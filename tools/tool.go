@@ -19,26 +19,14 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
-				"name":        "bash",
-				"description": "Execute shell command",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"command": map[string]any{"type": "string", "description": "Command to execute"},
-					},
-					"required": []string{"command"},
-				},
-			},
-		},
-		{
-			"type": "function",
-			"function": map[string]any{
 				"name":        "read",
 				"description": "Read file contents",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"path": map[string]any{"type": "string", "description": "File path to read"},
+						"path":   map[string]any{"type": "string", "description": "File path to read"},
+						"offset": map[string]any{"type": "integer", "description": "Start reading from this byte offset (optional)"},
+						"limit":  map[string]any{"type": "integer", "description": "Maximum bytes to read (optional)"},
 					},
 					"required": []string{"path"},
 				},
@@ -54,6 +42,7 @@ func GetToolsSchema() []map[string]any {
 					"properties": map[string]any{
 						"path":    map[string]any{"type": "string", "description": "File path to write"},
 						"content": map[string]any{"type": "string", "description": "Content to write"},
+						"append":  map[string]any{"type": "boolean", "description": "Append to file instead of overwriting (optional, default: false)"},
 					},
 					"required": []string{"path", "content"},
 				},
@@ -63,15 +52,30 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "edit",
-				"description": "Edit file - replace first occurrence of text",
+				"description": "Edit file - replace text",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"path":      map[string]any{"type": "string", "description": "File path"},
-						"oldString": map[string]any{"type": "string", "description": "Text to replace"},
-						"newString": map[string]any{"type": "string", "description": "Replacement text"},
+						"path":       map[string]any{"type": "string", "description": "File path"},
+						"oldString":  map[string]any{"type": "string", "description": "Text to replace"},
+						"newString":  map[string]any{"type": "string", "description": "Replacement text"},
+						"replaceAll": map[string]any{"type": "boolean", "description": "Replace all occurrences (optional, default: false - replaces first only)"},
 					},
 					"required": []string{"path", "oldString", "newString"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "bash",
+				"description": "Execute shell command",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"command": map[string]any{"type": "string", "description": "Command to execute"},
+					},
+					"required": []string{"command"},
 				},
 			},
 		},
@@ -100,24 +104,14 @@ func GetToolsSchemaForResponses() []responsesTool {
 	return []responsesTool{
 		{
 			Type:        "function",
-			Name:        "bash",
-			Description: "Execute shell command",
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"command": map[string]any{"type": "string", "description": "Command to execute"},
-				},
-				"required": []string{"command"},
-			},
-		},
-		{
-			Type:        "function",
 			Name:        "read",
 			Description: "Read file contents",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path": map[string]any{"type": "string", "description": "File path to read"},
+					"path":   map[string]any{"type": "string", "description": "File path to read"},
+					"offset": map[string]any{"type": "integer", "description": "Start reading from this byte offset (optional)"},
+					"limit":  map[string]any{"type": "integer", "description": "Maximum bytes to read (optional)"},
 				},
 				"required": []string{"path"},
 			},
@@ -131,6 +125,7 @@ func GetToolsSchemaForResponses() []responsesTool {
 				"properties": map[string]any{
 					"path":    map[string]any{"type": "string", "description": "File path to write"},
 					"content": map[string]any{"type": "string", "description": "Content to write"},
+					"append":  map[string]any{"type": "boolean", "description": "Append to file instead of overwriting (optional, default: false)"},
 				},
 				"required": []string{"path", "content"},
 			},
@@ -138,15 +133,28 @@ func GetToolsSchemaForResponses() []responsesTool {
 		{
 			Type:        "function",
 			Name:        "edit",
-			Description: "Edit file - replace first occurrence of text",
+			Description: "Edit file - replace text",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path":      map[string]any{"type": "string", "description": "File path"},
-					"oldString": map[string]any{"type": "string", "description": "Text to replace"},
-					"newString": map[string]any{"type": "string", "description": "Replacement text"},
+					"path":       map[string]any{"type": "string", "description": "File path"},
+					"oldString":  map[string]any{"type": "string", "description": "Text to replace"},
+					"newString":  map[string]any{"type": "string", "description": "Replacement text"},
+					"replaceAll": map[string]any{"type": "boolean", "description": "Replace all occurrences (optional, default: false - replaces first only)"},
 				},
 				"required": []string{"path", "oldString", "newString"},
+			},
+		},
+		{
+			Type:        "function",
+			Name:        "bash",
+			Description: "Execute shell command",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"command": map[string]any{"type": "string", "description": "Command to execute"},
+				},
+				"required": []string{"command"},
 			},
 		},
 	}
