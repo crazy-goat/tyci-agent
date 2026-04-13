@@ -14,12 +14,20 @@ import (
 )
 
 type OutputHandler struct {
-	out *os.File
+	out    *os.File
+	buffer *strings.Builder
+	silent bool
 }
 
 func (h *OutputHandler) Chunk(text string) {
-	fmt.Fprint(h.out, text)
-	h.out.Sync()
+	if h.silent {
+		if h.buffer != nil {
+			h.buffer.WriteString(text)
+		}
+	} else {
+		fmt.Fprint(h.out, text)
+		h.out.Sync()
+	}
 }
 
 func (h *OutputHandler) Summary(usage providers.UsageInfo) {}
@@ -94,7 +102,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler := &OutputHandler{out: os.Stdout}
+	var textBuffer strings.Builder
+	handler := &OutputHandler{
+		out:    os.Stdout,
+		silent: expectJSON,
+		buffer: &textBuffer,
+	}
 
 	messages := []providers.Message{
 		{Role: "user", Content: prompt},
@@ -140,20 +153,29 @@ func main() {
 	}
 
 	// For JSON mode, validate and format the output
-	if expectJSON && result.Text != "" {
-		var jsonData interface{}
-		if err := json.Unmarshal([]byte(result.Text), &jsonData); err != nil {
-			// Not valid JSON, wrap it
-			output := map[string]interface{}{
-				"response":   result.Text,
-				"tool_calls": result.ToolCalls,
+	if expectJSON {
+		responseText := textBuffer.String()
+		if responseText == "" {
+			responseText = result.Text
+		}
+
+		if responseText != "" {
+			var jsonData interface{}
+			if err := json.Unmarshal([]byte(responseText), &jsonData); err != nil {
+				// Not valid JSON, wrap it
+				output := map[string]interface{}{
+					"response": responseText,
+				}
+				if len(result.ToolCalls) > 0 {
+					output["tool_calls"] = result.ToolCalls
+				}
+				jsonBytes, _ := json.MarshalIndent(output, "", "  ")
+				fmt.Fprintln(os.Stdout, string(jsonBytes))
+			} else {
+				// Valid JSON, output as-is with indentation
+				jsonBytes, _ := json.MarshalIndent(jsonData, "", "  ")
+				fmt.Fprintln(os.Stdout, string(jsonBytes))
 			}
-			jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-			fmt.Fprintln(os.Stdout, string(jsonBytes))
-		} else {
-			// Valid JSON, output as-is with indentation
-			jsonBytes, _ := json.MarshalIndent(jsonData, "", "  ")
-			fmt.Fprintln(os.Stdout, string(jsonBytes))
 		}
 	} else {
 		fmt.Fprintln(os.Stdout)
