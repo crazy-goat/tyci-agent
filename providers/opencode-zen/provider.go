@@ -382,7 +382,11 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 	wrapper := &handlerWrapper{Inner: handler, collector: collector}
 	debugHandler := &api.DebugHandler{Inner: wrapper, Debug: debug}
 
-	chatMsgs := make([]api.ChatMessage, 0, len(messages))
+	chatMsgs := make([]api.ChatMessage, 0, len(messages)+1)
+	chatMsgs = append(chatMsgs, api.ChatMessage{
+		Role:    "system",
+		Content: providers.SystemPrompt,
+	})
 	for _, m := range messages {
 		chatMsgs = append(chatMsgs, api.ChatMessage{Role: m.Role, Content: m.Content})
 	}

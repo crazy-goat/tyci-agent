@@ -1,6 +1,12 @@
 package providers
 
-import "context"
+import (
+	"context"
+	_ "embed"
+)
+
+//go:embed SYSTEM_PROMPT.md
+var SystemPrompt string
 
 type UsageInfo struct {
 	InputTokens  int
