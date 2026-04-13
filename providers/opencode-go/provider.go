@@ -113,6 +113,28 @@ func (t *textCollector) Summary(api.UsageInfo)   {}
 func (t *textCollector) End()                    {}
 func (t *textCollector) Error(err error)         {}
 
+type handlerWrapper struct {
+	Inner     providers.OutputHandler
+	collector *textCollector
+}
+
+func (h *handlerWrapper) Chunk(text string) {
+	h.Inner.Chunk(text)
+	h.collector.text += text
+}
+func (h *handlerWrapper) Thinking(text string) { h.Inner.Thinking(text) }
+func (h *handlerWrapper) EndThinking()         { h.Inner.EndThinking() }
+func (h *handlerWrapper) LogToolCallStart(n string) {
+	h.Inner.LogToolCallStart(n)
+}
+func (h *handlerWrapper) ToolCallArg(t string) { h.Inner.ToolCallArg(t) }
+func (h *handlerWrapper) EndToolCall()         { h.Inner.EndToolCall() }
+func (h *handlerWrapper) Summary(u api.UsageInfo) {
+	h.Inner.Summary(providers.UsageInfo{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, Cost: u.Cost})
+}
+func (h *handlerWrapper) End()            { h.Inner.End() }
+func (h *handlerWrapper) Error(err error) { h.Inner.Error(err) }
+
 func convertToolCalls(apiCalls []api.ToolCall) []providers.ToolCall {
 	result := make([]providers.ToolCall, len(apiCalls))
 	for i, tc := range apiCalls {
@@ -218,7 +240,8 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 
 	endpoint := modelEndpoint(model)
 	collector := &textCollector{}
-	debugHandler := &api.DebugHandler{Inner: collector, Debug: debug}
+	wrapper := &handlerWrapper{Inner: handler, collector: collector}
+	debugHandler := &api.DebugHandler{Inner: wrapper, Debug: debug}
 
 	chatMsgs := make([]api.ChatMessage, 0, len(messages))
 	for _, m := range messages {
