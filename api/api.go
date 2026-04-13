@@ -38,7 +38,6 @@ type DebugHandler struct {
 	ToolCalls       []ToolCall
 	thinkingActive  bool
 	thinkingStarted bool
-	thinkingBuf     string
 }
 
 func (d *DebugHandler) Chunk(text string) {
@@ -54,48 +53,47 @@ func (d *DebugHandler) Thinking(text string) {
 		return
 	}
 
-	// Only print the new part of the thinking (model sends full text in each chunk)
-	if len(text) > len(d.thinkingBuf) {
-		newPart := text[len(d.thinkingBuf):]
-		if !d.thinkingStarted {
-			fmt.Fprintf(os.Stderr, "💭 %s", newPart)
-			d.thinkingStarted = true
-		} else {
-			fmt.Fprintf(os.Stderr, "%s", newPart)
-		}
-		d.thinkingBuf = text
-		d.thinkingActive = true
+	// Model sends reasoning as delta chunks, just print them
+	if !d.thinkingStarted {
+		fmt.Fprintf(os.Stderr, "💭 %s", text)
+		d.thinkingStarted = true
+	} else {
+		fmt.Fprintf(os.Stderr, "%s", text)
 	}
+	d.thinkingActive = true
 }
 
 func (d *DebugHandler) EndThinking() {
 	if !d.HideThinking && d.thinkingActive {
 		fmt.Fprintf(os.Stderr, "\n\n")
 		d.thinkingActive = false
-		d.thinkingBuf = ""
+		d.thinkingStarted = false
 	}
 	d.Inner.EndThinking()
 }
 
 func (d *DebugHandler) LogToolCallStart(name string) {
 	d.Inner.LogToolCallStart(name)
-	if d.Debug {
-		fmt.Fprintf(os.Stderr, "🔧 %s(", name)
+	if d.HideTools {
+		return
 	}
+	fmt.Fprintf(os.Stderr, "🔧 %s(", name)
 }
 
 func (d *DebugHandler) ToolCallArg(text string) {
 	d.Inner.ToolCallArg(text)
-	if d.Debug {
-		fmt.Fprintf(os.Stderr, "%s", text)
+	if d.HideTools {
+		return
 	}
+	fmt.Fprintf(os.Stderr, "%s", text)
 }
 
 func (d *DebugHandler) EndToolCall() {
 	d.Inner.EndToolCall()
-	if d.Debug {
-		fmt.Fprintf(os.Stderr, "):\n")
+	if d.HideTools {
+		return
 	}
+	fmt.Fprintf(os.Stderr, "):\n")
 }
 
 func (d *DebugHandler) Summary(usage UsageInfo) {

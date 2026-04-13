@@ -40,35 +40,15 @@ func (h *OutputHandler) Error(err error) {
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 }
 
-func (h *OutputHandler) Thinking(text string) {
-	if !h.hideThinking {
-		fmt.Fprintf(os.Stderr, "💭 %s", text)
-	}
-}
+func (h *OutputHandler) Thinking(text string) {}
 
-func (h *OutputHandler) EndThinking() {
-	if !h.hideThinking {
-		fmt.Fprintf(os.Stderr, "\n\n")
-	}
-}
+func (h *OutputHandler) EndThinking() {}
 
-func (h *OutputHandler) LogToolCallStart(name string) {
-	if !h.hideTools {
-		fmt.Fprintf(os.Stderr, "🔧 %s(", name)
-	}
-}
+func (h *OutputHandler) LogToolCallStart(name string) {}
 
-func (h *OutputHandler) ToolCallArg(text string) {
-	if !h.hideTools {
-		fmt.Fprintf(os.Stderr, "%s", text)
-	}
-}
+func (h *OutputHandler) ToolCallArg(text string) {}
 
-func (h *OutputHandler) EndToolCall() {
-	if !h.hideTools {
-		fmt.Fprintf(os.Stderr, "):\n")
-	}
-}
+func (h *OutputHandler) EndToolCall() {}
 
 func main() {
 	debugFlag := flag.Bool("debug", false, "Show HTTP request/response data")
@@ -148,11 +128,6 @@ func main() {
 	for len(result.ToolCalls) > 0 {
 		toolResults := []string{}
 		for _, tc := range result.ToolCalls {
-			// Print tool call before executing
-			if !*hideToolsFlag {
-				fmt.Fprintf(os.Stderr, "🔧 %s(%s):\n", tc.Name, tc.Arguments)
-			}
-
 			var args map[string]any
 			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
 				if !*hideToolsFlag {
