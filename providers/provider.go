@@ -8,16 +8,26 @@ type UsageInfo struct {
 	Cost         float64
 }
 
-type StreamHandler interface {
-	Chunk(text string)
-	Summary(usage UsageInfo)
-	End()
-	Error(err error)
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type Provider interface {
 	Name() string
 	IsConfigured() bool
 	Models() []string
-	Send(ctx context.Context, model, prompt, system string, handler StreamHandler) error
+	FreeModels() []string
+	Send(ctx context.Context, model, prompt, system string, debug bool) (*SendResult, error)
+	SendWithMessages(ctx context.Context, model, prompt, system string, messages []Message, debug bool) (*SendResult, error)
+}
+
+type ToolCall struct {
+	Name      string
+	Arguments string
+}
+
+type SendResult struct {
+	Text      string
+	ToolCalls []ToolCall
 }

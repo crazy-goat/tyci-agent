@@ -36,10 +36,16 @@ func FindModel(model string) (Provider, string, bool) {
 		return nil, "", false
 	}
 	for _, p := range providers {
-		if !p.IsConfigured() {
-			continue
+		if p.IsConfigured() {
+			for _, m := range p.Models() {
+				if m == model {
+					return p, model, true
+				}
+			}
 		}
-		for _, m := range p.Models() {
+	}
+	for _, p := range providers {
+		for _, m := range p.FreeModels() {
 			if m == model {
 				return p, model, true
 			}
