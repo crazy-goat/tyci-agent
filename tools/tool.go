@@ -75,36 +75,6 @@ func GetToolsSchema() []map[string]any {
 				},
 			},
 		},
-		{
-			"type": "function",
-			"function": map[string]any{
-				"name":        "glob",
-				"description": "Find files matching pattern",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"pattern": map[string]any{"type": "string", "description": "Glob pattern (e.g., *.go)"},
-					},
-					"required": []string{"pattern"},
-				},
-			},
-		},
-		{
-			"type": "function",
-			"function": map[string]any{
-				"name":        "grep",
-				"description": "Search for text in files",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"pattern": map[string]any{"type": "string", "description": "Search pattern"},
-						"path":    map[string]any{"type": "string", "description": "Directory to search"},
-						"include": map[string]any{"type": "string", "description": "File pattern (*.go)"},
-					},
-					"required": []string{"pattern"},
-				},
-			},
-		},
 	}
 }
 
@@ -179,32 +149,6 @@ func GetToolsSchemaForResponses() []responsesTool {
 				"required": []string{"path", "oldString", "newString"},
 			},
 		},
-		{
-			Type:        "function",
-			Name:        "glob",
-			Description: "Find files matching pattern",
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"pattern": map[string]any{"type": "string", "description": "Glob pattern (e.g., *.go)"},
-				},
-				"required": []string{"pattern"},
-			},
-		},
-		{
-			Type:        "function",
-			Name:        "grep",
-			Description: "Search for text in files",
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"pattern": map[string]any{"type": "string", "description": "Search pattern"},
-					"path":    map[string]any{"type": "string", "description": "Directory to search"},
-					"include": map[string]any{"type": "string", "description": "File pattern (*.go)"},
-				},
-				"required": []string{"pattern"},
-			},
-		},
 	}
 }
 
@@ -213,8 +157,6 @@ var toolRegistry = map[string]Tool{
 	"read":  &ReadTool{},
 	"write": &WriteTool{},
 	"edit":  &EditTool{},
-	"glob":  &GlobTool{},
-	"grep":  &GrepTool{},
 }
 
 func RunTool(name string, arguments map[string]any) ToolResult {
