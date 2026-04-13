@@ -33,6 +33,8 @@ type StreamHandler interface {
 type DebugHandler struct {
 	Inner          StreamHandler
 	Debug          bool
+	HideThinking   bool
+	HideTools      bool
 	ToolCalls      []ToolCall
 	thinkingActive bool
 }
@@ -46,6 +48,9 @@ func (d *DebugHandler) Chunk(text string) {
 
 func (d *DebugHandler) Thinking(text string) {
 	d.Inner.Thinking(text)
+	if d.HideThinking {
+		return
+	}
 	if !d.thinkingActive {
 		fmt.Fprintf(os.Stderr, "💭 %s", text)
 		d.thinkingActive = true
@@ -55,7 +60,7 @@ func (d *DebugHandler) Thinking(text string) {
 }
 
 func (d *DebugHandler) EndThinking() {
-	if d.thinkingActive {
+	if !d.HideThinking && d.thinkingActive {
 		fmt.Fprintf(os.Stderr, "\n\n")
 		d.thinkingActive = false
 	}

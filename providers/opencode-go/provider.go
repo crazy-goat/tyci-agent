@@ -234,7 +234,7 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
 }
 
-func (p *provider) SendWithHandler(model string, messages []providers.Message, handler providers.OutputHandler, debug bool) (*providers.SendResult, error) {
+func (p *provider) SendWithHandler(model string, messages []providers.Message, handler providers.OutputHandler, debug, hideThinking, hideTools bool) (*providers.SendResult, error) {
 	apiKey := os.Getenv("OPENCODE_GO_API_KEY")
 	if apiKey == "" {
 		return nil, fmt.Errorf("OPENCODE_GO_API_KEY not set")
@@ -243,7 +243,7 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 	endpoint := modelEndpoint(model)
 	collector := &textCollector{}
 	wrapper := &handlerWrapper{Inner: handler, collector: collector}
-	debugHandler := &api.DebugHandler{Inner: wrapper, Debug: debug}
+	debugHandler := &api.DebugHandler{Inner: wrapper, Debug: debug, HideThinking: hideThinking, HideTools: hideTools}
 
 	chatMsgs := make([]api.ChatMessage, 0, len(messages)+1)
 	chatMsgs = append(chatMsgs, api.ChatMessage{

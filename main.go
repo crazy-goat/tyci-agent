@@ -14,9 +14,11 @@ import (
 )
 
 type OutputHandler struct {
-	out    *os.File
-	buffer *strings.Builder
-	silent bool
+	out          *os.File
+	buffer       *strings.Builder
+	silent       bool
+	hideThinking bool
+	hideTools    bool
 }
 
 func (h *OutputHandler) Chunk(text string) {
@@ -38,24 +40,46 @@ func (h *OutputHandler) Error(err error) {
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 }
 
-func (h *OutputHandler) Thinking(text string) {}
+func (h *OutputHandler) Thinking(text string) {
+	if !h.hideThinking {
+		fmt.Fprintf(os.Stderr, "💭 %s", text)
+	}
+}
 
-func (h *OutputHandler) EndThinking() {}
+func (h *OutputHandler) EndThinking() {
+	if !h.hideThinking {
+		fmt.Fprintf(os.Stderr, "\n\n")
+	}
+}
 
-func (h *OutputHandler) LogToolCallStart(string) {}
+func (h *OutputHandler) LogToolCallStart(name string) {
+	if !h.hideTools {
+		fmt.Fprintf(os.Stderr, "🔧 %s(", name)
+	}
+}
 
-func (h *OutputHandler) ToolCallArg(string) {}
+func (h *OutputHandler) ToolCallArg(text string) {
+	if !h.hideTools {
+		fmt.Fprintf(os.Stderr, "%s", text)
+	}
+}
 
-func (h *OutputHandler) EndToolCall() {}
+func (h *OutputHandler) EndToolCall() {
+	if !h.hideTools {
+		fmt.Fprintf(os.Stderr, "):\n")
+	}
+}
 
 func main() {
 	debugFlag := flag.Bool("debug", false, "Show HTTP request/response data")
 	modelFlag := flag.String("model", "opencode-zen/big-pickle", "Model to use (format: provider/model)")
 	promptTextFlag := flag.String("prompt-to-text", "", "Prompt for text response")
 	promptJSONFlag := flag.String("prompt-to-json", "", "Prompt for JSON response")
+	hideThinkingFlag := flag.Bool("hide-thinking", false, "Hide thinking output (💭)")
+	hideToolsFlag := flag.Bool("hide-tools", false, "Hide tool call output (🔧)")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] (--prompt-to-text <prompt> | --prompt-to-json <prompt>)\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] (--prompt-to-text <prompt> | --prompt-to-json <prompt>)\n\n")
 		fmt.Fprintf(os.Stderr, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -104,16 +128,18 @@ func main() {
 
 	var textBuffer strings.Builder
 	handler := &OutputHandler{
-		out:    os.Stdout,
-		silent: expectJSON,
-		buffer: &textBuffer,
+		out:          os.Stdout,
+		silent:       expectJSON,
+		buffer:       &textBuffer,
+		hideThinking: *hideThinkingFlag,
+		hideTools:    *hideToolsFlag,
 	}
 
 	messages := []providers.Message{
 		{Role: "user", Content: prompt},
 	}
 
-	result, err := provider.SendWithHandler(modelName, messages, handler, *debugFlag)
+	result, err := provider.SendWithHandler(modelName, messages, handler, *debugFlag, *hideThinkingFlag, *hideToolsFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -123,21 +149,29 @@ func main() {
 		toolResults := []string{}
 		for _, tc := range result.ToolCalls {
 			// Print tool call before executing
-			fmt.Fprintf(os.Stderr, "🔧 %s(%s):\n", tc.Name, tc.Arguments)
+			if !*hideToolsFlag {
+				fmt.Fprintf(os.Stderr, "🔧 %s(%s):\n", tc.Name, tc.Arguments)
+			}
 
 			var args map[string]any
 			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing args for %s: %v\n", tc.Name, err)
+				if !*hideToolsFlag {
+					fmt.Fprintf(os.Stderr, "Error parsing args for %s: %v\n", tc.Name, err)
+				}
 				toolResults = append(toolResults, fmt.Sprintf("Error: %v", err))
 				continue
 			}
 
 			toolRes := tools.RunTool(tc.Name, args)
 			if toolRes.Success {
-				fmt.Fprintf(os.Stderr, "%s\n", toolRes.Content)
+				if !*hideToolsFlag {
+					fmt.Fprintf(os.Stderr, "%s\n", toolRes.Content)
+				}
 				toolResults = append(toolResults, toolRes.Content)
 			} else {
-				fmt.Fprintf(os.Stderr, "Error: %s\n", toolRes.Error)
+				if !*hideToolsFlag {
+					fmt.Fprintf(os.Stderr, "Error: %s\n", toolRes.Error)
+				}
 				toolResults = append(toolResults, "Error: "+toolRes.Error)
 			}
 		}
@@ -145,7 +179,7 @@ func main() {
 		messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
 		messages = append(messages, providers.Message{Role: "user", Content: "Tool results:\n" + strings.Join(toolResults, "\n---\n")})
 
-		result, err = provider.SendWithHandler(modelName, messages, handler, *debugFlag)
+		result, err = provider.SendWithHandler(modelName, messages, handler, *debugFlag, *hideThinkingFlag, *hideToolsFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
