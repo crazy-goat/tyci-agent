@@ -20,40 +20,61 @@ type ToolCall struct {
 
 type StreamHandler interface {
 	Chunk(text string)
+	Thinking(text string)
+	EndThinking()
+	LogToolCallStart(name string)
+	ToolCallArg(text string)
+	EndToolCall()
 	Summary(usage UsageInfo)
 	End()
 	Error(err error)
 }
 
 type DebugHandler struct {
-	Inner     StreamHandler
-	Debug     bool
-	ToolCalls []ToolCall
+	Inner          StreamHandler
+	Debug          bool
+	ToolCalls      []ToolCall
+	thinkingActive bool
 }
 
 func (d *DebugHandler) Chunk(text string) {
+	d.Inner.Chunk(text)
 	if d.Debug {
 		fmt.Fprintf(os.Stderr, "[CHUNK] %s\n", text)
 	}
-	d.Inner.Chunk(text)
 }
 
 func (d *DebugHandler) Thinking(text string) {
-	if d.Debug {
-		fmt.Fprintf(os.Stderr, "[THINKING] %s\n", text)
+	d.Inner.Thinking(text)
+	if !d.thinkingActive {
+		fmt.Fprintf(os.Stderr, "💭 %s", text)
+		d.thinkingActive = true
+	} else {
+		fmt.Fprintf(os.Stderr, "%s", text)
 	}
+}
+
+func (d *DebugHandler) EndThinking() {
+	if d.thinkingActive {
+		fmt.Fprintf(os.Stderr, "\n\n")
+		d.thinkingActive = false
+	}
+	d.Inner.EndThinking()
 }
 
 func (d *DebugHandler) LogToolCallStart(name string) {
-	if d.Debug {
-		fmt.Fprintf(os.Stderr, "[TOOL_CALL_START] %s\n", name)
-	}
+	fmt.Fprintf(os.Stderr, "🔧 %s(", name)
+	d.Inner.LogToolCallStart(name)
 }
 
-func (d *DebugHandler) LogToolCallResult(name, result string) {
-	if d.Debug {
-		fmt.Fprintf(os.Stderr, "[TOOL_RESULT] %s: %s\n", name, result)
-	}
+func (d *DebugHandler) ToolCallArg(text string) {
+	fmt.Fprintf(os.Stderr, "%s", text)
+	d.Inner.ToolCallArg(text)
+}
+
+func (d *DebugHandler) EndToolCall() {
+	fmt.Fprintf(os.Stderr, "):\n")
+	d.Inner.EndToolCall()
 }
 
 func (d *DebugHandler) Summary(usage UsageInfo) {

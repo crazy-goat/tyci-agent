@@ -103,10 +103,15 @@ type textCollector struct {
 	text string
 }
 
-func (t *textCollector) Chunk(text string)     { t.text += text }
-func (t *textCollector) Summary(api.UsageInfo) {}
-func (t *textCollector) End()                  {}
-func (t *textCollector) Error(err error)       {}
+func (t *textCollector) Chunk(text string)       { t.text += text }
+func (t *textCollector) Thinking(text string)    {}
+func (t *textCollector) EndThinking()            {}
+func (t *textCollector) LogToolCallStart(string) {}
+func (t *textCollector) ToolCallArg(string)      {}
+func (t *textCollector) EndToolCall()            {}
+func (t *textCollector) Summary(api.UsageInfo)   {}
+func (t *textCollector) End()                    {}
+func (t *textCollector) Error(err error)         {}
 
 func convertToolCalls(apiCalls []api.ToolCall) []providers.ToolCall {
 	result := make([]providers.ToolCall, len(apiCalls))
@@ -203,4 +208,29 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 	}
 	err := api.StreamChat(ctx, apiKey, endpoint, body, handler)
 	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
+}
+
+func (p *provider) SendWithHandler(model string, messages []providers.Message, handler providers.OutputHandler, debug bool) (*providers.SendResult, error) {
+	apiKey := os.Getenv("OPENCODE_GO_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("OPENCODE_GO_API_KEY not set")
+	}
+
+	endpoint := modelEndpoint(model)
+	collector := &textCollector{}
+	debugHandler := &api.DebugHandler{Inner: collector, Debug: debug}
+
+	chatMsgs := make([]api.ChatMessage, 0, len(messages))
+	for _, m := range messages {
+		chatMsgs = append(chatMsgs, api.ChatMessage{Role: m.Role, Content: m.Content})
+	}
+
+	body := api.ChatRequest{
+		Model:    model,
+		Stream:   true,
+		Messages: chatMsgs,
+	}
+
+	err := api.StreamChat(context.Background(), apiKey, endpoint, body, debugHandler)
+	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(debugHandler.GetToolCalls())}, err
 }

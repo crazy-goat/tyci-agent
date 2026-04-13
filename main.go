@@ -1,14 +1,11 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 
 	"github.com/decodo/tyci-agent/providers"
 	_ "github.com/decodo/tyci-agent/providers/opencode-go"
@@ -16,123 +13,91 @@ import (
 	"github.com/decodo/tyci-agent/tools"
 )
 
-func listModels() {
-	fmt.Println("Available models:")
-	for _, p := range providers.ListProviders() {
-		if !p.IsConfigured() {
-			continue
-		}
-		for _, m := range p.Models() {
-			fmt.Printf("  ✓ %s/%s\n", p.Name(), m)
-		}
-	}
+type OutputHandler struct {
+	out *os.File
 }
 
+func (h *OutputHandler) Chunk(text string) {
+	fmt.Fprint(h.out, text)
+	h.out.Sync()
+}
+
+func (h *OutputHandler) Summary(usage providers.UsageInfo) {}
+
+func (h *OutputHandler) End() {}
+
+func (h *OutputHandler) Error(err error) {
+	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+}
+
+func (h *OutputHandler) Thinking(text string) {}
+
+func (h *OutputHandler) EndThinking() {}
+
+func (h *OutputHandler) LogToolCallStart(string) {}
+
+func (h *OutputHandler) ToolCallArg(string) {}
+
+func (h *OutputHandler) EndToolCall() {}
+
 func main() {
-	listFlag := flag.Bool("list", false, "list available models")
-	prompt := flag.String("p", "", "prompt (required)")
-	system := flag.String("s", "", "system prompt")
-	model := flag.String("m", "", "model in format provider/model (e.g., opencode-zen/big-pickle)")
-	output := flag.String("o", "stdout", "output file (default: stdout)")
-	debugFlag := flag.Bool("debug", false, "debug mode - print requests and responses to stderr")
+	debugFlag := flag.Bool("debug", false, "Show HTTP request/response data")
 	flag.Parse()
 
-	if *listFlag {
-		listModels()
-		os.Exit(0)
-	}
+	model := "opencode-zen/big-pickle"
+	prompt := strings.Join(flag.Args(), " ")
 
-	if *model == "" {
-		*model = "opencode-zen/big-pickle"
-		fmt.Fprintf(os.Stderr, "Using default model: %s (free)\n", *model)
-	}
-
-	if *prompt == "" {
-		fmt.Fprintln(os.Stderr, "Error: --prompt is required")
+	if prompt == "" {
+		fmt.Fprintln(os.Stderr, "Usage: tyci-agent [--debug] <prompt>")
+		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
-	provider, modelName, ok := providers.FindModel(*model)
+	provider, modelName, ok := providers.FindModel(model)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Error: model %q not found\n", *model)
+		fmt.Fprintf(os.Stderr, "Error: model %q not found\n", model)
 		os.Exit(1)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	handler := &OutputHandler{out: os.Stdout}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		cancel()
-	}()
-
-	var out *os.File = os.Stdout
-	if *output != "stdout" {
-		f, err := os.Create(*output)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating file: %v\n", err)
-			os.Exit(1)
-		}
-		defer f.Close()
-		out = f
+	messages := []providers.Message{
+		{Role: "user", Content: prompt},
 	}
 
-	var systemMsg string
-	if *system != "" {
-		systemMsg = *system
-	}
-
-	result, err := provider.Send(ctx, modelName, *prompt, systemMsg, *debugFlag)
+	result, err := provider.SendWithHandler(modelName, messages, handler, *debugFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprint(out, result.Text)
-	out.Sync()
-
-	messages := []providers.Message{
-		{Role: "user", Content: *prompt},
-	}
-
 	for len(result.ToolCalls) > 0 {
-		fmt.Fprintf(os.Stderr, "\n[Executing %d tool call(s)]\n", len(result.ToolCalls))
-
 		toolResults := []string{}
-		for i, tc := range result.ToolCalls {
+		for _, tc := range result.ToolCalls {
 			var args map[string]any
 			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to parse tool arguments for %s: %v\n", tc.Name, err)
-				toolResults = append(toolResults, fmt.Sprintf("Error parsing arguments for %s: %v", tc.Name, err))
+				fmt.Fprintf(os.Stderr, "Error parsing args for %s: %v\n", tc.Name, err)
+				toolResults = append(toolResults, fmt.Sprintf("Error: %v", err))
 				continue
 			}
 
-			result := tools.RunTool(tc.Name, args)
-			var resultContent string
-			if result.Success {
-				resultContent = result.Content
+			toolRes := tools.RunTool(tc.Name, args)
+			if toolRes.Success {
+				fmt.Fprintf(os.Stderr, "%s\n", toolRes.Content)
+				toolResults = append(toolResults, toolRes.Content)
 			} else {
-				resultContent = "Error: " + result.Error
-			}
-			toolResults = append(toolResults, resultContent)
-
-			if *debugFlag {
-				fmt.Fprintf(os.Stderr, "[TOOL_RESULT %d] %s: %s\n", i, tc.Name, resultContent)
+				fmt.Fprintf(os.Stderr, "Error: %s\n", toolRes.Error)
+				toolResults = append(toolResults, "Error: "+toolRes.Error)
 			}
 		}
 
 		messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
 		messages = append(messages, providers.Message{Role: "user", Content: "Tool results:\n" + strings.Join(toolResults, "\n---\n")})
 
-		result, err = provider.SendWithMessages(ctx, modelName, *prompt, systemMsg, messages, *debugFlag)
+		result, err = provider.SendWithHandler(modelName, messages, handler, *debugFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-
-		fmt.Fprint(out, result.Text)
-		out.Sync()
 	}
 }

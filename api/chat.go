@@ -25,10 +25,9 @@ type ChatRequest struct {
 type chatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content      string `json:"content"`
-			Reasoning    string `json:"reasoning"`
-			FinishReason string `json:"finish_reason"`
-			ToolCalls    []struct {
+			Content   string `json:"content"`
+			Reasoning string `json:"reasoning"`
+			ToolCalls []struct {
 				Type     string `json:"type"`
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
@@ -38,6 +37,7 @@ type chatStreamChunk struct {
 				} `json:"function"`
 			} `json:"tool_calls,omitempty"`
 		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 }
 
@@ -70,6 +70,8 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 	}
 
 	reader := bufio.NewReader(resp.Body)
+	var sawThinking bool
+	var lastToolIdx int = -1
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -92,15 +94,41 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 			continue
 		}
 		if len(chunk.Choices) > 0 {
-			delta := chunk.Choices[0].Delta
+			choice := chunk.Choices[0]
+			delta := choice.Delta
 			if delta.Reasoning != "" {
 				handler.Thinking(delta.Reasoning)
+				sawThinking = true
 			}
 			if delta.Content != "" {
+				if sawThinking {
+					handler.EndThinking()
+					sawThinking = false
+				}
 				handler.Chunk(delta.Content)
 			}
-			for _, tc := range delta.ToolCalls {
-				handler.AccumulateToolCall(tc.Index, tc.Function.Name, tc.Function.Arguments)
+			for i, tc := range delta.ToolCalls {
+				if sawThinking {
+					handler.EndThinking()
+					sawThinking = false
+				}
+				if tc.Function.Name != "" {
+					if lastToolIdx >= 0 && lastToolIdx != i {
+						handler.EndToolCall()
+					}
+					handler.LogToolCallStart(tc.Function.Name)
+					lastToolIdx = i
+				}
+				if tc.Function.Arguments != "" {
+					handler.ToolCallArg(tc.Function.Arguments)
+				}
+				handler.AccumulateToolCall(i, tc.Function.Name, tc.Function.Arguments)
+			}
+			if choice.FinishReason == "tool_calls" {
+				if lastToolIdx >= 0 {
+					handler.EndToolCall()
+					lastToolIdx = -1
+				}
 			}
 		}
 	}

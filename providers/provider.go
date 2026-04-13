@@ -13,15 +13,6 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-type Provider interface {
-	Name() string
-	IsConfigured() bool
-	Models() []string
-	FreeModels() []string
-	Send(ctx context.Context, model, prompt, system string, debug bool) (*SendResult, error)
-	SendWithMessages(ctx context.Context, model, prompt, system string, messages []Message, debug bool) (*SendResult, error)
-}
-
 type ToolCall struct {
 	Name      string
 	Arguments string
@@ -30,4 +21,26 @@ type ToolCall struct {
 type SendResult struct {
 	Text      string
 	ToolCalls []ToolCall
+}
+
+type OutputHandler interface {
+	Chunk(text string)
+	Thinking(text string)
+	EndThinking()
+	LogToolCallStart(name string)
+	ToolCallArg(text string)
+	EndToolCall()
+	Summary(usage UsageInfo)
+	End()
+	Error(err error)
+}
+
+type Provider interface {
+	Name() string
+	IsConfigured() bool
+	Models() []string
+	FreeModels() []string
+	Send(ctx context.Context, model, prompt, system string, debug bool) (*SendResult, error)
+	SendWithMessages(ctx context.Context, model, prompt, system string, messages []Message, debug bool) (*SendResult, error)
+	SendWithHandler(model string, messages []Message, handler OutputHandler, debug bool) (*SendResult, error)
 }
