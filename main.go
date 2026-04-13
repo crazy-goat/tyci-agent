@@ -43,8 +43,11 @@ func (h *OutputHandler) EndToolCall() {}
 func main() {
 	debugFlag := flag.Bool("debug", false, "Show HTTP request/response data")
 	modelFlag := flag.String("model", "opencode-zen/big-pickle", "Model to use (format: provider/model)")
+	promptTextFlag := flag.String("prompt-to-text", "", "Prompt for text response")
+	promptJSONFlag := flag.String("prompt-to-json", "", "Prompt for JSON response")
+
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] <prompt>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] (--prompt-to-text <prompt> | --prompt-to-json <prompt>)\n\n")
 		fmt.Fprintf(os.Stderr, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -61,13 +64,28 @@ func main() {
 	}
 	flag.Parse()
 
-	model := *modelFlag
-	prompt := strings.Join(flag.Args(), " ")
-
-	if prompt == "" {
-		fmt.Fprintln(os.Stderr, "Usage: tyci-agent [--debug] <prompt>")
-		flag.PrintDefaults()
+	// Validate that exactly one prompt flag is provided
+	if *promptTextFlag == "" && *promptJSONFlag == "" {
+		fmt.Fprintln(os.Stderr, "Error: must provide either --prompt-to-text or --prompt-to-json")
+		flag.Usage()
 		os.Exit(1)
+	}
+	if *promptTextFlag != "" && *promptJSONFlag != "" {
+		fmt.Fprintln(os.Stderr, "Error: cannot use both --prompt-to-text and --prompt-to-json")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	model := *modelFlag
+	var prompt string
+	var expectJSON bool
+
+	if *promptTextFlag != "" {
+		prompt = *promptTextFlag
+		expectJSON = false
+	} else {
+		prompt = *promptJSONFlag
+		expectJSON = true
 	}
 
 	provider, modelName, ok := providers.FindModel(model)
@@ -120,5 +138,24 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	fmt.Fprintln(os.Stdout)
+
+	// For JSON mode, validate and format the output
+	if expectJSON && result.Text != "" {
+		var jsonData interface{}
+		if err := json.Unmarshal([]byte(result.Text), &jsonData); err != nil {
+			// Not valid JSON, wrap it
+			output := map[string]interface{}{
+				"response":   result.Text,
+				"tool_calls": result.ToolCalls,
+			}
+			jsonBytes, _ := json.MarshalIndent(output, "", "  ")
+			fmt.Fprintln(os.Stdout, string(jsonBytes))
+		} else {
+			// Valid JSON, output as-is with indentation
+			jsonBytes, _ := json.MarshalIndent(jsonData, "", "  ")
+			fmt.Fprintln(os.Stdout, string(jsonBytes))
+		}
+	} else {
+		fmt.Fprintln(os.Stdout)
+	}
 }
