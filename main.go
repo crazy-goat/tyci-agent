@@ -117,4 +117,5 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	fmt.Fprintln(os.Stdout)
 }
