@@ -10,6 +10,7 @@ import (
 
 	"github.com/decodo/tyci-agent/api"
 	"github.com/decodo/tyci-agent/providers"
+	"github.com/decodo/tyci-agent/tools"
 )
 
 const baseURL = "https://opencode.ai/zen/go/v1"
@@ -180,6 +181,7 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 		Model:    model,
 		Stream:   true,
 		Messages: chatMessages,
+		Tools:    tools.GetToolsSchemaJSON(),
 	}
 	err := api.StreamChat(ctx, apiKey, endpoint, body, handler)
 	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
@@ -252,6 +254,7 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 		Model:    model,
 		Stream:   true,
 		Messages: chatMsgs,
+		Tools:    tools.GetToolsSchemaJSON(),
 	}
 
 	err := api.StreamChat(context.Background(), apiKey, endpoint, body, debugHandler)
