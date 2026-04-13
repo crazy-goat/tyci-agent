@@ -38,6 +38,24 @@ func (d *DebugHandler) Chunk(text string) {
 	d.Inner.Chunk(text)
 }
 
+func (d *DebugHandler) Thinking(text string) {
+	if d.Debug {
+		fmt.Fprintf(os.Stderr, "[THINKING] %s\n", text)
+	}
+}
+
+func (d *DebugHandler) LogToolCallStart(name string) {
+	if d.Debug {
+		fmt.Fprintf(os.Stderr, "[TOOL_CALL_START] %s\n", name)
+	}
+}
+
+func (d *DebugHandler) LogToolCallResult(name, result string) {
+	if d.Debug {
+		fmt.Fprintf(os.Stderr, "[TOOL_RESULT] %s: %s\n", name, result)
+	}
+}
+
 func (d *DebugHandler) Summary(usage UsageInfo) {
 	d.Inner.Summary(usage)
 }
