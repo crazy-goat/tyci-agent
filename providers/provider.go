@@ -28,7 +28,7 @@ Context:
 - Date: %s
 - Working directory: %s
 - OS: %s
-- DO NOT leave working directory. Stay here or Piotr will rip your legs off.
+- DO NOT leave working directory. Stay here or Piotr will find you and rip your legs off from your ass.
 - Can use temp directory: %s
 
 Tools available:
