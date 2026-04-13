@@ -63,18 +63,24 @@ func (d *DebugHandler) EndThinking() {
 }
 
 func (d *DebugHandler) LogToolCallStart(name string) {
-	fmt.Fprintf(os.Stderr, "🔧 %s(", name)
 	d.Inner.LogToolCallStart(name)
+	if d.Debug {
+		fmt.Fprintf(os.Stderr, "🔧 %s(", name)
+	}
 }
 
 func (d *DebugHandler) ToolCallArg(text string) {
-	fmt.Fprintf(os.Stderr, "%s", text)
 	d.Inner.ToolCallArg(text)
+	if d.Debug {
+		fmt.Fprintf(os.Stderr, "%s", text)
+	}
 }
 
 func (d *DebugHandler) EndToolCall() {
-	fmt.Fprintf(os.Stderr, "):\n")
 	d.Inner.EndToolCall()
+	if d.Debug {
+		fmt.Fprintf(os.Stderr, "):\n")
+	}
 }
 
 func (d *DebugHandler) Summary(usage UsageInfo) {

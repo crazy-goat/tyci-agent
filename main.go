@@ -91,6 +91,9 @@ func main() {
 	for len(result.ToolCalls) > 0 {
 		toolResults := []string{}
 		for _, tc := range result.ToolCalls {
+			// Print tool call before executing
+			fmt.Fprintf(os.Stderr, "🔧 %s(%s):\n", tc.Name, tc.Arguments)
+
 			var args map[string]any
 			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
 				fmt.Fprintf(os.Stderr, "Error parsing args for %s: %v\n", tc.Name, err)
