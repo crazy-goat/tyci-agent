@@ -128,6 +128,10 @@ func main() {
 	for len(result.ToolCalls) > 0 {
 		toolResults := []string{}
 		for _, tc := range result.ToolCalls {
+			if !*hideToolsFlag {
+				fmt.Fprintf(os.Stderr, "🔧 %s(%s):\n", tc.Name, tc.Arguments)
+			}
+
 			var args map[string]any
 			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
 				if !*hideToolsFlag {
