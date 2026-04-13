@@ -31,12 +31,14 @@ type StreamHandler interface {
 }
 
 type DebugHandler struct {
-	Inner          StreamHandler
-	Debug          bool
-	HideThinking   bool
-	HideTools      bool
-	ToolCalls      []ToolCall
-	thinkingActive bool
+	Inner           StreamHandler
+	Debug           bool
+	HideThinking    bool
+	HideTools       bool
+	ToolCalls       []ToolCall
+	thinkingActive  bool
+	thinkingStarted bool
+	thinkingBuf     string
 }
 
 func (d *DebugHandler) Chunk(text string) {
@@ -51,11 +53,18 @@ func (d *DebugHandler) Thinking(text string) {
 	if d.HideThinking {
 		return
 	}
-	if !d.thinkingActive {
-		fmt.Fprintf(os.Stderr, "💭 %s", text)
+
+	// Only print the new part of the thinking (model sends full text in each chunk)
+	if len(text) > len(d.thinkingBuf) {
+		newPart := text[len(d.thinkingBuf):]
+		if !d.thinkingStarted {
+			fmt.Fprintf(os.Stderr, "💭 %s", newPart)
+			d.thinkingStarted = true
+		} else {
+			fmt.Fprintf(os.Stderr, "%s", newPart)
+		}
+		d.thinkingBuf = text
 		d.thinkingActive = true
-	} else {
-		fmt.Fprintf(os.Stderr, "%s", text)
 	}
 }
 
@@ -63,6 +72,7 @@ func (d *DebugHandler) EndThinking() {
 	if !d.HideThinking && d.thinkingActive {
 		fmt.Fprintf(os.Stderr, "\n\n")
 		d.thinkingActive = false
+		d.thinkingBuf = ""
 	}
 	d.Inner.EndThinking()
 }
