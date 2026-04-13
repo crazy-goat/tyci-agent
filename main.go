@@ -47,10 +47,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] <prompt>\n\n")
 		fmt.Fprintf(os.Stderr, "Available models:\n")
 		for _, p := range providers.ListProviders() {
-			if p.IsConfigured() {
-				for _, m := range p.Models() {
-					fmt.Fprintf(os.Stderr, "  %s/%s\n", p.Name(), m)
-				}
+			for _, m := range p.Models() {
+				fmt.Fprintf(os.Stderr, "  %s/%s\n", p.Name(), m)
 			}
 		}
 		fmt.Fprintf(os.Stderr, "\nFree models:\n")
