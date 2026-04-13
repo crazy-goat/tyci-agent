@@ -71,7 +71,7 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 
 	reader := bufio.NewReader(resp.Body)
 	var sawThinking bool
-	var lastToolIdx int = -1
+	var toolStarted bool
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -113,11 +113,11 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 					sawThinking = false
 				}
 				if tc.Function.Name != "" {
-					if lastToolIdx >= 0 && lastToolIdx != i {
+					if toolStarted {
 						handler.EndToolCall()
 					}
 					handler.LogToolCallStart(tc.Function.Name)
-					lastToolIdx = i
+					toolStarted = true
 				}
 				if tc.Function.Arguments != "" {
 					handler.ToolCallArg(tc.Function.Arguments)
@@ -125,9 +125,9 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 				handler.AccumulateToolCall(i, tc.Function.Name, tc.Function.Arguments)
 			}
 			if choice.FinishReason == "tool_calls" {
-				if lastToolIdx >= 0 {
+				if toolStarted {
 					handler.EndToolCall()
-					lastToolIdx = -1
+					toolStarted = false
 				}
 			}
 		}
