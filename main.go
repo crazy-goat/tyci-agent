@@ -42,9 +42,28 @@ func (h *OutputHandler) EndToolCall() {}
 
 func main() {
 	debugFlag := flag.Bool("debug", false, "Show HTTP request/response data")
+	modelFlag := flag.String("model", "opencode-zen/big-pickle", "Model to use (format: provider/model)")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] <prompt>\n\n")
+		fmt.Fprintf(os.Stderr, "Available models:\n")
+		for _, p := range providers.ListProviders() {
+			if p.IsConfigured() {
+				for _, m := range p.Models() {
+					fmt.Fprintf(os.Stderr, "  %s/%s\n", p.Name(), m)
+				}
+			}
+		}
+		fmt.Fprintf(os.Stderr, "\nFree models:\n")
+		for _, p := range providers.ListProviders() {
+			for _, m := range p.FreeModels() {
+				fmt.Fprintf(os.Stderr, "  %s/%s (free)\n", p.Name(), m)
+			}
+		}
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
-	model := "opencode-zen/big-pickle"
+	model := *modelFlag
 	prompt := strings.Join(flag.Args(), " ")
 
 	if prompt == "" {
