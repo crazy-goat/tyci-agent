@@ -107,7 +107,7 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 				}
 				handler.Chunk(delta.Content)
 			}
-			for i, tc := range delta.ToolCalls {
+			for _, tc := range delta.ToolCalls {
 				if sawThinking {
 					handler.EndThinking()
 					sawThinking = false
@@ -122,7 +122,7 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 				if tc.Function.Arguments != "" {
 					handler.ToolCallArg(tc.Function.Arguments)
 				}
-				handler.AccumulateToolCall(i, tc.Function.Name, tc.Function.Arguments)
+				handler.AccumulateToolCall(tc.Index, tc.Function.Name, tc.Function.Arguments)
 			}
 			if choice.FinishReason == "tool_calls" {
 				if toolStarted {
