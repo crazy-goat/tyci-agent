@@ -3,7 +3,6 @@ package tools
 import (
 	"bytes"
 	"os/exec"
-	"strings"
 )
 
 type BashTool struct{}
@@ -18,12 +17,11 @@ func (t *BashTool) Run(input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: "command required"}
 	}
 
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
+	if cmd == "" {
 		return ToolResult{Type: "result", Success: false, Error: "empty command"}
 	}
 
-	c := exec.Command(parts[0], parts[1:]...)
+	c := exec.Command("bash", "-c", cmd)
 	var out bytes.Buffer
 	c.Stdout = &out
 	c.Stderr = &out
