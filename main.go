@@ -105,17 +105,31 @@ func main() {
 	var prompt string
 	var expectJSON bool
 
+	provider, modelName, ok := providers.FindModel(model)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "Error: model %q not found\n", model)
+		os.Exit(1)
+	}
+
 	// Interactive mode
 	if *interactiveFlag {
 		if *promptTextFlag != "" || *promptJSONFlag != "" {
-			fmt.Fprintln(os.Stderr, "Error: --interactive cannot be combined with --prompt-to-text or --prompt-to-json")
-			os.Exit(1)
-		}
+			if *promptTextFlag != "" {
+				prompt = *promptTextFlag
+			} else {
+				prompt = *promptJSONFlag
+			}
 
-		provider, modelName, ok := providers.FindModel(model)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "Error: model %q not found\n", model)
-			os.Exit(1)
+			handler := &OutputHandler{
+				out:          os.Stdout,
+				silent:       false,
+				buffer:       nil,
+				hideThinking: *hideThinkingFlag,
+				hideTools:    *hideToolsFlag,
+			}
+
+			messages := []providers.Message{{Role: "user", Content: prompt}}
+			runLLMLoop(provider, modelName, messages, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
 		}
 
 		scanner := bufio.NewScanner(os.Stdin)
@@ -146,7 +160,7 @@ func main() {
 		return
 	}
 
-	// Validate that exactly one prompt flag is provided
+	// Non-interactive mode: validate that exactly one prompt flag is provided
 	if *promptTextFlag == "" && *promptJSONFlag == "" {
 		fmt.Fprintln(os.Stderr, "Error: must provide either --prompt-to-text or --prompt-to-json")
 		flag.Usage()
@@ -164,12 +178,6 @@ func main() {
 	} else {
 		prompt = *promptJSONFlag
 		expectJSON = true
-	}
-
-	provider, modelName, ok := providers.FindModel(model)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "Error: model %q not found\n", model)
-		os.Exit(1)
 	}
 
 	var textBuffer strings.Builder
