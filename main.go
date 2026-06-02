@@ -141,7 +141,7 @@ func main() {
 			messages := []providers.Message{{Role: "user", Content: line}}
 			runLLMLoop(provider, modelName, messages, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
 
-			fmt.Fprint(os.Stderr, ">>> ")
+			fmt.Fprintf(os.Stderr, "\n>>> ")
 		}
 		return
 	}
