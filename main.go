@@ -326,6 +326,7 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 		}
 	}
 
+	messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
 	handler.LastText = result.Text
 	handler.LastToolCalls = result.ToolCalls
 	return messages
