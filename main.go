@@ -126,7 +126,8 @@ func main() {
 
 	// Interactive mode
 	if *interactiveFlag {
-		hadInitial := false
+		var conversation []providers.Message
+
 		if *promptTextFlag != "" || *promptJSONFlag != "" {
 			if *promptTextFlag != "" {
 				prompt = *promptTextFlag
@@ -142,15 +143,12 @@ func main() {
 				hideTools:    *hideToolsFlag,
 			}
 
-			messages := []providers.Message{{Role: "user", Content: prompt}}
-			runLLMLoop(provider, modelName, messages, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
-			hadInitial = true
+			conversation = append(conversation, providers.Message{Role: "user", Content: prompt})
+			conversation = runLLMLoop(provider, modelName, conversation, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
+			fmt.Fprint(os.Stdout, "\n")
 		}
 
 		scanner := bufio.NewScanner(os.Stdin)
-		if hadInitial {
-			fmt.Fprint(os.Stdout, "\n")
-		}
 		fmt.Fprint(os.Stdout, ">>> ")
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -170,8 +168,8 @@ func main() {
 				hideTools:    *hideToolsFlag,
 			}
 
-			messages := []providers.Message{{Role: "user", Content: line}}
-			runLLMLoop(provider, modelName, messages, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
+			conversation = append(conversation, providers.Message{Role: "user", Content: line})
+			conversation = runLLMLoop(provider, modelName, conversation, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
 
 			fmt.Fprint(os.Stdout, "\n>>> ")
 		}
@@ -238,7 +236,7 @@ func main() {
 	}
 }
 
-func runLLMLoop(provider providers.Provider, modelName string, messages []providers.Message, handler *OutputHandler, expectJSON bool, debugFlag, hideThinkingFlag, hideToolsFlag *bool) {
+func runLLMLoop(provider providers.Provider, modelName string, messages []providers.Message, handler *OutputHandler, expectJSON bool, debugFlag, hideThinkingFlag, hideToolsFlag *bool) []providers.Message {
 	result, err := provider.SendWithHandler(modelName, messages, handler, *debugFlag, *hideThinkingFlag, *hideToolsFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -343,4 +341,5 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 
 	handler.LastText = result.Text
 	handler.LastToolCalls = result.ToolCalls
+	return messages
 }
