@@ -298,6 +298,7 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 			}
 
 			if buf := resultBufs[i]; buf != nil && buf.Len() > 0 {
+				fmt.Fprint(os.Stderr, clearLine)
 				fmt.Fprint(os.Stderr, buf.String())
 			}
 		}
