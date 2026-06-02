@@ -39,11 +39,17 @@ func (p *provider) Name() string {
 
 func (p *provider) IsConfigured() bool {
 	key := os.Getenv("OPENCODE_GO_API_KEY")
+	if key == "" {
+		key = os.Getenv("OPENCODE_API_KEY")
+	}
 	return key != ""
 }
 
 func (p *provider) fetchModels() []string {
 	apiKey := os.Getenv("OPENCODE_GO_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENCODE_API_KEY")
+	}
 	if apiKey == "" {
 		return nil
 	}
@@ -161,6 +167,9 @@ func convertToolCalls(apiCalls []api.ToolCall) []providers.ToolCall {
 func (p *provider) Send(ctx context.Context, model, prompt, system string, debug bool) (*providers.SendResult, error) {
 	apiKey := os.Getenv("OPENCODE_GO_API_KEY")
 	if apiKey == "" {
+		apiKey = os.Getenv("OPENCODE_API_KEY")
+	}
+	if apiKey == "" {
 		return nil, fmt.Errorf("OPENCODE_GO_API_KEY not set")
 	}
 
@@ -203,6 +212,9 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 
 func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system string, messages []providers.Message, debug bool) (*providers.SendResult, error) {
 	apiKey := os.Getenv("OPENCODE_GO_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENCODE_API_KEY")
+	}
 	if apiKey == "" {
 		return nil, fmt.Errorf("OPENCODE_GO_API_KEY not set")
 	}
@@ -250,6 +262,9 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 
 func (p *provider) SendWithHandler(model string, messages []providers.Message, handler providers.OutputHandler, debug, hideThinking, hideTools bool) (*providers.SendResult, error) {
 	apiKey := os.Getenv("OPENCODE_GO_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENCODE_API_KEY")
+	}
 	if apiKey == "" {
 		return nil, fmt.Errorf("OPENCODE_GO_API_KEY not set")
 	}
