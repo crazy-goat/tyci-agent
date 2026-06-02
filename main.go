@@ -291,7 +291,22 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 			}
 			toolCount++
 
-			if tc.Name == "read" {
+			title := ""
+			if d, ok := parsedArgs[i]["description"].(string); ok && d != "" {
+				title = d
+			}
+
+			if title != "" {
+				cmd := ""
+				if c, ok := parsedArgs[i]["command"].(string); ok && c != "" {
+					cmd = c
+				}
+				if cmd != "" {
+					fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n%s$ %s%s%s\n", bgTools, clearLine, title, clearLine, cmd, clearLine, bgReset)
+				} else {
+					fmt.Fprintf(os.Stderr, "%s%s🔧 %s%s%s\n", bgTools, clearLine, title, clearLine, bgReset)
+				}
+			} else if tc.Name == "read" {
 				fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):%s%s\n", bgTools, clearLine, tc.Name, tc.Arguments, clearLine, bgReset)
 			} else {
 				fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):\n", bgTools, clearLine, tc.Name, tc.Arguments)

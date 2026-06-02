@@ -76,7 +76,8 @@ func GetToolsSchema() []map[string]any {
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"command": map[string]any{"type": "string", "description": "Command to execute"},
+						"description": map[string]any{"type": "string", "description": "Short description of what this command does"},
+						"command":     map[string]any{"type": "string", "description": "Command to execute"},
 					},
 					"required": []string{"command"},
 				},
@@ -155,7 +156,8 @@ func GetToolsSchemaForResponses() []responsesTool {
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"command": map[string]any{"type": "string", "description": "Command to execute"},
+					"description": map[string]any{"type": "string", "description": "Short description of what this command does"},
+					"command":     map[string]any{"type": "string", "description": "Command to execute"},
 				},
 				"required": []string{"command"},
 			},
