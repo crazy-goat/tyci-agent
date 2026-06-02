@@ -6,6 +6,8 @@ import (
 	"os"
 	"runtime"
 	"time"
+
+	"github.com/decodo/tyci-agent/api"
 )
 
 func BuildSystemPrompt() string {
@@ -83,3 +85,5 @@ type Provider interface {
 	SendWithMessages(ctx context.Context, model, prompt, system string, messages []Message, debug bool) (*SendResult, error)
 	SendWithHandler(model string, messages []Message, handler OutputHandler, debug, hideThinking, hideTools bool) (*SendResult, error)
 }
+
+var DefaultRetryConfig = api.RetryConfig{MaxRetries: 5, BaseBackoff: 4, MaxBackoff: 128}

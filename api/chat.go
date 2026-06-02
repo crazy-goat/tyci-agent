@@ -66,6 +66,12 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 
 	if resp.StatusCode != 200 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == 429 {
+			return &RetryableError{Code: 429, RetryAfter: resp.Header.Get("Retry-After"), Message: "rate limited"}
+		}
+		if resp.StatusCode >= 500 {
+			return &RetryableError{Code: resp.StatusCode, Message: fmt.Sprintf("server error %d: %s", resp.StatusCode, string(bodyBytes))}
+		}
 		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
