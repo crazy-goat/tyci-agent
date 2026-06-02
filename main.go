@@ -280,12 +280,12 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 					toolResults[idx] = toolRes.Content
 					if !*hideToolsFlag && tc.Name != "read" {
 						content := strings.ReplaceAll(toolRes.Content, "\n", "\n"+clearLine)
-						fmt.Fprintf(buf, "%s%s%s\n", content, clearLine, bgReset)
+						fmt.Fprintf(buf, "%s%s%s%s\n", bgTools, content, clearLine, bgReset)
 					}
 				} else {
 					toolResults[idx] = "Error: " + toolRes.Error
 					if !*hideToolsFlag {
-						fmt.Fprintf(buf, "%sError: %s%s\n", clearLine, toolRes.Error, bgReset)
+						fmt.Fprintf(buf, "%s%s%s%s\n", bgTools, clearLine, toolRes.Error, bgReset)
 					}
 				}
 			}(i, tc, parsedArgs[i], buf)
@@ -315,9 +315,9 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 					cmd = c
 				}
 				if cmd != "" {
-					fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n%s$ %s%s%s\n", bgTools, clearLine, title, clearLine, cmd, clearLine, bgReset)
+					fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n%s$ %s\n", bgTools, clearLine, title, clearLine, cmd)
 				} else {
-					fmt.Fprintf(os.Stderr, "%s%s🔧 %s%s%s\n", bgTools, clearLine, title, clearLine, bgReset)
+					fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n", bgTools, clearLine, title)
 				}
 			} else if tc.Name == "read" {
 				fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):%s%s\n", bgTools, clearLine, tc.Name, tc.Arguments, clearLine, bgReset)
