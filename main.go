@@ -138,14 +138,14 @@ func main() {
 		if hadInitial {
 			fmt.Fprint(os.Stdout, "\n")
 		}
-		fmt.Fprint(os.Stderr, ">>> ")
+		fmt.Fprint(os.Stdout, ">>> ")
 		for scanner.Scan() {
 			line := scanner.Text()
 			if line == "/exit" {
 				break
 			}
 			if line == "" {
-				fmt.Fprint(os.Stderr, ">>> ")
+				fmt.Fprint(os.Stdout, ">>> ")
 				continue
 			}
 
@@ -160,8 +160,7 @@ func main() {
 			messages := []providers.Message{{Role: "user", Content: line}}
 			runLLMLoop(provider, modelName, messages, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
 
-			fmt.Fprint(os.Stdout, "\n")
-			fmt.Fprint(os.Stderr, ">>> ")
+			fmt.Fprint(os.Stdout, "\n>>> ")
 		}
 		return
 	}
