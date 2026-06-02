@@ -39,7 +39,6 @@ type OutputHandler struct {
 	silent       bool
 	hideThinking bool
 	hideTools    bool
-	started      bool
 	LastText     string
 	LastToolCalls []providers.ToolCall
 }
@@ -49,25 +48,13 @@ func (h *OutputHandler) Chunk(text string) {
 		if h.buffer != nil {
 			h.buffer.WriteString(text)
 		}
-		return
-	}
-
-	if !h.started {
-		fmt.Fprint(h.out, bgTools)
-		h.started = true
-	}
-	text = strings.ReplaceAll(text, "\n", "\n"+clearLine)
-	fmt.Fprint(h.out, text)
-	h.out.Sync()
-}
-
-func (h *OutputHandler) End() {
-	if !h.silent && h.started {
-		fmt.Fprint(h.out, clearLine+bgReset)
+	} else {
+		fmt.Fprint(h.out, text)
 		h.out.Sync()
-		h.started = false
 	}
 }
+
+func (h *OutputHandler) End() {}
 
 func (h *OutputHandler) Summary(usage providers.UsageInfo) {}
 
