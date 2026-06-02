@@ -1,0 +1,13 @@
+tyci-agent
+*.exe
+*.dll
+*.so
+*.dylib
+
+.DS_Store
+Thumbs.db
+
+*.log
+
+# Go build/cache (in case anything is ever in-tree)
+vendor/
