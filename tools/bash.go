@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"os/exec"
 )
 
@@ -11,7 +12,7 @@ func (t *BashTool) Name() string {
 	return "bash"
 }
 
-func (t *BashTool) Run(input map[string]any) ToolResult {
+func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	cmd, ok := input["command"].(string)
 	if !ok {
 		return ToolResult{Type: "result", Success: false, Error: "command required"}
@@ -21,7 +22,7 @@ func (t *BashTool) Run(input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: "empty command"}
 	}
 
-	c := exec.Command("bash", "-c", cmd)
+	c := exec.CommandContext(ctx, "bash", "-c", cmd)
 	var out bytes.Buffer
 	c.Stdout = &out
 	c.Stderr = &out

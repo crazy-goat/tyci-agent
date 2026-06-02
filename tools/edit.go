@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"strings"
 )
@@ -11,7 +12,7 @@ func (t *EditTool) Name() string {
 	return "edit"
 }
 
-func (t *EditTool) Run(input map[string]any) ToolResult {
+func (t *EditTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	path, ok := input["path"].(string)
 	if !ok {
 		return ToolResult{Type: "result", Success: false, Error: "path required"}

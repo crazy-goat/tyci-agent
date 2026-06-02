@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -14,7 +15,7 @@ func (t *ReadTool) Name() string {
 	return "read"
 }
 
-func (t *ReadTool) Run(input map[string]any) ToolResult {
+func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	path, ok := input["path"].(string)
 	if !ok {
 		return ToolResult{Type: "result", Success: false, Error: "path required"}

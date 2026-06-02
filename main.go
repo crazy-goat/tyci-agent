@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/decodo/tyci-agent/api"
 	"github.com/decodo/tyci-agent/providers"
@@ -145,46 +148,74 @@ func main() {
 
 	toolCount := 0
 	for len(result.ToolCalls) > 0 {
-		toolResults := []string{}
-		for _, tc := range result.ToolCalls {
-			if !*hideToolsFlag {
-				if toolCount > 0 {
-					fmt.Fprintf(os.Stderr, "\n")
-				}
-				toolCount++
-				if tc.Name == "read" {
-					fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):%s%s\n", bgTools, clearLine, tc.Name, tc.Arguments, clearLine, bgReset)
-				} else {
-					fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):\n", bgTools, clearLine, tc.Name, tc.Arguments)
-				}
-			}
+		toolResults := make([]string, len(result.ToolCalls))
+		parsedArgs := make([]map[string]any, len(result.ToolCalls))
 
-			var args map[string]any
-			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
-				if !*hideToolsFlag {
-					api.StderrOutput = true
-					fmt.Fprintf(os.Stderr, "%sError: %v%s\n", clearLine, err, bgReset)
-				}
-				toolResults = append(toolResults, fmt.Sprintf("Error: %v", err))
+		// Phase 1: parse arguments (sequential)
+		for i, tc := range result.ToolCalls {
+			if err := json.Unmarshal([]byte(tc.Arguments), &parsedArgs[i]); err != nil {
+				toolResults[i] = fmt.Sprintf("Error: %v", err)
+				parsedArgs[i] = nil
+			}
+		}
+
+		// Phase 2: parallel execution, buffer output per tool
+		var wg sync.WaitGroup
+		resultBufs := make([]*strings.Builder, len(result.ToolCalls))
+
+		for i, tc := range result.ToolCalls {
+			if parsedArgs[i] == nil {
 				continue
 			}
 
-			toolRes := tools.RunTool(tc.Name, args)
-			if toolRes.Success {
-				if !*hideToolsFlag {
-					api.StderrOutput = true
-					if tc.Name != "read" {
+			buf := &strings.Builder{}
+			resultBufs[i] = buf
+			wg.Add(1)
+
+			go func(idx int, tc providers.ToolCall, args map[string]any, buf *strings.Builder) {
+				defer wg.Done()
+
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+
+				toolRes := tools.RunTool(ctx, tc.Name, args)
+				if toolRes.Success {
+					toolResults[idx] = toolRes.Content
+					if !*hideToolsFlag && tc.Name != "read" {
 						content := strings.ReplaceAll(toolRes.Content, "\n", "\n"+clearLine)
-						fmt.Fprintf(os.Stderr, "%s%s%s\n", content, clearLine, bgReset)
+						fmt.Fprintf(buf, "%s%s%s\n", content, clearLine, bgReset)
+					}
+				} else {
+					toolResults[idx] = "Error: " + toolRes.Error
+					if !*hideToolsFlag {
+						fmt.Fprintf(buf, "%sError: %s%s\n", clearLine, toolRes.Error, bgReset)
 					}
 				}
-				toolResults = append(toolResults, toolRes.Content)
+			}(i, tc, parsedArgs[i], buf)
+		}
+
+		wg.Wait()
+
+		// Phase 3: render headers + results in source order
+		api.StderrOutput = true
+		for i, tc := range result.ToolCalls {
+			if parsedArgs[i] == nil {
+				continue
+			}
+
+			if toolCount > 0 {
+				fmt.Fprintln(os.Stderr)
+			}
+			toolCount++
+
+			if tc.Name == "read" {
+				fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):%s%s\n", bgTools, clearLine, tc.Name, tc.Arguments, clearLine, bgReset)
 			} else {
-				if !*hideToolsFlag {
-					api.StderrOutput = true
-					fmt.Fprintf(os.Stderr, "%sError: %s%s\n", clearLine, toolRes.Error, bgReset)
-				}
-				toolResults = append(toolResults, "Error: "+toolRes.Error)
+				fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):\n", bgTools, clearLine, tc.Name, tc.Arguments)
+			}
+
+			if buf := resultBufs[i]; buf != nil && buf.Len() > 0 {
+				fmt.Fprint(os.Stderr, buf.String())
 			}
 		}
 

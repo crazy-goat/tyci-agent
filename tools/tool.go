@@ -1,6 +1,9 @@
 package tools
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+)
 
 type ToolResult struct {
 	Type    string `json:"type"`
@@ -11,7 +14,7 @@ type ToolResult struct {
 
 type Tool interface {
 	Name() string
-	Run(input map[string]any) ToolResult
+	Run(ctx context.Context, input map[string]any) ToolResult
 }
 
 func GetToolsSchema() []map[string]any {
@@ -167,10 +170,10 @@ var toolRegistry = map[string]Tool{
 	"edit":  &EditTool{},
 }
 
-func RunTool(name string, arguments map[string]any) ToolResult {
+func RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {
 	tool, ok := toolRegistry[name]
 	if !ok {
 		return ToolResult{Type: "result", Success: false, Error: "unknown tool: " + name}
 	}
-	return tool.Run(arguments)
+	return tool.Run(ctx, arguments)
 }

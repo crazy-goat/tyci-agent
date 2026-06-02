@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 )
 
@@ -10,7 +11,7 @@ func (t *WriteTool) Name() string {
 	return "write"
 }
 
-func (t *WriteTool) Run(input map[string]any) ToolResult {
+func (t *WriteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	path, ok := input["path"].(string)
 	if !ok {
 		return ToolResult{Type: "result", Success: false, Error: "path required"}
