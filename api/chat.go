@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -80,18 +81,27 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 	reader := bufio.NewReader(resp.Body)
 	var sawThinking bool
 	var toolStarted bool
+	var readErr error
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			break
+			readErr = err
+			if line == "" {
+				break
+			}
 		}
+
 		line = strings.TrimSpace(line)
 		if line == "" || !strings.HasPrefix(line, "data:") {
+			if readErr != nil {
+				break
+			}
 			continue
 		}
 
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
+			handler.sawDone = true
 			break
 		}
 
@@ -99,6 +109,9 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 
 		var chunk chatStreamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			if readErr != nil {
+				break
+			}
 			continue
 		}
 		if len(chunk.Choices) > 0 {
@@ -132,16 +145,25 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 				}
 				handler.AccumulateToolCall(tc.Index, tc.Function.Name, tc.Function.Arguments)
 			}
-			if choice.FinishReason == "tool_calls" {
-				if toolStarted {
+			if choice.FinishReason != "" {
+				handler.FinishReason = choice.FinishReason
+				if choice.FinishReason == "tool_calls" && toolStarted {
 					handler.EndToolCall()
 					toolStarted = false
 				}
 			}
 		}
+
+		if readErr != nil {
+			break
+		}
 	}
 
 	handler.Summary(UsageInfo{})
 	handler.End()
+
+	if !handler.sawDone && readErr != nil && !errors.Is(readErr, io.EOF) {
+		return readErr
+	}
 	return nil
 }

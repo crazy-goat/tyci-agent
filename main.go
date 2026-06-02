@@ -231,7 +231,7 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 	}
 
 	toolCount := 0
-	for len(result.ToolCalls) > 0 {
+	for result.StopReason == "tool_calls" {
 		toolResults := make([]string, len(result.ToolCalls))
 		parsedArgs := make([]map[string]any, len(result.ToolCalls))
 

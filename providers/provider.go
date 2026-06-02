@@ -60,8 +60,9 @@ type ToolCall struct {
 }
 
 type SendResult struct {
-	Text      string
-	ToolCalls []ToolCall
+	Text       string
+	ToolCalls  []ToolCall
+	StopReason string
 }
 
 type OutputHandler interface {

@@ -235,7 +235,7 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 			Messages:  messages,
 		}
 		err := api.StreamAnthropic(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
 	}
 
 	if geminiModels[model] {
@@ -252,7 +252,7 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 			}{Parts: []api.GeminiPart{{Text: system}}}
 		}
 		err := api.StreamGemini(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
 	}
 
 	if responsesAPIModels[model] {
@@ -278,7 +278,7 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 			Tools:  toolsJSON,
 		}
 		err := api.StreamResponses(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
 	}
 
 	chatMessages := []api.ChatMessage{}
@@ -294,7 +294,7 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 		Reasoning: true,
 	}
 	err := api.StreamChat(ctx, apiKey, endpoint, body, handler)
-	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
+	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
 }
 
 func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system string, messages []providers.Message, debug bool) (*providers.SendResult, error) {
@@ -328,7 +328,7 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 			Messages:  anthropicMsgs,
 		}
 		err := api.StreamAnthropic(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
 	}
 
 	if geminiModels[model] {
@@ -345,7 +345,7 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 			}{Parts: []api.GeminiPart{{Text: system}}}
 		}
 		err := api.StreamGemini(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
 	}
 
 	if responsesAPIModels[model] {
@@ -369,7 +369,7 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 			Tools:  toolsJSON,
 		}
 		err := api.StreamResponses(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
 	}
 
 	chatMsgs := make([]api.ChatMessage, 0, len(messages))
@@ -384,7 +384,7 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 		Reasoning: true,
 	}
 	err := api.StreamChat(ctx, apiKey, endpoint, body, handler)
-	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
+	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
 }
 
 func (p *provider) SendWithHandler(model string, messages []providers.Message, handler providers.OutputHandler, debug, hideThinking, hideTools bool) (*providers.SendResult, error) {
@@ -444,7 +444,7 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 			if retryColl != nil {
 				text = retryColl.text
 			}
-			return &providers.SendResult{Text: text, ToolCalls: convertToolCalls(debugHandler.GetToolCalls())}, nil
+			return &providers.SendResult{Text: text, ToolCalls: convertToolCalls(debugHandler.GetToolCalls()), StopReason: debugHandler.GetFinishReason()}, nil
 		}
 
 		lastErr = err

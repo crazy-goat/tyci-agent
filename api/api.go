@@ -164,8 +164,10 @@ type DebugHandler struct {
 	HideThinking    bool
 	HideTools       bool
 	ToolCalls       []ToolCall
+	FinishReason    string
 	thinkingActive  bool
 	thinkingStarted bool
+	sawDone         bool
 }
 
 func (d *DebugHandler) Chunk(text string) {
@@ -258,6 +260,14 @@ func (d *DebugHandler) AccumulateToolCall(idx int, name, argument string) {
 
 func (d *DebugHandler) GetToolCalls() []ToolCall {
 	return d.ToolCalls
+}
+
+func (d *DebugHandler) GetFinishReason() string {
+	return d.FinishReason
+}
+
+func (d *DebugHandler) SawDone() bool {
+	return d.sawDone
 }
 
 func (d *DebugHandler) ResetToolCalls() {
