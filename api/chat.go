@@ -16,17 +16,18 @@ type ChatMessage struct {
 }
 
 type ChatRequest struct {
-	Model    string          `json:"model"`
-	Stream   bool            `json:"stream"`
-	Messages []ChatMessage   `json:"messages"`
-	Tools    json.RawMessage `json:"tools,omitempty"`
+	Model     string          `json:"model"`
+	Stream    bool            `json:"stream"`
+	Messages  []ChatMessage   `json:"messages"`
+	Tools     json.RawMessage `json:"tools,omitempty"`
+	Reasoning bool            `json:"reasoning,omitempty"`
 }
 
 type chatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			Reasoning string `json:"reasoning"`
+			Content         string `json:"content"`
+			Reasoning       string `json:"reasoning_content"`
 			ToolCalls []struct {
 				Type     string `json:"type"`
 				Index    int    `json:"index"`

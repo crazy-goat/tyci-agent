@@ -148,7 +148,11 @@ func main() {
 			toolRes := tools.RunTool(tc.Name, args)
 			if toolRes.Success {
 				if !*hideToolsFlag {
-					fmt.Fprintf(os.Stderr, "%s\n", toolRes.Content)
+					if tc.Name == "read" {
+						fmt.Fprintf(os.Stderr, "ok\n")
+					} else {
+						fmt.Fprintf(os.Stderr, "%s\n", toolRes.Content)
+					}
 				}
 				toolResults = append(toolResults, toolRes.Content)
 			} else {
