@@ -277,25 +277,31 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
 		collector := &textCollector{}
 		var inner api.StreamHandler
+		var retryColl *retryCollector
 		if attempt == 0 {
 			wrapper := &handlerWrapper{Inner: handler, collector: collector}
 			inner = wrapper
 		} else {
-			inner = &retryCollector{text: ""}
+			retryColl = &retryCollector{}
+			inner = retryColl
 		}
 		debugHandler := &api.DebugHandler{Inner: inner, Debug: debug && attempt == 0, HideThinking: hideThinking, HideTools: hideTools}
 
 		err := api.StreamChat(context.Background(), apiKey, endpoint, body, debugHandler)
 		if err == nil {
 			if attempt > 0 {
-				handler.Chunk(collector.text)
+				handler.Chunk(retryColl.text)
 				for _, tc := range debugHandler.GetToolCalls() {
 					handler.LogToolCallStart(tc.Name)
 					handler.ToolCallArg(tc.Argument)
 					handler.EndToolCall()
 				}
 			}
-			return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(debugHandler.GetToolCalls())}, nil
+			text := collector.text
+			if retryColl != nil {
+				text = retryColl.text
+			}
+			return &providers.SendResult{Text: text, ToolCalls: convertToolCalls(debugHandler.GetToolCalls())}, nil
 		}
 
 		lastErr = err
@@ -308,5 +314,6 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 			time.Sleep(backoff)
 		}
 	}
+	handler.Error(lastErr)
 	return nil, fmt.Errorf("all %d retries exhausted: %w", config.MaxRetries, lastErr)
 }
