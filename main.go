@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -18,9 +19,10 @@ import (
 )
 
 var (
-	bgTools   string
-	bgReset   = "\033[0m"
-	clearLine = "\033[K"
+	bgTools        string
+	bgReset        = "\033[0m"
+	clearLine      = "\033[K"
+	interactiveFlag = flag.Bool("interactive", false, "Interactive mode: read prompts from stdin")
 )
 
 func init() {
@@ -37,6 +39,8 @@ type OutputHandler struct {
 	silent       bool
 	hideThinking bool
 	hideTools    bool
+	LastText     string
+	LastToolCalls []providers.ToolCall
 }
 
 func (h *OutputHandler) Chunk(text string) {
@@ -78,7 +82,7 @@ func main() {
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] [--max-retries N] (--prompt-to-text <prompt> | --prompt-to-json <prompt>)\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] [--max-retries N] (--prompt-to-text <prompt> | --prompt-to-json <prompt> | --interactive)\n\n")
 		fmt.Fprintf(os.Stderr, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -95,6 +99,53 @@ func main() {
 	}
 	flag.Parse()
 
+	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: *maxRetriesFlag, BaseBackoff: 4, MaxBackoff: 128}
+
+	model := *modelFlag
+	var prompt string
+	var expectJSON bool
+
+	// Interactive mode
+	if *interactiveFlag {
+		if *promptTextFlag != "" || *promptJSONFlag != "" {
+			fmt.Fprintln(os.Stderr, "Error: --interactive cannot be combined with --prompt-to-text or --prompt-to-json")
+			os.Exit(1)
+		}
+
+		provider, modelName, ok := providers.FindModel(model)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Error: model %q not found\n", model)
+			os.Exit(1)
+		}
+
+		scanner := bufio.NewScanner(os.Stdin)
+		fmt.Fprint(os.Stderr, ">>> ")
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "/exit" {
+				break
+			}
+			if line == "" {
+				fmt.Fprint(os.Stderr, ">>> ")
+				continue
+			}
+
+			handler := &OutputHandler{
+				out:          os.Stdout,
+				silent:       false,
+				buffer:       nil,
+				hideThinking: *hideThinkingFlag,
+				hideTools:    *hideToolsFlag,
+			}
+
+			messages := []providers.Message{{Role: "user", Content: line}}
+			runLLMLoop(provider, modelName, messages, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
+
+			fmt.Fprint(os.Stderr, ">>> ")
+		}
+		return
+	}
+
 	// Validate that exactly one prompt flag is provided
 	if *promptTextFlag == "" && *promptJSONFlag == "" {
 		fmt.Fprintln(os.Stderr, "Error: must provide either --prompt-to-text or --prompt-to-json")
@@ -106,10 +157,6 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
-
-	model := *modelFlag
-	var prompt string
-	var expectJSON bool
 
 	if *promptTextFlag != "" {
 		prompt = *promptTextFlag
@@ -125,8 +172,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: *maxRetriesFlag, BaseBackoff: 4, MaxBackoff: 128}
-
 	var textBuffer strings.Builder
 	handler := &OutputHandler{
 		out:          os.Stdout,
@@ -136,10 +181,38 @@ func main() {
 		hideTools:    *hideToolsFlag,
 	}
 
-	messages := []providers.Message{
-		{Role: "user", Content: prompt},
-	}
+	messages := []providers.Message{{Role: "user", Content: prompt}}
+	runLLMLoop(provider, modelName, messages, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
 
+	// For JSON mode, validate and format the output
+	if expectJSON {
+		responseText := textBuffer.String()
+		if responseText == "" {
+			responseText = handler.LastText
+		}
+
+		if responseText != "" {
+			var jsonData interface{}
+			if err := json.Unmarshal([]byte(responseText), &jsonData); err != nil {
+				output := map[string]interface{}{
+					"response": responseText,
+				}
+				if handler.LastToolCalls != nil {
+					output["tool_calls"] = handler.LastToolCalls
+				}
+				jsonBytes, _ := json.MarshalIndent(output, "", "  ")
+				fmt.Fprintln(os.Stdout, string(jsonBytes))
+			} else {
+				jsonBytes, _ := json.MarshalIndent(jsonData, "", "  ")
+				fmt.Fprintln(os.Stdout, string(jsonBytes))
+			}
+		}
+	} else {
+		fmt.Fprintln(os.Stdout)
+	}
+}
+
+func runLLMLoop(provider providers.Provider, modelName string, messages []providers.Message, handler *OutputHandler, expectJSON bool, debugFlag, hideThinkingFlag, hideToolsFlag *bool) {
 	result, err := provider.SendWithHandler(modelName, messages, handler, *debugFlag, *hideThinkingFlag, *hideToolsFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -151,7 +224,6 @@ func main() {
 		toolResults := make([]string, len(result.ToolCalls))
 		parsedArgs := make([]map[string]any, len(result.ToolCalls))
 
-		// Phase 1: parse arguments (sequential)
 		for i, tc := range result.ToolCalls {
 			if err := json.Unmarshal([]byte(tc.Arguments), &parsedArgs[i]); err != nil {
 				toolResults[i] = fmt.Sprintf("Error: %v", err)
@@ -159,7 +231,6 @@ func main() {
 			}
 		}
 
-		// Phase 2: parallel execution, buffer output per tool
 		var wg sync.WaitGroup
 		resultBufs := make([]*strings.Builder, len(result.ToolCalls))
 
@@ -196,7 +267,6 @@ func main() {
 
 		wg.Wait()
 
-		// Phase 3: render headers + results in source order
 		api.StderrOutput = true
 		for i, tc := range result.ToolCalls {
 			if parsedArgs[i] == nil {
@@ -229,32 +299,6 @@ func main() {
 		}
 	}
 
-	// For JSON mode, validate and format the output
-	if expectJSON {
-		responseText := textBuffer.String()
-		if responseText == "" {
-			responseText = result.Text
-		}
-
-		if responseText != "" {
-			var jsonData interface{}
-			if err := json.Unmarshal([]byte(responseText), &jsonData); err != nil {
-				// Not valid JSON, wrap it
-				output := map[string]interface{}{
-					"response": responseText,
-				}
-				if len(result.ToolCalls) > 0 {
-					output["tool_calls"] = result.ToolCalls
-				}
-				jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-				fmt.Fprintln(os.Stdout, string(jsonBytes))
-			} else {
-				// Valid JSON, output as-is with indentation
-				jsonBytes, _ := json.MarshalIndent(jsonData, "", "  ")
-				fmt.Fprintln(os.Stdout, string(jsonBytes))
-			}
-		}
-	} else {
-		fmt.Fprintln(os.Stdout)
-	}
+	handler.LastText = result.Text
+	handler.LastToolCalls = result.ToolCalls
 }
