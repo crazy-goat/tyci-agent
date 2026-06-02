@@ -187,10 +187,10 @@ func (d *DebugHandler) Thinking(text string) {
 			fmt.Fprintf(os.Stderr, "\n")
 		}
 		StderrOutput = true
-		fmt.Fprintf(os.Stderr, "%s%s💭 %s", bgThinking, clearLine, text)
+		fmt.Fprintf(os.Stderr, "%s%s💭 %s%s", bgThinking, clearLine, text, clearLine)
 		d.thinkingStarted = true
 	} else {
-		fmt.Fprintf(os.Stderr, "%s", text)
+		fmt.Fprintf(os.Stderr, "%s%s%s", clearLine, text, clearLine)
 	}
 	d.thinkingActive = true
 }
