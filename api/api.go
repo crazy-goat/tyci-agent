@@ -88,6 +88,21 @@ func CalcBackoff(attempt int, err error, config RetryConfig) time.Duration {
 	return dur
 }
 
+func SleepWithCountdown(backoff time.Duration, attempt, maxRetries int, err error) {
+	remaining := int(backoff.Seconds())
+	prefix := fmt.Sprintf("⟳ retry %d/%d", attempt+1, maxRetries)
+	reason := err.Error()
+	fmt.Fprintf(os.Stderr, "%s — %s\n", prefix, reason)
+	for remaining > 0 {
+		time.Sleep(1 * time.Second)
+		remaining--
+		if remaining > 0 {
+			fmt.Fprintf(os.Stderr, "\r%s — %s — next in %ds... ", prefix, reason, remaining)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "\r%s — %s — retrying...                    \n", prefix, reason)
+}
+
 type UsageInfo struct {
 	InputTokens  int
 	OutputTokens int

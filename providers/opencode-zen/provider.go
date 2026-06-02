@@ -450,8 +450,7 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 		}
 		if attempt < config.MaxRetries {
 			backoff := api.CalcBackoff(attempt, err, config)
-			fmt.Fprintf(os.Stderr, "retry %d/%d after %v: %v\n", attempt+1, config.MaxRetries, backoff, err)
-			time.Sleep(backoff)
+			api.SleepWithCountdown(backoff, attempt, config.MaxRetries, err)
 		}
 	}
 	handler.Error(lastErr)
