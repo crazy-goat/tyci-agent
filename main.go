@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/decodo/tyci-agent/api"
 	"github.com/decodo/tyci-agent/providers"
 	_ "github.com/decodo/tyci-agent/providers/opencode-go"
 	_ "github.com/decodo/tyci-agent/providers/opencode-zen"
@@ -57,9 +58,10 @@ func main() {
 	promptJSONFlag := flag.String("prompt-to-json", "", "Prompt for JSON response")
 	hideThinkingFlag := flag.Bool("hide-thinking", false, "Hide thinking output (💭)")
 	hideToolsFlag := flag.Bool("hide-tools", false, "Hide tool call output (🔧)")
+	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] (--prompt-to-text <prompt> | --prompt-to-json <prompt>)\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] [--max-retries N] (--prompt-to-text <prompt> | --prompt-to-json <prompt>)\n\n")
 		fmt.Fprintf(os.Stderr, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -105,6 +107,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: model %q not found\n", model)
 		os.Exit(1)
 	}
+
+	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: *maxRetriesFlag, BaseBackoff: 4, MaxBackoff: 128}
 
 	var textBuffer strings.Builder
 	handler := &OutputHandler{

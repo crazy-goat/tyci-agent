@@ -174,6 +174,20 @@ func (t *textCollector) Summary(api.UsageInfo)   {}
 func (t *textCollector) End()                    {}
 func (t *textCollector) Error(err error)         {}
 
+type retryCollector struct {
+	text string
+}
+
+func (h *retryCollector) Chunk(text string)            { h.text += text }
+func (h *retryCollector) Thinking(text string)         {}
+func (h *retryCollector) EndThinking()                 {}
+func (h *retryCollector) LogToolCallStart(name string) {}
+func (h *retryCollector) ToolCallArg(text string)      {}
+func (h *retryCollector) EndToolCall()                 {}
+func (h *retryCollector) Summary(api.UsageInfo)        {}
+func (h *retryCollector) End()                         {}
+func (h *retryCollector) Error(err error)              {}
+
 type handlerWrapper struct {
 	Inner     providers.OutputHandler
 	collector *textCollector
@@ -373,14 +387,15 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 
 func (p *provider) SendWithHandler(model string, messages []providers.Message, handler providers.OutputHandler, debug, hideThinking, hideTools bool) (*providers.SendResult, error) {
 	apiKey := os.Getenv("OPENCODE_ZEN_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENCODE_API_KEY")
+	}
 	if apiKey == "" && !isFreeModel(model) {
 		return nil, fmt.Errorf("OPENCODE_ZEN_API_KEY not set (or use a free model: big-pickle, mimo-v2-*-free, etc.)")
 	}
 
 	endpoint := modelEndpoint(model)
-	collector := &textCollector{}
-	wrapper := &handlerWrapper{Inner: handler, collector: collector}
-	debugHandler := &api.DebugHandler{Inner: wrapper, Debug: debug, HideThinking: hideThinking, HideTools: hideTools}
+	config := providers.DefaultRetryConfig.WithDefaults()
 
 	chatMsgs := make([]api.ChatMessage, 0, len(messages)+1)
 	chatMsgs = append(chatMsgs, api.ChatMessage{
@@ -398,6 +413,40 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 		Tools:    tools.GetToolsSchemaJSON(),
 	}
 
-	err := api.StreamChat(context.Background(), apiKey, endpoint, body, debugHandler)
-	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(debugHandler.GetToolCalls())}, err
+	var lastErr error
+	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
+		collector := &textCollector{}
+		var inner api.StreamHandler
+		if attempt == 0 {
+			wrapper := &handlerWrapper{Inner: handler, collector: collector}
+			inner = wrapper
+		} else {
+			inner = &retryCollector{text: ""}
+		}
+		debugHandler := &api.DebugHandler{Inner: inner, Debug: debug && attempt == 0, HideThinking: hideThinking, HideTools: hideTools}
+
+		err := api.StreamChat(context.Background(), apiKey, endpoint, body, debugHandler)
+		if err == nil {
+			if attempt > 0 {
+				handler.Chunk(collector.text)
+				for _, tc := range debugHandler.GetToolCalls() {
+					handler.LogToolCallStart(tc.Name)
+					handler.ToolCallArg(tc.Argument)
+					handler.EndToolCall()
+				}
+			}
+			return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(debugHandler.GetToolCalls())}, nil
+		}
+
+		lastErr = err
+		if !api.IsRetryable(err) {
+			return nil, err
+		}
+		if attempt < config.MaxRetries {
+			backoff := api.CalcBackoff(attempt, err, config)
+			fmt.Fprintf(os.Stderr, "retry %d/%d after %v: %v\n", attempt+1, config.MaxRetries, backoff, err)
+			time.Sleep(backoff)
+		}
+	}
+	return nil, fmt.Errorf("all %d retries exhausted: %w", config.MaxRetries, lastErr)
 }
