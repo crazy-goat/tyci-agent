@@ -113,6 +113,7 @@ func main() {
 
 	// Interactive mode
 	if *interactiveFlag {
+		hadInitial := false
 		if *promptTextFlag != "" || *promptJSONFlag != "" {
 			if *promptTextFlag != "" {
 				prompt = *promptTextFlag
@@ -130,9 +131,13 @@ func main() {
 
 			messages := []providers.Message{{Role: "user", Content: prompt}}
 			runLLMLoop(provider, modelName, messages, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
+			hadInitial = true
 		}
 
 		scanner := bufio.NewScanner(os.Stdin)
+		if hadInitial {
+			fmt.Fprint(os.Stdout, "\n")
+		}
 		fmt.Fprint(os.Stderr, ">>> ")
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -155,7 +160,8 @@ func main() {
 			messages := []providers.Message{{Role: "user", Content: line}}
 			runLLMLoop(provider, modelName, messages, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
 
-			fmt.Fprintf(os.Stderr, "\n>>> ")
+			fmt.Fprint(os.Stdout, "\n")
+			fmt.Fprint(os.Stderr, ">>> ")
 		}
 		return
 	}
