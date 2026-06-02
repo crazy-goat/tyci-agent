@@ -1,8 +1,11 @@
 package tools
 
 import (
+	"fmt"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 )
 
 type ReadTool struct{}
@@ -45,6 +48,31 @@ func (t *ReadTool) Run(input map[string]any) ToolResult {
 				limit = parsed
 			}
 		}
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
+
+	if info.IsDir() {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].Name() < entries[j].Name()
+		})
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s:\n", path)
+		for _, e := range entries {
+			if e.IsDir() {
+				fmt.Fprintf(&b, "  %s/\n", e.Name())
+			} else {
+				fmt.Fprintf(&b, "  %s\n", e.Name())
+			}
+		}
+		return ToolResult{Type: "result", Success: true, Content: b.String()}
 	}
 
 	file, err := os.Open(path)

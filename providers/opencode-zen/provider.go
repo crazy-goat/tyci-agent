@@ -287,10 +287,11 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 	}
 	chatMessages = append(chatMessages, api.ChatMessage{Role: "user", Content: prompt})
 	body := api.ChatRequest{
-		Model:    model,
-		Stream:   true,
-		Messages: chatMessages,
-		Tools:    tools.GetToolsSchemaJSON(),
+		Model:     model,
+		Stream:    true,
+		Messages:  chatMessages,
+		Tools:     tools.GetToolsSchemaJSON(),
+		Reasoning: true,
 	}
 	err := api.StreamChat(ctx, apiKey, endpoint, body, handler)
 	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
@@ -376,10 +377,11 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 		chatMsgs = append(chatMsgs, api.ChatMessage{Role: m.Role, Content: m.Content})
 	}
 	body := api.ChatRequest{
-		Model:    model,
-		Stream:   true,
-		Messages: chatMsgs,
-		Tools:    tools.GetToolsSchemaJSON(),
+		Model:     model,
+		Stream:    true,
+		Messages:  chatMsgs,
+		Tools:     tools.GetToolsSchemaJSON(),
+		Reasoning: true,
 	}
 	err := api.StreamChat(ctx, apiKey, endpoint, body, handler)
 	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls())}, err
@@ -407,10 +409,11 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 	}
 
 	body := api.ChatRequest{
-		Model:    model,
-		Stream:   true,
-		Messages: chatMsgs,
-		Tools:    tools.GetToolsSchemaJSON(),
+		Model:     model,
+		Stream:    true,
+		Messages:  chatMsgs,
+		Tools:     tools.GetToolsSchemaJSON(),
+		Reasoning: true,
 	}
 
 	var lastErr error
@@ -450,8 +453,7 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 		}
 		if attempt < config.MaxRetries {
 			backoff := api.CalcBackoff(attempt, err, config)
-			fmt.Fprintf(os.Stderr, "retry %d/%d after %v: %v\n", attempt+1, config.MaxRetries, backoff, err)
-			time.Sleep(backoff)
+			api.SleepWithCountdown(backoff, attempt, config.MaxRetries, err)
 		}
 	}
 	handler.Error(lastErr)

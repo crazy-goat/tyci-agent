@@ -16,17 +16,18 @@ type ChatMessage struct {
 }
 
 type ChatRequest struct {
-	Model    string          `json:"model"`
-	Stream   bool            `json:"stream"`
-	Messages []ChatMessage   `json:"messages"`
-	Tools    json.RawMessage `json:"tools,omitempty"`
+	Model     string          `json:"model"`
+	Stream    bool            `json:"stream"`
+	Messages  []ChatMessage   `json:"messages"`
+	Tools     json.RawMessage `json:"tools,omitempty"`
+	Reasoning bool            `json:"reasoning,omitempty"`
 }
 
 type chatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			Reasoning string `json:"reasoning"`
+			Content         string `json:"content"`
+			Reasoning       string `json:"reasoning_content"`
 			ToolCalls []struct {
 				Type     string `json:"type"`
 				Index    int    `json:"index"`
@@ -66,13 +67,14 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 
 	if resp.StatusCode != 200 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyStr := string(bodyBytes)
 		if resp.StatusCode == 429 {
-			return &RetryableError{Code: 429, RetryAfter: resp.Header.Get("Retry-After"), Message: "rate limited"}
+			return &RetryableError{Code: 429, RetryAfter: resp.Header.Get("Retry-After"), Message: fmt.Sprintf("429 rate limited: %s", bodyStr)}
 		}
 		if resp.StatusCode >= 500 {
-			return &RetryableError{Code: resp.StatusCode, Message: fmt.Sprintf("server error %d: %s", resp.StatusCode, string(bodyBytes))}
+			return &RetryableError{Code: resp.StatusCode, Message: fmt.Sprintf("%d server error: %s", resp.StatusCode, bodyStr)}
 		}
-		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(bodyBytes))
+		return fmt.Errorf("server returned %d: %s", resp.StatusCode, bodyStr)
 	}
 
 	reader := bufio.NewReader(resp.Body)
