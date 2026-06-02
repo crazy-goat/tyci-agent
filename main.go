@@ -14,6 +14,20 @@ import (
 	"github.com/decodo/tyci-agent/tools"
 )
 
+var (
+	bgTools   string
+	bgReset   = "\033[0m"
+	clearLine = "\033[K"
+)
+
+func init() {
+	if api.TerminalIsDark() {
+		bgTools = "\033[48;2;18;18;42m"
+	} else {
+		bgTools = "\033[48;2;248;248;254m"
+	}
+}
+
 type OutputHandler struct {
 	out          *os.File
 	buffer       *strings.Builder
@@ -129,17 +143,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	toolCount := 0
 	for len(result.ToolCalls) > 0 {
 		toolResults := []string{}
 		for _, tc := range result.ToolCalls {
 			if !*hideToolsFlag {
-				fmt.Fprintf(os.Stderr, "🔧 %s(%s):\n", tc.Name, tc.Arguments)
+				if toolCount > 0 {
+					fmt.Fprintf(os.Stderr, "\n")
+				}
+				toolCount++
+				if tc.Name == "read" {
+					fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):%s%s\n", bgTools, clearLine, tc.Name, tc.Arguments, clearLine, bgReset)
+				} else {
+					fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):\n", bgTools, clearLine, tc.Name, tc.Arguments)
+				}
 			}
 
 			var args map[string]any
 			if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
 				if !*hideToolsFlag {
-					fmt.Fprintf(os.Stderr, "Error parsing args for %s: %v\n", tc.Name, err)
+					api.StderrOutput = true
+					fmt.Fprintf(os.Stderr, "%sError: %v%s\n", clearLine, err, bgReset)
 				}
 				toolResults = append(toolResults, fmt.Sprintf("Error: %v", err))
 				continue
@@ -148,16 +172,17 @@ func main() {
 			toolRes := tools.RunTool(tc.Name, args)
 			if toolRes.Success {
 				if !*hideToolsFlag {
-					if tc.Name == "read" {
-						fmt.Fprintf(os.Stderr, "ok\n")
-					} else {
-						fmt.Fprintf(os.Stderr, "%s\n", toolRes.Content)
+					api.StderrOutput = true
+					if tc.Name != "read" {
+						content := strings.ReplaceAll(toolRes.Content, "\n", "\n"+clearLine)
+						fmt.Fprintf(os.Stderr, "%s%s%s\n", content, clearLine, bgReset)
 					}
 				}
 				toolResults = append(toolResults, toolRes.Content)
 			} else {
 				if !*hideToolsFlag {
-					fmt.Fprintf(os.Stderr, "Error: %s\n", toolRes.Error)
+					api.StderrOutput = true
+					fmt.Fprintf(os.Stderr, "%sError: %s%s\n", clearLine, toolRes.Error, bgReset)
 				}
 				toolResults = append(toolResults, "Error: "+toolRes.Error)
 			}

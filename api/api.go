@@ -127,6 +127,37 @@ type StreamHandler interface {
 	Error(err error)
 }
 
+var (
+	bgThinking   = "\033[48;2;248;253;248m"
+	bgReset      = "\033[0m"
+	clearLine    = "\033[K"
+	StderrOutput bool
+)
+
+func TerminalIsDark() bool {
+	cfb := os.Getenv("COLORFGBG")
+	if cfb == "" {
+		return true
+	}
+	parts := strings.Split(cfb, ";")
+	if len(parts) < 2 {
+		return true
+	}
+	bg, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return true
+	}
+	return bg < 8
+}
+
+func init() {
+	if TerminalIsDark() {
+		bgThinking = "\033[48;2;18;40;18m"
+	} else {
+		bgThinking = "\033[48;2;248;253;248m"
+	}
+}
+
 type DebugHandler struct {
 	Inner           StreamHandler
 	Debug           bool
@@ -150,9 +181,13 @@ func (d *DebugHandler) Thinking(text string) {
 		return
 	}
 
-	// Model sends reasoning as delta chunks, just print them
+	text = strings.ReplaceAll(text, "\n", "\n"+clearLine)
 	if !d.thinkingStarted {
-		fmt.Fprintf(os.Stderr, "💭 %s", text)
+		if StderrOutput {
+			fmt.Fprintf(os.Stderr, "\n")
+		}
+		StderrOutput = true
+		fmt.Fprintf(os.Stderr, "%s%s💭 %s", bgThinking, clearLine, text)
 		d.thinkingStarted = true
 	} else {
 		fmt.Fprintf(os.Stderr, "%s", text)
@@ -162,7 +197,7 @@ func (d *DebugHandler) Thinking(text string) {
 
 func (d *DebugHandler) EndThinking() {
 	if !d.HideThinking && d.thinkingActive {
-		fmt.Fprintf(os.Stderr, "\n\n")
+		fmt.Fprintf(os.Stderr, "%s%s\n\n", clearLine, bgReset)
 		d.thinkingActive = false
 		d.thinkingStarted = false
 	}
