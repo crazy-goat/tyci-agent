@@ -3,7 +3,35 @@ package tools
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/decodo/tyci-agent/providers"
 )
+
+// GlobalProvider allows subagent tool to access the LLM provider.
+var GlobalProvider providers.Provider
+
+// GlobalModel holds the current model string (e.g. "opencode-zen/big-pickle")
+var GlobalModel string
+
+// SetProvider sets the global provider for subagent tool.
+func SetProvider(p providers.Provider) {
+	GlobalProvider = p
+}
+
+// GetProvider returns the global provider.
+func GetProvider() providers.Provider {
+	return GlobalProvider
+}
+
+// SetCurrentModel sets the current model string.
+func SetCurrentModel(m string) {
+	GlobalModel = m
+}
+
+// GetCurrentModel returns the current model string.
+func GetCurrentModel() string {
+	return GlobalModel
+}
 
 type ToolResult struct {
 	Type    string `json:"type"`
@@ -80,6 +108,22 @@ func GetToolsSchema() []map[string]any {
 						"command":     map[string]any{"type": "string", "description": "Command to execute"},
 					},
 					"required": []string{"command"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "subagent",
+				"description": "Delegate a subtask to a child agent. Provide a clear task description and the agent will use its own tools to complete it. Returns the result.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"task":        map[string]any{"type": "string", "description": "Detailed task description for the child agent"},
+						"model":       map[string]any{"type": "string", "description": "Optional model override (format: provider/model, e.g. opencode-zen/big-pickle)"},
+						"temperature": map[string]any{"type": "number", "description": "Optional temperature (0.0-2.0, default: 0.7)"},
+					},
+					"required": []string{"task"},
 				},
 			},
 		},
@@ -166,10 +210,11 @@ func GetToolsSchemaForResponses() []responsesTool {
 }
 
 var toolRegistry = map[string]Tool{
-	"bash":  &BashTool{},
-	"read":  &ReadTool{},
-	"write": &WriteTool{},
-	"edit":  &EditTool{},
+	"bash":     &BashTool{},
+	"read":     &ReadTool{},
+	"write":    &WriteTool{},
+	"edit":     &EditTool{},
+	"subagent": &SubagentTool{},
 }
 
 func RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {
