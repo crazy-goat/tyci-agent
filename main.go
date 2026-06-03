@@ -231,94 +231,111 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 	}
 
 	toolCount := 0
-	for result.StopReason == "tool_calls" {
-		toolResults := make([]string, len(result.ToolCalls))
-		parsedArgs := make([]map[string]any, len(result.ToolCalls))
+	for {
+		// 1. Tool calls → wykonaj i leć dalej
+		if len(result.ToolCalls) > 0 {
+			toolResults := make([]string, len(result.ToolCalls))
+			parsedArgs := make([]map[string]any, len(result.ToolCalls))
 
-		for i, tc := range result.ToolCalls {
-			if err := json.Unmarshal([]byte(tc.Arguments), &parsedArgs[i]); err != nil {
-				toolResults[i] = fmt.Sprintf("Error: %v", err)
-				parsedArgs[i] = nil
-			}
-		}
-
-		var wg sync.WaitGroup
-		resultBufs := make([]*strings.Builder, len(result.ToolCalls))
-
-		for i, tc := range result.ToolCalls {
-			if parsedArgs[i] == nil {
-				continue
+			for i, tc := range result.ToolCalls {
+				if err := json.Unmarshal([]byte(tc.Arguments), &parsedArgs[i]); err != nil {
+					toolResults[i] = fmt.Sprintf("Error: %v", err)
+					parsedArgs[i] = nil
+				}
 			}
 
-			buf := &strings.Builder{}
-			resultBufs[i] = buf
-			wg.Add(1)
+			var wg sync.WaitGroup
+			resultBufs := make([]*strings.Builder, len(result.ToolCalls))
 
-			go func(idx int, tc providers.ToolCall, args map[string]any, buf *strings.Builder) {
-				defer wg.Done()
+			for i, tc := range result.ToolCalls {
+				if parsedArgs[i] == nil {
+					continue
+				}
 
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-				defer cancel()
+				buf := &strings.Builder{}
+				resultBufs[i] = buf
+				wg.Add(1)
 
-				toolRes := tools.RunTool(ctx, tc.Name, args)
-				if toolRes.Success {
-					toolResults[idx] = toolRes.Content
-					if !*hideToolsFlag && tc.Name != "read" {
-						content := strings.ReplaceAll(toolRes.Content, "\n", "\n"+clearLine)
-						fmt.Fprintf(buf, "%s%s%s%s\n", bgTools, content, clearLine, bgReset)
+				go func(idx int, tc providers.ToolCall, args map[string]any, buf *strings.Builder) {
+					defer wg.Done()
+
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					defer cancel()
+
+					toolRes := tools.RunTool(ctx, tc.Name, args)
+					if toolRes.Success {
+						toolResults[idx] = toolRes.Content
+						if !*hideToolsFlag && tc.Name != "read" {
+							content := strings.ReplaceAll(toolRes.Content, "\n", "\n"+clearLine)
+							fmt.Fprintf(buf, "%s%s%s%s\n", bgTools, content, clearLine, bgReset)
+						}
+					} else {
+						toolResults[idx] = "Error: " + toolRes.Error
+						if !*hideToolsFlag {
+							fmt.Fprintf(buf, "%s%s%s%s\n", bgTools, clearLine, toolRes.Error, bgReset)
+						}
 					}
-				} else {
-					toolResults[idx] = "Error: " + toolRes.Error
-					if !*hideToolsFlag {
-						fmt.Fprintf(buf, "%s%s%s%s\n", bgTools, clearLine, toolRes.Error, bgReset)
+				}(i, tc, parsedArgs[i], buf)
+			}
+
+			wg.Wait()
+
+			api.StderrOutput = true
+			for i, tc := range result.ToolCalls {
+				if parsedArgs[i] == nil {
+					continue
+				}
+
+				if toolCount > 0 {
+					fmt.Fprintln(os.Stderr)
+				}
+				toolCount++
+
+				title := ""
+				if d, ok := parsedArgs[i]["description"].(string); ok && d != "" {
+					title = d
+				}
+
+				if title != "" {
+					cmd := ""
+					if c, ok := parsedArgs[i]["command"].(string); ok && c != "" {
+						cmd = c
 					}
-				}
-			}(i, tc, parsedArgs[i], buf)
-		}
-
-		wg.Wait()
-
-		api.StderrOutput = true
-		for i, tc := range result.ToolCalls {
-			if parsedArgs[i] == nil {
-				continue
-			}
-
-			if toolCount > 0 {
-				fmt.Fprintln(os.Stderr)
-			}
-			toolCount++
-
-			title := ""
-			if d, ok := parsedArgs[i]["description"].(string); ok && d != "" {
-				title = d
-			}
-
-			if title != "" {
-				cmd := ""
-				if c, ok := parsedArgs[i]["command"].(string); ok && c != "" {
-					cmd = c
-				}
-				if cmd != "" {
-					fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n%s$ %s\n", bgTools, clearLine, title, clearLine, cmd)
+					if cmd != "" {
+						fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n%s$ %s\n", bgTools, clearLine, title, clearLine, cmd)
+					} else {
+						fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n", bgTools, clearLine, title)
+					}
+				} else if tc.Name == "read" {
+					fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):%s%s\n", bgTools, clearLine, tc.Name, tc.Arguments, clearLine, bgReset)
 				} else {
-					fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n", bgTools, clearLine, title)
+					fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):\n", bgTools, clearLine, tc.Name, tc.Arguments)
 				}
-			} else if tc.Name == "read" {
-				fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):%s%s\n", bgTools, clearLine, tc.Name, tc.Arguments, clearLine, bgReset)
-			} else {
-				fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):\n", bgTools, clearLine, tc.Name, tc.Arguments)
+
+				if buf := resultBufs[i]; buf != nil && buf.Len() > 0 {
+					fmt.Fprint(os.Stderr, clearLine)
+					fmt.Fprint(os.Stderr, buf.String())
+				}
 			}
 
-			if buf := resultBufs[i]; buf != nil && buf.Len() > 0 {
-				fmt.Fprint(os.Stderr, clearLine)
-				fmt.Fprint(os.Stderr, buf.String())
+			messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
+			messages = append(messages, providers.Message{Role: "user", Content: "Tool results:\n" + strings.Join(toolResults, "\n---\n")})
+
+			result, err = provider.SendWithHandler(modelName, messages, handler, *debugFlag, *hideThinkingFlag, *hideToolsFlag)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
 			}
+			continue
 		}
 
+		// 2. Text + stop → normalna odpowiedź, koniec
+		if result.StopReason == "stop" && result.Text != "" {
+			break
+		}
+
+		// 3. Reszta (thinking-only, brak text) → leć dalej
 		messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
-		messages = append(messages, providers.Message{Role: "user", Content: "Tool results:\n" + strings.Join(toolResults, "\n---\n")})
-
 		result, err = provider.SendWithHandler(modelName, messages, handler, *debugFlag, *hideThinkingFlag, *hideToolsFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
