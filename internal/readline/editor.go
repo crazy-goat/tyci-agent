@@ -14,6 +14,7 @@ type LineEditor struct {
 	maxHistory  int
 	historyFile string
 	reader      *bufio.Reader
+	appendCount int
 }
 
 func New(historyFile string, maxEntries int) (*LineEditor, error) {
@@ -54,6 +55,20 @@ func (e *LineEditor) AddHistory(line string) {
 		e.history = e.history[1:]
 	}
 	e.history = append(e.history, line)
+
+	if e.historyFile != "" {
+		if err := appendLineToFile(e.historyFile, line); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to write history: %v\n", err)
+			return
+		}
+		e.appendCount++
+		if e.appendCount >= e.maxHistory {
+			if err := syncHistoryToFile(e.history, e.historyFile, e.maxHistory); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to rotate history: %v\n", err)
+			}
+			e.appendCount = 0
+		}
+	}
 }
 
 func (e *LineEditor) History() []string {

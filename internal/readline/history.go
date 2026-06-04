@@ -69,6 +69,16 @@ func dedupAdjacent(lines []string) []string {
 	return result
 }
 
+func appendLineToFile(path, line string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintln(f, line)
+	return err
+}
+
 func syncHistoryToFile(history []string, path string, maxEntries int) error {
 	if len(history) > maxEntries {
 		history = history[len(history)-maxEntries:]
