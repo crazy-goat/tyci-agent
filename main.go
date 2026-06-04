@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -12,65 +11,15 @@ import (
 	"time"
 
 	"github.com/decodo/tyci-agent/api"
+	"github.com/decodo/tyci-agent/display"
+	"github.com/decodo/tyci-agent/internal/readline"
 	"github.com/decodo/tyci-agent/providers"
 	_ "github.com/decodo/tyci-agent/providers/opencode-go"
 	_ "github.com/decodo/tyci-agent/providers/opencode-zen"
 	"github.com/decodo/tyci-agent/tools"
 )
 
-var (
-	bgTools        string
-	bgReset        = "\033[0m"
-	clearLine      = "\033[K"
-	interactiveFlag = flag.Bool("interactive", false, "Interactive mode: read prompts from stdin")
-)
-
-func init() {
-	if api.TerminalIsDark() {
-		bgTools = "\033[48;2;18;18;42m"
-	} else {
-		bgTools = "\033[48;2;248;248;254m"
-	}
-}
-
-type OutputHandler struct {
-	out          *os.File
-	buffer       *strings.Builder
-	silent       bool
-	hideThinking bool
-	hideTools    bool
-	LastText     string
-	LastToolCalls []providers.ToolCall
-}
-
-func (h *OutputHandler) Chunk(text string) {
-	if h.silent {
-		if h.buffer != nil {
-			h.buffer.WriteString(text)
-		}
-	} else {
-		fmt.Fprint(h.out, text)
-		h.out.Sync()
-	}
-}
-
-func (h *OutputHandler) End() {}
-
-func (h *OutputHandler) Summary(usage providers.UsageInfo) {}
-
-func (h *OutputHandler) Error(err error) {
-	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-}
-
-func (h *OutputHandler) Thinking(text string) {}
-
-func (h *OutputHandler) EndThinking() {}
-
-func (h *OutputHandler) LogToolCallStart(name string) {}
-
-func (h *OutputHandler) ToolCallArg(text string) {}
-
-func (h *OutputHandler) EndToolCall() {}
+var interactiveFlag = flag.Bool("interactive", false, "Interactive mode: read prompts from stdin")
 
 func main() {
 	debugFlag := flag.Bool("debug", false, "Show HTTP request/response data")
@@ -80,9 +29,11 @@ func main() {
 	hideThinkingFlag := flag.Bool("hide-thinking", false, "Hide thinking output (💭)")
 	hideToolsFlag := flag.Bool("hide-tools", false, "Hide tool call output (🔧)")
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
+	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.local/share/tyci-agent/history)")
+	noHistoryFlag := flag.Bool("no-history", false, "Disable history loading/saving entirely")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] [--max-retries N] (--prompt-to-text <prompt> | --prompt-to-json <prompt> | --interactive)\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] [--max-retries N] [--history-file <path>] [--no-history] (--prompt-to-text <prompt> | --prompt-to-json <prompt> | --interactive)\n\n")
 		fmt.Fprintf(os.Stderr, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -99,6 +50,19 @@ func main() {
 	}
 	flag.Parse()
 
+	var historyFile string
+	if *noHistoryFlag {
+		historyFile = ""
+	} else if *historyFileFlag != "" {
+		historyFile = *historyFileFlag
+	} else {
+		var err error
+		historyFile, err = readline.DefaultHistoryFile()
+		if err != nil {
+			historyFile = ""
+		}
+	}
+
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: *maxRetriesFlag, BaseBackoff: 4, MaxBackoff: 128}
 
 	model := *modelFlag
@@ -111,9 +75,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Interactive mode
+	var disp display.Display
+	if *interactiveFlag {
+		disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag)
+	} else if *promptJSONFlag != "" {
+		disp = display.NewJSON()
+	} else {
+		disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag)
+	}
+
 	if *interactiveFlag {
 		var conversation []providers.Message
+
+		editor, err := readline.New(historyFile, readline.DefaultMaxEntries)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer editor.Close()
 
 		if *promptTextFlag != "" || *promptJSONFlag != "" {
 			if *promptTextFlag != "" {
@@ -122,23 +101,18 @@ func main() {
 				prompt = *promptJSONFlag
 			}
 
-			handler := &OutputHandler{
-				out:          os.Stdout,
-				silent:       false,
-				buffer:       nil,
-				hideThinking: *hideThinkingFlag,
-				hideTools:    *hideToolsFlag,
-			}
-
 			conversation = append(conversation, providers.Message{Role: "user", Content: prompt})
-			conversation = runLLMLoop(provider, modelName, conversation, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
+			conversation = runLLMLoop(provider, modelName, conversation, disp, *debugFlag)
+			disp.End()
 			fmt.Fprint(os.Stdout, "\n")
 		}
 
-		scanner := bufio.NewScanner(os.Stdin)
 		fmt.Fprint(os.Stdout, ">>> ")
-		for scanner.Scan() {
-			line := scanner.Text()
+		for {
+			line, err := editor.ReadLine()
+			if err != nil {
+				break
+			}
 			if line == "/exit" {
 				break
 			}
@@ -147,23 +121,16 @@ func main() {
 				continue
 			}
 
-			handler := &OutputHandler{
-				out:          os.Stdout,
-				silent:       false,
-				buffer:       nil,
-				hideThinking: *hideThinkingFlag,
-				hideTools:    *hideToolsFlag,
-			}
-
+			editor.AddHistory(line)
 			conversation = append(conversation, providers.Message{Role: "user", Content: line})
-			conversation = runLLMLoop(provider, modelName, conversation, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
+			conversation = runLLMLoop(provider, modelName, conversation, disp, *debugFlag)
+			disp.End()
 
 			fmt.Fprint(os.Stdout, "\n>>> ")
 		}
 		return
 	}
 
-	// Non-interactive mode: validate that exactly one prompt flag is provided
 	if *promptTextFlag == "" && *promptJSONFlag == "" {
 		fmt.Fprintln(os.Stderr, "Error: must provide either --prompt-to-text or --prompt-to-json")
 		flag.Usage()
@@ -183,56 +150,28 @@ func main() {
 		expectJSON = true
 	}
 
-	var textBuffer strings.Builder
-	handler := &OutputHandler{
-		out:          os.Stdout,
-		silent:       expectJSON,
-		buffer:       &textBuffer,
-		hideThinking: *hideThinkingFlag,
-		hideTools:    *hideToolsFlag,
-	}
-
 	messages := []providers.Message{{Role: "user", Content: prompt}}
-	runLLMLoop(provider, modelName, messages, handler, expectJSON, debugFlag, hideThinkingFlag, hideToolsFlag)
-
-	// For JSON mode, validate and format the output
-	if expectJSON {
-		responseText := textBuffer.String()
-		if responseText == "" {
-			responseText = handler.LastText
-		}
-
-		if responseText != "" {
-			var jsonData interface{}
-			if err := json.Unmarshal([]byte(responseText), &jsonData); err != nil {
-				output := map[string]interface{}{
-					"response": responseText,
-				}
-				if handler.LastToolCalls != nil {
-					output["tool_calls"] = handler.LastToolCalls
-				}
-				jsonBytes, _ := json.MarshalIndent(output, "", "  ")
-				fmt.Fprintln(os.Stdout, string(jsonBytes))
-			} else {
-				jsonBytes, _ := json.MarshalIndent(jsonData, "", "  ")
-				fmt.Fprintln(os.Stdout, string(jsonBytes))
-			}
-		}
-	} else {
+	runLLMLoop(provider, modelName, messages, disp, *debugFlag)
+	disp.End()
+	if !expectJSON {
 		fmt.Fprintln(os.Stdout)
 	}
 }
 
-func runLLMLoop(provider providers.Provider, modelName string, messages []providers.Message, handler *OutputHandler, expectJSON bool, debugFlag, hideThinkingFlag, hideToolsFlag *bool) []providers.Message {
-	result, err := provider.SendWithHandler(modelName, messages, handler, *debugFlag, *hideThinkingFlag, *hideToolsFlag)
+type toolRunResult struct {
+	success bool
+	content string
+	err     string
+}
+
+func runLLMLoop(provider providers.Provider, modelName string, messages []providers.Message, disp display.Display, debug bool) []providers.Message {
+	result, err := provider.SendWithHandler(modelName, messages, disp, debug)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	toolCount := 0
 	for {
-		// 1. Tool calls → wykonaj i leć dalej
 		if len(result.ToolCalls) > 0 {
 			toolResults := make([]string, len(result.ToolCalls))
 			parsedArgs := make([]map[string]any, len(result.ToolCalls))
@@ -245,83 +184,50 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 			}
 
 			var wg sync.WaitGroup
-			resultBufs := make([]*strings.Builder, len(result.ToolCalls))
+			results := make([]toolRunResult, len(result.ToolCalls))
 
 			for i, tc := range result.ToolCalls {
 				if parsedArgs[i] == nil {
 					continue
 				}
 
-				buf := &strings.Builder{}
-				resultBufs[i] = buf
 				wg.Add(1)
-
-				go func(idx int, tc providers.ToolCall, args map[string]any, buf *strings.Builder) {
+				go func(idx int, tc providers.ToolCall, args map[string]any) {
 					defer wg.Done()
-
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer cancel()
-
 					toolRes := tools.RunTool(ctx, tc.Name, args)
-					if toolRes.Success {
-						toolResults[idx] = toolRes.Content
-						if !*hideToolsFlag && tc.Name != "read" {
-							content := strings.ReplaceAll(toolRes.Content, "\n", "\n"+clearLine)
-							fmt.Fprintf(buf, "%s%s%s%s\n", bgTools, content, clearLine, bgReset)
-						}
-					} else {
-						toolResults[idx] = "Error: " + toolRes.Error
-						if !*hideToolsFlag {
-							fmt.Fprintf(buf, "%s%s%s%s\n", bgTools, clearLine, toolRes.Error, bgReset)
-						}
+					results[idx] = toolRunResult{
+						success: toolRes.Success,
+						content: toolRes.Content,
+						err:     toolRes.Error,
 					}
-				}(i, tc, parsedArgs[i], buf)
+				}(i, tc, parsedArgs[i])
 			}
 
 			wg.Wait()
 
-			api.StderrOutput = true
 			for i, tc := range result.ToolCalls {
 				if parsedArgs[i] == nil {
 					continue
 				}
-
-				if toolCount > 0 {
-					fmt.Fprintln(os.Stderr)
-				}
-				toolCount++
-
-				title := ""
-				if d, ok := parsedArgs[i]["description"].(string); ok && d != "" {
-					title = d
-				}
-
-				if title != "" {
-					cmd := ""
-					if c, ok := parsedArgs[i]["command"].(string); ok && c != "" {
-						cmd = c
-					}
-					if cmd != "" {
-						fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n%s$ %s\n", bgTools, clearLine, title, clearLine, cmd)
-					} else {
-						fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n", bgTools, clearLine, title)
-					}
-				} else if tc.Name == "read" {
-					fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):%s%s\n", bgTools, clearLine, tc.Name, tc.Arguments, clearLine, bgReset)
+				r := results[i]
+				if r.success {
+					toolResults[i] = r.content
 				} else {
-					fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):\n", bgTools, clearLine, tc.Name, tc.Arguments)
+					toolResults[i] = "Error: " + r.err
 				}
-
-				if buf := resultBufs[i]; buf != nil && buf.Len() > 0 {
-					fmt.Fprint(os.Stderr, clearLine)
-					fmt.Fprint(os.Stderr, buf.String())
-				}
+				disp.ToolResult(tc.Name, &display.ToolResult{
+					Success: r.success,
+					Content: r.content,
+					Error:   r.err,
+				})
 			}
 
 			messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
 			messages = append(messages, providers.Message{Role: "user", Content: "Tool results:\n" + strings.Join(toolResults, "\n---\n")})
 
-			result, err = provider.SendWithHandler(modelName, messages, handler, *debugFlag, *hideThinkingFlag, *hideToolsFlag)
+			result, err = provider.SendWithHandler(modelName, messages, disp, debug)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -329,14 +235,12 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 			continue
 		}
 
-		// 2. Text + stop → normalna odpowiedź, koniec
 		if result.StopReason == "stop" && result.Text != "" {
 			break
 		}
 
-		// 3. Reszta (thinking-only, brak text) → leć dalej
 		messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
-		result, err = provider.SendWithHandler(modelName, messages, handler, *debugFlag, *hideThinkingFlag, *hideToolsFlag)
+		result, err = provider.SendWithHandler(modelName, messages, disp, debug)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -344,7 +248,5 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 	}
 
 	messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
-	handler.LastText = result.Text
-	handler.LastToolCalls = result.ToolCalls
 	return messages
 }
