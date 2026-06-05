@@ -131,8 +131,18 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		}
 	}
 
-	if textBuf.Len() > 0 {
-		*msgs = append(*msgs, providers.Message{Role: "assistant", Content: textBuf.String()})
+	if textBuf.Len() > 0 || len(toolCalls) > 0 {
+		var content string
+		if textBuf.Len() > 0 {
+			content = textBuf.String()
+		}
+		for _, tc := range toolCalls {
+			if content != "" {
+				content += "\n"
+			}
+			content += fmt.Sprintf("Tool call: %s(%s)", tc.Name, tc.Arguments)
+		}
+		*msgs = append(*msgs, providers.Message{Role: "assistant", Content: content})
 	}
 
 	if lastUsage.Input > 0 || lastUsage.Output > 0 {

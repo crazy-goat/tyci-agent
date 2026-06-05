@@ -163,6 +163,11 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 			fmt.Println("Bye!")
 			return
 		}
+		if line == "/new" {
+			conversation = nil
+			fmt.Print("\033[2J\033[H")
+			continue
+		}
 		if line == "" {
 			continue
 		}
