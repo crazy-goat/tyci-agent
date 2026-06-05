@@ -39,6 +39,7 @@ type LineEditor struct {
 	searchDir    int
 
 	interrupted bool
+	eofRequested bool
 
 	renderLines    int
 	lastCursorLine int
@@ -120,6 +121,11 @@ func (e *LineEditor) Read(ctx context.Context, prompt string) (string, error) {
 					e.resetLine()
 					return "", ErrInterrupt
 				}
+				if e.eofRequested {
+					e.eofRequested = false
+					e.resetLine()
+					return "", ErrEOF
+				}
 				line := string(e.buffer)
 				e.resetLine()
 				fmt.Fprint(os.Stdout, "\r\n")
@@ -164,6 +170,8 @@ func (e *LineEditor) History() []string {
 func (e *LineEditor) resetLine() {
 	e.buffer = e.buffer[:0]
 	e.cursorPos = 0
+	e.interrupted = false
+	e.eofRequested = false
 	e.historyPos = len(e.history)
 	e.searching = false
 	e.searchQuery = nil

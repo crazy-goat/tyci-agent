@@ -11,6 +11,11 @@ func (e *LineEditor) handleKey(k key) bool {
 		e.cursorPos++
 		return false
 	case KeyCtrlC:
+		if len(e.buffer) == 0 {
+			e.printCtrlC()
+			e.eofRequested = true
+			return true
+		}
 		e.buffer = e.buffer[:0]
 		e.cursorPos = 0
 		e.printCtrlC()
@@ -19,6 +24,7 @@ func (e *LineEditor) handleKey(k key) bool {
 		return true
 	case KeyCtrlD:
 		if len(e.buffer) == 0 {
+			e.eofRequested = true
 			return true
 		}
 		if e.cursorPos < len(e.buffer) {

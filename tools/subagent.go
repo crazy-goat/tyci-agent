@@ -259,7 +259,7 @@ func runSingleTask(ctx context.Context, globalProvider providers.Provider, task 
 		Schema:     GetSubagentToolsSchemaJSON(),
 	}
 
-	err := agent.Run(runCtx, prov, c, &msgs, cfg)
+	_, err := agent.Run(runCtx, prov, c, &msgs, cfg)
 	res := c.Result()
 	res.Task = task.Task
 	res.Model = mName

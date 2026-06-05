@@ -2,13 +2,16 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/decodo/tyci-agent/display"
 	"github.com/decodo/tyci-agent/providers"
+	"github.com/decodo/tyci-agent/session"
 	"github.com/decodo/tyci-agent/stream"
 )
 
@@ -175,7 +178,7 @@ func TestRunAppendsAssistantMessage(t *testing.T) {
 	d := display.NewSilent()
 	msgs := []providers.Message{{Role: "user", Content: "Hi"}}
 
-	if err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
+	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -195,7 +198,7 @@ func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
 	d := display.NewSilent()
 	msgs := []providers.Message{{Role: "user", Content: "Hi"}}
 
-	if err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
+	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -219,7 +222,7 @@ func TestRun_ToolCall_ShowsToolBlockDuringStream(t *testing.T) {
 	runner.SetResult("read", "file content")
 	msgs := []providers.Message{{Role: "user", Content: "read file.go"}}
 
-	if err := Run(context.Background(), p, d, &msgs, Config{
+	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
@@ -281,7 +284,7 @@ func TestRun_ToolCall_NoToolBlockWithoutTools(t *testing.T) {
 	d := newCaptureDisplay()
 	msgs := []providers.Message{{Role: "user", Content: "Hello"}}
 
-	if err := Run(context.Background(), p, d, &msgs, Config{
+	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
 		MaxRetries: 1,
 	}); err != nil {
@@ -314,7 +317,7 @@ func TestRun_ToolCall_MultipleTools(t *testing.T) {
 	runner.SetResult("bash", "file1\nfile2")
 	msgs := []providers.Message{{Role: "user", Content: "list and read"}}
 
-	if err := Run(context.Background(), p, d, &msgs, Config{
+	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
@@ -367,7 +370,7 @@ func TestRun_ToolCall_TextAndTools(t *testing.T) {
 	runner.SetResult("read", "package main")
 	msgs := []providers.Message{{Role: "user", Content: "read x.go"}}
 
-	if err := Run(context.Background(), p, d, &msgs, Config{
+	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
@@ -403,7 +406,7 @@ func TestRun_ToolCall_ToolCallWithoutDelta(t *testing.T) {
 	runner.SetResult("bash", "hi")
 	msgs := []providers.Message{{Role: "user", Content: "echo"}}
 
-	if err := Run(context.Background(), p, d, &msgs, Config{
+	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
@@ -439,7 +442,7 @@ func TestRun_ToolCall_EmptyResult(t *testing.T) {
 	// No result set → Run returns empty string, no error
 	msgs := []providers.Message{{Role: "user", Content: "run"}}
 
-	if err := Run(context.Background(), p, d, &msgs, Config{
+	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
@@ -465,7 +468,7 @@ func TestRun_ToolCall_StreamError(t *testing.T) {
 	d := newCaptureDisplay()
 	msgs := []providers.Message{{Role: "user", Content: "hi"}}
 
-	err := Run(context.Background(), p, d, &msgs, Config{
+	_, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
 		MaxRetries: 1,
 	})
@@ -474,5 +477,67 @@ func TestRun_ToolCall_StreamError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "connection lost") {
 		t.Errorf("expected 'connection lost', got %v", err)
+	}
+}
+
+// TestWriteSessionEvents verifies that session events are written correctly.
+func TestWriteSessionEvents(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/test.jsonl"
+
+	s, err := session.Open(path, "/test", "mock-1", "mock")
+	if err != nil {
+		t.Fatalf("session.Open: %v", err)
+	}
+
+	err = s.WriteMessage("assistant", []session.ContentBlock{
+		{Type: "text", Text: "Hello"},
+		{Type: "toolCall", ID: "tc1", Name: "bash", Arguments: json.RawMessage(`{"command":"ls"}`)},
+	}, &session.MessageOptions{
+		Provider: "mock",
+		Model:    "mock-1",
+		Usage:    &session.Usage{Input: 10, Output: 5, Reasoning: 2, TotalTokens: 17},
+	})
+	if err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+
+	err = s.WriteMessage("toolResult", []session.ContentBlock{
+		{Type: "text", Text: "file1\nfile2", ToolCallID: "tc1", ToolName: "bash"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("WriteMessage toolResult: %v", err)
+	}
+
+	err = s.WriteSessionEnd("ok", 0, &session.Usage{Input: 10, Output: 5, TotalTokens: 15})
+	if err != nil {
+		t.Fatalf("WriteSessionEnd: %v", err)
+	}
+	s.Close()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 lines (header, assistant, toolResult, session_end), got %d", len(lines))
+	}
+
+	if !strings.Contains(lines[0], `"type":"session"`) {
+		t.Errorf("expected session header, got: %s", lines[0])
+	}
+	if !strings.Contains(lines[1], `"type":"message"`) {
+		t.Errorf("expected message event, got: %s", lines[1])
+	}
+	if !strings.Contains(lines[1], `"role":"assistant"`) {
+		t.Errorf("expected assistant role, got: %s", lines[1])
+	}
+	if !strings.Contains(lines[2], `"role":"toolResult"`) {
+		t.Errorf("expected toolResult role, got: %s", lines[2])
+	}
+	if !strings.Contains(lines[3], `"type":"session_end"`) {
+		t.Errorf("expected session_end, got: %s", lines[3])
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 	"github.com/decodo/tyci-agent/internal/debug"
 	"github.com/decodo/tyci-agent/internal/readline"
 	"github.com/decodo/tyci-agent/providers"
+	"github.com/decodo/tyci-agent/session"
+	"github.com/decodo/tyci-agent/stream"
 	"github.com/decodo/tyci-agent/tools"
 	"golang.org/x/term"
 )
@@ -49,6 +52,8 @@ func main() {
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.local/share/tyci-agent/history)")
 	modeFlag := flag.String("mode", "minimal", "Display mode: minimal, normal, interactive")
+	sessionFlag := flag.String("session", "", "Session file path (default: auto-generated in ~/.local/share/tyci-agent/sessions/)")
+	noSessionFlag := flag.Bool("no-session", false, "Disable session persistence")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--no-debug] [--model provider/model] [--max-retries N] [--history-file <path>] [--mode minimal|normal|interactive] (--prompt <prompt> | --interactive)\n\n")
@@ -130,12 +135,38 @@ func main() {
 		Debug:      *debugFlag,
 		Tools:      toolsAdapter{},
 		Schema:     tools.GetToolsSchemaJSON(),
+		ProviderName: provider.Name(),
 	}
 	tools.SetProvider(provider)
 	tools.SetCurrentModel(modelName)
 
+	// Session setup
+	wd, _ := os.Getwd()
+	var sess *session.Session
+	var sessionPath string
+	if !*noSessionFlag {
+		sessionPath = *sessionFlag
+		if sessionPath == "" {
+			var err error
+			sessionPath, err = session.DefaultPath(wd)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: cannot determine session path: %v\n", err)
+			}
+		}
+		if sessionPath != "" {
+			var err error
+			sess, err = session.Open(sessionPath, wd, modelName, provider.Name())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: session: %v (continuing without session)\n", err)
+				sess = nil
+				sessionPath = ""
+			}
+		}
+	}
+	cfg.Session = sess
+
 	if interactiveFlag {
-		runInteractive(provider, modelName, disp, historyFile, cfg, ctx)
+		runInteractive(provider, modelName, disp, historyFile, cfg, ctx, sessionPath)
 		return
 	}
 
@@ -160,28 +191,83 @@ func main() {
 	stopESC := watchESC(runCancel)
 
 	messages := []providers.Message{{Role: "user", Content: *promptFlag}}
-	err := agent.Run(runCtx, provider, disp, &messages, cfg)
+
+	// Resume from session if applicable
+	if sess != nil && sess.IsResume() {
+		parsedLines := sess.Messages()
+		rebuiltMsgs, err := session.RebuildMessages(parsedLines)
+		if err == nil && len(rebuiltMsgs) > 0 {
+			conversation := rebuildToProviderMessages(rebuiltMsgs)
+			fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages) from %s\n", sess.ID(), len(conversation), sessionPath)
+
+			// Visual replay of the session history
+			replaySessionToDisplay(disp, sessionPath)
+
+			// Append current prompt as new user message
+			conversation = append(conversation, providers.Message{Role: "user", Content: *promptFlag})
+			messages = conversation
+		}
+	}
+
+	// Write user message to session
+	if sess != nil && *promptFlag != "" {
+		blocks := []session.ContentBlock{{Type: "text", Text: *promptFlag}}
+		_ = sess.WriteMessage("user", blocks, nil)
+	}
+
+	usage, err := agent.Run(runCtx, provider, disp, &messages, cfg)
 
 	stopESC()
 	signal.Stop(sigCh)
 	runCancel()
 	<-sigDone
 
+	status := "ok"
+	exitCode := 0
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			disp.End()
 			fmt.Fprint(os.Stdout, "\n")
+			agent.WriteSessionEnd(sess, "cancelled", 130, &usage)
+			if sessionPath != "" {
+				fmt.Fprintf(os.Stderr, "📁 Session: %s\n", sessionPath)
+			}
 			os.Exit(130) // standard exit code for SIGINT
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		status = "error"
+		exitCode = 1
+	}
+	agent.WriteSessionEnd(sess, status, exitCode, &usage)
+
+	if err != nil {
+		if sessionPath != "" {
+			fmt.Fprintf(os.Stderr, "📁 Session: %s\n", sessionPath)
+		}
+		os.Exit(exitCode)
 	}
 	disp.End()
 	fmt.Fprintln(os.Stdout)
+	if sessionPath != "" {
+		fmt.Fprintf(os.Stderr, "📁 Session: %s\n", sessionPath)
+	}
 }
 
-func runInteractive(provider providers.Provider, modelName string, disp display.Display, historyFile string, cfg agent.Config, baseCtx context.Context) {
+func runInteractive(provider providers.Provider, modelName string, disp display.Display, historyFile string, cfg agent.Config, baseCtx context.Context, sessionPath string) {
 	var conversation []providers.Message
+	var totalUsage stream.Usage
+
+	// Replay session history if resuming
+	if cfg.Session != nil && cfg.Session.IsResume() && sessionPath != "" {
+		replaySessionToDisplay(disp, sessionPath)
+		// Load conversation from session
+		parsedLines := cfg.Session.Messages()
+		rebuiltMsgs, _ := session.RebuildMessages(parsedLines)
+		if len(rebuiltMsgs) > 0 {
+			conversation = rebuildToProviderMessages(rebuiltMsgs)
+			fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", cfg.Session.ID(), len(conversation))
+		}
+	}
 
 	var editor *readline.LineEditor
 	if historyFile != "" {
@@ -195,6 +281,16 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 	if editor != nil {
 		defer editor.Close()
 	}
+
+	// Close session on exit with accumulated usage
+	defer func() {
+		if cfg.Session != nil {
+			agent.WriteSessionEnd(cfg.Session, "ok", 0, &totalUsage)
+			if sessionPath != "" {
+				fmt.Fprintf(os.Stderr, "📁 Session: %s\n", sessionPath)
+			}
+		}
+	}()
 
 	for {
 		// Per-iteration context — Ctrl+C or ESC cancels this, returning to prompt
@@ -249,6 +345,12 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 
 		conversation = append(conversation, providers.Message{Role: "user", Content: line})
 
+		// Write user message to session
+		if cfg.Session != nil {
+			blocks := []session.ContentBlock{{Type: "text", Text: line}}
+			_ = cfg.Session.WriteMessage("user", blocks, nil)
+		}
+
 		// Agent phase — Ctrl+C (SIGINT) and ESC cancel the iteration
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, os.Interrupt)
@@ -263,8 +365,13 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		}()
 
 		stopESC := watchESC(iterCancel)
-		err = agent.Run(iterCtx, provider, disp, &conversation, cfg)
+		usage, err := agent.Run(iterCtx, provider, disp, &conversation, cfg)
 		stopESC()
+		totalUsage.Input += usage.Input
+		totalUsage.Output += usage.Output
+		totalUsage.Reasoning += usage.Reasoning
+		totalUsage.CacheRead += usage.CacheRead
+		totalUsage.CacheWrite += usage.CacheWrite
 
 		signal.Stop(sigCh)
 		iterCancel()   // anuluj kontekst żeby odblokować gorutynę sygnałową
@@ -381,4 +488,247 @@ func simplePrompt(prompt string) (string, error) {
 		return "", readline.ErrEOF
 	}
 	return fallbackScanner.Text(), fallbackScanner.Err()
+}
+
+// rebuildToProviderMessages converts session-rebuilt messages to providers.Message slice.
+func rebuildToProviderMessages(rawMsgs []map[string]any) []providers.Message {
+	var msgs []providers.Message
+	for _, raw := range rawMsgs {
+		role, _ := raw["role"].(string)
+		content, _ := raw["content"].(string)
+
+		msg := providers.Message{
+			Role:    role,
+			Content: content,
+		}
+		// Map "toolResult" → "tool" for API compatibility
+		if msg.Role == "toolResult" {
+			msg.Role = "tool"
+		}
+
+		// Handle tool calls
+		if role == "assistant" {
+			if tcsRaw, ok := raw["toolCalls"]; ok {
+				// toolCalls can be []any or []map[string]any
+				switch tcs := tcsRaw.(type) {
+				case []any:
+					for _, tcRaw := range tcs {
+						if tcMap, ok := tcRaw.(map[string]any); ok {
+							msg.ToolCalls = append(msg.ToolCalls, toolCallFromMap(tcMap))
+						}
+					}
+				case []map[string]any:
+					for _, tcMap := range tcs {
+						msg.ToolCalls = append(msg.ToolCalls, toolCallFromMap(tcMap))
+					}
+				}
+			}
+		}
+
+		// Handle tool results
+		if role == "tool" || role == "toolResult" {
+			msg.ToolCallID, _ = raw["toolCallId"].(string)
+			// toolName not in providers.Message but used for session write
+		}
+
+		msgs = append(msgs, msg)
+	}
+	return msgs
+}
+
+func toolCallFromMap(tcMap map[string]any) stream.ToolCall {
+	id, _ := tcMap["id"].(string)
+	name, _ := tcMap["name"].(string)
+	var argsStr string
+	if args, ok := tcMap["arguments"]; ok {
+		switch v := args.(type) {
+		case string:
+			argsStr = v
+		case map[string]any, []any:
+			if data, err := json.Marshal(v); err == nil {
+				argsStr = string(data)
+			}
+		}
+	}
+	return stream.ToolCall{
+		ID:        id,
+		Name:      name,
+		Arguments: argsStr,
+	}
+}
+
+// replaySessionToDisplay reads a JSONL session file and replays all events
+// visually through the display, showing thinking, text, tool calls, results
+// and usage as they happened during the original run.
+func replaySessionToDisplay(disp display.Display, sessionPath string) {
+	f, err := os.Open(sessionPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: cannot replay session: %v\n", err)
+		return
+	}
+	defer f.Close()
+
+	disp.ToolBlock("📋 Session history")
+	disp.End()
+
+	type pendingTool struct {
+		id   string
+		name string
+	}
+	var pendingTools []pendingTool
+
+	var lastUsage stream.Usage
+	var totalUsage stream.Usage
+	hasUsage := false
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
+
+		evType, _ := raw["type"].(string)
+		if evType == "session" || evType == "session_end" {
+			continue
+		}
+
+		msgRaw, ok := raw["message"].(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := msgRaw["role"].(string)
+		content, _ := msgRaw["content"].([]any)
+
+		switch role {
+		case "user":
+			// Show user prompt
+			for _, block := range content {
+				b, ok := block.(map[string]any)
+				if !ok {
+					continue
+				}
+				if txt, _ := b["text"].(string); txt != "" {
+					disp.Text("User: " + txt)
+				}
+			}
+
+		case "assistant":
+			for _, block := range content {
+				b, ok := block.(map[string]any)
+				if !ok {
+					continue
+				}
+				bType, _ := b["type"].(string)
+				switch bType {
+				case "thinking":
+					if txt, _ := b["thinking"].(string); txt != "" {
+						disp.Thinking(txt)
+					}
+				case "text":
+					if txt, _ := b["text"].(string); txt != "" {
+						disp.Text(txt)
+					}
+				case "toolCall":
+					id, _ := b["id"].(string)
+					name, _ := b["name"].(string)
+					disp.ToolCallStart(name)
+					if args, ok := b["arguments"]; ok {
+						switch v := args.(type) {
+						case string:
+							if v != "" {
+								disp.ToolCallDelta(v)
+							}
+						case map[string]any, []any:
+							if data, err := json.Marshal(v); err == nil {
+								disp.ToolCallDelta(string(data))
+							}
+						}
+					}
+					pendingTools = append(pendingTools, pendingTool{id: id, name: name})
+				}
+			}
+
+			// Track usage
+			if u, ok := raw["usage"].(map[string]any); ok {
+				lastUsage = parseUsageFromMap(u)
+				totalUsage.Input += lastUsage.Input
+				totalUsage.Output += lastUsage.Output
+				totalUsage.Reasoning += lastUsage.Reasoning
+				hasUsage = true
+			}
+
+		case "toolResult", "tool":
+			for _, block := range content {
+				b, ok := block.(map[string]any)
+				if !ok {
+					continue
+				}
+				bType, _ := b["type"].(string)
+				if bType != "text" {
+					continue
+				}
+				txt, _ := b["text"].(string)
+				toolName, _ := b["toolName"].(string)
+				toolCallID, _ := b["toolCallId"].(string)
+
+				// Match by toolCallId or name
+				matched := false
+				for i, pt := range pendingTools {
+					if pt.id == toolCallID || pt.name == toolName {
+						disp.ToolCallEnd(pt.name, txt)
+						pendingTools = append(pendingTools[:i], pendingTools[i+1:]...)
+						matched = true
+						break
+					}
+				}
+				if !matched && toolName != "" {
+					disp.ToolCallEnd(toolName, txt)
+				} else if !matched && len(pendingTools) > 0 {
+					pt := pendingTools[0]
+					disp.ToolCallEnd(pt.name, txt)
+					pendingTools = pendingTools[1:]
+				}
+			}
+		}
+	}
+
+	if hasUsage {
+		disp.Summary(totalUsage, stream.Stats{})
+	}
+
+	// Separator before new output
+	disp.End()
+	disp.ToolBlock("▶️ Continuing from session end")
+	disp.End()
+
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: session replay error: %v\n", err)
+	}
+}
+
+// parseUsageFromMap extracts stream.Usage from a JSON map.
+func parseUsageFromMap(u map[string]any) stream.Usage {
+	var us stream.Usage
+	if v, ok := u["input"].(float64); ok {
+		us.Input = int(v)
+	}
+	if v, ok := u["output"].(float64); ok {
+		us.Output = int(v)
+	}
+	if v, ok := u["reasoning"].(float64); ok {
+		us.Reasoning = int(v)
+	}
+	if v, ok := u["cacheRead"].(float64); ok {
+		us.CacheRead = int(v)
+	}
+	if v, ok := u["cacheWrite"].(float64); ok {
+		us.CacheWrite = int(v)
+	}
+	return us
 }

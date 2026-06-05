@@ -133,11 +133,14 @@ func TestLineEditorHandleKey(t *testing.T) {
 		}
 	})
 
-	t.Run("Ctrl+D on empty line returns true", func(t *testing.T) {
+	t.Run("Ctrl+D on empty line signals EOF", func(t *testing.T) {
 		e := &LineEditor{buffer: []rune{}}
 		done := e.handleKey(key{special: KeyCtrlD})
 		if !done {
 			t.Error("expected done (EOF)")
+		}
+		if !e.eofRequested {
+			t.Error("expected eofRequested flag")
 		}
 	})
 
@@ -149,6 +152,9 @@ func TestLineEditorHandleKey(t *testing.T) {
 		}
 		if e.cursorPos != 2 {
 			t.Errorf("cursorPos = %d, want 2", e.cursorPos)
+		}
+		if e.eofRequested {
+			t.Error("expected eofRequested to be false for non-empty buffer")
 		}
 	})
 
@@ -248,7 +254,7 @@ func TestLineEditorHandleKey(t *testing.T) {
 		}
 	})
 
-	t.Run("Ctrl+C clears buffer and signals interrupt", func(t *testing.T) {
+	t.Run("Ctrl+C on non-empty buffer clears buffer and signals interrupt", func(t *testing.T) {
 		e := &LineEditor{buffer: []rune("hello"), cursorPos: 5, prompt: ">>> "}
 		done := e.handleKey(key{special: KeyCtrlC})
 		if !done {
@@ -256,6 +262,43 @@ func TestLineEditorHandleKey(t *testing.T) {
 		}
 		if !e.interrupted {
 			t.Error("expected interrupted flag")
+		}
+		if e.eofRequested {
+			t.Error("expected eofRequested to be false")
+		}
+		if len(e.buffer) != 0 {
+			t.Errorf("buffer should be empty, got %q", string(e.buffer))
+		}
+		if e.cursorPos != 0 {
+			t.Errorf("cursorPos = %d, want 0", e.cursorPos)
+		}
+	})
+
+	t.Run("Ctrl+C on empty buffer signals EOF", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune{}, cursorPos: 0, prompt: ">>> "}
+		done := e.handleKey(key{special: KeyCtrlC})
+		if !done {
+			t.Error("expected done (should abort input)")
+		}
+		if e.interrupted {
+			t.Error("expected interrupted to be false for empty buffer")
+		}
+		if !e.eofRequested {
+			t.Error("expected eofRequested flag")
+		}
+	})
+
+	t.Run("ESC on non-empty buffer clears buffer and signals interrupt", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("hello"), cursorPos: 5, prompt: ">>> "}
+		done := e.handleKey(key{special: KeyEsc})
+		if !done {
+			t.Error("expected done (should abort input)")
+		}
+		if !e.interrupted {
+			t.Error("expected interrupted flag")
+		}
+		if e.eofRequested {
+			t.Error("expected eofRequested to be false")
 		}
 		if len(e.buffer) != 0 {
 			t.Errorf("buffer should be empty, got %q", string(e.buffer))

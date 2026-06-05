@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/decodo/tyci-agent/api"
 	"github.com/decodo/tyci-agent/display"
 	"github.com/decodo/tyci-agent/providers"
+	"github.com/decodo/tyci-agent/session"
 	"github.com/decodo/tyci-agent/stream"
 )
 
@@ -20,12 +22,14 @@ type ToolRunner interface {
 }
 
 type Config struct {
-	Model      string
-	System     string
-	MaxRetries int
-	Debug      bool
-	Tools      ToolRunner
-	Schema     json.RawMessage
+	Model        string
+	System       string
+	MaxRetries   int
+	Debug        bool
+	Tools        ToolRunner
+	Schema       json.RawMessage
+	Session      *session.Session // optional session logging / resume
+	ProviderName string           // provider name for session metadata
 }
 
 const DefaultMaxIterations = 50
@@ -33,22 +37,31 @@ const DefaultMaxIterations = 50
 // Run executes the agent loop. It will make at most MaxRetries retries on
 // transient errors, and at most MaxIterations tool-call iterations.
 // If MaxIterations is 0, DefaultMaxIterations is used.
-func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.Message, cfg Config) error {
+// Returns total usage accumulated during the run.
+func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.Message, cfg Config) (stream.Usage, error) {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 5
 	}
 
+	var totalUsage stream.Usage
 	maxIter := DefaultMaxIterations
 
 	for iter := 0; iter < maxIter; iter++ {
-		more, err := runOnce(ctx, p, d, msgs, cfg)
+		more, usage, err := runOnce(ctx, p, d, msgs, cfg)
+		if usage != nil {
+			totalUsage.Input += usage.Input
+			totalUsage.Output += usage.Output
+			totalUsage.Reasoning += usage.Reasoning
+			totalUsage.CacheRead += usage.CacheRead
+			totalUsage.CacheWrite += usage.CacheWrite
+		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return err
+				return totalUsage, err
 			}
 			if !api.IsRetryable(err) {
 				d.Error(err)
-				return err
+				return totalUsage, err
 			}
 
 			var lastErr error = err
@@ -57,9 +70,16 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				backoff := api.CalcBackoff(attempt, lastErr, api.RetryConfig{MaxRetries: cfg.MaxRetries})
 				d.Error(fmt.Errorf("⟳ retry %d/%d — %s", attempt+1, cfg.MaxRetries, lastErr.Error()))
 				if err := sleepWithCountdown(ctx, backoff); err != nil {
-					return err
+					return totalUsage, err
 				}
-				more, err = runOnce(ctx, p, d, msgs, cfg)
+				more, usage, err = runOnce(ctx, p, d, msgs, cfg)
+				if usage != nil {
+					totalUsage.Input += usage.Input
+					totalUsage.Output += usage.Output
+					totalUsage.Reasoning += usage.Reasoning
+					totalUsage.CacheRead += usage.CacheRead
+					totalUsage.CacheWrite += usage.CacheWrite
+				}
 				if err == nil {
 					recovered = true
 					break
@@ -67,21 +87,21 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				lastErr = err
 				if !api.IsRetryable(err) {
 					d.Error(err)
-					return err
+					return totalUsage, err
 				}
 			}
 			if !recovered {
 				d.Error(fmt.Errorf("all %d retries exhausted: %w", cfg.MaxRetries, lastErr))
-				return lastErr
+				return totalUsage, lastErr
 			}
 		}
 		if !more {
-			return nil
+			return totalUsage, nil
 		}
 	}
 
 	d.Text(fmt.Sprintf("\n⚠️ Agent wykonał %d iteracji narzędzi – możliwa nieskończona pętla. Przerywam.\n", maxIter))
-	return nil
+	return totalUsage, nil
 }
 
 func sleepWithCountdown(ctx context.Context, backoff time.Duration) error {
@@ -97,7 +117,7 @@ func sleepWithCountdown(ctx context.Context, backoff time.Duration) error {
 	return nil
 }
 
-func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.Message, cfg Config) (more bool, err error) {
+func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.Message, cfg Config) (more bool, usage *stream.Usage, err error) {
 	events, streamErr := p.Stream(ctx, providers.Request{
 		Model:    cfg.Model,
 		System:   cfg.System,
@@ -106,13 +126,14 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		Debug:    cfg.Debug,
 	})
 	if streamErr != nil {
-		return false, streamErr
+		return false, nil, streamErr
 	}
 
 	var toolCalls []stream.ToolCall
 	var toolDeltas = make(map[string]strings.Builder) // accumulate deltas per tool call ID
 	var lastUsage stream.Usage
 	var textBuf strings.Builder
+	var thinkingBuf strings.Builder
 	startTime := time.Now()
 	var firstToken time.Duration
 	var hasFirstToken bool
@@ -127,6 +148,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 				hasFirstToken = true
 			}
 			d.Thinking(e.Text)
+			thinkingBuf.WriteString(e.Text)
 		case stream.TextDelta:
 			if !hasFirstToken {
 				firstToken = time.Since(startTime)
@@ -165,24 +187,32 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		case stream.Finish:
 			lastUsage = e.Usage
 		case stream.StreamError:
-			return false, e.Err
+			return false, nil, e.Err
 		}
 	}
 
-	if textBuf.Len() > 0 || len(toolCalls) > 0 {
+	hasText := textBuf.Len() > 0
+	hasTools := len(toolCalls) > 0
+
+	if hasText || hasTools {
 		msg := providers.Message{Role: "assistant"}
-		if textBuf.Len() > 0 {
+		if hasText {
 			msg.Content = textBuf.String()
 		}
-		if len(toolCalls) > 0 {
+		if hasTools {
 			tcs := make([]stream.ToolCall, len(toolCalls))
 			copy(tcs, toolCalls)
 			msg.ToolCalls = tcs
 		}
 		*msgs = append(*msgs, msg)
+
+		// Write assistant message to session
+		if cfg.Session != nil {
+			writeAssistantSessionEvent(cfg.Session, cfg.ProviderName, cfg.Model, msg, thinkingBuf.String(), &lastUsage)
+		}
 	}
 
-	if len(toolCalls) == 0 {
+	if !hasTools {
 		// No tools – show usage and stop
 		if lastUsage.Input > 0 || lastUsage.Output > 0 {
 			d.Summary(lastUsage, stream.Stats{
@@ -190,7 +220,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 				FirstToken: firstToken,
 			})
 		}
-		return false, nil
+		return false, &lastUsage, nil
 	}
 
 	// Show each tool call with its arguments
@@ -206,7 +236,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	// Execute tools in parallel
 	results := executeTools(ctx, cfg.Tools, toolCalls)
 
-	// Show results
+	// Show results and write session events
 	for i, tc := range toolCalls {
 		d.ToolCallEnd(tc.Name, results[i])
 		*msgs = append(*msgs, providers.Message{
@@ -214,6 +244,11 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 			ToolCallID: tc.ID,
 			Content:    results[i],
 		})
+
+		// Write tool result to session
+		if cfg.Session != nil {
+			writeToolResultSessionEvent(cfg.Session, tc.ID, tc.Name, results[i])
+		}
 	}
 
 	// Show usage AFTER tools execution
@@ -223,7 +258,101 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 			FirstToken: firstToken,
 		})
 	}
-	return true, nil
+	return true, &lastUsage, nil
+}
+
+func writeAssistantSessionEvent(s *session.Session, providerName, model string, msg providers.Message, thinking string, usage *stream.Usage) {
+	var blocks []session.ContentBlock
+
+	// Add thinking blocks first (before text, chronologically)
+	if thinking != "" {
+		blocks = append(blocks, session.ContentBlock{
+			Type:     "thinking",
+			Thinking: thinking,
+		})
+	}
+
+	// Use text content as a text block
+	if msg.Content != "" {
+		blocks = append(blocks, session.ContentBlock{
+			Type: "text",
+			Text: msg.Content,
+		})
+	}
+
+	// Add tool call blocks
+	for _, tc := range msg.ToolCalls {
+		var args json.RawMessage
+		if tc.Arguments != "" {
+			args = json.RawMessage(tc.Arguments)
+		}
+		blocks = append(blocks, session.ContentBlock{
+			Type:      "toolCall",
+			ID:        tc.ID,
+			Name:      tc.Name,
+			Arguments: args,
+		})
+	}
+
+	opts := &session.MessageOptions{
+		Provider: providerName,
+		Model:    model,
+	}
+	if usage != nil {
+		opts.Usage = &session.Usage{
+			Input:       usage.Input,
+			Output:      usage.Output,
+			Reasoning:   usage.Reasoning,
+			CacheRead:   usage.CacheRead,
+			CacheWrite:  usage.CacheWrite,
+			TotalTokens: usage.Input + usage.Output + usage.Reasoning,
+		}
+	}
+
+	if err := s.WriteMessage("assistant", blocks, opts); err != nil {
+		// Non-fatal: log but don't break agent
+		fmt.Fprintf(os.Stderr, "Warning: session write (assistant): %v\n", err)
+	}
+}
+
+func writeToolResultSessionEvent(s *session.Session, toolCallID, toolName, result string) {
+	blocks := []session.ContentBlock{
+		{
+			Type:       "text",
+			Text:       result,
+			ToolCallID: toolCallID,
+			ToolName:   toolName,
+			IsError:    strings.HasPrefix(result, "Error:"),
+		},
+	}
+	if err := s.WriteMessage("toolResult", blocks, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: session write (toolResult): %v\n", err)
+	}
+}
+
+// WriteSessionEnd writes a session_end event and closes the session.
+// Safe to call multiple times; subsequent calls are no-ops.
+func WriteSessionEnd(s *session.Session, status string, exitCode int, totalUsage *stream.Usage) {
+	if s == nil {
+		return
+	}
+	var u *session.Usage
+	if totalUsage != nil {
+		u = &session.Usage{
+			Input:       totalUsage.Input,
+			Output:      totalUsage.Output,
+			Reasoning:   totalUsage.Reasoning,
+			CacheRead:   totalUsage.CacheRead,
+			CacheWrite:  totalUsage.CacheWrite,
+			TotalTokens: totalUsage.Input + totalUsage.Output + totalUsage.Reasoning,
+		}
+	}
+	if err := s.WriteSessionEnd(status, exitCode, u); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: session write (session_end): %v\n", err)
+	}
+	if err := s.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: session close: %v\n", err)
+	}
 }
 
 func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.ToolCall) []string {
