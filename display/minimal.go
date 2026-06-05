@@ -270,7 +270,16 @@ func (m *Minimal) Summary(usage UsageInfo) {
 	m.totalOut += usage.OutputTokens
 	m.totalCacheRd += usage.CacheReadInputTokens
 	m.totalCacheWr += usage.CacheCreateInputTokens
-	m.printUsage("Usage:", newIn, usage.OutputTokens, usage.CacheReadInputTokens, usage.CacheCreateInputTokens)
+	parts := fmt.Sprintf("in=%d out=%d", newIn, usage.OutputTokens)
+	if usage.CacheReadInputTokens > 0 || usage.CacheCreateInputTokens > 0 {
+		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", usage.CacheReadInputTokens, usage.CacheCreateInputTokens)
+	}
+	if usage.StopReason != "" {
+		parts += fmt.Sprintf(" stop_reason=%s", usage.StopReason)
+	}
+	m.startLine("Usage:")
+	m.curContent.WriteString(parts)
+	m.finalizeLine()
 }
 
 func (m *Minimal) Error(err error) {

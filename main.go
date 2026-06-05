@@ -124,7 +124,7 @@ func main() {
 			}
 
 			conversation = append(conversation, providers.Message{Role: "user", Content: prompt})
-			conversation = runLLMLoop(provider, modelName, conversation, disp, *debugFlag)
+			conversation = runLLMLoop(context.Background(), provider, modelName, conversation, disp, *debugFlag)
 			disp.End()
 			fmt.Fprint(os.Stdout, "\n")
 		}
@@ -169,7 +169,7 @@ func main() {
 			}
 
 			conversation = append(conversation, providers.Message{Role: "user", Content: line})
-			conversation = runLLMLoop(provider, modelName, conversation, disp, *debugFlag)
+			conversation = runLLMLoop(ctx, provider, modelName, conversation, disp, *debugFlag)
 			disp.End()
 
 			fmt.Fprint(os.Stdout, "\n")
@@ -196,7 +196,7 @@ func main() {
 	}
 
 	messages := []providers.Message{{Role: "user", Content: prompt}}
-	runLLMLoop(provider, modelName, messages, disp, *debugFlag)
+	runLLMLoop(context.Background(), provider, modelName, messages, disp, *debugFlag)
 	disp.End()
 	if !expectJSON {
 		fmt.Fprintln(os.Stdout)
@@ -209,11 +209,14 @@ type toolRunResult struct {
 	err     string
 }
 
-func runLLMLoop(provider providers.Provider, modelName string, messages []providers.Message, disp display.Display, debug bool) []providers.Message {
+func runLLMLoop(ctx context.Context, provider providers.Provider, modelName string, messages []providers.Message, disp display.Display, debug bool) []providers.Message {
 	var totalInputTokens, totalOutputTokens, totalReasoningTokens int
 
-	result, err := provider.SendWithHandler(modelName, messages, disp, debug)
+	result, err := provider.SendWithHandler(ctx, modelName, messages, disp, debug)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return messages
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -245,9 +248,9 @@ loop:
 				wg.Add(1)
 				go func(idx int, tc providers.ToolCall, args map[string]any) {
 					defer wg.Done()
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-					defer cancel()
-					toolRes := tools.RunTool(ctx, tc.Name, args)
+					toolCtx, toolCancel := context.WithTimeout(ctx, 5*time.Minute)
+					defer toolCancel()
+					toolRes := tools.RunTool(toolCtx, tc.Name, args)
 					results[idx] = toolRunResult{
 						success: toolRes.Success,
 						content: toolRes.Content,
@@ -257,6 +260,10 @@ loop:
 			}
 
 			wg.Wait()
+
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return messages
+			}
 
 			for i, tc := range result.ToolCalls {
 				if parsedArgs[i] == nil {
@@ -278,8 +285,11 @@ loop:
 			messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
 			messages = append(messages, providers.Message{Role: "user", Content: "Tool results:\n" + strings.Join(toolResults, "\n---\n")})
 
-			result, err = provider.SendWithHandler(modelName, messages, disp, debug)
+			result, err = provider.SendWithHandler(ctx, modelName, messages, disp, debug)
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return messages
+				}
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -307,8 +317,11 @@ loop:
 		}
 
 		messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
-		result, err = provider.SendWithHandler(modelName, messages, disp, debug)
+		result, err = provider.SendWithHandler(ctx, modelName, messages, disp, debug)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return messages
+			}
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

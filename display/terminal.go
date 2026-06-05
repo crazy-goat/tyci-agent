@@ -179,6 +179,9 @@ func (t *Terminal) Summary(usage UsageInfo) {
 	if usage.CacheReadInputTokens > 0 || usage.CacheCreateInputTokens > 0 {
 		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", usage.CacheReadInputTokens, usage.CacheCreateInputTokens)
 	}
+	if usage.StopReason != "" {
+		parts += fmt.Sprintf(" stop_reason=%s", usage.StopReason)
+	}
 	if t.interactive {
 		fmt.Fprintf(os.Stderr, "\n%s%s%s%s\n\n", t.bgUsage, clearLine, parts, bgReset)
 	} else {

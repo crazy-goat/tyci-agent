@@ -5,6 +5,7 @@ type UsageInfo struct {
 	OutputTokens          int
 	CacheReadInputTokens  int
 	CacheCreateInputTokens int
+	StopReason            string
 }
 
 type ToolResult struct {

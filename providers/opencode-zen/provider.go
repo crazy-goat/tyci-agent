@@ -397,7 +397,7 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
 }
 
-func (p *provider) SendWithHandler(model string, messages []providers.Message, handler display.Display, debug bool) (*providers.SendResult, error) {
+func (p *provider) SendWithHandler(ctx context.Context, model string, messages []providers.Message, handler display.Display, debug bool) (*providers.SendResult, error) {
 	apiKey := os.Getenv("OPENCODE_ZEN_API_KEY")
 	if apiKey == "" {
 		apiKey = os.Getenv("OPENCODE_API_KEY")
@@ -440,7 +440,7 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 		}
 		debugHandler := &api.DebugHandler{Inner: inner, Debug: debug && attempt == 0}
 
-		err := api.StreamChat(context.Background(), apiKey, endpoint, body, debugHandler)
+		err := api.StreamChat(ctx, apiKey, endpoint, body, debugHandler)
 		if err == nil {
 			if attempt > 0 {
 				handler.Chunk(retryColl.text)

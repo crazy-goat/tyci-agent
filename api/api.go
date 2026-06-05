@@ -184,10 +184,11 @@ func (d *DebugHandler) Summary(usage UsageInfo) {
 		cacheWrite = usage.CacheMissTokens
 	}
 	d.Inner.Summary(display.UsageInfo{
-		InputTokens:          in,
-		OutputTokens:         out + usage.ReasoningTokens,
-		CacheReadInputTokens: cacheRead,
+		InputTokens:           in,
+		OutputTokens:          out + usage.ReasoningTokens,
+		CacheReadInputTokens:  cacheRead,
 		CacheCreateInputTokens: cacheWrite,
+		StopReason:            d.FinishReason,
 	})
 }
 

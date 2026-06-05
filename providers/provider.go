@@ -76,7 +76,7 @@ type Provider interface {
 	FreeModels() []string
 	Send(ctx context.Context, model, prompt, system string, debug bool) (*SendResult, error)
 	SendWithMessages(ctx context.Context, model, prompt, system string, messages []Message, debug bool) (*SendResult, error)
-	SendWithHandler(model string, messages []Message, handler display.Display, debug bool) (*SendResult, error)
+	SendWithHandler(ctx context.Context, model string, messages []Message, handler display.Display, debug bool) (*SendResult, error)
 }
 
 var DefaultRetryConfig = api.RetryConfig{MaxRetries: 5, BaseBackoff: 4, MaxBackoff: 128}
