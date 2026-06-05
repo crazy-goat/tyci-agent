@@ -148,8 +148,8 @@ func main() {
 			}
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, readline.ErrInterrupt) {
-					ctx, cancel = signal.NotifyContext(context.Background(), os.Interrupt)
-					continue
+					fmt.Println("Bye!")
+					return
 				}
 				fmt.Fprintf(os.Stderr, "Read error: %v\n", err)
 				continue
@@ -170,6 +170,10 @@ func main() {
 
 			conversation = append(conversation, providers.Message{Role: "user", Content: line})
 			conversation = runLLMLoop(ctx, provider, modelName, conversation, disp, *debugFlag)
+			if errors.Is(ctx.Err(), context.Canceled) {
+				fmt.Println("Bye!")
+				return
+			}
 			disp.End()
 
 			fmt.Fprint(os.Stdout, "\n")

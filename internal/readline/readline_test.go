@@ -234,11 +234,14 @@ func TestLineEditorHandleKey(t *testing.T) {
 		}
 	})
 
-	t.Run("Ctrl+C clears buffer and re-prompts", func(t *testing.T) {
+	t.Run("Ctrl+C clears buffer and signals interrupt", func(t *testing.T) {
 		e := &LineEditor{buffer: []rune("hello"), cursorPos: 5, prompt: ">>> "}
 		done := e.handleKey(key{special: KeyCtrlC})
-		if done {
-			t.Error("expected not done (should re-prompt, not exit)")
+		if !done {
+			t.Error("expected done (should abort input)")
+		}
+		if !e.interrupted {
+			t.Error("expected interrupted flag")
 		}
 		if len(e.buffer) != 0 {
 			t.Errorf("buffer should be empty, got %q", string(e.buffer))

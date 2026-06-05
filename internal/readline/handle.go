@@ -9,7 +9,8 @@ func (e *LineEditor) handleKey(k key) bool {
 		e.cursorPos = 0
 		e.printCtrlC()
 		e.historyPos = len(e.history)
-		return false
+		e.interrupted = true
+		return true
 	case KeyCtrlD:
 		if len(e.buffer) == 0 {
 			return true

@@ -37,6 +37,8 @@ type LineEditor struct {
 	searchBuf    []rune
 	searchCursor int
 	searchDir    int
+
+	interrupted bool
 }
 
 func New(historyFile string, maxEntries int) (*LineEditor, error) {
@@ -110,6 +112,11 @@ func (e *LineEditor) Read(ctx context.Context, prompt string) (string, error) {
 		} else {
 			done := e.handleKey(key)
 			if done {
+				if e.interrupted {
+					e.interrupted = false
+					e.resetLine()
+					return "", ErrInterrupt
+				}
 				line := string(e.buffer)
 				e.resetLine()
 				fmt.Fprint(os.Stdout, "\r\n")
