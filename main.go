@@ -28,6 +28,11 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "agent" {
+		runAgentSubcommand(os.Args[2:])
+		return
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "connect" {
 		fs := flag.NewFlagSet("connect", flag.ExitOnError)
 		name := fs.String("name", "", "Provider name")
@@ -48,6 +53,7 @@ func main() {
 	noDebugFlag := flag.Bool("no-debug", false, "Disable API request/response debug logging")
 	debugFlag := flag.Bool("debug", false, "Show HTTP request/response data")
 	modelFlag := flag.String("model", "", "Model to use (format: provider/model)")
+	agentFlag := flag.String("agent", "", "Agent name to use for default model (from agents config)")
 	promptFlag := flag.String("prompt", "", "Prompt for response")
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.local/share/tyci-agent/history)")
@@ -92,6 +98,13 @@ func main() {
 	}
 
 	model := *modelFlag
+	if model == "" {
+		model = agent.ResolveModel("", *agentFlag)
+	}
+	if model == "" {
+		fmt.Fprintf(os.Stderr, "Error: no model specified. Use --model, --agent, or configure a default agent.\n")
+		os.Exit(1)
+	}
 
 	provider, modelName, ok := providers.FindModel(model)
 	if !ok {
@@ -256,6 +269,80 @@ func main() {
 	fmt.Fprintln(os.Stdout)
 	if sessionPath != "" {
 		fmt.Fprintf(os.Stderr, "📁 Session: %s\n", sessionPath)
+	}
+}
+
+func runAgentSubcommand(args []string) {
+	if len(args) == 0 {
+		// Default: list agents
+		agent.DisplayAgents()
+		return
+	}
+
+	cmd := args[0]
+	switch cmd {
+	case "list":
+		agent.DisplayAgents()
+
+	case "get":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent agent get <name>")
+			os.Exit(1)
+		}
+		name := args[1]
+		model, ok := agent.GetAgent(name)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Agent %q not found\n", name)
+			os.Exit(1)
+		}
+		fmt.Printf("%s = %s\n", name, model)
+
+	case "set":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent agent set <name> --model=\"provider/model\"")
+			os.Exit(1)
+		}
+		name := args[1]
+		// Parse --model flag from remaining args
+		rest := args[2:]
+		model := ""
+		for i, a := range rest {
+			if a == "--model" || a == "-m" {
+				if i+1 < len(rest) {
+					model = rest[i+1]
+				}
+			} else if strings.HasPrefix(a, "--model=") {
+				model = strings.TrimPrefix(a, "--model=")
+			} else if strings.HasPrefix(a, "-m=") {
+				model = strings.TrimPrefix(a, "-m=")
+			}
+		}
+		if model == "" {
+			fmt.Fprintln(os.Stderr, "Error: --model is required (format: provider/model)")
+			os.Exit(1)
+		}
+		if err := agent.SetAgent(name, model); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Agent %q set to %s (config: %s)\n", name, model, agent.ConfigPath())
+
+	case "delete":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent agent delete <name>")
+			os.Exit(1)
+		}
+		name := args[1]
+		if err := agent.DeleteAgent(name); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Agent %q deleted (config: %s)\n", name, agent.ConfigPath())
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown agent subcommand: %q\n", cmd)
+		fmt.Fprintln(os.Stderr, "Usage: tyci-agent agent [list|get|set|delete]")
+		os.Exit(1)
 	}
 }
 
