@@ -17,7 +17,7 @@ type Display interface {
 	Thinking(text string)
 	Text(text string)
 	ToolCall(name, args, result string)
-	Summary(usage stream.Usage)
+	Summary(usage stream.Usage, stats stream.Stats)
 	Error(err error)
 	End()
 }

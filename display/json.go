@@ -26,7 +26,7 @@ func (j *JSON) Text(text string) {
 	j.text.WriteString(text)
 }
 
-func (j *JSON) Summary(usage stream.Usage) {
+func (j *JSON) Summary(usage stream.Usage, stats stream.Stats) {
 	j.usage = &usage
 }
 

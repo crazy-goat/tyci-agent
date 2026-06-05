@@ -73,7 +73,7 @@ func TestSilent_AllMethods_NoOutput(t *testing.T) {
 	s := NewSilent()
 	s.Thinking("ignored")
 	s.ToolCall("read", `{"path": "x"}`, "content")
-	s.Summary(stream.Usage{Input: 10, Output: 20})
+	s.Summary(stream.Usage{Input: 10, Output: 20}, stream.Stats{})
 	s.Error(nil)
 	s.End()
 	sync()
@@ -194,7 +194,7 @@ func TestTerminal_Summary_OutputsUsage(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.Summary(stream.Usage{Input: 100, Output: 50, CacheRead: 200})
+	term.Summary(stream.Usage{Input: 100, Output: 50, CacheRead: 200}, stream.Stats{})
 	sync()
 
 	got := stdout.String()

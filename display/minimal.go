@@ -215,18 +215,10 @@ func (m *Minimal) ToolCall(name, args, result string) {
 	}
 }
 
-func (m *Minimal) Summary(usage stream.Usage) {
+func (m *Minimal) Summary(usage stream.Usage, stats stream.Stats) {
 	m.flushActiveBlock()
-	newIn := usage.Input - usage.CacheRead
-	if newIn < 0 {
-		newIn = 0
-	}
-	parts := fmt.Sprintf("in=%d out=%d", newIn, usage.Output)
-	if usage.CacheRead > 0 || usage.CacheWrite > 0 {
-		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", usage.CacheRead, usage.CacheWrite)
-	}
 	m.startLine("Usage:")
-	m.curContent.WriteString(parts)
+	m.curContent.WriteString(buildUsageLine(usage, stats))
 	m.finalizeLine()
 }
 

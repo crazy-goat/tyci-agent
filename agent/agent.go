@@ -99,15 +99,30 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	var toolCalls []stream.ToolCall
 	var lastUsage stream.Usage
 	var textBuf strings.Builder
+	startTime := time.Now()
+	var firstToken time.Duration
+	var hasFirstToken bool
 
 	for ev := range events {
 		switch e := ev.(type) {
 		case stream.ThinkingDelta:
+			if !hasFirstToken {
+				firstToken = time.Since(startTime)
+				hasFirstToken = true
+			}
 			d.Thinking(e.Text)
 		case stream.TextDelta:
+			if !hasFirstToken {
+				firstToken = time.Since(startTime)
+				hasFirstToken = true
+			}
 			d.Text(e.Text)
 			textBuf.WriteString(e.Text)
 		case stream.ToolCall:
+			if !hasFirstToken {
+				firstToken = time.Since(startTime)
+				hasFirstToken = true
+			}
 			toolCalls = append(toolCalls, e)
 		case stream.Finish:
 			lastUsage = e.Usage
@@ -121,7 +136,10 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	}
 
 	if lastUsage.Input > 0 || lastUsage.Output > 0 {
-		d.Summary(lastUsage)
+		d.Summary(lastUsage, stream.Stats{
+			Duration:   time.Since(startTime),
+			FirstToken: firstToken,
+		})
 	}
 
 	if len(toolCalls) == 0 {

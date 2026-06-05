@@ -56,6 +56,41 @@ type chatUsage struct {
 	CacheCreateInputTokens int `json:"cache_creation_tokens,omitempty"`
 }
 
+func (u *chatUsage) UnmarshalJSON(data []byte) error {
+	type alias chatUsage
+	if err := json.Unmarshal(data, (*alias)(u)); err != nil {
+		return err
+	}
+	if u.CacheReadInputTokens > 0 && u.CacheCreateInputTokens > 0 {
+		return nil
+	}
+	var extra struct {
+		PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
+		PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
+		CachedTokens          int `json:"cached_tokens"`
+		PromptTokensDetails   *struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	}
+	if err := json.Unmarshal(data, &extra); err != nil {
+		return nil
+	}
+	if u.CacheReadInputTokens == 0 {
+		switch {
+		case extra.PromptCacheHitTokens > 0:
+			u.CacheReadInputTokens = extra.PromptCacheHitTokens
+		case extra.CachedTokens > 0:
+			u.CacheReadInputTokens = extra.CachedTokens
+		case extra.PromptTokensDetails != nil && extra.PromptTokensDetails.CachedTokens > 0:
+			u.CacheReadInputTokens = extra.PromptTokensDetails.CachedTokens
+		}
+	}
+	if u.CacheCreateInputTokens == 0 && extra.PromptCacheMissTokens > 0 {
+		u.CacheCreateInputTokens = extra.PromptCacheMissTokens
+	}
+	return nil
+}
+
 func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, emit func(stream.Event) error) error {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {

@@ -133,17 +133,9 @@ func (t *Terminal) ToolCall(name, args, result string) {
 	fmt.Fprint(os.Stdout, block.String())
 }
 
-func (t *Terminal) Summary(usage stream.Usage) {
+func (t *Terminal) Summary(usage stream.Usage, stats stream.Stats) {
 	t.newBlock(blockUsage, t.bgUsage)
-	newIn := usage.Input - usage.CacheRead
-	if newIn < 0 {
-		newIn = 0
-	}
-	parts := fmt.Sprintf("Usage: in=%d out=%d", newIn, usage.Output)
-	if usage.CacheRead > 0 || usage.CacheWrite > 0 {
-		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", usage.CacheRead, usage.CacheWrite)
-	}
-	fmt.Fprint(os.Stdout, parts)
+	fmt.Fprintf(os.Stdout, "Usage: %s", buildUsageLine(usage, stats))
 }
 
 func (t *Terminal) Error(err error) {

@@ -21,7 +21,7 @@ func (s *Silent) Text(text string) {
 	s.text.WriteString(text)
 }
 
-func (s *Silent) Summary(usage stream.Usage) {}
+func (s *Silent) Summary(usage stream.Usage, stats stream.Stats) {}
 func (s *Silent) Error(err error)             {}
 func (s *Silent) End()                        {}
 
