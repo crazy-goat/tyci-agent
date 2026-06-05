@@ -1,3 +1,5 @@
+//go:build !nogemini
+
 package api
 
 import (
@@ -12,23 +14,6 @@ import (
 	"github.com/decodo/tyci-agent/internal/debug"
 	"github.com/decodo/tyci-agent/stream"
 )
-
-type GeminiContent struct {
-	Parts []GeminiPart `json:"parts"`
-	Role  string       `json:"role,omitempty"`
-}
-
-type GeminiPart struct {
-	Text string `json:"text"`
-}
-
-type GeminiRequest struct {
-	Contents          []GeminiContent `json:"contents"`
-	Stream            bool            `json:"stream"`
-	SystemInstruction *struct {
-		Parts []GeminiPart `json:"parts"`
-	} `json:"systemInstruction,omitempty"`
-}
 
 type geminiStreamChunk struct {
 	Candidates []struct {
@@ -64,8 +49,7 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := defaultClientProvider().Do(req)
 	if err != nil {
 		return err
 	}

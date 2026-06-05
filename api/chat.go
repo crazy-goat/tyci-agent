@@ -130,8 +130,7 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := defaultClientProvider().Do(req)
 	if err != nil {
 		return err
 	}

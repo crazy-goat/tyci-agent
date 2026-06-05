@@ -5,10 +5,25 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// defaultClient is the shared HTTP client used by all API streaming functions.
+// It reuses connections and avoids allocating a new Transport per request.
+var defaultClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns:        4,
+		MaxIdleConnsPerHost: 2,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
+
+// defaultClientProvider returns the shared HTTP client.
+// Extracted as a variable so tests can override it.
+var defaultClientProvider = func() *http.Client { return defaultClient }
 
 type RetryableError struct {
 	Code       int

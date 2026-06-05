@@ -9,11 +9,22 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci-agent/display"
 	"github.com/decodo/tyci-agent/providers"
 	"github.com/decodo/tyci-agent/session"
 	"github.com/decodo/tyci-agent/stream"
 )
+
+// silentDisplay is a minimal Display implementation for tests.
+type silentDisplay struct{}
+func (s *silentDisplay) Thinking(string)            {}
+func (s *silentDisplay) Text(string)                {}
+func (s *silentDisplay) ToolCallStart(string)       {}
+func (s *silentDisplay) ToolCallDelta(string)       {}
+func (s *silentDisplay) ToolCallEnd(string, string) {}
+func (s *silentDisplay) ToolBlock(string)           {}
+func (s *silentDisplay) Summary(stream.Usage, stream.Stats) {}
+func (s *silentDisplay) Error(error)               {}
+func (s *silentDisplay) End()                      {}
 
 type mockProvider struct {
 	chunks []string
@@ -175,7 +186,7 @@ func (c *captureDisplay) End()            {}
 
 func TestRunAppendsAssistantMessage(t *testing.T) {
 	p := &mockProvider{chunks: []string{"Hello", " world"}}
-	d := display.NewSilent()
+	d := &silentDisplay{}
 	msgs := []providers.RichMessage{{
 		Role:    "user",
 		Content: []providers.ContentBlock{{Type: "text", Text: "Hi"}},
@@ -201,7 +212,7 @@ func TestRunAppendsAssistantMessage(t *testing.T) {
 
 func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
 	p := &mockProvider{chunks: nil}
-	d := display.NewSilent()
+	d := &silentDisplay{}
 	msgs := []providers.RichMessage{{
 		Role:    "user",
 		Content: []providers.ContentBlock{{Type: "text", Text: "Hi"}},

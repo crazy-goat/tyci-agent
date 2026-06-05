@@ -56,38 +56,6 @@ func captureOutput(t *testing.T) (stdoutBuf, stderrBuf *bytes.Buffer, sync func(
 	return stdoutBuf, stderrBuf, sync, restore
 }
 
-func TestSilent_Text_BuffersText(t *testing.T) {
-	s := NewSilent()
-	s.Text("hello ")
-	s.Text("world")
-
-	if got := s.Text2(); got != "hello world" {
-		t.Errorf("expected 'hello world', got %q", got)
-	}
-}
-
-func TestSilent_AllMethods_NoOutput(t *testing.T) {
-	stdout, stderr, sync, restore := captureOutput(t)
-	defer restore()
-
-	s := NewSilent()
-	s.Thinking("ignored")
-	s.ToolCallStart("read")
-	s.ToolCallDelta(`{"path": "x"}`)
-	s.ToolCallEnd("read", "content")
-	s.Summary(stream.Usage{Input: 10, Output: 20}, stream.Stats{})
-	s.Error(nil)
-	s.End()
-	sync()
-
-	if stdout.Len() != 0 {
-		t.Errorf("expected no stdout, got %q", stdout.String())
-	}
-	if stderr.Len() != 0 {
-		t.Errorf("expected no stderr, got %q", stderr.String())
-	}
-}
-
 func TestTerminal_Text_WritesStdout(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()

@@ -1,7 +1,7 @@
 # Go build configuration
 BINARY=tyci-agent
 
-.PHONY: build release clean install
+.PHONY: build release minimal clean install
 
 # Debug build (with debug symbols, no optimizations)
 build:
@@ -9,10 +9,19 @@ build:
 		-gcflags "all=-N -l" \
 		-o $(BINARY) .
 
-# Optimized release build (stripped, optimized)
+# Optimized release build (stripped, optimized, trimmed paths)
 release:
 	go build \
 		-ldflags "-s -w" \
+		-trimpath \
+		-o $(BINARY) .
+
+# Minimal build: no anthropic, no gemini, stripped
+minimal:
+	go build \
+		-tags "noanthropic nogemini" \
+		-ldflags "-s -w" \
+		-trimpath \
 		-o $(BINARY) .
 
 install: build
