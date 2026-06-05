@@ -209,3 +209,428 @@ func TestTerminal_Summary_OutputsUsage(t *testing.T) {
 		t.Errorf("expected cache info, got %q", got)
 	}
 }
+
+// --- Tests for stripAnsi ---
+
+func TestStripAnsi_EmptyString(t *testing.T) {
+	if got := stripAnsi(""); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestStripAnsi_NoAnsi(t *testing.T) {
+	input := "hello world"
+	if got := stripAnsi(input); got != input {
+		t.Errorf("expected %q, got %q", input, got)
+	}
+}
+
+func TestStripAnsi_WithAnsi(t *testing.T) {
+	input := "\033[31mred\033[0m"
+	expected := "red"
+	if got := stripAnsi(input); got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestStripAnsi_MultipleAnsi(t *testing.T) {
+	input := "\033[1m\033[31mbold red\033[0m"
+	expected := "bold red"
+	if got := stripAnsi(input); got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestStripAnsi_ClearLine(t *testing.T) {
+	input := "a\033[Kb"
+	expected := "ab"
+	if got := stripAnsi(input); got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+// --- Tests for visibleWidth ---
+
+func TestVisibleWidth_Empty(t *testing.T) {
+	if got := visibleWidth(""); got != 0 {
+		t.Errorf("expected 0, got %d", got)
+	}
+}
+
+func TestVisibleWidth_Plain(t *testing.T) {
+	if got := visibleWidth("hello"); got != 5 {
+		t.Errorf("expected 5, got %d", got)
+	}
+}
+
+func TestVisibleWidth_WithAnsi(t *testing.T) {
+	input := "\033[31mhello\033[0m"
+	if got := visibleWidth(input); got != 5 {
+		t.Errorf("expected 5, got %d", got)
+	}
+}
+
+func TestVisibleWidth_Unicode(t *testing.T) {
+	input := "💭 hello"
+	if got := visibleWidth(input); got != 8 { // 💭 is 2 columns, space=1, hello=5
+		t.Errorf("expected 8, got %d", got)
+	}
+}
+
+// --- Tests for wrapText ---
+
+func TestWrapText_ZeroWidth(t *testing.T) {
+	input := "hello"
+	if got := wrapText(input, 0, 0); got != input {
+		t.Errorf("expected %q, got %q", input, got)
+	}
+}
+
+func TestWrapText_NegativeWidth(t *testing.T) {
+	input := "hello"
+	if got := wrapText(input, -1, 0); got != input {
+		t.Errorf("expected %q, got %q", input, got)
+	}
+}
+
+func TestWrapText_EmptyString(t *testing.T) {
+	if got := wrapText("", 10, 0); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestWrapText_ShortLine(t *testing.T) {
+	input := "hello"
+	got := wrapText(input, 80, 0)
+	if got != input {
+		t.Errorf("expected %q, got %q", input, got)
+	}
+}
+
+func TestWrapText_ExactFit(t *testing.T) {
+	input := "hello"
+	got := wrapText(input, 5, 0)
+	if got != input {
+		t.Errorf("expected %q, got %q", input, got)
+	}
+}
+
+func TestWrapText_LongLine(t *testing.T) {
+	input := "1234567890abcdef"
+	got := wrapText(input, 10, 0)
+	// Should wrap at 10 chars
+	expected := "1234567890\033[K\nabcdef"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestWrapText_MultipleWraps(t *testing.T) {
+	input := "123456789012345678901234567890"
+	got := wrapText(input, 10, 0)
+	expected := "1234567890\033[K\n1234567890\033[K\n1234567890"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestWrapText_MultipleLines(t *testing.T) {
+	input := "short\n1234567890abcdef"
+	got := wrapText(input, 10, 0)
+	expected := "short\n1234567890\033[K\nabcdef"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestWrapText_WithAnsi(t *testing.T) {
+	// ANSI sequences should not count towards width
+	input := "\033[31m1234567890\033[0mabcdef"
+	got := wrapText(input, 10, 0)
+	// The visible part is "1234567890abcdef" = 16 chars
+	// First 10 visible chars: "1234567890" (with ANSI around)
+	// Then "\033[K\n"
+	// Then "abcdef" (with ANSI reset before it? No, the ANSI reset is at end)
+	// Actually the input is: \033[31m1234567890\033[0mabcdef
+	// After wrapping at visual position 10:
+	// Part1: \033[31m1234567890\033[0m (10 visible chars)
+	// Part2: abcdef
+	// Expected: \033[31m1234567890\033[0m\033[K\nabcdef
+	expected := "\033[31m1234567890\033[0m\033[K\nabcdef"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestWrapText_WithAnsiSpanningWrap(t *testing.T) {
+	// ANSI at start, then text that wraps
+	input := "\033[31m1234567890abcdef\033[0m"
+	got := wrapText(input, 10, 0)
+	// First 10 visible: 1234567890, all red
+	// Then clearLine + newline
+	// Then remaining: abcdef, still red (no reset until end)
+	expected := "\033[31m1234567890\033[K\nabcdef\033[0m"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestWrapText_WithUnicode(t *testing.T) {
+	input := "💭1234567890abcdef"
+	got := wrapText(input, 10, 0)
+	// 💭 is one rune (visible width 1), so 10 visible chars: "💭123456789"
+	expected := "💭123456789\033[K\n0abcdef"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestWrapText_AlreadyHasClearLine(t *testing.T) {
+	input := "1234567890\033[K\nabcdef"
+	got := wrapText(input, 10, 0)
+	// The first line is exactly 10 visible + clearLine, so no wrap needed
+	expected := "1234567890\033[K\nabcdef"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestWrapText_LongLineWithClearLine(t *testing.T) {
+	input := "1234567890abcdef\033[K\nxyz"
+	got := wrapText(input, 10, 0)
+	// The first line is 16 vis chars + clearLine, so it gets wrapped
+	// But wrapText splits at 10, so:
+	// "1234567890" + "\033[K\n" + "abcdef\033[K\n" + "xyz"
+	expected := "1234567890\033[K\nabcdef\033[K\nxyz"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+// --- Integration: Terminal with long lines ---
+
+func TestTerminal_Thinking_LongLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	// Create a terminal with known width for deterministic test
+	term := NewTerminal()
+	term.termWidth = 20 // force narrow width
+	longText := "0123456789012345678901234567890123456789" // 40 chars
+	term.Thinking(longText)
+	sync()
+
+	got := stdout.String()
+	// Should have multiple clearLine sequences (one per wrapped line + one per \n from ReplaceAll)
+	// Count \033[K occurrences
+	count := strings.Count(got, "\033[K")
+	if count < 3 {
+		t.Errorf("expected at least 3 clearLine sequences for a 40-char line wrapped at 20, got %d. Output: %q", count, got)
+	}
+	// Should contain the thinking icon
+	if !strings.Contains(got, "💭") {
+		t.Errorf("expected thinking icon, got %q", got)
+	}
+	// Should contain the background color
+	if !strings.Contains(got, term.bgThinking) {
+		t.Errorf("expected bgThinking code, got %q", got)
+	}
+}
+
+func TestTerminal_ToolCallStart_LongLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 30 // force narrow width
+	// Description that's long
+	term.ToolCallStart("bash", `{"description": "this is a very long description that should wrap to multiple lines", "command": "ls -la"}`)
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "🔧") {
+		t.Errorf("expected tool icon, got %q", got)
+	}
+	// Should have multiple clearLine sequences
+	count := strings.Count(got, "\033[K")
+	if count < 2 {
+		t.Errorf("expected at least 2 clearLine sequences, got %d. Output: %q", count, got)
+	}
+}
+
+func TestTerminal_ToolCallEnd_LongLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 20
+	term.ToolCallStart("bash", `{"description": "test", "command": "echo hello"}`)
+	term.ToolCallEnd("bash", "0123456789012345678901234567890123456789") // 40 chars
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "🔧") {
+		t.Errorf("expected tool icon, got %q", got)
+	}
+	// Should have multiple clearLine sequences (from both start and end)
+	count := strings.Count(got, "\033[K")
+	if count < 3 {
+		t.Errorf("expected at least 3 clearLine sequences, got %d. Output: %q", count, got)
+	}
+}
+
+func TestTerminal_Summary_LongLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 30 // narrow width to force wrap
+	term.Summary(stream.Usage{Input: 12345, Output: 67890, CacheRead: 111, CacheWrite: 222}, stream.Stats{})
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "Usage:") {
+		t.Errorf("expected Usage prefix, got %q", got)
+	}
+	// Should have clearLine sequences
+	count := strings.Count(got, "\033[K")
+	if count < 2 {
+		t.Errorf("expected at least 2 clearLine sequences, got %d. Output: %q", count, got)
+	}
+}
+
+func TestTerminal_Thinking_NoWrapForShortLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 80
+	term.Thinking("short")
+	sync()
+
+	got := stdout.String()
+	// Should have exactly 2 clearLine: one from newBlock, one from ReplaceAll after text (but there's no \n)
+	// Actually: newBlock prints bg + clearLine, then Thinking writes "💭 short" (no newlines)
+	// So only the initial clearLine from newBlock
+	// But wait, the text "short" doesn't have \n, so ReplaceAll doesn't add extra
+	// Then closeBlock adds another clearLine + bgReset + \n\n
+	// Actually closeBlock is called later (not in this test)
+	count := strings.Count(got, "\033[K")
+	// Just check it's a small number
+	if count > 5 {
+		t.Errorf("expected few clearLine sequences for short line, got %d. Output: %q", count, got)
+	}
+	_ = count
+}
+
+// --- Tests for streaming (multiple Thinking calls) ---
+
+func TestTerminal_Thinking_StreamingChunks(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 20
+
+	// First chunk
+	term.Thinking("first chunk ")
+	// Second chunk (continues on same line)
+	term.Thinking("second chunk that is very long and should wrap correctly")
+	sync()
+
+	got := stdout.String()
+	// Should have multiple clearLine sequences
+	count := strings.Count(got, "\033[K")
+	if count < 3 {
+		t.Errorf("expected at least 3 clearLine sequences for streaming chunks, got %d. Output: %q", count, got)
+	}
+	// Should contain the thinking icon only once (for the first chunk)
+	if strings.Count(got, "💭") != 1 {
+		t.Errorf("expected exactly one thinking icon, got %d", strings.Count(got, "💭"))
+	}
+	// Should contain both chunk texts (maybe split across lines)
+	if !strings.Contains(got, "first chunk") {
+		t.Errorf("expected 'first chunk' in output")
+	}
+	if !strings.Contains(got, "chunk") {
+		t.Errorf("expected 'chunk' in output")
+	}
+}
+
+func TestTerminal_Thinking_StreamingWithNewlines(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 20
+
+	// First chunk ends with newline
+	term.Thinking("first line\n")
+	// Second chunk starts at column 0
+	term.Thinking("second line that is very long and should wrap correctly")
+	sync()
+
+	got := stdout.String()
+	// Should have multiple clearLine sequences
+	count := strings.Count(got, "\033[K")
+	if count < 3 {
+		t.Errorf("expected at least 3 clearLine sequences, got %d. Output: %q", count, got)
+	}
+	// Should contain both lines
+	if !strings.Contains(got, "first line") {
+		t.Errorf("expected 'first line' in output")
+	}
+	if !strings.Contains(got, "second line") {
+		t.Errorf("expected 'second line' in output")
+	}
+}
+
+func TestTerminal_Thinking_LongLineInMiddleOfText(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 20
+
+	// Single call with multiple lines, middle line is long
+	term.Thinking("normal line\nthis line is extremely long and should be properly wrapped with background color\nanother normal line")
+	sync()
+
+	got := stdout.String()
+	count := strings.Count(got, "\033[K")
+	if count < 5 {
+		t.Errorf("expected at least 5 clearLine sequences for multi-line with long middle line, got %d. Output: %q", count, got)
+	}
+	// Should contain all three lines (words may be split across wraps)
+	if !strings.Contains(got, "normal line") {
+		t.Errorf("expected 'normal line' in output")
+	}
+	if !strings.Contains(got, "this line") {
+		t.Errorf("expected 'this line' in output")
+	}
+	if !strings.Contains(got, "another normal line") {
+		t.Errorf("expected 'another normal line' in output")
+	}
+}
+
+// --- Tests for ToolCall streaming ---
+
+func TestTerminal_ToolCallEnd_LongResult(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 20
+
+	term.ToolCallStart("bash", `{"description": "test", "command": "echo hello"}`)
+	term.ToolCallEnd("bash", "short\n0123456789012345678901234567890123456789")
+	sync()
+
+	got := stdout.String()
+	// Should have multiple clearLine sequences
+	count := strings.Count(got, "\033[K")
+	if count < 4 {
+		t.Errorf("expected at least 4 clearLine sequences, got %d. Output: %q", count, got)
+	}
+}
+
