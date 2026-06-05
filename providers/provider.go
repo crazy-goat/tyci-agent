@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/decodo/tyci-agent/api"
@@ -26,7 +28,7 @@ func BuildSystemPrompt() string {
 		tempDir = "%TEMP%"
 	}
 
-	return fmt.Sprintf(`You coding agent. Non-interactive. No ask question. Just do.
+	prompt := fmt.Sprintf(`You coding agent. Non-interactive. No ask question. Just do.
 
 Context:
 - Date: %s
@@ -44,6 +46,16 @@ Tools available:
 
 Be terse. No fluff. Short sentence. Get job done.
 `, date, wd, osName, tempDir)
+
+	// Append AGENTS.md from CWD if present
+	if agentsMd, err := os.ReadFile(filepath.Join(wd, "AGENTS.md")); err == nil {
+		content := strings.TrimSpace(string(agentsMd))
+		if content != "" {
+			prompt += "\n---\nAdditional instructions from AGENTS.md:\n" + content
+		}
+	}
+
+	return prompt
 }
 
 // ContentBlock represents a single content block within a RichMessage.
