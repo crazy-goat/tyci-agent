@@ -81,6 +81,11 @@ func main() {
 
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: *maxRetriesFlag, BaseBackoff: 4, MaxBackoff: 128}
 
+	// If neither --prompt nor --interactive mode given, or --prompt is empty, just exit cleanly
+	if *modeFlag != "interactive" && *promptFlag == "" {
+		return
+	}
+
 	model := *modelFlag
 
 	provider, modelName, ok := providers.FindModel(model)
@@ -134,14 +139,40 @@ func main() {
 		return
 	}
 
-	if *promptFlag == "" {
-		fmt.Fprintln(os.Stderr, "Error: must provide --prompt")
-		flag.Usage()
-		os.Exit(1)
-	}
+	// Create cancellable context for the agent run
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+
+	// Handle Ctrl+C during non-interactive agent run
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	sigDone := make(chan struct{})
+	go func() {
+		defer close(sigDone)
+		select {
+		case <-sigCh:
+			runCancel()
+		case <-runCtx.Done():
+		}
+	}()
+
+	// Also watch for ESC if stdin is a terminal
+	stopESC := watchESC(runCancel)
 
 	messages := []providers.Message{{Role: "user", Content: *promptFlag}}
-	if err := agent.Run(ctx, provider, disp, &messages, cfg); err != nil {
+	err := agent.Run(runCtx, provider, disp, &messages, cfg)
+
+	stopESC()
+	signal.Stop(sigCh)
+	runCancel()
+	<-sigDone
+
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			disp.End()
+			fmt.Fprint(os.Stdout, "\n")
+			os.Exit(130) // standard exit code for SIGINT
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
