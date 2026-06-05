@@ -757,6 +757,72 @@ func TestTerminal_ToolCall_ReadHidesResult(t *testing.T) {
 	}
 }
 
+func TestTerminal_ToolCall_SameLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 80
+
+	term.ToolCallStart("read")
+	term.ToolCallDelta(`{"path": "main.go"}`)
+	sync()
+
+	got := stdout.String()
+	// The first line (before any \n) should contain both the tool name and its arguments
+	firstLine := got
+	if idx := strings.IndexByte(got, '\n'); idx >= 0 {
+		firstLine = got[:idx]
+	}
+	// Remove ANSI escapes for assertion
+	clean := stripAnsi(firstLine)
+	if !strings.Contains(clean, "🔧 read") {
+		t.Errorf("expected '🔧 read' in first line, got %q", clean)
+	}
+	if !strings.Contains(clean, `"path": "main.go"`) {
+		t.Errorf("expected args in first line, got %q", clean)
+	}
+	// There should be NO newline between tool name and arguments
+	// (the first line should contain both)
+	if strings.Contains(clean, "🔧") && strings.Contains(clean, `"path"`) {
+		// Both are on same line — good
+	} else {
+		t.Errorf("tool name and args should be on the same line, got first line: %q", clean)
+	}
+}
+
+func TestTerminal_ToolCall_SameLineMultipleDeltas(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 80
+
+	// Stream deltas that build up the full arguments
+	term.ToolCallStart("bash")
+	term.ToolCallDelta(`{"description": "`)
+	term.ToolCallDelta(`list files`)
+	term.ToolCallDelta(`", "command": "`)
+	term.ToolCallDelta(`ls -la"}`)
+	sync()
+
+	got := stdout.String()
+	firstLine := got
+	if idx := strings.IndexByte(got, '\n'); idx >= 0 {
+		firstLine = got[:idx]
+	}
+	clean := stripAnsi(firstLine)
+	if !strings.Contains(clean, "🔧 bash") {
+		t.Errorf("expected '🔧 bash' in first line, got %q", clean)
+	}
+	if !strings.Contains(clean, "list files") {
+		t.Errorf("expected description in first line, got %q", clean)
+	}
+	if !strings.Contains(clean, "ls -la") {
+		t.Errorf("expected command in first line, got %q", clean)
+	}
+}
+
 func TestTerminal_ToolCallDelta_EmptyDoesNothing(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()

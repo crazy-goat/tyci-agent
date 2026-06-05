@@ -178,11 +178,11 @@ func (t *Terminal) Text(text string) {
 func (t *Terminal) ToolCallStart(name string) {
 	t.newBlock(blockTool, t.bgTools)
 
-	out := fmt.Sprintf("🔧 %s\n", name)
+	out := fmt.Sprintf("🔧 %s ", name)
 	out = wrapText(out, t.termWidth, 0)
 	out = strings.ReplaceAll(out, "\n", "\n"+clearLine)
 	fmt.Fprint(os.Stdout, out)
-	t.cursorCol = 0
+	t.cursorCol = visibleWidth("🔧 " + name + " ")
 }
 
 func (t *Terminal) ToolCallDelta(delta string) {
@@ -190,15 +190,13 @@ func (t *Terminal) ToolCallDelta(delta string) {
 		return
 	}
 	out := delta
-	out = wrapText(out, t.termWidth, 0)
+	out = wrapText(out, t.termWidth, t.cursorCol)
 	out = strings.ReplaceAll(out, "\n", "\n"+clearLine)
-
-	if t.curBg != "" {
-		out = clearLine + out
-	}
 
 	fmt.Fprint(os.Stdout, out)
 
+	// Update cursorCol — if ended with newline, cursor is at column 0,
+	// otherwise add to existing column offset
 	if strings.HasSuffix(out, "\n") || strings.HasSuffix(out, clearLine+"\n") {
 		t.cursorCol = 0
 	} else {
@@ -207,7 +205,11 @@ func (t *Terminal) ToolCallDelta(delta string) {
 			lastLine = out[idx+1:]
 		}
 		lastLine = strings.TrimPrefix(lastLine, clearLine)
-		t.cursorCol = visibleWidth(lastLine)
+		if !strings.Contains(out, "\n") {
+			t.cursorCol += visibleWidth(lastLine)
+		} else {
+			t.cursorCol = visibleWidth(lastLine)
+		}
 	}
 }
 

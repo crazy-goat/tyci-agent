@@ -106,6 +106,7 @@ func GetToolsSchema() []map[string]any {
 					"properties": map[string]any{
 						"description": map[string]any{"type": "string", "description": "Short description of what this command does"},
 						"command":     map[string]any{"type": "string", "description": "Command to execute"},
+						"timeout":     map[string]any{"type": "integer", "description": "Optional timeout in seconds for this command (default: 120)"},
 					},
 					"required": []string{"command"},
 				},
