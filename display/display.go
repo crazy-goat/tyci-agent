@@ -14,6 +14,7 @@ type Display interface {
 	ToolCallStart(name string)
 	ToolCallDelta(delta string)
 	ToolCallEnd(name string, result string)
+	ToolBlock(msg string)
 	Summary(usage stream.Usage, stats stream.Stats)
 	Error(err error)
 	End()

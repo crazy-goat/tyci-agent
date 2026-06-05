@@ -39,6 +39,7 @@ const (
 	blockText
 	blockTool
 	blockUsage
+	blockToolExec
 )
 
 type Terminal struct {
@@ -230,6 +231,24 @@ func (t *Terminal) ToolCallEnd(name string, result string) {
 		lastLine := out
 		if idx := strings.LastIndex(out, "\n"); idx >= 0 {
 			lastLine = out[idx+1:]
+		}
+		t.cursorCol = visibleWidth(lastLine)
+	}
+}
+
+func (t *Terminal) ToolBlock(msg string) {
+	t.newBlock(blockToolExec, t.bgUsage)
+	line := msg
+	line = wrapText(line, t.termWidth, 0)
+	line = strings.ReplaceAll(line, "\n", "\n"+clearLine)
+	fmt.Fprint(os.Stdout, line)
+
+	if strings.HasSuffix(line, "\n") || strings.HasSuffix(line, clearLine+"\n") {
+		t.cursorCol = 0
+	} else {
+		lastLine := line
+		if idx := strings.LastIndex(line, "\n"); idx >= 0 {
+			lastLine = line[idx+1:]
 		}
 		t.cursorCol = visibleWidth(lastLine)
 	}

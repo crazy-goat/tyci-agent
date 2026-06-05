@@ -18,6 +18,7 @@ func (s *Silent) Thinking(text string)            {}
 func (s *Silent) ToolCallStart(name string)       {}
 func (s *Silent) ToolCallDelta(delta string)      {}
 func (s *Silent) ToolCallEnd(name, result string) {}
+func (s *Silent) ToolBlock(msg string)            {}
 
 func (s *Silent) Text(text string) {
 	s.text.WriteString(text)

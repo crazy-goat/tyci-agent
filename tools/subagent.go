@@ -65,6 +65,7 @@ func (c *collector) ToolCallStart(name string) {
 }
 func (c *collector) ToolCallDelta(delta string) {}
 func (c *collector) ToolCallEnd(name, result string) {}
+func (c *collector) ToolBlock(msg string)            {}
 func (c *collector) Summary(usage stream.Usage, stats stream.Stats) {
 	c.mu.Lock()
 	c.usage = usage

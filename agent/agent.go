@@ -117,6 +117,8 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	var firstToken time.Duration
 	var hasFirstToken bool
 
+	var toolBlockShown bool
+
 	for ev := range events {
 		switch e := ev.(type) {
 		case stream.ThinkingDelta:
@@ -137,9 +139,14 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 				firstToken = time.Since(startTime)
 				hasFirstToken = true
 			}
-			// Just track that we received this tool call, don't display yet
+			// Track for full arguments
 			if _, ok := toolDeltas[e.ID]; !ok {
 				toolDeltas[e.ID] = strings.Builder{}
+			}
+			// Gray box with hourglass on first tool detection – instant feedback
+			if !toolBlockShown {
+				d.ToolBlock("⏳ waiting for tools...")
+				toolBlockShown = true
 			}
 		case stream.ToolCallDelta:
 			if b, ok := toolDeltas[e.ID]; ok {
@@ -175,19 +182,18 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		*msgs = append(*msgs, msg)
 	}
 
-	// Show usage BEFORE tool calls
-	if lastUsage.Input > 0 || lastUsage.Output > 0 {
-		d.Summary(lastUsage, stream.Stats{
-			Duration:   time.Since(startTime),
-			FirstToken: firstToken,
-		})
-	}
-
 	if len(toolCalls) == 0 {
+		// No tools – show usage and stop
+		if lastUsage.Input > 0 || lastUsage.Output > 0 {
+			d.Summary(lastUsage, stream.Stats{
+				Duration:   time.Since(startTime),
+				FirstToken: firstToken,
+			})
+		}
 		return false, nil
 	}
 
-	// Now display all tool calls (both streamed and non-streamed)
+	// Show each tool call with its arguments
 	for _, tc := range toolCalls {
 		d.ToolCallStart(tc.Name)
 		if delta, ok := toolDeltas[tc.ID]; ok && delta.Len() > 0 {
@@ -197,13 +203,24 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		}
 	}
 
+	// Execute tools in parallel
 	results := executeTools(ctx, cfg.Tools, toolCalls)
+
+	// Show results
 	for i, tc := range toolCalls {
 		d.ToolCallEnd(tc.Name, results[i])
 		*msgs = append(*msgs, providers.Message{
 			Role:       "tool",
 			ToolCallID: tc.ID,
 			Content:    results[i],
+		})
+	}
+
+	// Show usage AFTER tools execution
+	if lastUsage.Input > 0 || lastUsage.Output > 0 {
+		d.Summary(lastUsage, stream.Stats{
+			Duration:   time.Since(startTime),
+			FirstToken: firstToken,
 		})
 	}
 	return true, nil

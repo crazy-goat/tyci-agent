@@ -221,6 +221,13 @@ func (m *Minimal) ToolCallEnd(name string, result string) {
 	m.blockStart = time.Now()
 }
 
+func (m *Minimal) ToolBlock(msg string) {
+	m.flushActiveBlock()
+	m.startLine("Tools:")
+	m.curContent.WriteString(msg)
+	m.finalizeLine()
+}
+
 func (m *Minimal) Summary(usage stream.Usage, stats stream.Stats) {
 	m.flushActiveBlock()
 	m.startLine("Usage:")

@@ -847,7 +847,72 @@ func TestTerminal_ToolCallDelta_EmptyDoesNothing(t *testing.T) {
 	// Just verify it doesn't crash or produce malformed output
 }
 
-// --- Tests for Minimal display with tool calls ---
+func TestTerminal_ToolBlock_WritesGrayBox(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.ToolBlock("⏳ waiting for tools...")
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, term.bgUsage) {
+		t.Errorf("expected gray background in ToolBlock output, got %q", got)
+	}
+	if !strings.Contains(got, "⏳ waiting for tools...") {
+		t.Errorf("expected message in ToolBlock output, got %q", got)
+	}
+}
+
+func TestTerminal_ToolBlock_ClosesPreviousBlock(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.ToolBlock("⏳ waiting...")
+	term.ToolBlock("⏳ still waiting...")
+	sync()
+
+	got := stdout.String()
+	// Should have bgReset between the two blocks
+	if !strings.Contains(got, bgReset) {
+		t.Errorf("expected bgReset between ToolBlock calls, got %q", got)
+	}
+}
+
+func TestTerminal_ToolBlock_ThenToolCall(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.ToolBlock("⏳ waiting for tools...")
+	term.ToolCallStart("bash")
+	term.ToolCallDelta(`{"command": "ls"}`)
+	term.ToolCallEnd("bash", "file1")
+	sync()
+
+	got := stdout.String()
+	// ToolBlock closes before ToolCallStart opens new block
+	if !strings.Contains(got, "⏳ waiting for tools...") {
+		t.Errorf("expected waiting message, got %q", got)
+	}
+	if !strings.Contains(got, "🔧") {
+		t.Errorf("expected tool icon, got %q", got)
+	}
+	if !strings.Contains(got, "file1") {
+		t.Errorf("expected result, got %q", got)
+	}
+}
+
+func TestTerminal_ToolBlock_ExitCodeZero(t *testing.T) {
+	// Just ensure no crash on basic smoke test
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+	term := NewTerminal()
+	term.ToolBlock("⏳ waiting...")
+	sync()
+	_ = stdout
+}
 
 func TestMinimal_ToolCallStart(t *testing.T) {
 	m := NewMinimal()
@@ -878,6 +943,22 @@ func TestMinimal_ToolCallDelta_Multiple(t *testing.T) {
 	m.ToolCallDelta(`list`)
 	m.ToolCallDelta(` files"}`)
 	m.ToolCallEnd("bash", "result")
+	// Just ensure no panic
+}
+
+func TestMinimal_ToolBlock_NoPanic(t *testing.T) {
+	m := NewMinimal()
+	m.ToolBlock("⏳ waiting for tools...")
+	m.ToolBlock("second call")
+	// Just ensure no panic
+}
+
+func TestMinimal_ToolBlock_ThenToolCall(t *testing.T) {
+	m := NewMinimal()
+	m.ToolBlock("⏳ waiting for tools...")
+	m.ToolCallStart("bash")
+	m.ToolCallDelta(`{"command": "ls"}`)
+	m.ToolCallEnd("bash", "file1")
 	// Just ensure no panic
 }
 
