@@ -40,6 +40,7 @@ type Terminal struct {
 	thinkingActive  bool
 	thinkingStarted bool
 	sawStderr       bool
+	sawStdout       bool
 	toolCount       int
 
 	pendingTools []ToolCall
@@ -67,6 +68,7 @@ func NewTerminal(hideThinking, hideTools bool, interactive bool) *Terminal {
 func (t *Terminal) Chunk(text string) {
 	fmt.Fprint(os.Stdout, text)
 	_ = os.Stdout.Sync()
+	t.sawStdout = true
 }
 
 func (t *Terminal) Thinking(text string) {
@@ -126,6 +128,11 @@ func (t *Terminal) ToolResult(name string, result *ToolResult) {
 	tc := t.pendingTools[0]
 	t.pendingTools = t.pendingTools[1:]
 
+	if t.interactive && t.sawStdout {
+		fmt.Fprintln(os.Stderr)
+		t.sawStdout = false
+	}
+
 	if t.toolCount > 0 {
 		fmt.Fprintln(os.Stderr)
 	}
@@ -134,6 +141,9 @@ func (t *Terminal) ToolResult(name string, result *ToolResult) {
 	if tc.Name == "read" {
 		fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):%s%s\n", t.bgTools, clearLine, tc.Name, tc.Arguments, clearLine, bgReset)
 		t.sawStderr = true
+		if t.interactive {
+			fmt.Fprintln(os.Stderr)
+		}
 		return
 	}
 
@@ -159,6 +169,9 @@ func (t *Terminal) ToolResult(name string, result *ToolResult) {
 		}
 	}
 	t.sawStderr = true
+	if t.interactive {
+		fmt.Fprintln(os.Stderr)
+	}
 }
 
 func (t *Terminal) Summary(usage UsageInfo) {
@@ -171,7 +184,7 @@ func (t *Terminal) Summary(usage UsageInfo) {
 		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", usage.CacheReadInputTokens, usage.CacheCreateInputTokens)
 	}
 	if t.interactive {
-		fmt.Fprintf(os.Stderr, "\n%s%s%s%s\n", t.bgUsage, clearLine, parts, bgReset)
+		fmt.Fprintf(os.Stderr, "\n%s%s%s%s\n\n", t.bgUsage, clearLine, parts, bgReset)
 	} else {
 		fmt.Fprintf(os.Stderr, "\n%s%s\n", clearLine, parts)
 	}
