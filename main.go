@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"time"
@@ -87,12 +90,20 @@ func main() {
 	if *interactiveFlag {
 		var conversation []providers.Message
 
-		editor, err := readline.New(historyFile, readline.DefaultMaxEntries)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+		var editor *readline.LineEditor
+		if *noHistoryFlag {
+			editor = nil
+		} else {
+			var err error
+			editor, err = readline.New(historyFile, readline.DefaultMaxEntries)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: cannot init readline: %v\n", err)
+				editor = nil
+			}
 		}
-		defer editor.Close()
+		if editor != nil {
+			defer editor.Close()
+		}
 
 		if *promptTextFlag != "" || *promptJSONFlag != "" {
 			if *promptTextFlag != "" {
@@ -107,28 +118,51 @@ func main() {
 			fmt.Fprint(os.Stdout, "\n")
 		}
 
-		fmt.Fprint(os.Stdout, ">>> ")
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer cancel()
+
 		for {
-			line, err := editor.ReadLine()
+			var line string
+			var err error
+
+			if editor != nil {
+				line, err = editor.Read(ctx, ">>> ")
+			} else {
+				line, err = simplePrompt(">>> ")
+			}
+
+			if errors.Is(err, readline.ErrEOF) {
+				fmt.Println("Bye!")
+				return
+			}
 			if err != nil {
-				break
-			}
-			if line == "/exit" {
-				break
-			}
-			if line == "" {
-				fmt.Fprint(os.Stdout, ">>> ")
+				if errors.Is(err, context.Canceled) || errors.Is(err, readline.ErrInterrupt) {
+					ctx, cancel = signal.NotifyContext(context.Background(), os.Interrupt)
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "Read error: %v\n", err)
 				continue
 			}
 
-			editor.AddHistory(line)
+			line = strings.TrimSpace(line)
+			if line == "/exit" {
+				fmt.Println("Bye!")
+				return
+			}
+			if line == "" {
+				continue
+			}
+
+			if editor != nil {
+				editor.AddHistory(line)
+			}
+
 			conversation = append(conversation, providers.Message{Role: "user", Content: line})
 			conversation = runLLMLoop(provider, modelName, conversation, disp, *debugFlag)
 			disp.End()
 
-			fmt.Fprint(os.Stdout, "\n>>> ")
+			fmt.Fprint(os.Stdout, "\n")
 		}
-		return
 	}
 
 	if *promptTextFlag == "" && *promptJSONFlag == "" {
@@ -249,4 +283,17 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 
 	messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
 	return messages
+}
+
+var fallbackScanner *bufio.Scanner
+
+func simplePrompt(prompt string) (string, error) {
+	if fallbackScanner == nil {
+		fallbackScanner = bufio.NewScanner(os.Stdin)
+	}
+	fmt.Fprint(os.Stdout, prompt)
+	if !fallbackScanner.Scan() {
+		return "", readline.ErrEOF
+	}
+	return fallbackScanner.Text(), fallbackScanner.Err()
 }
