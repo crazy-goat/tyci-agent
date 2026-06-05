@@ -165,44 +165,50 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		defer editor.Close()
 	}
 
-	sigCtx, sigCancel := signal.NotifyContext(baseCtx, os.Interrupt)
-	defer sigCancel()
-
 	for {
+		// Per-iteration context — Ctrl+C or ESC cancels this, returning to prompt
+		iterCtx, iterCancel := context.WithCancel(baseCtx)
+
 		var line string
 		var err error
 
 		if editor != nil {
-			line, err = editor.Read(sigCtx, ">>> ")
+			line, err = editor.Read(iterCtx, ">>> ")
 		} else {
 			line, err = simplePrompt(">>> ")
 		}
 
 		if errors.Is(err, readline.ErrEOF) {
+			iterCancel()
 			fmt.Println("Bye!")
 			return
 		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, readline.ErrInterrupt) {
 				// Ctrl+C or ESC during input — return to prompt
+				iterCancel()
 				fmt.Fprint(os.Stdout, "\n")
 				continue
 			}
 			fmt.Fprintf(os.Stdout, "Read error: %v\n", err)
+			iterCancel()
 			continue
 		}
 
 		line = strings.TrimSpace(line)
 		if line == "/exit" {
+			iterCancel()
 			fmt.Println("Bye!")
 			return
 		}
 		if line == "/new" {
+			iterCancel()
 			conversation = nil
 			fmt.Print("\033[2J\033[H")
 			continue
 		}
 		if line == "" {
+			iterCancel()
 			continue
 		}
 
@@ -212,13 +218,25 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 
 		conversation = append(conversation, providers.Message{Role: "user", Content: line})
 
-		// Per-iteration context — cancelling it returns to prompt instead of exiting
-		iterCtx, iterCancel := context.WithCancel(sigCtx)
+		// Agent phase — Ctrl+C (SIGINT) and ESC cancel the iteration
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt)
+		sigDone := make(chan struct{})
+		go func() {
+			defer close(sigDone)
+			select {
+			case <-sigCh:
+				iterCancel()
+			case <-iterCtx.Done():
+			}
+		}()
 
-		// Watch for ESC key during agent execution to cancel iteration
 		stopESC := watchESC(iterCancel)
 		err = agent.Run(iterCtx, provider, disp, &conversation, cfg)
 		stopESC()
+
+		signal.Stop(sigCh)
+		<-sigDone
 		iterCancel()
 
 		if err != nil {
@@ -239,8 +257,9 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 
 // watchESC starts a goroutine that monitors the terminal for the ESC key (0x1b).
 // When ESC is pressed, it calls cancel() to interrupt the current operation.
-// It sets stdin to cbreak mode (non-canonical, echo off, ISIG on, OPOST on)
-// so that individual keypresses can be read without breaking display output.
+// It sets stdin to raw+cbreak mode (non-canonical, echo off, ISIG on, OPOST on)
+// with VMIN=0 and VTIME=1 (100ms timeout) so the goroutine can exit promptly
+// when the context is cancelled externally (e.g. Ctrl+C).
 // Returns a cleanup function that restores the original terminal state.
 // If stdin is not a terminal, returns a no-op function.
 func watchESC(cancel context.CancelFunc) func() {
@@ -249,20 +268,19 @@ func watchESC(cancel context.CancelFunc) func() {
 		return func() {}
 	}
 
-	// Save current terminal state
 	oldState, err := term.GetState(fd)
 	if err != nil {
 		return func() {}
 	}
 
-	// Set raw mode first (non-canonical, no echo, etc.)
+	// Set raw mode (non-canonical, no echo, etc.)
 	_, err = term.MakeRaw(fd)
 	if err != nil {
 		return func() {}
 	}
 
-	// Re-enable ISIG (signal generation for Ctrl+C) and OPOST (output processing)
-	// while keeping non-canonical mode and echo off.
+	// Tweak: keep ISIG (for Ctrl+C signals) and OPOST (output processing),
+	// set VMIN=0 VTIME=1 so read() returns every 100ms instead of blocking forever.
 	var t syscall.Termios
 	if _, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), syscall.TCGETS, uintptr(unsafe.Pointer(&t)), 0, 0, 0); errno != 0 {
 		term.Restore(fd, oldState)
@@ -270,6 +288,8 @@ func watchESC(cancel context.CancelFunc) func() {
 	}
 	t.Lflag |= syscall.ISIG
 	t.Oflag |= syscall.OPOST
+	t.Cc[syscall.VMIN] = 0
+	t.Cc[syscall.VTIME] = 1 // 100ms
 	if _, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), syscall.TCSETS, uintptr(unsafe.Pointer(&t)), 0, 0, 0); errno != 0 {
 		term.Restore(fd, oldState)
 		return func() {}
@@ -282,13 +302,19 @@ func watchESC(cancel context.CancelFunc) func() {
 		for {
 			n, err := os.Stdin.Read(buf)
 			if err != nil || n == 0 {
-				// read interrupted (e.g. by Ctrl+C signal) or EOF
-				return
+				// timeout (VTIME) with no data, or error — loop and check done
+				select {
+				case <-done:
+					return
+				default:
+					continue
+				}
 			}
 			if buf[0] == 0x1b { // ESC
 				cancel()
 				return
 			}
+			// Any other key is discarded
 		}
 	}()
 
