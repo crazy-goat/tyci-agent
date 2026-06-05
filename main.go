@@ -190,21 +190,27 @@ func main() {
 	// Also watch for ESC if stdin is a terminal
 	stopESC := watchESC(runCancel)
 
-	messages := []providers.Message{{Role: "user", Content: *promptFlag}}
+	messages := []providers.RichMessage{{
+		Role: "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: *promptFlag}},
+	}}
 
 	// Resume from session if applicable
 	if sess != nil && sess.IsResume() {
 		parsedLines := sess.Messages()
 		rebuiltMsgs, err := session.RebuildMessages(parsedLines)
 		if err == nil && len(rebuiltMsgs) > 0 {
-			conversation := rebuildToProviderMessages(rebuiltMsgs)
+			conversation := rebuiltMsgs
 			fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages) from %s\n", sess.ID(), len(conversation), sessionPath)
 
 			// Visual replay of the session history
 			replaySessionToDisplay(disp, sessionPath)
 
 			// Append current prompt as new user message
-			conversation = append(conversation, providers.Message{Role: "user", Content: *promptFlag})
+			conversation = append(conversation, providers.RichMessage{
+				Role:    "user",
+				Content: []providers.ContentBlock{{Type: "text", Text: *promptFlag}},
+			})
 			messages = conversation
 		}
 	}
@@ -254,7 +260,7 @@ func main() {
 }
 
 func runInteractive(provider providers.Provider, modelName string, disp display.Display, historyFile string, cfg agent.Config, baseCtx context.Context, sessionPath string) {
-	var conversation []providers.Message
+	var conversation []providers.RichMessage
 	var totalUsage stream.Usage
 
 	// Replay session history if resuming
@@ -264,7 +270,7 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		parsedLines := cfg.Session.Messages()
 		rebuiltMsgs, _ := session.RebuildMessages(parsedLines)
 		if len(rebuiltMsgs) > 0 {
-			conversation = rebuildToProviderMessages(rebuiltMsgs)
+			conversation = rebuiltMsgs
 			fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", cfg.Session.ID(), len(conversation))
 		}
 	}
@@ -343,7 +349,10 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 			editor.AddHistory(line)
 		}
 
-		conversation = append(conversation, providers.Message{Role: "user", Content: line})
+		conversation = append(conversation, providers.RichMessage{
+			Role:    "user",
+			Content: []providers.ContentBlock{{Type: "text", Text: line}},
+		})
 
 		// Write user message to session
 		if cfg.Session != nil {
@@ -488,73 +497,6 @@ func simplePrompt(prompt string) (string, error) {
 		return "", readline.ErrEOF
 	}
 	return fallbackScanner.Text(), fallbackScanner.Err()
-}
-
-// rebuildToProviderMessages converts session-rebuilt messages to providers.Message slice.
-func rebuildToProviderMessages(rawMsgs []map[string]any) []providers.Message {
-	var msgs []providers.Message
-	for _, raw := range rawMsgs {
-		role, _ := raw["role"].(string)
-		content, _ := raw["content"].(string)
-
-		msg := providers.Message{
-			Role:    role,
-			Content: content,
-		}
-		// Map "toolResult" → "tool" for API compatibility
-		if msg.Role == "toolResult" {
-			msg.Role = "tool"
-		}
-
-		// Handle tool calls
-		if role == "assistant" {
-			if tcsRaw, ok := raw["toolCalls"]; ok {
-				// toolCalls can be []any or []map[string]any
-				switch tcs := tcsRaw.(type) {
-				case []any:
-					for _, tcRaw := range tcs {
-						if tcMap, ok := tcRaw.(map[string]any); ok {
-							msg.ToolCalls = append(msg.ToolCalls, toolCallFromMap(tcMap))
-						}
-					}
-				case []map[string]any:
-					for _, tcMap := range tcs {
-						msg.ToolCalls = append(msg.ToolCalls, toolCallFromMap(tcMap))
-					}
-				}
-			}
-		}
-
-		// Handle tool results
-		if role == "tool" || role == "toolResult" {
-			msg.ToolCallID, _ = raw["toolCallId"].(string)
-			// toolName not in providers.Message but used for session write
-		}
-
-		msgs = append(msgs, msg)
-	}
-	return msgs
-}
-
-func toolCallFromMap(tcMap map[string]any) stream.ToolCall {
-	id, _ := tcMap["id"].(string)
-	name, _ := tcMap["name"].(string)
-	var argsStr string
-	if args, ok := tcMap["arguments"]; ok {
-		switch v := args.(type) {
-		case string:
-			argsStr = v
-		case map[string]any, []any:
-			if data, err := json.Marshal(v); err == nil {
-				argsStr = string(data)
-			}
-		}
-	}
-	return stream.ToolCall{
-		ID:        id,
-		Name:      name,
-		Arguments: argsStr,
-	}
 }
 
 // replaySessionToDisplay reads a JSONL session file and replays all events

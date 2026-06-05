@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/decodo/tyci-agent/providers"
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -381,11 +383,11 @@ func DefaultPath(cwd string) (string, error) {
 
 // ─── Resume: rebuild conversation ─────────────────────────────────────────
 
-// RebuildMessages reconstructs []providers.Message from parsed session lines.
-// It walks forward from the last header, collecting user messages and their
-// corresponding assistant responses + tool results.
-func RebuildMessages(lines []ParsedLine) ([]map[string]any, error) {
-	var msgs []map[string]any
+// RebuildMessages reconstructs []providers.RichMessage from parsed session lines.
+// It walks forward from the last header, collecting all message events and
+// preserving the full content block structure.
+func RebuildMessages(lines []ParsedLine) ([]providers.RichMessage, error) {
+	var msgs []providers.RichMessage
 
 	// Find start index (after header)
 	startIdx := 0
@@ -399,7 +401,7 @@ func RebuildMessages(lines []ParsedLine) ([]map[string]any, error) {
 	// Walk forward, collecting all message events (skip session_end)
 	for _, l := range lines[startIdx:] {
 		if l.MsgType == "session_end" {
-			continue // skip end markers — they're just metadata
+			continue
 		}
 
 		var raw map[string]any
@@ -407,90 +409,65 @@ func RebuildMessages(lines []ParsedLine) ([]map[string]any, error) {
 			continue
 		}
 
-		msg, ok := raw["message"].(map[string]any)
+		msgRaw, ok := raw["message"].(map[string]any)
 		if !ok {
 			continue
 		}
 
-		role, _ := msg["role"].(string)
-		content, _ := msg["content"].([]any)
+		role, _ := msgRaw["role"].(string)
+		contentRaw, _ := msgRaw["content"].([]any)
 
-		// Convert content blocks to a simple text string for providers.Message
-		var textParts []string
-		for _, block := range content {
-			b, ok := block.(map[string]any)
+		var blocks []providers.ContentBlock
+		for _, blockRaw := range contentRaw {
+			b, ok := blockRaw.(map[string]any)
 			if !ok {
 				continue
 			}
 			t, _ := b["type"].(string)
+
+			var cb providers.ContentBlock
+			cb.Type = t
+
 			switch t {
 			case "text":
-				if txt, _ := b["text"].(string); txt != "" {
-					textParts = append(textParts, txt)
+				cb.Text, _ = b["text"].(string)
+				if id, _ := b["toolCallId"].(string); id != "" {
+					cb.ToolCallID = id
+				}
+				if name, _ := b["toolName"].(string); name != "" {
+					cb.ToolName = name
+				}
+				if isErr, _ := b["isError"].(bool); isErr {
+					cb.IsError = true
 				}
 			case "thinking":
-				// Skip thinking in rebuild
+				cb.Thinking, _ = b["thinking"].(string)
 			case "toolCall":
-				// Will be handled separately below
-			}
-		}
-
-		// Map "toolResult" → "tool" (OpenAI API only accepts "tool")
-		apiRole := role
-		if apiRole == "toolResult" {
-			apiRole = "tool"
-		}
-
-		entry := map[string]any{
-			"role":    apiRole,
-			"content": strings.Join(textParts, ""),
-		}
-
-		// Handle tool calls in assistant messages
-		if role == "assistant" {
-			var toolCalls []map[string]any
-			for _, block := range content {
-				b, ok := block.(map[string]any)
-				if !ok {
-					continue
-				}
-				if t, _ := b["type"].(string); t == "toolCall" {
-					tc := map[string]any{
-						"id":   b["id"],
-						"name": b["name"],
-						"arguments": b["arguments"],
-					}
-					toolCalls = append(toolCalls, tc)
-				}
-			}
-			if len(toolCalls) > 0 {
-				entry["toolCalls"] = toolCalls
-			}
-		}
-
-		// Handle tool results
-		if role == "tool" || role == "toolResult" {
-			// Extract toolCallId and toolName from content blocks
-			for _, block := range content {
-				b, ok := block.(map[string]any)
-				if !ok {
-					continue
-				}
-				if t, _ := b["type"].(string); t == "text" {
-					if id, ok := b["toolCallId"].(string); ok && id != "" {
-						entry["toolCallId"] = id
-					}
-					if name, ok := b["toolName"].(string); ok && name != "" {
-						entry["toolName"] = name
-					}
-					if isErr, ok := b["isError"].(bool); ok {
-						entry["isError"] = isErr
+				cb.ID, _ = b["id"].(string)
+				cb.Name, _ = b["name"].(string)
+				if args, ok := b["arguments"]; ok {
+					switch v := args.(type) {
+					case string:
+						cb.Arguments = json.RawMessage(v)
+					case map[string]any, []any:
+						if data, err := json.Marshal(v); err == nil {
+							cb.Arguments = data
+						}
 					}
 				}
+			case "toolResult":
+				cb.Text, _ = b["text"].(string)
+				cb.ToolCallID, _ = b["toolCallId"].(string)
+				cb.ToolName, _ = b["toolName"].(string)
+				if isErr, _ := b["isError"].(bool); isErr {
+					cb.IsError = true
+				}
 			}
+
+			blocks = append(blocks, cb)
 		}
 
-		msgs = append(msgs, entry)
+		msgs = append(msgs, providers.RichMessage{Role: role, Content: blocks})
 	}
 
 	return msgs, nil

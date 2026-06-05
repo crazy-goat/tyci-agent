@@ -38,7 +38,7 @@ const DefaultMaxIterations = 50
 // transient errors, and at most MaxIterations tool-call iterations.
 // If MaxIterations is 0, DefaultMaxIterations is used.
 // Returns total usage accumulated during the run.
-func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.Message, cfg Config) (stream.Usage, error) {
+func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config) (stream.Usage, error) {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 5
 	}
@@ -117,7 +117,7 @@ func sleepWithCountdown(ctx context.Context, backoff time.Duration) error {
 	return nil
 }
 
-func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.Message, cfg Config) (more bool, usage *stream.Usage, err error) {
+func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config) (more bool, usage *stream.Usage, err error) {
 	events, streamErr := p.Stream(ctx, providers.Request{
 		Model:    cfg.Model,
 		System:   cfg.System,
@@ -195,20 +195,47 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	hasTools := len(toolCalls) > 0
 
 	if hasText || hasTools {
-		msg := providers.Message{Role: "assistant"}
-		if hasText {
-			msg.Content = textBuf.String()
+		var content []providers.ContentBlock
+
+		// Add thinking block first (before text, chronologically)
+		if thinkingBuf.Len() > 0 {
+			content = append(content, providers.ContentBlock{
+				Type:     "thinking",
+				Thinking: thinkingBuf.String(),
+			})
 		}
-		if hasTools {
-			tcs := make([]stream.ToolCall, len(toolCalls))
-			copy(tcs, toolCalls)
-			msg.ToolCalls = tcs
+
+		// Add text block
+		if hasText {
+			content = append(content, providers.ContentBlock{
+				Type: "text",
+				Text: textBuf.String(),
+			})
+		}
+
+		// Add tool call blocks
+		for _, tc := range toolCalls {
+			var args json.RawMessage
+			if tc.Arguments != "" {
+				args = json.RawMessage(tc.Arguments)
+			}
+			content = append(content, providers.ContentBlock{
+				Type:      "toolCall",
+				ID:        tc.ID,
+				Name:      tc.Name,
+				Arguments: args,
+			})
+		}
+
+		msg := providers.RichMessage{
+			Role:    "assistant",
+			Content: content,
 		}
 		*msgs = append(*msgs, msg)
 
 		// Write assistant message to session
 		if cfg.Session != nil {
-			writeAssistantSessionEvent(cfg.Session, cfg.ProviderName, cfg.Model, msg, thinkingBuf.String(), &lastUsage)
+			writeAssistantSessionEvent(cfg.Session, cfg.ProviderName, cfg.Model, msg, &lastUsage)
 		}
 	}
 
@@ -239,10 +266,17 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	// Show results and write session events
 	for i, tc := range toolCalls {
 		d.ToolCallEnd(tc.Name, results[i])
-		*msgs = append(*msgs, providers.Message{
-			Role:       "tool",
-			ToolCallID: tc.ID,
-			Content:    results[i],
+		*msgs = append(*msgs, providers.RichMessage{
+			Role: "toolResult",
+			Content: []providers.ContentBlock{
+				{
+					Type:       "text",
+					Text:       results[i],
+					ToolCallID: tc.ID,
+					ToolName:   tc.Name,
+					IsError:    strings.HasPrefix(results[i], "Error:"),
+				},
+			},
 		})
 
 		// Write tool result to session
@@ -261,37 +295,21 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	return true, &lastUsage, nil
 }
 
-func writeAssistantSessionEvent(s *session.Session, providerName, model string, msg providers.Message, thinking string, usage *stream.Usage) {
-	var blocks []session.ContentBlock
-
-	// Add thinking blocks first (before text, chronologically)
-	if thinking != "" {
-		blocks = append(blocks, session.ContentBlock{
-			Type:     "thinking",
-			Thinking: thinking,
-		})
-	}
-
-	// Use text content as a text block
-	if msg.Content != "" {
-		blocks = append(blocks, session.ContentBlock{
-			Type: "text",
-			Text: msg.Content,
-		})
-	}
-
-	// Add tool call blocks
-	for _, tc := range msg.ToolCalls {
-		var args json.RawMessage
-		if tc.Arguments != "" {
-			args = json.RawMessage(tc.Arguments)
+func writeAssistantSessionEvent(s *session.Session, providerName, model string, msg providers.RichMessage, usage *stream.Usage) {
+	// Convert providers.ContentBlock to session.ContentBlock (they have identical structure)
+	blocks := make([]session.ContentBlock, len(msg.Content))
+	for i, cb := range msg.Content {
+		blocks[i] = session.ContentBlock{
+			Type:       cb.Type,
+			Text:       cb.Text,
+			Thinking:    cb.Thinking,
+			ID:         cb.ID,
+			Name:       cb.Name,
+			Arguments:  cb.Arguments,
+			IsError:    cb.IsError,
+			ToolCallID: cb.ToolCallID,
+			ToolName:   cb.ToolName,
 		}
-		blocks = append(blocks, session.ContentBlock{
-			Type:      "toolCall",
-			ID:        tc.ID,
-			Name:      tc.Name,
-			Arguments: args,
-		})
 	}
 
 	opts := &session.MessageOptions{

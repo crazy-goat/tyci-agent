@@ -246,8 +246,11 @@ func runSingleTask(ctx context.Context, globalProvider providers.Provider, task 
 	}
 
 	c := newCollector()
-	msgs := []providers.Message{
-		{Role: "user", Content: task.Task},
+	msgs := []providers.RichMessage{
+		{
+			Role:    "user",
+			Content: []providers.ContentBlock{{Type: "text", Text: task.Task}},
+		},
 	}
 
 	cfg := agent.Config{

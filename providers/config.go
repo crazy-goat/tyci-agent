@@ -186,20 +186,14 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 
 	switch apiType {
 	case "anthropic":
-		anthropicMsgs := make([]api.AnthropicMessage, 0, len(req.Messages))
-		for _, m := range req.Messages {
-			content := []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}{{Type: "text", Text: m.Content}}
-			anthropicMsgs = append(anthropicMsgs, api.AnthropicMessage{Role: m.Role, Content: content})
-		}
+		anthropicMsgs := RichMessagesToAnthropic(req.Messages)
 		body := api.AnthropicRequest{
 			Model:     req.Model,
 			MaxTokens: 4096,
 			Stream:    true,
 			System:    req.System,
 			Messages:  anthropicMsgs,
+			Tools:     req.Tools,
 		}
 		go func() {
 			defer close(ch)
@@ -209,18 +203,16 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 		}()
 
 	case "gemini":
-		contents := []api.GeminiContent{}
-		for _, m := range req.Messages {
-			contents = append(contents, api.GeminiContent{
-				Parts: []api.GeminiPart{{Text: m.Content}},
-				Role:  m.Role,
-			})
-		}
+		contents, system := RichMessagesToGemini(req.Messages)
 		body := api.GeminiRequest{
 			Contents: contents,
 			Stream:   true,
 		}
-		if req.System != "" {
+		if system != "" {
+			body.SystemInstruction = &struct {
+				Parts []api.GeminiPart `json:"parts"`
+			}{Parts: []api.GeminiPart{{Text: system}}}
+		} else if req.System != "" {
 			body.SystemInstruction = &struct {
 				Parts []api.GeminiPart `json:"parts"`
 			}{Parts: []api.GeminiPart{{Text: req.System}}}
@@ -233,32 +225,7 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 		}()
 
 	default: // "openai" or any other chat-completion-like API
-		chatMsgs := make([]api.ChatMessage, 0, len(req.Messages)+1)
-		if req.System != "" {
-			chatMsgs = append(chatMsgs, api.ChatMessage{Role: "system", Content: req.System})
-		}
-		for _, m := range req.Messages {
-			msg := api.ChatMessage{Role: m.Role, Content: m.Content}
-			if m.Role == "assistant" && len(m.ToolCalls) > 0 {
-				msg.Content = m.Content
-				tcs := make([]api.ChatToolCall, len(m.ToolCalls))
-				for i, tc := range m.ToolCalls {
-					tcs[i] = api.ChatToolCall{
-						ID:   tc.ID,
-						Type: "function",
-						Function: api.ChatFunctionCall{
-							Name:      tc.Name,
-							Arguments: tc.Arguments,
-						},
-					}
-				}
-				msg.ToolCalls = tcs
-			}
-			if m.Role == "tool" {
-				msg.ToolCallID = m.ToolCallID
-			}
-			chatMsgs = append(chatMsgs, msg)
-		}
+		chatMsgs := RichMessagesToChat(req.Messages, req.System)
 		body := api.ChatRequest{
 			Model:     req.Model,
 			Stream:    true,

@@ -176,7 +176,10 @@ func (c *captureDisplay) End()            {}
 func TestRunAppendsAssistantMessage(t *testing.T) {
 	p := &mockProvider{chunks: []string{"Hello", " world"}}
 	d := display.NewSilent()
-	msgs := []providers.Message{{Role: "user", Content: "Hi"}}
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "Hi"}},
+	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -188,15 +191,21 @@ func TestRunAppendsAssistantMessage(t *testing.T) {
 	if msgs[1].Role != "assistant" {
 		t.Errorf("expected assistant role, got %q", msgs[1].Role)
 	}
-	if msgs[1].Content != "Hello world" {
-		t.Errorf("expected %q, got %q", "Hello world", msgs[1].Content)
+	if len(msgs[1].Content) != 1 || msgs[1].Content[0].Type != "text" {
+		t.Fatalf("expected one text block, got %#v", msgs[1].Content)
+	}
+	if msgs[1].Content[0].Text != "Hello world" {
+		t.Errorf("expected %q, got %q", "Hello world", msgs[1].Content[0].Text)
 	}
 }
 
 func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
 	p := &mockProvider{chunks: nil}
 	d := display.NewSilent()
-	msgs := []providers.Message{{Role: "user", Content: "Hi"}}
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "Hi"}},
+	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -220,7 +229,10 @@ func TestRun_ToolCall_ShowsToolBlockDuringStream(t *testing.T) {
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("read", "file content")
-	msgs := []providers.Message{{Role: "user", Content: "read file.go"}}
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "read file.go"}},
+	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
@@ -269,8 +281,15 @@ func TestRun_ToolCall_ShowsToolBlockDuringStream(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages (user, assistant, tool), got %d", len(msgs))
 	}
-	if msgs[2].Role != "tool" {
-		t.Errorf("expected tool role, got %q", msgs[2].Role)
+	if msgs[2].Role != "toolResult" {
+		t.Errorf("expected toolResult role, got %q", msgs[2].Role)
+	}
+	// Check tool result content
+	if len(msgs[2].Content) != 1 || msgs[2].Content[0].Type != "text" {
+		t.Fatalf("expected one text block in tool result, got %#v", msgs[2].Content)
+	}
+	if msgs[2].Content[0].Text != "file content" {
+		t.Errorf("expected tool result text %q, got %q", "file content", msgs[2].Content[0].Text)
 	}
 }
 
@@ -282,7 +301,10 @@ func TestRun_ToolCall_NoToolBlockWithoutTools(t *testing.T) {
 		},
 	}
 	d := newCaptureDisplay()
-	msgs := []providers.Message{{Role: "user", Content: "Hello"}}
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
@@ -315,7 +337,10 @@ func TestRun_ToolCall_MultipleTools(t *testing.T) {
 	runner := newMockToolRunner()
 	runner.SetResult("read", "content of a.go")
 	runner.SetResult("bash", "file1\nfile2")
-	msgs := []providers.Message{{Role: "user", Content: "list and read"}}
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "list and read"}},
+	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
@@ -368,7 +393,10 @@ func TestRun_ToolCall_TextAndTools(t *testing.T) {
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("read", "package main")
-	msgs := []providers.Message{{Role: "user", Content: "read x.go"}}
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "read x.go"}},
+	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
@@ -404,7 +432,10 @@ func TestRun_ToolCall_ToolCallWithoutDelta(t *testing.T) {
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("bash", "hi")
-	msgs := []providers.Message{{Role: "user", Content: "echo"}}
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "echo"}},
+	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
@@ -440,7 +471,10 @@ func TestRun_ToolCall_EmptyResult(t *testing.T) {
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	// No result set → Run returns empty string, no error
-	msgs := []providers.Message{{Role: "user", Content: "run"}}
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "run"}},
+	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
@@ -466,7 +500,10 @@ func TestRun_ToolCall_StreamError(t *testing.T) {
 		},
 	}
 	d := newCaptureDisplay()
-	msgs := []providers.Message{{Role: "user", Content: "hi"}}
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
 
 	_, err := Run(context.Background(), p, d, &msgs, Config{
 		Model:      "mock-tool-1",
