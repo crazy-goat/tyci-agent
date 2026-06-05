@@ -77,10 +77,6 @@ func (t *Terminal) Thinking(text string) {
 	}
 	text = strings.ReplaceAll(text, "\n", "\n"+clearLine)
 	if !t.thinkingStarted {
-		if t.sawStderr {
-			fmt.Fprintf(os.Stderr, "\n")
-		}
-		t.sawStderr = true
 		fmt.Fprintf(os.Stderr, "%s%s💭 %s%s", t.bgThinking, clearLine, text, clearLine)
 		t.thinkingStarted = true
 	} else {
@@ -189,6 +185,7 @@ func (t *Terminal) Summary(usage UsageInfo) {
 		fmt.Fprintf(os.Stderr, "\n%s%s\n", clearLine, parts)
 	}
 	t.sawStderr = true
+	t.sawStdout = false
 }
 
 func (t *Terminal) Error(err error) {
