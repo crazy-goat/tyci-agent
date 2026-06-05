@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/decodo/tyci-agent/display"
 )
 
 type RetryableError struct {
@@ -104,9 +106,15 @@ func SleepWithCountdown(backoff time.Duration, attempt, maxRetries int, err erro
 }
 
 type UsageInfo struct {
-	InputTokens  int
-	OutputTokens int
-	Cost         float64
+	InputTokens           int `json:"prompt_tokens"`
+	InputTokensAlt        int `json:"input_tokens,omitempty"`
+	OutputTokens          int `json:"completion_tokens"`
+	OutputTokensAlt       int `json:"output_tokens,omitempty"`
+	ReasoningTokens       int `json:"reasoning_tokens,omitempty"`
+	CacheHitTokens        int `json:"prompt_cache_hit_tokens,omitempty"`
+	CacheMissTokens       int `json:"prompt_cache_miss_tokens,omitempty"`
+	CacheReadInputTokens  int `json:"cache_read_input_tokens,omitempty"`
+	CacheCreateInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 }
 
 type ToolCall struct {
@@ -115,59 +123,17 @@ type ToolCall struct {
 	Argument string
 }
 
-type StreamHandler interface {
-	Chunk(text string)
-	Thinking(text string)
-	EndThinking()
-	LogToolCallStart(name string)
-	ToolCallArg(text string)
-	EndToolCall()
-	Summary(usage UsageInfo)
-	End()
-	Error(err error)
-}
-
-var (
-	bgThinking   = "\033[48;2;248;253;248m"
-	bgReset      = "\033[0m"
-	clearLine    = "\033[K"
-	StderrOutput bool
-)
-
-func TerminalIsDark() bool {
-	cfb := os.Getenv("COLORFGBG")
-	if cfb == "" {
-		return true
-	}
-	parts := strings.Split(cfb, ";")
-	if len(parts) < 2 {
-		return true
-	}
-	bg, err := strconv.Atoi(parts[len(parts)-1])
-	if err != nil {
-		return true
-	}
-	return bg < 8
-}
-
-func init() {
-	if TerminalIsDark() {
-		bgThinking = "\033[48;2;18;40;18m"
-	} else {
-		bgThinking = "\033[48;2;248;253;248m"
-	}
-}
-
 type DebugHandler struct {
-	Inner           StreamHandler
+	Inner           display.Display
 	Debug           bool
-	HideThinking    bool
-	HideTools       bool
 	ToolCalls       []ToolCall
 	FinishReason    string
-	thinkingActive  bool
-	thinkingStarted bool
 	sawDone         bool
+	InputTokens     int
+	OutputTokens    int
+	ReasoningTokens int
+	CacheRead       int
+	CacheWrite      int
 }
 
 func (d *DebugHandler) Chunk(text string) {
@@ -179,35 +145,17 @@ func (d *DebugHandler) Chunk(text string) {
 
 func (d *DebugHandler) Thinking(text string) {
 	d.Inner.Thinking(text)
-	if d.HideThinking {
-		return
+	if d.Debug {
+		fmt.Fprintf(os.Stderr, "[THINKING] %s\n", text)
 	}
-
-	text = strings.ReplaceAll(text, "\n", "\n"+clearLine)
-	if !d.thinkingStarted {
-		if StderrOutput {
-			fmt.Fprintf(os.Stderr, "\n")
-		}
-		StderrOutput = true
-		fmt.Fprintf(os.Stderr, "%s%s💭 %s%s", bgThinking, clearLine, text, clearLine)
-		d.thinkingStarted = true
-	} else {
-		fmt.Fprintf(os.Stderr, "%s%s%s", clearLine, text, clearLine)
-	}
-	d.thinkingActive = true
 }
 
 func (d *DebugHandler) EndThinking() {
-	if !d.HideThinking && d.thinkingActive {
-		fmt.Fprintf(os.Stderr, "%s%s\n\n", clearLine, bgReset)
-		d.thinkingActive = false
-		d.thinkingStarted = false
-	}
 	d.Inner.EndThinking()
 }
 
 func (d *DebugHandler) LogToolCallStart(name string) {
-	d.Inner.LogToolCallStart(name)
+	d.Inner.ToolCallStart(name)
 }
 
 func (d *DebugHandler) ToolCallArg(text string) {
@@ -219,15 +167,38 @@ func (d *DebugHandler) EndToolCall() {
 }
 
 func (d *DebugHandler) Summary(usage UsageInfo) {
-	d.Inner.Summary(usage)
+	in := usage.InputTokens
+	if in == 0 {
+		in = usage.InputTokensAlt
+	}
+	out := usage.OutputTokens
+	if out == 0 {
+		out = usage.OutputTokensAlt
+	}
+	cacheRead := usage.CacheReadInputTokens
+	if cacheRead == 0 {
+		cacheRead = usage.CacheHitTokens
+	}
+	cacheWrite := usage.CacheCreateInputTokens
+	if cacheWrite == 0 {
+		cacheWrite = usage.CacheMissTokens
+	}
+	d.Inner.Summary(display.UsageInfo{
+		InputTokens:          in,
+		OutputTokens:         out + usage.ReasoningTokens,
+		CacheReadInputTokens: cacheRead,
+		CacheCreateInputTokens: cacheWrite,
+	})
 }
 
 func (d *DebugHandler) End() {
-	d.Inner.End()
 }
 
 func (d *DebugHandler) Error(err error) {
 	d.Inner.Error(err)
+	if d.Debug {
+		fmt.Fprintf(os.Stderr, "[ERROR] %v\n", err)
+	}
 }
 
 func (d *DebugHandler) LogRequest(method, url string, body any) {
@@ -268,6 +239,10 @@ func (d *DebugHandler) GetFinishReason() string {
 
 func (d *DebugHandler) SawDone() bool {
 	return d.sawDone
+}
+
+func (d *DebugHandler) GetUsage() (input, output, reasoning int) {
+	return d.InputTokens, d.OutputTokens, d.ReasoningTokens
 }
 
 func (d *DebugHandler) ResetToolCalls() {

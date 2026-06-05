@@ -6,8 +6,8 @@ import (
 
 func TestProviderName(t *testing.T) {
 	p := &provider{}
-	if p.Name() != "opencodezen" {
-		t.Errorf("expected 'opencodezen', got '%s'", p.Name())
+	if p.Name() != "opencode-zen" {
+		t.Errorf("expected 'opencode-zen', got '%s'", p.Name())
 	}
 }
 

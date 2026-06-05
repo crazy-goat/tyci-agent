@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/decodo/tyci-agent/api"
+	"github.com/decodo/tyci-agent/display"
 	"github.com/decodo/tyci-agent/providers"
 	"github.com/decodo/tyci-agent/tools"
 )
@@ -68,7 +69,7 @@ func (p *provider) Name() string {
 }
 
 func (p *provider) IsConfigured() bool {
-	return true
+	return os.Getenv("OPENCODE_ZEN_API_KEY") != "" || os.Getenv("OPENCODE_API_KEY") != ""
 }
 
 func isFreeModel(model string) bool {
@@ -164,32 +165,34 @@ type textCollector struct {
 	text string
 }
 
-func (t *textCollector) Chunk(text string)       { t.text += text }
-func (t *textCollector) Thinking(text string)    {}
-func (t *textCollector) EndThinking()            {}
-func (t *textCollector) LogToolCallStart(string) {}
-func (t *textCollector) ToolCallArg(string)      {}
-func (t *textCollector) EndToolCall()            {}
-func (t *textCollector) Summary(api.UsageInfo)   {}
-func (t *textCollector) End()                    {}
-func (t *textCollector) Error(err error)         {}
+func (t *textCollector) Chunk(text string)                      { t.text += text }
+func (t *textCollector) Thinking(text string)                   {}
+func (t *textCollector) EndThinking()                           {}
+func (t *textCollector) ToolCallStart(name string)              {}
+func (t *textCollector) ToolCallArg(text string)                {}
+func (t *textCollector) EndToolCall()                           {}
+func (t *textCollector) ToolResult(string, *display.ToolResult) {}
+func (t *textCollector) Summary(display.UsageInfo)              {}
+func (t *textCollector) End()                                   {}
+func (t *textCollector) Error(err error)                        {}
 
 type retryCollector struct {
 	text string
 }
 
-func (h *retryCollector) Chunk(text string)            { h.text += text }
-func (h *retryCollector) Thinking(text string)         {}
-func (h *retryCollector) EndThinking()                 {}
-func (h *retryCollector) LogToolCallStart(name string) {}
-func (h *retryCollector) ToolCallArg(text string)      {}
-func (h *retryCollector) EndToolCall()                 {}
-func (h *retryCollector) Summary(api.UsageInfo)        {}
-func (h *retryCollector) End()                         {}
-func (h *retryCollector) Error(err error)              {}
+func (h *retryCollector) Chunk(text string)                      { h.text += text }
+func (h *retryCollector) Thinking(text string)                   {}
+func (h *retryCollector) EndThinking()                           {}
+func (h *retryCollector) ToolCallStart(name string)              {}
+func (h *retryCollector) ToolCallArg(text string)                {}
+func (h *retryCollector) EndToolCall()                           {}
+func (h *retryCollector) ToolResult(string, *display.ToolResult) {}
+func (h *retryCollector) Summary(display.UsageInfo)              {}
+func (h *retryCollector) End()                                   {}
+func (h *retryCollector) Error(err error)                        {}
 
 type handlerWrapper struct {
-	Inner     providers.OutputHandler
+	Inner     display.Display
 	collector *textCollector
 }
 
@@ -197,16 +200,15 @@ func (h *handlerWrapper) Chunk(text string) {
 	h.Inner.Chunk(text)
 	h.collector.text += text
 }
-func (h *handlerWrapper) Thinking(text string) { h.Inner.Thinking(text) }
-func (h *handlerWrapper) EndThinking()         { h.Inner.EndThinking() }
-func (h *handlerWrapper) LogToolCallStart(n string) {
-	h.Inner.LogToolCallStart(n)
+func (h *handlerWrapper) Thinking(text string)             { h.Inner.Thinking(text) }
+func (h *handlerWrapper) EndThinking()                     { h.Inner.EndThinking() }
+func (h *handlerWrapper) ToolCallStart(name string)        { h.Inner.ToolCallStart(name) }
+func (h *handlerWrapper) ToolCallArg(text string)          { h.Inner.ToolCallArg(text) }
+func (h *handlerWrapper) EndToolCall()                     { h.Inner.EndToolCall() }
+func (h *handlerWrapper) ToolResult(name string, r *display.ToolResult) {
+	h.Inner.ToolResult(name, r)
 }
-func (h *handlerWrapper) ToolCallArg(t string) { h.Inner.ToolCallArg(t) }
-func (h *handlerWrapper) EndToolCall()         { h.Inner.EndToolCall() }
-func (h *handlerWrapper) Summary(u api.UsageInfo) {
-	h.Inner.Summary(providers.UsageInfo{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, Cost: u.Cost})
-}
+func (h *handlerWrapper) Summary(u display.UsageInfo) { h.Inner.Summary(u) }
 func (h *handlerWrapper) End()            { h.Inner.End() }
 func (h *handlerWrapper) Error(err error) { h.Inner.Error(err) }
 
@@ -235,7 +237,8 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 			Messages:  messages,
 		}
 		err := api.StreamAnthropic(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
+		in, out, reasoning := handler.GetUsage()
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
 	}
 
 	if geminiModels[model] {
@@ -252,7 +255,8 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 			}{Parts: []api.GeminiPart{{Text: system}}}
 		}
 		err := api.StreamGemini(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
+		in, out, reasoning := handler.GetUsage()
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
 	}
 
 	if responsesAPIModels[model] {
@@ -278,7 +282,8 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 			Tools:  toolsJSON,
 		}
 		err := api.StreamResponses(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
+		in, out, reasoning := handler.GetUsage()
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
 	}
 
 	chatMessages := []api.ChatMessage{}
@@ -294,7 +299,8 @@ func (p *provider) Send(ctx context.Context, model, prompt, system string, debug
 		Reasoning: true,
 	}
 	err := api.StreamChat(ctx, apiKey, endpoint, body, handler)
-	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
+	in, out, reasoning := handler.GetUsage()
+	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
 }
 
 func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system string, messages []providers.Message, debug bool) (*providers.SendResult, error) {
@@ -328,7 +334,8 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 			Messages:  anthropicMsgs,
 		}
 		err := api.StreamAnthropic(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
+		in, out, reasoning := handler.GetUsage()
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
 	}
 
 	if geminiModels[model] {
@@ -345,7 +352,8 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 			}{Parts: []api.GeminiPart{{Text: system}}}
 		}
 		err := api.StreamGemini(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
+		in, out, reasoning := handler.GetUsage()
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
 	}
 
 	if responsesAPIModels[model] {
@@ -369,7 +377,8 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 			Tools:  toolsJSON,
 		}
 		err := api.StreamResponses(ctx, apiKey, endpoint, body, handler)
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
+		in, out, reasoning := handler.GetUsage()
+		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
 	}
 
 	chatMsgs := make([]api.ChatMessage, 0, len(messages))
@@ -384,10 +393,11 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 		Reasoning: true,
 	}
 	err := api.StreamChat(ctx, apiKey, endpoint, body, handler)
-	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason()}, err
+	in, out, reasoning := handler.GetUsage()
+	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
 }
 
-func (p *provider) SendWithHandler(model string, messages []providers.Message, handler providers.OutputHandler, debug, hideThinking, hideTools bool) (*providers.SendResult, error) {
+func (p *provider) SendWithHandler(model string, messages []providers.Message, handler display.Display, debug bool) (*providers.SendResult, error) {
 	apiKey := os.Getenv("OPENCODE_ZEN_API_KEY")
 	if apiKey == "" {
 		apiKey = os.Getenv("OPENCODE_API_KEY")
@@ -419,7 +429,7 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 	var lastErr error
 	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
 		collector := &textCollector{}
-		var inner api.StreamHandler
+		var inner display.Display
 		var retryColl *retryCollector
 		if attempt == 0 {
 			wrapper := &handlerWrapper{Inner: handler, collector: collector}
@@ -428,14 +438,14 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 			retryColl = &retryCollector{}
 			inner = retryColl
 		}
-		debugHandler := &api.DebugHandler{Inner: inner, Debug: debug && attempt == 0, HideThinking: hideThinking, HideTools: hideTools}
+		debugHandler := &api.DebugHandler{Inner: inner, Debug: debug && attempt == 0}
 
 		err := api.StreamChat(context.Background(), apiKey, endpoint, body, debugHandler)
 		if err == nil {
 			if attempt > 0 {
 				handler.Chunk(retryColl.text)
 				for _, tc := range debugHandler.GetToolCalls() {
-					handler.LogToolCallStart(tc.Name)
+					handler.ToolCallStart(tc.Name)
 					handler.ToolCallArg(tc.Argument)
 					handler.EndToolCall()
 				}
@@ -444,7 +454,8 @@ func (p *provider) SendWithHandler(model string, messages []providers.Message, h
 			if retryColl != nil {
 				text = retryColl.text
 			}
-			return &providers.SendResult{Text: text, ToolCalls: convertToolCalls(debugHandler.GetToolCalls()), StopReason: debugHandler.GetFinishReason()}, nil
+			in, out, reasoning := debugHandler.GetUsage()
+			return &providers.SendResult{Text: text, ToolCalls: convertToolCalls(debugHandler.GetToolCalls()), StopReason: debugHandler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, nil
 		}
 
 		lastErr = err

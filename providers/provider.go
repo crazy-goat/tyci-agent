@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/decodo/tyci-agent/api"
+	"github.com/decodo/tyci-agent/display"
 )
 
 func BuildSystemPrompt() string {
@@ -60,21 +61,12 @@ type ToolCall struct {
 }
 
 type SendResult struct {
-	Text       string
-	ToolCalls  []ToolCall
-	StopReason string
-}
-
-type OutputHandler interface {
-	Chunk(text string)
-	Thinking(text string)
-	EndThinking()
-	LogToolCallStart(name string)
-	ToolCallArg(text string)
-	EndToolCall()
-	Summary(usage UsageInfo)
-	End()
-	Error(err error)
+	Text           string
+	ToolCalls      []ToolCall
+	StopReason     string
+	InputTokens    int
+	OutputTokens   int
+	ReasoningTokens int
 }
 
 type Provider interface {
@@ -84,7 +76,7 @@ type Provider interface {
 	FreeModels() []string
 	Send(ctx context.Context, model, prompt, system string, debug bool) (*SendResult, error)
 	SendWithMessages(ctx context.Context, model, prompt, system string, messages []Message, debug bool) (*SendResult, error)
-	SendWithHandler(model string, messages []Message, handler OutputHandler, debug, hideThinking, hideTools bool) (*SendResult, error)
+	SendWithHandler(model string, messages []Message, handler display.Display, debug bool) (*SendResult, error)
 }
 
 var DefaultRetryConfig = api.RetryConfig{MaxRetries: 5, BaseBackoff: 4, MaxBackoff: 128}

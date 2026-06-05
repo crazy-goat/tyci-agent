@@ -41,6 +41,7 @@ type chatStreamChunk struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *UsageInfo `json:"usage,omitempty"`
 }
 
 func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, handler *DebugHandler) error {
@@ -154,12 +155,36 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 			}
 		}
 
+		if chunk.Usage != nil {
+			handler.InputTokens = chunk.Usage.InputTokens
+			handler.OutputTokens = chunk.Usage.OutputTokens
+			handler.ReasoningTokens = chunk.Usage.ReasoningTokens
+			handler.CacheRead = chunk.Usage.CacheReadInputTokens
+			if handler.CacheRead == 0 {
+				handler.CacheRead = chunk.Usage.CacheHitTokens
+			}
+			handler.CacheWrite = chunk.Usage.CacheCreateInputTokens
+			if handler.CacheWrite == 0 {
+				handler.CacheWrite = chunk.Usage.CacheMissTokens
+			}
+		}
+
 		if readErr != nil {
 			break
 		}
 	}
 
-	handler.Summary(UsageInfo{})
+	if handler.InputTokens > 0 || handler.OutputTokens > 0 {
+		handler.Summary(UsageInfo{
+			InputTokens:           handler.InputTokens,
+			OutputTokens:          handler.OutputTokens,
+			ReasoningTokens:       handler.ReasoningTokens,
+			CacheReadInputTokens:  handler.CacheRead,
+			CacheCreateInputTokens: handler.CacheWrite,
+		})
+	} else {
+		handler.Summary(UsageInfo{})
+	}
 	handler.End()
 
 	if !handler.sawDone && readErr != nil && !errors.Is(readErr, io.EOF) {

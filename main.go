@@ -34,9 +34,10 @@ func main() {
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.local/share/tyci-agent/history)")
 	noHistoryFlag := flag.Bool("no-history", false, "Disable history loading/saving entirely")
+	modeFlag := flag.String("mode", "minimal", "Display mode: minimal, normal, interactive")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] [--max-retries N] [--history-file <path>] [--no-history] (--prompt-to-text <prompt> | --prompt-to-json <prompt> | --interactive)\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] [--max-retries N] [--history-file <path>] [--no-history] [--mode minimal|normal|interactive] (--prompt-to-text <prompt> | --prompt-to-json <prompt> | --interactive)\n\n")
 		fmt.Fprintf(os.Stderr, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -79,12 +80,22 @@ func main() {
 	}
 
 	var disp display.Display
-	if *interactiveFlag {
+	mode := *modeFlag
+	switch mode {
+	case "minimal":
+		disp = display.NewMinimal(*hideThinkingFlag, *hideToolsFlag)
+	case "normal":
+		if *promptJSONFlag != "" {
+			disp = display.NewJSON()
+		} else {
+			disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag)
+		}
+	case "interactive":
+		*interactiveFlag = true
 		disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag)
-	} else if *promptJSONFlag != "" {
-		disp = display.NewJSON()
-	} else {
-		disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag)
+	default:
+		fmt.Fprintf(os.Stderr, "Error: unknown mode %q (expected minimal, normal, or interactive)\n", mode)
+		os.Exit(1)
 	}
 
 	if *interactiveFlag {
@@ -199,12 +210,18 @@ type toolRunResult struct {
 }
 
 func runLLMLoop(provider providers.Provider, modelName string, messages []providers.Message, disp display.Display, debug bool) []providers.Message {
+	var totalInputTokens, totalOutputTokens, totalReasoningTokens int
+
 	result, err := provider.SendWithHandler(modelName, messages, disp, debug)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	totalInputTokens += result.InputTokens
+	totalOutputTokens += result.OutputTokens
+	totalReasoningTokens += result.ReasoningTokens
 
+loop:
 	for {
 		if len(result.ToolCalls) > 0 {
 			toolResults := make([]string, len(result.ToolCalls))
@@ -266,11 +283,27 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
+			totalInputTokens += result.InputTokens
+			totalOutputTokens += result.OutputTokens
+			totalReasoningTokens += result.ReasoningTokens
 			continue
 		}
 
-		if result.StopReason == "stop" && result.Text != "" {
-			break
+		switch result.StopReason {
+		case "stop":
+			break loop
+		case "tool_calls":
+			if len(result.ToolCalls) > 0 {
+				continue
+			}
+		case "length", "content_filter", "function_call":
+			if result.Text == "" {
+				continue
+			}
+		default:
+			if result.Text == "" {
+				continue
+			}
 		}
 
 		messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
@@ -279,6 +312,9 @@ func runLLMLoop(provider providers.Provider, modelName string, messages []provid
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		totalInputTokens += result.InputTokens
+		totalOutputTokens += result.OutputTokens
+		totalReasoningTokens += result.ReasoningTokens
 	}
 
 	messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
