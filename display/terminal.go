@@ -123,51 +123,43 @@ func (t *Terminal) ToolResult(name string, result *ToolResult) {
 	}
 	tc := t.pendingTools[0]
 	t.pendingTools = t.pendingTools[1:]
-
-	if t.interactive && t.sawStdout {
-		fmt.Fprintln(os.Stderr)
-		t.sawStdout = false
-	}
-
-	if t.toolCount > 0 {
-		fmt.Fprintln(os.Stderr)
-	}
 	t.toolCount++
 
+	var block strings.Builder
 	if tc.Name == "read" {
-		fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):%s%s\n", t.bgTools, clearLine, tc.Name, tc.Arguments, clearLine, bgReset)
-		t.sawStderr = true
-		if t.interactive {
-			fmt.Fprintln(os.Stderr)
-		}
-		return
-	}
-
-	parsedArgs := parseArgs(tc.Arguments)
-	title, _ := parsedArgs["description"].(string)
-	if title != "" {
-		cmd, _ := parsedArgs["command"].(string)
-		if cmd != "" {
-			fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n%s$ %s\n", t.bgTools, clearLine, title, clearLine, cmd)
-		} else {
-			fmt.Fprintf(os.Stderr, "%s%s🔧 %s\n", t.bgTools, clearLine, title)
-		}
+		block.WriteString(fmt.Sprintf("🔧 %s(%s):", tc.Name, tc.Arguments))
 	} else {
-		fmt.Fprintf(os.Stderr, "%s%s🔧 %s(%s):\n", t.bgTools, clearLine, tc.Name, tc.Arguments)
+		parsedArgs := parseArgs(tc.Arguments)
+		title, _ := parsedArgs["description"].(string)
+		if title != "" {
+			cmd, _ := parsedArgs["command"].(string)
+			if cmd != "" {
+				block.WriteString(fmt.Sprintf("🔧 %s\n$ %s", title, cmd))
+			} else {
+				block.WriteString(fmt.Sprintf("🔧 %s", title))
+			}
+		} else {
+			block.WriteString(fmt.Sprintf("🔧 %s(%s):", tc.Name, tc.Arguments))
+		}
+
+		if result != nil {
+			block.WriteByte('\n')
+			if result.Success {
+				block.WriteString(result.Content)
+			} else {
+				block.WriteString(result.Error)
+			}
+		}
 	}
 
-	if result != nil {
-		if result.Success {
-			content := strings.ReplaceAll(result.Content, "\n", "\n"+clearLine)
-			fmt.Fprintf(os.Stderr, "%s%s%s%s\n", t.bgTools, content, clearLine, bgReset)
-		} else {
-			fmt.Fprintf(os.Stderr, "%s%s%s%s\n", t.bgTools, clearLine, result.Error, bgReset)
-		}
+	content := block.String()
+	if t.interactive {
+		content = strings.ReplaceAll(content, "\n", "\n"+clearLine)
+		fmt.Fprintf(os.Stderr, "%s%s%s%s%s\n\n", t.bgTools, clearLine, content, clearLine, bgReset)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s%s%s%s\n", t.bgTools, clearLine, content, bgReset)
 	}
 	t.sawStderr = true
-	if t.interactive {
-		fmt.Fprintln(os.Stderr)
-	}
 }
 
 func (t *Terminal) Summary(usage UsageInfo) {
@@ -183,9 +175,9 @@ func (t *Terminal) Summary(usage UsageInfo) {
 		parts += fmt.Sprintf(" stop_reason=%s", usage.StopReason)
 	}
 	if t.interactive {
-		fmt.Fprintf(os.Stderr, "\n%s%s%s%s\n\n", t.bgUsage, clearLine, parts, bgReset)
+		fmt.Fprintf(os.Stderr, "%s%s%s%s\n\n", t.bgUsage, clearLine, parts, bgReset)
 	} else {
-		fmt.Fprintf(os.Stderr, "\n%s%s\n", clearLine, parts)
+		fmt.Fprintf(os.Stderr, "%s%s\n", clearLine, parts)
 	}
 	t.sawStderr = true
 	t.sawStdout = false
