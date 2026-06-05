@@ -20,18 +20,26 @@ type ToolRunner interface {
 
 type Config struct {
 	Model      string
+	System     string
 	MaxRetries int
 	Debug      bool
 	Tools      ToolRunner
 	Schema     json.RawMessage
 }
 
+const DefaultMaxIterations = 25
+
+// Run executes the agent loop. It will make at most MaxRetries retries on
+// transient errors, and at most MaxIterations tool-call iterations.
+// If MaxIterations is 0, DefaultMaxIterations is used.
 func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.Message, cfg Config) error {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 5
 	}
 
-	for {
+	maxIter := DefaultMaxIterations
+
+	for iter := 0; iter < maxIter; iter++ {
 		more, err := runOnce(ctx, p, d, msgs, cfg)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -70,6 +78,8 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 			return nil
 		}
 	}
+
+	return fmt.Errorf("agent loop: exceeded %d tool-call iterations (possible infinite loop)", maxIter)
 }
 
 func sleepWithCountdown(ctx context.Context, backoff time.Duration) error {
@@ -88,6 +98,7 @@ func sleepWithCountdown(ctx context.Context, backoff time.Duration) error {
 func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.Message, cfg Config) (more bool, err error) {
 	events, streamErr := p.Stream(ctx, providers.Request{
 		Model:    cfg.Model,
+		System:   cfg.System,
 		Messages: *msgs,
 		Tools:    cfg.Schema,
 		Debug:    cfg.Debug,
@@ -155,9 +166,14 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		return false, nil
 	}
 
+	// Show tool call start for each tool immediately
+	for _, tc := range toolCalls {
+		d.ToolCallStart(tc.Name, tc.Arguments)
+	}
+
 	results := executeTools(ctx, cfg.Tools, toolCalls)
 	for i, tc := range toolCalls {
-		d.ToolCall(tc.Name, tc.Arguments, results[i])
+		d.ToolCallEnd(tc.Name, results[i])
 		*msgs = append(*msgs, providers.Message{
 			Role:       "tool",
 			ToolCallID: tc.ID,

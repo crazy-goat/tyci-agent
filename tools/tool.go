@@ -50,14 +50,14 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
-				"name":        "read",
-				"description": "Read file contents",
+			"name":        "read",
+			"description": "Read file contents. Text output is truncated to 2000 lines or 50KB (whichever first). Use offset (1-indexed line) and limit (max lines) for large files. Returns continuation hints when truncated.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"path":   map[string]any{"type": "string", "description": "File path to read"},
-						"offset": map[string]any{"type": "integer", "description": "Start reading from this byte offset (optional)"},
-						"limit":  map[string]any{"type": "integer", "description": "Maximum bytes to read (optional)"},
+						"offset": map[string]any{"type": "integer", "description": "Line number to start from (1-indexed). Use offset from continuation hint to continue reading."},
+						"limit":  map[string]any{"type": "integer", "description": "Maximum number of lines to read"},
 					},
 					"required": []string{"path"},
 				},
@@ -115,15 +115,20 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "subagent",
-				"description": "Delegate a subtask to a child agent. Provide a clear task description and the agent will use its own tools to complete it. Returns the result.",
+				"description": "Delegate complex or independent tasks to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description. The child agent has access to read/write/edit/bash tools. For single task use 'task' (string). For parallel execution use 'tasks' (array). Supports optional 'timeout' (seconds, default 120) and 'model' override.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"task":        map[string]any{"type": "string", "description": "Detailed task description for the child agent"},
-						"model":       map[string]any{"type": "string", "description": "Optional model override (format: provider/model, e.g. opencode-zen/big-pickle)"},
+						"task":        map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/edit/bash tools."},
+						"tasks":       map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
+							"task":        map[string]any{"type": "string", "description": "Clear task description for this parallel subtask. The child agent has read/write/edit/bash tools."},
+							"model":       map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
+							"temperature": map[string]any{"type": "number", "description": "Optional temperature (0.0-2.0)"},
+						}, "required": []string{"task"}}},
+						"model":       map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
 						"temperature": map[string]any{"type": "number", "description": "Optional temperature (0.0-2.0, default: 0.7)"},
+						"timeout":     map[string]any{"type": "number", "description": "Optional timeout in seconds for each subagent (default: 120)"},
 					},
-					"required": []string{"task"},
 				},
 			},
 		},
@@ -131,14 +136,36 @@ func GetToolsSchema() []map[string]any {
 }
 
 var toolsSchema json.RawMessage
+var subagentToolsSchema json.RawMessage
 
 func init() {
 	data, _ := json.Marshal(GetToolsSchema())
 	toolsSchema = data
+	data, _ = json.Marshal(GetSubagentToolsSchema())
+	subagentToolsSchema = data
 }
 
 func GetToolsSchemaJSON() json.RawMessage {
 	return toolsSchema
+}
+
+// GetSubagentToolsSchema returns tool definitions excluding "subagent" (prevents recursion).
+func GetSubagentToolsSchema() []map[string]any {
+	schema := GetToolsSchema()
+	filtered := make([]map[string]any, 0, len(schema))
+	for _, s := range schema {
+		if fn, ok := s["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok && name == "subagent" {
+				continue
+			}
+		}
+		filtered = append(filtered, s)
+	}
+	return filtered
+}
+
+func GetSubagentToolsSchemaJSON() json.RawMessage {
+	return subagentToolsSchema
 }
 
 var toolRegistry = map[string]Tool{

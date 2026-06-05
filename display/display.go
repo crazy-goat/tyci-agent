@@ -8,15 +8,11 @@ type ToolResult struct {
 	Error   string
 }
 
-type ToolCall struct {
-	Name      string
-	Arguments string
-}
-
 type Display interface {
 	Thinking(text string)
 	Text(text string)
-	ToolCall(name, args, result string)
+	ToolCallStart(name, args string)
+	ToolCallEnd(name string, result string)
 	Summary(usage stream.Usage, stats stream.Stats)
 	Error(err error)
 	End()

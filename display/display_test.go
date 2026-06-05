@@ -72,7 +72,8 @@ func TestSilent_AllMethods_NoOutput(t *testing.T) {
 
 	s := NewSilent()
 	s.Thinking("ignored")
-	s.ToolCall("read", `{"path": "x"}`, "content")
+	s.ToolCallStart("read", `{"path": "x"}`)
+	s.ToolCallEnd("read", "content")
 	s.Summary(stream.Usage{Input: 10, Output: 20}, stream.Stats{})
 	s.Error(nil)
 	s.End()
@@ -123,7 +124,8 @@ func TestTerminal_ToolCall_BashWithDescription(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.ToolCall("bash", `{"description": "list files", "command": "ls -la"}`, "file1\nfile2")
+	term.ToolCallStart("bash", `{"description": "list files", "command": "ls -la"}`)
+	term.ToolCallEnd("bash", "file1\nfile2")
 	sync()
 
 	got := stdout.String()
@@ -146,7 +148,8 @@ func TestTerminal_ToolCall_BashError(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.ToolCall("bash", `{"description": "fail", "command": "false"}`, "exit status 1")
+	term.ToolCallStart("bash", `{"description": "fail", "command": "false"}`)
+	term.ToolCallEnd("bash", "exit status 1")
 	sync()
 
 	got := stdout.String()
@@ -160,7 +163,8 @@ func TestTerminal_ToolCall_ReadOmitsResult(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.ToolCall("read", `{"path": "x.txt"}`, "file content")
+	term.ToolCallStart("read", `{"path": "x.txt"}`)
+	term.ToolCallEnd("read", "file content")
 	sync()
 
 	got := stdout.String()

@@ -196,7 +196,7 @@ func (m *Minimal) flushActiveBlock() {
 	m.finalizeLine()
 }
 
-func (m *Minimal) ToolCall(name, args, result string) {
+func (m *Minimal) ToolCallStart(name, args string) {
 	parsed := parseArgs(args)
 	title, _ := parsed["description"].(string)
 	if title == "" {
@@ -206,13 +206,19 @@ func (m *Minimal) ToolCall(name, args, result string) {
 	m.curContent.WriteString(title)
 	m.finalizeLine()
 	m.blockStart = time.Now()
+}
 
-	if name != "read" && result != "" {
-		m.startLine("Result:")
-		m.curContent.WriteString(result)
-		m.finalizeLine()
-		m.blockStart = time.Now()
+func (m *Minimal) ToolCallEnd(name string, result string) {
+	if name == "read" {
+		return
 	}
+	if result == "" {
+		return
+	}
+	m.startLine("Result:")
+	m.curContent.WriteString(result)
+	m.finalizeLine()
+	m.blockStart = time.Now()
 }
 
 func (m *Minimal) Summary(usage stream.Usage, stats stream.Stats) {

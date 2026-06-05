@@ -15,7 +15,8 @@ func NewSilent() *Silent {
 }
 
 func (s *Silent) Thinking(text string)            {}
-func (s *Silent) ToolCall(name, args, result string) {}
+func (s *Silent) ToolCallStart(name, args string)  {}
+func (s *Silent) ToolCallEnd(name, result string) {}
 
 func (s *Silent) Text(text string) {
 	s.text.WriteString(text)

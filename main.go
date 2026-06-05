@@ -117,6 +117,7 @@ func main() {
 
 	cfg := agent.Config{
 		Model:      modelName,
+		System:     providers.BuildSystemPrompt(),
 		MaxRetries: *maxRetriesFlag,
 		Debug:      *debugFlag,
 		Tools:      toolsAdapter{},

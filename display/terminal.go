@@ -111,7 +111,7 @@ func (t *Terminal) Text(text string) {
 	fmt.Fprint(os.Stdout, text)
 }
 
-func (t *Terminal) ToolCall(name, args, result string) {
+func (t *Terminal) ToolCallStart(name, args string) {
 	t.newBlock(blockTool, t.bgTools)
 
 	var block strings.Builder
@@ -128,14 +128,17 @@ func (t *Terminal) ToolCall(name, args, result string) {
 		block.WriteString(fmt.Sprintf("🔧 %s(%s)", name, args))
 	}
 
-	if name == "read" {
-	} else if result != "" {
-		block.WriteByte('\n')
-		block.WriteString(result)
-	}
-
 	// ensure each new line gets filled with background
 	out := strings.ReplaceAll(block.String(), "\n", "\n"+clearLine)
+	fmt.Fprint(os.Stdout, out)
+}
+
+func (t *Terminal) ToolCallEnd(name string, result string) {
+	if name == "read" || result == "" {
+		return
+	}
+	// append result to the current tool block
+	out := strings.ReplaceAll("\n"+result, "\n", "\n"+clearLine)
 	fmt.Fprint(os.Stdout, out)
 }
 

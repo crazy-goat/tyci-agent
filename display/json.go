@@ -20,7 +20,8 @@ func NewJSON() *JSON {
 }
 
 func (j *JSON) Thinking(text string) {}
-func (j *JSON) ToolCall(name, args, result string) {}
+func (j *JSON) ToolCallStart(name, args string)  {}
+func (j *JSON) ToolCallEnd(name, result string) {}
 
 func (j *JSON) Text(text string) {
 	j.text.WriteString(text)
