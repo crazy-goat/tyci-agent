@@ -61,8 +61,8 @@ func getTerminalWidth() int {
 			return width
 		}
 	}
-	if term.IsTerminal(int(os.Stderr.Fd())) {
-		width, _, err := term.GetSize(int(os.Stderr.Fd()))
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		width, _, err := term.GetSize(int(os.Stdout.Fd()))
 		if err == nil && width > 0 {
 			return width
 		}
@@ -130,8 +130,8 @@ func (m *Minimal) renderLine(spin bool) {
 	if padding < 1 {
 		padding = 1
 	}
-	fmt.Fprintf(os.Stderr, "\r%s%s%s", out, strings.Repeat(" ", padding), elapsed)
-	_ = os.Stderr.Sync()
+	fmt.Fprintf(os.Stdout, "\r%s%s%s", out, strings.Repeat(" ", padding), elapsed)
+	_ = os.Stdout.Sync()
 }
 
 func (m *Minimal) finalizeLine() {
@@ -154,8 +154,8 @@ func (m *Minimal) finalizeLine() {
 	if padding < 1 {
 		padding = 1
 	}
-	fmt.Fprintf(os.Stderr, "\r%s%s%s\n", out, strings.Repeat(" ", padding), elapsed)
-	_ = os.Stderr.Sync()
+	fmt.Fprintf(os.Stdout, "\r%s%s%s\n", out, strings.Repeat(" ", padding), elapsed)
+	_ = os.Stdout.Sync()
 	m.curContent.Reset()
 	m.lineActive = false
 }
@@ -284,9 +284,7 @@ func (m *Minimal) Summary(usage UsageInfo) {
 
 func (m *Minimal) Error(err error) {
 	m.flushActiveBlock()
-	m.startLine("Error:")
-	m.curContent.WriteString(err.Error())
-	m.finalizeLine()
+	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 }
 
 func (m *Minimal) End() {

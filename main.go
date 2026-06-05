@@ -37,17 +37,17 @@ func main() {
 	modeFlag := flag.String("mode", "minimal", "Display mode: minimal, normal, interactive")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] [--max-retries N] [--history-file <path>] [--no-history] [--mode minimal|normal|interactive] (--prompt-to-text <prompt> | --prompt-to-json <prompt> | --interactive)\n\n")
-		fmt.Fprintf(os.Stderr, "Available models:\n")
+		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] [--max-retries N] [--history-file <path>] [--no-history] [--mode minimal|normal|interactive] (--prompt-to-text <prompt> | --prompt-to-json <prompt> | --interactive)\n\n")
+		fmt.Fprintf(os.Stdout, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
-				fmt.Fprintf(os.Stderr, "  %s/%s\n", p.Name(), m)
+				fmt.Fprintf(os.Stdout, "  %s/%s\n", p.Name(), m)
 			}
 		}
-		fmt.Fprintf(os.Stderr, "\nFree models:\n")
+		fmt.Fprintf(os.Stdout, "\nFree models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.FreeModels() {
-				fmt.Fprintf(os.Stderr, "  %s/%s (free)\n", p.Name(), m)
+				fmt.Fprintf(os.Stdout, "  %s/%s (free)\n", p.Name(), m)
 			}
 		}
 		flag.PrintDefaults()
@@ -108,7 +108,7 @@ func main() {
 			var err error
 			editor, err = readline.New(historyFile, readline.DefaultMaxEntries)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: cannot init readline: %v\n", err)
+				fmt.Fprintf(os.Stdout, "Warning: cannot init readline: %v\n", err)
 				editor = nil
 			}
 		}
@@ -151,7 +151,7 @@ func main() {
 					fmt.Println("Bye!")
 					return
 				}
-				fmt.Fprintf(os.Stderr, "Read error: %v\n", err)
+				fmt.Fprintf(os.Stdout, "Read error: %v\n", err)
 				continue
 			}
 

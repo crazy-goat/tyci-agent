@@ -94,15 +94,15 @@ func SleepWithCountdown(backoff time.Duration, attempt, maxRetries int, err erro
 	remaining := int(backoff.Seconds())
 	prefix := fmt.Sprintf("⟳ retry %d/%d", attempt+1, maxRetries)
 	reason := err.Error()
-	fmt.Fprintf(os.Stderr, "%s — %s\n", prefix, reason)
+	fmt.Fprintf(os.Stdout, "%s — %s\n", prefix, reason)
 	for remaining > 0 {
 		time.Sleep(1 * time.Second)
 		remaining--
 		if remaining > 0 {
-			fmt.Fprintf(os.Stderr, "\r%s — %s — next in %ds... ", prefix, reason, remaining)
+			fmt.Fprintf(os.Stdout, "\r%s — %s — next in %ds... ", prefix, reason, remaining)
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\r%s — %s — retrying...                    \n", prefix, reason)
+	fmt.Fprintf(os.Stdout, "\r%s — %s — retrying...                    \n", prefix, reason)
 }
 
 type UsageInfo struct {
@@ -139,14 +139,14 @@ type DebugHandler struct {
 func (d *DebugHandler) Chunk(text string) {
 	d.Inner.Chunk(text)
 	if d.Debug {
-		fmt.Fprintf(os.Stderr, "[CHUNK] %s\n", text)
+		fmt.Fprintf(os.Stdout, "[CHUNK] %s\n", text)
 	}
 }
 
 func (d *DebugHandler) Thinking(text string) {
 	d.Inner.Thinking(text)
 	if d.Debug {
-		fmt.Fprintf(os.Stderr, "[THINKING] %s\n", text)
+		fmt.Fprintf(os.Stdout, "[THINKING] %s\n", text)
 	}
 }
 
@@ -198,7 +198,7 @@ func (d *DebugHandler) End() {
 func (d *DebugHandler) Error(err error) {
 	d.Inner.Error(err)
 	if d.Debug {
-		fmt.Fprintf(os.Stderr, "[ERROR] %v\n", err)
+		fmt.Fprintf(os.Stdout, "[ERROR] %v\n", err)
 	}
 }
 
@@ -207,14 +207,14 @@ func (d *DebugHandler) LogRequest(method, url string, body any) {
 		return
 	}
 	jsonBody, _ := json.Marshal(body)
-	fmt.Fprintf(os.Stderr, "[DEBUG REQ] %s %s\n%s\n", method, url, string(jsonBody))
+	fmt.Fprintf(os.Stdout, "[DEBUG REQ] %s %s\n%s\n", method, url, string(jsonBody))
 }
 
 func (d *DebugHandler) LogResponse(data string) {
 	if !d.Debug {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[DEBUG RESP] %s\n", data)
+	fmt.Fprintf(os.Stdout, "[DEBUG RESP] %s\n", data)
 }
 
 func (d *DebugHandler) AccumulateToolCall(idx int, name, argument string) {
@@ -226,7 +226,7 @@ func (d *DebugHandler) AccumulateToolCall(idx int, name, argument string) {
 	}
 	d.ToolCalls[idx].Argument += argument
 	if d.Debug {
-		fmt.Fprintf(os.Stderr, "[TOOL_CALL] idx=%d name=%q arg_accumulated=%q\n", idx, d.ToolCalls[idx].Name, d.ToolCalls[idx].Argument)
+		fmt.Fprintf(os.Stdout, "[TOOL_CALL] idx=%d name=%q arg_accumulated=%q\n", idx, d.ToolCalls[idx].Name, d.ToolCalls[idx].Argument)
 	}
 }
 

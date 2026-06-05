@@ -77,17 +77,17 @@ func (t *Terminal) Thinking(text string) {
 	}
 	text = strings.ReplaceAll(text, "\n", "\n"+clearLine)
 	if !t.thinkingStarted {
-		fmt.Fprintf(os.Stderr, "%s%s💭 %s%s", t.bgThinking, clearLine, text, clearLine)
+		fmt.Fprintf(os.Stdout, "%s%s💭 %s%s", t.bgThinking, clearLine, text, clearLine)
 		t.thinkingStarted = true
 	} else {
-		fmt.Fprintf(os.Stderr, "%s%s%s", clearLine, text, clearLine)
+		fmt.Fprintf(os.Stdout, "%s%s%s", clearLine, text, clearLine)
 	}
 	t.thinkingActive = true
 }
 
 func (t *Terminal) EndThinking() {
 	if !t.hideThinking && t.thinkingActive {
-		fmt.Fprintf(os.Stderr, "%s%s\n\n", clearLine, bgReset)
+		fmt.Fprintf(os.Stdout, "%s%s\n\n", clearLine, bgReset)
 		t.thinkingActive = false
 		t.thinkingStarted = false
 	}
@@ -154,9 +154,9 @@ func (t *Terminal) ToolResult(name string, result *ToolResult) {
 	content := block.String()
 	if t.interactive {
 		content = strings.ReplaceAll(content, "\n", "\n"+clearLine)
-		fmt.Fprintf(os.Stderr, "%s%s%s%s%s\n\n", t.bgTools, clearLine, content, clearLine, bgReset)
+		fmt.Fprintf(os.Stdout, "%s%s%s%s%s\n\n", t.bgTools, clearLine, content, clearLine, bgReset)
 	} else {
-		fmt.Fprintf(os.Stderr, "%s%s%s%s\n", t.bgTools, clearLine, content, bgReset)
+		fmt.Fprintf(os.Stdout, "%s%s%s%s\n", t.bgTools, clearLine, content, bgReset)
 	}
 }
 
@@ -174,14 +174,14 @@ func (t *Terminal) Summary(usage UsageInfo) {
 	}
 	if t.interactive {
 		if t.sawStdout && !t.textEndsNewline {
-			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stdout)
 		}
 		if t.sawStdout {
-			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stdout)
 		}
-		fmt.Fprintf(os.Stderr, "%s%s%s%s\n\n", t.bgUsage, clearLine, parts, bgReset)
+		fmt.Fprintf(os.Stdout, "%s%s%s%s\n\n", t.bgUsage, clearLine, parts, bgReset)
 	} else {
-		fmt.Fprintf(os.Stderr, "%s%s\n", clearLine, parts)
+		fmt.Fprintf(os.Stdout, "%s%s\n", clearLine, parts)
 	}
 	t.sawStdout = false
 	t.textEndsNewline = false

@@ -249,7 +249,7 @@ func TestTerminal_Chunk_WritesStdout(t *testing.T) {
 }
 
 func TestTerminal_Thinking_RespectsHideThinking(t *testing.T) {
-	_, stderr, sync, restore := captureOutput(t)
+	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(true, false, false)
@@ -257,13 +257,13 @@ func TestTerminal_Thinking_RespectsHideThinking(t *testing.T) {
 	term.EndThinking()
 	sync()
 
-	if stderr.Len() != 0 {
-		t.Errorf("expected no stderr output when hideThinking, got %q", stderr.String())
+	if stdout.Len() != 0 {
+		t.Errorf("expected no stdout output when hideThinking, got %q", stdout.String())
 	}
 }
 
 func TestTerminal_Thinking_RendersWithIconAndBackground(t *testing.T) {
-	_, stderr, sync, restore := captureOutput(t)
+	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, false, false)
@@ -271,7 +271,7 @@ func TestTerminal_Thinking_RendersWithIconAndBackground(t *testing.T) {
 	term.EndThinking()
 	sync()
 
-	got := stderr.String()
+	got := stdout.String()
 	if !strings.Contains(got, "💭") {
 		t.Errorf("expected thinking output to contain 💭, got %q", got)
 	}
@@ -284,7 +284,7 @@ func TestTerminal_Thinking_RendersWithIconAndBackground(t *testing.T) {
 }
 
 func TestTerminal_EndThinking_ClosesBlock(t *testing.T) {
-	_, stderr, sync, restore := captureOutput(t)
+	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, false, false)
@@ -292,14 +292,14 @@ func TestTerminal_EndThinking_ClosesBlock(t *testing.T) {
 	term.EndThinking()
 	sync()
 
-	got := stderr.String()
+	got := stdout.String()
 	if !strings.HasSuffix(got, "\n\n") {
 		t.Errorf("expected thinking block to end with blank line, got %q", got)
 	}
 }
 
 func TestTerminal_ToolResult_BashWithDescription(t *testing.T) {
-	_, stderr, sync, restore := captureOutput(t)
+	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, false, false)
@@ -310,7 +310,7 @@ func TestTerminal_ToolResult_BashWithDescription(t *testing.T) {
 	term.End()
 	sync()
 
-	got := stderr.String()
+	got := stdout.String()
 	if !strings.Contains(got, "🔧") {
 		t.Errorf("expected tool output to contain 🔧, got %q", got)
 	}
@@ -326,7 +326,7 @@ func TestTerminal_ToolResult_BashWithDescription(t *testing.T) {
 }
 
 func TestTerminal_ToolResult_BashError(t *testing.T) {
-	_, stderr, sync, restore := captureOutput(t)
+	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, false, false)
@@ -337,14 +337,14 @@ func TestTerminal_ToolResult_BashError(t *testing.T) {
 	term.End()
 	sync()
 
-	got := stderr.String()
+	got := stdout.String()
 	if !strings.Contains(got, "exit status 1") {
 		t.Errorf("expected output to contain error 'exit status 1', got %q", got)
 	}
 }
 
 func TestTerminal_ToolResult_ReadOnlyHeader(t *testing.T) {
-	_, stderr, sync, restore := captureOutput(t)
+	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, false, false)
@@ -355,7 +355,7 @@ func TestTerminal_ToolResult_ReadOnlyHeader(t *testing.T) {
 	term.End()
 	sync()
 
-	got := stderr.String()
+	got := stdout.String()
 	if !strings.Contains(got, "🔧 read(") {
 		t.Errorf("expected read header, got %q", got)
 	}
@@ -365,7 +365,7 @@ func TestTerminal_ToolResult_ReadOnlyHeader(t *testing.T) {
 }
 
 func TestTerminal_ToolResult_RespectsHideTools(t *testing.T) {
-	_, stderr, sync, restore := captureOutput(t)
+	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, true, false)
@@ -376,8 +376,8 @@ func TestTerminal_ToolResult_RespectsHideTools(t *testing.T) {
 	term.End()
 	sync()
 
-	if stderr.Len() != 0 {
-		t.Errorf("expected no stderr output when hideTools, got %q", stderr.String())
+	if stdout.Len() != 0 {
+		t.Errorf("expected no stdout output when hideTools, got %q", stdout.String())
 	}
 }
 

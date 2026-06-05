@@ -50,7 +50,7 @@ func New(historyFile string, maxEntries int) (*LineEditor, error) {
 		var err error
 		history, err = loadHistoryFromFile(historyFile, maxEntries)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+			fmt.Fprintf(os.Stdout, "warning: %v\n", err)
 			history = nil
 		}
 		history = dedupAdjacent(history)
@@ -151,7 +151,7 @@ func (e *LineEditor) AddHistory(line string) {
 
 	if e.historyFile != "" {
 		if err := appendLineToFile(e.historyFile, line); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to write history: %v\n", err)
+			fmt.Fprintf(os.Stdout, "warning: failed to write history: %v\n", err)
 			return
 		}
 	}

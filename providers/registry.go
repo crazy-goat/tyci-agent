@@ -72,7 +72,7 @@ func (h *DefaultHandler) Chunk(text string) {
 }
 
 func (h *DefaultHandler) Summary(usage UsageInfo) {
-	fmt.Fprintf(os.Stderr, "\n[Tokens: %d in / %d out, Cost: $%.6f]\n",
+	fmt.Fprintf(os.Stdout, "\n[Tokens: %d in / %d out, Cost: $%.6f]\n",
 		usage.InputTokens, usage.OutputTokens, usage.Cost)
 }
 
