@@ -39,9 +39,8 @@ type Terminal struct {
 
 	thinkingActive  bool
 	thinkingStarted bool
-	sawStderr       bool
 	sawStdout       bool
-	toolCount       int
+	textEndsNewline bool
 
 	pendingTools []ToolCall
 	currentTool  *ToolCall
@@ -69,6 +68,7 @@ func (t *Terminal) Chunk(text string) {
 	fmt.Fprint(os.Stdout, text)
 	_ = os.Stdout.Sync()
 	t.sawStdout = true
+	t.textEndsNewline = strings.HasSuffix(text, "\n")
 }
 
 func (t *Terminal) Thinking(text string) {
@@ -123,7 +123,6 @@ func (t *Terminal) ToolResult(name string, result *ToolResult) {
 	}
 	tc := t.pendingTools[0]
 	t.pendingTools = t.pendingTools[1:]
-	t.toolCount++
 
 	var block strings.Builder
 	if tc.Name == "read" {
@@ -159,7 +158,6 @@ func (t *Terminal) ToolResult(name string, result *ToolResult) {
 	} else {
 		fmt.Fprintf(os.Stderr, "%s%s%s%s\n", t.bgTools, clearLine, content, bgReset)
 	}
-	t.sawStderr = true
 }
 
 func (t *Terminal) Summary(usage UsageInfo) {
@@ -175,6 +173,9 @@ func (t *Terminal) Summary(usage UsageInfo) {
 		parts += fmt.Sprintf(" stop_reason=%s", usage.StopReason)
 	}
 	if t.interactive {
+		if t.sawStdout && !t.textEndsNewline {
+			fmt.Fprintln(os.Stderr)
+		}
 		if t.sawStdout {
 			fmt.Fprintln(os.Stderr)
 		}
@@ -182,8 +183,8 @@ func (t *Terminal) Summary(usage UsageInfo) {
 	} else {
 		fmt.Fprintf(os.Stderr, "%s%s\n", clearLine, parts)
 	}
-	t.sawStderr = true
 	t.sawStdout = false
+	t.textEndsNewline = false
 }
 
 func (t *Terminal) Error(err error) {
