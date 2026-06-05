@@ -10,7 +10,9 @@ const continuation = "  "
 
 func (e *LineEditor) render() {
 	if e.renderLines > 0 {
-		fmt.Fprintf(os.Stdout, "\033[%dA", e.lastCursorLine)
+		if e.lastCursorLine > 0 {
+			fmt.Fprintf(os.Stdout, "\033[%dA", e.lastCursorLine)
+		}
 		fmt.Fprint(os.Stdout, "\r\033[J")
 	}
 
