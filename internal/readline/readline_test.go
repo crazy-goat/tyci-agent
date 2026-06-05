@@ -68,6 +68,20 @@ func TestParseEscapeSequence(t *testing.T) {
 	}
 }
 
+func TestAltEnterInsertsNewline(t *testing.T) {
+	e := &LineEditor{buffer: []rune("hello"), cursorPos: 3}
+	done := e.handleKey(key{special: KeyAltEnter})
+	if done {
+		t.Error("expected not done")
+	}
+	if string(e.buffer) != "hel\nlo" {
+		t.Errorf("buffer = %q, want %q", string(e.buffer), "hel\nlo")
+	}
+	if e.cursorPos != 4 {
+		t.Errorf("cursorPos = %d, want 4", e.cursorPos)
+	}
+}
+
 func TestLineEditorHandleKey(t *testing.T) {
 	t.Run("insert character", func(t *testing.T) {
 		e := &LineEditor{buffer: []rune{}}
@@ -309,6 +323,187 @@ func TestLineEditorHandleKey(t *testing.T) {
 		}
 		if string(e.buffer) != "old command" {
 			t.Errorf("buffer = %q, want %q", string(e.buffer), "old command")
+		}
+	})
+}
+
+func TestMultilineCursorLine(t *testing.T) {
+	t.Run("cursorLine on single line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("hello")}
+		if e.cursorLine() != 0 {
+			t.Errorf("cursorLine = %d, want 0", e.cursorLine())
+		}
+	})
+
+	t.Run("cursorLine on second line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef"), cursorPos: 6}
+		if e.cursorLine() != 1 {
+			t.Errorf("cursorLine = %d, want 1", e.cursorLine())
+		}
+	})
+
+	t.Run("cursorCol on first line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef"), cursorPos: 2}
+		if e.cursorCol() != 2 {
+			t.Errorf("cursorCol = %d, want 2", e.cursorCol())
+		}
+	})
+
+	t.Run("cursorCol on second line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef"), cursorPos: 5}
+		if e.cursorCol() != 1 {
+			t.Errorf("cursorCol = %d, want 1", e.cursorCol())
+		}
+	})
+
+	t.Run("lineCount", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef\nghi")}
+		if e.lineCount() != 3 {
+			t.Errorf("lineCount = %d, want 3", e.lineCount())
+		}
+	})
+
+	t.Run("lineCount single", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("hello")}
+		if e.lineCount() != 1 {
+			t.Errorf("lineCount = %d, want 1", e.lineCount())
+		}
+	})
+
+	t.Run("lineStart first line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef")}
+		if e.lineStart(0) != 0 {
+			t.Errorf("lineStart(0) = %d, want 0", e.lineStart(0))
+		}
+	})
+
+	t.Run("lineStart second line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef")}
+		if e.lineStart(1) != 4 {
+			t.Errorf("lineStart(1) = %d, want 4", e.lineStart(1))
+		}
+	})
+
+	t.Run("lineEnd first line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef")}
+		if e.lineEnd(0) != 3 {
+			t.Errorf("lineEnd(0) = %d, want 3", e.lineEnd(0))
+		}
+	})
+
+	t.Run("lineEnd last line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef")}
+		if e.lineEnd(1) != 7 {
+			t.Errorf("lineEnd(1) = %d, want 7", e.lineEnd(1))
+		}
+	})
+
+	t.Run("lineEnd with no trailing newline", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("hello")}
+		if e.lineEnd(0) != 5 {
+			t.Errorf("lineEnd(0) = %d, want 5", e.lineEnd(0))
+		}
+	})
+}
+
+func TestMultilineKeyNavigation(t *testing.T) {
+	t.Run("up arrow moves to previous line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef"), cursorPos: 6}
+		e.handleKey(key{special: KeyUp})
+		if e.cursorPos != 2 {
+			t.Errorf("cursorPos = %d, want 2", e.cursorPos)
+		}
+	})
+
+	t.Run("up arrow at first line navigates history", func(t *testing.T) {
+		e := &LineEditor{
+			buffer: []rune("current"), cursorPos: 7,
+			history: []string{"previous"}, historyPos: 1,
+		}
+		e.handleKey(key{special: KeyUp})
+		if string(e.buffer) != "previous" {
+			t.Errorf("buffer = %q, want %q", string(e.buffer), "previous")
+		}
+	})
+
+	t.Run("down arrow keeps column position", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef"), cursorPos: 2}
+		e.handleKey(key{special: KeyDown})
+		if e.cursorPos != 6 {
+			t.Errorf("cursorPos = %d, want 6 (col 2 on line 1)", e.cursorPos)
+		}
+	})
+
+	t.Run("down arrow at last line navigates history", func(t *testing.T) {
+		e := &LineEditor{
+			buffer: []rune("current"), cursorPos: 7,
+			history: []string{"prev"}, draft: "draft", historyPos: 0,
+		}
+		e.handleKey(key{special: KeyDown})
+		if e.draft != "" || string(e.buffer) != "draft" {
+			t.Errorf("should restore draft, got buffer=%q draft=%q", string(e.buffer), e.draft)
+		}
+	})
+
+	t.Run("up clamps to end of shorter line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("a\nbcd"), cursorPos: 5}
+		e.handleKey(key{special: KeyUp})
+		if e.cursorPos != 1 {
+			t.Errorf("cursorPos = %d, want 1", e.cursorPos)
+		}
+	})
+
+	t.Run("down clamps to end of shorter line", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\nd"), cursorPos: 2}
+		e.handleKey(key{special: KeyDown})
+		if e.cursorPos != 5 {
+			t.Errorf("cursorPos = %d, want 5 (end of line 1)", e.cursorPos)
+		}
+	})
+
+	t.Run("Home goes to line start", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef"), cursorPos: 6}
+		e.handleKey(key{special: KeyHome})
+		if e.cursorPos != 4 {
+			t.Errorf("cursorPos = %d, want 4", e.cursorPos)
+		}
+	})
+
+	t.Run("End goes to line end", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef"), cursorPos: 4}
+		e.handleKey(key{special: KeyEnd})
+		if e.cursorPos != 7 {
+			t.Errorf("cursorPos = %d, want 7", e.cursorPos)
+		}
+	})
+
+	t.Run("Ctrl+U deletes to line start", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef"), cursorPos: 6}
+		e.handleKey(key{special: KeyCtrlU})
+		if string(e.buffer) != "abc\nf" {
+			t.Errorf("buffer = %q, want %q", string(e.buffer), "abc\nf")
+		}
+		if e.cursorPos != 4 {
+			t.Errorf("cursorPos = %d, want 4", e.cursorPos)
+		}
+	})
+
+	t.Run("Ctrl+K deletes to line end", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef"), cursorPos: 1}
+		e.handleKey(key{special: KeyCtrlK})
+		if string(e.buffer) != "a\ndef" {
+			t.Errorf("buffer = %q, want %q", string(e.buffer), "a\ndef")
+		}
+		if e.cursorPos != 1 {
+			t.Errorf("cursorPos = %d, want 1", e.cursorPos)
+		}
+	})
+
+	t.Run("Ctrl+K at line end does nothing", func(t *testing.T) {
+		e := &LineEditor{buffer: []rune("abc\ndef"), cursorPos: 3}
+		e.handleKey(key{special: KeyCtrlK})
+		if string(e.buffer) != "abc\ndef" {
+			t.Errorf("buffer = %q, want %q", string(e.buffer), "abc\ndef")
 		}
 	})
 }

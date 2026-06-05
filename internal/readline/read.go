@@ -39,6 +39,7 @@ const (
 	KeyCtrlU
 	KeyCtrlW
 	KeyEsc
+	KeyAltEnter
 )
 
 func (e *LineEditor) readKey() (key, error) {
@@ -93,6 +94,9 @@ func (e *LineEditor) readEscapeSequence() (key, error) {
 	seq = append(seq, buf[0])
 
 	if buf[0] != '[' && buf[0] != 'O' {
+		if buf[0] == '\r' || buf[0] == '\n' {
+			return key{special: KeyAltEnter}, nil
+		}
 		return key{special: KeyEsc}, nil
 	}
 

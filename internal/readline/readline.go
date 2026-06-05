@@ -39,6 +39,9 @@ type LineEditor struct {
 	searchDir    int
 
 	interrupted bool
+
+	renderLines    int
+	lastCursorLine int
 }
 
 func New(historyFile string, maxEntries int) (*LineEditor, error) {
@@ -168,4 +171,6 @@ func (e *LineEditor) resetLine() {
 	e.searchBuf = nil
 	e.searchCursor = 0
 	e.searchDir = 0
+	e.renderLines = 0
+	e.lastCursorLine = 0
 }

@@ -6,15 +6,54 @@ import (
 	"strings"
 )
 
+const continuation = "  "
+
 func (e *LineEditor) render() {
-	fmt.Fprint(os.Stdout, "\r\033[K")
+	if e.renderLines > 0 {
+		fmt.Fprintf(os.Stdout, "\033[%dA", e.lastCursorLine)
+		fmt.Fprint(os.Stdout, "\r\033[J")
+	}
+
 	if e.searching {
 		fmt.Fprintf(os.Stdout, "(reverse-i-search)`%s': %s", string(e.searchQuery), string(e.buffer))
-	} else {
-		fmt.Fprint(os.Stdout, e.prompt)
-		fmt.Fprint(os.Stdout, string(e.buffer))
+		e.renderLines = 1
+		e.lastCursorLine = 0
+		return
 	}
-	e.moveCursor()
+
+	lines := e.lines()
+	for i, line := range lines {
+		if i > 0 {
+			fmt.Fprint(os.Stdout, "\r\n")
+		}
+		if i == 0 {
+			fmt.Fprint(os.Stdout, e.prompt)
+		} else {
+			fmt.Fprint(os.Stdout, continuation)
+		}
+		fmt.Fprint(os.Stdout, line)
+	}
+
+	curLine := e.cursorLine()
+	curCol := e.cursorCol()
+
+	if curLine < len(lines)-1 {
+		fmt.Fprintf(os.Stdout, "\033[%dA", len(lines)-1-curLine)
+	}
+	col := curCol
+	if curLine == 0 {
+		col += len([]rune(e.prompt))
+	} else {
+		col += len([]rune(continuation))
+	}
+	if col > 0 {
+		fmt.Fprintf(os.Stdout, "\033[%dC", col)
+	} else {
+		fmt.Fprint(os.Stdout, "\r")
+	}
+
+	e.renderLines = len(lines)
+	e.lastCursorLine = curLine
 }
 
 func (e *LineEditor) moveCursor() {
