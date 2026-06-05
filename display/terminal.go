@@ -32,8 +32,10 @@ func TerminalIsDark() bool {
 type Terminal struct {
 	hideThinking bool
 	hideTools    bool
+	interactive  bool
 	bgTools      string
 	bgThinking   string
+	bgUsage      string
 
 	thinkingActive  bool
 	thinkingStarted bool
@@ -44,17 +46,20 @@ type Terminal struct {
 	currentTool  *ToolCall
 }
 
-func NewTerminal(hideThinking, hideTools bool) *Terminal {
+func NewTerminal(hideThinking, hideTools bool, interactive bool) *Terminal {
 	t := &Terminal{
 		hideThinking: hideThinking,
 		hideTools:    hideTools,
+		interactive:  interactive,
 	}
 	if TerminalIsDark() {
 		t.bgTools = "\033[48;2;18;18;42m"
 		t.bgThinking = "\033[48;2;18;40;18m"
+		t.bgUsage = "\033[48;2;70;70;70m"
 	} else {
 		t.bgTools = "\033[48;2;248;248;254m"
 		t.bgThinking = "\033[48;2;248;253;248m"
+		t.bgUsage = "\033[48;2;230;230;230m"
 	}
 	return t
 }
@@ -156,7 +161,22 @@ func (t *Terminal) ToolResult(name string, result *ToolResult) {
 	t.sawStderr = true
 }
 
-func (t *Terminal) Summary(usage UsageInfo) {}
+func (t *Terminal) Summary(usage UsageInfo) {
+	newIn := usage.InputTokens - usage.CacheReadInputTokens
+	if newIn < 0 {
+		newIn = 0
+	}
+	parts := fmt.Sprintf("Usage: in=%d out=%d", newIn, usage.OutputTokens)
+	if usage.CacheReadInputTokens > 0 || usage.CacheCreateInputTokens > 0 {
+		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", usage.CacheReadInputTokens, usage.CacheCreateInputTokens)
+	}
+	if t.interactive {
+		fmt.Fprintf(os.Stderr, "%s%s%s%s\n", t.bgUsage, clearLine, parts, bgReset)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s%s\n", clearLine, parts)
+	}
+	t.sawStderr = true
+}
 
 func (t *Terminal) Error(err error) {
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)

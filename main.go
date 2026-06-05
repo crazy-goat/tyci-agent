@@ -88,11 +88,11 @@ func main() {
 		if *promptJSONFlag != "" {
 			disp = display.NewJSON()
 		} else {
-			disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag)
+			disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag, false)
 		}
 	case "interactive":
 		*interactiveFlag = true
-		disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag)
+		disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag, true)
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown mode %q (expected minimal, normal, or interactive)\n", mode)
 		os.Exit(1)

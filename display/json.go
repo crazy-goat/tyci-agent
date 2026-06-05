@@ -11,6 +11,7 @@ type JSON struct {
 	text        strings.Builder
 	toolCalls   []ToolCall
 	currentTool *ToolCall
+	usage       *UsageInfo
 }
 
 func NewJSON() *JSON {
@@ -46,7 +47,9 @@ func (j *JSON) EndToolCall() {
 
 func (j *JSON) ToolResult(name string, result *ToolResult) {}
 
-func (j *JSON) Summary(usage UsageInfo) {}
+func (j *JSON) Summary(usage UsageInfo) {
+	j.usage = &usage
+}
 
 func (j *JSON) Error(err error) {}
 
@@ -63,11 +66,23 @@ func (j *JSON) End() {
 		if len(j.toolCalls) > 0 {
 			output["tool_calls"] = j.toolCalls
 		}
+		if j.usage != nil {
+			output["usage"] = j.usage
+		}
 		jsonBytes, _ := json.MarshalIndent(output, "", "  ")
 		fmt.Fprintln(os.Stdout, string(jsonBytes))
 	} else {
-		jsonBytes, _ := json.MarshalIndent(jsonData, "", "  ")
-		fmt.Fprintln(os.Stdout, string(jsonBytes))
+		if j.usage != nil {
+			output := map[string]interface{}{
+				"response": jsonData,
+				"usage":    j.usage,
+			}
+			jsonBytes, _ := json.MarshalIndent(output, "", "  ")
+			fmt.Fprintln(os.Stdout, string(jsonBytes))
+		} else {
+			jsonBytes, _ := json.MarshalIndent(jsonData, "", "  ")
+			fmt.Fprintln(os.Stdout, string(jsonBytes))
+		}
 	}
 }
 

@@ -237,7 +237,7 @@ func TestTerminal_Chunk_WritesStdout(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false)
+	term := NewTerminal(false, false, false)
 	term.Chunk("hello")
 	term.Chunk(" world")
 	sync()
@@ -252,7 +252,7 @@ func TestTerminal_Thinking_RespectsHideThinking(t *testing.T) {
 	_, stderr, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(true, false)
+	term := NewTerminal(true, false, false)
 	term.Thinking("internal reasoning")
 	term.EndThinking()
 	sync()
@@ -266,7 +266,7 @@ func TestTerminal_Thinking_RendersWithIconAndBackground(t *testing.T) {
 	_, stderr, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false)
+	term := NewTerminal(false, false, false)
 	term.Thinking("some thought")
 	term.EndThinking()
 	sync()
@@ -287,7 +287,7 @@ func TestTerminal_EndThinking_ClosesBlock(t *testing.T) {
 	_, stderr, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false)
+	term := NewTerminal(false, false, false)
 	term.Thinking("a")
 	term.EndThinking()
 	sync()
@@ -302,7 +302,7 @@ func TestTerminal_ToolResult_BashWithDescription(t *testing.T) {
 	_, stderr, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false)
+	term := NewTerminal(false, false, false)
 	term.ToolCallStart("bash")
 	term.ToolCallArg(`{"description": "list files", "command": "ls -la"}`)
 	term.EndToolCall()
@@ -329,7 +329,7 @@ func TestTerminal_ToolResult_BashError(t *testing.T) {
 	_, stderr, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false)
+	term := NewTerminal(false, false, false)
 	term.ToolCallStart("bash")
 	term.ToolCallArg(`{"description": "fail", "command": "false"}`)
 	term.EndToolCall()
@@ -347,7 +347,7 @@ func TestTerminal_ToolResult_ReadOnlyHeader(t *testing.T) {
 	_, stderr, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false)
+	term := NewTerminal(false, false, false)
 	term.ToolCallStart("read")
 	term.ToolCallArg(`{"path": "x.txt"}`)
 	term.EndToolCall()
@@ -368,7 +368,7 @@ func TestTerminal_ToolResult_RespectsHideTools(t *testing.T) {
 	_, stderr, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, true)
+	term := NewTerminal(false, true, false)
 	term.ToolCallStart("bash")
 	term.ToolCallArg(`{"description": "list", "command": "ls"}`)
 	term.EndToolCall()
@@ -385,7 +385,7 @@ func TestTerminal_Error_WritesToStderr(t *testing.T) {
 	_, stderr, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false)
+	term := NewTerminal(false, false, false)
 	term.Error(os.ErrNotExist)
 	sync()
 
