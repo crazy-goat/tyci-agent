@@ -46,13 +46,10 @@ Be terse. No fluff. Short sentence. Get job done.
 }
 
 type Message struct {
-	Role    string
-	Content string
-}
-
-type ToolCall struct {
-	Name      string
-	Arguments string
+	Role       string
+	Content    string
+	ToolCallID string
+	ToolCalls  []stream.ToolCall
 }
 
 type Request struct {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/decodo/tyci-agent/internal/debug"
 	"github.com/decodo/tyci-agent/stream"
 )
 
@@ -50,6 +51,11 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 		return err
 	}
 
+	dl := debug.FromContext(ctx)
+	if dl != nil {
+		dl.WriteRequest("POST", endpoint, jsonBody)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return err
@@ -68,6 +74,9 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 	if resp.StatusCode != 200 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		bodyStr := string(bodyBytes)
+		if dl != nil {
+			dl.WriteResponse(resp.StatusCode, bodyBytes)
+		}
 		if resp.StatusCode == 429 {
 			return &RetryableError{Code: 429, RetryAfter: resp.Header.Get("Retry-After"), Message: fmt.Sprintf("429 rate limited: %s", bodyStr)}
 		}
@@ -85,6 +94,11 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 		if err != nil {
 			break
 		}
+
+		if dl != nil {
+			dl.WriteResponseLine([]byte(line))
+		}
+
 		line = strings.TrimSpace(line)
 		if line == "" || !strings.HasPrefix(line, "data:") {
 			continue

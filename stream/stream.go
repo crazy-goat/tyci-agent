@@ -11,6 +11,7 @@ type TextDelta struct{ Text string }
 func (TextDelta) sealed() {}
 
 type ToolCall struct {
+	ID        string
 	Name      string
 	Arguments string
 }

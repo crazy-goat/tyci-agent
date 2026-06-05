@@ -10,12 +10,26 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/decodo/tyci-agent/internal/debug"
 	"github.com/decodo/tyci-agent/stream"
 )
 
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role         string          `json:"role"`
+	Content      string          `json:"content"`
+	ToolCallID   string          `json:"tool_call_id,omitempty"`
+	ToolCalls    []ChatToolCall  `json:"tool_calls,omitempty"`
+}
+
+type ChatToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ChatFunctionCall `json:"function"`
+}
+
+type ChatFunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type ChatRequest struct {
@@ -61,7 +75,7 @@ func (u *chatUsage) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*alias)(u)); err != nil {
 		return err
 	}
-	if u.CacheReadInputTokens > 0 && u.CacheCreateInputTokens > 0 {
+	if u.CacheReadInputTokens > 0 && u.CacheCreateInputTokens > 0 && u.ReasoningTokens > 0 {
 		return nil
 	}
 	var extra struct {
@@ -71,6 +85,9 @@ func (u *chatUsage) UnmarshalJSON(data []byte) error {
 		PromptTokensDetails   *struct {
 			CachedTokens int `json:"cached_tokens"`
 		} `json:"prompt_tokens_details"`
+		CompletionTokensDetails *struct {
+			Reasoning int `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details"`
 	}
 	if err := json.Unmarshal(data, &extra); err != nil {
 		return nil
@@ -88,6 +105,9 @@ func (u *chatUsage) UnmarshalJSON(data []byte) error {
 	if u.CacheCreateInputTokens == 0 && extra.PromptCacheMissTokens > 0 {
 		u.CacheCreateInputTokens = extra.PromptCacheMissTokens
 	}
+	if u.ReasoningTokens == 0 && extra.CompletionTokensDetails != nil {
+		u.ReasoningTokens = extra.CompletionTokensDetails.Reasoning
+	}
 	return nil
 }
 
@@ -95,6 +115,11 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return err
+	}
+
+	dl := debug.FromContext(ctx)
+	if dl != nil {
+		dl.WriteRequest("POST", endpoint, jsonBody)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(jsonBody)))
@@ -115,6 +140,9 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 	if resp.StatusCode != 200 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		bodyStr := string(bodyBytes)
+		if dl != nil {
+			dl.WriteResponse(resp.StatusCode, bodyBytes)
+		}
 		if resp.StatusCode == 429 {
 			return &RetryableError{Code: 429, RetryAfter: resp.Header.Get("Retry-After"), Message: fmt.Sprintf("429 rate limited: %s", bodyStr)}
 		}
@@ -126,6 +154,7 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 
 	reader := bufio.NewReader(resp.Body)
 	var toolAcc []struct {
+		ID        string
 		Name      string
 		Arguments strings.Builder
 	}
@@ -140,6 +169,10 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 			if line == "" {
 				break
 			}
+		}
+
+		if dl != nil {
+			dl.WriteResponseLine([]byte(line))
 		}
 
 		line = strings.TrimSpace(line)
@@ -179,9 +212,13 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 			for _, tc := range delta.ToolCalls {
 				for len(toolAcc) <= tc.Index {
 					toolAcc = append(toolAcc, struct {
+						ID        string
 						Name      string
 						Arguments strings.Builder
 					}{})
+				}
+				if tc.ID != "" {
+					toolAcc[tc.Index].ID = tc.ID
 				}
 				if tc.Function.Name != "" {
 					toolAcc[tc.Index].Name = tc.Function.Name
@@ -218,7 +255,7 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 		if tc.Name == "" && tc.Arguments.Len() == 0 {
 			continue
 		}
-		if err := emit(stream.ToolCall{Name: tc.Name, Arguments: tc.Arguments.String()}); err != nil {
+		if err := emit(stream.ToolCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments.String()}); err != nil {
 			return err
 		}
 	}

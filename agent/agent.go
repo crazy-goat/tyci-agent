@@ -132,17 +132,16 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	}
 
 	if textBuf.Len() > 0 || len(toolCalls) > 0 {
-		var content string
+		msg := providers.Message{Role: "assistant"}
 		if textBuf.Len() > 0 {
-			content = textBuf.String()
+			msg.Content = textBuf.String()
 		}
-		for _, tc := range toolCalls {
-			if content != "" {
-				content += "\n"
-			}
-			content += fmt.Sprintf("Tool call: %s(%s)", tc.Name, tc.Arguments)
+		if len(toolCalls) > 0 {
+			tcs := make([]stream.ToolCall, len(toolCalls))
+			copy(tcs, toolCalls)
+			msg.ToolCalls = tcs
 		}
-		*msgs = append(*msgs, providers.Message{Role: "assistant", Content: content})
+		*msgs = append(*msgs, msg)
 	}
 
 	if lastUsage.Input > 0 || lastUsage.Output > 0 {
@@ -159,10 +158,12 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	results := executeTools(ctx, cfg.Tools, toolCalls)
 	for i, tc := range toolCalls {
 		d.ToolCall(tc.Name, tc.Arguments, results[i])
+		*msgs = append(*msgs, providers.Message{
+			Role:       "tool",
+			ToolCallID: tc.ID,
+			Content:    results[i],
+		})
 	}
-
-	body := "Tool results:\n" + strings.Join(results, "\n---\n")
-	*msgs = append(*msgs, providers.Message{Role: "user", Content: body})
 	return true, nil
 }
 

@@ -201,7 +201,7 @@ func TestTerminal_Summary_OutputsUsage(t *testing.T) {
 	if !strings.Contains(got, "in=") || !strings.Contains(got, "out=") {
 		t.Errorf("expected usage info, got %q", got)
 	}
-	if !strings.Contains(got, "cache_rd=") {
+	if !strings.Contains(got, " cr=") {
 		t.Errorf("expected cache info, got %q", got)
 	}
 }

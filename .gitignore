@@ -1,4 +1,6 @@
 tyci-agent
+tyci-agent-race
+tyci-agent-test
 *.exe
 *.dll
 *.so

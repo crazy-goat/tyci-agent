@@ -24,8 +24,11 @@ func buildUsageLine(usage stream.Usage, stats stream.Stats) string {
 		newIn = 0
 	}
 	parts := fmt.Sprintf("in=%d out=%d", newIn, usage.Output)
+	if usage.Reasoning > 0 {
+		parts += fmt.Sprintf(" r=%d", usage.Reasoning)
+	}
 	if usage.CacheRead > 0 || usage.CacheWrite > 0 {
-		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", usage.CacheRead, usage.CacheWrite)
+		parts += fmt.Sprintf(" cr=%d cw=%d", usage.CacheRead, usage.CacheWrite)
 	}
 	genDur := stats.Duration - stats.FirstToken
 	if genDur < 0 {

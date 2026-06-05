@@ -8,30 +8,47 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 
 	"github.com/decodo/tyci-agent/agent"
 	"github.com/decodo/tyci-agent/api"
 	"github.com/decodo/tyci-agent/display"
+	"github.com/decodo/tyci-agent/internal/connect"
+	"github.com/decodo/tyci-agent/internal/debug"
 	"github.com/decodo/tyci-agent/internal/readline"
 	"github.com/decodo/tyci-agent/providers"
-	_ "github.com/decodo/tyci-agent/providers/opencode-go"
-	_ "github.com/decodo/tyci-agent/providers/opencode-zen"
 	"github.com/decodo/tyci-agent/tools"
 )
 
-var interactiveFlag = flag.Bool("interactive", false, "Interactive mode: read prompts from stdin")
-
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "connect" {
+		fs := flag.NewFlagSet("connect", flag.ExitOnError)
+		name := fs.String("name", "", "Provider name")
+		apiType := fs.String("api", "openai", "API type (openai, anthropic, gemini, responses)")
+		url := fs.String("url", "", "API base URL")
+		token := fs.String("token", "", "API key or $ENV_VAR reference")
+		fs.Parse(os.Args[2:])
+		if err := connect.Run(*name, *apiType, *url, *token); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	providers.RegisterProvidersFromConfig(filepath.Join(os.Getenv("HOME"), ".cache", "tyci-agent", "model.json"))
+
+	var interactiveFlag bool
+	noDebugFlag := flag.Bool("no-debug", false, "Disable API request/response debug logging")
 	debugFlag := flag.Bool("debug", false, "Show HTTP request/response data")
-	modelFlag := flag.String("model", "opencode-zen/big-pickle", "Model to use (format: provider/model)")
+	modelFlag := flag.String("model", "", "Model to use (format: provider/model)")
 	promptFlag := flag.String("prompt", "", "Prompt for response")
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.local/share/tyci-agent/history)")
 	modeFlag := flag.String("mode", "minimal", "Display mode: minimal, normal, interactive")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--model provider/model] [--max-retries N] [--history-file <path>] [--mode minimal|normal|interactive] (--prompt <prompt> | --interactive)\n\n")
+		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--no-debug] [--model provider/model] [--max-retries N] [--history-file <path>] [--mode minimal|normal|interactive] (--prompt <prompt> | --interactive)\n\n")
 		fmt.Fprintf(os.Stdout, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -69,6 +86,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	var ctx context.Context
+	if !*noDebugFlag {
+		dl, err := debug.Init()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: debug log: %v\n", err)
+			ctx = context.Background()
+		} else {
+			defer dl.Close()
+			ctx = debug.NewContext(context.Background(), dl)
+		}
+	} else {
+		ctx = context.Background()
+	}
+
 	var disp display.Display
 	mode := *modeFlag
 	switch mode {
@@ -77,7 +108,7 @@ func main() {
 	case "normal":
 		disp = display.NewTerminal()
 	case "interactive":
-		*interactiveFlag = true
+		interactiveFlag = true
 		disp = display.NewTerminal()
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown mode %q (expected minimal, normal, or interactive)\n", mode)
@@ -94,8 +125,8 @@ func main() {
 	tools.SetProvider(provider)
 	tools.SetCurrentModel(modelName)
 
-	if *interactiveFlag {
-		runInteractive(provider, modelName, disp, historyFile, cfg)
+	if interactiveFlag {
+		runInteractive(provider, modelName, disp, historyFile, cfg, ctx)
 		return
 	}
 
@@ -106,7 +137,7 @@ func main() {
 	}
 
 	messages := []providers.Message{{Role: "user", Content: *promptFlag}}
-	if err := agent.Run(context.Background(), provider, disp, &messages, cfg); err != nil {
+	if err := agent.Run(ctx, provider, disp, &messages, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -114,7 +145,7 @@ func main() {
 	fmt.Fprintln(os.Stdout)
 }
 
-func runInteractive(provider providers.Provider, modelName string, disp display.Display, historyFile string, cfg agent.Config) {
+func runInteractive(provider providers.Provider, modelName string, disp display.Display, historyFile string, cfg agent.Config, baseCtx context.Context) {
 	var conversation []providers.Message
 
 	var editor *readline.LineEditor
@@ -130,7 +161,7 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		defer editor.Close()
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(baseCtx, os.Interrupt)
 	defer cancel()
 
 	_ = modelName
