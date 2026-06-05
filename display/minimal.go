@@ -196,16 +196,16 @@ func (m *Minimal) flushActiveBlock() {
 	m.finalizeLine()
 }
 
-func (m *Minimal) ToolCallStart(name, args string) {
-	parsed := parseArgs(args)
-	title, _ := parsed["description"].(string)
-	if title == "" {
-		title = name
-	}
+func (m *Minimal) ToolCallStart(name string) {
 	m.startLine("Tool:")
-	m.curContent.WriteString(title)
+	m.curContent.WriteString(name)
 	m.finalizeLine()
 	m.blockStart = time.Now()
+}
+
+func (m *Minimal) ToolCallDelta(delta string) {
+	// Show partial arguments inline
+	m.feedContent("Args:", delta, false)
 }
 
 func (m *Minimal) ToolCallEnd(name string, result string) {

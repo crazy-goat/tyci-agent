@@ -130,6 +130,10 @@ func (t *Terminal) Thinking(text string) {
 			lastLine = text[idx+1:]
 		}
 		t.cursorCol = visibleWidth(lastLine)
+		// When continuing a block without newlines, cursor stays on same line
+		if !isNew && !strings.Contains(text, "\n") {
+			t.cursorCol += startCol
+		}
 	}
 	// If this is a new block and the output didn't contain newlines (single line),
 	// the prompt offset only affects the first line. If there are multiple lines,
@@ -152,7 +156,6 @@ func (t *Terminal) Text(text string) {
 	// so they don't overflow the terminal. However, "normal" mode doesn't
 	// wrap text; it's displayed as-is. The user expects text to flow naturally.
 	// We'll just print directly without wrapping for text blocks.
-	_ = startCol
 	fmt.Fprint(os.Stdout, text)
 
 	// Update cursorCol
@@ -165,33 +168,37 @@ func (t *Terminal) Text(text string) {
 			lastLine = text[idx+1:]
 		}
 		t.cursorCol = visibleWidth(lastLine)
+		// When continuing a block without newlines, cursor stays on same line
+		if !isNew && !strings.Contains(text, "\n") {
+			t.cursorCol += startCol
+		}
 	}
 }
 
-func (t *Terminal) ToolCallStart(name, args string) {
+func (t *Terminal) ToolCallStart(name string) {
 	t.newBlock(blockTool, t.bgTools)
 
-	var block strings.Builder
-	parsedArgs := parseArgs(args)
-	title, _ := parsedArgs["description"].(string)
-	if title != "" {
-		cmd, _ := parsedArgs["command"].(string)
-		if cmd != "" {
-			block.WriteString(fmt.Sprintf("🔧 %s\n$ %s", title, cmd))
-		} else {
-			block.WriteString(fmt.Sprintf("🔧 %s", title))
-		}
-	} else {
-		block.WriteString(fmt.Sprintf("🔧 %s(%s)", name, args))
-	}
-
-	// ensure each new line gets filled with background
-	out := block.String()
+	out := fmt.Sprintf("🔧 %s\n", name)
 	out = wrapText(out, t.termWidth, 0)
 	out = strings.ReplaceAll(out, "\n", "\n"+clearLine)
 	fmt.Fprint(os.Stdout, out)
+	t.cursorCol = 0
+}
 
-	// Update cursorCol based on what was printed
+func (t *Terminal) ToolCallDelta(delta string) {
+	if delta == "" {
+		return
+	}
+	out := delta
+	out = wrapText(out, t.termWidth, 0)
+	out = strings.ReplaceAll(out, "\n", "\n"+clearLine)
+
+	if t.curBg != "" {
+		out = clearLine + out
+	}
+
+	fmt.Fprint(os.Stdout, out)
+
 	if strings.HasSuffix(out, "\n") || strings.HasSuffix(out, clearLine+"\n") {
 		t.cursorCol = 0
 	} else {
@@ -199,6 +206,7 @@ func (t *Terminal) ToolCallStart(name, args string) {
 		if idx := strings.LastIndex(out, "\n"); idx >= 0 {
 			lastLine = out[idx+1:]
 		}
+		lastLine = strings.TrimPrefix(lastLine, clearLine)
 		t.cursorCol = visibleWidth(lastLine)
 	}
 }

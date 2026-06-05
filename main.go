@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"unsafe"
 
 	"github.com/decodo/tyci-agent/agent"
 	"github.com/decodo/tyci-agent/api"
@@ -19,6 +21,7 @@ import (
 	"github.com/decodo/tyci-agent/internal/readline"
 	"github.com/decodo/tyci-agent/providers"
 	"github.com/decodo/tyci-agent/tools"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -162,17 +165,15 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		defer editor.Close()
 	}
 
-	ctx, cancel := signal.NotifyContext(baseCtx, os.Interrupt)
-	defer cancel()
-
-	_ = modelName
+	sigCtx, sigCancel := signal.NotifyContext(baseCtx, os.Interrupt)
+	defer sigCancel()
 
 	for {
 		var line string
 		var err error
 
 		if editor != nil {
-			line, err = editor.Read(ctx, ">>> ")
+			line, err = editor.Read(sigCtx, ">>> ")
 		} else {
 			line, err = simplePrompt(">>> ")
 		}
@@ -183,8 +184,9 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, readline.ErrInterrupt) {
-				fmt.Println("Bye!")
-				return
+				// Ctrl+C or ESC during input — return to prompt
+				fmt.Fprint(os.Stdout, "\n")
+				continue
 			}
 			fmt.Fprintf(os.Stdout, "Read error: %v\n", err)
 			continue
@@ -209,10 +211,22 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		}
 
 		conversation = append(conversation, providers.Message{Role: "user", Content: line})
-		if err := agent.Run(ctx, provider, disp, &conversation, cfg); err != nil {
+
+		// Per-iteration context — cancelling it returns to prompt instead of exiting
+		iterCtx, iterCancel := context.WithCancel(sigCtx)
+
+		// Watch for ESC key during agent execution to cancel iteration
+		stopESC := watchESC(iterCancel)
+		err = agent.Run(iterCtx, provider, disp, &conversation, cfg)
+		stopESC()
+		iterCancel()
+
+		if err != nil {
 			if errors.Is(err, context.Canceled) {
-				fmt.Println("Bye!")
-				return
+				// Interrupted by Ctrl+C or ESC — return to prompt
+				disp.End()
+				fmt.Fprint(os.Stdout, "\n")
+				continue
 			}
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return
@@ -220,6 +234,67 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		disp.End()
 
 		fmt.Fprint(os.Stdout, "\n")
+	}
+}
+
+// watchESC starts a goroutine that monitors the terminal for the ESC key (0x1b).
+// When ESC is pressed, it calls cancel() to interrupt the current operation.
+// It sets stdin to cbreak mode (non-canonical, echo off, ISIG on, OPOST on)
+// so that individual keypresses can be read without breaking display output.
+// Returns a cleanup function that restores the original terminal state.
+// If stdin is not a terminal, returns a no-op function.
+func watchESC(cancel context.CancelFunc) func() {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return func() {}
+	}
+
+	// Save current terminal state
+	oldState, err := term.GetState(fd)
+	if err != nil {
+		return func() {}
+	}
+
+	// Set raw mode first (non-canonical, no echo, etc.)
+	_, err = term.MakeRaw(fd)
+	if err != nil {
+		return func() {}
+	}
+
+	// Re-enable ISIG (signal generation for Ctrl+C) and OPOST (output processing)
+	// while keeping non-canonical mode and echo off.
+	var t syscall.Termios
+	if _, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), syscall.TCGETS, uintptr(unsafe.Pointer(&t)), 0, 0, 0); errno != 0 {
+		term.Restore(fd, oldState)
+		return func() {}
+	}
+	t.Lflag |= syscall.ISIG
+	t.Oflag |= syscall.OPOST
+	if _, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), syscall.TCSETS, uintptr(unsafe.Pointer(&t)), 0, 0, 0); errno != 0 {
+		term.Restore(fd, oldState)
+		return func() {}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 1)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if err != nil || n == 0 {
+				// read interrupted (e.g. by Ctrl+C signal) or EOF
+				return
+			}
+			if buf[0] == 0x1b { // ESC
+				cancel()
+				return
+			}
+		}
+	}()
+
+	return func() {
+		term.Restore(fd, oldState)
+		<-done
 	}
 }
 

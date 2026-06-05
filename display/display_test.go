@@ -72,7 +72,8 @@ func TestSilent_AllMethods_NoOutput(t *testing.T) {
 
 	s := NewSilent()
 	s.Thinking("ignored")
-	s.ToolCallStart("read", `{"path": "x"}`)
+	s.ToolCallStart("read")
+	s.ToolCallDelta(`{"path": "x"}`)
 	s.ToolCallEnd("read", "content")
 	s.Summary(stream.Usage{Input: 10, Output: 20}, stream.Stats{})
 	s.Error(nil)
@@ -124,7 +125,8 @@ func TestTerminal_ToolCall_BashWithDescription(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.ToolCallStart("bash", `{"description": "list files", "command": "ls -la"}`)
+	term.ToolCallStart("bash")
+	term.ToolCallDelta(`{"description": "list files", "command": "ls -la"}`)
 	term.ToolCallEnd("bash", "file1\nfile2")
 	sync()
 
@@ -135,8 +137,8 @@ func TestTerminal_ToolCall_BashWithDescription(t *testing.T) {
 	if !strings.Contains(got, "list files") {
 		t.Errorf("expected output to contain description 'list files', got %q", got)
 	}
-	if !strings.Contains(got, "$ ls -la") {
-		t.Errorf("expected output to contain command '$ ls -la', got %q", got)
+	if !strings.Contains(got, `"command": "ls -la"`) {
+		t.Errorf("expected output to contain command 'ls -la', got %q", got)
 	}
 	if !strings.Contains(got, "file1") {
 		t.Errorf("expected output to contain result 'file1', got %q", got)
@@ -148,7 +150,8 @@ func TestTerminal_ToolCall_BashError(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.ToolCallStart("bash", `{"description": "fail", "command": "false"}`)
+	term.ToolCallStart("bash")
+	term.ToolCallDelta(`{"description": "fail", "command": "false"}`)
 	term.ToolCallEnd("bash", "exit status 1")
 	sync()
 
@@ -163,7 +166,8 @@ func TestTerminal_ToolCall_ReadOmitsResult(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.ToolCallStart("read", `{"path": "x.txt"}`)
+	term.ToolCallStart("read")
+	term.ToolCallDelta(`{"path": "x.txt"}`)
 	term.ToolCallEnd("read", "file content")
 	sync()
 
@@ -205,7 +209,7 @@ func TestTerminal_Summary_OutputsUsage(t *testing.T) {
 	if !strings.Contains(got, "in=") || !strings.Contains(got, "out=") {
 		t.Errorf("expected usage info, got %q", got)
 	}
-	if !strings.Contains(got, " cr=") {
+	if !strings.Contains(got, "cache_r=") {
 		t.Errorf("expected cache info, got %q", got)
 	}
 }
@@ -444,7 +448,8 @@ func TestTerminal_ToolCallStart_LongLine(t *testing.T) {
 	term := NewTerminal()
 	term.termWidth = 30 // force narrow width
 	// Description that's long
-	term.ToolCallStart("bash", `{"description": "this is a very long description that should wrap to multiple lines", "command": "ls -la"}`)
+	term.ToolCallStart("bash")
+	term.ToolCallDelta(`{"description": "this is a very long description that should wrap to multiple lines", "command": "ls -la"}`)
 	sync()
 
 	got := stdout.String()
@@ -464,7 +469,8 @@ func TestTerminal_ToolCallEnd_LongLine(t *testing.T) {
 
 	term := NewTerminal()
 	term.termWidth = 20
-	term.ToolCallStart("bash", `{"description": "test", "command": "echo hello"}`)
+	term.ToolCallStart("bash")
+	term.ToolCallDelta(`{"description": "test", "command": "echo hello"}`)
 	term.ToolCallEnd("bash", "0123456789012345678901234567890123456789") // 40 chars
 	sync()
 
@@ -622,7 +628,8 @@ func TestTerminal_ToolCallEnd_LongResult(t *testing.T) {
 	term := NewTerminal()
 	term.termWidth = 20
 
-	term.ToolCallStart("bash", `{"description": "test", "command": "echo hello"}`)
+	term.ToolCallStart("bash")
+	term.ToolCallDelta(`{"description": "test", "command": "echo hello"}`)
 	term.ToolCallEnd("bash", "short\n0123456789012345678901234567890123456789")
 	sync()
 
@@ -632,5 +639,179 @@ func TestTerminal_ToolCallEnd_LongResult(t *testing.T) {
 	if count < 4 {
 		t.Errorf("expected at least 4 clearLine sequences, got %d. Output: %q", count, got)
 	}
+}
+
+func TestTerminal_ToolCall_StreamingDeltas(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 40
+
+	// Simulate streaming tool call arguments in multiple chunks
+	term.ToolCallStart("bash")
+	term.ToolCallDelta(`{"description": "`)
+	term.ToolCallDelta(`list files`,)
+	term.ToolCallDelta(`", "command": "`)
+	term.ToolCallDelta(`ls -la"}`)
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "🔧") {
+		t.Errorf("expected tool icon in output, got %q", got)
+	}
+	if !strings.Contains(got, "bash") {
+		t.Errorf("expected tool name 'bash' in output, got %q", got)
+	}
+	if !strings.Contains(got, "list files") {
+		t.Errorf("expected description 'list files' in output, got %q", got)
+	}
+	if !strings.Contains(got, `ls -la`) {
+		t.Errorf("expected command 'ls -la' in output, got %q", got)
+	}
+	// Should have exactly one icon (ToolCallStart only)
+	if strings.Count(got, "🔧") != 1 {
+		t.Errorf("expected exactly one tool icon, got %d", strings.Count(got, "🔧"))
+	}
+}
+
+func TestTerminal_ToolCall_StreamingDeltasWithWrap(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 30
+
+	term.ToolCallStart("bash")
+	term.ToolCallDelta(`{"description": "this is a very long description that should wrap"`)
+	term.ToolCallDelta(`, "command": "ls -la"}`)
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "🔧") {
+		t.Errorf("expected tool icon, got %q", got)
+	}
+	// Should have at least 2 clearLine sequences (one for wrapping)
+	count := strings.Count(got, "\033[K")
+	if count < 2 {
+		t.Errorf("expected at least 2 clearLine sequences, got %d. Output: %q", count, got)
+	}
+}
+
+func TestTerminal_ToolCall_FullFlow(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 40
+
+	// Full lifecycle: start → delta → delta → end
+	term.ToolCallStart("bash")
+	term.ToolCallDelta(`{"description": "check disk"`)
+	term.ToolCallDelta(`, "command": "df -h"}`)
+	term.ToolCallEnd("bash", "Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda1       100G   50G   50G  50% /")
+	sync()
+
+	got := stdout.String()
+	// Should have 🔧 for start
+	if !strings.Contains(got, "🔧") {
+		t.Errorf("expected tool icon, got %q", got)
+	}
+	// Should have the tool name
+	if !strings.Contains(got, "bash") {
+		t.Errorf("expected 'bash', got %q", got)
+	}
+	// Should have the result text
+	if !strings.Contains(got, "Filesystem") {
+		t.Errorf("expected result 'Filesystem', got %q", got)
+	}
+	if !strings.Contains(got, "/dev/sda1") {
+		t.Errorf("expected result '/dev/sda1', got %q", got)
+	}
+	// Should have at least some clearLine sequences
+	count := strings.Count(got, "\033[K")
+	if count < 2 {
+		t.Errorf("expected at least 2 clearLine sequences, got %d. Output: %q", count, got)
+	}
+}
+
+func TestTerminal_ToolCall_ReadHidesResult(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 40
+
+	// For read tool, ToolCallEnd should NOT render the result
+	term.ToolCallStart("read")
+	term.ToolCallDelta(`{"path": "secret.txt"}`)
+	term.ToolCallEnd("read", "this should not appear")
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "🔧") {
+		t.Errorf("expected tool icon, got %q", got)
+	}
+	if strings.Contains(got, "this should not appear") {
+		t.Errorf("expected read tool NOT to render result, got %q", got)
+	}
+}
+
+func TestTerminal_ToolCallDelta_EmptyDoesNothing(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal()
+	term.termWidth = 40
+
+	term.ToolCallStart("bash")
+	term.ToolCallDelta("") // should do nothing
+	term.ToolCallEnd("bash", "result")
+	sync()
+
+	got := stdout.String()
+	// Should have 🔧 from start and result from end
+	if !strings.Contains(got, "🔧") {
+		t.Errorf("expected tool icon, got %q", got)
+	}
+	if !strings.Contains(got, "result") {
+		t.Errorf("expected result, got %q", got)
+	}
+	// Should not have any extra clearLine from the empty delta
+	// Just verify it doesn't crash or produce malformed output
+}
+
+// --- Tests for Minimal display with tool calls ---
+
+func TestMinimal_ToolCallStart(t *testing.T) {
+	m := NewMinimal()
+	m.ToolCallStart("bash")
+	// Minimal writes to stdout but we can't easily capture it in unit test
+	// Just ensure it doesn't panic
+}
+
+func TestMinimal_ToolCallDelta(t *testing.T) {
+	m := NewMinimal()
+	m.ToolCallStart("bash")
+	m.ToolCallDelta(`{"description": "test"}`)
+	// Just ensure no panic
+}
+
+func TestMinimal_ToolCall_FullFlow(t *testing.T) {
+	m := NewMinimal()
+	m.ToolCallStart("bash")
+	m.ToolCallDelta(`{"command": "ls"}`)
+	m.ToolCallEnd("bash", "file1\nfile2")
+	// Just ensure no panic
+}
+
+func TestMinimal_ToolCallDelta_Multiple(t *testing.T) {
+	m := NewMinimal()
+	m.ToolCallStart("bash")
+	m.ToolCallDelta(`{"description": "`)
+	m.ToolCallDelta(`list`)
+	m.ToolCallDelta(` files"}`)
+	m.ToolCallEnd("bash", "result")
+	// Just ensure no panic
 }
 

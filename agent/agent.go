@@ -27,7 +27,7 @@ type Config struct {
 	Schema     json.RawMessage
 }
 
-const DefaultMaxIterations = 25
+const DefaultMaxIterations = 50
 
 // Run executes the agent loop. It will make at most MaxRetries retries on
 // transient errors, and at most MaxIterations tool-call iterations.
@@ -79,7 +79,8 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 		}
 	}
 
-	return fmt.Errorf("agent loop: exceeded %d tool-call iterations (possible infinite loop)", maxIter)
+	d.Text(fmt.Sprintf("\n⚠️ Agent wykonał %d iteracji narzędzi – możliwa nieskończona pętla. Przerywam.\n", maxIter))
+	return nil
 }
 
 func sleepWithCountdown(ctx context.Context, backoff time.Duration) error {
@@ -108,6 +109,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	}
 
 	var toolCalls []stream.ToolCall
+	var toolDeltas = make(map[string]strings.Builder) // accumulate deltas per tool call ID
 	var lastUsage stream.Usage
 	var textBuf strings.Builder
 	startTime := time.Now()
@@ -129,6 +131,23 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 			}
 			d.Text(e.Text)
 			textBuf.WriteString(e.Text)
+		case stream.ToolCallStart:
+			if !hasFirstToken {
+				firstToken = time.Since(startTime)
+				hasFirstToken = true
+			}
+			// Just track that we received this tool call, don't display yet
+			if _, ok := toolDeltas[e.ID]; !ok {
+				toolDeltas[e.ID] = strings.Builder{}
+			}
+		case stream.ToolCallDelta:
+			if b, ok := toolDeltas[e.ID]; ok {
+				b.WriteString(e.Delta)
+			} else {
+				var sb strings.Builder
+				sb.WriteString(e.Delta)
+				toolDeltas[e.ID] = sb
+			}
 		case stream.ToolCall:
 			if !hasFirstToken {
 				firstToken = time.Since(startTime)
@@ -155,6 +174,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		*msgs = append(*msgs, msg)
 	}
 
+	// Show usage BEFORE tool calls
 	if lastUsage.Input > 0 || lastUsage.Output > 0 {
 		d.Summary(lastUsage, stream.Stats{
 			Duration:   time.Since(startTime),
@@ -166,9 +186,14 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		return false, nil
 	}
 
-	// Show tool call start for each tool immediately
+	// Now display all tool calls (both streamed and non-streamed)
 	for _, tc := range toolCalls {
-		d.ToolCallStart(tc.Name, tc.Arguments)
+		d.ToolCallStart(tc.Name)
+		if delta, ok := toolDeltas[tc.ID]; ok && delta.Len() > 0 {
+			d.ToolCallDelta(delta.String())
+		} else if tc.Arguments != "" {
+			d.ToolCallDelta(tc.Arguments)
+		}
 	}
 
 	results := executeTools(ctx, cfg.Tools, toolCalls)

@@ -10,6 +10,18 @@ func (ThinkingDelta) sealed() {}
 type TextDelta struct{ Text string }
 func (TextDelta) sealed() {}
 
+type ToolCallStart struct {
+	ID   string
+	Name string
+}
+func (ToolCallStart) sealed() {}
+
+type ToolCallDelta struct {
+	ID    string
+	Delta string
+}
+func (ToolCallDelta) sealed() {}
+
 type ToolCall struct {
 	ID        string
 	Name      string

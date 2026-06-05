@@ -217,13 +217,22 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 						Arguments strings.Builder
 					}{})
 				}
+				isNew := toolAcc[tc.Index].ID == ""
 				if tc.ID != "" {
 					toolAcc[tc.Index].ID = tc.ID
 				}
 				if tc.Function.Name != "" {
 					toolAcc[tc.Index].Name = tc.Function.Name
 				}
+				if isNew && toolAcc[tc.Index].ID != "" {
+					if err := emit(stream.ToolCallStart{ID: toolAcc[tc.Index].ID, Name: toolAcc[tc.Index].Name}); err != nil {
+						return err
+					}
+				}
 				if tc.Function.Arguments != "" {
+					if err := emit(stream.ToolCallDelta{ID: toolAcc[tc.Index].ID, Delta: tc.Function.Arguments}); err != nil {
+						return err
+					}
 					toolAcc[tc.Index].Arguments.WriteString(tc.Function.Arguments)
 				}
 			}

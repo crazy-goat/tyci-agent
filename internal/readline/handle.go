@@ -129,7 +129,11 @@ func (e *LineEditor) handleKey(k key) bool {
 		e.cursorPos = start
 		return false
 	case KeyEsc:
-		return false
+		e.buffer = e.buffer[:0]
+		e.cursorPos = 0
+		e.historyPos = len(e.history)
+		e.interrupted = true
+		return true
 	}
 
 	if k.r != 0 {

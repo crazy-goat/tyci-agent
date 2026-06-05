@@ -11,7 +11,8 @@ type ToolResult struct {
 type Display interface {
 	Thinking(text string)
 	Text(text string)
-	ToolCallStart(name, args string)
+	ToolCallStart(name string)
+	ToolCallDelta(delta string)
 	ToolCallEnd(name string, result string)
 	Summary(usage stream.Usage, stats stream.Stats)
 	Error(err error)

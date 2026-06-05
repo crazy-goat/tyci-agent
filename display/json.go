@@ -19,9 +19,10 @@ func NewJSON() *JSON {
 	return &JSON{}
 }
 
-func (j *JSON) Thinking(text string) {}
-func (j *JSON) ToolCallStart(name, args string)  {}
-func (j *JSON) ToolCallEnd(name, result string) {}
+func (j *JSON) Thinking(text string)                        {}
+func (j *JSON) ToolCallStart(name string)                   {}
+func (j *JSON) ToolCallDelta(delta string)                  {}
+func (j *JSON) ToolCallEnd(name, result string)             {}
 
 func (j *JSON) Text(text string) {
 	j.text.WriteString(text)

@@ -58,11 +58,12 @@ func (c *collector) Text(text string) {
 	c.text.WriteString(text)
 	c.mu.Unlock()
 }
-func (c *collector) ToolCallStart(name, args string) {
+func (c *collector) ToolCallStart(name string) {
 	c.mu.Lock()
 	c.toolCalls++
 	c.mu.Unlock()
 }
+func (c *collector) ToolCallDelta(delta string) {}
 func (c *collector) ToolCallEnd(name, result string) {}
 func (c *collector) Summary(usage stream.Usage, stats stream.Stats) {
 	c.mu.Lock()
