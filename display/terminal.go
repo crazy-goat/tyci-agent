@@ -78,6 +78,7 @@ func (t *Terminal) newBlock(kind blockKind, bg string) {
 	t.curBg = bg
 	if bg != "" {
 		fmt.Fprint(os.Stdout, bg)
+		fmt.Fprint(os.Stdout, clearLine) // wypełnij całą pierwszą linię tłem
 	}
 }
 
@@ -86,6 +87,7 @@ func (t *Terminal) closeBlock() {
 		return
 	}
 	if t.curBg != "" {
+		fmt.Fprint(os.Stdout, clearLine) // wypełnij resztę linii tłem
 		fmt.Fprint(os.Stdout, bgReset)
 	}
 	fmt.Fprintln(os.Stdout)
@@ -95,6 +97,8 @@ func (t *Terminal) closeBlock() {
 }
 
 func (t *Terminal) Thinking(text string) {
+	// ensure each new line gets filled with background
+	text = strings.ReplaceAll(text, "\n", "\n"+clearLine)
 	if t.continueBlock(blockThinking, t.bgThinking) {
 		fmt.Fprintf(os.Stdout, "💭 %s", text)
 		return
@@ -130,7 +134,9 @@ func (t *Terminal) ToolCall(name, args, result string) {
 		block.WriteString(result)
 	}
 
-	fmt.Fprint(os.Stdout, block.String())
+	// ensure each new line gets filled with background
+	out := strings.ReplaceAll(block.String(), "\n", "\n"+clearLine)
+	fmt.Fprint(os.Stdout, out)
 }
 
 func (t *Terminal) Summary(usage stream.Usage, stats stream.Stats) {
