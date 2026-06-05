@@ -171,9 +171,9 @@ func (t *Terminal) Summary(usage UsageInfo) {
 		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", usage.CacheReadInputTokens, usage.CacheCreateInputTokens)
 	}
 	if t.interactive {
-		fmt.Fprintf(os.Stderr, "%s%s%s%s\n", t.bgUsage, clearLine, parts, bgReset)
+		fmt.Fprintf(os.Stderr, "\n%s%s%s%s\n", t.bgUsage, clearLine, parts, bgReset)
 	} else {
-		fmt.Fprintf(os.Stderr, "%s%s\n", clearLine, parts)
+		fmt.Fprintf(os.Stderr, "\n%s%s\n", clearLine, parts)
 	}
 	t.sawStderr = true
 }
