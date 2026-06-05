@@ -40,7 +40,7 @@ func Run(name, apiType, baseURL, token string) error {
 		return fmt.Errorf("no models returned")
 	}
 
-	configDir := filepath.Join(os.Getenv("HOME"), ".cache", "tyci-agent")
+	configDir := filepath.Join(os.Getenv("HOME"), ".tyci")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}

@@ -357,7 +357,7 @@ func parseSessionFile(path string) ([]ParsedLine, error) {
 
 // DefaultPath returns the default session file path:
 //
-//	~/.local/share/tyci-agent/sessions/<encoded-cwd>/<ts>_<uuid>.jsonl
+//	~/.tyci/sessions/<encoded-cwd>/<ts>_<uuid>.jsonl
 func DefaultPath(cwd string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -377,7 +377,7 @@ func DefaultPath(cwd string) (string, error) {
 	}
 
 	filename := fmt.Sprintf("%s_%s.jsonl", ts, id)
-	dir := filepath.Join(home, ".local", "share", "tyci-agent", "sessions", encoded)
+	dir := filepath.Join(home, ".tyci", "sessions", encoded)
 	return filepath.Join(dir, filename), nil
 }
 

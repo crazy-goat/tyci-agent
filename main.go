@@ -47,7 +47,7 @@ func main() {
 		return
 	}
 
-	providers.RegisterProvidersFromConfig(filepath.Join(os.Getenv("HOME"), ".cache", "tyci-agent", "model.json"))
+	providers.RegisterProvidersFromConfig(filepath.Join(os.Getenv("HOME"), ".tyci", "model.json"))
 
 	var interactiveFlag bool
 	noDebugFlag := flag.Bool("no-debug", false, "Disable API request/response debug logging")
@@ -56,9 +56,9 @@ func main() {
 	agentFlag := flag.String("agent", "", "Agent name to use for default model (from agents config)")
 	promptFlag := flag.String("prompt", "", "Prompt for response")
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
-	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.local/share/tyci-agent/history)")
+	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.tyci/history)")
 	modeFlag := flag.String("mode", "interactive", "Display mode: minimal, normal, interactive")
-	sessionFlag := flag.String("session", "", "Session file path (default: auto-generated in ~/.local/share/tyci-agent/sessions/)")
+	sessionFlag := flag.String("session", "", "Session file path (default: auto-generated in ~/.tyci/sessions/)")
 	noSessionFlag := flag.Bool("no-session", false, "Disable session persistence")
 
 	flag.Usage = func() {

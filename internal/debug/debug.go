@@ -35,7 +35,7 @@ func Init() (*Logger, error) {
 		return nil, fmt.Errorf("uuid: %w", err)
 	}
 
-	dir := filepath.Join(os.Getenv("HOME"), ".cache", "tyci-agent", "debug")
+	dir := filepath.Join(os.Getenv("HOME"), ".tyci", "debug")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("mkdir debug: %w", err)
 	}

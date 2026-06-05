@@ -1,5 +1,5 @@
 // Package agent provides named agent configurations mapping agent names to default models.
-// Config is loaded from local (.tyci-agent.json) then global (~/.cache/tyci-agent/agents.json).
+// Config is loaded from local (.tyci-agent.json) then global (~/.tyci/agents.json).
 package agent
 
 import (
@@ -15,7 +15,7 @@ import (
 const LocalConfigFile = ".tyci-agent.json"
 
 // GlobalConfigDir is relative to HOME.
-const GlobalConfigDir = ".cache/tyci-agent"
+const GlobalConfigDir = ".tyci"
 
 // GlobalConfigFile is the agents config file name in the global directory.
 const GlobalConfigFile = "agents.json"

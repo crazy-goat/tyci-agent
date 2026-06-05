@@ -9,11 +9,11 @@ import (
 )
 
 func DefaultHistoryFile() (string, error) {
-	dir, err := os.UserCacheDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, "tyci-agent", "history")
+	path := filepath.Join(home, ".tyci", "history")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return "", err
 	}
