@@ -14,8 +14,6 @@ import (
 const minRenderInterval = 100 * time.Millisecond
 
 type Minimal struct {
-	hideThinking  bool
-	hideTools     bool
 	blockStart    time.Time
 	requestStart  time.Time
 	terminalWidth int
@@ -32,11 +30,9 @@ type Minimal struct {
 	totalCacheWr int
 }
 
-func NewMinimal(hideThinking, hideTools bool) *Minimal {
+func NewMinimal() *Minimal {
 	width := getTerminalWidth()
 	return &Minimal{
-		hideThinking:  hideThinking,
-		hideTools:     hideTools,
 		blockStart:    time.Now(),
 		requestStart:  time.Now(),
 		terminalWidth: width,
@@ -177,9 +173,6 @@ func (m *Minimal) Text(text string) {
 }
 
 func (m *Minimal) Thinking(text string) {
-	if m.hideThinking {
-		return
-	}
 	m.feedContent("Thinking:", text, true)
 }
 
@@ -204,9 +197,6 @@ func (m *Minimal) flushActiveBlock() {
 }
 
 func (m *Minimal) ToolCall(name, args, result string) {
-	if m.hideTools {
-		return
-	}
 	parsed := parseArgs(args)
 	title, _ := parsed["description"].(string)
 	if title == "" {

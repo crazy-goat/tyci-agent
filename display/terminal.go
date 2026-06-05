@@ -42,21 +42,16 @@ const (
 )
 
 type Terminal struct {
-	hideThinking bool
-	hideTools    bool
-	bgTools      string
-	bgThinking   string
-	bgUsage      string
+	bgTools    string
+	bgThinking string
+	bgUsage    string
 
 	curBlock blockKind
 	curBg    string
 }
 
-func NewTerminal(hideThinking, hideTools bool, _ bool) *Terminal {
-	t := &Terminal{
-		hideThinking: hideThinking,
-		hideTools:    hideTools,
-	}
+func NewTerminal() *Terminal {
+	t := &Terminal{}
 	if TerminalIsDark() {
 		t.bgTools = "\033[48;2;18;18;42m"
 		t.bgThinking = "\033[48;2;18;40;18m"
@@ -100,9 +95,6 @@ func (t *Terminal) closeBlock() {
 }
 
 func (t *Terminal) Thinking(text string) {
-	if t.hideThinking {
-		return
-	}
 	if t.continueBlock(blockThinking, t.bgThinking) {
 		fmt.Fprintf(os.Stdout, "💭 %s", text)
 		return
@@ -116,9 +108,6 @@ func (t *Terminal) Text(text string) {
 }
 
 func (t *Terminal) ToolCall(name, args, result string) {
-	if t.hideTools {
-		return
-	}
 	t.newBlock(blockTool, t.bgTools)
 
 	var block strings.Builder

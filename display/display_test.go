@@ -90,7 +90,7 @@ func TestTerminal_Text_WritesStdout(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false, false)
+	term := NewTerminal()
 	term.Text("hello")
 	term.Text(" world")
 	sync()
@@ -101,24 +101,11 @@ func TestTerminal_Text_WritesStdout(t *testing.T) {
 	}
 }
 
-func TestTerminal_Thinking_RespectsHideThinking(t *testing.T) {
-	stdout, _, sync, restore := captureOutput(t)
-	defer restore()
-
-	term := NewTerminal(true, false, false)
-	term.Thinking("internal reasoning")
-	sync()
-
-	if stdout.Len() != 0 {
-		t.Errorf("expected no stdout output when hideThinking, got %q", stdout.String())
-	}
-}
-
 func TestTerminal_Thinking_RendersWithIcon(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false, false)
+	term := NewTerminal()
 	term.Thinking("some thought")
 	sync()
 
@@ -135,7 +122,7 @@ func TestTerminal_ToolCall_BashWithDescription(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false, false)
+	term := NewTerminal()
 	term.ToolCall("bash", `{"description": "list files", "command": "ls -la"}`, "file1\nfile2")
 	sync()
 
@@ -158,7 +145,7 @@ func TestTerminal_ToolCall_BashError(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false, false)
+	term := NewTerminal()
 	term.ToolCall("bash", `{"description": "fail", "command": "false"}`, "exit status 1")
 	sync()
 
@@ -172,7 +159,7 @@ func TestTerminal_ToolCall_ReadOmitsResult(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false, false)
+	term := NewTerminal()
 	term.ToolCall("read", `{"path": "x.txt"}`, "file content")
 	sync()
 
@@ -185,24 +172,11 @@ func TestTerminal_ToolCall_ReadOmitsResult(t *testing.T) {
 	}
 }
 
-func TestTerminal_ToolCall_RespectsHideTools(t *testing.T) {
-	stdout, _, sync, restore := captureOutput(t)
-	defer restore()
-
-	term := NewTerminal(false, true, false)
-	term.ToolCall("bash", `{"description": "list", "command": "ls"}`, "x")
-	sync()
-
-	if stdout.Len() != 0 {
-		t.Errorf("expected no stdout output when hideTools, got %q", stdout.String())
-	}
-}
-
 func TestTerminal_Error_WritesToStderr(t *testing.T) {
 	_, stderr, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false, false)
+	term := NewTerminal()
 	term.Error(os.ErrNotExist)
 	sync()
 
@@ -219,7 +193,7 @@ func TestTerminal_Summary_OutputsUsage(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
-	term := NewTerminal(false, false, false)
+	term := NewTerminal()
 	term.Summary(stream.Usage{Input: 100, Output: 50, CacheRead: 200})
 	sync()
 

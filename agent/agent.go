@@ -98,6 +98,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 
 	var toolCalls []stream.ToolCall
 	var lastUsage stream.Usage
+	var textBuf strings.Builder
 
 	for ev := range events {
 		switch e := ev.(type) {
@@ -105,6 +106,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 			d.Thinking(e.Text)
 		case stream.TextDelta:
 			d.Text(e.Text)
+			textBuf.WriteString(e.Text)
 		case stream.ToolCall:
 			toolCalls = append(toolCalls, e)
 		case stream.Finish:
@@ -112,6 +114,10 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		case stream.StreamError:
 			return false, e.Err
 		}
+	}
+
+	if textBuf.Len() > 0 {
+		*msgs = append(*msgs, providers.Message{Role: "assistant", Content: textBuf.String()})
 	}
 
 	if lastUsage.Input > 0 || lastUsage.Output > 0 {

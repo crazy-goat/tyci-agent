@@ -27,15 +27,12 @@ func main() {
 	modelFlag := flag.String("model", "opencode-zen/big-pickle", "Model to use (format: provider/model)")
 	promptTextFlag := flag.String("prompt-to-text", "", "Prompt for text response")
 	promptJSONFlag := flag.String("prompt-to-json", "", "Prompt for JSON response")
-	hideThinkingFlag := flag.Bool("hide-thinking", false, "Hide thinking output (💭)")
-	hideToolsFlag := flag.Bool("hide-tools", false, "Hide tool call output (🔧)")
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.local/share/tyci-agent/history)")
-	noHistoryFlag := flag.Bool("no-history", false, "Disable history loading/saving entirely")
 	modeFlag := flag.String("mode", "minimal", "Display mode: minimal, normal, interactive")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--model provider/model] [--hide-thinking] [--hide-tools] [--max-retries N] [--history-file <path>] [--no-history] [--mode minimal|normal|interactive] (--prompt-to-text <prompt> | --prompt-to-json <prompt> | --interactive)\n\n")
+		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--model provider/model] [--max-retries N] [--history-file <path>] [--mode minimal|normal|interactive] (--prompt-to-text <prompt> | --prompt-to-json <prompt> | --interactive)\n\n")
 		fmt.Fprintf(os.Stdout, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -53,9 +50,7 @@ func main() {
 	flag.Parse()
 
 	var historyFile string
-	if *noHistoryFlag {
-		historyFile = ""
-	} else if *historyFileFlag != "" {
+	if *historyFileFlag != "" {
 		historyFile = *historyFileFlag
 	} else {
 		var err error
@@ -79,16 +74,16 @@ func main() {
 	mode := *modeFlag
 	switch mode {
 	case "minimal":
-		disp = display.NewMinimal(*hideThinkingFlag, *hideToolsFlag)
+		disp = display.NewMinimal()
 	case "normal":
 		if *promptJSONFlag != "" {
 			disp = display.NewJSON()
 		} else {
-			disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag, false)
+			disp = display.NewTerminal()
 		}
 	case "interactive":
 		*interactiveFlag = true
-		disp = display.NewTerminal(*hideThinkingFlag, *hideToolsFlag, true)
+		disp = display.NewTerminal()
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown mode %q (expected minimal, normal, or interactive)\n", mode)
 		os.Exit(1)
@@ -105,7 +100,7 @@ func main() {
 	tools.SetCurrentModel(modelName)
 
 	if *interactiveFlag {
-		runInteractive(provider, modelName, disp, historyFile, *noHistoryFlag, cfg)
+		runInteractive(provider, modelName, disp, historyFile, cfg)
 		return
 	}
 
@@ -141,11 +136,11 @@ func main() {
 	}
 }
 
-func runInteractive(provider providers.Provider, modelName string, disp display.Display, historyFile string, noHistory bool, cfg agent.Config) {
+func runInteractive(provider providers.Provider, modelName string, disp display.Display, historyFile string, cfg agent.Config) {
 	var conversation []providers.Message
 
 	var editor *readline.LineEditor
-	if !noHistory {
+	if historyFile != "" {
 		var err error
 		editor, err = readline.New(historyFile, readline.DefaultMaxEntries)
 		if err != nil {

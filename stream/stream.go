@@ -39,3 +39,8 @@ type Usage struct {
 	CacheRead      int
 	CacheWrite     int
 }
+
+type Stats struct {
+	Duration   time.Duration
+	FirstToken time.Duration
+}
