@@ -3,16 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
-	"time"
 
+	"github.com/decodo/tyci-agent/agent"
 	"github.com/decodo/tyci-agent/api"
 	"github.com/decodo/tyci-agent/display"
 	"github.com/decodo/tyci-agent/internal/readline"
@@ -70,8 +68,6 @@ func main() {
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: *maxRetriesFlag, BaseBackoff: 4, MaxBackoff: 128}
 
 	model := *modelFlag
-	var prompt string
-	var expectJSON bool
 
 	provider, modelName, ok := providers.FindModel(model)
 	if !ok {
@@ -98,86 +94,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	cfg := agent.Config{
+		Model:      modelName,
+		MaxRetries: *maxRetriesFlag,
+		Debug:      *debugFlag,
+		Tools:      toolsAdapter{},
+		Schema:     tools.GetToolsSchemaJSON(),
+	}
+	tools.SetProvider(provider)
+	tools.SetCurrentModel(modelName)
+
 	if *interactiveFlag {
-		var conversation []providers.Message
-
-		var editor *readline.LineEditor
-		if *noHistoryFlag {
-			editor = nil
-		} else {
-			var err error
-			editor, err = readline.New(historyFile, readline.DefaultMaxEntries)
-			if err != nil {
-				fmt.Fprintf(os.Stdout, "Warning: cannot init readline: %v\n", err)
-				editor = nil
-			}
-		}
-		if editor != nil {
-			defer editor.Close()
-		}
-
-		if *promptTextFlag != "" || *promptJSONFlag != "" {
-			if *promptTextFlag != "" {
-				prompt = *promptTextFlag
-			} else {
-				prompt = *promptJSONFlag
-			}
-
-			conversation = append(conversation, providers.Message{Role: "user", Content: prompt})
-			conversation = runLLMLoop(context.Background(), provider, modelName, conversation, disp, *debugFlag)
-			disp.End()
-			fmt.Fprint(os.Stdout, "\n")
-		}
-
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-		defer cancel()
-
-		for {
-			var line string
-			var err error
-
-			if editor != nil {
-				line, err = editor.Read(ctx, ">>> ")
-			} else {
-				line, err = simplePrompt(">>> ")
-			}
-
-			if errors.Is(err, readline.ErrEOF) {
-				fmt.Println("Bye!")
-				return
-			}
-			if err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, readline.ErrInterrupt) {
-					fmt.Println("Bye!")
-					return
-				}
-				fmt.Fprintf(os.Stdout, "Read error: %v\n", err)
-				continue
-			}
-
-			line = strings.TrimSpace(line)
-			if line == "/exit" {
-				fmt.Println("Bye!")
-				return
-			}
-			if line == "" {
-				continue
-			}
-
-			if editor != nil {
-				editor.AddHistory(line)
-			}
-
-			conversation = append(conversation, providers.Message{Role: "user", Content: line})
-			conversation = runLLMLoop(ctx, provider, modelName, conversation, disp, *debugFlag)
-			if errors.Is(ctx.Err(), context.Canceled) {
-				fmt.Println("Bye!")
-				return
-			}
-			disp.End()
-
-			fmt.Fprint(os.Stdout, "\n")
-		}
+		runInteractive(provider, modelName, disp, historyFile, *noHistoryFlag, cfg)
+		return
 	}
 
 	if *promptTextFlag == "" && *promptJSONFlag == "" {
@@ -191,6 +120,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	var prompt string
+	var expectJSON bool
 	if *promptTextFlag != "" {
 		prompt = *promptTextFlag
 		expectJSON = false
@@ -200,142 +131,96 @@ func main() {
 	}
 
 	messages := []providers.Message{{Role: "user", Content: prompt}}
-	runLLMLoop(context.Background(), provider, modelName, messages, disp, *debugFlag)
+	if err := agent.Run(context.Background(), provider, disp, &messages, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 	disp.End()
 	if !expectJSON {
 		fmt.Fprintln(os.Stdout)
 	}
 }
 
-type toolRunResult struct {
-	success bool
-	content string
-	err     string
-}
+func runInteractive(provider providers.Provider, modelName string, disp display.Display, historyFile string, noHistory bool, cfg agent.Config) {
+	var conversation []providers.Message
 
-func runLLMLoop(ctx context.Context, provider providers.Provider, modelName string, messages []providers.Message, disp display.Display, debug bool) []providers.Message {
-	var totalInputTokens, totalOutputTokens, totalReasoningTokens int
-
-	result, err := provider.SendWithHandler(ctx, modelName, messages, disp, debug)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return messages
+	var editor *readline.LineEditor
+	if !noHistory {
+		var err error
+		editor, err = readline.New(historyFile, readline.DefaultMaxEntries)
+		if err != nil {
+			fmt.Fprintf(os.Stdout, "Warning: cannot init readline: %v\n", err)
+			editor = nil
 		}
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
 	}
-	totalInputTokens += result.InputTokens
-	totalOutputTokens += result.OutputTokens
-	totalReasoningTokens += result.ReasoningTokens
+	if editor != nil {
+		defer editor.Close()
+	}
 
-loop:
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	_ = modelName
+
 	for {
-		if len(result.ToolCalls) > 0 {
-			toolResults := make([]string, len(result.ToolCalls))
-			parsedArgs := make([]map[string]any, len(result.ToolCalls))
+		var line string
+		var err error
 
-			for i, tc := range result.ToolCalls {
-				if err := json.Unmarshal([]byte(tc.Arguments), &parsedArgs[i]); err != nil {
-					toolResults[i] = fmt.Sprintf("Error: %v", err)
-					parsedArgs[i] = nil
-				}
+		if editor != nil {
+			line, err = editor.Read(ctx, ">>> ")
+		} else {
+			line, err = simplePrompt(">>> ")
+		}
+
+		if errors.Is(err, readline.ErrEOF) {
+			fmt.Println("Bye!")
+			return
+		}
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, readline.ErrInterrupt) {
+				fmt.Println("Bye!")
+				return
 			}
-
-			var wg sync.WaitGroup
-			results := make([]toolRunResult, len(result.ToolCalls))
-
-			for i, tc := range result.ToolCalls {
-				if parsedArgs[i] == nil {
-					continue
-				}
-
-				wg.Add(1)
-				go func(idx int, tc providers.ToolCall, args map[string]any) {
-					defer wg.Done()
-					toolCtx, toolCancel := context.WithTimeout(ctx, 5*time.Minute)
-					defer toolCancel()
-					toolRes := tools.RunTool(toolCtx, tc.Name, args)
-					results[idx] = toolRunResult{
-						success: toolRes.Success,
-						content: toolRes.Content,
-						err:     toolRes.Error,
-					}
-				}(i, tc, parsedArgs[i])
-			}
-
-			wg.Wait()
-
-			if errors.Is(ctx.Err(), context.Canceled) {
-				return messages
-			}
-
-			for i, tc := range result.ToolCalls {
-				if parsedArgs[i] == nil {
-					continue
-				}
-				r := results[i]
-				if r.success {
-					toolResults[i] = r.content
-				} else {
-					toolResults[i] = "Error: " + r.err
-				}
-				disp.ToolResult(tc.Name, &display.ToolResult{
-					Success: r.success,
-					Content: r.content,
-					Error:   r.err,
-				})
-			}
-
-			messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
-			messages = append(messages, providers.Message{Role: "user", Content: "Tool results:\n" + strings.Join(toolResults, "\n---\n")})
-
-			result, err = provider.SendWithHandler(ctx, modelName, messages, disp, debug)
-			if err != nil {
-				if errors.Is(err, context.Canceled) {
-					return messages
-				}
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			totalInputTokens += result.InputTokens
-			totalOutputTokens += result.OutputTokens
-			totalReasoningTokens += result.ReasoningTokens
+			fmt.Fprintf(os.Stdout, "Read error: %v\n", err)
 			continue
 		}
 
-		switch result.StopReason {
-		case "stop":
-			break loop
-		case "tool_calls":
-			if len(result.ToolCalls) > 0 {
-				continue
-			}
-		case "length", "content_filter", "function_call":
-			if result.Text == "" {
-				continue
-			}
-		default:
-			if result.Text == "" {
-				continue
-			}
+		line = strings.TrimSpace(line)
+		if line == "/exit" {
+			fmt.Println("Bye!")
+			return
+		}
+		if line == "" {
+			continue
 		}
 
-		messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
-		result, err = provider.SendWithHandler(ctx, modelName, messages, disp, debug)
-		if err != nil {
+		if editor != nil {
+			editor.AddHistory(line)
+		}
+
+		conversation = append(conversation, providers.Message{Role: "user", Content: line})
+		if err := agent.Run(ctx, provider, disp, &conversation, cfg); err != nil {
 			if errors.Is(err, context.Canceled) {
-				return messages
+				fmt.Println("Bye!")
+				return
 			}
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			return
 		}
-		totalInputTokens += result.InputTokens
-		totalOutputTokens += result.OutputTokens
-		totalReasoningTokens += result.ReasoningTokens
-	}
+		disp.End()
 
-	messages = append(messages, providers.Message{Role: "assistant", Content: result.Text})
-	return messages
+		fmt.Fprint(os.Stdout, "\n")
+	}
+}
+
+type toolsAdapter struct{}
+
+func (toolsAdapter) Run(ctx context.Context, name string, args map[string]any) (string, error) {
+	res := tools.RunTool(ctx, name, args)
+	if res.Success {
+		return res.Content, nil
+	}
+	return "", fmt.Errorf("%s", res.Error)
 }
 
 var fallbackScanner *bufio.Scanner

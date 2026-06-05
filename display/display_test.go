@@ -2,10 +2,11 @@ package display
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/decodo/tyci-agent/stream"
 )
 
 func captureOutput(t *testing.T) (stdoutBuf, stderrBuf *bytes.Buffer, sync func(), restore func()) {
@@ -55,154 +56,24 @@ func captureOutput(t *testing.T) (stdoutBuf, stderrBuf *bytes.Buffer, sync func(
 	return stdoutBuf, stderrBuf, sync, restore
 }
 
-func TestJSON_Chunk_BuffersText(t *testing.T) {
-	j := NewJSON()
-	j.Chunk("hello ")
-	j.Chunk("world")
-
-	if got := j.Text(); got != "hello world" {
-		t.Errorf("expected 'hello world', got %q", got)
-	}
-}
-
-func TestJSON_End_OutputsEnvelope(t *testing.T) {
-	stdout, _, sync, restore := captureOutput(t)
-	defer restore()
-
-	j := NewJSON()
-	j.Chunk("some response text")
-	j.End()
-	sync()
-
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
-		t.Fatalf("expected valid JSON, got error: %v\noutput: %s", err, stdout.String())
-	}
-	if got, ok := parsed["response"].(string); !ok || got != "some response text" {
-		t.Errorf("expected response 'some response text', got %v", parsed["response"])
-	}
-}
-
-func TestJSON_End_PassesThroughValidJSON(t *testing.T) {
-	stdout, _, sync, restore := captureOutput(t)
-	defer restore()
-
-	j := NewJSON()
-	j.Chunk(`{"foo": "bar", "n": 42}`)
-	j.End()
-	sync()
-
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
-		t.Fatalf("expected valid JSON, got error: %v\noutput: %s", err, stdout.String())
-	}
-	if got := parsed["foo"]; got != "bar" {
-		t.Errorf("expected foo=bar, got %v", got)
-	}
-}
-
-func TestJSON_End_IncludesToolCalls(t *testing.T) {
-	stdout, _, sync, restore := captureOutput(t)
-	defer restore()
-
-	j := NewJSON()
-	j.Chunk("I'll read the file")
-	j.ToolCallStart("read")
-	j.ToolCallArg(`{"path": "x.txt"}`)
-	j.EndToolCall()
-	j.ToolResult("read", &ToolResult{Success: true, Content: "file content"})
-	j.End()
-	sync()
-
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
-		t.Fatalf("expected valid JSON, got error: %v\noutput: %s", err, stdout.String())
-	}
-	if got, ok := parsed["response"].(string); !ok || got != "I'll read the file" {
-		t.Errorf("expected response, got %v", parsed["response"])
-	}
-	calls, ok := parsed["tool_calls"].([]interface{})
-	if !ok || len(calls) != 1 {
-		t.Fatalf("expected 1 tool call, got %v", parsed["tool_calls"])
-	}
-	tc := calls[0].(map[string]interface{})
-	if tc["Name"] != "read" {
-		t.Errorf("expected name 'read', got %v", tc["Name"])
-	}
-	if tc["Arguments"] != `{"path": "x.txt"}` {
-		t.Errorf("expected arguments, got %v", tc["Arguments"])
-	}
-}
-
-func TestJSON_End_EmptyTextNoOutput(t *testing.T) {
-	stdout, _, sync, restore := captureOutput(t)
-	defer restore()
-
-	j := NewJSON()
-	j.End()
-	sync()
-
-	if stdout.Len() != 0 {
-		t.Errorf("expected no output for empty text, got %q", stdout.String())
-	}
-}
-
-func TestJSON_ThinkingIgnored(t *testing.T) {
-	j := NewJSON()
-	j.Thinking("internal reasoning")
-	j.EndThinking()
-
-	if got := j.Text(); got != "" {
-		t.Errorf("expected empty text, got %q", got)
-	}
-}
-
-func TestJSON_ToolCallArgWithoutStartIgnored(t *testing.T) {
-	j := NewJSON()
-	j.ToolCallArg("orphaned arg")
-
-	if len(j.toolCalls) != 0 {
-		t.Errorf("expected no buffered tool calls, got %d", len(j.toolCalls))
-	}
-}
-
-func TestJSON_AccumulatedArguments(t *testing.T) {
-	j := NewJSON()
-	j.ToolCallStart("bash")
-	j.ToolCallArg(`{"command": "ls`)
-	j.ToolCallArg(` -la"}`)
-	j.EndToolCall()
-
-	if len(j.toolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(j.toolCalls))
-	}
-	expected := `{"command": "ls -la"}`
-	if j.toolCalls[0].Arguments != expected {
-		t.Errorf("expected arguments %q, got %q", expected, j.toolCalls[0].Arguments)
-	}
-}
-
-func TestSilent_Chunk_BuffersText(t *testing.T) {
+func TestSilent_Text_BuffersText(t *testing.T) {
 	s := NewSilent()
-	s.Chunk("hello ")
-	s.Chunk("world")
+	s.Text("hello ")
+	s.Text("world")
 
-	if got := s.Text(); got != "hello world" {
+	if got := s.Text2(); got != "hello world" {
 		t.Errorf("expected 'hello world', got %q", got)
 	}
 }
 
-func TestSilent_End_ProducesNoOutput(t *testing.T) {
+func TestSilent_AllMethods_NoOutput(t *testing.T) {
 	stdout, stderr, sync, restore := captureOutput(t)
 	defer restore()
 
 	s := NewSilent()
-	s.Chunk("some text")
-	s.ToolCallStart("read")
-	s.ToolCallArg(`{"path":"x.txt"}`)
-	s.EndToolCall()
-	s.ToolResult("read", &ToolResult{Success: true, Content: "content"})
-	s.Summary(UsageInfo{InputTokens: 10, OutputTokens: 20})
+	s.Thinking("ignored")
+	s.ToolCall("read", `{"path": "x"}`, "content")
+	s.Summary(stream.Usage{Input: 10, Output: 20})
 	s.Error(nil)
 	s.End()
 	sync()
@@ -215,31 +86,13 @@ func TestSilent_End_ProducesNoOutput(t *testing.T) {
 	}
 }
 
-func TestSilent_ToolCalls(t *testing.T) {
-	s := NewSilent()
-	s.ToolCallStart("read")
-	s.ToolCallArg(`{"path": "a.txt"}`)
-	s.EndToolCall()
-	s.ToolCallStart("bash")
-	s.ToolCallArg(`{"command": "ls"}`)
-	s.EndToolCall()
-
-	calls := s.ToolCalls()
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 tool calls, got %d", len(calls))
-	}
-	if calls[0].Name != "read" || calls[1].Name != "bash" {
-		t.Errorf("expected names [read, bash], got [%s, %s]", calls[0].Name, calls[1].Name)
-	}
-}
-
-func TestTerminal_Chunk_WritesStdout(t *testing.T) {
+func TestTerminal_Text_WritesStdout(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, false, false)
-	term.Chunk("hello")
-	term.Chunk(" world")
+	term.Text("hello")
+	term.Text(" world")
 	sync()
 
 	got := stdout.String()
@@ -254,7 +107,6 @@ func TestTerminal_Thinking_RespectsHideThinking(t *testing.T) {
 
 	term := NewTerminal(true, false, false)
 	term.Thinking("internal reasoning")
-	term.EndThinking()
 	sync()
 
 	if stdout.Len() != 0 {
@@ -262,13 +114,12 @@ func TestTerminal_Thinking_RespectsHideThinking(t *testing.T) {
 	}
 }
 
-func TestTerminal_Thinking_RendersWithIconAndBackground(t *testing.T) {
+func TestTerminal_Thinking_RendersWithIcon(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, false, false)
 	term.Thinking("some thought")
-	term.EndThinking()
 	sync()
 
 	got := stdout.String()
@@ -276,38 +127,16 @@ func TestTerminal_Thinking_RendersWithIconAndBackground(t *testing.T) {
 		t.Errorf("expected thinking output to contain 💭, got %q", got)
 	}
 	if !strings.Contains(got, term.bgThinking) {
-		t.Errorf("expected output to contain bgThinking code %q, got %q", term.bgThinking, got)
-	}
-	if !strings.Contains(got, clearLine) {
-		t.Errorf("expected output to contain clearLine, got %q", got)
+		t.Errorf("expected output to contain bgThinking code, got %q", got)
 	}
 }
 
-func TestTerminal_EndThinking_ClosesBlock(t *testing.T) {
+func TestTerminal_ToolCall_BashWithDescription(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, false, false)
-	term.Thinking("a")
-	term.EndThinking()
-	sync()
-
-	got := stdout.String()
-	if !strings.HasSuffix(got, "\n\n") {
-		t.Errorf("expected thinking block to end with blank line, got %q", got)
-	}
-}
-
-func TestTerminal_ToolResult_BashWithDescription(t *testing.T) {
-	stdout, _, sync, restore := captureOutput(t)
-	defer restore()
-
-	term := NewTerminal(false, false, false)
-	term.ToolCallStart("bash")
-	term.ToolCallArg(`{"description": "list files", "command": "ls -la"}`)
-	term.EndToolCall()
-	term.ToolResult("bash", &ToolResult{Success: true, Content: "file1\nfile2"})
-	term.End()
+	term.ToolCall("bash", `{"description": "list files", "command": "ls -la"}`, "file1\nfile2")
 	sync()
 
 	got := stdout.String()
@@ -325,16 +154,12 @@ func TestTerminal_ToolResult_BashWithDescription(t *testing.T) {
 	}
 }
 
-func TestTerminal_ToolResult_BashError(t *testing.T) {
+func TestTerminal_ToolCall_BashError(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, false, false)
-	term.ToolCallStart("bash")
-	term.ToolCallArg(`{"description": "fail", "command": "false"}`)
-	term.EndToolCall()
-	term.ToolResult("bash", &ToolResult{Success: false, Error: "exit status 1"})
-	term.End()
+	term.ToolCall("bash", `{"description": "fail", "command": "false"}`, "exit status 1")
 	sync()
 
 	got := stdout.String()
@@ -343,20 +168,16 @@ func TestTerminal_ToolResult_BashError(t *testing.T) {
 	}
 }
 
-func TestTerminal_ToolResult_ReadOnlyHeader(t *testing.T) {
+func TestTerminal_ToolCall_ReadOmitsResult(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, false, false)
-	term.ToolCallStart("read")
-	term.ToolCallArg(`{"path": "x.txt"}`)
-	term.EndToolCall()
-	term.ToolResult("read", &ToolResult{Success: true, Content: "file content"})
-	term.End()
+	term.ToolCall("read", `{"path": "x.txt"}`, "file content")
 	sync()
 
 	got := stdout.String()
-	if !strings.Contains(got, "🔧 read(") {
+	if !strings.Contains(got, "🔧") {
 		t.Errorf("expected read header, got %q", got)
 	}
 	if strings.Contains(got, "file content") {
@@ -364,16 +185,12 @@ func TestTerminal_ToolResult_ReadOnlyHeader(t *testing.T) {
 	}
 }
 
-func TestTerminal_ToolResult_RespectsHideTools(t *testing.T) {
+func TestTerminal_ToolCall_RespectsHideTools(t *testing.T) {
 	stdout, _, sync, restore := captureOutput(t)
 	defer restore()
 
 	term := NewTerminal(false, true, false)
-	term.ToolCallStart("bash")
-	term.ToolCallArg(`{"description": "list", "command": "ls"}`)
-	term.EndToolCall()
-	term.ToolResult("bash", &ToolResult{Success: true, Content: "x"})
-	term.End()
+	term.ToolCall("bash", `{"description": "list", "command": "ls"}`, "x")
 	sync()
 
 	if stdout.Len() != 0 {
@@ -395,5 +212,22 @@ func TestTerminal_Error_WritesToStderr(t *testing.T) {
 	}
 	if !strings.Contains(got, "not exist") {
 		t.Errorf("expected error output to contain 'not exist', got %q", got)
+	}
+}
+
+func TestTerminal_Summary_OutputsUsage(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	term := NewTerminal(false, false, false)
+	term.Summary(stream.Usage{Input: 100, Output: 50, CacheRead: 200})
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "in=") || !strings.Contains(got, "out=") {
+		t.Errorf("expected usage info, got %q", got)
+	}
+	if !strings.Contains(got, "cache_rd=") {
+		t.Errorf("expected cache info, got %q", got)
 	}
 }

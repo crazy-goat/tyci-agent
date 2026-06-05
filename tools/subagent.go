@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/decodo/tyci-agent/agent"
+	"github.com/decodo/tyci-agent/display"
 	"github.com/decodo/tyci-agent/providers"
 )
 
@@ -29,7 +31,6 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		return ToolResult{Type: "result", Success: false, Error: "no LLM provider available (start with --model)"}
 	}
 
-	// Resolve model
 	modelName := model
 	if modelName == "" {
 		modelName = GetCurrentModel()
@@ -38,32 +39,29 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		}
 	}
 
-	// If model contains "/" it's provider/model format
 	var prov providers.Provider
 	var mName string
 	if p, m, ok := providers.FindModel(modelName); ok {
 		prov = p
 		mName = m
 	} else {
-		// Try as just model name within same provider
 		prov = provider
 		mName = modelName
 	}
 
-	system := providers.BuildSystemPrompt()
+	_ = prov
+	_ = mName
+	_ = providers.BuildSystemPrompt()
 
-	messages := []providers.Message{
-		{Role: "user", Content: task},
-	}
-
-	result, err := prov.SendWithMessages(ctx, mName, task, system, messages, false)
-	if err != nil {
+	d := display.NewSilent()
+	msgs := []providers.Message{{Role: "user", Content: task}}
+	if err := agent.Run(ctx, provider, d, &msgs, agent.Config{Model: mName, MaxRetries: 1, Debug: false}); err != nil {
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("subagent error: %v", err)}
 	}
 
-	if result == nil {
-		return ToolResult{Type: "result", Success: false, Error: "subagent returned nil result"}
+	text := d.Text2()
+	if text == "" {
+		return ToolResult{Type: "result", Success: false, Error: "subagent returned no text"}
 	}
-
-	return ToolResult{Type: "result", Success: true, Content: result.Text}
+	return ToolResult{Type: "result", Success: true, Content: text}
 }

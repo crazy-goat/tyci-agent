@@ -5,53 +5,34 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/decodo/tyci-agent/stream"
 )
 
 type JSON struct {
-	text        strings.Builder
-	toolCalls   []ToolCall
-	currentTool *ToolCall
-	usage       *UsageInfo
+	text      strings.Builder
+	usage     *stream.Usage
+	stopReason string
 }
 
 func NewJSON() *JSON {
 	return &JSON{}
 }
 
-func (j *JSON) Chunk(text string) {
+func (j *JSON) Thinking(text string) {}
+func (j *JSON) ToolCall(name, args, result string) {}
+
+func (j *JSON) Text(text string) {
 	j.text.WriteString(text)
 }
 
-func (j *JSON) Thinking(text string) {}
-
-func (j *JSON) EndThinking() {}
-
-func (j *JSON) ToolCallStart(name string) {
-	j.currentTool = &ToolCall{Name: name}
-}
-
-func (j *JSON) ToolCallArg(text string) {
-	if j.currentTool == nil {
-		return
-	}
-	j.currentTool.Arguments += text
-}
-
-func (j *JSON) EndToolCall() {
-	if j.currentTool == nil {
-		return
-	}
-	j.toolCalls = append(j.toolCalls, *j.currentTool)
-	j.currentTool = nil
-}
-
-func (j *JSON) ToolResult(name string, result *ToolResult) {}
-
-func (j *JSON) Summary(usage UsageInfo) {
+func (j *JSON) Summary(usage stream.Usage) {
 	j.usage = &usage
 }
 
-func (j *JSON) Error(err error) {}
+func (j *JSON) Error(err error) {
+	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+}
 
 func (j *JSON) End() {
 	responseText := j.text.String()
@@ -62,9 +43,6 @@ func (j *JSON) End() {
 	if err := json.Unmarshal([]byte(responseText), &jsonData); err != nil {
 		output := map[string]interface{}{
 			"response": responseText,
-		}
-		if len(j.toolCalls) > 0 {
-			output["tool_calls"] = j.toolCalls
 		}
 		if j.usage != nil {
 			output["usage"] = j.usage
@@ -86,6 +64,6 @@ func (j *JSON) End() {
 	}
 }
 
-func (j *JSON) Text() string {
+func (j *JSON) Text2() string {
 	return j.text.String()
 }

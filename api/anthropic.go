@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/decodo/tyci-agent/stream"
 )
 
 type AnthropicMessage struct {
@@ -37,13 +39,11 @@ type anthropicStreamChunk struct {
 	} `json:"usage,omitempty"`
 }
 
-func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body AnthropicRequest, handler *DebugHandler) error {
+func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body AnthropicRequest, emit func(stream.Event) error) error {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-
-	handler.LogRequest("POST", endpoint, body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(jsonBody)))
 	if err != nil {
@@ -73,6 +73,8 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 	}
 
 	reader := bufio.NewReader(resp.Body)
+	var inputTokens, outputTokens int
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -88,7 +90,18 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 			break
 		}
 
-		handler.LogResponse(data)
+		processChunk := func(chunk anthropicStreamChunk) error {
+			if chunk.Type == "content_block_delta" {
+				if err := emit(stream.TextDelta{Text: chunk.Delta.Text}); err != nil {
+					return err
+				}
+			}
+			if chunk.Type == "message_delta" && chunk.Usage != nil {
+				inputTokens = chunk.Usage.InputTokens
+				outputTokens = chunk.Usage.OutputTokens
+			}
+			return nil
+		}
 
 		if strings.HasPrefix(data, "[") {
 			var chunks []anthropicStreamChunk
@@ -96,14 +109,8 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 				continue
 			}
 			for _, chunk := range chunks {
-				if chunk.Type == "content_block_delta" {
-					handler.Chunk(chunk.Delta.Text)
-				}
-				if chunk.Type == "message_stop" && chunk.Usage != nil {
-					handler.Summary(UsageInfo{
-						InputTokens:  chunk.Usage.InputTokens,
-						OutputTokens: chunk.Usage.OutputTokens,
-					})
+				if err := processChunk(chunk); err != nil {
+					return err
 				}
 			}
 			continue
@@ -113,18 +120,16 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
 		}
-		if chunk.Type == "content_block_delta" {
-			handler.Chunk(chunk.Delta.Text)
-		}
-		if chunk.Type == "message_stop" && chunk.Usage != nil {
-			handler.Summary(UsageInfo{
-				InputTokens:  chunk.Usage.InputTokens,
-				OutputTokens: chunk.Usage.OutputTokens,
-			})
+		if err := processChunk(chunk); err != nil {
+			return err
 		}
 	}
 
-	handler.Summary(UsageInfo{})
-	handler.End()
-	return nil
+	return emit(stream.Finish{
+		Reason: "stop",
+		Usage: stream.Usage{
+			Input:  inputTokens,
+			Output: outputTokens,
+		},
+	})
 }

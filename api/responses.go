@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/decodo/tyci-agent/stream"
 )
 
 type ResponsesMessage struct {
@@ -45,13 +47,11 @@ type responsesStreamChunk struct {
 	} `json:"usage,omitempty"`
 }
 
-func StreamResponses(ctx context.Context, apiKey, endpoint string, body ResponsesRequest, handler *DebugHandler) error {
+func StreamResponses(ctx context.Context, apiKey, endpoint string, body ResponsesRequest, emit func(stream.Event) error) error {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-
-	handler.LogRequest("POST", endpoint, body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(jsonBody)))
 	if err != nil {
@@ -81,6 +81,8 @@ func StreamResponses(ctx context.Context, apiKey, endpoint string, body Response
 	}
 
 	reader := bufio.NewReader(resp.Body)
+	var inputTokens, outputTokens int
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -96,8 +98,6 @@ func StreamResponses(ctx context.Context, apiKey, endpoint string, body Response
 			break
 		}
 
-		handler.LogResponse(data)
-
 		var chunk responsesStreamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
@@ -106,20 +106,24 @@ func StreamResponses(ctx context.Context, apiKey, endpoint string, body Response
 			for _, msg := range chunk.Output.Messages {
 				for _, c := range msg.Content {
 					if c.Type == "text" {
-						handler.Chunk(c.Text)
+						if err := emit(stream.TextDelta{Text: c.Text}); err != nil {
+							return err
+						}
 					}
 				}
 			}
 		}
 		if chunk.Type == "response.done" && chunk.Usage != nil {
-			handler.Summary(UsageInfo{
-				InputTokens:  chunk.Usage.InputTokens,
-				OutputTokens: chunk.Usage.OutputTokens,
-			})
+			inputTokens = chunk.Usage.InputTokens
+			outputTokens = chunk.Usage.OutputTokens
 		}
 	}
 
-	handler.Summary(UsageInfo{})
-	handler.End()
-	return nil
+	return emit(stream.Finish{
+		Reason: "stop",
+		Usage: stream.Usage{
+			Input:  inputTokens,
+			Output: outputTokens,
+		},
+	})
 }

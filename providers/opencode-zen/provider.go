@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/decodo/tyci-agent/api"
-	"github.com/decodo/tyci-agent/display"
 	"github.com/decodo/tyci-agent/providers"
+	"github.com/decodo/tyci-agent/stream"
 	"github.com/decodo/tyci-agent/tools"
 )
 
@@ -153,169 +153,21 @@ func modelEndpoint(model string) string {
 	return baseURL + "/chat/completions"
 }
 
-func convertToolCalls(apiCalls []api.ToolCall) []providers.ToolCall {
-	result := make([]providers.ToolCall, len(apiCalls))
-	for i, tc := range apiCalls {
-		result[i] = providers.ToolCall{Name: tc.Name, Arguments: tc.Argument}
-	}
-	return result
-}
-
-type textCollector struct {
-	text string
-}
-
-func (t *textCollector) Chunk(text string)                      { t.text += text }
-func (t *textCollector) Thinking(text string)                   {}
-func (t *textCollector) EndThinking()                           {}
-func (t *textCollector) ToolCallStart(name string)              {}
-func (t *textCollector) ToolCallArg(text string)                {}
-func (t *textCollector) EndToolCall()                           {}
-func (t *textCollector) ToolResult(string, *display.ToolResult) {}
-func (t *textCollector) Summary(display.UsageInfo)              {}
-func (t *textCollector) End()                                   {}
-func (t *textCollector) Error(err error)                        {}
-
-type retryCollector struct {
-	text string
-}
-
-func (h *retryCollector) Chunk(text string)                      { h.text += text }
-func (h *retryCollector) Thinking(text string)                   {}
-func (h *retryCollector) EndThinking()                           {}
-func (h *retryCollector) ToolCallStart(name string)              {}
-func (h *retryCollector) ToolCallArg(text string)                {}
-func (h *retryCollector) EndToolCall()                           {}
-func (h *retryCollector) ToolResult(string, *display.ToolResult) {}
-func (h *retryCollector) Summary(display.UsageInfo)              {}
-func (h *retryCollector) End()                                   {}
-func (h *retryCollector) Error(err error)                        {}
-
-type handlerWrapper struct {
-	Inner     display.Display
-	collector *textCollector
-}
-
-func (h *handlerWrapper) Chunk(text string) {
-	h.Inner.Chunk(text)
-	h.collector.text += text
-}
-func (h *handlerWrapper) Thinking(text string)             { h.Inner.Thinking(text) }
-func (h *handlerWrapper) EndThinking()                     { h.Inner.EndThinking() }
-func (h *handlerWrapper) ToolCallStart(name string)        { h.Inner.ToolCallStart(name) }
-func (h *handlerWrapper) ToolCallArg(text string)          { h.Inner.ToolCallArg(text) }
-func (h *handlerWrapper) EndToolCall()                     { h.Inner.EndToolCall() }
-func (h *handlerWrapper) ToolResult(name string, r *display.ToolResult) {
-	h.Inner.ToolResult(name, r)
-}
-func (h *handlerWrapper) Summary(u display.UsageInfo) { h.Inner.Summary(u) }
-func (h *handlerWrapper) End()            { h.Inner.End() }
-func (h *handlerWrapper) Error(err error) { h.Inner.Error(err) }
-
-func (p *provider) Send(ctx context.Context, model, prompt, system string, debug bool) (*providers.SendResult, error) {
+func (p *provider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
 	apiKey := os.Getenv("OPENCODE_ZEN_API_KEY")
-	if apiKey == "" && !isFreeModel(model) {
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENCODE_API_KEY")
+	}
+	if apiKey == "" && !isFreeModel(req.Model) {
 		return nil, fmt.Errorf("OPENCODE_ZEN_API_KEY not set (or use a free model: big-pickle, mimo-v2-*-free, etc.)")
 	}
 
-	endpoint := modelEndpoint(model)
-	collector := &textCollector{}
-	handler := &api.DebugHandler{Inner: collector, Debug: debug}
+	endpoint := modelEndpoint(req.Model)
+	ch := make(chan stream.Event, 64)
 
-	if claudeModels[model] {
-		messages := []api.AnthropicMessage{
-			{Role: "user", Content: []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}{{Type: "text", Text: prompt}}},
-		}
-		body := api.AnthropicRequest{
-			Model:     model,
-			MaxTokens: 4096,
-			Stream:    true,
-			System:    system,
-			Messages:  messages,
-		}
-		err := api.StreamAnthropic(ctx, apiKey, endpoint, body, handler)
-		in, out, reasoning := handler.GetUsage()
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
-	}
-
-	if geminiModels[model] {
-		contents := []api.GeminiContent{
-			{Parts: []api.GeminiPart{{Text: prompt}}},
-		}
-		body := api.GeminiRequest{
-			Contents: contents,
-			Stream:   true,
-		}
-		if system != "" {
-			body.SystemInstruction = &struct {
-				Parts []api.GeminiPart `json:"parts"`
-			}{Parts: []api.GeminiPart{{Text: system}}}
-		}
-		err := api.StreamGemini(ctx, apiKey, endpoint, body, handler)
-		in, out, reasoning := handler.GetUsage()
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
-	}
-
-	if responsesAPIModels[model] {
-		messages := []api.ResponsesMessage{
-			{Role: "user", Content: []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}{{Type: "text", Text: prompt}}},
-		}
-		if system != "" {
-			messages = append([]api.ResponsesMessage{
-				{Role: "system", Content: []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				}{{Type: "text", Text: system}}},
-			}, messages...)
-		}
-		toolsJSON, _ := json.Marshal(tools.GetToolsSchemaForResponses())
-		body := api.ResponsesRequest{
-			Model:  model,
-			Stream: true,
-			Input:  api.ResponsesInput{Messages: messages},
-			Tools:  toolsJSON,
-		}
-		err := api.StreamResponses(ctx, apiKey, endpoint, body, handler)
-		in, out, reasoning := handler.GetUsage()
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
-	}
-
-	chatMessages := []api.ChatMessage{}
-	if system != "" {
-		chatMessages = append(chatMessages, api.ChatMessage{Role: "system", Content: system})
-	}
-	chatMessages = append(chatMessages, api.ChatMessage{Role: "user", Content: prompt})
-	body := api.ChatRequest{
-		Model:     model,
-		Stream:    true,
-		Messages:  chatMessages,
-		Tools:     tools.GetToolsSchemaJSON(),
-		Reasoning: true,
-	}
-	err := api.StreamChat(ctx, apiKey, endpoint, body, handler)
-	in, out, reasoning := handler.GetUsage()
-	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
-}
-
-func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system string, messages []providers.Message, debug bool) (*providers.SendResult, error) {
-	apiKey := os.Getenv("OPENCODE_ZEN_API_KEY")
-	if apiKey == "" && !isFreeModel(model) {
-		return nil, fmt.Errorf("OPENCODE_ZEN_API_KEY not set (or use a free model: big-pickle, mimo-v2-*-free, etc.)")
-	}
-
-	endpoint := modelEndpoint(model)
-	collector := &textCollector{}
-	handler := &api.DebugHandler{Inner: collector, Debug: debug}
-
-	if claudeModels[model] {
-		anthropicMsgs := make([]api.AnthropicMessage, 0, len(messages))
-		for _, m := range messages {
+	if claudeModels[req.Model] {
+		anthropicMsgs := make([]api.AnthropicMessage, 0, len(req.Messages))
+		for _, m := range req.Messages {
 			var content []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -327,146 +179,130 @@ func (p *provider) SendWithMessages(ctx context.Context, model, prompt, system s
 			anthropicMsgs = append(anthropicMsgs, api.AnthropicMessage{Role: m.Role, Content: content})
 		}
 		body := api.AnthropicRequest{
-			Model:     model,
+			Model:     req.Model,
 			MaxTokens: 4096,
 			Stream:    true,
-			System:    system,
+			System:    req.System,
 			Messages:  anthropicMsgs,
 		}
-		err := api.StreamAnthropic(ctx, apiKey, endpoint, body, handler)
-		in, out, reasoning := handler.GetUsage()
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
+		go func() {
+			defer close(ch)
+			if err := api.StreamAnthropic(ctx, apiKey, endpoint, body, func(e stream.Event) error {
+				select {
+				case ch <- e:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}); err != nil {
+				ch <- stream.StreamError{Err: err}
+			}
+		}()
+		return ch, nil
 	}
 
-	if geminiModels[model] {
-		contents := []api.GeminiContent{
-			{Parts: []api.GeminiPart{{Text: prompt}}},
+	if geminiModels[req.Model] {
+		contents := []api.GeminiContent{}
+		for _, m := range req.Messages {
+			contents = append(contents, api.GeminiContent{
+				Parts: []api.GeminiPart{{Text: m.Content}},
+				Role:  m.Role,
+			})
 		}
 		body := api.GeminiRequest{
 			Contents: contents,
 			Stream:   true,
 		}
-		if system != "" {
+		if req.System != "" {
 			body.SystemInstruction = &struct {
 				Parts []api.GeminiPart `json:"parts"`
-			}{Parts: []api.GeminiPart{{Text: system}}}
+			}{Parts: []api.GeminiPart{{Text: req.System}}}
 		}
-		err := api.StreamGemini(ctx, apiKey, endpoint, body, handler)
-		in, out, reasoning := handler.GetUsage()
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
+		go func() {
+			defer close(ch)
+			if err := api.StreamGemini(ctx, apiKey, endpoint, body, func(e stream.Event) error {
+				select {
+				case ch <- e:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}); err != nil {
+				ch <- stream.StreamError{Err: err}
+			}
+		}()
+		return ch, nil
 	}
 
-	if responsesAPIModels[model] {
-		responsesMsgs := make([]api.ResponsesMessage, 0, len(messages))
-		for _, m := range messages {
-			var content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}
-			content = append(content, struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}{Type: "text", Text: m.Content})
-			responsesMsgs = append(responsesMsgs, api.ResponsesMessage{Role: m.Role, Content: content})
+	if responsesAPIModels[req.Model] {
+		messages := make([]api.ResponsesMessage, 0, len(req.Messages))
+		if req.System != "" {
+			messages = append(messages, api.ResponsesMessage{
+				Role: "system",
+				Content: []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				}{{Type: "text", Text: req.System}},
+			})
+		}
+		for _, m := range req.Messages {
+			messages = append(messages, api.ResponsesMessage{
+				Role: m.Role,
+				Content: []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				}{{Type: "text", Text: m.Content}},
+			})
 		}
 		toolsJSON, _ := json.Marshal(tools.GetToolsSchemaForResponses())
 		body := api.ResponsesRequest{
-			Model:  model,
+			Model:  req.Model,
 			Stream: true,
-			Input:  api.ResponsesInput{Messages: responsesMsgs},
+			Input:  api.ResponsesInput{Messages: messages},
 			Tools:  toolsJSON,
 		}
-		err := api.StreamResponses(ctx, apiKey, endpoint, body, handler)
-		in, out, reasoning := handler.GetUsage()
-		return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
-	}
-
-	chatMsgs := make([]api.ChatMessage, 0, len(messages))
-	for _, m := range messages {
-		chatMsgs = append(chatMsgs, api.ChatMessage{Role: m.Role, Content: m.Content})
-	}
-	body := api.ChatRequest{
-		Model:     model,
-		Stream:    true,
-		Messages:  chatMsgs,
-		Tools:     tools.GetToolsSchemaJSON(),
-		Reasoning: true,
-	}
-	err := api.StreamChat(ctx, apiKey, endpoint, body, handler)
-	in, out, reasoning := handler.GetUsage()
-	return &providers.SendResult{Text: collector.text, ToolCalls: convertToolCalls(handler.GetToolCalls()), StopReason: handler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, err
-}
-
-func (p *provider) SendWithHandler(ctx context.Context, model string, messages []providers.Message, handler display.Display, debug bool) (*providers.SendResult, error) {
-	apiKey := os.Getenv("OPENCODE_ZEN_API_KEY")
-	if apiKey == "" {
-		apiKey = os.Getenv("OPENCODE_API_KEY")
-	}
-	if apiKey == "" && !isFreeModel(model) {
-		return nil, fmt.Errorf("OPENCODE_ZEN_API_KEY not set (or use a free model: big-pickle, mimo-v2-*-free, etc.)")
-	}
-
-	endpoint := modelEndpoint(model)
-	config := providers.DefaultRetryConfig.WithDefaults()
-
-	chatMsgs := make([]api.ChatMessage, 0, len(messages)+1)
-	chatMsgs = append(chatMsgs, api.ChatMessage{
-		Role:    "system",
-		Content: providers.BuildSystemPrompt(),
-	})
-	for _, m := range messages {
-		chatMsgs = append(chatMsgs, api.ChatMessage{Role: m.Role, Content: m.Content})
-	}
-
-	body := api.ChatRequest{
-		Model:     model,
-		Stream:    true,
-		Messages:  chatMsgs,
-		Tools:     tools.GetToolsSchemaJSON(),
-		Reasoning: true,
-	}
-
-	var lastErr error
-	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
-		collector := &textCollector{}
-		var inner display.Display
-		var retryColl *retryCollector
-		if attempt == 0 {
-			wrapper := &handlerWrapper{Inner: handler, collector: collector}
-			inner = wrapper
-		} else {
-			retryColl = &retryCollector{}
-			inner = retryColl
-		}
-		debugHandler := &api.DebugHandler{Inner: inner, Debug: debug && attempt == 0}
-
-		err := api.StreamChat(ctx, apiKey, endpoint, body, debugHandler)
-		if err == nil {
-			if attempt > 0 {
-				handler.Chunk(retryColl.text)
-				for _, tc := range debugHandler.GetToolCalls() {
-					handler.ToolCallStart(tc.Name)
-					handler.ToolCallArg(tc.Argument)
-					handler.EndToolCall()
+		go func() {
+			defer close(ch)
+			if err := api.StreamResponses(ctx, apiKey, endpoint, body, func(e stream.Event) error {
+				select {
+				case ch <- e:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
 				}
+			}); err != nil {
+				ch <- stream.StreamError{Err: err}
 			}
-			text := collector.text
-			if retryColl != nil {
-				text = retryColl.text
-			}
-			in, out, reasoning := debugHandler.GetUsage()
-			return &providers.SendResult{Text: text, ToolCalls: convertToolCalls(debugHandler.GetToolCalls()), StopReason: debugHandler.GetFinishReason(), InputTokens: in, OutputTokens: out, ReasoningTokens: reasoning}, nil
-		}
-
-		lastErr = err
-		if !api.IsRetryable(err) {
-			return nil, err
-		}
-		if attempt < config.MaxRetries {
-			backoff := api.CalcBackoff(attempt, err, config)
-			api.SleepWithCountdown(backoff, attempt, config.MaxRetries, err)
-		}
+		}()
+		return ch, nil
 	}
-	handler.Error(lastErr)
-	return nil, fmt.Errorf("all %d retries exhausted: %w", config.MaxRetries, lastErr)
+
+	chatMsgs := make([]api.ChatMessage, 0, len(req.Messages)+1)
+	if req.System != "" {
+		chatMsgs = append(chatMsgs, api.ChatMessage{Role: "system", Content: req.System})
+	}
+	for _, m := range req.Messages {
+		chatMsgs = append(chatMsgs, api.ChatMessage{Role: m.Role, Content: m.Content})
+	}
+	body := api.ChatRequest{
+		Model:     req.Model,
+		Stream:    true,
+		Messages:  chatMsgs,
+		Tools:     tools.GetToolsSchemaJSON(),
+		Reasoning: true,
+	}
+	go func() {
+		defer close(ch)
+		if err := api.StreamChat(ctx, apiKey, endpoint, body, func(e stream.Event) error {
+			select {
+			case ch <- e:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}); err != nil {
+			ch <- stream.StreamError{Err: err}
+		}
+	}()
+	return ch, nil
 }

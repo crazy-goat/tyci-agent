@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/decodo/tyci-agent/stream"
 )
 
 type ChatMessage struct {
@@ -27,8 +29,8 @@ type ChatRequest struct {
 type chatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content         string `json:"content"`
-			Reasoning       string `json:"reasoning_content"`
+			Content   string `json:"content"`
+			Reasoning string `json:"reasoning_content"`
 			ToolCalls []struct {
 				Type     string `json:"type"`
 				Index    int    `json:"index"`
@@ -41,16 +43,24 @@ type chatStreamChunk struct {
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
-	Usage *UsageInfo `json:"usage,omitempty"`
+	Usage *chatUsage `json:"usage,omitempty"`
 }
 
-func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, handler *DebugHandler) error {
+type chatUsage struct {
+	InputTokens           int `json:"prompt_tokens"`
+	InputTokensAlt        int `json:"input_tokens,omitempty"`
+	OutputTokens          int `json:"completion_tokens"`
+	OutputTokensAlt       int `json:"output_tokens,omitempty"`
+	ReasoningTokens       int `json:"reasoning_tokens,omitempty"`
+	CacheReadInputTokens  int `json:"cache_read_input_tokens,omitempty"`
+	CacheCreateInputTokens int `json:"cache_creation_tokens,omitempty"`
+}
+
+func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, emit func(stream.Event) error) error {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-
-	handler.LogRequest("POST", endpoint, body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(jsonBody)))
 	if err != nil {
@@ -80,9 +90,14 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 	}
 
 	reader := bufio.NewReader(resp.Body)
-	var sawThinking bool
-	var toolStarted bool
+	var toolAcc []struct {
+		Name      string
+		Arguments strings.Builder
+	}
+	var inputTokens, outputTokens, reasoningTokens, cacheRead, cacheWrite int
+	var finishReason string
 	var readErr error
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -102,11 +117,8 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
-			handler.sawDone = true
 			break
 		}
-
-		handler.LogResponse(data)
 
 		var chunk chatStreamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
@@ -115,58 +127,51 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 			}
 			continue
 		}
+
 		if len(chunk.Choices) > 0 {
 			choice := chunk.Choices[0]
 			delta := choice.Delta
 			if delta.Reasoning != "" {
-				handler.Thinking(delta.Reasoning)
-				sawThinking = true
+				if err := emit(stream.ThinkingDelta{Text: delta.Reasoning}); err != nil {
+					return err
+				}
 			}
 			if delta.Content != "" {
-				if sawThinking {
-					handler.EndThinking()
-					sawThinking = false
+				if err := emit(stream.TextDelta{Text: delta.Content}); err != nil {
+					return err
 				}
-				handler.Chunk(delta.Content)
 			}
 			for _, tc := range delta.ToolCalls {
-				if sawThinking {
-					handler.EndThinking()
-					sawThinking = false
+				for len(toolAcc) <= tc.Index {
+					toolAcc = append(toolAcc, struct {
+						Name      string
+						Arguments strings.Builder
+					}{})
 				}
 				if tc.Function.Name != "" {
-					if toolStarted {
-						handler.EndToolCall()
-					}
-					handler.LogToolCallStart(tc.Function.Name)
-					toolStarted = true
+					toolAcc[tc.Index].Name = tc.Function.Name
 				}
 				if tc.Function.Arguments != "" {
-					handler.ToolCallArg(tc.Function.Arguments)
+					toolAcc[tc.Index].Arguments.WriteString(tc.Function.Arguments)
 				}
-				handler.AccumulateToolCall(tc.Index, tc.Function.Name, tc.Function.Arguments)
 			}
 			if choice.FinishReason != "" {
-				handler.FinishReason = choice.FinishReason
-				if choice.FinishReason == "tool_calls" && toolStarted {
-					handler.EndToolCall()
-					toolStarted = false
-				}
+				finishReason = choice.FinishReason
 			}
 		}
 
 		if chunk.Usage != nil {
-			handler.InputTokens = chunk.Usage.InputTokens
-			handler.OutputTokens = chunk.Usage.OutputTokens
-			handler.ReasoningTokens = chunk.Usage.ReasoningTokens
-			handler.CacheRead = chunk.Usage.CacheReadInputTokens
-			if handler.CacheRead == 0 {
-				handler.CacheRead = chunk.Usage.CacheHitTokens
+			inputTokens = chunk.Usage.InputTokens
+			if inputTokens == 0 {
+				inputTokens = chunk.Usage.InputTokensAlt
 			}
-			handler.CacheWrite = chunk.Usage.CacheCreateInputTokens
-			if handler.CacheWrite == 0 {
-				handler.CacheWrite = chunk.Usage.CacheMissTokens
+			outputTokens = chunk.Usage.OutputTokens
+			if outputTokens == 0 {
+				outputTokens = chunk.Usage.OutputTokensAlt
 			}
+			reasoningTokens = chunk.Usage.ReasoningTokens
+			cacheRead = chunk.Usage.CacheReadInputTokens
+			cacheWrite = chunk.Usage.CacheCreateInputTokens
 		}
 
 		if readErr != nil {
@@ -174,20 +179,29 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 		}
 	}
 
-	if handler.InputTokens > 0 || handler.OutputTokens > 0 {
-		handler.Summary(UsageInfo{
-			InputTokens:           handler.InputTokens,
-			OutputTokens:          handler.OutputTokens,
-			ReasoningTokens:       handler.ReasoningTokens,
-			CacheReadInputTokens:  handler.CacheRead,
-			CacheCreateInputTokens: handler.CacheWrite,
-		})
-	} else {
-		handler.Summary(UsageInfo{})
+	for _, tc := range toolAcc {
+		if tc.Name == "" && tc.Arguments.Len() == 0 {
+			continue
+		}
+		if err := emit(stream.ToolCall{Name: tc.Name, Arguments: tc.Arguments.String()}); err != nil {
+			return err
+		}
 	}
-	handler.End()
 
-	if !handler.sawDone && readErr != nil && !errors.Is(readErr, io.EOF) {
+	if err := emit(stream.Finish{
+		Reason: finishReason,
+		Usage: stream.Usage{
+			Input:      inputTokens,
+			Output:     outputTokens,
+			Reasoning:  reasoningTokens,
+			CacheRead:  cacheRead,
+			CacheWrite: cacheWrite,
+		},
+	}); err != nil {
+		return err
+	}
+
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		return readErr
 	}
 	return nil

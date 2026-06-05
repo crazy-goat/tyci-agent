@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/decodo/tyci-agent/stream"
 	"golang.org/x/term"
 )
 
@@ -24,9 +25,6 @@ type Minimal struct {
 	lineActive bool
 	spinIdx    int
 	lastRender time.Time
-
-	toolName string
-	toolArgs strings.Builder
 
 	totalIn      int
 	totalOut     int
@@ -47,11 +45,6 @@ func NewMinimal(hideThinking, hideTools bool) *Minimal {
 
 func (m *Minimal) blockElapsed() string {
 	e := time.Since(m.blockStart).Round(time.Millisecond)
-	return fmt.Sprintf("[%v]", e)
-}
-
-func (m *Minimal) totalElapsed() string {
-	e := time.Since(m.requestStart).Round(time.Millisecond)
 	return fmt.Sprintf("[%v]", e)
 }
 
@@ -179,7 +172,7 @@ func (m *Minimal) feedContent(prefix string, text string, useSpinner bool) {
 	m.throttleRender(useSpinner)
 }
 
-func (m *Minimal) Chunk(text string) {
+func (m *Minimal) Text(text string) {
 	m.feedContent("Text:", text, false)
 }
 
@@ -210,72 +203,37 @@ func (m *Minimal) flushActiveBlock() {
 	m.finalizeLine()
 }
 
-func (m *Minimal) EndThinking() {
-	if m.hideThinking {
-		return
-	}
-	m.flushActiveBlock()
-	m.blockStart = time.Now()
-}
-
-func (m *Minimal) ToolCallStart(name string) {
-	m.flushActiveBlock()
-	m.toolName = name
-	m.toolArgs.Reset()
-	m.blockStart = time.Now()
-}
-
-func (m *Minimal) ToolCallArg(text string) {
-	m.toolArgs.WriteString(text)
-}
-
-func (m *Minimal) EndToolCall() {
+func (m *Minimal) ToolCall(name, args, result string) {
 	if m.hideTools {
 		return
 	}
-	args := m.toolArgs.String()
+	parsed := parseArgs(args)
+	title, _ := parsed["description"].(string)
+	if title == "" {
+		title = name
+	}
 	m.startLine("Tool:")
-	if args != "" {
-		m.curContent.WriteString(m.toolName + "(" + args + ")")
-	} else {
-		m.curContent.WriteString(m.toolName)
-	}
+	m.curContent.WriteString(title)
 	m.finalizeLine()
-	m.toolName = ""
-	m.toolArgs.Reset()
 	m.blockStart = time.Now()
-}
 
-func (m *Minimal) ToolResult(name string, result *ToolResult) {
-
-}
-
-func (m *Minimal) printUsage(prefix string, in, out, cacheRd, cacheWr int) {
-	parts := fmt.Sprintf("in=%d out=%d", in, out)
-	if cacheRd > 0 || cacheWr > 0 {
-		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", cacheRd, cacheWr)
+	if name != "read" && result != "" {
+		m.startLine("Result:")
+		m.curContent.WriteString(result)
+		m.finalizeLine()
+		m.blockStart = time.Now()
 	}
-	m.startLine(prefix)
-	m.curContent.WriteString(parts)
-	m.finalizeLine()
 }
 
-func (m *Minimal) Summary(usage UsageInfo) {
+func (m *Minimal) Summary(usage stream.Usage) {
 	m.flushActiveBlock()
-	newIn := usage.InputTokens - usage.CacheReadInputTokens
+	newIn := usage.Input - usage.CacheRead
 	if newIn < 0 {
 		newIn = 0
 	}
-	m.totalIn += newIn
-	m.totalOut += usage.OutputTokens
-	m.totalCacheRd += usage.CacheReadInputTokens
-	m.totalCacheWr += usage.CacheCreateInputTokens
-	parts := fmt.Sprintf("in=%d out=%d", newIn, usage.OutputTokens)
-	if usage.CacheReadInputTokens > 0 || usage.CacheCreateInputTokens > 0 {
-		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", usage.CacheReadInputTokens, usage.CacheCreateInputTokens)
-	}
-	if usage.StopReason != "" {
-		parts += fmt.Sprintf(" stop_reason=%s", usage.StopReason)
+	parts := fmt.Sprintf("in=%d out=%d", newIn, usage.Output)
+	if usage.CacheRead > 0 || usage.CacheWrite > 0 {
+		parts += fmt.Sprintf(" cache_rd=%d cache_wr=%d", usage.CacheRead, usage.CacheWrite)
 	}
 	m.startLine("Usage:")
 	m.curContent.WriteString(parts)

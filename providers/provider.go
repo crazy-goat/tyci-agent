@@ -2,13 +2,14 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
 	"time"
 
 	"github.com/decodo/tyci-agent/api"
-	"github.com/decodo/tyci-agent/display"
+	"github.com/decodo/tyci-agent/stream"
 )
 
 func BuildSystemPrompt() string {
@@ -44,15 +45,9 @@ Be terse. No fluff. Short sentence. Get job done.
 `, date, wd, osName, tempDir)
 }
 
-type UsageInfo struct {
-	InputTokens  int
-	OutputTokens int
-	Cost         float64
-}
-
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string
+	Content string
 }
 
 type ToolCall struct {
@@ -60,13 +55,12 @@ type ToolCall struct {
 	Arguments string
 }
 
-type SendResult struct {
-	Text           string
-	ToolCalls      []ToolCall
-	StopReason     string
-	InputTokens    int
-	OutputTokens   int
-	ReasoningTokens int
+type Request struct {
+	Model    string
+	System   string
+	Messages []Message
+	Tools    json.RawMessage
+	Debug    bool
 }
 
 type Provider interface {
@@ -74,9 +68,7 @@ type Provider interface {
 	IsConfigured() bool
 	Models() []string
 	FreeModels() []string
-	Send(ctx context.Context, model, prompt, system string, debug bool) (*SendResult, error)
-	SendWithMessages(ctx context.Context, model, prompt, system string, messages []Message, debug bool) (*SendResult, error)
-	SendWithHandler(ctx context.Context, model string, messages []Message, handler display.Display, debug bool) (*SendResult, error)
+	Stream(ctx context.Context, req Request) (<-chan stream.Event, error)
 }
 
 var DefaultRetryConfig = api.RetryConfig{MaxRetries: 5, BaseBackoff: 4, MaxBackoff: 128}

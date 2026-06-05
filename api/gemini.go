@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/decodo/tyci-agent/stream"
 )
 
 type GeminiContent struct {
@@ -42,13 +44,11 @@ type geminiStreamChunk struct {
 	} `json:"usageMetadata,omitempty"`
 }
 
-func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiRequest, handler *DebugHandler) error {
+func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiRequest, emit func(stream.Event) error) error {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-
-	handler.LogRequest("POST", endpoint, body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(jsonBody)))
 	if err != nil {
@@ -78,6 +78,8 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 	}
 
 	reader := bufio.NewReader(resp.Body)
+	var inputTokens, outputTokens int
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -93,20 +95,28 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 			break
 		}
 
-		handler.LogResponse(data)
-
 		var chunk geminiStreamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
 		}
 		for _, c := range chunk.Candidates {
 			for _, part := range c.Content.Parts {
-				handler.Chunk(part.Text)
+				if err := emit(stream.TextDelta{Text: part.Text}); err != nil {
+					return err
+				}
 			}
+		}
+		if chunk.UsageMetadata != nil {
+			inputTokens = chunk.UsageMetadata.PromptTokenCount
+			outputTokens = chunk.UsageMetadata.CandidatesTokenCount
 		}
 	}
 
-	handler.Summary(UsageInfo{})
-	handler.End()
-	return nil
+	return emit(stream.Finish{
+		Reason: "stop",
+		Usage: stream.Usage{
+			Input:  inputTokens,
+			Output: outputTokens,
+		},
+	})
 }

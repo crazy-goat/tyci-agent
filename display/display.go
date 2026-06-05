@@ -1,12 +1,6 @@
 package display
 
-type UsageInfo struct {
-	InputTokens           int
-	OutputTokens          int
-	CacheReadInputTokens  int
-	CacheCreateInputTokens int
-	StopReason            string
-}
+import "github.com/decodo/tyci-agent/stream"
 
 type ToolResult struct {
 	Success bool
@@ -20,14 +14,10 @@ type ToolCall struct {
 }
 
 type Display interface {
-	Chunk(text string)
 	Thinking(text string)
-	EndThinking()
-	ToolCallStart(name string)
-	ToolCallArg(text string)
-	EndToolCall()
-	ToolResult(name string, result *ToolResult)
-	Summary(usage UsageInfo)
+	Text(text string)
+	ToolCall(name, args, result string)
+	Summary(usage stream.Usage)
 	Error(err error)
 	End()
 }
