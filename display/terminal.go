@@ -175,6 +175,9 @@ func (t *Terminal) Summary(usage UsageInfo) {
 		parts += fmt.Sprintf(" stop_reason=%s", usage.StopReason)
 	}
 	if t.interactive {
+		if t.sawStdout {
+			fmt.Fprintln(os.Stderr)
+		}
 		fmt.Fprintf(os.Stderr, "%s%s%s%s\n\n", t.bgUsage, clearLine, parts, bgReset)
 	} else {
 		fmt.Fprintf(os.Stderr, "%s%s\n", clearLine, parts)
