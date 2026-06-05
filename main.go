@@ -236,8 +236,8 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		stopESC()
 
 		signal.Stop(sigCh)
-		<-sigDone
-		iterCancel()
+		iterCancel()   // anuluj kontekst żeby odblokować gorutynę sygnałową
+		<-sigDone      // teraz gorutyna wyjdzie przez <-iterCtx.Done()
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -295,16 +295,20 @@ func watchESC(cancel context.CancelFunc) func() {
 		return func() {}
 	}
 
-	done := make(chan struct{})
+	stop := make(chan struct{})
 	go func() {
-		defer close(done)
 		buf := make([]byte, 1)
 		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
 			n, err := os.Stdin.Read(buf)
 			if err != nil || n == 0 {
-				// timeout (VTIME) with no data, or error — loop and check done
+				// timeout or error — check if we should stop before retrying
 				select {
-				case <-done:
+				case <-stop:
 					return
 				default:
 					continue
@@ -319,8 +323,9 @@ func watchESC(cancel context.CancelFunc) func() {
 	}()
 
 	return func() {
+		close(stop)       // signal goroutine to stop
 		term.Restore(fd, oldState)
-		<-done
+		// Don't wait for goroutine — it will exit on next timeout or stop signal
 	}
 }
 
