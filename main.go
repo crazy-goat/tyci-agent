@@ -57,7 +57,7 @@ func main() {
 	promptFlag := flag.String("prompt", "", "Prompt for response")
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.local/share/tyci-agent/history)")
-	modeFlag := flag.String("mode", "minimal", "Display mode: minimal, normal, interactive")
+	modeFlag := flag.String("mode", "interactive", "Display mode: minimal, normal, interactive")
 	sessionFlag := flag.String("session", "", "Session file path (default: auto-generated in ~/.local/share/tyci-agent/sessions/)")
 	noSessionFlag := flag.Bool("no-session", false, "Disable session persistence")
 
