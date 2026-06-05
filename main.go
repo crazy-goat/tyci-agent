@@ -25,14 +25,13 @@ var interactiveFlag = flag.Bool("interactive", false, "Interactive mode: read pr
 func main() {
 	debugFlag := flag.Bool("debug", false, "Show HTTP request/response data")
 	modelFlag := flag.String("model", "opencode-zen/big-pickle", "Model to use (format: provider/model)")
-	promptTextFlag := flag.String("prompt-to-text", "", "Prompt for text response")
-	promptJSONFlag := flag.String("prompt-to-json", "", "Prompt for JSON response")
+	promptFlag := flag.String("prompt", "", "Prompt for response")
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.local/share/tyci-agent/history)")
 	modeFlag := flag.String("mode", "minimal", "Display mode: minimal, normal, interactive")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--model provider/model] [--max-retries N] [--history-file <path>] [--mode minimal|normal|interactive] (--prompt-to-text <prompt> | --prompt-to-json <prompt> | --interactive)\n\n")
+		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--model provider/model] [--max-retries N] [--history-file <path>] [--mode minimal|normal|interactive] (--prompt <prompt> | --interactive)\n\n")
 		fmt.Fprintf(os.Stdout, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -76,11 +75,7 @@ func main() {
 	case "minimal":
 		disp = display.NewMinimal()
 	case "normal":
-		if *promptJSONFlag != "" {
-			disp = display.NewJSON()
-		} else {
-			disp = display.NewTerminal()
-		}
+		disp = display.NewTerminal()
 	case "interactive":
 		*interactiveFlag = true
 		disp = display.NewTerminal()
@@ -104,36 +99,19 @@ func main() {
 		return
 	}
 
-	if *promptTextFlag == "" && *promptJSONFlag == "" {
-		fmt.Fprintln(os.Stderr, "Error: must provide either --prompt-to-text or --prompt-to-json")
-		flag.Usage()
-		os.Exit(1)
-	}
-	if *promptTextFlag != "" && *promptJSONFlag != "" {
-		fmt.Fprintln(os.Stderr, "Error: cannot use both --prompt-to-text and --prompt-to-json")
+	if *promptFlag == "" {
+		fmt.Fprintln(os.Stderr, "Error: must provide --prompt")
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	var prompt string
-	var expectJSON bool
-	if *promptTextFlag != "" {
-		prompt = *promptTextFlag
-		expectJSON = false
-	} else {
-		prompt = *promptJSONFlag
-		expectJSON = true
-	}
-
-	messages := []providers.Message{{Role: "user", Content: prompt}}
+	messages := []providers.Message{{Role: "user", Content: *promptFlag}}
 	if err := agent.Run(context.Background(), provider, disp, &messages, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	disp.End()
-	if !expectJSON {
-		fmt.Fprintln(os.Stdout)
-	}
+	fmt.Fprintln(os.Stdout)
 }
 
 func runInteractive(provider providers.Provider, modelName string, disp display.Display, historyFile string, cfg agent.Config) {
