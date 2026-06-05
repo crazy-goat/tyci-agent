@@ -16,6 +16,9 @@ func (e *LineEditor) render() {
 
 	if e.searching {
 		fmt.Fprintf(os.Stdout, "(reverse-i-search)`%s': %s", string(e.searchQuery), string(e.buffer))
+		searchPrompt := fmt.Sprintf("(reverse-i-search)`%s': ", string(e.searchQuery))
+		pos := len([]rune(searchPrompt)) + e.cursorPos
+		fmt.Fprintf(os.Stdout, "\r\033[%dC", pos)
 		e.renderLines = 1
 		e.lastCursorLine = 0
 		return
@@ -40,6 +43,7 @@ func (e *LineEditor) render() {
 	if curLine < len(lines)-1 {
 		fmt.Fprintf(os.Stdout, "\033[%dA", len(lines)-1-curLine)
 	}
+	fmt.Fprint(os.Stdout, "\r")
 	col := curCol
 	if curLine == 0 {
 		col += len([]rune(e.prompt))
@@ -48,8 +52,6 @@ func (e *LineEditor) render() {
 	}
 	if col > 0 {
 		fmt.Fprintf(os.Stdout, "\033[%dC", col)
-	} else {
-		fmt.Fprint(os.Stdout, "\r")
 	}
 
 	e.renderLines = len(lines)
