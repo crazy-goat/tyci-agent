@@ -676,7 +676,14 @@ func (t *TUI) Text(text string)                { t.post(tuiMsgBlock{kind: "text"
 func (t *TUI) ToolCallStart(name string)       { t.post(tuiMsgBlock{kind: "tool-start", toolName: name}) }
 func (t *TUI) ToolCallDelta(delta string)      { t.post(tuiMsgBlock{kind: "tool-delta", content: delta}) }
 func (t *TUI) ToolCallEnd(name, result string) { t.post(tuiMsgBlock{kind: "tool-end", content: result}) }
-func (t *TUI) ToolBlock(msg string)            { t.post(tuiMsgBlock{kind: "block", content: msg}) }
+func (t *TUI) ToolBlock(msg string) {
+	// In TUI, "⏳ waiting for tools..." is noise; tools are rendered live via ToolCallStart/Delta/End.
+	// Skip it.
+	if strings.HasPrefix(msg, "⏳") {
+		return
+	}
+	t.post(tuiMsgBlock{kind: "block", content: msg})
+}
 func (t *TUI) Summary(usage stream.Usage, stats stream.Stats) {
 	t.post(tuiMsgBlock{kind: "usage", usage: usage, stats: stats})
 }

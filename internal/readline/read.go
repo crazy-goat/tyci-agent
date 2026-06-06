@@ -2,6 +2,7 @@ package readline
 
 import (
 	"os"
+	"syscall"
 	"unicode/utf8"
 )
 
@@ -58,6 +59,10 @@ func (e *LineEditor) readKey() (key, error) {
 		}
 
 		if buf[0] < 0x20 || buf[0] == 0x7f {
+			// Newline in EOF: check if more data follows (paste detection)
+			if (buf[0] == 0x0a || buf[0] == 0x0d) && e.hasMoreData() {
+				return key{r: '\n'}, nil
+			}
 			return key{special: parseCtrlKey(buf[0])}, nil
 		}
 
@@ -80,6 +85,15 @@ func (e *LineEditor) readKey() (key, error) {
 
 		return key{r: rune(buf[0])}, nil
 	}
+}
+
+// hasMoreData checks if there's more data available on stdin (non-blocking poll).
+func (e *LineEditor) hasMoreData() bool {
+	var rfds syscall.FdSet
+	rfds.Bits[e.fd/64] |= 1 << (uint(e.fd) % 64)
+	tv := syscall.NsecToTimeval(0) // no wait
+	n, err := syscall.Select(e.fd+1, &rfds, nil, nil, &tv)
+	return n > 0 && err == nil
 }
 
 func (e *LineEditor) readEscapeSequence() (key, error) {

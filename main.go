@@ -401,9 +401,9 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		var err error
 
 		if editor != nil {
-			line, err = editor.Read(iterCtx, ">>> ")
+			line, err = editor.Read(iterCtx, ">>> (Alt+Enter to send) ")
 		} else {
-			line, err = simplePrompt(">>> ")
+			line, err = simplePrompt(">>> ")         // Enter to send (no multiline)
 		}
 
 		if errors.Is(err, readline.ErrEOF) {
