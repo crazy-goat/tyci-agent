@@ -339,6 +339,10 @@ func (m *TuiModel) finishToolAt(result string) {
 	m.toolQueue = m.toolQueue[1:]
 	if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].kind == "tool" {
 		if result != "" {
+			// Ensure separator newline if content exists
+			if m.blocks[idx].content != "" && !strings.HasSuffix(m.blocks[idx].content, "\n") {
+				m.blocks[idx].content += "\n"
+			}
 			m.blocks[idx].content += result
 		}
 		m.blocks[idx].toolState = "done"
