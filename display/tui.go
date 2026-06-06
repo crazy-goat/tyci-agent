@@ -151,10 +151,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollLine = 0
 			return m, nil
 
-		case tea.KeyTab:
-			m.toggleNextTool()
-			return m, nil
-
 		case tea.KeyCtrlC:
 			m.quitting = true
 			return m, tea.Quit
@@ -191,6 +187,18 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiMsgBlock:
 		m.handleBlockMsg(msg)
+		return m, nil
+
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			// Y is 0-indexed terminal row from bubbletea
+			if msg.Y >= 0 && msg.Y < m.visibleLines() {
+				idx := m.blockAtVisibleLine(msg.Y)
+				if idx >= 0 && m.blocks[idx].kind == "tool" && m.blocks[idx].toolState == "done" {
+					m.blocks[idx].collapsed = !m.blocks[idx].collapsed
+				}
+			}
+		}
 		return m, nil
 	}
 
@@ -322,6 +330,51 @@ func (m *TuiModel) toggleNextTool() {
 	}
 }
 
+// blockAtVisibleLine returns the block index at the given visible Y (0-indexed within message area).
+// Returns -1 if no block is at that position (welcome, separator, etc).
+func (m *TuiModel) blockAtVisibleLine(visY int) int {
+	// Build flat lines with block index tracking
+	type lineInfo struct {
+		blockIdx int
+	}
+	var allLines []lineInfo
+
+	for blkIdx, blk := range m.blocks {
+		rendered := m.renderBlock(blk)
+		if rendered == "" {
+			continue
+		}
+		lines := strings.Split(rendered, "\n")
+		for range lines {
+			allLines = append(allLines, lineInfo{blockIdx: blkIdx})
+		}
+		// Separator blank line (no block)
+		allLines = append(allLines, lineInfo{blockIdx: -1})
+	}
+	if len(allLines) > 0 && allLines[len(allLines)-1].blockIdx == -1 {
+		allLines = allLines[:len(allLines)-1]
+	}
+
+	totalLines := len(allLines)
+	msgHeight := m.visibleLines()
+
+	var startIdx int
+	if totalLines <= msgHeight {
+		startIdx = 0
+	} else {
+		startIdx = totalLines - msgHeight - m.scrollLine
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+
+	idx := startIdx + visY
+	if idx >= 0 && idx < totalLines {
+		return allLines[idx].blockIdx
+	}
+	return -1
+}
+
 // ─── View ─────────────────────────────────────────────────────────────────
 
 func (m TuiModel) View() string {
@@ -341,7 +394,7 @@ func (m TuiModel) View() string {
 		w := max(10, m.width-2)
 		msg := lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
 			Foreground(lipgloss.Color("240")).
-			Render("tyci-agent TUI\nType a message, Enter to send\nCtrl+C to quit, Tab to toggle tools")
+			Render("tyci-agent TUI\nType a message, Enter to send\nCtrl+C to quit\nClick on a tool block to expand/collapse")
 		b.WriteString(msg)
 		b.WriteString("\n")
 		msgHeight--
@@ -488,7 +541,7 @@ func (m TuiModel) renderToolBlock(b block) string {
 				out.WriteString(textStyle.Render(lines[i]))
 				out.WriteString("\n")
 			}
-			out.WriteString(dimStyle.Render(fmt.Sprintf("├── %d more lines (Tab → expand)", remainingLines-b.maxLines)))
+			out.WriteString(dimStyle.Render(fmt.Sprintf("├── %d more lines (click to expand)", remainingLines-b.maxLines)))
 		} else {
 			for i := 1; i < totalLines; i++ {
 				out.WriteString(bar)
@@ -497,7 +550,7 @@ func (m TuiModel) renderToolBlock(b block) string {
 				out.WriteString("\n")
 			}
 			if b.maxLines > 0 && remainingLines > b.maxLines {
-				out.WriteString(dimStyle.Render("├── expanded (Tab → collapse)"))
+				out.WriteString(dimStyle.Render("├── expanded (click to collapse)"))
 			}
 		}
 	}
@@ -537,7 +590,7 @@ type TUI struct {
 func NewTUI() *TUI {
 	results := make(chan string, 8)
 	m := newModel(results)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	t := &TUI{
 		prog:    p,
