@@ -550,13 +550,25 @@ func (m TuiModel) renderToolBlock(b block) string {
 	if b.toolState == "running" {
 		firstLine += " ⟳"
 	}
+
+	// Remaining content lines (output)
+	remainingLines := totalLines - 1
+
+	// File tools (read/write/edit): always one line when collapsed, show "· N lines (click to expand)" inline
+	if isFileTool && b.collapsed {
+		if remainingLines > 0 {
+			firstLine += fmt.Sprintf(" · %d lines (click to expand)", remainingLines)
+		}
+		out.WriteString(bar)
+		out.WriteString(" ")
+		out.WriteString(textStyle.Render(firstLine))
+		return strings.TrimRight(out.String(), "\n")
+	}
+
 	out.WriteString(bar)
 	out.WriteString(" ")
 	out.WriteString(textStyle.Render(firstLine))
 	out.WriteString("\n")
-
-	// Remaining content lines (output)
-	remainingLines := totalLines - 1
 
 	if remainingLines > 0 {
 		if b.toolState == "running" {
@@ -568,9 +580,6 @@ func (m TuiModel) renderToolBlock(b block) string {
 			if remainingLines > 1 {
 				out.WriteString(dimStyle.Render(fmt.Sprintf(" … (+%d more)", remainingLines-1)))
 			}
-		} else if isFileTool && b.collapsed {
-			// File tools: hide output, show click to expand
-			out.WriteString(dimStyle.Render(fmt.Sprintf("├── %d lines (click to expand)", remainingLines)))
 		} else if b.collapsed && b.maxLines > 0 && remainingLines > b.maxLines {
 			for i := 1; i < b.maxLines+1; i++ {
 				out.WriteString(bar)
