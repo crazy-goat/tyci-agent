@@ -2,6 +2,7 @@ package display
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -522,19 +523,29 @@ func (m TuiModel) renderBlock(b block) string {
 }
 
 func (m TuiModel) renderToolBlock(b block) string {
-	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("│") // blue
+	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("│")
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)
 
 	lines := strings.Split(b.content, "\n")
 	totalLines := len(lines)
 
+	// Determine if content-hiding tool
+	isFileTool := b.toolName == "read" || b.toolName == "write" || b.toolName == "edit"
+
+	// Extract path from first line (JSON args)
+	path := extractPath(lines[0])
+
 	var out strings.Builder
 
-	// First line: tool name + first content line (args) inline
-	firstLine := b.toolName
-	if totalLines > 0 && lines[0] != "" {
-		firstLine += " " + lines[0]
+	// First line: tool name + path/args
+	var firstLine string
+	if isFileTool && path != "" {
+		firstLine = b.toolName + " " + path
+	} else if totalLines > 0 && lines[0] != "" {
+		firstLine = b.toolName + " " + lines[0]
+	} else {
+		firstLine = b.toolName
 	}
 	if b.toolState == "running" {
 		firstLine += " ⟳"
@@ -557,6 +568,9 @@ func (m TuiModel) renderToolBlock(b block) string {
 			if remainingLines > 1 {
 				out.WriteString(dimStyle.Render(fmt.Sprintf(" … (+%d more)", remainingLines-1)))
 			}
+		} else if isFileTool && b.collapsed {
+			// File tools: hide output, show click to expand
+			out.WriteString(dimStyle.Render(fmt.Sprintf("├── %d lines (click to expand)", remainingLines)))
 		} else if b.collapsed && b.maxLines > 0 && remainingLines > b.maxLines {
 			for i := 1; i < b.maxLines+1; i++ {
 				out.WriteString(bar)
@@ -579,6 +593,21 @@ func (m TuiModel) renderToolBlock(b block) string {
 	}
 
 	return strings.TrimRight(out.String(), "\n")
+}
+
+// extractPath tries to parse JSON and get "path" value.
+func extractPath(s string) string {
+	if s == "" {
+		return ""
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(s), &obj); err != nil {
+		return ""
+	}
+	if p, ok := obj["path"].(string); ok {
+		return p
+	}
+	return ""
 }
 
 func (m TuiModel) buildStatus() string {
