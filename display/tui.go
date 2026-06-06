@@ -446,45 +446,62 @@ func (m TuiModel) renderBlock(b block) string {
 }
 
 func (m TuiModel) renderToolBlock(b block) string {
-	var out strings.Builder
-	icon := "🔧"
-	stateIcon := ""
-	if b.toolState == "running" {
-		stateIcon = " ⟳"
-	}
-	header := fmt.Sprintf("%s %s%s", icon, b.toolName, stateIcon)
-	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
-	out.WriteString(headerStyle.Render(header))
-	out.WriteString("\n")
+	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("│") // blue
+	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)
 
 	lines := strings.Split(b.content, "\n")
 	totalLines := len(lines)
 
-	if b.toolState == "running" && totalLines > 0 {
-		last := lines[totalLines-1]
-		out.WriteString(last)
-		if totalLines > 1 {
-			style := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)
-			out.WriteString(style.Render(fmt.Sprintf(" … (+%d lines)", totalLines-1)))
-		}
-	} else if b.collapsed && b.maxLines > 0 && totalLines > b.maxLines {
-		for i := 0; i < b.maxLines && i < totalLines; i++ {
-			out.WriteString(lines[i])
-			out.WriteString("\n")
-		}
-		remaining := totalLines - b.maxLines
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)
-		out.WriteString(style.Render(fmt.Sprintf("├── %d more lines (Tab to expand)", remaining)))
-	} else {
-		for _, line := range lines {
-			out.WriteString(line)
-			out.WriteString("\n")
-		}
-		if b.maxLines > 0 && totalLines > b.maxLines {
-			style := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)
-			out.WriteString(style.Render("├── expanded (Tab to collapse)"))
+	var out strings.Builder
+
+	// First line: tool name + first content line (args) inline
+	firstLine := b.toolName
+	if totalLines > 0 && lines[0] != "" {
+		firstLine += " " + lines[0]
+	}
+	if b.toolState == "running" {
+		firstLine += " ⟳"
+	}
+	out.WriteString(bar)
+	out.WriteString(" ")
+	out.WriteString(textStyle.Render(firstLine))
+	out.WriteString("\n")
+
+	// Remaining content lines (output)
+	remainingLines := totalLines - 1
+
+	if remainingLines > 0 {
+		if b.toolState == "running" {
+			// Show last line only
+			last := lines[totalLines-1]
+			out.WriteString(bar)
+			out.WriteString(" ")
+			out.WriteString(textStyle.Render(last))
+			if remainingLines > 1 {
+				out.WriteString(dimStyle.Render(fmt.Sprintf(" … (+%d more)", remainingLines-1)))
+			}
+		} else if b.collapsed && b.maxLines > 0 && remainingLines > b.maxLines {
+			for i := 1; i < b.maxLines+1; i++ {
+				out.WriteString(bar)
+				out.WriteString(" ")
+				out.WriteString(textStyle.Render(lines[i]))
+				out.WriteString("\n")
+			}
+			out.WriteString(dimStyle.Render(fmt.Sprintf("├── %d more lines (Tab → expand)", remainingLines-b.maxLines)))
+		} else {
+			for i := 1; i < totalLines; i++ {
+				out.WriteString(bar)
+				out.WriteString(" ")
+				out.WriteString(textStyle.Render(lines[i]))
+				out.WriteString("\n")
+			}
+			if b.maxLines > 0 && remainingLines > b.maxLines {
+				out.WriteString(dimStyle.Render("├── expanded (Tab → collapse)"))
+			}
 		}
 	}
+
 	return strings.TrimRight(out.String(), "\n")
 }
 
