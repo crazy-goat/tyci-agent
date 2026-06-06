@@ -261,6 +261,19 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	}
 
 	// Execute tools in parallel
+	// Set up streaming callback if display supports it
+	type streamer interface {
+		StreamProgress(toolIdx int, line string)
+	}
+	if s, ok := d.(streamer); ok {
+		stream.OnOutput = func(toolIdx int, line string) {
+			s.StreamProgress(toolIdx, line)
+		}
+		defer func() { stream.OnOutput = nil }()
+	} else {
+		stream.OnOutput = nil
+	}
+
 	results := executeTools(ctx, cfg.Tools, toolCalls)
 
 	// Show results and write session events
@@ -420,6 +433,11 @@ func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.Too
 			if toolTimeout > 0 {
 				toolCtx, cancel = context.WithTimeout(ctx, toolTimeout)
 				defer cancel()
+			}
+
+			// Pass tool index for streaming tools (bash)
+			if call.Name == "bash" {
+				toolCtx = context.WithValue(toolCtx, stream.ToolIdxCtxKey{}, idx)
 			}
 
 			body, err := runner.Run(toolCtx, call.Name, args)

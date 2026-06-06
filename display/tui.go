@@ -16,9 +16,10 @@ import (
 // ─── Messages ─────────────────────────────────────────────────────────────
 
 type tuiMsgBlock struct {
-	kind     string // "thinking","text","tool-start","tool-delta","tool-end","usage","error","done","block"
+	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block"
 	content  string
 	toolName string
+	toolIdx  int // for tool-progress: index in toolQueue
 	usage    stream.Usage
 	stats    stream.Stats
 }
@@ -41,7 +42,7 @@ func defaultMaxLines(toolName string) int {
 	case "read", "write", "edit":
 		return 1
 	case "bash":
-		return 10
+		return 3
 	case "subagent":
 		return 1
 	default:
@@ -293,6 +294,8 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.appendToLastTool(msg.content)
 	case "tool-end":
 		m.finishToolAt(msg.content)
+	case "tool-progress":
+		m.appendTool(msg.toolIdx, msg.content)
 	case "usage":
 		m.lastUsage = msg.usage
 		m.lastStats = msg.stats
@@ -328,6 +331,16 @@ func (m *TuiModel) appendToLastTool(delta string) {
 			m.blocks[i].content += delta
 			return
 		}
+	}
+}
+
+func (m *TuiModel) appendTool(queueIdx int, content string) {
+	if queueIdx < 0 || queueIdx >= len(m.toolQueue) {
+		return
+	}
+	blockIdx := m.toolQueue[queueIdx]
+	if blockIdx >= 0 && blockIdx < len(m.blocks) && m.blocks[blockIdx].kind == "tool" {
+		m.blocks[blockIdx].content += content
 	}
 }
 
@@ -585,7 +598,12 @@ func (m TuiModel) renderToolBlock(b block) string {
 				out.WriteString(dimStyle.Render(fmt.Sprintf(" … (+%d more)", remainingLines-1)))
 			}
 		} else if b.collapsed && b.maxLines > 0 && remainingLines > b.maxLines {
-			for i := 1; i < b.maxLines+1; i++ {
+			// Show LAST b.maxLines lines instead of first
+			start := totalLines - b.maxLines - 1
+			if start < 1 {
+				start = 1
+			}
+			for i := start; i < totalLines; i++ {
 				out.WriteString(bar)
 				out.WriteString(" ")
 				out.WriteString(textStyle.Render(lines[i]))
@@ -695,6 +713,12 @@ func (t *TUI) Error(err error)    { t.post(tuiMsgBlock{kind: "error", content: e
 func (t *TUI) End()               {}
 func (t *TUI) Done(usage stream.Usage, stats stream.Stats) {
 	t.post(tuiMsgBlock{kind: "done", usage: usage, stats: stats})
+}
+
+// StreamProgress sends incremental tool output to the TUI.
+// toolIdx is the index of the tool in the current tool batch (0-based).
+func (t *TUI) StreamProgress(toolIdx int, line string) {
+	t.post(tuiMsgBlock{kind: "tool-progress", toolIdx: toolIdx, content: line + "\n"})
 }
 
 func (t *TUI) ReadInput(_ context.Context, _ string) (string, error) {

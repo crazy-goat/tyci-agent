@@ -57,3 +57,10 @@ type Stats struct {
 	Duration   time.Duration
 	FirstToken time.Duration
 }
+
+// ToolIdxCtxKey is the context key for passing tool index to streaming tools.
+type ToolIdxCtxKey struct{}
+
+// OnOutput is set by the display (TUI) to receive streaming tool output.
+// toolIdx is the 0-based index of the tool in the current batch.
+var OnOutput func(toolIdx int, line string)
