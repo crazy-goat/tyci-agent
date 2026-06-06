@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -12,6 +13,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/decodo/tyci-agent/stream"
 )
+
+const tuiMaxHistory = 500
 
 // ─── Messages ─────────────────────────────────────────────────────────────
 
@@ -61,6 +64,8 @@ type TuiModel struct {
 	lastUsage     stream.Usage
 	lastStats     stream.Stats
 	reading       bool
+	status        string // "idle", "thinking", "responding", "tool"
+	modelName    string // model name shown in status bar
 
 	// Scroll: offset in rendered lines from the bottom.
 	// 0 = bottom (newest messages). Positive = scrolled up.
@@ -68,11 +73,17 @@ type TuiModel struct {
 
 	submitResult chan<- string
 	toolQueue    []int // FIFO of block indices for ToolCallStart->ToolCallEnd matching
+
+	// Input history for Up/Down navigation
+	inputHistory  []string
+	historyIdx    int    // -1 = current input, 0..len-1 = browsing history
+	stashedInput  string // saved current input while browsing history
+	historyPath   string // path to history file for persistence
 }
 
-func newModel(submitResult chan<- string) TuiModel {
+func newModel(submitResult chan<- string, modelName string, historyPath string) TuiModel {
 	ta := textarea.New()
-	ta.Placeholder = "Type message (Enter send, Alt+Enter newline)"
+	ta.Placeholder = "Type message (Enter send, Alt+Enter / Ctrl+N newline)"
 	ta.CharLimit = 0
 	ta.ShowLineNumbers = false
 	ta.SetWidth(80)
@@ -85,12 +96,16 @@ func newModel(submitResult chan<- string) TuiModel {
 	ta.Focus()
 
 	return TuiModel{
-		blocks:       make([]block, 0, 1024),
-		input:        ta,
-		submitResult: submitResult,
-		ready:        true,
-		reading:      true,
-		toolQueue:    make([]int, 0, 16),
+		blocks:        make([]block, 0, 1024),
+		input:         ta,
+		submitResult:  submitResult,
+		ready:         true,
+		reading:       true,
+		toolQueue:     make([]int, 0, 16),
+		modelName:     modelName,
+		inputHistory:  loadTuiHistory(historyPath),
+		historyIdx:    -1,
+		historyPath:   historyPath,
 	}
 }
 
@@ -106,15 +121,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(max(10, msg.Width-2))
-		ih := msg.Height / 6
-		if ih < 3 {
-			ih = 3
-		}
-		if ih > 8 {
-			ih = 8
-		}
-		m.input.SetHeight(ih)
-		// Clamp scroll
 		m.clampScroll()
 		return m, nil
 
@@ -135,16 +141,52 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case tea.KeyUp:
+		case tea.KeyCtrlUp:
 			m.scrollLine++
 			m.clampScroll()
 			return m, nil
 
-		case tea.KeyDown:
+		case tea.KeyCtrlDown:
 			m.scrollLine--
 			if m.scrollLine < 0 {
 				m.scrollLine = 0
 			}
+			return m, nil
+
+		case tea.KeyUp:
+			// Navigate input history (older)
+			if len(m.inputHistory) == 0 {
+				return m, nil
+			}
+			if m.historyIdx == -1 {
+				// Save current input before browsing
+				m.stashedInput = m.input.Value()
+				m.historyIdx = len(m.inputHistory) - 1
+			} else if m.historyIdx > 0 {
+				m.historyIdx--
+			}
+			m.input.SetValue(m.inputHistory[m.historyIdx])
+			m.input.SetCursor(len(m.inputHistory[m.historyIdx]))
+			m.capInputHeight()
+			return m, nil
+
+		case tea.KeyDown:
+			// Navigate input history (newer)
+			if m.historyIdx == -1 || len(m.inputHistory) == 0 {
+				return m, nil
+			}
+			m.historyIdx++
+			if m.historyIdx >= len(m.inputHistory) {
+				// Back to current input
+				m.historyIdx = -1
+				m.input.SetValue(m.stashedInput)
+				m.input.SetCursor(len(m.stashedInput))
+				m.stashedInput = ""
+			} else {
+				m.input.SetValue(m.inputHistory[m.historyIdx])
+				m.input.SetCursor(len(m.inputHistory[m.historyIdx]))
+			}
+			m.capInputHeight()
 			return m, nil
 
 		case tea.KeyHome:
@@ -166,9 +208,12 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Other keys need reading mode
+		// Allow typing while agent thinks, but don't submit until reading=true
 		if !m.reading {
-			return m, nil
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			m.capInputHeight()
+			return m, cmd
 		}
 
 		switch msg.Type {
@@ -178,15 +223,23 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyEnter:
 			if msg.Alt {
-				var cmd tea.Cmd
-				m.input, cmd = m.input.Update(msg)
-				return m, cmd
+				// Strip Alt so textarea recognizes it as "enter" for newline
+				m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
+				m.capInputHeight()
+				return m, nil
 			}
 			return m.submit(), nil
+
+		case tea.KeyCtrlN, tea.KeyCtrlJ:
+			// Insert newline (fallback when Alt+Enter is captured by terminal)
+			m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m.capInputHeight()
+			return m, nil
 		}
 
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
+		m.capInputHeight()
 		return m, cmd
 
 	case tuiMsgBlock:
@@ -263,9 +316,19 @@ func (m TuiModel) visibleLines() int {
 func (m TuiModel) submit() tea.Model {
 	line := strings.TrimSpace(m.input.Value())
 	m.input.Reset()
+	m.input.SetHeight(1)
 	if line == "" {
 		return m
 	}
+	// Save to input history (avoid duplicating last entry)
+	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != line {
+		m.inputHistory = append(m.inputHistory, line)
+		// Persist to history file
+		if m.historyPath != "" {
+			_ = appendTuiHistory(m.historyPath, line)
+		}
+	}
+	m.historyIdx = -1
 	m.reading = false
 	m.blocks = append(m.blocks, block{kind: "text", content: "You: " + line})
 	if m.submitResult != nil {
@@ -274,15 +337,28 @@ func (m TuiModel) submit() tea.Model {
 	return m
 }
 
+func (m *TuiModel) capInputHeight() {
+	lines := strings.Count(m.input.Value(), "\n") + 1
+	if lines > 10 {
+		lines = 10
+	}
+	m.input.SetHeight(lines)
+}
+
 // ─── Block handling ───────────────────────────────────────────────────────
 
 func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	switch msg.kind {
 	case "thinking":
+		m.status = "thinking"
 		m.appendOrAppend("thinking", msg.content)
 	case "text":
+		if m.status != "responding" {
+			m.status = "responding"
+		}
 		m.appendOrAppend("text", msg.content)
 	case "tool-start":
+		m.status = "tool"
 		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{
 			kind: "tool", toolName: msg.toolName,
@@ -302,12 +378,18 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	case "error":
 		m.blocks = append(m.blocks, block{kind: "error", content: msg.content})
 	case "done":
+		m.status = "idle"
 		if msg.usage.Output > 0 || msg.usage.Input > 0 {
 			m.appendOrAppend("usage", buildUsageLine(msg.usage, msg.stats))
 		}
 		m.reading = true
 	case "block":
 		m.blocks = append(m.blocks, block{kind: "block", content: msg.content})
+	case "reset":
+		m.blocks = nil
+		m.scrollLine = 0
+		m.reading = true
+		m.status = "idle"
 	}
 	m.clampScroll()
 }
@@ -500,7 +582,7 @@ func (m TuiModel) View() string {
 		Background(lipgloss.Color("236")).
 		Foreground(lipgloss.Color("250"))
 	if status != "" {
-		b.WriteString(statusStyle.Render(" " + status))
+		b.WriteString(statusStyle.Render(status))
 	} else {
 		b.WriteString(statusStyle.Render(""))
 	}
@@ -642,24 +724,73 @@ func extractPath(s string) string {
 }
 
 func (m TuiModel) buildStatus() string {
-	parts := []string{}
+	leftParts := []string{}
+	rightParts := []string{}
+
+	if m.modelName != "" {
+		leftParts = append(leftParts, m.modelName)
+	}
+
 	if m.scrollLine > 0 {
-		parts = append(parts, fmt.Sprintf("↑%d lines", m.scrollLine))
+		leftParts = append(leftParts, fmt.Sprintf("↑%d lines", m.scrollLine))
 	}
+
 	if !m.reading {
-		parts = append(parts, "⟳ thinking...")
+		switch m.status {
+		case "thinking":
+			leftParts = append(leftParts, "⟳ thinking...")
+		case "responding":
+			leftParts = append(leftParts, "⟳ responding...")
+		case "tool":
+			leftParts = append(leftParts, "⟳ tool...")
+		default:
+			leftParts = append(leftParts, "⟳ working...")
+		}
 	}
+
 	if m.lastUsage.Input > 0 || m.lastUsage.Output > 0 {
-		u := fmt.Sprintf("in=%d out=%d", m.lastUsage.Input, m.lastUsage.Output)
+		inNew := m.lastUsage.Input - m.lastUsage.CacheRead
+		if inNew < 0 {
+			inNew = 0
+		}
+		u := fmt.Sprintf("in=%d", inNew)
+		if m.lastUsage.CacheRead > 0 {
+			u += fmt.Sprintf(" (+%d cache)", m.lastUsage.CacheRead)
+		}
+		u += fmt.Sprintf(" out=%d", m.lastUsage.Output)
 		if m.lastUsage.Reasoning > 0 {
 			u += fmt.Sprintf(" r=%d", m.lastUsage.Reasoning)
 		}
-		parts = append(parts, u)
+		if m.lastUsage.CacheWrite > 0 {
+			u += fmt.Sprintf(" cache_w=%d", m.lastUsage.CacheWrite)
+		}
+		genDur := m.lastStats.Duration - m.lastStats.FirstToken
+		if genDur < 0 {
+			genDur = 0
+		}
+		u += fmt.Sprintf(" t=%.1fs ttft=%.2fs tok/s=%s",
+			m.lastStats.Duration.Seconds(),
+			m.lastStats.FirstToken.Seconds(),
+			fmtRate(m.lastUsage.Output, genDur),
+		)
+		rightParts = append(rightParts, u)
 	}
-	if len(parts) == 0 {
+
+	if len(leftParts) == 0 && len(rightParts) == 0 {
 		return ""
 	}
-	return strings.Join(parts, " │ ")
+
+	left := strings.Join(leftParts, " │ ")
+	right := strings.Join(rightParts, " │ ")
+
+	// Right-align the right part
+	leftW := lipgloss.Width(left)
+	rightW := lipgloss.Width(right)
+	padding := m.width - leftW - rightW
+	if padding < 1 {
+		padding = 1
+	}
+	return " " + left + strings.Repeat(" ", padding-1) + right
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────
@@ -670,9 +801,9 @@ type TUI struct {
 	done    chan struct{}
 }
 
-func NewTUI() *TUI {
+func NewTUI(modelName string, historyPath string) *TUI {
 	results := make(chan string, 8)
-	m := newModel(results)
+	m := newModel(results, modelName, historyPath)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	t := &TUI{
@@ -715,6 +846,10 @@ func (t *TUI) Done(usage stream.Usage, stats stream.Stats) {
 	t.post(tuiMsgBlock{kind: "done", usage: usage, stats: stats})
 }
 
+func (t *TUI) Reset() {
+	t.post(tuiMsgBlock{kind: "reset"})
+}
+
 // StreamProgress sends incremental tool output to the TUI.
 // toolIdx is the index of the tool in the current tool batch (0-based).
 func (t *TUI) StreamProgress(toolIdx int, line string) {
@@ -739,4 +874,58 @@ func (t *TUI) Close() { t.prog.Quit() }
 func max(a, b int) int {
 	if a > b { return a }
 	return b
+}
+
+// ─── History persistence ──────────────────────────────────────────────────
+
+// loadTuiHistory reads history lines from a file.
+func loadTuiHistory(path string) []string {
+	if path == "" {
+		return make([]string, 0, 128)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return make([]string, 0, 128)
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	// Filter printable lines and trim
+	clean := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if l != "" && isPrintable(l) {
+			clean = append(clean, l)
+		}
+	}
+	// Cap at max
+	if len(clean) > tuiMaxHistory {
+		clean = clean[len(clean)-tuiMaxHistory:]
+	}
+	return clean
+}
+
+// appendTuiHistory appends a single line to the history file.
+func appendTuiHistory(path, line string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintln(f, line)
+	return err
+}
+
+// isPrintable checks if a string contains only printable characters.
+func isPrintable(s string) bool {
+	for _, r := range s {
+		if r < 0x20 && r != '\t' {
+			return false
+		}
+	}
+	return true
 }

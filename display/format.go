@@ -91,12 +91,17 @@ func fmtRate(tokens int, genDur time.Duration) string {
 }
 
 func buildUsageLine(usage stream.Usage, stats stream.Stats) string {
-	parts := fmt.Sprintf("in=%d out=%d", usage.Input, usage.Output)
+	inNew := usage.Input - usage.CacheRead
+	if inNew < 0 {
+		inNew = 0
+	}
+	parts := fmt.Sprintf("in=%d", inNew)
+	if usage.CacheRead > 0 {
+		parts += fmt.Sprintf(" (+%d cache)", usage.CacheRead)
+	}
+	parts += fmt.Sprintf(" out=%d", usage.Output)
 	if usage.Reasoning > 0 {
 		parts += fmt.Sprintf(" r=%d", usage.Reasoning)
-	}
-	if usage.CacheRead > 0 {
-		parts += fmt.Sprintf(" cache_r=%d", usage.CacheRead)
 	}
 	if usage.CacheWrite > 0 {
 		parts += fmt.Sprintf(" cache_w=%d", usage.CacheWrite)

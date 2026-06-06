@@ -137,7 +137,7 @@ func main() {
 		interactiveFlag = true
 		disp = display.NewTerminal()
 	case "tui":
-		tuiDisp := display.NewTUI()
+		tuiDisp := display.NewTUI(model, historyFile)
 		disp = tuiDisp
 		interactiveFlag = true
 	default:
@@ -537,6 +537,7 @@ func runTUI(provider providers.Provider, modelName string, tuiDisp *display.TUI,
 		if line == "/new" {
 			iterCancel()
 			conversation = nil
+			tuiDisp.Reset()
 			continue
 		}
 		if line == "" {
