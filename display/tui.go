@@ -65,6 +65,7 @@ type TuiModel struct {
 	scrollLine int
 
 	submitResult chan<- string
+	toolQueue    []int // FIFO of block indices for ToolCallStart->ToolCallEnd matching
 }
 
 func newModel(submitResult chan<- string) TuiModel {
@@ -87,6 +88,7 @@ func newModel(submitResult chan<- string) TuiModel {
 		submitResult: submitResult,
 		ready:        true,
 		reading:      true,
+		toolQueue:    make([]int, 0, 16),
 	}
 }
 
@@ -279,15 +281,17 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	case "text":
 		m.appendOrAppend("text", msg.content)
 	case "tool-start":
+		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{
 			kind: "tool", toolName: msg.toolName,
 			toolState: "running", collapsed: true,
 			maxLines: defaultMaxLines(msg.toolName),
 		})
+		m.toolQueue = append(m.toolQueue, idx)
 	case "tool-delta":
 		m.appendToLastTool(msg.content)
 	case "tool-end":
-		m.finishLastTool(msg.content)
+		m.finishToolAt(msg.content)
 	case "usage":
 		m.lastUsage = msg.usage
 		m.lastStats = msg.stats
@@ -326,15 +330,17 @@ func (m *TuiModel) appendToLastTool(delta string) {
 	}
 }
 
-func (m *TuiModel) finishLastTool(result string) {
-	for i := len(m.blocks) - 1; i >= 0; i-- {
-		if m.blocks[i].kind == "tool" {
-			if result != "" {
-				m.blocks[i].content += result
-			}
-			m.blocks[i].toolState = "done"
-			return
+func (m *TuiModel) finishToolAt(result string) {
+	if len(m.toolQueue) == 0 {
+		return
+	}
+	idx := m.toolQueue[0]
+	m.toolQueue = m.toolQueue[1:]
+	if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].kind == "tool" {
+		if result != "" {
+			m.blocks[idx].content += result
 		}
+		m.blocks[idx].toolState = "done"
 	}
 }
 
