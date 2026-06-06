@@ -190,6 +190,20 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
+		// Wheel scrolling
+		if msg.Button == tea.MouseButtonWheelUp {
+			m.scrollLine += 3
+			m.clampScroll()
+			return m, nil
+		}
+		if msg.Button == tea.MouseButtonWheelDown {
+			m.scrollLine -= 3
+			if m.scrollLine < 0 {
+				m.scrollLine = 0
+			}
+			return m, nil
+		}
+		// Left click on tool block to toggle
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			// Y is 0-indexed terminal row from bubbletea
 			if msg.Y >= 0 && msg.Y < m.visibleLines() {
