@@ -57,12 +57,12 @@ func main() {
 	promptFlag := flag.String("prompt", "", "Prompt for response")
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.tyci/history)")
-	modeFlag := flag.String("mode", "interactive", "Display mode: minimal, normal, interactive")
+	modeFlag := flag.String("mode", "interactive", "Display mode: minimal, normal, interactive, tui")
 	sessionFlag := flag.String("session", "", "Session file path (default: auto-generated in ~/.tyci/sessions/)")
 	noSessionFlag := flag.Bool("no-session", false, "Disable session persistence")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--no-debug] [--model provider/model] [--max-retries N] [--history-file <path>] [--mode minimal|normal|interactive] (--prompt <prompt> | --interactive)\n\n")
+		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--no-debug] [--model provider/model] [--max-retries N] [--history-file <path>] [--mode minimal|normal|interactive|tui] (--prompt <prompt> | --interactive)\n\n")
 		fmt.Fprintf(os.Stdout, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -93,7 +93,7 @@ func main() {
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: *maxRetriesFlag, BaseBackoff: 4, MaxBackoff: 128}
 
 	// If neither --prompt nor --interactive mode given, or --prompt is empty, just exit cleanly
-	if *modeFlag != "interactive" && *promptFlag == "" {
+	if *modeFlag != "interactive" && *modeFlag != "tui" && *promptFlag == "" {
 		return
 	}
 
@@ -136,8 +136,12 @@ func main() {
 	case "interactive":
 		interactiveFlag = true
 		disp = display.NewTerminal()
+	case "tui":
+		tuiDisp := display.NewTUI()
+		disp = tuiDisp
+		interactiveFlag = true
 	default:
-		fmt.Fprintf(os.Stderr, "Error: unknown mode %q (expected minimal, normal, or interactive)\n", mode)
+		fmt.Fprintf(os.Stderr, "Error: unknown mode %q (expected minimal, normal, interactive, or tui)\n", mode)
 		os.Exit(1)
 	}
 
@@ -179,7 +183,11 @@ func main() {
 	cfg.Session = sess
 
 	if interactiveFlag {
-		runInteractive(provider, modelName, disp, historyFile, cfg, ctx, sessionPath)
+		if tuiDisp, ok := disp.(*display.TUI); ok {
+			runTUI(provider, modelName, tuiDisp, cfg, ctx, sessionPath)
+		} else {
+			runInteractive(provider, modelName, disp, historyFile, cfg, ctx, sessionPath)
+		}
 		return
 	}
 
@@ -486,6 +494,79 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 		disp.End()
 
 		fmt.Fprint(os.Stdout, "\n")
+	}
+}
+
+// runTUI runs the TUI interactive loop.
+func runTUI(provider providers.Provider, modelName string, tuiDisp *display.TUI, cfg agent.Config, baseCtx context.Context, sessionPath string) {
+	var conversation []providers.RichMessage
+	var totalUsage stream.Usage
+
+	// Replay session history if resuming
+	if cfg.Session != nil && cfg.Session.IsResume() && sessionPath != "" {
+		replaySessionToDisplay(tuiDisp, sessionPath)
+		parsedLines := cfg.Session.Messages()
+		rebuiltMsgs, _ := session.RebuildMessages(parsedLines)
+		if len(rebuiltMsgs) > 0 {
+			conversation = rebuiltMsgs
+		}
+	}
+
+	// Close TUI on exit, write session end
+	defer func() {
+		if cfg.Session != nil {
+			agent.WriteSessionEnd(cfg.Session, "ok", 0, &totalUsage)
+		}
+		tuiDisp.Close()
+	}()
+
+	for {
+		iterCtx, iterCancel := context.WithCancel(baseCtx)
+
+		line, err := tuiDisp.ReadInput(iterCtx, "")
+		if err != nil {
+			iterCancel()
+			return
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "/exit" {
+			iterCancel()
+			return
+		}
+		if line == "/new" {
+			iterCancel()
+			conversation = nil
+			continue
+		}
+		if line == "" {
+			iterCancel()
+			continue
+		}
+
+		conversation = append(conversation, providers.RichMessage{
+			Role:    "user",
+			Content: []providers.ContentBlock{{Type: "text", Text: line}},
+		})
+
+		if cfg.Session != nil {
+			blocks := []session.ContentBlock{{Type: "text", Text: line}}
+			_ = cfg.Session.WriteMessage("user", blocks, nil)
+		}
+
+		usage, err := agent.Run(iterCtx, provider, tuiDisp, &conversation, cfg)
+		iterCancel()
+		totalUsage.Input += usage.Input
+		totalUsage.Output += usage.Output
+		totalUsage.Reasoning += usage.Reasoning
+		totalUsage.CacheRead += usage.CacheRead
+		totalUsage.CacheWrite += usage.CacheWrite
+
+		tuiDisp.Done(usage, stream.Stats{})
+
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return
+		}
 	}
 }
 

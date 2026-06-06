@@ -424,7 +424,9 @@ func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.Too
 
 			body, err := runner.Run(toolCtx, call.Name, args)
 			if err != nil {
-				if errors.Is(err, context.DeadlineExceeded) {
+				// Check the actual context state – the returned error may have lost its type
+				// after passing through tool wrappers (fmt.Errorf etc.).
+				if toolCtx.Err() == context.DeadlineExceeded {
 					results[idx] = fmt.Sprintf("Error: %s tool timed out after %v", call.Name, toolTimeout)
 				} else {
 					results[idx] = "Error: " + err.Error()
