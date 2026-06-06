@@ -190,6 +190,10 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
+		// If Shift is held, let terminal handle selection natively
+		if msg.Shift {
+			return m, nil
+		}
 		// Wheel scrolling
 		if msg.Button == tea.MouseButtonWheelUp {
 			m.scrollLine += 3
@@ -205,7 +209,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Left click on tool block to toggle
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			// Y is 0-indexed terminal row from bubbletea
 			if msg.Y >= 0 && msg.Y < m.visibleLines() {
 				idx := m.blockAtVisibleLine(msg.Y)
 				if idx >= 0 && m.blocks[idx].kind == "tool" && m.blocks[idx].toolState == "done" {
@@ -408,7 +411,7 @@ func (m TuiModel) View() string {
 		w := max(10, m.width-2)
 		msg := lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
 			Foreground(lipgloss.Color("240")).
-			Render("tyci-agent TUI\nType a message, Enter to send\nCtrl+C to quit\nClick on a tool block to expand/collapse")
+			Render("tyci-agent TUI\nType a message, Enter to send\nCtrl+C to quit\nClick tool block to expand/collapse\nShift+click/drag to select text")
 		b.WriteString(msg)
 		b.WriteString("\n")
 		msgHeight--
