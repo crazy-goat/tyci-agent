@@ -419,15 +419,14 @@ func (m TuiModel) View() string {
 func (m TuiModel) renderBlock(b block) string {
 	switch b.kind {
 	case "thinking":
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
+		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
+		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
 		lines := strings.Split(b.content, "\n")
 		var out strings.Builder
-		for i, line := range lines {
-			if i == 0 {
-				out.WriteString(style.Render("💭 " + line))
-			} else {
-				out.WriteString(style.Render(line))
-			}
+		for _, line := range lines {
+			out.WriteString(bar)
+			out.WriteString(" ")
+			out.WriteString(textStyle.Render(line))
 			out.WriteString("\n")
 		}
 		return strings.TrimRight(out.String(), "\n")
