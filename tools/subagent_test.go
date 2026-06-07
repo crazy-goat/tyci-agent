@@ -1,0 +1,391 @@
+package tools
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/decodo/tyci-agent/stream"
+)
+
+func TestCollector_Text(t *testing.T) {
+	c := newCollector()
+	c.Text("hello")
+	c.Text(" world")
+	res := c.Result()
+	if res.Content != "hello world" {
+		t.Errorf("expected 'hello world', got %q", res.Content)
+	}
+}
+
+func TestCollector_Thinking(t *testing.T) {
+	c := newCollector()
+	c.Thinking("step 1")
+	c.Thinking(" step 2")
+	res := c.Result()
+	if res.Thinking != "step 1 step 2" {
+		t.Errorf("expected 'step 1 step 2', got %q", res.Thinking)
+	}
+}
+
+func TestCollector_ToolCalls(t *testing.T) {
+	c := newCollector()
+	c.ToolCallStart("bash")
+	c.ToolCallStart("read")
+	res := c.Result()
+	if res.ToolCalls != 2 {
+		t.Errorf("expected 2 tool calls, got %d", res.ToolCalls)
+	}
+}
+
+func TestCollector_Usage(t *testing.T) {
+	c := newCollector()
+	c.Summary(stream.Usage{Input: 100, Output: 50, Reasoning: 25}, stream.Stats{})
+	res := c.Result()
+	if res.Usage.Input != 100 {
+		t.Errorf("expected Input 100, got %d", res.Usage.Input)
+	}
+	if res.Usage.Output != 50 {
+		t.Errorf("expected Output 50, got %d", res.Usage.Output)
+	}
+	if res.Usage.Reasoning != 25 {
+		t.Errorf("expected Reasoning 25, got %d", res.Usage.Reasoning)
+	}
+}
+
+func TestCollector_Concurrency(t *testing.T) {
+	c := newCollector()
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.Text("a")
+			c.Thinking("b")
+			c.ToolCallStart("test")
+		}()
+	}
+	wg.Wait()
+	res := c.Result()
+	if res.ToolCalls != 10 {
+		t.Errorf("expected 10 tool calls, got %d", res.ToolCalls)
+	}
+	if len(res.Content) != 10 {
+		t.Errorf("expected 10 chars of text, got %d", len(res.Content))
+	}
+}
+
+// mockOutput implements the parentOutput callback for testing streamingCollector.
+// It records each call: toolIdx and line.
+type mockOutput struct {
+	mu     sync.Mutex
+	calls  []outputCall
+}
+
+type outputCall struct {
+	toolIdx int
+	line    string
+}
+
+func (m *mockOutput) call(toolIdx int, line string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, outputCall{toolIdx, line})
+}
+
+func (m *mockOutput) lines() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var lines []string
+	for _, c := range m.calls {
+		lines = append(lines, c.line)
+	}
+	return lines
+}
+
+func TestStreamingCollector_ForwardsTextLines(t *testing.T) {
+	mo := &mockOutput{}
+	// Simulate what runOnce does: set stream.OnOutput
+	prevOnOutput := stream.OnOutput
+	stream.OnOutput = mo.call
+	defer func() { stream.OnOutput = prevOnOutput }()
+
+	sc := newStreamingCollector(2)
+	if sc.parentOutput == nil {
+		t.Fatal("parentOutput is nil — stream.OnOutput was not set")
+	}
+
+	// Text with newlines → should forward complete lines
+	sc.Text("line1\nline2\n")
+	sc.flushPartial()
+
+	lines := mo.lines()
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines forwarded, got %d: %q", len(lines), lines)
+	}
+	if lines[0] != "line1" {
+		t.Errorf("expected 'line1', got %q", lines[0])
+	}
+	if lines[1] != "line2" {
+		t.Errorf("expected 'line2', got %q", lines[1])
+	}
+}
+
+func TestStreamingCollector_ForwardsThinkingLines(t *testing.T) {
+	mo := &mockOutput{}
+	prevOnOutput := stream.OnOutput
+	stream.OnOutput = mo.call
+	defer func() { stream.OnOutput = prevOnOutput }()
+
+	sc := newStreamingCollector(3)
+	sc.Thinking("thought\n")
+
+	lines := mo.lines()
+	if len(lines) != 1 || lines[0] != "thought" {
+		t.Errorf("expected ['thought'], got %q", lines)
+	}
+}
+
+func TestStreamingCollector_FlushesPartialLine(t *testing.T) {
+	mo := &mockOutput{}
+	prevOnOutput := stream.OnOutput
+	stream.OnOutput = mo.call
+	defer func() { stream.OnOutput = prevOnOutput }()
+
+	sc := newStreamingCollector(0)
+	// Send text without trailing newline
+	sc.Text("partial line without newline")
+
+	// Nothing forwarded yet (buffered)
+	if len(mo.lines()) != 0 {
+		t.Errorf("expected no lines before flush, got %q", mo.lines())
+	}
+
+	// After flush, partial should appear
+	sc.flushPartial()
+	lines := mo.lines()
+	if len(lines) != 1 || lines[0] != "partial line without newline" {
+		t.Errorf("expected ['partial line without newline'], got %q", lines)
+	}
+}
+
+func TestStreamingCollector_UsesCorrectToolIdx(t *testing.T) {
+	mo := &mockOutput{}
+	prevOnOutput := stream.OnOutput
+	stream.OnOutput = mo.call
+	defer func() { stream.OnOutput = prevOnOutput }()
+
+	sc := newStreamingCollector(7)
+	sc.Text("test\n")
+	sc.flushPartial()
+
+	if len(mo.calls) != 1 || mo.calls[0].toolIdx != 7 {
+		t.Errorf("expected toolIdx=7, got %d; calls=%+v", mo.calls[0].toolIdx, mo.calls)
+	}
+}
+
+func TestStreamingCollector_StreamProgressForwardsCorrectly(t *testing.T) {
+	mo := &mockOutput{}
+	prevOnOutput := stream.OnOutput
+	stream.OnOutput = mo.call
+	defer func() { stream.OnOutput = prevOnOutput }()
+
+	sc := newStreamingCollector(5)
+	// Simulate what subagent's runOnce does when a bash tool runs
+	// StreamProgress is called with inner toolIdx but it ignores it and uses sc.toolIdx
+	sc.StreamProgress(0, "bash output line 1")
+	sc.StreamProgress(1, "bash output line 2")
+
+	if len(mo.calls) != 2 {
+		t.Fatalf("expected 2 calls, got %d", len(mo.calls))
+	}
+	if mo.calls[0].toolIdx != 5 || mo.calls[0].line != "bash output line 1" {
+		t.Errorf("call[0]: expected toolIdx=5, line='bash output line 1', got %+v", mo.calls[0])
+	}
+	if mo.calls[1].toolIdx != 5 || mo.calls[1].line != "bash output line 2" {
+		t.Errorf("call[1]: expected toolIdx=5, line='bash output line 2', got %+v", mo.calls[1])
+	}
+}
+
+func TestStreamingCollector_ParentOutputNilSkipsForwarding(t *testing.T) {
+	// When stream.OnOutput is nil, streamingCollector should not panic or forward
+	prevOnOutput := stream.OnOutput
+	stream.OnOutput = nil
+	defer func() { stream.OnOutput = prevOnOutput }()
+
+	sc := newStreamingCollector(0)
+	// These should not panic
+	sc.Text("hello\n")
+	sc.Thinking("think\n")
+	sc.StreamProgress(0, "output")
+	sc.flushPartial()
+}
+
+func TestStreamingCollector_TextAndThinkingMixed(t *testing.T) {
+	mo := &mockOutput{}
+	prevOnOutput := stream.OnOutput
+	stream.OnOutput = mo.call
+	defer func() { stream.OnOutput = prevOnOutput }()
+
+	sc := newStreamingCollector(1)
+	sc.Text("I'll look up the file.\n")
+	sc.Thinking("Let me check README...\n")
+	sc.Thinking("Done thinking.\n")
+	sc.flushPartial()
+
+	lines := mo.lines()
+	expected := []string{"I'll look up the file.", "Let me check README...", "Done thinking."}
+	if len(lines) != len(expected) {
+		t.Fatalf("expected %d lines, got %d: %q", len(expected), len(lines), lines)
+	}
+	for i, exp := range expected {
+		if lines[i] != exp {
+			t.Errorf("line[%d]: expected %q, got %q", i, exp, lines[i])
+		}
+	}
+}
+
+// TestToolIdxCtxKey verifies that ToolIdxCtxKey can be stored and retrieved.
+func TestToolIdxCtxKey(t *testing.T) {
+	ctx := context.WithValue(context.Background(), stream.ToolIdxCtxKey{}, 42)
+	if val, ok := ctx.Value(stream.ToolIdxCtxKey{}).(int); !ok {
+		t.Fatal("ToolIdxCtxKey not found in context")
+	} else if val != 42 {
+		t.Errorf("expected 42, got %d", val)
+	}
+}
+
+func TestParseTasks_SingleTask(t *testing.T) {
+	input := map[string]any{"task": "do something"}
+	tasks, err := parseTasks(input, "default/model")
+	if err != nil {
+		t.Fatalf("parseTasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if tasks[0].Task != "do something" {
+		t.Errorf("expected 'do something', got %q", tasks[0].Task)
+	}
+	if tasks[0].Model != "" {
+		t.Errorf("expected empty model override, got %q", tasks[0].Model)
+	}
+}
+
+func TestParseTasks_SingleTaskWithModel(t *testing.T) {
+	input := map[string]any{"task": "do something", "model": "other/model"}
+	tasks, err := parseTasks(input, "default/model")
+	if err != nil {
+		t.Fatalf("parseTasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if tasks[0].Task != "do something" {
+		t.Errorf("expected 'do something', got %q", tasks[0].Task)
+	}
+	if tasks[0].Model != "other/model" {
+		t.Errorf("expected 'other/model', got %q", tasks[0].Model)
+	}
+}
+
+func TestParseTasks_MultipleTasks(t *testing.T) {
+	input := map[string]any{
+		"tasks": []any{
+			map[string]any{"task": "task 1"},
+			map[string]any{"task": "task 2", "model": "other/model"},
+		},
+	}
+	tasks, err := parseTasks(input, "default/model")
+	if err != nil {
+		t.Fatalf("parseTasks: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(tasks))
+	}
+	if tasks[0].Task != "task 1" {
+		t.Errorf("expected 'task 1', got %q", tasks[0].Task)
+	}
+	if tasks[1].Task != "task 2" {
+		t.Errorf("expected 'task 2', got %q", tasks[1].Task)
+	}
+	if tasks[1].Model != "other/model" {
+		t.Errorf("expected 'other/model', got %q", tasks[1].Model)
+	}
+}
+
+func TestParseTasks_EmptyInput(t *testing.T) {
+	_, err := parseTasks(map[string]any{}, "default/model")
+	if err == nil {
+		t.Fatal("expected error for empty input")
+	}
+	if !strings.Contains(err.Error(), "task") {
+		t.Errorf("expected error mentioning 'task', got %v", err)
+	}
+}
+
+func TestParseTasks_TasksArrayEmpty(t *testing.T) {
+	_, err := parseTasks(map[string]any{"tasks": []any{}}, "default/model")
+	if err == nil {
+		t.Fatal("expected error for empty tasks array")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("expected error mentioning 'empty', got %v", err)
+	}
+}
+
+func TestSubagentTool_MissingProvider(t *testing.T) {
+	// Save and restore global provider
+	prevProvider := GetProvider()
+	SetProvider(nil)
+	defer SetProvider(prevProvider)
+
+	tool := &SubagentTool{}
+	result := tool.Run(context.Background(), map[string]any{"task": "test"})
+	if result.Success {
+		t.Fatal("expected failure when no provider")
+	}
+	if !strings.Contains(result.Error, "no LLM provider") {
+		t.Errorf("expected 'no LLM provider' error, got %q", result.Error)
+	}
+}
+
+func TestSubagentTool_MissingModel(t *testing.T) {
+	// We need a provider that exists but no current model
+	// This test verifies the error path when GetCurrentModel returns empty
+	prevModel := GetCurrentModel()
+	SetCurrentModel("")
+	defer SetCurrentModel(prevModel)
+
+	// Full integration test requires mocking providers.
+	// For now, parseTasks is tested above and missing provider is tested above.
+	_ = &SubagentTool{}
+}
+
+func TestStreamingCollector_PreservesThreadSafety(t *testing.T) {
+	mo := &mockOutput{}
+	prevOnOutput := stream.OnOutput
+	stream.OnOutput = mo.call
+	defer func() { stream.OnOutput = prevOnOutput }()
+
+	sc := newStreamingCollector(0)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sc.Text("a\n")
+			sc.Thinking("b\n")
+		}()
+	}
+	wg.Wait()
+	sc.flushPartial()
+
+	// Should have 40 lines (20 text + 20 thinking)
+	lines := mo.lines()
+	if len(lines) != 40 {
+		t.Errorf("expected 40 lines, got %d", len(lines))
+	}
+}

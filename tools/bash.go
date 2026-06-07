@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/decodo/tyci-agent/stream"
@@ -149,18 +150,25 @@ func (t *BashTool) runStreaming(ctx context.Context, c *exec.Cmd) ToolResult {
 
 	// Read lines from both pipes
 	lineCh := make(chan string, 64)
+	var wg sync.WaitGroup
+	wg.Add(2)
 	go func() {
+		defer wg.Done()
 		scanner := bufio.NewScanner(stdoutPipe)
 		for scanner.Scan() {
 			lineCh <- scanner.Text()
 		}
-		close(lineCh)
 	}()
 	go func() {
+		defer wg.Done()
 		scanner := bufio.NewScanner(stderrPipe)
 		for scanner.Scan() {
 			lineCh <- scanner.Text()
 		}
+	}()
+	go func() {
+		wg.Wait()
+		close(lineCh)
 	}()
 
 	waitCh := make(chan error, 1)

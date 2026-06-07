@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/decodo/tyci-agent/agent"
+	"github.com/decodo/tyci-agent/api"
 	"github.com/decodo/tyci-agent/providers"
 	"github.com/decodo/tyci-agent/stream"
 )
@@ -89,6 +91,91 @@ func (c *collector) Result() subagentResult {
 	}
 }
 
+// streamingCollector wraps collector and pushes output to stream.OnOutput
+// for live TUI display in the subagent modal.
+type streamingCollector struct {
+	*collector
+	toolIdx int
+	mu      sync.Mutex
+	lineBuf strings.Builder // buffer for partial lines
+
+	// parentOutput saves the stream.OnOutput callback from the parent's
+	// runOnce so we can forward output to the TUI even after the subagent's
+	// own runOnce overwrites the global stream.OnOutput.
+	parentOutput func(toolIdx int, line string)
+}
+
+func newStreamingCollector(toolIdx int) *streamingCollector {
+	// Save the parent's streaming callback before it gets overwritten
+	// by the subagent's inner runOnce.
+	parentOutput := stream.OnOutput
+	return &streamingCollector{
+		collector:    newCollector(),
+		toolIdx:      toolIdx,
+		parentOutput: parentOutput,
+	}
+}
+
+func (s *streamingCollector) Text(text string) {
+	s.collector.Text(text)
+	s.pushText(text)
+}
+
+func (s *streamingCollector) Thinking(text string) {
+	s.collector.Thinking(text)
+	s.pushText(text)
+}
+
+// pushText buffers text and pushes complete lines to the parent's streaming
+// callback (saved at creation time). We use s.parentOutput instead of the
+// global stream.OnOutput because subagent's own runOnce overwrites the global.
+func (s *streamingCollector) pushText(text string) {
+	if s.parentOutput == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.lineBuf.WriteString(text)
+	content := s.lineBuf.String()
+
+	for {
+		idx := strings.IndexByte(content, '\n')
+		if idx < 0 {
+			break
+		}
+		line := content[:idx]
+		s.parentOutput(s.toolIdx, line)
+		content = content[idx+1:]
+	}
+	s.lineBuf.Reset()
+	s.lineBuf.WriteString(content)
+}
+
+// flushPartial flushes any remaining partial line when subagent finishes.
+func (s *streamingCollector) flushPartial() {
+	if s.parentOutput == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lineBuf.Len() > 0 {
+		s.parentOutput(s.toolIdx, s.lineBuf.String())
+		s.lineBuf.Reset()
+	}
+}
+
+// StreamProgress implements the streamer interface so that the subagent's
+// inner runOnce can forward tool output (e.g. bash lines) to the parent TUI.
+// toolIdx here is the index within the subagent's own tool batch; we ignore it
+// and always forward using the subagent's own toolIdx (the parent's perspective).
+func (s *streamingCollector) StreamProgress(_ int, line string) {
+	if s.parentOutput == nil {
+		return
+	}
+	s.parentOutput(s.toolIdx, line)
+}
+
 func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	provider := GetProvider()
 	if provider == nil {
@@ -100,17 +187,6 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		return ToolResult{Type: "result", Success: false, Error: "no model specified and no default model set"}
 	}
 
-	// Parse timeout (seconds)
-	var timeoutSec int
-	if to, ok := input["timeout"]; ok {
-		switch v := to.(type) {
-		case float64:
-			timeoutSec = int(v)
-		case int:
-			timeoutSec = v
-		}
-	}
-
 	// Parse tasks
 	tasks, err := parseTasks(input, defaultModel)
 	if err != nil {
@@ -120,8 +196,8 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		return ToolResult{Type: "result", Success: false, Error: "no tasks provided"}
 	}
 
-	// Run tasks concurrently
-	results := runTasks(ctx, provider, tasks, timeoutSec)
+	// Run tasks concurrently (no timeout – runs until completion)
+	results := runTasks(ctx, provider, tasks, 0)
 
 	// Single task → return plain text (backward compatible)
 	if len(results) == 1 {
@@ -226,12 +302,23 @@ func runTasks(ctx context.Context, globalProvider providers.Provider, tasks []su
 
 func runSingleTask(ctx context.Context, globalProvider providers.Provider, task subagentTask, timeoutSec int) subagentResult {
 	runCtx := ctx
-	if timeoutSec <= 0 {
-		timeoutSec = 120 // default timeout: 2 minutes
+	if timeoutSec > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+		defer cancel()
 	}
-	var cancel context.CancelFunc
-	runCtx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
-	defer cancel()
+
+	// Create isolated HTTP client with its own connection pool — share nothing
+	// with parent agent. This prevents parent cancellation from leaking into
+	// subagent requests and vice versa.
+	isolatedClient := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        2,
+			MaxIdleConnsPerHost: 1,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
+	runCtx = context.WithValue(runCtx, api.HTTPClientKey{}, isolatedClient)
 
 	mName := task.Model
 	prov := globalProvider
@@ -245,7 +332,13 @@ func runSingleTask(ctx context.Context, globalProvider providers.Provider, task 
 		mName = m
 	}
 
-	c := newCollector()
+	// Get tool index for streaming (passed by agent.executeTools)
+	toolIdx := 0
+	if idx, ok := ctx.Value(stream.ToolIdxCtxKey{}).(int); ok {
+		toolIdx = idx
+	}
+
+	c := newStreamingCollector(toolIdx)
 	msgs := []providers.RichMessage{
 		{
 			Role:    "user",
@@ -254,15 +347,20 @@ func runSingleTask(ctx context.Context, globalProvider providers.Provider, task 
 	}
 
 	cfg := agent.Config{
-		Model:      mName,
-		System:     providers.BuildSystemPrompt(),
-		MaxRetries: 1,
-		Debug:      false,
-		Tools:      &subagentToolRunner{},
-		Schema:     GetSubagentToolsSchemaJSON(),
+		Model:         mName,
+		System:        providers.BuildSystemPrompt(),
+		MaxRetries:    1,
+		MaxIterations: 10, // limit tool-call iterations to prevent infinite loops
+		Debug:         false,
+		Tools:         &subagentToolRunner{},
+		Schema:        GetSubagentToolsSchemaJSON(),
 	}
 
 	_, err := agent.Run(runCtx, prov, c, &msgs, cfg)
+
+	// Flush any remaining partial line
+	c.flushPartial()
+
 	res := c.Result()
 	res.Task = task.Task
 	res.Model = mName

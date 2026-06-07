@@ -49,7 +49,7 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := defaultClientProvider().Do(req)
+	resp, err := ClientFromContext(ctx).Do(req)
 	if err != nil {
 		return err
 	}

@@ -369,19 +369,24 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 
 	// Execute tools in parallel
 	// Set up streaming callback if display supports it
+	// Save previous to restore after nested runOnce calls (e.g. subagent)
 	type streamer interface {
 		StreamProgress(toolIdx int, line string)
 	}
+	prevOnOutput := stream.OnOutput
 	if s, ok := d.(streamer); ok {
 		stream.OnOutput = func(toolIdx int, line string) {
 			s.StreamProgress(toolIdx, line)
 		}
-		defer func() { stream.OnOutput = nil }()
 	} else {
 		stream.OnOutput = nil
 	}
 
 	results := executeTools(ctx, cfg.Tools, toolCalls)
+
+	// Restore previous streaming callback so nested calls don't permanently
+	// overwrite the parent's callback (e.g. subagent inside agent loop).
+	stream.OnOutput = prevOnOutput
 
 	// Show results and write session events
 	for i, tc := range toolCalls {
@@ -542,8 +547,8 @@ func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.Too
 				defer cancel()
 			}
 
-			// Pass tool index for streaming tools (bash)
-			if call.Name == "bash" {
+			// Pass tool index for streaming tools (bash, subagent)
+			if call.Name == "bash" || call.Name == "subagent" {
 				toolCtx = context.WithValue(toolCtx, stream.ToolIdxCtxKey{}, idx)
 			}
 

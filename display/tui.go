@@ -101,6 +101,14 @@ type TuiModel struct {
 	// 0 = bottom (newest messages). Positive = scrolled up.
 	scrollLine int
 
+	// Subagent modal (live streaming output from child agents)
+	subagentModalActive  bool
+	subagentModalTitle   string          // task description (first ~60 chars)
+	subagentModalContent *strings.Builder // accumulated output
+	subagentModalScroll  int             // scroll offset within modal
+	subagentModalToolIdx int             // tool queue index for this modal
+	subagentModalDone    bool            // true when subagent finished (ESC to close)
+
 	submitResult chan<- string
 	toolQueue    []int // FIFO of block indices for ToolCallStart->ToolCallEnd matching
 
@@ -150,6 +158,8 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		inputHistory:  loadTuiHistory(historyPath),
 		historyIdx:    -1,
 		historyPath:   historyPath,
+		subagentModalToolIdx: -1,
+		subagentModalContent: &strings.Builder{},
 	}
 }
 
@@ -163,6 +173,11 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Model picker popup mode ──
 	if m.pickerActive {
 		return m.updatePicker(msg)
+	}
+
+	// ── Subagent modal mode ──
+	if m.subagentModalActive {
+		return m.updateSubagentModal(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -356,8 +371,28 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			if msg.Y >= 0 && msg.Y < m.visibleLines() {
 				idx := m.blockAtVisibleLine(msg.Y)
-				if idx >= 0 && m.blocks[idx].kind == "tool" && m.blocks[idx].toolState == "done" {
-					m.blocks[idx].collapsed = !m.blocks[idx].collapsed
+				if idx >= 0 && m.blocks[idx].kind == "tool" {
+					// Toggle collapse for done tools
+					if m.blocks[idx].toolState == "done" {
+						m.blocks[idx].collapsed = !m.blocks[idx].collapsed
+					}
+					// Open subagent modal on click for subagent tools
+					if m.blocks[idx].toolName == "subagent" && !m.subagentModalActive {
+						m.subagentModalActive = true
+						m.subagentModalContent.Reset()
+						m.subagentModalScroll = 0
+						// Fill modal with existing tool output
+						if m.blocks[idx].content != "" {
+							m.subagentModalContent.WriteString(m.blocks[idx].content)
+						}
+						// Find toolIdx for this block in toolQueue
+						for qi, bidx := range m.toolQueue {
+							if bidx == idx {
+								m.subagentModalToolIdx = qi
+								break
+							}
+						}
+					}
 				}
 			}
 		}
@@ -434,6 +469,94 @@ func (m TuiModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseMsg:
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// updateSubagentModal handles keyboard input when the subagent modal is active.
+// It also forwards tuiMsgBlock messages to handleBlockMsg so streaming
+// (tool-progress, tool-end, error, done, reset) continues to work.
+func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEscape:
+			// Close modal on ESC — always (even if running).
+			// The subagent keeps running in background; its output
+			// goes to the inline tool block after modal closes.
+			m.subagentModalActive = false
+			m.subagentModalContent.Reset()
+			m.subagentModalToolIdx = -1
+			m.subagentModalDone = false
+			return m, nil
+
+		case tea.KeyCtrlC:
+			// Quit the whole program
+			m.quitting = true
+			return m, tea.Quit
+
+		case tea.KeyEnter:
+			// Close modal on Enter when done
+			if m.subagentModalDone {
+				m.subagentModalActive = false
+				m.subagentModalContent.Reset()
+				m.subagentModalToolIdx = -1
+				m.subagentModalDone = false
+			}
+			return m, nil
+
+		case tea.KeyUp, tea.KeyCtrlUp:
+			if m.subagentModalScroll < m.subagentModalMaxScroll() {
+				m.subagentModalScroll++
+			}
+			return m, nil
+
+		case tea.KeyDown, tea.KeyCtrlDown:
+			if m.subagentModalScroll > 0 {
+				m.subagentModalScroll--
+			}
+			return m, nil
+
+		case tea.KeyPgUp:
+			page := m.subagentModalPageSize()
+			m.subagentModalScroll += page
+			if m.subagentModalScroll > m.subagentModalMaxScroll() {
+				m.subagentModalScroll = m.subagentModalMaxScroll()
+			}
+			return m, nil
+
+		case tea.KeyPgDown:
+			page := m.subagentModalPageSize()
+			m.subagentModalScroll -= page
+			if m.subagentModalScroll < 0 {
+				m.subagentModalScroll = 0
+			}
+			return m, nil
+
+		case tea.KeyHome:
+			m.subagentModalScroll = m.subagentModalMaxScroll()
+			return m, nil
+
+		case tea.KeyEnd:
+			m.subagentModalScroll = 0
+			return m, nil
+		}
+
+	case tea.MouseMsg:
+		return m, nil
+
+	case tuiMsgBlock:
+		// Forward block messages to the normal handler so streaming
+		// (tool-progress, tool-end, error, done, reset) works while
+		// the subagent modal is active.
+		m.handleBlockMsg(msg)
 		return m, nil
 	}
 
@@ -537,6 +660,14 @@ func (m *TuiModel) pickerSelectedModel() string {
 
 // ─── Scroll helpers ───────────────────────────────────────────────────────
 
+// truncateString shortens a string to maxLen with "..." if needed.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
 // totalRenderedLines returns the total number of terminal lines all blocks would
 // occupy when rendered, including separator blank lines between blocks.
 func (m *TuiModel) totalRenderedLines() int {
@@ -628,12 +759,64 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 			maxLines: defaultMaxLines(msg.toolName),
 		})
 		m.toolQueue = append(m.toolQueue, idx)
+
+		// Track subagent tool index for modal (but don't auto-open).
+		// Modal opens on user click on the subagent block.
+		if msg.toolName == "subagent" {
+			m.subagentModalToolIdx = len(m.toolQueue) - 1
+			m.subagentModalContent.Reset()
+			m.subagentModalScroll = 0
+			m.subagentModalDone = false
+			m.subagentModalTitle = "subagent"
+		}
 	case "tool-delta":
-		m.appendToLastTool(msg.content)
+		// For subagent: extract task description, don't append raw delta to inline block
+		if m.subagentModalToolIdx >= 0 && m.subagentModalTitle == "subagent" && msg.content != "" {
+			var args map[string]any
+			if json.Unmarshal([]byte(msg.content), &args) == nil {
+				if task, ok := args["task"].(string); ok && task != "" {
+					m.subagentModalTitle = truncateString(task, 80)
+				}
+			}
+			// Set inline block to "subagent (task...)" format
+			if len(m.toolQueue) > m.subagentModalToolIdx {
+				bidx := m.toolQueue[m.subagentModalToolIdx]
+				if bidx >= 0 && bidx < len(m.blocks) && m.blocks[bidx].kind == "tool" {
+					m.blocks[bidx].content = "subagent (" + m.subagentModalTitle + ")"
+				}
+			}
+		} else {
+			m.appendToLastTool(msg.content)
+		}
 	case "tool-end":
-		m.finishToolAt(msg.content)
+		// Determine if this tool-end is for the subagent
+		isSubagentEnd := m.subagentModalToolIdx == 0 && m.subagentModalToolIdx >= 0 && len(m.toolQueue) > 0
+
+		if isSubagentEnd {
+			// For subagent: pop queue entry without appending result to block content
+			if len(m.toolQueue) > 0 {
+				idx := m.toolQueue[0]
+				m.toolQueue = m.toolQueue[1:]
+				if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].kind == "tool" {
+					m.blocks[idx].toolState = "done"
+				}
+			}
+			m.subagentModalDone = true
+			m.subagentModalToolIdx = -1
+		} else {
+			m.finishToolAt(msg.content)
+			// If subagent is deeper in queue, decrement its index
+			if m.subagentModalToolIdx > 0 {
+				m.subagentModalToolIdx--
+			}
+		}
 	case "tool-progress":
-		m.appendTool(msg.toolIdx, msg.content)
+		// Subagent progress captured for modal (even if not active), never to inline block
+		if msg.toolIdx == m.subagentModalToolIdx {
+			m.subagentModalContent.WriteString(msg.content)
+		} else {
+			m.appendTool(msg.toolIdx, msg.content)
+		}
 	case "usage":
 		m.lastUsage = msg.usage
 		m.lastStats = msg.stats
@@ -653,6 +836,8 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.status = "idle"
 		m.lastUsage = stream.Usage{}
 		m.lastStats = stream.Stats{}
+		m.subagentModalActive = false
+		m.subagentModalContent.Reset()
 	}
 	m.clampScroll()
 }
@@ -771,6 +956,11 @@ func (m TuiModel) View() string {
 		return ""
 	}
 
+	// ── Subagent modal overlay mode ──
+	if m.subagentModalActive {
+		return m.renderSubagentModalView()
+	}
+
 	// ── Model picker popup mode ──
 	if m.pickerActive {
 		return m.renderModelPickerView()
@@ -869,6 +1059,149 @@ func (m TuiModel) renderModelPickerView() string {
 		m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
 		popup,
+		lipgloss.WithWhitespaceBackground(lipgloss.Color("235")),
+		lipgloss.WithWhitespaceChars(" "),
+	)
+	return placed
+}
+
+// ─── Subagent modal ─────────────────────────────────────────────────────
+
+// subagentModalMaxScroll returns the maximum scroll offset (lines from bottom).
+func (m TuiModel) subagentModalMaxScroll() int {
+	content := m.subagentModalContent.String()
+	lines := strings.Split(content, "\n")
+	totalLines := len(lines)
+	popupHeight := int(float64(m.height) * 0.9)
+	// Subtract title (2) + footer (2) + borders (2) = ~6 lines
+	avail := popupHeight - 6
+	if avail < 1 {
+		avail = 1
+	}
+	if totalLines <= avail {
+		return 0
+	}
+	return totalLines - avail
+}
+
+// subagentModalPageSize returns the number of lines per page scroll.
+func (m TuiModel) subagentModalPageSize() int {
+	popupHeight := int(float64(m.height) * 0.9)
+	avail := popupHeight - 6
+	if avail < 1 {
+		avail = 1
+	}
+	return avail
+}
+
+// renderSubagentModalView renders the subagent live output as a centered modal (90% w/h).
+func (m TuiModel) renderSubagentModalView() string {
+	popupWidth := int(float64(m.width) * 0.9)
+	if popupWidth < 60 {
+		popupWidth = 60
+	}
+	if popupWidth > m.width-2 {
+		popupWidth = m.width - 2
+	}
+	popupHeight := int(float64(m.height) * 0.9)
+	if popupHeight < 15 {
+		popupHeight = 15
+	}
+	if popupHeight > m.height-2 {
+		popupHeight = m.height - 2
+	}
+
+	// Content area height (minus title, footer, borders)
+	contentHeight := popupHeight - 6
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+
+	// Build title line
+	status := "⟳ running..."
+	if m.subagentModalDone {
+		status = "✓ done"
+	}
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("60")).
+		Width(popupWidth - 2).
+		Padding(0, 1)
+	title := titleStyle.Render(fmt.Sprintf(" %s — %s ", m.subagentModalTitle, status))
+
+	// Build content with scroll
+	allLines := strings.Split(m.subagentModalContent.String(), "\n")
+	totalLines := len(allLines)
+
+	var visibleStart int
+	if totalLines <= contentHeight {
+		visibleStart = 0
+	} else {
+		visibleStart = totalLines - contentHeight - m.subagentModalScroll
+		if visibleStart < 0 {
+			visibleStart = 0
+		}
+	}
+	visibleEnd := visibleStart + contentHeight
+	if visibleEnd > totalLines {
+		visibleEnd = totalLines
+	}
+
+	// Render visible lines
+	lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	contentLines := make([]string, 0, contentHeight)
+
+	for i := visibleStart; i < visibleEnd; i++ {
+		line := allLines[i]
+		// Truncate long lines
+		if len(line) > popupWidth-4 {
+			line = line[:popupWidth-7] + "..."
+		}
+		contentLines = append(contentLines, lineStyle.Render(line))
+	}
+
+	// Fill remaining empty lines
+	for len(contentLines) < contentHeight {
+		contentLines = append(contentLines, "")
+	}
+	contentStr := strings.Join(contentLines, "\n")
+
+	// Build footer
+	var footerText string
+	if m.subagentModalScroll > 0 {
+		pct := int(float64(m.subagentModalScroll) / float64(max(1, m.subagentModalMaxScroll())) * 100)
+		footerText = fmt.Sprintf(" ↑ scrolled %d%%  ↑↓ scroll  PgUp/Dn  Home/End  ESC/Enter close ", pct)
+	} else if totalLines > contentHeight {
+		footerText = fmt.Sprintf(" ↓ %d more lines  ↑↓ scroll  ESC/Enter close ", totalLines-contentHeight)
+	} else {
+		footerText = " ↑↓ scroll  ESC/Enter close "
+	}
+	footerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245")).
+		Width(popupWidth - 2).
+		Padding(0, 1)
+	footer := footerStyle.Render(footerText)
+
+	// Combine into a bordered box
+	box := lipgloss.JoinVertical(lipgloss.Top,
+		title,
+		contentStr,
+		footer,
+	)
+
+	bordered := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Width(popupWidth).
+		MaxWidth(popupWidth).
+		Render(box)
+
+	// Place it centered
+	placed := lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		bordered,
 		lipgloss.WithWhitespaceBackground(lipgloss.Color("235")),
 		lipgloss.WithWhitespaceChars(" "),
 	)
@@ -1055,6 +1388,21 @@ func (m TuiModel) renderToolBlock(b block) string {
 	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("│")
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)
+
+	// Subagent: always render as a single line "│ subagent (task...)"
+	if b.toolName == "subagent" {
+		content := b.content
+		if content == "" {
+			content = "subagent"
+		}
+		if b.toolState == "running" {
+			content += " ⟳"
+		}
+		if b.toolState == "done" {
+			content += " ✓"
+		}
+		return bar + " " + textStyle.Render(content)
+	}
 
 	lines := strings.Split(b.content, "\n")
 	totalLines := len(lines)

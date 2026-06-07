@@ -116,7 +116,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "subagent",
-				"description": "Delegate complex or independent tasks to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description. The child agent has access to read/write/edit/bash tools. For single task use 'task' (string). For parallel execution use 'tasks' (array). Supports optional 'timeout' (seconds, default 120) and 'model' override.",
+				"description": "Delegate complex or independent tasks to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description. The child agent has access to read/write/edit/bash tools. Runs until completion (no timeout). For single task use 'task' (string). For parallel execution use 'tasks' (array).",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -128,7 +128,6 @@ func GetToolsSchema() []map[string]any {
 						}, "required": []string{"task"}}},
 						"model":       map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
 						"temperature": map[string]any{"type": "number", "description": "Optional temperature (0.0-2.0, default: 0.7)"},
-						"timeout":     map[string]any{"type": "number", "description": "Optional timeout in seconds for each subagent (default: 120)"},
 					},
 				},
 			},

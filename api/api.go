@@ -25,6 +25,19 @@ var defaultClient = &http.Client{
 // Extracted as a variable so tests can override it.
 var defaultClientProvider = func() *http.Client { return defaultClient }
 
+// HTTPClientKey is the context key for overriding the HTTP client per-request.
+// Used by subagent to create its own isolated HTTP connection pool.
+type HTTPClientKey struct{}
+
+// ClientFromContext returns an HTTP client from context if set, otherwise
+// falls back to the global default client provider.
+func ClientFromContext(ctx context.Context) *http.Client {
+	if cl, ok := ctx.Value(HTTPClientKey{}).(*http.Client); ok && cl != nil {
+		return cl
+	}
+	return defaultClientProvider()
+}
+
 type RetryableError struct {
 	Code       int
 	RetryAfter string
