@@ -1432,9 +1432,29 @@ func (m TuiModel) renderBlock(b block) string {
 	case "usage":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("247")).Render("📊 " + b.content)
 	case "error":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("✖ " + b.content)
+		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│")
+		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Italic(true)
+		lines := strings.Split(b.content, "\n")
+		var out strings.Builder
+		for _, line := range lines {
+			out.WriteString(bar)
+			out.WriteString(" ")
+			out.WriteString(textStyle.Render(line))
+			out.WriteString("\n")
+		}
+		return strings.TrimRight(out.String(), "\n")
 	case "block":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("242")).Render(b.content)
+		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│")
+		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Italic(true)
+		lines := strings.Split(b.content, "\n")
+		var out strings.Builder
+		for _, line := range lines {
+			out.WriteString(bar)
+			out.WriteString(" ")
+			out.WriteString(textStyle.Render(line))
+			out.WriteString("\n")
+		}
+		return strings.TrimRight(out.String(), "\n")
 	default:
 		return b.content
 	}

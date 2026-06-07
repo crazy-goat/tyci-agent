@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -82,7 +83,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 
 			// Try fallback models if available
 			if len(cfg.FallbackModels) > 0 {
-				fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage)
+				fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage, err)
 				if fbErr == nil {
 					// Fallback succeeded — continue or exit based on fbMore
 					if !fbMore {
@@ -91,13 +92,13 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 					continue
 				}
 				// All fallbacks failed
-				d.Error(fbErr)
+				d.ToolBlock("all fallback models exhausted: " + fbErr.Error())
 				return totalUsage, fbErr
 			}
 
 			// No fallbacks — use retry logic for retryable errors
 			if !api.IsRetryable(err) {
-				d.Error(err)
+				d.ToolBlock(err.Error())
 				return totalUsage, err
 			}
 
@@ -105,7 +106,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 			recovered := false
 			for attempt := 0; attempt < cfg.MaxRetries; attempt++ {
 				backoff := api.CalcBackoff(attempt, lastErr, api.RetryConfig{MaxRetries: cfg.MaxRetries})
-				d.Error(fmt.Errorf("⟳ retry %d/%d — %s", attempt+1, cfg.MaxRetries, lastErr.Error()))
+				d.ToolBlock(fmt.Sprintf("retry %d/%d — %s", attempt+1, cfg.MaxRetries, lastErr.Error()))
 				if err := sleepWithCountdown(ctx, backoff); err != nil {
 					return totalUsage, err
 				}
@@ -125,7 +126,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				if !api.IsRetryable(err) {
 					// Non-retryable during retry — try fallback if available
 					if len(cfg.FallbackModels) > 0 {
-						fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage)
+						fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage, err)
 						if fbErr == nil {
 							if !fbMore {
 								return totalUsage, nil
@@ -133,15 +134,15 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 							recovered = true
 							break
 						}
-						d.Error(fbErr)
+						d.ToolBlock("all fallback models exhausted: " + fbErr.Error())
 						return totalUsage, fbErr
 					}
-					d.Error(err)
+					d.ToolBlock(err.Error())
 					return totalUsage, err
 				}
 			}
 			if !recovered {
-				d.Error(fmt.Errorf("all %d retries exhausted: %w", cfg.MaxRetries, lastErr))
+				d.ToolBlock(fmt.Sprintf("all %d retries exhausted: %v", cfg.MaxRetries, lastErr))
 				return totalUsage, lastErr
 			}
 		}
@@ -165,8 +166,13 @@ func (c Config) withModel(model string) Config {
 // tryFallback attempts to switch to the next fallback model.
 // It updates fs with the new provider/model on success.
 // Returns (more, nil) on success, (false, err) if all fallbacks exhausted.
-func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichMessage, cfg Config, fs *fallbackState, totalUsage *stream.Usage) (bool, error) {
+// origErr is the error that triggered the fallback.
+func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichMessage, cfg Config, fs *fallbackState, totalUsage *stream.Usage, origErr error) (bool, error) {
 	var lastErr error
+
+	// Format the reason from the original error
+	reason := formatFallbackReason(origErr)
+
 	for fs.idx+1 < len(cfg.FallbackModels) {
 		fs.idx++
 		fbFull := cfg.FallbackModels[fs.idx]
@@ -174,12 +180,12 @@ func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichM
 		// Resolve the fallback model to a provider
 		fbProvider, fbModel, ok := providers.FindModel(fbFull)
 		if !ok {
-			d.Error(fmt.Errorf("⚠️ fallback model %q not found, skipping", fbFull))
+			d.ToolBlock(fmt.Sprintf("fallback model %q not found, skipping", fbFull))
 			lastErr = fmt.Errorf("fallback model %q not found", fbFull)
 			continue
 		}
 
-		d.Text(fmt.Sprintf("\n⚠️ Switching to fallback model: %s\n", fbFull))
+		d.ToolBlock(fmt.Sprintf("Switching to fallback model: %s\nReason: %s", fbFull, reason))
 
 		// Try the fallback
 		more, usage, err := runOnce(ctx, fbProvider, d, msgs, cfg.withModel(fbModel))
@@ -192,7 +198,7 @@ func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichM
 		}
 		if err != nil {
 			lastErr = err
-			d.Error(fmt.Errorf("⚠️ fallback %s also failed: %v", fbFull, err))
+			d.ToolBlock(fmt.Sprintf("fallback %s also failed: %v", fbFull, err))
 			continue
 		}
 
@@ -209,6 +215,52 @@ func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichM
 		lastErr = fmt.Errorf("no fallback models available")
 	}
 	return false, lastErr
+}
+
+// formatFallbackReason extracts a human-readable reason from an error.
+// It checks for HTTP status codes, JSON parse errors, and retryable errors.
+func formatFallbackReason(err error) string {
+	if err == nil {
+		return "unknown error"
+	}
+
+	// Check for RetryableError (has status code)
+	var re *api.RetryableError
+	if errors.As(err, &re) {
+		return fmt.Sprintf("HTTP %d: %s", re.Code, re.Message)
+	}
+
+	// Check for JSON parse errors
+	errStr := err.Error()
+	if strings.Contains(errStr, "invalid character") ||
+		strings.Contains(errStr, "unexpected end of JSON") ||
+		strings.Contains(errStr, "JSON parse") ||
+		strings.Contains(errStr, "json: cannot unmarshal") ||
+		strings.Contains(errStr, "syntax error") {
+		return "no JSON in response: " + errStr
+	}
+
+	// Check for HTTP errors (from fmt.Errorf("server returned %d: ..."))
+	if strings.Contains(errStr, "server returned") {
+		return errStr
+	}
+
+	// Check for context errors
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "request timed out"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "request cancelled"
+	}
+
+	// Network errors
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return fmt.Sprintf("network error: %s", netErr.Error())
+	}
+
+	// Fallback
+	return errStr
 }
 
 func sleepWithCountdown(ctx context.Context, backoff time.Duration) error {
