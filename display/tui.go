@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -53,7 +54,8 @@ type block struct {
 	toolState string // "running","done"
 	collapsed bool
 	maxLines  int
-	output    string // full tool output (for modal)
+	output    string    // full tool output (for modal)
+	startTime time.Time // when the tool was started (for duration display)
 }
 
 func defaultMaxLines(toolName string) int {
@@ -770,6 +772,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 			kind: "tool", toolName: msg.toolName,
 			toolState: "running", collapsed: true,
 			maxLines: defaultMaxLines(msg.toolName),
+			startTime: time.Now(),
 		})
 		m.toolQueue = append(m.toolQueue, idx)
 
@@ -1442,23 +1445,70 @@ func (m TuiModel) renderToolBlock(b block) string {
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
-	var line string
-	if b.content != "" {
-		line = b.content
-	} else {
-		line = b.toolName + "(...)"
-	}
+	// Build display line: toolname(arg)
+	line := formatToolCall(b.toolName, b.content)
 
 	if b.toolState == "running" {
 		line += " ⟳"
 	} else if b.toolState == "done" {
+		dur := time.Since(b.startTime)
+		line += " " + formatDuration(dur)
 		line += " " + hintStyle.Render("- click to display")
 	}
 
 	return bar + " " + textStyle.Render(line)
 }
 
+// formatToolCall parses the raw JSON tool arguments and returns a human-readable
+// summary like "read(main.go)" or "bash(Build display package)".
+func formatToolCall(toolName, rawJSON string) string {
+	if rawJSON == "" {
+		return toolName + "(...)"
+	}
+
+	var args map[string]any
+	if err := json.Unmarshal([]byte(rawJSON), &args); err != nil {
+		return toolName + "(...)"
+	}
+
+	switch toolName {
+	case "read", "write", "edit":
+		if path, ok := args["path"].(string); ok && path != "" {
+			return toolName + "(" + path + ")"
+		}
+	case "bash":
+		if desc, ok := args["description"].(string); ok && desc != "" {
+			return "bash(" + truncateString(desc, 60) + ")"
+		}
+		if cmd, ok := args["command"].(string); ok && cmd != "" {
+			return "bash(" + truncateString(cmd, 60) + ")"
+		}
+	case "subagent":
+		if task, ok := args["task"].(string); ok && task != "" {
+			return "subagent(" + truncateString(task, 60) + ")"
+		}
+	}
+
+	return toolName + "(...)"
+}
+
+// formatDuration returns a human-readable duration string.
+// Milliseconds under 1s: "23ms". Seconds with 2 decimals: "1.23s".
+func formatDuration(d time.Duration) string {
+	switch {
+	case d < time.Millisecond:
+		return "0ms"
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	case d < 10*time.Second:
+		return fmt.Sprintf("%.2fs", d.Seconds())
+	default:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+}
+
 // extractPath tries to parse JSON and get "path" value.
+// Deprecated: use formatToolCall for rendering tool blocks.
 func extractPath(s string) string {
 	if s == "" {
 		return ""
