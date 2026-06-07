@@ -937,7 +937,10 @@ func (m *TuiModel) blockAtVisibleLine(visY int) int {
 		for range lines {
 			allLines = append(allLines, lineInfo{blockIdx: blkIdx})
 		}
-		// Separator blank line (no block)
+		// Separator blank line (skip if next block is also a tool)
+		if blkIdx+1 < len(m.blocks) && m.blocks[blkIdx+1].kind == "tool" && blk.kind == "tool" {
+			continue
+		}
 		allLines = append(allLines, lineInfo{blockIdx: -1})
 	}
 	if len(allLines) > 0 && allLines[len(allLines)-1].blockIdx == -1 {
@@ -1005,7 +1008,7 @@ func (m TuiModel) View() string {
 	}
 	var allLines []lineInfo
 
-	for _, blk := range m.blocks {
+	for i, blk := range m.blocks {
 		rendered := m.renderBlock(blk)
 		if rendered == "" {
 			continue
@@ -1014,7 +1017,10 @@ func (m TuiModel) View() string {
 		for _, l := range lines {
 			allLines = append(allLines, lineInfo{text: l})
 		}
-		// Blank line separator between blocks
+		// Blank line separator between blocks (skip if next block is also a tool)
+		if i+1 < len(m.blocks) && m.blocks[i+1].kind == "tool" && blk.kind == "tool" {
+			continue
+		}
 		allLines = append(allLines, lineInfo{text: ""})
 	}
 	// Remove trailing empty line
