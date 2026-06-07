@@ -920,7 +920,7 @@ func (m *TuiModel) toggleNextTool() {
 }
 
 // blockAtVisibleLine returns the block index at the given visible Y (0-indexed within message area).
-// Returns -1 if no block is at that position (welcome, separator, "calling tools:" header, etc).
+// Returns -1 if no block is at that position (welcome, separator, etc).
 func (m *TuiModel) blockAtVisibleLine(visY int) int {
 	// Build flat lines with block index tracking
 	type lineInfo struct {
@@ -934,23 +934,8 @@ func (m *TuiModel) blockAtVisibleLine(visY int) int {
 			continue
 		}
 		lines := strings.Split(rendered, "\n")
-
-		if blk.kind == "tool" {
-			// Check if this is start of a tool group → "calling tools:" header line
-			if blkIdx == 0 || m.blocks[blkIdx-1].kind != "tool" {
-				allLines = append(allLines, lineInfo{blockIdx: -1})
-			}
-			for range lines {
-				allLines = append(allLines, lineInfo{blockIdx: blkIdx})
-			}
-			// No separator if next block is also a tool
-			if blkIdx+1 < len(m.blocks) && m.blocks[blkIdx+1].kind == "tool" {
-				continue
-			}
-		} else {
-			for range lines {
-				allLines = append(allLines, lineInfo{blockIdx: blkIdx})
-			}
+		for range lines {
+			allLines = append(allLines, lineInfo{blockIdx: blkIdx})
 		}
 		// Separator blank line (no block)
 		allLines = append(allLines, lineInfo{blockIdx: -1})
@@ -1019,44 +1004,18 @@ func (m TuiModel) View() string {
 		text string
 	}
 	var allLines []lineInfo
-	toolHeaderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
-	inToolGroup := false
 
-	for i, blk := range m.blocks {
+	for _, blk := range m.blocks {
 		rendered := m.renderBlock(blk)
 		if rendered == "" {
 			continue
 		}
 		lines := strings.Split(rendered, "\n")
-
-		if blk.kind == "tool" {
-			if !inToolGroup {
-				// Start a new tool group — add header
-				allLines = append(allLines, lineInfo{text: toolHeaderStyle.Render("calling tools:")})
-				inToolGroup = true
-			}
-			// Render tool lines without blank separator
-			for _, l := range lines {
-				allLines = append(allLines, lineInfo{text: l})
-			}
-			// No blank line after tool blocks within the group
-			if i+1 < len(m.blocks) && m.blocks[i+1].kind == "tool" {
-				continue
-			}
-			// Last tool in group — add blank line after
-			allLines = append(allLines, lineInfo{text: ""})
-			inToolGroup = false
-		} else {
-			if inToolGroup {
-				// Previous was tool group, already added blank line
-				inToolGroup = false
-			}
-			for _, l := range lines {
-				allLines = append(allLines, lineInfo{text: l})
-			}
-			// Blank line separator between blocks
-			allLines = append(allLines, lineInfo{text: ""})
+		for _, l := range lines {
+			allLines = append(allLines, lineInfo{text: l})
 		}
+		// Blank line separator between blocks
+		allLines = append(allLines, lineInfo{text: ""})
 	}
 	// Remove trailing empty line
 	if len(allLines) > 0 && allLines[len(allLines)-1].text == "" {
