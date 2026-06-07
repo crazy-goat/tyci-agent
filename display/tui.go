@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/decodo/tyci-agent/stream"
 )
@@ -57,6 +58,10 @@ type block struct {
 	output    string        // full tool output (for modal)
 	startTime time.Time     // when the tool was started (for duration display)
 	duration  time.Duration // frozen duration when tool finished (0 = still running)
+
+	// Markdown rendering cache (for "thinking" and "text" blocks)
+	rendered string // cached ANSI-rendered output
+	dirty    bool   // content changed since last render
 }
 
 func defaultMaxLines(toolName string) int {
@@ -113,6 +118,11 @@ type TuiModel struct {
 	subagentModalToolIdx int             // tool queue index for this modal
 	subagentModalDone    bool            // true when subagent finished (ESC to close)
 
+	// Markdown render cache maps (keyed by block index)
+	dirtyBlocks     map[int]bool      // block indices with content changed
+	lastRenderTime  map[int]time.Time // last glamour render per block
+	mdCacheRendered map[int]string    // cached rendered ANSI output per block
+
 	submitResult chan<- string
 	toolQueue    []int // FIFO of block indices for ToolCallStart->ToolCallEnd matching
 
@@ -164,6 +174,9 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		historyPath:   historyPath,
 		subagentModalToolIdx: -1,
 		subagentModalContent: &strings.Builder{},
+		dirtyBlocks:   make(map[int]bool),
+		lastRenderTime: make(map[int]time.Time),
+		mdCacheRendered: make(map[int]string),
 	}
 }
 
@@ -688,8 +701,8 @@ func truncateString(s string, maxLen int) string {
 // occupy when rendered, including separator blank lines between blocks.
 func (m *TuiModel) totalRenderedLines() int {
 	total := 0
-	for _, b := range m.blocks {
-		rendered := m.renderBlock(b)
+	for i, b := range m.blocks {
+		rendered := m.renderBlock(i, b)
 		if rendered == "" {
 			continue
 		}
@@ -839,12 +852,17 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.lastUsage = msg.usage
 		m.lastStats = msg.stats
 	case "error":
-		m.blocks = append(m.blocks, block{kind: "error", content: msg.content})
+		idx := len(m.blocks)
+		m.blocks = append(m.blocks, block{kind: "error", content: msg.content, dirty: true})
+		m.dirtyBlocks[idx] = true
 	case "done":
 		m.status = "idle"
 		m.reading = true
+		// Mark all dirty blocks for final render (throttle check will pass because status == "idle")
 	case "block":
-		m.blocks = append(m.blocks, block{kind: "block", content: msg.content})
+		idx := len(m.blocks)
+		m.blocks = append(m.blocks, block{kind: "block", content: msg.content, dirty: true})
+		m.dirtyBlocks[idx] = true
 	case "set-model":
 		m.modelName = msg.content
 	case "reset":
@@ -854,6 +872,9 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.status = "idle"
 		m.lastUsage = stream.Usage{}
 		m.lastStats = stream.Stats{}
+		m.dirtyBlocks = make(map[int]bool)
+		m.lastRenderTime = make(map[int]time.Time)
+		m.mdCacheRendered = make(map[int]string)
 		m.subagentModalActive = false
 		m.subagentModalContent.Reset()
 	}
@@ -862,15 +883,22 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 
 func (m *TuiModel) appendOrAppend(kind, content string) {
 	if len(m.blocks) == 0 {
-		m.blocks = append(m.blocks, block{kind: kind, content: content})
+		idx := 0
+		m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
+		m.dirtyBlocks[idx] = true
 		return
 	}
 	last := &m.blocks[len(m.blocks)-1]
 	if last.kind == kind {
 		last.content += content
+		last.dirty = true
+		last.rendered = "" // invalidate cache
+		m.dirtyBlocks[len(m.blocks)-1] = true
 		return
 	}
-	m.blocks = append(m.blocks, block{kind: kind, content: content})
+	idx := len(m.blocks)
+	m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
+	m.dirtyBlocks[idx] = true
 }
 
 func (m *TuiModel) appendToLastTool(delta string) {
@@ -929,7 +957,7 @@ func (m *TuiModel) blockAtVisibleLine(visY int) int {
 	var allLines []lineInfo
 
 	for blkIdx, blk := range m.blocks {
-		rendered := m.renderBlock(blk)
+		rendered := m.renderBlock(blkIdx, blk)
 		if rendered == "" {
 			continue
 		}
@@ -1009,7 +1037,7 @@ func (m TuiModel) View() string {
 	var allLines []lineInfo
 
 	for i, blk := range m.blocks {
-		rendered := m.renderBlock(blk)
+		rendered := m.renderBlock(i, blk)
 		if rendered == "" {
 			continue
 		}
@@ -1391,45 +1419,99 @@ func (m TuiModel) renderModelPickerContent() string {
 	return boxStyle.Render(content)
 }
 
-func (m TuiModel) renderBlock(b block) string {
-	switch b.kind {
-	case "thinking":
-		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
-		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
-		maxW := m.width - 2
+func (m TuiModel) renderBlock(idx int, b block) string {
+	// ── Helper to render markdown with caching/throttling ──
+	tryRenderMarkdown := func(content string, useBar bool) string {
+		if content == "" {
+			return ""
+		}
+		cached, hasCached := m.mdCacheRendered[idx]
+
+		// Check cache: if not dirty and we have cached output, return it
+		if !m.dirtyBlocks[idx] && hasCached && cached != "" {
+			return cached
+		}
+		// Throttle: if still streaming (status != "idle") and last render was < 1s ago, use cache
+		lastTime, hasLast := m.lastRenderTime[idx]
+		if m.dirtyBlocks[idx] && m.status != "idle" && hasLast && time.Since(lastTime) < 1*time.Second {
+			if hasCached && cached != "" {
+				return cached
+			}
+		}
+		// Try glamour rendering
+		maxW := m.width
+		if useBar {
+			maxW = m.width - 2
+		}
 		if maxW < 10 {
 			maxW = 10
 		}
-		var out strings.Builder
-		for _, line := range strings.Split(b.content, "\n") {
-			wrapped := wrapText(line, maxW, 0)
-			for _, wl := range strings.Split(wrapped, "\n") {
-				wl = strings.TrimSuffix(wl, clearLine)
-				out.WriteString(bar)
-				out.WriteString(" ")
-				out.WriteString(textStyle.Render(wl))
-				out.WriteString("\n")
-			}
-		}
-		return strings.TrimRight(out.String(), "\n")
-	case "text":
-		if m.width > 0 {
-			maxW := m.width
-			if maxW < 10 {
-				maxW = 10
-			}
-			var out strings.Builder
-			for _, line := range strings.Split(b.content, "\n") {
-				wrapped := wrapText(line, maxW, 0)
-				for _, wl := range strings.Split(wrapped, "\n") {
-					wl = strings.TrimSuffix(wl, clearLine)
-					out.WriteString(wl)
-					out.WriteString("\n")
+		var rendered string
+		renderer, err := glamour.NewTermRenderer(
+			glamour.WithStandardStyle("dark"),
+			glamour.WithWordWrap(maxW),
+		)
+		if err == nil {
+			out, err := renderer.Render(content)
+			if err == nil {
+				out = strings.TrimRight(out, "\n")
+				if useBar {
+					bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
+					var sb strings.Builder
+					for _, line := range strings.Split(out, "\n") {
+						sb.WriteString(bar)
+						sb.WriteString(" ")
+						sb.WriteString(line)
+						sb.WriteString("\n")
+					}
+					rendered = strings.TrimRight(sb.String(), "\n")
+				} else {
+					rendered = out
 				}
 			}
-			return strings.TrimRight(out.String(), "\n")
 		}
-		return b.content
+		// Fallback on glamour error: use wrapText directly
+		if rendered == "" {
+			if useBar {
+				bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
+				textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
+				var out strings.Builder
+				for _, line := range strings.Split(content, "\n") {
+					wrapped := wrapText(line, maxW, 0)
+					for _, wl := range strings.Split(wrapped, "\n") {
+						wl = strings.TrimSuffix(wl, clearLine)
+						out.WriteString(bar)
+						out.WriteString(" ")
+						out.WriteString(textStyle.Render(wl))
+						out.WriteString("\n")
+					}
+				}
+				rendered = strings.TrimRight(out.String(), "\n")
+			} else {
+				var out strings.Builder
+				for _, line := range strings.Split(content, "\n") {
+					wrapped := wrapText(line, maxW, 0)
+					for _, wl := range strings.Split(wrapped, "\n") {
+						wl = strings.TrimSuffix(wl, clearLine)
+						out.WriteString(wl)
+						out.WriteString("\n")
+					}
+				}
+				rendered = strings.TrimRight(out.String(), "\n")
+			}
+		}
+		// Update cache
+		m.lastRenderTime[idx] = time.Now()
+		m.dirtyBlocks[idx] = false
+		m.mdCacheRendered[idx] = rendered
+		return rendered
+	}
+
+	switch b.kind {
+	case "thinking":
+		return tryRenderMarkdown(b.content, true)
+	case "text":
+		return tryRenderMarkdown(b.content, false)
 	case "tool":
 		return m.renderToolBlock(b)
 	case "usage":
