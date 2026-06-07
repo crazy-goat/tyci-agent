@@ -22,21 +22,20 @@ type ToolRunner interface {
 }
 
 type Config struct {
-	Model        string
-	System       string
-	MaxRetries   int
-	Debug        bool
-	Tools        ToolRunner
-	Schema       json.RawMessage
-	Session      *session.Session // optional session logging / resume
-	ProviderName string           // provider name for session metadata
+	Model         string
+	System        string
+	MaxRetries    int
+	MaxIterations int // max tool-call iterations; -1 or 0 means unlimited
+	Debug         bool
+	Tools         ToolRunner
+	Schema        json.RawMessage
+	Session       *session.Session // optional session logging / resume
+	ProviderName  string           // provider name for session metadata
 }
-
-const DefaultMaxIterations = 50
 
 // Run executes the agent loop. It will make at most MaxRetries retries on
 // transient errors, and at most MaxIterations tool-call iterations.
-// If MaxIterations is 0, DefaultMaxIterations is used.
+// If MaxIterations <= 0, there is no iteration limit.
 // Returns total usage accumulated during the run.
 func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config) (stream.Usage, error) {
 	if cfg.MaxRetries == 0 {
@@ -44,9 +43,8 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 	}
 
 	var totalUsage stream.Usage
-	maxIter := DefaultMaxIterations
 
-	for iter := 0; iter < maxIter; iter++ {
+	for iter := 0; cfg.MaxIterations <= 0 || iter < cfg.MaxIterations; iter++ {
 		more, usage, err := runOnce(ctx, p, d, msgs, cfg)
 		if usage != nil {
 			totalUsage.Input += usage.Input
@@ -100,7 +98,9 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 		}
 	}
 
-	d.Text(fmt.Sprintf("\n⚠️ Agent wykonał %d iteracji narzędzi – możliwa nieskończona pętla. Przerywam.\n", maxIter))
+	if cfg.MaxIterations > 0 {
+		d.Text(fmt.Sprintf("\n⚠️ Agent wykonał %d iteracji narzędzi – możliwa nieskończona pętla. Przerywam.\n", cfg.MaxIterations))
+	}
 	return totalUsage, nil
 }
 

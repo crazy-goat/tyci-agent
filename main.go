@@ -56,13 +56,14 @@ func main() {
 	agentFlag := flag.String("agent", "", "Agent name to use for default model (from agents config)")
 	promptFlag := flag.String("prompt", "", "Prompt for response")
 	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
+	maxIterationsFlag := flag.Int("max-iterations", -1, "Max tool-call iterations (-1 = unlimited)")
 	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.tyci/history)")
 	modeFlag := flag.String("mode", "interactive", "Display mode: minimal, normal, interactive, tui")
 	sessionFlag := flag.String("session", "", "Session file path (default: auto-generated in ~/.tyci/sessions/)")
 	noSessionFlag := flag.Bool("no-session", false, "Disable session persistence")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--no-debug] [--model provider/model] [--max-retries N] [--history-file <path>] [--mode minimal|normal|interactive|tui] (--prompt <prompt> | --interactive)\n\n")
+		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--no-debug] [--model provider/model] [--max-retries N] [--max-iterations N] [--history-file <path>] [--mode minimal|normal|interactive|tui] (--prompt <prompt> | --interactive)\n\n")
 		fmt.Fprintf(os.Stdout, "Available models:\n")
 		for _, p := range providers.ListProviders() {
 			for _, m := range p.Models() {
@@ -137,7 +138,24 @@ func main() {
 		interactiveFlag = true
 		disp = display.NewTerminal()
 	case "tui":
-		tuiDisp := display.NewTUI(model, historyFile)
+		// Build list of all available models for Tab switching and model picker
+		var allModels []string
+		var allProviderModels []display.ProviderModels
+		for _, p := range providers.ListProviders() {
+			pm := display.ProviderModels{Name: p.Name()}
+			for _, m := range p.Models() {
+				allModels = append(allModels, p.Name()+"/"+m)
+				pm.Models = append(pm.Models, m)
+			}
+			for _, m := range p.FreeModels() {
+				allModels = append(allModels, p.Name()+"/"+m)
+				pm.Models = append(pm.Models, m)
+			}
+			if len(pm.Models) > 0 {
+				allProviderModels = append(allProviderModels, pm)
+			}
+		}
+		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels)
 		disp = tuiDisp
 		interactiveFlag = true
 	default:
@@ -146,13 +164,14 @@ func main() {
 	}
 
 	cfg := agent.Config{
-		Model:      modelName,
-		System:     providers.BuildSystemPrompt(),
-		MaxRetries: *maxRetriesFlag,
-		Debug:      *debugFlag,
-		Tools:      toolsAdapter{},
-		Schema:     tools.GetToolsSchemaJSON(),
-		ProviderName: provider.Name(),
+		Model:         modelName,
+		System:        providers.BuildSystemPrompt(),
+		MaxRetries:    *maxRetriesFlag,
+		MaxIterations: *maxIterationsFlag,
+		Debug:         *debugFlag,
+		Tools:         toolsAdapter{},
+		Schema:        tools.GetToolsSchemaJSON(),
+		ProviderName:  provider.Name(),
 	}
 	tools.SetProvider(provider)
 	tools.SetCurrentModel(modelName)
@@ -498,9 +517,13 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 }
 
 // runTUI runs the TUI interactive loop.
-func runTUI(provider providers.Provider, modelName string, tuiDisp *display.TUI, cfg agent.Config, baseCtx context.Context, sessionPath string) {
+func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp *display.TUI, cfg agent.Config, baseCtx context.Context, sessionPath string) {
 	var conversation []providers.RichMessage
 	var totalUsage stream.Usage
+
+	// Mutable provider/model that can change via Tab/Shift+Tab
+	provider := initialProvider
+	modelName := initialModelName
 
 	// Replay session history if resuming
 	if cfg.Session != nil && cfg.Session.IsResume() && sessionPath != "" {
@@ -520,11 +543,42 @@ func runTUI(provider providers.Provider, modelName string, tuiDisp *display.TUI,
 		tuiDisp.Close()
 	}()
 
+	// updateModel resolves a new model string and updates provider/config/globals.
+	updateModel := func(newModel string) {
+		p, m, ok := providers.FindModel(newModel)
+		if !ok {
+			tuiDisp.SetModel(modelName) // revert TUI display to previous model
+			return
+		}
+		provider = p
+		modelName = m
+		cfg.Model = m
+		cfg.ProviderName = p.Name()
+		tools.SetProvider(p)
+		tools.SetCurrentModel(newModel)
+	}
+
 	for {
 		iterCtx, iterCancel := context.WithCancel(baseCtx)
 
-		line, err := tuiDisp.ReadInput(iterCtx, "")
-		if err != nil {
+		// Wait for user input or model change
+		var line string
+		select {
+		case newModel, ok := <-tuiDisp.ModelChanges():
+			iterCancel()
+			if ok {
+				updateModel(newModel)
+			}
+			continue
+
+		case l, ok := <-tuiDisp.Results():
+			if !ok {
+				iterCancel()
+				return
+			}
+			line = l
+
+		case <-tuiDisp.DoneCh():
 			iterCancel()
 			return
 		}
@@ -538,6 +592,9 @@ func runTUI(provider providers.Provider, modelName string, tuiDisp *display.TUI,
 			iterCancel()
 			conversation = nil
 			tuiDisp.Reset()
+			if totalUsage.Input > 0 || totalUsage.Output > 0 {
+				tuiDisp.ShowTotalUsage(totalUsage)
+			}
 			continue
 		}
 		if line == "" {
@@ -555,18 +612,42 @@ func runTUI(provider providers.Provider, modelName string, tuiDisp *display.TUI,
 			_ = cfg.Session.WriteMessage("user", blocks, nil)
 		}
 
-		usage, err := agent.Run(iterCtx, provider, tuiDisp, &conversation, cfg)
-		iterCancel()
-		totalUsage.Input += usage.Input
-		totalUsage.Output += usage.Output
-		totalUsage.Reasoning += usage.Reasoning
-		totalUsage.CacheRead += usage.CacheRead
-		totalUsage.CacheWrite += usage.CacheWrite
+		// Run agent in a goroutine so we can interrupt it via ESC
+		type agentResult struct {
+			usage stream.Usage
+			err   error
+		}
+		resultCh := make(chan agentResult, 1)
+		go func() {
+			u, e := agent.Run(iterCtx, provider, tuiDisp, &conversation, cfg)
+			resultCh <- agentResult{usage: u, err: e}
+		}()
 
-		tuiDisp.Done(usage, stream.Stats{})
+		select {
+		case <-tuiDisp.CancelCh():
+			// ESC pressed — cancel the agent run
+			iterCancel()
+			res := <-resultCh // wait for agent to finish
+			if !errors.Is(res.err, context.Canceled) && res.err != nil {
+				// Real error, not just cancellation
+			}
+			tuiDisp.ResetStatus()
+			// User probably wants to retry with a new prompt
+			continue
 
-		if err != nil && !errors.Is(err, context.Canceled) {
-			return
+		case res := <-resultCh:
+			iterCancel()
+			totalUsage.Input += res.usage.Input
+			totalUsage.Output += res.usage.Output
+			totalUsage.Reasoning += res.usage.Reasoning
+			totalUsage.CacheRead += res.usage.CacheRead
+			totalUsage.CacheWrite += res.usage.CacheWrite
+
+			tuiDisp.Done(res.usage, stream.Stats{})
+
+			if res.err != nil && !errors.Is(res.err, context.Canceled) {
+				return
+			}
 		}
 	}
 }

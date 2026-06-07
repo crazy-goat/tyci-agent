@@ -1,6 +1,9 @@
 package providers
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 var (
 	providers = make(map[string]Provider)
@@ -15,6 +18,9 @@ func ListProviders() []Provider {
 	for _, p := range providers {
 		result = append(result, p)
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name() < result[j].Name()
+	})
 	return result
 }
 

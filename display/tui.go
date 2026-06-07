@@ -19,7 +19,7 @@ const tuiMaxHistory = 500
 // ─── Messages ─────────────────────────────────────────────────────────────
 
 type tuiMsgBlock struct {
-	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block"
+	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block","set-model","reset"
 	content  string
 	toolName string
 	toolIdx  int // for tool-progress: index in toolQueue
@@ -28,6 +28,21 @@ type tuiMsgBlock struct {
 }
 
 type tuiInputSubmitted string
+
+// ─── Model picker types ───────────────────────────────────────────────────
+
+// ProviderModels groups model names under a provider name.
+type ProviderModels struct {
+	Name   string
+	Models []string
+}
+
+// pickerItem represents a single row in the model picker popup.
+type pickerItem struct {
+	isHeader bool
+	label    string // display text
+	value    string // "provider/model" for model items, empty for headers
+}
 
 // ─── Block ────────────────────────────────────────────────────────────────
 
@@ -65,7 +80,22 @@ type TuiModel struct {
 	lastStats     stream.Stats
 	reading       bool
 	status        string // "idle", "thinking", "responding", "tool"
-	modelName    string // model name shown in status bar
+	modelName     string // model name shown in status bar
+
+	// Model switching (Tab/Shift+Tab)
+	models        []string        // available models (format: "provider/model")
+	modelIdx      int             // index of current model in models slice
+	modelChanges  chan<- string   // channel to notify outer TUI of model changes
+
+	// Model picker (/model command)
+	pickerActive  bool
+	pickerFilter  string
+	pickerCursor  int              // index into pickerItems (only model entries)
+	pickerItems   []pickerItem     // filtered list for display
+	allProviders  []ProviderModels // grouped provider->models for the picker
+
+	// Cancel signal: sent on when ESC pressed during agent run
+	cancelCh chan<- struct{}
 
 	// Scroll: offset in rendered lines from the bottom.
 	// 0 = bottom (newest messages). Positive = scrolled up.
@@ -81,7 +111,7 @@ type TuiModel struct {
 	historyPath   string // path to history file for persistence
 }
 
-func newModel(submitResult chan<- string, modelName string, historyPath string) TuiModel {
+func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}) TuiModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type message (Enter send, Alt+Enter / Ctrl+N newline)"
 	ta.CharLimit = 0
@@ -95,6 +125,15 @@ func newModel(submitResult chan<- string, modelName string, historyPath string) 
 	ta.BlurredStyle = blurredStyle
 	ta.Focus()
 
+	// Find index of current model
+	modelIdx := 0
+	for i, m := range models {
+		if m == modelName {
+			modelIdx = i
+			break
+		}
+	}
+
 	return TuiModel{
 		blocks:        make([]block, 0, 1024),
 		input:         ta,
@@ -103,6 +142,11 @@ func newModel(submitResult chan<- string, modelName string, historyPath string) 
 		reading:       true,
 		toolQueue:     make([]int, 0, 16),
 		modelName:     modelName,
+		models:        models,
+		modelIdx:      modelIdx,
+		modelChanges:  modelChanges,
+		allProviders:  allProviders,
+		cancelCh:      cancelCh,
 		inputHistory:  loadTuiHistory(historyPath),
 		historyIdx:    -1,
 		historyPath:   historyPath,
@@ -116,6 +160,11 @@ func (m TuiModel) Init() tea.Cmd {
 }
 
 func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// ── Model picker popup mode ──
+	if m.pickerActive {
+		return m.updatePicker(msg)
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -125,6 +174,37 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Model switching with Tab/Shift+Tab
+		switch msg.Type {
+		case tea.KeyTab:
+			if len(m.models) > 0 {
+				m.modelIdx = (m.modelIdx + 1) % len(m.models)
+				newModel := m.models[m.modelIdx]
+				m.modelName = newModel
+				if m.modelChanges != nil {
+					select {
+					case m.modelChanges <- newModel:
+					default:
+					}
+				}
+			}
+			return m, nil
+
+		case tea.KeyShiftTab:
+			if len(m.models) > 0 {
+				m.modelIdx = (m.modelIdx - 1 + len(m.models)) % len(m.models)
+				newModel := m.models[m.modelIdx]
+				m.modelName = newModel
+				if m.modelChanges != nil {
+					select {
+					case m.modelChanges <- newModel:
+					default:
+					}
+				}
+			}
+			return m, nil
+		}
+
 		// Always-available keys: scroll, tool toggle, quit
 		switch msg.Type {
 		case tea.KeyPgUp:
@@ -159,7 +239,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.historyIdx == -1 {
-				// Save current input before browsing
 				m.stashedInput = m.input.Value()
 				m.historyIdx = len(m.inputHistory) - 1
 			} else if m.historyIdx > 0 {
@@ -177,7 +256,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.historyIdx++
 			if m.historyIdx >= len(m.inputHistory) {
-				// Back to current input
 				m.historyIdx = -1
 				m.input.SetValue(m.stashedInput)
 				m.input.SetCursor(len(m.stashedInput))
@@ -210,6 +288,14 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Allow typing while agent thinks, but don't submit until reading=true
 		if !m.reading {
+			// ESC during agent run → cancel the current operation
+			if msg.Type == tea.KeyEscape {
+				select {
+				case m.cancelCh <- struct{}{}:
+				default:
+				}
+				return m, nil
+			}
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
 			m.capInputHeight()
@@ -223,15 +309,20 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyEnter:
 			if msg.Alt {
-				// Strip Alt so textarea recognizes it as "enter" for newline
 				m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
 				m.capInputHeight()
+				return m, nil
+			}
+			// Check for /model command
+			line := strings.TrimSpace(m.input.Value())
+			if strings.EqualFold(line, "/model") {
+				m.input.Reset()
+				m.openModelPicker()
 				return m, nil
 			}
 			return m.submit(), nil
 
 		case tea.KeyCtrlN, tea.KeyCtrlJ:
-			// Insert newline (fallback when Alt+Enter is captured by terminal)
 			m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			m.capInputHeight()
 			return m, nil
@@ -247,11 +338,9 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		// If Shift is held, let terminal handle selection natively
 		if msg.Shift {
 			return m, nil
 		}
-		// Wheel scrolling
 		if msg.Button == tea.MouseButtonWheelUp {
 			m.scrollLine += 3
 			m.clampScroll()
@@ -264,7 +353,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		// Left click on tool block to toggle
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			if msg.Y >= 0 && msg.Y < m.visibleLines() {
 				idx := m.blockAtVisibleLine(msg.Y)
@@ -277,6 +365,174 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// updatePicker handles keyboard input when the model picker popup is active.
+func (m TuiModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEscape:
+			m.closeModelPicker()
+			return m, nil
+
+		case tea.KeyEnter:
+			// Select the currently highlighted model
+			selected := m.pickerSelectedModel()
+			if selected != "" {
+				m.selectModel(selected)
+			}
+			return m, nil
+
+		case tea.KeyUp:
+			if m.pickerCursor > 0 {
+				m.pickerCursor--
+			}
+			return m, nil
+
+		case tea.KeyDown:
+			modelCount := m.pickerModelCount()
+			if m.pickerCursor < modelCount-1 {
+				m.pickerCursor++
+			}
+			return m, nil
+
+		case tea.KeyHome:
+			m.pickerCursor = 0
+			return m, nil
+
+		case tea.KeyEnd:
+			m.pickerCursor = m.pickerModelCount() - 1
+			if m.pickerCursor < 0 {
+				m.pickerCursor = 0
+			}
+			return m, nil
+
+		case tea.KeyBackspace:
+			if len(m.pickerFilter) > 0 {
+				m.pickerFilter = m.pickerFilter[:len(m.pickerFilter)-1]
+				m.rebuildPickerItems()
+			}
+			return m, nil
+
+		case tea.KeyTab, tea.KeyShiftTab:
+			// Ignore tab in picker mode
+			return m, nil
+
+		default:
+			// Add character to filter
+			if msg.Type == tea.KeyRunes {
+				m.pickerFilter += string(msg.Runes)
+				m.rebuildPickerItems()
+			}
+			return m, nil
+		}
+
+	case tea.MouseMsg:
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// openModelPicker activates the model picker popup.
+func (m *TuiModel) openModelPicker() {
+	m.pickerActive = true
+	m.pickerFilter = ""
+	m.pickerCursor = 0
+	m.rebuildPickerItems()
+}
+
+// closeModelPicker deactivates the model picker popup without changing the model.
+func (m *TuiModel) closeModelPicker() {
+	m.pickerActive = false
+	m.pickerFilter = ""
+	m.pickerCursor = 0
+	m.pickerItems = nil
+}
+
+// selectModel picks a model and closes the picker.
+func (m *TuiModel) selectModel(model string) {
+	m.modelName = model
+	// Update modelIdx in flat list
+	for i, mm := range m.models {
+		if mm == model {
+			m.modelIdx = i
+			break
+		}
+	}
+	if m.modelChanges != nil {
+		select {
+		case m.modelChanges <- model:
+		default:
+		}
+	}
+	m.closeModelPicker()
+}
+
+// rebuildPickerItems builds the filtered picker items list from allProviders.
+func (m *TuiModel) rebuildPickerItems() {
+	m.pickerItems = nil
+	modelCount := 0
+	filter := strings.ToLower(m.pickerFilter)
+
+	for _, prov := range m.allProviders {
+		// Collect matching models for this provider
+		var matched []string
+		for _, model := range prov.Models {
+			label := prov.Name + "/" + model
+			if filter == "" || strings.Contains(strings.ToLower(label), filter) {
+				matched = append(matched, label)
+			}
+		}
+		if len(matched) == 0 {
+			continue
+		}
+		// Add header
+		m.pickerItems = append(m.pickerItems, pickerItem{isHeader: true, label: prov.Name})
+		for _, label := range matched {
+			m.pickerItems = append(m.pickerItems, pickerItem{isHeader: false, label: label, value: label})
+			modelCount++
+		}
+	}
+
+	// Clamp cursor
+	if m.pickerCursor >= modelCount && modelCount > 0 {
+		m.pickerCursor = modelCount - 1
+	} else if modelCount == 0 {
+		m.pickerCursor = 0
+	}
+}
+
+// pickerModelCount returns the number of model items (not headers) in the picker.
+func (m *TuiModel) pickerModelCount() int {
+	count := 0
+	for _, item := range m.pickerItems {
+		if !item.isHeader {
+			count++
+		}
+	}
+	return count
+}
+
+// pickerSelectedModel returns the currently selected model (full "provider/model").
+func (m *TuiModel) pickerSelectedModel() string {
+	idx := 0
+	for _, item := range m.pickerItems {
+		if item.isHeader {
+			continue
+		}
+		if idx == m.pickerCursor {
+			return item.value
+		}
+		idx++
+	}
+	return ""
 }
 
 // ─── Scroll helpers ───────────────────────────────────────────────────────
@@ -338,7 +594,13 @@ func (m TuiModel) submit() tea.Model {
 }
 
 func (m *TuiModel) capInputHeight() {
-	lines := strings.Count(m.input.Value(), "\n") + 1
+	// Use the textarea's own line count, which accounts for both hard newlines
+	// and soft-wraps. Manual newline+width math was off whenever a logical
+	// line was long enough to wrap on its own, causing lines to disappear.
+	lines := m.input.LineCount()
+	if lines < 1 {
+		lines = 1
+	}
 	if lines > 10 {
 		lines = 10
 	}
@@ -379,17 +641,18 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.blocks = append(m.blocks, block{kind: "error", content: msg.content})
 	case "done":
 		m.status = "idle"
-		if msg.usage.Output > 0 || msg.usage.Input > 0 {
-			m.appendOrAppend("usage", buildUsageLine(msg.usage, msg.stats))
-		}
 		m.reading = true
 	case "block":
 		m.blocks = append(m.blocks, block{kind: "block", content: msg.content})
+	case "set-model":
+		m.modelName = msg.content
 	case "reset":
 		m.blocks = nil
 		m.scrollLine = 0
 		m.reading = true
 		m.status = "idle"
+		m.lastUsage = stream.Usage{}
+		m.lastStats = stream.Stats{}
 	}
 	m.clampScroll()
 }
@@ -508,6 +771,11 @@ func (m TuiModel) View() string {
 		return ""
 	}
 
+	// ── Model picker popup mode ──
+	if m.pickerActive {
+		return m.renderModelPickerView()
+	}
+
 	var b strings.Builder
 	msgHeight := m.visibleLines()
 
@@ -517,7 +785,7 @@ func (m TuiModel) View() string {
 		w := max(10, m.width-2)
 		msg := lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
 			Foreground(lipgloss.Color("240")).
-			Render("tyci-agent TUI\nType a message, Enter to send\nCtrl+C to quit\nClick tool block to expand/collapse\nShift+click/drag to select text")
+			Render("tyci-agent TUI\nType a message, Enter to send\nCtrl+C to quit\nTab/Shift+Tab: switch model\n/model: pick model\nClick tool block to expand/collapse\nShift+click/drag to select text")
 		b.WriteString(msg)
 		b.WriteString("\n")
 		msgHeight--
@@ -590,6 +858,168 @@ func (m TuiModel) View() string {
 
 	b.WriteString(m.input.View())
 	return b.String()
+}
+
+// renderModelPickerView renders just the model picker popup on a blank background.
+func (m TuiModel) renderModelPickerView() string {
+	popup := m.renderModelPickerContent()
+
+	// Use Place to center the popup in the background
+	placed := lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		popup,
+		lipgloss.WithWhitespaceBackground(lipgloss.Color("235")),
+		lipgloss.WithWhitespaceChars(" "),
+	)
+	return placed
+}
+
+// renderModelPickerContent renders the model picker content without outer positioning.
+func (m TuiModel) renderModelPickerContent() string {
+	var b strings.Builder
+
+	// Popup dimensions
+	popupWidth := m.width - 8
+	if popupWidth < 40 {
+		popupWidth = 40
+	}
+	// Cap max height
+	maxPopupHeight := m.height - 4
+	if maxPopupHeight < 10 {
+		maxPopupHeight = 10
+	}
+
+	// Title
+	title := " Select Model (type to filter, Enter to select, Esc to cancel) "
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("60")).
+		Width(popupWidth - 2).
+		Align(lipgloss.Center)
+	b.WriteString(titleStyle.Render(title))
+	b.WriteString("\n")
+
+	// Filter input line - using a simulated input
+	filterPrefix := " Filter: "
+	filterVal := m.pickerFilter
+	if filterVal == "" {
+		filterVal = " " // empty but visible cursor
+	}
+	filterLine := filterPrefix + filterVal
+	filterStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color("236")).
+		Width(popupWidth - 2)
+	b.WriteString(filterStyle.Render(filterLine))
+	b.WriteString("\n")
+
+	// Separator
+	sep := strings.Repeat("─", popupWidth-2)
+	sepStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Width(popupWidth - 2)
+	b.WriteString(sepStyle.Render(sep))
+	b.WriteString("\n")
+
+	// Available lines for items
+	availableLines := maxPopupHeight - 5 // title + filter + sep + hint + bottom margin
+	if availableLines < 1 {
+		availableLines = 1
+	}
+
+	// Header style
+	headerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("238")).
+		Width(popupWidth - 2)
+	// Selected item style
+	selectedStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("0")).
+		Background(lipgloss.Color("45")).
+		Width(popupWidth - 2)
+	// Normal item style
+	normalStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252")).
+		Width(popupWidth - 2)
+
+	// Build filtered items with scrolling
+	modelIdx := 0
+	totalModels := m.pickerModelCount()
+	visibleStart := 0
+	if totalModels > availableLines {
+		visibleStart = m.pickerCursor - availableLines/2
+		if visibleStart < 0 {
+			visibleStart = 0
+		}
+		if visibleStart+availableLines > totalModels {
+			visibleStart = totalModels - availableLines
+		}
+	}
+
+	renderedModels := 0
+	headerRendered := 0 // tracks total rendered lines (headers + items)
+
+	for _, item := range m.pickerItems {
+		if item.isHeader {
+			if renderedModels >= visibleStart && renderedModels < visibleStart+availableLines {
+				b.WriteString(headerStyle.Render("  " + item.label))
+				b.WriteString("\n")
+				headerRendered++
+			}
+			// Headers before visibleStart also count as rendered to push content up
+			if renderedModels < visibleStart {
+				// This header is before visible range; we need to account for its space
+				// but we don't render it
+			}
+			continue
+		}
+		isSelected := modelIdx == m.pickerCursor
+		isVisible := renderedModels >= visibleStart && renderedModels < visibleStart+availableLines
+
+		if isVisible {
+			var line string
+			if isSelected {
+				line = selectedStyle.Render("▸ " + item.label)
+			} else {
+				line = normalStyle.Render("  " + item.label)
+			}
+			b.WriteString(line)
+			b.WriteString("\n")
+			headerRendered++
+		}
+		modelIdx++
+		renderedModels++
+	}
+
+	// Fill remaining lines to maintain popup height
+	for headerRendered < availableLines {
+		b.WriteString("\n")
+		headerRendered++
+	}
+
+	// Hint at bottom
+	if totalModels == 0 {
+		b.WriteString(normalStyle.Render("  No matching models"))
+		b.WriteString("\n")
+	} else {
+		hint := fmt.Sprintf("  %d model(s) — ↑/↓ to navigate, Enter to select, Esc to cancel", totalModels)
+		hintStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245")).
+			Width(popupWidth - 2)
+		b.WriteString(hintStyle.Render(hint))
+		b.WriteString("\n")
+	}
+
+	// Wrap in a bordered box
+	content := b.String()
+	boxStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Width(popupWidth).
+		MaxWidth(popupWidth)
+	return boxStyle.Render(content)
 }
 
 func (m TuiModel) renderBlock(b block) string {
@@ -796,20 +1226,26 @@ func (m TuiModel) buildStatus() string {
 // ─── Public API ───────────────────────────────────────────────────────────
 
 type TUI struct {
-	prog    *tea.Program
-	results chan string
-	done    chan struct{}
+	prog          *tea.Program
+	results       chan string
+	modelChanges  chan string
+	cancel        chan struct{}    // sent on when ESC pressed during agent run
+	done          chan struct{}
 }
 
-func NewTUI(modelName string, historyPath string) *TUI {
+func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels) *TUI {
 	results := make(chan string, 8)
-	m := newModel(results, modelName, historyPath)
+	modelChanges := make(chan string, 8)
+	cancel := make(chan struct{}, 1)
+	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	t := &TUI{
-		prog:    p,
-		results: results,
-		done:    make(chan struct{}),
+		prog:          p,
+		results:       results,
+		modelChanges:  modelChanges,
+		cancel:        cancel,
+		done:          make(chan struct{}),
 	}
 
 	go func() {
@@ -820,6 +1256,33 @@ func NewTUI(modelName string, historyPath string) *TUI {
 	}()
 
 	return t
+}
+
+// ModelChanges returns a channel that receives new model names when the user
+// switches model via Tab/Shift+Tab.
+func (t *TUI) ModelChanges() <-chan string {
+	return t.modelChanges
+}
+
+// SetModel updates the model name displayed in the status bar.
+func (t *TUI) SetModel(name string) {
+	t.prog.Send(tuiMsgBlock{kind: "set-model", content: name})
+}
+
+// Results returns the channel that receives submitted lines from the TUI.
+func (t *TUI) Results() <-chan string {
+	return t.results
+}
+
+// DoneCh returns a channel that is closed when the TUI program exits.
+func (t *TUI) DoneCh() <-chan struct{} {
+	return t.done
+}
+
+// CancelCh returns a channel that is sent on when the user presses ESC during
+// an agent run, requesting cancellation of the current operation.
+func (t *TUI) CancelCh() <-chan struct{} {
+	return t.cancel
 }
 
 func (t *TUI) post(msg tuiMsgBlock) { t.prog.Send(msg) }
@@ -846,8 +1309,20 @@ func (t *TUI) Done(usage stream.Usage, stats stream.Stats) {
 	t.post(tuiMsgBlock{kind: "done", usage: usage, stats: stats})
 }
 
+// ResetStatus resets the TUI state to idle/reading after an interruption.
+func (t *TUI) ResetStatus() {
+	t.post(tuiMsgBlock{kind: "done"})
+}
+
 func (t *TUI) Reset() {
 	t.post(tuiMsgBlock{kind: "reset"})
+}
+
+// ShowTotalUsage displays accumulated total usage after a reset (/new).
+func (t *TUI) ShowTotalUsage(usage stream.Usage) {
+	line := buildUsageLine(usage, stream.Stats{})
+	t.post(tuiMsgBlock{kind: "block", content: "───── new conversation ─────"})
+	t.post(tuiMsgBlock{kind: "block", content: "📊 Session total: " + line})
 }
 
 // StreamProgress sends incremental tool output to the TUI.
