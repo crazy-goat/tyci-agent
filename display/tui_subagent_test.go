@@ -128,12 +128,12 @@ func TestTuiModel_SubagentToolProgress_WrongToolIdx_GoesToInline(t *testing.T) {
 		content: "bash output\n",
 	})
 
-	// Content should go to inline block, not modal
+	// Content should go to output field (for modal), not inline block content
 	if m.subagentModalContent.String() != "" {
 		t.Errorf("modal content should be empty, got %q", m.subagentModalContent.String())
 	}
 
-	// Inline block should have the content
+	// Inline block output should have the content (not content field)
 	if len(m.toolQueue) != 1 {
 		t.Fatalf("expected 1 tool in queue, got %d", len(m.toolQueue))
 	}
@@ -141,8 +141,11 @@ func TestTuiModel_SubagentToolProgress_WrongToolIdx_GoesToInline(t *testing.T) {
 	if bidx < 0 || bidx >= len(m.blocks) {
 		t.Fatal("invalid block index")
 	}
-	if m.blocks[bidx].content != "bash output\n" {
-		t.Errorf("inline block should have bash output, got %q", m.blocks[bidx].content)
+	if m.blocks[bidx].output != "bash output\n" {
+		t.Errorf("block output should have bash output, got %q", m.blocks[bidx].output)
+	}
+	if m.blocks[bidx].content != "" {
+		t.Errorf("block content should be empty (summary only), got %q", m.blocks[bidx].content)
 	}
 }
 

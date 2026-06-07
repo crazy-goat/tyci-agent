@@ -53,6 +53,7 @@ type block struct {
 	toolState string // "running","done"
 	collapsed bool
 	maxLines  int
+	output    string // full tool output (for modal)
 }
 
 func defaultMaxLines(toolName string) int {
@@ -372,26 +373,38 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Y >= 0 && msg.Y < m.visibleLines() {
 				idx := m.blockAtVisibleLine(msg.Y)
 				if idx >= 0 && m.blocks[idx].kind == "tool" {
-					// Toggle collapse for done tools
-					if m.blocks[idx].toolState == "done" {
-						m.blocks[idx].collapsed = !m.blocks[idx].collapsed
-					}
-					// Open subagent modal on click for subagent tools
+					// Open tool detail modal on click for any tool
 					if m.blocks[idx].toolName == "subagent" && !m.subagentModalActive {
 						m.subagentModalActive = true
-						m.subagentModalContent.Reset()
 						m.subagentModalScroll = 0
-						// Fill modal with existing tool output
-						if m.blocks[idx].content != "" {
-							m.subagentModalContent.WriteString(m.blocks[idx].content)
-						}
-						// Find toolIdx for this block in toolQueue
+						// subagentModalContent already has accumulated output from tool-progress
 						for qi, bidx := range m.toolQueue {
 							if bidx == idx {
 								m.subagentModalToolIdx = qi
 								break
 							}
 						}
+					} else if m.blocks[idx].toolName != "subagent" && m.blocks[idx].toolState == "done" {
+						// Generic tool detail modal for other tools
+						m.subagentModalActive = true
+						m.subagentModalContent.Reset()
+						m.subagentModalScroll = 0
+						m.subagentModalDone = true
+						// Set title from the tool block's first line (summary)
+						title := m.blocks[idx].toolName
+						if m.blocks[idx].content != "" {
+							firstLine := strings.SplitN(m.blocks[idx].content, "\n", 2)[0]
+							if firstLine != "" {
+								title = truncateString(firstLine, 80)
+							}
+						}
+						m.subagentModalTitle = title
+						content := m.blocks[idx].output
+						if content == "" {
+							content = m.blocks[idx].content
+						}
+						m.subagentModalContent.WriteString(content)
+						m.subagentModalToolIdx = -1
 					}
 				}
 			}
@@ -870,7 +883,7 @@ func (m *TuiModel) appendTool(queueIdx int, content string) {
 	}
 	blockIdx := m.toolQueue[queueIdx]
 	if blockIdx >= 0 && blockIdx < len(m.blocks) && m.blocks[blockIdx].kind == "tool" {
-		m.blocks[blockIdx].content += content
+		m.blocks[blockIdx].output += content
 	}
 }
 
@@ -882,11 +895,10 @@ func (m *TuiModel) finishToolAt(result string) {
 	m.toolQueue = m.toolQueue[1:]
 	if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].kind == "tool" {
 		if result != "" {
-			// Ensure separator newline if content exists
-			if m.blocks[idx].content != "" && !strings.HasSuffix(m.blocks[idx].content, "\n") {
-				m.blocks[idx].content += "\n"
+			if m.blocks[idx].output != "" && !strings.HasSuffix(m.blocks[idx].output, "\n") {
+				m.blocks[idx].output += "\n"
 			}
-			m.blocks[idx].content += result
+			m.blocks[idx].output += result
 		}
 		m.blocks[idx].toolState = "done"
 	}
@@ -902,7 +914,7 @@ func (m *TuiModel) toggleNextTool() {
 }
 
 // blockAtVisibleLine returns the block index at the given visible Y (0-indexed within message area).
-// Returns -1 if no block is at that position (welcome, separator, etc).
+// Returns -1 if no block is at that position (welcome, separator, "calling tools:" header, etc).
 func (m *TuiModel) blockAtVisibleLine(visY int) int {
 	// Build flat lines with block index tracking
 	type lineInfo struct {
@@ -916,8 +928,23 @@ func (m *TuiModel) blockAtVisibleLine(visY int) int {
 			continue
 		}
 		lines := strings.Split(rendered, "\n")
-		for range lines {
-			allLines = append(allLines, lineInfo{blockIdx: blkIdx})
+
+		if blk.kind == "tool" {
+			// Check if this is start of a tool group → "calling tools:" header line
+			if blkIdx == 0 || m.blocks[blkIdx-1].kind != "tool" {
+				allLines = append(allLines, lineInfo{blockIdx: -1})
+			}
+			for range lines {
+				allLines = append(allLines, lineInfo{blockIdx: blkIdx})
+			}
+			// No separator if next block is also a tool
+			if blkIdx+1 < len(m.blocks) && m.blocks[blkIdx+1].kind == "tool" {
+				continue
+			}
+		} else {
+			for range lines {
+				allLines = append(allLines, lineInfo{blockIdx: blkIdx})
+			}
 		}
 		// Separator blank line (no block)
 		allLines = append(allLines, lineInfo{blockIdx: -1})
@@ -986,18 +1013,44 @@ func (m TuiModel) View() string {
 		text string
 	}
 	var allLines []lineInfo
+	toolHeaderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
+	inToolGroup := false
 
-	for _, blk := range m.blocks {
+	for i, blk := range m.blocks {
 		rendered := m.renderBlock(blk)
 		if rendered == "" {
 			continue
 		}
 		lines := strings.Split(rendered, "\n")
-		for _, l := range lines {
-			allLines = append(allLines, lineInfo{text: l})
+
+		if blk.kind == "tool" {
+			if !inToolGroup {
+				// Start a new tool group — add header
+				allLines = append(allLines, lineInfo{text: toolHeaderStyle.Render("calling tools:")})
+				inToolGroup = true
+			}
+			// Render tool lines without blank separator
+			for _, l := range lines {
+				allLines = append(allLines, lineInfo{text: l})
+			}
+			// No blank line after tool blocks within the group
+			if i+1 < len(m.blocks) && m.blocks[i+1].kind == "tool" {
+				continue
+			}
+			// Last tool in group — add blank line after
+			allLines = append(allLines, lineInfo{text: ""})
+			inToolGroup = false
+		} else {
+			if inToolGroup {
+				// Previous was tool group, already added blank line
+				inToolGroup = false
+			}
+			for _, l := range lines {
+				allLines = append(allLines, lineInfo{text: l})
+			}
+			// Blank line separator between blocks
+			allLines = append(allLines, lineInfo{text: ""})
 		}
-		// Blank line separator between blocks
-		allLines = append(allLines, lineInfo{text: ""})
 	}
 	// Remove trailing empty line
 	if len(allLines) > 0 && allLines[len(allLines)-1].text == "" {
@@ -1385,105 +1438,24 @@ func (m TuiModel) renderBlock(b block) string {
 }
 
 func (m TuiModel) renderToolBlock(b block) string {
-	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("│")
+	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("┃")
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)
+	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
-	// Subagent: always render as a single line "│ subagent (task...)"
-	if b.toolName == "subagent" {
-		content := b.content
-		if content == "" {
-			content = "subagent"
-		}
-		if b.toolState == "running" {
-			content += " ⟳"
-		}
-		if b.toolState == "done" {
-			content += " ✓"
-		}
-		return bar + " " + textStyle.Render(content)
-	}
-
-	lines := strings.Split(b.content, "\n")
-	totalLines := len(lines)
-
-	// Determine if content-hiding tool
-	isFileTool := b.toolName == "read" || b.toolName == "write" || b.toolName == "edit"
-
-	// Extract path from first line (JSON args)
-	path := extractPath(lines[0])
-
-	var out strings.Builder
-
-	// First line: tool name + path/args
-	var firstLine string
-	if isFileTool && path != "" {
-		firstLine = b.toolName + " " + path
-	} else if totalLines > 0 && lines[0] != "" {
-		firstLine = b.toolName + " " + lines[0]
+	var line string
+	if b.content != "" {
+		line = b.content
 	} else {
-		firstLine = b.toolName
+		line = b.toolName + "(...)"
 	}
+
 	if b.toolState == "running" {
-		firstLine += " ⟳"
+		line += " ⟳"
+	} else if b.toolState == "done" {
+		line += " " + hintStyle.Render("- click to display")
 	}
 
-	// Remaining content lines (output)
-	remainingLines := totalLines - 1
-
-	// File tools (read/write/edit): always one line when collapsed, show "· N lines (click to expand)" inline
-	if isFileTool && b.collapsed {
-		if remainingLines > 0 {
-			firstLine += fmt.Sprintf(" · %d lines (click to expand)", remainingLines)
-		}
-		out.WriteString(bar)
-		out.WriteString(" ")
-		out.WriteString(textStyle.Render(firstLine))
-		return strings.TrimRight(out.String(), "\n")
-	}
-
-	out.WriteString(bar)
-	out.WriteString(" ")
-	out.WriteString(textStyle.Render(firstLine))
-	out.WriteString("\n")
-
-	if remainingLines > 0 {
-		if b.toolState == "running" {
-			// Show last line only
-			last := lines[totalLines-1]
-			out.WriteString(bar)
-			out.WriteString(" ")
-			out.WriteString(textStyle.Render(last))
-			if remainingLines > 1 {
-				out.WriteString(dimStyle.Render(fmt.Sprintf(" … (+%d more)", remainingLines-1)))
-			}
-		} else if b.collapsed && b.maxLines > 0 && remainingLines > b.maxLines {
-			// Show LAST b.maxLines lines instead of first
-			start := totalLines - b.maxLines - 1
-			if start < 1 {
-				start = 1
-			}
-			for i := start; i < totalLines; i++ {
-				out.WriteString(bar)
-				out.WriteString(" ")
-				out.WriteString(textStyle.Render(lines[i]))
-				out.WriteString("\n")
-			}
-			out.WriteString(dimStyle.Render(fmt.Sprintf("├── %d more lines (click to expand)", remainingLines-b.maxLines)))
-		} else {
-			for i := 1; i < totalLines; i++ {
-				out.WriteString(bar)
-				out.WriteString(" ")
-				out.WriteString(textStyle.Render(lines[i]))
-				out.WriteString("\n")
-			}
-			if b.maxLines > 0 && remainingLines > b.maxLines {
-				out.WriteString(dimStyle.Render("├── expanded (click to collapse)"))
-			}
-		}
-	}
-
-	return strings.TrimRight(out.String(), "\n")
+	return bar + " " + textStyle.Render(line)
 }
 
 // extractPath tries to parse JSON and get "path" value.
