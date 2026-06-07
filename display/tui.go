@@ -780,6 +780,8 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		}
 		m.appendOrAppend("text", msg.content)
 	case "tool-start":
+		// New tool block → force-render previous dirty blocks (thinking/text)
+		m.forceRenderDirtyBlocks()
 		m.status = "tool"
 		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{
@@ -852,14 +854,19 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.lastUsage = msg.usage
 		m.lastStats = msg.stats
 	case "error":
+		// New error block → force-render previous dirty blocks
+		m.forceRenderDirtyBlocks()
 		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{kind: "error", content: msg.content, dirty: true})
 		m.dirtyBlocks[idx] = true
 	case "done":
 		m.status = "idle"
 		m.reading = true
-		// Mark all dirty blocks for final render (throttle check will pass because status == "idle")
+		// Force-render all dirty blocks now that streaming is complete
+		m.forceRenderDirtyBlocks()
 	case "block":
+		// New info block → force-render previous dirty blocks
+		m.forceRenderDirtyBlocks()
 		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{kind: "block", content: msg.content, dirty: true})
 		m.dirtyBlocks[idx] = true
@@ -896,9 +903,83 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 		m.dirtyBlocks[len(m.blocks)-1] = true
 		return
 	}
+	// New block type starting → force-render all dirty blocks immediately
+	// so they show final markdown before the new block appears.
+	m.forceRenderDirtyBlocks()
 	idx := len(m.blocks)
 	m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
 	m.dirtyBlocks[idx] = true
+}
+
+// renderMarkdown renders markdown content to ANSI using glamour.
+// Falls back to wrapRawText on error.
+func (m TuiModel) renderMarkdown(content string, useBar bool) string {
+	if content == "" {
+		return ""
+	}
+	maxW := m.width
+	if useBar {
+		maxW = m.width - 2
+	}
+	if maxW < 10 {
+		maxW = 10
+	}
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(maxW),
+	)
+	if err == nil {
+		out, err := renderer.Render(content)
+		if err == nil {
+			out = strings.Trim(out, "\n")
+			if useBar {
+				bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
+				textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
+				var sb strings.Builder
+				for _, line := range strings.Split(out, "\n") {
+					// Strip ANSI codes first so TrimLeft works properly
+					clean := stripAnsi(line)
+					clean = strings.TrimLeft(clean, " ")
+					if clean == "" {
+						sb.WriteString(bar)
+						sb.WriteString("\n")
+						continue
+					}
+					sb.WriteString(bar)
+					sb.WriteString(" ")
+					sb.WriteString(textStyle.Render(clean))
+					sb.WriteString("\n")
+				}
+				return strings.TrimRight(sb.String(), "\n")
+			}
+			return out
+		}
+	}
+	return wrapRawText(content, useBar, m.width)
+}
+
+// forceRenderDirtyBlocks immediately glamour-renders all dirty "thinking"
+// and "text" blocks, caching the result so they are shown with proper
+// markdown formatting. Called when a block finishes (new block type starts
+// or streaming ends).
+func (m *TuiModel) forceRenderDirtyBlocks() {
+	for idx := range m.dirtyBlocks {
+		if idx >= 0 && idx < len(m.blocks) {
+			b := m.blocks[idx]
+			if b.kind == "thinking" || b.kind == "text" {
+				rendered := m.renderMarkdown(b.content, b.kind == "thinking")
+				if rendered != "" {
+					m.mdCacheRendered[idx] = rendered
+				}
+				m.dirtyBlocks[idx] = false
+				delete(m.lastRenderTime, idx)
+			} else {
+				// For non-markdown blocks, just mark as not dirty
+				m.dirtyBlocks[idx] = false
+				delete(m.lastRenderTime, idx)
+			}
+		}
+	}
 }
 
 func (m *TuiModel) appendToLastTool(delta string) {
@@ -1420,86 +1501,29 @@ func (m TuiModel) renderModelPickerContent() string {
 }
 
 func (m TuiModel) renderBlock(idx int, b block) string {
-	// ── Helper to render markdown with caching/throttling ──
+	// ── Helper to render markdown with caching ──
 	tryRenderMarkdown := func(content string, useBar bool) string {
 		if content == "" {
 			return ""
 		}
 		cached, hasCached := m.mdCacheRendered[idx]
+		dirty := m.dirtyBlocks[idx]
+		isStreaming := m.status != "idle"
 
-		// Check cache: if not dirty and we have cached output, return it
-		if !m.dirtyBlocks[idx] && hasCached && cached != "" {
+		// If not dirty and cache exists → return cached
+		if !dirty && hasCached && cached != "" {
 			return cached
 		}
-		// Throttle: if still streaming (status != "idle") and last render was < 1s ago, use cache
-		lastTime, hasLast := m.lastRenderTime[idx]
-		if m.dirtyBlocks[idx] && m.status != "idle" && hasLast && time.Since(lastTime) < 1*time.Second {
-			if hasCached && cached != "" {
-				return cached
-			}
+
+		// During streaming: show raw wrapped text (no glamour re-render).
+		// Markdown rendering only happens when block finishes (idle or
+		// forceRenderDirtyBlocks called at block boundary).
+		if dirty && isStreaming {
+			return wrapRawText(content, useBar, m.width)
 		}
-		// Try glamour rendering
-		maxW := m.width
-		if useBar {
-			maxW = m.width - 2
-		}
-		if maxW < 10 {
-			maxW = 10
-		}
-		var rendered string
-		renderer, err := glamour.NewTermRenderer(
-			glamour.WithStandardStyle("dark"),
-			glamour.WithWordWrap(maxW),
-		)
-		if err == nil {
-			out, err := renderer.Render(content)
-			if err == nil {
-				out = strings.TrimRight(out, "\n")
-				if useBar {
-					bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
-					var sb strings.Builder
-					for _, line := range strings.Split(out, "\n") {
-						sb.WriteString(bar)
-						sb.WriteString(" ")
-						sb.WriteString(line)
-						sb.WriteString("\n")
-					}
-					rendered = strings.TrimRight(sb.String(), "\n")
-				} else {
-					rendered = out
-				}
-			}
-		}
-		// Fallback on glamour error: use wrapText directly
-		if rendered == "" {
-			if useBar {
-				bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
-				textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
-				var out strings.Builder
-				for _, line := range strings.Split(content, "\n") {
-					wrapped := wrapText(line, maxW, 0)
-					for _, wl := range strings.Split(wrapped, "\n") {
-						wl = strings.TrimSuffix(wl, clearLine)
-						out.WriteString(bar)
-						out.WriteString(" ")
-						out.WriteString(textStyle.Render(wl))
-						out.WriteString("\n")
-					}
-				}
-				rendered = strings.TrimRight(out.String(), "\n")
-			} else {
-				var out strings.Builder
-				for _, line := range strings.Split(content, "\n") {
-					wrapped := wrapText(line, maxW, 0)
-					for _, wl := range strings.Split(wrapped, "\n") {
-						wl = strings.TrimSuffix(wl, clearLine)
-						out.WriteString(wl)
-						out.WriteString("\n")
-					}
-				}
-				rendered = strings.TrimRight(out.String(), "\n")
-			}
-		}
+
+		// Not streaming → do glamour render (final rendering)
+		rendered := m.renderMarkdown(content, useBar)
 		// Update cache
 		m.lastRenderTime[idx] = time.Now()
 		m.dirtyBlocks[idx] = false
@@ -1843,6 +1867,43 @@ func (t *TUI) Close() { t.prog.Quit() }
 func max(a, b int) int {
 	if a > b { return a }
 	return b
+}
+
+// wrapRawText wraps content as plain text (no glamour markdown).
+func wrapRawText(content string, useBar bool, width int) string {
+	maxW := width
+	if useBar {
+		maxW = width - 2
+	}
+	if maxW < 10 {
+		maxW = 10
+	}
+	if useBar {
+		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
+		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
+		var out strings.Builder
+		for _, line := range strings.Split(content, "\n") {
+			wrapped := wrapText(line, maxW, 0)
+			for _, wl := range strings.Split(wrapped, "\n") {
+				wl = strings.TrimSuffix(wl, clearLine)
+				out.WriteString(bar)
+				out.WriteString(" ")
+				out.WriteString(textStyle.Render(wl))
+				out.WriteString("\n")
+			}
+		}
+		return strings.TrimRight(out.String(), "\n")
+	}
+	var out strings.Builder
+	for _, line := range strings.Split(content, "\n") {
+		wrapped := wrapText(line, maxW, 0)
+		for _, wl := range strings.Split(wrapped, "\n") {
+			wl = strings.TrimSuffix(wl, clearLine)
+			out.WriteString(wl)
+			out.WriteString("\n")
+		}
+	}
+	return strings.TrimRight(out.String(), "\n")
 }
 
 // ─── History persistence ──────────────────────────────────────────────────
