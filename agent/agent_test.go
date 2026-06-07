@@ -589,3 +589,313 @@ func TestWriteSessionEvents(t *testing.T) {
 		t.Errorf("expected session_end, got: %s", lines[3])
 	}
 }
+
+// ─── Fallback tests ──────────────────────────────────────────────────────
+
+// mockFailingProvider always returns an error from Stream().
+type mockFailingProvider struct {
+	name  string
+	model string
+	err   string
+}
+
+func (m *mockFailingProvider) Name() string          { return m.name }
+func (m *mockFailingProvider) IsConfigured() bool    { return true }
+func (m *mockFailingProvider) Models() []string      { return []string{m.model} }
+func (m *mockFailingProvider) FreeModels() []string  { return nil }
+
+func (m *mockFailingProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+	return nil, errors.New(m.err)
+}
+
+// mockTextProvider returns fixed text chunks then finishes (no tools).
+type mockTextProvider struct {
+	name   string
+	model  string
+	chunks []string
+}
+
+func (m *mockTextProvider) Name() string          { return m.name }
+func (m *mockTextProvider) IsConfigured() bool    { return true }
+func (m *mockTextProvider) Models() []string      { return []string{m.model} }
+func (m *mockTextProvider) FreeModels() []string  { return nil }
+
+func (m *mockTextProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+	ch := make(chan stream.Event, len(m.chunks)+2)
+	go func() {
+		defer close(ch)
+		for _, c := range m.chunks {
+			select {
+			case ch <- stream.TextDelta{Text: c}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
+	}()
+	return ch, nil
+}
+
+// mockToolProvider returns events once, then returns empty finish on subsequent calls.
+// This is already defined above but we extend it here for the tests.
+
+func TestRunFallbackPrimaryFailsFallbackSucceeds(t *testing.T) {
+	// Primary provider returns error, fallback succeeds with text
+	primary := &mockFailingProvider{name: "fb-primary", model: "primary-1", err: "server error 500"}
+
+	fallback := &mockTextProvider{name: "fb-fallback", model: "fb-1", chunks: []string{"fallback response"}}
+
+	// Register the fallback so FindModel can resolve it
+	providers.Register(fallback)
+
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+	}}
+
+	cfg := Config{
+		Model:          "primary-1",
+		MaxRetries:     1,
+		FallbackModels: []string{"fb-fallback/fb-1"},
+	}
+
+	_, err := Run(context.Background(), primary, d, &msgs, cfg)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Should have produced text from the fallback
+	fullText := strings.Join(d.text, "")
+	if !strings.Contains(fullText, "fallback response") {
+		t.Errorf("expected 'fallback response', got %q", fullText)
+	}
+
+	// Messages should include fallback assistant response
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (user, assistant), got %d", len(msgs))
+	}
+	if len(msgs[1].Content) == 0 || msgs[1].Content[0].Text != "fallback response" {
+		t.Errorf("expected fallback response text, got %+v", msgs[1].Content)
+	}
+}
+
+func TestRunFallbackAllFallbacksFail(t *testing.T) {
+	// Primary fails, all fallbacks also fail
+	primary := &mockFailingProvider{name: "fb-p1", model: "p1", err: "primary dead"}
+
+	fallback1 := &mockFailingProvider{name: "fb-f1", model: "f1", err: "fb1 dead"}
+	fallback2 := &mockFailingProvider{name: "fb-f2", model: "f2", err: "fb2 dead"}
+
+	providers.Register(fallback1)
+	providers.Register(fallback2)
+
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+	}}
+
+	cfg := Config{
+		Model:          "p1",
+		MaxRetries:     1,
+		FallbackModels: []string{"fb-f1/f1", "fb-f2/f2"},
+	}
+
+	_, err := Run(context.Background(), primary, d, &msgs, cfg)
+	if err == nil {
+		t.Fatal("expected error when all fallbacks fail")
+	}
+	if !strings.Contains(err.Error(), "fb2 dead") {
+		t.Errorf("expected last fallback error, got %v", err)
+	}
+}
+
+func TestRunFallbackPrimaryFailsWithNoFallbacks(t *testing.T) {
+	// Primary fails with non-retryable error, no fallbacks configured
+	primary := &mockFailingProvider{name: "fb-nofb", model: "nofb-1", err: "non-retryable"}
+
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+	}}
+
+	cfg := Config{
+		Model:          "nofb-1",
+		MaxRetries:     1,
+		FallbackModels: nil, // no fallback configured
+	}
+
+	_, err := Run(context.Background(), primary, d, &msgs, cfg)
+	if err == nil {
+		t.Fatal("expected error from primary")
+	}
+	if !strings.Contains(err.Error(), "non-retryable") {
+		t.Errorf("expected 'non-retryable', got %v", err)
+	}
+}
+
+func TestRunFallbackWithTools(t *testing.T) {
+	// Primary fails, fallback succeeds and produces tools
+	primary := &mockFailingProvider{name: "fb-tp", model: "tp-1", err: "down"}
+
+	fallback := &mockToolProvider{
+		events: []stream.Event{
+			stream.ToolCallStart{ID: "tc1", Name: "read"},
+			stream.ToolCallDelta{ID: "tc1", Delta: `{"path": "file.go"}`},
+			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "file.go"}`},
+			stream.Finish{Usage: stream.Usage{Input: 10, Output: 5}},
+		},
+	}
+
+	providers.Register(fallback)
+
+	d := newCaptureDisplay()
+	runner := newMockToolRunner()
+	runner.SetResult("read", "file content from fallback")
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "read file"}},
+	}}
+
+	cfg := Config{
+		Model:          "tp-1",
+		MaxRetries:     1,
+		FallbackModels: []string{"mock-tool/mock-tool-1"},
+		Tools:          runner,
+	}
+
+	_, err := Run(context.Background(), primary, d, &msgs, cfg)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Should have tool calls executed
+	if len(d.toolCallStarts) == 0 {
+		t.Fatal("expected tool calls from fallback")
+	}
+	if d.toolCallStarts[0] != "read" {
+		t.Errorf("expected 'read', got %q", d.toolCallStarts[0])
+	}
+	if len(d.toolCallEnds) == 0 || d.toolCallEnds[0].Result != "file content from fallback" {
+		t.Errorf("expected tool result 'file content from fallback', got %+v", d.toolCallEnds)
+	}
+
+	// Should have 3 messages: user + assistant + toolResult
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+}
+
+func TestRunFallbackNoToolsTextOnly(t *testing.T) {
+	// Primary fails, fallback succeeds with text only (no tools)
+	primary := &mockFailingProvider{name: "fb-ntp", model: "ntp-1", err: "down"}
+
+	fallback := &mockTextProvider{name: "fb-ntf", model: "ntf-1", chunks: []string{"just text, no tools"}}
+
+	providers.Register(fallback)
+
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "hello"}},
+	}}
+
+	cfg := Config{
+		Model:          "ntp-1",
+		MaxRetries:     1,
+		FallbackModels: []string{"fb-ntf/ntf-1"},
+	}
+
+	_, err := Run(context.Background(), primary, d, &msgs, cfg)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	fullText := strings.Join(d.text, "")
+	if !strings.Contains(fullText, "just text, no tools") {
+		t.Errorf("expected fallback text, got %q", fullText)
+	}
+}
+
+func TestRunFallbackUsedForRestOfSession(t *testing.T) {
+	// After fallback, subsequent iterations use the fallback provider/model.
+	// We simulate two iterations: first fails, fallback succeeds,
+	// second iteration (no tools) should use the fallback.
+	primary := &mockFailingProvider{name: "fb-sess", model: "sess-1", err: "down"}
+
+	// The fallback returns text first, then on second call returns different text
+	fallback := &mockToolProvider{
+		events: []stream.Event{
+			stream.TextDelta{Text: "first call "},
+			stream.ToolCallStart{ID: "tc1", Name: "bash"},
+			stream.ToolCallDelta{ID: "tc1", Delta: `{"command": "echo hello"}`},
+			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "echo hello"}`},
+			stream.Finish{Usage: stream.Usage{Input: 5, Output: 3}},
+		},
+	}
+
+	providers.Register(fallback)
+
+	d := newCaptureDisplay()
+	runner := newMockToolRunner()
+	runner.SetResult("bash", "hello world")
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "run bash"}},
+	}}
+
+	cfg := Config{
+		Model:          "sess-1",
+		MaxRetries:     1,
+		FallbackModels: []string{"mock-tool/mock-tool-1"},
+		Tools:          runner,
+	}
+
+	_, err := Run(context.Background(), primary, d, &msgs, cfg)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// First iteration: fallback was used, tool executed
+	if len(d.toolCallEnds) == 0 || d.toolCallEnds[0].Result != "hello world" {
+		t.Errorf("expected tool result 'hello world', got %+v", d.toolCallEnds)
+	}
+
+	// The fallback provider was used (the text came from mockToolProvider)
+	// which returned "first call " text
+	if len(d.text) == 0 || !strings.Contains(strings.Join(d.text, ""), "first call") {
+		t.Errorf("expected text from fallback, got %q", strings.Join(d.text, ""))
+	}
+}
+
+func TestRunNoFallbackNormalPath(t *testing.T) {
+	// No fallback configured — standard path should work fine
+	p := &mockProvider{chunks: []string{"hello world"}}
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	cfg := Config{
+		Model:          "mock-1",
+		MaxRetries:     1,
+		FallbackModels: nil,
+	}
+
+	_, err := Run(context.Background(), p, d, &msgs, cfg)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if len(msgs[1].Content) == 0 || msgs[1].Content[0].Text != "hello world" {
+		t.Errorf("expected 'hello world', got %+v", msgs[1].Content)
+	}
+}
+
+

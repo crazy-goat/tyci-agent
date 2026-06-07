@@ -31,11 +31,23 @@ type Config struct {
 	Schema        json.RawMessage
 	Session       *session.Session // optional session logging / resume
 	ProviderName  string           // provider name for session metadata
+	FallbackModels []string        // full "provider/model" strings for fallback
+}
+
+// fallbackState tracks which fallback model we're currently using.
+type fallbackState struct {
+	active   bool   // true if we've switched to a fallback
+	idx      int    // index into FallbackModels currently in use (-1 = primary)
+	provider providers.Provider
+	model    string
+	fullModel string
 }
 
 // Run executes the agent loop. It will make at most MaxRetries retries on
 // transient errors, and at most MaxIterations tool-call iterations.
 // If MaxIterations <= 0, there is no iteration limit.
+// If cfg.FallbackModels is set, non-retryable errors will try fallback models
+// before giving up. Once a fallback succeeds, it is used for the rest of the session.
 // Returns total usage accumulated during the run.
 func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config) (stream.Usage, error) {
 	if cfg.MaxRetries == 0 {
@@ -44,8 +56,17 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 
 	var totalUsage stream.Usage
 
+	// Track fallback state across iterations
+	fs := fallbackState{
+		active:    false,
+		idx:       -1,
+		provider:  p,
+		model:     cfg.Model,
+		fullModel: "",
+	}
+
 	for iter := 0; cfg.MaxIterations <= 0 || iter < cfg.MaxIterations; iter++ {
-		more, usage, err := runOnce(ctx, p, d, msgs, cfg)
+		more, usage, err := runOnce(ctx, fs.provider, d, msgs, cfg.withModel(fs.model))
 		if usage != nil {
 			totalUsage.Input += usage.Input
 			totalUsage.Output += usage.Output
@@ -54,9 +75,27 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 			totalUsage.CacheWrite += usage.CacheWrite
 		}
 		if err != nil {
+			// Check for context cancellation first
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return totalUsage, err
 			}
+
+			// Try fallback models if available
+			if len(cfg.FallbackModels) > 0 {
+				fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage)
+				if fbErr == nil {
+					// Fallback succeeded — continue or exit based on fbMore
+					if !fbMore {
+						return totalUsage, nil
+					}
+					continue
+				}
+				// All fallbacks failed
+				d.Error(fbErr)
+				return totalUsage, fbErr
+			}
+
+			// No fallbacks — use retry logic for retryable errors
 			if !api.IsRetryable(err) {
 				d.Error(err)
 				return totalUsage, err
@@ -70,7 +109,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				if err := sleepWithCountdown(ctx, backoff); err != nil {
 					return totalUsage, err
 				}
-				more, usage, err = runOnce(ctx, p, d, msgs, cfg)
+				more, usage, err = runOnce(ctx, fs.provider, d, msgs, cfg.withModel(fs.model))
 				if usage != nil {
 					totalUsage.Input += usage.Input
 					totalUsage.Output += usage.Output
@@ -84,6 +123,19 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				}
 				lastErr = err
 				if !api.IsRetryable(err) {
+					// Non-retryable during retry — try fallback if available
+					if len(cfg.FallbackModels) > 0 {
+						fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage)
+						if fbErr == nil {
+							if !fbMore {
+								return totalUsage, nil
+							}
+							recovered = true
+							break
+						}
+						d.Error(fbErr)
+						return totalUsage, fbErr
+					}
 					d.Error(err)
 					return totalUsage, err
 				}
@@ -102,6 +154,61 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 		d.Text(fmt.Sprintf("\n⚠️ Agent wykonał %d iteracji narzędzi – możliwa nieskończona pętla. Przerywam.\n", cfg.MaxIterations))
 	}
 	return totalUsage, nil
+}
+
+// withModel returns a copy of Config with the given model name.
+func (c Config) withModel(model string) Config {
+	c.Model = model
+	return c
+}
+
+// tryFallback attempts to switch to the next fallback model.
+// It updates fs with the new provider/model on success.
+// Returns (more, nil) on success, (false, err) if all fallbacks exhausted.
+func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichMessage, cfg Config, fs *fallbackState, totalUsage *stream.Usage) (bool, error) {
+	var lastErr error
+	for fs.idx+1 < len(cfg.FallbackModels) {
+		fs.idx++
+		fbFull := cfg.FallbackModels[fs.idx]
+
+		// Resolve the fallback model to a provider
+		fbProvider, fbModel, ok := providers.FindModel(fbFull)
+		if !ok {
+			d.Error(fmt.Errorf("⚠️ fallback model %q not found, skipping", fbFull))
+			lastErr = fmt.Errorf("fallback model %q not found", fbFull)
+			continue
+		}
+
+		d.Text(fmt.Sprintf("\n⚠️ Switching to fallback model: %s\n", fbFull))
+
+		// Try the fallback
+		more, usage, err := runOnce(ctx, fbProvider, d, msgs, cfg.withModel(fbModel))
+		if usage != nil {
+			totalUsage.Input += usage.Input
+			totalUsage.Output += usage.Output
+			totalUsage.Reasoning += usage.Reasoning
+			totalUsage.CacheRead += usage.CacheRead
+			totalUsage.CacheWrite += usage.CacheWrite
+		}
+		if err != nil {
+			lastErr = err
+			d.Error(fmt.Errorf("⚠️ fallback %s also failed: %v", fbFull, err))
+			continue
+		}
+
+		// Fallback succeeded — update state
+		fs.active = true
+		fs.provider = fbProvider
+		fs.model = fbModel
+		fs.fullModel = fbFull
+
+		return more, nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no fallback models available")
+	}
+	return false, lastErr
 }
 
 func sleepWithCountdown(ctx context.Context, backoff time.Duration) error {
@@ -235,7 +342,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 
 		// Write assistant message to session
 		if cfg.Session != nil {
-			writeAssistantSessionEvent(cfg.Session, cfg.ProviderName, cfg.Model, msg, &lastUsage)
+			writeAssistantSessionEvent(cfg.Session, p.Name(), cfg.Model, msg, &lastUsage)
 		}
 	}
 

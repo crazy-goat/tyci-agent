@@ -20,8 +20,45 @@ const GlobalConfigDir = ".tyci"
 // GlobalConfigFile is the agents config file name in the global directory.
 const GlobalConfigFile = "agents.json"
 
-// Agents maps agent name -> model string (e.g. "openai/gpt-4o").
-type Agents map[string]string
+// AgentEntry holds the model and optional fallback models for an agent.
+// Supports both old format (string value) and new format (object value) in JSON.
+type AgentEntry struct {
+	Model    string   `json:"model"`
+	Fallback []string `json:"fallback,omitempty"`
+}
+
+// MarshalJSON writes as plain string if no fallback, object otherwise.
+func (e AgentEntry) MarshalJSON() ([]byte, error) {
+	if len(e.Fallback) == 0 {
+		return json.Marshal(e.Model)
+	}
+	// Use alias to avoid infinite recursion
+	type alias AgentEntry
+	return json.Marshal(alias(e))
+}
+
+// UnmarshalJSON accepts both "string" and {"model":"...","fallback":[...]}.
+func (e *AgentEntry) UnmarshalJSON(data []byte) error {
+	// Try string first
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		e.Model = s
+		e.Fallback = nil
+		return nil
+	}
+	// Try object
+	type alias AgentEntry
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	e.Model = a.Model
+	e.Fallback = a.Fallback
+	return nil
+}
+
+// Agents maps agent name -> agent entry (model + optional fallback).
+type Agents map[string]AgentEntry
 
 // localConfigPath returns the local config path in the given working directory.
 func localConfigPath(wd string) string {
@@ -100,6 +137,7 @@ func SaveLocal(a Agents, wd string) error {
 
 // SetAgent sets an agent name to a model string and saves to the appropriate location.
 // If a local config exists, saves locally; otherwise saves globally.
+// Preserves any existing fallback configuration for the agent.
 func SetAgent(name, model string) error {
 	if name == "" {
 		return fmt.Errorf("agent name is required")
@@ -115,7 +153,12 @@ func SetAgent(name, model string) error {
 	if agents == nil {
 		agents = make(Agents)
 	}
-	agents[name] = model
+	entry, ok := agents[name]
+	if !ok {
+		entry = AgentEntry{}
+	}
+	entry.Model = model
+	agents[name] = entry
 
 	// If local config exists, save locally; otherwise globally
 	if _, err := os.Stat(lPath); err == nil {
@@ -131,7 +174,65 @@ func GetAgent(name string) (string, bool) {
 		return "", false
 	}
 	v, ok := agents[name]
+	if !ok {
+		return "", false
+	}
+	return v.Model, true
+}
+
+// GetAgentEntry returns the full AgentEntry for a given agent name.
+func GetAgentEntry(name string) (AgentEntry, bool) {
+	agents, err := LoadAgents()
+	if err != nil || agents == nil {
+		return AgentEntry{}, false
+	}
+	v, ok := agents[name]
 	return v, ok
+}
+
+// GetFallbackModels returns the fallback models for a given agent name.
+// Returns nil if agent has no fallback configured.
+func GetFallbackModels(name string) []string {
+	agents, err := LoadAgents()
+	if err != nil || agents == nil {
+		return nil
+	}
+	v, ok := agents[name]
+	if !ok {
+		return nil
+	}
+	return v.Fallback
+}
+
+// SetFallback sets the fallback models for an agent and saves config.
+// If fallbacks is empty, removes fallback configuration.
+func SetFallback(name string, fallbacks []string) error {
+	if name == "" {
+		return fmt.Errorf("agent name is required")
+	}
+
+	wd, _ := os.Getwd()
+	lPath := localConfigPath(wd)
+
+	agents, _ := LoadAgents()
+	if agents == nil {
+		agents = make(Agents)
+	}
+
+	entry, ok := agents[name]
+	if !ok {
+		// Agent doesn't exist yet — create it with empty model
+		entry = AgentEntry{}
+	}
+
+	entry.Fallback = fallbacks
+	agents[name] = entry
+
+	// If local config exists, save locally; otherwise globally
+	if _, err := os.Stat(lPath); err == nil {
+		return SaveLocal(agents, wd)
+	}
+	return SaveGlobal(agents)
 }
 
 // DeleteAgent removes an agent by name. "default" cannot be deleted.
@@ -238,7 +339,12 @@ func DisplayAgents() error {
 	fmt.Fprintf(os.Stderr, "Config: %s\n\n", path)
 	fmt.Println("Agents:")
 	for _, name := range names {
-		fmt.Printf("  %-20s  %s\n", name, agents[name])
+		entry := agents[name]
+		modelStr := entry.Model
+		if len(entry.Fallback) > 0 {
+			modelStr += fmt.Sprintf("  (fallback: %s)", strings.Join(entry.Fallback, ", "))
+		}
+		fmt.Printf("  %-20s  %s\n", name, modelStr)
 	}
 	return nil
 }
@@ -269,7 +375,12 @@ func SetLocal(name, model string) error {
 	if agents == nil {
 		agents = make(Agents)
 	}
-	agents[name] = model
+	entry, ok := agents[name]
+	if !ok {
+		entry = AgentEntry{}
+	}
+	entry.Model = model
+	agents[name] = entry
 	return SaveLocal(agents, wd)
 }
 
