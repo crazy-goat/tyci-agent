@@ -117,3 +117,24 @@ func buildUsageLine(usage stream.Usage, stats stream.Stats) string {
 	)
 	return parts
 }
+
+// buildUsageLineNoTiming formats usage without timing stats.
+// Used for session totals where timing (per-request) is not meaningful.
+func buildUsageLineNoTiming(usage stream.Usage) string {
+	inNew := usage.Input - usage.CacheRead
+	if inNew < 0 {
+		inNew = 0
+	}
+	parts := fmt.Sprintf("in=%d", inNew)
+	if usage.CacheRead > 0 {
+		parts += fmt.Sprintf(" (+%d cache)", usage.CacheRead)
+	}
+	parts += fmt.Sprintf(" out=%d", usage.Output)
+	if usage.Reasoning > 0 {
+		parts += fmt.Sprintf(" r=%d", usage.Reasoning)
+	}
+	if usage.CacheWrite > 0 {
+		parts += fmt.Sprintf(" cache_w=%d", usage.CacheWrite)
+	}
+	return parts
+}

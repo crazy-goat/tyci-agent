@@ -1680,8 +1680,10 @@ func (t *TUI) Reset() {
 }
 
 // ShowTotalUsage displays accumulated total usage after a reset (/new).
+// Timing stats (t=, ttft=, tok/s) are per-request and not meaningful for
+// session totals, so we build the line manually without them.
 func (t *TUI) ShowTotalUsage(usage stream.Usage) {
-	line := buildUsageLine(usage, stream.Stats{})
+	line := buildUsageLineNoTiming(usage)
 	t.post(tuiMsgBlock{kind: "block", content: "───── new conversation ─────"})
 	t.post(tuiMsgBlock{kind: "block", content: "📊 Session total: " + line})
 }
