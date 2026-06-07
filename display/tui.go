@@ -62,6 +62,9 @@ type block struct {
 	// Markdown rendering cache (for "thinking" and "text" blocks)
 	rendered string // cached ANSI-rendered output
 	dirty    bool   // content changed since last render
+
+	// Render caches
+	cachedLineCount int // number of display lines for this block (0 = not computed)
 }
 
 func defaultMaxLines(toolName string) int {
@@ -119,9 +122,13 @@ type TuiModel struct {
 	subagentModalDone    bool            // true when subagent finished (ESC to close)
 
 	// Markdown render cache maps (keyed by block index)
-	dirtyBlocks     map[int]bool      // block indices with content changed
-	lastRenderTime  map[int]time.Time // last glamour render per block
-	mdCacheRendered map[int]string    // cached rendered ANSI output per block
+	dirtyBlocks      map[int]bool   // block indices with content changed
+	mdCacheRendered  map[int]string // cached rendered ANSI output per block
+	streamingCache   map[int]string // cached wrapRawText output during streaming
+	toolDisplayCache map[int]string // cached formatToolCall result per tool block index
+
+	// Total line count cache (invalidated on block add/change/resize)
+	cachedTotalLines int
 
 	submitResult chan<- string
 	toolQueue    []int // FIFO of block indices for ToolCallStart->ToolCallEnd matching
@@ -174,9 +181,11 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		historyPath:   historyPath,
 		subagentModalToolIdx: -1,
 		subagentModalContent: &strings.Builder{},
-		dirtyBlocks:   make(map[int]bool),
-		lastRenderTime: make(map[int]time.Time),
-		mdCacheRendered: make(map[int]string),
+		dirtyBlocks:      make(map[int]bool),
+		mdCacheRendered:  make(map[int]string),
+		streamingCache:   make(map[int]string),
+		toolDisplayCache: make(map[int]string),
+		cachedTotalLines: -1,
 	}
 }
 
@@ -202,6 +211,8 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(max(10, msg.Width-2))
+		// Width change invalidates all line-count caches (wrap depends on width)
+		m.invalidateAllBlockLineCounts()
 		m.clampScroll()
 		return m, nil
 
@@ -699,24 +710,59 @@ func truncateString(s string, maxLen int) string {
 
 // totalRenderedLines returns the total number of terminal lines all blocks would
 // occupy when rendered, including separator blank lines between blocks.
+// Uses cached value when available; call invalidateTotalLines() to force recompute.
 func (m *TuiModel) totalRenderedLines() int {
+	if m.cachedTotalLines >= 0 {
+		return m.cachedTotalLines
+	}
 	total := 0
 	for i, b := range m.blocks {
-		rendered := m.renderBlock(i, b)
-		if rendered == "" {
+		if b.cachedLineCount > 0 {
+			total += b.cachedLineCount
+		} else {
+			rendered := m.renderBlock(i, b)
+			if rendered == "" {
+				continue
+			}
+			lc := lineCount(rendered)
+			m.blocks[i].cachedLineCount = lc
+			total += lc
+		}
+		// Separator blank line between blocks (skip between consecutive tool blocks)
+		if i+1 < len(m.blocks) && m.blocks[i+1].kind == "tool" && b.kind == "tool" {
 			continue
 		}
-		lines := strings.Split(rendered, "\n")
-		// Each block ends with a blank separator line
-		total += len(lines) + 1
+		total++
 	}
-	// Remove trailing blank if there are blocks (last block's separator)
-	// We'll keep it for simplicity
+	if total > 0 && len(m.blocks) > 0 {
+		// Remove trailing blank line
+		total--
+	}
+	m.cachedTotalLines = total
 	return total
+}
+
+// invalidateTotalLines forces recomputation of cached line counts.
+func (m *TuiModel) invalidateTotalLines() {
+	m.cachedTotalLines = -1
+}
+
+// invalidateAllBlockLineCounts clears per-block line counts and total line cache.
+// Called on resize since wrap width changes.
+func (m *TuiModel) invalidateAllBlockLineCounts() {
+	for i := range m.blocks {
+		m.blocks[i].cachedLineCount = 0
+	}
+	m.streamingCache = make(map[int]string)
+	m.mdCacheRendered = make(map[int]string)
+	m.cachedTotalLines = -1
 }
 
 // clampScroll ensures scrollLine is within valid range.
 func (m *TuiModel) clampScroll() {
+	if m.scrollLine == 0 {
+		return // auto-scrolling, no need to compute max
+	}
 	maxLine := m.totalRenderedLines()
 	if m.scrollLine > maxLine {
 		m.scrollLine = maxLine
@@ -747,6 +793,7 @@ func (m TuiModel) submit() tea.Model {
 	m.historyIdx = -1
 	m.reading = false
 	m.blocks = append(m.blocks, block{kind: "text", content: "You: " + line})
+	m.invalidateTotalLines()
 	if m.submitResult != nil {
 		m.submitResult <- line
 	}
@@ -815,6 +862,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 				bidx := m.toolQueue[m.subagentModalToolIdx]
 				if bidx >= 0 && bidx < len(m.blocks) && m.blocks[bidx].kind == "tool" {
 					m.blocks[bidx].content = "subagent (" + m.subagentModalTitle + ")"
+					delete(m.toolDisplayCache, bidx)
 				}
 			}
 		} else {
@@ -880,8 +928,10 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.lastUsage = stream.Usage{}
 		m.lastStats = stream.Stats{}
 		m.dirtyBlocks = make(map[int]bool)
-		m.lastRenderTime = make(map[int]time.Time)
 		m.mdCacheRendered = make(map[int]string)
+		m.streamingCache = make(map[int]string)
+		m.toolDisplayCache = make(map[int]string)
+		m.cachedTotalLines = -1
 		m.subagentModalActive = false
 		m.subagentModalContent.Reset()
 	}
@@ -889,6 +939,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 }
 
 func (m *TuiModel) appendOrAppend(kind, content string) {
+	m.invalidateTotalLines()
 	if len(m.blocks) == 0 {
 		idx := 0
 		m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
@@ -900,7 +951,11 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 		last.content += content
 		last.dirty = true
 		last.rendered = "" // invalidate cache
-		m.dirtyBlocks[len(m.blocks)-1] = true
+		last.cachedLineCount = 0
+		idx := len(m.blocks) - 1
+		m.dirtyBlocks[idx] = true
+		delete(m.streamingCache, idx)
+		delete(m.mdCacheRendered, idx)
 		return
 	}
 	// New block type starting → force-render all dirty blocks immediately
@@ -963,20 +1018,33 @@ func (m TuiModel) renderMarkdown(content string, useBar bool) string {
 // markdown formatting. Called when a block finishes (new block type starts
 // or streaming ends).
 func (m *TuiModel) forceRenderDirtyBlocks() {
+	m.invalidateTotalLines()
 	for idx := range m.dirtyBlocks {
+		if !m.dirtyBlocks[idx] {
+			delete(m.dirtyBlocks, idx)
+			continue
+		}
 		if idx >= 0 && idx < len(m.blocks) {
 			b := m.blocks[idx]
 			if b.kind == "thinking" || b.kind == "text" {
 				rendered := m.renderMarkdown(b.content, b.kind == "thinking")
 				if rendered != "" {
 					m.mdCacheRendered[idx] = rendered
+					m.blocks[idx].cachedLineCount = lineCount(rendered)
 				}
-				m.dirtyBlocks[idx] = false
-				delete(m.lastRenderTime, idx)
+				delete(m.dirtyBlocks, idx)
+				delete(m.streamingCache, idx)
+			} else if b.kind == "error" || b.kind == "block" {
+				rendered := renderErrorOrBlock(b, m.width)
+				if rendered != "" {
+					m.mdCacheRendered[idx] = rendered
+					m.blocks[idx].cachedLineCount = lineCount(rendered)
+				}
+				delete(m.dirtyBlocks, idx)
+				delete(m.streamingCache, idx)
 			} else {
-				// For non-markdown blocks, just mark as not dirty
-				m.dirtyBlocks[idx] = false
-				delete(m.lastRenderTime, idx)
+				delete(m.dirtyBlocks, idx)
+				delete(m.streamingCache, idx)
 			}
 		}
 	}
@@ -986,6 +1054,7 @@ func (m *TuiModel) appendToLastTool(delta string) {
 	for i := len(m.blocks) - 1; i >= 0; i-- {
 		if m.blocks[i].kind == "tool" {
 			m.blocks[i].content += delta
+			delete(m.toolDisplayCache, i)
 			return
 		}
 	}
@@ -1519,15 +1588,23 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 		// Markdown rendering only happens when block finishes (idle or
 		// forceRenderDirtyBlocks called at block boundary).
 		if dirty && isStreaming {
-			return wrapRawText(content, useBar, m.width)
+			if sc, ok := m.streamingCache[idx]; ok {
+				return sc
+			}
+			wrapped := wrapRawText(content, useBar, m.width)
+			m.streamingCache[idx] = wrapped
+			m.blocks[idx].cachedLineCount = lineCount(wrapped)
+			return wrapped
 		}
 
 		// Not streaming → do glamour render (final rendering)
 		rendered := m.renderMarkdown(content, useBar)
 		// Update cache
-		m.lastRenderTime[idx] = time.Now()
-		m.dirtyBlocks[idx] = false
+		delete(m.dirtyBlocks, idx)
+		delete(m.streamingCache, idx)
 		m.mdCacheRendered[idx] = rendered
+		m.blocks[idx].cachedLineCount = lineCount(rendered)
+		delete(m.streamingCache, idx)
 		return rendered
 	}
 
@@ -1537,59 +1614,60 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 	case "text":
 		return tryRenderMarkdown(b.content, false)
 	case "tool":
-		return m.renderToolBlock(b)
+		return m.renderToolBlock(idx, b)
 	case "usage":
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("247")).Render("📊 " + b.content)
 	case "error":
-		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│")
-		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Italic(true)
-		maxW := m.width - 2
-		if maxW < 10 {
-			maxW = 10
+		if cached, ok := m.mdCacheRendered[idx]; ok && cached != "" && !m.dirtyBlocks[idx] {
+			return cached
 		}
-		var out strings.Builder
-		for _, line := range strings.Split(b.content, "\n") {
-			wrapped := wrapText(line, maxW, 0)
-			for _, wl := range strings.Split(wrapped, "\n") {
-				wl = strings.TrimSuffix(wl, clearLine)
-				out.WriteString(bar)
-				out.WriteString(" ")
-				out.WriteString(textStyle.Render(wl))
-				out.WriteString("\n")
-			}
-		}
-		return strings.TrimRight(out.String(), "\n")
+		return renderErrorOrBlock(b, m.width)
 	case "block":
-		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│")
-		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Italic(true)
-		maxW := m.width - 2
-		if maxW < 10 {
-			maxW = 10
+		if cached, ok := m.mdCacheRendered[idx]; ok && cached != "" && !m.dirtyBlocks[idx] {
+			return cached
 		}
-		var out strings.Builder
-		for _, line := range strings.Split(b.content, "\n") {
-			wrapped := wrapText(line, maxW, 0)
-			for _, wl := range strings.Split(wrapped, "\n") {
-				wl = strings.TrimSuffix(wl, clearLine)
-				out.WriteString(bar)
-				out.WriteString(" ")
-				out.WriteString(textStyle.Render(wl))
-				out.WriteString("\n")
-			}
-		}
-		return strings.TrimRight(out.String(), "\n")
+		return renderErrorOrBlock(b, m.width)
 	default:
 		return b.content
 	}
 }
 
-func (m TuiModel) renderToolBlock(b block) string {
+// renderErrorOrBlock renders error and block type blocks (no glamour, just wrapText).
+func renderErrorOrBlock(b block, width int) string {
+	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│")
+	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Italic(true)
+	if b.kind == "block" {
+		bar = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Render("│")
+		textStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Italic(true)
+	}
+	maxW := width - 2
+	if maxW < 10 {
+		maxW = 10
+	}
+	var out strings.Builder
+	for _, line := range strings.Split(b.content, "\n") {
+		wrapped := wrapText(line, maxW, 0)
+		for _, wl := range strings.Split(wrapped, "\n") {
+			wl = strings.TrimSuffix(wl, clearLine)
+			out.WriteString(bar)
+			out.WriteString(" ")
+			out.WriteString(textStyle.Render(wl))
+			out.WriteString("\n")
+		}
+	}
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func (m TuiModel) renderToolBlock(idx int, b block) string {
 	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("┃")
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
-	// Build display line: toolname(arg)
-	line := formatToolCall(b.toolName, b.content)
+	line, ok := m.toolDisplayCache[idx]
+	if !ok {
+		line = formatToolCall(b.toolName, b.content)
+		m.toolDisplayCache[idx] = line
+	}
 
 	if b.toolState == "running" {
 		line += " ⟳"
@@ -1867,6 +1945,17 @@ func (t *TUI) Close() { t.prog.Quit() }
 func max(a, b int) int {
 	if a > b { return a }
 	return b
+}
+
+// lineCount returns the number of newline-delimited lines in s.
+func lineCount(s string) int {
+	n := 1
+	for _, r := range s {
+		if r == '\n' {
+			n++
+		}
+	}
+	return n
 }
 
 // wrapRawText wraps content as plain text (no glamour markdown).

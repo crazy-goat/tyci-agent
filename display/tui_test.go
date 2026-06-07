@@ -110,7 +110,7 @@ func TestTuiModel_RenderToolBlock_ShowsFrozenDuration(t *testing.T) {
 		duration:  1234 * time.Millisecond, // 1.23s
 	}
 
-	rendered := m.renderToolBlock(b)
+	rendered := m.renderToolBlock(0, b)
 
 	if !strings.Contains(rendered, "1.23s") {
 		t.Errorf("expected rendered block to contain '1.23s', got %q", rendered)
@@ -130,7 +130,7 @@ func TestTuiModel_RenderToolBlock_RunningShowsSpinner(t *testing.T) {
 		duration:  0,
 	}
 
-	rendered := m.renderToolBlock(b)
+	rendered := m.renderToolBlock(0, b)
 
 	if !strings.Contains(rendered, "⟳") {
 		t.Errorf("expected running tool to show spinner, got %q", rendered)
@@ -177,7 +177,7 @@ func TestTuiModel_RenderToolBlock_FormatToolCall(t *testing.T) {
 				toolState: "done",
 				duration:  time.Second,
 			}
-			rendered := m.renderToolBlock(b)
+			rendered := m.renderToolBlock(0, b)
 			if !strings.Contains(rendered, tt.want) {
 				t.Errorf("expected %q in rendered output, got %q", tt.want, rendered)
 			}
