@@ -54,8 +54,9 @@ type block struct {
 	toolState string // "running","done"
 	collapsed bool
 	maxLines  int
-	output    string    // full tool output (for modal)
-	startTime time.Time // when the tool was started (for duration display)
+	output    string        // full tool output (for modal)
+	startTime time.Time     // when the tool was started (for duration display)
+	duration  time.Duration // frozen duration when tool finished (0 = still running)
 }
 
 func defaultMaxLines(toolName string) int {
@@ -815,6 +816,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 				m.toolQueue = m.toolQueue[1:]
 				if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].kind == "tool" {
 					m.blocks[idx].toolState = "done"
+					m.blocks[idx].duration = time.Since(m.blocks[idx].startTime)
 				}
 			}
 			m.subagentModalDone = true
@@ -904,6 +906,7 @@ func (m *TuiModel) finishToolAt(result string) {
 			m.blocks[idx].output += result
 		}
 		m.blocks[idx].toolState = "done"
+		m.blocks[idx].duration = time.Since(m.blocks[idx].startTime)
 	}
 }
 
@@ -1471,7 +1474,10 @@ func (m TuiModel) renderToolBlock(b block) string {
 	if b.toolState == "running" {
 		line += " ⟳"
 	} else if b.toolState == "done" {
-		dur := time.Since(b.startTime)
+		dur := b.duration
+		if dur == 0 {
+			dur = time.Since(b.startTime) // fallback, shouldn't happen
+		}
 		line += " " + formatDuration(dur)
 		line += " " + hintStyle.Render("- click to display")
 	}
