@@ -1045,12 +1045,24 @@ func (m TuiModel) View() string {
 	rendered := 0
 	for i := startIdx; i < totalLines && rendered < msgHeight; i++ {
 		line := allLines[i].text
-		if m.width > 0 && len(line) > m.width-1 {
-			line = line[:m.width-4] + "..."
+		if m.width > 0 && lipgloss.Width(line) > m.width {
+			// Wrap long lines instead of truncating with "..."
+			wrapped := wrapText(line, m.width, 0)
+			wrappedLines := strings.Split(wrapped, "\n")
+			for _, wl := range wrappedLines {
+				if rendered >= msgHeight {
+					break
+				}
+				wl = strings.TrimSuffix(wl, clearLine)
+				b.WriteString(wl)
+				b.WriteString("\n")
+				rendered++
+			}
+		} else {
+			b.WriteString(line)
+			b.WriteString("\n")
+			rendered++
 		}
-		b.WriteString(line)
-		b.WriteString("\n")
-		rendered++
 	}
 	for rendered < msgHeight {
 		b.WriteString("\n")
@@ -1178,9 +1190,9 @@ func (m TuiModel) renderSubagentModalView() string {
 
 	for i := visibleStart; i < visibleEnd; i++ {
 		line := allLines[i]
-		// Truncate long lines
+		// Truncate long lines (no "...", just cut)
 		if len(line) > popupWidth-4 {
-			line = line[:popupWidth-7] + "..."
+			line = line[:popupWidth-4]
 		}
 		contentLines = append(contentLines, lineStyle.Render(line))
 	}
@@ -1384,16 +1396,39 @@ func (m TuiModel) renderBlock(b block) string {
 	case "thinking":
 		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
 		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
-		lines := strings.Split(b.content, "\n")
+		maxW := m.width - 2
+		if maxW < 10 {
+			maxW = 10
+		}
 		var out strings.Builder
-		for _, line := range lines {
-			out.WriteString(bar)
-			out.WriteString(" ")
-			out.WriteString(textStyle.Render(line))
-			out.WriteString("\n")
+		for _, line := range strings.Split(b.content, "\n") {
+			wrapped := wrapText(line, maxW, 0)
+			for _, wl := range strings.Split(wrapped, "\n") {
+				wl = strings.TrimSuffix(wl, clearLine)
+				out.WriteString(bar)
+				out.WriteString(" ")
+				out.WriteString(textStyle.Render(wl))
+				out.WriteString("\n")
+			}
 		}
 		return strings.TrimRight(out.String(), "\n")
 	case "text":
+		if m.width > 0 {
+			maxW := m.width
+			if maxW < 10 {
+				maxW = 10
+			}
+			var out strings.Builder
+			for _, line := range strings.Split(b.content, "\n") {
+				wrapped := wrapText(line, maxW, 0)
+				for _, wl := range strings.Split(wrapped, "\n") {
+					wl = strings.TrimSuffix(wl, clearLine)
+					out.WriteString(wl)
+					out.WriteString("\n")
+				}
+			}
+			return strings.TrimRight(out.String(), "\n")
+		}
 		return b.content
 	case "tool":
 		return m.renderToolBlock(b)
@@ -1402,25 +1437,39 @@ func (m TuiModel) renderBlock(b block) string {
 	case "error":
 		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│")
 		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Italic(true)
-		lines := strings.Split(b.content, "\n")
+		maxW := m.width - 2
+		if maxW < 10 {
+			maxW = 10
+		}
 		var out strings.Builder
-		for _, line := range lines {
-			out.WriteString(bar)
-			out.WriteString(" ")
-			out.WriteString(textStyle.Render(line))
-			out.WriteString("\n")
+		for _, line := range strings.Split(b.content, "\n") {
+			wrapped := wrapText(line, maxW, 0)
+			for _, wl := range strings.Split(wrapped, "\n") {
+				wl = strings.TrimSuffix(wl, clearLine)
+				out.WriteString(bar)
+				out.WriteString(" ")
+				out.WriteString(textStyle.Render(wl))
+				out.WriteString("\n")
+			}
 		}
 		return strings.TrimRight(out.String(), "\n")
 	case "block":
 		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│")
 		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Italic(true)
-		lines := strings.Split(b.content, "\n")
+		maxW := m.width - 2
+		if maxW < 10 {
+			maxW = 10
+		}
 		var out strings.Builder
-		for _, line := range lines {
-			out.WriteString(bar)
-			out.WriteString(" ")
-			out.WriteString(textStyle.Render(line))
-			out.WriteString("\n")
+		for _, line := range strings.Split(b.content, "\n") {
+			wrapped := wrapText(line, maxW, 0)
+			for _, wl := range strings.Split(wrapped, "\n") {
+				wl = strings.TrimSuffix(wl, clearLine)
+				out.WriteString(bar)
+				out.WriteString(" ")
+				out.WriteString(textStyle.Render(wl))
+				out.WriteString("\n")
+			}
 		}
 		return strings.TrimRight(out.String(), "\n")
 	default:

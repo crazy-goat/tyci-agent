@@ -399,3 +399,202 @@ func TestTuiModel_View_BlankLineBetweenToolAndText(t *testing.T) {
 		t.Error("expected blank line between tool block and text block, but none found")
 	}
 }
+
+// ─── Wrapping tests for renderBlock ──────────────────────────────────────
+
+func TestTuiModel_RenderBlock_Thinking_WrapsLongLines(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 30 // narrow terminal
+
+	line := "this is a very long thinking line that should definitely be wrapped because it exceeds thirty characters"
+	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: line})
+
+	rendered := m.renderBlock(m.blocks[0])
+	lines := strings.Split(rendered, "\n")
+
+	// Should produce multiple lines (each starts with │)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped thinking (multiple lines), got %d line(s): %q", len(lines), rendered)
+	}
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "│") {
+			t.Errorf("each thinking line should start with │, got: %q", l)
+		}
+		// Each visible line should be ≤ m.width
+		visible := strings.TrimPrefix(l, "│ ")
+		if len(visible) > m.width {
+			t.Errorf("line too long: %d chars (max %d): %q", len(visible), m.width, visible)
+		}
+	}
+}
+
+func TestTuiModel_RenderBlock_Thinking_ShortLinesStaySingle(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 80
+
+	line := "short thought"
+	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: line})
+
+	rendered := m.renderBlock(m.blocks[0])
+	lines := strings.Split(rendered, "\n")
+
+	if len(lines) != 1 {
+		t.Fatalf("expected single line, got %d: %q", len(lines), rendered)
+	}
+	if !strings.HasPrefix(lines[0], "│") {
+		t.Errorf("should start with │, got: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "short thought") {
+		t.Errorf("should contain original text, got: %q", lines[0])
+	}
+}
+
+func TestTuiModel_RenderBlock_Text_WrapsLongLines(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 20
+
+	line := "this is a very long line that should wrap"
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: line})
+
+	rendered := m.renderBlock(m.blocks[0])
+	lines := strings.Split(rendered, "\n")
+
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped text (multiple lines), got %d line(s): %q", len(lines), rendered)
+	}
+	for _, l := range lines {
+		if len(l) > m.width {
+			t.Errorf("line too long: %d chars (max %d): %q", len(l), m.width, l)
+		}
+	}
+	if !strings.Contains(rendered, "this is a very long") {
+		t.Errorf("should contain original text, got: %q", rendered)
+	}
+}
+
+func TestTuiModel_RenderBlock_Text_ShortLinesStaySingle(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 80
+
+	line := "short text"
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: line})
+
+	rendered := m.renderBlock(m.blocks[0])
+	lines := strings.Split(rendered, "\n")
+
+	if len(lines) != 1 {
+		t.Fatalf("expected single line, got %d: %q", len(lines), rendered)
+	}
+	if lines[0] != "short text" {
+		t.Errorf("expected 'short text', got %q", lines[0])
+	}
+}
+
+func TestTuiModel_RenderBlock_Error_WrapsLongLines(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 25
+
+	line := "this is a very long error message that must be wrapped"
+	m.handleBlockMsg(tuiMsgBlock{kind: "error", content: line})
+
+	rendered := m.renderBlock(m.blocks[0])
+	lines := strings.Split(rendered, "\n")
+
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped error (multiple lines), got %d line(s): %q", len(lines), rendered)
+	}
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "│") {
+			t.Errorf("each error line should start with │, got: %q", l)
+		}
+		visible := strings.TrimPrefix(l, "│ ")
+		if len(visible) > m.width {
+			t.Errorf("line too long: %d chars (max %d): %q", len(visible), m.width, visible)
+		}
+	}
+}
+
+func TestTuiModel_RenderBlock_Block_WrapsLongLines(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 30
+
+	line := "this is a very long block message that should be wrapped properly"
+	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: line})
+
+	rendered := m.renderBlock(m.blocks[0])
+	lines := strings.Split(rendered, "\n")
+
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped block (multiple lines), got %d line(s): %q", len(lines), rendered)
+	}
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "│") {
+			t.Errorf("each block line should start with │, got: %q", l)
+		}
+	}
+}
+
+func TestTuiModel_RenderBlock_Text_MultipleShortLines(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 80
+
+	text := "line one\nline two\nline three"
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: text})
+
+	rendered := m.renderBlock(m.blocks[0])
+	lines := strings.Split(rendered, "\n")
+
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d: %q", len(lines), rendered)
+	}
+	if lines[0] != "line one" {
+		t.Errorf("line 0: expected 'line one', got %q", lines[0])
+	}
+	if lines[1] != "line two" {
+		t.Errorf("line 1: expected 'line two', got %q", lines[1])
+	}
+	if lines[2] != "line three" {
+		t.Errorf("line 2: expected 'line three', got %q", lines[2])
+	}
+}
+
+func TestTuiModel_View_WrapsLongLinesInAllBlocks(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 30
+	m.height = 40
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "this is a very long thinking line that must wrap due to width limitation"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "this is a very long text response that should also be wrapped to fit"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "this is a very long block message that also must wrap"})
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+
+	// Only check lines in the message area (before status bar)
+	// Status bar is the first line starting with a space followed by model name
+	// Input area starts after status bar
+	msgLines := lines
+	for i, l := range lines {
+		if strings.HasPrefix(l, " ") && len(l) > 5 && strings.TrimSpace(l) != "" {
+			// This is the status bar - message area ends here
+			msgLines = lines[:i]
+			break
+		}
+	}
+
+	tooLong := 0
+	for _, l := range msgLines {
+		if l == "" {
+			continue
+		}
+		vw := visibleWidth(l)
+		if vw > m.width {
+			tooLong++
+			t.Logf("too long: vw=%d %q", vw, l)
+		}
+	}
+	if tooLong > 0 {
+		t.Errorf("expected no lines exceeding width %d, found %d too long in message area", m.width, tooLong)
+	}
+}
