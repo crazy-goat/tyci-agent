@@ -442,6 +442,7 @@ func replaySessionToDisplay(disp display.Display, sessionPath string) {
 	hasUsage := false
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
