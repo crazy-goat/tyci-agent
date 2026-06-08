@@ -154,11 +154,7 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 
 		case res := <-resultCh:
 			iterCancel()
-			totalUsage.Input += res.usage.Input
-			totalUsage.Output += res.usage.Output
-			totalUsage.Reasoning += res.usage.Reasoning
-			totalUsage.CacheRead += res.usage.CacheRead
-			totalUsage.CacheWrite += res.usage.CacheWrite
+			totalUsage.Add(res.usage)
 
 			tuiDisp.Done(res.usage, stream.Stats{})
 

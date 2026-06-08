@@ -45,11 +45,7 @@ func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichM
 		// Try the fallback
 		more, usage, err := runOnce(ctx, fbProvider, d, msgs, cfg.withModel(fbModel))
 		if usage != nil {
-			totalUsage.Input += usage.Input
-			totalUsage.Output += usage.Output
-			totalUsage.Reasoning += usage.Reasoning
-			totalUsage.CacheRead += usage.CacheRead
-			totalUsage.CacheWrite += usage.CacheWrite
+			totalUsage.Add(*usage)
 		}
 		if err != nil {
 			lastErr = err
