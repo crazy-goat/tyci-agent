@@ -100,16 +100,16 @@ type TuiModel struct {
 	modelName     string // model name shown in status bar
 
 	// Model switching (Tab/Shift+Tab)
-	models        []string        // available models (format: "provider/model")
-	modelIdx      int             // index of current model in models slice
-	modelChanges  chan<- string   // channel to notify outer TUI of model changes
+	models       []string      // available models (format: "provider/model")
+	modelIdx     int           // index of current model in models slice
+	modelChanges chan<- string // channel to notify outer TUI of model changes
 
 	// Model picker (/model command)
-	pickerActive  bool
-	pickerFilter  string
-	pickerCursor  int              // index into pickerItems (only model entries)
-	pickerItems   []pickerItem     // filtered list for display
-	allProviders  []ProviderModels // grouped provider->models for the picker
+	pickerActive bool
+	pickerFilter string
+	pickerCursor int              // index into pickerItems (only model entries)
+	pickerItems  []pickerItem     // filtered list for display
+	allProviders []ProviderModels // grouped provider->models for the picker
 
 	// Cancel signal: sent on when ESC pressed during agent run
 	cancelCh chan<- struct{}
@@ -125,11 +125,11 @@ type TuiModel struct {
 
 	// Subagent modal (live streaming output from child agents)
 	subagentModalActive  bool
-	subagentModalTitle   string          // task description (first ~60 chars)
+	subagentModalTitle   string           // task description (first ~60 chars)
 	subagentModalContent *strings.Builder // accumulated output
-	subagentModalScroll  int             // scroll offset within modal
-	subagentModalToolIdx int             // tool queue index for this modal
-	subagentModalDone    bool            // true when subagent finished (ESC to close)
+	subagentModalScroll  int              // scroll offset within modal
+	subagentModalToolIdx int              // tool queue index for this modal
+	subagentModalDone    bool             // true when subagent finished (ESC to close)
 
 	// Resize debounce
 	resizePending bool // if true, a resize is pending debounce
@@ -149,10 +149,10 @@ type TuiModel struct {
 	toolQueue    []int // FIFO of block indices for ToolCallStart->ToolCallEnd matching
 
 	// Input history for Up/Down navigation
-	inputHistory  []string
-	historyIdx    int    // -1 = current input, 0..len-1 = browsing history
-	stashedInput  string // saved current input while browsing history
-	historyPath   string // path to history file for persistence
+	inputHistory []string
+	historyIdx   int    // -1 = current input, 0..len-1 = browsing history
+	stashedInput string // saved current input while browsing history
+	historyPath  string // path to history file for persistence
 }
 
 func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}) TuiModel {
@@ -179,30 +179,30 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 	}
 
 	return TuiModel{
-		blocks:        make([]block, 0, 1024),
-		input:         ta,
-		submitResult:  submitResult,
-		ready:         true,
-		reading:       true,
-		toolQueue:     make([]int, 0, 16),
-		modelName:     modelName,
-		models:        models,
-		modelIdx:      modelIdx,
-		modelChanges:  modelChanges,
-		allProviders:  allProviders,
-		cancelCh:      cancelCh,
-		atBottom:      true,
-		savedAtBottom: true,
-		inputHistory:  loadTuiHistory(historyPath),
-		historyIdx:    -1,
-		historyPath:   historyPath,
+		blocks:               make([]block, 0, 1024),
+		input:                ta,
+		submitResult:         submitResult,
+		ready:                true,
+		reading:              true,
+		toolQueue:            make([]int, 0, 16),
+		modelName:            modelName,
+		models:               models,
+		modelIdx:             modelIdx,
+		modelChanges:         modelChanges,
+		allProviders:         allProviders,
+		cancelCh:             cancelCh,
+		atBottom:             true,
+		savedAtBottom:        true,
+		inputHistory:         loadTuiHistory(historyPath),
+		historyIdx:           -1,
+		historyPath:          historyPath,
 		subagentModalToolIdx: -1,
 		subagentModalContent: &strings.Builder{},
-		dirtyBlocks:      make(map[int]bool),
-		mdCacheRendered:  make(map[int]string),
-		streamingCache:   make(map[int]string),
-		toolDisplayCache: make(map[int]string),
-		cachedTotalLines: -1,
+		dirtyBlocks:          make(map[int]bool),
+		mdCacheRendered:      make(map[int]string),
+		streamingCache:       make(map[int]string),
+		toolDisplayCache:     make(map[int]string),
+		cachedTotalLines:     -1,
 	}
 }
 
@@ -851,7 +851,15 @@ func (m TuiModel) submit() tea.Model {
 	}
 	m.historyIdx = -1
 	m.reading = false
-	m.blocks = append(m.blocks, block{kind: "text", content: "You: " + line})
+	// User messages must not use kind "text": assistant text streams are
+	// coalesced with the previous text block while tokens arrive. If the user
+	// prompt were a text block too, the next assistant response could be appended
+	// to it, leaving stale render/scroll caches and breaking follow-to-bottom.
+	m.blocks = append(m.blocks, block{kind: "user", content: "You: " + line})
+	// A new prompt should always jump back to the live bottom, even if the user
+	// had scrolled up in the previous answer.
+	m.atBottom = true
+	m.scrollLine = 0
 	m.invalidateTotalLines()
 	m.clampScroll()
 	if m.submitResult != nil {
@@ -894,7 +902,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.blocks = append(m.blocks, block{
 			kind: "tool", toolName: msg.toolName,
 			toolState: "running", collapsed: true,
-			maxLines: defaultMaxLines(msg.toolName),
+			maxLines:  defaultMaxLines(msg.toolName),
 			startTime: time.Now(),
 		})
 		m.toolQueue = append(m.toolQueue, idx)
@@ -1505,7 +1513,7 @@ func (m TuiModel) renderSubagentModalView() string {
 		Bold(true).
 		Foreground(lipgloss.Color("252")).
 		Background(lipgloss.Color("60")).
-		Width(popupWidth - 2).
+		Width(popupWidth-2).
 		Padding(0, 1)
 	title := titleStyle.Render(fmt.Sprintf(" %s — %s ", m.subagentModalTitle, status))
 
@@ -1558,7 +1566,7 @@ func (m TuiModel) renderSubagentModalView() string {
 	}
 	footerStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245")).
-		Width(popupWidth - 2).
+		Width(popupWidth-2).
 		Padding(0, 1)
 	footer := footerStyle.Render(footerText)
 
@@ -1780,6 +1788,8 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 		return tryRenderMarkdown(b.content, true)
 	case "text":
 		return tryRenderMarkdown(b.content, false)
+	case "user":
+		return wrapRawText(b.content, false, m.width)
 	case "tool":
 		return m.renderToolBlock(idx, b)
 	case "usage":
@@ -2014,11 +2024,11 @@ func (m TuiModel) buildStatus() string {
 // ─── Public API ───────────────────────────────────────────────────────────
 
 type TUI struct {
-	prog          *tea.Program
-	results       chan string
-	modelChanges  chan string
-	cancel        chan struct{}    // sent on when ESC pressed during agent run
-	done          chan struct{}
+	prog         *tea.Program
+	results      chan string
+	modelChanges chan string
+	cancel       chan struct{} // sent on when ESC pressed during agent run
+	done         chan struct{}
 
 	// Streaming coalescing
 	mu             sync.Mutex
@@ -2036,13 +2046,13 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	t := &TUI{
-		prog:          p,
-		results:       results,
-		modelChanges:  modelChanges,
-		cancel:        cancel,
-		done:          make(chan struct{}),
-		flushTicker:   time.NewTicker(time.Second / 30), // ~30 FPS
-		flushDone:     make(chan struct{}),
+		prog:         p,
+		results:      results,
+		modelChanges: modelChanges,
+		cancel:       cancel,
+		done:         make(chan struct{}),
+		flushTicker:  time.NewTicker(time.Second / 30), // ~30 FPS
+		flushDone:    make(chan struct{}),
 	}
 
 	go t.flushLoop()
@@ -2248,11 +2258,13 @@ func (t *TUI) ReadInput(_ context.Context, _ string) (string, error) {
 	}
 }
 
-func (t *TUI) Wait() { <-t.done }
+func (t *TUI) Wait()  { <-t.done }
 func (t *TUI) Close() { t.prog.Quit() }
 
 func max(a, b int) int {
-	if a > b { return a }
+	if a > b {
+		return a
+	}
 	return b
 }
 
