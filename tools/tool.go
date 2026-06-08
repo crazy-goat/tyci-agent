@@ -50,14 +50,76 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
-			"name":        "read",
-			"description": "Read file contents. Text output is truncated to 2000 lines or 50KB (whichever first). Use offset (1-indexed line) and limit (max lines) for large files. Returns continuation hints when truncated.",
+				"name":        "glob",
+				"description": "Find files using glob patterns. Returns paths relative to cwd unless absolute=true.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"path":   map[string]any{"type": "string", "description": "File path to read"},
-						"offset": map[string]any{"type": "integer", "description": "Line number to start from (1-indexed). Use offset from continuation hint to continue reading."},
-						"limit":  map[string]any{"type": "integer", "description": "Maximum number of lines to read"},
+						"pattern":     map[string]any{"description": "Glob pattern or array, e.g. **/*.ts or src/**/*.{ts,tsx}"},
+						"cwd":         map[string]any{"type": "string", "description": "Base directory (default: .)"},
+						"exclude":     map[string]any{"description": "Glob pattern or array to exclude"},
+						"limit":       map[string]any{"type": "integer", "description": "Max paths (default: 500)"},
+						"includeDirs": map[string]any{"type": "boolean", "description": "Include directories (default: false)"},
+						"absolute":    map[string]any{"type": "boolean", "description": "Return absolute paths (default: false)"},
+					},
+					"required": []string{"pattern"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "grep",
+				"description": "Search file contents using text, regex, or whole-word mode. Returns matches with file and line numbers by default.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"pattern":       map[string]any{"type": "string", "description": "Text or regex to search for"},
+						"cwd":           map[string]any{"type": "string", "description": "Base directory (default: .)"},
+						"include":       map[string]any{"description": "Glob pattern or array to include (default: **/*)"},
+						"exclude":       map[string]any{"description": "Glob pattern or array to exclude"},
+						"mode":          map[string]any{"type": "string", "enum": []string{"text", "regex", "word"}, "description": "Search mode (default: text)"},
+						"caseSensitive": map[string]any{"type": "boolean", "description": "Case-sensitive search (default: true)"},
+						"context":       map[string]any{"type": "integer", "description": "Lines before/after each match (default: 0)"},
+						"limit":         map[string]any{"type": "integer", "description": "Max results (default: 100)"},
+						"output":        map[string]any{"type": "string", "enum": []string{"lines", "files", "count"}, "description": "Output format (default: lines)"},
+						"maxLineLength": map[string]any{"type": "integer", "description": "Trim long lines (default: 300)"},
+					},
+					"required": []string{"pattern"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "todo",
+				"description": "Manage a per-run in-memory todo list. Use for multi-step tasks. Returns the full list.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"action":   map[string]any{"type": "string", "enum": []string{"add", "update", "done", "remove", "list", "clear"}},
+						"id":       map[string]any{"type": "integer", "description": "Todo id for update/done/remove"},
+						"content":  map[string]any{"type": "string", "description": "Todo text"},
+						"status":   map[string]any{"type": "string", "enum": []string{"todo", "doing", "done", "blocked"}, "description": "Default: todo"},
+						"priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high"}, "description": "Default: normal"},
+						"parentId": map[string]any{"type": "integer", "description": "Optional parent todo id"},
+					},
+					"required": []string{"action"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "read",
+				"description": "Read file contents. Use offset/limit for ranges. Set lineNumbers=true when you need exact line numbers for edits.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path":        map[string]any{"type": "string", "description": "File path to read"},
+						"offset":      map[string]any{"type": "integer", "description": "Start line, 1-indexed"},
+						"limit":       map[string]any{"type": "integer", "description": "Maximum lines to read"},
+						"lineNumbers": map[string]any{"type": "boolean", "description": "Prefix lines as N| text (default: false)"},
 					},
 					"required": []string{"path"},
 				},
@@ -67,13 +129,13 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "write",
-				"description": "Write content to file",
+				"description": "Write file content. Overwrites by default. range can replace line(s) or append.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"path":    map[string]any{"type": "string", "description": "File path to write"},
 						"content": map[string]any{"type": "string", "description": "Content to write"},
-						"append":  map[string]any{"type": "boolean", "description": "Append to file instead of overwriting (optional, default: false)"},
+						"range":   map[string]any{"description": "Optional: line number, 'from...to' inclusive, 'all', or -1/'append'"},
 					},
 					"required": []string{"path", "content"},
 				},
@@ -120,8 +182,8 @@ func GetToolsSchema() []map[string]any {
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"task":        map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/edit/bash tools."},
-						"tasks":       map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
+						"task": map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/edit/bash tools."},
+						"tasks": map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
 							"task":        map[string]any{"type": "string", "description": "Clear task description for this parallel subtask. The child agent has read/write/edit/bash tools."},
 							"model":       map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
 							"temperature": map[string]any{"type": "number", "description": "Optional temperature (0.0-2.0)"},
@@ -170,6 +232,9 @@ func GetSubagentToolsSchemaJSON() json.RawMessage {
 
 var toolRegistry = map[string]Tool{
 	"bash":     &BashTool{},
+	"glob":     &GlobTool{},
+	"grep":     &GrepTool{},
+	"todo":     &TodoTool{},
 	"read":     &ReadTool{},
 	"write":    &WriteTool{},
 	"edit":     &EditTool{},

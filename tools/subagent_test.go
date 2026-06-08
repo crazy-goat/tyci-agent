@@ -79,8 +79,8 @@ func TestCollector_Concurrency(t *testing.T) {
 // mockOutput implements the parentOutput callback for testing streamingCollector.
 // It records each call: toolIdx and line.
 type mockOutput struct {
-	mu     sync.Mutex
-	calls  []outputCall
+	mu    sync.Mutex
+	calls []outputCall
 }
 
 type outputCall struct {

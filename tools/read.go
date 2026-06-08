@@ -21,13 +21,13 @@ const (
 
 // truncationResult holds info about truncation applied to the output.
 type truncationResult struct {
-	content             string
-	truncated           bool
-	truncatedBy         string // "lines", "bytes", or ""
-	totalLines          int
-	totalBytes          int
-	outputLines         int
-	firstLineExceeds    bool
+	content          string
+	truncated        bool
+	truncatedBy      string // "lines", "bytes", or ""
+	totalLines       int
+	totalBytes       int
+	outputLines      int
+	firstLineExceeds bool
 }
 
 // truncateHead keeps first N complete lines that fit within limits.
@@ -38,9 +38,9 @@ func truncateHead(text string, maxLines, maxBytes int) truncationResult {
 
 	if totalLines <= maxLines && totalBytes <= maxBytes {
 		return truncationResult{
-			content:   text,
-			totalLines: totalLines,
-			totalBytes: totalBytes,
+			content:     text,
+			totalLines:  totalLines,
+			totalBytes:  totalBytes,
 			outputLines: totalLines,
 		}
 	}
@@ -103,6 +103,7 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 
 	offset := intParam(input, "offset", 0)
 	limit := intParam(input, "limit", 0)
+	lineNumbers := boolParam(input, "lineNumbers", false)
 
 	// Sprawdź czy istnieje i czy to katalog (używamy Lstat żeby nie podążać za symlinkami)
 	info, err := os.Lstat(path)
@@ -186,6 +187,9 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	}
 
 	content := tr.content
+	if lineNumbers && content != "" {
+		content = addLineNumbers(content, startLineDisplay)
+	}
 
 	// Dodaj informację o kontynuacji jeśli truncation obciął
 	if tr.truncated {
@@ -207,6 +211,18 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	}
 
 	return ToolResult{Type: "result", Success: true, Content: content}
+}
+
+func addLineNumbers(content string, start int) string {
+	lines := strings.Split(content, "\n")
+	var b strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "%d| %s", start+i, line)
+	}
+	return b.String()
 }
 
 func listDirectory(path string) ToolResult {

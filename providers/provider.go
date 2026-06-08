@@ -38,11 +38,14 @@ Context:
 - Can use temp directory: %s
 
 Tools available:
-- read(path, offset?, limit?): read file contents (optional: line number to start from 1-indexed, max lines). Truncated to 2000 lines/50KB – use offset to continue.
-- write(path, content, append?): write content to file (optional: append mode)
-- edit(path, oldString, newString, replaceAll?): replace text in file (optional: replace all occurrences)
-- bash(description, command): run shell command (use when no other tool fits). Provide a short description of what the command does.
-- subagent(task, tasks?, model?, timeout?): delegate complex or independent tasks to a child agent with its own context. Use when a task is self-contained, can run in parallel, or needs separate reasoning. Returns result text.
+- glob(pattern, cwd?, exclude?, limit?, includeDirs?, absolute?): find files by glob. Returns relative paths by default.
+- grep(pattern, cwd?, include?, exclude?, mode?, caseSensitive?, context?, limit?, output?, maxLineLength?): search contents. mode: text/regex/word. output: lines/files/count.
+- todo(action, id?, content?, status?, priority?, parentId?): manage per-run todo list. actions: add/update/done/remove/list/clear.
+- read(path, offset?, limit?, lineNumbers?): read file contents. Use lineNumbers=true for exact line edits.
+- write(path, content, range?): write file. range: line number, 'from...to' inclusive, 'all', or -1/'append'. Defaults to whole file.
+- edit(path, oldString, newString, replaceAll?): replace exact text in file.
+- bash(description, command, timeout?): run shell command when no tool fits.
+- subagent(task, tasks?, model?, temperature?): delegate independent work to child agents.
 
 Be terse. No fluff. Short sentence. Get job done.
 `, date, wd, osName, tempDir)
@@ -60,9 +63,9 @@ Be terse. No fluff. Short sentence. Get job done.
 
 // ContentBlock represents a single content block within a RichMessage.
 type ContentBlock struct {
-	Type       string          `json:"type"` // "text", "thinking", "toolCall", "toolResult"
-	Text       string          `json:"text,omitempty"`
-	Thinking   string          `json:"thinking,omitempty"`
+	Type     string `json:"type"` // "text", "thinking", "toolCall", "toolResult"
+	Text     string `json:"text,omitempty"`
+	Thinking string `json:"thinking,omitempty"`
 
 	// Tool call fields
 	ID        string          `json:"id,omitempty"`
