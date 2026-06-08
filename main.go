@@ -59,19 +59,13 @@ func main() {
 	noSessionFlag := flag.Bool("no-session", false, "Disable session persistence")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [--debug] [--no-debug] [--model provider/model] [--max-retries N] [--max-iterations N] [--history-file <path>] [--mode minimal|normal|interactive|tui] (--prompt <prompt> | --interactive)\n\n")
-		fmt.Fprintf(os.Stdout, "Available models:\n")
-		for _, p := range providers.ListProviders() {
-			for _, m := range p.Models() {
-				fmt.Fprintf(os.Stdout, "  %s/%s\n", p.Name(), m)
-			}
-		}
-		fmt.Fprintf(os.Stdout, "\nFree models:\n")
-		for _, p := range providers.ListProviders() {
-			for _, m := range p.FreeModels() {
-				fmt.Fprintf(os.Stdout, "  %s/%s (free)\n", p.Name(), m)
-			}
-		}
+		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [flags] (--prompt <prompt>)\n")
+		fmt.Fprintf(os.Stdout, "       tyci-agent connect --name <name> --api <type> --url <url> --token <token>\n")
+		fmt.Fprintf(os.Stdout, "       tyci-agent agent [list|get|set|delete|set-fallback]\n\n")
+		fmt.Fprintf(os.Stdout, "Subcommands:\n")
+		fmt.Fprintf(os.Stdout, "  connect  Register a new provider in ~/.tyci/model.json\n")
+		fmt.Fprintf(os.Stdout, "  agent    Manage agent configurations (model assignments)\n\n")
+		fmt.Fprintf(os.Stdout, "Flags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
