@@ -30,7 +30,11 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
 	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel)
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if tuiMouseEnabled() {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(m, opts...)
 
 	t := &TUI{
 		prog:         p,
