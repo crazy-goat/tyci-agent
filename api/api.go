@@ -104,7 +104,14 @@ func CalcBackoff(attempt int, err error, config RetryConfig) time.Duration {
 			return dur
 		}
 	}
-	backoff := config.BaseBackoff * (1 << attempt)
+	// Cap shift to prevent integer overflow on 64-bit systems.
+	// Max safe shift: 62 would overflow when multiplied by BaseBackoff=4,
+	// so we cap at 30 which gives 2^30 * max BaseBackoff < 2^63.
+	shift := attempt
+	if shift > 30 {
+		shift = 30
+	}
+	backoff := config.BaseBackoff * (1 << shift)
 	maxDur := time.Duration(config.MaxBackoff) * time.Second
 	dur := time.Duration(backoff) * time.Second
 	if dur > maxDur {
