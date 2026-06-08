@@ -44,23 +44,10 @@ func (m TuiModel) View() string {
 	// not trim lines when the viewport started in the middle of a long block.
 	// At bottom during streaming that showed the start of the current response
 	// instead of the newest tokens until a resize rebuilt the layout.
-	var allLines []string
-	for i := range m.blocks {
-		lines := m.getBlockLines(i, false)
-		if len(lines) == 0 {
-			continue
-		}
-		allLines = append(allLines, lines...)
-		if i+1 < len(m.blocks) && !(m.blocks[i+1].kind == "tool" && m.blocks[i].kind == "tool") {
-			allLines = append(allLines, "")
-		}
-	}
-	if len(allLines) > 0 && allLines[len(allLines)-1] == "" {
-		allLines = allLines[:len(allLines)-1]
-	}
-
+	allLines := m.buildFlatRenderLines()
 	totalLines := len(allLines)
 	m.cachedTotalLines = totalLines
+	m.renderBuffer = newRenderBuffer(msgHeight)
 
 	var startIdx int
 	if totalLines > msgHeight {
@@ -73,25 +60,32 @@ func (m TuiModel) View() string {
 	rendered := 0
 	for i := startIdx; i < totalLines && rendered < msgHeight; i++ {
 		line := allLines[i]
-		if m.width > 0 && lipgloss.Width(line) > m.width {
-			wrapped := wrapText(line, m.width, 0)
+		if m.width > 0 && lipgloss.Width(line.Text) > m.width {
+			wrapped := wrapText(line.Text, m.width, 0)
 			for _, wl := range strings.Split(wrapped, "\n") {
 				if rendered >= msgHeight {
 					break
 				}
 				wl = strings.TrimSuffix(wl, clearLine)
-				b.WriteString(wl)
+				renderedLine := m.renderSelectableLine(wl, rendered)
+				b.WriteString(renderedLine)
 				b.WriteString("\n")
+				m.renderBuffer.Add(wl, line.SourceKind, line.BlockIndex, line.SourceLine, rendered)
 				rendered++
 			}
 		} else {
-			b.WriteString(line)
+			renderedLine := m.renderSelectableLine(line.Text, rendered)
+			b.WriteString(renderedLine)
 			b.WriteString("\n")
+			m.renderBuffer.Add(line.Text, line.SourceKind, line.BlockIndex, line.SourceLine, rendered)
 			rendered++
 		}
 	}
 	for rendered < msgHeight {
+		renderedLine := m.renderSelectableLine("", rendered)
+		b.WriteString(renderedLine)
 		b.WriteString("\n")
+		m.renderBuffer.Add("", "empty", -1, -1, rendered)
 		rendered++
 	}
 

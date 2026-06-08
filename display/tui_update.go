@@ -24,6 +24,9 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleResize(msg)
 	case resizeFlushMsg:
 		return m.handleResizeFlush()
+	case selectionFlashDoneMsg:
+		m.selectionFlash = false
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 	case tuiMsgBlock:

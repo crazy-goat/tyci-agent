@@ -25,6 +25,9 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.Type {
 	case tea.KeyEscape:
+		if m.selection.Active || m.selection.Candidate {
+			return m.clearSelection(), nil
+		}
 		m.input.Reset()
 		return m, nil
 	case tea.KeyEnter:
@@ -34,7 +37,8 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		line := strings.TrimSpace(m.input.Value())
-		if strings.EqualFold(line, "/model") {
+		switch strings.ToLower(line) {
+		case "/model":
 			m.input.Reset()
 			m.openModelPicker()
 			return m, nil
@@ -55,11 +59,13 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyPgUp:
+		m = m.clearSelection()
 		m.atBottom = false
 		m.scrollLine += max(1, m.visibleLines())
 		m.clampScroll()
 		return true, m, nil
 	case tea.KeyPgDown:
+		m = m.clearSelection()
 		m.scrollLine -= max(1, m.visibleLines())
 		if m.scrollLine < 0 {
 			m.scrollLine = 0
@@ -67,11 +73,13 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 		return true, m, nil
 	case tea.KeyCtrlUp:
+		m = m.clearSelection()
 		m.atBottom = false
 		m.scrollLine++
 		m.clampScroll()
 		return true, m, nil
 	case tea.KeyCtrlDown:
+		m = m.clearSelection()
 		m.scrollLine--
 		if m.scrollLine < 0 {
 			m.scrollLine = 0
@@ -83,10 +91,12 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	case tea.KeyDown:
 		return true, m.historyNewer(), nil
 	case tea.KeyHome:
+		m = m.clearSelection()
 		m.atBottom = false
 		m.scrollLine = m.totalRenderedLines()
 		return true, m, nil
 	case tea.KeyEnd:
+		m = m.clearSelection()
 		m.atBottom = true
 		m.scrollLine = 0
 		return true, m, nil

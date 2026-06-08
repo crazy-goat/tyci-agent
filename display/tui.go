@@ -81,6 +81,7 @@ type TuiModel struct {
 	lastStats     stream.Stats
 	reading       bool
 	status        string // "idle", "thinking", "responding", "tool"
+	statusMessage string // transient user-facing status, e.g. copy result
 	modelName     string // model name shown in status bar
 
 	// Model switching (Tab/Shift+Tab)
@@ -128,6 +129,13 @@ type TuiModel struct {
 
 	// Total line count cache (invalidated on block add/change/resize)
 	cachedTotalLines int
+
+	// Metadata for the currently visible transcript lines. Built by View().
+	renderBuffer RenderBuffer
+
+	// Mouse text selection over visible transcript lines.
+	selection      SelectionState
+	selectionFlash bool // briefly true after successful copy, for visual feedback
 
 	submitResult chan<- string
 	toolQueue    []int // FIFO of block indices for ToolCallStart->ToolCallEnd matching

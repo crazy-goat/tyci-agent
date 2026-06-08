@@ -19,6 +19,10 @@ func (m TuiModel) buildStatus() string {
 		leftParts = append(leftParts, fmt.Sprintf("↑%d lines", m.scrollLine))
 	}
 
+	if m.statusMessage != "" {
+		leftParts = append(leftParts, m.statusMessage)
+	}
+
 	if !m.reading {
 		switch m.status {
 		case "thinking":

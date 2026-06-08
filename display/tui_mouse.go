@@ -2,6 +2,7 @@ package display
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -11,12 +12,14 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Button == tea.MouseButtonWheelUp {
+		m = m.clearSelection()
 		m.atBottom = false
 		m.scrollLine += 3
 		m.clampScroll()
 		return m, nil
 	}
 	if msg.Button == tea.MouseButtonWheelDown {
+		m = m.clearSelection()
 		m.scrollLine -= 3
 		if m.scrollLine < 0 {
 			m.scrollLine = 0
@@ -24,8 +27,35 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-		m.openToolModalAt(msg.Y)
+
+	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && m.transcriptY(msg.Y) {
+		m.selection = SelectionState{Candidate: true, AnchorY: msg.Y, CursorY: msg.Y, PressX: msg.X, PressY: msg.Y}
+		return m, nil
+	}
+	if msg.Action == tea.MouseActionMotion && m.selection.Candidate {
+		y := m.clampTranscriptY(msg.Y)
+		if y != m.selection.PressY || msg.X != m.selection.PressX || m.selection.Dragging {
+			m.selection.Active = true
+			m.selection.Dragging = true
+			m.selection.CursorY = y
+		}
+		return m, nil
+	}
+	if msg.Action == tea.MouseActionRelease && m.selection.Candidate {
+		if m.selection.Dragging {
+			m.selection.Active = true
+			m.selection.Candidate = false
+			m.selection.CursorY = m.clampTranscriptY(msg.Y)
+			m = m.copySelection()
+			if m.selectionFlash {
+				return m, tea.Tick(180*time.Millisecond, func(time.Time) tea.Msg { return selectionFlashDoneMsg{} })
+			}
+			return m, nil
+		}
+		y := m.selection.PressY
+		m = m.clearSelection()
+		m.openToolModalAt(y)
+		return m, nil
 	}
 	return m, nil
 }
