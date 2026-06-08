@@ -105,18 +105,18 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	limit := intParam(input, "limit", 0)
 	lineNumbers := boolParam(input, "lineNumbers", false)
 
-	// Sprawdź czy istnieje i czy to katalog (używamy Lstat żeby nie podążać za symlinkami)
+	// Check if path exists and if it's a directory (use Lstat to avoid following symlinks)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
 
-	// Obsługa katalogu
+	// Handle directory listing
 	if info.IsDir() {
 		return listDirectory(path)
 	}
 
-	// Jeśli to symlink – rozpoznaj czy wskazuje na katalog
+	// If it's a symlink, check if it points to a directory
 	if info.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(path)
 		if err != nil {

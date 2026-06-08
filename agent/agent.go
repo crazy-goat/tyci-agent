@@ -138,7 +138,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 	}
 
 	if cfg.MaxIterations > 0 {
-		d.Text(fmt.Sprintf("\n⚠️ Agent wykonał %d iteracji narzędzi – możliwa nieskończona pętla. Przerywam.\n", cfg.MaxIterations))
+		d.Text(fmt.Sprintf("\n⚠️ Agent executed %d tool-call iterations – possible infinite loop. Stopping.\n", cfg.MaxIterations))
 	}
 	return totalUsage, nil
 }
