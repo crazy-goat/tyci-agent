@@ -15,8 +15,22 @@ import (
 	"github.com/decodo/tyci-agent/stream"
 )
 
+// anthropicMessageUsage captures the usage inside a message_start event.
+type anthropicMessageUsage struct {
+	InputTokens         int `json:"input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens    int `json:"cache_read_input_tokens"`
+}
+
+// anthropicMessage captures the message object inside message_start events.
+type anthropicMessage struct {
+	Usage *anthropicMessageUsage `json:"usage,omitempty"`
+}
+
 type anthropicStreamChunk struct {
 	Type  string `json:"type"`
+	// Message is present in message_start events.
+	Message *anthropicMessage `json:"message,omitempty"`
 	Delta struct {
 		Text string `json:"text"`
 	} `json:"delta"`
@@ -67,7 +81,7 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 	}
 
 	reader := bufio.NewReader(resp.Body)
-	var inputTokens, outputTokens int
+	var inputTokens, outputTokens, cacheRead, cacheWrite int
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -91,14 +105,21 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 		}
 
 		processChunk := func(chunk anthropicStreamChunk) error {
-			if chunk.Type == "content_block_delta" {
+			switch chunk.Type {
+			case "message_start":
+				if chunk.Message != nil && chunk.Message.Usage != nil {
+					inputTokens = chunk.Message.Usage.InputTokens
+					cacheRead = chunk.Message.Usage.CacheReadInputTokens
+					cacheWrite = chunk.Message.Usage.CacheCreationInputTokens
+				}
+			case "content_block_delta":
 				if err := emit(stream.TextDelta{Text: chunk.Delta.Text}); err != nil {
 					return err
 				}
-			}
-			if chunk.Type == "message_delta" && chunk.Usage != nil {
-				inputTokens = chunk.Usage.InputTokens
-				outputTokens = chunk.Usage.OutputTokens
+			case "message_delta":
+				if chunk.Usage != nil {
+					outputTokens = chunk.Usage.OutputTokens
+				}
 			}
 			return nil
 		}
@@ -128,8 +149,10 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 	return emit(stream.Finish{
 		Reason: "stop",
 		Usage: stream.Usage{
-			Input:  inputTokens,
-			Output: outputTokens,
+			Input:      inputTokens,
+			Output:     outputTokens,
+			CacheRead:  cacheRead,
+			CacheWrite: cacheWrite,
 		},
 	})
 }
