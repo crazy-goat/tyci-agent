@@ -71,9 +71,5 @@ func (s *interactiveState) stopInterruptWatcher(sigCh chan os.Signal, sigDone ch
 }
 
 func (s *interactiveState) addUsage(usage stream.Usage) {
-	s.totalUsage.Input += usage.Input
-	s.totalUsage.Output += usage.Output
-	s.totalUsage.Reasoning += usage.Reasoning
-	s.totalUsage.CacheRead += usage.CacheRead
-	s.totalUsage.CacheWrite += usage.CacheWrite
+	s.totalUsage.Add(usage)
 }

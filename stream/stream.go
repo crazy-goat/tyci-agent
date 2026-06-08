@@ -53,6 +53,15 @@ type Usage struct {
 	CacheWrite     int
 }
 
+// Add accumulates another Usage into this one.
+func (u *Usage) Add(other Usage) {
+	u.Input += other.Input
+	u.Output += other.Output
+	u.Reasoning += other.Reasoning
+	u.CacheRead += other.CacheRead
+	u.CacheWrite += other.CacheWrite
+}
+
 type Stats struct {
 	Duration   time.Duration
 	FirstToken time.Duration

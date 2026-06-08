@@ -55,11 +55,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 	for iter := 0; cfg.MaxIterations <= 0 || iter < cfg.MaxIterations; iter++ {
 		more, usage, err := runOnce(ctx, fs.provider, d, msgs, cfg.withModel(fs.model))
 		if usage != nil {
-			totalUsage.Input += usage.Input
-			totalUsage.Output += usage.Output
-			totalUsage.Reasoning += usage.Reasoning
-			totalUsage.CacheRead += usage.CacheRead
-			totalUsage.CacheWrite += usage.CacheWrite
+			totalUsage.Add(*usage)
 		}
 		if err != nil {
 			// Check for context cancellation first
@@ -98,11 +94,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				}
 				more, usage, err = runOnce(ctx, fs.provider, d, msgs, cfg.withModel(fs.model))
 				if usage != nil {
-					totalUsage.Input += usage.Input
-					totalUsage.Output += usage.Output
-					totalUsage.Reasoning += usage.Reasoning
-					totalUsage.CacheRead += usage.CacheRead
-					totalUsage.CacheWrite += usage.CacheWrite
+					totalUsage.Add(*usage)
 				}
 				if err == nil {
 					recovered = true

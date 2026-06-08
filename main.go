@@ -517,9 +517,7 @@ func replaySessionToDisplay(disp display.Display, sessionPath string) {
 			// Track usage
 			if u, ok := raw["usage"].(map[string]any); ok {
 				lastUsage = parseUsageFromMap(u)
-				totalUsage.Input += lastUsage.Input
-				totalUsage.Output += lastUsage.Output
-				totalUsage.Reasoning += lastUsage.Reasoning
+				totalUsage.Add(lastUsage)
 				hasUsage = true
 			}
 
