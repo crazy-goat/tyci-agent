@@ -1,6 +1,7 @@
 package display
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -67,5 +68,24 @@ func TestTuiModel_KeyEndRestoresAutoScrollAfterPrompt(t *testing.T) {
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "new content") {
 		t.Fatalf("expected view to include new streamed content, got:\n%s", view)
+	}
+}
+
+func TestTuiModel_ViewAtBottomShowsTailOfLongStreamingBlock(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 80
+	m.height = 8 // visible message lines = 5
+	m.atBottom = true
+
+	for i := 1; i <= 12; i++ {
+		m.handleBlockMsg(tuiMsgBlock{kind: "text", content: fmt.Sprintf("line-%02d\n", i)})
+	}
+
+	view := stripANSI(m.View())
+	if strings.Contains(view, "line-01") {
+		t.Fatalf("bottom view showed start of long block instead of tail:\n%s", view)
+	}
+	if !strings.Contains(view, "line-12") {
+		t.Fatalf("bottom view did not show newest line:\n%s", view)
 	}
 }

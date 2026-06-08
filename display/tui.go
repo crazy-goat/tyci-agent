@@ -855,12 +855,15 @@ func (m TuiModel) submit() tea.Model {
 	// coalesced with the previous text block while tokens arrive. If the user
 	// prompt were a text block too, the next assistant response could be appended
 	// to it, leaving stale render/scroll caches and breaking follow-to-bottom.
+	m.forceRenderDirtyBlocks()
 	m.blocks = append(m.blocks, block{kind: "user", content: "You: " + line})
+	// A new block changes separators and line offsets. Clear line caches
+	// aggressively so the next View uses fresh layout immediately.
+	m.invalidateAllBlockLineCounts()
 	// A new prompt should always jump back to the live bottom, even if the user
 	// had scrolled up in the previous answer.
 	m.atBottom = true
 	m.scrollLine = 0
-	m.invalidateTotalLines()
 	m.clampScroll()
 	if m.submitResult != nil {
 		m.submitResult <- line
@@ -906,6 +909,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 			startTime: time.Now(),
 		})
 		m.toolQueue = append(m.toolQueue, idx)
+		m.invalidateAllBlockLineCounts()
 
 		// Track subagent tool index for modal (but don't auto-open).
 		// Modal opens on user click on the subagent block.
@@ -978,6 +982,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{kind: "error", content: msg.content, dirty: true})
 		m.dirtyBlocks[idx] = true
+		m.invalidateAllBlockLineCounts()
 	case "done":
 		m.status = "idle"
 		m.reading = true
@@ -989,6 +994,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{kind: "block", content: msg.content, dirty: true})
 		m.dirtyBlocks[idx] = true
+		m.invalidateAllBlockLineCounts()
 	case "set-model":
 		m.modelName = msg.content
 	case "reset":
@@ -1055,6 +1061,9 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 	idx := len(m.blocks)
 	m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
 	m.dirtyBlocks[idx] = true
+	// Adding a block changes separator positions and line offsets. Recompute
+	// layout caches right away instead of relying on a resize to fix them.
+	m.invalidateAllBlockLineCounts()
 }
 
 // ─── Glamour renderer cache ─────────────────────────────────────────
@@ -1308,109 +1317,53 @@ func (m TuiModel) View() string {
 		msgHeight--
 	}
 
-	// ── Virtual scrolling: only render blocks visible in viewport ──
-	// First, compute total rendered lines (uses cached line counts).
-	totalLines := m.totalRenderedLines()
-
-	// Calculate visible line range (0-based, from top).
-	var visibleStart, visibleEnd int
-	if totalLines <= msgHeight {
-		visibleStart = 0
-		visibleEnd = totalLines
-	} else {
-		// scrollLine = lines scrolled up from bottom
-		bottomLine := totalLines - m.scrollLine
-		visibleStart = bottomLine - msgHeight
-		if visibleStart < 0 {
-			visibleStart = 0
-		}
-		visibleEnd = bottomLine
-		if visibleEnd > totalLines {
-			visibleEnd = totalLines
-		}
-	}
-
-	// Walk blocks, accumulate line offset, and only render/split blocks
-	// whose line range overlaps [visibleStart, visibleEnd).
-	// Must match totalRenderedLines() separator logic.
-	type blockLines struct {
-		lines []string
-		sep   bool // whether a blank separator line follows
-	}
-	var renderedBlocks []blockLines
-	offset := 0 // current line offset within total
-
+	// Build a flat, cached line list and then slice the exact visible window.
+	// The previous virtual-scrolling path selected overlapping blocks but did
+	// not trim lines when the viewport started in the middle of a long block.
+	// At bottom during streaming that showed the start of the current response
+	// instead of the newest tokens until a resize rebuilt the layout.
+	var allLines []string
 	for i := range m.blocks {
-		// Get cached lines for this block (renders if needed)
 		lines := m.getBlockLines(i, false)
-		lc := 0
-		if lines != nil {
-			lc = len(lines)
-		}
-		// Empty block — skip entirely (no block lines, no separator).
-		if lc == 0 {
+		if len(lines) == 0 {
 			continue
 		}
-		blockStart := offset
-		blockEnd := offset + lc
-
-		// Blank separator between blocks (same logic as totalRenderedLines)
-		hasSep := i+1 < len(m.blocks)
-		if hasSep && m.blocks[i+1].kind == "tool" && m.blocks[i].kind == "tool" {
-			hasSep = false
+		allLines = append(allLines, lines...)
+		if i+1 < len(m.blocks) && !(m.blocks[i+1].kind == "tool" && m.blocks[i].kind == "tool") {
+			allLines = append(allLines, "")
 		}
-		sepStart := blockEnd
-		sepEnd := blockEnd
-		if hasSep {
-			sepEnd = blockEnd + 1
-		}
+	}
+	if len(allLines) > 0 && allLines[len(allLines)-1] == "" {
+		allLines = allLines[:len(allLines)-1]
+	}
 
-		// Check if this block or its separator overlaps with visible range
-		overlap := blockEnd > visibleStart && blockStart < visibleEnd
-		sepOverlap := hasSep && sepEnd > visibleStart && sepStart < visibleEnd
+	totalLines := len(allLines)
+	m.cachedTotalLines = totalLines
 
-		if overlap || sepOverlap {
-			// Use cached lines directly (no re-split)
-			renderedBlocks = append(renderedBlocks, blockLines{lines: lines, sep: hasSep && sepOverlap})
-		}
-
-		// Always advance offset for correct total
-		offset = sepEnd
-
-		// If we've passed the visible range and rendered what we need, stop early
-		if blockStart >= visibleEnd && len(renderedBlocks) > 0 {
-			break
+	var startIdx int
+	if totalLines > msgHeight {
+		startIdx = totalLines - msgHeight - m.scrollLine
+		if startIdx < 0 {
+			startIdx = 0
 		}
 	}
 
-	// Render visible lines from the collected blocks
 	rendered := 0
-	for _, rb := range renderedBlocks {
-		for _, line := range rb.lines {
-			if rendered >= msgHeight {
-				break
-			}
-			if m.width > 0 && lipgloss.Width(line) > m.width {
-				wrapped := wrapText(line, m.width, 0)
-				for _, wl := range strings.Split(wrapped, "\n") {
-					if rendered >= msgHeight {
-						break
-					}
-					wl = strings.TrimSuffix(wl, clearLine)
-					b.WriteString(wl)
-					b.WriteString("\n")
-					rendered++
+	for i := startIdx; i < totalLines && rendered < msgHeight; i++ {
+		line := allLines[i]
+		if m.width > 0 && lipgloss.Width(line) > m.width {
+			wrapped := wrapText(line, m.width, 0)
+			for _, wl := range strings.Split(wrapped, "\n") {
+				if rendered >= msgHeight {
+					break
 				}
-			} else {
-				b.WriteString(line)
+				wl = strings.TrimSuffix(wl, clearLine)
+				b.WriteString(wl)
 				b.WriteString("\n")
 				rendered++
 			}
-		}
-		if rendered >= msgHeight {
-			break
-		}
-		if rb.sep {
+		} else {
+			b.WriteString(line)
 			b.WriteString("\n")
 			rendered++
 		}

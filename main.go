@@ -595,6 +595,8 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 	}()
 
 	// updateModel resolves a new model string and updates provider/config/globals.
+	// This is in-memory only for the current TUI process. It does not write
+	// agents/config files, and /new must not reset it.
 	updateModel := func(newModel string) {
 		p, m, ok := providers.FindModel(newModel)
 		if !ok {
@@ -607,6 +609,23 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 		cfg.ProviderName = p.Name()
 		tools.SetProvider(p)
 		tools.SetCurrentModel(newModel)
+	}
+
+	// drainModelChanges applies all queued model changes before running a prompt.
+	// This avoids a race where the user picks /model and immediately submits the
+	// next prompt while the model change is still buffered.
+	drainModelChanges := func() {
+		for {
+			select {
+			case newModel, ok := <-tuiDisp.ModelChanges():
+				if !ok {
+					return
+				}
+				updateModel(newModel)
+			default:
+				return
+			}
+		}
 	}
 
 	for {
@@ -633,6 +652,8 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 			iterCancel()
 			return
 		}
+
+		drainModelChanges()
 
 		line = strings.TrimSpace(line)
 		if line == "/exit" {
