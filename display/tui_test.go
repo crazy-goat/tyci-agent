@@ -1,6 +1,7 @@
 package display
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -639,5 +640,436 @@ func TestTuiModel_View_WrapsLongLinesInAllBlocks(t *testing.T) {
 	}
 	if tooLong > 0 {
 		t.Errorf("expected no lines exceeding width %d, found %d too long in message area", m.width, tooLong)
+	}
+}
+
+// ─── Benchmark: View() performance ────────────────────────────────────────
+
+func BenchmarkTUIView(b *testing.B) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 100
+	m.height = 40
+
+	// Populate 200 blocks with 10 lines each
+	for i := 0; i < 200; i++ {
+		kind := "text"
+		if i%3 == 0 {
+			kind = "thinking"
+		}
+		var content strings.Builder
+		for j := 0; j < 10; j++ {
+			content.WriteString(fmt.Sprintf("Line %d of block %d. This is some sample text to simulate a realistic conversation.\n", j, i))
+		}
+		m.handleBlockMsg(tuiMsgBlock{kind: kind, content: content.String()})
+	}
+	// Mark done to trigger final rendering
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+
+	// Reset benchmark timer
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for n := 0; n < b.N; n++ {
+		_ = m.View()
+	}
+}
+
+func BenchmarkTUIViewStreaming(b *testing.B) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 100
+	m.height = 40
+
+	// Add a base set of blocks
+	for i := 0; i < 50; i++ {
+		m.handleBlockMsg(tuiMsgBlock{kind: "text", content: fmt.Sprintf("Block %d with some content.\n", i)})
+	}
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	// Simulate streaming: append to the last block repeatedly
+	for n := 0; n < b.N; n++ {
+		m.handleBlockMsg(tuiMsgBlock{kind: "text", content: " new token"})
+		_ = m.View()
+	}
+}
+
+// ─── Tool block rendering lifecycle tests ────────────────────────────────
+
+// TestToolBlock_StartShowsRunningSpinner verifies that a tool block just
+// started shows spinner and no duration/hint.
+func TestToolBlock_StartShowsRunningSpinner(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+
+	view := m.View()
+	plain := stripANSI(view)
+
+	if !strings.Contains(plain, "bash") {
+		t.Errorf("tool block should contain tool name 'bash', got: %q", plain)
+	}
+	if !strings.Contains(plain, "⟳") {
+		t.Errorf("running tool should show spinner '⟳', got: %q", plain)
+	}
+	if strings.Contains(plain, "click to display") {
+		t.Errorf("running tool should NOT show 'click to display' hint, got: %q", plain)
+	}
+	if strings.Contains(plain, "ms") && strings.Contains(plain, "s") {
+		// Might show duration after completion, but not during running
+		t.Errorf("running tool should NOT show duration, got: %q", plain)
+	}
+}
+
+// TestToolBlock_DeltaUpdatesContent verifies that tool-delta messages update
+// the tool block content in View() output.
+func TestToolBlock_DeltaUpdatesContent(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
+
+	// Before delta: should show no args
+	view1 := stripANSI(m.View())
+	if !strings.Contains(view1, "read(...)") {
+		t.Errorf("before delta, should show 'read(...)', got: %q", view1)
+	}
+
+	// Send delta with path
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"path": "main.go"}`})
+
+	// After delta: should show the path
+	view2 := stripANSI(m.View())
+	if !strings.Contains(view2, "read(main.go)") {
+		t.Errorf("after delta, should show 'read(main.go)', got: %q", view2)
+	}
+}
+
+// TestToolBlock_EndShowsDoneState verifies that after tool-end the block
+// shows done state with duration and click hint.
+func TestToolBlock_EndShowsDoneState(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"description": "list files"}`})
+
+	// Small sleep so duration is measurable
+	time.Sleep(2 * time.Millisecond)
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "file1\nfile2"})
+
+	view := stripANSI(m.View())
+
+	if !strings.Contains(view, "bash(list files)") {
+		t.Errorf("should show formatted tool call, got: %q", view)
+	}
+	if !strings.Contains(view, "click to display") {
+		t.Errorf("done tool should show 'click to display' hint, got: %q", view)
+	}
+	if strings.Contains(view, "⟳") {
+		t.Errorf("done tool should NOT show spinner, got: %q", view)
+	}
+	// Should show some duration (ms or s)
+	if !strings.Contains(view, "ms") && !strings.Contains(view, "s") {
+		t.Errorf("done tool should show duration (ms or s), got: %q", view)
+	}
+}
+
+// TestToolBlock_MultipleDeltasAccumulate verifies that multiple tool-delta
+// messages are accumulated correctly.
+func TestToolBlock_MultipleDeltasAccumulate(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+
+	// Send partial delta (first part of JSON)
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"descript`})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `ion": "list`})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: ` files"}`})
+
+	// After accumulation: should parse to "list files"
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "bash(list files)") {
+		t.Errorf("after cumulative deltas, should show 'bash(list files)', got: %q", view)
+	}
+}
+
+// TestToolBlock_ViewDoesNotStaleCacheAfterDelta verifies that after a tool
+// block gets a delta, the View() output is updated (regression test for
+// cachedLines invalidation).
+func TestToolBlock_ViewDoesNotStaleCacheAfterDelta(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	// Start tool and get initial View (creates cachedLines)
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
+	_ = m.View() // warm up cache
+
+	// Send delta
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"path": "main.go"}`})
+
+	// View should show updated content, not stale
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "read(main.go)") {
+		t.Errorf("after delta, View() should show 'read(main.go)', got stale: %q", view)
+	}
+}
+
+// TestToolBlock_ViewDoesNotStaleCacheAfterEnd verifies that after tool-end,
+// the View() output is updated (regression test for cachedLines invalidation).
+func TestToolBlock_ViewDoesNotStaleCacheAfterEnd(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	// Start tool, send delta, warm cache with View()
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"description": "test"}`})
+	_ = m.View() // warm up cache
+
+	time.Sleep(2 * time.Millisecond)
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "ok"})
+
+	// View should show done state, not stale running state
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "click to display") {
+		t.Errorf("after end, View() should show 'click to display', got stale: %q", view)
+	}
+	if strings.Contains(view, "⟳") {
+		t.Errorf("after end, View() should NOT show spinner, got stale: %q", view)
+	}
+}
+
+// TestToolBlock_TwoConsecutiveTools verifies that when two tools run in
+// sequence, both appear correctly in View() output.
+func TestToolBlock_TwoConsecutiveTools(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	// First tool: read
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"path": "a.txt"}`})
+	time.Sleep(1 * time.Millisecond)
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "content a"})
+
+	// Second tool: bash
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"description": "build"}`})
+	time.Sleep(1 * time.Millisecond)
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "ok"})
+
+	view := stripANSI(m.View())
+
+	if !strings.Contains(view, "read(a.txt)") {
+		t.Errorf("should contain first tool 'read(a.txt)', got: %q", view)
+	}
+	if !strings.Contains(view, "bash(build)") {
+		t.Errorf("should contain second tool 'bash(build)', got: %q", view)
+	}
+	if !strings.Contains(view, "click to display") {
+		t.Errorf("both tools should show click hint, got: %q", view)
+	}
+}
+
+// TestToolBlock_SubagentInlineFormat verifies that subagent tool shows
+// the tool name and state transitions correctly.
+func TestToolBlock_SubagentInlineFormat(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"task": "build project"}`})
+
+	view := stripANSI(m.View())
+	// The inline block shows tool name; the task text is available in the modal
+	if !strings.Contains(view, "subagent") {
+		t.Errorf("subagent should show 'subagent', got: %q", view)
+	}
+	if !strings.Contains(view, "⟳") {
+		t.Errorf("running subagent should show spinner, got: %q", view)
+	}
+
+	time.Sleep(1 * time.Millisecond)
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "done"})
+
+	view2 := stripANSI(m.View())
+	if !strings.Contains(view2, "subagent") {
+		t.Errorf("after end, subagent should show 'subagent', got: %q", view2)
+	}
+	if !strings.Contains(view2, "click to display") {
+		t.Errorf("subagent done should show click hint, got: %q", view2)
+	}
+	if strings.Contains(view2, "⟳") {
+		t.Errorf("done subagent should NOT show spinner, got: %q", view2)
+	}
+}
+
+// TestToolBlock_EmptyArgsFallback verifies that when tool-delta content
+// is not valid JSON, the block shows fallback format.
+func TestToolBlock_EmptyArgsFallback(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
+
+	// No delta was sent → args are empty
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "read(...)") {
+		t.Errorf("no args should show 'read(...)', got: %q", view)
+	}
+}
+
+// TestToolBlock_CachedLinesInvalidatedOnToolStart verifies that when a new
+// tool starts, the model's internal state is consistent.
+func TestToolBlock_CachedLinesInvalidatedOnToolStart(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	// Start and complete a tool
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"description": "first"}`})
+	time.Sleep(1 * time.Millisecond)
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "done"})
+
+	// Start another tool
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"path": "other.go"}`})
+
+	view := stripANSI(m.View())
+	if strings.Contains(view, "bash(") && !strings.Contains(view, "click to display") {
+		t.Errorf("first tool should still show but with 'click to display' hint")
+	}
+	if !strings.Contains(view, "read(other.go)") {
+		t.Errorf("second tool should show 'read(other.go)', got: %q", view)
+	}
+}
+
+// TestToolBlock_GetBlockLines_ReturnsUpdatedContent verifies that
+// getBlockLines returns the latest content after tool block changes.
+func TestToolBlock_GetBlockLines_ReturnsUpdatedContent(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 80
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "write"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"path": "out.txt"}`})
+
+	// getBlockLines should return lines after tool-delta
+	lines := m.getBlockLines(0, false)
+	if len(lines) == 0 {
+		t.Fatal("getBlockLines should return non-empty lines")
+	}
+	found := false
+	for _, l := range lines {
+		if strings.Contains(l, "write(out.txt)") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("getBlockLines should contain 'write(out.txt)', got: %v", lines)
+	}
+
+	// Now end the tool
+	time.Sleep(1 * time.Millisecond)
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "done"})
+
+	// getBlockLines should now show done state
+	lines2 := m.getBlockLines(0, false)
+	if len(lines2) == 0 {
+		t.Fatal("getBlockLines should return non-empty lines after end")
+	}
+	combined := strings.Join(lines2, " ")
+	if !strings.Contains(combined, "click to display") {
+		t.Errorf("getBlockLines after end should contain 'click to display', got: %v", lines2)
+	}
+	// Should still have the tool call
+	if !strings.Contains(combined, "write(out.txt)") {
+		t.Errorf("getBlockLines after end should contain 'write(out.txt)', got: %v", lines2)
+	}
+}
+
+// TestToolBlock_RenderBlock_RunningVsDone verifies that renderBlock returns
+// different output for running vs done tool blocks.
+func TestToolBlock_RenderBlock_RunningVsDone(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 80
+
+	// Create blocks and fill them via handlers to set all fields correctly
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "edit"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"path": "x.go"}`})
+
+	// Snapshot running render
+	running := m.renderBlock(0, m.blocks[0])
+
+	time.Sleep(1 * time.Millisecond)
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "done"})
+
+	done := m.renderBlock(0, m.blocks[0])
+
+	if running == done {
+		t.Errorf("renderBlock should return different output for running vs done, but got same: %q", running)
+	}
+	if !strings.Contains(running, "⟳") {
+		t.Errorf("running render should contain spinner, got: %q", running)
+	}
+	if strings.Contains(running, "click to display") {
+		t.Errorf("running render should NOT contain 'click to display', got: %q", running)
+	}
+	if !strings.Contains(done, "click to display") {
+		t.Errorf("done render should contain 'click to display', got: %q", done)
+	}
+	if strings.Contains(done, "⟳") {
+		t.Errorf("done render should NOT contain spinner, got: %q", done)
+	}
+	if !strings.Contains(done, "edit(x.go)") {
+		t.Errorf("done render should contain 'edit(x.go)', got: %q", done)
+	}
+}
+
+// TestToolBlock_ToolBlockOutput_NotVisibleInInline verifies that tool output
+// is not shown in the inline tool block (only in the modal on click).
+func TestToolBlock_ToolBlockOutput_NotVisibleInInline(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"description": "test"}`})
+	time.Sleep(1 * time.Millisecond)
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "very long output that should not appear inline"})
+
+	view := stripANSI(m.View())
+	if strings.Contains(view, "very long output") {
+		t.Errorf("tool output should NOT appear in inline tool block, got: %q", view)
+	}
+	if !strings.Contains(view, "bash(test)") {
+		t.Errorf("tool block should show formatted call, got: %q", view)
 	}
 }

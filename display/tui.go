@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -30,6 +31,9 @@ type tuiMsgBlock struct {
 }
 
 type tuiInputSubmitted string
+
+// resizeFlushMsg is sent after a debounce delay to flush resize changes.
+type resizeFlushMsg struct{}
 
 // ─── Model picker types ───────────────────────────────────────────────────
 
@@ -64,7 +68,8 @@ type block struct {
 	dirty    bool   // content changed since last render
 
 	// Render caches
-	cachedLineCount int // number of display lines for this block (0 = not computed)
+	cachedLineCount int      // number of display lines for this block (0 = not computed)
+	cachedLines     []string // cached split lines (valid when cachedLineCount > 0)
 }
 
 func defaultMaxLines(toolName string) int {
@@ -120,6 +125,11 @@ type TuiModel struct {
 	subagentModalScroll  int             // scroll offset within modal
 	subagentModalToolIdx int             // tool queue index for this modal
 	subagentModalDone    bool            // true when subagent finished (ESC to close)
+
+	// Resize debounce
+	resizePending bool // if true, a resize is pending debounce
+	resizeWidth   int  // most recent resize width
+	resizeHeight  int  // most recent resize height
 
 	// Markdown render cache maps (keyed by block index)
 	dirtyBlocks      map[int]bool   // block indices with content changed
@@ -211,9 +221,30 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(max(10, msg.Width-2))
-		// Width change invalidates all line-count caches (wrap depends on width)
-		m.invalidateAllBlockLineCounts()
-		m.clampScroll()
+		// Debounce resize: store dimensions and set pending flag.
+		// Actual invalidation happens after 100ms quiescence via tea.Tick.
+		m.resizeWidth = msg.Width
+		m.resizeHeight = msg.Height
+		if !m.resizePending {
+			m.resizePending = true
+			return m, tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+				return resizeFlushMsg{}
+			})
+		}
+		return m, nil
+
+	case resizeFlushMsg:
+		if m.resizePending {
+			m.resizePending = false
+			// Only invalidate if dimensions actually changed since last flush
+			if m.width != m.resizeWidth || m.height != m.resizeHeight {
+				m.width = m.resizeWidth
+				m.height = m.resizeHeight
+				m.input.SetWidth(max(10, m.resizeWidth-2))
+			}
+			m.invalidateAllBlockLineCounts()
+			m.clampScroll()
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -717,17 +748,16 @@ func (m *TuiModel) totalRenderedLines() int {
 	}
 	total := 0
 	for i, b := range m.blocks {
-		if b.cachedLineCount > 0 {
-			total += b.cachedLineCount
-		} else {
-			rendered := m.renderBlock(i, b)
-			if rendered == "" {
+		lc := b.cachedLineCount
+		if lc == 0 {
+			// Try to get lines (renders if needed)
+			lines := m.getBlockLines(i, false)
+			if lines == nil {
 				continue
 			}
-			lc := lineCount(rendered)
-			m.blocks[i].cachedLineCount = lc
-			total += lc
+			lc = len(lines)
 		}
+		total += lc
 		// Separator blank line between blocks (skip between consecutive tool blocks)
 		if i+1 < len(m.blocks) && m.blocks[i+1].kind == "tool" && b.kind == "tool" {
 			continue
@@ -752,6 +782,7 @@ func (m *TuiModel) invalidateTotalLines() {
 func (m *TuiModel) invalidateAllBlockLineCounts() {
 	for i := range m.blocks {
 		m.blocks[i].cachedLineCount = 0
+		m.blocks[i].cachedLines = nil
 	}
 	m.streamingCache = make(map[int]string)
 	m.mdCacheRendered = make(map[int]string)
@@ -862,6 +893,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 				bidx := m.toolQueue[m.subagentModalToolIdx]
 				if bidx >= 0 && bidx < len(m.blocks) && m.blocks[bidx].kind == "tool" {
 					m.blocks[bidx].content = "subagent (" + m.subagentModalTitle + ")"
+					m.blocks[bidx].cachedLines = nil
 					delete(m.toolDisplayCache, bidx)
 				}
 			}
@@ -880,6 +912,8 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 				if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].kind == "tool" {
 					m.blocks[idx].toolState = "done"
 					m.blocks[idx].duration = time.Since(m.blocks[idx].startTime)
+					m.blocks[idx].cachedLines = nil
+					delete(m.toolDisplayCache, idx)
 				}
 			}
 			m.subagentModalDone = true
@@ -952,6 +986,7 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 		last.dirty = true
 		last.rendered = "" // invalidate cache
 		last.cachedLineCount = 0
+		last.cachedLines = nil
 		idx := len(m.blocks) - 1
 		m.dirtyBlocks[idx] = true
 		delete(m.streamingCache, idx)
@@ -966,24 +1001,53 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 	m.dirtyBlocks[idx] = true
 }
 
+// ─── Glamour renderer cache ─────────────────────────────────────────
+
+var (
+	muRendererCache sync.Mutex
+	rendererCache   = make(map[int]*glamour.TermRenderer)
+)
+
+// getRenderer returns a cached glamour TermRenderer for the given wrap width,
+// creating one if needed.
+func getRenderer(maxW int) *glamour.TermRenderer {
+	muRendererCache.Lock()
+	defer muRendererCache.Unlock()
+	if r, ok := rendererCache[maxW]; ok {
+		return r
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(maxW),
+	)
+	if err != nil {
+		// Fallback: return nil; callers should handle
+		return nil
+	}
+	rendererCache[maxW] = r
+	return r
+}
+
 // renderMarkdown renders markdown content to ANSI using glamour.
 // Falls back to wrapRawText on error.
 func (m TuiModel) renderMarkdown(content string, useBar bool) string {
+	return renderMarkdownWithCache(content, useBar, m.width)
+}
+
+// renderMarkdownWithCache renders markdown using a cached glamour renderer.
+func renderMarkdownWithCache(content string, useBar bool, width int) string {
 	if content == "" {
 		return ""
 	}
-	maxW := m.width
+	maxW := width
 	if useBar {
-		maxW = m.width - 2
+		maxW = width - 2
 	}
 	if maxW < 10 {
 		maxW = 10
 	}
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
-		glamour.WithWordWrap(maxW),
-	)
-	if err == nil {
+	renderer := getRenderer(maxW)
+	if renderer != nil {
 		out, err := renderer.Render(content)
 		if err == nil {
 			out = strings.Trim(out, "\n")
@@ -1010,7 +1074,7 @@ func (m TuiModel) renderMarkdown(content string, useBar bool) string {
 			return out
 		}
 	}
-	return wrapRawText(content, useBar, m.width)
+	return wrapRawText(content, useBar, width)
 }
 
 // forceRenderDirtyBlocks immediately glamour-renders all dirty "thinking"
@@ -1027,10 +1091,11 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 		if idx >= 0 && idx < len(m.blocks) {
 			b := m.blocks[idx]
 			if b.kind == "thinking" || b.kind == "text" {
-				rendered := m.renderMarkdown(b.content, b.kind == "thinking")
+				rendered := renderMarkdownWithCache(b.content, b.kind == "thinking", m.width)
 				if rendered != "" {
 					m.mdCacheRendered[idx] = rendered
 					m.blocks[idx].cachedLineCount = lineCount(rendered)
+					m.blocks[idx].cachedLines = strings.Split(rendered, "\n")
 				}
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamingCache, idx)
@@ -1039,6 +1104,7 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				if rendered != "" {
 					m.mdCacheRendered[idx] = rendered
 					m.blocks[idx].cachedLineCount = lineCount(rendered)
+					m.blocks[idx].cachedLines = strings.Split(rendered, "\n")
 				}
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamingCache, idx)
@@ -1054,6 +1120,7 @@ func (m *TuiModel) appendToLastTool(delta string) {
 	for i := len(m.blocks) - 1; i >= 0; i-- {
 		if m.blocks[i].kind == "tool" {
 			m.blocks[i].content += delta
+			m.blocks[i].cachedLines = nil
 			delete(m.toolDisplayCache, i)
 			return
 		}
@@ -1085,6 +1152,8 @@ func (m *TuiModel) finishToolAt(result string) {
 		}
 		m.blocks[idx].toolState = "done"
 		m.blocks[idx].duration = time.Since(m.blocks[idx].startTime)
+		m.blocks[idx].cachedLines = nil
+		delete(m.toolDisplayCache, idx)
 	}
 }
 
@@ -1106,17 +1175,16 @@ func (m *TuiModel) blockAtVisibleLine(visY int) int {
 	}
 	var allLines []lineInfo
 
-	for blkIdx, blk := range m.blocks {
-		rendered := m.renderBlock(blkIdx, blk)
-		if rendered == "" {
+	for blkIdx := range m.blocks {
+		lines := m.getBlockLines(blkIdx, false)
+		if len(lines) == 0 {
 			continue
 		}
-		lines := strings.Split(rendered, "\n")
 		for range lines {
 			allLines = append(allLines, lineInfo{blockIdx: blkIdx})
 		}
 		// Separator blank line (skip if next block is also a tool)
-		if blkIdx+1 < len(m.blocks) && m.blocks[blkIdx+1].kind == "tool" && blk.kind == "tool" {
+		if blkIdx+1 < len(m.blocks) && m.blocks[blkIdx+1].kind == "tool" && m.blocks[blkIdx].kind == "tool" {
 			continue
 		}
 		allLines = append(allLines, lineInfo{blockIdx: -1})
@@ -1180,64 +1248,109 @@ func (m TuiModel) View() string {
 		msgHeight--
 	}
 
-	// Build all rendered block lines into a flat slice
-	type lineInfo struct {
-		text string
-	}
-	var allLines []lineInfo
+	// ── Virtual scrolling: only render blocks visible in viewport ──
+	// First, compute total rendered lines (uses cached line counts).
+	totalLines := m.totalRenderedLines()
 
-	for i, blk := range m.blocks {
-		rendered := m.renderBlock(i, blk)
-		if rendered == "" {
-			continue
-		}
-		lines := strings.Split(rendered, "\n")
-		for _, l := range lines {
-			allLines = append(allLines, lineInfo{text: l})
-		}
-		// Blank line separator between blocks (skip if next block is also a tool)
-		if i+1 < len(m.blocks) && m.blocks[i+1].kind == "tool" && blk.kind == "tool" {
-			continue
-		}
-		allLines = append(allLines, lineInfo{text: ""})
-	}
-	// Remove trailing empty line
-	if len(allLines) > 0 && allLines[len(allLines)-1].text == "" {
-		allLines = allLines[:len(allLines)-1]
-	}
-
-	totalLines := len(allLines)
-
-	// Calculate visible range (from bottom)
-	var startIdx int
+	// Calculate visible line range (0-based, from top).
+	var visibleStart, visibleEnd int
 	if totalLines <= msgHeight {
-		startIdx = 0
+		visibleStart = 0
+		visibleEnd = totalLines
 	} else {
 		// scrollLine = lines scrolled up from bottom
-		startIdx = totalLines - msgHeight - m.scrollLine
-		if startIdx < 0 {
-			startIdx = 0
+		bottomLine := totalLines - m.scrollLine
+		visibleStart = bottomLine - msgHeight
+		if visibleStart < 0 {
+			visibleStart = 0
+		}
+		visibleEnd = bottomLine
+		if visibleEnd > totalLines {
+			visibleEnd = totalLines
 		}
 	}
 
+	// Walk blocks, accumulate line offset, and only render/split blocks
+	// whose line range overlaps [visibleStart, visibleEnd).
+	// Must match totalRenderedLines() separator logic.
+	type blockLines struct {
+		lines []string
+		sep   bool // whether a blank separator line follows
+	}
+	var renderedBlocks []blockLines
+	offset := 0 // current line offset within total
+
+	for i := range m.blocks {
+		// Get cached lines for this block (renders if needed)
+		lines := m.getBlockLines(i, false)
+		lc := 0
+		if lines != nil {
+			lc = len(lines)
+		}
+		// Empty block — skip entirely (no block lines, no separator).
+		if lc == 0 {
+			continue
+		}
+		blockStart := offset
+		blockEnd := offset + lc
+
+		// Blank separator between blocks (same logic as totalRenderedLines)
+		hasSep := i+1 < len(m.blocks)
+		if hasSep && m.blocks[i+1].kind == "tool" && m.blocks[i].kind == "tool" {
+			hasSep = false
+		}
+		sepStart := blockEnd
+		sepEnd := blockEnd
+		if hasSep {
+			sepEnd = blockEnd + 1
+		}
+
+		// Check if this block or its separator overlaps with visible range
+		overlap := blockEnd > visibleStart && blockStart < visibleEnd
+		sepOverlap := hasSep && sepEnd > visibleStart && sepStart < visibleEnd
+
+		if overlap || sepOverlap {
+			// Use cached lines directly (no re-split)
+			renderedBlocks = append(renderedBlocks, blockLines{lines: lines, sep: hasSep && sepOverlap})
+		}
+
+		// Always advance offset for correct total
+		offset = sepEnd
+
+		// If we've passed the visible range and rendered what we need, stop early
+		if blockStart >= visibleEnd && len(renderedBlocks) > 0 {
+			break
+		}
+	}
+
+	// Render visible lines from the collected blocks
 	rendered := 0
-	for i := startIdx; i < totalLines && rendered < msgHeight; i++ {
-		line := allLines[i].text
-		if m.width > 0 && lipgloss.Width(line) > m.width {
-			// Wrap long lines instead of truncating with "..."
-			wrapped := wrapText(line, m.width, 0)
-			wrappedLines := strings.Split(wrapped, "\n")
-			for _, wl := range wrappedLines {
-				if rendered >= msgHeight {
-					break
+	for _, rb := range renderedBlocks {
+		for _, line := range rb.lines {
+			if rendered >= msgHeight {
+				break
+			}
+			if m.width > 0 && lipgloss.Width(line) > m.width {
+				wrapped := wrapText(line, m.width, 0)
+				for _, wl := range strings.Split(wrapped, "\n") {
+					if rendered >= msgHeight {
+						break
+					}
+					wl = strings.TrimSuffix(wl, clearLine)
+					b.WriteString(wl)
+					b.WriteString("\n")
+					rendered++
 				}
-				wl = strings.TrimSuffix(wl, clearLine)
-				b.WriteString(wl)
+			} else {
+				b.WriteString(line)
 				b.WriteString("\n")
 				rendered++
 			}
-		} else {
-			b.WriteString(line)
+		}
+		if rendered >= msgHeight {
+			break
+		}
+		if rb.sep {
 			b.WriteString("\n")
 			rendered++
 		}
@@ -1594,16 +1707,18 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 			wrapped := wrapRawText(content, useBar, m.width)
 			m.streamingCache[idx] = wrapped
 			m.blocks[idx].cachedLineCount = lineCount(wrapped)
+			m.blocks[idx].cachedLines = strings.Split(wrapped, "\n")
 			return wrapped
 		}
 
 		// Not streaming → do glamour render (final rendering)
-		rendered := m.renderMarkdown(content, useBar)
+		rendered := renderMarkdownWithCache(content, useBar, m.width)
 		// Update cache
 		delete(m.dirtyBlocks, idx)
 		delete(m.streamingCache, idx)
 		m.mdCacheRendered[idx] = rendered
 		m.blocks[idx].cachedLineCount = lineCount(rendered)
+		m.blocks[idx].cachedLines = strings.Split(rendered, "\n")
 		delete(m.streamingCache, idx)
 		return rendered
 	}
@@ -1630,6 +1745,32 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 	default:
 		return b.content
 	}
+}
+
+// getBlockLines returns the cached lines for a block, computing them if necessary.
+// If forceRender is false and the block has no cached lines, it calls renderBlock to compute them.
+// Returns nil if the block is empty or has no content.
+func (m *TuiModel) getBlockLines(idx int, forceRender bool) []string {
+	if idx < 0 || idx >= len(m.blocks) {
+		return nil
+	}
+	b := &m.blocks[idx]
+	if b.cachedLines != nil {
+		return b.cachedLines
+	}
+	if forceRender {
+		return nil
+	}
+	rendered := m.renderBlock(idx, *b)
+	if rendered == "" {
+		b.cachedLines = []string{} // empty but not nil → skip next time
+		b.cachedLineCount = 0
+		return nil
+	}
+	lines := strings.Split(rendered, "\n")
+	b.cachedLines = lines
+	b.cachedLineCount = len(lines)
+	return lines
 }
 
 // renderErrorOrBlock renders error and block type blocks (no glamour, just wrapText).
@@ -1659,7 +1800,8 @@ func renderErrorOrBlock(b block, width int) string {
 }
 
 func (m TuiModel) renderToolBlock(idx int, b block) string {
-	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("69")).Render("┃")
+	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("┃") // orange bar
+	toolLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("tool")
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
@@ -1680,7 +1822,7 @@ func (m TuiModel) renderToolBlock(idx int, b block) string {
 		line += " " + hintStyle.Render("- click to display")
 	}
 
-	return bar + " " + textStyle.Render(line)
+	return bar + " " + toolLabel + " " + textStyle.Render(line)
 }
 
 // formatToolCall parses the raw JSON tool arguments and returns a human-readable
@@ -1825,6 +1967,13 @@ type TUI struct {
 	modelChanges  chan string
 	cancel        chan struct{}    // sent on when ESC pressed during agent run
 	done          chan struct{}
+
+	// Streaming coalescing
+	mu             sync.Mutex
+	pendingKind    string // "thinking" or "text"
+	pendingContent strings.Builder
+	flushTicker    *time.Ticker
+	flushDone      chan struct{}
 }
 
 func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels) *TUI {
@@ -1840,8 +1989,11 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 		modelChanges:  modelChanges,
 		cancel:        cancel,
 		done:          make(chan struct{}),
+		flushTicker:   time.NewTicker(time.Second / 30), // ~30 FPS
+		flushDone:     make(chan struct{}),
 	}
 
+	go t.flushLoop()
 	go func() {
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
@@ -1850,6 +2002,49 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	}()
 
 	return t
+}
+
+// flushLoop periodically flushes accumulated streaming content.
+func (t *TUI) flushLoop() {
+	for {
+		select {
+		case <-t.flushTicker.C:
+			t.flushPending()
+		case <-t.done:
+			t.flushPending() // flush one last time
+			t.flushTicker.Stop()
+			close(t.flushDone)
+			return
+		}
+	}
+}
+
+// flushPending sends any accumulated streaming content as a single message.
+func (t *TUI) flushPending() {
+	t.mu.Lock()
+	kind := t.pendingKind
+	content := t.pendingContent.String()
+	t.pendingKind = ""
+	t.pendingContent.Reset()
+	t.mu.Unlock()
+
+	if content != "" && kind != "" {
+		t.post(tuiMsgBlock{kind: kind, content: content})
+	}
+}
+
+// flushNow forces an immediate flush of pending content.
+func (t *TUI) flushNow() {
+	t.mu.Lock()
+	kind := t.pendingKind
+	content := t.pendingContent.String()
+	t.pendingKind = ""
+	t.pendingContent.Reset()
+	t.mu.Unlock()
+
+	if content != "" && kind != "" {
+		t.post(tuiMsgBlock{kind: kind, content: content})
+	}
 }
 
 // ModelChanges returns a channel that receives new model names when the user
@@ -1881,12 +2076,63 @@ func (t *TUI) CancelCh() <-chan struct{} {
 
 func (t *TUI) post(msg tuiMsgBlock) { t.prog.Send(msg) }
 
-func (t *TUI) Thinking(text string)           { t.post(tuiMsgBlock{kind: "thinking", content: text}) }
-func (t *TUI) Text(text string)                { t.post(tuiMsgBlock{kind: "text", content: text}) }
-func (t *TUI) ToolCallStart(name string)       { t.post(tuiMsgBlock{kind: "tool-start", toolName: name}) }
-func (t *TUI) ToolCallDelta(delta string)      { t.post(tuiMsgBlock{kind: "tool-delta", content: delta}) }
-func (t *TUI) ToolCallEnd(name, result string) { t.post(tuiMsgBlock{kind: "tool-end", content: result}) }
+func (t *TUI) Thinking(text string) {
+	t.mu.Lock()
+	if t.pendingKind != "" && t.pendingKind != "thinking" {
+		// Kind changed, flush previous
+		kind := t.pendingKind
+		content := t.pendingContent.String()
+		t.pendingKind = "thinking"
+		t.pendingContent.Reset()
+		t.pendingContent.WriteString(text)
+		t.mu.Unlock()
+		if content != "" {
+			t.post(tuiMsgBlock{kind: kind, content: content})
+		}
+	} else {
+		t.pendingKind = "thinking"
+		t.pendingContent.WriteString(text)
+		t.mu.Unlock()
+	}
+}
+
+func (t *TUI) Text(text string) {
+	t.mu.Lock()
+	if t.pendingKind != "" && t.pendingKind != "text" {
+		// Kind changed, flush previous
+		kind := t.pendingKind
+		content := t.pendingContent.String()
+		t.pendingKind = "text"
+		t.pendingContent.Reset()
+		t.pendingContent.WriteString(text)
+		t.mu.Unlock()
+		if content != "" {
+			t.post(tuiMsgBlock{kind: kind, content: content})
+		}
+	} else {
+		t.pendingKind = "text"
+		t.pendingContent.WriteString(text)
+		t.mu.Unlock()
+	}
+}
+
+func (t *TUI) ToolCallStart(name string) {
+	t.flushNow()
+	t.post(tuiMsgBlock{kind: "tool-start", toolName: name})
+}
+
+func (t *TUI) ToolCallDelta(delta string) {
+	t.flushNow()
+	t.post(tuiMsgBlock{kind: "tool-delta", content: delta})
+}
+
+func (t *TUI) ToolCallEnd(name, result string) {
+	t.flushNow()
+	t.post(tuiMsgBlock{kind: "tool-end", content: result})
+}
+
 func (t *TUI) ToolBlock(msg string) {
+	t.flushNow()
 	// In TUI, "⏳ waiting for tools..." is noise; tools are rendered live via ToolCallStart/Delta/End.
 	// Skip it.
 	if strings.HasPrefix(msg, "⏳") {
@@ -1894,12 +2140,23 @@ func (t *TUI) ToolBlock(msg string) {
 	}
 	t.post(tuiMsgBlock{kind: "block", content: msg})
 }
+
 func (t *TUI) Summary(usage stream.Usage, stats stream.Stats) {
+	t.flushNow()
 	t.post(tuiMsgBlock{kind: "usage", usage: usage, stats: stats})
 }
-func (t *TUI) Error(err error)    { t.post(tuiMsgBlock{kind: "error", content: err.Error()}) }
-func (t *TUI) End()               {}
+
+func (t *TUI) Error(err error) {
+	t.flushNow()
+	t.post(tuiMsgBlock{kind: "error", content: err.Error()})
+}
+
+func (t *TUI) End() {
+	t.flushNow()
+}
+
 func (t *TUI) Done(usage stream.Usage, stats stream.Stats) {
+	t.flushNow()
 	t.post(tuiMsgBlock{kind: "done", usage: usage, stats: stats})
 }
 
