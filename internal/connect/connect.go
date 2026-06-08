@@ -30,7 +30,7 @@ func Run(name, apiType, baseURL, token string) error {
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
-	host := u.Host + strings.TrimRight(u.Path, "/")
+	host := u.Host
 
 	modelIDs, err := fetchOpenAIModels(baseURL, token)
 	if err != nil {
@@ -127,7 +127,7 @@ func fetchOpenAIModels(baseURL, token string) ([]string, error) {
 			}
 			return ids, nil
 		}
-		if resp.StatusCode == http.StatusNotFound {
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden {
 			continue
 		}
 		respBody, _ := io.ReadAll(resp.Body)
