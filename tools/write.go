@@ -38,24 +38,38 @@ func (t *WriteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			return ToolResult{Type: "result", Success: false, Error: err.Error()}
 		}
 		return ToolResult{Type: "result", Success: true, Content: "written " + path}
-	case "lines":
+	case "before", "after", "lines":
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return ToolResult{Type: "result", Success: false, Error: err.Error()}
 		}
 		lines, origTrailing := splitFileLines(string(data))
-		if r.from < 1 || r.to < r.from || r.to > len(lines) {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("range %d...%d out of bounds (file has %d lines)", r.from, r.to, len(lines))}
+		if r.from < 1 || r.from > len(lines) || (r.mode == "lines" && (r.to < r.from || r.to > len(lines))) {
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("range out of bounds (file has %d lines)", len(lines))}
 		}
 		repl, replTrailing := splitReplacementLines(content)
-		newLines := make([]string, 0, len(lines)-(r.to-r.from+1)+len(repl))
-		newLines = append(newLines, lines[:r.from-1]...)
-		newLines = append(newLines, repl...)
-		newLines = append(newLines, lines[r.to:]...)
+		var newLines []string
+		switch r.mode {
+		case "before":
+			newLines = make([]string, 0, len(lines)+len(repl))
+			newLines = append(newLines, lines[:r.from-1]...)
+			newLines = append(newLines, repl...)
+			newLines = append(newLines, lines[r.from-1:]...)
+		case "after":
+			newLines = make([]string, 0, len(lines)+len(repl))
+			newLines = append(newLines, lines[:r.from]...)
+			newLines = append(newLines, repl...)
+			newLines = append(newLines, lines[r.from:]...)
+		default:
+			newLines = make([]string, 0, len(lines)-(r.to-r.from+1)+len(repl))
+			newLines = append(newLines, lines[:r.from-1]...)
+			newLines = append(newLines, repl...)
+			newLines = append(newLines, lines[r.to:]...)
+		}
 
 		out := strings.Join(newLines, "\n")
 		trailing := origTrailing
-		if r.to >= len(lines) {
+		if r.mode == "lines" && r.to >= len(lines) {
 			trailing = replTrailing
 		}
 		if trailing && out != "" {
@@ -64,10 +78,17 @@ func (t *WriteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		if err := os.WriteFile(path, []byte(out), 0644); err != nil {
 			return ToolResult{Type: "result", Success: false, Error: err.Error()}
 		}
-		if r.from == r.to {
-			return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("replaced line %d in %s", r.from, path)}
+		switch r.mode {
+		case "before":
+			return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("inserted before line %d in %s", r.from, path)}
+		case "after":
+			return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("inserted after line %d in %s", r.from, path)}
+		case "lines":
+			if r.from == r.to {
+				return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("replaced line %d in %s", r.from, path)}
+			}
+			return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("replaced lines %d...%d in %s", r.from, r.to, path)}
 		}
-		return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("replaced lines %d...%d in %s", r.from, r.to, path)}
 	}
 
 	return ToolResult{Type: "result", Success: false, Error: "invalid range"}
@@ -86,7 +107,7 @@ func appendFile(path, content string) ToolResult {
 }
 
 type writeRange struct {
-	mode     string // all, append, lines
+	mode     string // all, append, lines, before, after
 	from, to int
 }
 
@@ -113,6 +134,34 @@ func parseWriteRange(v any) (writeRange, error) {
 	case string:
 		s := strings.TrimSpace(x)
 		sl := strings.ToLower(s)
+		if strings.HasPrefix(sl, "before:") || strings.HasPrefix(sl, "before ") {
+			n, err := strconv.Atoi(strings.TrimSpace(s[strings.IndexAny(s, ": ")+1:]))
+			if err != nil || n < 1 {
+				return writeRange{}, fmt.Errorf("invalid before range %q", s)
+			}
+			return writeRange{mode: "before", from: n, to: n}, nil
+		}
+		if strings.HasPrefix(sl, "after:") || strings.HasPrefix(sl, "after ") {
+			n, err := strconv.Atoi(strings.TrimSpace(s[strings.IndexAny(s, ": ")+1:]))
+			if err != nil || n < 1 {
+				return writeRange{}, fmt.Errorf("invalid after range %q", s)
+			}
+			return writeRange{mode: "after", from: n, to: n}, nil
+		}
+		if strings.HasSuffix(s, "^") {
+			n, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(s, "^")))
+			if err != nil || n < 1 {
+				return writeRange{}, fmt.Errorf("invalid before range %q", s)
+			}
+			return writeRange{mode: "before", from: n, to: n}, nil
+		}
+		if strings.HasSuffix(s, "+") {
+			n, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(s, "+")))
+			if err != nil || n < 1 {
+				return writeRange{}, fmt.Errorf("invalid after range %q", s)
+			}
+			return writeRange{mode: "after", from: n, to: n}, nil
+		}
 		if s == "" || sl == "all" || s == "0...-1" || s == "0..-1" {
 			return writeRange{mode: "all"}, nil
 		}
@@ -144,7 +193,7 @@ func parseWriteRange(v any) (writeRange, error) {
 			}
 		}
 	}
-	return writeRange{}, fmt.Errorf("invalid range; use line number, from...to, all, or -1/append")
+	return writeRange{}, fmt.Errorf("invalid range; use line number, from...to, before:N, after:N, all, or -1/append")
 }
 
 func splitFileLines(s string) ([]string, bool) {

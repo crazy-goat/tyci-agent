@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -19,7 +20,7 @@ func (t *GlobTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: "pattern required"}
 	}
 	cwd := stringParam(input, "cwd", ".")
-	excludes := stringListParam(input, "exclude", nil)
+	excludes := defaultExcludes(input)
 	limit := intParam(input, "limit", 500)
 	if limit <= 0 {
 		limit = 500
@@ -83,6 +84,8 @@ func (t *GlobTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
+
+	sort.Strings(results)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Found %d paths", len(results))

@@ -161,6 +161,24 @@ func TestTuiModel_RenderToolBlock_FormatToolCall(t *testing.T) {
 			want:     "bash(list files)",
 		},
 		{
+			name:     "glob with pattern",
+			toolName: "glob",
+			content:  `{"pattern": "**/*.go"}`,
+			want:     "glob(**/*.go)",
+		},
+		{
+			name:     "grep with pattern",
+			toolName: "grep",
+			content:  `{"pattern": "TODO"}`,
+			want:     "grep(TODO)",
+		},
+		{
+			name:     "todo with action",
+			toolName: "todo",
+			content:  `{"action": "add", "content": "Implement thing"}`,
+			want:     "todo(add: Implement thing)",
+		},
+		{
 			name:     "empty args",
 			toolName: "read",
 			content:  "",
@@ -1262,7 +1280,6 @@ func TestTuiModel_Autoscroll_ModalRestoresScrollState(t *testing.T) {
 		t.Errorf("scrollLine should be restored to 0, got %d", m.scrollLine)
 	}
 }
-
 
 // ─── Autoscroll multi-turn tests (issue #50) ─────────────────────────────
 

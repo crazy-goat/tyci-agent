@@ -23,7 +23,7 @@ func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	}
 	cwd := stringParam(input, "cwd", ".")
 	includes := stringListParam(input, "include", []string{"**/*"})
-	excludes := stringListParam(input, "exclude", nil)
+	excludes := defaultExcludes(input)
 	mode := stringParam(input, "mode", "text")
 	caseSensitive := boolParam(input, "caseSensitive", true)
 	contextLines := intParam(input, "context", 0)
@@ -101,7 +101,7 @@ func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
 				}
 				blocks = append(blocks, block)
 			}
-		} else if len(filesSet) >= limit && output == "files" {
+		} else if (output == "files" || output == "count") && len(filesSet) >= limit {
 			truncated = true
 			return filepath.SkipAll
 		}
@@ -127,8 +127,13 @@ func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		}
 	case "count":
 		files := sortedKeysInt(counts)
-		fmt.Fprintf(&b, "Found %d matches in %d files:", totalMatches, len(files))
-		for _, f := range files {
+		shown := minInt(len(files), limit)
+		fmt.Fprintf(&b, "Found %d matches in %d files", totalMatches, len(files))
+		if truncated || len(files) > shown {
+			fmt.Fprintf(&b, " (showing %d)", shown)
+		}
+		b.WriteString(":")
+		for _, f := range files[:shown] {
 			fmt.Fprintf(&b, "\n%s: %d", f, counts[f])
 		}
 	case "lines":
@@ -262,6 +267,15 @@ func grepFile(path, rel string, matcher *contentMatcher, contextLines, maxLineLe
 	for _, ln := range matchLines {
 		start := maxInt(1, ln-contextLines)
 		end := minInt(len(lines), ln+contextLines)
+		if len(blocks) > 0 && blocks[len(blocks)-1].end >= start-1 {
+			if end > blocks[len(blocks)-1].end {
+				for i := blocks[len(blocks)-1].end + 1; i <= end; i++ {
+					blocks[len(blocks)-1].lines = append(blocks[len(blocks)-1].lines, truncateLine(lines[i-1], maxLineLength))
+				}
+				blocks[len(blocks)-1].end = end
+			}
+			continue
+		}
 		ctx := make([]string, 0, end-start+1)
 		for i := start; i <= end; i++ {
 			ctx = append(ctx, truncateLine(lines[i-1], maxLineLength))

@@ -77,6 +77,12 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		if _, ok := input["parentId"]; ok {
 			todoState.items[idx].ParentID = parentID
 		}
+	case "doing", "blocked":
+		idx := findTodoIndex(id)
+		if idx < 0 {
+			return ToolResult{Type: "result", Success: false, Error: "todo not found"}
+		}
+		todoState.items[idx].Status = action
 	case "done":
 		idx := findTodoIndex(id)
 		if idx < 0 {

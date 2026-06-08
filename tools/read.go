@@ -131,13 +131,10 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		}
 	}
 
-	// Wczytaj cały plik (do hard limitu 256KB)
+	// Read the whole file so continuation hints are accurate. Output is still capped below.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
-	}
-	if len(data) > HardMaxBytes {
-		data = data[:HardMaxBytes]
 	}
 
 	text := string(data)
@@ -168,21 +165,21 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		selectedText = strings.Join(lines[startLine:], "\n")
 	}
 
-	// Aplikuj truncation (linie i bajty)
+	// Apply output caps. If user set limit, respect it by lines but still cap bytes.
 	maxLines := DefaultMaxLines
 	maxBytes := DefaultMaxBytes
-	if limit > 0 && limit < maxLines {
-		maxLines = limit // user already limited lines, don't truncate further by lines
+	if limit > 0 {
+		maxLines = limit
 	}
 	tr := truncateHead(selectedText, maxLines, maxBytes)
 
 	startLineDisplay := startLine + 1
 
-	// Jeśli pierwsza linia przekracza limit bajtów
+	// If the first selected line alone exceeds byte cap, return a clear continuation hint.
 	if tr.firstLineExceeds {
 		firstLineSize := len(lines[startLine])
-		msg := fmt.Sprintf("[Line %d is %dB, exceeds %d byte limit. Use bash: sed -n '%dp' %s | head -c %d]",
-			startLineDisplay, firstLineSize, maxBytes, startLineDisplay, path, maxBytes)
+		msg := fmt.Sprintf("[Line %d is %dB, exceeds %dKB output limit. No partial line returned. Use bash or read a later offset after this long line.]",
+			startLineDisplay, firstLineSize, maxBytes/1024)
 		return ToolResult{Type: "result", Success: true, Content: msg}
 	}
 
@@ -191,23 +188,28 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		content = addLineNumbers(content, startLineDisplay)
 	}
 
-	// Dodaj informację o kontynuacji jeśli truncation obciął
+	// Always say how to continue when returned output is incomplete.
+	endLineDisplay := startLineDisplay + tr.outputLines - 1
+	if tr.outputLines == 0 {
+		endLineDisplay = startLineDisplay
+	}
 	if tr.truncated {
-		endLineDisplay := startLineDisplay + tr.outputLines - 1
 		nextOffset := endLineDisplay + 1
+		if nextOffset <= startLineDisplay {
+			nextOffset = startLineDisplay + 1
+		}
 		if tr.truncatedBy == "lines" {
-			content += fmt.Sprintf("\n\n[Showing lines %d-%d of %d. Use offset=%d to continue.]",
+			content += fmt.Sprintf("\n\n[Showing lines %d-%d of %d. More content available. Use offset=%d to continue.]",
 				startLineDisplay, endLineDisplay, totalFileLines, nextOffset)
 		} else {
-			content += fmt.Sprintf("\n\n[Showing lines %d-%d of %d (%dKB limit). Use offset=%d to continue.]",
+			content += fmt.Sprintf("\n\n[Showing lines %d-%d of %d. Output hit %dKB limit. More content available. Use offset=%d to continue.]",
 				startLineDisplay, endLineDisplay, totalFileLines, maxBytes/1024, nextOffset)
 		}
 	} else if userLimited {
-		// User-specified limit zatrzymał się wcześniej niż koniec pliku
 		remaining := totalFileLines - (startLine + limit)
 		nextOffset := startLine + limit + 1
-		content += fmt.Sprintf("\n\n[%d more lines in file. Use offset=%d to continue.]",
-			remaining, nextOffset)
+		content += fmt.Sprintf("\n\n[Showing lines %d-%d of %d. %d more lines available. Use offset=%d to continue.]",
+			startLineDisplay, startLine+limit, totalFileLines, remaining, nextOffset)
 	}
 
 	return ToolResult{Type: "result", Success: true, Content: content}

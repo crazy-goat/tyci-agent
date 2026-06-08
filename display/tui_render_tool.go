@@ -3,6 +3,7 @@ package display
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -47,6 +48,21 @@ func formatToolCall(toolName, rawJSON string) string {
 	}
 
 	switch toolName {
+	case "glob":
+		if pattern := formatArg(args["pattern"]); pattern != "" {
+			return "glob(" + truncateString(pattern, 60) + ")"
+		}
+	case "grep":
+		if pattern := formatArg(args["pattern"]); pattern != "" {
+			return "grep(" + truncateString(pattern, 60) + ")"
+		}
+	case "todo":
+		if action, ok := args["action"].(string); ok && action != "" {
+			if content, ok := args["content"].(string); ok && content != "" {
+				return "todo(" + action + ": " + truncateString(content, 50) + ")"
+			}
+			return "todo(" + action + ")"
+		}
 	case "read", "write", "edit":
 		if path, ok := args["path"].(string); ok && path != "" {
 			return toolName + "(" + path + ")"
@@ -65,6 +81,24 @@ func formatToolCall(toolName, rawJSON string) string {
 	}
 
 	return toolName + "(...)"
+}
+
+func formatArg(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case []any:
+		parts := make([]string, 0, len(x))
+		for _, item := range x {
+			if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, ",")
+		}
+	}
+	return ""
 }
 
 // formatDuration returns a human-readable duration string.

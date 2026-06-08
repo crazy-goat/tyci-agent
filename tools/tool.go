@@ -97,7 +97,7 @@ func GetToolsSchema() []map[string]any {
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"action":   map[string]any{"type": "string", "enum": []string{"add", "update", "done", "remove", "list", "clear"}},
+						"action":   map[string]any{"type": "string", "enum": []string{"add", "update", "doing", "blocked", "done", "remove", "list", "clear"}},
 						"id":       map[string]any{"type": "integer", "description": "Todo id for update/done/remove"},
 						"content":  map[string]any{"type": "string", "description": "Todo text"},
 						"status":   map[string]any{"type": "string", "enum": []string{"todo", "doing", "done", "blocked"}, "description": "Default: todo"},
@@ -129,13 +129,13 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "write",
-				"description": "Write file content. Overwrites by default. range can replace line(s) or append.",
+				"description": "Write file content. Overwrites by default. range can replace, insert, or append.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"path":    map[string]any{"type": "string", "description": "File path to write"},
 						"content": map[string]any{"type": "string", "description": "Content to write"},
-						"range":   map[string]any{"description": "Optional: line number, 'from...to' inclusive, 'all', or -1/'append'"},
+						"range":   map[string]any{"description": "Optional: line number, 'from...to', 'before:N', 'after:N', 'all', or -1/'append'"},
 					},
 					"required": []string{"path", "content"},
 				},
@@ -145,14 +145,15 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "edit",
-				"description": "Edit file - replace text",
+				"description": "Replace exact text in a file. By default oldString must match exactly once.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"path":       map[string]any{"type": "string", "description": "File path"},
-						"oldString":  map[string]any{"type": "string", "description": "Text to replace"},
+						"oldString":  map[string]any{"type": "string", "description": "Exact text to replace"},
 						"newString":  map[string]any{"type": "string", "description": "Replacement text"},
-						"replaceAll": map[string]any{"type": "boolean", "description": "Replace all occurrences (optional, default: false - replaces first only)"},
+						"occurrence": map[string]any{"description": "Optional: occurrence number or 'all'. Default requires exactly one match"},
+						"dryRun":     map[string]any{"type": "boolean", "description": "Preview without writing (default: false)"},
 					},
 					"required": []string{"path", "oldString", "newString"},
 				},

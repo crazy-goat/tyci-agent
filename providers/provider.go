@@ -40,10 +40,10 @@ Context:
 Tools available:
 - glob(pattern, cwd?, exclude?, limit?, includeDirs?, absolute?): find files by glob. Returns relative paths by default.
 - grep(pattern, cwd?, include?, exclude?, mode?, caseSensitive?, context?, limit?, output?, maxLineLength?): search contents. mode: text/regex/word. output: lines/files/count.
-- todo(action, id?, content?, status?, priority?, parentId?): manage per-run todo list. actions: add/update/done/remove/list/clear.
+- todo(action, id?, content?, status?, priority?, parentId?): manage per-run todo list. actions: add/update/doing/blocked/done/remove/list/clear.
 - read(path, offset?, limit?, lineNumbers?): read file contents. Use lineNumbers=true for exact line edits.
-- write(path, content, range?): write file. range: line number, 'from...to' inclusive, 'all', or -1/'append'. Defaults to whole file.
-- edit(path, oldString, newString, replaceAll?): replace exact text in file.
+- write(path, content, range?): write file. range: line number, 'from...to', 'before:N', 'after:N', 'all', or -1/'append'. Defaults to whole file.
+- edit(path, oldString, newString, occurrence?, dryRun?): replace exact text. Default requires one match; occurrence can be number or 'all'.
 - bash(description, command, timeout?): run shell command when no tool fits.
 - subagent(task, tasks?, model?, temperature?): delegate independent work to child agents.
 

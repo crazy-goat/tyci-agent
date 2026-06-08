@@ -387,7 +387,7 @@ func TestTerminal_Thinking_LongLine(t *testing.T) {
 
 	// Create a terminal with known width for deterministic test
 	term := NewTerminal()
-	term.termWidth = 20 // force narrow width
+	term.termWidth = 20                                    // force narrow width
 	longText := "0123456789012345678901234567890123456789" // 40 chars
 	term.Thinking(longText)
 	sync()
@@ -619,7 +619,7 @@ func TestTerminal_ToolCall_StreamingDeltas(t *testing.T) {
 	// Simulate streaming tool call arguments in multiple chunks
 	term.ToolCallStart("bash")
 	term.ToolCallDelta(`{"description": "`)
-	term.ToolCallDelta(`list files`,)
+	term.ToolCallDelta(`list files`)
 	term.ToolCallDelta(`", "command": "`)
 	term.ToolCallDelta(`ls -la"}`)
 	sync()
@@ -1010,4 +1010,3 @@ func TestMinimal_ToolBlock_ThenToolCall(t *testing.T) {
 	m.ToolCallEnd("bash", "file1")
 	// Just ensure no panic
 }
-

@@ -53,7 +53,7 @@ func TestReadTool_WithLimit(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected success, got error: %s", res.Error)
 	}
-	expected := "line1\nline2\nline3\n\n[2 more lines in file. Use offset=4 to continue.]"
+	expected := "line1\nline2\nline3\n\n[Showing lines 1-3 of 5. 2 more lines available. Use offset=4 to continue.]"
 	if res.Content != expected {
 		t.Fatalf("expected %q, got %q", expected, res.Content)
 	}
@@ -70,7 +70,7 @@ func TestReadTool_WithOffsetAndLimit(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected success, got error: %s", res.Error)
 	}
-	expected := "line2\nline3\nline4\n\n[1 more lines in file. Use offset=5 to continue.]"
+	expected := "line2\nline3\nline4\n\n[Showing lines 2-4 of 5. 1 more lines available. Use offset=5 to continue.]"
 	if res.Content != expected {
 		t.Fatalf("expected %q, got %q", expected, res.Content)
 	}
@@ -102,7 +102,7 @@ func TestReadTool_OffsetString(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected success, got error: %s", res.Error)
 	}
-	expected := "charlie\ndelta\n\n[1 more lines in file. Use offset=5 to continue.]"
+	expected := "charlie\ndelta\n\n[Showing lines 3-4 of 5. 1 more lines available. Use offset=5 to continue.]"
 	if res.Content != expected {
 		t.Fatalf("expected %q, got %q", expected, res.Content)
 	}
@@ -280,6 +280,41 @@ func TestReadTool_TruncationContinuationHint(t *testing.T) {
 	// Should mention next offset
 	if !strings.Contains(res.Content, "offset=4") {
 		t.Errorf("expected 'offset=4' hint, got: %s", res.Content)
+	}
+}
+
+func TestReadTool_LineNumbers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "numbered.txt")
+	writeFile(t, path, "a\nb\nc")
+
+	r := &ReadTool{}
+	res := r.Run(context.Background(), map[string]any{"path": path, "offset": 2, "limit": 2, "lineNumbers": true})
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+	expected := "2| b\n3| c"
+	if res.Content != expected {
+		t.Fatalf("expected %q, got %q", expected, res.Content)
+	}
+}
+
+func TestReadTool_ByteTruncationShowsContinuation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bytes.txt")
+	line := strings.Repeat("x", 100)
+	writeFile(t, path, strings.Repeat(line+"\n", 700))
+
+	r := &ReadTool{}
+	res := r.Run(context.Background(), map[string]any{"path": path})
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "Output hit 50KB limit") {
+		t.Fatalf("expected byte truncation hint, got suffix: %q", res.Content[len(res.Content)-120:])
+	}
+	if !strings.Contains(res.Content, "Use offset=") {
+		t.Fatalf("expected continuation offset, got: %s", res.Content)
 	}
 }
 

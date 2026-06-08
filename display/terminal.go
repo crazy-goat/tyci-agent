@@ -335,7 +335,7 @@ func wrapText(s string, maxWidth, startCol int) string {
 
 	// Assemble output lines from tokens, wrapping at maxWidth visible chars.
 	var result strings.Builder
-	var lineTokens []token // tokens for the current output line
+	var lineTokens []token   // tokens for the current output line
 	visibleCount := startCol // account for the starting column offset
 
 	flushLine := func() {
