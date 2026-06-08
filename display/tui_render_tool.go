@@ -75,12 +75,30 @@ func formatToolCall(toolName, rawJSON string) string {
 			return "bash(" + truncateString(cmd, 60) + ")"
 		}
 	case "subagent":
-		if task, ok := args["task"].(string); ok && task != "" {
-			return "subagent(" + truncateString(task, 60) + ")"
+		if title := subagentTitleFromArgs(args); title != "" {
+			return "subagent(" + truncateString(title, 60) + ")"
 		}
 	}
 
 	return toolName + "(...)"
+}
+
+func subagentTitleFromArgs(args map[string]any) string {
+	if task, ok := args["task"].(string); ok && task != "" {
+		return task
+	}
+	if tasks, ok := args["tasks"].([]any); ok && len(tasks) > 0 {
+		if first, ok := tasks[0].(map[string]any); ok {
+			if task, ok := first["task"].(string); ok && task != "" {
+				if len(tasks) == 1 {
+					return task
+				}
+				return fmt.Sprintf("%s +%d", task, len(tasks)-1)
+			}
+		}
+		return fmt.Sprintf("%d tasks", len(tasks))
+	}
+	return ""
 }
 
 func formatArg(v any) string {

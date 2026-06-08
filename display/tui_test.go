@@ -179,6 +179,18 @@ func TestTuiModel_RenderToolBlock_FormatToolCall(t *testing.T) {
 			want:     "todo(add: Implement thing)",
 		},
 		{
+			name:     "subagent with task",
+			toolName: "subagent",
+			content:  `{"task": "Research parser"}`,
+			want:     "subagent(Research parser)",
+		},
+		{
+			name:     "subagent with tasks",
+			toolName: "subagent",
+			content:  `{"tasks": [{"task": "A"}, {"task": "B"}]}`,
+			want:     "subagent(A +1)",
+		},
+		{
 			name:     "empty args",
 			toolName: "read",
 			content:  "",

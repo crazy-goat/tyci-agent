@@ -42,26 +42,27 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 			m.subagentModalTitle = "subagent"
 		}
 	case "tool-delta":
-		// For subagent: extract task description, don't append raw delta to inline block
-		if m.subagentModalToolIdx >= 0 && m.subagentModalTitle == "subagent" && msg.content != "" {
-			var args map[string]any
-			if json.Unmarshal([]byte(msg.content), &args) == nil {
-				if task, ok := args["task"].(string); ok && task != "" {
-					m.subagentModalTitle = truncateString(task, 80)
+		// For subagent: keep raw JSON args in the inline block for summary rendering,
+		// while progress/output goes only to the modal.
+		if m.subagentModalToolIdx >= 0 && msg.content != "" && len(m.toolQueue) > m.subagentModalToolIdx {
+			bidx := m.toolQueue[m.subagentModalToolIdx]
+			if bidx >= 0 && bidx < len(m.blocks) && m.blocks[bidx].kind == "tool" && m.blocks[bidx].toolName == "subagent" {
+				m.blocks[bidx].content += msg.content
+				m.blocks[bidx].cachedLines = nil
+				m.blocks[bidx].cachedLineCount = 0
+				delete(m.toolDisplayCache, bidx)
+				m.invalidateTotalLines()
+
+				var args map[string]any
+				if json.Unmarshal([]byte(m.blocks[bidx].content), &args) == nil {
+					if title := subagentTitleFromArgs(args); title != "" {
+						m.subagentModalTitle = truncateString(title, 80)
+					}
 				}
+				break
 			}
-			// Set inline block to "subagent (task...)" format
-			if len(m.toolQueue) > m.subagentModalToolIdx {
-				bidx := m.toolQueue[m.subagentModalToolIdx]
-				if bidx >= 0 && bidx < len(m.blocks) && m.blocks[bidx].kind == "tool" {
-					m.blocks[bidx].content = "subagent (" + m.subagentModalTitle + ")"
-					m.blocks[bidx].cachedLines = nil
-					delete(m.toolDisplayCache, bidx)
-				}
-			}
-		} else {
-			m.appendToLastTool(msg.content)
 		}
+		m.appendToLastTool(msg.content)
 	case "tool-end":
 		// Determine if this tool-end is for the subagent
 		isSubagentEnd := m.subagentModalToolIdx == 0 && m.subagentModalToolIdx >= 0 && len(m.toolQueue) > 0

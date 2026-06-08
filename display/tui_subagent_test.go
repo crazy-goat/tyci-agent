@@ -215,6 +215,21 @@ func TestTuiModel_SubagentModal_Reset(t *testing.T) {
 	}
 }
 
+func TestTuiModel_SubagentInlineSummaryFromDelta(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"task": "find all Go files"}`})
+
+	if len(m.blocks) != 1 {
+		t.Fatalf("expected one block, got %d", len(m.blocks))
+	}
+	got := formatToolCall(m.blocks[0].toolName, m.blocks[0].content)
+	if got != "subagent(find all Go files)" {
+		t.Fatalf("expected subagent summary with task, got %q (content %q)", got, m.blocks[0].content)
+	}
+}
+
 func TestTuiModel_SubagentModal_TitleSetFromDelta(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
 
