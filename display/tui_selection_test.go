@@ -35,7 +35,7 @@ func TestTuiSelection_CopyUsesRenderBuffer(t *testing.T) {
 		{PlainText: "one", SourceKind: "text", Y: 1},
 		{PlainText: "two", SourceKind: "text", Y: 2},
 	}}
-	m.selection = SelectionState{Active: true, AnchorY: 1, CursorY: 2}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 1, CursorX: 3, CursorY: 2}
 
 	m = m.copySelection()
 
@@ -91,9 +91,9 @@ func TestTuiSelection_ClickToolOpensModalButDragDoesNot(t *testing.T) {
 	m.invalidateAllBlockLineCounts()
 	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 0})
 	m = model.(TuiModel)
-	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 2, Y: 0})
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 8, Y: 0})
 	m = model.(TuiModel)
-	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 2, Y: 0})
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 8, Y: 0})
 	m = model.(TuiModel)
 	if m.subagentModalActive {
 		t.Fatal("drag over tool should not open modal")
@@ -109,7 +109,7 @@ func TestTuiSelection_ModalCopyUsesModalFallbackBuffer(t *testing.T) {
 	m.subagentModalActive = true
 	m.subagentModalContent.WriteString("alpha\nbeta\ngamma")
 	layout := m.subagentModalLayout()
-	m.selection = SelectionState{Active: true, AnchorY: layout.contentTop, CursorY: layout.contentTop + 1}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: layout.contentTop, CursorX: 4, CursorY: layout.contentTop + 1}
 
 	m = m.copySelection()
 

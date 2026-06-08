@@ -11,9 +11,11 @@ type SelectionState struct {
 	Active    bool
 	Dragging  bool
 	Candidate bool
+	AnchorX   int // selection cell, relative to selectable content
 	AnchorY   int
+	CursorX   int // selection cell, relative to selectable content
 	CursorY   int
-	PressX    int
+	PressX    int // raw screen cell, for click-vs-drag detection
 	PressY    int
 }
 
@@ -53,17 +55,35 @@ func (m TuiModel) clampTranscriptY(y int) int {
 	return y
 }
 
-func (m TuiModel) selectedLineRange() (int, int, bool) {
+type selectionPoint struct {
+	X int
+	Y int
+}
+
+func (m TuiModel) normalizeSelection() (selectionPoint, selectionPoint, bool) {
 	if !m.selection.Active {
-		return 0, 0, false
+		return selectionPoint{}, selectionPoint{}, false
 	}
-	start, end := m.selection.AnchorY, m.selection.CursorY
-	if start > end {
+	start := selectionPoint{X: m.selection.AnchorX, Y: m.clampTranscriptY(m.selection.AnchorY)}
+	end := selectionPoint{X: m.selection.CursorX, Y: m.clampTranscriptY(m.selection.CursorY)}
+	if start.Y > end.Y || (start.Y == end.Y && start.X > end.X) {
 		start, end = end, start
 	}
-	start = m.clampTranscriptY(start)
-	end = m.clampTranscriptY(end)
+	if start.X < 0 {
+		start.X = 0
+	}
+	if end.X < 0 {
+		end.X = 0
+	}
 	return start, end, true
+}
+
+func (m TuiModel) selectedLineRange() (int, int, bool) {
+	start, end, ok := m.normalizeSelection()
+	if !ok {
+		return 0, 0, false
+	}
+	return start.Y, end.Y, true
 }
 
 func (m TuiModel) isLineSelected(y int) bool {
@@ -72,31 +92,49 @@ func (m TuiModel) isLineSelected(y int) bool {
 }
 
 func (m TuiModel) renderSelectableLine(line string, y int) string {
-	if !m.isLineSelected(y) {
+	start, end, ok := m.normalizeSelection()
+	if !ok || y < start.Y || y > end.Y {
 		return line
 	}
 	// Existing rendered lines often already contain ANSI styles from markdown,
-	// tool blocks, or lipgloss. Applying a background around those styles only
-	// highlights padding/gaps in many terminals. For selected lines, render the
-	// plain text version so the selection background covers the whole content.
+	// tool blocks, or lipgloss. For selected spans, render the plain text version
+	// so selection colors are predictable and copy text matches what is shown.
 	plain := plainLine(line)
-	width := m.width
-	if m.subagentModalActive {
-		layout := m.subagentModalLayout()
-		width = layout.popupWidth - 4
-	}
-	if width < 1 {
-		width = lipgloss.Width(plain)
-	}
+	lineWidth := selectableLineWidth(m, plain)
 	style := selectionLineStyle
 	if m.selectionFlash {
 		style = selectionFlashLineStyle
 	}
-	return style.Width(width).MaxWidth(width).Render(plain)
+
+	from, to := 0, lipgloss.Width(plain)
+	if y == start.Y {
+		from = start.X
+	}
+	if y == end.Y {
+		to = end.X
+	}
+	if start.Y != end.Y {
+		if y == start.Y {
+			to = lineWidth
+		} else if y == end.Y {
+			from = 0
+			to = end.X
+		} else {
+			from = 0
+			to = lineWidth
+		}
+	}
+	if from < 0 {
+		from = 0
+	}
+	if to < from {
+		to = from
+	}
+	return renderSelectedSpan(plain, from, to, lineWidth, style)
 }
 
 func (m TuiModel) selectedText() string {
-	start, end, ok := m.selectedLineRange()
+	start, end, ok := m.normalizeSelection()
 	if !ok {
 		return ""
 	}
@@ -109,16 +147,34 @@ func (m TuiModel) selectedText() string {
 	} else if len(rb.Lines) == 0 {
 		rb = m.visibleRenderBufferSnapshot()
 	}
-	parts := make([]string, 0, end-start+1)
+	parts := make([]string, 0, end.Y-start.Y+1)
 	for _, line := range rb.Lines {
-		if line.Y < start || line.Y > end {
+		if line.Y < start.Y || line.Y > end.Y {
 			continue
 		}
 		if line.SourceKind == "empty" || line.SourceKind == "modal-empty" {
 			parts = append(parts, "")
 			continue
 		}
-		parts = append(parts, line.PlainText)
+		from, to := 0, lipgloss.Width(line.PlainText)
+		if line.Y == start.Y {
+			from = start.X
+		}
+		if line.Y == end.Y {
+			to = end.X
+		}
+		if start.Y != end.Y {
+			if line.Y == start.Y {
+				to = lipgloss.Width(line.PlainText)
+			} else if line.Y == end.Y {
+				from = 0
+				to = end.X
+			} else {
+				from = 0
+				to = lipgloss.Width(line.PlainText)
+			}
+		}
+		parts = append(parts, cutCells(line.PlainText, from, to))
 	}
 	return strings.TrimRight(strings.Join(parts, "\n"), "\n")
 }

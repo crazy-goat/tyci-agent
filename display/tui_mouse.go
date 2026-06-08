@@ -30,15 +30,18 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && m.transcriptY(msg.Y) {
 		m.selectionVersion++
-		m.selection = SelectionState{Candidate: true, AnchorY: msg.Y, CursorY: msg.Y, PressX: msg.X, PressY: msg.Y}
+		x := screenXToSelectionX(m, msg.X)
+		m.selection = SelectionState{Candidate: true, AnchorX: x, AnchorY: msg.Y, CursorX: x, CursorY: msg.Y, PressX: msg.X, PressY: msg.Y}
 		return m, nil
 	}
 	if msg.Action == tea.MouseActionMotion && m.selection.Candidate {
 		y := m.clampTranscriptY(msg.Y)
+		x := screenXToSelectionX(m, msg.X)
 		if y != m.selection.PressY || msg.X != m.selection.PressX || m.selection.Dragging {
 			m.selectionVersion++
 			m.selection.Active = true
 			m.selection.Dragging = true
+			m.selection.CursorX = x
 			m.selection.CursorY = y
 			version := m.selectionVersion
 			return m, tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg { return selectionAutoCopyMsg{version: version} })
@@ -47,9 +50,11 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Action == tea.MouseActionMotion && m.selection.Active {
 		y := m.clampTranscriptY(msg.Y)
-		if y != m.selection.CursorY || msg.X != m.selection.PressX {
+		x := screenXToSelectionX(m, msg.X)
+		if y != m.selection.CursorY || x != m.selection.CursorX {
 			m.selectionVersion++
 			m.selection.Dragging = true
+			m.selection.CursorX = x
 			m.selection.CursorY = y
 			version := m.selectionVersion
 			return m, tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg { return selectionAutoCopyMsg{version: version} })
@@ -60,6 +65,7 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if m.selection.Dragging || m.selection.Active {
 			m.selection.Active = true
 			m.selection.Candidate = false
+			m.selection.CursorX = screenXToSelectionX(m, msg.X)
 			m.selection.CursorY = m.clampTranscriptY(msg.Y)
 			m = m.copySelection()
 			return m, copyFeedbackCmd(m)
