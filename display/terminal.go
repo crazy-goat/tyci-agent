@@ -85,7 +85,7 @@ func (t *Terminal) newBlock(kind blockKind, bg string) {
 	t.cursorCol = 0
 	if bg != "" {
 		fmt.Fprint(os.Stdout, bg)
-		fmt.Fprint(os.Stdout, clearLine) // wypełnij całą pierwszą linię tłem
+		fmt.Fprint(os.Stdout, clearLine) // fill the first line with background
 	}
 }
 
@@ -94,7 +94,7 @@ func (t *Terminal) closeBlock() {
 		return
 	}
 	if t.curBg != "" {
-		fmt.Fprint(os.Stdout, clearLine) // wypełnij resztę linii tłem
+		fmt.Fprint(os.Stdout, clearLine) // fill the rest of the line with background
 		fmt.Fprint(os.Stdout, bgReset)
 	}
 	fmt.Fprintln(os.Stdout)
