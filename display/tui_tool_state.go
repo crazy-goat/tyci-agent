@@ -1,0 +1,62 @@
+package display
+
+import (
+	"strings"
+	"time"
+)
+
+func (m *TuiModel) appendToLastTool(delta string) {
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		if m.blocks[i].kind == "tool" {
+			m.blocks[i].content += delta
+			m.blocks[i].cachedLines = nil
+			m.blocks[i].cachedLineCount = 0
+			delete(m.toolDisplayCache, i)
+			m.invalidateTotalLines()
+			return
+		}
+	}
+}
+
+func (m *TuiModel) appendTool(queueIdx int, content string) {
+	if queueIdx < 0 || queueIdx >= len(m.toolQueue) {
+		return
+	}
+	blockIdx := m.toolQueue[queueIdx]
+	if blockIdx >= 0 && blockIdx < len(m.blocks) && m.blocks[blockIdx].kind == "tool" {
+		m.blocks[blockIdx].output += content
+	}
+}
+
+func (m *TuiModel) finishToolAt(result string) {
+	if len(m.toolQueue) == 0 {
+		return
+	}
+	idx := m.toolQueue[0]
+	m.toolQueue = m.toolQueue[1:]
+	if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].kind == "tool" {
+		if result != "" {
+			if m.blocks[idx].output != "" && !strings.HasSuffix(m.blocks[idx].output, "\n") {
+				m.blocks[idx].output += "\n"
+			}
+			m.blocks[idx].output += result
+		}
+		m.blocks[idx].toolState = "done"
+		m.blocks[idx].duration = time.Since(m.blocks[idx].startTime)
+		m.blocks[idx].cachedLines = nil
+		m.blocks[idx].cachedLineCount = 0
+		delete(m.toolDisplayCache, idx)
+		m.invalidateTotalLines()
+	}
+}
+
+func (m *TuiModel) toggleNextTool() {
+	for i := range m.blocks {
+		if m.blocks[i].kind == "tool" && m.blocks[i].toolState == "done" {
+			m.blocks[i].collapsed = !m.blocks[i].collapsed
+			return
+		}
+	}
+}
+
+// blockAtVisibleLine returns the block index at the given visible Y (0-indexed within message area).

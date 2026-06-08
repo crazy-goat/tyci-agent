@@ -16,23 +16,24 @@ import (
 
 // silentDisplay is a minimal Display implementation for tests.
 type silentDisplay struct{}
-func (s *silentDisplay) Thinking(string)            {}
-func (s *silentDisplay) Text(string)                {}
-func (s *silentDisplay) ToolCallStart(string)       {}
-func (s *silentDisplay) ToolCallDelta(string)       {}
-func (s *silentDisplay) ToolCallEnd(string, string) {}
-func (s *silentDisplay) ToolBlock(string)           {}
+
+func (s *silentDisplay) Thinking(string)                    {}
+func (s *silentDisplay) Text(string)                        {}
+func (s *silentDisplay) ToolCallStart(string)               {}
+func (s *silentDisplay) ToolCallDelta(string)               {}
+func (s *silentDisplay) ToolCallEnd(string, string)         {}
+func (s *silentDisplay) ToolBlock(string)                   {}
 func (s *silentDisplay) Summary(stream.Usage, stream.Stats) {}
-func (s *silentDisplay) Error(error)               {}
-func (s *silentDisplay) End()                      {}
+func (s *silentDisplay) Error(error)                        {}
+func (s *silentDisplay) End()                               {}
 
 type mockProvider struct {
 	chunks []string
 }
 
-func (m *mockProvider) Name() string  { return "mock" }
-func (m *mockProvider) IsConfigured() bool { return true }
-func (m *mockProvider) Models() []string  { return []string{"mock-1"} }
+func (m *mockProvider) Name() string         { return "mock" }
+func (m *mockProvider) IsConfigured() bool   { return true }
+func (m *mockProvider) Models() []string     { return []string{"mock-1"} }
 func (m *mockProvider) FreeModels() []string { return nil }
 
 func (m *mockProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
@@ -53,14 +54,14 @@ func (m *mockProvider) Stream(ctx context.Context, req providers.Request) (<-cha
 
 // mockToolProvider emits a predefined sequence of events once, then returns empty finish.
 type mockToolProvider struct {
-	mu       sync.Mutex
-	events   []stream.Event
-	called   bool
+	mu     sync.Mutex
+	events []stream.Event
+	called bool
 }
 
-func (m *mockToolProvider) Name() string  { return "mock-tool" }
-func (m *mockToolProvider) IsConfigured() bool { return true }
-func (m *mockToolProvider) Models() []string  { return []string{"mock-tool-1"} }
+func (m *mockToolProvider) Name() string         { return "mock-tool" }
+func (m *mockToolProvider) IsConfigured() bool   { return true }
+func (m *mockToolProvider) Models() []string     { return []string{"mock-tool-1"} }
 func (m *mockToolProvider) FreeModels() []string { return nil }
 
 func (m *mockToolProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
@@ -93,9 +94,9 @@ func (m *mockToolProvider) Stream(ctx context.Context, req providers.Request) (<
 
 // mockToolRunner records tool calls and returns canned results.
 type mockToolRunner struct {
-	mu       sync.Mutex
-	calls    []toolCallRecord
-	results  map[string]string
+	mu      sync.Mutex
+	calls   []toolCallRecord
+	results map[string]string
 }
 
 type toolCallRecord struct {
@@ -599,10 +600,10 @@ type mockFailingProvider struct {
 	err   string
 }
 
-func (m *mockFailingProvider) Name() string          { return m.name }
-func (m *mockFailingProvider) IsConfigured() bool    { return true }
-func (m *mockFailingProvider) Models() []string      { return []string{m.model} }
-func (m *mockFailingProvider) FreeModels() []string  { return nil }
+func (m *mockFailingProvider) Name() string         { return m.name }
+func (m *mockFailingProvider) IsConfigured() bool   { return true }
+func (m *mockFailingProvider) Models() []string     { return []string{m.model} }
+func (m *mockFailingProvider) FreeModels() []string { return nil }
 
 func (m *mockFailingProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
 	return nil, errors.New(m.err)
@@ -615,10 +616,10 @@ type mockTextProvider struct {
 	chunks []string
 }
 
-func (m *mockTextProvider) Name() string          { return m.name }
-func (m *mockTextProvider) IsConfigured() bool    { return true }
-func (m *mockTextProvider) Models() []string      { return []string{m.model} }
-func (m *mockTextProvider) FreeModels() []string  { return nil }
+func (m *mockTextProvider) Name() string         { return m.name }
+func (m *mockTextProvider) IsConfigured() bool   { return true }
+func (m *mockTextProvider) Models() []string     { return []string{m.model} }
+func (m *mockTextProvider) FreeModels() []string { return nil }
 
 func (m *mockTextProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
 	ch := make(chan stream.Event, len(m.chunks)+2)
@@ -897,5 +898,3 @@ func TestRunNoFallbackNormalPath(t *testing.T) {
 		t.Errorf("expected 'hello world', got %+v", msgs[1].Content)
 	}
 }
-
-
