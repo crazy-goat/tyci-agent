@@ -157,3 +157,40 @@ func TestRetryConfig_WithDefaults_PreservesValues(t *testing.T) {
 		t.Errorf("expected MaxBackoff=64, got %d", config.MaxBackoff)
 	}
 }
+
+func TestCalcBackoff_HighAttemptDoesNotOverflow(t *testing.T) {
+	config := RetryConfig{MaxRetries: 100, BaseBackoff: 4, MaxBackoff: 128}
+	err := fmt.Errorf("server error")
+
+	tests := []struct {
+		attempt int
+	}{
+		{31},
+		{62},
+		{63},
+		{100},
+	}
+
+	for _, tt := range tests {
+		got := CalcBackoff(tt.attempt, err, config)
+		// Must not be 0, must not be negative
+		if got <= 0 {
+			t.Errorf("attempt %d: got %v, want > 0", tt.attempt, got)
+		}
+		// Must be capped at MaxBackoff
+		if got > 128*time.Second {
+			t.Errorf("attempt %d: got %v, want capped at 128s", tt.attempt, got)
+		}
+	}
+}
+
+func TestCalcBackoff_ExactOverflowBoundaries(t *testing.T) {
+	config := RetryConfig{MaxRetries: 100, BaseBackoff: 4, MaxBackoff: 999999}
+	err := fmt.Errorf("server error")
+
+	// At attempt=30, base*2^30 = 4*1073741824 = 4294967296s, which fits in int64
+	got := CalcBackoff(30, err, config)
+	if got <= 0 {
+		t.Errorf("attempt 30: got %v, want > 0", got)
+	}
+}
