@@ -77,46 +77,48 @@ func (m TuiModel) visibleLines() int {
 }
 
 func (m *TuiModel) blockAtVisibleLine(visY int) int {
-	// Build flat lines with block index tracking
-	type lineInfo struct {
-		blockIdx int
+	// Use the cached render buffer from the last View() call for fast lookup.
+	// The buffer is rebuilt on every render and maps screen Y → block index.
+	if visY >= 0 && visY < len(m.renderBuffer.Lines) {
+		return m.renderBuffer.Lines[visY].BlockIndex
 	}
-	var allLines []lineInfo
-
-	for blkIdx := range m.blocks {
-		lines := m.getBlockLines(blkIdx, false)
-		if len(lines) == 0 {
-			continue
-		}
-		for range lines {
-			allLines = append(allLines, lineInfo{blockIdx: blkIdx})
-		}
-		// Separator blank line (skip if next block is also a tool)
-		if blkIdx+1 < len(m.blocks) && m.blocks[blkIdx+1].kind == "tool" && m.blocks[blkIdx].kind == "tool" {
-			continue
-		}
-		allLines = append(allLines, lineInfo{blockIdx: -1})
+	// Fallback when View() hasn't been called yet (e.g., in tests):
+	// compute the block index by iterating with accumulated line counts.
+	if visY < 0 {
+		return -1
 	}
-	if len(allLines) > 0 && allLines[len(allLines)-1].blockIdx == -1 {
-		allLines = allLines[:len(allLines)-1]
-	}
-
-	totalLines := len(allLines)
 	msgHeight := m.visibleLines()
-
-	var startIdx int
-	if totalLines <= msgHeight {
-		startIdx = 0
-	} else {
-		startIdx = totalLines - msgHeight - m.scrollLine
-		if startIdx < 0 {
-			startIdx = 0
+	totalLines := m.totalRenderedLines()
+	var startLine int
+	if totalLines > msgHeight {
+		startLine = totalLines - msgHeight - m.scrollLine
+		if startLine < 0 {
+			startLine = 0
 		}
 	}
-
-	idx := startIdx + visY
-	if idx >= 0 && idx < totalLines {
-		return allLines[idx].blockIdx
+	targetLine := startLine + visY
+	if targetLine < 0 || targetLine >= totalLines {
+		return -1
+	}
+	acc := 0
+	for i, b := range m.blocks {
+		lc := b.cachedLineCount
+		if lc == 0 {
+			lines := m.getBlockLines(i, false)
+			if lines == nil {
+				continue
+			}
+			lc = len(lines)
+		}
+		blockEnd := acc + lc
+		if targetLine < blockEnd {
+			return i
+		}
+		// Account for spacer
+		if i+1 < len(m.blocks) && !(m.blocks[i+1].kind == "tool" && m.blocks[i].kind == "tool") {
+			blockEnd++
+		}
+		acc = blockEnd
 	}
 	return -1
 }

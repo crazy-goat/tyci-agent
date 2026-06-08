@@ -1,7 +1,6 @@
 package display
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -280,14 +279,6 @@ func (t *Terminal) Error(err error) {
 
 func (t *Terminal) End() {
 	t.closeBlock()
-}
-
-func parseArgs(arguments string) map[string]any {
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(arguments), &parsed); err != nil {
-		return nil
-	}
-	return parsed
 }
 
 // wrapText splits long lines into multiple lines to fit within maxWidth.

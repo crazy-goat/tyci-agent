@@ -33,12 +33,6 @@ func getRenderer(maxW int) *glamour.TermRenderer {
 	return r
 }
 
-// renderMarkdown renders markdown content to ANSI using glamour.
-// Falls back to wrapRawText on error.
-func (m TuiModel) renderMarkdown(content string, useBar bool) string {
-	return renderMarkdownWithCache(content, useBar, m.width)
-}
-
 // renderMarkdownWithCache renders markdown using a cached glamour renderer.
 func renderMarkdownWithCache(content string, useBar bool, width int) string {
 	if content == "" {

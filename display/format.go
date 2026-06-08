@@ -79,10 +79,6 @@ func visibleWidth(s string) int {
 	return w
 }
 
-func fmtDur(d time.Duration) string {
-	return fmt.Sprintf("%.2fs", d.Seconds())
-}
-
 func fmtRate(tokens int, genDur time.Duration) string {
 	if genDur <= 0 {
 		return "0.0"

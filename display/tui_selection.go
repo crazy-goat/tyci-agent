@@ -78,19 +78,6 @@ func (m TuiModel) normalizeSelection() (selectionPoint, selectionPoint, bool) {
 	return start, end, true
 }
 
-func (m TuiModel) selectedLineRange() (int, int, bool) {
-	start, end, ok := m.normalizeSelection()
-	if !ok {
-		return 0, 0, false
-	}
-	return start.Y, end.Y, true
-}
-
-func (m TuiModel) isLineSelected(y int) bool {
-	start, end, ok := m.selectedLineRange()
-	return ok && y >= start && y <= end
-}
-
 func (m TuiModel) renderSelectableLine(line string, y int) string {
 	start, end, ok := m.normalizeSelection()
 	if !ok || y < start.Y || y > end.Y {

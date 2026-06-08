@@ -39,27 +39,16 @@ func (m TuiModel) View() string {
 		msgHeight--
 	}
 
-	// Build a flat, cached line list and then slice the exact visible window.
-	// The previous virtual-scrolling path selected overlapping blocks but did
-	// not trim lines when the viewport started in the middle of a long block.
-	// At bottom during streaming that showed the start of the current response
-	// instead of the newest tokens until a resize rebuilt the layout.
+	// Build a flat, cached line list covering only the visible viewport.
+	// Virtual viewport rendering avoids O(n) processing of all blocks.
 	allLines := m.buildFlatRenderLines()
-	totalLines := len(allLines)
-	m.cachedTotalLines = totalLines
 	m.renderBuffer = newRenderBuffer(msgHeight)
 
-	var startIdx int
-	if totalLines > msgHeight {
-		startIdx = totalLines - msgHeight - m.scrollLine
-		if startIdx < 0 {
-			startIdx = 0
-		}
-	}
-
 	rendered := 0
-	for i := startIdx; i < totalLines && rendered < msgHeight; i++ {
-		line := allLines[i]
+	for _, line := range allLines {
+		if rendered >= msgHeight {
+			break
+		}
 		if m.width > 0 && lipgloss.Width(line.Text) > m.width {
 			wrapped := wrapText(line.Text, m.width, 0)
 			for _, wl := range strings.Split(wrapped, "\n") {

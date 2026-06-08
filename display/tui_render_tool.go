@@ -134,18 +134,4 @@ func formatDuration(d time.Duration) string {
 	}
 }
 
-// extractPath tries to parse JSON and get "path" value.
-// Deprecated: use formatToolCall for rendering tool blocks.
-func extractPath(s string) string {
-	if s == "" {
-		return ""
-	}
-	var obj map[string]any
-	if err := json.Unmarshal([]byte(s), &obj); err != nil {
-		return ""
-	}
-	if p, ok := obj["path"].(string); ok {
-		return p
-	}
-	return ""
-}
+

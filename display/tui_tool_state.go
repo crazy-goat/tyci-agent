@@ -49,14 +49,3 @@ func (m *TuiModel) finishToolAt(result string) {
 		m.invalidateTotalLines()
 	}
 }
-
-func (m *TuiModel) toggleNextTool() {
-	for i := range m.blocks {
-		if m.blocks[i].kind == "tool" && m.blocks[i].toolState == "done" {
-			m.blocks[i].collapsed = !m.blocks[i].collapsed
-			return
-		}
-	}
-}
-
-// blockAtVisibleLine returns the block index at the given visible Y (0-indexed within message area).
