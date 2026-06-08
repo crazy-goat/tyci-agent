@@ -182,7 +182,8 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 			continue
 		}
 
-		data := strings.TrimPrefix(line, "data: ")
+		data := strings.TrimPrefix(line, "data:")
+		data = strings.TrimLeft(data, " \t")
 		if data == "[DONE]" {
 			break
 		}
