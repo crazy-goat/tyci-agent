@@ -131,6 +131,7 @@ func (m TuiModel) copySelection() TuiModel {
 }
 
 func (m TuiModel) clearSelection() TuiModel {
+	m.selectionVersion++
 	m.selection = SelectionState{}
 	m.selectionFlash = false
 	return m

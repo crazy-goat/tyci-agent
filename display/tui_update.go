@@ -27,6 +27,17 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case selectionFlashDoneMsg:
 		m.selectionFlash = false
 		return m, nil
+	case selectionAutoCopyMsg:
+		if msg.version == m.selectionVersion && m.selection.Active {
+			m = m.copySelection()
+			return m, copyFeedbackCmd(m)
+		}
+		return m, nil
+	case statusMessageClearMsg:
+		if m.statusMessage == msg.message {
+			m.statusMessage = ""
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 	case tuiMsgBlock:

@@ -29,28 +29,40 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && m.transcriptY(msg.Y) {
+		m.selectionVersion++
 		m.selection = SelectionState{Candidate: true, AnchorY: msg.Y, CursorY: msg.Y, PressX: msg.X, PressY: msg.Y}
 		return m, nil
 	}
 	if msg.Action == tea.MouseActionMotion && m.selection.Candidate {
 		y := m.clampTranscriptY(msg.Y)
 		if y != m.selection.PressY || msg.X != m.selection.PressX || m.selection.Dragging {
+			m.selectionVersion++
 			m.selection.Active = true
 			m.selection.Dragging = true
 			m.selection.CursorY = y
+			version := m.selectionVersion
+			return m, tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg { return selectionAutoCopyMsg{version: version} })
 		}
 		return m, nil
 	}
-	if msg.Action == tea.MouseActionRelease && m.selection.Candidate {
-		if m.selection.Dragging {
+	if msg.Action == tea.MouseActionMotion && m.selection.Active {
+		y := m.clampTranscriptY(msg.Y)
+		if y != m.selection.CursorY || msg.X != m.selection.PressX {
+			m.selectionVersion++
+			m.selection.Dragging = true
+			m.selection.CursorY = y
+			version := m.selectionVersion
+			return m, tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg { return selectionAutoCopyMsg{version: version} })
+		}
+		return m, nil
+	}
+	if msg.Action == tea.MouseActionRelease && (m.selection.Candidate || m.selection.Active) {
+		if m.selection.Dragging || m.selection.Active {
 			m.selection.Active = true
 			m.selection.Candidate = false
 			m.selection.CursorY = m.clampTranscriptY(msg.Y)
 			m = m.copySelection()
-			if m.selectionFlash {
-				return m, tea.Tick(180*time.Millisecond, func(time.Time) tea.Msg { return selectionFlashDoneMsg{} })
-			}
-			return m, nil
+			return m, copyFeedbackCmd(m)
 		}
 		y := m.selection.PressY
 		m = m.clearSelection()

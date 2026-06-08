@@ -134,8 +134,9 @@ type TuiModel struct {
 	renderBuffer RenderBuffer
 
 	// Mouse text selection over visible transcript lines.
-	selection      SelectionState
-	selectionFlash bool // briefly true after successful copy, for visual feedback
+	selection        SelectionState
+	selectionVersion int
+	selectionFlash   bool // briefly true after successful copy, for visual feedback
 
 	submitResult chan<- string
 	toolQueue    []int // FIFO of block indices for ToolCallStart->ToolCallEnd matching
