@@ -37,7 +37,7 @@ func (m *mockProvider) Models() []string     { return []string{"mock-1"} }
 func (m *mockProvider) FreeModels() []string { return nil }
 
 func (m *mockProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
-	ch := make(chan stream.Event, len(m.chunks)+2)
+	ch := make(chan stream.Event, 4)
 	go func() {
 		defer close(ch)
 		for _, c := range m.chunks {
@@ -78,7 +78,7 @@ func (m *mockToolProvider) Stream(ctx context.Context, req providers.Request) (<
 	events := m.events
 	m.mu.Unlock()
 
-	ch := make(chan stream.Event, len(events)+2)
+	ch := make(chan stream.Event, 4)
 	go func() {
 		defer close(ch)
 		for _, e := range events {
@@ -622,7 +622,7 @@ func (m *mockTextProvider) Models() []string     { return []string{m.model} }
 func (m *mockTextProvider) FreeModels() []string { return nil }
 
 func (m *mockTextProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
-	ch := make(chan stream.Event, len(m.chunks)+2)
+	ch := make(chan stream.Event, 4)
 	go func() {
 		defer close(ch)
 		for _, c := range m.chunks {
