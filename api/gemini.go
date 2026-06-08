@@ -88,7 +88,8 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 			continue
 		}
 
-		data := strings.TrimPrefix(line, "data: ")
+		data := strings.TrimPrefix(line, "data:")
+		data = strings.TrimLeft(data, " \t")
 		if data == "[DONE]" {
 			break
 		}
