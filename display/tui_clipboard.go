@@ -10,7 +10,9 @@ import (
 	osc52 "github.com/aymanbagabas/go-osc52/v2"
 )
 
-func copyToClipboard(text string) error {
+var copyToClipboard = copyToClipboardImpl
+
+func copyToClipboardImpl(text string) error {
 	if text == "" {
 		return fmt.Errorf("nothing to copy")
 	}
