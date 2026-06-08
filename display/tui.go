@@ -131,7 +131,8 @@ type TuiModel struct {
 	cachedTotalLines int
 
 	// Metadata for the currently visible transcript lines. Built by View().
-	renderBuffer RenderBuffer
+	renderBuffer      RenderBuffer
+	modalRenderBuffer RenderBuffer
 
 	// Mouse text selection over visible transcript lines.
 	selection        SelectionState

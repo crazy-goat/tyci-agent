@@ -26,17 +26,26 @@ var selectionFlashLineStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("232")).
 	Bold(true)
 
+func (m TuiModel) selectionYRange() (int, int) {
+	if m.subagentModalActive {
+		layout := m.subagentModalLayout()
+		return layout.contentTop, layout.contentBottom
+	}
+	return 0, m.visibleLines() - 1
+}
+
 func (m TuiModel) transcriptY(y int) bool {
-	return y >= 0 && y < m.visibleLines()
+	start, end := m.selectionYRange()
+	return y >= start && y <= end
 }
 
 func (m TuiModel) clampTranscriptY(y int) int {
-	if y < 0 {
-		return 0
+	start, maxY := m.selectionYRange()
+	if y < start {
+		return start
 	}
-	maxY := m.visibleLines() - 1
-	if maxY < 0 {
-		return 0
+	if maxY < start {
+		return start
 	}
 	if y > maxY {
 		return maxY
@@ -72,6 +81,10 @@ func (m TuiModel) renderSelectableLine(line string, y int) string {
 	// plain text version so the selection background covers the whole content.
 	plain := plainLine(line)
 	width := m.width
+	if m.subagentModalActive {
+		layout := m.subagentModalLayout()
+		width = layout.popupWidth - 4
+	}
 	if width < 1 {
 		width = lipgloss.Width(plain)
 	}
@@ -88,7 +101,12 @@ func (m TuiModel) selectedText() string {
 		return ""
 	}
 	rb := m.renderBuffer
-	if len(rb.Lines) == 0 {
+	if m.subagentModalActive {
+		rb = m.modalRenderBuffer
+		if len(rb.Lines) == 0 {
+			rb = m.visibleModalRenderBufferSnapshot()
+		}
+	} else if len(rb.Lines) == 0 {
 		rb = m.visibleRenderBufferSnapshot()
 	}
 	parts := make([]string, 0, end-start+1)
@@ -96,7 +114,7 @@ func (m TuiModel) selectedText() string {
 		if line.Y < start || line.Y > end {
 			continue
 		}
-		if line.SourceKind == "empty" {
+		if line.SourceKind == "empty" || line.SourceKind == "modal-empty" {
 			parts = append(parts, "")
 			continue
 		}

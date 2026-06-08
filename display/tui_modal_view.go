@@ -35,26 +35,9 @@ func (m TuiModel) subagentModalPageSize() int {
 
 // renderSubagentModalView renders the subagent live output as a centered modal (90% w/h).
 func (m TuiModel) renderSubagentModalView() string {
-	popupWidth := int(float64(m.width) * 0.9)
-	if popupWidth < 60 {
-		popupWidth = 60
-	}
-	if popupWidth > m.width-2 {
-		popupWidth = m.width - 2
-	}
-	popupHeight := int(float64(m.height) * 0.9)
-	if popupHeight < 15 {
-		popupHeight = 15
-	}
-	if popupHeight > m.height-2 {
-		popupHeight = m.height - 2
-	}
-
-	// Content area height (minus title, footer, borders)
-	contentHeight := popupHeight - 6
-	if contentHeight < 1 {
-		contentHeight = 1
-	}
+	layout := m.subagentModalLayout()
+	popupWidth := layout.popupWidth
+	contentHeight := layout.contentHeight
 
 	// Build title line
 	status := "⟳ running..."
@@ -90,6 +73,7 @@ func (m TuiModel) renderSubagentModalView() string {
 	// Render visible lines
 	lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	contentLines := make([]string, 0, contentHeight)
+	m.modalRenderBuffer = newRenderBuffer(contentHeight)
 
 	for i := visibleStart; i < visibleEnd; i++ {
 		line := allLines[i]
@@ -97,12 +81,17 @@ func (m TuiModel) renderSubagentModalView() string {
 		if len(line) > popupWidth-4 {
 			line = line[:popupWidth-4]
 		}
-		contentLines = append(contentLines, lineStyle.Render(line))
+		y := layout.contentTop + len(contentLines)
+		renderedLine := lineStyle.Render(line)
+		m.modalRenderBuffer.Add(renderedLine, "modal", -1, i, y)
+		contentLines = append(contentLines, m.renderSelectableLine(renderedLine, y))
 	}
 
 	// Fill remaining empty lines
 	for len(contentLines) < contentHeight {
-		contentLines = append(contentLines, "")
+		y := layout.contentTop + len(contentLines)
+		m.modalRenderBuffer.Add("", "modal-empty", -1, -1, y)
+		contentLines = append(contentLines, m.renderSelectableLine("", y))
 	}
 	contentStr := strings.Join(contentLines, "\n")
 
