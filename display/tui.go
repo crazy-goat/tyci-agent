@@ -117,6 +117,11 @@ type TuiModel struct {
 	// Scroll: offset in rendered lines from the bottom.
 	// 0 = bottom (newest messages). Positive = scrolled up.
 	scrollLine int
+	atBottom   bool // true when user is at newest content (auto-scroll follows new content)
+
+	// Saved scroll state before opening subagent modal (restored on close)
+	savedScrollLine int
+	savedAtBottom   bool
 
 	// Subagent modal (live streaming output from child agents)
 	subagentModalActive  bool
@@ -186,6 +191,8 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		modelChanges:  modelChanges,
 		allProviders:  allProviders,
 		cancelCh:      cancelCh,
+		atBottom:      true,
+		savedAtBottom: true,
 		inputHistory:  loadTuiHistory(historyPath),
 		historyIdx:    -1,
 		historyPath:   historyPath,
@@ -282,6 +289,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Always-available keys: scroll, tool toggle, quit
 		switch msg.Type {
 		case tea.KeyPgUp:
+			m.atBottom = false
 			page := max(1, m.visibleLines())
 			m.scrollLine += page
 			m.clampScroll()
@@ -292,10 +300,12 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollLine -= page
 			if m.scrollLine < 0 {
 				m.scrollLine = 0
+				m.atBottom = true
 			}
 			return m, nil
 
 		case tea.KeyCtrlUp:
+			m.atBottom = false
 			m.scrollLine++
 			m.clampScroll()
 			return m, nil
@@ -304,6 +314,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollLine--
 			if m.scrollLine < 0 {
 				m.scrollLine = 0
+				m.atBottom = true
 			}
 			return m, nil
 
@@ -342,10 +353,12 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyHome:
+			m.atBottom = false
 			m.scrollLine = m.totalRenderedLines()
 			return m, nil
 
 		case tea.KeyEnd:
+			m.atBottom = true
 			m.scrollLine = 0
 			return m, nil
 
@@ -416,6 +429,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.Button == tea.MouseButtonWheelUp {
+			m.atBottom = false
 			m.scrollLine += 3
 			m.clampScroll()
 			return m, nil
@@ -424,6 +438,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollLine -= 3
 			if m.scrollLine < 0 {
 				m.scrollLine = 0
+				m.atBottom = true
 			}
 			return m, nil
 		}
@@ -431,6 +446,10 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Y >= 0 && msg.Y < m.visibleLines() {
 				idx := m.blockAtVisibleLine(msg.Y)
 				if idx >= 0 && m.blocks[idx].kind == "tool" {
+					// Save scroll state before opening modal (restored on close)
+					m.savedScrollLine = m.scrollLine
+					m.savedAtBottom = m.atBottom
+
 					// Open tool detail modal on click for any tool
 					if m.blocks[idx].toolName == "subagent" && !m.subagentModalActive {
 						m.subagentModalActive = true
@@ -566,6 +585,9 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.subagentModalContent.Reset()
 			m.subagentModalToolIdx = -1
 			m.subagentModalDone = false
+			// Restore scroll state from before modal opened
+			m.atBottom = m.savedAtBottom
+			m.scrollLine = m.savedScrollLine
 			return m, nil
 
 		case tea.KeyCtrlC:
@@ -580,6 +602,9 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.subagentModalContent.Reset()
 				m.subagentModalToolIdx = -1
 				m.subagentModalDone = false
+				// Restore scroll state from before modal opened
+				m.atBottom = m.savedAtBottom
+				m.scrollLine = m.savedScrollLine
 			}
 			return m, nil
 
@@ -791,6 +816,9 @@ func (m *TuiModel) invalidateAllBlockLineCounts() {
 
 // clampScroll ensures scrollLine is within valid range.
 func (m *TuiModel) clampScroll() {
+	if m.atBottom {
+		m.scrollLine = 0
+	}
 	if m.scrollLine == 0 {
 		return // auto-scrolling, no need to compute max
 	}
@@ -825,6 +853,7 @@ func (m TuiModel) submit() tea.Model {
 	m.reading = false
 	m.blocks = append(m.blocks, block{kind: "text", content: "You: " + line})
 	m.invalidateTotalLines()
+	m.clampScroll()
 	if m.submitResult != nil {
 		m.submitResult <- line
 	}
@@ -957,6 +986,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	case "reset":
 		m.blocks = nil
 		m.scrollLine = 0
+		m.atBottom = true
 		m.reading = true
 		m.status = "idle"
 		m.lastUsage = stream.Usage{}
@@ -968,6 +998,11 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.cachedTotalLines = -1
 		m.subagentModalActive = false
 		m.subagentModalContent.Reset()
+	}
+
+	// If user is at bottom, keep scrolled to bottom when new content arrives
+	if m.atBottom {
+		m.scrollLine = 0
 	}
 	m.clampScroll()
 }
@@ -982,6 +1017,19 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 	}
 	last := &m.blocks[len(m.blocks)-1]
 	if last.kind == kind {
+		// Don't merge user messages ("You: ...") with agent response text
+		// or vice versa. Without this check, consecutive user and agent text
+		// blocks get concatenated, corrupting conversation display.
+		lastIsUser := strings.HasPrefix(last.content, "You: ")
+		newIsUser := strings.HasPrefix(content, "You: ")
+		if lastIsUser != newIsUser {
+			// Different sources → create new block
+			m.forceRenderDirtyBlocks()
+			idx := len(m.blocks)
+			m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
+			m.dirtyBlocks[idx] = true
+			return
+		}
 		last.content += content
 		last.dirty = true
 		last.rendered = "" // invalidate cache
@@ -1121,7 +1169,9 @@ func (m *TuiModel) appendToLastTool(delta string) {
 		if m.blocks[i].kind == "tool" {
 			m.blocks[i].content += delta
 			m.blocks[i].cachedLines = nil
+			m.blocks[i].cachedLineCount = 0
 			delete(m.toolDisplayCache, i)
+			m.invalidateTotalLines()
 			return
 		}
 	}
@@ -1153,7 +1203,9 @@ func (m *TuiModel) finishToolAt(result string) {
 		m.blocks[idx].toolState = "done"
 		m.blocks[idx].duration = time.Since(m.blocks[idx].startTime)
 		m.blocks[idx].cachedLines = nil
+		m.blocks[idx].cachedLineCount = 0
 		delete(m.toolDisplayCache, idx)
+		m.invalidateTotalLines()
 	}
 }
 

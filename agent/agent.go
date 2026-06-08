@@ -92,13 +92,13 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 					continue
 				}
 				// All fallbacks failed
-				d.ToolBlock("all fallback models exhausted: " + fbErr.Error())
+				d.Error(fmt.Errorf("all fallback models exhausted: %v", fbErr))
 				return totalUsage, fbErr
 			}
 
 			// No fallbacks — use retry logic for retryable errors
 			if !api.IsRetryable(err) {
-				d.ToolBlock(err.Error())
+				d.Error(err)
 				return totalUsage, err
 			}
 
@@ -134,15 +134,15 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 							recovered = true
 							break
 						}
-						d.ToolBlock("all fallback models exhausted: " + fbErr.Error())
+						d.Error(fmt.Errorf("all fallback models exhausted: %v", fbErr))
 						return totalUsage, fbErr
 					}
-					d.ToolBlock(err.Error())
+					d.Error(err)
 					return totalUsage, err
 				}
 			}
 			if !recovered {
-				d.ToolBlock(fmt.Sprintf("all %d retries exhausted: %v", cfg.MaxRetries, lastErr))
+				d.Error(fmt.Errorf("all %d retries exhausted: %v", cfg.MaxRetries, lastErr))
 				return totalUsage, lastErr
 			}
 		}

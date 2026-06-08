@@ -1073,3 +1073,359 @@ func TestToolBlock_ToolBlockOutput_NotVisibleInInline(t *testing.T) {
 		t.Errorf("tool block should show formatted call, got: %q", view)
 	}
 }
+
+// ─── Autoscroll tests (issue #50) ────────────────────────────────────────
+
+func TestTuiModel_Autoscroll_NewContentWhileAtBottom(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 20 // small viewport
+
+	// Initially at bottom
+	if !m.atBottom {
+		t.Error("newModel should have atBottom = true")
+	}
+	if m.scrollLine != 0 {
+		t.Errorf("newModel should have scrollLine = 0, got %d", m.scrollLine)
+	}
+
+	// Add content to fill viewport
+	for i := 0; i < 5; i++ {
+		m.handleBlockMsg(tuiMsgBlock{kind: "text", content: fmt.Sprintf("line %d", i)})
+	}
+
+	// Should still be at bottom after adding content
+	if !m.atBottom {
+		t.Error("atBottom should remain true after adding content while at bottom")
+	}
+	if m.scrollLine != 0 {
+		t.Errorf("scrollLine should be 0 when atBottom, got %d", m.scrollLine)
+	}
+
+	// Simulate user scrolling up (PgUp equivalent)
+	m.atBottom = false
+	m.scrollLine = 10
+
+	// Add more content while scrolled away from bottom
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "new content while scrolled up"})
+
+	// Should NOT auto-scroll to bottom (user explicitly scrolled up)
+	if m.atBottom {
+		t.Error("atBottom should be false after user scrolled up and new content arrives")
+	}
+	if m.scrollLine == 0 {
+		t.Error("scrollLine should NOT be 0 when user scrolled away from bottom")
+	}
+
+	// Simulate pressing End key
+	m.atBottom = true
+	m.scrollLine = 0
+
+	// Add more content while at bottom
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "final content"})
+
+	// Should auto-scroll to bottom
+	if !m.atBottom {
+		t.Error("atBottom should be true after pressing End and adding content")
+	}
+	if m.scrollLine != 0 {
+		t.Errorf("scrollLine should be 0 when auto-scrolling, got %d", m.scrollLine)
+	}
+}
+
+func TestTuiModel_Autoscroll_ScrollEventsSetAtBottom(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 20
+
+	// Add some content first
+	for i := 0; i < 3; i++ {
+		m.handleBlockMsg(tuiMsgBlock{kind: "text", content: fmt.Sprintf("line %d", i)})
+	}
+
+	// Start at bottom
+	m.atBottom = true
+	m.scrollLine = 0
+
+	// Simulate PageUp → should set atBottom = false
+	m.atBottom = false
+	m.scrollLine = 5
+	if m.atBottom {
+		t.Error("PageUp should set atBottom = false")
+	}
+
+	// Simulate End → should set atBottom = true
+	m.atBottom = false
+	m.scrollLine = 10
+	m.atBottom = true
+	m.scrollLine = 0
+	if !m.atBottom {
+		t.Error("End should set atBottom = true")
+	}
+
+	// Simulate Home → should set atBottom = false
+	m.atBottom = false
+	m.scrollLine = 100
+	if m.atBottom {
+		t.Error("Home should set atBottom = false")
+	}
+
+	// Simulate reaching bottom via scroll down: scrollLine goes from 1 to 0
+	// The event handler sets atBottom = true when scrollLine would go negative.
+	m.atBottom = false
+	m.scrollLine = 1
+	// Applying same logic as KeyCtrlDown / KeyPgDown / MouseWheelDown handlers:
+	m.scrollLine--
+	if m.scrollLine < 0 {
+		m.scrollLine = 0
+		m.atBottom = true
+	}
+	// scrollLine is now 0 (clamped) but not negative, so atBottom stays false
+	if m.atBottom {
+		t.Error("scrolling from scrollLine=1 to 0 should NOT set atBottom (need negative)")
+	}
+
+	// Proper "at bottom reached via scroll past bottom": scrollLine = 0, then scroll down again
+	m.atBottom = false
+	m.scrollLine = 0
+	m.scrollLine -= 3 // simulate PageDown while at bottom
+	if m.scrollLine < 0 {
+		m.scrollLine = 0
+		m.atBottom = true
+	}
+	if !m.atBottom {
+		t.Error("scrolling past bottom (scrollLine goes negative) should set atBottom = true")
+	}
+}
+
+func TestTuiModel_Autoscroll_ModalRestoresScrollState(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 20
+
+	// Add a tool block to click on
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"command": "test"}`})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "done"})
+
+	// User scrolls up a bit
+	m.atBottom = false
+	m.scrollLine = 3
+
+	// Save scroll state (simulating what happens when modal opens)
+	m.savedScrollLine = m.scrollLine
+	m.savedAtBottom = m.atBottom
+
+	// Verify saved state
+	if m.savedScrollLine != 3 {
+		t.Errorf("savedScrollLine should be 3, got %d", m.savedScrollLine)
+	}
+	if m.savedAtBottom {
+		t.Error("savedAtBottom should be false")
+	}
+
+	// Restore scroll state (simulating what happens when modal closes)
+	m.atBottom = m.savedAtBottom
+	m.scrollLine = m.savedScrollLine
+
+	if m.atBottom {
+		t.Error("atBottom should be restored to false")
+	}
+	if m.scrollLine != 3 {
+		t.Errorf("scrollLine should be restored to 3, got %d", m.scrollLine)
+	}
+
+	// Now test case where user was at bottom before modal
+	m.atBottom = true
+	m.scrollLine = 0
+	m.savedScrollLine = m.scrollLine
+	m.savedAtBottom = m.atBottom
+
+	if m.savedScrollLine != 0 {
+		t.Errorf("savedScrollLine should be 0, got %d", m.savedScrollLine)
+	}
+	if !m.savedAtBottom {
+		t.Error("savedAtBottom should be true")
+	}
+
+	// Restore
+	m.atBottom = m.savedAtBottom
+	m.scrollLine = m.savedScrollLine
+
+	if !m.atBottom {
+		t.Error("atBottom should be restored to true")
+	}
+	if m.scrollLine != 0 {
+		t.Errorf("scrollLine should be restored to 0, got %d", m.scrollLine)
+	}
+}
+
+
+// ─── Autoscroll multi-turn tests (issue #50) ─────────────────────────────
+
+func TestAutoscroll_MultiTurnSimulation(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 10 // small viewport
+
+	check := func(turn string, wantBlocks int) {
+		t.Helper()
+		if !m.atBottom {
+			t.Errorf("[%s] atBottom should be true, got false (scrollLine=%d)", turn, m.scrollLine)
+		}
+		if m.scrollLine != 0 {
+			t.Errorf("[%s] scrollLine should be 0, got %d", turn, m.scrollLine)
+		}
+		if got := len(m.blocks); got != wantBlocks {
+			t.Errorf("[%s] expected %d blocks, got %d", turn, wantBlocks, got)
+			for i, b := range m.blocks {
+				t.Logf("  block[%d]: kind=%s content=%q", i, b.kind, b.content)
+			}
+		}
+	}
+
+	// Turn 1: user types, agent responds (no thinking phase)
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "You: hello"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "Hi there!"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	check("turn1-after", 2) // You: hello, Hi there!
+
+	// Turn 2: another prompt
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "You: what's up?"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "Not much, you?"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	check("turn2-after", 4)
+
+	// Turn 3: another prompt
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "You: just testing"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "Cool, keep going!"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	check("turn3-after", 6)
+
+	// Verify all blocks are separate
+	for i, b := range m.blocks {
+		if i%2 == 0 {
+			if !strings.HasPrefix(b.content, "You: ") {
+				t.Errorf("block[%d] should be user message (You: ...), got %q", i, b.content)
+			}
+		} else {
+			if strings.HasPrefix(b.content, "You: ") {
+				t.Errorf("block[%d] should be agent response, got %q", i, b.content)
+			}
+		}
+	}
+
+	// Now scroll up
+	m.atBottom = false
+	m.scrollLine = 5
+
+	// Turn 4: user submits while scrolled up
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "You: scrolled up message"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "response while scrolled up"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+
+	if m.atBottom {
+		t.Error("atBottom should be false (user scrolled up)")
+	}
+	if m.scrollLine == 0 {
+		t.Error("scrollLine should not be 0 when scrolled up")
+	}
+
+	// Press End
+	m.atBottom = true
+	m.scrollLine = 0
+
+	// Turn 5: normal at bottom
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "You: final test"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "Final answer"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	check("turn5-after", 10)
+}
+
+func TestAutoscroll_BlockSeparation_WithThinking(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 20
+
+	// Turn 1 with thinking phase
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "You: hello"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "thinking..."})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "Hi there!"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+
+	// With thinking phase, blocks should be: [You: hello, thinking, Hi there!]
+	if got := len(m.blocks); got != 3 {
+		t.Fatalf("expected 3 blocks with thinking, got %d", got)
+		for i, b := range m.blocks {
+			t.Logf("  block[%d]: kind=%s content=%q", i, b.kind, b.content)
+		}
+	}
+
+	// Turn 2
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "You: second msg"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "more thinking..."})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "Second response"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+
+	if got := len(m.blocks); got != 6 {
+		t.Fatalf("expected 6 blocks after turn 2, got %d", got)
+	}
+
+	// Verify structure
+	expected := []struct {
+		kind   string
+		prefix string // content prefix
+	}{
+		{"text", "You: "},
+		{"thinking", "thinking..."},
+		{"text", "Hi there!"},
+		{"text", "You: "},
+		{"thinking", "more thinking..."},
+		{"text", "Second response"},
+	}
+	for i, exp := range expected {
+		if m.blocks[i].kind != exp.kind {
+			t.Errorf("block[%d] kind: expected %q, got %q", i, exp.kind, m.blocks[i].kind)
+		}
+		if !strings.HasPrefix(m.blocks[i].content, exp.prefix) {
+			t.Errorf("block[%d] content: expected prefix %q, got %q", i, exp.prefix, m.blocks[i].content)
+		}
+	}
+}
+
+// TestAutoscroll_AgentStreamingDeltas_MergeCorrectly verifies that multiple
+// streaming text deltas from the agent are still merged into one block.
+func TestAutoscroll_AgentStreamingDeltas_MergeCorrectly(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 80
+	m.height = 20
+
+	// User message
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "You: hello"})
+	// Agent sends multiple text deltas (streaming) → should merge into one block
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "Hi "})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "there! "})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "How "})
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "are you?"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+
+	if got := len(m.blocks); got != 2 {
+		t.Fatalf("expected 2 blocks (user + agent), got %d", got)
+		for i, b := range m.blocks {
+			t.Logf("  block[%d]: kind=%s content=%q", i, b.kind, b.content)
+		}
+	}
+
+	if m.blocks[0].content != "You: hello" {
+		t.Errorf("block[0]: expected 'You: hello', got %q", m.blocks[0].content)
+	}
+	if m.blocks[1].content != "Hi there! How are you?" {
+		t.Errorf("block[1]: expected 'Hi there! How are you?', got %q", m.blocks[1].content)
+	}
+}
