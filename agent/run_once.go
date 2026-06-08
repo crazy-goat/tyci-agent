@@ -24,7 +24,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	}
 
 	var toolCalls []stream.ToolCall
-	var toolDeltas = make(map[string]strings.Builder) // accumulate deltas per tool call ID
+	var toolDeltas = make(map[string]*strings.Builder) // accumulate deltas per tool call ID
 	var lastUsage stream.Usage
 	var textBuf strings.Builder
 	var thinkingBuf strings.Builder
@@ -57,7 +57,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 			}
 			// Track for full arguments
 			if _, ok := toolDeltas[e.ID]; !ok {
-				toolDeltas[e.ID] = strings.Builder{}
+				toolDeltas[e.ID] = new(strings.Builder)
 			}
 			// Gray box with hourglass on first tool detection – instant feedback
 			if !toolBlockShown {
@@ -68,9 +68,8 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 			if b, ok := toolDeltas[e.ID]; ok {
 				b.WriteString(e.Delta)
 			} else {
-				var sb strings.Builder
-				sb.WriteString(e.Delta)
-				toolDeltas[e.ID] = sb
+				toolDeltas[e.ID] = new(strings.Builder)
+				toolDeltas[e.ID].WriteString(e.Delta)
 			}
 		case stream.ToolCall:
 			if !hasFirstToken {

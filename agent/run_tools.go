@@ -13,7 +13,7 @@ type streamProgressDisplay interface {
 	StreamProgress(toolIdx int, line string)
 }
 
-func executeAndAppendToolResults(ctx context.Context, d display.Display, msgs *[]providers.RichMessage, cfg Config, toolCalls []stream.ToolCall, toolDeltas map[string]strings.Builder) {
+func executeAndAppendToolResults(ctx context.Context, d display.Display, msgs *[]providers.RichMessage, cfg Config, toolCalls []stream.ToolCall, toolDeltas map[string]*strings.Builder) {
 	showToolCalls(d, toolCalls, toolDeltas)
 	prevOnOutput := installToolStreaming(d)
 	results := executeTools(ctx, cfg.Tools, toolCalls)
@@ -21,7 +21,7 @@ func executeAndAppendToolResults(ctx context.Context, d display.Display, msgs *[
 	appendToolResults(d, msgs, cfg, toolCalls, results)
 }
 
-func showToolCalls(d display.Display, toolCalls []stream.ToolCall, toolDeltas map[string]strings.Builder) {
+func showToolCalls(d display.Display, toolCalls []stream.ToolCall, toolDeltas map[string]*strings.Builder) {
 	for _, tc := range toolCalls {
 		d.ToolCallStart(tc.Name)
 		if delta, ok := toolDeltas[tc.ID]; ok && delta.Len() > 0 {
