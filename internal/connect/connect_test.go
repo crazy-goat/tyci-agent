@@ -97,7 +97,7 @@ func TestFetchOpenAIModels_WithAuthHeader(t *testing.T) {
 }
 
 func TestFetchOpenAIModels_EnvVarToken(t *testing.T) {
-	os.Setenv("TEST_FETCH_TOKEN", "sk-env-token")
+	_ = os.Setenv("TEST_FETCH_TOKEN", "sk-env-token")
 	t.Cleanup(func() { _ = os.Unsetenv("TEST_FETCH_TOKEN") })
 
 	var receivedAuth string
@@ -357,7 +357,7 @@ func TestRun_TokenEnvVarExpansion(t *testing.T) {
 	dir := t.TempDir()
 	setHome(t, dir)
 
-	os.Setenv("TEST_MODEL_TOKEN", "sk-env-expanded")
+	_ = os.Setenv("TEST_MODEL_TOKEN", "sk-env-expanded")
 	t.Cleanup(func() { _ = os.Unsetenv("TEST_MODEL_TOKEN") })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
