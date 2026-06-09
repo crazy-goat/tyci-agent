@@ -209,7 +209,7 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 			Stream:    true,
 			System:    req.System,
 			Messages:  anthropicMsgs,
-			Tools:     req.Tools,
+			Tools:     api.ConvertToolsToAnthropic(req.Tools),
 		}
 		go func() {
 			defer close(ch)
