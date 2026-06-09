@@ -85,11 +85,10 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 	reader := bufio.NewReader(resp.Body)
 	var inputTokens, outputTokens int
 	var finishReason string
-	// toolCalls maps tool call ID (index-based) to accumulated arguments
+	// toolCalls tracks tool call IDs for generating unique IDs
 	type pendingTool struct {
 		id   string
 		name string
-		args strings.Builder
 	}
 	var toolCalls []*pendingTool
 

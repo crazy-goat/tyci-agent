@@ -12,8 +12,8 @@ type GeminiContent struct {
 // GeminiPart represents a single part within Gemini content.
 // Only one of Text, FunctionCall, or FunctionResponse should be set.
 type GeminiPart struct {
-	Text             string                `json:"text,omitempty"`
-	FunctionCall     *GeminiFunctionCall   `json:"functionCall,omitempty"`
+	Text             string                  `json:"text,omitempty"`
+	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"`
 }
 
