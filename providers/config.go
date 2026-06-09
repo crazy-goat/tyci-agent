@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/decodo/tyci-agent/api"
+	"github.com/decodo/tyci-agent/internal/connect"
 	"github.com/decodo/tyci-agent/stream"
 )
 
@@ -122,6 +123,12 @@ func (p *dynamicProvider) IsConfigured() bool {
 		if err == nil && token != "" {
 			return true
 		}
+		// Check auth.json (ignore read errors; env vars still work as fallback)
+		if key, ok, err := connect.GetKey(p.name); err == nil && ok && key != "" {
+			return true
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: reading auth.json: %v\n", err)
+		}
 		if os.Getenv(strings.ToUpper(p.name+"_API_KEY")) != "" {
 			return true
 		}
@@ -168,7 +175,16 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 		apiKey = os.Getenv(strings.TrimPrefix(apiKey, "$"))
 	}
 
-	// If no API key in URI, try env vars
+	// If no API key in URI, try auth.json
+	if apiKey == "" {
+		if key, ok, err := connect.GetKey(p.name); err == nil && ok {
+			apiKey = key
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: reading auth.json: %v\n", err)
+		}
+	}
+
+	// If still no API key, try env vars
 	if apiKey == "" {
 		envKey := strings.ToUpper(p.name) + "_API_KEY"
 		apiKey = os.Getenv(envKey)
@@ -178,7 +194,7 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 	}
 
 	if apiKey == "" {
-		return nil, fmt.Errorf("no API key for %q (set %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
+		return nil, fmt.Errorf("no API key for %q (set via 'tyci-agent provider auth set', %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
 	}
 
 	endpoint := baseURL + endpointPath
