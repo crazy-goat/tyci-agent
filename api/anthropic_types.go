@@ -4,11 +4,11 @@ import "encoding/json"
 
 // AnthropicContentBlock is a generic content block for Anthropic messages.
 type AnthropicContentBlock struct {
-	Type   string `json:"type"` // "text", "tool_use", "tool_result"
-	Text   string `json:"text,omitempty"`
-	ID     string `json:"id,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Input  any    `json:"input,omitempty"`
+	Type  string `json:"type"` // "text", "tool_use", "tool_result"
+	Text  string `json:"text,omitempty"`
+	ID    string `json:"id,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Input any    `json:"input,omitempty"`
 
 	// Tool result fields
 	ToolUseID string `json:"tool_use_id,omitempty"`
@@ -20,7 +20,7 @@ type AnthropicContentBlock struct {
 }
 
 type AnthropicMessage struct {
-	Role    string                 `json:"role"`
+	Role    string                  `json:"role"`
 	Content []AnthropicContentBlock `json:"content"`
 }
 

@@ -43,6 +43,20 @@ func main() {
 		return
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "provider" {
+		if len(os.Args) > 2 && os.Args[2] == "auth" {
+			runProviderAuth(os.Args[3:])
+		} else if len(os.Args) > 2 {
+			fmt.Fprintf(os.Stderr, "Unknown provider subcommand: %q\n", os.Args[2])
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth [set|get|list|rm]")
+			os.Exit(1)
+		} else {
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth [set|get|list|rm]")
+			os.Exit(1)
+		}
+		return
+	}
+
 	providers.RegisterProvidersFromConfig(filepath.Join(os.Getenv("HOME"), ".tyci", "model.json"))
 
 	var interactiveFlag bool
@@ -59,13 +73,15 @@ func main() {
 	noSessionFlag := flag.Bool("no-session", false, "Disable session persistence")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [flags] (--prompt <prompt>)\n")
-		fmt.Fprintf(os.Stdout, "       tyci-agent connect --name <name> --api <type> --url <url> --token <token>\n")
-		fmt.Fprintf(os.Stdout, "       tyci-agent agent [list|get|set|delete|set-fallback]\n\n")
-		fmt.Fprintf(os.Stdout, "Subcommands:\n")
-		fmt.Fprintf(os.Stdout, "  connect  Register a new provider in ~/.tyci/model.json\n")
-		fmt.Fprintf(os.Stdout, "  agent    Manage agent configurations (model assignments)\n\n")
-		fmt.Fprintf(os.Stdout, "Flags:\n")
+		_, _ = fmt.Fprintf(os.Stdout, "Usage: tyci-agent [flags] (--prompt <prompt>)\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent connect --name <name> --api <type> --url <url> --token <token>\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent agent [list|get|set|delete|set-fallback]\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider auth [set|get|list|rm]\n\n")
+		_, _ = fmt.Fprintf(os.Stdout, "Subcommands:\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  connect       Register a new provider in ~/.tyci/model.json\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  agent         Manage agent configurations (model assignments)\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  provider auth Manage API keys in ~/.tyci/auth.json\n\n")
+		_, _ = fmt.Fprintf(os.Stdout, "Flags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -328,6 +344,141 @@ func runAgentSubcommand(args []string) {
 		fmt.Fprintln(os.Stderr, "Usage: tyci-agent agent [list|get|set|delete|set-fallback]")
 		os.Exit(1)
 	}
+}
+
+func runProviderAuth(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth [set|get|list|rm]")
+		os.Exit(1)
+	}
+
+	cmd := args[0]
+	switch cmd {
+	case "set":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth set <provider> [<key>]")
+			fmt.Fprintln(os.Stderr, "  If <key> is omitted, reads from stdin.")
+			fmt.Fprintln(os.Stderr, "  If <key> is \"-\", reads from stdin.")
+			os.Exit(1)
+		}
+		provider := args[1]
+		var key string
+		if len(args) >= 3 {
+			key = args[2]
+			if key == "-" {
+				// Read from stdin
+				data, err := readStdin()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error reading key from stdin: %v\n", err)
+					os.Exit(1)
+				}
+				key = strings.TrimSpace(string(data))
+			}
+		} else {
+			// Prompt for key
+			fmt.Fprint(os.Stderr, "Enter API key: ")
+			data, err := readStdin()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading key: %v\n", err)
+				os.Exit(1)
+			}
+			key = strings.TrimSpace(string(data))
+		}
+		if key == "" {
+			fmt.Fprintln(os.Stderr, "Error: API key cannot be empty")
+			os.Exit(1)
+		}
+		if err := connect.SetKey(provider, key); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "Saved key for provider %q in %s\n", provider, connect.AuthPath())
+
+	case "get":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth get <provider>")
+			os.Exit(1)
+		}
+		provider := args[1]
+		key, ok, err := connect.GetKey(provider)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if !ok {
+			fmt.Fprintf(os.Stderr, "No key found for provider %q\n", provider)
+			os.Exit(1)
+		}
+		_, _ = fmt.Fprintln(os.Stdout, connect.MaskKey(key))
+
+	case "list":
+		keys, err := connect.ListKeys()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if len(keys) == 0 {
+			_, _ = fmt.Fprintln(os.Stdout, "No API keys configured in auth.json")
+			return
+		}
+		_, _ = fmt.Fprintln(os.Stdout, "Configured providers:")
+		for _, p := range keys {
+			key, ok, _ := connect.GetKey(p)
+			masked := ""
+			if ok {
+				masked = connect.MaskKey(key)
+			}
+			_, _ = fmt.Fprintf(os.Stdout, "  %s = %s\n", p, masked)
+		}
+
+	case "rm":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth rm <provider>")
+			os.Exit(1)
+		}
+		provider := args[1]
+		if err := connect.RemoveKey(provider); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "Removed key for provider %q\n", provider)
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown provider auth subcommand: %q\n", cmd)
+		fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth [set|get|list|rm]")
+		os.Exit(1)
+	}
+}
+
+// readStdin reads all data from stdin until EOF.
+// For pipe input (e.g., echo "key" | tyci-agent ...), reads everything.
+// For terminal input, reads one line.
+func readStdin() ([]byte, error) {
+	stat, err := os.Stdin.Stat()
+	if err == nil && (stat.Mode()&os.ModeCharDevice) == 0 {
+		// Pipe mode: read all until EOF
+		buf := make([]byte, 0, 4096)
+		tmp := make([]byte, 1024)
+		for {
+			n, err := os.Stdin.Read(tmp)
+			if n > 0 {
+				buf = append(buf, tmp[:n]...)
+			}
+			if err != nil {
+				if err.Error() == "EOF" {
+					break
+				}
+				return nil, err
+			}
+		}
+		return buf, nil
+	}
+	// Terminal mode: read one line
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		return []byte(scanner.Text()), nil
+	}
+	return nil, scanner.Err()
 }
 
 func watchESC(cancel context.CancelFunc) func() {

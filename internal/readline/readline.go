@@ -18,13 +18,13 @@ var (
 const DefaultMaxEntries = 500
 
 type LineEditor struct {
-	history      []string
-	historyPos   int
-	buffer       []rune
-	cursorPos    int
-	draft        string
-	maxHistory   int
-	historyFile  string
+	history     []string
+	historyPos  int
+	buffer      []rune
+	cursorPos   int
+	draft       string
+	maxHistory  int
+	historyFile string
 
 	fd        int
 	origState *term.State
@@ -38,7 +38,7 @@ type LineEditor struct {
 	searchCursor int
 	searchDir    int
 
-	interrupted bool
+	interrupted  bool
 	eofRequested bool
 
 	renderLines    int
