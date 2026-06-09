@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -28,7 +29,10 @@ type anthropicMessage struct {
 	Usage *anthropicMessageUsage `json:"usage,omitempty"`
 }
 
-// anthropicContentBlock is the content_block inside content_block_start events.
+// anthropicContentBlock is used internally for parsing SSE content_block_start events.
+// It is intentionally separate from the public AnthropicContentBlock (in anthropic_types.go)
+// which is used for building outgoing requests. The SSE parser needs raw JSON fields
+// (e.g. Input any) while the request builder needs structured tool result fields.
 type anthropicContentBlock struct {
 	Type string `json:"type"`           // "text" or "tool_use"
 	Text string `json:"text,omitempty"` // present for text blocks
@@ -98,6 +102,7 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := ClientFromContext(ctx).Do(req)
 	if err != nil {
@@ -205,7 +210,7 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 				}
 				var d anthropicDelta
 				if err := json.Unmarshal(chunk.Delta, &d); err != nil {
-					return nil
+					return fmt.Errorf("failed to parse content_block_delta: %w", err)
 				}
 				switch d.Type {
 				case "text_delta":
@@ -251,6 +256,9 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 						finishReason = md.StopReason
 					}
 				}
+
+			case "message_stop":
+				// No data to extract; the subsequent [DONE] line will end the loop.
 			}
 			return nil
 		}
@@ -301,6 +309,9 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 		}
 	}
 
+	if finishReason == "" {
+		finishReason = "stop"
+	}
 	if err := emit(stream.Finish{
 		Reason: finishReason,
 		Usage: stream.Usage{
@@ -329,7 +340,7 @@ func ConvertToolsToAnthropic(tools json.RawMessage) json.RawMessage {
 
 	var openaiTools []map[string]any
 	if err := json.Unmarshal(tools, &openaiTools); err != nil {
-		// If we can't parse, return as-is (might be a simple array)
+		log.Printf("warning: ConvertToolsToAnthropic failed to parse tools: %v — returning as-is", err)
 		return tools
 	}
 
