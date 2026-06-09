@@ -13,12 +13,3 @@ linters:
 formatters:
   enable:
     - gofmt
-
-output:
-  formats:
-    colored-line-number:
-      path: stdout
-
-issues:
-  # Ignore existing issues; only report new ones introduced by changes.
-  new-from-rev: origin/main

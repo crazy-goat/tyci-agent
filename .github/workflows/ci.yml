@@ -76,6 +76,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -95,3 +97,4 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
+          only-new-issues: true
