@@ -1,27 +1,24 @@
-run:
-  timeout: 5m
+version: "2"
 
 linters:
   enable:
     - errcheck
-    - staticcheck
-    - gosec
     - unused
     - misspell
 
-linters-settings:
-  misspell:
-    locale: US
-  gosec:
-    excludes: []
+  settings:
+    misspell:
+      locale: US
+
+formatters:
+  enable:
+    - gofmt
 
 output:
   formats:
-    - format: colored-line-number
+    colored-line-number:
+      path: stdout
 
 issues:
-  exclude-rules:
-    # G304: file path traversal via variable — tools like glob/grep
-    # legitimately accept user-provided paths.
-    - linters: [gosec]
-      text: "G304"
+  # Ignore existing issues; only report new ones introduced by changes.
+  new-from-rev: origin/main

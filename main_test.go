@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,17 +12,71 @@ import (
 	"github.com/decodo/tyci-agent/stream"
 )
 
-var binPath string
+var (
+	binPath string
+	testDir string
+)
+
+// testEnv returns an environment slice with HOME set to testDir
+// so the subprocess finds the test model.json.
+func testEnv(extra ...string) []string {
+	env := os.Environ()
+	found := false
+	for i, e := range env {
+		if strings.HasPrefix(e, "HOME=") {
+			env[i] = "HOME=" + testDir
+			found = true
+			break
+		}
+	}
+	if !found {
+		env = append(env, "HOME="+testDir)
+	}
+	return append(env, extra...)
+}
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "tyci-agent-test")
+	var err error
+	testDir, err = os.MkdirTemp("", "tyci-agent-test")
 	if err != nil {
 		os.Stderr.WriteString("mkdir temp: " + err.Error())
 		os.Exit(1)
 	}
-	defer os.RemoveAll(dir)
+	// Remove the temp directory in a defer; ignore errors on cleanup.
+	defer func() { _ = os.RemoveAll(testDir) }()
 
-	binPath = filepath.Join(dir, "tyci-agent")
+	// Create a minimal model.json so subprocess tests can find a model.
+	tyciDir := filepath.Join(testDir, ".tyci")
+	if err := os.MkdirAll(tyciDir, 0755); err != nil {
+		_, _ = os.Stderr.WriteString("mkdir .tyci: " + err.Error())
+		os.Exit(1)
+	}
+	modelCfg := map[string]map[string]map[string]string{
+		"test-provider": {
+			"test-model": {
+				"uri": "openai://test-model@$TEST_API_KEY@example.com/v1",
+			},
+		},
+	}
+	data, _ := json.Marshal(modelCfg)
+	if err := os.WriteFile(filepath.Join(tyciDir, "model.json"), data, 0644); err != nil {
+		_, _ = os.Stderr.WriteString("write model.json: " + err.Error())
+		os.Exit(1)
+	}
+
+	// Create a default agent so ResolveModel finds a model without --model flag.
+	agentCfg := map[string]map[string]any{
+		"default": {
+			"model": "test-provider/test-model",
+		},
+	}
+	data2, _ := json.Marshal(agentCfg)
+	if err := os.WriteFile(filepath.Join(tyciDir, "agents.json"), data2, 0644); err != nil {
+		_, _ = os.Stderr.WriteString("write agents.json: " + err.Error())
+		os.Exit(1)
+	}
+
+	binPath = filepath.Join(testDir, "tyci-agent")
 	out, err := exec.Command("go", "build", "-o", binPath, ".").CombinedOutput()
 	if err != nil {
 		os.Stderr.WriteString("build failed: " + string(out))
@@ -32,6 +87,7 @@ func TestMain(m *testing.M) {
 
 func TestEmptyPromptExitsZero(t *testing.T) {
 	cmd := exec.Command(binPath, "--prompt", "")
+	cmd.Env = testEnv()
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			t.Fatalf("exit code %d, stderr: %s", exitErr.ExitCode(), exitErr.Stderr)
@@ -42,6 +98,7 @@ func TestEmptyPromptExitsZero(t *testing.T) {
 
 func TestNoPromptFlagExitsZero(t *testing.T) {
 	cmd := exec.Command(binPath)
+	cmd.Env = testEnv()
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			t.Fatalf("exit code %d, stderr: %s", exitErr.ExitCode(), exitErr.Stderr)
@@ -52,6 +109,7 @@ func TestNoPromptFlagExitsZero(t *testing.T) {
 
 func TestHelpExitsZero(t *testing.T) {
 	cmd := exec.Command(binPath, "--help")
+	cmd.Env = testEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -67,6 +125,7 @@ func TestHelpExitsZero(t *testing.T) {
 func TestInteractiveModelNotExistError(t *testing.T) {
 	// Non-existent model should print error and exit
 	cmd := exec.Command(binPath, "--mode", "interactive", "--model", "nonexistent/model")
+	cmd.Env = testEnv()
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatal("expected error for non-existent model")
