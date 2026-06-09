@@ -137,27 +137,51 @@ func TestInteractiveModelNotExistError(t *testing.T) {
 
 // captureDisplay implements display.Display for testing replay.
 type captureDisplay struct {
-	mu           sync.Mutex
-	thinking     []string
-	text         []string
-	toolStarts   []string
-	toolDeltas   []string
-	toolEnds     []string
-	toolBlocks   []string
-	summaries    []stream.Usage
+	mu         sync.Mutex
+	thinking   []string
+	text       []string
+	toolStarts []string
+	toolDeltas []string
+	toolEnds   []string
+	toolBlocks []string
+	summaries  []stream.Usage
 }
 
 func newCapture() *captureDisplay { return &captureDisplay{} }
 
-func (c *captureDisplay) Thinking(text string)    { c.mu.Lock(); c.thinking = append(c.thinking, text); c.mu.Unlock() }
-func (c *captureDisplay) Text(text string)         { c.mu.Lock(); c.text = append(c.text, text); c.mu.Unlock() }
-func (c *captureDisplay) ToolCallStart(name string) { c.mu.Lock(); c.toolStarts = append(c.toolStarts, name); c.mu.Unlock() }
-func (c *captureDisplay) ToolCallDelta(delta string) { c.mu.Lock(); c.toolDeltas = append(c.toolDeltas, delta); c.mu.Unlock() }
-func (c *captureDisplay) ToolCallEnd(name, result string) { c.mu.Lock(); c.toolEnds = append(c.toolEnds, name+":"+result); c.mu.Unlock() }
-func (c *captureDisplay) ToolBlock(msg string)     { c.mu.Lock(); c.toolBlocks = append(c.toolBlocks, msg); c.mu.Unlock() }
-func (c *captureDisplay) Summary(usage stream.Usage, stats stream.Stats) { c.mu.Lock(); c.summaries = append(c.summaries, usage); c.mu.Unlock() }
-func (c *captureDisplay) Error(err error)          {}
-func (c *captureDisplay) End()                     {}
+func (c *captureDisplay) Thinking(text string) {
+	c.mu.Lock()
+	c.thinking = append(c.thinking, text)
+	c.mu.Unlock()
+}
+func (c *captureDisplay) Text(text string) { c.mu.Lock(); c.text = append(c.text, text); c.mu.Unlock() }
+func (c *captureDisplay) ToolCallStart(name string) {
+	c.mu.Lock()
+	c.toolStarts = append(c.toolStarts, name)
+	c.mu.Unlock()
+}
+func (c *captureDisplay) ToolCallDelta(delta string) {
+	c.mu.Lock()
+	c.toolDeltas = append(c.toolDeltas, delta)
+	c.mu.Unlock()
+}
+func (c *captureDisplay) ToolCallEnd(name, result string) {
+	c.mu.Lock()
+	c.toolEnds = append(c.toolEnds, name+":"+result)
+	c.mu.Unlock()
+}
+func (c *captureDisplay) ToolBlock(msg string) {
+	c.mu.Lock()
+	c.toolBlocks = append(c.toolBlocks, msg)
+	c.mu.Unlock()
+}
+func (c *captureDisplay) Summary(usage stream.Usage, stats stream.Stats) {
+	c.mu.Lock()
+	c.summaries = append(c.summaries, usage)
+	c.mu.Unlock()
+}
+func (c *captureDisplay) Error(err error) {}
+func (c *captureDisplay) End()            {}
 
 func TestReplaySessionToDisplay(t *testing.T) {
 	dir := t.TempDir()
@@ -198,4 +222,3 @@ func TestReplaySessionToDisplay(t *testing.T) {
 		t.Errorf("summaries: got %v", c.summaries)
 	}
 }
-

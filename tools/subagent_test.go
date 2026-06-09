@@ -342,10 +342,10 @@ func TestSubagentTool_MissingModel(t *testing.T) {
 
 type fakeProvider struct{}
 
-func (f *fakeProvider) Name() string          { return "fake" }
-func (f *fakeProvider) IsConfigured() bool    { return true }
-func (f *fakeProvider) Models() []string      { return nil }
-func (f *fakeProvider) FreeModels() []string  { return nil }
+func (f *fakeProvider) Name() string         { return "fake" }
+func (f *fakeProvider) IsConfigured() bool   { return true }
+func (f *fakeProvider) Models() []string     { return nil }
+func (f *fakeProvider) FreeModels() []string { return nil }
 func (f *fakeProvider) Stream(context.Context, providers.Request) (<-chan stream.Event, error) {
 	return nil, nil
 }

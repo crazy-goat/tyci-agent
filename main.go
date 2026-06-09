@@ -73,15 +73,15 @@ func main() {
 	noSessionFlag := flag.Bool("no-session", false, "Disable session persistence")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stdout, "Usage: tyci-agent [flags] (--prompt <prompt>)\n")
-		fmt.Fprintf(os.Stdout, "       tyci-agent connect --name <name> --api <type> --url <url> --token <token>\n")
-		fmt.Fprintf(os.Stdout, "       tyci-agent agent [list|get|set|delete|set-fallback]\n")
-		fmt.Fprintf(os.Stdout, "       tyci-agent provider auth [set|get|list|rm]\n\n")
-		fmt.Fprintf(os.Stdout, "Subcommands:\n")
-		fmt.Fprintf(os.Stdout, "  connect       Register a new provider in ~/.tyci/model.json\n")
-		fmt.Fprintf(os.Stdout, "  agent         Manage agent configurations (model assignments)\n")
-		fmt.Fprintf(os.Stdout, "  provider auth Manage API keys in ~/.tyci/auth.json\n\n")
-		fmt.Fprintf(os.Stdout, "Flags:\n")
+		_, _ = fmt.Fprintf(os.Stdout, "Usage: tyci-agent [flags] (--prompt <prompt>)\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent connect --name <name> --api <type> --url <url> --token <token>\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent agent [list|get|set|delete|set-fallback]\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider auth [set|get|list|rm]\n\n")
+		_, _ = fmt.Fprintf(os.Stdout, "Subcommands:\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  connect       Register a new provider in ~/.tyci/model.json\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  agent         Manage agent configurations (model assignments)\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  provider auth Manage API keys in ~/.tyci/auth.json\n\n")
+		_, _ = fmt.Fprintf(os.Stdout, "Flags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -392,7 +392,7 @@ func runProviderAuth(args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stdout, "Saved key for provider %q in %s\n", provider, connect.AuthPath())
+		_, _ = fmt.Fprintf(os.Stdout, "Saved key for provider %q in %s\n", provider, connect.AuthPath())
 
 	case "get":
 		if len(args) < 2 {
@@ -409,7 +409,7 @@ func runProviderAuth(args []string) {
 			fmt.Fprintf(os.Stderr, "No key found for provider %q\n", provider)
 			os.Exit(1)
 		}
-		fmt.Fprintln(os.Stdout, connect.MaskKey(key))
+		_, _ = fmt.Fprintln(os.Stdout, connect.MaskKey(key))
 
 	case "list":
 		keys, err := connect.ListKeys()
@@ -418,17 +418,17 @@ func runProviderAuth(args []string) {
 			os.Exit(1)
 		}
 		if len(keys) == 0 {
-			fmt.Fprintln(os.Stdout, "No API keys configured in auth.json")
+			_, _ = fmt.Fprintln(os.Stdout, "No API keys configured in auth.json")
 			return
 		}
-		fmt.Fprintln(os.Stdout, "Configured providers:")
+		_, _ = fmt.Fprintln(os.Stdout, "Configured providers:")
 		for _, p := range keys {
 			key, ok, _ := connect.GetKey(p)
 			masked := ""
 			if ok {
 				masked = connect.MaskKey(key)
 			}
-			fmt.Fprintf(os.Stdout, "  %s = %s\n", p, masked)
+			_, _ = fmt.Fprintf(os.Stdout, "  %s = %s\n", p, masked)
 		}
 
 	case "rm":
@@ -441,7 +441,7 @@ func runProviderAuth(args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stdout, "Removed key for provider %q\n", provider)
+		_, _ = fmt.Fprintf(os.Stdout, "Removed key for provider %q\n", provider)
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown provider auth subcommand: %q\n", cmd)

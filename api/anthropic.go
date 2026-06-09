@@ -17,9 +17,9 @@ import (
 
 // anthropicMessageUsage captures the usage inside a message_start event.
 type anthropicMessageUsage struct {
-	InputTokens         int `json:"input_tokens"`
+	InputTokens              int `json:"input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens    int `json:"cache_read_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
 // anthropicMessage captures the message object inside message_start events.
@@ -28,10 +28,10 @@ type anthropicMessage struct {
 }
 
 type anthropicStreamChunk struct {
-	Type  string `json:"type"`
+	Type string `json:"type"`
 	// Message is present in message_start events.
 	Message *anthropicMessage `json:"message,omitempty"`
-	Delta struct {
+	Delta   struct {
 		Text string `json:"text"`
 	} `json:"delta"`
 	Usage *struct {

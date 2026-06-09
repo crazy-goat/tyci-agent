@@ -15,10 +15,10 @@ import (
 )
 
 type ChatMessage struct {
-	Role         string          `json:"role"`
-	Content      string          `json:"content"`
-	ToolCallID   string          `json:"tool_call_id,omitempty"`
-	ToolCalls    []ChatToolCall  `json:"tool_calls,omitempty"`
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	ToolCalls  []ChatToolCall `json:"tool_calls,omitempty"`
 }
 
 type ChatToolCall struct {
@@ -61,12 +61,12 @@ type chatStreamChunk struct {
 }
 
 type chatUsage struct {
-	InputTokens           int `json:"prompt_tokens"`
-	InputTokensAlt        int `json:"input_tokens,omitempty"`
-	OutputTokens          int `json:"completion_tokens"`
-	OutputTokensAlt       int `json:"output_tokens,omitempty"`
-	ReasoningTokens       int `json:"reasoning_tokens,omitempty"`
-	CacheReadInputTokens  int `json:"cache_read_input_tokens,omitempty"`
+	InputTokens            int `json:"prompt_tokens"`
+	InputTokensAlt         int `json:"input_tokens,omitempty"`
+	OutputTokens           int `json:"completion_tokens"`
+	OutputTokensAlt        int `json:"output_tokens,omitempty"`
+	ReasoningTokens        int `json:"reasoning_tokens,omitempty"`
+	CacheReadInputTokens   int `json:"cache_read_input_tokens,omitempty"`
 	CacheCreateInputTokens int `json:"cache_creation_tokens,omitempty"`
 }
 

@@ -13,7 +13,7 @@ func tempDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
 }
 
@@ -21,8 +21,8 @@ func tempDir(t *testing.T) string {
 func setHome(t *testing.T, dir string) {
 	t.Helper()
 	orig := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	t.Cleanup(func() { os.Setenv("HOME", orig) })
+	_ = os.Setenv("HOME", dir)
+	t.Cleanup(func() { _ = os.Setenv("HOME", orig) })
 }
 
 func TestAuthPath(t *testing.T) {
@@ -91,8 +91,8 @@ func TestLoadAuthCorrupted(t *testing.T) {
 	setHome(t, dir)
 
 	// Write invalid JSON
-	os.MkdirAll(filepath.Join(dir, ".tyci"), 0755)
-	os.WriteFile(AuthPath(), []byte("not json"), 0600)
+	_ = os.MkdirAll(filepath.Join(dir, ".tyci"), 0755)
+	_ = os.WriteFile(AuthPath(), []byte("not json"), 0600)
 
 	_, err := LoadAuth()
 	if err == nil {
@@ -130,8 +130,8 @@ func TestSetKeyOverwrite(t *testing.T) {
 	dir := tempDir(t)
 	setHome(t, dir)
 
-	SetKey("provider1", "key1")
-	SetKey("provider1", "key2")
+	_ = SetKey("provider1", "key1")
+	_ = SetKey("provider1", "key2")
 
 	key, ok, _ := GetKey("provider1")
 	if !ok {
@@ -162,8 +162,8 @@ func TestRemoveKey(t *testing.T) {
 	dir := tempDir(t)
 	setHome(t, dir)
 
-	SetKey("provider1", "key1")
-	SetKey("provider2", "key2")
+	_ = SetKey("provider1", "key1")
+	_ = SetKey("provider2", "key2")
 
 	if err := RemoveKey("provider1"); err != nil {
 		t.Fatalf("RemoveKey() error: %v", err)

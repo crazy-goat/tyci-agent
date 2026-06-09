@@ -30,13 +30,13 @@ const (
 
 // Usage mirrors stream.Usage but is JSON-serializable without coupling.
 type Usage struct {
-	Input      int     `json:"input"`
-	Output     int     `json:"output"`
-	Reasoning  int     `json:"reasoning,omitempty"`
-	TotalTokens int    `json:"totalTokens"`
-	TotalCost  float64 `json:"total_cost,omitempty"`
-	CacheRead  int     `json:"cacheRead,omitempty"`
-	CacheWrite int     `json:"cacheWrite,omitempty"`
+	Input       int     `json:"input"`
+	Output      int     `json:"output"`
+	Reasoning   int     `json:"reasoning,omitempty"`
+	TotalTokens int     `json:"totalTokens"`
+	TotalCost   float64 `json:"total_cost,omitempty"`
+	CacheRead   int     `json:"cacheRead,omitempty"`
+	CacheWrite  int     `json:"cacheWrite,omitempty"`
 }
 
 // Header is the first line of every session file.
@@ -52,37 +52,37 @@ type Header struct {
 
 // ContentBlock is a typed content block (text, thinking, toolCall, toolResult).
 type ContentBlock struct {
-	Type        string          `json:"type"`
-	Text        string          `json:"text,omitempty"`
-	Thinking    string          `json:"thinking,omitempty"`
-	ID          string          `json:"id,omitempty"`
-	Name        string          `json:"name,omitempty"`
-	Arguments   json.RawMessage `json:"arguments,omitempty"`
-	IsError     bool            `json:"isError,omitempty"`
-	ToolCallID  string          `json:"toolCallId,omitempty"`
-	ToolName    string          `json:"toolName,omitempty"`
+	Type       string          `json:"type"`
+	Text       string          `json:"text,omitempty"`
+	Thinking   string          `json:"thinking,omitempty"`
+	ID         string          `json:"id,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	Arguments  json.RawMessage `json:"arguments,omitempty"`
+	IsError    bool            `json:"isError,omitempty"`
+	ToolCallID string          `json:"toolCallId,omitempty"`
+	ToolName   string          `json:"toolName,omitempty"`
 }
 
 // MessagePayload is the message portion of a message event.
 type MessagePayload struct {
-	Role       string         `json:"role"`
-	Content    []ContentBlock `json:"content"`
+	Role    string         `json:"role"`
+	Content []ContentBlock `json:"content"`
 }
 
 // MessageEvent represents a user message, assistant message, or tool result.
 type MessageEvent struct {
-	Type       EventType       `json:"type"`
-	ID         string          `json:"id"`
-	Timestamp  string          `json:"timestamp"`
-	Message    MessagePayload  `json:"message"`
+	Type      EventType      `json:"type"`
+	ID        string         `json:"id"`
+	Timestamp string         `json:"timestamp"`
+	Message   MessagePayload `json:"message"`
 
 	// Assistant-only metadata
-	API        string          `json:"api,omitempty"`
-	Provider   string          `json:"provider,omitempty"`
-	Model      string          `json:"model,omitempty"`
-	Usage      *Usage          `json:"usage,omitempty"`
-	StopReason string          `json:"stopReason,omitempty"`
-	ResponseID string          `json:"responseId,omitempty"`
+	API        string `json:"api,omitempty"`
+	Provider   string `json:"provider,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Usage      *Usage `json:"usage,omitempty"`
+	StopReason string `json:"stopReason,omitempty"`
+	ResponseID string `json:"responseId,omitempty"`
 }
 
 // SessionEnd is the final event in every session file.
@@ -265,11 +265,11 @@ func (s *Session) WriteSessionEnd(status string, exitCode int, totalUsage *Usage
 	}
 
 	ev := SessionEnd{
-		Type:      TypeSessionEnd,
-		ID:        s.id,
-		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-		Status:    status,
-		ExitCode:  exitCode,
+		Type:       TypeSessionEnd,
+		ID:         s.id,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+		Status:     status,
+		ExitCode:   exitCode,
 		TotalUsage: totalUsage,
 	}
 
@@ -290,7 +290,7 @@ func (s *Session) Close() error {
 
 // ─── Accessors ────────────────────────────────────────────────────────────
 
-func (s *Session) ID() string   { return s.id }
+func (s *Session) ID() string     { return s.id }
 func (s *Session) IsResume() bool { return s.isResume }
 
 // Messages returns the parsed messages from a resumed session.

@@ -64,14 +64,14 @@ func TestDynamicProviderIsConfigured_withAuthJSON(t *testing.T) {
 	// Setup: create a temporary HOME with auth.json containing a key
 	dir := t.TempDir()
 	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	_ = os.Setenv("HOME", dir)
+	t.Cleanup(func() { _ = os.Setenv("HOME", origHome) })
 
 	// Write auth.json
 	authDir := filepath.Join(dir, ".tyci")
-	os.MkdirAll(authDir, 0755)
+	_ = os.MkdirAll(authDir, 0755)
 	authPath := filepath.Join(authDir, "auth.json")
-	os.WriteFile(authPath, []byte(`{"test-provider":"sk-test-key-123"}`), 0600)
+	_ = os.WriteFile(authPath, []byte(`{"test-provider":"sk-test-key-123"}`), 0600)
 
 	// Create dynamicProvider with a URI that has no embedded token
 	p := &dynamicProvider{
@@ -108,12 +108,12 @@ func TestDynamicProviderIsConfigured_withURIOnly(t *testing.T) {
 func TestDynamicProviderIsConfigured_notConfigured(t *testing.T) {
 	dir := t.TempDir()
 	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	_ = os.Setenv("HOME", dir)
+	t.Cleanup(func() { _ = os.Setenv("HOME", origHome) })
 
 	// Unset relevant env vars to ensure clean state
-	os.Unsetenv(strings.ToUpper("test-provider") + "_API_KEY")
-	os.Unsetenv("OPENCODE_API_KEY")
+	_ = os.Unsetenv(strings.ToUpper("test-provider") + "_API_KEY")
+	_ = os.Unsetenv("OPENCODE_API_KEY")
 
 	// No auth.json, no URI token, no env vars
 	p := &dynamicProvider{
@@ -134,18 +134,18 @@ func TestDynamicProviderIsConfigured_notConfigured(t *testing.T) {
 func TestDynamicProviderStream_usesAuthJSON(t *testing.T) {
 	dir := t.TempDir()
 	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	_ = os.Setenv("HOME", dir)
+	t.Cleanup(func() { _ = os.Setenv("HOME", origHome) })
 
 	// Unset env vars to ensure we're testing auth.json path
-	os.Unsetenv(strings.ToUpper("test-provider") + "_API_KEY")
-	os.Unsetenv("OPENCODE_API_KEY")
+	_ = os.Unsetenv(strings.ToUpper("test-provider") + "_API_KEY")
+	_ = os.Unsetenv("OPENCODE_API_KEY")
 
 	// Write auth.json with a key
 	authDir := filepath.Join(dir, ".tyci")
-	os.MkdirAll(authDir, 0755)
+	_ = os.MkdirAll(authDir, 0755)
 	authPath := filepath.Join(authDir, "auth.json")
-	os.WriteFile(authPath, []byte(`{"test-provider":"sk-auth-key"}`), 0600)
+	_ = os.WriteFile(authPath, []byte(`{"test-provider":"sk-auth-key"}`), 0600)
 
 	p := &dynamicProvider{
 		name: "test-provider",
@@ -177,7 +177,7 @@ func TestDynamicProviderStream_usesAuthJSON(t *testing.T) {
 			if strings.Contains(err.Err.Error(), "no API key") {
 				t.Errorf("Stream() should not fail with 'no API key' when auth.json has a key: %v", err.Err)
 			}
-			// Any other error (connection refused, cancelled) is fine
+			// Any other error (connection refused, canceled) is fine
 			return
 		}
 	}
@@ -186,14 +186,14 @@ func TestDynamicProviderStream_usesAuthJSON(t *testing.T) {
 func TestDynamicProviderStream_authJSONFallbackToEnvVar(t *testing.T) {
 	dir := t.TempDir()
 	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	t.Cleanup(func() { os.Setenv("HOME", origHome) })
+	_ = os.Setenv("HOME", dir)
+	t.Cleanup(func() { _ = os.Setenv("HOME", origHome) })
 
 	// No auth.json — key should come from env var
 	// Provider name "test-provider" maps to "TEST-PROVIDER_API_KEY" env var
-	os.Setenv("TEST-PROVIDER_API_KEY", "sk-env-key")
-	t.Cleanup(func() { os.Unsetenv("TEST-PROVIDER_API_KEY") })
-	os.Unsetenv("OPENCODE_API_KEY")
+	_ = os.Setenv("TEST-PROVIDER_API_KEY", "sk-env-key")
+	t.Cleanup(func() { _ = os.Unsetenv("TEST-PROVIDER_API_KEY") })
+	_ = os.Unsetenv("OPENCODE_API_KEY")
 
 	p := &dynamicProvider{
 		name: "test-provider",
@@ -289,4 +289,3 @@ func TestParseURI_anthropic(t *testing.T) {
 		t.Errorf("endpointPath = %q, want %q", endpointPath, "/v1/messages")
 	}
 }
-
