@@ -15,19 +15,31 @@ import (
 	"github.com/decodo/tyci-agent/stream"
 )
 
+// geminiPartRaw is used for unmarshalling SSE parts with unknown structure.
+type geminiPartRaw struct {
+	Text         string           `json:"text,omitempty"`
+	FunctionCall *json.RawMessage `json:"functionCall,omitempty"`
+}
+
+// geminiStreamChunk represents a single SSE event from the Gemini API.
 type geminiStreamChunk struct {
 	Candidates []struct {
 		Content struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
+			Parts []geminiPartRaw `json:"parts"`
 		} `json:"content"`
+		FinishReason string `json:"finishReason"`
 	} `json:"candidates"`
 	UsageMetadata *struct {
 		PromptTokenCount     int `json:"promptTokenCount"`
 		CandidatesTokenCount int `json:"candidatesTokenCount"`
 		TotalTokenCount      int `json:"totalTokenCount"`
 	} `json:"usageMetadata,omitempty"`
+}
+
+// geminiFunctionCallArgs holds the parsed function call from the model.
+type geminiFunctionCallArgs struct {
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args"`
 }
 
 func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiRequest, emit func(stream.Event) error) error {
@@ -72,6 +84,14 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 
 	reader := bufio.NewReader(resp.Body)
 	var inputTokens, outputTokens int
+	var finishReason string
+	// toolCalls maps tool call ID (index-based) to accumulated arguments
+	type pendingTool struct {
+		id   string
+		name string
+		args strings.Builder
+	}
+	var toolCalls []*pendingTool
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -98,21 +118,63 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
 		}
+
 		for _, c := range chunk.Candidates {
+			if c.FinishReason != "" {
+				finishReason = c.FinishReason
+			}
 			for _, part := range c.Content.Parts {
-				if err := emit(stream.TextDelta{Text: part.Text}); err != nil {
-					return err
+				if part.Text != "" {
+					if err := emit(stream.TextDelta{Text: part.Text}); err != nil {
+						return err
+					}
+				}
+				if part.FunctionCall != nil && len(*part.FunctionCall) > 0 {
+					var fc geminiFunctionCallArgs
+					if err := json.Unmarshal(*part.FunctionCall, &fc); err != nil {
+						continue
+					}
+					// Generate a unique tool call ID (Gemini doesn't provide one)
+					toolID := fmt.Sprintf("%s_%d", fc.Name, len(toolCalls))
+
+					// Emit start event
+					if err := emit(stream.ToolCallStart{ID: toolID, Name: fc.Name}); err != nil {
+						return err
+					}
+
+					// Emit the full arguments as a single delta
+					argsJSON := string(fc.Args)
+					if argsJSON != "" {
+						if err := emit(stream.ToolCallDelta{ID: toolID, Delta: argsJSON}); err != nil {
+							return err
+						}
+					}
+
+					// Emit the complete tool call
+					if err := emit(stream.ToolCall{ID: toolID, Name: fc.Name, Arguments: argsJSON}); err != nil {
+						return err
+					}
+
+					toolCalls = append(toolCalls, &pendingTool{
+						id:   toolID,
+						name: fc.Name,
+					})
 				}
 			}
 		}
+
 		if chunk.UsageMetadata != nil {
 			inputTokens = chunk.UsageMetadata.PromptTokenCount
 			outputTokens = chunk.UsageMetadata.CandidatesTokenCount
 		}
 	}
 
+	if finishReason == "" {
+		finishReason = "stop"
+	}
+
 	return emit(stream.Finish{
-		Reason: "stop",
+		Reason: finishReason,
 		Usage: stream.Usage{
 			Input:  inputTokens,
 			Output: outputTokens,
