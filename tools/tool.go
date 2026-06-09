@@ -7,31 +7,21 @@ import (
 	"github.com/decodo/tyci-agent/providers"
 )
 
-// GlobalProvider allows subagent tool to access the LLM provider.
-var GlobalProvider providers.Provider
+// SetProvider is a no-op. Provider is now passed via context (see
+// providers.WithProvider). Kept for backward compat during transition.
+func SetProvider(_ providers.Provider) {}
 
-// GlobalModel holds the current model string (e.g. "opencode-zen/big-pickle")
-var GlobalModel string
+// GetProvider always returns nil. Provider is now passed via context.
+// Kept for backward compat during transition.
+func GetProvider() providers.Provider { return nil }
 
-// SetProvider sets the global provider for subagent tool.
-func SetProvider(p providers.Provider) {
-	GlobalProvider = p
-}
+// SetCurrentModel is a no-op. Model is now passed via context (see
+// providers.WithModel). Kept for backward compat during transition.
+func SetCurrentModel(_ string) {}
 
-// GetProvider returns the global provider.
-func GetProvider() providers.Provider {
-	return GlobalProvider
-}
-
-// SetCurrentModel sets the current model string.
-func SetCurrentModel(m string) {
-	GlobalModel = m
-}
-
-// GetCurrentModel returns the current model string.
-func GetCurrentModel() string {
-	return GlobalModel
-}
+// GetCurrentModel always returns "". Model is now passed via context.
+// Kept for backward compat during transition.
+func GetCurrentModel() string { return "" }
 
 type ToolResult struct {
 	Type    string `json:"type"`

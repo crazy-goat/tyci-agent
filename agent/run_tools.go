@@ -15,9 +15,8 @@ type streamProgressDisplay interface {
 
 func executeAndAppendToolResults(ctx context.Context, d display.Display, msgs *[]providers.RichMessage, cfg Config, toolCalls []stream.ToolCall, toolDeltas map[string]*strings.Builder) {
 	showToolCalls(d, toolCalls, toolDeltas)
-	prevOnOutput := installToolStreaming(d)
+	ctx = installToolStreaming(ctx, d)
 	results := executeTools(ctx, cfg.Tools, toolCalls)
-	stream.OnOutput = prevOnOutput
 	appendToolResults(d, msgs, cfg, toolCalls, results)
 }
 
@@ -32,16 +31,13 @@ func showToolCalls(d display.Display, toolCalls []stream.ToolCall, toolDeltas ma
 	}
 }
 
-func installToolStreaming(d display.Display) func(int, string) {
-	prevOnOutput := stream.OnOutput
+func installToolStreaming(ctx context.Context, d display.Display) context.Context {
 	if s, ok := d.(streamProgressDisplay); ok {
-		stream.OnOutput = func(toolIdx int, line string) {
+		return stream.WithOutput(ctx, func(toolIdx int, line string) {
 			s.StreamProgress(toolIdx, line)
-		}
-	} else {
-		stream.OnOutput = nil
+		})
 	}
-	return prevOnOutput
+	return ctx
 }
 
 func appendToolResults(d display.Display, msgs *[]providers.RichMessage, cfg Config, toolCalls []stream.ToolCall, results []string) {

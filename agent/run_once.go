@@ -12,6 +12,9 @@ import (
 )
 
 func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config) (more bool, usage *stream.Usage, err error) {
+	ctx = providers.WithProvider(ctx, p)
+	ctx = providers.WithModel(ctx, cfg.Model)
+
 	events, streamErr := p.Stream(ctx, providers.Request{
 		Model:    cfg.Model,
 		System:   cfg.System,
