@@ -1,0 +1,15 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - staticcheck
+    - gosec
+    - unused
+    - misspell
+
+issues:
+  exclude-rules:
+    - linters: [gosec]
+      text: "G304|G204|G101"
