@@ -145,3 +145,739 @@ func TestReadAllMessages_EmptyInput(t *testing.T) {
 		t.Fatalf("expected 0 messages, got %d", len(msgs))
 	}
 }
+
+// ─── Open / Fresh Session ────────────────────────────────────────────────
+
+func TestOpen_CreatesNewSession(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	s, err := Open(path, "/tmp", "gpt-4", "openai")
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer s.Close()
+
+	if s.ID() == "" {
+		t.Error("session ID should not be empty")
+	}
+	if s.IsResume() {
+		t.Error("fresh session should not be resume")
+	}
+	if msgs := s.Messages(); msgs != nil {
+		t.Errorf("fresh session should have nil messages, got %d lines", len(msgs))
+	}
+
+	// Verify file was created with header
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read session file: %v", err)
+	}
+	var header Header
+	if err := json.Unmarshal(bytes.Split(data, []byte("\n"))[0], &header); err != nil {
+		t.Fatalf("unmarshal header: %v", err)
+	}
+	if header.Type != TypeSession {
+		t.Errorf("header type = %q, want %q", header.Type, TypeSession)
+	}
+	if header.Version != 1 {
+		t.Errorf("header version = %d, want 1", header.Version)
+	}
+	if header.Model != "gpt-4" {
+		t.Errorf("header model = %q, want %q", header.Model, "gpt-4")
+	}
+	if header.Provider != "openai" {
+		t.Errorf("header provider = %q, want %q", header.Provider, "openai")
+	}
+}
+
+func TestOpen_CreatesDirIfNotExists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sub", "nested", "test.jsonl")
+
+	s, err := Open(path, "/tmp", "test-model", "test-provider")
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	s.Close()
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Error("session file was not created")
+	}
+}
+
+// ─── Open / Resume ──────────────────────────────────────────────────────
+
+func TestOpen_ResumesExistingSession(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "resume-test.jsonl")
+
+	// Create initial session with one message
+	s1, err := Open(path, "/tmp", "gpt-4", "openai")
+	if err != nil {
+		t.Fatalf("first Open() error: %v", err)
+	}
+	err = s1.WriteMessage("user", []ContentBlock{{Type: "text", Text: "hello"}}, nil)
+	if err != nil {
+		t.Fatalf("WriteMessage() error: %v", err)
+	}
+	err = s1.WriteSessionEnd("success", 0, nil)
+	if err != nil {
+		t.Fatalf("WriteSessionEnd() error: %v", err)
+	}
+	s1.Close()
+
+	// Resume the session
+	s2, err := Open(path, "/tmp", "gpt-4", "openai")
+	if err != nil {
+		t.Fatalf("second Open() error: %v", err)
+	}
+	defer s2.Close()
+
+	if !s2.IsResume() {
+		t.Error("resumed session should have IsResume() = true")
+	}
+	msgs := s2.Messages()
+	if msgs == nil {
+		t.Fatal("resumed session should have messages")
+	}
+	// Header + 1 message + session_end = 3 lines
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 parsed lines, got %d", len(msgs))
+	}
+	if msgs[0].MsgType != "header" {
+		t.Errorf("first line should be header, got %q", msgs[0].MsgType)
+	}
+	if msgs[1].MsgType != "user" {
+		t.Errorf("second line should be 'user', got %q", msgs[1].MsgType)
+	}
+	if msgs[2].MsgType != "session_end" {
+		t.Errorf("third line should be 'session_end', got %q", msgs[2].MsgType)
+	}
+}
+
+func TestOpen_ResumeAppendsToExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "append-test.jsonl")
+
+	s1, err := Open(path, "/tmp", "gpt-4", "openai")
+	if err != nil {
+		t.Fatalf("first Open() error: %v", err)
+	}
+	s1.Close()
+
+	// Resume and add a message
+	s2, err := Open(path, "/tmp", "gpt-4", "openai")
+	if err != nil {
+		t.Fatalf("second Open() error: %v", err)
+	}
+	err = s2.WriteMessage("user", []ContentBlock{{Type: "text", Text: "appended"}}, nil)
+	if err != nil {
+		t.Fatalf("WriteMessage() error: %v", err)
+	}
+	s2.Close()
+
+	// Read file and count lines
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 { // header + 1 message
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+}
+
+// ─── WriteMessage ───────────────────────────────────────────────────────
+
+func TestWriteMessage_UserMessage(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	s, err := Open(path, "/tmp", "test", "test")
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer s.Close()
+
+	err = s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "Hello, world!"}}, nil)
+	if err != nil {
+		t.Fatalf("WriteMessage() error: %v", err)
+	}
+
+	// Verify content
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "Hello, world!") {
+		t.Errorf("expected 'Hello, world!' in output, got %q", content)
+	}
+	if !strings.Contains(content, `"role":"user"`) {
+		t.Errorf("expected role 'user' in output, got %q", content)
+	}
+}
+
+func TestWriteMessage_AssistantWithOptions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	s, err := Open(path, "/tmp", "test", "test")
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer s.Close()
+
+	opts := &MessageOptions{
+		API:        "openai",
+		Provider:   "openai",
+		Model:      "gpt-4",
+		StopReason: "stop",
+		ResponseID: "resp-123",
+		Usage: &Usage{
+			Input:      50,
+			Output:     100,
+			Reasoning:  0,
+			CacheRead:  10,
+			CacheWrite: 5,
+		},
+	}
+
+	err = s.WriteMessage("assistant", []ContentBlock{
+		{Type: "text", Text: "I am an AI."},
+		{Type: "toolCall", ID: "call-1", Name: "bash", Arguments: json.RawMessage(`{"cmd":"ls"}`)},
+	}, opts)
+	if err != nil {
+		t.Fatalf("WriteMessage() error: %v", err)
+	}
+
+	// Read and verify
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, `"role":"assistant"`) {
+		t.Errorf("expected assistant role, got %q", content)
+	}
+	if !strings.Contains(content, `"api":"openai"`) {
+		t.Errorf("expected api field, got %q", content)
+	}
+	if !strings.Contains(content, `"input":50`) {
+		t.Errorf("expected input usage, got %q", content)
+	}
+	if !strings.Contains(content, `"output":100`) {
+		t.Errorf("expected output usage, got %q", content)
+	}
+	if !strings.Contains(content, `"cacheRead":10`) {
+		t.Errorf("expected cacheRead, got %q", content)
+	}
+	if !strings.Contains(content, `"cacheWrite":5`) {
+		t.Errorf("expected cacheWrite, got %q", content)
+	}
+	if !strings.Contains(content, `"stopReason":"stop"`) {
+		t.Errorf("expected stopReason, got %q", content)
+	}
+	if !strings.Contains(content, `"responseId":"resp-123"`) {
+		t.Errorf("expected responseId, got %q", content)
+	}
+	if !strings.Contains(content, `"name":"bash"`) {
+		t.Errorf("expected tool name 'bash', got %q", content)
+	}
+}
+
+func TestWriteMessage_ToolResult(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	s, err := Open(path, "/tmp", "test", "test")
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer s.Close()
+
+	err = s.WriteMessage("toolResult", []ContentBlock{
+		{Type: "toolResult", ToolCallID: "call-1", ToolName: "bash", Text: "file1.txt\nfile2.txt", IsError: false},
+	}, nil)
+	if err != nil {
+		t.Fatalf("WriteMessage() error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, `"role":"toolResult"`) {
+		t.Errorf("expected toolResult role, got %q", content)
+	}
+	if !strings.Contains(content, `"toolCallId":"call-1"`) {
+		t.Errorf("expected toolCallId, got %q", content)
+	}
+}
+
+func TestWriteMessage_AfterClose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	s, err := Open(path, "/tmp", "test", "test")
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	s.Close()
+
+	err = s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "should fail"}}, nil)
+	if err == nil {
+		t.Error("WriteMessage() after close should return error")
+	}
+}
+
+// ─── WriteSessionEnd ────────────────────────────────────────────────────
+
+func TestWriteSessionEnd(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	s, err := Open(path, "/tmp", "test", "test")
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer s.Close()
+
+	usage := &Usage{Input: 10, Output: 20, TotalTokens: 30}
+	err = s.WriteSessionEnd("success", 0, usage)
+	if err != nil {
+		t.Fatalf("WriteSessionEnd() error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, `"type":"session_end"`) {
+		t.Errorf("expected session_end type, got %q", content)
+	}
+	if !strings.Contains(content, `"status":"success"`) {
+		t.Errorf("expected status, got %q", content)
+	}
+	if !strings.Contains(content, `"exit_code":0`) {
+		t.Errorf("expected exit_code, got %q", content)
+	}
+	if !strings.Contains(content, `"input":10`) {
+		t.Errorf("expected usage input, got %q", content)
+	}
+}
+
+func TestWriteSessionEnd_AfterClose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	s, err := Open(path, "/tmp", "test", "test")
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	s.Close()
+
+	err = s.WriteSessionEnd("failed", 1, nil)
+	if err == nil {
+		t.Error("WriteSessionEnd() after close should return error")
+	}
+}
+
+// ─── Close ──────────────────────────────────────────────────────────────
+
+func TestClose_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	s, err := Open(path, "/tmp", "test", "test")
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("first Close() error: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("second Close() should not error: %v", err)
+	}
+}
+
+// ─── DefaultPath ────────────────────────────────────────────────────────
+
+func TestDefaultPath_Format(t *testing.T) {
+	path, err := DefaultPath("/home/user/projects/my-app")
+	if err != nil {
+		t.Fatalf("DefaultPath() error: %v", err)
+	}
+
+	// Should be under ~/.tyci/sessions/
+	if !strings.Contains(path, ".tyci/sessions/") {
+		t.Errorf("expected .tyci/sessions/ in path, got %q", path)
+	}
+
+	// Should contain encoded CWD
+	if !strings.Contains(path, "--home--user--projects--my-app") {
+		t.Errorf("expected encoded CWD, got %q", path)
+	}
+
+	// Should end with .jsonl
+	if !strings.HasSuffix(path, ".jsonl") {
+		t.Errorf("expected .jsonl suffix, got %q", path)
+	}
+
+	// Should contain timestamp and UUID
+	parts := strings.Split(path, "/")
+	filename := parts[len(parts)-1]
+	// Format: <ts>_<uuid>.jsonl
+	tsPart := strings.Split(filename, "_")
+	if len(tsPart) != 2 {
+		t.Errorf("expected filename format <ts>_<uuid>.jsonl, got %q", filename)
+	}
+}
+
+func TestDefaultPath_RootCWD(t *testing.T) {
+	path, err := DefaultPath("/")
+	if err != nil {
+		t.Fatalf("DefaultPath() error: %v", err)
+	}
+
+	// "/" becomes "--" after replacing slashes
+	if !strings.Contains(path, "--") {
+		t.Errorf("root CWD should contain '--', got %q", path)
+	}
+}
+
+func TestDefaultPath_EmptyCWD(t *testing.T) {
+	path, err := DefaultPath("")
+	if err != nil {
+		t.Fatalf("DefaultPath() error: %v", err)
+	}
+
+	if !strings.Contains(path, "root") {
+		t.Errorf("empty CWD should default to 'root', got %q", path)
+	}
+}
+
+// ─── RebuildMessages ────────────────────────────────────────────────────
+
+func TestRebuildMessages_SingleUserMessage(t *testing.T) {
+	lines := []ParsedLine{
+		{Raw: `{"type":"session","version":1,"id":"s1","timestamp":"2026-01-01T00:00:00Z"}`, MsgType: "header"},
+		{Raw: `{"type":"message","id":"m1","timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`, MsgType: "user"},
+		{Raw: `{"type":"session_end","id":"s1","timestamp":"2026-01-01T00:00:02Z","status":"success","exit_code":0}`, MsgType: "session_end"},
+	}
+
+	msgs, err := RebuildMessages(lines)
+	if err != nil {
+		t.Fatalf("RebuildMessages() error: %v", err)
+	}
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" {
+		t.Errorf("expected role 'user', got %q", msgs[0].Role)
+	}
+	if len(msgs[0].Content) != 1 {
+		t.Fatalf("expected 1 content block, got %d", len(msgs[0].Content))
+	}
+	if msgs[0].Content[0].Type != "text" {
+		t.Errorf("expected text block, got %q", msgs[0].Content[0].Type)
+	}
+	if msgs[0].Content[0].Text != "hello" {
+		t.Errorf("expected text 'hello', got %q", msgs[0].Content[0].Text)
+	}
+}
+
+func TestRebuildMessages_AssistantWithToolCalls(t *testing.T) {
+	lines := []ParsedLine{
+		{Raw: `{"type":"session","version":1}`, MsgType: "header"},
+		{Raw: `{"type":"message","id":"m1","message":{"role":"assistant","content":[{"type":"text","text":"Let me check"},{"type":"toolCall","id":"call-1","name":"bash","arguments":"{\"cmd\":\"ls\"}"}]}}`, MsgType: "assistant"},
+	}
+
+	msgs, err := RebuildMessages(lines)
+	if err != nil {
+		t.Fatalf("RebuildMessages() error: %v", err)
+	}
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].Role != "assistant" {
+		t.Errorf("expected role 'assistant', got %q", msgs[0].Role)
+	}
+	if len(msgs[0].Content) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d", len(msgs[0].Content))
+	}
+
+	// Check text block
+	if msgs[0].Content[0].Type != "text" || msgs[0].Content[0].Text != "Let me check" {
+		t.Errorf("expected text block 'Let me check', got %+v", msgs[0].Content[0])
+	}
+
+	// Check tool call block
+	if msgs[0].Content[1].Type != "toolCall" {
+		t.Errorf("expected toolCall block, got %q", msgs[0].Content[1].Type)
+	}
+	if msgs[0].Content[1].ID != "call-1" {
+		t.Errorf("expected toolCall ID 'call-1', got %q", msgs[0].Content[1].ID)
+	}
+	if msgs[0].Content[1].Name != "bash" {
+		t.Errorf("expected tool name 'bash', got %q", msgs[0].Content[1].Name)
+	}
+}
+
+func TestRebuildMessages_MixedConversation(t *testing.T) {
+	lines := []ParsedLine{
+		{Raw: `{"type":"session","version":1}`, MsgType: "header"},
+		{Raw: `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"What time is it?"}]}}`, MsgType: "user"},
+		{Raw: `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"It's noon."}]}}`, MsgType: "assistant"},
+		{Raw: `{"type":"session_end","status":"success","exit_code":0}`, MsgType: "session_end"},
+	}
+
+	msgs, err := RebuildMessages(lines)
+	if err != nil {
+		t.Fatalf("RebuildMessages() error: %v", err)
+	}
+
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" || msgs[1].Role != "assistant" {
+		t.Errorf("expected roles user->assistant, got %q -> %q", msgs[0].Role, msgs[1].Role)
+	}
+}
+
+func TestRebuildMessages_NestedToolResult(t *testing.T) {
+	json := `{"type":"message","message":{"role":"toolResult","content":[{"type":"toolResult","toolCallId":"call-1","toolName":"bash","text":"output","isError":false}]}}`
+	lines := []ParsedLine{
+		{Raw: `{"type":"session","version":1}`, MsgType: "header"},
+		{Raw: json, MsgType: "toolResult"},
+	}
+
+	msgs, err := RebuildMessages(lines)
+	if err != nil {
+		t.Fatalf("RebuildMessages() error: %v", err)
+	}
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].Role != "toolResult" {
+		t.Errorf("expected role 'toolResult', got %q", msgs[0].Role)
+	}
+	if len(msgs[0].Content) != 1 {
+		t.Fatalf("expected 1 content block, got %d", len(msgs[0].Content))
+	}
+	cb := msgs[0].Content[0]
+	if cb.Type != "toolResult" || cb.ToolCallID != "call-1" || cb.ToolName != "bash" || cb.Text != "output" {
+		t.Errorf("unexpected toolResult block: %+v", cb)
+	}
+}
+
+func TestRebuildMessages_SkipsThinking(t *testing.T) {
+	lines := []ParsedLine{
+		{Raw: `{"type":"session","version":1}`, MsgType: "header"},
+		{Raw: `{"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Hmm, let me think..."},{"type":"text","text":"Here's the answer."}]}}`, MsgType: "assistant"},
+	}
+
+	msgs, err := RebuildMessages(lines)
+	if err != nil {
+		t.Fatalf("RebuildMessages() error: %v", err)
+	}
+
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if len(msgs[0].Content) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d", len(msgs[0].Content))
+	}
+	if msgs[0].Content[0].Type != "thinking" {
+		t.Errorf("expected thinking block, got %q", msgs[0].Content[0].Type)
+	}
+	if msgs[0].Content[0].Thinking != "Hmm, let me think..." {
+		t.Errorf("expected thinking text, got %q", msgs[0].Content[0].Thinking)
+	}
+}
+
+func TestRebuildMessages_SkipsMalformedLines(t *testing.T) {
+	lines := []ParsedLine{
+		{Raw: `{"type":"session","version":1}`, MsgType: "header"},
+		{Raw: `NOT JSON`, MsgType: "unknown"},
+		{Raw: `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}`, MsgType: "user"},
+	}
+
+	msgs, err := RebuildMessages(lines)
+	if err != nil {
+		t.Fatalf("RebuildMessages() error: %v", err)
+	}
+
+	// Should only have the valid message (skip malformed line)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 valid message, got %d", len(msgs))
+	}
+}
+
+// ─── parseSessionFile edge cases ────────────────────────────────────────
+
+func TestParseSessionFile_SkipsEmptyLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	header := Header{Type: TypeSession, Version: 1, ID: "s1"}
+	hData, _ := json.Marshal(header)
+	// Add empty lines between valid JSON lines
+	content := string(hData) + "\n\n\n" + string(hData) + "\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, err := parseSessionFile(path)
+	if err != nil {
+		t.Fatalf("parseSessionFile() error: %v", err)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines (skipping empty ones), got %d", len(lines))
+	}
+}
+
+func TestParseSessionFile_SkipsInvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	content := `{"type":"session","version":1}
+not json
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, err := parseSessionFile(path)
+	if err != nil {
+		t.Fatalf("parseSessionFile() error: %v", err)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 valid lines (skipping invalid), got %d", len(lines))
+	}
+}
+
+// ─── ReadAllMessages ────────────────────────────────────────────────────
+
+func TestReadAllMessages_MultipleEvents(t *testing.T) {
+	var buf bytes.Buffer
+	events := []string{
+		`{"type":"session","version":1}`,
+		`{"type":"message","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}`,
+		`{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}`,
+		`{"type":"session_end","status":"success","exit_code":0}`,
+	}
+	for _, e := range events {
+		buf.WriteString(e + "\n")
+	}
+
+	msgs, err := ReadAllMessages(&buf)
+	if err != nil {
+		t.Fatalf("ReadAllMessages() error: %v", err)
+	}
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(msgs))
+	}
+}
+
+func TestReadAllMessages_SkipsNonJSON(t *testing.T) {
+	var buf bytes.Buffer
+	buf.WriteString("not json\n")
+	buf.WriteString(`{"valid":true}` + "\n")
+
+	msgs, err := ReadAllMessages(&buf)
+	if err != nil {
+		t.Fatalf("ReadAllMessages() error: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 valid message, got %d", len(msgs))
+	}
+}
+
+// ─── Round-trip: Open → Write → Resume → Rebuild ───────────────────────
+
+func TestFullRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "roundtrip.jsonl")
+
+	// Create session with user + assistant + toolResult messages
+	s, err := Open(path, "/tmp", "gpt-4", "openai")
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+
+	err = s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "List files"}}, nil)
+	if err != nil {
+		t.Fatalf("WriteMessage(user) error: %v", err)
+	}
+
+	err = s.WriteMessage("assistant", []ContentBlock{
+		{Type: "text", Text: "Running ls"},
+		{Type: "toolCall", ID: "tc-1", Name: "bash", Arguments: json.RawMessage(`{"cmd":"ls"}`)},
+	}, &MessageOptions{Model: "gpt-4", Usage: &Usage{Input: 10, Output: 20}})
+	if err != nil {
+		t.Fatalf("WriteMessage(assistant) error: %v", err)
+	}
+
+	err = s.WriteMessage("toolResult", []ContentBlock{
+		{Type: "toolResult", ToolCallID: "tc-1", ToolName: "bash", Text: "file1.txt\nfile2.txt"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("WriteMessage(toolResult) error: %v", err)
+	}
+
+	err = s.WriteSessionEnd("success", 0, &Usage{Input: 10, Output: 20, TotalTokens: 30})
+	if err != nil {
+		t.Fatalf("WriteSessionEnd() error: %v", err)
+	}
+	s.Close()
+
+	// Resume and rebuild
+	s2, err := Open(path, "/tmp", "gpt-4", "openai")
+	if err != nil {
+		t.Fatalf("resume Open() error: %v", err)
+	}
+	defer s2.Close()
+
+	if !s2.IsResume() {
+		t.Error("should be resume")
+	}
+
+	msgs, err := RebuildMessages(s2.Messages())
+	if err != nil {
+		t.Fatalf("RebuildMessages() error: %v", err)
+	}
+
+	// Should have 3 messages (user, assistant, toolResult)
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" {
+		t.Errorf("msg[0] role = %q, want 'user'", msgs[0].Role)
+	}
+	if msgs[1].Role != "assistant" {
+		t.Errorf("msg[1] role = %q, want 'assistant'", msgs[1].Role)
+	}
+	if msgs[2].Role != "toolResult" {
+		t.Errorf("msg[2] role = %q, want 'toolResult'", msgs[2].Role)
+	}
+
+	// Check content blocks
+	if len(msgs[1].Content) != 2 {
+		t.Fatalf("assistant should have 2 content blocks, got %d", len(msgs[1].Content))
+	}
+	if msgs[1].Content[0].Type != "text" || msgs[1].Content[0].Text != "Running ls" {
+		t.Errorf("assistant text block wrong: %+v", msgs[1].Content[0])
+	}
+	if msgs[1].Content[1].Type != "toolCall" || msgs[1].Content[1].ID != "tc-1" {
+		t.Errorf("assistant toolCall block wrong: %+v", msgs[1].Content[1])
+	}
+}
