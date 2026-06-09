@@ -248,7 +248,7 @@ func TestRun_ReplaceExistingPrefix(t *testing.T) {
 	// Create existing config for the same provider with different api type
 	existingCfg := map[string]map[string]uriEntry{
 		"test-provider": {
-			"gpt-4": {URI: "openai://gpt-4@old-token@old.api.com"},
+			"gpt-4":  {URI: "openai://gpt-4@old-token@old.api.com"},
 			"claude": {URI: "anthropic://claude@old-key@ant.api.com"},
 		},
 	}
