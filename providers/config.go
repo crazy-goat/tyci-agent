@@ -233,6 +233,10 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 				Parts []api.GeminiPart `json:"parts"`
 			}{Parts: []api.GeminiPart{{Text: req.System}}}
 		}
+		// Convert tools from OpenAI format to Gemini functionDeclarations
+		if len(req.Tools) > 0 && string(req.Tools) != "null" && string(req.Tools) != "[]" {
+			body.Tools = convertToolsToGemini(req.Tools)
+		}
 		go func() {
 			defer close(ch)
 			if err := api.StreamGemini(ctx, apiKey, endpoint, body, forward(ch, ctx)); err != nil {
@@ -348,4 +352,46 @@ func parseModel(uri string) string {
 		return atParts[0]
 	}
 	return atParts[0] // model@host:port/path (no token)
+}
+
+// convertToolsToGemini converts tool schemas from OpenAI format to Gemini functionDeclarations format.
+// OpenAI format:  [{"type":"function","function":{"name":"...","description":"...","parameters":{...}}}]
+// Gemini format: [{"functionDeclarations":[{"name":"...","description":"...","parameters":{...}}]}]
+func convertToolsToGemini(tools json.RawMessage) []api.GeminiTools {
+	var openaiTools []map[string]any
+	if err := json.Unmarshal(tools, &openaiTools); err != nil {
+		return nil
+	}
+
+	declarations := make([]api.GeminiToolDeclaration, 0, len(openaiTools))
+	for _, t := range openaiTools {
+		fn, ok := t["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		if name == "" {
+			continue
+		}
+		desc, _ := fn["description"].(string)
+
+		var params json.RawMessage
+		if p, ok := fn["parameters"]; ok {
+			if data, err := json.Marshal(p); err == nil {
+				params = data
+			}
+		}
+
+		declarations = append(declarations, api.GeminiToolDeclaration{
+			Name:        name,
+			Description: desc,
+			Parameters:  params,
+		})
+	}
+
+	if len(declarations) == 0 {
+		return nil
+	}
+
+	return []api.GeminiTools{{FunctionDeclarations: declarations}}
 }

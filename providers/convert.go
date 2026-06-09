@@ -147,9 +147,9 @@ func RichMessagesToGemini(msgs []RichMessage) ([]api.GeminiContent, string) {
 	var systemText string
 	for _, m := range msgs {
 		role := m.Role
-		// Map "toolResult" → "user" for Gemini
+		// Map "toolResult" → "function" for Gemini (Gemini uses "function" role for tool results)
 		if role == "toolResult" {
-			role = "user"
+			role = "function"
 		}
 		// Map "system" role to system instruction
 		if role == "system" {
@@ -165,15 +165,57 @@ func RichMessagesToGemini(msgs []RichMessage) ([]api.GeminiContent, string) {
 		for _, block := range m.Content {
 			switch block.Type {
 			case "text":
-				parts = append(parts, api.GeminiPart{Text: block.Text})
+				// For tool results with a ToolCallID, wrap as functionResponse
+				if role == "function" && block.ToolCallID != "" {
+					parts = append(parts, api.GeminiPart{
+						FunctionResponse: &api.GeminiFunctionResponse{
+							Name: block.ToolName,
+							Response: struct {
+								Name    string `json:"name"`
+								Content string `json:"content"`
+							}{
+								Name:    block.ToolName,
+								Content: block.Text,
+							},
+						},
+					})
+				} else {
+					parts = append(parts, api.GeminiPart{Text: block.Text})
+				}
 			case "thinking":
 				// Skip thinking blocks for Gemini
-			case "toolCall", "toolResult":
-				// Tool calls not supported in current Gemini implementation
+			case "toolCall":
+				// Convert tool calls to functionCall parts for Gemini
+				var args json.RawMessage
+				if block.Arguments != nil {
+					args = block.Arguments
+				} else {
+					args = json.RawMessage("{}")
+				}
+				parts = append(parts, api.GeminiPart{
+					FunctionCall: &api.GeminiFunctionCall{
+						Name: block.Name,
+						Args: args,
+					},
+				})
+			case "toolResult":
+				// Convert tool results to functionResponse parts for Gemini
+				parts = append(parts, api.GeminiPart{
+					FunctionResponse: &api.GeminiFunctionResponse{
+						Name: block.ToolName,
+						Response: struct {
+							Name    string `json:"name"`
+							Content string `json:"content"`
+						}{
+							Name:    block.ToolName,
+							Content: block.Text,
+						},
+					},
+				})
 			}
 		}
 
-		if len(parts) > 0 {
+		if len(parts) > 0 || role == "function" {
 			contents = append(contents, api.GeminiContent{Parts: parts, Role: role})
 		}
 	}
