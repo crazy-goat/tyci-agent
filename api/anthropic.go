@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,17 +28,56 @@ type anthropicMessage struct {
 	Usage *anthropicMessageUsage `json:"usage,omitempty"`
 }
 
+// anthropicContentBlock is the content_block inside content_block_start events.
+type anthropicContentBlock struct {
+	Type string `json:"type"`           // "text" or "tool_use"
+	Text string `json:"text,omitempty"` // present for text blocks
+	ID   string `json:"id,omitempty"`   // present for tool_use blocks
+	Name string `json:"name,omitempty"` // present for tool_use blocks
+	// Input may be an empty object (or partial) on content_block_start for tool_use.
+	// Full arguments arrive via content_block_delta / input_json_delta.
+	Input any `json:"input,omitempty"`
+}
+
+// anthropicDelta is the delta inside content_block_delta events.
+type anthropicDelta struct {
+	Type        string `json:"type"`                   // "text_delta" or "input_json_delta"
+	Text        string `json:"text,omitempty"`         // present for text_delta
+	PartialJSON string `json:"partial_json,omitempty"` // present for input_json_delta
+}
+
+// anthropicMessageDeltaUsage captures usage inside message_delta events.
+type anthropicMessageDeltaUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
+// anthropicMessageDeltaStop captures the delta fields inside message_delta events.
+type anthropicMessageDeltaStop struct {
+	StopReason   string `json:"stop_reason"`
+	StopSequence string `json:"stop_sequence"`
+}
+
 type anthropicStreamChunk struct {
 	Type string `json:"type"`
-	// Message is present in message_start events.
+	// Present in message_start events.
 	Message *anthropicMessage `json:"message,omitempty"`
-	Delta   struct {
-		Text string `json:"text"`
-	} `json:"delta"`
-	Usage *struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-	} `json:"usage,omitempty"`
+	// Present in content_block_start events.
+	Index        int                    `json:"index,omitempty"`
+	ContentBlock *anthropicContentBlock `json:"content_block,omitempty"`
+	// Raw delta — shape depends on event type:
+	//   content_block_delta → anthropicDelta (Type, Text, PartialJSON)
+	//   message_delta       → anthropicMessageDeltaStop (StopReason, StopSequence)
+	Delta json.RawMessage `json:"delta,omitempty"`
+	// Present in message_delta events.
+	Usage *anthropicMessageDeltaUsage `json:"usage,omitempty"`
+}
+
+// toolAccumulator tracks a single tool call being accumulated from stream events.
+type toolAccumulator struct {
+	ID        string
+	Name      string
+	Arguments strings.Builder
 }
 
 func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body AnthropicRequest, emit func(stream.Event) error) error {
@@ -82,11 +122,18 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 
 	reader := bufio.NewReader(resp.Body)
 	var inputTokens, outputTokens, cacheRead, cacheWrite int
+	var finishReason string
+	// toolAcc maps content_block index → tool accumulator
+	toolAcc := make(map[int]*toolAccumulator)
+	var readErr error
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			break
+			readErr = err
+			if line == "" {
+				break
+			}
 		}
 
 		if dl != nil {
@@ -95,6 +142,9 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 
 		line = strings.TrimSpace(line)
 		if line == "" || !strings.HasPrefix(line, "data:") {
+			if readErr != nil {
+				break
+			}
 			continue
 		}
 
@@ -112,13 +162,94 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 					cacheRead = chunk.Message.Usage.CacheReadInputTokens
 					cacheWrite = chunk.Message.Usage.CacheCreationInputTokens
 				}
-			case "content_block_delta":
-				if err := emit(stream.TextDelta{Text: chunk.Delta.Text}); err != nil {
-					return err
+
+			case "content_block_start":
+				if chunk.ContentBlock == nil {
+					return nil
 				}
+				cb := chunk.ContentBlock
+				switch cb.Type {
+				case "text":
+					if cb.Text != "" {
+						if err := emit(stream.TextDelta{Text: cb.Text}); err != nil {
+							return err
+						}
+					}
+				case "tool_use":
+					acc := &toolAccumulator{
+						ID:   cb.ID,
+						Name: cb.Name,
+					}
+					// The initial input may contain partial arguments.
+					if cb.Input != nil {
+						if argsJSON, err := json.Marshal(cb.Input); err == nil && len(argsJSON) > 2 {
+							// Only if it's not an empty object "{}"
+							acc.Arguments.Write(argsJSON)
+						}
+					}
+					toolAcc[chunk.Index] = acc
+					if err := emit(stream.ToolCallStart{ID: acc.ID, Name: acc.Name}); err != nil {
+						return err
+					}
+					// Emit any initial arguments as delta
+					if acc.Arguments.Len() > 0 {
+						if err := emit(stream.ToolCallDelta{ID: acc.ID, Delta: acc.Arguments.String()}); err != nil {
+							return err
+						}
+					}
+				}
+
+			case "content_block_delta":
+				if len(chunk.Delta) == 0 {
+					return nil
+				}
+				var d anthropicDelta
+				if err := json.Unmarshal(chunk.Delta, &d); err != nil {
+					return nil
+				}
+				switch d.Type {
+				case "text_delta":
+					if d.Text != "" {
+						if err := emit(stream.TextDelta{Text: d.Text}); err != nil {
+							return err
+						}
+					}
+				case "input_json_delta":
+					if d.PartialJSON == "" {
+						return nil
+					}
+					// Find the tool accumulator for this index
+					if acc, ok := toolAcc[chunk.Index]; ok {
+						acc.Arguments.WriteString(d.PartialJSON)
+						if err := emit(stream.ToolCallDelta{ID: acc.ID, Delta: d.PartialJSON}); err != nil {
+							return err
+						}
+					}
+				}
+
+			case "content_block_stop":
+				// Finalize tool call if we have one at this index
+				if acc, ok := toolAcc[chunk.Index]; ok {
+					if err := emit(stream.ToolCall{
+						ID:        acc.ID,
+						Name:      acc.Name,
+						Arguments: acc.Arguments.String(),
+					}); err != nil {
+						return err
+					}
+					delete(toolAcc, chunk.Index)
+				}
+
 			case "message_delta":
 				if chunk.Usage != nil {
 					outputTokens = chunk.Usage.OutputTokens
+				}
+				// Extract stop_reason from message_delta.delta
+				if len(chunk.Delta) > 0 {
+					var md anthropicMessageDeltaStop
+					if err := json.Unmarshal(chunk.Delta, &md); err == nil && md.StopReason != "" {
+						finishReason = md.StopReason
+					}
 				}
 			}
 			return nil
@@ -127,6 +258,9 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 		if strings.HasPrefix(data, "[") {
 			var chunks []anthropicStreamChunk
 			if err := json.Unmarshal([]byte(data), &chunks); err != nil {
+				if readErr != nil {
+					break
+				}
 				continue
 			}
 			for _, chunk := range chunks {
@@ -134,25 +268,103 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 					return err
 				}
 			}
+			if readErr != nil {
+				break
+			}
 			continue
 		}
 
 		var chunk anthropicStreamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			if readErr != nil {
+				break
+			}
 			continue
 		}
 		if err := processChunk(chunk); err != nil {
 			return err
 		}
+
+		if readErr != nil {
+			break
+		}
 	}
 
-	return emit(stream.Finish{
-		Reason: "stop",
+	// Emit any remaining tool calls that were never stopped
+	for _, acc := range toolAcc {
+		if err := emit(stream.ToolCall{
+			ID:        acc.ID,
+			Name:      acc.Name,
+			Arguments: acc.Arguments.String(),
+		}); err != nil {
+			return err
+		}
+	}
+
+	if err := emit(stream.Finish{
+		Reason: finishReason,
 		Usage: stream.Usage{
 			Input:      inputTokens,
 			Output:     outputTokens,
 			CacheRead:  cacheRead,
 			CacheWrite: cacheWrite,
 		},
-	})
+	}); err != nil {
+		return err
+	}
+
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return readErr
+	}
+	return nil
+}
+
+// ConvertToolsToAnthropic converts tool schemas from OpenAI format to Anthropic format.
+// OpenAI format:  [{"type":"function","function":{"name":"...","description":"...","parameters":{...}}}]
+// Anthropic format: [{"name":"...","description":"...","input_schema":{...}}]
+func ConvertToolsToAnthropic(tools json.RawMessage) json.RawMessage {
+	if len(tools) == 0 || string(tools) == "null" || string(tools) == "[]" {
+		return tools
+	}
+
+	var openaiTools []map[string]any
+	if err := json.Unmarshal(tools, &openaiTools); err != nil {
+		// If we can't parse, return as-is (might be a simple array)
+		return tools
+	}
+
+	anthropicTools := make([]map[string]any, 0, len(openaiTools))
+	for _, t := range openaiTools {
+		fn, ok := t["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		if name == "" {
+			continue
+		}
+		desc, _ := fn["description"].(string)
+		inputSchema, _ := fn["parameters"].(map[string]any)
+
+		at := map[string]any{
+			"name": name,
+		}
+		if desc != "" {
+			at["description"] = desc
+		}
+		if inputSchema != nil {
+			at["input_schema"] = inputSchema
+		}
+		anthropicTools = append(anthropicTools, at)
+	}
+
+	if len(anthropicTools) == 0 {
+		return tools
+	}
+
+	result, err := json.Marshal(anthropicTools)
+	if err != nil {
+		return tools
+	}
+	return result
 }
