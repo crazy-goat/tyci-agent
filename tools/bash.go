@@ -83,7 +83,7 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	}
 
 	// If streaming callback is set, use pipes and stream
-	if stream.OnOutput != nil {
+	if stream.Output(ctx) != nil {
 		return t.runStreaming(ctx, c)
 	}
 
@@ -195,8 +195,8 @@ func (t *BashTool) runStreaming(ctx context.Context, c *exec.Cmd) ToolResult {
 			}
 			fullOutput.WriteString(line)
 			fullOutput.WriteString("\n")
-			if stream.OnOutput != nil {
-				stream.OnOutput(toolIdx, line)
+			if f := stream.Output(ctx); f != nil {
+				f(toolIdx, line)
 			}
 
 		case <-ctx.Done():

@@ -1,6 +1,9 @@
 package stream
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type Event interface{ sealed() }
 
@@ -70,6 +73,24 @@ type Stats struct {
 // ToolIdxCtxKey is the context key for passing tool index to streaming tools.
 type ToolIdxCtxKey struct{}
 
-// OnOutput is set by the display (TUI) to receive streaming tool output.
-// toolIdx is the 0-based index of the tool in the current batch.
-var OnOutput func(toolIdx int, line string)
+// OutputFunc is called by streaming tools (e.g. bash) to forward a line of
+// output to the display layer.
+type OutputFunc func(toolIdx int, line string)
+
+type outputCtxKey struct{}
+
+// WithOutput returns a child context that carries the given OutputFunc.
+func WithOutput(ctx context.Context, f OutputFunc) context.Context {
+	return context.WithValue(ctx, outputCtxKey{}, f)
+}
+
+// Output extracts the OutputFunc from ctx, or returns nil.
+func Output(ctx context.Context) OutputFunc {
+	if ctx == nil {
+		return nil
+	}
+	if f, ok := ctx.Value(outputCtxKey{}).(OutputFunc); ok {
+		return f
+	}
+	return nil
+}

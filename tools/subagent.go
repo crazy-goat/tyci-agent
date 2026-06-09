@@ -105,10 +105,10 @@ type streamingCollector struct {
 	parentOutput func(toolIdx int, line string)
 }
 
-func newStreamingCollector(toolIdx int) *streamingCollector {
-	// Save the parent's streaming callback before it gets overwritten
-	// by the subagent's inner runOnce.
-	parentOutput := stream.OnOutput
+func newStreamingCollector(ctx context.Context, toolIdx int) *streamingCollector {
+	// Capture the parent's streaming callback from context before the
+	// subagent's inner runOnce installs its own.
+	parentOutput := stream.Output(ctx)
 	return &streamingCollector{
 		collector:    newCollector(),
 		toolIdx:      toolIdx,
@@ -177,12 +177,19 @@ func (s *streamingCollector) StreamProgress(_ int, line string) {
 }
 
 func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult {
-	provider := GetProvider()
+	provider := providers.ProviderFromContext(ctx)
 	if provider == nil {
-		return ToolResult{Type: "result", Success: false, Error: "no LLM provider available (start with --model)"}
+		// Fallback to global for backward compat during transition
+		provider = GetProvider()
+		if provider == nil {
+			return ToolResult{Type: "result", Success: false, Error: "no LLM provider available (start with --model)"}
+		}
 	}
 
-	defaultModel := GetCurrentModel()
+	defaultModel := providers.ModelFromContext(ctx)
+	if defaultModel == "" {
+		defaultModel = GetCurrentModel()
+	}
 	if defaultModel == "" {
 		return ToolResult{Type: "result", Success: false, Error: "no model specified and no default model set"}
 	}
@@ -325,7 +332,10 @@ func runSingleTask(ctx context.Context, globalProvider providers.Provider, task 
 
 	if mName == "" {
 		// No override – use the same provider and model as the parent
-		mName = GetCurrentModel()
+		mName = providers.ModelFromContext(ctx)
+		if mName == "" {
+			mName = GetCurrentModel()
+		}
 	} else if p, m, ok := providers.FindModel(mName); ok {
 		// Model override – resolve provider/model from string
 		prov = p
@@ -338,7 +348,7 @@ func runSingleTask(ctx context.Context, globalProvider providers.Provider, task 
 		toolIdx = idx
 	}
 
-	c := newStreamingCollector(toolIdx)
+	c := newStreamingCollector(ctx, toolIdx)
 	msgs := []providers.RichMessage{
 		{
 			Role:    "user",

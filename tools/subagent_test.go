@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/decodo/tyci-agent/providers"
 	"github.com/decodo/tyci-agent/stream"
 )
 
@@ -106,12 +107,8 @@ func (m *mockOutput) lines() []string {
 
 func TestStreamingCollector_ForwardsTextLines(t *testing.T) {
 	mo := &mockOutput{}
-	// Simulate what runOnce does: set stream.OnOutput
-	prevOnOutput := stream.OnOutput
-	stream.OnOutput = mo.call
-	defer func() { stream.OnOutput = prevOnOutput }()
-
-	sc := newStreamingCollector(2)
+	ctx := stream.WithOutput(context.Background(), mo.call)
+	sc := newStreamingCollector(ctx, 2)
 	if sc.parentOutput == nil {
 		t.Fatal("parentOutput is nil — stream.OnOutput was not set")
 	}
@@ -134,11 +131,8 @@ func TestStreamingCollector_ForwardsTextLines(t *testing.T) {
 
 func TestStreamingCollector_ForwardsThinkingLines(t *testing.T) {
 	mo := &mockOutput{}
-	prevOnOutput := stream.OnOutput
-	stream.OnOutput = mo.call
-	defer func() { stream.OnOutput = prevOnOutput }()
-
-	sc := newStreamingCollector(3)
+	ctx := stream.WithOutput(context.Background(), mo.call)
+	sc := newStreamingCollector(ctx, 3)
 	sc.Thinking("thought\n")
 
 	lines := mo.lines()
@@ -149,11 +143,8 @@ func TestStreamingCollector_ForwardsThinkingLines(t *testing.T) {
 
 func TestStreamingCollector_FlushesPartialLine(t *testing.T) {
 	mo := &mockOutput{}
-	prevOnOutput := stream.OnOutput
-	stream.OnOutput = mo.call
-	defer func() { stream.OnOutput = prevOnOutput }()
-
-	sc := newStreamingCollector(0)
+	ctx := stream.WithOutput(context.Background(), mo.call)
+	sc := newStreamingCollector(ctx, 0)
 	// Send text without trailing newline
 	sc.Text("partial line without newline")
 
@@ -172,11 +163,8 @@ func TestStreamingCollector_FlushesPartialLine(t *testing.T) {
 
 func TestStreamingCollector_UsesCorrectToolIdx(t *testing.T) {
 	mo := &mockOutput{}
-	prevOnOutput := stream.OnOutput
-	stream.OnOutput = mo.call
-	defer func() { stream.OnOutput = prevOnOutput }()
-
-	sc := newStreamingCollector(7)
+	ctx := stream.WithOutput(context.Background(), mo.call)
+	sc := newStreamingCollector(ctx, 7)
 	sc.Text("test\n")
 	sc.flushPartial()
 
@@ -187,11 +175,8 @@ func TestStreamingCollector_UsesCorrectToolIdx(t *testing.T) {
 
 func TestStreamingCollector_StreamProgressForwardsCorrectly(t *testing.T) {
 	mo := &mockOutput{}
-	prevOnOutput := stream.OnOutput
-	stream.OnOutput = mo.call
-	defer func() { stream.OnOutput = prevOnOutput }()
-
-	sc := newStreamingCollector(5)
+	ctx := stream.WithOutput(context.Background(), mo.call)
+	sc := newStreamingCollector(ctx, 5)
 	// Simulate what subagent's runOnce does when a bash tool runs
 	// StreamProgress is called with inner toolIdx but it ignores it and uses sc.toolIdx
 	sc.StreamProgress(0, "bash output line 1")
@@ -209,12 +194,9 @@ func TestStreamingCollector_StreamProgressForwardsCorrectly(t *testing.T) {
 }
 
 func TestStreamingCollector_ParentOutputNilSkipsForwarding(t *testing.T) {
-	// When stream.OnOutput is nil, streamingCollector should not panic or forward
-	prevOnOutput := stream.OnOutput
-	stream.OnOutput = nil
-	defer func() { stream.OnOutput = prevOnOutput }()
-
-	sc := newStreamingCollector(0)
+	// When stream.Output(ctx) is nil, streamingCollector should not panic or forward
+	ctx := context.Background()
+	sc := newStreamingCollector(ctx, 0)
 	// These should not panic
 	sc.Text("hello\n")
 	sc.Thinking("think\n")
@@ -224,11 +206,8 @@ func TestStreamingCollector_ParentOutputNilSkipsForwarding(t *testing.T) {
 
 func TestStreamingCollector_TextAndThinkingMixed(t *testing.T) {
 	mo := &mockOutput{}
-	prevOnOutput := stream.OnOutput
-	stream.OnOutput = mo.call
-	defer func() { stream.OnOutput = prevOnOutput }()
-
-	sc := newStreamingCollector(1)
+	ctx := stream.WithOutput(context.Background(), mo.call)
+	sc := newStreamingCollector(ctx, 1)
 	sc.Text("I'll look up the file.\n")
 	sc.Thinking("Let me check README...\n")
 	sc.Thinking("Done thinking.\n")
@@ -336,12 +315,8 @@ func TestParseTasks_TasksArrayEmpty(t *testing.T) {
 }
 
 func TestSubagentTool_MissingProvider(t *testing.T) {
-	// Save and restore global provider
-	prevProvider := GetProvider()
-	SetProvider(nil)
-	defer SetProvider(prevProvider)
-
 	tool := &SubagentTool{}
+	// Context without provider or model
 	result := tool.Run(context.Background(), map[string]any{"task": "test"})
 	if result.Success {
 		t.Fatal("expected failure when no provider")
@@ -352,24 +327,33 @@ func TestSubagentTool_MissingProvider(t *testing.T) {
 }
 
 func TestSubagentTool_MissingModel(t *testing.T) {
-	// We need a provider that exists but no current model
-	// This test verifies the error path when GetCurrentModel returns empty
-	prevModel := GetCurrentModel()
-	SetCurrentModel("")
-	defer SetCurrentModel(prevModel)
+	tool := &SubagentTool{}
+	// Context with provider but no model
+	fakeProv := &fakeProvider{}
+	ctx := providers.WithProvider(context.Background(), fakeProv)
+	result := tool.Run(ctx, map[string]any{"task": "test"})
+	if result.Success {
+		t.Fatal("expected failure when no model")
+	}
+	if !strings.Contains(result.Error, "no model") {
+		t.Errorf("expected 'no model' error, got %q", result.Error)
+	}
+}
 
-	// Full integration test requires mocking providers.
-	// For now, parseTasks is tested above and missing provider is tested above.
-	_ = &SubagentTool{}
+type fakeProvider struct{}
+
+func (f *fakeProvider) Name() string          { return "fake" }
+func (f *fakeProvider) IsConfigured() bool    { return true }
+func (f *fakeProvider) Models() []string      { return nil }
+func (f *fakeProvider) FreeModels() []string  { return nil }
+func (f *fakeProvider) Stream(context.Context, providers.Request) (<-chan stream.Event, error) {
+	return nil, nil
 }
 
 func TestStreamingCollector_PreservesThreadSafety(t *testing.T) {
 	mo := &mockOutput{}
-	prevOnOutput := stream.OnOutput
-	stream.OnOutput = mo.call
-	defer func() { stream.OnOutput = prevOnOutput }()
-
-	sc := newStreamingCollector(0)
+	ctx := stream.WithOutput(context.Background(), mo.call)
+	sc := newStreamingCollector(ctx, 0)
 	var wg sync.WaitGroup
 
 	for i := 0; i < 20; i++ {
