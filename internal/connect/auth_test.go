@@ -206,8 +206,8 @@ func TestListKeys(t *testing.T) {
 	dir := tempDir(t)
 	setHome(t, dir)
 
-	SetKey("provider1", "key1")
-	SetKey("provider2", "key2")
+	_ = SetKey("provider1", "key1")
+	_ = SetKey("provider2", "key2")
 
 	keys, err := ListKeys()
 	if err != nil {
