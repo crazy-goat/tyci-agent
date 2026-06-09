@@ -9,7 +9,19 @@ linters:
     - unused
     - misspell
 
+linters-settings:
+  misspell:
+    locale: US
+  gosec:
+    excludes: []
+
+output:
+  formats:
+    - format: colored-line-number
+
 issues:
   exclude-rules:
+    # G304: file path traversal via variable — tools like glob/grep
+    # legitimately accept user-provided paths.
     - linters: [gosec]
-      text: "G304|G204|G101"
+      text: "G304"
