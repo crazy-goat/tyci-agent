@@ -16,7 +16,7 @@ func TestFetchOpenAIModels_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"data":[{"id":"gpt-4"},{"id":"gpt-4o"},{"id":"gpt-3.5-turbo"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4"},{"id":"gpt-4o"},{"id":"gpt-3.5-turbo"}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -43,7 +43,7 @@ func TestFetchOpenAIModels_FallbackToModels(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/models" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"data":[{"id":"custom-model"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"custom-model"}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -80,7 +80,7 @@ func TestFetchOpenAIModels_WithAuthHeader(t *testing.T) {
 		receivedAuth = r.Header.Get("Authorization")
 		if r.URL.Path == "/v1/models" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"data":[{"id":"gpt-4"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4"}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -98,14 +98,14 @@ func TestFetchOpenAIModels_WithAuthHeader(t *testing.T) {
 
 func TestFetchOpenAIModels_EnvVarToken(t *testing.T) {
 	os.Setenv("TEST_FETCH_TOKEN", "sk-env-token")
-	defer os.Unsetenv("TEST_FETCH_TOKEN")
+	t.Cleanup(func() { os.Unsetenv("TEST_FETCH_TOKEN") })
 
 	var receivedAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedAuth = r.Header.Get("Authorization")
 		if r.URL.Path == "/v1/models" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"data":[{"id":"gpt-4"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4"}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -124,7 +124,7 @@ func TestFetchOpenAIModels_EnvVarToken(t *testing.T) {
 func TestFetchOpenAIModels_NonJSONResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(`not json`))
+		_, _ = w.Write([]byte(`not json`))
 	}))
 	defer srv.Close()
 
@@ -144,7 +144,7 @@ func TestRun_CreatesModelFile(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"data":[{"id":"gpt-4"},{"id":"gpt-4o"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4"},{"id":"gpt-4o"}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -202,15 +202,15 @@ func TestRun_MergesWithExistingConfig(t *testing.T) {
 		},
 	}
 	configDir := filepath.Join(dir, ".tyci")
-	os.MkdirAll(configDir, 0755)
+	_ = os.MkdirAll(configDir, 0755)
 	existingData, _ := json.MarshalIndent(existingCfg, "", "  ")
-	os.WriteFile(filepath.Join(configDir, "model.json"), existingData, 0644)
+	_ = os.WriteFile(filepath.Join(configDir, "model.json"), existingData, 0644)
 
 	// Now run connect for a different provider
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"data":[{"id":"new-model"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"new-model"}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -228,7 +228,7 @@ func TestRun_MergesWithExistingConfig(t *testing.T) {
 		t.Fatalf("read model.json: %v", err)
 	}
 	var cfg map[string]map[string]uriEntry
-	json.Unmarshal(data, &cfg)
+	_ = json.Unmarshal(data, &cfg)
 
 	if len(cfg) != 2 {
 		t.Fatalf("expected 2 providers, got %d", len(cfg))
@@ -253,15 +253,15 @@ func TestRun_ReplaceExistingPrefix(t *testing.T) {
 		},
 	}
 	configDir := filepath.Join(dir, ".tyci")
-	os.MkdirAll(configDir, 0755)
+	_ = os.MkdirAll(configDir, 0755)
 	existingData, _ := json.MarshalIndent(existingCfg, "", "  ")
-	os.WriteFile(filepath.Join(configDir, "model.json"), existingData, 0644)
+	_ = os.WriteFile(filepath.Join(configDir, "model.json"), existingData, 0644)
 
 	// Run with openai type - should remove existing openai:// entries but keep anthropic
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"data":[{"id":"gpt-4"},{"id":"gpt-4o"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4"},{"id":"gpt-4o"}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -278,7 +278,7 @@ func TestRun_ReplaceExistingPrefix(t *testing.T) {
 		t.Fatalf("read model.json: %v", err)
 	}
 	var cfg map[string]map[string]uriEntry
-	json.Unmarshal(data, &cfg)
+	_ = json.Unmarshal(data, &cfg)
 
 	models := cfg["test-provider"]
 	if models == nil {
@@ -299,7 +299,7 @@ func TestRun_ReplaceExistingPrefix(t *testing.T) {
 func TestRun_NoModelsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":[]}`))
+		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
 	defer srv.Close()
 
@@ -343,7 +343,7 @@ func TestRun_EmptyURL(t *testing.T) {
 func TestRun_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"server error"}`))
+		_, _ = w.Write([]byte(`{"error":"server error"}`))
 	}))
 	defer srv.Close()
 
@@ -358,12 +358,12 @@ func TestRun_TokenEnvVarExpansion(t *testing.T) {
 	setHome(t, dir)
 
 	os.Setenv("TEST_MODEL_TOKEN", "sk-env-expanded")
-	defer os.Unsetenv("TEST_MODEL_TOKEN")
+	t.Cleanup(func() { os.Unsetenv("TEST_MODEL_TOKEN") })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"data":[{"id":"gpt-4"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4"}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
