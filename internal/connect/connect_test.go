@@ -286,8 +286,8 @@ func TestRun_ReplaceExistingPrefix(t *testing.T) {
 	}
 
 	// gpt-4 should now have the new URI (openai prefix was replaced)
-	if models["gpt-4"].URI != "openai://gpt-4@new-token@" {
-		t.Logf("gpt-4 URI: %q", models["gpt-4"].URI)
+	if !strings.HasPrefix(models["gpt-4"].URI, "openai://gpt-4@new-token@") {
+		t.Errorf("gpt-4 URI should start with 'openai://gpt-4@new-token@', got %q", models["gpt-4"].URI)
 	}
 
 	// claude (anthropic) should remain unchanged
