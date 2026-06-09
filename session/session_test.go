@@ -156,7 +156,7 @@ func TestOpen_CreatesNewSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	if s.ID() == "" {
 		t.Error("session ID should not be empty")
@@ -199,7 +199,7 @@ func TestOpen_CreatesDirIfNotExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	s.Close()
+	_ = s.Close()
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Error("session file was not created")
@@ -225,14 +225,14 @@ func TestOpen_ResumesExistingSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteSessionEnd() error: %v", err)
 	}
-	s1.Close()
+	_ = s1.Close()
 
 	// Resume the session
 	s2, err := Open(path, "/tmp", "gpt-4", "openai")
 	if err != nil {
 		t.Fatalf("second Open() error: %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 
 	if !s2.IsResume() {
 		t.Error("resumed session should have IsResume() = true")
@@ -264,7 +264,7 @@ func TestOpen_ResumeAppendsToExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Open() error: %v", err)
 	}
-	s1.Close()
+	_ = s1.Close()
 
 	// Resume and add a message
 	s2, err := Open(path, "/tmp", "gpt-4", "openai")
@@ -275,7 +275,7 @@ func TestOpen_ResumeAppendsToExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteMessage() error: %v", err)
 	}
-	s2.Close()
+	_ = s2.Close()
 
 	// Read file and count lines
 	data, err := os.ReadFile(path)
@@ -298,7 +298,7 @@ func TestWriteMessage_UserMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	err = s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "Hello, world!"}}, nil)
 	if err != nil {
@@ -327,7 +327,7 @@ func TestWriteMessage_AssistantWithOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	opts := &MessageOptions{
 		API:        "openai",
@@ -395,7 +395,7 @@ func TestWriteMessage_ToolResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	err = s.WriteMessage("toolResult", []ContentBlock{
 		{Type: "toolResult", ToolCallID: "call-1", ToolName: "bash", Text: "file1.txt\nfile2.txt", IsError: false},
@@ -425,7 +425,7 @@ func TestWriteMessage_AfterClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	s.Close()
+	_ = s.Close()
 
 	err = s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "should fail"}}, nil)
 	if err == nil {
@@ -443,7 +443,7 @@ func TestWriteSessionEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	usage := &Usage{Input: 10, Output: 20, TotalTokens: 30}
 	err = s.WriteSessionEnd("success", 0, usage)
@@ -478,7 +478,7 @@ func TestWriteSessionEnd_AfterClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
-	s.Close()
+	_ = s.Close()
 
 	err = s.WriteSessionEnd("failed", 1, nil)
 	if err == nil {
@@ -838,14 +838,14 @@ func TestFullRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteSessionEnd() error: %v", err)
 	}
-	s.Close()
+	_ = s.Close()
 
 	// Resume and rebuild
 	s2, err := Open(path, "/tmp", "gpt-4", "openai")
 	if err != nil {
 		t.Fatalf("resume Open() error: %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 
 	if !s2.IsResume() {
 		t.Error("should be resume")

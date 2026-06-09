@@ -13,8 +13,8 @@ import (
 func setHome(t *testing.T, dir string) {
 	t.Helper()
 	orig := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
-	t.Cleanup(func() { os.Setenv("HOME", orig) })
+	_ = os.Setenv("HOME", dir)
+	t.Cleanup(func() { _ = os.Setenv("HOME", orig) })
 }
 
 func TestInit_CreatesFileInCorrectDir(t *testing.T) {
@@ -58,8 +58,8 @@ func TestInit_ErrorOnBadHome(t *testing.T) {
 	// /dev/null/.tyci/debug is not a valid path.
 	if _, err := os.Stat("/dev/null"); err == nil {
 		orig := os.Getenv("HOME")
-		os.Setenv("HOME", "/dev/null")
-		t.Cleanup(func() { os.Setenv("HOME", orig) })
+		_ = os.Setenv("HOME", "/dev/null")
+		t.Cleanup(func() { _ = os.Setenv("HOME", orig) })
 
 		_, err := Init()
 		if err == nil {
@@ -383,7 +383,7 @@ func TestConcurrentWrite(t *testing.T) {
 	done := make(chan bool, goroutines)
 	for i := 0; i < goroutines; i++ {
 		go func(n int) {
-			l.Write([]byte("line\n"))
+			_, _ = l.Write([]byte("line\n"))
 			done <- true
 		}(i)
 	}
@@ -453,13 +453,13 @@ func TestWrite_ConcurrentWithClose(t *testing.T) {
 	done := make(chan bool)
 	go func() {
 		for i := 0; i < 50; i++ {
-			l.Write([]byte("data\n"))
+			_, _ = l.Write([]byte("data\n"))
 		}
 		done <- true
 	}()
 	go func() {
 		for i := 0; i < 50; i++ {
-			l.Write([]byte("more\n"))
+			_, _ = l.Write([]byte("more\n"))
 		}
 		done <- true
 	}()
