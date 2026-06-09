@@ -214,7 +214,10 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 		go func() {
 			defer close(ch)
 			if err := api.StreamAnthropic(ctx, apiKey, endpoint, body, forward(ch, ctx)); err != nil {
-				ch <- stream.StreamError{Err: err}
+				select {
+				case ch <- stream.StreamError{Err: err}:
+				case <-ctx.Done():
+				}
 			}
 		}()
 
@@ -240,7 +243,10 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 		go func() {
 			defer close(ch)
 			if err := api.StreamGemini(ctx, apiKey, endpoint, body, forward(ch, ctx)); err != nil {
-				ch <- stream.StreamError{Err: err}
+				select {
+				case ch <- stream.StreamError{Err: err}:
+				case <-ctx.Done():
+				}
 			}
 		}()
 

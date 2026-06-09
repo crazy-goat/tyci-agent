@@ -202,6 +202,8 @@ func (t *BashTool) runStreaming(ctx context.Context, c *exec.Cmd) ToolResult {
 		case <-ctx.Done():
 			_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
 			<-waitCh
+			for range lineCh {
+			}
 			if ctx.Err() == context.DeadlineExceeded {
 				return ToolResult{Type: "result", Success: false, Error: "bash tool timed out"}
 			}
