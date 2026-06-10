@@ -212,6 +212,9 @@ var toolsSchema json.RawMessage
 var subagentToolsSchema json.RawMessage
 
 func init() {
+	// Load Lua tools from user directories
+	LoadAndRegisterLuaTools()
+
 	data, _ := json.Marshal(GetToolsSchema())
 	toolsSchema = data
 	data, _ = json.Marshal(GetSubagentToolsSchema())
