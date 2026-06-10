@@ -119,12 +119,14 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "provider" {
 		if len(os.Args) > 2 && os.Args[2] == "auth" {
 			runProviderAuth(os.Args[3:])
+		} else if len(os.Args) > 2 && os.Args[2] == "add" {
+			runProviderAdd(os.Args[3:])
 		} else if len(os.Args) > 2 {
 			fmt.Fprintf(os.Stderr, "Unknown provider subcommand: %q\n", os.Args[2])
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth [set|get|list|rm]")
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider [auth|add]")
 			os.Exit(1)
 		} else {
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth [set|get|list|rm]")
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider [auth|add]")
 			os.Exit(1)
 		}
 		return
@@ -149,10 +151,12 @@ func main() {
 		_, _ = fmt.Fprintf(os.Stdout, "Usage: tyci-agent [flags] (--prompt <prompt>)\n")
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent connect --name <name> --api <type> --url <url> --token <token>\n")
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent agent [list|get|set|delete|set-fallback]\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider add <name> --url <url> --token <key>\n")
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider auth [set|get|list|rm]\n\n")
 		_, _ = fmt.Fprintf(os.Stdout, "Subcommands:\n")
-		_, _ = fmt.Fprintf(os.Stdout, "  connect       Register a new provider in ~/.tyci/model.json\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  connect       Register a new provider in ~/.tyci/model.json (deprecated)\n")
 		_, _ = fmt.Fprintf(os.Stdout, "  agent         Manage agent configurations (model assignments)\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  provider add  Add a provider with auth and connectivity check\n")
 		_, _ = fmt.Fprintf(os.Stdout, "  provider auth Manage API keys in ~/.tyci/auth.json\n\n")
 		_, _ = fmt.Fprintf(os.Stdout, "Flags:\n")
 		flag.PrintDefaults()
@@ -518,6 +522,27 @@ func runProviderAuth(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown provider auth subcommand: %q\n", cmd)
 		fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth [set|get|list|rm]")
+		os.Exit(1)
+	}
+}
+
+func runProviderAdd(args []string) {
+	fs := flag.NewFlagSet("provider-add", flag.ExitOnError)
+	apiType := fs.String("api", "openai", "API type (openai, anthropic, gemini)")
+	url := fs.String("url", "", "API base URL")
+	token := fs.String("token", "", "API key or $ENV_VAR reference")
+	test := fs.Bool("test", false, "Test connectivity after adding")
+	testModel := fs.String("test-model", "", "Model to test with (default: first model)")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider add <name> --url <url> [--token <key>] [--test]")
+		os.Exit(1)
+	}
+
+	name := fs.Arg(0)
+	if err := connect.AddProvider(name, *apiType, *url, *token, *test, *testModel); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
