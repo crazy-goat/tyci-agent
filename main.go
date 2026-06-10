@@ -61,7 +61,46 @@ func (r *agentRunner) RunTask(ctx context.Context, task string, model string, te
 	return c.text.String(), nil
 }
 
+func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model string, temperature float64, system string) (string, error) {
+	// Resolve provider and model
+	prov, mName, ok := providers.FindModel(model)
+	if !ok {
+		// Fallback to context values
+		prov = providers.ProviderFromContext(ctx)
+		mName = providers.ModelFromContext(ctx)
+	}
+	if prov == nil {
+		return "", fmt.Errorf("no provider available for model %q", model)
+	}
+	if mName == "" {
+		return "", fmt.Errorf("no model specified")
+	}
 
+	// Create collector to capture output
+	c := &collector{}
+	msgs := []providers.RichMessage{
+		{
+			Role:    "user",
+			Content: []providers.ContentBlock{{Type: "text", Text: task}},
+		},
+	}
+
+	cfg := agent.Config{
+		Model:         mName,
+		System:        system,
+		MaxRetries:    1,
+		MaxIterations: 10,
+		Debug:         false,
+		Tools:         &subagentToolRunner{},
+		Schema:        tools.GetSubagentToolsSchemaJSON(),
+	}
+
+	_, err := agent.Run(ctx, prov, c, &msgs, cfg)
+	if err != nil {
+		return "", err
+	}
+	return c.text.String(), nil
+}
 
 // subagentToolRunner wraps the global tool registry so subagents can use tools.
 type subagentToolRunner struct{}

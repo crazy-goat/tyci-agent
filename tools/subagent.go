@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +25,7 @@ func (t *SubagentTool) Name() string { return "subagent" }
 // subagentTask represents a single task for a subagent.
 type subagentTask struct {
 	Task        string   `json:"task"`
+	Agent       string   `json:"agent,omitempty"`
 	Model       string   `json:"model,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
 }
@@ -254,6 +257,9 @@ func parseTasks(input map[string]any, defaultModel string) ([]subagentTask, erro
 	}
 
 	t := subagentTask{Task: taskStr}
+	if agent, ok := input["agent"].(string); ok && agent != "" {
+		t.Agent = agent
+	}
 	if m, ok := input["model"].(string); ok && m != "" {
 		t.Model = m
 	}
@@ -272,6 +278,9 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 		return subagentTask{}, fmt.Errorf("task is required")
 	}
 	t := subagentTask{Task: taskStr}
+	if agent, ok := m["agent"].(string); ok && agent != "" {
+		t.Agent = agent
+	}
 	if model, ok := m["model"].(string); ok && model != "" {
 		t.Model = model
 	}
@@ -282,6 +291,34 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 		}
 	}
 	return t, nil
+}
+
+// getAgentSystemPrompt retrieves the system prompt for a named markdown agent.
+// Returns empty string if agent not found.
+func getAgentSystemPrompt(agentName string) string {
+	// Import agent package to get markdown agent
+	// We avoid direct import by reading the file ourselves
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		return ""
+	}
+	path := filepath.Join(home, ".tyci", "agents", agentName+".md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	content := string(data)
+	if !strings.HasPrefix(content, "---") {
+		return ""
+	}
+
+	parts := strings.SplitN(content[3:], "---", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+
+	return strings.TrimSpace(parts[1])
 }
 
 func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, timeoutSec int) []subagentResult {
@@ -340,7 +377,19 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	c := newStreamingCollector(ctx, toolIdx)
 
 	// Run the task via the runner interface
-	content, err := runner.RunTask(runCtx, task.Task, mName, temperature)
+	var content string
+	var err error
+	if task.Agent != "" {
+		// Look up markdown agent for system prompt
+		sysPrompt := getAgentSystemPrompt(task.Agent)
+		if sysPrompt != "" {
+			content, err = runner.RunTaskWithSystem(runCtx, task.Task, mName, temperature, sysPrompt)
+		} else {
+			content, err = runner.RunTask(runCtx, task.Task, mName, temperature)
+		}
+	} else {
+		content, err = runner.RunTask(runCtx, task.Task, mName, temperature)
+	}
 
 	// Flush any remaining partial line
 	c.flushPartial()

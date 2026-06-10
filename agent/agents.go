@@ -9,10 +9,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // AgentsFile is the name of the local config file (in current working directory).
 const LocalConfigFile = ".tyci-agent.json"
+
+// MarkdownAgentsDir is the directory for markdown agent definitions.
+const MarkdownAgentsDir = "agents"
 
 // GlobalConfigDir is relative to HOME.
 const GlobalConfigDir = ".tyci"
@@ -25,6 +30,34 @@ const GlobalConfigFile = "agents.json"
 type AgentEntry struct {
 	Model    string   `json:"model"`
 	Fallback []string `json:"fallback,omitempty"`
+}
+
+// MarkdownAgentFrontmatter holds YAML frontmatter from a markdown agent file.
+type MarkdownAgentFrontmatter struct {
+	Model          string   `yaml:"model"`
+	Tools          string   `yaml:"tools"`
+	MaxIterations  int      `yaml:"max_iterations"`
+	Temperature    float64  `yaml:"temperature"`
+	SystemPrompt   string   `yaml:"system"`
+	Description    string   `yaml:"description"`
+	FallbackModels []string `yaml:"fallback"`
+}
+
+// MarkdownAgent represents a full agent definition loaded from a .md file.
+type MarkdownAgent struct {
+	Name           string
+	Frontmatter    MarkdownAgentFrontmatter
+	SystemPrompt   string
+	FilePath       string
+}
+
+// AgentsDirPath returns the path to the markdown agents directory.
+func AgentsDirPath() string {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = "~"
+	}
+	return filepath.Join(home, GlobalConfigDir, MarkdownAgentsDir)
 }
 
 // MarshalJSON writes as plain string if no fallback, object otherwise.
@@ -75,7 +108,7 @@ func globalConfigPath() string {
 }
 
 // LoadAgents loads agents from local config first (if exists), then merges with global config.
-// Local values override global ones.
+// Local values override global ones. Also loads markdown agents from ~/.tyci/agents/.
 func LoadAgents() (Agents, error) {
 	result := make(Agents)
 
@@ -102,7 +135,112 @@ func LoadAgents() (Agents, error) {
 		}
 	}
 
+	// Load markdown agents (they become entries with just model set)
+	mdAgents, _ := LoadMarkdownAgents(AgentsDirPath())
+	for _, md := range mdAgents {
+		if _, exists := result[md.Name]; !exists {
+			result[md.Name] = AgentEntry{Model: md.Frontmatter.Model}
+		}
+	}
+
 	return result, nil
+}
+
+// LoadMarkdownAgents reads .md files from the given directory.
+// Each file must have YAML frontmatter between --- markers.
+// The markdown body becomes the system prompt.
+func LoadMarkdownAgents(dir string) ([]MarkdownAgent, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read agents dir: %w", err)
+	}
+
+	var agents []MarkdownAgent
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+
+		path := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		agent, err := parseMarkdownAgent(entry.Name(), data)
+		if err != nil {
+			continue
+		}
+		agent.FilePath = path
+		agents = append(agents, *agent)
+	}
+
+	return agents, nil
+}
+
+// parseMarkdownAgent parses a markdown agent file with YAML frontmatter.
+func parseMarkdownAgent(filename string, data []byte) (*MarkdownAgent, error) {
+	content := string(data)
+
+	// Look for YAML frontmatter between --- markers
+	if !strings.HasPrefix(content, "---") {
+		return nil, fmt.Errorf("no frontmatter")
+	}
+
+	parts := strings.SplitN(content[3:], "---", 2)
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("unclosed frontmatter")
+	}
+
+	var fm MarkdownAgentFrontmatter
+	if err := yaml.Unmarshal([]byte(parts[0]), &fm); err != nil {
+		return nil, fmt.Errorf("parse frontmatter: %w", err)
+	}
+
+	systemPrompt := strings.TrimSpace(parts[1])
+	if fm.SystemPrompt != "" {
+		systemPrompt = fm.SystemPrompt
+	}
+
+	// Use filename without .md as agent name
+	name := strings.TrimSuffix(filename, ".md")
+
+	return &MarkdownAgent{
+		Name:         name,
+		Frontmatter:  fm,
+		SystemPrompt: systemPrompt,
+	}, nil
+}
+
+// GetMarkdownAgent returns a markdown agent by name.
+func GetMarkdownAgent(name string) (*MarkdownAgent, error) {
+	agents, err := LoadMarkdownAgents(AgentsDirPath())
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range agents {
+		if a.Name == name {
+			return &a, nil
+		}
+	}
+	return nil, fmt.Errorf("markdown agent %q not found", name)
+}
+
+// ListMarkdownAgents returns names of all markdown agents.
+func ListMarkdownAgents() ([]string, error) {
+	agents, err := LoadMarkdownAgents(AgentsDirPath())
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(agents))
+	for _, a := range agents {
+		names = append(names, a.Name)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // SaveGlobal saves agents to the global config file.

@@ -22,10 +22,21 @@ func (m *mockRunner) RunTask(ctx context.Context, task string, model string, tem
 	return "mock response", nil
 }
 
+func (m *mockRunner) RunTaskWithSystem(ctx context.Context, task string, model string, temperature float64, system string) (string, error) {
+	if m.RunTaskFunc != nil {
+		return m.RunTaskFunc(ctx, task, model, temperature)
+	}
+	return "mock response with custom system", nil
+}
+
 // failingRunner always returns an error
 type failingRunner struct{}
 
 func (f *failingRunner) RunTask(ctx context.Context, task string, model string, temperature float64) (string, error) {
+	return "", fmt.Errorf("agent failed")
+}
+
+func (f *failingRunner) RunTaskWithSystem(ctx context.Context, task string, model string, temperature float64, system string) (string, error) {
 	return "", fmt.Errorf("agent failed")
 }
 

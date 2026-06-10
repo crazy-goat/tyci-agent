@@ -11,6 +11,9 @@ import (
 type SubAgentRunner interface {
 	// RunTask executes a single agent task and returns the result text.
 	RunTask(ctx context.Context, task string, model string, temperature float64) (string, error)
+
+	// RunTaskWithSystem executes a single agent task with a custom system prompt.
+	RunTaskWithSystem(ctx context.Context, task string, model string, temperature float64, system string) (string, error)
 }
 
 type ToolResult struct {
@@ -164,8 +167,10 @@ func GetToolsSchema() []map[string]any {
 					"type": "object",
 					"properties": map[string]any{
 						"task": map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/edit/bash tools."},
+						"agent": map[string]any{"type": "string", "description": "Named agent to use (looks up ~/.tyci/agents/<name>.md for system prompt and config)"},
 						"tasks": map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
 							"task":        map[string]any{"type": "string", "description": "Clear task description for this parallel subtask. The child agent has read/write/edit/bash tools."},
+							"agent":       map[string]any{"type": "string", "description": "Named agent to use"},
 							"model":       map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
 							"temperature": map[string]any{"type": "number", "description": "Optional temperature (0.0-2.0)"},
 						}, "required": []string{"task"}}},
