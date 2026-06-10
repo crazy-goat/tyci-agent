@@ -121,12 +121,14 @@ func main() {
 			runProviderAuth(os.Args[3:])
 		} else if len(os.Args) > 2 && os.Args[2] == "add" {
 			runProviderAdd(os.Args[3:])
+		} else if len(os.Args) > 2 && os.Args[2] == "refresh" {
+			runProviderRefresh(os.Args[3:])
 		} else if len(os.Args) > 2 {
 			fmt.Fprintf(os.Stderr, "Unknown provider subcommand: %q\n", os.Args[2])
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider [auth|add]")
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider [auth|add|refresh]")
 			os.Exit(1)
 		} else {
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider [auth|add]")
+			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider [auth|add|refresh]")
 			os.Exit(1)
 		}
 		return
@@ -152,12 +154,14 @@ func main() {
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent connect --name <name> --api <type> --url <url> --token <token>\n")
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent agent [list|get|set|delete|set-fallback]\n")
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider add <name> --url <url> --token <key>\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider refresh [--provider p1,p2] [--dry-run]\n")
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider auth [set|get|list|rm]\n\n")
 		_, _ = fmt.Fprintf(os.Stdout, "Subcommands:\n")
-		_, _ = fmt.Fprintf(os.Stdout, "  connect       Register a new provider in ~/.tyci/model.json (deprecated)\n")
-		_, _ = fmt.Fprintf(os.Stdout, "  agent         Manage agent configurations (model assignments)\n")
-		_, _ = fmt.Fprintf(os.Stdout, "  provider add  Add a provider with auth and connectivity check\n")
-		_, _ = fmt.Fprintf(os.Stdout, "  provider auth Manage API keys in ~/.tyci/auth.json\n\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  connect         Register a new provider in ~/.tyci/model.json (deprecated)\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  agent           Manage agent configurations (model assignments)\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  provider add    Add a provider with auth and connectivity check\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  provider refresh Import models from models.dev\n")
+		_, _ = fmt.Fprintf(os.Stdout, "  provider auth   Manage API keys in ~/.tyci/auth.json\n\n")
 		_, _ = fmt.Fprintf(os.Stdout, "Flags:\n")
 		flag.PrintDefaults()
 	}
@@ -544,6 +548,38 @@ func runProviderAdd(args []string) {
 	if err := connect.AddProvider(name, *apiType, *url, *token, *test, *testModel); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func runProviderRefresh(args []string) {
+	fs := flag.NewFlagSet("provider-refresh", flag.ExitOnError)
+	providerFilter := fs.String("provider", "", "Comma-separated list of providers to import (default: all)")
+	dryRun := fs.Bool("dry-run", false, "Preview without writing")
+	fs.Parse(args)
+
+	imported, err := connect.RefreshModels(*providerFilter, *dryRun)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(imported) == 0 {
+		fmt.Fprintln(os.Stdout, "No providers found to import")
+		return
+	}
+
+	if *dryRun {
+		fmt.Fprintf(os.Stdout, "Would import %d providers:\n\n", len(imported))
+	} else {
+		fmt.Fprintf(os.Stdout, "Imported %d providers:\n\n", len(imported))
+	}
+
+	for _, p := range imported {
+		fmt.Fprintf(os.Stdout, "  %s (%s): %d models\n", p.Name, p.Type, p.Models)
+	}
+
+	if !*dryRun {
+		fmt.Fprintf(os.Stdout, "\n✓ Models saved to %s\n", connect.ModelJSONPath())
 	}
 }
 
