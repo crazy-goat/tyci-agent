@@ -20,10 +20,12 @@ type HTTPClient struct {
 	url  string
 	auth string // "bearer" or ""
 
-	mu      sync.Mutex
-	nextID  int
-	client  *http.Client
-	headers http.Header
+	mu               sync.Mutex
+	nextID           int
+	client           *http.Client
+	headers          http.Header
+	samplingHandler  SamplingHandler
+	elicitationHandler ElicitationHandler
 }
 
 // NewHTTPClient creates a new HTTP-based MCP client.
@@ -127,6 +129,20 @@ func (c *HTTPClient) CallTool(ctx context.Context, name string, arguments json.R
 	}
 
 	return &result, nil
+}
+
+// SetSamplingHandler sets the handler for sampling/createMessage requests.
+func (c *HTTPClient) SetSamplingHandler(handler SamplingHandler) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.samplingHandler = handler
+}
+
+// SetElicitationHandler sets the handler for elicitation/create requests.
+func (c *HTTPClient) SetElicitationHandler(handler ElicitationHandler) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.elicitationHandler = handler
 }
 
 // Close shuts down the client (no-op for HTTP).

@@ -26,6 +26,12 @@ type Client interface {
 
 	// Name returns the server name.
 	Name() string
+
+	// SetSamplingHandler sets the handler for sampling/createMessage requests.
+	SetSamplingHandler(handler SamplingHandler)
+
+	// SetElicitationHandler sets the handler for elicitation/create requests.
+	SetElicitationHandler(handler ElicitationHandler)
 }
 
 // ServerConfig represents a single MCP server configuration.

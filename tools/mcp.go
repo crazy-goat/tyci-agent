@@ -15,6 +15,10 @@ type MCPToolRunner struct {
 	mu      sync.RWMutex
 	clients map[string]mcp.Client
 	tools   map[string]*mcpTool // prefixed name -> tool info
+
+	// Sampling/Elicitation handlers
+	samplingFunc  func(ctx context.Context, messages []mcp.SamplingMessage, model string) (string, error)
+	elicitationFunc func(ctx context.Context, message string) (string, error)
 }
 
 type mcpTool struct {
@@ -43,6 +47,12 @@ func (r *MCPToolRunner) Connect(ctx context.Context) error {
 	for name, client := range clients {
 		r.clients[name] = client
 
+		// Set up sampling handler
+		client.SetSamplingHandler(r.makeSamplingHandler(name))
+
+		// Set up elicitation handler
+		client.SetElicitationHandler(r.makeElicitationHandler(name))
+
 		// List tools from this server
 		tools, err := client.ListTools(ctx)
 		if err != nil {
@@ -61,6 +71,88 @@ func (r *MCPToolRunner) Connect(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// SetSamplingFunc sets the function to handle sampling requests.
+func (r *MCPToolRunner) SetSamplingFunc(f func(ctx context.Context, messages []mcp.SamplingMessage, model string) (string, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.samplingFunc = f
+}
+
+// SetElicitationFunc sets the function to handle elicitation requests.
+func (r *MCPToolRunner) SetElicitationFunc(f func(ctx context.Context, message string) (string, error)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.elicitationFunc = f
+}
+
+// makeSamplingHandler creates a SamplingHandler for a specific server.
+func (r *MCPToolRunner) makeSamplingHandler(serverName string) mcp.SamplingHandler {
+	return func(ctx context.Context, srvName string, req *mcp.SamplingRequest) (*mcp.SamplingResult, error) {
+		r.mu.RLock()
+		handler := r.samplingFunc
+		r.mu.RUnlock()
+
+		if handler == nil {
+			return nil, fmt.Errorf("sampling not supported")
+		}
+
+		// Determine model to use
+		model := ""
+		if req.ModelPreferences != nil && len(req.ModelPreferences.Hints) > 0 {
+			model = req.ModelPreferences.Hints[0].Name
+		}
+
+		// Call the handler
+		response, err := handler(ctx, req.Messages, model)
+		if err != nil {
+			return nil, err
+		}
+
+		// Build result
+		content, _ := json.Marshal(mcp.SamplingResultContent{
+			Type: "text",
+			Text: response,
+		})
+
+		return &mcp.SamplingResult{
+			Model:      model,
+			Role:       "assistant",
+			Content:    content,
+			StopReason: "endTurn",
+		}, nil
+	}
+}
+
+// makeElicitationHandler creates an ElicitationHandler for a specific server.
+func (r *MCPToolRunner) makeElicitationHandler(serverName string) mcp.ElicitationHandler {
+	return func(ctx context.Context, srvName string, req *mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+		r.mu.RLock()
+		handler := r.elicitationFunc
+		r.mu.RUnlock()
+
+		if handler == nil {
+			return nil, fmt.Errorf("elicitation not supported")
+		}
+
+		// Call the handler
+		response, err := handler(ctx, req.Message)
+		if err != nil {
+			return nil, err
+		}
+
+		// Build result
+		content, _ := json.Marshal(map[string]interface{}{
+			"type": "text",
+			"text": response,
+		})
+
+		return &mcp.ElicitationResult{
+			Action:  "accept",
+			Content: content,
+		}, nil
+	}
 }
 
 // Close shuts down all MCP clients.

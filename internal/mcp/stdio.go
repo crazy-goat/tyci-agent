@@ -10,6 +10,9 @@ import (
 	"sync"
 )
 
+// Ensure we use context
+var _ = context.Background
+
 // StdioClient communicates with an MCP server over stdio.
 type StdioClient struct {
 	name    string
@@ -20,9 +23,11 @@ type StdioClient struct {
 	stdin  io.WriteCloser
 	stdout *bufio.Reader
 
-	mu      sync.Mutex
-	nextID  int
-	pending map[int]chan *Response
+	mu               sync.Mutex
+	nextID           int
+	pending          map[int]chan *Response
+	samplingHandler  SamplingHandler
+	elicitationHandler ElicitationHandler
 }
 
 // NewStdioClient creates a new stdio-based MCP client.
@@ -145,6 +150,20 @@ func (c *StdioClient) CallTool(ctx context.Context, name string, arguments json.
 	return &result, nil
 }
 
+// SetSamplingHandler sets the handler for sampling/createMessage requests.
+func (c *StdioClient) SetSamplingHandler(handler SamplingHandler) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.samplingHandler = handler
+}
+
+// SetElicitationHandler sets the handler for elicitation/create requests.
+func (c *StdioClient) SetElicitationHandler(handler ElicitationHandler) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.elicitationHandler = handler
+}
+
 // Close shuts down the client.
 func (c *StdioClient) Close() error {
 	c.mu.Lock()
@@ -229,6 +248,14 @@ func (c *StdioClient) sendNotification(req Request) error {
 	return nil
 }
 
+// rawMessage is used to detect if a message is a request or response.
+type rawMessage struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	ID      int             `json:"id"`
+	Params  json.RawMessage `json:"params"`
+}
+
 // readLoop reads responses from stdout and dispatches them.
 func (c *StdioClient) readLoop() {
 	for {
@@ -238,9 +265,25 @@ func (c *StdioClient) readLoop() {
 			return
 		}
 
+		// First, try to detect if this is a request from the server
+		var raw rawMessage
+		if err := json.Unmarshal(line, &raw); err != nil {
+			// Skip malformed messages
+			continue
+		}
+
+		// Server requests have a method and typically ID=0 (or no ID)
+		if raw.Method != "" && (raw.ID == 0 || raw.Method == "sampling/createMessage" || raw.Method == "elicitation/create") {
+			var req Request
+			if err := json.Unmarshal(line, &req); err == nil {
+				c.handleServerRequest(req)
+				continue
+			}
+		}
+
+		// Otherwise, treat as a response
 		var resp Response
 		if err := json.Unmarshal(line, &resp); err != nil {
-			// Skip malformed messages
 			continue
 		}
 
@@ -250,5 +293,109 @@ func (c *StdioClient) readLoop() {
 			ch <- &resp
 		}
 		c.mu.Unlock()
+	}
+}
+
+// handleServerRequest processes requests from the server (sampling, elicitation).
+func (c *StdioClient) handleServerRequest(req Request) {
+	// Marshal params to raw JSON
+	paramsJSON, err := json.Marshal(req.Params)
+	if err != nil {
+		return
+	}
+
+	switch req.Method {
+	case "sampling/createMessage":
+		c.mu.Lock()
+		handler := c.samplingHandler
+		c.mu.Unlock()
+
+		if handler == nil {
+			c.sendErrorResponse(req.ID, -32601, "sampling not supported")
+			return
+		}
+
+		var samplingReq SamplingRequest
+		if err := json.Unmarshal(paramsJSON, &samplingReq); err != nil {
+			c.sendErrorResponse(req.ID, -32700, "parse error")
+			return
+		}
+
+		// Call handler (blocking)
+		ctx := context.Background()
+		result, err := handler(ctx, c.name, &samplingReq)
+		if err != nil {
+			c.sendErrorResponse(req.ID, -32603, err.Error())
+			return
+		}
+
+		c.sendResultResponse(req.ID, result)
+
+	case "elicitation/create":
+		c.mu.Lock()
+		handler := c.elicitationHandler
+		c.mu.Unlock()
+
+		if handler == nil {
+			c.sendErrorResponse(req.ID, -32601, "elicitation not supported")
+			return
+		}
+
+		var elicitationReq ElicitationRequest
+		if err := json.Unmarshal(paramsJSON, &elicitationReq); err != nil {
+			c.sendErrorResponse(req.ID, -32700, "parse error")
+			return
+		}
+
+		// Call handler (blocking)
+		ctx := context.Background()
+		result, err := handler(ctx, c.name, &elicitationReq)
+		if err != nil {
+			c.sendErrorResponse(req.ID, -32603, err.Error())
+			return
+		}
+
+		c.sendResultResponse(req.ID, result)
+	}
+}
+
+// sendErrorResponse sends a JSON-RPC error response.
+func (c *StdioClient) sendErrorResponse(id int, code int, message string) {
+	resp := Response{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   &RPCError{Code: code, Message: message},
+	}
+	c.sendResponse(resp)
+}
+
+// sendResultResponse sends a JSON-RPC success response.
+func (c *StdioClient) sendResultResponse(id int, result interface{}) {
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		c.sendErrorResponse(id, -32603, "failed to marshal result")
+		return
+	}
+
+	resp := Response{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result:  resultJSON,
+	}
+	c.sendResponse(resp)
+}
+
+// sendResponse sends a JSON-RPC response.
+func (c *StdioClient) sendResponse(resp Response) {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stdin != nil {
+		c.stdin.Write(data)
 	}
 }
