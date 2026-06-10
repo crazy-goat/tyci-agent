@@ -6,30 +6,30 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/decodo/tyci-agent/agent"
 	"github.com/decodo/tyci-agent/providers"
+	"github.com/decodo/tyci-agent/stream"
 	"github.com/decodo/tyci-agent/tools"
 )
 
 // Engine orchestrates Lua workflow scripts.
 type Engine struct {
-	L       *lua.LState
-	ctx     context.Context
-	prompt  string
-	runner  agent.Runner
+	L        *lua.LState
+	ctx      context.Context
+	prompt   string
+	sessions map[string]*luaSession
 }
 
 // NewEngine creates a new workflow engine.
-func NewEngine(ctx context.Context, prompt string, runner agent.Runner) *Engine {
+func NewEngine(ctx context.Context, prompt string) *Engine {
 	return &Engine{
-		L:      lua.NewState(),
-		ctx:    ctx,
-		prompt: prompt,
-		runner: runner,
+		L:        lua.NewState(),
+		ctx:      ctx,
+		prompt:   prompt,
+		sessions: make(map[string]*luaSession),
 	}
 }
 
@@ -91,13 +91,13 @@ func (e *Engine) luaCwd(L *lua.LState) int {
 	return 1
 }
 
-// luaModels returns available models.
+// luaModels returns available providers.
 func (e *Engine) luaModels(L *lua.LState) int {
 	providers.RegisterProvidersFromConfig(filepath.Join(os.Getenv("HOME"), ".tyci", "model.json"))
-	models := providers.ListModels()
+	providerList := providers.ListProviders()
 	arr := L.NewTable()
-	for i, m := range models {
-		arr.RawSetInt(i+1, lua.LString(m))
+	for i, p := range providerList {
+		arr.RawSetInt(i+1, lua.LString(p.Name()))
 	}
 	L.Push(arr)
 	return 1
@@ -142,10 +142,14 @@ func (e *Engine) luaNewSession(L *lua.LState) int {
 	model := L.OptString(1, "")
 
 	session := &luaSession{
-		engine:  e,
-		model:   model,
+		engine:   e,
+		model:    model,
 		messages: []providers.RichMessage{},
 	}
+
+	// Store session in registry
+	sessionKey := fmt.Sprintf("session_%d", len(e.sessions))
+	e.sessions[sessionKey] = session
 
 	// Create metatable for session methods
 	mt := L.NewTable()
@@ -154,6 +158,7 @@ func (e *Engine) luaNewSession(L *lua.LState) int {
 	tbl := L.NewTable()
 	L.SetField(tbl, "model", lua.LString(model))
 	L.SetField(tbl, "messages", L.NewTable())
+	L.SetField(tbl, "_session_key", lua.LString(sessionKey))
 
 	L.SetMetatable(tbl, mt)
 	L.Push(tbl)
@@ -188,6 +193,10 @@ func (e *Engine) luaResumeSession(L *lua.LState) int {
 		messages: sessionData.Messages,
 	}
 
+	// Store session in registry
+	sessionKey := fmt.Sprintf("session_%d", len(e.sessions))
+	e.sessions[sessionKey] = session
+
 	// Create metatable
 	mt := L.NewTable()
 	L.SetField(mt, "__index", e.newSessionMethods())
@@ -195,6 +204,7 @@ func (e *Engine) luaResumeSession(L *lua.LState) int {
 	tbl := L.NewTable()
 	L.SetField(tbl, "model", lua.LString(session.model))
 	L.SetField(tbl, "messages", L.NewTable())
+	L.SetField(tbl, "_session_key", lua.LString(sessionKey))
 
 	L.SetMetatable(tbl, mt)
 	L.Push(tbl)
@@ -216,7 +226,7 @@ func (e *Engine) newSessionMethods() *lua.LTable {
 
 // sessionPrompt adds a user message.
 func (e *Engine) sessionPrompt(L *lua.LState) int {
-	session := checkSession(L)
+	session := checkSession(L, e)
 	msg := L.CheckString(2)
 
 	session.messages = append(session.messages, providers.RichMessage{
@@ -243,7 +253,7 @@ func (e *Engine) sessionPrompt(L *lua.LState) int {
 
 // sessionAddSystem adds a system message.
 func (e *Engine) sessionAddSystem(L *lua.LState) int {
-	session := checkSession(L)
+	session := checkSession(L, e)
 	msg := L.CheckString(2)
 
 	session.messages = append(session.messages, providers.RichMessage{
@@ -258,7 +268,7 @@ func (e *Engine) sessionAddSystem(L *lua.LState) int {
 
 // sessionAwait sends messages to LLM and waits for response.
 func (e *Engine) sessionAwait(L *lua.LState) int {
-	session := checkSession(L)
+	session := checkSession(L, e)
 
 	// Get provider and model
 	provider, modelName, ok := providers.FindModel(session.model)
@@ -295,8 +305,8 @@ func (e *Engine) sessionAwait(L *lua.LState) int {
 	L.SetField(reply, "tools", lua.LNumber(collector.toolCalls))
 
 	usage := L.NewTable()
-	L.SetField(usage, "input", lua.LNumber(collector.usage.InputTokens))
-	L.SetField(usage, "output", lua.LNumber(collector.usage.OutputTokens))
+	L.SetField(usage, "input", lua.LNumber(collector.usage.Input))
+	L.SetField(usage, "output", lua.LNumber(collector.usage.Output))
 	L.SetField(reply, "usage", usage)
 
 	L.Push(reply)
@@ -305,7 +315,7 @@ func (e *Engine) sessionAwait(L *lua.LState) int {
 
 // sessionSave saves the session to a file.
 func (e *Engine) sessionSave(L *lua.LState) int {
-	session := checkSession(L)
+	session := checkSession(L, e)
 	path := L.CheckString(2)
 
 	sessionData := struct {
@@ -335,7 +345,7 @@ func (e *Engine) sessionSave(L *lua.LState) int {
 
 // sessionMessages returns the message history.
 func (e *Engine) sessionMessages(L *lua.LState) int {
-	session := checkSession(L)
+	session := checkSession(L, e)
 
 	msgsTable := L.NewTable()
 	for i, m := range session.messages {
@@ -352,13 +362,16 @@ func (e *Engine) sessionMessages(L *lua.LState) int {
 }
 
 // checkSession extracts the session from a Lua table.
-func checkSession(L *lua.LState) *luaSession {
+func checkSession(L *lua.LState, e *Engine) *luaSession {
 	tbl := L.CheckTable(1)
-	// The session is stored as a pointer in the table
-	// We use a global registry to store session references
-	// For now, we'll use a simpler approach
+	key := L.GetField(tbl, "_session_key").String()
+	if key != "" {
+		if session, ok := e.sessions[key]; ok {
+			return session
+		}
+	}
 	return &luaSession{
-		engine:   nil, // Will be set by the engine
+		engine:   e,
 		model:    L.GetField(tbl, "model").String(),
 		messages: []providers.RichMessage{},
 	}
@@ -376,7 +389,7 @@ type responseCollector struct {
 	content   string
 	thinking  string
 	toolCalls int
-	usage     providers.Usage
+	usage     stream.Usage
 }
 
 func (c *responseCollector) Thinking(text string) {
@@ -397,7 +410,7 @@ func (c *responseCollector) ToolCallEnd(name, result string) {}
 
 func (c *responseCollector) ToolBlock(msg string) {}
 
-func (c *responseCollector) Summary(usage providers.Usage, stats providers.Stats) {
+func (c *responseCollector) Summary(usage stream.Usage, stats stream.Stats) {
 	c.usage = usage
 }
 
@@ -430,7 +443,7 @@ func convertLuaValueToGo(v lua.LValue) any {
 }
 
 // RunWorkflow executes a Lua workflow script.
-func RunWorkflow(ctx context.Context, scriptPath, prompt string, runner agent.Runner) (string, error) {
-	engine := NewEngine(ctx, prompt, runner)
+func RunWorkflow(ctx context.Context, scriptPath, prompt string) (string, error) {
+	engine := NewEngine(ctx, prompt)
 	return engine.Run(scriptPath)
 }
