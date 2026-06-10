@@ -222,6 +222,21 @@ func GetToolsSchemaJSON() json.RawMessage {
 	return toolsSchema
 }
 
+// GetAllToolsSchema returns all tools including MCP tools.
+func GetAllToolsSchema() []map[string]any {
+	schema := GetToolsSchema()
+	if mcpRunner := GetMCPToolRunner(); mcpRunner != nil {
+		schema = append(schema, mcpRunner.MCPToolsSchema()...)
+	}
+	return schema
+}
+
+// GetAllToolsSchemaJSON returns all tools schema as JSON including MCP tools.
+func GetAllToolsSchemaJSON() json.RawMessage {
+	data, _ := json.Marshal(GetAllToolsSchema())
+	return data
+}
+
 // GetSubagentToolsSchema returns tool definitions excluding "subagent" (prevents recursion).
 func GetSubagentToolsSchema() []map[string]any {
 	schema := GetToolsSchema()
@@ -265,8 +280,14 @@ func SetSubAgentRunner(runner SubAgentRunner) {
 
 func RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {
 	tool, ok := toolRegistry[name]
-	if !ok {
-		return ToolResult{Type: "result", Success: false, Error: "unknown tool: " + name}
+	if ok {
+		return tool.Run(ctx, arguments)
 	}
-	return tool.Run(ctx, arguments)
+
+	// Check MCP tools
+	if mcpRunner := GetMCPToolRunner(); mcpRunner != nil && mcpRunner.HasTool(name) {
+		return mcpRunner.RunTool(ctx, name, arguments)
+	}
+
+	return ToolResult{Type: "result", Success: false, Error: "unknown tool: " + name}
 }
