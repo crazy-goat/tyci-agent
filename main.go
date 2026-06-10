@@ -102,20 +102,6 @@ func main() {
 		return
 	}
 
-	if len(os.Args) > 1 && os.Args[1] == "connect" {
-		fs := flag.NewFlagSet("connect", flag.ExitOnError)
-		name := fs.String("name", "", "Provider name")
-		apiType := fs.String("api", "openai", "API type (openai, anthropic, gemini, responses)")
-		url := fs.String("url", "", "API base URL")
-		token := fs.String("token", "", "API key or $ENV_VAR reference")
-		fs.Parse(os.Args[2:])
-		if err := connect.Run(*name, *apiType, *url, *token); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
 	if len(os.Args) > 1 && os.Args[1] == "provider" {
 		if len(os.Args) > 2 && os.Args[2] == "auth" {
 			runProviderAuth(os.Args[3:])
@@ -151,13 +137,11 @@ func main() {
 
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(os.Stdout, "Usage: tyci-agent [flags] (--prompt <prompt>)\n")
-		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent connect --name <name> --api <type> --url <url> --token <token>\n")
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent agent [list|get|set|delete|set-fallback]\n")
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider add <name> --url <url> --token <key>\n")
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider refresh [--provider p1,p2] [--dry-run]\n")
 		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider auth [set|get|list|rm]\n\n")
 		_, _ = fmt.Fprintf(os.Stdout, "Subcommands:\n")
-		_, _ = fmt.Fprintf(os.Stdout, "  connect         Register a new provider in ~/.tyci/model.json (deprecated)\n")
 		_, _ = fmt.Fprintf(os.Stdout, "  agent           Manage agent configurations (model assignments)\n")
 		_, _ = fmt.Fprintf(os.Stdout, "  provider add    Add a provider with auth and connectivity check\n")
 		_, _ = fmt.Fprintf(os.Stdout, "  provider refresh Import models from models.dev\n")
