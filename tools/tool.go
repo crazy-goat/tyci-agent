@@ -175,6 +175,31 @@ func GetToolsSchema() []map[string]any {
 				},
 			},
 		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "load_skill",
+				"description": "Load a skill by name and return its full content. Skills are markdown files stored in ~/.tyci/skills/<name>/SKILL.md.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string", "description": "Name of the skill to load (directory name)"},
+					},
+					"required": []string{"name"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "list_skills",
+				"description": "List all available skills with their descriptions.",
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
 	}
 }
 
@@ -212,13 +237,15 @@ func GetSubagentToolsSchemaJSON() json.RawMessage {
 }
 
 var toolRegistry = map[string]Tool{
-	"bash":     &BashTool{},
-	"glob":     &GlobTool{},
-	"grep":     &GrepTool{},
-	"todo":     &TodoTool{},
-	"read":     &ReadTool{},
-	"write":    &WriteTool{},
-	"edit":     &EditTool{},
+	"bash":       &BashTool{},
+	"glob":       &GlobTool{},
+	"grep":       &GrepTool{},
+	"todo":       &TodoTool{},
+	"read":       &ReadTool{},
+	"write":      &WriteTool{},
+	"edit":       &EditTool{},
+	"load_skill": &LoadSkillTool{},
+	"list_skills": &ListSkillsTool{},
 }
 
 // subagentToolInstance is the singleton SubagentTool used by the registry.

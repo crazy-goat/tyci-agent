@@ -58,6 +58,13 @@ Be terse. No fluff. Short sentence. Get job done.
 		}
 	}
 
+	// List available skills (names only, not content)
+	skillsDir := filepath.Join(os.Getenv("HOME"), ".tyci", "skills")
+	if skillNames, err := listSkillNames(skillsDir); err == nil && len(skillNames) > 0 {
+		prompt += "\n---\nAvailable skills: " + strings.Join(skillNames, ", ")
+		prompt += "\nUse load_skill(name) to load a skill's full content.\n"
+	}
+
 	return prompt
 }
 
@@ -104,3 +111,23 @@ type Provider interface {
 }
 
 var DefaultRetryConfig = api.RetryConfig{MaxRetries: 5, BaseBackoff: 4, MaxBackoff: 128}
+
+// listSkillNames returns the names of all skills in the given directory.
+func listSkillNames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var names []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillPath := filepath.Join(dir, entry.Name(), "SKILL.md")
+		if _, err := os.Stat(skillPath); err == nil {
+			names = append(names, entry.Name())
+		}
+	}
+	return names, nil
+}
