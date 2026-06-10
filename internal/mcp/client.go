@@ -33,6 +33,7 @@ type ServerConfig struct {
 	Command string   `json:"command,omitempty"`
 	Args    []string `json:"args,omitempty"`
 	URL     string   `json:"url,omitempty"`
+	Auth    string   `json:"auth,omitempty"` // "bearer" or ""
 }
 
 // Config represents the MCP configuration file.
@@ -103,7 +104,8 @@ func NewClient(name string, cfg ServerConfig) (Client, error) {
 		return NewStdioClient(name, cfg.Command, cfg.Args), nil
 	}
 	if cfg.URL != "" {
-		return nil, fmt.Errorf("HTTP MCP transport not yet implemented")
+		hc := NewHTTPClient(name, cfg.URL, cfg.Auth)
+		return hc, nil
 	}
 	return nil, fmt.Errorf("invalid server config: must have command or url")
 }
@@ -132,8 +134,9 @@ func ConnectAll(ctx context.Context) (map[string]Client, error) {
 
 		// Add auth token if available
 		if token, ok, _ := connect.GetKey("mcp_" + name); ok && token != "" {
-			// Token will be used by HTTP client when implemented
-			_ = token
+			if hc, ok := client.(*HTTPClient); ok {
+				hc.SetAuthToken(token)
+			}
 		}
 
 		clients[name] = client
