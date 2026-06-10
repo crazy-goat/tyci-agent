@@ -30,10 +30,54 @@ type Client interface {
 
 // ServerConfig represents a single MCP server configuration.
 type ServerConfig struct {
-	Command string   `json:"command,omitempty"`
-	Args    []string `json:"args,omitempty"`
-	URL     string   `json:"url,omitempty"`
-	Auth    string   `json:"auth,omitempty"` // "bearer" or ""
+	Command string      `json:"command,omitempty"`
+	Args    []string    `json:"args,omitempty"`
+	URL     string      `json:"url,omitempty"`
+	Auth    interface{} `json:"auth,omitempty"` // string (legacy) or AuthConfig object
+}
+
+// GetAuthConfig returns the AuthConfig for this server.
+// Supports both legacy string format ("bearer") and new AuthConfig object.
+func (s *ServerConfig) GetAuthConfig() *AuthConfig {
+	if s.Auth == nil {
+		return nil
+	}
+
+	// Legacy string format
+	if authStr, ok := s.Auth.(string); ok {
+		return &AuthConfig{Type: authStr}
+	}
+
+	// New object format - unmarshal from map
+	if authMap, ok := s.Auth.(map[string]interface{}); ok {
+		cfg := &AuthConfig{}
+		if v, ok := authMap["type"].(string); ok {
+			cfg.Type = v
+		}
+		if v, ok := authMap["token_env"].(string); ok {
+			cfg.TokenEnv = v
+		}
+		if v, ok := authMap["token"].(string); ok {
+			cfg.Token = v
+		}
+		return cfg
+	}
+
+	return nil
+}
+
+// GetAuthType returns the auth type string for legacy compatibility.
+func (s *ServerConfig) GetAuthType() string {
+	if s.Auth == nil {
+		return ""
+	}
+	if authStr, ok := s.Auth.(string); ok {
+		return authStr
+	}
+	if cfg := s.GetAuthConfig(); cfg != nil {
+		return cfg.Type
+	}
+	return ""
 }
 
 // Config represents the MCP configuration file.
@@ -104,7 +148,7 @@ func NewClient(name string, cfg ServerConfig) (Client, error) {
 		return NewStdioClient(name, cfg.Command, cfg.Args), nil
 	}
 	if cfg.URL != "" {
-		hc := NewHTTPClient(name, cfg.URL, cfg.Auth)
+		hc := NewHTTPClient(name, cfg.URL, cfg.GetAuthType())
 		return hc, nil
 	}
 	return nil, fmt.Errorf("invalid server config: must have command or url")
@@ -115,6 +159,12 @@ func ConnectAll(ctx context.Context) (map[string]Client, error) {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return nil, err
+	}
+
+	// Initialize auth manager
+	authMgr := NewAuthManager()
+	if err := authMgr.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load MCP auth: %v\n", err)
 	}
 
 	clients := make(map[string]Client)
@@ -132,10 +182,20 @@ func ConnectAll(ctx context.Context) (map[string]Client, error) {
 			continue
 		}
 
-		// Add auth token if available
-		if token, ok, _ := connect.GetKey("mcp_" + name); ok && token != "" {
+		// Resolve auth token using AuthManager
+		authCfg := serverCfg.GetAuthConfig()
+		if token := GetTokenForServer(authMgr, name, authCfg); token != "" {
 			if hc, ok := client.(*HTTPClient); ok {
 				hc.SetAuthToken(token)
+			}
+		}
+
+		// Legacy fallback: check connect package
+		if authCfg == nil {
+			if token, ok, _ := connect.GetKey("mcp_" + name); ok && token != "" {
+				if hc, ok := client.(*HTTPClient); ok {
+					hc.SetAuthToken(token)
+				}
 			}
 		}
 
