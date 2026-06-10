@@ -2,13 +2,32 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci-agent/providers"
 	"github.com/decodo/tyci-agent/stream"
 )
+
+// mockRunner implements SubAgentRunner for testing
+type mockRunner struct {
+	RunTaskFunc func(ctx context.Context, task string, model string, temperature float64) (string, error)
+}
+
+func (m *mockRunner) RunTask(ctx context.Context, task string, model string, temperature float64) (string, error) {
+	if m.RunTaskFunc != nil {
+		return m.RunTaskFunc(ctx, task, model, temperature)
+	}
+	return "mock response", nil
+}
+
+// failingRunner always returns an error
+type failingRunner struct{}
+
+func (f *failingRunner) RunTask(ctx context.Context, task string, model string, temperature float64) (string, error) {
+	return "", fmt.Errorf("agent failed")
+}
 
 func TestCollector_Text(t *testing.T) {
 	c := newCollector()
@@ -314,40 +333,28 @@ func TestParseTasks_TasksArrayEmpty(t *testing.T) {
 	}
 }
 
-func TestSubagentTool_MissingProvider(t *testing.T) {
+func TestSubagentTool_MissingRunner(t *testing.T) {
 	tool := &SubagentTool{}
-	// Context without provider or model
+	// Context without runner
 	result := tool.Run(context.Background(), map[string]any{"task": "test"})
 	if result.Success {
-		t.Fatal("expected failure when no provider")
+		t.Fatal("expected failure when no runner")
 	}
-	if !strings.Contains(result.Error, "no LLM provider") {
-		t.Errorf("expected 'no LLM provider' error, got %q", result.Error)
+	if !strings.Contains(result.Error, "subagent runner not configured") {
+		t.Errorf("expected 'subagent runner not configured' error, got %q", result.Error)
 	}
 }
 
 func TestSubagentTool_MissingModel(t *testing.T) {
-	tool := &SubagentTool{}
-	// Context with provider but no model
-	fakeProv := &fakeProvider{}
-	ctx := providers.WithProvider(context.Background(), fakeProv)
-	result := tool.Run(ctx, map[string]any{"task": "test"})
+	tool := &SubagentTool{Runner: &mockRunner{}}
+	// Context with runner but no model
+	result := tool.Run(context.Background(), map[string]any{"task": "test"})
 	if result.Success {
 		t.Fatal("expected failure when no model")
 	}
 	if !strings.Contains(result.Error, "no model") {
 		t.Errorf("expected 'no model' error, got %q", result.Error)
 	}
-}
-
-type fakeProvider struct{}
-
-func (f *fakeProvider) Name() string         { return "fake" }
-func (f *fakeProvider) IsConfigured() bool   { return true }
-func (f *fakeProvider) Models() []string     { return nil }
-func (f *fakeProvider) FreeModels() []string { return nil }
-func (f *fakeProvider) Stream(context.Context, providers.Request) (<-chan stream.Event, error) {
-	return nil, nil
 }
 
 func TestStreamingCollector_PreservesThreadSafety(t *testing.T) {

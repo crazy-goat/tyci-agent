@@ -9,13 +9,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decodo/tyci-agent/agent"
 	"github.com/decodo/tyci-agent/api"
 	"github.com/decodo/tyci-agent/providers"
 	"github.com/decodo/tyci-agent/stream"
 )
 
-type SubagentTool struct{}
+type SubagentTool struct {
+	Runner SubAgentRunner
+}
 
 func (t *SubagentTool) Name() string { return "subagent" }
 
@@ -177,19 +178,11 @@ func (s *streamingCollector) StreamProgress(_ int, line string) {
 }
 
 func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult {
-	provider := providers.ProviderFromContext(ctx)
-	if provider == nil {
-		// Fallback to global for backward compat during transition
-		provider = GetProvider()
-		if provider == nil {
-			return ToolResult{Type: "result", Success: false, Error: "no LLM provider available (start with --model)"}
-		}
+	if t.Runner == nil {
+		return ToolResult{Type: "result", Success: false, Error: "subagent runner not configured"}
 	}
 
 	defaultModel := providers.ModelFromContext(ctx)
-	if defaultModel == "" {
-		defaultModel = GetCurrentModel()
-	}
 	if defaultModel == "" {
 		return ToolResult{Type: "result", Success: false, Error: "no model specified and no default model set"}
 	}
@@ -204,7 +197,7 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 	}
 
 	// Run tasks concurrently (no timeout – runs until completion)
-	results := runTasks(ctx, provider, tasks, 0)
+	results := runTasks(ctx, t.Runner, tasks, 0)
 
 	// Single task → return plain text (backward compatible)
 	if len(results) == 1 {
@@ -291,7 +284,7 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 	return t, nil
 }
 
-func runTasks(ctx context.Context, globalProvider providers.Provider, tasks []subagentTask, timeoutSec int) []subagentResult {
+func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, timeoutSec int) []subagentResult {
 	results := make([]subagentResult, len(tasks))
 	var wg sync.WaitGroup
 
@@ -299,7 +292,7 @@ func runTasks(ctx context.Context, globalProvider providers.Provider, tasks []su
 		wg.Add(1)
 		go func(idx int, t subagentTask) {
 			defer wg.Done()
-			results[idx] = runSingleTask(ctx, globalProvider, t, timeoutSec)
+			results[idx] = runSingleTask(ctx, runner, t, timeoutSec)
 		}(i, task)
 	}
 
@@ -307,7 +300,7 @@ func runTasks(ctx context.Context, globalProvider providers.Provider, tasks []su
 	return results
 }
 
-func runSingleTask(ctx context.Context, globalProvider providers.Provider, task subagentTask, timeoutSec int) subagentResult {
+func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask, timeoutSec int) subagentResult {
 	runCtx := ctx
 	if timeoutSec > 0 {
 		var cancel context.CancelFunc
@@ -328,18 +321,14 @@ func runSingleTask(ctx context.Context, globalProvider providers.Provider, task 
 	runCtx = context.WithValue(runCtx, api.HTTPClientKey{}, isolatedClient)
 
 	mName := task.Model
-	prov := globalProvider
-
 	if mName == "" {
 		// No override – use the same provider and model as the parent
 		mName = providers.ModelFromContext(ctx)
-		if mName == "" {
-			mName = GetCurrentModel()
-		}
-	} else if p, m, ok := providers.FindModel(mName); ok {
-		// Model override – resolve provider/model from string
-		prov = p
-		mName = m
+	}
+
+	temperature := 0.7
+	if task.Temperature != nil {
+		temperature = *task.Temperature
 	}
 
 	// Get tool index for streaming (passed by agent.executeTools)
@@ -349,24 +338,9 @@ func runSingleTask(ctx context.Context, globalProvider providers.Provider, task 
 	}
 
 	c := newStreamingCollector(ctx, toolIdx)
-	msgs := []providers.RichMessage{
-		{
-			Role:    "user",
-			Content: []providers.ContentBlock{{Type: "text", Text: task.Task}},
-		},
-	}
 
-	cfg := agent.Config{
-		Model:         mName,
-		System:        providers.BuildSystemPrompt(),
-		MaxRetries:    1,
-		MaxIterations: 10, // limit tool-call iterations to prevent infinite loops
-		Debug:         false,
-		Tools:         &subagentToolRunner{},
-		Schema:        GetSubagentToolsSchemaJSON(),
-	}
-
-	_, err := agent.Run(runCtx, prov, c, &msgs, cfg)
+	// Run the task via the runner interface
+	content, err := runner.RunTask(runCtx, task.Task, mName, temperature)
 
 	// Flush any remaining partial line
 	c.flushPartial()
@@ -374,6 +348,7 @@ func runSingleTask(ctx context.Context, globalProvider providers.Provider, task 
 	res := c.Result()
 	res.Task = task.Task
 	res.Model = mName
+	res.Content = content
 
 	if err != nil {
 		res.Success = false
@@ -383,19 +358,4 @@ func runSingleTask(ctx context.Context, globalProvider providers.Provider, task 
 	}
 
 	return res
-}
-
-// subagentToolRunner wraps the global tool registry so subagents can use tools.
-// Subagent tool itself is excluded to prevent recursion.
-type subagentToolRunner struct{}
-
-func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[string]any) (string, error) {
-	if name == "subagent" {
-		return "", fmt.Errorf("subagent tool is not available to subagents (recursion denied)")
-	}
-	res := RunTool(ctx, name, args)
-	if res.Success {
-		return res.Content, nil
-	}
-	return res.Content, fmt.Errorf("%s", res.Error)
 }

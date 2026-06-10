@@ -9,6 +9,7 @@ import (
 
 	"github.com/decodo/tyci-agent/api"
 	"github.com/decodo/tyci-agent/internal/connect"
+	"github.com/decodo/tyci-agent/internal/tyciconfig"
 	"github.com/decodo/tyci-agent/stream"
 )
 
@@ -282,82 +283,34 @@ func forward(ch chan<- stream.Event, ctx context.Context) func(stream.Event) err
 	}
 }
 
-// parseURI parses the URI format:
-//
-//	api_type://model@auth_token@host:port/path
-//
-// api_type can be: openai, anthropic, gemini (defaults to openai).
-// The auth_token can be empty for free models.
+// parseURI parses the URI using the shared tyciconfig.ProviderURI type.
+// Kept for backward compatibility with existing callers.
 func parseURI(uri string) (apiType, authToken, baseURL, endpointPath string, err error) {
-	parts := strings.SplitN(uri, "://", 2)
-	if len(parts) != 2 {
-		return "", "", "", "", fmt.Errorf("invalid URI: missing ://")
-	}
-	scheme := parts[0]
-	rest := parts[1]
-
-	apiType = scheme
-	switch apiType {
-	case "openai", "anthropic", "gemini":
-		// known
-	default:
-		apiType = "openai"
+	u, err := tyciconfig.Parse(uri)
+	if err != nil {
+		return "", "", "", "", err
 	}
 
-	// Split by '@' - format: model@token@hostportpath
-	atParts := strings.SplitN(rest, "@", 3)
-	if len(atParts) < 2 {
-		return "", "", "", "", fmt.Errorf("invalid URI: expected model@token@host:port/path, got %q", rest)
-	}
-	modelName := atParts[0]
-	if len(atParts) >= 3 {
-		authToken = atParts[1]
-	} else {
-		authToken = ""
-	}
-
-	hostPortPath := atParts[len(atParts)-1]
-
-	var host string
-	var path string
-	if idx := strings.Index(hostPortPath, "/"); idx >= 0 {
-		host = hostPortPath[:idx]
-		path = hostPortPath[idx:]
-	} else {
-		host = hostPortPath
-		path = ""
-	}
-
-	baseURL = "https://" + host
-	endpointPath = path
-
-	switch apiType {
+	endpointPath = u.Path
+	switch u.APIType {
 	case "anthropic":
 		endpointPath += "/v1/messages"
 	case "gemini":
+		// Gemini uses different path structure
 	default:
 		endpointPath += "/v1/chat/completions"
 	}
 
-	_ = modelName
-	return
+	return u.APIType, u.AuthToken, "https://" + u.Host, endpointPath, nil
 }
 
 // parseModel extracts the model name from a URI.
 func parseModel(uri string) string {
-	parts := strings.SplitN(uri, "://", 2)
-	if len(parts) != 2 {
+	u, err := tyciconfig.Parse(uri)
+	if err != nil {
 		return ""
 	}
-	rest := parts[1]
-	atParts := strings.SplitN(rest, "@", 3)
-	if len(atParts) < 2 {
-		return ""
-	}
-	if len(atParts) >= 3 {
-		return atParts[0]
-	}
-	return atParts[0] // model@host:port/path (no token)
+	return u.Model
 }
 
 // convertToolsToGemini converts tool schemas from OpenAI format to Gemini functionDeclarations format.

@@ -135,6 +135,16 @@ func SaveLocal(a Agents, wd string) error {
 	return nil
 }
 
+// saveToActiveConfig saves agents to the active config (local if exists, otherwise global).
+func saveToActiveConfig(a Agents) error {
+	wd, _ := os.Getwd()
+	lPath := localConfigPath(wd)
+	if _, err := os.Stat(lPath); err == nil {
+		return SaveLocal(a, wd)
+	}
+	return SaveGlobal(a)
+}
+
 // SetAgent sets an agent name to a model string and saves to the appropriate location.
 // If a local config exists, saves locally; otherwise saves globally.
 // Preserves any existing fallback configuration for the agent.
@@ -145,9 +155,6 @@ func SetAgent(name, model string) error {
 	if model == "" {
 		return fmt.Errorf("model is required (format: provider/model)")
 	}
-
-	wd, _ := os.Getwd()
-	lPath := localConfigPath(wd)
 
 	agents, _ := LoadAgents()
 	if agents == nil {
@@ -160,11 +167,7 @@ func SetAgent(name, model string) error {
 	entry.Model = model
 	agents[name] = entry
 
-	// If local config exists, save locally; otherwise globally
-	if _, err := os.Stat(lPath); err == nil {
-		return SaveLocal(agents, wd)
-	}
-	return SaveGlobal(agents)
+	return saveToActiveConfig(agents)
 }
 
 // GetAgent returns the model for a given agent name.
@@ -211,9 +214,6 @@ func SetFallback(name string, fallbacks []string) error {
 		return fmt.Errorf("agent name is required")
 	}
 
-	wd, _ := os.Getwd()
-	lPath := localConfigPath(wd)
-
 	agents, _ := LoadAgents()
 	if agents == nil {
 		agents = make(Agents)
@@ -228,11 +228,7 @@ func SetFallback(name string, fallbacks []string) error {
 	entry.Fallback = fallbacks
 	agents[name] = entry
 
-	// If local config exists, save locally; otherwise globally
-	if _, err := os.Stat(lPath); err == nil {
-		return SaveLocal(agents, wd)
-	}
-	return SaveGlobal(agents)
+	return saveToActiveConfig(agents)
 }
 
 // DeleteAgent removes an agent by name. "default" cannot be deleted.
@@ -254,13 +250,7 @@ func DeleteAgent(name string) error {
 
 	delete(agents, name)
 
-	// Save back
-	wd, _ := os.Getwd()
-	lPath := localConfigPath(wd)
-	if _, err := os.Stat(lPath); err == nil {
-		return SaveLocal(agents, wd)
-	}
-	return SaveGlobal(agents)
+	return saveToActiveConfig(agents)
 }
 
 // ListAgents returns a sorted list of agent names.

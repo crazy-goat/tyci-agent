@@ -23,6 +23,79 @@ import (
 	"golang.org/x/term"
 )
 
+// agentRunner implements tools.SubAgentRunner by wrapping agent.Run.
+type agentRunner struct{}
+
+func (r *agentRunner) RunTask(ctx context.Context, task string, model string, temperature float64) (string, error) {
+	// Resolve provider and model
+	prov, mName, ok := providers.FindModel(model)
+	if !ok {
+		// Fallback to context values
+		prov = providers.ProviderFromContext(ctx)
+		mName = providers.ModelFromContext(ctx)
+	}
+	if prov == nil {
+		return "", fmt.Errorf("no provider available for model %q", model)
+	}
+	if mName == "" {
+		return "", fmt.Errorf("no model specified")
+	}
+
+	// Create collector to capture output
+	c := &collector{}
+	msgs := []providers.RichMessage{
+		{
+			Role:    "user",
+			Content: []providers.ContentBlock{{Type: "text", Text: task}},
+		},
+	}
+
+	cfg := agent.Config{
+		Model:         mName,
+		System:        providers.BuildSystemPrompt(),
+		MaxRetries:    1,
+		MaxIterations: 10,
+		Debug:         false,
+		Tools:         &subagentToolRunner{},
+		Schema:        tools.GetSubagentToolsSchemaJSON(),
+	}
+
+	_, err := agent.Run(ctx, prov, c, &msgs, cfg)
+	if err != nil {
+		return "", err
+	}
+	return c.text.String(), nil
+}
+
+// collector captures agent output (simplified for subagent runner)
+type collector struct {
+	text strings.Builder
+}
+
+func (c *collector) Thinking(text string)          { c.text.WriteString(text) }
+func (c *collector) Text(text string)              { c.text.WriteString(text) }
+func (c *collector) ToolCallStart(name string)     {}
+func (c *collector) ToolCallDelta(delta string)    {}
+func (c *collector) ToolCallEnd(name, result string) {}
+func (c *collector) ToolBlock(msg string)          {}
+func (c *collector) Summary(usage stream.Usage, stats stream.Stats) {}
+func (c *collector) Error(err error)               {}
+func (c *collector) End()                          {}
+
+// subagentToolRunner wraps the global tool registry so subagents can use tools.
+type subagentToolRunner struct{}
+
+func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[string]any) (string, error) {
+	if name == "subagent" {
+		return "", fmt.Errorf("subagent tool is not available to subagents (recursion denied)")
+	}
+	res := tools.RunTool(ctx, name, args)
+	if res.Success {
+		return res.Content, nil
+	}
+	return res.Content, fmt.Errorf("%s", res.Error)
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "agent" {
 		runAgentSubcommand(os.Args[2:])
@@ -190,8 +263,7 @@ func main() {
 		ProviderName:   provider.Name(),
 		FallbackModels: fallbackModels,
 	}
-	tools.SetProvider(provider)
-	tools.SetCurrentModel(modelName)
+	tools.SetSubAgentRunner(&agentRunner{})
 
 	// Session setup
 	wd, _ := os.Getwd()

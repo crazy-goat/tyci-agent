@@ -10,7 +10,6 @@ import (
 	"github.com/decodo/tyci-agent/providers"
 	"github.com/decodo/tyci-agent/session"
 	"github.com/decodo/tyci-agent/stream"
-	"github.com/decodo/tyci-agent/tools"
 )
 
 func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp *display.TUI, cfg agent.Config, baseCtx context.Context, sessionPath string) {
@@ -39,7 +38,7 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 		tuiDisp.Close()
 	}()
 
-	// updateModel resolves a new model string and updates provider/config/globals.
+	// updateModel resolves a new model string and updates provider/config.
 	// This is in-memory only for the current TUI process. It does not write
 	// agents/config files, and /new must not reset it.
 	updateModel := func(newModel string) {
@@ -52,8 +51,6 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 		modelName = m
 		cfg.Model = m
 		cfg.ProviderName = p.Name()
-		tools.SetProvider(p)
-		tools.SetCurrentModel(newModel)
 	}
 
 	// drainModelChanges applies all queued model changes before running a prompt.

@@ -3,25 +3,15 @@ package tools
 import (
 	"context"
 	"encoding/json"
-
-	"github.com/decodo/tyci-agent/providers"
 )
 
-// SetProvider is a no-op. Provider is now passed via context (see
-// providers.WithProvider). Kept for backward compat during transition.
-func SetProvider(_ providers.Provider) {}
-
-// GetProvider always returns nil. Provider is now passed via context.
-// Kept for backward compat during transition.
-func GetProvider() providers.Provider { return nil }
-
-// SetCurrentModel is a no-op. Model is now passed via context (see
-// providers.WithModel). Kept for backward compat during transition.
-func SetCurrentModel(_ string) {}
-
-// GetCurrentModel always returns "". Model is now passed via context.
-// Kept for backward compat during transition.
-func GetCurrentModel() string { return "" }
+// SubAgentRunner is the interface that tools/subagent.go uses to run
+// agent tasks without importing the agent package directly.
+// This keeps the tools package as a leaf layer with no upward dependencies.
+type SubAgentRunner interface {
+	// RunTask executes a single agent task and returns the result text.
+	RunTask(ctx context.Context, task string, model string, temperature float64) (string, error)
+}
 
 type ToolResult struct {
 	Type    string `json:"type"`
@@ -229,7 +219,16 @@ var toolRegistry = map[string]Tool{
 	"read":     &ReadTool{},
 	"write":    &WriteTool{},
 	"edit":     &EditTool{},
-	"subagent": &SubagentTool{},
+}
+
+// subagentToolInstance is the singleton SubagentTool used by the registry.
+var subagentToolInstance *SubagentTool
+
+// SetSubAgentRunner sets the runner for the subagent tool and registers it.
+// Must be called before any subagent tool usage.
+func SetSubAgentRunner(runner SubAgentRunner) {
+	subagentToolInstance = &SubagentTool{Runner: runner}
+	toolRegistry["subagent"] = subagentToolInstance
 }
 
 func RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {

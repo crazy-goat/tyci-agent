@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/decodo/tyci-agent/internal/tyciconfig"
 )
 
 type uriEntry struct {
@@ -68,8 +70,13 @@ func Run(name, apiType, baseURL, token string) error {
 
 	for _, m := range modelIDs {
 		tok := token
-		uri := fmt.Sprintf("%s://%s@%s@%s", apiType, m, tok, host)
-		models[m] = uriEntry{URI: uri}
+		uri := tyciconfig.ProviderURI{
+			APIType:   apiType,
+			Model:     m,
+			AuthToken: tok,
+			Host:      host,
+		}
+		models[m] = uriEntry{URI: uri.String()}
 	}
 
 	cfg[name] = models
