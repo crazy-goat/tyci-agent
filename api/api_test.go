@@ -1,0 +1,737 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/decodo/tyci-agent/stream"
+)
+
+// Test chatUsage.UnmarshalJSON with various inputs
+func TestChatUsage_UnmarshalJSON_StandardFields(t *testing.T) {
+	data := []byte(`{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"reasoning_tokens": 10,
+		"cache_read_input_tokens": 20,
+		"cache_creation_tokens": 5
+	}`)
+
+	var u chatUsage
+	if err := json.Unmarshal(data, &u); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if u.InputTokens != 100 {
+		t.Errorf("InputTokens: got %d, want 100", u.InputTokens)
+	}
+	if u.OutputTokens != 50 {
+		t.Errorf("OutputTokens: got %d, want 50", u.OutputTokens)
+	}
+	if u.ReasoningTokens != 10 {
+		t.Errorf("ReasoningTokens: got %d, want 10", u.ReasoningTokens)
+	}
+	if u.CacheReadInputTokens != 20 {
+		t.Errorf("CacheReadInputTokens: got %d, want 20", u.CacheReadInputTokens)
+	}
+	if u.CacheCreateInputTokens != 5 {
+		t.Errorf("CacheCreateInputTokens: got %d, want 5", u.CacheCreateInputTokens)
+	}
+}
+
+func TestChatUsage_UnmarshalJSON_AltFields(t *testing.T) {
+	data := []byte(`{
+		"input_tokens": 100,
+		"output_tokens": 50
+	}`)
+
+	var u chatUsage
+	if err := json.Unmarshal(data, &u); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if u.InputTokensAlt != 100 {
+		t.Errorf("InputTokensAlt: got %d, want 100", u.InputTokensAlt)
+	}
+	if u.OutputTokensAlt != 50 {
+		t.Errorf("OutputTokensAlt: got %d, want 50", u.OutputTokensAlt)
+	}
+}
+
+func TestChatUsage_UnmarshalJSON_PromptCacheHitTokens(t *testing.T) {
+	data := []byte(`{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"prompt_cache_hit_tokens": 30
+	}`)
+
+	var u chatUsage
+	if err := json.Unmarshal(data, &u); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if u.CacheReadInputTokens != 30 {
+		t.Errorf("CacheReadInputTokens: got %d, want 30", u.CacheReadInputTokens)
+	}
+}
+
+func TestChatUsage_UnmarshalJSON_PromptCacheMissTokens(t *testing.T) {
+	data := []byte(`{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"prompt_cache_miss_tokens": 15
+	}`)
+
+	var u chatUsage
+	if err := json.Unmarshal(data, &u); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if u.CacheCreateInputTokens != 15 {
+		t.Errorf("CacheCreateInputTokens: got %d, want 15", u.CacheCreateInputTokens)
+	}
+}
+
+func TestChatUsage_UnmarshalJSON_CachedTokens(t *testing.T) {
+	data := []byte(`{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"cached_tokens": 25
+	}`)
+
+	var u chatUsage
+	if err := json.Unmarshal(data, &u); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if u.CacheReadInputTokens != 25 {
+		t.Errorf("CacheReadInputTokens: got %d, want 25", u.CacheReadInputTokens)
+	}
+}
+
+func TestChatUsage_UnmarshalJSON_PromptTokensDetails(t *testing.T) {
+	data := []byte(`{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"prompt_tokens_details": {"cached_tokens": 40}
+	}`)
+
+	var u chatUsage
+	if err := json.Unmarshal(data, &u); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if u.CacheReadInputTokens != 40 {
+		t.Errorf("CacheReadInputTokens: got %d, want 40", u.CacheReadInputTokens)
+	}
+}
+
+func TestChatUsage_UnmarshalJSON_CompletionTokensDetails(t *testing.T) {
+	data := []byte(`{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"completion_tokens_details": {"reasoning_tokens": 15}
+	}`)
+
+	var u chatUsage
+	if err := json.Unmarshal(data, &u); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if u.ReasoningTokens != 15 {
+		t.Errorf("ReasoningTokens: got %d, want 15", u.ReasoningTokens)
+	}
+}
+
+func TestChatUsage_UnmarshalJSON_ExistingValuesNotOverwritten(t *testing.T) {
+	data := []byte(`{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"reasoning_tokens": 10,
+		"cache_read_input_tokens": 20,
+		"cache_creation_tokens": 5,
+		"prompt_cache_hit_tokens": 99,
+		"prompt_cache_miss_tokens": 99,
+		"completion_tokens_details": {"reasoning_tokens": 99}
+	}`)
+
+	var u chatUsage
+	if err := json.Unmarshal(data, &u); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	// Existing values should NOT be overwritten by extra fields
+	if u.ReasoningTokens != 10 {
+		t.Errorf("ReasoningTokens should remain 10, got %d", u.ReasoningTokens)
+	}
+	if u.CacheReadInputTokens != 20 {
+		t.Errorf("CacheReadInputTokens should remain 20, got %d", u.CacheReadInputTokens)
+	}
+	if u.CacheCreateInputTokens != 5 {
+		t.Errorf("CacheCreateInputTokens should remain 5, got %d", u.CacheCreateInputTokens)
+	}
+}
+
+func TestChatUsage_UnmarshalJSON_EmptyObject(t *testing.T) {
+	data := []byte(`{}`)
+
+	var u chatUsage
+	if err := json.Unmarshal(data, &u); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	// All fields should be zero
+	if u.InputTokens != 0 || u.OutputTokens != 0 || u.ReasoningTokens != 0 {
+		t.Errorf("expected zero values, got %+v", u)
+	}
+}
+
+func TestChatUsage_UnmarshalJSON_InvalidJSON(t *testing.T) {
+	data := []byte(`{invalid}`)
+
+	var u chatUsage
+	if err := json.Unmarshal(data, &u); err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+// Test ClientFromContext
+func TestClientFromContext_DefaultClient(t *testing.T) {
+	ctx := context.Background()
+	client := ClientFromContext(ctx)
+	if client == nil {
+		t.Error("expected non-nil client")
+	}
+	if client != defaultClient {
+		t.Error("expected default client")
+	}
+}
+
+func TestClientFromContext_OverrideFromContext(t *testing.T) {
+	customClient := &http.Client{}
+	ctx := context.WithValue(context.Background(), HTTPClientKey{}, customClient)
+	client := ClientFromContext(ctx)
+	if client != customClient {
+		t.Error("expected custom client from context")
+	}
+}
+
+func TestClientFromContext_NilClientInContext(t *testing.T) {
+	ctx := context.WithValue(context.Background(), HTTPClientKey{}, nil)
+	client := ClientFromContext(ctx)
+	if client != defaultClient {
+		t.Error("expected default client when nil in context")
+	}
+}
+
+// Test StreamChat
+func TestStreamChat_TextResponse(t *testing.T) {
+	sseEvents := `data: {"choices":[{"delta":{"content":"Hello"}}]}
+data: {"choices":[{"delta":{"content":" world"}}]}
+data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}
+data: [DONE]
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		events = append(events, e)
+		return nil
+	}
+
+	body := ChatRequest{
+		Model:    "gpt-4",
+		Stream:   true,
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	}
+
+	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var texts []string
+	var finish stream.Finish
+	for _, e := range events {
+		switch v := e.(type) {
+		case stream.TextDelta:
+			texts = append(texts, v.Text)
+		case stream.Finish:
+			finish = v
+		}
+	}
+
+	if len(texts) != 2 || texts[0] != "Hello" || texts[1] != " world" {
+		t.Errorf("expected text deltas ['Hello', ' world'], got %v", texts)
+	}
+	if finish.Reason != "stop" {
+		t.Errorf("expected reason 'stop', got %q", finish.Reason)
+	}
+	if finish.Usage.Input != 10 {
+		t.Errorf("expected input tokens 10, got %d", finish.Usage.Input)
+	}
+	if finish.Usage.Output != 5 {
+		t.Errorf("expected output tokens 5, got %d", finish.Usage.Output)
+	}
+}
+
+func TestStreamChat_ToolCalls(t *testing.T) {
+	sseEvents := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"loc"}}]}}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ation\":\"NY\"}"}}]}}]}
+data: {"choices":[{"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}
+data: [DONE]
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		events = append(events, e)
+		return nil
+	}
+
+	body := ChatRequest{
+		Model:    "gpt-4",
+		Stream:   true,
+		Messages: []ChatMessage{{Role: "user", Content: "weather?"}},
+	}
+
+	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var toolCalls []stream.ToolCall
+	for _, e := range events {
+		if tc, ok := e.(stream.ToolCall); ok {
+			toolCalls = append(toolCalls, tc)
+		}
+	}
+
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(toolCalls))
+	}
+	if toolCalls[0].ID != "call_1" {
+		t.Errorf("expected ID 'call_1', got %q", toolCalls[0].ID)
+	}
+	if toolCalls[0].Name != "get_weather" {
+		t.Errorf("expected Name 'get_weather', got %q", toolCalls[0].Name)
+	}
+}
+
+func TestStreamChat_ReasoningContent(t *testing.T) {
+	sseEvents := `data: {"choices":[{"delta":{"reasoning_content":"thinking..."}}]}
+data: {"choices":[{"delta":{"content":"Hello"}}]}
+data: {"choices":[{"finish_reason":"stop"}]}
+data: [DONE]
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		events = append(events, e)
+		return nil
+	}
+
+	body := ChatRequest{
+		Model:    "gpt-4",
+		Stream:   true,
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	}
+
+	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var thinking []string
+	var texts []string
+	for _, e := range events {
+		switch v := e.(type) {
+		case stream.ThinkingDelta:
+			thinking = append(thinking, v.Text)
+		case stream.TextDelta:
+			texts = append(texts, v.Text)
+		}
+	}
+
+	if len(thinking) != 1 || thinking[0] != "thinking..." {
+		t.Errorf("expected thinking 'thinking...', got %v", thinking)
+	}
+	if len(texts) != 1 || texts[0] != "Hello" {
+		t.Errorf("expected text 'Hello', got %v", texts)
+	}
+}
+
+func TestStreamChat_EmptyStream(t *testing.T) {
+	sseEvents := "data: [DONE]\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		events = append(events, e)
+		return nil
+	}
+
+	body := ChatRequest{
+		Model:    "gpt-4",
+		Stream:   true,
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	}
+
+	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var finish *stream.Finish
+	for _, e := range events {
+		if f, ok := e.(stream.Finish); ok {
+			finish = &f
+			break
+		}
+	}
+	if finish == nil {
+		t.Fatal("expected Finish event")
+	}
+}
+
+func TestStreamChat_Error429(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(429)
+		_, _ = w.Write([]byte(`{"error":"rate limited"}`))
+	}))
+	defer server.Close()
+
+	emit := func(e stream.Event) error { return nil }
+	body := ChatRequest{Model: "gpt-4", Stream: true, Messages: []ChatMessage{{Role: "user", Content: "hi"}}}
+
+	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	if err == nil {
+		t.Fatal("expected error for 429")
+	}
+	var re *RetryableError
+	if !as(err, &re) {
+		t.Fatalf("expected RetryableError, got %T: %v", err, err)
+	}
+	if re.Code != 429 {
+		t.Errorf("expected code 429, got %d", re.Code)
+	}
+}
+
+func TestStreamChat_Error500(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte("internal error"))
+	}))
+	defer server.Close()
+
+	emit := func(e stream.Event) error { return nil }
+	body := ChatRequest{Model: "gpt-4", Stream: true, Messages: []ChatMessage{{Role: "user", Content: "hi"}}}
+
+	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	if err == nil {
+		t.Fatal("expected error for 500")
+	}
+	var re *RetryableError
+	if !as(err, &re) {
+		t.Fatalf("expected RetryableError, got %T: %v", err, err)
+	}
+	if re.Code != 500 {
+		t.Errorf("expected code 500, got %d", re.Code)
+	}
+}
+
+func TestStreamChat_Error400(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		_, _ = w.Write([]byte("bad request"))
+	}))
+	defer server.Close()
+
+	emit := func(e stream.Event) error { return nil }
+	body := ChatRequest{Model: "gpt-4", Stream: true, Messages: []ChatMessage{{Role: "user", Content: "hi"}}}
+
+	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	// 400 is not retryable
+	var re *RetryableError
+	if as(err, &re) {
+		t.Error("400 should not be RetryableError")
+	}
+}
+
+func TestStreamChat_UsageAltFields(t *testing.T) {
+	sseEvents := `data: {"choices":[{"delta":{"content":"Hi"}}],"usage":{"input_tokens":10,"output_tokens":5}}
+data: [DONE]
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		events = append(events, e)
+		return nil
+	}
+
+	body := ChatRequest{
+		Model:    "gpt-4",
+		Stream:   true,
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	}
+
+	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var finish *stream.Finish
+	for _, e := range events {
+		if f, ok := e.(stream.Finish); ok {
+			finish = &f
+			break
+		}
+	}
+	if finish == nil {
+		t.Fatal("expected Finish event")
+	}
+	// input_tokens maps to Input, output_tokens maps to Output
+	if finish.Usage.Input != 10 {
+		t.Errorf("expected input 10, got %d", finish.Usage.Input)
+	}
+	if finish.Usage.Output != 5 {
+		t.Errorf("expected output 5, got %d", finish.Usage.Output)
+	}
+}
+
+// Test StreamGemini
+func TestStreamGemini_TextResponse(t *testing.T) {
+	sseEvents := `data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}
+data: [DONE]
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		events = append(events, e)
+		return nil
+	}
+
+	body := GeminiRequest{
+		Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}},
+		Stream:   true,
+	}
+
+	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
+	if err != nil {
+		t.Fatalf("StreamGemini: %v", err)
+	}
+
+	var texts []string
+	var finish stream.Finish
+	for _, e := range events {
+		switch v := e.(type) {
+		case stream.TextDelta:
+			texts = append(texts, v.Text)
+		case stream.Finish:
+			finish = v
+		}
+	}
+
+	if len(texts) != 1 || texts[0] != "Hello" {
+		t.Errorf("expected text 'Hello', got %v", texts)
+	}
+	if finish.Usage.Input != 10 {
+		t.Errorf("expected input 10, got %d", finish.Usage.Input)
+	}
+	if finish.Usage.Output != 5 {
+		t.Errorf("expected output 5, got %d", finish.Usage.Output)
+	}
+}
+
+func TestStreamGemini_ToolCalls(t *testing.T) {
+	sseEvents := `data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"NY"}}}]},"finishReason":"STOP"}]}
+data: [DONE]
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		events = append(events, e)
+		return nil
+	}
+
+	body := GeminiRequest{
+		Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "weather?"}}}},
+		Stream:   true,
+	}
+
+	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
+	if err != nil {
+		t.Fatalf("StreamGemini: %v", err)
+	}
+
+	var toolCalls []stream.ToolCall
+	for _, e := range events {
+		if tc, ok := e.(stream.ToolCall); ok {
+			toolCalls = append(toolCalls, tc)
+		}
+	}
+
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(toolCalls))
+	}
+	if toolCalls[0].Name != "get_weather" {
+		t.Errorf("expected name 'get_weather', got %q", toolCalls[0].Name)
+	}
+}
+
+func TestStreamGemini_EmptyStream(t *testing.T) {
+	sseEvents := "data: [DONE]\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		events = append(events, e)
+		return nil
+	}
+
+	body := GeminiRequest{
+		Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}},
+		Stream:   true,
+	}
+
+	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
+	if err != nil {
+		t.Fatalf("StreamGemini: %v", err)
+	}
+
+	var finish *stream.Finish
+	for _, e := range events {
+		if f, ok := e.(stream.Finish); ok {
+			finish = &f
+			break
+		}
+	}
+	if finish == nil {
+		t.Fatal("expected Finish event")
+	}
+	if finish.Reason != "stop" {
+		t.Errorf("expected reason 'stop', got %q", finish.Reason)
+	}
+}
+
+func TestStreamGemini_Error429(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "20")
+		w.WriteHeader(429)
+		_, _ = w.Write([]byte(`{"error":"rate limited"}`))
+	}))
+	defer server.Close()
+
+	emit := func(e stream.Event) error { return nil }
+	body := GeminiRequest{Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}}, Stream: true}
+
+	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
+	if err == nil {
+		t.Fatal("expected error for 429")
+	}
+	var re *RetryableError
+	if !as(err, &re) {
+		t.Fatalf("expected RetryableError, got %T: %v", err, err)
+	}
+	if re.Code != 429 {
+		t.Errorf("expected code 429, got %d", re.Code)
+	}
+}
+
+func TestStreamGemini_Error500(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte("server error"))
+	}))
+	defer server.Close()
+
+	emit := func(e stream.Event) error { return nil }
+	body := GeminiRequest{Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}}, Stream: true}
+
+	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
+	if err == nil {
+		t.Fatal("expected error for 500")
+	}
+	var re *RetryableError
+	if !as(err, &re) {
+		t.Fatalf("expected RetryableError, got %T: %v", err, err)
+	}
+	if re.Code != 500 {
+		t.Errorf("expected code 500, got %d", re.Code)
+	}
+}
+
+func TestStreamGemini_Error400(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		_, _ = w.Write([]byte("bad request"))
+	}))
+	defer server.Close()
+
+	emit := func(e stream.Event) error { return nil }
+	body := GeminiRequest{Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}}, Stream: true}
+
+	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	// 400 is not retryable
+	var re *RetryableError
+	if as(err, &re) {
+		t.Error("400 should not be RetryableError")
+	}
+}
+
+// Helper to wrap errors.As for testing
+func as(err error, target any) bool {
+	switch t := target.(type) {
+	case **RetryableError:
+		if re, ok := err.(*RetryableError); ok {
+			*t = re
+			return true
+		}
+	}
+	return false
+}
