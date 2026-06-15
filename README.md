@@ -1,6 +1,6 @@
-# tyci-agent
+# tyci
 
-**tyci-agent** is a CLI tool that runs AI agents powered by large language models (LLMs).
+**tyci** is a CLI tool that runs AI agents powered by large language models (LLMs).
 It provides a multi-turn agent loop with tool execution, session persistence, streaming responses,
 and a rich TUI — all configurable through a simple JSON model registry.
 
@@ -13,7 +13,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 - **Session persistence** — automatic save/resume of conversations (JSONL)
 - **Streaming** — real-time thought, text, and tool output streaming
 - **Agent configuration** — named agent presets with model and fallback assignments
-- **Provider registration** — `tyci-agent connect` CLI to add providers without editing JSON manually
+- **Provider registration** — `tyci connect` CLI to add providers without editing JSON manually
 
 ## Installation
 
@@ -38,7 +38,7 @@ make release
 make minimal
 ```
 
-The binary is named `tyci-agent` in the current directory.
+The binary is named `tyci` in the current directory.
 
 ### Install to ~/local/bin
 
@@ -57,7 +57,7 @@ and base URL.
 Example using the `connect` subcommand:
 
 ```bash
-tyci-agent connect \
+tyci connect \
   --name my-provider \
   --api openai \
   --url https://api.example.com/v1 \
@@ -84,16 +84,16 @@ Supported API types: `openai`, `anthropic`, `gemini`, `responses`.
 
 ```bash
 # One-shot prompt
-tyci-agent --model my-provider/my-model --prompt "What is the capital of France?"
+tyci --model my-provider/my-model --prompt "What is the capital of France?"
 
 # Interactive session
-tyci-agent --model my-provider/my-model --mode interactive
+tyci --model my-provider/my-model --mode interactive
 
 # TUI mode (rich terminal UI)
-tyci-agent --model my-provider/my-model --mode tui
+tyci --model my-provider/my-model --mode tui
 
 # Use agent presets
-tyci-agent --agent my-agent --prompt "Hello"
+tyci --agent my-agent --prompt "Hello"
 ```
 
 ## Directory Layout
@@ -127,12 +127,12 @@ tyci-agent --agent my-agent --prompt "Hello"
 
 ### Subcommands
 
-#### `tyci-agent connect`
+#### `tyci connect`
 
 Register a new provider in `~/.tyci/model.json`.
 
 ```bash
-tyci-agent connect --name <name> --api <type> --url <url> --token <token>
+tyci connect --name <name> --api <type> --url <url> --token <token>
 ```
 
 - `--name` — Provider name (e.g. `my-provider`)
@@ -140,16 +140,16 @@ tyci-agent connect --name <name> --api <type> --url <url> --token <token>
 - `--url` — API base URL
 - `--token` — API key or `$ENV_VAR` reference
 
-#### `tyci-agent agent`
+#### `tyci agent`
 
 Manage named agent configurations.
 
 ```bash
-tyci-agent agent list                          # List all agents
-tyci-agent agent get <name>                    # Show agent model assignment
-tyci-agent agent set <name> --model <model>    # Assign model to agent
-tyci-agent agent delete <name>                 # Remove agent
-tyci-agent agent set-fallback <name> --model <m1> [--model <m2> ...]  # Set fallback models
+tyci agent list                          # List all agents
+tyci agent get <name>                    # Show agent model assignment
+tyci agent set <name> --model <model>    # Assign model to agent
+tyci agent delete <name>                 # Remove agent
+tyci agent set-fallback <name> --model <m1> [--model <m2> ...]  # Set fallback models
 ```
 
 ### Display Modes
@@ -184,7 +184,7 @@ Each line is a complete event (message, tool call, result, usage).
 ### Project Structure
 
 ```
-tyci-agent/
+tyci/
 ├── agent/            # Agent loop, message management, iteration logic
 ├── api/              # HTTP client, retry logic, streaming helpers
 ├── display/          # Display interfaces and implementations (terminal, TUI)

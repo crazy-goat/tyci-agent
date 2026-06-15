@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/decodo/tyci-agent/internal/tyciconfig"
+	"github.com/decodo/tyci/internal/tyciconfig"
 )
 
 type uriEntry struct {

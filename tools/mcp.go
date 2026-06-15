@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/decodo/tyci-agent/internal/mcp"
+	"github.com/decodo/tyci/internal/mcp"
 )
 
 // MCPToolRunner routes tool calls to MCP servers.

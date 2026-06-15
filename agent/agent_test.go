@@ -9,9 +9,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci-agent/providers"
-	"github.com/decodo/tyci-agent/session"
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/session"
+	"github.com/decodo/tyci/stream"
 )
 
 // silentDisplay is a minimal Display implementation for tests.

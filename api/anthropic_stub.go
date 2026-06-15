@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 func StreamAnthropic(ctx context.Context, _ string, _ string, _ AnthropicRequest, _ func(stream.Event) error) error {

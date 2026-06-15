@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.ToolCall) []string {

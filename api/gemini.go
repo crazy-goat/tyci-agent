@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/decodo/tyci-agent/internal/debug"
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/internal/debug"
+	"github.com/decodo/tyci/stream"
 )
 
 // geminiPartRaw is used for unmarshalling SSE parts with unknown structure.

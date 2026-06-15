@@ -173,7 +173,7 @@ func TestInitializeRequest(t *testing.T) {
 	if params.ProtocolVersion != "2024-11-05" {
 		t.Errorf("expected protocol version '2024-11-05', got %q", params.ProtocolVersion)
 	}
-	if params.ClientInfo.Name != "tyci-agent" {
-		t.Errorf("expected client name 'tyci-agent', got %q", params.ClientInfo.Name)
+	if params.ClientInfo.Name != "tyci" {
+		t.Errorf("expected client name 'tyci', got %q", params.ClientInfo.Name)
 	}
 }

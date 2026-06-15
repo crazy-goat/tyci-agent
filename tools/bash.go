@@ -10,7 +10,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 // exitCodeHint returns a human-readable description for common exit codes.

@@ -1,4 +1,4 @@
-module github.com/decodo/tyci-agent
+module github.com/decodo/tyci
 
 go 1.25.0
 

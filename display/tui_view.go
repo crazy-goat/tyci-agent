@@ -33,7 +33,7 @@ func (m TuiModel) View() string {
 		w := max(10, m.width-2)
 		msg := lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
 			Foreground(lipgloss.Color("240")).
-			Render("tyci-agent TUI\nType a message, Enter to send\nCtrl+C to quit\nTab/Shift+Tab: switch model\n/model: pick model\nClick tool block to expand/collapse\nDrag to select and copy text\nSet TYCI_TUI_MOUSE=0 for native terminal selection")
+			Render("tyci TUI\nType a message, Enter to send\nCtrl+C to quit\nTab/Shift+Tab: switch model\n/model: pick model\nClick tool block to expand/collapse\nDrag to select and copy text\nSet TYCI_TUI_MOUSE=0 for native terminal selection")
 		b.WriteString(msg)
 		b.WriteString("\n")
 		msgHeight--

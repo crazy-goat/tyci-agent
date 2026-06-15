@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci-agent/agent"
+	"github.com/decodo/tyci/agent"
 )
 
 func runAgentSubcommand(args []string) {
@@ -22,7 +22,7 @@ func runAgentSubcommand(args []string) {
 
 	case "get":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent agent get <name>")
+			fmt.Fprintln(os.Stderr, "Usage: tyci agent get <name>")
 			os.Exit(1)
 		}
 		name := args[1]
@@ -42,7 +42,7 @@ func runAgentSubcommand(args []string) {
 
 	case "set":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent agent set <name> --model=\"provider/model\"")
+			fmt.Fprintln(os.Stderr, "Usage: tyci agent set <name> --model=\"provider/model\"")
 			os.Exit(1)
 		}
 		name := args[1]
@@ -72,7 +72,7 @@ func runAgentSubcommand(args []string) {
 
 	case "delete":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent agent delete <name>")
+			fmt.Fprintln(os.Stderr, "Usage: tyci agent delete <name>")
 			os.Exit(1)
 		}
 		name := args[1]
@@ -84,7 +84,7 @@ func runAgentSubcommand(args []string) {
 
 	case "set-fallback":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent agent set-fallback <name> --model <fallback1> [--model <fallback2> ...]")
+			fmt.Fprintln(os.Stderr, "Usage: tyci agent set-fallback <name> --model <fallback1> [--model <fallback2> ...]")
 			os.Exit(1)
 		}
 		name := args[1]
@@ -119,7 +119,7 @@ func runAgentSubcommand(args []string) {
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown agent subcommand: %q\n", cmd)
-		fmt.Fprintln(os.Stderr, "Usage: tyci-agent agent [list|get|set|delete|set-fallback]")
+		fmt.Fprintln(os.Stderr, "Usage: tyci agent [list|get|set|delete|set-fallback]")
 		os.Exit(1)
 	}
 }

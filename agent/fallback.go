@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci-agent/api"
-	"github.com/decodo/tyci-agent/display"
-	"github.com/decodo/tyci-agent/providers"
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/display"
+	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/stream"
 )
 
 type fallbackState struct {

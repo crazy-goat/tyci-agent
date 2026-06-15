@@ -2,7 +2,7 @@
 
 > **For agentic workers:** Implementacja task po tasku bez subagentów - proste pliki.
 
-**Goal:** Dodanie tooli (read, write, edit, bash) do tyci-agent z wymianą przez stdin/stdout pipe.
+**Goal:** Dodanie tooli (read, write, edit, bash) do tyci z wymianą przez stdin/stdout pipe.
 
 **Architecture:** CLI przyjmuje JSON z stdin, wykonuje tool, zwraca JSON przez stdout. Tool wywoływany przez AI jako subprocess.
 
@@ -13,7 +13,7 @@
 ## File Structure
 
 ```
-tyci-agent/
+tyci/
 ├── main.go           # rozszerzony o tool execution
 ├── tools/
 │   ├── tool.go     # interfejs Tool
@@ -261,7 +261,7 @@ import (
     "os"
     "fmt"
 
-    "github.com/decodo/tyci-agent/tools"
+    "github.com/decodo/tyci/tools"
 )
 
 func main() {
@@ -311,20 +311,20 @@ git add main.go && git commit -m "feat: integrate tools in main.go"
 - [ ] **Step 1: Build**
 
 ```bash
-cd /home/decodo/work/tyci-agent && go build -o tyci-agent .
+cd /home/decodo/work/tyci && go build -o tyci .
 ```
 
 - [ ] **Step 2: Test read**
 
 ```bash
-echo '{"type":"read","input":{"path":"main.go"}}' | ./tyci-agent
+echo '{"type":"read","input":{"path":"main.go"}}' | ./tyci
 # Expected: {"type":"result","success":true,"content":"..."}
 ```
 
 - [ ] **Step 3: Test write**
 
 ```bash
-echo '{"type":"write","input":{"path":"/tmp/test.txt","content":"hello"}}' | ./tyci-agent
+echo '{"type":"write","input":{"path":"/tmp/test.txt","content":"hello"}}' | ./tyci
 # Expected: {"type":"result","success":true}
 ```
 
@@ -339,7 +339,7 @@ git add -A && git commit -m "feat: tools implementation complete"
 ## Verification
 
 ```bash
-echo '{"type":"read","input":{"path":"main.go"}}' | ./tyci-agent | jq .
-echo '{"type":"write","input":{"path":"/tmp/test.txt","content":"test"}}' | ./tyci-agent | jq .
-echo '{"type":"bash","input":{"command":"echo hi"}}' | ./tyci-agent | jq .
+echo '{"type":"read","input":{"path":"main.go"}}' | ./tyci | jq .
+echo '{"type":"write","input":{"path":"/tmp/test.txt","content":"test"}}' | ./tyci | jq .
+echo '{"type":"bash","input":{"command":"echo hi"}}' | ./tyci | jq .
 ```

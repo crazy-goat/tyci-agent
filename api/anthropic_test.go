@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 func TestConvertToolsToAnthropic_Null(t *testing.T) {

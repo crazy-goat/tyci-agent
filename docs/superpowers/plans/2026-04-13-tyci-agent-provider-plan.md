@@ -1,8 +1,8 @@
-# tyci-agent Provider Architecture - Implementation Plan
+# tyci Provider Architecture - Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Refaktor `tyci-agent` na provider-based architecture z osobnymi providerami dla Zen, Anthropic i OpenAI.
+**Goal:** Refaktor `tyci` na provider-based architecture z osobnymi providerami dla Zen, Anthropic i OpenAI.
 
 **Architecture:** Każdy provider jest osobnym pakietem Go w `providers/<name>/`. Wspólny interfejs `Provider` definiuje zachowanie. Na starcie rejestr iteruje po providerach i buduje listę dostępnych modeli.
 
@@ -13,7 +13,7 @@
 ## File Structure
 
 ```
-tyci-agent/
+tyci/
 ├── main.go                          # refactor: use providers
 ├── go.mod                           # unchanged
 ├── providers/
@@ -190,7 +190,7 @@ import (
     "net/http"
     "strings"
 
-    "github.com/decodo/tyci-agent/providers"
+    "github.com/decodo/tyci/providers"
 )
 
 const baseURL = "https://opencode.ai/zen/go"
@@ -338,7 +338,7 @@ import (
     "os"
     "strings"
 
-    "github.com/decodo/tyci-agent/providers"
+    "github.com/decodo/tyci/providers"
 )
 
 const baseURL = "https://opencode.ai/zen/go"
@@ -483,7 +483,7 @@ import (
     "fmt"
     "os"
 
-    "github.com/decodo/tyci-agent/providers"
+    "github.com/decodo/tyci/providers"
 )
 
 type provider struct{}
@@ -540,10 +540,10 @@ import (
     "strings"
     "syscall"
 
-    "github.com/decodo/tyci-agent/providers"
-    _ "github.com/decodo/tyci-agent/providers/zen"
-    _ "github.com/decodo/tyci-agent/providers/anthropic"
-    _ "github.com/decodo/tyci-agent/providers/openai"
+    "github.com/decodo/tyci/providers"
+    _ "github.com/decodo/tyci/providers/zen"
+    _ "github.com/decodo/tyci/providers/anthropic"
+    _ "github.com/decodo/tyci/providers/openai"
 )
 
 func main() {
@@ -638,8 +638,8 @@ func (h *writerHandler) Error(err error) {
 - [ ] **Step 2: Build and test**
 
 ```bash
-cd /home/decodo/work/tyci-agent && go build -o tyci-agent .
-./tyci-agent --list
+cd /home/decodo/work/tyci && go build -o tyci .
+./tyci --list
 ```
 
 Expected output:
@@ -668,7 +668,7 @@ git commit -m "refactor: use provider architecture"
 Current main.go needs `bufio` import for bufio.NewReader in providers. Check if Go build passes:
 
 ```bash
-cd /home/decodo/work/tyci-agent && go build -o tyci-agent .
+cd /home/decodo/work/tyci && go build -o tyci .
 ```
 
 If there are issues, fix them.
@@ -686,7 +686,7 @@ git add main.go && git commit -m "fix: ensure all imports in main.go"
 After all tasks:
 
 ```bash
-cd /home/decodo/work/tyci-agent && go build -o tyci-agent . && ./tyci-agent --list
+cd /home/decodo/work/tyci && go build -o tyci . && ./tyci --list
 go vet ./...
 go fmt ./...
 ```

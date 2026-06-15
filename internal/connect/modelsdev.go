@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/decodo/tyci-agent/internal/tyciconfig"
+	"github.com/decodo/tyci/internal/tyciconfig"
 )
 
 // ModelsDevProvider represents a provider from models.dev API.

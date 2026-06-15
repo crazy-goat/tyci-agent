@@ -8,10 +8,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci-agent/display"
-	"github.com/decodo/tyci-agent/internal/readline"
-	"github.com/decodo/tyci-agent/stream"
-	"github.com/decodo/tyci-agent/tools"
+	"github.com/decodo/tyci/display"
+	"github.com/decodo/tyci/internal/readline"
+	"github.com/decodo/tyci/stream"
+	"github.com/decodo/tyci/tools"
 	"golang.org/x/term"
 )
 
