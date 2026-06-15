@@ -84,7 +84,7 @@ func runInteractivePTY(t *testing.T) (*os.File, *exec.Cmd) {
 
 	master, slave := openPTY(t)
 
-	cmd := exec.Command(binPath, "--mode", "interactive", "--model", "test-provider/test-model", "--no-session", "--history-file", "/dev/null")
+	cmd := exec.Command(binPath, "console", "--model", "test-provider/test-model", "--no-session", "--history-file", "/dev/null")
 	cmd.Env = testEnv("TERM=xterm-256color")
 	cmd.Stdin = slave
 	cmd.Stdout = slave

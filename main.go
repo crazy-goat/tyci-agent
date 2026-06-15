@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/api"
@@ -117,59 +119,112 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "agent" {
-		runAgentSubcommand(os.Args[2:])
-		return
-	}
-
-	if len(os.Args) > 1 && os.Args[1] == "provider" {
-		if len(os.Args) > 2 && os.Args[2] == "auth" {
-			runProviderAuth(os.Args[3:])
-		} else if len(os.Args) > 2 && os.Args[2] == "add" {
-			runProviderAdd(os.Args[3:])
-		} else if len(os.Args) > 2 && os.Args[2] == "refresh" {
-			runProviderRefresh(os.Args[3:])
-		} else if len(os.Args) > 2 {
-			fmt.Fprintf(os.Stderr, "Unknown provider subcommand: %q\n", os.Args[2])
-			fmt.Fprintln(os.Stderr, "Usage: tyci provider [auth|add|refresh]")
-			os.Exit(1)
-		} else {
-			fmt.Fprintln(os.Stderr, "Usage: tyci provider [auth|add|refresh]")
-			os.Exit(1)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "agent":
+			runAgentSubcommand(os.Args[2:])
+			return
+		case "provider":
+			handleProviderSubcommand(os.Args[2:])
+			return
+		case "run", "console", "tui":
+			if err := runSubcommand(os.Args[1], os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "-h", "--help", "help":
+			printUsage(os.Stdout)
+			return
 		}
-		return
 	}
 
+	if hasFlags(os.Args[1:]) {
+		fmt.Fprintln(os.Stderr, "Error: a subcommand is required (run, console, tui, agent, provider).")
+		printUsage(os.Stderr)
+		os.Exit(1)
+	}
+	printUsage(os.Stdout)
+}
+
+func handleProviderSubcommand(args []string) {
+	if len(args) > 0 && args[0] == "auth" {
+		runProviderAuth(args[1:])
+		return
+	}
+	if len(args) > 0 && args[0] == "add" {
+		runProviderAdd(args[1:])
+		return
+	}
+	if len(args) > 0 && args[0] == "refresh" {
+		runProviderRefresh(args[1:])
+		return
+	}
+	if len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "Unknown provider subcommand: %q\n", args[0])
+		fmt.Fprintln(os.Stderr, "Usage: tyci provider [auth|add|refresh]")
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, "Usage: tyci provider [auth|add|refresh]")
+	os.Exit(1)
+}
+
+func hasFlags(args []string) bool {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			return true
+		}
+	}
+	return false
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprintf(w, "Usage: tyci <subcommand> [flags]\n\n")
+	fmt.Fprintln(w, "Subcommands:")
+	fmt.Fprintln(w, "  run              One-shot run with a single --prompt (minimal display)")
+	fmt.Fprintln(w, "  console          Interactive REPL with readline, history, slash commands")
+	fmt.Fprintln(w, "  tui              Bubble Tea TUI with model picker, split-pane, mouse support")
+	fmt.Fprintln(w, "  agent            Manage agent configurations (list|get|set|delete|set-fallback)")
+	fmt.Fprintln(w, "  provider add     Add a provider with auth and connectivity check")
+	fmt.Fprintln(w, "  provider refresh Import models from models.dev")
+	fmt.Fprintln(w, "  provider auth    Manage API keys in ~/.tyci/auth.json")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Common flags (run, console, tui):")
+	fmt.Fprintln(w, "  --model <provider/model>   Model to use")
+	fmt.Fprintln(w, "  --agent <name>             Use agent preset (from ~/.tyci/agents.json)")
+	fmt.Fprintln(w, "  --prompt <text>            Prompt text (required for `run`)")
+	fmt.Fprintln(w, "  --max-retries <n>          Max retries on transient errors (default 5)")
+	fmt.Fprintln(w, "  --max-iterations <n>       Max tool-call iterations (-1 = unlimited)")
+	fmt.Fprintln(w, "  --debug                    Show HTTP request/response data")
+	fmt.Fprintln(w, "  --no-debug                 Disable debug logging")
+	fmt.Fprintln(w, "  --session <path>           Session file path")
+	fmt.Fprintln(w, "  --no-session               Disable session persistence")
+	fmt.Fprintln(w, "  --history-file <path>      Path to readline history file")
+}
+
+func runSubcommand(kind string, args []string) error {
 	providers.RegisterProvidersFromConfig(filepath.Join(os.Getenv("HOME"), ".tyci", "model.json"))
 
-	var interactiveFlag bool
-	noDebugFlag := flag.Bool("no-debug", false, "Disable API request/response debug logging")
-	debugFlag := flag.Bool("debug", false, "Show HTTP request/response data")
-	modelFlag := flag.String("model", "", "Model to use (format: provider/model)")
-	agentFlag := flag.String("agent", "", "Agent name to use for default model (from agents config)")
-	promptFlag := flag.String("prompt", "", "Prompt for response")
-	maxRetriesFlag := flag.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
-	maxIterationsFlag := flag.Int("max-iterations", -1, "Max tool-call iterations (-1 = unlimited)")
-	historyFileFlag := flag.String("history-file", "", "Path to history file (default: ~/.tyci/history)")
-	modeFlag := flag.String("mode", "interactive", "Display mode: minimal, normal, interactive, tui")
-	sessionFlag := flag.String("session", "", "Session file path (default: auto-generated in ~/.tyci/sessions/)")
-	noSessionFlag := flag.Bool("no-session", false, "Disable session persistence")
+	fs := flag.NewFlagSet("tyci "+kind, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	noDebugFlag := fs.Bool("no-debug", false, "Disable API request/response debug logging")
+	debugFlag := fs.Bool("debug", false, "Show HTTP request/response data")
+	modelFlag := fs.String("model", "", "Model to use (format: provider/model)")
+	agentFlag := fs.String("agent", "", "Agent name to use for default model (from agents config)")
+	promptFlag := fs.String("prompt", "", "Prompt for response (required for `run`)")
+	maxRetriesFlag := fs.Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
+	maxIterationsFlag := fs.Int("max-iterations", -1, "Max tool-call iterations (-1 = unlimited)")
+	historyFileFlag := fs.String("history-file", "", "Path to history file (default: ~/.tyci/history)")
+	sessionFlag := fs.String("session", "", "Session file path (default: auto-generated in ~/.tyci/sessions/)")
+	noSessionFlag := fs.Bool("no-session", false, "Disable session persistence")
 
-	flag.Usage = func() {
-		_, _ = fmt.Fprintf(os.Stdout, "Usage: tyci [flags] (--prompt <prompt>)\n")
-		_, _ = fmt.Fprintf(os.Stdout, "       tyci agent [list|get|set|delete|set-fallback]\n")
-		_, _ = fmt.Fprintf(os.Stdout, "       tyci provider add <name> --url <url> --token <key>\n")
-		_, _ = fmt.Fprintf(os.Stdout, "       tyci provider refresh [--provider p1,p2] [--dry-run]\n")
-		_, _ = fmt.Fprintf(os.Stdout, "       tyci provider auth [set|get|list|rm]\n\n")
-		_, _ = fmt.Fprintf(os.Stdout, "Subcommands:\n")
-		_, _ = fmt.Fprintf(os.Stdout, "  agent           Manage agent configurations (model assignments)\n")
-		_, _ = fmt.Fprintf(os.Stdout, "  provider add    Add a provider with auth and connectivity check\n")
-		_, _ = fmt.Fprintf(os.Stdout, "  provider refresh Import models from models.dev\n")
-		_, _ = fmt.Fprintf(os.Stdout, "  provider auth   Manage API keys in ~/.tyci/auth.json\n\n")
-		_, _ = fmt.Fprintf(os.Stdout, "Flags:\n")
-		flag.PrintDefaults()
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-	flag.Parse()
+
+	if kind == "run" && *promptFlag == "" {
+		return fmt.Errorf("Error: `tyci run` requires --prompt")
+	}
 
 	var historyFile string
 	if *historyFileFlag != "" {
@@ -184,27 +239,19 @@ func main() {
 
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: *maxRetriesFlag, BaseBackoff: 4, MaxBackoff: 128}
 
-	// If neither --prompt nor --interactive mode given, or --prompt is empty, just exit cleanly
-	if *modeFlag != "interactive" && *modeFlag != "tui" && *promptFlag == "" {
-		return
-	}
-
 	model := *modelFlag
 	if model == "" {
 		model = agent.ResolveModel("", *agentFlag)
 	}
 	if model == "" {
-		fmt.Fprintf(os.Stderr, "Error: no model specified. Use --model, --agent, or configure a default agent.\n")
-		os.Exit(1)
+		return fmt.Errorf("Error: no model specified. Use --model, --agent, or configure a default agent.")
 	}
 
 	provider, modelName, ok := providers.FindModel(model)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Error: model %q not found\n", model)
-		os.Exit(1)
+		return fmt.Errorf("Error: model %q not found", model)
 	}
 
-	// Resolve fallback models for the agent
 	var fallbackModels []string
 	agentName := *agentFlag
 	if agentName == "" {
@@ -229,17 +276,14 @@ func main() {
 	}
 
 	var disp display.Display
-	mode := *modeFlag
-	switch mode {
-	case "minimal":
+	interactiveFlag := false
+	switch kind {
+	case "run":
 		disp = display.NewMinimal()
-	case "normal":
-		disp = display.NewTerminal()
-	case "interactive":
+	case "console":
 		interactiveFlag = true
 		disp = display.NewTerminal()
 	case "tui":
-		// Build list of all available models for Tab switching and model picker
 		var allModels []string
 		var allProviderModels []display.ProviderModels
 		for _, p := range providers.ListProviders() {
@@ -259,9 +303,6 @@ func main() {
 		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels)
 		disp = tuiDisp
 		interactiveFlag = true
-	default:
-		fmt.Fprintf(os.Stderr, "Error: unknown mode %q (expected minimal, normal, interactive, or tui)\n", mode)
-		os.Exit(1)
 	}
 
 	cfg := agent.Config{
@@ -277,7 +318,6 @@ func main() {
 	}
 	tools.SetSubAgentRunner(&agentRunner{})
 
-	// Session setup
 	wd, _ := os.Getwd()
 	var sess *session.Session
 	var sessionPath string
@@ -308,10 +348,11 @@ func main() {
 		} else {
 			runInteractive(provider, modelName, disp, historyFile, cfg, ctx, sessionPath)
 		}
-		return
+		return nil
 	}
 
 	runPrompt(provider, disp, *promptFlag, cfg, ctx, sess, sessionPath)
+	return nil
 }
 
 

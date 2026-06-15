@@ -9,7 +9,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 - **Multi-provider support** — OpenAI-compatible, Anthropic, Gemini, and custom API types
 - **Agent loop** — model calls, tool execution, iteration, fallback models
 - **Tool system** — built-in tools: `bash`, `glob`, `grep`, `read`, `write`, `edit`, `todo`, `subagent`
-- **Display modes** — `minimal`, `normal`, `interactive`, `tui` (Bubble Tea terminal UI)
+- **Run modes** — `run` (one-shot, minimal), `console` (interactive REPL), `tui` (Bubble Tea UI)
 - **Session persistence** — automatic save/resume of conversations (JSONL)
 - **Streaming** — real-time thought, text, and tool output streaming
 - **Agent configuration** — named agent presets with model and fallback assignments
@@ -83,17 +83,17 @@ Supported API types: `openai`, `anthropic`, `gemini`, `responses`.
 ### 2. Run the agent
 
 ```bash
-# One-shot prompt
-tyci --model my-provider/my-model --prompt "What is the capital of France?"
+# One-shot prompt (minimal display)
+tyci run --model my-provider/my-model --prompt "What is the capital of France?"
 
-# Interactive session
-tyci --model my-provider/my-model --mode interactive
+# Interactive REPL with history and slash commands
+tyci console --model my-provider/my-model
 
-# TUI mode (rich terminal UI)
-tyci --model my-provider/my-model --mode tui
+# Rich TUI (Bubble Tea)
+tyci tui --model my-provider/my-model
 
 # Use agent presets
-tyci --agent my-agent --prompt "Hello"
+tyci run --agent my-agent --prompt "Hello"
 ```
 
 ## Directory Layout
@@ -109,14 +109,23 @@ tyci --agent my-agent --prompt "Hello"
 
 ## CLI Reference
 
-### Global Flags
+### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `tyci run` | One-shot run with a single `--prompt` (minimal display) |
+| `tyci console` | Interactive REPL with readline, history, slash commands |
+| `tyci tui` | Bubble Tea TUI with model picker, split-pane, mouse support |
+| `tyci agent` | Manage agent configurations (list/get/set/delete/set-fallback) |
+| `tyci provider` | Manage providers and auth (add/refresh/auth) |
+
+### Common Flags (run, console, tui)
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--model` | `""` | Model to use (format: `provider/model`) |
 | `--agent` | `""` | Agent name for default model (from `~/.tyci/agents.json`) |
-| `--prompt` | `""` | Prompt for a one-shot response |
-| `--mode` | `interactive` | Display mode: `minimal`, `normal`, `interactive`, `tui` |
+| `--prompt` | `""` | Prompt for a one-shot response (required for `run`) |
 | `--max-retries` | `5` | Max retries on transient errors (0 to disable) |
 | `--max-iterations` | `-1` | Max tool-call iterations (-1 = unlimited) |
 | `--history-file` | `""` | Path to history file (default: `~/.tyci/history`) |
@@ -124,21 +133,6 @@ tyci --agent my-agent --prompt "Hello"
 | `--no-session` | `false` | Disable session persistence |
 | `--debug` | `false` | Show HTTP request/response data |
 | `--no-debug` | `false` | Disable API request/response debug logging |
-
-### Subcommands
-
-#### `tyci connect`
-
-Register a new provider in `~/.tyci/model.json`.
-
-```bash
-tyci connect --name <name> --api <type> --url <url> --token <token>
-```
-
-- `--name` — Provider name (e.g. `my-provider`)
-- `--api` — API type: `openai`, `anthropic`, `gemini`, `responses`
-- `--url` — API base URL
-- `--token` — API key or `$ENV_VAR` reference
 
 #### `tyci agent`
 
@@ -151,13 +145,6 @@ tyci agent set <name> --model <model>    # Assign model to agent
 tyci agent delete <name>                 # Remove agent
 tyci agent set-fallback <name> --model <m1> [--model <m2> ...]  # Set fallback models
 ```
-
-### Display Modes
-
-- **minimal** — Plain text output, no decorations
-- **normal** — Colored terminal output with basic formatting
-- **interactive** — Full interactive readline session (line editing, history)
-- **tui** — Bubble Tea TUI with split-pane, model picker, mouse support
 
 ## Session Management
 

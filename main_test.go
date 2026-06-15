@@ -85,14 +85,15 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestEmptyPromptExitsZero(t *testing.T) {
-	cmd := exec.Command(binPath, "--prompt", "")
+func TestRunRequiresPrompt(t *testing.T) {
+	cmd := exec.Command(binPath, "run", "--prompt", "")
 	cmd.Env = testEnv()
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			t.Fatalf("exit code %d, stderr: %s", exitErr.ExitCode(), exitErr.Stderr)
-		}
-		t.Fatalf("unexpected error: %v", err)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected error for `run` without --prompt")
+	}
+	if !strings.Contains(string(out), "requires --prompt") {
+		t.Errorf("output should mention 'requires --prompt', got: %s", string(out))
 	}
 }
 
@@ -124,7 +125,7 @@ func TestHelpExitsZero(t *testing.T) {
 
 func TestInteractiveModelNotExistError(t *testing.T) {
 	// Non-existent model should print error and exit
-	cmd := exec.Command(binPath, "--mode", "interactive", "--model", "nonexistent/model")
+	cmd := exec.Command(binPath, "console", "--model", "nonexistent/model")
 	cmd.Env = testEnv()
 	out, err := cmd.CombinedOutput()
 	if err == nil {
