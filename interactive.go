@@ -40,6 +40,7 @@ func runInteractive(provider providers.Provider, modelName string, disp display.
 }
 
 func (s *interactiveState) init() {
+	fmt.Print("\033[2J\033[H")
 	s.replaySession()
 	if s.historyFile == "" {
 		return
@@ -138,6 +139,12 @@ func (s *interactiveState) handleCommand(line string, cancel context.CancelFunc)
 	case "/new":
 		cancel()
 		s.conversation = nil
+		s.display.End()
+		if s.totalUsage.Input > 0 || s.totalUsage.Output > 0 {
+			fmt.Fprintf(os.Stderr, "───── new conversation ─────\n")
+			line := "📊 Session total: " + display.BuildUsageLineNoTiming(s.totalUsage)
+			fmt.Fprintf(os.Stderr, "%s\n", line)
+		}
 		fmt.Print("\033[2J\033[H")
 		return false, true
 	}

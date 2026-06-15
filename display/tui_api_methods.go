@@ -139,7 +139,7 @@ func (t *TUI) Reset() {
 // Timing stats (t=, ttft=, tok/s) are per-request and not meaningful for
 // session totals, so we build the line manually without them.
 func (t *TUI) ShowTotalUsage(usage stream.Usage) {
-	line := buildUsageLineNoTiming(usage)
+	line := BuildUsageLineNoTiming(usage)
 	t.post(tuiMsgBlock{kind: "block", content: "───── new conversation ─────"})
 	t.post(tuiMsgBlock{kind: "block", content: "📊 Session total: " + line})
 }

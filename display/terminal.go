@@ -289,6 +289,13 @@ func (t *Terminal) End() {
 	t.closeBlock()
 }
 
+// Reset closes any open block and resets the display state to pristine.
+// Used by /new to clear the screen and start fresh.
+func (t *Terminal) Reset() {
+	t.closeBlock()
+	fmt.Print("\033[2J\033[H")
+}
+
 // wrapText splits long lines into multiple lines to fit within maxWidth.
 // startCol is the number of columns already used on the first line (e.g., prompt).
 // It preserves ANSI escape sequences and adds clearLine after each newline.

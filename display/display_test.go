@@ -883,7 +883,7 @@ func TestTerminal_ToolBlock_ExitCodeZero(t *testing.T) {
 	_ = stdout
 }
 
-// ─── Tests for buildUsageLineNoTiming ───────────────────────────────────
+// ─── Tests for BuildUsageLineNoTiming ───────────────────────────────────
 
 // hasTiming checks if a line contains timing stats (t=, ttft=, tok/s).
 // We check for " t=" (space + t=) to avoid false match on "out=".
@@ -892,7 +892,7 @@ func hasTiming(line string) bool {
 }
 
 func TestBuildUsageLineNoTiming_Zero(t *testing.T) {
-	line := buildUsageLineNoTiming(stream.Usage{})
+	line := BuildUsageLineNoTiming(stream.Usage{})
 	expected := "in=0 out=0"
 	if line != expected {
 		t.Errorf("expected %q, got %q", expected, line)
@@ -903,7 +903,7 @@ func TestBuildUsageLineNoTiming_Zero(t *testing.T) {
 }
 
 func TestBuildUsageLineNoTiming_WithCacheRead(t *testing.T) {
-	line := buildUsageLineNoTiming(stream.Usage{Input: 150, Output: 50, CacheRead: 100})
+	line := BuildUsageLineNoTiming(stream.Usage{Input: 150, Output: 50, CacheRead: 100})
 	expected := "in=50 (+100 cache) out=50"
 	if line != expected {
 		t.Errorf("expected %q, got %q", expected, line)
@@ -911,7 +911,7 @@ func TestBuildUsageLineNoTiming_WithCacheRead(t *testing.T) {
 }
 
 func TestBuildUsageLineNoTiming_WithReasoning(t *testing.T) {
-	line := buildUsageLineNoTiming(stream.Usage{Input: 200, Output: 100, Reasoning: 50})
+	line := BuildUsageLineNoTiming(stream.Usage{Input: 200, Output: 100, Reasoning: 50})
 	expected := "in=200 out=100 r=50"
 	if line != expected {
 		t.Errorf("expected %q, got %q", expected, line)
@@ -919,7 +919,7 @@ func TestBuildUsageLineNoTiming_WithReasoning(t *testing.T) {
 }
 
 func TestBuildUsageLineNoTiming_WithCacheWrite(t *testing.T) {
-	line := buildUsageLineNoTiming(stream.Usage{Input: 200, Output: 100, CacheWrite: 25})
+	line := BuildUsageLineNoTiming(stream.Usage{Input: 200, Output: 100, CacheWrite: 25})
 	expected := "in=200 out=100 cache_w=25"
 	if line != expected {
 		t.Errorf("expected %q, got %q", expected, line)
@@ -927,7 +927,7 @@ func TestBuildUsageLineNoTiming_WithCacheWrite(t *testing.T) {
 }
 
 func TestBuildUsageLineNoTiming_AllFields(t *testing.T) {
-	line := buildUsageLineNoTiming(stream.Usage{Input: 500, Output: 300, Reasoning: 50, CacheRead: 100, CacheWrite: 25})
+	line := BuildUsageLineNoTiming(stream.Usage{Input: 500, Output: 300, Reasoning: 50, CacheRead: 100, CacheWrite: 25})
 	expected := "in=400 (+100 cache) out=300 r=50 cache_w=25"
 	if line != expected {
 		t.Errorf("expected %q, got %q", expected, line)
@@ -938,7 +938,7 @@ func TestBuildUsageLineNoTiming_AllFields(t *testing.T) {
 }
 
 func TestBuildUsageLineNoTiming_CacheReadExceedsInput(t *testing.T) {
-	line := buildUsageLineNoTiming(stream.Usage{Input: 50, Output: 10, CacheRead: 100})
+	line := BuildUsageLineNoTiming(stream.Usage{Input: 50, Output: 10, CacheRead: 100})
 	// inNew = max(50-100, 0) = 0
 	expected := "in=0 (+100 cache) out=10"
 	if line != expected {
@@ -957,9 +957,9 @@ func TestBuildUsageLineNoTiming_NoTimingInOutput(t *testing.T) {
 		{Input: 100, Output: 50, CacheRead: 20, Reasoning: 10, CacheWrite: 5},
 	}
 	for _, u := range tests {
-		line := buildUsageLineNoTiming(u)
+		line := BuildUsageLineNoTiming(u)
 		if hasTiming(line) {
-			t.Errorf("buildUsageLineNoTiming(%+v) = %q contains timing stats", u, line)
+			t.Errorf("BuildUsageLineNoTiming(%+v) = %q contains timing stats", u, line)
 		}
 	}
 }

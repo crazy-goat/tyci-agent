@@ -247,7 +247,7 @@ func TestTuiModel_ShowTotalUsage_BlocksAdded(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
 
 	usage := stream.Usage{Input: 1000, Output: 500, CacheRead: 200}
-	line := buildUsageLineNoTiming(usage)
+	line := BuildUsageLineNoTiming(usage)
 
 	// Simulate what ShowTotalUsage posts
 	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "───── new conversation ─────"})
@@ -272,7 +272,7 @@ func TestTuiModel_ShowTotalUsage_NoTimingInOutput(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
 
 	usage := stream.Usage{Input: 500, Output: 300}
-	line := buildUsageLineNoTiming(usage)
+	line := BuildUsageLineNoTiming(usage)
 	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "───── new conversation ─────"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "📊 Session total: " + line})
 
@@ -289,7 +289,7 @@ func TestTuiModel_ShowTotalUsage_AllUsageFields(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
 
 	usage := stream.Usage{Input: 1000, Output: 600, Reasoning: 50, CacheRead: 200, CacheWrite: 30}
-	line := buildUsageLineNoTiming(usage)
+	line := BuildUsageLineNoTiming(usage)
 	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "───── new conversation ─────"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "📊 Session total: " + line})
 
@@ -340,7 +340,7 @@ func TestTuiModel_ShowTotalUsage_AfterExistingBlocks(t *testing.T) {
 
 	// Now simulate ShowTotalUsage
 	usage := stream.Usage{Input: 300, Output: 150}
-	line := buildUsageLineNoTiming(usage)
+	line := BuildUsageLineNoTiming(usage)
 	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "───── new conversation ─────"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "📊 Session total: " + line})
 	// tool-delta and tool-end don't create new blocks, so we have:
