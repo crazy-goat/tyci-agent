@@ -1,5 +1,5 @@
 // Package agent provides named agent configurations mapping agent names to default models.
-// Config is loaded from local (.tyci-agent.json) then global (~/.tyci/agents.json).
+// Config is loaded from local (.tyci.json) then global (~/.tyci/agents.json).
 package agent
 
 import (
@@ -14,7 +14,7 @@ import (
 )
 
 // AgentsFile is the name of the local config file (in current working directory).
-const LocalConfigFile = ".tyci-agent.json"
+const LocalConfigFile = ".tyci.json"
 
 // MarkdownAgentsDir is the directory for markdown agent definitions.
 const MarkdownAgentsDir = "agents"

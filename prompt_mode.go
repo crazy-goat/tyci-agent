@@ -6,10 +6,10 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/decodo/tyci-agent/agent"
-	"github.com/decodo/tyci-agent/display"
-	"github.com/decodo/tyci-agent/providers"
-	"github.com/decodo/tyci-agent/session"
+	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/display"
+	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/session"
 )
 
 func runPrompt(provider providers.Provider, disp display.Display, prompt string, cfg agent.Config, ctx context.Context, sess *session.Session, sessionPath string) {

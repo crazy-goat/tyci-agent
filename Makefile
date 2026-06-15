@@ -1,5 +1,5 @@
 # Go build configuration
-BINARY=tyci-agent
+BINARY=tyci
 
 .PHONY: build release minimal clean install
 

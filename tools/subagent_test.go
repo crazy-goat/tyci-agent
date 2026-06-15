@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 // mockRunner implements SubAgentRunner for testing

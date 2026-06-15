@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 func StreamGemini(ctx context.Context, _ string, _ string, _ GeminiRequest, _ func(stream.Event) error) error {

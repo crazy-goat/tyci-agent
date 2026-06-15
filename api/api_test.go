@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 // Test chatUsage.UnmarshalJSON with various inputs

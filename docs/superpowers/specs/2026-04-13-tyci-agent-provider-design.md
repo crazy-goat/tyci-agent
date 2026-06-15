@@ -1,13 +1,13 @@
-# tyci-agent: Provider-based Architecture
+# tyci: Provider-based Architecture
 
 ## Overview
 
-Refaktoryzacja `tyci-agent` na architekturę provider-based. Każdy provider (Zen, Anthropic, OpenAI) jest osobnym katalogem z własną implementacją. Na starcie iterujemy po providerach, każdy zgłasza gotowość i listę modeli.
+Refaktoryzacja `tyci` na architekturę provider-based. Każdy provider (Zen, Anthropic, OpenAI) jest osobnym katalogem z własną implementacją. Na starcie iterujemy po providerach, każdy zgłasza gotowość i listę modeli.
 
 ## Structure
 
 ```
-tyci-agent/
+tyci/
 ├── main.go                    # główna logika, inicjalizacja providerów
 ├── go.mod
 ├── providers/
@@ -89,7 +89,7 @@ Tylko skonfigurowane (IsConfigured=true) providery są pokazywane.
 
 Model podawany jako `provider/model`:
 ```
-tyci-agent -m zen/glm-5.1 -p "prompt"
+tyci -m zen/glm-5.1 -p "prompt"
 ```
 
 Jeśli podany tylko `model` bez prefixu (np. `-m glm-5.1`), wyszukaj pierwszego providera który go ma.

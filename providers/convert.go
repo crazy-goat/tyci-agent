@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/decodo/tyci-agent/api"
+	"github.com/decodo/tyci/api"
 )
 
 // RichMessagesToChat converts RichMessage slice to ChatMessage slice,

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 const (

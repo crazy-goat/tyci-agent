@@ -1,6 +1,6 @@
 package display
 
-import "github.com/decodo/tyci-agent/stream"
+import "github.com/decodo/tyci/stream"
 
 type ToolResult struct {
 	Success bool

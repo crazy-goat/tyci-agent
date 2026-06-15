@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 // stripANSI removes ANSI escape sequences from a string.

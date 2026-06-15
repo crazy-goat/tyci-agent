@@ -138,7 +138,7 @@ func InitializeRequest(id int) Request {
 			ProtocolVersion: "2024-11-05",
 			Capabilities:    ClientCaps{},
 			ClientInfo: ClientInfo{
-				Name:    "tyci-agent",
+				Name:    "tyci",
 				Version: "0.1.0",
 			},
 		},

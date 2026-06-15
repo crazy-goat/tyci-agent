@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {

@@ -7,14 +7,14 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/decodo/tyci-agent/agent"
-	"github.com/decodo/tyci-agent/api"
-	"github.com/decodo/tyci-agent/display"
-	"github.com/decodo/tyci-agent/internal/debug"
-	"github.com/decodo/tyci-agent/internal/readline"
-	"github.com/decodo/tyci-agent/providers"
-	"github.com/decodo/tyci-agent/session"
-	"github.com/decodo/tyci-agent/tools"
+	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/display"
+	"github.com/decodo/tyci/internal/debug"
+	"github.com/decodo/tyci/internal/readline"
+	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/session"
+	"github.com/decodo/tyci/tools"
 )
 
 // agentRunner implements tools.SubAgentRunner by wrapping agent.Run.
@@ -131,10 +131,10 @@ func main() {
 			runProviderRefresh(os.Args[3:])
 		} else if len(os.Args) > 2 {
 			fmt.Fprintf(os.Stderr, "Unknown provider subcommand: %q\n", os.Args[2])
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider [auth|add|refresh]")
+			fmt.Fprintln(os.Stderr, "Usage: tyci provider [auth|add|refresh]")
 			os.Exit(1)
 		} else {
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider [auth|add|refresh]")
+			fmt.Fprintln(os.Stderr, "Usage: tyci provider [auth|add|refresh]")
 			os.Exit(1)
 		}
 		return
@@ -156,11 +156,11 @@ func main() {
 	noSessionFlag := flag.Bool("no-session", false, "Disable session persistence")
 
 	flag.Usage = func() {
-		_, _ = fmt.Fprintf(os.Stdout, "Usage: tyci-agent [flags] (--prompt <prompt>)\n")
-		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent agent [list|get|set|delete|set-fallback]\n")
-		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider add <name> --url <url> --token <key>\n")
-		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider refresh [--provider p1,p2] [--dry-run]\n")
-		_, _ = fmt.Fprintf(os.Stdout, "       tyci-agent provider auth [set|get|list|rm]\n\n")
+		_, _ = fmt.Fprintf(os.Stdout, "Usage: tyci [flags] (--prompt <prompt>)\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci agent [list|get|set|delete|set-fallback]\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci provider add <name> --url <url> --token <key>\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci provider refresh [--provider p1,p2] [--dry-run]\n")
+		_, _ = fmt.Fprintf(os.Stdout, "       tyci provider auth [set|get|list|rm]\n\n")
 		_, _ = fmt.Fprintf(os.Stdout, "Subcommands:\n")
 		_, _ = fmt.Fprintf(os.Stdout, "  agent           Manage agent configurations (model assignments)\n")
 		_, _ = fmt.Fprintf(os.Stdout, "  provider add    Add a provider with auth and connectivity check\n")

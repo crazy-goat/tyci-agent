@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 // Streamer is the common interface for all API streaming clients.

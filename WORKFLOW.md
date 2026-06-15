@@ -283,7 +283,7 @@ git checkout main && git pull origin main
   ```bash
   make release
   ```
-- The binary is `tyci-agent`. After building, test it locally:
+- The binary is `tyci`. After building, test it locally:
   ```bash
-  ./tyci-agent --help
+  ./tyci --help
   ```

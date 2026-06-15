@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 var (
@@ -37,7 +37,7 @@ func testEnv(extra ...string) []string {
 
 func TestMain(m *testing.M) {
 	var err error
-	testDir, err = os.MkdirTemp("", "tyci-agent-test")
+	testDir, err = os.MkdirTemp("", "tyci-test")
 	if err != nil {
 		os.Stderr.WriteString("mkdir temp: " + err.Error())
 		os.Exit(1)
@@ -76,7 +76,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	binPath = filepath.Join(testDir, "tyci-agent")
+	binPath = filepath.Join(testDir, "tyci")
 	out, err := exec.Command("go", "build", "-o", binPath, ".").CombinedOutput()
 	if err != nil {
 		os.Stderr.WriteString("build failed: " + string(out))

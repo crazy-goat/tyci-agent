@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/decodo/tyci-agent/internal/connect"
+	"github.com/decodo/tyci/internal/connect"
 )
 
 // Client defines the interface for MCP servers.

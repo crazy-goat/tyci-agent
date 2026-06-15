@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 func (t *TUI) ModelChanges() <-chan string {

@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decodo/tyci-agent/providers"
+	"github.com/decodo/tyci/providers"
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────

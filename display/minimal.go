@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 	"golang.org/x/term"
 )
 

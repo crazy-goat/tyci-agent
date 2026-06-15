@@ -7,7 +7,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/decodo/tyci-agent/api"
+	"github.com/decodo/tyci/api"
 )
 
 // =============================================================================

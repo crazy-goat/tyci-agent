@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci-agent/api"
-	"github.com/decodo/tyci-agent/internal/connect"
-	"github.com/decodo/tyci-agent/internal/tyciconfig"
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/internal/connect"
+	"github.com/decodo/tyci/internal/tyciconfig"
+	"github.com/decodo/tyci/stream"
 )
 
 // uriEntry is the inner JSON object with just a URI.
@@ -195,7 +195,7 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 	}
 
 	if apiKey == "" {
-		return nil, fmt.Errorf("no API key for %q (set via 'tyci-agent provider auth set', %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
+		return nil, fmt.Errorf("no API key for %q (set via 'tyci provider auth set', %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
 	}
 
 	endpoint := baseURL + endpointPath

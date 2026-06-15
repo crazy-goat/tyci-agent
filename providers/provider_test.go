@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/stream"
 )
 
 func TestBuildSystemPrompt_noAgentsMd(t *testing.T) {

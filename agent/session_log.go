@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci-agent/providers"
-	"github.com/decodo/tyci-agent/session"
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/session"
+	"github.com/decodo/tyci/stream"
 )
 
 func writeAssistantSessionEvent(s *session.Session, providerName, model string, msg providers.RichMessage, usage *stream.Usage) {

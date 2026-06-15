@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/decodo/tyci-agent/agent"
-	"github.com/decodo/tyci-agent/display"
-	"github.com/decodo/tyci-agent/session"
-	"github.com/decodo/tyci-agent/stream"
+	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/display"
+	"github.com/decodo/tyci/session"
+	"github.com/decodo/tyci/stream"
 )
 
 func finishPromptRun(disp display.Display, sess *session.Session, sessionPath string, usage stream.Usage, err error) {

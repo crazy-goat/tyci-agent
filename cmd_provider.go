@@ -7,12 +7,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci-agent/internal/connect"
+	"github.com/decodo/tyci/internal/connect"
 )
 
 func runProviderAuth(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth [set|get|list|rm]")
+		fmt.Fprintln(os.Stderr, "Usage: tyci provider auth [set|get|list|rm]")
 		os.Exit(1)
 	}
 
@@ -20,7 +20,7 @@ func runProviderAuth(args []string) {
 	switch cmd {
 	case "set":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth set <provider> [<key>]")
+			fmt.Fprintln(os.Stderr, "Usage: tyci provider auth set <provider> [<key>]")
 			fmt.Fprintln(os.Stderr, "  If <key> is omitted, reads from stdin.")
 			fmt.Fprintln(os.Stderr, "  If <key> is \"-\", reads from stdin.")
 			os.Exit(1)
@@ -60,7 +60,7 @@ func runProviderAuth(args []string) {
 
 	case "get":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth get <provider>")
+			fmt.Fprintln(os.Stderr, "Usage: tyci provider auth get <provider>")
 			os.Exit(1)
 		}
 		provider := args[1]
@@ -97,7 +97,7 @@ func runProviderAuth(args []string) {
 
 	case "rm":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth rm <provider>")
+			fmt.Fprintln(os.Stderr, "Usage: tyci provider auth rm <provider>")
 			os.Exit(1)
 		}
 		provider := args[1]
@@ -109,7 +109,7 @@ func runProviderAuth(args []string) {
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown provider auth subcommand: %q\n", cmd)
-		fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider auth [set|get|list|rm]")
+		fmt.Fprintln(os.Stderr, "Usage: tyci provider auth [set|get|list|rm]")
 		os.Exit(1)
 	}
 }
@@ -124,7 +124,7 @@ func runProviderAdd(args []string) {
 	fs.Parse(args)
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: tyci-agent provider add <name> --url <url> [--token <key>] [--test]")
+		fmt.Fprintln(os.Stderr, "Usage: tyci provider add <name> --url <url> [--token <key>] [--test]")
 		os.Exit(1)
 	}
 
@@ -168,7 +168,7 @@ func runProviderRefresh(args []string) {
 }
 
 // readStdin reads all data from stdin until EOF.
-// For pipe input (e.g., echo "key" | tyci-agent ...), reads everything.
+// For pipe input (e.g., echo "key" | tyci ...), reads everything.
 // For terminal input, reads one line.
 func readStdin() ([]byte, error) {
 	stat, err := os.Stdin.Stat()

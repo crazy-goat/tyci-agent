@@ -9,10 +9,10 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/decodo/tyci-agent/agent"
-	"github.com/decodo/tyci-agent/providers"
-	"github.com/decodo/tyci-agent/stream"
-	"github.com/decodo/tyci-agent/tools"
+	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/stream"
+	"github.com/decodo/tyci/tools"
 )
 
 // Engine orchestrates Lua workflow scripts.
