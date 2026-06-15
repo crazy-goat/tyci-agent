@@ -35,6 +35,13 @@ func (t *TUI) CancelCh() <-chan struct{} {
 
 func (t *TUI) post(msg tuiMsgBlock) { t.prog.Send(msg) }
 
+// Request is a no-op in TUI mode — request boundaries are implicit
+// in the rendered transcript.
+func (t *TUI) Request(string) {}
+
+// ToolFinish is a no-op in TUI mode — tool summaries are not rendered.
+func (t *TUI) ToolFinish() {}
+
 func (t *TUI) Thinking(text string) {
 	t.mu.Lock()
 	if t.pendingKind != "" && t.pendingKind != "thinking" {

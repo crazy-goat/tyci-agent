@@ -86,6 +86,45 @@ func fmtRate(tokens int, genDur time.Duration) string {
 	return fmt.Sprintf("%.1f", float64(tokens)/genDur.Seconds())
 }
 
+// buildStatLine returns the body of the run-mode [STAT] line — just the
+// field list, no time. The elapsed time is rendered on the right by the
+// standard renderLocked() machinery (so columns stay aligned with the
+// other lines) and the caller is responsible for setting blockStart so
+// that elapsed equals the round's total duration.
+// The rate is the overall throughput (output / total duration), not the
+// generation-only rate. ttft is intentionally omitted — it's already
+// visible on the [ REQ] line of the round.
+func buildStatLine(usage stream.Usage) string {
+	inNew := usage.Input - usage.CacheRead
+	if inNew < 0 {
+		inNew = 0
+	}
+	parts := fmt.Sprintf("in=%d", inNew)
+	if usage.CacheRead > 0 {
+		parts += fmt.Sprintf(" (+%d cache)", usage.CacheRead)
+	}
+	parts += fmt.Sprintf(" out=%d", usage.Output)
+	if usage.Reasoning > 0 {
+		parts += fmt.Sprintf(" r=%d", usage.Reasoning)
+	}
+	if usage.CacheWrite > 0 {
+		parts += fmt.Sprintf(" cache_w=%d", usage.CacheWrite)
+	}
+	return parts
+}
+
+// buildStatRate returns the "tok/s=N.N" suffix for the [STAT] line.
+// Exposed separately so the caller can compute it from the same
+// stats.Duration that drives the right-aligned time, keeping the
+// displayed rate and the displayed time in lockstep.
+func buildStatRate(usage stream.Usage, stats stream.Stats) string {
+	var rate float64
+	if stats.Duration > 0 {
+		rate = float64(usage.Output) / stats.Duration.Seconds()
+	}
+	return fmt.Sprintf("tok/s=%.1f", rate)
+}
+
 func buildUsageLine(usage stream.Usage, stats stream.Stats) string {
 	inNew := usage.Input - usage.CacheRead
 	if inNew < 0 {

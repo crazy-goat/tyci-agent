@@ -54,6 +54,7 @@ type collector struct {
 
 func newCollector() *collector { return &collector{} }
 
+func (c *collector) Request(string) {}
 func (c *collector) Thinking(text string) {
 	c.mu.Lock()
 	c.thinking.WriteString(text)
@@ -71,6 +72,7 @@ func (c *collector) ToolCallStart(name string) {
 }
 func (c *collector) ToolCallDelta(delta string)      {}
 func (c *collector) ToolCallEnd(name, result string) {}
+func (c *collector) ToolFinish()                     {}
 func (c *collector) ToolBlock(msg string)            {}
 func (c *collector) Summary(usage stream.Usage, stats stream.Stats) {
 	c.mu.Lock()

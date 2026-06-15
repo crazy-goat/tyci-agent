@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/decodo/tyci/stream"
 )
@@ -963,50 +964,514 @@ func TestBuildUsageLineNoTiming_NoTimingInOutput(t *testing.T) {
 	}
 }
 
-func TestMinimal_ToolCallStart(t *testing.T) {
-	m := NewMinimal()
-	m.ToolCallStart("bash")
-	// Minimal writes to stdout but we can't easily capture it in unit test
-	// Just ensure it doesn't panic
+// --- Tests for Minimal display (run mode) ---
+
+// newTestMinimal returns a Minimal with a known width so output is
+// deterministic regardless of test environment.
+func newTestMinimal(width int) *Minimal {
+	return &Minimal{
+		terminalWidth: width,
+		blockStart:    time.Now(),
+		done:          make(chan struct{}),
+	}
 }
 
-func TestMinimal_ToolCallDelta(t *testing.T) {
-	m := NewMinimal()
-	m.ToolCallStart("bash")
-	m.ToolCallDelta(`{"description": "test"}`)
-	// Just ensure no panic
+func TestMinimal_Request_EmitsReqLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
+	m.Request("user prompt")
+	m.End()
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "[ REQ]") {
+		t.Errorf("expected [ REQ] prefix, got %q", got)
+	}
+	if !strings.Contains(got, "user prompt") {
+		t.Errorf("expected 'user prompt' content, got %q", got)
+	}
+	if !strings.Contains(got, "]") {
+		t.Errorf("expected time bracket in output, got %q", got)
+	}
 }
 
-func TestMinimal_ToolCall_FullFlow(t *testing.T) {
-	m := NewMinimal()
+func TestMinimal_Request_FinalizedByThinking(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
+	m.Request("user prompt")
+	m.Thinking("a thought")
+	m.End()
+	sync()
+
+	got := stdout.String()
+	// The [ REQ] line should be followed by a [THNK] line in the final output.
+	idxReq := strings.Index(got, "[ REQ]")
+	idxThnk := strings.Index(got, "[THNK]")
+	if idxReq < 0 {
+		t.Fatalf("expected [ REQ] prefix in output, got %q", got)
+	}
+	if idxThnk < 0 {
+		t.Fatalf("expected [THNK] prefix in output, got %q", got)
+	}
+	if idxThnk <= idxReq {
+		t.Errorf("expected [THNK] to follow [ REQ], got %q", got)
+	}
+}
+
+func TestMinimal_Request_TimeCountedUntilNextEvent(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
+	m.Request("user prompt")
+	// Simulate a 250ms round-trip latency (e.g. model warm-up).
+	time.Sleep(250 * time.Millisecond)
+	m.Thinking("a thought")
+	m.End()
+	sync()
+
+	got := stdout.String()
+	// The [ REQ] line is rendered twice in the output stream: once at
+	// ~0ms (initial), then again at finalization with the real elapsed
+	// time, followed by a newline. The last render before the newline
+	// is what the user actually sees in a terminal.
+	nlIdx := strings.Index(got, "\n")
+	if nlIdx < 0 {
+		t.Fatalf("expected newline after [ REQ] line, got %q", got)
+	}
+	reqLine := strings.TrimPrefix(got[:nlIdx], "\r")
+	// Find the last "[" on the line — that's where the time bracket starts.
+	openIdx := strings.LastIndex(reqLine, "[")
+	if openIdx < 0 {
+		t.Fatalf("no time bracket on [ REQ] line: %q", reqLine)
+	}
+	timeStr := reqLine[openIdx:]
+	if !strings.HasSuffix(strings.TrimRight(reqLine, " "), "]") {
+		t.Fatalf("[ REQ] line does not end with ']': %q", reqLine)
+	}
+	// The time should be at least 200ms (we slept 250ms).
+	if !strings.Contains(timeStr, "s]") {
+		t.Errorf("expected s] on [ REQ] line for 250ms wait, got %q (line: %q)", timeStr, reqLine)
+	}
+	// Sanity check: extract the digits and confirm >= 200.
+	digits := strings.TrimRight(strings.TrimLeft(timeStr, "["), "ms]")
+	if digits == "" {
+		t.Fatalf("could not extract ms number from %q", timeStr)
+	}
+}
+
+func TestMinimal_Request_TimeUpdatesVisiblyDuringWait(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
+	m.Request("user prompt")
+	// The background ticker fires every 100ms, so after 250ms we should
+	// see at least two in-place re-renders of the [ REQ] line — one from
+	// the ticker (around 100ms), one from finalization (250ms).
+	time.Sleep(250 * time.Millisecond)
+	m.Thinking("a thought")
+	m.End()
+	sync()
+
+	got := stdout.String()
+	// Count distinct render blocks separated by \r or \n on the [ REQ] line.
+	// The user's terminal will only display the last one, but the stream
+	// should contain multiple time updates.
+	updates := strings.Count(got, "[ REQ]")
+	if updates < 2 {
+		t.Errorf("expected [ REQ] line to be re-rendered by background ticker, got %d updates in %q", updates, got)
+	}
+}
+
+func TestMinimal_Thinking_EmitsThinkLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
+	m.Thinking("reasoning tokens")
+	m.End()
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "[THNK]") {
+		t.Errorf("expected [THNK] prefix, got %q", got)
+	}
+	if !strings.Contains(got, "reasoning tokens") {
+		t.Errorf("expected content, got %q", got)
+	}
+}
+
+func TestMinimal_Text_EmitsRespLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
+	m.Text("response tokens")
+	m.End()
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "[RESP]") {
+		t.Errorf("expected [RESP] prefix, got %q", got)
+	}
+	if !strings.Contains(got, "response tokens") {
+		t.Errorf("expected content, got %q", got)
+	}
+}
+
+func TestMinimal_ToolCall_EmitsToolLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
+	m.ToolCallStart("read")
+	m.ToolCallDelta(`{"path":"main.go"}`)
+	m.ToolCallEnd("read", "")
+	m.End()
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "[TOOL]") {
+		t.Errorf("expected [TOOL] prefix, got %q", got)
+	}
+	if !strings.Contains(got, "read") {
+		t.Errorf("expected tool name, got %q", got)
+	}
+	if !strings.Contains(got, `"path":"main.go"`) {
+		t.Errorf("expected tool args, got %q", got)
+	}
+	// The call signature should be `read({"path":"main.go"})`.
+	if !strings.Contains(got, `read({"path":"main.go"})`) {
+		t.Errorf("expected call signature read({...}), got %q", got)
+	}
+}
+
+func TestMinimal_ToolCall_LongParamsTruncated(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(40) // narrow terminal
+	longArgs := `{"path":"` + strings.Repeat("x", 200) + `"}`
+	m.ToolCallStart("read")
+	m.ToolCallDelta(longArgs)
+	m.ToolCallEnd("read", "")
+	m.End()
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "...") {
+		t.Errorf("expected ellipsis truncation for long params, got %q", got)
+	}
+	// Each final line must fit the terminal width.
+	for _, block := range strings.Split(got, "\r") {
+		for _, line := range strings.Split(block, "\n") {
+			line = strings.TrimRight(line, " ")
+			if line == "" {
+				continue
+			}
+			if w := visibleWidth(line); w > 40 {
+				t.Errorf("line wider than terminal: width=%d line=%q", w, line)
+			}
+		}
+	}
+}
+
+func TestMinimal_ToolCall_MultipleTools_OneLineEach(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(120)
+	m.Request("user prompt")
+	m.ToolCallStart("ls")
+	m.ToolCallDelta(`{"path":"/home/piotr/work/tyci-agent"}`)
+	m.ToolCallEnd("ls", "")
+	m.ToolCallStart("glob")
+	m.ToolCallDelta(`{"pattern":"*","cwd":"/home/piotr/work/tyci-agent","includeDirs":true}`)
+	m.ToolCallEnd("glob", "")
+	m.ToolFinish()
+	m.End()
+	sync()
+
+	got := stdout.String()
+	// Count distinct [TOOL] lines (not in-place render duplicates).
+	lines := strings.Split(strings.ReplaceAll(got, "\r", ""), "\n")
+	toolLines := 0
+	var toolLineContents []string
+	for _, l := range lines {
+		if strings.Contains(l, "[TOOL]") {
+			toolLines++
+			toolLineContents = append(toolLineContents, l)
+		}
+	}
+	if toolLines != 2 {
+		t.Errorf("expected exactly 2 [TOOL] lines, got %d:\n%q", toolLines, got)
+		for i, c := range toolLineContents {
+			t.Logf("  line %d: %q", i, c)
+		}
+	}
+	// Each [TOOL] line should contain both the name AND the args.
+	for i, c := range toolLineContents {
+		if !strings.Contains(c, "(") || !strings.Contains(c, ")") {
+			t.Errorf("tool line %d missing call syntax: %q", i, c)
+		}
+	}
+}
+
+// TestMinimal_ToolCall_AgentLikeFlow reproduces the exact sequence the
+// agent uses: all ToolCallStart+Delta calls first, then all ToolCallEnd
+// calls after tools have executed. This is the real flow from
+// agent/run_tools.go.
+func TestMinimal_ToolCall_AgentLikeFlow(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(120)
+	m.Request("user prompt")
+
+	// Phase 1: all start + delta (from showToolCalls)
+	m.ToolCallStart("ls")
+	m.ToolCallDelta(`{"path":"/home/piotr/work/tyci-agent"}`)
+	m.ToolCallStart("glob")
+	m.ToolCallDelta(`{"pattern":"*","cwd":"/home/piotr/work/tyci-agent","includeDirs":true}`)
+
+	// Phase 2: all ends (from appendToolResults, after tools execute)
+	m.ToolCallEnd("ls", "")
+	m.ToolCallEnd("glob", "")
+	m.ToolFinish()
+	m.End()
+	sync()
+
+	got := stdout.String()
+	// Count distinct [TOOL] lines.
+	lines := strings.Split(strings.ReplaceAll(got, "\r", ""), "\n")
+	toolLines := 0
+	var toolLineContents []string
+	for _, l := range lines {
+		if strings.Contains(l, "[TOOL]") {
+			toolLines++
+			toolLineContents = append(toolLineContents, l)
+		}
+	}
+	if toolLines != 2 {
+		t.Errorf("expected exactly 2 [TOOL] lines, got %d:\n%q", toolLines, got)
+		for i, c := range toolLineContents {
+			t.Logf("  line %d: %q", i, c)
+		}
+	}
+	// Each line should be a complete call: name(args)
+	for i, c := range toolLineContents {
+		if !strings.Contains(c, "(") || !strings.Contains(c, ")") {
+			t.Errorf("tool line %d missing call syntax: %q", i, c)
+		}
+	}
+}
+
+func TestMinimal_ToolCallEnd_OneLineNoResult(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
 	m.ToolCallStart("bash")
-	m.ToolCallDelta(`{"command": "ls"}`)
+	m.ToolCallDelta(`{"command":"ls"}`)
 	m.ToolCallEnd("bash", "file1\nfile2")
-	// Just ensure no panic
+	m.End()
+	sync()
+
+	got := stdout.String()
+	// The result is intentionally suppressed in run mode.
+	if strings.Contains(got, "file1") {
+		t.Errorf("did not expect result 'file1' in run mode, got %q", got)
+	}
+	// Count distinct [TOOL] lines (separated by newlines, ignoring \r updates).
+	lines := strings.Split(strings.ReplaceAll(got, "\r", ""), "\n")
+	toolLines := 0
+	for _, l := range lines {
+		if strings.Contains(l, "[TOOL]") {
+			toolLines++
+		}
+	}
+	if toolLines != 1 {
+		t.Errorf("expected exactly 1 [TOOL] line, got %d in %q", toolLines, got)
+	}
+	// The line should look like: [TOOL] bash({"command":"ls"})
+	if !strings.Contains(got, `bash({"command":"ls"})`) {
+		t.Errorf("expected call signature bash({\"command\":\"ls\"}), got %q", got)
+	}
 }
 
-func TestMinimal_ToolCallDelta_Multiple(t *testing.T) {
-	m := NewMinimal()
+func TestMinimal_ToolFinish_EmitsSummaryLine(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
+	m.ToolCallStart("read")
+	m.ToolCallDelta(`{"path":"x"}`)
+	m.ToolCallEnd("read", "")
 	m.ToolCallStart("bash")
-	m.ToolCallDelta(`{"description": "`)
-	m.ToolCallDelta(`list`)
-	m.ToolCallDelta(` files"}`)
-	m.ToolCallEnd("bash", "result")
-	// Just ensure no panic
-}
-
-func TestMinimal_ToolBlock_NoPanic(t *testing.T) {
-	m := NewMinimal()
-	m.ToolBlock("⏳ waiting for tools...")
-	m.ToolBlock("second call")
-	// Just ensure no panic
-}
-
-func TestMinimal_ToolBlock_ThenToolCall(t *testing.T) {
-	m := NewMinimal()
-	m.ToolBlock("⏳ waiting for tools...")
-	m.ToolCallStart("bash")
-	m.ToolCallDelta(`{"command": "ls"}`)
+	m.ToolCallDelta(`{"command":"ls"}`)
 	m.ToolCallEnd("bash", "file1")
-	// Just ensure no panic
+	m.ToolFinish()
+	m.End()
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "[TOOL}") {
+		t.Errorf("expected [TOOL} summary prefix, got %q", got)
+	}
+	if !strings.Contains(got, "Tool finish") {
+		t.Errorf("expected 'Tool finish' label, got %q", got)
+	}
+}
+
+func TestMinimal_LongLine_TruncatesWithEllipsis(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(40) // narrow
+	longText := strings.Repeat("x", 200)
+	m.Text(longText)
+	m.End()
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "...") {
+		t.Errorf("expected ellipsis truncation, got %q", got)
+	}
+	// Each carriage-return-delimited render block must fit the terminal.
+	// (In-place updates reuse the line, so we split on \r too.)
+	for _, block := range strings.Split(got, "\r") {
+		for _, line := range strings.Split(block, "\n") {
+			line = strings.TrimRight(line, " ")
+			if line == "" {
+				continue
+			}
+			if w := visibleWidth(line); w > 40 {
+				t.Errorf("line wider than terminal: width=%d line=%q", w, line)
+			}
+		}
+	}
+}
+
+func TestMinimal_FormatElapsed(t *testing.T) {
+	cases := []struct {
+		d        time.Duration
+		contains string
+	}{
+		{0, "ms"},
+		{50 * time.Millisecond, "ms"},
+		{99 * time.Millisecond, "ms"},
+		{100 * time.Millisecond, "s"},
+		{500 * time.Millisecond, "s"},
+		{time.Second, "s"},
+		{10*time.Second + 200*time.Millisecond, "s"},
+	}
+	for _, c := range cases {
+		got := formatElapsed(c.d)
+		if !strings.Contains(got, c.contains) {
+			t.Errorf("formatElapsed(%v) = %q, expected to contain %q", c.d, got, c.contains)
+		}
+		// Always wrapped in square brackets
+		if !strings.HasPrefix(got, "[") || !strings.HasSuffix(got, "]") {
+			t.Errorf("formatElapsed(%v) = %q, expected brackets", c.d, got)
+		}
+	}
+}
+
+func TestMinimal_FitLine_TruncatesWithEllipsis(t *testing.T) {
+	if got := fitLine("hello world", 5); got != "he..." {
+		t.Errorf("fitLine: got %q, want he...", got)
+	}
+	if got := fitLine("hi", 10); got != "hi" {
+		t.Errorf("fitLine short: got %q, want hi", got)
+	}
+	if got := fitLine("hello", 0); got != "" {
+		t.Errorf("fitLine zero: got %q, want empty", got)
+	}
+}
+
+func TestMinimal_ToolBlock_PendingSuppressed(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
+	m.ToolBlock("⏳ waiting for tools...")
+	m.ToolCallStart("bash")
+	m.ToolBlock("⏳ another waiting...") // also suppressed
+	m.ToolCallEnd("bash", "out")
+	m.ToolFinish()
+	m.End()
+	sync()
+
+	got := stdout.String()
+	if strings.Contains(got, "⏳") {
+		t.Errorf("expected pending marker to be suppressed, got %q", got)
+	}
+}
+
+func TestMinimal_ToolBlock_AfterBlock_StillEmitted(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(80)
+	m.ToolCallStart("bash")
+	m.ToolCallEnd("bash", "out")
+	m.ToolFinish()
+	m.ToolBlock("retry 1/3 — error")
+	m.End()
+	sync()
+
+	got := stdout.String()
+	if !strings.Contains(got, "retry 1/3") {
+		t.Errorf("expected non-pending ToolBlock to appear, got %q", got)
+	}
+}
+
+// TestMinimal_FullFlow exercises the entire display sequence the agent
+// produces for a round with thinking, a response, and two tool calls.
+func TestMinimal_FullFlow(t *testing.T) {
+	stdout, _, sync, restore := captureOutput(t)
+	defer restore()
+
+	m := newTestMinimal(120)
+	m.Request("user prompt")
+	m.Thinking("step 1")
+	m.Text("I'll run two tools")
+	m.ToolBlock("⏳ waiting for tools...") // suppressed
+	m.ToolCallStart("read")
+	m.ToolCallDelta(`{"path":"a.go"}`)
+	m.ToolCallEnd("read", "")
+	m.ToolCallStart("bash")
+	m.ToolCallDelta(`{"command":"ls"}`)
+	m.ToolCallEnd("bash", "file1\nfile2")
+	m.ToolFinish()
+	m.Summary(stream.Usage{Input: 100, Output: 50}, stream.Stats{Duration: 2 * time.Second})
+	m.End()
+	sync()
+
+	got := stdout.String()
+	wantPrefixes := []string{
+		"[ REQ]", "[THNK]", "[RESP]",
+		"[TOOL]", "read(",
+		"[TOOL]", "bash(",
+		"[TOOL}", "Tool finish",
+		"[STAT]", "tok/s=",
+	}
+	last := 0
+	for _, p := range wantPrefixes {
+		idx := strings.Index(got[last:], p)
+		if idx < 0 {
+			t.Errorf("expected %q in order after position %d, got %q", p, last, got)
+			continue
+		}
+		last += idx + len(p)
+	}
+	// Results are not rendered in run mode.
+	if strings.Contains(got, "file1") {
+		t.Errorf("did not expect tool result 'file1' in run mode, got %q", got)
+	}
 }

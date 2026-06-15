@@ -17,6 +17,8 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	d.Request(roundInputLabel(*msgs))
+
 	events, streamErr := p.Stream(streamCtx, providers.Request{
 		Model:    cfg.Model,
 		System:   cfg.System,
@@ -158,4 +160,19 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		})
 	}
 	return true, &lastUsage, nil
+}
+
+// roundInputLabel returns a short label describing the input being sent to
+// the model for the current round: "user prompt" for the first round and
+// "return of tool" for subsequent rounds that feed tool results back.
+func roundInputLabel(msgs []providers.RichMessage) string {
+	if n := len(msgs); n > 0 {
+		switch msgs[n-1].Role {
+		case "user":
+			return "user prompt"
+		case "toolResult", "tool":
+			return "return of tool"
+		}
+	}
+	return "request"
 }

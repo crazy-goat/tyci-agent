@@ -57,4 +57,5 @@ func appendToolResults(d display.Display, msgs *[]providers.RichMessage, cfg Con
 			writeToolResultSessionEvent(cfg.Session, tc.ID, tc.Name, results[i])
 		}
 	}
+	d.ToolFinish()
 }

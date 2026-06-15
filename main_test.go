@@ -150,6 +150,7 @@ type captureDisplay struct {
 
 func newCapture() *captureDisplay { return &captureDisplay{} }
 
+func (c *captureDisplay) Request(string) {}
 func (c *captureDisplay) Thinking(text string) {
 	c.mu.Lock()
 	c.thinking = append(c.thinking, text)
@@ -171,6 +172,7 @@ func (c *captureDisplay) ToolCallEnd(name, result string) {
 	c.toolEnds = append(c.toolEnds, name+":"+result)
 	c.mu.Unlock()
 }
+func (c *captureDisplay) ToolFinish() {}
 func (c *captureDisplay) ToolBlock(msg string) {
 	c.mu.Lock()
 	c.toolBlocks = append(c.toolBlocks, msg)

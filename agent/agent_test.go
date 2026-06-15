@@ -17,11 +17,13 @@ import (
 // silentDisplay is a minimal Display implementation for tests.
 type silentDisplay struct{}
 
+func (s *silentDisplay) Request(string)                     {}
 func (s *silentDisplay) Thinking(string)                    {}
 func (s *silentDisplay) Text(string)                        {}
 func (s *silentDisplay) ToolCallStart(string)               {}
 func (s *silentDisplay) ToolCallDelta(string)               {}
 func (s *silentDisplay) ToolCallEnd(string, string)         {}
+func (s *silentDisplay) ToolFinish()                        {}
 func (s *silentDisplay) ToolBlock(string)                   {}
 func (s *silentDisplay) Summary(stream.Usage, stream.Stats) {}
 func (s *silentDisplay) Error(error)                        {}
@@ -140,6 +142,8 @@ func newCaptureDisplay() *captureDisplay {
 	return &captureDisplay{}
 }
 
+func (c *captureDisplay) Request(string) {}
+
 func (c *captureDisplay) Thinking(text string) {
 	c.mu.Lock()
 	c.thinking = append(c.thinking, text)
@@ -169,6 +173,8 @@ func (c *captureDisplay) ToolCallEnd(name, result string) {
 	c.toolCallEnds = append(c.toolCallEnds, struct{ Name, Result string }{name, result})
 	c.mu.Unlock()
 }
+
+func (c *captureDisplay) ToolFinish() {}
 
 func (c *captureDisplay) ToolBlock(msg string) {
 	c.mu.Lock()

@@ -104,6 +104,14 @@ func (t *Terminal) closeBlock() {
 	t.cursorCol = 0
 }
 
+// Request is a no-op in Terminal mode — the console display handles
+// request boundaries via the surrounding text/tool blocks.
+func (t *Terminal) Request(string) {}
+
+// ToolFinish is a no-op in Terminal mode — the console display renders
+// tool execution inline without a summary line.
+func (t *Terminal) ToolFinish() {}
+
 func (t *Terminal) Thinking(text string) {
 	isNew := t.continueBlock(blockThinking, t.bgThinking)
 	var startCol int
