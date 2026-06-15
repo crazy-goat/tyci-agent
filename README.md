@@ -14,6 +14,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 - **Streaming** — real-time thought, text, and tool output streaming
 - **Agent configuration** — named agent presets with model and fallback assignments
 - **Provider registration** — `tyci connect` CLI to add providers without editing JSON manually
+- **Shell completions** — bash/zsh/fish completions with dynamic `--model` / `--agent` / provider suggestions from your config files
 
 ## Installation
 
@@ -47,6 +48,29 @@ make install
 ```
 
 ## Quick Start
+
+### 0. (Optional) Install shell completions
+
+```bash
+# bash — load in current shell
+source <(tyci completion bash)
+
+# bash — install permanently
+tyci completion bash > ~/.local/share/bash-completion/completions/tyci
+
+# zsh — tyci must be on $PATH; the compdef line is auto-emitted
+tyci completion zsh > "${fpath[1]}/_tyci"
+
+# fish
+tyci completion fish > ~/.config/fish/completions/tyci.fish
+```
+
+Completions include:
+
+- All subcommands and flags
+- `--model <TAB>` — suggestions from `~/.tyci/model.json`
+- `--agent <TAB>` — suggestions from `~/.tyci/agents.json`
+- `provider auth {set,get,rm} <TAB>` — known provider names
 
 ### 1. Configure a provider
 
@@ -118,6 +142,7 @@ tyci run --agent my-agent --prompt "Hello"
 | `tyci tui` | Bubble Tea TUI with model picker, split-pane, mouse support |
 | `tyci agent` | Manage agent configurations (list/get/set/delete/set-fallback) |
 | `tyci provider` | Manage providers and auth (add/refresh/auth) |
+| `tyci completion` | Generate shell completion script (bash, zsh, fish, powershell) |
 
 ### Common Flags (run, console, tui)
 

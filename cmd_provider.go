@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"flag"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,149 +10,27 @@ import (
 	"github.com/decodo/tyci/internal/connect"
 )
 
-func runProviderAuth(args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: tyci provider auth [set|get|list|rm]")
-		os.Exit(1)
-	}
+var (
+	errProviderUsage     = errors.New("Usage: tyci provider [add|refresh|auth]")
+	errProviderAuthUsage = errors.New("Usage: tyci provider auth [set|get|list|rm]")
+)
 
-	cmd := args[0]
-	switch cmd {
-	case "set":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: tyci provider auth set <provider> [<key>]")
-			fmt.Fprintln(os.Stderr, "  If <key> is omitted, reads from stdin.")
-			fmt.Fprintln(os.Stderr, "  If <key> is \"-\", reads from stdin.")
-			os.Exit(1)
-		}
-		provider := args[1]
-		var key string
-		if len(args) >= 3 {
-			key = args[2]
-			if key == "-" {
-				// Read from stdin
-				data, err := readStdin()
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error reading key from stdin: %v\n", err)
-					os.Exit(1)
-				}
-				key = strings.TrimSpace(string(data))
-			}
-		} else {
-			// Prompt for key
-			fmt.Fprint(os.Stderr, "Enter API key: ")
-			data, err := readStdin()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading key: %v\n", err)
-				os.Exit(1)
-			}
-			key = strings.TrimSpace(string(data))
-		}
-		if key == "" {
-			fmt.Fprintln(os.Stderr, "Error: API key cannot be empty")
-			os.Exit(1)
-		}
-		if err := connect.SetKey(provider, key); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		_, _ = fmt.Fprintf(os.Stdout, "Saved key for provider %q in %s\n", provider, connect.AuthPath())
-
-	case "get":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: tyci provider auth get <provider>")
-			os.Exit(1)
-		}
-		provider := args[1]
-		key, ok, err := connect.GetKey(provider)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		if !ok {
-			fmt.Fprintf(os.Stderr, "No key found for provider %q\n", provider)
-			os.Exit(1)
-		}
-		_, _ = fmt.Fprintln(os.Stdout, connect.MaskKey(key))
-
-	case "list":
-		keys, err := connect.ListKeys()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		if len(keys) == 0 {
-			_, _ = fmt.Fprintln(os.Stdout, "No API keys configured in auth.json")
-			return
-		}
-		_, _ = fmt.Fprintln(os.Stdout, "Configured providers:")
-		for _, p := range keys {
-			key, ok, _ := connect.GetKey(p)
-			masked := ""
-			if ok {
-				masked = connect.MaskKey(key)
-			}
-			_, _ = fmt.Fprintf(os.Stdout, "  %s = %s\n", p, masked)
-		}
-
-	case "rm":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: tyci provider auth rm <provider>")
-			os.Exit(1)
-		}
-		provider := args[1]
-		if err := connect.RemoveKey(provider); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		_, _ = fmt.Fprintf(os.Stdout, "Removed key for provider %q\n", provider)
-
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown provider auth subcommand: %q\n", cmd)
-		fmt.Fprintln(os.Stderr, "Usage: tyci provider auth [set|get|list|rm]")
-		os.Exit(1)
-	}
+func runProviderAdd(name, apiType, url, token string, test bool, testModel string) error {
+	return connect.AddProvider(name, apiType, url, token, test, testModel)
 }
 
-func runProviderAdd(args []string) {
-	fs := flag.NewFlagSet("provider-add", flag.ExitOnError)
-	apiType := fs.String("api", "openai", "API type (openai, anthropic, gemini)")
-	url := fs.String("url", "", "API base URL")
-	token := fs.String("token", "", "API key or $ENV_VAR reference")
-	test := fs.Bool("test", false, "Test connectivity after adding")
-	testModel := fs.String("test-model", "", "Model to test with (default: first model)")
-	fs.Parse(args)
-
-	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: tyci provider add <name> --url <url> [--token <key>] [--test]")
-		os.Exit(1)
-	}
-
-	name := fs.Arg(0)
-	if err := connect.AddProvider(name, *apiType, *url, *token, *test, *testModel); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func runProviderRefresh(args []string) {
-	fs := flag.NewFlagSet("provider-refresh", flag.ExitOnError)
-	providerFilter := fs.String("provider", "", "Comma-separated list of providers to import (default: all)")
-	dryRun := fs.Bool("dry-run", false, "Preview without writing")
-	fs.Parse(args)
-
-	imported, err := connect.RefreshModels(*providerFilter, *dryRun)
+func runProviderRefresh(providerFilter string, dryRun bool) error {
+	imported, err := connect.RefreshModels(providerFilter, dryRun)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	if len(imported) == 0 {
 		fmt.Fprintln(os.Stdout, "No providers found to import")
-		return
+		return nil
 	}
 
-	if *dryRun {
+	if dryRun {
 		fmt.Fprintf(os.Stdout, "Would import %d providers:\n\n", len(imported))
 	} else {
 		fmt.Fprintf(os.Stdout, "Imported %d providers:\n\n", len(imported))
@@ -162,9 +40,76 @@ func runProviderRefresh(args []string) {
 		fmt.Fprintf(os.Stdout, "  %s (%s): %d models\n", p.Name, p.Type, p.Models)
 	}
 
-	if !*dryRun {
+	if !dryRun {
 		fmt.Fprintf(os.Stdout, "\n✓ Models saved to %s\n", connect.ModelJSONPath())
 	}
+	return nil
+}
+
+func runProviderAuthSet(provider, key string) error {
+	if key == "-" {
+		data, err := readStdin()
+		if err != nil {
+			return fmt.Errorf("reading key from stdin: %w", err)
+		}
+		key = strings.TrimSpace(string(data))
+	} else if key == "" {
+		fmt.Fprint(os.Stderr, "Enter API key: ")
+		data, err := readStdin()
+		if err != nil {
+			return fmt.Errorf("reading key: %w", err)
+		}
+		key = strings.TrimSpace(string(data))
+	}
+	if key == "" {
+		return errors.New("API key cannot be empty")
+	}
+	if err := connect.SetKey(provider, key); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "Saved key for provider %q in %s\n", provider, connect.AuthPath())
+	return nil
+}
+
+func runProviderAuthGet(provider string) error {
+	key, ok, err := connect.GetKey(provider)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("No key found for provider %q", provider)
+	}
+	_, _ = fmt.Fprintln(os.Stdout, connect.MaskKey(key))
+	return nil
+}
+
+func runProviderAuthList() error {
+	keys, err := connect.ListKeys()
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		_, _ = fmt.Fprintln(os.Stdout, "No API keys configured in auth.json")
+		return nil
+	}
+	_, _ = fmt.Fprintln(os.Stdout, "Configured providers:")
+	for _, p := range keys {
+		key, ok, _ := connect.GetKey(p)
+		masked := ""
+		if ok {
+			masked = connect.MaskKey(key)
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "  %s = %s\n", p, masked)
+	}
+	return nil
+}
+
+func runProviderAuthRm(provider string) error {
+	if err := connect.RemoveKey(provider); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "Removed key for provider %q\n", provider)
+	return nil
 }
 
 // readStdin reads all data from stdin until EOF.
