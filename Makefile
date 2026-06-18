@@ -27,9 +27,9 @@ minimal:
 install: build
 	cp $(BINARY) ~/local/bin/
 
-install-local: build
+install-local: release
 	mkdir -p ~/.local/bin
-	cp $(BINARY) ~/.local/bin/
+	cp $(BINARY) ~/.local/bin/tyci-agent
 
 clean:
 	rm -f $(BINARY)
