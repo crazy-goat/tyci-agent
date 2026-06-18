@@ -87,13 +87,10 @@ func fmtRate(tokens int, genDur time.Duration) string {
 }
 
 // buildStatLine returns the body of the run-mode [STAT] line — just the
-// field list, no time. The elapsed time is rendered on the right by the
-// standard renderLocked() machinery (so columns stay aligned with the
-// other lines) and the caller is responsible for setting blockStart so
-// that elapsed equals the round's total duration.
-// The rate is the overall throughput (output / total duration), not the
-// generation-only rate. ttft is intentionally omitted — it's already
-// visible on the [ REQ] line of the round.
+// field list, no time and no rate. The elapsed time is rendered on the
+// right by Minimal's renderLocked() machinery (so columns stay aligned
+// with the other lines) and the caller is responsible for setting
+// blockStart so that elapsed equals the round's total duration.
 func buildStatLine(usage stream.Usage) string {
 	inNew := usage.Input - usage.CacheRead
 	if inNew < 0 {
@@ -125,51 +122,96 @@ func buildStatRate(usage stream.Usage, stats stream.Stats) string {
 	return fmt.Sprintf("tok/s=%.1f", rate)
 }
 
+// buildUsageLine returns the full usage line with tokens and timing concatenated.
+// Kept for backward compatibility (used by Minimal display).
 func buildUsageLine(usage stream.Usage, stats stream.Stats) string {
-	inNew := usage.Input - usage.CacheRead
-	if inNew < 0 {
-		inNew = 0
+	return usageTokens(usage) + " " + timingTokens(usage, stats)
+}
+
+// usageTokens builds the token-count part (left side).
+// in= shows actual new input tokens (total minus cache read), with cache read in brackets.
+// ctx= shows total context (Input + Output).
+func usageTokens(usage stream.Usage) string {
+	inActual := usage.Input - usage.CacheRead
+	if inActual < 0 {
+		inActual = 0
 	}
-	parts := fmt.Sprintf("in=%d", inNew)
+	parts := fmt.Sprintf("in=%d", inActual)
 	if usage.CacheRead > 0 {
-		parts += fmt.Sprintf(" (+%d cache)", usage.CacheRead)
+		parts += fmt.Sprintf("[%d]", usage.CacheRead)
 	}
 	parts += fmt.Sprintf(" out=%d", usage.Output)
+	if usage.CacheWrite > 0 {
+		parts += fmt.Sprintf("[%d]", usage.CacheWrite)
+	}
 	if usage.Reasoning > 0 {
 		parts += fmt.Sprintf(" r=%d", usage.Reasoning)
 	}
-	if usage.CacheWrite > 0 {
-		parts += fmt.Sprintf(" cache_w=%d", usage.CacheWrite)
-	}
+	parts += fmt.Sprintf(" ctx=%d", usage.Input+usage.Output)
+	return parts
+}
+
+// timingTokens builds the timing part (right side).
+func timingTokens(usage stream.Usage, stats stream.Stats) string {
 	genDur := stats.Duration - stats.FirstToken
 	if genDur < 0 {
 		genDur = 0
 	}
-	parts += fmt.Sprintf(" t=%.1fs ttft=%.2fs tok/s=%s",
+	return fmt.Sprintf("t=%.1fs ttft=%.2fs tok/s=%s",
 		stats.Duration.Seconds(),
 		stats.FirstToken.Seconds(),
 		fmtRate(usage.Output, genDur),
 	)
+}
+
+// buildAlignedUsageLine builds a line with token info left-aligned and timing
+// info right-aligned, padded to fill the given width.
+// If the terminal is too narrow for alignment, falls back to concatenation.
+func buildAlignedUsageLine(width int, prefix string, usage stream.Usage, stats stream.Stats) string {
+	left := prefix + " " + usageTokens(usage)
+	right := timingTokens(usage, stats)
+	if width >= visibleWidth(left)+visibleWidth(right) {
+		return left + strings.Repeat(" ", width-visibleWidth(left)-visibleWidth(right)) + right
+	}
+	// Narrow terminal: just concatenate with one space
+	return left + " " + right
+}
+
+// buildCostsLine formats cumulative session token counts.
+// Shows total tokens across all iterations in the session.
+// Order: main counts (in, out), then cache details (cin, cout).
+func buildCostsLine(usage stream.Usage) string {
+	inActual := usage.Input - usage.CacheRead
+	if inActual < 0 {
+		inActual = 0
+	}
+	parts := fmt.Sprintf("in=%d", inActual)
+	parts += fmt.Sprintf(" out=%d", usage.Output)
+	if usage.CacheRead > 0 {
+		parts += fmt.Sprintf(" cin=%d", usage.CacheRead)
+	}
+	if usage.CacheWrite > 0 {
+		parts += fmt.Sprintf(" cout=%d", usage.CacheWrite)
+	}
 	return parts
 }
 
 // BuildUsageLineNoTiming formats usage without timing stats.
 // Used for session totals where timing (per-request) is not meaningful.
+// in= shows actual new input tokens (total minus cache read).
+// Order: main counts (in, out), then cache details (cin, cout).
 func BuildUsageLineNoTiming(usage stream.Usage) string {
-	inNew := usage.Input - usage.CacheRead
-	if inNew < 0 {
-		inNew = 0
+	inActual := usage.Input - usage.CacheRead
+	if inActual < 0 {
+		inActual = 0
 	}
-	parts := fmt.Sprintf("in=%d", inNew)
-	if usage.CacheRead > 0 {
-		parts += fmt.Sprintf(" (+%d cache)", usage.CacheRead)
-	}
+	parts := fmt.Sprintf("in=%d", inActual)
 	parts += fmt.Sprintf(" out=%d", usage.Output)
-	if usage.Reasoning > 0 {
-		parts += fmt.Sprintf(" r=%d", usage.Reasoning)
+	if usage.CacheRead > 0 {
+		parts += fmt.Sprintf(" cin=%d", usage.CacheRead)
 	}
 	if usage.CacheWrite > 0 {
-		parts += fmt.Sprintf(" cache_w=%d", usage.CacheWrite)
+		parts += fmt.Sprintf(" cout=%d", usage.CacheWrite)
 	}
 	return parts
 }

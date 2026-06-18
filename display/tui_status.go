@@ -52,6 +52,7 @@ func (m TuiModel) buildStatus() string {
 		if m.lastUsage.CacheWrite > 0 {
 			u += fmt.Sprintf(" cache_w=%d", m.lastUsage.CacheWrite)
 		}
+		u += fmt.Sprintf(" ctx=%d", m.lastUsage.Input+m.lastUsage.Output)
 		genDur := m.lastStats.Duration - m.lastStats.FirstToken
 		if genDur < 0 {
 			genDur = 0

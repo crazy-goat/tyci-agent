@@ -11,7 +11,7 @@ import (
 	"github.com/decodo/tyci/stream"
 )
 
-func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config) (more bool, usage *stream.Usage, err error) {
+func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config, totalUsage *stream.Usage) (more bool, usage *stream.Usage, totalEmitted bool, err error) {
 	ctx = providers.WithProvider(ctx, p)
 	ctx = providers.WithModel(ctx, cfg.Model)
 	streamCtx, cancel := context.WithCancel(ctx)
@@ -27,7 +27,9 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		Debug:    cfg.Debug,
 	})
 	if streamErr != nil {
-		return false, nil, streamErr
+		// Provider failed before streaming started. runOnce does not emit
+		// d.Total on error paths – the caller (agent.Run) handles them.
+		return false, nil, false, streamErr
 	}
 
 	var toolCalls []stream.ToolCall
@@ -87,7 +89,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 		case stream.Finish:
 			lastUsage = e.Usage
 		case stream.StreamError:
-			return false, nil, e.Err
+			return false, nil, false, e.Err
 		}
 	}
 
@@ -140,31 +142,54 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	}
 
 	if !hasTools {
-		// No tools – show usage and stop
-		if lastUsage.Input > 0 || lastUsage.Output > 0 {
+		// No tools – show usage, accumulate into session total, and emit
+		// the Costs line in one consistent block. Return usage=nil so the
+		// caller doesn't double-count.
+		if hasUsage(lastUsage) {
 			d.Summary(lastUsage, stream.Stats{
 				Duration:   time.Since(startTime),
 				FirstToken: firstToken,
 			})
+			if totalUsage != nil {
+				totalUsage.Add(lastUsage)
+				d.Total(*totalUsage)
+			}
 		}
-		return false, &lastUsage, nil
+		return false, nil, true, nil
 	}
 
 	executeAndAppendToolResults(ctx, d, msgs, cfg, toolCalls, toolDeltas)
 
-	// Show usage AFTER tools execution
-	if lastUsage.Input > 0 || lastUsage.Output > 0 {
+	// Show usage AFTER tools execution, then accumulate into the session
+	// total and emit the Costs line — all in one place, so the Costs
+	// line is always in sync with the just-displayed Summary.
+	// We return usage=nil so the caller (agent.Run) doesn't add the same
+	// usage to totalUsage a second time.
+	emitted := false
+	if hasUsage(lastUsage) {
 		d.Summary(lastUsage, stream.Stats{
 			Duration:   time.Since(startTime),
 			FirstToken: firstToken,
 		})
+		if totalUsage != nil {
+			totalUsage.Add(lastUsage)
+			d.Total(*totalUsage)
+			emitted = true
+		}
 	}
-	return true, &lastUsage, nil
+	return true, nil, emitted, nil
 }
 
-// roundInputLabel returns a short label describing the input being sent to
-// the model for the current round: "user prompt" for the first round and
-// "return of tool" for subsequent rounds that feed tool results back.
+// hasUsage reports whether a Usage value contains any token data.
+// Includes input, output, reasoning, and cache tokens.
+func hasUsage(u stream.Usage) bool {
+	return u.Input > 0 || u.Output > 0 || u.Reasoning > 0 || u.CacheRead > 0 || u.CacheWrite > 0
+}
+
+// roundInputLabel returns a short label describing the input being sent
+// to the model for the current round: "user prompt" for the first round
+// and "return of tool" for subsequent rounds that feed tool results
+// back. The run-mode Minimal display uses this for the [ REQ] line.
 func roundInputLabel(msgs []providers.RichMessage) string {
 	if n := len(msgs); n > 0 {
 		switch msgs[n-1].Role {

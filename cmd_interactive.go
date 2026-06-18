@@ -4,203 +4,34 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/decodo/tyci/agent"
-	"github.com/decodo/tyci/api"
 	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/internal/debug"
 	"github.com/decodo/tyci/internal/readline"
-	"github.com/decodo/tyci/providers"
-	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 	"github.com/decodo/tyci/tools"
 	"golang.org/x/term"
 )
-
-// errRunRequiresPrompt is returned by `tyci run` when --prompt is not provided.
-// Kept as a sentinel so tests can assert on the message text.
-var errRunRequiresPrompt = errors.New("`tyci run` requires --prompt")
-
-// errNoModel is returned when no model could be resolved from --model / --agent / default.
-var errNoModel = errors.New("no model specified. Use --model, --agent, or configure a default agent.")
-
-// runCmdOptions is the parsed form of the common run-mode flags shared by
-// `tyci run`, `tyci console`, and `tyci tui`. Cobra fills it via pflag before
-// invoking runSubcommandWithOpts.
-type runCmdOptions struct {
-	Kind          string // "run" | "console" | "tui"
-	Model         string
-	Agent         string
-	Prompt        string
-	MaxRetries    int
-	MaxIterations int
-	HistoryFile   string
-	Session       string
-	NoSession     bool
-	Debug         bool
-	NoDebug       bool
-}
-
-// runSubcommandWithOpts executes the requested run mode. Cobra has already
-// parsed all flags; this function is a thin wrapper around the original
-// flag.Set-based dispatcher that just consumes the parsed values.
-func runSubcommandWithOpts(opts runCmdOptions) error {
-	providers.RegisterProvidersFromConfig(filepath.Join(os.Getenv("HOME"), ".tyci", "model.json"))
-
-	if opts.Kind == "run" && opts.Prompt == "" {
-		return errRunRequiresPrompt
-	}
-
-	var historyFile string
-	if opts.HistoryFile != "" {
-		historyFile = opts.HistoryFile
-	} else {
-		var err error
-		historyFile, err = readline.DefaultHistoryFile()
-		if err != nil {
-			historyFile = ""
-		}
-	}
-
-	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: opts.MaxRetries, BaseBackoff: 4, MaxBackoff: 128}
-
-	model := opts.Model
-	if model == "" {
-		model = agent.ResolveModel("", opts.Agent)
-	}
-	if model == "" {
-		return errNoModel
-	}
-
-	provider, modelName, ok := providers.FindModel(model)
-	if !ok {
-		return fmt.Errorf("model %q not found", model)
-	}
-
-	var fallbackModels []string
-	agentName := opts.Agent
-	if agentName == "" {
-		agentName = "default"
-	}
-	if fb := agent.GetFallbackModels(agentName); len(fb) > 0 {
-		fallbackModels = fb
-	}
-
-	var ctx context.Context
-	if !opts.NoDebug {
-		dl, err := debug.Init()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: debug log: %v\n", err)
-			ctx = context.Background()
-		} else {
-			defer dl.Close()
-			ctx = debug.NewContext(context.Background(), dl)
-		}
-	} else {
-		ctx = context.Background()
-	}
-
-	var disp display.Display
-	interactiveFlag := false
-	switch opts.Kind {
-	case "run":
-		disp = display.NewMinimal()
-	case "console":
-		interactiveFlag = true
-		disp = display.NewTerminal()
-	case "tui":
-		var allModels []string
-		var allProviderModels []display.ProviderModels
-		for _, p := range providers.ListProviders() {
-			pm := display.ProviderModels{Name: p.Name()}
-			for _, m := range p.Models() {
-				allModels = append(allModels, p.Name()+"/"+m)
-				pm.Models = append(pm.Models, m)
-			}
-			for _, m := range p.FreeModels() {
-				allModels = append(allModels, p.Name()+"/"+m)
-				pm.Models = append(pm.Models, m)
-			}
-			if len(pm.Models) > 0 {
-				allProviderModels = append(allProviderModels, pm)
-			}
-		}
-		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels)
-		disp = tuiDisp
-		interactiveFlag = true
-	}
-
-	cfg := agent.Config{
-		Model:          modelName,
-		System:         providers.BuildSystemPrompt(),
-		MaxRetries:     opts.MaxRetries,
-		MaxIterations:  opts.MaxIterations,
-		Debug:          opts.Debug,
-		Tools:          toolsAdapter{},
-		Schema:         tools.GetToolsSchemaJSON(),
-		ProviderName:   provider.Name(),
-		FallbackModels: fallbackModels,
-	}
-	tools.SetSubAgentRunner(&agentRunner{})
-
-	wd, _ := os.Getwd()
-	var sess *session.Session
-	var sessionPath string
-	if !opts.NoSession {
-		sessionPath = opts.Session
-		if sessionPath == "" {
-			var err error
-			sessionPath, err = session.DefaultPath(wd)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: cannot determine session path: %v\n", err)
-			}
-		}
-		if sessionPath != "" {
-			var err error
-			sess, err = session.Open(sessionPath, wd, modelName, provider.Name())
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: session: %v (continuing without session)\n", err)
-				sess = nil
-				sessionPath = ""
-			}
-		}
-	}
-	cfg.Session = sess
-
-	if interactiveFlag {
-		if tuiDisp, ok := disp.(*display.TUI); ok {
-			runTUI(provider, modelName, tuiDisp, cfg, ctx, sessionPath)
-		} else {
-			runInteractive(provider, modelName, disp, historyFile, cfg, ctx, sessionPath)
-		}
-		return nil
-	}
-
-	runPrompt(provider, disp, opts.Prompt, cfg, ctx, sess, sessionPath)
-	return nil
-}
 
 // collector captures agent output (simplified for subagent runner)
 type collector struct {
 	text strings.Builder
 }
 
-func (c *collector) Request(string)                                 {}
-func (c *collector) Thinking(text string)                           { c.text.WriteString(text) }
-func (c *collector) Text(text string)                               { c.text.WriteString(text) }
-func (c *collector) ToolCallStart(name string)                      {}
-func (c *collector) ToolCallDelta(delta string)                     {}
-func (c *collector) ToolCallEnd(name, result string)                {}
-func (c *collector) ToolFinish()                                    {}
-func (c *collector) ToolBlock(msg string)                           {}
+func (c *collector) Thinking(text string)            { c.text.WriteString(text) }
+func (c *collector) Text(text string)                { c.text.WriteString(text) }
+func (c *collector) Request(string)                  {}
+func (c *collector) ToolCallStart(name string)       {}
+func (c *collector) ToolCallDelta(delta string)      {}
+func (c *collector) ToolCallEnd(name, result string) {}
+func (c *collector) ToolFinish()                     {}
+func (c *collector) ToolBlock(msg string)            {}
 func (c *collector) Summary(usage stream.Usage, stats stream.Stats) {}
-func (c *collector) Error(err error)                                {}
-func (c *collector) End()                                           {}
+func (c *collector) Total(usage stream.Usage)                       {}
+func (c *collector) Error(err error)                 {}
+func (c *collector) End()                            {}
 
 // toolsAdapter implements the tools.Runner interface by delegating to tools.RunTool.
 type toolsAdapter struct{}

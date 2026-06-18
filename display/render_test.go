@@ -586,3 +586,15 @@ func TestMinimal_Summary_TimeAlignmentWithOtherLines(t *testing.T) {
 		t.Errorf("stat line visible width = %d, want %d (terminal width). line=%q", vw, w, statLine)
 	}
 }
+
+// newTestMinimal returns a Minimal with a known width so output is
+// deterministic in tests. The background ticker is disabled (done
+// channel replaced with a never-closed one) so the test does not race
+// with re-renders.
+func newTestMinimal(width int) *Minimal {
+	return &Minimal{
+		terminalWidth: width,
+		blockStart:    time.Now(),
+		done:          make(chan struct{}),
+	}
+}

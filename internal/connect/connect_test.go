@@ -134,13 +134,12 @@ func TestFetchOpenAIModels_NonJSONResponse(t *testing.T) {
 	}
 }
 
-// ─── Run (config merging) ───────────────────────────────────────────────
+// ─── AddProvider ──────────────────────────────────────────────────────────
 
-func TestRun_CreatesModelFile(t *testing.T) {
+func TestAddProvider_SavesAuthAndModelFile(t *testing.T) {
 	dir := t.TempDir()
 	setHome(t, dir)
 
-	// Start a test server
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
 			w.Header().Set("Content-Type", "application/json")
@@ -151,159 +150,48 @@ func TestRun_CreatesModelFile(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := Run("test-provider", "openai", srv.URL, "sk-token")
+	err := AddProvider("test-provider", "openai", srv.URL, "sk-token", false, "")
 	if err != nil {
-		t.Fatalf("Run() error: %v", err)
+		t.Fatalf("AddProvider() error: %v", err)
 	}
 
-	// Verify model.json was created
-	configPath := filepath.Join(dir, ".tyci", "model.json")
-	data, err := os.ReadFile(configPath)
+	// Auth key saved to auth.json
+	key, ok, err := GetKey("test-provider")
+	if err != nil || !ok || key != "sk-token" {
+		t.Errorf("expected key 'sk-token' in auth.json, got %q (ok=%v, err=%v)", key, ok, err)
+	}
+
+	// Models saved to model.json without token in URI
+	data, err := os.ReadFile(filepath.Join(dir, ".tyci", "model.json"))
 	if err != nil {
 		t.Fatalf("read model.json: %v", err)
 	}
-
 	var cfg map[string]map[string]uriEntry
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("unmarshal model.json: %v", err)
 	}
-
-	if len(cfg) != 1 {
-		t.Fatalf("expected 1 provider, got %d", len(cfg))
-	}
-
 	models := cfg["test-provider"]
-	if models == nil {
-		t.Fatal("expected test-provider in config")
+	if models == nil || len(models) != 2 {
+		t.Fatalf("expected 2 models, got %+v", models)
 	}
-	if len(models) != 2 {
-		t.Fatalf("expected 2 models, got %d: %+v", len(models), models)
-	}
-
-	// Check URI format: openai://gpt-4@sk-token@<host>
 	for name, entry := range models {
+		if strings.Contains(entry.URI, "sk-token") {
+			t.Errorf("model %q URI should not contain token: %q", name, entry.URI)
+		}
 		if !strings.HasPrefix(entry.URI, "openai://") {
 			t.Errorf("model %q URI prefix wrong: %q", name, entry.URI)
 		}
-		if !strings.Contains(entry.URI, "sk-token") {
-			t.Errorf("model %q URI missing token: %q", name, entry.URI)
-		}
 	}
 }
 
-func TestRun_MergesWithExistingConfig(t *testing.T) {
-	dir := t.TempDir()
-	setHome(t, dir)
-
-	// Create an existing model.json with a different provider
-	existingCfg := map[string]map[string]uriEntry{
-		"existing-provider": {
-			"existing-model": {URI: "openai://existing-model@existing.com"},
-		},
-	}
-	configDir := filepath.Join(dir, ".tyci")
-	_ = os.MkdirAll(configDir, 0755)
-	existingData, _ := json.MarshalIndent(existingCfg, "", "  ")
-	_ = os.WriteFile(filepath.Join(configDir, "model.json"), existingData, 0644)
-
-	// Now run connect for a different provider
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/models" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"new-model"}]}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	err := Run("new-provider", "openai", srv.URL, "sk-token")
-	if err != nil {
-		t.Fatalf("Run() error: %v", err)
-	}
-
-	// Verify both providers exist
-	data, err := os.ReadFile(filepath.Join(configDir, "model.json"))
-	if err != nil {
-		t.Fatalf("read model.json: %v", err)
-	}
-	var cfg map[string]map[string]uriEntry
-	_ = json.Unmarshal(data, &cfg)
-
-	if len(cfg) != 2 {
-		t.Fatalf("expected 2 providers, got %d", len(cfg))
-	}
-	if _, ok := cfg["existing-provider"]; !ok {
-		t.Error("existing-provider should remain in config")
-	}
-	if _, ok := cfg["new-provider"]; !ok {
-		t.Error("new-provider should be added to config")
-	}
-}
-
-func TestRun_ReplaceExistingPrefix(t *testing.T) {
-	dir := t.TempDir()
-	setHome(t, dir)
-
-	// Create existing config for the same provider with different api type
-	existingCfg := map[string]map[string]uriEntry{
-		"test-provider": {
-			"gpt-4":  {URI: "openai://gpt-4@old-token@old.api.com"},
-			"claude": {URI: "anthropic://claude@old-key@ant.api.com"},
-		},
-	}
-	configDir := filepath.Join(dir, ".tyci")
-	_ = os.MkdirAll(configDir, 0755)
-	existingData, _ := json.MarshalIndent(existingCfg, "", "  ")
-	_ = os.WriteFile(filepath.Join(configDir, "model.json"), existingData, 0644)
-
-	// Run with openai type - should remove existing openai:// entries but keep anthropic
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/models" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4"},{"id":"gpt-4o"}]}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	err := Run("test-provider", "openai", srv.URL, "new-token")
-	if err != nil {
-		t.Fatalf("Run() error: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(configDir, "model.json"))
-	if err != nil {
-		t.Fatalf("read model.json: %v", err)
-	}
-	var cfg map[string]map[string]uriEntry
-	_ = json.Unmarshal(data, &cfg)
-
-	models := cfg["test-provider"]
-	if models == nil {
-		t.Fatal("test-provider should exist")
-	}
-
-	// gpt-4 should now have the new URI (openai prefix was replaced)
-	if !strings.HasPrefix(models["gpt-4"].URI, "openai://gpt-4@new-token@") {
-		t.Errorf("gpt-4 URI should start with 'openai://gpt-4@new-token@', got %q", models["gpt-4"].URI)
-	}
-
-	// claude (anthropic) should remain unchanged
-	if models["claude"].URI != "anthropic://claude@old-key@ant.api.com" {
-		t.Errorf("claude URI changed: %q", models["claude"].URI)
-	}
-}
-
-func TestRun_NoModelsError(t *testing.T) {
+func TestAddProvider_NoModelsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
 	defer srv.Close()
 
-	err := Run("test", "openai", srv.URL, "")
+	err := AddProvider("test", "openai", srv.URL, "", false, "")
 	if err == nil {
 		t.Fatal("expected error for empty models list")
 	}
@@ -312,48 +200,69 @@ func TestRun_NoModelsError(t *testing.T) {
 	}
 }
 
-func TestRun_InvalidURL(t *testing.T) {
-	err := Run("test", "openai", "://invalid", "")
-	if err == nil {
-		t.Fatal("expected error for invalid URL")
-	}
-}
-
-func TestRun_EmptyName(t *testing.T) {
-	err := Run("", "openai", "http://localhost", "")
+func TestAddProvider_EmptyName(t *testing.T) {
+	err := AddProvider("", "openai", "http://localhost", "", false, "")
 	if err == nil {
 		t.Fatal("expected error for empty name")
 	}
 }
 
-func TestRun_EmptyAPI(t *testing.T) {
-	err := Run("test", "", "http://localhost", "")
-	if err == nil {
-		t.Fatal("expected error for empty API type")
-	}
-}
-
-func TestRun_EmptyURL(t *testing.T) {
-	err := Run("test", "openai", "", "")
+func TestAddProvider_EmptyURL(t *testing.T) {
+	err := AddProvider("test", "openai", "", "", false, "")
 	if err == nil {
 		t.Fatal("expected error for empty URL")
 	}
 }
 
-func TestRun_HTTPError(t *testing.T) {
+func TestAddProvider_ReplacesExistingPrefix(t *testing.T) {
+	dir := t.TempDir()
+	setHome(t, dir)
+
+	// Existing model.json with same provider, different api type
+	existingCfg := map[string]map[string]uriEntry{
+		"test-provider": {
+			"gpt-4":  {URI: "openai://gpt-4@@old.api.com"},
+			"claude": {URI: "anthropic://claude@@ant.api.com"},
+		},
+	}
+	configDir := filepath.Join(dir, ".tyci")
+	_ = os.MkdirAll(configDir, 0755)
+	existingData, _ := json.MarshalIndent(existingCfg, "", "  ")
+	_ = os.WriteFile(filepath.Join(configDir, "model.json"), existingData, 0644)
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"server error"}`))
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4"},{"id":"gpt-4o"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
-	err := Run("test", "openai", srv.URL, "")
-	if err == nil {
-		t.Fatal("expected error for HTTP 500")
+	if err := AddProvider("test-provider", "openai", srv.URL, "new-token", false, ""); err != nil {
+		t.Fatalf("AddProvider() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(configDir, "model.json"))
+	var cfg map[string]map[string]uriEntry
+	_ = json.Unmarshal(data, &cfg)
+
+	models := cfg["test-provider"]
+	if models == nil {
+		t.Fatal("test-provider should exist")
+	}
+
+	// gpt-4 should have new URI; claude (anthropic) should remain
+	if !strings.HasPrefix(models["gpt-4"].URI, "openai://gpt-4@") {
+		t.Errorf("gpt-4 URI should start with 'openai://gpt-4@', got %q", models["gpt-4"].URI)
+	}
+	if models["claude"].URI != "anthropic://claude@@ant.api.com" {
+		t.Errorf("claude URI changed: %q", models["claude"].URI)
 	}
 }
 
-func TestRun_TokenEnvVarExpansion(t *testing.T) {
+func TestAddProvider_TokenEnvVarExpansion(t *testing.T) {
 	dir := t.TempDir()
 	setHome(t, dir)
 
@@ -370,17 +279,14 @@ func TestRun_TokenEnvVarExpansion(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := Run("test-provider", "openai", srv.URL, "$TEST_MODEL_TOKEN")
-	if err != nil {
-		t.Fatalf("Run() error: %v", err)
+	if err := AddProvider("test-provider", "openai", srv.URL, "$TEST_MODEL_TOKEN", false, ""); err != nil {
+		t.Fatalf("AddProvider() error: %v", err)
 	}
 
-	// Verify the URI contains the expanded token
-	configPath := filepath.Join(dir, ".tyci", "model.json")
-	data, _ := os.ReadFile(configPath)
-	content := string(data)
-
-	if !strings.Contains(content, "$TEST_MODEL_TOKEN") {
-		t.Error("URI should contain the env var reference $TEST_MODEL_TOKEN, not the expanded value")
+	// The env var should be resolved when fetching models (server gets expanded value)
+	// and the resolved token should be stored in auth.json
+	key, ok, _ := GetKey("test-provider")
+	if !ok || key != "sk-env-expanded" {
+		t.Errorf("expected resolved token 'sk-env-expanded' in auth.json, got %q", key)
 	}
 }

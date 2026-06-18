@@ -104,6 +104,99 @@ func RegisterProvidersFromConfig(path string) {
 	}
 }
 
+// npmToAPIType maps npm package names to tyci API types.
+var npmToAPIType = map[string]string{
+	"@ai-sdk/openai":            "openai",
+	"@ai-sdk/anthropic":         "anthropic",
+	"@ai-sdk/gemini":            "gemini",
+	"@ai-sdk/openai-compatible": "openai",
+}
+
+// npmToHost maps npm package names to default API hosts.
+var npmToHost = map[string]string{
+	"@ai-sdk/openai":    "api.openai.com",
+	"@ai-sdk/anthropic": "api.anthropic.com",
+	"@ai-sdk/gemini":    "generativelanguage.googleapis.com",
+}
+
+// LoadProvidersJSON reads a models.dev api.json format file (cached at
+// providers.json) and returns parsed provider model entries with URIs.
+func LoadProvidersJSON(path string) (map[string][]ModelEntry, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading providers.json: %w", err)
+	}
+
+	var catalog map[string]connect.ModelsDevProvider
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		return nil, fmt.Errorf("parsing providers.json: %w", err)
+	}
+
+	result := make(map[string][]ModelEntry)
+	for id, p := range catalog {
+		apiType, ok := npmToAPIType[p.NPM]
+		if !ok {
+			continue
+		}
+		host, apiPath := "", ""
+		if p.API != "" {
+			host, apiPath = splitHostPath(p.API)
+		} else {
+			host = npmToHost[p.NPM]
+		}
+		if host == "" {
+			continue
+		}
+		for mid := range p.Models {
+			uri := tyciconfig.ProviderURI{
+				APIType:   apiType,
+				Model:     mid,
+				AuthToken: "",
+				Host:      host,
+				Path:      apiPath,
+			}
+			result[id] = append(result[id], ModelEntry{Name: mid, URI: uri.String()})
+		}
+	}
+	return result, nil
+}
+
+// RegisterProvidersFromProvidersJSON reads providers.json (models.dev api.json
+// format) and registers a dynamic provider for each entry.
+func RegisterProvidersFromProvidersJSON(path string) error {
+	entries, err := LoadProvidersJSON(path)
+	if err != nil {
+		return err
+	}
+	for groupName, list := range entries {
+		if len(list) == 0 {
+			continue
+		}
+		p := &dynamicProvider{
+			name:    groupName,
+			entries: list,
+		}
+		Register(p)
+	}
+	return nil
+}
+
+func splitHostPath(apiURL string) (host, path string) {
+	if idx := strings.Index(apiURL, "://"); idx >= 0 {
+		apiURL = apiURL[idx+3:]
+	}
+	if idx := strings.Index(apiURL, "/"); idx >= 0 {
+		host = apiURL[:idx]
+		path = apiURL[idx:]
+	} else {
+		host = apiURL
+	}
+	return host, path
+}
+
 // ModelEntry holds a single model's friendly name and URI.
 type ModelEntry struct {
 	Name string
@@ -294,14 +387,28 @@ func parseURI(uri string) (apiType, authToken, baseURL, endpointPath string, err
 	endpointPath = u.Path
 	switch u.APIType {
 	case "anthropic":
-		endpointPath += "/v1/messages"
+		endpointPath = appendChatPath(endpointPath, "/v1/messages")
 	case "gemini":
 		// Gemini uses different path structure
 	default:
-		endpointPath += "/v1/chat/completions"
+		endpointPath = appendChatPath(endpointPath, "/v1/chat/completions")
 	}
 
 	return u.APIType, u.AuthToken, "https://" + u.Host, endpointPath, nil
+}
+
+// appendChatPath appends the API-specific chat endpoint path to the base path.
+// It preserves a non-empty base path (e.g. /zen/go/v1) and only adds the
+// default endpoint when the base path is empty or ends with /v1.
+func appendChatPath(basePath, defaultEndpoint string) string {
+	basePath = strings.TrimSuffix(basePath, "/")
+	if basePath == "" {
+		return defaultEndpoint
+	}
+	if strings.HasSuffix(basePath, "/v1") {
+		return basePath + strings.TrimPrefix(defaultEndpoint, "/v1")
+	}
+	return basePath
 }
 
 // parseModel extracts the model name from a URI.

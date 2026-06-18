@@ -54,7 +54,7 @@ type collector struct {
 
 func newCollector() *collector { return &collector{} }
 
-func (c *collector) Request(string) {}
+func (c *collector) Request(content string)           {}
 func (c *collector) Thinking(text string) {
 	c.mu.Lock()
 	c.thinking.WriteString(text)
@@ -79,6 +79,7 @@ func (c *collector) Summary(usage stream.Usage, stats stream.Stats) {
 	c.usage = usage
 	c.mu.Unlock()
 }
+func (c *collector) Total(usage stream.Usage) {}
 func (c *collector) Error(err error) {
 	c.mu.Lock()
 	c.err = err

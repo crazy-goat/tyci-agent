@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
@@ -17,7 +19,7 @@ import (
 // silentDisplay is a minimal Display implementation for tests.
 type silentDisplay struct{}
 
-func (s *silentDisplay) Request(string)                     {}
+func (s *silentDisplay) Request(string)                      {}
 func (s *silentDisplay) Thinking(string)                    {}
 func (s *silentDisplay) Text(string)                        {}
 func (s *silentDisplay) ToolCallStart(string)               {}
@@ -26,6 +28,7 @@ func (s *silentDisplay) ToolCallEnd(string, string)         {}
 func (s *silentDisplay) ToolFinish()                        {}
 func (s *silentDisplay) ToolBlock(string)                   {}
 func (s *silentDisplay) Summary(stream.Usage, stream.Stats) {}
+func (s *silentDisplay) Total(stream.Usage)                  {}
 func (s *silentDisplay) Error(error)                        {}
 func (s *silentDisplay) End()                               {}
 
@@ -136,13 +139,13 @@ type captureDisplay struct {
 	toolCallEnds   []struct{ Name, Result string }
 	toolBlocks     []string
 	summaries      []stream.Usage
+	totals         []stream.Usage
+	errors         []error
 }
 
 func newCaptureDisplay() *captureDisplay {
 	return &captureDisplay{}
 }
-
-func (c *captureDisplay) Request(string) {}
 
 func (c *captureDisplay) Thinking(text string) {
 	c.mu.Lock()
@@ -174,8 +177,6 @@ func (c *captureDisplay) ToolCallEnd(name, result string) {
 	c.mu.Unlock()
 }
 
-func (c *captureDisplay) ToolFinish() {}
-
 func (c *captureDisplay) ToolBlock(msg string) {
 	c.mu.Lock()
 	c.toolBlocks = append(c.toolBlocks, msg)
@@ -188,8 +189,21 @@ func (c *captureDisplay) Summary(usage stream.Usage, stats stream.Stats) {
 	c.mu.Unlock()
 }
 
-func (c *captureDisplay) Error(err error) {}
-func (c *captureDisplay) End()            {}
+func (c *captureDisplay) Total(usage stream.Usage) {
+	c.mu.Lock()
+	c.totals = append(c.totals, usage)
+	c.mu.Unlock()
+}
+
+func (c *captureDisplay) Error(err error) {
+	c.mu.Lock()
+	c.errors = append(c.errors, err)
+	c.mu.Unlock()
+}
+func (c *captureDisplay) End() {}
+
+func (c *captureDisplay) Request(content string) {}
+func (c *captureDisplay) ToolFinish()            {}
 
 func TestRunAppendsAssistantMessage(t *testing.T) {
 	p := &mockProvider{chunks: []string{"Hello", " world"}}
@@ -603,7 +617,7 @@ func TestWriteSessionEvents(t *testing.T) {
 type mockFailingProvider struct {
 	name  string
 	model string
-	err   string
+	err   error
 }
 
 func (m *mockFailingProvider) Name() string         { return m.name }
@@ -612,7 +626,16 @@ func (m *mockFailingProvider) Models() []string     { return []string{m.model} }
 func (m *mockFailingProvider) FreeModels() []string { return nil }
 
 func (m *mockFailingProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
-	return nil, errors.New(m.err)
+	if m.err == nil {
+		return nil, errors.New("mockFailingProvider: no error configured")
+	}
+	return nil, m.err
+}
+
+// newFailingProvider is a small helper for tests that only need an
+// always-failing provider with a plain (non-retryable) error message.
+func newFailingProvider(name, model, msg string) *mockFailingProvider {
+	return &mockFailingProvider{name: name, model: model, err: errors.New(msg)}
 }
 
 // mockTextProvider returns fixed text chunks then finishes (no tools).
@@ -648,7 +671,7 @@ func (m *mockTextProvider) Stream(ctx context.Context, req providers.Request) (<
 
 func TestRunFallbackPrimaryFailsFallbackSucceeds(t *testing.T) {
 	// Primary provider returns error, fallback succeeds with text
-	primary := &mockFailingProvider{name: "fb-primary", model: "primary-1", err: "server error 500"}
+	primary := &mockFailingProvider{name: "fb-primary", model: "primary-1", err: errors.New("server error 500")}
 
 	fallback := &mockTextProvider{name: "fb-fallback", model: "fb-1", chunks: []string{"fallback response"}}
 
@@ -689,10 +712,10 @@ func TestRunFallbackPrimaryFailsFallbackSucceeds(t *testing.T) {
 
 func TestRunFallbackAllFallbacksFail(t *testing.T) {
 	// Primary fails, all fallbacks also fail
-	primary := &mockFailingProvider{name: "fb-p1", model: "p1", err: "primary dead"}
+	primary := &mockFailingProvider{name: "fb-p1", model: "p1", err: errors.New("primary dead")}
 
-	fallback1 := &mockFailingProvider{name: "fb-f1", model: "f1", err: "fb1 dead"}
-	fallback2 := &mockFailingProvider{name: "fb-f2", model: "f2", err: "fb2 dead"}
+	fallback1 := &mockFailingProvider{name: "fb-f1", model: "f1", err: errors.New("fb1 dead")}
+	fallback2 := &mockFailingProvider{name: "fb-f2", model: "f2", err: errors.New("fb2 dead")}
 
 	providers.Register(fallback1)
 	providers.Register(fallback2)
@@ -720,7 +743,7 @@ func TestRunFallbackAllFallbacksFail(t *testing.T) {
 
 func TestRunFallbackPrimaryFailsWithNoFallbacks(t *testing.T) {
 	// Primary fails with non-retryable error, no fallbacks configured
-	primary := &mockFailingProvider{name: "fb-nofb", model: "nofb-1", err: "non-retryable"}
+	primary := &mockFailingProvider{name: "fb-nofb", model: "nofb-1", err: errors.New("non-retryable")}
 
 	d := newCaptureDisplay()
 	msgs := []providers.RichMessage{{
@@ -745,7 +768,7 @@ func TestRunFallbackPrimaryFailsWithNoFallbacks(t *testing.T) {
 
 func TestRunFallbackWithTools(t *testing.T) {
 	// Primary fails, fallback succeeds and produces tools
-	primary := &mockFailingProvider{name: "fb-tp", model: "tp-1", err: "down"}
+	primary := &mockFailingProvider{name: "fb-tp", model: "tp-1", err: errors.New("down")}
 
 	fallback := &mockToolProvider{
 		events: []stream.Event{
@@ -797,7 +820,7 @@ func TestRunFallbackWithTools(t *testing.T) {
 
 func TestRunFallbackNoToolsTextOnly(t *testing.T) {
 	// Primary fails, fallback succeeds with text only (no tools)
-	primary := &mockFailingProvider{name: "fb-ntp", model: "ntp-1", err: "down"}
+	primary := &mockFailingProvider{name: "fb-ntp", model: "ntp-1", err: errors.New("down")}
 
 	fallback := &mockTextProvider{name: "fb-ntf", model: "ntf-1", chunks: []string{"just text, no tools"}}
 
@@ -830,7 +853,7 @@ func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 	// After fallback, subsequent iterations use the fallback provider/model.
 	// We simulate two iterations: first fails, fallback succeeds,
 	// second iteration (no tools) should use the fallback.
-	primary := &mockFailingProvider{name: "fb-sess", model: "sess-1", err: "down"}
+	primary := &mockFailingProvider{name: "fb-sess", model: "sess-1", err: errors.New("down")}
 
 	// The fallback returns text first, then on second call returns different text
 	fallback := &mockToolProvider{
@@ -903,4 +926,291 @@ func TestRunNoFallbackNormalPath(t *testing.T) {
 	if len(msgs[1].Content) == 0 || msgs[1].Content[0].Text != "hello world" {
 		t.Errorf("expected 'hello world', got %+v", msgs[1].Content)
 	}
+}
+
+// ─── Total() cost-summary emission tests ───────────────────────────────────
+//
+// The agent must always emit a final Total(...) call to the display so the
+// user gets a cost summary even when the run ends via fallback, retry
+// exhaustion, context cancellation, or non-retryable error. Previously
+// several return paths skipped this call.
+
+func assertTotalCalled(t *testing.T, d *captureDisplay) {
+	t.Helper()
+	if len(d.totals) == 0 {
+		t.Fatal("expected at least one Total() call, got none")
+	}
+}
+
+func TestRun_TotalCalledOnSuccess(t *testing.T) {
+	p := &mockProvider{chunks: []string{"hello"}}
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	assertTotalCalled(t, d)
+	if len(d.totals) != 1 {
+		t.Errorf("expected exactly 1 Total() call on simple success, got %d", len(d.totals))
+	}
+}
+
+func TestRun_TotalCalledOnFallbackSuccess(t *testing.T) {
+	// Regression: primary provider fails, fallback succeeds. Previously the
+	// `return totalUsage, nil` inside the `if !fbMore` branch skipped the
+	// Total() call.
+	primary := &mockFailingProvider{name: "fb-tot-p", model: "tot-p-1", err: errors.New("primary down")}
+	fallback := &mockTextProvider{name: "fb-tot-fb", model: "tot-fb-1", chunks: []string{"fallback ok"}}
+	providers.Register(fallback)
+
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	_, err := Run(context.Background(), primary, d, &msgs, Config{
+		Model:          "tot-p-1",
+		MaxRetries:     1,
+		FallbackModels: []string{"fb-tot-fb/tot-fb-1"},
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	assertTotalCalled(t, d)
+}
+
+func TestRun_TotalCalledOnAllFallbacksExhausted(t *testing.T) {
+	// Primary fails, every fallback fails — we should still see Total() so
+	// the user sees accumulated cost (likely 0, but the summary should be
+	// emitted).
+	primary := &mockFailingProvider{name: "fb-all-p", model: "all-p-1", err: errors.New("primary down")}
+	fb1 := &mockFailingProvider{name: "fb-all-f1", model: "all-f1", err: errors.New("fb1 down")}
+	fb2 := &mockFailingProvider{name: "fb-all-f2", model: "all-f2", err: errors.New("fb2 down")}
+	providers.Register(fb1)
+	providers.Register(fb2)
+
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	_, err := Run(context.Background(), primary, d, &msgs, Config{
+		Model:          "all-p-1",
+		MaxRetries:     1,
+		FallbackModels: []string{"fb-all-f1/all-f1", "fb-all-f2/all-f2"},
+	})
+	if err == nil {
+		t.Fatal("expected error when all fallbacks fail")
+	}
+
+	assertTotalCalled(t, d)
+}
+
+func TestRun_TotalCalledOnContextCancel(t *testing.T) {
+	// Stream returns context.Canceled, Run should still emit Total.
+	cancelledProvider := &blockingProvider{name: "fb-ctx", model: "blocking-1"}
+
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := Run(ctx, cancelledProvider, d, &msgs, Config{Model: "blocking-1", MaxRetries: 1})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled error, got %v", err)
+	}
+
+	assertTotalCalled(t, d)
+}
+
+func TestRun_TotalCalledOnNonRetryable(t *testing.T) {
+	// Plain non-retryable error (e.g. plain errors.New) with no fallbacks.
+	primary := &mockFailingProvider{name: "fb-nr", model: "nr-1", err: errors.New("fatal")}
+
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	_, err := Run(context.Background(), primary, d, &msgs, Config{Model: "nr-1", MaxRetries: 3})
+	if err == nil {
+		t.Fatal("expected error from non-retryable failure")
+	}
+
+	assertTotalCalled(t, d)
+}
+
+func TestRun_TotalCalledOnAllRetriesExhausted(t *testing.T) {
+	// Retryable error, primary provider always fails, no fallbacks, all
+	// retries exhausted. We cancel ctx during the first backoff to avoid
+	// waiting 4+8+16+... seconds in the test. io.EOF is recognised as
+	// retryable by api.IsRetryable.
+	primary := &mockFailingProvider{name: "fb-rx", model: "rx-1", err: io.EOF}
+
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Poll the first ToolBlock("retry 1/5 ...") call to know the agent has
+	// entered the backoff sleep, then cancel the context.
+	gotBackoff := make(chan struct{})
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			d.mu.Lock()
+			seen := false
+			for _, tb := range d.toolBlocks {
+				if strings.HasPrefix(tb, "retry 1/5") {
+					seen = true
+					break
+				}
+			}
+			d.mu.Unlock()
+			if seen {
+				close(gotBackoff)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Run(ctx, primary, d, &msgs, Config{Model: "rx-1", MaxRetries: 5})
+		done <- err
+	}()
+
+	select {
+	case <-gotBackoff:
+		cancel()
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("did not observe first retry backoff within 2s")
+	}
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled during backoff, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return within 3s after cancel")
+	}
+
+	assertTotalCalled(t, d)
+}
+
+func TestRun_TotalCalledOnEveryToolTurn(t *testing.T) {
+	// The user asked to see the cumulative cost after every tool turn
+	// (not only at the very end). Total() must be emitted right after
+	// the Summary of the tool-using iteration, with the current
+	// totalUsage (which now includes the just-finished iteration's
+	// tokens). The follow-up iteration is empty (no usage) so it
+	// does not produce an extra Total().
+	p := &mockToolProvider{
+		events: []stream.Event{
+			stream.TextDelta{Text: "first "},
+			stream.ToolCallStart{ID: "tc1", Name: "bash"},
+			stream.ToolCallDelta{ID: "tc1", Delta: `{"command": "echo hi"}`},
+			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "echo hi"}`},
+			stream.Finish{Usage: stream.Usage{Input: 5, Output: 3}},
+		},
+	}
+	d := newCaptureDisplay()
+	runner := newMockToolRunner()
+	runner.SetResult("bash", "hi")
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "echo"}},
+	}}
+
+	if _, err := Run(context.Background(), p, d, &msgs, Config{
+		Model:      "mock-tool-1",
+		MaxRetries: 1,
+		Tools:      runner,
+	}); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if got := len(d.totals); got != 1 {
+		t.Fatalf("expected exactly 1 Total() call (one per tool turn), got %d", got)
+	}
+	// And the Total must reflect the cumulative usage (Input 5 from the
+	// tool iteration, not 0 – that was the original bug).
+	if d.totals[0].Input != 5 {
+		t.Errorf("expected Total.Input=5 (cumulative), got %d", d.totals[0].Input)
+	}
+}
+
+func TestRun_TotalNotDuplicatedOnFallbackSuccess(t *testing.T) {
+	// Regression: when primary fails and fallback succeeds, the Costs
+	// line was printed twice (once by runOnce inside tryFallback, once
+	// by agent.Run before returning). User reported this as a duplicate
+	// "Costs: in=88 out=43 cin=2304 cout=88" line.
+	primary := &mockFailingProvider{name: "fb-dup-p", model: "dup-p-1", err: errors.New("rate limited")}
+	fallback := &mockTextProvider{name: "fb-dup-fb", model: "dup-fb-1", chunks: []string{"hello"}}
+	providers.Register(fallback)
+
+	d := newCaptureDisplay()
+	msgs := []providers.RichMessage{{
+		Role:    "user",
+		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	if _, err := Run(context.Background(), primary, d, &msgs, Config{
+		Model:          "dup-p-1",
+		MaxRetries:     1,
+		FallbackModels: []string{"fb-dup-fb/dup-fb-1"},
+	}); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if got := len(d.totals); got != 1 {
+		t.Fatalf("expected exactly 1 Total() call after fallback success, got %d", got)
+	}
+}
+
+// blockingProvider blocks the stream until the context is cancelled, then
+// returns ctx.Err(). It exercises the context.Canceled return path in
+// agent.Run.
+type blockingProvider struct {
+	name  string
+	model string
+}
+
+func (b *blockingProvider) Name() string         { return b.name }
+func (b *blockingProvider) IsConfigured() bool   { return true }
+func (b *blockingProvider) Models() []string     { return []string{b.model} }
+func (b *blockingProvider) FreeModels() []string { return nil }
+
+func (b *blockingProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+	ch := make(chan stream.Event, 1)
+	go func() {
+		defer close(ch)
+		<-ctx.Done()
+		// No usage reported on cancel — totalUsage stays at zero.
+		ch <- stream.StreamError{Err: ctx.Err()}
+	}()
+	return ch, nil
 }

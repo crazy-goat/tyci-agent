@@ -104,14 +104,6 @@ func (t *Terminal) closeBlock() {
 	t.cursorCol = 0
 }
 
-// Request is a no-op in Terminal mode — the console display handles
-// request boundaries via the surrounding text/tool blocks.
-func (t *Terminal) Request(string) {}
-
-// ToolFinish is a no-op in Terminal mode — the console display renders
-// tool execution inline without a summary line.
-func (t *Terminal) ToolFinish() {}
-
 func (t *Terminal) Thinking(text string) {
 	isNew := t.continueBlock(blockThinking, t.bgThinking)
 	var startCol int
@@ -263,8 +255,7 @@ func (t *Terminal) ToolBlock(msg string) {
 
 func (t *Terminal) Summary(usage stream.Usage, stats stream.Stats) {
 	t.newBlock(blockUsage, t.bgUsage)
-	line := "Usage: " + buildUsageLine(usage, stats)
-	line = wrapText(line, t.termWidth, 0)
+	line := buildAlignedUsageLine(t.termWidth, "Usage:", usage, stats)
 	line = strings.ReplaceAll(line, "\n", "\n"+clearLine)
 	fmt.Fprint(os.Stdout, line)
 
@@ -280,6 +271,22 @@ func (t *Terminal) Summary(usage stream.Usage, stats stream.Stats) {
 	}
 }
 
+func (t *Terminal) Total(usage stream.Usage) {
+	// Print a newline within the current block, then the costs line.
+	// The block's background is still active from Summary.
+	if t.curBg != "" {
+		fmt.Fprint(os.Stdout, clearLine) // fill rest of usage line with bg
+	}
+	fmt.Fprintln(os.Stdout)
+	if t.curBg != "" {
+		fmt.Fprint(os.Stdout, t.curBg)
+		fmt.Fprint(os.Stdout, clearLine)
+	}
+	line := "Costs: " + buildCostsLine(usage)
+	fmt.Fprint(os.Stdout, line)
+	t.cursorCol = visibleWidth(line)
+}
+
 func (t *Terminal) Error(err error) {
 	t.closeBlock()
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -289,12 +296,13 @@ func (t *Terminal) End() {
 	t.closeBlock()
 }
 
-// Reset closes any open block and resets the display state to pristine.
-// Used by /new to clear the screen and start fresh.
-func (t *Terminal) Reset() {
-	t.closeBlock()
-	fmt.Print("\033[2J\033[H")
-}
+// Request is a no-op for Terminal (run-mode Minimal uses it for the [ REQ]
+// header). Terminal is the rich line-based display for console/interactive.
+func (t *Terminal) Request(content string) {}
+
+// ToolFinish is a no-op for Terminal (run-mode Minimal uses it for the
+// [TOOL} Tool finish summary line). Terminal streams tool output inline.
+func (t *Terminal) ToolFinish() {}
 
 // wrapText splits long lines into multiple lines to fit within maxWidth.
 // startCol is the number of columns already used on the first line (e.g., prompt).

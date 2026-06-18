@@ -259,7 +259,7 @@ func TestTuiModel_ShowTotalUsage_BlocksAdded(t *testing.T) {
 	if m.blocks[0].content != "───── new conversation ─────" {
 		t.Errorf("expected block[0] content %q, got %q", "───── new conversation ─────", m.blocks[0].content)
 	}
-	expectedTotal := "📊 Session total: in=800 (+200 cache) out=500"
+	expectedTotal := "📊 Session total: in=800 out=500 cin=200"
 	if m.blocks[1].content != expectedTotal {
 		t.Errorf("expected block[1] content %q, got %q", expectedTotal, m.blocks[1].content)
 	}
@@ -300,14 +300,11 @@ func TestTuiModel_ShowTotalUsage_AllUsageFields(t *testing.T) {
 	if !strings.Contains(totalBlock.content, "out=600") {
 		t.Errorf("expected out=600 in total, got %q", totalBlock.content)
 	}
-	if !strings.Contains(totalBlock.content, "r=50") {
-		t.Errorf("expected r=50 in total, got %q", totalBlock.content)
+	if !strings.Contains(totalBlock.content, "cin=200") {
+		t.Errorf("expected cin=200 in total, got %q", totalBlock.content)
 	}
-	if !strings.Contains(totalBlock.content, "(+200 cache)") {
-		t.Errorf("expected cache in total, got %q", totalBlock.content)
-	}
-	if !strings.Contains(totalBlock.content, "cache_w=30") {
-		t.Errorf("expected cache_w=30 in total, got %q", totalBlock.content)
+	if !strings.Contains(totalBlock.content, "cout=30") {
+		t.Errorf("expected cout=30 in total, got %q", totalBlock.content)
 	}
 	if hasTiming(totalBlock.content) {
 		t.Errorf("should not contain timing stats, got %q", totalBlock.content)

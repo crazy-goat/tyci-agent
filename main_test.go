@@ -64,6 +64,13 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// Stub providers.json (models.dev catalog) so EnsureProvidersJSON skips
+	// the network download during tests.
+	if err := os.WriteFile(filepath.Join(tyciDir, "providers.json"), []byte("{}"), 0644); err != nil {
+		_, _ = os.Stderr.WriteString("write providers.json: " + err.Error())
+		os.Exit(1)
+	}
+
 	// Create a default agent so ResolveModel finds a model without --model flag.
 	agentCfg := map[string]map[string]any{
 		"default": {
@@ -92,7 +99,7 @@ func TestRunRequiresPrompt(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for `run` without --prompt")
 	}
-	if !strings.Contains(string(out), "requires --prompt") {
+	if !strings.Contains(string(out), "--prompt is required") {
 		t.Errorf("output should mention 'requires --prompt', got: %s", string(out))
 	}
 }
@@ -183,6 +190,7 @@ func (c *captureDisplay) Summary(usage stream.Usage, stats stream.Stats) {
 	c.summaries = append(c.summaries, usage)
 	c.mu.Unlock()
 }
+func (c *captureDisplay) Total(usage stream.Usage) {}
 func (c *captureDisplay) Error(err error) {}
 func (c *captureDisplay) End()            {}
 

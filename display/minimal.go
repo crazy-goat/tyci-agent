@@ -20,6 +20,7 @@ const (
 	prefixThinking = "[THNK] "
 	prefixResponse = "[RESP] "
 	prefixStat     = "[STAT] "
+	prefixTotal    = "[COST] "
 	prefixTool     = "[TOOL] "
 	prefixToolEnd  = "[TOOL} "
 
@@ -411,6 +412,20 @@ func (m *Minimal) Summary(usage stream.Usage, stats stream.Stats) {
 	if stats.Duration > 0 {
 		m.blockStart = time.Now().Add(-stats.Duration)
 	}
+	m.lastRender = time.Time{}
+	m.renderLocked(false)
+	m.finishLine()
+}
+
+// Total emits a [COST] line with cumulative session token counts. Shown
+// after every iteration (runOnce emits it) and at the very end so the
+// user always sees a clean cost summary.
+func (m *Minimal) Total(usage stream.Usage) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.finishLine()
+	m.startLine(prefixTotal)
+	m.curContent.WriteString(BuildUsageLineNoTiming(usage))
 	m.lastRender = time.Time{}
 	m.renderLocked(false)
 	m.finishLine()

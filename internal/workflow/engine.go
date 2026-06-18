@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/stream"
 	"github.com/decodo/tyci/tools"
@@ -93,7 +93,9 @@ func (e *Engine) luaCwd(L *lua.LState) int {
 
 // luaModels returns available providers.
 func (e *Engine) luaModels(L *lua.LState) int {
-	providers.RegisterProvidersFromConfig(filepath.Join(os.Getenv("HOME"), ".tyci", "model.json"))
+	_ = connect.EnsureProvidersJSON()
+	_ = providers.RegisterProvidersFromProvidersJSON(connect.ProvidersJSONPath())
+	providers.RegisterProvidersFromConfig(connect.ModelJSONPath())
 	providerList := providers.ListProviders()
 	arr := L.NewTable()
 	for i, p := range providerList {
@@ -178,7 +180,7 @@ func (e *Engine) luaResumeSession(L *lua.LState) int {
 	}
 
 	var sessionData struct {
-		Model    string                  `json:"model"`
+		Model    string                 `json:"model"`
 		Messages []providers.RichMessage `json:"messages"`
 	}
 	if err := json.Unmarshal(data, &sessionData); err != nil {
@@ -319,7 +321,7 @@ func (e *Engine) sessionSave(L *lua.LState) int {
 	path := L.CheckString(2)
 
 	sessionData := struct {
-		Model    string                  `json:"model"`
+		Model    string                 `json:"model"`
 		Messages []providers.RichMessage `json:"messages"`
 	}{
 		Model:    session.model,
@@ -392,8 +394,6 @@ type responseCollector struct {
 	usage     stream.Usage
 }
 
-func (c *responseCollector) Request(string) {}
-
 func (c *responseCollector) Thinking(text string) {
 	c.thinking += text
 }
@@ -406,17 +406,17 @@ func (c *responseCollector) ToolCallStart(name string) {
 	c.toolCalls++
 }
 
+func (c *responseCollector) Request(content string)           {}
 func (c *responseCollector) ToolCallDelta(delta string) {}
-
 func (c *responseCollector) ToolCallEnd(name, result string) {}
-
-func (c *responseCollector) ToolFinish() {}
-
+func (c *responseCollector) ToolFinish()                    {}
 func (c *responseCollector) ToolBlock(msg string) {}
 
 func (c *responseCollector) Summary(usage stream.Usage, stats stream.Stats) {
 	c.usage = usage
 }
+
+func (c *responseCollector) Total(usage stream.Usage) {}
 
 func (c *responseCollector) Error(err error) {}
 

@@ -112,6 +112,11 @@ func (t *TUI) Summary(usage stream.Usage, stats stream.Stats) {
 	t.post(tuiMsgBlock{kind: "usage", usage: usage, stats: stats})
 }
 
+func (t *TUI) Total(usage stream.Usage) {
+	t.flushNow()
+	t.post(tuiMsgBlock{kind: "block", content: "📊 Costs: " + buildCostsLine(usage)})
+}
+
 func (t *TUI) Error(err error) {
 	t.flushNow()
 	t.post(tuiMsgBlock{kind: "error", content: err.Error()})

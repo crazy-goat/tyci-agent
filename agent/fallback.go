@@ -43,10 +43,7 @@ func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichM
 		d.ToolBlock(fmt.Sprintf("Switching to fallback model: %s\nReason: %s", fbFull, reason))
 
 		// Try the fallback
-		more, usage, err := runOnce(ctx, fbProvider, d, msgs, cfg.withModel(fbModel))
-		if usage != nil {
-			totalUsage.Add(*usage)
-		}
+		more, _, _, err := runOnce(ctx, fbProvider, d, msgs, cfg.withModel(fbModel), totalUsage)
 		if err != nil {
 			lastErr = err
 			d.ToolBlock(fmt.Sprintf("fallback %s also failed: %v", fbFull, err))

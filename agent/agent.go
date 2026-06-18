@@ -53,13 +53,17 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 	}
 
 	for iter := 0; cfg.MaxIterations <= 0 || iter < cfg.MaxIterations; iter++ {
-		more, usage, err := runOnce(ctx, fs.provider, d, msgs, cfg.withModel(fs.model))
-		if usage != nil {
-			totalUsage.Add(*usage)
-		}
+		// runOnce accumulates usage into totalUsage and emits d.Total
+		// only when it reaches the Summary line. totalEmitted reports
+		// whether the call already showed the Costs line; if not, the
+		// caller must emit it (typically on error/early-return paths).
+		more, _, totalEmitted, err := runOnce(ctx, fs.provider, d, msgs, cfg.withModel(fs.model), &totalUsage)
 		if err != nil {
 			// Check for context cancellation first
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				if !totalEmitted {
+					d.Total(totalUsage)
+				}
 				return totalUsage, err
 			}
 
@@ -67,7 +71,8 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 			if len(cfg.FallbackModels) > 0 {
 				fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage, err)
 				if fbErr == nil {
-					// Fallback succeeded — continue or exit based on fbMore
+					// Fallback succeeded — runOnce inside tryFallback
+					// already emitted d.Total.
 					if !fbMore {
 						return totalUsage, nil
 					}
@@ -75,12 +80,18 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				}
 				// All fallbacks failed
 				d.Error(fmt.Errorf("all fallback models exhausted: %v", fbErr))
+				if !totalEmitted {
+					d.Total(totalUsage)
+				}
 				return totalUsage, fbErr
 			}
 
 			// No fallbacks — use retry logic for retryable errors
 			if !api.IsRetryable(err) {
 				d.Error(err)
+				if !totalEmitted {
+					d.Total(totalUsage)
+				}
 				return totalUsage, err
 			}
 
@@ -90,12 +101,12 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				backoff := api.CalcBackoff(attempt, lastErr, api.RetryConfig{MaxRetries: cfg.MaxRetries})
 				d.ToolBlock(fmt.Sprintf("retry %d/%d — %s", attempt+1, cfg.MaxRetries, lastErr.Error()))
 				if err := sleepWithCountdown(ctx, backoff); err != nil {
+					if !totalEmitted {
+						d.Total(totalUsage)
+					}
 					return totalUsage, err
 				}
-				more, usage, err = runOnce(ctx, fs.provider, d, msgs, cfg.withModel(fs.model))
-				if usage != nil {
-					totalUsage.Add(*usage)
-				}
+				more, _, totalEmitted, err = runOnce(ctx, fs.provider, d, msgs, cfg.withModel(fs.model), &totalUsage)
 				if err == nil {
 					recovered = true
 					break
@@ -113,18 +124,28 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 							break
 						}
 						d.Error(fmt.Errorf("all fallback models exhausted: %v", fbErr))
+						if !totalEmitted {
+							d.Total(totalUsage)
+						}
 						return totalUsage, fbErr
 					}
 					d.Error(err)
+					if !totalEmitted {
+						d.Total(totalUsage)
+					}
 					return totalUsage, err
 				}
 			}
 			if !recovered {
 				d.Error(fmt.Errorf("all %d retries exhausted: %v", cfg.MaxRetries, lastErr))
+				if !totalEmitted {
+					d.Total(totalUsage)
+				}
 				return totalUsage, lastErr
 			}
 		}
 		if !more {
+			// runOnce emitted d.Total as part of the Summary block.
 			return totalUsage, nil
 		}
 	}

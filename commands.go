@@ -1,0 +1,833 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+
+	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/display"
+	"github.com/decodo/tyci/internal/connect"
+	"github.com/decodo/tyci/internal/debug"
+	"github.com/decodo/tyci/internal/readline"
+	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/session"
+	"github.com/decodo/tyci/tools"
+	"github.com/spf13/cobra"
+)
+
+// ---------------------------------------------------------------------------
+// Root command
+// ---------------------------------------------------------------------------
+
+var rootCmd = &cobra.Command{
+	Use:           "tyci-agent",
+	Short:         "LLM-powered AI agent CLI",
+	SilenceErrors: true,
+	SilenceUsage:  true,
+	Run: func(cmd *cobra.Command, args []string) {
+		cmd.Help()
+	},
+}
+
+func Execute() error {
+	return rootCmd.Execute()
+}
+
+func init() {
+	// Persistent flags shared by run / console / tui
+	rootCmd.PersistentFlags().String("model", "", "Model to use (format: provider/model)")
+	rootCmd.PersistentFlags().String("agent", "", "Agent name to use for default model (from agents config)")
+	rootCmd.PersistentFlags().Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
+	rootCmd.PersistentFlags().Int("max-iterations", -1, "Max tool-call iterations (-1 = unlimited)")
+	rootCmd.PersistentFlags().String("history-file", "", "Path to history file (default: ~/.tyci/history)")
+	rootCmd.PersistentFlags().String("session", "", "Session file path (default: auto-generated in ~/.tyci/sessions/)")
+	rootCmd.PersistentFlags().Bool("no-session", false, "Disable session persistence")
+	rootCmd.PersistentFlags().Bool("debug", false, "Show HTTP request/response data")
+	rootCmd.PersistentFlags().Bool("no-debug", false, "Disable API request/response debug logging")
+
+	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(consoleCmd)
+	rootCmd.AddCommand(tuiCmd)
+	rootCmd.AddCommand(agentCmd)
+	rootCmd.AddCommand(providerCmd)
+	rootCmd.AddCommand(completionCmd)
+}
+
+// ---------------------------------------------------------------------------
+// Shared setup
+// ---------------------------------------------------------------------------
+
+func registerProviders() {
+	if err := connect.EnsureProvidersJSON(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: providers.json: %v\n", err)
+	}
+	providers.RegisterProvidersFromProvidersJSON(connect.ProvidersJSONPath())
+	providers.RegisterProvidersFromConfig(connect.ModelJSONPath())
+}
+
+func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, context.Context, *session.Session, string, string, *debug.Logger, error) {
+	registerProviders()
+
+	maxRetries, _ := cmd.Flags().GetInt("max-retries")
+	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: maxRetries, BaseBackoff: 4, MaxBackoff: 128}
+
+	model, _ := cmd.Flags().GetString("model")
+	agentName, _ := cmd.Flags().GetString("agent")
+	if model == "" {
+		model = agent.ResolveModel("", agentName)
+	}
+	if model == "" {
+		return nil, "", agent.Config{}, nil, nil, "", "", nil, fmt.Errorf("no model specified. Use --model, --agent, or configure a default agent")
+	}
+
+	provider, modelName, ok := providers.FindModel(model)
+	if !ok {
+		return nil, "", agent.Config{}, nil, nil, "", "", nil, fmt.Errorf("model %q not found", model)
+	}
+
+	if agentName == "" {
+		agentName = "default"
+	}
+	var fallbackModels []string
+	if fb := agent.GetFallbackModels(agentName); len(fb) > 0 {
+		fallbackModels = fb
+	}
+
+	var ctx context.Context
+	var dl *debug.Logger
+	noDebug, _ := cmd.Flags().GetBool("no-debug")
+	if !noDebug {
+		var err error
+		dl, err = debug.Init()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: debug log: %v\n", err)
+			ctx = context.Background()
+		} else {
+			ctx = debug.NewContext(context.Background(), dl)
+		}
+	} else {
+		ctx = context.Background()
+	}
+
+	debugFlag, _ := cmd.Flags().GetBool("debug")
+	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
+	cfg := agent.Config{
+		Model:          modelName,
+		System:         providers.BuildSystemPrompt(),
+		MaxRetries:     maxRetries,
+		MaxIterations:  maxIterations,
+		Debug:          debugFlag,
+		Tools:          toolsAdapter{},
+		Schema:         tools.GetToolsSchemaJSON(),
+		ProviderName:   provider.Name(),
+		FallbackModels: fallbackModels,
+	}
+	ctx = providers.WithProvider(ctx, provider)
+	ctx = providers.WithModel(ctx, modelName)
+
+	wd, _ := os.Getwd()
+	var sess *session.Session
+	var sessionPath string
+	noSession, _ := cmd.Flags().GetBool("no-session")
+	if !noSession {
+		sessionPath, _ = cmd.Flags().GetString("session")
+		if sessionPath == "" {
+			var err error
+			sessionPath, err = session.DefaultPath(wd)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: cannot determine session path: %v\n", err)
+			}
+		}
+		if sessionPath != "" {
+			var err error
+			sess, err = session.Open(sessionPath, wd, modelName, provider.Name())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: session: %v (continuing without session)\n", err)
+				sess = nil
+				sessionPath = ""
+			}
+		}
+	}
+	cfg.Session = sess
+
+	historyFile, _ := cmd.Flags().GetString("history-file")
+	if historyFile == "" {
+		hf, err := readline.DefaultHistoryFile()
+		if err == nil {
+			historyFile = hf
+		}
+	}
+
+	return provider, modelName, cfg, ctx, sess, sessionPath, historyFile, dl, nil
+}
+
+// ---------------------------------------------------------------------------
+// run
+// ---------------------------------------------------------------------------
+
+var runCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Run a one-shot prompt",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		prompt, _ := cmd.Flags().GetString("prompt")
+		if prompt == "" {
+			return fmt.Errorf("--prompt is required")
+		}
+		provider, _, cfg, ctx, sess, sessionPath, _, dl, err := initCommon(cmd)
+		if err != nil {
+			return err
+		}
+		if dl != nil {
+			defer dl.Close()
+		}
+		// `tyci-agent run` is a one-shot CLI invocation. Use the
+		// bracket-prefix Minimal display so output is plain, one line
+		// per event, and easy to grep / pipe. For the rich REPL or
+		// full-screen experience, use `tyci-agent console` or
+		// `tyci-agent tui` instead.
+		disp := display.NewMinimal()
+		runPrompt(provider, disp, prompt, cfg, ctx, sess, sessionPath)
+		return nil
+	},
+}
+
+func init() {
+	runCmd.Flags().String("prompt", "", "Prompt for response (required)")
+	runCmd.RegisterFlagCompletionFunc("model", completeProviderModels)
+	runCmd.RegisterFlagCompletionFunc("agent", completeAgents)
+}
+
+// ---------------------------------------------------------------------------
+// console
+// ---------------------------------------------------------------------------
+
+var consoleCmd = &cobra.Command{
+	Use:   "console",
+	Short: "Start an interactive console session",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		provider, modelName, cfg, ctx, _, sessionPath, historyFile, dl, err := initCommon(cmd)
+		if err != nil {
+			return err
+		}
+		if dl != nil {
+			defer dl.Close()
+		}
+		disp := display.NewTerminal()
+		runInteractive(provider, modelName, disp, historyFile, cfg, ctx, sessionPath)
+		return nil
+	},
+}
+
+// ---------------------------------------------------------------------------
+// tui
+// ---------------------------------------------------------------------------
+
+var tuiCmd = &cobra.Command{
+	Use:   "tui",
+	Short: "Start the TUI (rich terminal UI)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		provider, modelName, cfg, ctx, _, sessionPath, historyFile, dl, err := initCommon(cmd)
+		if err != nil {
+			return err
+		}
+		if dl != nil {
+			defer dl.Close()
+		}
+
+		var allModels []string
+		var allProviderModels []display.ProviderModels
+		for _, p := range providers.ListProviders() {
+			pm := display.ProviderModels{Name: p.Name()}
+			for _, m := range p.Models() {
+				allModels = append(allModels, p.Name()+"/"+m)
+				pm.Models = append(pm.Models, m)
+			}
+			for _, m := range p.FreeModels() {
+				allModels = append(allModels, p.Name()+"/"+m)
+				pm.Models = append(pm.Models, m)
+			}
+			if len(pm.Models) > 0 {
+				allProviderModels = append(allProviderModels, pm)
+			}
+		}
+		model, _ := cmd.Flags().GetString("model")
+		if model == "" {
+			agentName, _ := cmd.Flags().GetString("agent")
+			model = agent.ResolveModel("", agentName)
+		}
+		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels)
+		runTUI(provider, modelName, tuiDisp, cfg, ctx, sessionPath)
+		return nil
+	},
+}
+
+// ---------------------------------------------------------------------------
+// provider add / refresh
+// ---------------------------------------------------------------------------
+
+var providerAddCmd = &cobra.Command{
+	Use:   "add <name>",
+	Short: "Add a custom provider (fetches models from the API)",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			_ = cmd.Help()
+			return nil
+		}
+		name := args[0]
+		apiType, _ := cmd.Flags().GetString("api")
+		baseURL, _ := cmd.Flags().GetString("url")
+		token, _ := cmd.Flags().GetString("token")
+		test, _ := cmd.Flags().GetBool("test")
+		testModel, _ := cmd.Flags().GetString("test-model")
+		return connect.AddProvider(name, apiType, baseURL, token, test, testModel)
+	},
+}
+
+func init() {
+	providerAddCmd.Flags().String("api", "openai", "API type (openai, anthropic, gemini)")
+	providerAddCmd.Flags().String("url", "", "API base URL")
+	providerAddCmd.Flags().String("token", "", "API key or $ENV_VAR reference")
+	providerAddCmd.Flags().Bool("test", false, "Test connectivity after adding")
+	providerAddCmd.Flags().String("test-model", "", "Model to test with (default: first model)")
+}
+
+var providerRefreshCmd = &cobra.Command{
+	Use:   "refresh",
+	Short: "Refresh provider catalog from models.dev",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		providerFilter, _ := cmd.Flags().GetString("provider")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+		imported, err := connect.RefreshModels(providerFilter, dryRun)
+		if err != nil {
+			return err
+		}
+
+		if len(imported) == 0 {
+			fmt.Fprintln(os.Stdout, "No providers found to import")
+			return nil
+		}
+
+		if dryRun {
+			fmt.Fprintf(os.Stdout, "Would import %d providers:\n\n", len(imported))
+		} else {
+			fmt.Fprintf(os.Stdout, "Imported %d providers:\n\n", len(imported))
+		}
+
+		for _, p := range imported {
+			fmt.Fprintf(os.Stdout, "  %s (%s): %d models\n", p.Name, p.Type, p.Models)
+		}
+
+		if !dryRun {
+			fmt.Fprintf(os.Stdout, "\nSaved catalog to %s\n", connect.ProvidersJSONPath())
+		}
+		return nil
+	},
+}
+
+func init() {
+	providerRefreshCmd.Flags().String("provider", "", "Comma-separated list of providers to import (default: all)")
+	providerRefreshCmd.Flags().Bool("dry-run", false, "Preview without writing")
+	providerListCmd.Flags().Bool("models", false, "Also list each provider's models")
+}
+
+var providerListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List registered providers",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		registerProviders()
+
+		allProviders := providers.ListProviders()
+		if len(allProviders) == 0 {
+			fmt.Fprintln(os.Stdout, "No providers registered.")
+			fmt.Fprintf(os.Stdout, "Run 'tyci-agent provider refresh' to fetch the models.dev catalog,\n")
+			fmt.Fprintf(os.Stdout, "or 'tyci-agent provider add <name>' to add a custom provider.\n")
+			return nil
+		}
+
+		showModels, _ := cmd.Flags().GetBool("models")
+
+		for _, p := range allProviders {
+			configured := p.IsConfigured()
+			if configured {
+				fmt.Fprintf(os.Stdout, "✓ %s\n", p.Name())
+			} else {
+				fmt.Fprintf(os.Stdout, "  %s (not configured)\n", p.Name())
+			}
+
+			if showModels {
+				models := p.Models()
+				freeModels := p.FreeModels()
+
+				for _, m := range models {
+					fmt.Fprintf(os.Stdout, "    %s/%s\n", p.Name(), m)
+				}
+				for _, m := range freeModels {
+					fmt.Fprintf(os.Stdout, "    %s/%s (free)\n", p.Name(), m)
+				}
+				if len(models) == 0 && len(freeModels) == 0 {
+					fmt.Fprintln(os.Stdout, "    (no models)")
+				}
+			}
+		}
+		return nil
+	},
+}
+
+// ---------------------------------------------------------------------------
+// agent
+// ---------------------------------------------------------------------------
+
+var agentCmd = &cobra.Command{
+	Use:   "agent",
+	Short: "Manage agent configurations",
+}
+
+var agentListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List configured agents",
+	Run: func(cmd *cobra.Command, args []string) {
+		agent.DisplayAgents()
+	},
+}
+
+var agentGetCmd = &cobra.Command{
+	Use:   "get <name>",
+	Short: "Show agent configuration",
+	Args:  cobra.MaximumNArgs(1),
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		names, _ := agent.ListAgents()
+		return names, cobra.ShellCompDirectiveNoFileComp
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			_ = cmd.Help()
+			return nil
+		}
+		name := args[0]
+		entry, ok := agent.GetAgentEntry(name)
+		if !ok {
+			return fmt.Errorf("agent %q not found", name)
+		}
+		if entry.Model != "" {
+			fmt.Printf("%s = %s\n", name, entry.Model)
+		} else {
+			fmt.Printf("%s = (no model set)\n", name)
+		}
+		if len(entry.Fallback) > 0 {
+			fmt.Printf("  fallback: %s\n", strings.Join(entry.Fallback, ", "))
+		}
+		return nil
+	},
+}
+
+var agentSetCmd = &cobra.Command{
+	Use:   "set <name> [model]",
+	Short: "Set agent model",
+	Args:  cobra.MaximumNArgs(2),
+	ValidArgsFunction: agentSetValidArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			_ = cmd.Help()
+			return nil
+		}
+		if len(args) < 2 {
+			return fmt.Errorf("missing model argument (format: provider/model)")
+		}
+		name, model := args[0], args[1]
+		if !strings.Contains(model, "/") || strings.HasPrefix(model, "/") || strings.HasSuffix(model, "/") {
+			return fmt.Errorf("invalid model %q (expected provider/model)", model)
+		}
+		if err := agent.SetAgent(name, model); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Agent %q set to %s (config: %s)\n", name, model, agent.ConfigPath())
+		return nil
+	},
+}
+
+var agentDeleteCmd = &cobra.Command{
+	Use:   "delete <name>",
+	Short: "Delete an agent",
+	Args:  cobra.MaximumNArgs(1),
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		names, _ := agent.ListAgents()
+		return names, cobra.ShellCompDirectiveNoFileComp
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			_ = cmd.Help()
+			return nil
+		}
+		name := args[0]
+		if err := agent.DeleteAgent(name); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Agent %q deleted (config: %s)\n", name, agent.ConfigPath())
+		return nil
+	},
+}
+
+var agentSetFallbackCmd = &cobra.Command{
+	Use:   "set-fallback <name> [model...]",
+	Short: "Set fallback models for an agent",
+	Args:  cobra.MinimumNArgs(1),
+	ValidArgsFunction: agentSetFallbackValidArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			_ = cmd.Help()
+			return nil
+		}
+		name := args[0]
+		models := args[1:]
+		for _, m := range models {
+			if !strings.Contains(m, "/") || strings.HasPrefix(m, "/") || strings.HasSuffix(m, "/") {
+				return fmt.Errorf("invalid fallback model %q (expected provider/model)", m)
+			}
+		}
+		if err := agent.SetFallback(name, models); err != nil {
+			return err
+		}
+		if len(models) == 0 {
+			fmt.Fprintf(os.Stderr, "Fallback models removed for agent %q (config: %s)\n", name, agent.ConfigPath())
+		} else {
+			fmt.Fprintf(os.Stderr, "Agent %q fallback set to [%s] (config: %s)\n", name, strings.Join(models, ", "), agent.ConfigPath())
+		}
+		return nil
+	},
+}
+
+func init() {
+	agentCmd.AddCommand(agentListCmd)
+	agentCmd.AddCommand(agentGetCmd)
+	agentCmd.AddCommand(agentSetCmd)
+	agentCmd.AddCommand(agentDeleteCmd)
+	agentCmd.AddCommand(agentSetFallbackCmd)
+}
+
+// listModels returns known models in the format provider/model.
+// When toComplete is empty it returns provider prefixes (e.g. "openai/") so
+// the completion list stays small and fast; otherwise it filters models by the
+// typed prefix.
+func listModels(toComplete string) []string {
+	registerProviders()
+	toComplete = strings.ToLower(toComplete)
+
+	// Empty prefix: suggest provider namespaces to keep the list short and fast.
+	if toComplete == "" {
+		seen := make(map[string]struct{})
+		for _, p := range providers.ListProviders() {
+			seen[p.Name()+"/"] = struct{}{}
+		}
+		prefixes := make([]string, 0, len(seen))
+		for p := range seen {
+			prefixes = append(prefixes, p)
+		}
+		sort.Strings(prefixes)
+		return prefixes
+	}
+
+	seen := make(map[string]struct{})
+	for _, p := range providers.ListProviders() {
+		prefix := p.Name() + "/"
+		for _, m := range p.Models() {
+			full := prefix + m
+			if strings.Contains(strings.ToLower(full), toComplete) {
+				seen[full] = struct{}{}
+			}
+		}
+		for _, m := range p.FreeModels() {
+			full := prefix + m
+			if strings.Contains(strings.ToLower(full), toComplete) {
+				seen[full] = struct{}{}
+			}
+		}
+	}
+	models := make([]string, 0, len(seen))
+	for m := range seen {
+		models = append(models, m)
+	}
+	sort.Strings(models)
+	return models
+}
+
+// listProviderNames returns all provider names known to tyci-agent:
+// registered in providers.json (models.dev), model.json (legacy/custom),
+// and auth.json (providers with stored keys).
+func listProviderNames() []string {
+	names := make(map[string]struct{})
+
+	if entries, err := providers.LoadProvidersJSON(connect.ProvidersJSONPath()); err == nil {
+		for name := range entries {
+			names[name] = struct{}{}
+		}
+	}
+	if entries, err := providers.LoadConfig(connect.ModelJSONPath()); err == nil {
+		for name := range entries {
+			names[name] = struct{}{}
+		}
+	}
+	if keys, err := connect.ListKeys(); err == nil {
+		for _, name := range keys {
+			names[name] = struct{}{}
+		}
+	}
+
+	result := make([]string, 0, len(names))
+	for name := range names {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// agentSetValidArgs completes positional args for `agent set <name> [model]`.
+// First arg is an agent name, second is a model in `provider/model` format.
+func agentSetValidArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	switch len(args) {
+	case 0:
+		names, _ := agent.ListAgents()
+		return names, cobra.ShellCompDirectiveNoFileComp
+	case 1:
+		return listModels(toComplete), cobra.ShellCompDirectiveNoFileComp
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
+}
+
+// agentSetFallbackValidArgs completes positional args for
+// `agent set-fallback <name> [model...]`. First arg is the agent name,
+// every subsequent arg is a model.
+func agentSetFallbackValidArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) == 0 {
+		names, _ := agent.ListAgents()
+		return names, cobra.ShellCompDirectiveNoFileComp
+	}
+	return listModels(toComplete), cobra.ShellCompDirectiveNoFileComp
+}
+
+// ---------------------------------------------------------------------------
+// provider auth
+// ---------------------------------------------------------------------------
+
+var providerCmd = &cobra.Command{
+	Use:   "provider",
+	Short: "Manage provider settings",
+}
+
+var providerAuthCmd = &cobra.Command{
+	Use:   "auth",
+	Short: "Manage provider API keys",
+}
+
+var providerAuthSetCmd = &cobra.Command{
+	Use:   "set <provider> [<key>]",
+	Short: "Set API key for a provider",
+	Args:  cobra.MaximumNArgs(2),
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return listProviderNames(), cobra.ShellCompDirectiveNoFileComp
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			_ = cmd.Help()
+			return nil
+		}
+		provider := args[0]
+		var key string
+		if len(args) >= 2 {
+			key = args[1]
+			if key == "-" {
+				data, err := readStdin()
+				if err != nil {
+					return fmt.Errorf("reading key from stdin: %w", err)
+				}
+				key = strings.TrimSpace(string(data))
+			}
+		} else {
+			fmt.Fprint(os.Stderr, "Enter API key: ")
+			data, err := readStdin()
+			if err != nil {
+				return fmt.Errorf("reading key: %w", err)
+			}
+			key = strings.TrimSpace(string(data))
+		}
+		if key == "" {
+			return fmt.Errorf("API key cannot be empty")
+		}
+		if err := connect.SetKey(provider, key); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "Saved key for provider %q in %s\n", provider, connect.AuthPath())
+		return nil
+	},
+}
+
+var providerAuthGetCmd = &cobra.Command{
+	Use:   "get <provider>",
+	Short: "Get stored API key for a provider",
+	Args:  cobra.MaximumNArgs(1),
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return listProviderNames(), cobra.ShellCompDirectiveNoFileComp
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			_ = cmd.Help()
+			return nil
+		}
+		provider := args[0]
+		key, ok, err := connect.GetKey(provider)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("no key found for provider %q", provider)
+		}
+		fmt.Fprintln(os.Stdout, connect.MaskKey(key))
+		return nil
+	},
+}
+
+var providerAuthListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List providers with stored keys",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		keys, err := connect.ListKeys()
+		if err != nil {
+			return err
+		}
+		if len(keys) == 0 {
+			fmt.Fprintln(os.Stdout, "No API keys configured in auth.json")
+			return nil
+		}
+		fmt.Fprintln(os.Stdout, "Configured providers:")
+		for _, p := range keys {
+			key, ok, _ := connect.GetKey(p)
+			masked := ""
+			if ok {
+				masked = connect.MaskKey(key)
+			}
+			fmt.Fprintf(os.Stdout, "  %s = %s\n", p, masked)
+		}
+		return nil
+	},
+}
+
+var providerAuthRmCmd = &cobra.Command{
+	Use:   "rm <provider>",
+	Short: "Remove stored API key for a provider",
+	Args:  cobra.MaximumNArgs(1),
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return listProviderNames(), cobra.ShellCompDirectiveNoFileComp
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			_ = cmd.Help()
+			return nil
+		}
+		provider := args[0]
+		if err := connect.RemoveKey(provider); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "Removed key for provider %q\n", provider)
+		return nil
+	},
+}
+
+func init() {
+	providerAuthCmd.AddCommand(providerAuthSetCmd)
+	providerAuthCmd.AddCommand(providerAuthGetCmd)
+	providerAuthCmd.AddCommand(providerAuthListCmd)
+	providerAuthCmd.AddCommand(providerAuthRmCmd)
+	providerCmd.AddCommand(providerAuthCmd)
+	providerCmd.AddCommand(providerAddCmd)
+	providerCmd.AddCommand(providerRefreshCmd)
+	providerCmd.AddCommand(providerListCmd)
+}
+
+// ---------------------------------------------------------------------------
+// completion
+// ---------------------------------------------------------------------------
+
+var completionCmd = &cobra.Command{
+	Use:   "completion [bash|zsh|fish|powershell]",
+	Short: "Generate shell completion script",
+	Long: `Generate shell completion scripts for tyci-agent.
+
+To load completions in the current shell session:
+
+  Bash:
+    source <(tyci-agent completion bash)
+
+  Zsh:
+    source <(tyci-agent completion zsh)
+
+  Fish:
+    tyci-agent completion fish | source
+
+  PowerShell:
+    tyci-agent completion powershell | Out-String | Invoke-Expression
+
+To make completions persistent across new sessions:
+
+  Bash on Linux:
+    tyci-agent completion bash > ~/.bash_completion.d/tyci-agent
+    # or append to ~/.bashrc:
+    echo 'source <(tyci-agent completion bash)' >> ~/.bashrc
+
+  Bash on macOS:
+    tyci-agent completion bash > /usr/local/etc/bash_completion.d/tyci-agent
+    # or append to ~/.bash_profile:
+    echo 'source <(tyci-agent completion bash)' >> ~/.bash_profile
+
+  Zsh:
+    tyci-agent completion zsh > "${fpath[1]}/_tyci-agent"
+    # or append to ~/.zshrc:
+    echo 'source <(tyci-agent completion zsh)' >> ~/.zshrc
+    # Make sure compinit is enabled:
+    autoload -Uz compinit && compinit
+
+  Fish:
+    tyci-agent completion fish > ~/.config/fish/completions/tyci-agent.fish
+
+  PowerShell:
+    tyci-agent completion powershell | Out-String |
+      Invoke-Expression -Command (Get-Clipboard)  # one-off
+    # Or add to your profile:
+    Add-Content -Path $PROFILE -Value 'tyci-agent completion powershell | Out-String | Invoke-Expression'
+`,
+	Args: cobra.MaximumNArgs(1),
+	Example: `  # Bash (Linux)
+  source <(tyci-agent completion bash)
+
+  # Zsh
+  source <(tyci-agent completion zsh)
+
+  # Fish
+  tyci-agent completion fish | source
+
+  # PowerShell
+  tyci-agent completion powershell | Out-String | Invoke-Expression`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			_ = cmd.Help()
+			return nil
+		}
+		shell := args[0]
+		switch shell {
+		case "bash":
+			return cmd.Root().GenBashCompletionV2(os.Stdout, true)
+		case "zsh":
+			return cmd.Root().GenZshCompletion(os.Stdout)
+		case "fish":
+			return cmd.Root().GenFishCompletion(os.Stdout, true)
+		case "powershell":
+			return cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+		default:
+			return fmt.Errorf("unknown shell %q", shell)
+		}
+	},
+}
