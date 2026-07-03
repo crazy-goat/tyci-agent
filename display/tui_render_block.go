@@ -6,6 +6,58 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// streamWrap incrementally wraps a streaming block's raw text. Content only
+// grows during streaming, and appended text can never change the wrapping of
+// logical lines that already ended with a newline — so those keep their
+// wrapped form and only the last (incomplete) logical line is re-wrapped on
+// each render. Must be discarded when the wrap width changes or the block
+// finishes.
+type streamWrap struct {
+	srcLen      int      // bytes of content whose wrapping is final (ends right after a '\n')
+	stableLines []string // wrapped sub-lines for content[:srcLen]
+	lastLen     int      // content length at the previous render
+	lastOut     string   // full wrapped output for lastLen
+	lastLines   []string // split lines matching lastOut
+}
+
+// render returns the wrapped output for content, reusing wrapped lines for
+// all completed logical lines. The result is identical to
+// wrapRawText(content, useBar, width).
+func (sw *streamWrap) render(content string, useBar bool, width int) (string, []string) {
+	if sw.srcLen > len(content) || sw.lastLen > len(content) {
+		// Content shrank — invariant broken, restart from scratch.
+		*sw = streamWrap{}
+	}
+	if sw.lastLen == len(content) && sw.lastLines != nil {
+		return sw.lastOut, sw.lastLines
+	}
+	w := newRawWrapper(useBar, width)
+	if nl := strings.LastIndexByte(content, '\n'); nl+1 > sw.srcLen {
+		parts := strings.Split(content[sw.srcLen:nl+1], "\n")
+		// The trailing element after the final '\n' is the start of the next
+		// (incomplete) logical line — always empty here, skip it.
+		for _, line := range parts[:len(parts)-1] {
+			sw.stableLines = w.appendLogicalLine(sw.stableLines, line)
+		}
+		sw.srcLen = nl + 1
+	}
+	lines := make([]string, len(sw.stableLines), len(sw.stableLines)+4)
+	copy(lines, sw.stableLines)
+	lines = w.appendLogicalLine(lines, content[sw.srcLen:])
+	// Drop trailing empty sub-lines to match wrapRawText's TrimRight.
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	out := strings.Join(lines, "\n")
+	if out == "" {
+		lines = []string{""}
+	}
+	sw.lastLen = len(content)
+	sw.lastOut = out
+	sw.lastLines = lines
+	return out, lines
+}
+
 func (m TuiModel) renderBlock(idx int, b block) string {
 	// ── Helper to render markdown with caching ──
 	tryRenderMarkdown := func(content string, useBar bool) string {
@@ -23,15 +75,17 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 
 		// During streaming: show raw wrapped text (no glamour re-render).
 		// Markdown rendering only happens when block finishes (idle or
-		// forceRenderDirtyBlocks called at block boundary).
+		// forceRenderDirtyBlocks called at block boundary). Wrapping is
+		// incremental: only the last logical line is re-wrapped per chunk.
 		if dirty && isStreaming {
-			if sc, ok := m.streamingCache[idx]; ok {
-				return sc
+			sw := m.streamWraps[idx]
+			if sw == nil {
+				sw = &streamWrap{}
+				m.streamWraps[idx] = sw
 			}
-			wrapped := wrapRawText(content, useBar, m.width)
-			m.streamingCache[idx] = wrapped
-			m.blocks[idx].cachedLineCount = lineCount(wrapped)
-			m.blocks[idx].cachedLines = strings.Split(wrapped, "\n")
+			wrapped, lines := sw.render(content, useBar, m.width)
+			m.blocks[idx].cachedLineCount = len(lines)
+			m.blocks[idx].cachedLines = lines
 			return wrapped
 		}
 
@@ -39,11 +93,10 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 		rendered := renderMarkdownWithCache(content, useBar, m.width)
 		// Update cache
 		delete(m.dirtyBlocks, idx)
-		delete(m.streamingCache, idx)
+		delete(m.streamWraps, idx)
 		m.mdCacheRendered[idx] = rendered
 		m.blocks[idx].cachedLineCount = lineCount(rendered)
 		m.blocks[idx].cachedLines = strings.Split(rendered, "\n")
-		delete(m.streamingCache, idx)
 		return rendered
 	}
 
@@ -92,6 +145,10 @@ func (m *TuiModel) getBlockLines(idx int, forceRender bool) []string {
 		b.cachedLines = []string{} // empty but not nil → skip next time
 		b.cachedLineCount = 0
 		return nil
+	}
+	if b.cachedLines != nil {
+		// renderBlock populated the line cache itself — avoid re-splitting.
+		return b.cachedLines
 	}
 	lines := strings.Split(rendered, "\n")
 	b.cachedLines = lines

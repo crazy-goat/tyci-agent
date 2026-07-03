@@ -143,7 +143,8 @@ func (m TuiModel) selectedText() string {
 			parts = append(parts, "")
 			continue
 		}
-		from, to := 0, lipgloss.Width(line.PlainText)
+		plain := line.plain()
+		from, to := 0, lipgloss.Width(plain)
 		if line.Y == start.Y {
 			from = start.X
 		}
@@ -152,16 +153,16 @@ func (m TuiModel) selectedText() string {
 		}
 		if start.Y != end.Y {
 			if line.Y == start.Y {
-				to = lipgloss.Width(line.PlainText)
+				to = lipgloss.Width(plain)
 			} else if line.Y == end.Y {
 				from = 0
 				to = end.X
 			} else {
 				from = 0
-				to = lipgloss.Width(line.PlainText)
+				to = lipgloss.Width(plain)
 			}
 		}
-		parts = append(parts, cutCells(line.PlainText, from, to))
+		parts = append(parts, cutCells(plain, from, to))
 	}
 	return strings.TrimRight(strings.Join(parts, "\n"), "\n")
 }

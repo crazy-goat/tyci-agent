@@ -27,8 +27,17 @@ func lineCount(s string) int {
 	return n
 }
 
-// wrapRawText wraps content as plain text (no glamour markdown).
-func wrapRawText(content string, useBar bool, width int) string {
+// rawWrapper wraps logical text lines into display sub-lines, optionally
+// prefixed with a colored bar. Styles are built once per wrapper instead of
+// per line.
+type rawWrapper struct {
+	useBar bool
+	maxW   int
+	bar    string
+	style  lipgloss.Style
+}
+
+func newRawWrapper(useBar bool, width int) rawWrapper {
 	maxW := width
 	if useBar {
 		maxW = width - 2
@@ -36,32 +45,36 @@ func wrapRawText(content string, useBar bool, width int) string {
 	if maxW < 10 {
 		maxW = 10
 	}
+	w := rawWrapper{useBar: useBar, maxW: maxW}
 	if useBar {
-		bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
-		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
-		var out strings.Builder
-		for _, line := range strings.Split(content, "\n") {
-			wrapped := wrapText(line, maxW, 0)
-			for _, wl := range strings.Split(wrapped, "\n") {
-				wl = strings.TrimSuffix(wl, clearLine)
-				out.WriteString(bar)
-				out.WriteString(" ")
-				out.WriteString(textStyle.Render(wl))
-				out.WriteString("\n")
-			}
-		}
-		return strings.TrimRight(out.String(), "\n")
+		w.bar = lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
+		w.style = lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
 	}
-	var out strings.Builder
+	return w
+}
+
+// appendLogicalLine wraps one logical (newline-free) line and appends the
+// resulting display sub-lines to lines.
+func (w rawWrapper) appendLogicalLine(lines []string, line string) []string {
+	wrapped := wrapText(line, w.maxW, 0)
+	for _, wl := range strings.Split(wrapped, "\n") {
+		wl = strings.TrimSuffix(wl, clearLine)
+		if w.useBar {
+			wl = w.bar + " " + w.style.Render(wl)
+		}
+		lines = append(lines, wl)
+	}
+	return lines
+}
+
+// wrapRawText wraps content as plain text (no glamour markdown).
+func wrapRawText(content string, useBar bool, width int) string {
+	w := newRawWrapper(useBar, width)
+	var lines []string
 	for _, line := range strings.Split(content, "\n") {
-		wrapped := wrapText(line, maxW, 0)
-		for _, wl := range strings.Split(wrapped, "\n") {
-			wl = strings.TrimSuffix(wl, clearLine)
-			out.WriteString(wl)
-			out.WriteString("\n")
-		}
+		lines = w.appendLogicalLine(lines, line)
 	}
-	return strings.TrimRight(out.String(), "\n")
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }
 
 // ─── History persistence ──────────────────────────────────────────────────

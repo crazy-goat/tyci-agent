@@ -9,10 +9,16 @@ func (m *TuiModel) appendToLastTool(delta string) {
 	for i := len(m.blocks) - 1; i >= 0; i-- {
 		if m.blocks[i].kind == "tool" {
 			m.blocks[i].content += delta
-			m.blocks[i].cachedLines = nil
-			m.blocks[i].cachedLineCount = 0
-			delete(m.toolDisplayCache, i)
-			m.invalidateTotalLines()
+			// The collapsed tool line only changes once the args JSON is
+			// complete (formatToolCall shows "tool(...)" until it parses).
+			// Skip cache invalidation for deltas that cannot end the JSON —
+			// otherwise every delta re-parses the whole accumulated args.
+			if jsonMaybeComplete(m.blocks[i].content) {
+				m.blocks[i].cachedLines = nil
+				m.blocks[i].cachedLineCount = 0
+				delete(m.toolDisplayCache, i)
+				m.invalidateTotalLines()
+			}
 			return
 		}
 	}

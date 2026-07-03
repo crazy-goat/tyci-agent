@@ -40,10 +40,7 @@ func AddProvider(name, apiType, baseURL, token string, test bool, testModel stri
 	host := u.Host
 
 	// Resolve token (handle $ENV_VAR references)
-	resolvedToken := token
-	if strings.HasPrefix(resolvedToken, "$") {
-		resolvedToken = os.Getenv(strings.TrimPrefix(resolvedToken, "$"))
-	}
+	resolvedToken := ResolveToken(token)
 
 	// Fetch models
 	modelIDs, err := fetchOpenAIModels(baseURL, resolvedToken)

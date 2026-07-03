@@ -9,7 +9,9 @@ import (
 
 // RenderLine describes one visible terminal line produced by the TUI renderer.
 // Text is the styled line used for display; PlainText is the same line without
-// ANSI styling, suitable for copying and hit-testing.
+// ANSI styling, suitable for copying and hit-testing. PlainText is filled
+// lazily — use plain() instead of reading the field, so the ANSI stripping
+// cost is only paid when a selection is actually copied, not on every render.
 type RenderLine struct {
 	Text       string
 	PlainText  string
@@ -17,6 +19,14 @@ type RenderLine struct {
 	BlockIndex int
 	SourceLine int
 	Y          int
+}
+
+// plain returns the ANSI-stripped form of the line, computing it on demand.
+func (l RenderLine) plain() string {
+	if l.PlainText != "" || l.Text == "" {
+		return l.PlainText
+	}
+	return plainLine(l.Text)
 }
 
 // RenderBuffer stores metadata for the currently visible transcript area.
@@ -34,7 +44,6 @@ func newRenderBuffer(capacity int) RenderBuffer {
 func (rb *RenderBuffer) Add(text, sourceKind string, blockIndex, sourceLine, y int) {
 	rb.Lines = append(rb.Lines, RenderLine{
 		Text:       text,
-		PlainText:  plainLine(text),
 		SourceKind: sourceKind,
 		BlockIndex: blockIndex,
 		SourceLine: sourceLine,

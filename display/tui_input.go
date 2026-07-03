@@ -29,9 +29,9 @@ func (m TuiModel) submit() tea.Model {
 	// to it, leaving stale render/scroll caches and breaking follow-to-bottom.
 	m.forceRenderDirtyBlocks()
 	m.blocks = append(m.blocks, block{kind: "user", content: "You: " + line})
-	// A new block changes separators and line offsets. Clear line caches
-	// aggressively so the next View uses fresh layout immediately.
-	m.invalidateAllBlockLineCounts()
+	// A new block only shifts line offsets; earlier blocks render the same,
+	// so their caches stay valid.
+	m.invalidateTotalLines()
 	// A new prompt should always jump back to the live bottom, even if the user
 	// had scrolled up in the previous answer.
 	m.atBottom = true
