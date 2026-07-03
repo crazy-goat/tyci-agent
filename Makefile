@@ -24,12 +24,18 @@ minimal:
 		-trimpath \
 		-o $(BINARY) .
 
+# NOTE: use `install` (temp file + atomic rename → fresh inode), not `cp`.
+# Overwriting a code-signed binary in place with `cp` reuses the inode, so on
+# Apple Silicon the kernel's cached code signature (CDHash) for that inode no
+# longer matches the new bytes and it SIGKILLs the binary at exec ("killed: 9"),
+# even though `codesign --verify` passes. A fresh inode avoids the stale cache.
 install: build
-	cp $(BINARY) ~/local/bin/
+	mkdir -p ~/local/bin
+	install -m 0755 $(BINARY) ~/local/bin/$(BINARY)
 
 install-local: release
 	mkdir -p ~/.local/bin
-	cp $(BINARY) ~/.local/bin/tyci-agent
+	install -m 0755 $(BINARY) ~/.local/bin/tyci-agent
 
 clean:
 	rm -f $(BINARY)

@@ -57,6 +57,33 @@ func (m *TuiModel) invalidateAllBlockLineCounts() {
 	m.cachedTotalLines = -1
 }
 
+// agentBusy reports whether the agent is actively producing output.
+func (m *TuiModel) agentBusy() bool {
+	switch m.status {
+	case "thinking", "responding", "tool":
+		return true
+	}
+	return false
+}
+
+// jumpScrollStart quantizes the viewport start line to a multiple of a quarter
+// of the window height, rounding up from minStart (the exact bottom-pinned
+// start). Between jumps the returned value is constant while content grows, so
+// visible rows do not shift and the renderer's positional line diff can skip
+// them. A quarter-screen step keeps the jumps small enough to feel smooth while
+// still batching several appends per shift.
+//
+// Only the ticker-based standard renderer uses this; the custom painter scrolls
+// the message region smoothly one line at a time via a hardware scroll region
+// (see paintRegion), so it does not quantize.
+func jumpScrollStart(minStart, msgHeight int) int {
+	jump := msgHeight / 4
+	if jump < 1 {
+		jump = 1
+	}
+	return (minStart + jump - 1) / jump * jump
+}
+
 // clampScroll ensures scrollLine is within valid range.
 func (m *TuiModel) clampScroll() {
 	if m.atBottom {

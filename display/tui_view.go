@@ -7,6 +7,29 @@ import (
 )
 
 func (m TuiModel) View() string {
+	frame := m.renderFrame()
+	// When the custom painter is active it drives the terminal directly; the
+	// returned string is discarded by bubbletea's nil renderer. Painting here
+	// (rather than on a ticker) means idle frames cost nothing and key presses
+	// repaint instantly. See tui_painter.go.
+	if m.painter != nil {
+		m.painter.paintRegion(frame, m.width, m.height, m.paintScrollBottom())
+	}
+	return frame
+}
+
+// paintScrollBottom returns the height of the top-of-screen message region the
+// painter may hardware-scroll (rows [0, N)). It's the message viewport in the
+// normal transcript view, and 0 (disabled) for full-screen overlays and states
+// that never scroll a stream, where a plain line diff is correct and cheaper.
+func (m TuiModel) paintScrollBottom() int {
+	if !m.ready || m.quitting || m.subagentModalActive || m.pickerActive {
+		return 0
+	}
+	return m.visibleLines()
+}
+
+func (m TuiModel) renderFrame() string {
 	if !m.ready {
 		return ""
 	}

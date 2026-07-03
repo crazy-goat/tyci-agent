@@ -74,6 +74,11 @@ func (m TuiModel) handleResizeFlush() (tea.Model, tea.Cmd) {
 		}
 		m.invalidateAllBlockLineCounts()
 		m.clampScroll()
+		if m.painter != nil {
+			// Geometry changed; force a clear+full redraw so no stale cells
+			// from the previous size linger.
+			m.painter.repaint()
+		}
 	}
 	return m, nil
 }

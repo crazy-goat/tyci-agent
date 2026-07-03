@@ -135,6 +135,11 @@ type TuiModel struct {
 	renderBuffer      RenderBuffer
 	modalRenderBuffer RenderBuffer
 
+	// Custom event-driven renderer (on by default; nil only when TYCI_TUI_PAINTER
+	// is set to 0/false to fall back to bubbletea's ticker-based renderer). When
+	// non-nil, View() hands each frame to it. See tui_painter.go.
+	painter *painter
+
 	// Mouse text selection over visible transcript lines.
 	selection        SelectionState
 	selectionVersion int

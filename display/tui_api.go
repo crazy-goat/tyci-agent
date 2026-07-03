@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/term"
 )
 
 type TUI struct {
@@ -31,8 +32,20 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
 	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel)
-	opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithFPS(tuiFPS())}
+
+	var opts []tea.ProgramOption
+	if tuiPainterEnabled() {
+		// Own the terminal ourselves via a custom event-driven painter: no
+		// idle ticker and instant key echo. bubbletea's nil renderer no-ops
+		// all terminal control, so the painter handles alt-screen/mouse/cursor.
+		m.painter = newPainter(os.Stdout, tuiMouseEnabled())
+		opts = append(opts, tea.WithoutRenderer())
+	} else {
+		opts = append(opts, tea.WithAltScreen(), tea.WithFPS(tuiFPS()))
+	}
 	if tuiMouseEnabled() {
+		// Needed even in painter mode so bubbletea's input reader delivers
+		// mouse events; the enable escape itself is written by the painter.
 		opts = append(opts, tea.WithMouseCellMotion())
 	}
 	p := tea.NewProgram(m, opts...)
@@ -49,7 +62,24 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 
 	go t.flushLoop()
 	go func() {
-		if _, err := p.Run(); err != nil {
+		// bubbletea skips all terminal init when the renderer is disabled
+		// (WithoutRenderer), so in painter mode we do it ourselves: raw mode,
+		// initial window size, and resize forwarding. Must happen before Run().
+		var restoreTerm func()
+		if m.painter != nil {
+			restoreTerm = setupPainterTerminal(p)
+		}
+		_, err := p.Run()
+		// p.Run() returns after bubbletea's own shutdown (including recovered
+		// panics), so this is the right place to restore the terminal state the
+		// painter set up — the nil renderer never does it.
+		if m.painter != nil {
+			m.painter.stop()
+		}
+		if restoreTerm != nil {
+			restoreTerm()
+		}
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		}
 		close(t.done)
@@ -72,27 +102,88 @@ func tuiFPS() int {
 	return 30
 }
 
+// setupPainterTerminal performs the terminal initialization bubbletea skips
+// when the renderer is disabled: it puts stdin into raw mode, sends the initial
+// window size to the program, and forwards SIGWINCH as WindowSizeMsg. bubbletea
+// normally does all of this in initTerminal/handleResize, but it early-returns
+// for a nil renderer, leaving input cooked and the model with no real size.
+// The returned func restores the terminal and must run after the program exits.
+func setupPainterTerminal(p *tea.Program) func() {
+	inFd := int(os.Stdin.Fd())
+	var oldState *term.State
+	if term.IsTerminal(inFd) {
+		if st, err := term.MakeRaw(inFd); err == nil {
+			oldState = st
+		}
+	}
+
+	outFd := int(os.Stdout.Fd())
+	sendSize := func() {
+		if w, h, err := term.GetSize(outFd); err == nil && w > 0 && h > 0 {
+			p.Send(tea.WindowSizeMsg{Width: w, Height: h})
+		}
+	}
+	// Deliver the initial size once the event loop starts consuming messages.
+	go sendSize()
+
+	stopResize := watchResize(sendSize)
+
+	return func() {
+		stopResize()
+		if oldState != nil {
+			_ = term.Restore(inFd, oldState)
+		}
+	}
+}
+
+// tuiPainterEnabled reports whether to use the custom event-driven painter
+// (tui_painter.go) instead of bubbletea's ticker-based renderer. It is on by
+// default — the painter eliminates idle ticker wakeups (0% idle CPU), removes
+// key-echo latency, and scrolls the transcript in hardware. Set TYCI_TUI_PAINTER
+// to 0/false/off/no to fall back to bubbletea's standard renderer.
+func tuiPainterEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("TYCI_TUI_PAINTER")))
+	return !(v == "0" || v == "false" || v == "off" || v == "no")
+}
+
+// Coalescing windows for flushLoop. The first chunk after a quiet period
+// flushes fast so the response appears promptly; once the stream is clearly
+// sustained (previous flush was recent), batching harder cuts the number of
+// transcript repaints 3x with no visible difference at reading speed.
+const (
+	coalesceCold  = 33 * time.Millisecond
+	coalesceHot   = 100 * time.Millisecond
+	coalesceHotIf = 300 * time.Millisecond // a flush this recent means the stream is hot
+)
+
+// nextCoalesce picks the coalescing window given the time since the last flush.
+func nextCoalesce(sinceLastFlush time.Duration) time.Duration {
+	if sinceLastFlush < coalesceHotIf {
+		return coalesceHot
+	}
+	return coalesceCold
+}
+
 // flushLoop flushes accumulated streaming content on demand. It sleeps until
 // signaled via flushWake (set by Thinking/Text when content is appended), then
-// waits a short coalescing window so multiple rapid appends batch into a single
+// waits a coalescing window so multiple rapid appends batch into a single
 // render. This keeps the loop idle (zero wakeups) when nothing is streaming.
-// 33ms matches the 30 FPS renderer — flushing faster than the renderer can
-// paint only burns CPU re-wrapping the streaming block.
 func (t *TUI) flushLoop() {
-	const coalesce = 33 * time.Millisecond
+	var lastFlush time.Time
 
 	for {
 		select {
 		case <-t.flushWake:
 			// Coalesce: wait briefly so bursts of appends flush as one message.
 			select {
-			case <-time.After(coalesce):
+			case <-time.After(nextCoalesce(time.Since(lastFlush))):
 			case <-t.done:
 				t.flushPending()
 				close(t.flushDone)
 				return
 			}
 			t.flushPending()
+			lastFlush = time.Now()
 		case <-t.done:
 			t.flushPending() // flush one last time
 			close(t.flushDone)

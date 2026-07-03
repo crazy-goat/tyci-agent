@@ -3,6 +3,7 @@ package display
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // ─── streamWrap incremental wrapping ─────────────────────────────────────
@@ -202,6 +203,97 @@ func TestRenderLinePlainLazy(t *testing.T) {
 	l2 := RenderLine{Text: styled, PlainText: "prefilled"}
 	if got := l2.plain(); got != "prefilled" {
 		t.Errorf("plain() = %q, want %q", got, "prefilled")
+	}
+}
+
+// ─── adaptive streaming coalescing ───────────────────────────────────────
+
+func TestNextCoalesce(t *testing.T) {
+	// First flush after a quiet period paints fast.
+	if got := nextCoalesce(time.Hour); got != coalesceCold {
+		t.Errorf("cold stream: got %v, want %v", got, coalesceCold)
+	}
+	// Sustained stream batches harder.
+	if got := nextCoalesce(50 * time.Millisecond); got != coalesceHot {
+		t.Errorf("hot stream: got %v, want %v", got, coalesceHot)
+	}
+}
+
+// ─── jump-scroll: rows stay stationary while the agent streams ────────────
+
+func TestJumpScrollStart(t *testing.T) {
+	const msgHeight = 20 // jump = 5 (quarter of the window)
+	prev := 0
+	for minStart := 1; minStart < 100; minStart++ {
+		got := jumpScrollStart(minStart, msgHeight)
+		if got < minStart {
+			t.Fatalf("minStart=%d: start %d must not cut off the newest lines", minStart, got)
+		}
+		if got%5 != 0 {
+			t.Fatalf("minStart=%d: start %d not a multiple of the jump size", minStart, got)
+		}
+		if got < prev {
+			t.Fatalf("minStart=%d: start went backwards (%d < %d)", minStart, got, prev)
+		}
+		prev = got
+	}
+	// Degenerate window: quantization disabled, exact bottom pin.
+	if got := jumpScrollStart(7, 1); got != 7 {
+		t.Errorf("msgHeight=1: got %d, want 7", got)
+	}
+}
+
+func TestJumpScrollKeepsRowsStationaryWhileStreaming(t *testing.T) {
+	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil)
+	m.width = 80
+	m.height = 24 // visibleLines = 24 - 3 (input) - 2 = 19, jump = 9
+	for i := 0; i < 40; i++ {
+		m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "streamed line\n"})
+	}
+	if m.status != "responding" {
+		t.Fatalf("setup: status = %q, want responding", m.status)
+	}
+
+	msgHeight := m.visibleLines()
+	jump := msgHeight / 4
+	starts := map[int]bool{}
+	prevStart := -1
+	for i := 0; i < 20; i++ {
+		m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "streamed line\n"})
+		lines := m.buildFlatRenderLines()
+		if len(lines) == 0 {
+			t.Fatal("no visible lines")
+		}
+		start := lines[0].SourceLine
+		if start%jump != 0 {
+			t.Fatalf("append %d: viewport start %d not a multiple of jump %d", i, start, jump)
+		}
+		if start < prevStart {
+			t.Fatalf("append %d: viewport start went backwards (%d < %d)", i, start, prevStart)
+		}
+		last := lines[len(lines)-1]
+		if last.SourceLine != m.blocks[0].cachedLineCount-1 {
+			t.Fatalf("append %d: newest line not visible (last=%d, want %d)",
+				i, last.SourceLine, m.blocks[0].cachedLineCount-1)
+		}
+		starts[start] = true
+		prevStart = start
+	}
+	// 20 appended lines with a quarter-screen jump → a handful of distinct
+	// viewport positions, not 20 (which is what smooth per-line scrolling gives).
+	if len(starts) > 6 {
+		t.Errorf("viewport shifted %d times over 20 appends; jump-scroll should batch shifts", len(starts))
+	}
+
+	// Once the agent is idle, the view snaps back to exact bottom pin.
+	m.status = "idle"
+	lines := m.buildFlatRenderLines()
+	wantStart := m.totalRenderedLines() - msgHeight
+	if got := lines[0].SourceLine; got != wantStart {
+		t.Errorf("idle: viewport start %d, want exact bottom pin %d", got, wantStart)
+	}
+	if got := len(lines); got != msgHeight {
+		t.Errorf("idle: %d visible lines, want full window %d", got, msgHeight)
 	}
 }
 
