@@ -99,6 +99,8 @@ type TuiModel struct {
 	favoriteModels  []string          // favorite models for quick Tab/Shift+Tab cycling
 	favoriteSet     map[string]bool   // set lookup for favorites (for picker rendering)
 	onFavoriteChanged func([]string)  // called when favorites change (persist to config)
+	defaultModel    string            // default model (one, highlighted in picker)
+	onDefaultChanged func(string)     // called when default model changes (persist to config)
 	favIdx          int               // index of current model in favoriteModels slice
 	modelIdx        int               // index of current model in models slice (for picker)
 	modelChanges    chan<- string      // channel to notify outer TUI of model changes
@@ -178,7 +180,7 @@ type TuiModel struct {
 	historyPath  string // path to history file for persistence
 }
 
-func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}, favoriteModels []string, onFavoriteChanged func([]string)) TuiModel {
+func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}, favoriteModels []string, onFavoriteChanged func([]string), defaultModel string, onDefaultChanged func(string)) TuiModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type message (Enter send, Alt+Enter / Ctrl+N newline)"
 	ta.CharLimit = 0
@@ -227,6 +229,8 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		favoriteModels:       favoriteModels,
 		favoriteSet:          favoriteSet,
 		onFavoriteChanged:    onFavoriteChanged,
+		defaultModel:         defaultModel,
+		onDefaultChanged:     onDefaultChanged,
 		favIdx:               favIdx,
 		modelIdx:             modelIdx,
 		modelChanges:         modelChanges,

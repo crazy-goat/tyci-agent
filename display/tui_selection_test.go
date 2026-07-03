@@ -20,7 +20,7 @@ func withClipboardStub(t *testing.T) *string {
 }
 
 func newSelectionTestModel() TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.width = 80
 	m.height = 20
 	m.ready = true

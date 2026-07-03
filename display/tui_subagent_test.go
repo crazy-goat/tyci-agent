@@ -13,7 +13,7 @@ import (
 func TestTuiModel_SubagentToolStart_DoesNotAutoOpenModal(t *testing.T) {
 	// The modal should NOT auto-open on tool-start.
 	// It should only open when the user clicks the subagent tool block.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Send tool-start for subagent
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
@@ -29,7 +29,7 @@ func TestTuiModel_SubagentToolStart_DoesNotAutoOpenModal(t *testing.T) {
 }
 
 func TestTuiModel_SubagentToolProgress_GoesToModalWhenActive(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Setup: simulate subagent tool start (modal NOT auto-opened)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
@@ -79,7 +79,7 @@ func TestTuiModel_SubagentToolProgress_GoesToModalWhenActive(t *testing.T) {
 }
 
 func TestTuiModel_SubagentToolProgress_GoesToInlineWhenModalNotActive(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Start subagent (modal NOT auto-opened)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
@@ -111,7 +111,7 @@ func TestTuiModel_SubagentToolProgress_GoesToInlineWhenModalNotActive(t *testing
 }
 
 func TestTuiModel_SubagentToolProgress_WrongToolIdx_GoesToInline(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Setup: start a bash tool (not subagent)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
@@ -150,7 +150,7 @@ func TestTuiModel_SubagentToolProgress_WrongToolIdx_GoesToInline(t *testing.T) {
 }
 
 func TestTuiModel_SubagentToolEnd_MarksDone(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Start subagent (no auto-open)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
@@ -196,7 +196,7 @@ func TestTuiModel_SubagentToolEnd_MarksDone(t *testing.T) {
 }
 
 func TestTuiModel_SubagentModal_Reset(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Start subagent and populate
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
@@ -216,7 +216,7 @@ func TestTuiModel_SubagentModal_Reset(t *testing.T) {
 }
 
 func TestTuiModel_SubagentInlineSummaryFromDelta(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"task": "find all Go files"}`})
@@ -231,7 +231,7 @@ func TestTuiModel_SubagentInlineSummaryFromDelta(t *testing.T) {
 }
 
 func TestTuiModel_SubagentModal_TitleSetFromDelta(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Start subagent
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
@@ -248,7 +248,7 @@ func TestTuiModel_SubagentModal_TitleSetFromDelta(t *testing.T) {
 }
 
 func TestTuiModel_SubagentModal_ScrollLimits(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Initially, max scroll should be 0 (no content)
 	if max := m.subagentModalMaxScroll(); max != 0 {
@@ -266,7 +266,7 @@ func TestTuiModel_SubagentModal_ScrollLimits(t *testing.T) {
 }
 
 func TestTuiModel_SubagentModal_ScrollDoesNotGoNegative(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.subagentModalActive = true
 	m.subagentModalScroll = 5
 
@@ -279,7 +279,7 @@ func TestTuiModel_SubagentModal_ScrollDoesNotGoNegative(t *testing.T) {
 // ─── updateSubagentModal tests ───────────────────────────────────────────
 
 func TestUpdateSubagentModal_EscapeClosesModalWhenDone(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.subagentModalActive = true
 	m.subagentModalDone = true
 	m.subagentModalContent.WriteString("some output")
@@ -295,7 +295,7 @@ func TestUpdateSubagentModal_EscapeClosesModalWhenDone(t *testing.T) {
 }
 
 func TestUpdateSubagentModal_EscapeClosesModalEvenWhenRunning(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.subagentModalActive = true
 	m.subagentModalDone = false
 	m.subagentModalContent.WriteString("still working...")
@@ -310,7 +310,7 @@ func TestUpdateSubagentModal_EscapeClosesModalEvenWhenRunning(t *testing.T) {
 }
 
 func TestUpdateSubagentModal_CtrlCQuits(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.subagentModalActive = true
 	m.subagentModalDone = false
 
@@ -332,7 +332,7 @@ func TestUpdateSubagentModal_CtrlCQuits(t *testing.T) {
 }
 
 func TestUpdateSubagentModal_EnterClosesWhenDone(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.subagentModalActive = true
 	m.subagentModalDone = true
 
@@ -345,7 +345,7 @@ func TestUpdateSubagentModal_EnterClosesWhenDone(t *testing.T) {
 }
 
 func TestUpdateSubagentModal_EnterDoesNotCloseWhenRunning(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.subagentModalActive = true
 	m.subagentModalDone = false
 
@@ -359,7 +359,7 @@ func TestUpdateSubagentModal_EnterDoesNotCloseWhenRunning(t *testing.T) {
 func TestUpdateSubagentModal_ForwardsTuiMsgBlock(t *testing.T) {
 	// When modal is active, tuiMsgBlock messages (tool-progress, etc.)
 	// should still be processed by handleBlockMsg.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.subagentModalActive = true
 	m.subagentModalToolIdx = 0
 	m.subagentModalContent.Reset()
@@ -379,7 +379,7 @@ func TestUpdateSubagentModal_ForwardsTuiMsgBlock(t *testing.T) {
 }
 
 func TestUpdateSubagentModal_ForwardsDoneMessage(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.subagentModalActive = true
 	m.reading = false
 	m.status = "tool"
@@ -403,7 +403,7 @@ func TestUpdateSubagentModal_ForwardsDoneMessage(t *testing.T) {
 func TestTuiModel_ToolStart_NonSubagent_DoesNotOpenModal(t *testing.T) {
 	tools := []string{"bash", "read", "write", "edit"}
 	for _, toolName := range tools {
-		m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+		m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 		m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: toolName})
 		if m.subagentModalActive {
 			t.Errorf("tool %q should NOT open subagent modal", toolName)
@@ -412,7 +412,7 @@ func TestTuiModel_ToolStart_NonSubagent_DoesNotOpenModal(t *testing.T) {
 }
 
 func TestTuiModel_MultipleSubagentTools_HandlesToolIndexCorrectly(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Start bash first
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
@@ -447,7 +447,7 @@ func TestTuiModel_MultipleSubagentTools_HandlesToolIndexCorrectly(t *testing.T) 
 // ─── Summary block building tests ────────────────────────────────────────
 
 func TestTuiModel_BuildStatus_ShowsModalInfo(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.width = 80
 	m.height = 24
 
@@ -458,7 +458,7 @@ func TestTuiModel_BuildStatus_ShowsModalInfo(t *testing.T) {
 }
 
 func TestTuiModel_Done_SetsReadingTrue(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.reading = false
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "done", usage: stream.Usage{}, stats: stream.Stats{}})
@@ -473,7 +473,7 @@ func TestTuiModel_Done_SetsReadingTrue(t *testing.T) {
 
 func TestTuiModel_ResetStatus(t *testing.T) {
 	// ResetStatus is called after ESC cancels an agent run
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.reading = false
 	m.status = "tool"
 
@@ -490,7 +490,7 @@ func TestTuiModel_ResetStatus(t *testing.T) {
 // ─── Click handler tests ─────────────────────────────────────────────────
 
 func TestTuiModel_ClickOnSubagentBlock_OpensModal(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.width = 100
 	m.height = 40
 
@@ -523,7 +523,7 @@ func TestTuiModel_ClickOnSubagentBlock_OpensModal(t *testing.T) {
 
 func TestSubagentModalContent_CopyAfterWrite_NoPanic(t *testing.T) {
 	// Create model, use builder, then copy — should not panic
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Write something to the builder (activating the copyCheck)
 	m.subagentModalContent.WriteString("hello from subagent\n")
@@ -555,7 +555,7 @@ func TestSubagentModalContent_CopyAfterWrite_NoPanic(t *testing.T) {
 func TestSubagentModalContent_MultipleUpdateCycles_NoPanic(t *testing.T) {
 	// Simulate what bubbletea does: multiple Update calls that copy the model
 	// by value while the builder is being written to.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 
 	// Activate modal (simulating user click on a subagent block)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})

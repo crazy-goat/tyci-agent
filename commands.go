@@ -288,6 +288,8 @@ var tuiCmd = &cobra.Command{
 
 		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels, favorites, func(newFavs []string) {
 			_ = agent.SetFavoriteModels(newFavs)
+		}, agent.GetDefaultModel(), func(newDefault string) {
+			_ = agent.SetDefaultModel(newDefault)
 		})
 		runTUI(provider, modelName, tuiDisp, cfg, ctx, sessionPath)
 		return nil

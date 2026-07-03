@@ -73,6 +73,11 @@ func (m TuiModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.togglePickerFavorite()
 				return m, nil
 			}
+			// 'd' key sets the selected model as default
+			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'd' {
+				m.setDefaultModel()
+				return m, nil
+			}
 			// Add character to filter
 			if msg.Type == tea.KeyRunes {
 				m.pickerFilter += string(msg.Runes)
@@ -113,6 +118,13 @@ func (m *TuiModel) selectModel(model string) {
 	for i, mm := range m.models {
 		if mm == model {
 			m.modelIdx = i
+			break
+		}
+	}
+	// Update favIdx in favorites list
+	for i, mm := range m.favoriteModels {
+		if mm == model {
+			m.favIdx = i
 			break
 		}
 	}
@@ -208,6 +220,18 @@ func (m *TuiModel) togglePickerFavorite() {
 	}
 	if m.onFavoriteChanged != nil {
 		m.onFavoriteChanged(m.favoriteModels)
+	}
+}
+
+// setDefaultModel sets the currently selected model as the default.
+func (m *TuiModel) setDefaultModel() {
+	model := m.pickerSelectedModel()
+	if model == "" {
+		return
+	}
+	m.defaultModel = model
+	if m.onDefaultChanged != nil {
+		m.onDefaultChanged(model)
 	}
 }
 

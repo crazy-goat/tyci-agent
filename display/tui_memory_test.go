@@ -12,7 +12,7 @@ import (
 // keeping resident memory bounded without dropping history.
 
 func TestScrollbackFlushAndPageIn(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.width = 80
 	m.height = 24
 
@@ -63,7 +63,7 @@ func TestScrollbackBudgetEvictsOldBlocks(t *testing.T) {
 	// With the 256 KiB resident budget, large blocks force eviction of the
 	// oldest while the newest stay resident. History (block count) must NOT
 	// shrink — only the heavy rendered-line content is paged to disk.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.width = 80
 	m.height = 24
 
@@ -131,7 +131,7 @@ func TestScrollbackDropsRenderCachesOnFlush(t *testing.T) {
 	// duplicate of every flushed block's rendered output. flushBlock dropped
 	// cachedLines but left these maps, so resident RAM was ~2x the budget for
 	// resident blocks and grew without bound (one entry per historical block).
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.width = 80
 	m.height = 24
 
@@ -182,7 +182,7 @@ func TestScrollbackDropsRenderCachesOnFlush(t *testing.T) {
 }
 
 func TestScrollbackResizeRewrapsPagedLines(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.width = 80
 	m.height = 24
 
@@ -221,7 +221,7 @@ func TestScrollbackResizeRewrapsPagedLines(t *testing.T) {
 }
 
 func TestScrollbackResetOnNew(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.width = 80
 	m.height = 24
 	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "history"})
@@ -287,7 +287,7 @@ func TestCapToolOutputKeepsTail(t *testing.T) {
 }
 
 func TestAppendToolCapsOutput(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 	huge := strings.Repeat("x", tuiMaxToolOutput*2)
 	m.appendTool(0, huge)
@@ -318,7 +318,7 @@ func TestCapModalBufferKeepsTail(t *testing.T) {
 }
 
 func TestToolProgressCapsModalBuffer(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
 	for i := 0; i < 10; i++ {
 		m.handleBlockMsg(tuiMsgBlock{

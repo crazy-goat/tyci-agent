@@ -12,6 +12,7 @@ const globalConfigName = "config.json"
 
 // TyciConfig holds global tyci settings stored in ~/.tyci/config.json.
 type TyciConfig struct {
+	DefaultModel   string   `json:"default_model,omitempty"`
 	FavoriteModels []string `json:"favorite_models,omitempty"`
 }
 
@@ -51,6 +52,18 @@ func SaveTyciConfig(cfg TyciConfig) error {
 		return err
 	}
 	return os.WriteFile(globalConfigFilePath(), data, 0644)
+}
+
+// GetDefaultModel returns the default model from config.
+func GetDefaultModel() string {
+	return LoadTyciConfig().DefaultModel
+}
+
+// SetDefaultModel saves the default model to config.
+func SetDefaultModel(model string) error {
+	cfg := LoadTyciConfig()
+	cfg.DefaultModel = model
+	return SaveTyciConfig(cfg)
 }
 
 // GetFavoriteModels returns the list of favorite models from config.

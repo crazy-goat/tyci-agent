@@ -39,7 +39,7 @@ func (m TuiModel) renderModelPickerContent() string {
 	}
 
 	// Title
-	title := " Select Model (type to filter, Enter to select, f to fav, Esc to cancel) "
+	title := " Select Model (type to filter, Enter select, f fav, d default, Esc cancel) "
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("252")).
@@ -86,16 +86,24 @@ func (m TuiModel) renderModelPickerContent() string {
 	selectedStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("0")).
 		Background(lipgloss.Color("45")).
-		Width(popupWidth - 2)
+		Width(popupWidth - 6)
 	// Normal item style
 	normalStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("252")).
-		Width(popupWidth - 2)
+		Width(popupWidth - 6)
 	// Favorite indicator style
 	favStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("214"))
 	favSelectedStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("208")).
+		Background(lipgloss.Color("45"))
+	// Default model indicator style
+	defaultStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("42")).
+		Bold(true)
+	defaultSelectedStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("42")).
+		Bold(true).
 		Background(lipgloss.Color("45"))
 
 	// Build filtered items with scrolling
@@ -134,6 +142,7 @@ func (m TuiModel) renderModelPickerContent() string {
 
 		if isVisible {
 			isFav := m.favoriteSet[item.value]
+			isDefault := item.value == m.defaultModel
 			var favMark string
 			if isFav {
 				if isSelected {
@@ -148,6 +157,20 @@ func (m TuiModel) renderModelPickerContent() string {
 					favMark = "  "
 				}
 			}
+			var defMark string
+			if isDefault {
+				if isSelected {
+					defMark = defaultSelectedStyle.Render("◆ ")
+				} else {
+					defMark = defaultStyle.Render("◆ ")
+				}
+			} else {
+				if isSelected {
+					defMark = lipgloss.NewStyle().Background(lipgloss.Color("45")).Render("  ")
+				} else {
+					defMark = "  "
+				}
+			}
 
 			var line string
 			if isSelected {
@@ -156,6 +179,7 @@ func (m TuiModel) renderModelPickerContent() string {
 				line = normalStyle.Render("  " + item.label)
 			}
 			b.WriteString(favMark)
+			b.WriteString(defMark)
 			b.WriteString(line)
 			b.WriteString("\n")
 			headerRendered++
@@ -175,7 +199,7 @@ func (m TuiModel) renderModelPickerContent() string {
 		b.WriteString(normalStyle.Render("  No matching models"))
 		b.WriteString("\n")
 	} else {
-		hint := fmt.Sprintf("  %d model(s) — ↑/↓ navigate, Enter select, f toggle fav, Esc cancel", totalModels)
+		hint := fmt.Sprintf("  %d model(s) — ↑/↓ navigate, Enter select, f fav, d default, Esc cancel", totalModels)
 		hintStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245")).
 			Width(popupWidth - 2)
