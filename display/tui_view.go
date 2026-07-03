@@ -48,7 +48,8 @@ func (m TuiModel) renderFrame() string {
 	}
 
 	var b strings.Builder
-	msgHeight := m.visibleLines()
+	queueH := m.queuePanelHeight()
+	msgHeight := max(1, m.visibleLines()-queueH)
 
 	// Top status bar (cwd)
 	b.WriteString(m.buildTopBar())
@@ -117,6 +118,11 @@ func (m TuiModel) renderFrame() string {
 		b.WriteString(statusStyle.Render(""))
 	}
 	b.WriteString("\n")
+
+	// Queue panel (issue #88): shows pending user messages submitted while
+	// the agent is busy. Renders zero-height when the queue is empty, so the
+	// layout is byte-identical to the pre-feature behavior in that case.
+	b.WriteString(m.renderQueuePanel(m.width))
 
 	b.WriteString(m.input.View())
 	return b.String()

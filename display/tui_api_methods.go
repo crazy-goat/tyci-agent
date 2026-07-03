@@ -33,6 +33,57 @@ func (t *TUI) CancelCh() <-chan struct{} {
 	return t.cancel
 }
 
+// EnqueueMessage adds a user line to the pending-message queue. Returns
+// false if the queue is full; callers should surface a status message in
+// that case (issue #88).
+func (t *TUI) EnqueueMessage(line string) bool {
+	select {
+	case t.queue <- line:
+		return true
+	default:
+		return false
+	}
+}
+
+// NextMessages drains the entire pending-message queue and returns the
+// messages in FIFO order. Used by agent.Run as a callback to inject
+// follow-up user prompts at the next safe point (issue #88).
+//
+// After returning the messages, posts a "queue-drained" notification to
+// the bubbletea event loop carrying the drained lines. The handler
+// appends a "You: …" block to the transcript for each line — so the
+// user sees their queued prompt appear in the transcript at the moment
+// it's actually delivered to the model, not when it was typed. Lines
+// typed between the drain and the handler running are kept in the
+// panel.
+func (t *TUI) NextMessages() []string {
+	var out []string
+	for {
+		select {
+		case s := <-t.queue:
+			out = append(out, s)
+		default:
+			if len(out) > 0 && t.prog != nil {
+				t.prog.Send(tuiMsgBlock{kind: "queue-drained", queuedLines: out})
+			}
+			return out
+		}
+	}
+}
+
+// ClearQueue drains the pending-message queue synchronously on the calling
+// goroutine. The bubbletea event loop must call this to ensure the queue is
+// empty before posting ClearQueueMsg to the model.
+func (t *TUI) ClearQueue() {
+	for {
+		select {
+		case <-t.queue:
+		default:
+			return
+		}
+	}
+}
+
 func (t *TUI) post(msg tuiMsgBlock) { t.prog.Send(msg) }
 
 // Request is called once per API turn (agent/run_once.go). It resets the

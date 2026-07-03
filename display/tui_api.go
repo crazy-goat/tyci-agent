@@ -18,6 +18,13 @@ type TUI struct {
 	cancel       chan struct{} // sent on when ESC pressed during agent run
 	done         chan struct{}
 
+	// Pending-message queue: filled by the bubbletea event loop while the
+	// agent is busy (see issue #88). Drained by the agent loop via
+	// NextMessages() at the next safe point. Capacity 16 is well above
+	// realistic follow-up count; if exceeded, additional submits drop with
+	// a status message rather than blocking the event loop.
+	queue chan string
+
 	// Streaming coalescing
 	mu             sync.Mutex
 	pendingKind    string // "thinking" or "text"
@@ -30,7 +37,9 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	results := make(chan string, 8)
 	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
+	queue := make(chan string, 16)
 	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel, favoriteModels, onFavoriteToggled, defaultModel, onDefaultChanged, toolCount, skillCount, mcpCount)
+	m.queue = queue
 
 	// Capture working directory and home for the top status bar.
 	if dir, err := os.Getwd(); err == nil {
@@ -62,6 +71,7 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 		results:      results,
 		modelChanges: modelChanges,
 		cancel:       cancel,
+		queue:        queue,
 		done:         make(chan struct{}),
 		flushWake:    make(chan struct{}, 1),
 		flushDone:    make(chan struct{}),

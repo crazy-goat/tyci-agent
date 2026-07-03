@@ -135,16 +135,79 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 
 func (m TuiModel) handleKeyWhileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyEscape {
+		// Clear the pending-message queue in addition to cancelling the
+		// current request (issue #88). The user almost always presses ESC
+		// because they want to "stop and start over" — leaving queued
+		// messages in place would trigger an unwanted follow-up on the
+		// very next Enter.
+		m.clearMessageQueue()
 		select {
 		case m.cancelCh <- struct{}{}:
 		default:
 		}
 		return m, nil
 	}
+	// Enter submits the typed line to the pending-message queue
+	// (issue #88). Without this branch, Enter would fall through to
+	// the textarea below, which interprets Enter as a newline — so
+	// the user would see a new line in the textarea and the message
+	// would never be enqueued. The slash-command and Alt+Enter
+	// branches mirror the idle handler so the keyboard semantics
+	// stay consistent.
+	switch msg.Type {
+	case tea.KeyEnter:
+		if msg.Alt {
+			// Alt+Enter: insert a newline in the textarea.
+			newH := m.input.LineCount() + 1
+			if newH < 1 {
+				newH = 1
+			} else if newH > 10 {
+				newH = 10
+			}
+			m.input.SetHeight(newH)
+			m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m.capInputHeight()
+			return m, nil
+		}
+		return m.submit(), nil
+	case tea.KeyCtrlN, tea.KeyCtrlJ:
+		// Ctrl+N / Ctrl+J: insert a newline in the textarea.
+		newH := m.input.LineCount() + 1
+		if newH < 1 {
+			newH = 1
+		} else if newH > 10 {
+			newH = 10
+		}
+		m.input.SetHeight(newH)
+		m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m.capInputHeight()
+		return m, nil
+	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.capInputHeight()
 	return m, cmd
+}
+
+// clearMessageQueue drops all pending user messages: both the rendering
+// snapshot and the shared channel. Called on ESC (with cancel) and on
+// /new (with conversation reset). Issue #88 acceptance criteria #5 and #6.
+func (m *TuiModel) clearMessageQueue() {
+	if len(m.queueItems) == 0 && m.queue == nil {
+		return
+	}
+	m.queueItems = nil
+	m.invalidateTotalLines()
+	if m.queue != nil {
+		// Non-blocking drain. Safe to call on the bubbletea event loop.
+		for {
+			select {
+			case <-m.queue:
+			default:
+				return
+			}
+		}
+	}
 }
 
 func (m TuiModel) historyOlder() TuiModel {

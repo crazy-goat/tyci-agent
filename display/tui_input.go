@@ -23,6 +23,28 @@ func (m TuiModel) submit() tea.Model {
 		}
 	}
 	m.historyIdx = -1
+	// If the agent is busy, route the line to the pending-message queue
+	// (issue #88) instead of submitting it through the results channel.
+	// The line will be drained by the agent loop at the next safe point
+	// and delivered to the model as a user RichMessage in a single
+	// runOnce. The transcript is NOT updated yet — only the queue panel
+	// shows the pending line. The "You: …" block is appended on drain
+	// (when the message is actually sent to the model), so the user's
+	// view of the conversation stays aligned with what the model has
+	// seen so far.
+	if !m.reading {
+		m.queueItems = append(m.queueItems, line)
+		m.invalidateTotalLines()
+		if m.queue != nil {
+			if !enqueueOrStatus(m.queue, line, &m.statusMessage) {
+				// Channel was full — drop the snapshot item so the
+				// panel doesn't show a message the model will never
+				// see.
+				m.queueItems = m.queueItems[:len(m.queueItems)-1]
+			}
+		}
+		return m
+	}
 	m.reading = false
 	m.requestStartTime = time.Now()
 	// User messages must not use kind "text": assistant text streams are
@@ -43,6 +65,22 @@ func (m TuiModel) submit() tea.Model {
 		m.submitResult <- line
 	}
 	return m
+}
+
+// enqueueOrStatus attempts a non-blocking send on ch. On success it returns
+// true. On a full channel it sets *status to queueFullStatusMessage and
+// returns false (issue #88 acceptance criteria #8: never block the event
+// loop, never silently swallow).
+func enqueueOrStatus(ch chan string, line string, status *string) bool {
+	select {
+	case ch <- line:
+		return true
+	default:
+		if status != nil {
+			*status = queueFullStatusMessage
+		}
+		return false
+	}
 }
 
 func (m *TuiModel) capInputHeight() {

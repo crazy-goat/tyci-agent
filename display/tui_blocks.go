@@ -162,8 +162,42 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.cachedTotalLines = -1
 		m.subagentModalActive = false
 		m.subagentModalContent.Reset()
+		// Issue #88: /new also drops any pending user messages queued
+		// while a request was in flight. The new conversation starts
+		// from a clean slate, with no carried-over follow-ups.
+		m.clearMessageQueue()
 		// Reset scrollback cache: a fresh conversation has no history to page.
 		m.scrollback.reset()
+	case "queue-drained":
+		// Issue #88: the agent loop drained the pending-message queue
+		// and is about to deliver the lines to the model. The on-screen
+		// queue panel must clear now so the user knows the messages
+		// have been picked up, and each drained line becomes a "You: …"
+		// block in the transcript — at the moment the model actually
+		// sees the message, not when the user typed it. This keeps the
+		// user's view of the conversation aligned with what the model
+		// has processed so far.
+		m.forceRenderDirtyBlocks()
+		for _, line := range msg.queuedLines {
+			m.blocks = append(m.blocks, block{kind: "user", content: "You: " + line, dirty: true})
+			m.dirtyBlocks[len(m.blocks)-1] = true
+		}
+		// Rebuild the snapshot from whatever is left on the channel:
+		// lines the user typed between the agent's drain and this
+		// handler running stay visible.
+		m.queueItems = nil
+		if m.queue != nil {
+			for {
+				select {
+				case s := <-m.queue:
+					m.queueItems = append(m.queueItems, s)
+				default:
+					m.invalidateTotalLines()
+					return
+				}
+			}
+		}
+		m.invalidateTotalLines()
 	}
 
 	// If user is at bottom, keep scrolled to bottom when new content arrives

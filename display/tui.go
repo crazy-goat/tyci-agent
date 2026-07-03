@@ -13,12 +13,17 @@ import (
 const tuiMaxHistory = 500
 
 type tuiMsgBlock struct {
-	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block","set-model","reset"
+	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block","set-model","reset","queue-drained"
 	content  string
 	toolName string
 	toolIdx  int // for tool-progress: index in toolQueue
 	usage    stream.Usage
 	stats    stream.Stats
+	// queuedLines: for "queue-drained", the messages that were drained
+	// and delivered to the model (FIFO order). The TUI appends each as
+	// a "You: …" block in the transcript at this point — when the model
+	// actually sees them, not when the user typed them.
+	queuedLines []string
 }
 
 type tuiInputSubmitted string
@@ -187,6 +192,18 @@ type TuiModel struct {
 	historyIdx   int    // -1 = current input, 0..len-1 = browsing history
 	stashedInput string // saved current input while browsing history
 	historyPath  string // path to history file for persistence
+
+	// Pending-message queue snapshot (issue #88). Updated synchronously by
+	// the bubbletea event loop on submit (when busy) and on ESC/reset. The
+	// agent goroutine drains the actual channel (TUI.queue) via the
+	// NextMessages callback; this slice is purely for rendering.
+	queueItems []string
+
+	// queue is the shared pending-message channel set by NewTUI after this
+	// model is constructed. bubbletea copies the model on every Update, but
+	// the channel reference is stable so all copies share the same backing
+	// channel. nil in unit tests that never call submit() while busy.
+	queue chan string
 
 	// Context counts for the top status bar (computed in commands.go and passed in).
 	toolCount  int // total tools available (built-in + Lua + MCP)
