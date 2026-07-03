@@ -99,11 +99,11 @@ func (m TuiModel) renderSubagentModalView() string {
 	var footerText string
 	if m.subagentModalScroll > 0 {
 		pct := int(float64(m.subagentModalScroll) / float64(max(1, m.subagentModalMaxScroll())) * 100)
-		footerText = fmt.Sprintf(" ↑ scrolled %d%%  ↑↓ scroll  PgUp/Dn  Home/End  ESC/Enter close ", pct)
+		footerText = fmt.Sprintf(" ↑ scrolled %d%%  ↑↓ scroll  PgUp/Dn  Home/End  y copy all  ESC/Enter close ", pct)
 	} else if totalLines > contentHeight {
-		footerText = fmt.Sprintf(" ↓ %d more lines  ↑↓ scroll  ESC/Enter close ", totalLines-contentHeight)
+		footerText = fmt.Sprintf(" ↓ %d more lines  ↑↓ scroll  y copy all  ESC/Enter close ", totalLines-contentHeight)
 	} else {
-		footerText = " ↑↓ scroll  ESC/Enter close "
+		footerText = " ↑↓ scroll  y copy all  ESC/Enter close "
 	}
 	footerStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245")).
@@ -131,6 +131,35 @@ func (m TuiModel) renderSubagentModalView() string {
 		lipgloss.WithWhitespaceBackground(lipgloss.Color("235")),
 		lipgloss.WithWhitespaceChars(" "),
 	)
+
+	// Overlay status message (e.g. "copied modal") above the modal box.
+	if m.statusMessage != "" {
+		statusStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("114")).
+			Background(lipgloss.Color("235")).
+			Bold(true).
+			Padding(0, 1)
+		statusLine := statusStyle.Render(m.statusMessage)
+		lines := strings.Split(placed, "\n")
+		if len(lines) > 1 {
+			// Place the status message on the second line (after the top dim border),
+			// centered horizontally.
+			statusW := lipgloss.Width(statusLine)
+			padLeft := (m.width - statusW) / 2
+			if padLeft < 0 {
+				padLeft = 0
+			}
+			lines[1] = strings.Repeat(" ", padLeft) + statusLine
+			if padLeft+statusW < m.width {
+				remainder := lipgloss.NewStyle().
+					Background(lipgloss.Color("235")).
+					Render(strings.Repeat(" ", m.width-padLeft-statusW))
+				lines[1] += remainder
+			}
+			placed = strings.Join(lines, "\n")
+		}
+	}
+
 	return placed
 }
 

@@ -1,6 +1,10 @@
 package display
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -103,6 +107,13 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.clearSelection()
 			m.subagentModalScroll = 0
 			return m, nil
+		}
+
+		// "y" (yank) — copy the entire modal buffer to clipboard.
+		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'y' {
+			fullText := strings.TrimRight(m.subagentModalContent.String(), "\n")
+			m = m.copyText("modal", fullText, false)
+			return m, copyFeedbackCmd(m)
 		}
 
 	case tea.MouseMsg:
