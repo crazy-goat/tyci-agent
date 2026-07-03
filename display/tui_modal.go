@@ -140,23 +140,32 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		// For click events (press or release), hit-test the modal body.
-		// We use MouseActionPress to match ESC semantics (immediate dismiss).
+		// Left press outside modal body → close it (same as ESC).
 		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 			layout := m.subagentModalLayout()
 			inModal := msg.X >= layout.left && msg.X < layout.left+layout.popupWidth &&
 				msg.Y >= layout.top && msg.Y < layout.top+layout.boxHeight
 			if !inModal {
-				// Click outside modal body → close it (same as ESC).
 				m.closeSubagentModal()
 				return m, nil
 			}
-			// Click inside modal body — block from leaking to background
-			// tool blocks. (Future #76: start text selection here.)
-			return m, nil
 		}
-		// Block all other mouse events (motion, release, drags) from
-		// leaking through to background tool blocks.
+
+		// Route left-button press/motion/release inside the modal body to the
+		// selection handler so text can be selected and copied (issue #76).
+		// Press outside the content area (title bar, border) is a no-op.
+		// Press on the title bar is excluded from selection.
+		if msg.Button == tea.MouseButtonLeft {
+			layout := m.subagentModalLayout()
+			inBody := msg.X >= layout.left && msg.X < layout.left+layout.popupWidth &&
+				msg.Y >= layout.top && msg.Y < layout.top+layout.boxHeight
+			if inBody {
+				return m.handleModalMouseMsg(msg)
+			}
+		}
+
+		// Block all other mouse events (non-left-button, outside clicks)
+		// from leaking through to background tool blocks.
 		return m, nil
 
 	case tuiMsgBlock:

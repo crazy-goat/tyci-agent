@@ -105,6 +105,82 @@ func (m *TuiModel) openToolModalAt(y int) {
 	}
 }
 
+// handleModalMouseMsg handles mouse events inside the subagent modal body
+// for text selection. It mirrors handleMouseMsg but adapted for modal context:
+// no wheel handling (dealt with in updateSubagentModal), no tool-modal opening.
+func (m TuiModel) handleModalMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Shift {
+		return m, nil
+	}
+
+	// Left press inside modal content area → start selection candidate.
+	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+		if m.transcriptY(msg.Y) {
+			m.selectionVersion++
+			x := screenXToSelectionX(m, msg.X)
+			m.selection = SelectionState{
+				Candidate: true,
+				AnchorX:   x, AnchorY: msg.Y,
+				CursorX: x, CursorY: msg.Y,
+				PressX: msg.X, PressY: msg.Y,
+			}
+		}
+		return m, nil
+	}
+
+	// Motion while candidate → promote to active selection.
+	if msg.Action == tea.MouseActionMotion && m.selection.Candidate {
+		y := m.clampTranscriptY(msg.Y)
+		x := screenXToSelectionX(m, msg.X)
+		if y != m.selection.PressY || msg.X != m.selection.PressX || m.selection.Dragging {
+			m.selectionVersion++
+			m.selection.Active = true
+			m.selection.Dragging = true
+			m.selection.CursorX = x
+			m.selection.CursorY = y
+			version := m.selectionVersion
+			return m, tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg {
+				return selectionAutoCopyMsg{version: version}
+			})
+		}
+		return m, nil
+	}
+
+	// Motion while already active → update selection extent.
+	if msg.Action == tea.MouseActionMotion && m.selection.Active {
+		y := m.clampTranscriptY(msg.Y)
+		x := screenXToSelectionX(m, msg.X)
+		if y != m.selection.CursorY || x != m.selection.CursorX {
+			m.selectionVersion++
+			m.selection.Dragging = true
+			m.selection.CursorX = x
+			m.selection.CursorY = y
+			version := m.selectionVersion
+			return m, tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg {
+				return selectionAutoCopyMsg{version: version}
+			})
+		}
+		return m, nil
+	}
+
+	// Release → commit selection (copy to clipboard).
+	if msg.Action == tea.MouseActionRelease && (m.selection.Candidate || m.selection.Active) {
+		if m.selection.Dragging || m.selection.Active {
+			m.selection.Active = true
+			m.selection.Candidate = false
+			m.selection.CursorX = screenXToSelectionX(m, msg.X)
+			m.selection.CursorY = m.clampTranscriptY(msg.Y)
+			m = m.copySelection()
+			return m, copyFeedbackCmd(m)
+		}
+		// Click without drag: just clear selection (no tool modal to open).
+		m = m.clearSelection()
+		return m, nil
+	}
+
+	return m, nil
+}
+
 func (m *TuiModel) openGenericToolModal(idx int) {
 	m.subagentModalActive = true
 	m.subagentModalContent.Reset()
