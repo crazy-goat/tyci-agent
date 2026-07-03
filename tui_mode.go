@@ -158,7 +158,8 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 			tuiDisp.Done(res.usage, stream.Stats{})
 
 			if res.err != nil && !errors.Is(res.err, context.Canceled) {
-				return
+				// Error already shown via d.Error() in agent.Run, continue
+				continue
 			}
 		}
 	}

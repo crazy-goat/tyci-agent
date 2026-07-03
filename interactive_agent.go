@@ -41,8 +41,9 @@ func (s *interactiveState) runAgentIteration(iterCtx context.Context, iterCancel
 			fmt.Fprint(os.Stdout, "\n")
 			return false
 		}
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return true
+		s.display.End()
+		fmt.Fprintf(os.Stdout, "Error: %v\n", err)
+		return false
 	}
 	s.display.End()
 	fmt.Fprint(os.Stdout, "\n")

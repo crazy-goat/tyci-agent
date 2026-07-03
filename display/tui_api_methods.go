@@ -115,8 +115,8 @@ func (t *TUI) Summary(usage stream.Usage, stats stream.Stats) {
 }
 
 func (t *TUI) Total(usage stream.Usage) {
-	t.flushNow()
-	t.post(tuiMsgBlock{kind: "block", content: "📊 Costs: " + buildCostsLine(usage)})
+	// No-op: costs are shown in the status bar at the bottom.
+	// No need to also display them in the chat window.
 }
 
 func (t *TUI) Error(err error) {

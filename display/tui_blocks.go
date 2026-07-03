@@ -115,17 +115,8 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	case "usage":
 		m.lastUsage = msg.usage
 		m.lastStats = msg.stats
-		// Show Usage block in conversation
-		m.forceRenderDirtyBlocks()
-		idx := len(m.blocks)
-		line := "Usage: " + usageTokens(msg.usage)
-		if msg.stats.Duration > 0 {
-			line += " " + timingTokens(msg.usage, msg.stats)
-		}
-		m.blocks = append(m.blocks, block{kind: "usage", content: line, dirty: true})
-		m.dirtyBlocks[idx] = true
-		m.invalidateTotalLines()
-		m.maybeFlushOldBlocks()
+		// Usage info is already shown in the bottom status bar (buildStatus).
+		// No need to add a separate block in the conversation.
 	case "error":
 		// New error block → force-render previous dirty blocks
 		m.forceRenderDirtyBlocks()
