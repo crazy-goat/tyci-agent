@@ -365,3 +365,158 @@ func TestGetAgentBackwardCompat(t *testing.T) {
 		t.Errorf("GetAgent('agent2') model = %q; want ''", m)
 	}
 }
+
+// --- ResolveModel tests ---
+
+func TestResolveModel_ExplicitModel(t *testing.T) {
+	setupConfigTest(t)
+	m := ResolveModel("explicit/model", "")
+	if m != "explicit/model" {
+		t.Errorf("ResolveModel = %q, want 'explicit/model'", m)
+	}
+}
+
+func TestResolveModel_NamedAgent(t *testing.T) {
+	setupConfigTest(t)
+	if err := SetAgent("my-agent", "agent/model"); err != nil {
+		t.Fatalf("SetAgent: %v", err)
+	}
+	m := ResolveModel("", "my-agent")
+	if m != "agent/model" {
+		t.Errorf("ResolveModel = %q, want 'agent/model'", m)
+	}
+}
+
+func TestResolveModel_DefaultAgent(t *testing.T) {
+	setupConfigTest(t)
+	if err := SetAgent("default", "default/model"); err != nil {
+		t.Fatalf("SetAgent: %v", err)
+	}
+	m := ResolveModel("", "")
+	if m != "default/model" {
+		t.Errorf("ResolveModel = %q, want 'default/model'", m)
+	}
+}
+
+func TestResolveModel_DefaultAgentWithNameDefault(t *testing.T) {
+	setupConfigTest(t)
+	if err := SetAgent("default", "default/model"); err != nil {
+		t.Fatalf("SetAgent: %v", err)
+	}
+	// Passing agentName "default" should still find the default agent
+	m := ResolveModel("", "default")
+	if m != "default/model" {
+		t.Errorf("ResolveModel = %q, want 'default/model'", m)
+	}
+}
+
+func TestResolveModel_DefaultModelFromConfig(t *testing.T) {
+	setupConfigTest(t)
+	// Set default_model in config.json (no agents configured)
+	if err := SetDefaultModel("config/default/model"); err != nil {
+		t.Fatalf("SetDefaultModel: %v", err)
+	}
+	m := ResolveModel("", "")
+	if m != "config/default/model" {
+		t.Errorf("ResolveModel = %q, want 'config/default/model'", m)
+	}
+}
+
+func TestResolveModel_NothingConfigured(t *testing.T) {
+	setupConfigTest(t)
+	m := ResolveModel("", "")
+	if m != "" {
+		t.Errorf("ResolveModel = %q, want empty", m)
+	}
+}
+
+func TestResolveModel_AgentOverridesConfigDefault(t *testing.T) {
+	setupConfigTest(t)
+	// Both "default" agent and config default_model set
+	if err := SetAgent("default", "agent-default/model"); err != nil {
+		t.Fatalf("SetAgent: %v", err)
+	}
+	if err := SetDefaultModel("config-default/model"); err != nil {
+		t.Fatalf("SetDefaultModel: %v", err)
+	}
+	// Agent should win over config
+	m := ResolveModel("", "")
+	if m != "agent-default/model" {
+		t.Errorf("ResolveModel = %q, want 'agent-default/model' (agent should win over config)", m)
+	}
+}
+
+func TestResolveModel_NamedAgentOverridesDefaultAgent(t *testing.T) {
+	setupConfigTest(t)
+	if err := SetAgent("default", "default/model"); err != nil {
+		t.Fatalf("SetAgent: %v", err)
+	}
+	if err := SetAgent("custom", "custom/model"); err != nil {
+		t.Fatalf("SetAgent: %v", err)
+	}
+	m := ResolveModel("", "custom")
+	if m != "custom/model" {
+		t.Errorf("ResolveModel = %q, want 'custom/model'", m)
+	}
+}
+
+func TestResolveModel_ExplicitModelOverridesEverything(t *testing.T) {
+	setupConfigTest(t)
+	if err := SetAgent("default", "default/model"); err != nil {
+		t.Fatalf("SetAgent: %v", err)
+	}
+	if err := SetDefaultModel("config/model"); err != nil {
+		t.Fatalf("SetDefaultModel: %v", err)
+	}
+	m := ResolveModel("explicit/model", "default")
+	if m != "explicit/model" {
+		t.Errorf("ResolveModel = %q, want 'explicit/model' (explicit trumps all)", m)
+	}
+}
+
+func TestResolveModel_AgentNameDefaultNoDefaultAgentFallsToConfig(t *testing.T) {
+	setupConfigTest(t)
+	// No "default" agent, but config has default_model
+	if err := SetDefaultModel("config/model"); err != nil {
+		t.Fatalf("SetDefaultModel: %v", err)
+	}
+	m := ResolveModel("", "default")
+	if m != "config/model" {
+		t.Errorf("ResolveModel = %q, want 'config/model'", m)
+	}
+}
+
+func TestResolveModel_FullPriorityChain(t *testing.T) {
+	setupConfigTest(t)
+	// Test the full chain: --model > --agent > "default" agent > config.json
+	if err := SetAgent("default", "default-agent/model"); err != nil {
+		t.Fatalf("SetAgent: %v", err)
+	}
+	if err := SetAgent("named", "named-agent/model"); err != nil {
+		t.Fatalf("SetAgent: %v", err)
+	}
+	if err := SetDefaultModel("config-default/model"); err != nil {
+		t.Fatalf("SetDefaultModel: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		model     string
+		agentName string
+		want      string
+	}{
+		{"explicit model wins", "explicit/model", "named", "explicit/model"},
+		{"named agent wins over default agent", "", "named", "named-agent/model"},
+		{"default agent wins over config", "", "", "default-agent/model"},
+		{"nonexistent agent falls to default agent", "", "nonexistent", "default-agent/model"},
+		{"empty everything falls to config", "", "", "default-agent/model"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveModel(tt.model, tt.agentName)
+			if got != tt.want {
+				t.Errorf("ResolveModel(%q, %q) = %q, want %q", tt.model, tt.agentName, got, tt.want)
+			}
+		})
+	}
+}

@@ -413,6 +413,7 @@ func AllAgents() (Agents, error) {
 // ResolveModel resolves the effective model:
 // - If model is explicitly provided, use it
 // - Otherwise look up agentName in config (fallback to "default")
+// - Otherwise fall back to default_model from config.json
 // - Returns empty string if nothing found
 func ResolveModel(model string, agentName string) string {
 	if model != "" {
@@ -426,11 +427,16 @@ func ResolveModel(model string, agentName string) string {
 		}
 	}
 
-	// Fall back to "default"
+	// Fall back to "default" agent
 	if agentName != "default" {
 		if m, ok := GetAgent("default"); ok && m != "" {
 			return m
 		}
+	}
+
+	// Fall back to default_model from config.json
+	if m := GetDefaultModel(); m != "" {
+		return m
 	}
 
 	return ""
