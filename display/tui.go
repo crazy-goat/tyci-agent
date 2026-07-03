@@ -46,7 +46,7 @@ type block struct {
 	toolState string // "running","done"
 	collapsed bool
 	maxLines  int
-	output    string        // full tool output (for modal)
+	output    string        // full tool output (for modal), capped to tuiMaxToolOutput
 	startTime time.Time     // when the tool was started (for duration display)
 	duration  time.Duration // frozen duration when tool finished (0 = still running)
 
@@ -56,6 +56,16 @@ type block struct {
 	// Render caches
 	cachedLineCount int      // number of display lines for this block (0 = not computed)
 	cachedLines     []string // cached split lines (valid when cachedLineCount > 0)
+
+	// Scrollback cache: when true, content/cachedLines/output were flushed to
+	// scrollback.file and the in-memory copies are nil/empty. The block keeps
+	// its identity (index, kind, toolName, lineCount) so scroll math and the
+	// tool queue stay valid; the heavy fields are paged back in on demand by
+	// ensureBlockResident. See tui_scrollback.go.
+	flushed      bool
+	flushedWidth int   // terminal width when the block was flushed (for resize re-wrap)
+	fileOffset   int64 // byte offset of this block's rendered lines in the cache file
+	fileBytes    int   // byte length of this block's rendered lines in the cache file
 }
 
 func defaultMaxLines(toolName string) int {
@@ -129,6 +139,16 @@ type TuiModel struct {
 
 	// Total line count cache (invalidated on block add/change/resize)
 	cachedTotalLines int
+
+	// Scrollback disk cache: keeps rendered lines for old blocks out of RAM.
+	// Old blocks (beyond the resident window) are flushed to a temp file; their
+	// in-memory content/cachedLines/output are nil and paged back in on demand
+	// when the viewport scrolls up to them or a resize needs to re-wrap them.
+	// See tui_scrollback.go.
+	//
+	// Pointer so the value-receiver TuiModel (bubbletea copies it on every
+	// Update) never copies the cache's sync.Mutex.
+	scrollback *scrollbackCache
 
 	// Metadata for the currently visible transcript lines. Built by View().
 	renderBuffer      RenderBuffer
@@ -205,5 +225,6 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		streamWraps:          make(map[int]*streamWrap),
 		toolDisplayCache:     make(map[int]string),
 		cachedTotalLines:     -1,
+		scrollback:           &scrollbackCache{},
 	}
 }

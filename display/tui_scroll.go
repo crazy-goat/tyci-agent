@@ -47,14 +47,25 @@ func (m *TuiModel) invalidateTotalLines() {
 
 // invalidateAllBlockLineCounts clears per-block line counts and total line cache.
 // Called on resize since wrap width changes.
+//
+// Flushed blocks (rendered lines paged to the scrollback file) are left
+// untouched: their cachedLineCount is still valid for the *old* width and the
+// file holds the old-wrapping. They'll be paged back in and re-wrapped lazily
+// by getBlockLines/ensureBlockResident the next time the viewport actually
+// needs them, so a resize doesn't force a full history re-render.
 func (m *TuiModel) invalidateAllBlockLineCounts() {
 	for i := range m.blocks {
+		if m.blocks[i].flushed {
+			continue // stay paged out; re-wrapped lazily on view
+		}
 		m.blocks[i].cachedLineCount = 0
 		m.blocks[i].cachedLines = nil
 	}
 	m.streamWraps = make(map[int]*streamWrap)
 	m.mdCacheRendered = make(map[int]string)
 	m.cachedTotalLines = -1
+	// Resident bytes changed: recount from the surviving resident blocks.
+	m.scrollback.residentBytes = m.residentBlockBytes()
 }
 
 // agentBusy reports whether the agent is actively producing output.

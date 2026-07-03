@@ -129,6 +129,10 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 // getBlockLines returns the cached lines for a block, computing them if necessary.
 // If forceRender is false and the block has no cached lines, it calls renderBlock to compute them.
 // Returns nil if the block is empty or has no content.
+//
+// If the block was flushed to the scrollback cache (old history paged out to
+// disk), this pages its rendered lines back in first. Callers on the render /
+// scroll path go through here, so scroll-up transparently restores old blocks.
 func (m *TuiModel) getBlockLines(idx int, forceRender bool) []string {
 	if idx < 0 || idx >= len(m.blocks) {
 		return nil
@@ -136,6 +140,14 @@ func (m *TuiModel) getBlockLines(idx int, forceRender bool) []string {
 	b := &m.blocks[idx]
 	if b.cachedLines != nil {
 		return b.cachedLines
+	}
+	// Flushed to disk? Page it back in (restores b.cachedLines).
+	if b.flushed {
+		if lines := m.ensureBlockResident(idx); lines != nil {
+			return lines
+		}
+		// page-in failed → treat as empty
+		return nil
 	}
 	if forceRender {
 		return nil
@@ -153,6 +165,8 @@ func (m *TuiModel) getBlockLines(idx int, forceRender bool) []string {
 	lines := strings.Split(rendered, "\n")
 	b.cachedLines = lines
 	b.cachedLineCount = len(lines)
+	// Track resident bytes so maybeFlushOldBlocks knows when to evict.
+	m.scrollback.residentBytes += blockLinesBytes(lines)
 	return lines
 }
 

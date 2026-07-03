@@ -33,8 +33,12 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		// Appending a block never changes how earlier blocks render (width is
 		// unchanged), so only the total-line cache needs invalidation.
 		m.invalidateTotalLines()
-		// Bound memory: drop oldest blocks past the cap, reindexing caches.
-		m.compactBlocks(tuiMaxHistory)
+		// Bound memory: flush old blocks' heavy fields (content/cachedLines/
+		// output) to the scrollback cache file, keeping only a ~250KB window
+		// of rendered lines resident. Block indices and the tool queue stay
+		// stable — the cache is paged back in on scroll-up/resize. See
+		// tui_scrollback.go.
+		m.maybeFlushOldBlocks()
 
 		// Track subagent tool index for modal (but don't auto-open).
 		// Modal opens on user click on the subagent block.
@@ -121,7 +125,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.blocks = append(m.blocks, block{kind: "usage", content: line, dirty: true})
 		m.dirtyBlocks[idx] = true
 		m.invalidateTotalLines()
-		m.compactBlocks(tuiMaxHistory)
+		m.maybeFlushOldBlocks()
 	case "error":
 		// New error block → force-render previous dirty blocks
 		m.forceRenderDirtyBlocks()
@@ -129,7 +133,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.blocks = append(m.blocks, block{kind: "error", content: msg.content, dirty: true})
 		m.dirtyBlocks[idx] = true
 		m.invalidateTotalLines()
-		m.compactBlocks(tuiMaxHistory)
+		m.maybeFlushOldBlocks()
 	case "done":
 		m.status = "idle"
 		m.reading = true
@@ -142,7 +146,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.blocks = append(m.blocks, block{kind: "block", content: msg.content, dirty: true})
 		m.dirtyBlocks[idx] = true
 		m.invalidateTotalLines()
-		m.compactBlocks(tuiMaxHistory)
+		m.maybeFlushOldBlocks()
 	case "set-model":
 		m.modelName = msg.content
 	case "reset":
@@ -160,6 +164,8 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.cachedTotalLines = -1
 		m.subagentModalActive = false
 		m.subagentModalContent.Reset()
+		// Reset scrollback cache: a fresh conversation has no history to page.
+		m.scrollback.reset()
 	}
 
 	// If user is at bottom, keep scrolled to bottom when new content arrives
@@ -190,7 +196,7 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 			idx := len(m.blocks)
 			m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
 			m.dirtyBlocks[idx] = true
-			m.compactBlocks(tuiMaxHistory)
+			m.maybeFlushOldBlocks()
 			return
 		}
 		last.content += content
@@ -212,7 +218,7 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 	m.dirtyBlocks[idx] = true
 	// Adding a block only shifts line offsets; earlier blocks render the same.
 	m.invalidateTotalLines()
-	m.compactBlocks(tuiMaxHistory)
+	m.maybeFlushOldBlocks()
 }
 
 // jsonMaybeComplete reports whether s could be a complete JSON document, used

@@ -76,6 +76,8 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 		if m.painter != nil {
 			m.painter.stop()
 		}
+		// Release the scrollback cache file (old rendered history paged to disk).
+		m.scrollback.close()
 		if restoreTerm != nil {
 			restoreTerm()
 		}

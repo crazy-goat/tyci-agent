@@ -203,13 +203,14 @@ markers.
 | **Per-block markdown cache** | ✅ shipped | `mdCacheRendered` + `dirtyBlocks` + `streamWraps`. §2. |
 | **Virtual viewport** | ✅ shipped | Render O(visible), not O(history). §2. |
 | **Streaming coalescing** | ✅ shipped | Cold/hot windows batch repaints. §3. |
-| **Scrollback compaction** | ✅ shipped | `compactBlocks(tuiMaxHistory)` drops oldest blocks + reindexes caches. §5a. |
+| **Scrollback disk cache** | ✅ shipped | Old rendered blocks paged to a temp file; ~256 KiB resident window. History never dropped. §5a. |
 | **Tool output cap** | ✅ shipped | `tuiMaxToolOutput` (1 MiB) bounds each tool block's `.output`. §5a. |
 | **Subagent modal cap** | ✅ shipped | `tuiMaxModalBuffer` (1 MiB) bounds the streaming modal accumulator. §5a. |
 | **Dead `rendered` field removal** | ✅ shipped | Was only ever zeroed, never read; removed to shrink `block`. |
 | **`View()` memoization** | ❌ rejected | See below. |
 | **Intra-line column diff** | ❌ rejected | Repaint only changed *characters* in a line. Complex with ANSI/wide chars; negligible gain over line-level diff. |
 | **Absolute-CUP skip jumps** | ❌ rejected | Use absolute cursor moves instead of `\n` to skip runs of unchanged lines. Micro-optimization, not worth the complexity. |
+| **Drop-history compaction** | ❌ rejected | The first memory attempt dropped oldest `m.blocks` past a cap. Rejected because it destroyed scrollback the user could still scroll into; replaced by the disk cache (§5a) which pages out instead of dropping. |
 
 ### Why we rejected `View()` memoization
 
@@ -229,37 +230,49 @@ On inspection it's a net negative here:
 - A correct memo would need a cache key covering **every** view-affecting field
   (~20 of them). Miss one and the UI freezes / goes stale. High risk, ~no reward.
 
-### 5a. Memory bounds (`tui_memory.go`)
+### 5a. Memory bounds (`tui_scrollback.go`, `tui_memory.go`)
 
 The TUI retains every block ever shown so the user can scroll back through the
 whole conversation. Without bounds, a long coding session — thousands of tool
-calls, each with full file contents in `.output` — grows the heap without limit:
-the `m.blocks` slice and the per-block index maps (`mdCacheRendered`,
-`toolDisplayCache`, `streamWraps`, `dirtyBlocks`) all keep references to evicted
-content, so the GC can never reclaim it. Three mechanisms cap the worst case:
+calls, each with full file contents in `.output` — grows the heap without limit.
+The resident set is bounded by a **scrollback disk cache** plus per-field caps:
 
-- **Scrollback compaction** — `compactBlocks(tuiMaxHistory)` runs whenever a new
-  block is appended (`tool-start`, `usage`, `error`, `block`, and the new-block
-  path of `appendOrAppend`). When `len(m.blocks)` exceeds the cap (500), the
-  oldest blocks are dropped and every index-keyed map is rebuilt with shifted
-  keys, which also frees the cached strings for the evicted blocks. The tool
-  queue is reindexed in lockstep. The cost is O(cap) but only when the cap is
-  exceeded — the streaming append-to-last-block path never triggers it.
+- **Scrollback disk cache** — only a ~`tuiScrollbackResidentBudget` (256 KiB)
+  window of the most recent rendered blocks stays resident in RAM. Older blocks
+  are **flushed**: their heavy fields (`content`, `cachedLines`, `output`) are
+  written to an append-only temp file and the in-memory copies dropped to nil.
+  The `block` struct stays (indices, `kind`, `toolName`, `cachedLineCount` are
+  all stable) so scroll math, the tool queue, and the cache maps keep working
+  unchanged — **history is never dropped, only paged out**. When the viewport
+  scrolls up into a flushed block, `ensureBlockResident` (called from
+  `getBlockLines`) pages its rendered lines back in from the file; a different,
+  older resident block is then flushed to stay within budget. The cache file is
+  process-local, deleted on `Close` (TUI shutdown) and on `/new` (`reset`).
+
+  Encoding: `[4-byte line count][4-byte len + bytes]…` per block, so page-in
+  reads an exact byte range without scanning. On resize, paged-in lines are
+  re-wrapped (`rewrapLines`) for the new width without re-running the markdown
+  renderer — the styled text is preserved, only the soft-wrap breaks move.
+
+  `scrollbackCache` is held as a `*scrollbackCache` pointer in `TuiModel` so
+  bubbletea's value-copy of the model on every `Update` never copies its
+  `sync.Mutex`.
+
 - **Tool output cap** — `tuiMaxToolOutput` (1 MiB) bounds each tool block's raw
-  `.output` buffer (the source shown in the click-to-expand modal). `appendTool`
-  and `finishToolAt` trim to the tail at a line boundary, so a chatty tool
-  (e.g. `bash` printing a 50 MB log) can't blow up the heap. The modal still
-  shows the most recent output.
+  `.output` buffer (the source shown in the click-to-expand modal).
+  `appendTool`/`finishToolAt` trim to the tail at a line boundary, so a chatty
+  tool (e.g. `bash` printing a 50 MB log) can't blow up the heap before eviction
+  runs. The modal still shows the most recent output.
+
 - **Subagent modal cap** — `tuiMaxModalBuffer` (1 MiB) bounds the modal streaming
   accumulator (`subagentModalContent`). A runaway child agent streaming forever
   would otherwise keep the builder growing until the modal is closed.
 
-The compaction reindex is the subtle part: the maps are keyed by block index, so
-after dropping `d` oldest blocks, the entry at key `k` must move to `k-d`, and
-entries with `k < d` are dropped. `reindexBoolMap`/`reindexStringMap`/
-`reindexStreamWrapMap` do this. If a still-open subagent modal's backing block is
-evicted, the modal is closed and its buffer reset — otherwise the user would be
-staring at a modal whose block no longer exists.
+The eviction trigger is `maybeFlushOldBlocks`, called after a new block is
+appended. It never flushes blocks still on the tool queue (they may receive
+deltas) or dirty/actively-streaming blocks. `forceRenderDirtyBlocks` clears the
+`block.dirty` flag when it finalizes a block's render, so finalized blocks
+become eligible for eviction.
 
 ---
 
@@ -285,10 +298,13 @@ staring at a modal whose block no longer exists.
 - **Keep the terminal-restore path intact** (`painter.stop()` + `restoreTerm()` in
   `NewTUI`'s run goroutine). The nil renderer never restores anything, so if this
   is skipped the user's terminal is left in raw mode / alt screen on exit.
-- **Every new-block path must call `compactBlocks(tuiMaxHistory)`.** The index
-  maps are keyed by block position, so any append that can grow `m.blocks` past
-  the cap must compact, or the maps leak entries for evicted blocks. The
-  streaming append-to-last-block path is exempt (it never adds a block).
-- **After compaction, index-keyed maps must be reindexed, not cleared.** Clearing
-  would force a full re-render of every retained block on the next View; reindexing
-  preserves the cached renders of blocks that survived.
+- **Never drop `m.blocks` to save memory — page them out instead.** The scrollback
+  cache (`tui_scrollback.go`) flushes old blocks' heavy fields to a temp file and
+  pages them back on scroll-up. Dropping blocks would destroy scrollback the user
+  can still scroll into. The rejected drop-history approach is documented in §5.
+- **`scrollbackCache` must stay a pointer in `TuiModel`.** bubbletea copies the
+  model by value on every `Update`; a value `sync.Mutex` would be copied (vet
+  copylocks) and the lock wouldn't protect anything across the copy.
+- **`forceRenderDirtyBlocks` must clear `block.dirty`.** Finalized blocks become
+  eligible for eviction; if `dirty` stays true the cache never flushes them and
+  the resident budget is violated.

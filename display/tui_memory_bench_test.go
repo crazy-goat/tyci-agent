@@ -8,30 +8,26 @@ import (
 
 // ─── Memory benchmarks: long-session heap residency ───────────────────────
 
-// BenchmarkLongSessionBlocks measures the heap retained by a long conversation
-// capped at tuiMaxHistory blocks. Without compaction, m.blocks (and its cache
-// maps) grow without bound; with compaction, residency is bounded by the cap.
-// Run with -benchmem to see the per-run alloc delta; the more meaningful
-// number is the steady-state heap, which this benchmark approximates by
-// building the session once and then measuring the cost of an additional
-// block+render cycle at the cap.
-func BenchmarkLongSessionBlocks(b *testing.B) {
+// BenchmarkScrollbackLongSession measures the steady-state cost of appending a
+// block at the resident-budget cap, when the oldest blocks are being flushed to
+// the scrollback file on every append. The cost is O(flushed), not O(total
+// history), and history (block count) keeps growing — only the heavy rendered
+// content is paged out, not dropped.
+func BenchmarkScrollbackLongSession(b *testing.B) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
 	m.ready = true
 	m.width = 100
 	m.height = 40
 
-	// Fill past the cap so compaction is active on every subsequent append.
-	for i := 0; i < tuiMaxHistory+50; i++ {
-		kind := "text"
-		if i%3 == 0 {
-			kind = "thinking"
+	// Fill past the 256 KiB resident budget so eviction is active on every
+	// subsequent append. Each block is ~32 KiB of rendered content.
+	big := strings.Repeat("line of content here\n", 1600)
+	for i := 0; i < 16; i++ {
+		if i%2 == 0 {
+			m.appendOrAppend("text", "You: "+fmt.Sprintf("%d", i)+" "+big)
+		} else {
+			m.appendOrAppend("text", "agent "+fmt.Sprintf("%d", i)+" "+big)
 		}
-		m.appendOrAppend("text", fmt.Sprintf("block %d content\n", i))
-		if i%5 == 0 {
-			kind = "tool"
-		}
-		_ = kind
 	}
 	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
 
@@ -39,33 +35,62 @@ func BenchmarkLongSessionBlocks(b *testing.B) {
 	b.ReportAllocs()
 
 	for n := 0; n < b.N; n++ {
-		// Each iteration adds a block at the cap, triggering compaction, and
-		// renders. The cost is O(cap), not O(total history).
-		m.appendOrAppend("text", "extra block content to force compaction\n")
+		// Each iteration adds a block at the cap, triggering eviction+flush,
+		// and renders. History grows; resident memory stays bounded.
+		m.appendOrAppend("text", "extra block "+fmt.Sprintf("%d", n)+" "+big)
 		_ = m.View()
 	}
 }
 
-// BenchmarkLongSessionWithToolOutput measures residency when tools emit large
-// outputs (the worst case for memory). The tool output cap bounds each block's
-// .output to tuiMaxToolOutput; without it a single bash call can hold megabytes.
-func BenchmarkLongSessionWithToolOutput(b *testing.B) {
+// BenchmarkScrollbackPageInOnScroll measures the cost of paging an old block
+// back from the scrollback file when the viewport scrolls up to it. This is the
+// user-perceived cost of scrolling into history.
+func BenchmarkScrollbackPageInOnScroll(b *testing.B) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
 	m.ready = true
 	m.width = 100
 	m.height = 40
 
-	// Simulate many tool calls each producing a large output.
+	big := strings.Repeat("line of content here\n", 1600)
+	for i := 0; i < 16; i++ {
+		if i%2 == 0 {
+			m.appendOrAppend("text", "You: "+fmt.Sprintf("%d", i)+" "+big)
+		} else {
+			m.appendOrAppend("text", "agent "+fmt.Sprintf("%d", i)+" "+big)
+		}
+	}
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	// Force the oldest block to be flushed.
+	m.maybeFlushOldBlocks()
+	if !m.blocks[0].flushed {
+		b.Fatal("setup: expected block 0 flushed")
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for n := 0; n < b.N; n++ {
+		// Re-flush block 0 so each iteration pages it in fresh.
+		m.scrollback.flushBlock(&m.blocks[0], m.width)
+		_ = m.getBlockLines(0, false)
+	}
+}
+
+// BenchmarkScrollbackToolOutput measures residency when tools emit large
+// outputs. The per-block .output cap bounds each block to tuiMaxToolOutput.
+func BenchmarkScrollbackToolOutput(b *testing.B) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.ready = true
+	m.width = 100
+	m.height = 40
+
 	for i := 0; i < 100; i++ {
 		m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
-		// Stream a chunk of output to the tool block.
 		m.appendTool(len(m.toolQueue)-1, strings.Repeat("x", tuiMaxToolOutput/4))
 		m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "done"})
 	}
 	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
 
-	// Total tool output resident should be ~100 * tuiMaxToolOutput/4 capped
-	// per-block, not unbounded.
 	b.ResetTimer()
 	b.ReportAllocs()
 
