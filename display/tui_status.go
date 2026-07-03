@@ -113,8 +113,8 @@ func displayPath(cwd, home string) string {
 func (m TuiModel) buildTopBar() string {
 	path := displayPath(m.cwd, m.home)
 
-	prefix := "📁 "
-	prefixW := lipgloss.Width(prefix)
+	prefix := ""
+	prefixW := 0
 	avail := m.width - prefixW
 	if avail < 1 {
 		avail = 1

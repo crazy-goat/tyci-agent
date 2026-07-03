@@ -119,7 +119,7 @@ func TestBuildTopBar_LongPathTruncated(t *testing.T) {
 	}
 }
 
-func TestBuildTopBar_ContainsFileEmoji(t *testing.T) {
+func TestBuildTopBar_ShowsPath(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.ready = true
 	m.width = 80
@@ -128,8 +128,8 @@ func TestBuildTopBar_ContainsFileEmoji(t *testing.T) {
 	m.home = "/home/user"
 
 	bar := m.buildTopBar()
-	if !strings.Contains(bar, "📁") {
-		t.Fatalf("buildTopBar should contain 📁 emoji, got %q", bar)
+	if !strings.Contains(bar, "/tmp") {
+		t.Fatalf("buildTopBar should contain path, got %q", bar)
 	}
 }
 
@@ -167,9 +167,9 @@ func TestRenderFrame_TopBarIsFirstLine(t *testing.T) {
 	if len(lines) == 0 {
 		t.Fatal("renderFrame returned empty string")
 	}
-	// First line should contain the top bar with 📁.
-	if !strings.Contains(lines[0], "📁") {
-		t.Fatalf("first line of renderFrame should be the top bar, got %q", lines[0])
+	// First line should contain the top bar with the cwd path.
+	if !strings.Contains(lines[0], "~/projects/tyci") {
+		t.Fatalf("first line of renderFrame should contain cwd path, got %q", lines[0])
 	}
 }
 
@@ -188,8 +188,8 @@ func TestRenderFrame_TopBarNotInModal(t *testing.T) {
 	m.subagentModalDone = true
 
 	frame := m.renderFrame()
-	// Modal view should NOT contain the top bar.
-	if strings.Contains(frame, "📁") {
+	// Modal view should NOT contain the top bar path.
+	if strings.Contains(frame, "~/projects/tyci") {
 		t.Fatal("subagent modal view should not contain the top bar")
 	}
 }
@@ -201,7 +201,7 @@ func TestRenderFrame_TopBarNotInPicker(t *testing.T) {
 	m.openModelPicker()
 
 	frame := m.renderFrame()
-	if strings.Contains(frame, "📁") {
+	if strings.Contains(frame, "~/projects/tyci") {
 		t.Fatal("model picker view should not contain the top bar")
 	}
 }
