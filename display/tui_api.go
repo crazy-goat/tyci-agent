@@ -38,10 +38,15 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	m.painter = newPainter(os.Stdout, tuiMouseEnabled())
 	opts := []tea.ProgramOption{tea.WithoutRenderer()}
 	if tuiMouseEnabled() {
-		// Needed even in painter mode so bubbletea's input reader delivers
-		// mouse events; the enable escape itself is written by the painter.
+		// Needed so bubbletea's input reader delivers mouse events; the enable
+		// escape itself is written by the painter.
 		opts = append(opts, tea.WithMouseCellMotion())
 	}
+	// Filter stray SGR mouse escapes that lost their leading ESC byte so
+	// they don't get inserted as literal `[<NN;NN;NN[Mm]` text into the
+	// textarea. Real mouse events arrive intact (with the 0x1b prefix) and
+	// are parsed by bubbletea as MouseMsg as usual. See tui_input_filter.go.
+	opts = append(opts, tea.WithInput(sanitizeInput(os.Stdin)))
 	p := tea.NewProgram(m, opts...)
 
 	t := &TUI{
