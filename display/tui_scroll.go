@@ -41,8 +41,12 @@ func (m *TuiModel) totalRenderedLines() int {
 }
 
 // invalidateTotalLines forces recomputation of cached line counts.
+// Also invalidates the message region cache (issue #84): anything that
+// changes block layout (add/change/remove/scroll) changes the transcript
+// viewport, so the cached region string is stale.
 func (m *TuiModel) invalidateTotalLines() {
 	m.cachedTotalLines = -1
+	m.invalidateMessageRegion()
 }
 
 // invalidateAllBlockLineCounts clears per-block line counts and total line cache.
@@ -64,6 +68,7 @@ func (m *TuiModel) invalidateAllBlockLineCounts() {
 	m.streamWraps = make(map[int]*streamWrap)
 	m.mdCacheRendered = make(map[int]string)
 	m.cachedTotalLines = -1
+	m.invalidateMessageRegion()
 	// Resident bytes changed: recount from the surviving resident blocks.
 	m.scrollback.residentBytes = m.residentBlockBytes()
 }
@@ -151,3 +156,39 @@ func (m *TuiModel) blockAtVisibleLine(visY int) int {
 }
 
 // ─── View ─────────────────────────────────────────────────────────────────
+
+// messageRegionCache holds the rendered message-region string (the transcript
+// area between the top bar and the status bar) so the status tick doesn't
+// rebuild it on every 250ms fire. Pointer-referenced by TuiModel so it
+// survives the value-copy bubbletea performs on every Update, exactly like
+// scrollback and painter. See issue #84.
+//
+// The cache uses two layers of invalidation:
+//  1. A dirty flag set by invalidateTotalLines/invalidateAllBlockLineCounts
+//     (covers block content/layout mutations and resize).
+//  2. A state snapshot (scrollLine, atBottom, selectionVersion, width,
+//     hasContent) compared on every lookup. This catches scroll and selection
+//     changes that don't go through the dirty-flag path, without needing
+//     invalidate calls scattered across 20+ event handlers.
+type messageRegionCache struct {
+	cached            string // the last rendered message region ("" = not built yet)
+	dirty             bool   // true when block layout/content changed
+	scrollLine        int    // scroll position when cache was built
+	atBottom          bool   // atBottom when cache was built
+	selectionVersion  int    // selection version when cache was built
+	selectionActive   bool   // selection active when cache was built
+	selectionFlash    bool   // selection flash when cache was built
+	width             int    // terminal width when cache was built
+	hasContent        bool   // whether blocks existed when cache was built
+}
+
+// invalidateMessageRegion marks the message region cache as stale so the next
+// renderFrame() rebuilds it. Call from every code path that mutates blocks,
+// scroll position, width (resize → re-wrap), or selection state — anything
+// that could change which lines appear in the transcript viewport.
+func (m *TuiModel) invalidateMessageRegion() {
+	if m.messageRegion == nil {
+		return
+	}
+	m.messageRegion.dirty = true
+}

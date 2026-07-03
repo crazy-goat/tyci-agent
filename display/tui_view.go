@@ -60,7 +60,83 @@ func (m TuiModel) renderFrame() string {
 	b.WriteString(m.buildTopBar())
 	b.WriteString("\n")
 
-	// Welcome message
+	// ── Message region (cached, issue #84) ──
+	// The message region (transcript viewport + welcome placeholder) is the
+	// expensive part of renderFrame(): it iterates visible blocks, wraps each
+	// line, and builds the renderBuffer. During long tool execution the only
+	// thing firing is the 250ms status tick — the message region is unchanged.
+	// Cache it and reuse the string until something invalidates it.
+	region := m.buildMessageRegionCached(msgHeight)
+	b.WriteString(region)
+	b.WriteString("\n")
+
+	// Status bar
+	status := m.buildStatus()
+	statusStyle := lipgloss.NewStyle().
+		Width(m.width).MaxWidth(m.width).
+		Background(lipgloss.Color("236")).
+		Foreground(lipgloss.Color("250"))
+	if status != "" {
+		b.WriteString(statusStyle.Render(status))
+	} else {
+		b.WriteString(statusStyle.Render(""))
+	}
+	b.WriteString("\n")
+
+	// Queue panel (issue #88): shows pending user messages submitted while
+	// the agent is busy. Renders zero-height when the queue is empty, so the
+	// layout is byte-identical to the pre-feature behavior in that case.
+	b.WriteString(m.renderQueuePanel(m.width))
+
+	b.WriteString(m.input.View())
+	return b.String()
+}
+
+// buildMessageRegionCached returns the rendered message region, reusing the
+// cached string when nothing has changed (issue #84). msgHeight is the number
+// of terminal rows available for the message viewport (height minus top bar,
+// status bar, queue panel, and input). The cached value is stored on the
+// pointer-referenced messageRegionCache so it survives bubbletea's value copy
+// on every Update.
+func (m *TuiModel) buildMessageRegionCached(msgHeight int) string {
+	if m.messageRegion == nil {
+		m.messageRegion = &messageRegionCache{}
+	}
+	c := m.messageRegion
+	hasContent := len(m.blocks) > 0
+	// Check if the cache is still valid: not dirty, has been built, and all
+	// state that affects the viewport (scroll, selection, width, content
+	// presence) is unchanged since the last build.
+	if !c.dirty && c.cached != "" &&
+		c.scrollLine == m.scrollLine &&
+		c.atBottom == m.atBottom &&
+		c.selectionVersion == m.selectionVersion &&
+		c.selectionActive == m.selection.Active &&
+		c.selectionFlash == m.selectionFlash &&
+		c.width == m.width &&
+		c.hasContent == hasContent {
+		return c.cached
+	}
+	region := m.buildMessageRegion(msgHeight)
+	c.cached = region
+	c.dirty = false
+	c.scrollLine = m.scrollLine
+	c.atBottom = m.atBottom
+	c.selectionVersion = m.selectionVersion
+	c.selectionActive = m.selection.Active
+	c.selectionFlash = m.selectionFlash
+	c.width = m.width
+	c.hasContent = hasContent
+	return region
+}
+
+// buildMessageRegion renders the message region: the welcome placeholder when
+// there are no blocks, or the visible transcript viewport (flat render lines
+// wrapped, selection-highlighted, padded to fill msgHeight rows). Also
+// populates m.renderBuffer for selection hit-testing.
+func (m *TuiModel) buildMessageRegion(msgHeight int) string {
+	var b strings.Builder
+
 	hasContent := len(m.blocks) > 0
 	if !hasContent {
 		w := max(10, m.width-2)
@@ -70,6 +146,16 @@ func (m TuiModel) renderFrame() string {
 		b.WriteString(msg)
 		b.WriteString("\n")
 		msgHeight -= lipgloss.Height(msg)
+		// Pad remaining rows with empty selectable lines so the region
+		// fills the viewport exactly (selection hit-testing + painter diff
+		// rely on a fixed-height region).
+		m.renderBuffer = newRenderBuffer(max(0, msgHeight))
+		for y := 0; y < msgHeight; y++ {
+			b.WriteString(m.renderSelectableLine("", y))
+			b.WriteString("\n")
+			m.renderBuffer.Add("", "empty", -1, -1, y)
+		}
+		return strings.TrimSuffix(b.String(), "\n")
 	}
 
 	// Build a flat, cached line list covering only the visible viewport.
@@ -111,26 +197,9 @@ func (m TuiModel) renderFrame() string {
 		rendered++
 	}
 
-	// Status bar
-	status := m.buildStatus()
-	statusStyle := lipgloss.NewStyle().
-		Width(m.width).MaxWidth(m.width).
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("250"))
-	if status != "" {
-		b.WriteString(statusStyle.Render(status))
-	} else {
-		b.WriteString(statusStyle.Render(""))
-	}
-	b.WriteString("\n")
-
-	// Queue panel (issue #88): shows pending user messages submitted while
-	// the agent is busy. Renders zero-height when the queue is empty, so the
-	// layout is byte-identical to the pre-feature behavior in that case.
-	b.WriteString(m.renderQueuePanel(m.width))
-
-	b.WriteString(m.input.View())
-	return b.String()
+	// Trim the trailing newline — the caller (renderFrame) adds its own
+	// separator newline between the region and the status bar.
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // renderModelPickerView renders just the model picker popup on a blank background.
