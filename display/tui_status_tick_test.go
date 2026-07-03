@@ -215,6 +215,64 @@ func TestHandleBlockMsg_DoneClearsAfterSubmit(t *testing.T) {
 	}
 }
 
+// ─── request-start resets requestStartTime ──────────────────────────────
+
+func TestHandleBlockMsg_RequestStartResetsTimer(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	// Set a stale timer (e.g. from a previous submit)
+	m.requestStartTime = time.Now().Add(-30 * time.Second)
+
+	// Send "request-start" message (called by TUI.Request() on each API turn)
+	m.handleBlockMsg(tuiMsgBlock{kind: "request-start"})
+
+	if m.requestStartTime.IsZero() {
+		t.Fatal("request-start should set requestStartTime to non-zero time")
+	}
+	if time.Since(m.requestStartTime) > time.Second {
+		t.Errorf("requestStartTime should be recent (new turn), was %v ago", time.Since(m.requestStartTime))
+	}
+	// Verify it's not the stale value anymore
+	if m.requestStartTime.Before(time.Now().Add(-10 * time.Second)) {
+		t.Error("requestStartTime should have been updated to recent time, not left as stale")
+	}
+}
+
+func TestHandleBlockMsg_RequestStartOverridesSubmitTime(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	// Simulate submit (sets requestStartTime)
+	m.input.SetValue("hello")
+	m.width = 100
+	m2 := m.submit().(TuiModel)
+
+	if m2.requestStartTime.IsZero() {
+		t.Fatal("submit should set requestStartTime")
+	}
+
+	// Simulate a new API turn mid-conversation (after tools returned)
+	before := time.Now()
+	m2.handleBlockMsg(tuiMsgBlock{kind: "request-start"})
+
+	if m2.requestStartTime.Before(before) {
+		t.Error("request-start should update requestStartTime to now, got stale time")
+	}
+	if time.Since(m2.requestStartTime) > time.Second {
+		t.Errorf("requestStartTime should be recent, was %v ago", time.Since(m2.requestStartTime))
+	}
+}
+
+func TestHandleBlockMsg_RequestStartWhileIdleStillSetsTimer(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	// Idle state
+	m.reading = true
+	m.requestStartTime = time.Time{} // zero
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "request-start"})
+
+	if m.requestStartTime.IsZero() {
+		t.Error("request-start should set requestStartTime even when idle")
+	}
+}
+
 // ─── statusTickMsg handling ────────────────────────────────────────────
 
 func TestUpdate_StatusTickMsg_ReturnsCmdWhenReading(t *testing.T) {
@@ -286,6 +344,13 @@ func TestStatusTickCmd_ProducesStatusTickMsg(t *testing.T) {
 	cmd := statusTickCmd()
 	_ = cmd // would produce statusTickMsg when executed in tea.Program
 	// This is a basic smoke test that the function doesn't panic.
+}
+
+func TestStatusTickCmd_IntervalIs250ms(t *testing.T) {
+	// Issue #83: tick interval was reduced from 100ms to 250ms.
+	if statusTickInterval != 250*time.Millisecond {
+		t.Errorf("statusTickInterval = %v, want 250ms", statusTickInterval)
+	}
 }
 
 // ─── buildStatus format lock test ──────────────────────────────────────

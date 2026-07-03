@@ -10,6 +10,11 @@ import (
 
 func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	switch msg.kind {
+	case "request-start":
+		// Reset the elapsed-time counter at the start of each API turn so the
+		// status bar shows per-turn wall time instead of accumulating from
+		// the user's initial submit. See issue #83.
+		m.requestStartTime = time.Now()
 	case "thinking":
 		m.status = "thinking"
 		m.appendOrAppend("thinking", msg.content)

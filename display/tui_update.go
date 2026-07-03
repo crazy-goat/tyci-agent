@@ -7,10 +7,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// statusTickCmd returns a command that ticks every 100ms while a request
-// is in flight, keeping the elapsed-time counter in the status bar live.
+// statusTickInterval is the interval between status-bar repaints while a
+// request is in flight. 250ms reduces idle CPU compared to the previous
+// 100ms (issue #83) while still providing smooth elapsed-time updates with
+// 0.1s precision.
+const statusTickInterval = 250 * time.Millisecond
+
+// statusTickCmd returns a command that ticks every statusTickInterval while
+// a request is in flight, keeping the elapsed-time counter in the status bar
+// live.
 func statusTickCmd() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(statusTickInterval, func(time.Time) tea.Msg {
 		return statusTickMsg{}
 	})
 }

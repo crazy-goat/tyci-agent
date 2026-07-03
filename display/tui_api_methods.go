@@ -35,9 +35,13 @@ func (t *TUI) CancelCh() <-chan struct{} {
 
 func (t *TUI) post(msg tuiMsgBlock) { t.prog.Send(msg) }
 
-// Request is a no-op in TUI mode — request boundaries are implicit
-// in the rendered transcript.
-func (t *TUI) Request(string) {}
+// Request is called once per API turn (agent/run_once.go). It resets the
+// elapsed-time counter so the status bar shows the *current* turn's wall
+// time rather than accumulating from user submit through multiple tool
+// loops. See issue #83.
+func (t *TUI) Request(_ string) {
+	t.post(tuiMsgBlock{kind: "request-start"})
+}
 
 // ToolFinish is a no-op in TUI mode — tool summaries are not rendered.
 func (t *TUI) ToolFinish() {}
