@@ -18,6 +18,7 @@ import (
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // ---------------------------------------------------------------------------
@@ -29,8 +30,19 @@ var rootCmd = &cobra.Command{
 	Short:         "LLM-powered AI agent CLI",
 	SilenceErrors: true,
 	SilenceUsage:  true,
-	Run: func(cmd *cobra.Command, args []string) {
-		cmd.Help()
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// If args were given (unknown subcommand), show help.
+		if len(args) > 0 {
+			cmd.Help()
+			return nil
+		}
+		// TUI requires a terminal; fall back to help when piped.
+		if !term.IsTerminal(int(os.Stdout.Fd())) {
+			cmd.Help()
+			return nil
+		}
+		// Default: launch the TUI.
+		return tuiCmd.RunE(cmd, args)
 	},
 }
 
