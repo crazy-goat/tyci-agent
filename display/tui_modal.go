@@ -106,7 +106,28 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseMsg:
-		return m.handleMouseMsg(msg)
+		// Only handle scroll wheel inside the modal; ignore all clicks
+		// so they don't leak through to background tool blocks.
+		if msg.Button == tea.MouseButtonWheelUp {
+			m = m.clearSelection()
+			if m.subagentModalScroll < m.subagentModalMaxScroll() {
+				m.subagentModalScroll += 3
+			}
+			if m.subagentModalScroll > m.subagentModalMaxScroll() {
+				m.subagentModalScroll = m.subagentModalMaxScroll()
+			}
+			return m, nil
+		}
+		if msg.Button == tea.MouseButtonWheelDown {
+			m = m.clearSelection()
+			m.subagentModalScroll -= 3
+			if m.subagentModalScroll < 0 {
+				m.subagentModalScroll = 0
+			}
+			return m, nil
+		}
+		// Block all other mouse events (clicks, drags) from leaking through.
+		return m, nil
 
 	case tuiMsgBlock:
 		// Forward block messages to the normal handler so streaming

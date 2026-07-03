@@ -109,6 +109,20 @@ func (m TuiModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseMsg:
+		// Block all mouse events so clicks don't leak through to
+		// background elements. Allow scroll wheel to navigate models.
+		if msg.Button == tea.MouseButtonWheelUp {
+			if m.pickerCursor > 0 {
+				m.pickerCursor--
+			}
+			return m, nil
+		}
+		if msg.Button == tea.MouseButtonWheelDown {
+			if m.pickerCursor < m.pickerModelCount()-1 {
+				m.pickerCursor++
+			}
+			return m, nil
+		}
 		return m, nil
 	}
 
