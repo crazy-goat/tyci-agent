@@ -322,6 +322,55 @@ data: [DONE]
 	}
 }
 
+func TestStreamChat_Reasoning(t *testing.T) {
+	sseEvents := `data: {"choices":[{"delta":{"reasoning":"thinking..."}}]}
+data: {"choices":[{"delta":{"content":"Hello"}}]}
+data: {"choices":[{"finish_reason":"stop"}]}
+data: [DONE]
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		events = append(events, e)
+		return nil
+	}
+
+	body := ChatRequest{
+		Model:    "mimo-v2.5-pro",
+		Stream:   true,
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	}
+
+	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var thinking []string
+	var texts []string
+	for _, e := range events {
+		switch v := e.(type) {
+		case stream.ThinkingDelta:
+			thinking = append(thinking, v.Text)
+		case stream.TextDelta:
+			texts = append(texts, v.Text)
+		}
+	}
+
+	if len(thinking) != 1 || thinking[0] != "thinking..." {
+		t.Errorf("expected thinking 'thinking...', got %v", thinking)
+	}
+	if len(texts) != 1 || texts[0] != "Hello" {
+		t.Errorf("expected text 'Hello', got %v", texts)
+	}
+}
+
 func TestStreamChat_ReasoningContent(t *testing.T) {
 	sseEvents := `data: {"choices":[{"delta":{"reasoning_content":"thinking..."}}]}
 data: {"choices":[{"delta":{"content":"Hello"}}]}

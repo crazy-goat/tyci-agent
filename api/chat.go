@@ -43,9 +43,10 @@ type ChatRequest struct {
 type chatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			Reasoning string `json:"reasoning_content"`
-			ToolCalls []struct {
+			Content      string `json:"content"`
+			Reasoning    string `json:"reasoning_content"`
+			ReasoningAlt string `json:"reasoning"`
+			ToolCalls    []struct {
 				Type     string `json:"type"`
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
@@ -199,8 +200,12 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 		if len(chunk.Choices) > 0 {
 			choice := chunk.Choices[0]
 			delta := choice.Delta
-			if delta.Reasoning != "" {
-				if err := emit(stream.ThinkingDelta{Text: delta.Reasoning}); err != nil {
+			reasoningText := delta.Reasoning
+			if reasoningText == "" {
+				reasoningText = delta.ReasoningAlt
+			}
+			if reasoningText != "" {
+				if err := emit(stream.ThinkingDelta{Text: reasoningText}); err != nil {
 					return err
 				}
 			}
