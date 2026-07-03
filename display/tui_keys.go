@@ -24,6 +24,9 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.Type {
+	case tea.KeyCtrlR:
+		m.openHistorySearch()
+		return m, nil
 	case tea.KeyEscape:
 		if m.selection.Active || m.selection.Candidate {
 			return m.clearSelection(), nil

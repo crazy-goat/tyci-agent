@@ -27,6 +27,9 @@ func (m TuiModel) Init() tea.Cmd {
 }
 
 func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.historySearchActive {
+		return m.updateHistorySearch(msg)
+	}
 	if m.pickerActive {
 		return m.updatePicker(msg)
 	}

@@ -193,6 +193,13 @@ type TuiModel struct {
 	stashedInput string // saved current input while browsing history
 	historyPath  string // path to history file for persistence
 
+	// Ctrl+R history search modal
+	historySearchActive  bool     // true when the search modal is open
+	historySearchFilter  string   // live filter substring
+	historySearchCursor  int      // index into historySearchResults
+	historySearchResults []string // filtered matching history entries
+	stashedSearchInput   string   // textarea value preserved for Esc cancel
+
 	// Pending-message queue snapshot (issue #88). Updated synchronously by
 	// the bubbletea event loop on submit (when busy) and on ESC/reset. The
 	// agent goroutine drains the actual channel (TUI.queue) via the
