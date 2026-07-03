@@ -137,8 +137,12 @@ func (m *TuiModel) blockAtVisibleLine(visY int) int {
 		if targetLine < blockEnd {
 			return i
 		}
-		// Account for spacer
-		if i+1 < len(m.blocks) && !(m.blocks[i+1].kind == "tool" && m.blocks[i].kind == "tool") {
+		// Account for spacer between non-consecutive-tool blocks.
+		if i+1 < len(m.blocks) && !(m.blocks[i+1].kind == "tool" && b.kind == "tool") {
+			// Spacer occupies exactly one line at blockEnd.
+			if targetLine == blockEnd {
+				return -1 // spacer line — not part of any block
+			}
 			blockEnd++
 		}
 		acc = blockEnd

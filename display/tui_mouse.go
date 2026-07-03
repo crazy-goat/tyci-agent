@@ -28,14 +28,19 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && m.transcriptY(msg.Y) {
+	// Convert terminal screen Y (0 = top bar) to message-area Y (0 = first message line).
+	// The top bar occupies row 0, so screen row 1 is the first message line.
+	// See https://github.com/crazy-goat/tyci-agent/issues/87
+	adjY := msg.Y - 1
+
+	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && m.transcriptY(adjY) {
 		m.selectionVersion++
 		x := screenXToSelectionX(m, msg.X)
-		m.selection = SelectionState{Candidate: true, AnchorX: x, AnchorY: msg.Y, CursorX: x, CursorY: msg.Y, PressX: msg.X, PressY: msg.Y}
+		m.selection = SelectionState{Candidate: true, AnchorX: x, AnchorY: adjY, CursorX: x, CursorY: adjY, PressX: msg.X, PressY: adjY}
 		return m, nil
 	}
 	if msg.Action == tea.MouseActionMotion && m.selection.Candidate {
-		y := m.clampTranscriptY(msg.Y)
+		y := m.clampTranscriptY(adjY)
 		x := screenXToSelectionX(m, msg.X)
 		if y != m.selection.PressY || msg.X != m.selection.PressX || m.selection.Dragging {
 			m.selectionVersion++
@@ -49,7 +54,7 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Action == tea.MouseActionMotion && m.selection.Active {
-		y := m.clampTranscriptY(msg.Y)
+		y := m.clampTranscriptY(adjY)
 		x := screenXToSelectionX(m, msg.X)
 		if y != m.selection.CursorY || x != m.selection.CursorX {
 			m.selectionVersion++
@@ -66,7 +71,7 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.selection.Active = true
 			m.selection.Candidate = false
 			m.selection.CursorX = screenXToSelectionX(m, msg.X)
-			m.selection.CursorY = m.clampTranscriptY(msg.Y)
+			m.selection.CursorY = m.clampTranscriptY(adjY)
 			m = m.copySelection()
 			return m, copyFeedbackCmd(m)
 		}

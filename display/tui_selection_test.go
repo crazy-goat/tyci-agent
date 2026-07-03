@@ -57,11 +57,12 @@ func TestTuiSelection_MouseReleaseCopiesSelection(t *testing.T) {
 	m.dirtyBlocks[0] = true
 	m.invalidateAllBlockLineCounts()
 
-	model, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 0})
+	// Screen Y=1 is first message line (after fix for #87: adjY = msg.Y - 1)
+	model, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 1})
 	m = model.(TuiModel)
-	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 1, Y: 1})
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 1, Y: 2})
 	m = model.(TuiModel)
-	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 1, Y: 1})
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 1, Y: 2})
 	m = model.(TuiModel)
 
 	if *copied == "" {
@@ -77,9 +78,10 @@ func TestTuiSelection_ClickToolOpensModalButDragDoesNot(t *testing.T) {
 	m.blocks = []block{{kind: "tool", toolName: "bash", toolState: "done", collapsed: true, content: "echo hi", output: "hi"}}
 	m.invalidateAllBlockLineCounts()
 
-	model, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 0})
+	// Screen Y=1 is first message line (after fix for #87: adjY = msg.Y - 1)
+	model, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 1})
 	m = model.(TuiModel)
-	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 1, Y: 0})
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 1, Y: 1})
 	m = model.(TuiModel)
 	if !m.subagentModalActive {
 		t.Fatal("expected click on done tool to open modal")
@@ -89,11 +91,11 @@ func TestTuiSelection_ClickToolOpensModalButDragDoesNot(t *testing.T) {
 	m = newSelectionTestModel()
 	m.blocks = []block{{kind: "tool", toolName: "bash", toolState: "done", collapsed: true, content: "echo hi", output: "hi"}}
 	m.invalidateAllBlockLineCounts()
-	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 0})
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 1})
 	m = model.(TuiModel)
-	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 8, Y: 0})
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 8, Y: 1})
 	m = model.(TuiModel)
-	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 8, Y: 0})
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 8, Y: 1})
 	m = model.(TuiModel)
 	if m.subagentModalActive {
 		t.Fatal("drag over tool should not open modal")
@@ -118,5 +120,190 @@ func TestTuiSelection_ModalCopyUsesModalFallbackBuffer(t *testing.T) {
 	}
 	if !m.selectionFlash {
 		t.Fatal("expected modal selection flash")
+	}
+}
+
+// ─── Off-by-one fix (issue #87) ──────────────────────────────────────────
+
+func TestTuiSelection_TopBarClickIgnored(t *testing.T) {
+	m := newSelectionTestModel()
+	m.blocks = []block{{kind: "text", content: "line one", dirty: true}}
+	m.dirtyBlocks[0] = true
+	m.invalidateAllBlockLineCounts()
+
+	// Click on screen Y=0 (top bar) — must not start a selection
+	model, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 0})
+	m = model.(TuiModel)
+
+	if m.selection.Candidate || m.selection.Active {
+		t.Fatal("click on top bar should not start a selection (issue #87)")
+	}
+}
+
+func TestTuiSelection_FirstMessageLineSelectable(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.blocks = []block{{kind: "text", content: "first line content", dirty: true}}
+	m.dirtyBlocks[0] = true
+	m.invalidateAllBlockLineCounts()
+
+	// Screen Y=1 is first message line (adjY=0)
+	model, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 1})
+	m = model.(TuiModel)
+	if !m.selection.Candidate {
+		t.Fatal("press on first message line should start selection candidate (issue #87)")
+	}
+
+	// Drag on the same line
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 10, Y: 1})
+	m = model.(TuiModel)
+	if !m.selection.Active {
+		t.Fatal("motion on first line should promote to active selection (issue #87)")
+	}
+
+	// Release should copy
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 10, Y: 1})
+	m = model.(TuiModel)
+	if *copied == "" {
+		t.Fatal("drag on first message line should copy text (issue #87)")
+	}
+}
+
+func TestTuiSelection_ScreenYMapping(t *testing.T) {
+	m := newSelectionTestModel()
+	// Verify that selectionYRange returns 0, visibleLines()-1 (message-area coords)
+	// after the fix: Y from mouse is adjusted at entry, so this range stays 0-based.
+	start, end := m.selectionYRange()
+	if start != 0 {
+		t.Fatalf("selectionYRange start = %d, want 0 (issue #87)", start)
+	}
+	wantEnd := m.visibleLines() - 1
+	if end != wantEnd {
+		t.Fatalf("selectionYRange end = %d, want %d (issue #87)", end, wantEnd)
+	}
+
+	// transcriptY should reject top bar (Y=0 adjY=-1) and accept first message line (Y=1 adjY=0)
+	if m.transcriptY(-1) {
+		t.Fatal("transcriptY(-1) should be false (top bar row, issue #87)")
+	}
+	if !m.transcriptY(0) {
+		t.Fatal("transcriptY(0) should be true (first message line, issue #87)")
+	}
+	if !m.transcriptY(end) {
+		t.Fatal("transcriptY(end) should be true (last message line, issue #87)")
+	}
+	if m.transcriptY(end + 1) {
+		t.Fatal("transcriptY(end+1) should be false (past last line, issue #87)")
+	}
+
+	// openToolModalAt should accept message-area Y in range [0, visibleLines()-1]
+	// and reject negative values (which would come from top bar clicks).
+	m.openToolModalAt(-1) // should be no-op (top bar)
+	m.openToolModalAt(m.visibleLines()) // should be no-op (past end)
+	// No crash means success.
+}
+
+// TestBlockAtVisibleLine_SpacerReturnsMinusOne verifies that the fallback
+// path in blockAtVisibleLine correctly identifies spacer lines (the blank
+// line between a text block and a tool block) as belonging to no block.
+// Before the fix, the spacer was attributed to the next block, so clicking
+// the blank line above a tool opened that tool's modal (issue #87).
+func TestBlockAtVisibleLine_SpacerReturnsMinusOne(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	// text block (1 line) + spacer (1 line) + tool block (1 line)
+	m.blocks = []block{
+		{kind: "text", content: "hello", cachedLines: []string{"hello"}, cachedLineCount: 1},
+		{kind: "tool", toolName: "bash", toolState: "done", content: "{}", output: "ok",
+			cachedLines: []string{"tool line"}, cachedLineCount: 1},
+	}
+	m.cachedTotalLines = -1
+	total := m.totalRenderedLines() // 1 (text) + 1 (spacer) + 1 (tool) = 3, minus trailing = 2? let's see
+
+	// At bottom (scrollLine=0, atBottom=true): startLine = total - msgHeight.
+	// For height=40, input.Height()=1, msgHeight = 40-1-2 = 37. total < msgHeight
+	// so startLine=0. Line layout:
+	//   visY 0 → text block line 0  (targetLine 0)
+	//   visY 1 → spacer             (targetLine 1)
+	//   visY 2 → tool block line 0  (targetLine 2)
+	_ = total
+
+	// text block
+	if idx := m.blockAtVisibleLine(0); idx != 0 {
+		t.Fatalf("blockAtVisibleLine(0) = %d, want 0 (text block)", idx)
+	}
+	// spacer — should be -1, NOT the tool block
+	if idx := m.blockAtVisibleLine(1); idx != -1 {
+		t.Fatalf("blockAtVisibleLine(1) = %d, want -1 (spacer line, issue #87)", idx)
+	}
+	// tool block
+	if idx := m.blockAtVisibleLine(2); idx != 1 {
+		t.Fatalf("blockAtVisibleLine(2) = %d, want 1 (tool block)", idx)
+	}
+}
+
+// TestClickSpacerLineDoesNotOpenToolModal is an end-to-end test: clicking the
+// blank spacer line between a text block and a tool block must NOT open the
+// tool modal. Before the fix, the spacer was mapped to the next block (issue #87).
+func TestClickSpacerLineDoesNotOpenToolModal(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	m.blocks = []block{
+		{kind: "text", content: "hello", cachedLines: []string{"hello"}, cachedLineCount: 1},
+		{kind: "tool", toolName: "bash", toolState: "done", content: "{}", output: "ok",
+			cachedLines: []string{"tool line"}, cachedLineCount: 1},
+	}
+	m.cachedTotalLines = -1
+
+	// Layout: screen Y=1 → text (adjY=0), screen Y=2 → spacer (adjY=1), screen Y=3 → tool (adjY=2)
+	// Click on spacer (screen Y=2)
+	model, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 2})
+	m = model.(TuiModel)
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 1, Y: 2})
+	m = model.(TuiModel)
+
+	if m.subagentModalActive {
+		t.Fatal("clicking spacer line should NOT open tool modal (issue #87)")
+	}
+
+	// Sanity: clicking the actual tool line (screen Y=3) should open the modal
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 1, Y: 3})
+	m = model.(TuiModel)
+	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 1, Y: 3})
+	m = model.(TuiModel)
+
+	if !m.subagentModalActive {
+		t.Fatal("clicking tool line should open tool modal (issue #87)")
+	}
+}
+
+// TestBlockAtVisibleLine_ConsecutiveToolsNoSpacer verifies that consecutive
+// tool blocks (no spacer between them) are mapped correctly — no off-by-one.
+func TestBlockAtVisibleLine_ConsecutiveToolsNoSpacer(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+
+	m.blocks = []block{
+		{kind: "tool", toolName: "bash", toolState: "done", content: "{}", output: "ok",
+			cachedLines: []string{"tool1"}, cachedLineCount: 1},
+		{kind: "tool", toolName: "read", toolState: "done", content: "{}", output: "ok",
+			cachedLines: []string{"tool2"}, cachedLineCount: 1},
+	}
+	m.cachedTotalLines = -1
+
+	// No spacer between consecutive tools: visY 0 → tool1, visY 1 → tool2
+	if idx := m.blockAtVisibleLine(0); idx != 0 {
+		t.Fatalf("blockAtVisibleLine(0) = %d, want 0 (tool1)", idx)
+	}
+	if idx := m.blockAtVisibleLine(1); idx != 1 {
+		t.Fatalf("blockAtVisibleLine(1) = %d, want 1 (tool2)", idx)
 	}
 }
