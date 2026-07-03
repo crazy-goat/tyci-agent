@@ -210,8 +210,8 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 }
 
 func (m *TuiModel) appendOrAppend(kind, content string) {
-	m.invalidateTotalLines()
 	if len(m.blocks) == 0 {
+		m.invalidateTotalLines()
 		idx := 0
 		m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
 		m.dirtyBlocks[idx] = true
@@ -226,12 +226,32 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 		newIsUser := strings.HasPrefix(content, "You: ")
 		if lastIsUser != newIsUser {
 			// Different sources → create new block
+			m.invalidateTotalLines()
 			m.forceRenderDirtyBlocks()
 			idx := len(m.blocks)
 			m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
 			m.dirtyBlocks[idx] = true
 			m.maybeFlushOldBlocks()
 			return
+		}
+		// ── Streaming hot path (issue: CPU grows with context length) ──
+		// This runs on every streamed token. The message region cache must be
+		// invalidated (the last block's content changed), but we deliberately
+		// avoid invalidateTotalLines() here: that sets cachedTotalLines = -1,
+		// forcing totalRenderedLines() to re-sum EVERY block on the next frame.
+		// That scan is O(total blocks) and, over a long conversation, becomes
+		// the dominant per-token cost — CPU climbs from ~1% to 10-20% as the
+		// transcript grows. Instead we update the cached total incrementally:
+		// only the last block's line count changes, so we recompute just that
+		// block and adjust the running total by the delta. See #84 follow-up.
+		m.invalidateMessageRegion()
+		// Old contribution of this block. Use the cached count when present;
+		// otherwise render it now so the delta below is exact (cachedLineCount
+		// can be 0 for a not-yet-rendered block that nonetheless has lines).
+		oldCount := last.cachedLineCount
+		if oldCount == 0 && m.cachedTotalLines >= 0 {
+			oldCount = len(m.getBlockLines(len(m.blocks)-1, false))
+			last = &m.blocks[len(m.blocks)-1] // getBlockLines may have grown the slice header; refresh
 		}
 		last.content += content
 		last.dirty = true
@@ -242,8 +262,21 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 		// Keep m.streamWraps[idx]: it detects the append itself and re-wraps
 		// only the last logical line instead of the whole block.
 		delete(m.mdCacheRendered, idx)
+		// Incrementally fix cachedTotalLines: the last block never carries a
+		// trailing spacer (totalRenderedLines strips it), so it contributes
+		// exactly its own line count. Recompute just this block and apply the
+		// delta. If the total wasn't cached, leave it (-1) so it's computed
+		// fresh on demand.
+		if m.cachedTotalLines >= 0 {
+			newLines := m.getBlockLines(idx, false)
+			m.cachedTotalLines += len(newLines) - oldCount
+			if m.cachedTotalLines < 0 {
+				m.cachedTotalLines = 0
+			}
+		}
 		return
 	}
+	m.invalidateTotalLines()
 	// New block type starting → force-render all dirty blocks immediately
 	// so they show final markdown before the new block appears.
 	m.forceRenderDirtyBlocks()
