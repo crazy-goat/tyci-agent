@@ -11,21 +11,29 @@ import (
 //
 // api_type can be: openai, anthropic, gemini (defaults to openai).
 // The auth_token can be empty for free models.
+// The optional query parameter ?reasoning=true enables the "reasoning"
+// field in chat-completion requests. By default it is not sent.
 type ProviderURI struct {
-	APIType  string // openai, anthropic, gemini
-	Model    string // model name (e.g., "gpt-4")
+	APIType   string // openai, anthropic, gemini
+	Model     string // model name (e.g., "gpt-4")
 	AuthToken string // optional auth token (can be empty or "$ENV_VAR")
-	Host     string // host:port (e.g., "api.openai.com")
-	Path     string // optional path (e.g., "/v1/chat/completions")
+	Host      string // host:port (e.g., "api.openai.com")
+	Path      string // optional path (e.g., "/v1/chat/completions"), without query
+	Reasoning bool   // send "reasoning": true in chat requests (only when explicitly set)
 }
 
 // String returns the URI in the format: api_type://model@auth_token@host/path
+// Appends ?reasoning=true only when Reasoning is explicitly set.
 func (u ProviderURI) String() string {
-	return fmt.Sprintf("%s://%s@%s@%s%s", u.APIType, u.Model, u.AuthToken, u.Host, u.Path)
+	s := fmt.Sprintf("%s://%s@%s@%s%s", u.APIType, u.Model, u.AuthToken, u.Host, u.Path)
+	if u.Reasoning {
+		s += "?reasoning=true"
+	}
+	return s
 }
 
 // Parse parses a URI string into a ProviderURI.
-// Format: api_type://model@auth_token@host:port/path
+// Format: api_type://model@auth_token@host:port/path?reasoning=true
 func Parse(uri string) (ProviderURI, error) {
 	parts := strings.SplitN(uri, "://", 2)
 	if len(parts) != 2 {
@@ -59,12 +67,32 @@ func Parse(uri string) (ProviderURI, error) {
 	}
 
 	var host string
-	var path string
+	var rawPath string
 	if idx := strings.Index(hostPortPath, "/"); idx >= 0 {
 		host = hostPortPath[:idx]
-		path = hostPortPath[idx:]
+		rawPath = hostPortPath[idx:]
 	} else {
-		host = hostPortPath
+		// No path — check for query string attached to host
+		if qIdx := strings.Index(hostPortPath, "?"); qIdx >= 0 {
+			host = hostPortPath[:qIdx]
+			rawPath = hostPortPath[qIdx:]
+		} else {
+			host = hostPortPath
+		}
+	}
+
+	// Parse query parameters from rawPath
+	reasoning := false // default: don't send reasoning field
+	path := rawPath
+	if idx := strings.Index(rawPath, "?"); idx >= 0 {
+		path = rawPath[:idx]
+		query := rawPath[idx+1:]
+		for _, param := range strings.Split(query, "&") {
+			kv := strings.SplitN(param, "=", 2)
+			if len(kv) == 2 && kv[0] == "reasoning" {
+				reasoning = kv[1] == "true"
+			}
+		}
 	}
 
 	return ProviderURI{
@@ -73,6 +101,7 @@ func Parse(uri string) (ProviderURI, error) {
 		AuthToken: authToken,
 		Host:      host,
 		Path:      path,
+		Reasoning: reasoning,
 	}, nil
 }
 

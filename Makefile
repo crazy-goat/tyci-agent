@@ -35,7 +35,7 @@ install: build
 
 install-local: release
 	mkdir -p ~/.local/bin
-	install -m 0755 $(BINARY) ~/.local/bin/tyci-agent
+	install -m 0755 $(BINARY) ~/.local/bin/tyci
 
 clean:
 	rm -f $(BINARY)

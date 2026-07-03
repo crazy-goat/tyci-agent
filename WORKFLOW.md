@@ -1,7 +1,7 @@
 # Workflow: Issue → Feature Branch → Implementation → Code Review → PR → CI → Merge
 
 This document describes the complete workflow for handling issues in the
-[tyci-agent](https://github.com/crazy-goat/tyci-agent) repository using `gh` and `git`.
+[tyci](https://github.com/crazy-goat/tyci) repository using `gh` and `git`.
 
 ---
 

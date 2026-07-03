@@ -24,7 +24,7 @@ import (
 // ---------------------------------------------------------------------------
 
 var rootCmd = &cobra.Command{
-	Use:           "tyci-agent",
+	Use:           "tyci",
 	Short:         "LLM-powered AI agent CLI",
 	SilenceErrors: true,
 	SilenceUsage:  true,
@@ -184,11 +184,11 @@ var runCmd = &cobra.Command{
 		if dl != nil {
 			defer dl.Close()
 		}
-		// `tyci-agent run` is a one-shot CLI invocation. Use the
+		// `tyci run` is a one-shot CLI invocation. Use the
 		// bracket-prefix Minimal display so output is plain, one line
 		// per event, and easy to grep / pipe. For the rich REPL or
-		// full-screen experience, use `tyci-agent console` or
-		// `tyci-agent tui` instead.
+		// full-screen experience, use `tyci console` or
+		// `tyci tui` instead.
 		disp := display.NewMinimal()
 		runPrompt(provider, disp, prompt, cfg, ctx, sess, sessionPath)
 		return nil
@@ -345,8 +345,8 @@ var providerListCmd = &cobra.Command{
 		allProviders := providers.ListProviders()
 		if len(allProviders) == 0 {
 			fmt.Fprintln(os.Stdout, "No providers registered.")
-			fmt.Fprintf(os.Stdout, "Run 'tyci-agent provider refresh' to fetch the models.dev catalog,\n")
-			fmt.Fprintf(os.Stdout, "or 'tyci-agent provider add <name>' to add a custom provider.\n")
+			fmt.Fprintf(os.Stdout, "Run 'tyci provider refresh' to fetch the models.dev catalog,\n")
+			fmt.Fprintf(os.Stdout, "or 'tyci provider add <name>' to add a custom provider.\n")
 			return nil
 		}
 
@@ -556,7 +556,7 @@ func listModels(toComplete string) []string {
 	return models
 }
 
-// listProviderNames returns all provider names known to tyci-agent:
+// listProviderNames returns all provider names known to tyci:
 // registered in providers.json (models.dev), model.json (legacy/custom),
 // and auth.json (providers with stored keys).
 func listProviderNames() []string {
@@ -767,62 +767,62 @@ func init() {
 var completionCmd = &cobra.Command{
 	Use:   "completion [bash|zsh|fish|powershell]",
 	Short: "Generate shell completion script",
-	Long: `Generate shell completion scripts for tyci-agent.
+	Long: `Generate shell completion scripts for tyci.
 
 To load completions in the current shell session:
 
   Bash:
-    source <(tyci-agent completion bash)
+    source <(tyci completion bash)
 
   Zsh:
-    source <(tyci-agent completion zsh)
+    source <(tyci completion zsh)
 
   Fish:
-    tyci-agent completion fish | source
+    tyci completion fish | source
 
   PowerShell:
-    tyci-agent completion powershell | Out-String | Invoke-Expression
+    tyci completion powershell | Out-String | Invoke-Expression
 
 To make completions persistent across new sessions:
 
   Bash on Linux:
-    tyci-agent completion bash > ~/.bash_completion.d/tyci-agent
+    tyci completion bash > ~/.bash_completion.d/tyci
     # or append to ~/.bashrc:
-    echo 'source <(tyci-agent completion bash)' >> ~/.bashrc
+    echo 'source <(tyci completion bash)' >> ~/.bashrc
 
   Bash on macOS:
-    tyci-agent completion bash > /usr/local/etc/bash_completion.d/tyci-agent
+    tyci completion bash > /usr/local/etc/bash_completion.d/tyci
     # or append to ~/.bash_profile:
-    echo 'source <(tyci-agent completion bash)' >> ~/.bash_profile
+    echo 'source <(tyci completion bash)' >> ~/.bash_profile
 
   Zsh:
-    tyci-agent completion zsh > "${fpath[1]}/_tyci-agent"
+    tyci completion zsh > "${fpath[1]}/_tyci"
     # or append to ~/.zshrc:
-    echo 'source <(tyci-agent completion zsh)' >> ~/.zshrc
+    echo 'source <(tyci completion zsh)' >> ~/.zshrc
     # Make sure compinit is enabled:
     autoload -Uz compinit && compinit
 
   Fish:
-    tyci-agent completion fish > ~/.config/fish/completions/tyci-agent.fish
+    tyci completion fish > ~/.config/fish/completions/tyci.fish
 
   PowerShell:
-    tyci-agent completion powershell | Out-String |
+    tyci completion powershell | Out-String |
       Invoke-Expression -Command (Get-Clipboard)  # one-off
     # Or add to your profile:
-    Add-Content -Path $PROFILE -Value 'tyci-agent completion powershell | Out-String | Invoke-Expression'
+    Add-Content -Path $PROFILE -Value 'tyci completion powershell | Out-String | Invoke-Expression'
 `,
 	Args: cobra.MaximumNArgs(1),
 	Example: `  # Bash (Linux)
-  source <(tyci-agent completion bash)
+  source <(tyci completion bash)
 
   # Zsh
-  source <(tyci-agent completion zsh)
+  source <(tyci completion zsh)
 
   # Fish
-  tyci-agent completion fish | source
+  tyci completion fish | source
 
   # PowerShell
-  tyci-agent completion powershell | Out-String | Invoke-Expression`,
+  tyci completion powershell | Out-String | Invoke-Expression`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			_ = cmd.Help()

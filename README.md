@@ -1,6 +1,6 @@
-# tyci-agent
+# tyci
 
-**tyci-agent** is a CLI tool that runs AI agents powered by large language models (LLMs).
+**tyci** is a CLI tool that runs AI agents powered by large language models (LLMs).
 It provides a multi-turn agent loop with tool execution, session persistence, streaming responses,
 and a rich TUI — all configurable through a simple JSON model registry.
 
@@ -13,7 +13,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 - **Session persistence** — automatic save/resume of conversations (JSONL)
 - **Streaming** — real-time thought, text, and tool output streaming
 - **Agent configuration** — named agent presets with model and fallback assignments
-- **Provider registration** — `tyci-agent provider add` / `provider refresh` CLI to add or sync providers without editing JSON manually
+- **Provider registration** — `tyci provider add` / `provider refresh` CLI to add or sync providers without editing JSON manually
 
 ## Installation
 
@@ -25,8 +25,8 @@ and a rich TUI — all configurable through a simple JSON model registry.
 ### Build from source
 
 ```bash
-git clone https://github.com/crazy-goat/tyci-agent.git
-cd tyci-agent
+git clone https://github.com/crazy-goat/tyci.git
+cd tyci
 
 # Development build (with debug symbols)
 make build
@@ -38,7 +38,7 @@ make release
 make minimal
 ```
 
-The binary is named `tyci-agent` in the current directory.
+The binary is named `tyci` in the current directory.
 
 ### Install to ~/local/bin
 
@@ -50,17 +50,17 @@ make install
 
 ### 1. Configure a provider
 
-On first run, `tyci-agent` auto-fetches the provider catalog from [models.dev](https://models.dev)
+On first run, `tyci` auto-fetches the provider catalog from [models.dev](https://models.dev)
 and caches it to `~/.tyci/providers.json`. To pull the latest catalog at any time:
 
 ```bash
-tyci-agent provider refresh
+tyci provider refresh
 ```
 
 For custom endpoints, add a provider manually:
 
 ```bash
-tyci-agent provider add my-provider \
+tyci provider add my-provider \
   --api openai \
   --url https://api.example.com/v1 \
   --token $MY_API_KEY
@@ -89,16 +89,16 @@ Supported API types: `openai`, `anthropic`, `gemini`, `responses`.
 
 ```bash
 # One-shot prompt
-tyci-agent run --model my-provider/my-model --prompt "What is the capital of France?"
+tyci run --model my-provider/my-model --prompt "What is the capital of France?"
 
 # Interactive session
-tyci-agent console --model my-provider/my-model
+tyci console --model my-provider/my-model
 
 # TUI mode (rich terminal UI)
-tyci-agent tui --model my-provider/my-model
+tyci tui --model my-provider/my-model
 
 # Use agent presets
-tyci-agent run --agent my-agent --prompt "Hello"
+tyci run --agent my-agent --prompt "Hello"
 ```
 
 ## Directory Layout
@@ -151,29 +151,29 @@ These flags work with `run`, `console`, and `tui`:
 
 ### Subcommands
 
-#### `tyci-agent provider list`
+#### `tyci provider list`
 
 List registered providers. Providers marked with `✓` are configured (have
 an API key in `auth.json` or a token in their URI); otherwise they are shown
 as `not configured`.
 
 ```bash
-tyci-agent provider list
+tyci provider list
 ```
 
 Use `--models` to also list each provider's models:
 
 ```bash
-tyci-agent provider list --models
+tyci provider list --models
 ```
 
-#### `tyci-agent provider add <name>`
+#### `tyci provider add <name>`
 
 Add a custom provider (fetches models from the API, saves the key to
 `~/.tyci/auth.json`, writes models to `~/.tyci/model.json` without tokens).
 
 ```bash
-tyci-agent provider add my-provider \
+tyci provider add my-provider \
   --api openai \
   --url https://api.example.com/v1 \
   --token $MY_API_KEY \
@@ -186,35 +186,35 @@ tyci-agent provider add my-provider \
 - `--test` — Test connectivity after adding
 - `--test-model` — Model to test with (default: first model)
 
-#### `tyci-agent provider refresh`
+#### `tyci provider refresh`
 
 Refresh the cached provider catalog from models.dev.
 
 ```bash
-tyci-agent provider refresh [--provider <id1,id2,...>] [--dry-run]
+tyci provider refresh [--provider <id1,id2,...>] [--dry-run]
 ```
 
-#### `tyci-agent provider auth`
+#### `tyci provider auth`
 
 Manage API keys stored in `~/.tyci/auth.json`.
 
 ```bash
-tyci-agent provider auth set <provider> [<key>]
-tyci-agent provider auth get <provider>
-tyci-agent provider auth list
-tyci-agent provider auth rm <provider>
+tyci provider auth set <provider> [<key>]
+tyci provider auth get <provider>
+tyci provider auth list
+tyci provider auth rm <provider>
 ```
 
-#### `tyci-agent agent`
+#### `tyci agent`
 
 Manage named agent configurations.
 
 ```bash
-tyci-agent agent list                          # List all agents
-tyci-agent agent get <name>                    # Show agent model assignment
-tyci-agent agent set <name> <provider>/<model> # Assign model to agent
-tyci-agent agent delete <name>                 # Remove agent
-tyci-agent agent set-fallback <name> <m1> [<m2> ...]  # Set fallback models (positional)
+tyci agent list                          # List all agents
+tyci agent get <name>                    # Show agent model assignment
+tyci agent set <name> <provider>/<model> # Assign model to agent
+tyci agent delete <name>                 # Remove agent
+tyci agent set-fallback <name> <m1> [<m2> ...]  # Set fallback models (positional)
 ```
 
 ### Display Modes
@@ -224,14 +224,14 @@ tyci-agent agent set-fallback <name> <m1> [<m2> ...]  # Set fallback models (pos
 - **interactive** — Full interactive readline session (line editing, history)
 - **tui** — Bubble Tea TUI with split-pane, model picker, mouse support
 
-#### `tyci-agent completion`
+#### `tyci completion`
 
 Generate shell completion script (`bash`, `zsh`, `fish`, `powershell`).
 
 ```bash
-source <(tyci-agent completion bash)
+source <(tyci completion bash)
 # or add to .bashrc:
-tyci-agent completion bash > /etc/bash_completion.d/tyci-agent
+tyci completion bash > /etc/bash_completion.d/tyci
 ```
 
 ## Session Management
@@ -259,7 +259,7 @@ Each line is a complete event (message, tool call, result, usage).
 ### Project Structure
 
 ```
-tyci-agent/
+tyci/
 ├── agent/            # Agent loop, message management, iteration logic
 ├── api/              # HTTP client, retry logic, streaming helpers
 ├── display/          # Display interfaces and implementations (terminal, TUI)

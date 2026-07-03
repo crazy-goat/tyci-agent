@@ -351,13 +351,20 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 		}()
 
 	default: // "openai" or any other chat-completion-like API
+		// Only send reasoning field if ?reasoning=true is in the URI
+		reasoning := false
+		if parsedURI, err := tyciconfig.Parse(entry.URI); err == nil {
+			reasoning = parsedURI.Reasoning
+		}
 		chatMsgs := RichMessagesToChat(req.Messages, req.System)
 		body := api.ChatRequest{
-			Model:     req.Model,
-			Stream:    true,
-			Messages:  chatMsgs,
-			Tools:     req.Tools,
-			Reasoning: true,
+			Model:    req.Model,
+			Stream:   true,
+			Messages: chatMsgs,
+			Tools:    req.Tools,
+		}
+		if reasoning {
+			body.Reasoning = true
 		}
 		go func() {
 			defer close(ch)

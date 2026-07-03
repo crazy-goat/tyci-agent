@@ -164,7 +164,7 @@ func (s *interactiveState) listAvailableModels() {
 		return
 	}
 	if len(keys) == 0 {
-		fmt.Fprintln(os.Stdout, "No providers configured in auth.json. Use 'tyci-agent provider auth set <provider> <key>' to add one.")
+		fmt.Fprintln(os.Stdout, "No providers configured in auth.json. Use 'tyci provider auth set <provider> <key>' to add one.")
 		return
 	}
 
@@ -213,7 +213,7 @@ func (s *interactiveState) switchModel(spec string) {
 		return
 	}
 	if !p.IsConfigured() {
-		fmt.Fprintf(os.Stderr, "Provider %q is not configured. Add a key via 'tyci-agent provider auth set %s <key>'.\n", p.Name(), p.Name())
+		fmt.Fprintf(os.Stderr, "Provider %q is not configured. Add a key via 'tyci provider auth set %s <key>'.\n", p.Name(), p.Name())
 		return
 	}
 	s.provider = p

@@ -49,7 +49,7 @@ func ProvidersJSONPath() string {
 	return filepath.Join(tyciDir(), "providers.json")
 }
 
-// ModelJSONPath returns the path to model.json (legacy, used by `tyci-agent connect`).
+// ModelJSONPath returns the path to model.json (legacy, used by `tyci connect`).
 func ModelJSONPath() string {
 	return filepath.Join(tyciDir(), "model.json")
 }
@@ -175,7 +175,7 @@ func fetchModelsDev() ([]byte, error) {
 	return body, nil
 }
 
-// writeModelJSON writes the config to model.json (used by `tyci-agent connect`).
+// writeModelJSON writes the config to model.json (used by `tyci connect`).
 func writeModelJSON(path string, cfg map[string]map[string]uriEntry) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {

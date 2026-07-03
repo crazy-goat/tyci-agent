@@ -6,7 +6,7 @@ import (
 )
 
 // readStdin reads all data from stdin until EOF.
-// For pipe input (e.g., echo "key" | tyci-agent ...), reads everything.
+// For pipe input (e.g., echo "key" | tyci ...), reads everything.
 // For terminal input, reads one line.
 func readStdin() ([]byte, error) {
 	stat, err := os.Stdin.Stat()
