@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/decodo/tyci/stream"
@@ -122,10 +123,10 @@ type TuiModel struct {
 	resizeHeight  int  // most recent resize height
 
 	// Markdown render cache maps (keyed by block index)
-	dirtyBlocks      map[int]bool   // block indices with content changed
-	mdCacheRendered  map[int]string // cached rendered ANSI output per block
-	streamingCache   map[int]string // cached wrapRawText output during streaming
-	toolDisplayCache map[int]string // cached formatToolCall result per tool block index
+	dirtyBlocks      map[int]bool        // block indices with content changed
+	mdCacheRendered  map[int]string      // cached rendered ANSI output per block
+	streamWraps      map[int]*streamWrap // incremental raw-wrap state during streaming
+	toolDisplayCache map[int]string      // cached formatToolCall result per tool block index
 
 	// Total line count cache (invalidated on block add/change/resize)
 	cachedTotalLines int
@@ -163,6 +164,10 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 	ta.BlurredStyle = blurredStyle
 	ta.Focus()
 
+	// Disable cursor blinking to keep the TUI idle at 0% CPU.
+	// Blinking causes the renderer to re-render View() every ~530ms.
+	ta.Cursor.SetMode(cursor.CursorStatic)
+
 	modelIdx := 0
 	for i, m := range models {
 		if m == modelName {
@@ -193,7 +198,7 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		subagentModalContent: &strings.Builder{},
 		dirtyBlocks:          make(map[int]bool),
 		mdCacheRendered:      make(map[int]string),
-		streamingCache:       make(map[int]string),
+		streamWraps:          make(map[int]*streamWrap),
 		toolDisplayCache:     make(map[int]string),
 		cachedTotalLines:     -1,
 	}

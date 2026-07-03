@@ -97,7 +97,7 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 					m.blocks[idx].cachedLines = strings.Split(rendered, "\n")
 				}
 				delete(m.dirtyBlocks, idx)
-				delete(m.streamingCache, idx)
+				delete(m.streamWraps, idx)
 			} else if b.kind == "error" || b.kind == "block" {
 				rendered := renderErrorOrBlock(b, m.width)
 				if rendered != "" {
@@ -106,10 +106,10 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 					m.blocks[idx].cachedLines = strings.Split(rendered, "\n")
 				}
 				delete(m.dirtyBlocks, idx)
-				delete(m.streamingCache, idx)
+				delete(m.streamWraps, idx)
 			} else {
 				delete(m.dirtyBlocks, idx)
-				delete(m.streamingCache, idx)
+				delete(m.streamWraps, idx)
 			}
 		}
 	}

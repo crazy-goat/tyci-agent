@@ -60,6 +60,7 @@ func (t *TUI) Thinking(text string) {
 		t.pendingContent.WriteString(text)
 		t.mu.Unlock()
 	}
+	t.wakeFlush()
 }
 
 func (t *TUI) Text(text string) {
@@ -80,6 +81,7 @@ func (t *TUI) Text(text string) {
 		t.pendingContent.WriteString(text)
 		t.mu.Unlock()
 	}
+	t.wakeFlush()
 }
 
 func (t *TUI) ToolCallStart(name string) {

@@ -217,9 +217,13 @@ func (p *dynamicProvider) IsConfigured() bool {
 		if err == nil && token != "" {
 			return true
 		}
-		// Check auth.json (ignore read errors; env vars still work as fallback)
-		if key, ok, err := connect.GetKey(p.name); err == nil && ok && key != "" {
-			return true
+		// Check auth.json. Resolve "$ENV_VAR" references so a literal
+		// "$FOO" entry (from single-quoted shell input or hand-edits)
+		// is treated as configured only when FOO is actually exported.
+		if key, ok, err := connect.GetKey(p.name); err == nil && ok {
+			if resolved := connect.ResolveToken(key); resolved != "" {
+				return true
+			}
 		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: reading auth.json: %v\n", err)
 		}
@@ -265,14 +269,16 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 	}
 
 	// Resolve $ENV_VAR references in token
-	if strings.HasPrefix(apiKey, "$") {
-		apiKey = os.Getenv(strings.TrimPrefix(apiKey, "$"))
-	}
+	apiKey = connect.ResolveToken(apiKey)
 
 	// If no API key in URI, try auth.json
 	if apiKey == "" {
 		if key, ok, err := connect.GetKey(p.name); err == nil && ok {
-			apiKey = key
+			// Resolve "$ENV_VAR" refs stored in auth.json, too. This
+			// allows entries like "nexos": "$NEXOS_API_KEY" to work
+			// even when the user accidentally single-quoted the value
+			// at `provider auth set` time.
+			apiKey = connect.ResolveToken(key)
 		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: reading auth.json: %v\n", err)
 		}

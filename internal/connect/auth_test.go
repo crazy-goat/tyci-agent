@@ -309,3 +309,89 @@ func TestRoundTripWithSpecialChars(t *testing.T) {
 		t.Errorf("GetKey() = %q, want %q", key, specialKey)
 	}
 }
+
+func TestResolveToken(t *testing.T) {
+	const envName = "TYCI_TEST_RESOLVE_TOKEN"
+	t.Setenv(envName, "real-secret-value-123")
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain value preserved", "sk-direct-key", "sk-direct-key"},
+		{"empty value preserved", "", ""},
+		{"env reference resolved", "$" + envName, "real-secret-value-123"},
+		{"bare dollar preserved (no name)", "$", "$"},
+		{"unknown env var returns empty", "$TYCI_TEST_DOES_NOT_EXIST_XYZ", ""},
+		{"prefix that contains dollar but is not env ref", "sk-$literal", "sk-$literal"},
+		{"multiple dollars — only first one treated as env ref name",
+			"$" + envName + "$tail", ""}, // "$TYCI_TEST_RESOLVE_TOKEN$tail" is looked up literally and is unset → ""
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveToken(tt.input)
+			if got != tt.want {
+				t.Errorf("ResolveToken(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLooksLikeEnvRef(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"$FOO", true},
+		{"$FOO_BAR", true},
+		{"$", false},           // bare "$" — not a valid ref
+		{"", false},            // empty
+		{"FOO", false},         // no dollar
+		{"sk-$literal", false}, // starts with sk-, not dollar
+		{"$", false},           // explicit edge case
+	}
+
+	for _, tt := range tests {
+		got := LooksLikeEnvRef(tt.input)
+		if got != tt.want {
+			t.Errorf("LooksLikeEnvRef(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// Repro of the real-world bug: a user did
+// `provider auth set nexos '$NEXOS_API_KEY'` and the literal went into
+// auth.json. Before the fix, ResolveToken was applied only to the URI token,
+// not to keys coming from auth.json, so the literal "$NEXOS_API_KEY" was
+// used as the bearer token and the API returned 401.
+func TestSetKeyDoesNotPersistLiteralEnvRef(t *testing.T) {
+	dir := tempDir(t)
+	setHome(t, dir)
+
+	const envName = "TYCI_TEST_DEMO_NEXOS"
+	t.Setenv(envName, "real-key-value")
+
+	// Caller passes an env-ref string (e.g. user single-quoted it at shell).
+	// `provider auth set` resolves `$VAR` before saving.
+	resolved := ResolveToken("$" + envName)
+	if resolved != "real-key-value" {
+		t.Fatalf("presumed resolution failed: %q", resolved)
+	}
+	if err := SetKey("nexos", resolved); err != nil {
+		t.Fatalf("SetKey() error: %v", err)
+	}
+
+	// auth.json must contain the resolved value, not the literal "$VAR".
+	got, ok, err := GetKey("nexos")
+	if err != nil {
+		t.Fatalf("GetKey() error: %v", err)
+	}
+	if !ok {
+		t.Fatal("GetKey() returned ok=false")
+	}
+	if got != "real-key-value" {
+		t.Errorf("auth.json stored %q, want %q (a literal $VAR was saved instead of resolved value)", got, "real-key-value")
+	}
+}

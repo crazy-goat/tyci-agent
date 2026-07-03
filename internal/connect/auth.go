@@ -75,6 +75,30 @@ func SetKey(provider, key string) error {
 	return SaveAuth(auth)
 }
 
+// ResolveToken expands a "$ENV_VAR" reference to the value of the named
+// environment variable. If token does not start with "$", it is returned
+// unchanged. If token starts with "$" but the environment variable is
+// unset or empty, an empty string is returned. Use [LooksLikeEnvRef] to
+// distinguish "user typed a literal $FOO" from "user typed an actual key".
+func ResolveToken(token string) string {
+	if !strings.HasPrefix(token, "$") {
+		return token
+	}
+	name := strings.TrimPrefix(token, "$")
+	if name == "" {
+		// Bare "$" — treat as literal rather than choking.
+		return token
+	}
+	return os.Getenv(name)
+}
+
+// LooksLikeEnvRef reports whether token is a "$ENV_VAR" reference, i.e.
+// it begins with "$" and has at least one character after it. Callers
+// use this to warn the user when an env-var reference won't resolve.
+func LooksLikeEnvRef(token string) bool {
+	return strings.HasPrefix(token, "$") && len(token) > 1
+}
+
 // GetKey retrieves the API key for the given provider from auth.json.
 // Returns the key, whether it was found, and any error.
 func GetKey(provider string) (string, bool, error) {

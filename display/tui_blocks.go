@@ -30,7 +30,9 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 			startTime: time.Now(),
 		})
 		m.toolQueue = append(m.toolQueue, idx)
-		m.invalidateAllBlockLineCounts()
+		// Appending a block never changes how earlier blocks render (width is
+		// unchanged), so only the total-line cache needs invalidation.
+		m.invalidateTotalLines()
 
 		// Track subagent tool index for modal (but don't auto-open).
 		// Modal opens on user click on the subagent block.
@@ -48,15 +50,21 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 			bidx := m.toolQueue[m.subagentModalToolIdx]
 			if bidx >= 0 && bidx < len(m.blocks) && m.blocks[bidx].kind == "tool" && m.blocks[bidx].toolName == "subagent" {
 				m.blocks[bidx].content += msg.content
-				m.blocks[bidx].cachedLines = nil
-				m.blocks[bidx].cachedLineCount = 0
-				delete(m.toolDisplayCache, bidx)
-				m.invalidateTotalLines()
+				// The collapsed tool line only changes once the args JSON is
+				// complete (formatToolCall shows "tool(...)" until it parses),
+				// so skip cache invalidation and parse attempts for deltas
+				// that cannot end the JSON document.
+				if jsonMaybeComplete(m.blocks[bidx].content) {
+					m.blocks[bidx].cachedLines = nil
+					m.blocks[bidx].cachedLineCount = 0
+					delete(m.toolDisplayCache, bidx)
+					m.invalidateTotalLines()
 
-				var args map[string]any
-				if json.Unmarshal([]byte(m.blocks[bidx].content), &args) == nil {
-					if title := subagentTitleFromArgs(args); title != "" {
-						m.subagentModalTitle = truncateString(title, 80)
+					var args map[string]any
+					if json.Unmarshal([]byte(m.blocks[bidx].content), &args) == nil {
+						if title := subagentTitleFromArgs(args); title != "" {
+							m.subagentModalTitle = truncateString(title, 80)
+						}
 					}
 				}
 				break
@@ -107,14 +115,14 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		}
 		m.blocks = append(m.blocks, block{kind: "usage", content: line, dirty: true})
 		m.dirtyBlocks[idx] = true
-		m.invalidateAllBlockLineCounts()
+		m.invalidateTotalLines()
 	case "error":
 		// New error block → force-render previous dirty blocks
 		m.forceRenderDirtyBlocks()
 		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{kind: "error", content: msg.content, dirty: true})
 		m.dirtyBlocks[idx] = true
-		m.invalidateAllBlockLineCounts()
+		m.invalidateTotalLines()
 	case "done":
 		m.status = "idle"
 		m.reading = true
@@ -126,7 +134,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{kind: "block", content: msg.content, dirty: true})
 		m.dirtyBlocks[idx] = true
-		m.invalidateAllBlockLineCounts()
+		m.invalidateTotalLines()
 	case "set-model":
 		m.modelName = msg.content
 	case "reset":
@@ -139,7 +147,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.lastStats = stream.Stats{}
 		m.dirtyBlocks = make(map[int]bool)
 		m.mdCacheRendered = make(map[int]string)
-		m.streamingCache = make(map[int]string)
+		m.streamWraps = make(map[int]*streamWrap)
 		m.toolDisplayCache = make(map[int]string)
 		m.cachedTotalLines = -1
 		m.subagentModalActive = false
@@ -183,7 +191,8 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 		last.cachedLines = nil
 		idx := len(m.blocks) - 1
 		m.dirtyBlocks[idx] = true
-		delete(m.streamingCache, idx)
+		// Keep m.streamWraps[idx]: it detects the append itself and re-wraps
+		// only the last logical line instead of the whole block.
 		delete(m.mdCacheRendered, idx)
 		return
 	}
@@ -193,9 +202,14 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 	idx := len(m.blocks)
 	m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
 	m.dirtyBlocks[idx] = true
-	// Adding a block changes separator positions and line offsets. Recompute
-	// layout caches right away instead of relying on a resize to fix them.
-	m.invalidateAllBlockLineCounts()
+	// Adding a block only shifts line offsets; earlier blocks render the same.
+	m.invalidateTotalLines()
+}
+
+// jsonMaybeComplete reports whether s could be a complete JSON document, used
+// to skip parse attempts on partially-streamed tool arguments.
+func jsonMaybeComplete(s string) bool {
+	return strings.HasSuffix(strings.TrimRight(s, " \t\r\n"), "}")
 }
 
 // ─── Glamour renderer cache ─────────────────────────────────────────

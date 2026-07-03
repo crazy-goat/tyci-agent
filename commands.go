@@ -658,6 +658,18 @@ var providerAuthSetCmd = &cobra.Command{
 		if key == "" {
 			return fmt.Errorf("API key cannot be empty")
 		}
+		// Resolve "$ENV_VAR" references so that single-quoted or
+		// escaped values like '$FOO' are not stored verbatim and used
+		// as bearer tokens (see github issue: "$FOO" sent as token ->
+		// 401 -> fallback).
+		if connect.LooksLikeEnvRef(key) {
+			resolved := connect.ResolveToken(key)
+			if resolved == "" {
+				return fmt.Errorf("%s is set to %q but env var %s is empty or unset", provider, key, strings.TrimPrefix(key, "$"))
+			}
+			fmt.Fprintf(os.Stderr, "Resolved %s -> %s\n", key, connect.MaskKey(resolved))
+			key = resolved
+		}
 		if err := connect.SetKey(provider, key); err != nil {
 			return err
 		}

@@ -52,7 +52,7 @@ func (m *TuiModel) invalidateAllBlockLineCounts() {
 		m.blocks[i].cachedLineCount = 0
 		m.blocks[i].cachedLines = nil
 	}
-	m.streamingCache = make(map[int]string)
+	m.streamWraps = make(map[int]*streamWrap)
 	m.mdCacheRendered = make(map[int]string)
 	m.cachedTotalLines = -1
 }
