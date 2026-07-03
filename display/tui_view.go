@@ -50,6 +50,10 @@ func (m TuiModel) renderFrame() string {
 	var b strings.Builder
 	msgHeight := m.visibleLines()
 
+	// Top status bar (cwd)
+	b.WriteString(m.buildTopBar())
+	b.WriteString("\n")
+
 	// Welcome message
 	hasContent := len(m.blocks) > 0
 	if !hasContent {
