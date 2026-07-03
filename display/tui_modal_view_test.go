@@ -8,7 +8,7 @@ import (
 )
 
 func TestSubagentModalView_RightBorderVisible(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40

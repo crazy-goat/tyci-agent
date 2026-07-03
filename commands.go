@@ -13,6 +13,7 @@ import (
 	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/internal/debug"
 	"github.com/decodo/tyci/internal/readline"
+	"github.com/decodo/tyci/internal/skills"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
@@ -276,6 +277,15 @@ var tuiCmd = &cobra.Command{
 		// NOT persisted here so toggling favorites can't silently save it.
 		favorites := agent.GetFavoriteModels()
 
+		// Compute context counts for the top status bar.
+		toolsCount := len(tools.GetAllToolsSchema())
+		skillNames, _ := skills.ListSkills(skills.SkillsDir())
+		skillsCount := len(skillNames)
+		mcpCount := 0
+		if mcpRunner := tools.GetMCPToolRunner(); mcpRunner != nil {
+			mcpCount = len(mcpRunner.MCPToolsSchema())
+		}
+
 		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels, favorites, func(mdl string, favorite bool) {
 			if favorite {
 				_ = agent.AddFavoriteModel(mdl)
@@ -284,7 +294,7 @@ var tuiCmd = &cobra.Command{
 			}
 		}, agent.GetDefaultModel(), func(newDefault string) {
 			_ = agent.SetDefaultModel(newDefault)
-		})
+		}, toolsCount, skillsCount, mcpCount)
 		runTUI(provider, modelName, tuiDisp, cfg, ctx, sessionPath)
 		return nil
 	},

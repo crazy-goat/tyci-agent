@@ -21,7 +21,7 @@ func stripANSI(s string) string {
 // ─── Tool duration freeze tests ──────────────────────────────────────────
 
 func TestTuiModel_ToolDuration_FrozenAtEnd(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	// Start a bash tool
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
@@ -50,7 +50,7 @@ func TestTuiModel_ToolDuration_FrozenAtEnd(t *testing.T) {
 }
 
 func TestTuiModel_ToolDuration_FrozenNeverChanges(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 	bIdx := m.toolQueue[0]
@@ -72,7 +72,7 @@ func TestTuiModel_ToolDuration_FrozenNeverChanges(t *testing.T) {
 }
 
 func TestTuiModel_ToolDuration_SubagentFrozenAtEnd(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	// Start subagent tool
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
@@ -101,7 +101,7 @@ func TestTuiModel_ToolDuration_SubagentFrozenAtEnd(t *testing.T) {
 // ─── renderToolBlock duration display tests ──────────────────────────────
 
 func TestTuiModel_RenderToolBlock_ShowsFrozenDuration(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	// Build a block manually with a known frozen duration
 	b := block{
@@ -122,7 +122,7 @@ func TestTuiModel_RenderToolBlock_ShowsFrozenDuration(t *testing.T) {
 }
 
 func TestTuiModel_RenderToolBlock_RunningShowsSpinner(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	b := block{
 		kind:      "tool",
@@ -200,7 +200,7 @@ func TestTuiModel_RenderToolBlock_FormatToolCall(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+			m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 			b := block{
 				kind:      "tool",
 				toolName:  tt.toolName,
@@ -219,7 +219,7 @@ func TestTuiModel_RenderToolBlock_FormatToolCall(t *testing.T) {
 // ─── View() output: no "calling tools:" header ───────────────────────────
 
 func TestTuiModel_View_NoCallingToolsHeader(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40
@@ -244,7 +244,7 @@ func TestTuiModel_View_NoCallingToolsHeader(t *testing.T) {
 // ─── ShowTotalUsage tests (via handleBlockMsg) ──────────────────────────
 
 func TestTuiModel_ShowTotalUsage_BlocksAdded(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	usage := stream.Usage{Input: 1000, Output: 500, CacheRead: 200}
 	line := BuildUsageLineNoTiming(usage)
@@ -269,7 +269,7 @@ func TestTuiModel_ShowTotalUsage_BlocksAdded(t *testing.T) {
 }
 
 func TestTuiModel_ShowTotalUsage_NoTimingInOutput(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	usage := stream.Usage{Input: 500, Output: 300}
 	line := BuildUsageLineNoTiming(usage)
@@ -286,7 +286,7 @@ func TestTuiModel_ShowTotalUsage_NoTimingInOutput(t *testing.T) {
 }
 
 func TestTuiModel_ShowTotalUsage_AllUsageFields(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	usage := stream.Usage{Input: 1000, Output: 600, Reasoning: 50, CacheRead: 200, CacheWrite: 30}
 	line := BuildUsageLineNoTiming(usage)
@@ -312,7 +312,7 @@ func TestTuiModel_ShowTotalUsage_AllUsageFields(t *testing.T) {
 }
 
 func TestTuiModel_ShowTotalUsage_ZeroUsage(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "───── new conversation ─────"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "📊 Session total: in=0 out=0"})
@@ -326,7 +326,7 @@ func TestTuiModel_ShowTotalUsage_ZeroUsage(t *testing.T) {
 }
 
 func TestTuiModel_ShowTotalUsage_AfterExistingBlocks(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	// Pre-populate with some blocks (simulating existing conversation)
 	// Text block + tool-start creates blocks; tool-delta/end modify existing
@@ -355,7 +355,7 @@ func TestTuiModel_ShowTotalUsage_AfterExistingBlocks(t *testing.T) {
 // ─── Blank line between consecutive tool blocks ──────────────────────────
 
 func TestTuiModel_View_NoBlankLineBetweenConsecutiveTools(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40
@@ -393,7 +393,7 @@ func TestTuiModel_View_NoBlankLineBetweenConsecutiveTools(t *testing.T) {
 }
 
 func TestTuiModel_View_BlankLineBetweenToolAndText(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40
@@ -441,7 +441,7 @@ func TestTuiModel_View_BlankLineBetweenToolAndText(t *testing.T) {
 // ─── Wrapping tests for renderBlock ──────────────────────────────────────
 
 func TestTuiModel_RenderBlock_Thinking_WrapsLongLines(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 30 // narrow terminal
 
 	line := "this is a very long thinking line that should definitely be wrapped because it exceeds thirty characters"
@@ -470,7 +470,7 @@ func TestTuiModel_RenderBlock_Thinking_WrapsLongLines(t *testing.T) {
 }
 
 func TestTuiModel_RenderBlock_Thinking_ShortLinesStaySingle(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 80
 
 	line := "short thought"
@@ -503,7 +503,7 @@ func TestTuiModel_RenderBlock_Thinking_ShortLinesStaySingle(t *testing.T) {
 }
 
 func TestTuiModel_RenderBlock_Text_WrapsLongLines(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 20
 
 	line := "this is a very long line that should wrap"
@@ -537,7 +537,7 @@ func TestTuiModel_RenderBlock_Text_WrapsLongLines(t *testing.T) {
 }
 
 func TestTuiModel_RenderBlock_Text_ShortLinesStaySingle(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 80
 
 	line := "short text"
@@ -563,7 +563,7 @@ func TestTuiModel_RenderBlock_Text_ShortLinesStaySingle(t *testing.T) {
 }
 
 func TestTuiModel_RenderBlock_Error_WrapsLongLines(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 25
 
 	line := "this is a very long error message that must be wrapped"
@@ -587,7 +587,7 @@ func TestTuiModel_RenderBlock_Error_WrapsLongLines(t *testing.T) {
 }
 
 func TestTuiModel_RenderBlock_Block_WrapsLongLines(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 30
 
 	line := "this is a very long block message that should be wrapped properly"
@@ -607,7 +607,7 @@ func TestTuiModel_RenderBlock_Block_WrapsLongLines(t *testing.T) {
 }
 
 func TestTuiModel_RenderBlock_Text_MultipleShortLines(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 80
 
 	text := "line one\nline two\nline three"
@@ -630,7 +630,7 @@ func TestTuiModel_RenderBlock_Text_MultipleShortLines(t *testing.T) {
 }
 
 func TestTuiModel_View_WrapsLongLinesInAllBlocks(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 30
 	m.height = 40
@@ -673,7 +673,7 @@ func TestTuiModel_View_WrapsLongLinesInAllBlocks(t *testing.T) {
 // ─── Benchmark: View() performance ────────────────────────────────────────
 
 func BenchmarkTUIView(b *testing.B) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40
@@ -703,7 +703,7 @@ func BenchmarkTUIView(b *testing.B) {
 }
 
 func BenchmarkTUIViewStreaming(b *testing.B) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40
@@ -729,7 +729,7 @@ func BenchmarkTUIViewStreaming(b *testing.B) {
 // TestToolBlock_StartShowsRunningSpinner verifies that a tool block just
 // started shows spinner and no duration/hint.
 func TestToolBlock_StartShowsRunningSpinner(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -757,7 +757,7 @@ func TestToolBlock_StartShowsRunningSpinner(t *testing.T) {
 // TestToolBlock_DeltaUpdatesContent verifies that tool-delta messages update
 // the tool block content in View() output.
 func TestToolBlock_DeltaUpdatesContent(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -783,7 +783,7 @@ func TestToolBlock_DeltaUpdatesContent(t *testing.T) {
 // TestToolBlock_EndShowsDoneState verifies that after tool-end the block
 // shows done state with duration and click hint.
 func TestToolBlock_EndShowsDoneState(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -816,7 +816,7 @@ func TestToolBlock_EndShowsDoneState(t *testing.T) {
 // TestToolBlock_MultipleDeltasAccumulate verifies that multiple tool-delta
 // messages are accumulated correctly.
 func TestToolBlock_MultipleDeltasAccumulate(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -839,7 +839,7 @@ func TestToolBlock_MultipleDeltasAccumulate(t *testing.T) {
 // block gets a delta, the View() output is updated (regression test for
 // cachedLines invalidation).
 func TestToolBlock_ViewDoesNotStaleCacheAfterDelta(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -861,7 +861,7 @@ func TestToolBlock_ViewDoesNotStaleCacheAfterDelta(t *testing.T) {
 // TestToolBlock_ViewDoesNotStaleCacheAfterEnd verifies that after tool-end,
 // the View() output is updated (regression test for cachedLines invalidation).
 func TestToolBlock_ViewDoesNotStaleCacheAfterEnd(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -888,7 +888,7 @@ func TestToolBlock_ViewDoesNotStaleCacheAfterEnd(t *testing.T) {
 // TestToolBlock_TwoConsecutiveTools verifies that when two tools run in
 // sequence, both appear correctly in View() output.
 func TestToolBlock_TwoConsecutiveTools(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -921,7 +921,7 @@ func TestToolBlock_TwoConsecutiveTools(t *testing.T) {
 // TestToolBlock_SubagentInlineFormat verifies that subagent tool shows
 // the tool name and state transitions correctly.
 func TestToolBlock_SubagentInlineFormat(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -956,7 +956,7 @@ func TestToolBlock_SubagentInlineFormat(t *testing.T) {
 // TestToolBlock_EmptyArgsFallback verifies that when tool-delta content
 // is not valid JSON, the block shows fallback format.
 func TestToolBlock_EmptyArgsFallback(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -973,7 +973,7 @@ func TestToolBlock_EmptyArgsFallback(t *testing.T) {
 // TestToolBlock_CachedLinesInvalidatedOnToolStart verifies that when a new
 // tool starts, the model's internal state is consistent.
 func TestToolBlock_CachedLinesInvalidatedOnToolStart(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -1000,7 +1000,7 @@ func TestToolBlock_CachedLinesInvalidatedOnToolStart(t *testing.T) {
 // TestToolBlock_GetBlockLines_ReturnsUpdatedContent verifies that
 // getBlockLines returns the latest content after tool block changes.
 func TestToolBlock_GetBlockLines_ReturnsUpdatedContent(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 80
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "write"})
@@ -1044,7 +1044,7 @@ func TestToolBlock_GetBlockLines_ReturnsUpdatedContent(t *testing.T) {
 // TestToolBlock_RenderBlock_RunningVsDone verifies that renderBlock returns
 // different output for running vs done tool blocks.
 func TestToolBlock_RenderBlock_RunningVsDone(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 80
 
 	// Create blocks and fill them via handlers to set all fields correctly
@@ -1082,7 +1082,7 @@ func TestToolBlock_RenderBlock_RunningVsDone(t *testing.T) {
 // TestToolBlock_ToolBlockOutput_NotVisibleInInline verifies that tool output
 // is not shown in the inline tool block (only in the modal on click).
 func TestToolBlock_ToolBlockOutput_NotVisibleInInline(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -1104,7 +1104,7 @@ func TestToolBlock_ToolBlockOutput_NotVisibleInInline(t *testing.T) {
 // ─── Autoscroll tests (issue #50) ────────────────────────────────────────
 
 func TestTuiModel_Autoscroll_NewContentWhileAtBottom(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 20 // small viewport
@@ -1162,7 +1162,7 @@ func TestTuiModel_Autoscroll_NewContentWhileAtBottom(t *testing.T) {
 }
 
 func TestTuiModel_Autoscroll_ScrollEventsSetAtBottom(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 20
@@ -1228,7 +1228,7 @@ func TestTuiModel_Autoscroll_ScrollEventsSetAtBottom(t *testing.T) {
 }
 
 func TestTuiModel_Autoscroll_ModalRestoresScrollState(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 20
@@ -1293,7 +1293,7 @@ func TestTuiModel_Autoscroll_ModalRestoresScrollState(t *testing.T) {
 // ─── Autoscroll multi-turn tests (issue #50) ─────────────────────────────
 
 func TestAutoscroll_MultiTurnSimulation(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 10 // small viewport
@@ -1373,7 +1373,7 @@ func TestAutoscroll_MultiTurnSimulation(t *testing.T) {
 }
 
 func TestAutoscroll_BlockSeparation_WithThinking(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 20
@@ -1427,7 +1427,7 @@ func TestAutoscroll_BlockSeparation_WithThinking(t *testing.T) {
 // TestAutoscroll_AgentStreamingDeltas_MergeCorrectly verifies that multiple
 // streaming text deltas from the agent are still merged into one block.
 func TestAutoscroll_AgentStreamingDeltas_MergeCorrectly(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 20

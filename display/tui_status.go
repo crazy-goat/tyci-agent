@@ -80,14 +80,18 @@ func (m TuiModel) buildStatus() string {
 	left := strings.Join(leftParts, " │ ")
 	right := strings.Join(rightParts, " │ ")
 
-	// Right-align the right part
+	// Right-align the right part, with leading and trailing space.
 	leftW := lipgloss.Width(left)
 	rightW := lipgloss.Width(right)
 	padding := m.width - leftW - rightW
-	if padding < 1 {
-		padding = 1
+	if padding >= 2 {
+		return " " + left + strings.Repeat(" ", padding-2) + right + " "
 	}
-	return " " + left + strings.Repeat(" ", padding-1) + right
+	// Not enough room for both spaces; just show leading space.
+	if padding >= 1 {
+		return " " + left + strings.Repeat(" ", padding-1) + right
+	}
+	return left + right
 }
 
 // displayPath returns a short, human-friendly representation of the working
@@ -115,21 +119,113 @@ func displayPath(cwd, home string) string {
 }
 
 // buildTopBar returns the single-line top status bar showing the current
-// working directory.  The bar is exactly m.width wide.  Long paths are
-// truncated with a leading "…", keeping the tail visible.
+// working directory and tool/skill/MCP context counts. The bar is exactly
+// m.width wide with a dark background. The path is left-aligned; the
+// counters are right-aligned. Long paths are truncated with a leading "…",
+// keeping the tail visible. Counters have rendering priority: the path is
+// truncated first. If even with a truncated path the total exceeds m.width,
+// counters are dropped in order: mcp first, then tools, then skills (the
+// path is never dropped). A single leading and trailing space is included.
 func (m TuiModel) buildTopBar() string {
 	path := displayPath(m.cwd, m.home)
 
-	prefix := ""
-	prefixW := 0
-	avail := m.width - prefixW
+	// ── Counter definitions ─────────────────────────────────────────────
+	type counterDef struct {
+		label     string
+		value     int
+		dropOrder int // 1 = dropped first
+	}
+	counters := []counterDef{
+		{label: "skills:", value: m.skillCount, dropOrder: 3},
+		{label: "tools:", value: m.toolCount, dropOrder: 2},
+		{label: "mcp:", value: m.mcpCount, dropOrder: 1},
+	}
+
+	renderCounter := func(c counterDef) string {
+		return fmt.Sprintf("%s %d", c.label, c.value)
+	}
+
+	type activeCounter struct {
+		def      counterDef
+		rendered string
+	}
+	active := make([]activeCounter, len(counters))
+	for i, c := range counters {
+		active[i] = activeCounter{def: c, rendered: renderCounter(c)}
+	}
+
+	sep := " "
+	sepW := lipgloss.Width(sep)
+
+	// Leading and trailing padding: 1 space on each side.
+	const sidePad = 1
+	sidePadW := sidePad * 2
+
+	// ── Iteratively drop counters until everything fits ─────────────────
+	for {
+		counterStrs := make([]string, len(active))
+		for i, a := range active {
+			counterStrs[i] = a.rendered
+		}
+		counterGroup := strings.Join(counterStrs, sep)
+		counterW := lipgloss.Width(counterGroup)
+
+		availableForPath := m.width - sidePadW - counterW - sepW
+		if availableForPath < 1 {
+			availableForPath = 1
+		}
+
+		truncatedPath := path
+		if lipgloss.Width(truncatedPath) > availableForPath {
+			runes := []rune(truncatedPath)
+			for len(runes) > 1 {
+				candidate := "…" + string(runes[1:])
+				if lipgloss.Width(candidate) <= availableForPath {
+					truncatedPath = candidate
+					break
+				}
+				runes = runes[1:]
+			}
+			if lipgloss.Width(truncatedPath) > availableForPath {
+				truncatedPath = "…"
+			}
+		}
+
+		pathW := lipgloss.Width(truncatedPath)
+		total := sidePadW + pathW + sepW + counterW
+		if total <= m.width {
+			padding := m.width - pathW - sepW - counterW - sidePadW
+			if padding < 0 {
+				padding = 0
+			}
+			content := strings.Repeat(" ", sidePad) + truncatedPath + strings.Repeat(" ", padding) + sep + counterGroup
+			// Let lipgloss pad the remaining width (provides trailing space).
+			style := lipgloss.NewStyle().
+				Width(m.width).MaxWidth(m.width).
+				Background(lipgloss.Color("236")).
+				Foreground(lipgloss.Color("250"))
+			return style.Render(content)
+		}
+
+		// Doesn't fit — drop the counter with the lowest dropOrder.
+		if len(active) == 0 {
+			break
+		}
+		minIdx := 0
+		for i := 1; i < len(active); i++ {
+			if active[i].def.dropOrder < active[minIdx].def.dropOrder {
+				minIdx = i
+			}
+		}
+		active = append(active[:minIdx], active[minIdx+1:]...)
+	}
+
+	// ── No counters fit — show path only, truncated to width ────────────
+	avail := m.width - sidePadW
 	if avail < 1 {
 		avail = 1
 	}
-
 	if lipgloss.Width(path) > avail {
-		// Truncate from the left, keeping the tail.  Remove runes one at
-		// a time from the front until the path (with a leading "…") fits.
 		runes := []rune(path)
 		for len(runes) > 1 {
 			candidate := "…" + string(runes[1:])
@@ -139,18 +235,16 @@ func (m TuiModel) buildTopBar() string {
 			}
 			runes = runes[1:]
 		}
-		// Edge case: even "…" alone is too wide — fall back to "…".
 		if lipgloss.Width(path) > avail {
 			path = "…"
 		}
 	}
-
-	label := prefix + path
+	content := strings.Repeat(" ", sidePad) + path
 	style := lipgloss.NewStyle().
 		Width(m.width).MaxWidth(m.width).
 		Background(lipgloss.Color("236")).
 		Foreground(lipgloss.Color("250"))
-	return style.Render(label)
+	return style.Render(content)
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────

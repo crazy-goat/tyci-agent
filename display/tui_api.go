@@ -26,11 +26,11 @@ type TUI struct {
 	flushDone      chan struct{}
 }
 
-func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string)) *TUI {
+func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int) *TUI {
 	results := make(chan string, 8)
 	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
-	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel, favoriteModels, onFavoriteToggled, defaultModel, onDefaultChanged)
+	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel, favoriteModels, onFavoriteToggled, defaultModel, onDefaultChanged, toolCount, skillCount, mcpCount)
 
 	// Capture working directory and home for the top status bar.
 	if dir, err := os.Getwd(); err == nil {

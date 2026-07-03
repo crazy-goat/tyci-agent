@@ -10,7 +10,7 @@ import (
 
 // helper: build a TuiModel with given providers, favorites and default for picker tests.
 func newPickerTestModel(allProviders []ProviderModels, favorites []string, defaultModel string) TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, allProviders, nil, favorites, nil, defaultModel, nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, allProviders, nil, favorites, nil, defaultModel, nil, 0, 0, 0)
 	m.width = 120
 	m.height = 40
 	m.ready = true
@@ -58,7 +58,7 @@ func TestTogglePickerFavorite_CallbackCalled(t *testing.T) {
 	}
 	var calls []toggle
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, testProviders, nil,
-		nil, func(mdl string, fav bool) { calls = append(calls, toggle{mdl, fav}) }, "", nil)
+		nil, func(mdl string, fav bool) { calls = append(calls, toggle{mdl, fav}) }, "", nil, 0, 0, 0)
 	m.width = 120
 	m.height = 40
 	m.openModelPicker()
@@ -114,7 +114,7 @@ func TestSetDefaultModel_ReplacesPrevious(t *testing.T) {
 func TestSetDefaultModel_CallbackCalled(t *testing.T) {
 	var got string
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, testProviders, nil,
-		nil, nil, "", func(s string) { got = s })
+		nil, nil, "", func(s string) { got = s }, 0, 0, 0)
 	m.width = 120
 	m.height = 40
 	m.openModelPicker()
@@ -178,7 +178,7 @@ func TestSwitchModel_BackwardWrap(t *testing.T) {
 
 func TestSwitchModel_FallsBackToAllModels(t *testing.T) {
 	allModels := []string{"openai/gpt-4o", "openai/gpt-4o-mini", "anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku"}
-	m := newModel(nil, "openai/gpt-4o", "", allModels, nil, testProviders, nil, nil, nil, "", nil)
+	m := newModel(nil, "openai/gpt-4o", "", allModels, nil, testProviders, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 120
 	m.height = 40
 
@@ -191,7 +191,7 @@ func TestSwitchModel_FallsBackToAllModels(t *testing.T) {
 func TestSwitchModel_ChangesChannel(t *testing.T) {
 	ch := make(chan string, 8)
 	m := newModel(nil, "test/model", "", []string{"test/model"}, ch, testProviders, nil,
-		[]string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"}, nil, "", nil)
+		[]string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"}, nil, "", nil, 0, 0, 0)
 	m.modelName = "openai/gpt-4o"
 	m.favIdx = 0
 
@@ -238,7 +238,7 @@ func TestPickerKeyCtrlD_SetsDefault(t *testing.T) {
 func TestPickerKeyEnter_SelectsModel(t *testing.T) {
 	ch := make(chan string, 8)
 	m := newModel(nil, "other/model", "", []string{"test/model", "other/model"}, ch, testProviders, nil,
-		nil, nil, "", nil)
+		nil, nil, "", nil, 0, 0, 0)
 	m.width = 120
 	m.height = 40
 	m.openModelPicker()
@@ -507,7 +507,7 @@ func TestSelectModel_UpdatesFavIdx(t *testing.T) {
 
 func TestSelectModel_UpdatesModelIdx(t *testing.T) {
 	allModels := []string{"openai/gpt-4o", "openai/gpt-4o-mini", "anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku"}
-	m := newModel(nil, "openai/gpt-4o", "", allModels, nil, testProviders, nil, nil, nil, "", nil)
+	m := newModel(nil, "openai/gpt-4o", "", allModels, nil, testProviders, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 120
 	m.height = 40
 	m.openModelPicker()
@@ -525,7 +525,7 @@ func TestSelectModel_UpdatesModelIdx(t *testing.T) {
 func TestNewModel_SetsFavoriteFields(t *testing.T) {
 	favs := []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"}
 	m := newModel(nil, "openai/gpt-4o", "", favs, nil, testProviders, nil,
-		favs, nil, "", nil)
+		favs, nil, "", nil, 0, 0, 0)
 
 	if len(m.favoriteModels) != 2 {
 		t.Fatalf("favoriteModels len = %d, want 2", len(m.favoriteModels))
@@ -540,7 +540,7 @@ func TestNewModel_SetsFavoriteFields(t *testing.T) {
 
 func TestNewModel_SetsDefaultModel(t *testing.T) {
 	m := newModel(nil, "test/model", "", nil, nil, testProviders, nil,
-		nil, nil, "anthropic/claude-sonnet-4-20250514", nil)
+		nil, nil, "anthropic/claude-sonnet-4-20250514", nil, 0, 0, 0)
 
 	if m.defaultModel != "anthropic/claude-sonnet-4-20250514" {
 		t.Fatalf("defaultModel = %q, want anthropic/claude-sonnet-4-20250514", m.defaultModel)
@@ -550,7 +550,7 @@ func TestNewModel_SetsDefaultModel(t *testing.T) {
 func TestNewModel_FavIdxMatchesModelName(t *testing.T) {
 	favs := []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"}
 	m := newModel(nil, "anthropic/claude-sonnet-4-20250514", "", favs, nil, testProviders, nil,
-		favs, nil, "", nil)
+		favs, nil, "", nil, 0, 0, 0)
 
 	if m.favIdx != 1 {
 		t.Fatalf("favIdx = %d, want 1 (matching modelName)", m.favIdx)

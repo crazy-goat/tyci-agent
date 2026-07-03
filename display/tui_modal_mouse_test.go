@@ -10,7 +10,7 @@ import (
 
 func TestSubagentModal_OutsideClick_ClosesModal(t *testing.T) {
 	// Set up a model with a tool block behind the modal.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -45,7 +45,7 @@ func TestSubagentModal_OutsideClick_ClosesModal(t *testing.T) {
 }
 
 func TestSubagentModal_InsideBodyClick_DoesNotClose(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -67,7 +67,7 @@ func TestSubagentModal_InsideBodyClick_DoesNotClose(t *testing.T) {
 }
 
 func TestSubagentModal_TitleBarClick_DoesNotClose(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -88,7 +88,7 @@ func TestSubagentModal_TitleBarClick_DoesNotClose(t *testing.T) {
 }
 
 func TestSubagentModal_MouseMotion_DoesNotClose(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -109,7 +109,7 @@ func TestSubagentModal_MouseMotion_DoesNotClose(t *testing.T) {
 }
 
 func TestSubagentModal_MouseRelease_DoesNotClose(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -132,7 +132,7 @@ func TestSubagentModal_MouseRelease_DoesNotClose(t *testing.T) {
 func TestSubagentModal_OutsideClick_NoLeakToBackgroundBlocks(t *testing.T) {
 	// Regression: clicking outside the modal must NOT leak to background
 	// tool block handlers (issue #75 property).
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -159,7 +159,7 @@ func TestSubagentModal_OutsideClick_NoLeakToBackgroundBlocks(t *testing.T) {
 }
 
 func TestSubagentModal_OutsideClick_ClearsSelection(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -181,7 +181,7 @@ func TestSubagentModal_OutsideClick_ClearsSelection(t *testing.T) {
 
 func TestSubagentModal_OutsideClick_Idempotent(t *testing.T) {
 	// Closing an already-closed modal should be a no-op.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -199,7 +199,7 @@ func TestSubagentModal_OutsideClick_Idempotent(t *testing.T) {
 }
 
 func TestSubagentModal_StillStreaming_OutsideClickStillCloses(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -219,7 +219,7 @@ func TestSubagentModal_StillStreaming_OutsideClickStillCloses(t *testing.T) {
 }
 
 func TestSubagentModal_WheelUp_ScrollsContent(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -248,7 +248,7 @@ func TestSubagentModal_WheelUp_ScrollsContent(t *testing.T) {
 }
 
 func TestSubagentModal_WheelDown_ScrollsContent(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -273,7 +273,7 @@ func TestSubagentModal_WheelDown_ScrollsContent(t *testing.T) {
 }
 
 func TestSubagentModal_WheelDown_ClampsAtZero(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -294,7 +294,7 @@ func TestSubagentModal_WheelDown_ClampsAtZero(t *testing.T) {
 }
 
 func TestSubagentModal_WheelUp_ClampsAtMax(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -426,7 +426,7 @@ func TestPicker_WheelDown_StaysActive(t *testing.T) {
 // These tests go through the top-level Update() to verify the routing.
 
 func TestSubagentModal_Update_MouseClickBlocked(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -450,7 +450,7 @@ func TestSubagentModal_Update_MouseClickBlocked(t *testing.T) {
 }
 
 func TestSubagentModal_Update_OutsideClick_Closes(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40

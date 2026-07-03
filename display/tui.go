@@ -187,9 +187,14 @@ type TuiModel struct {
 	historyIdx   int    // -1 = current input, 0..len-1 = browsing history
 	stashedInput string // saved current input while browsing history
 	historyPath  string // path to history file for persistence
+
+	// Context counts for the top status bar (computed in commands.go and passed in).
+	toolCount  int // total tools available (built-in + Lua + MCP)
+	skillCount int // skills loaded from skills directory
+	mcpCount   int // MCP tools available
 }
 
-func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string)) TuiModel {
+func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int) TuiModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type message (Enter send, Alt+Enter / Ctrl+N newline)"
 	ta.CharLimit = 0
@@ -258,5 +263,8 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		toolDisplayCache:     make(map[int]string),
 		cachedTotalLines:     -1,
 		scrollback:           &scrollbackCache{},
+		toolCount:            toolCount,
+		skillCount:           skillCount,
+		mcpCount:             mcpCount,
 	}
 }

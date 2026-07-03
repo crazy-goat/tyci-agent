@@ -9,7 +9,7 @@ import (
 )
 
 func TestTuiModel_SubmitCreatesUserBlockAndResetsScroll(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 40
 	m.height = 10
 	m.scrollLine = 5
@@ -29,7 +29,7 @@ func TestTuiModel_SubmitCreatesUserBlockAndResetsScroll(t *testing.T) {
 }
 
 func TestTuiModel_AssistantTextDoesNotAppendToSubmittedUserPrompt(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 40
 	m.height = 10
 	m.input.SetValue("prompt")
@@ -49,7 +49,7 @@ func TestTuiModel_AssistantTextDoesNotAppendToSubmittedUserPrompt(t *testing.T) 
 }
 
 func TestTuiModel_KeyEndRestoresAutoScrollAfterPrompt(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 30
 	m.height = 8
 	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: strings.Repeat("old content ", 40)})
@@ -72,7 +72,7 @@ func TestTuiModel_KeyEndRestoresAutoScrollAfterPrompt(t *testing.T) {
 }
 
 func TestTuiModel_ViewAtBottomShowsTailOfLongStreamingBlock(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 80
 	m.height = 8 // visible message lines = 5
 	m.atBottom = true

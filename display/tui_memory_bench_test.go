@@ -14,7 +14,7 @@ import (
 // history), and history (block count) keeps growing — only the heavy rendered
 // content is paged out, not dropped.
 func BenchmarkScrollbackLongSession(b *testing.B) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40
@@ -46,7 +46,7 @@ func BenchmarkScrollbackLongSession(b *testing.B) {
 // back from the scrollback file when the viewport scrolls up to it. This is the
 // user-perceived cost of scrolling into history.
 func BenchmarkScrollbackPageInOnScroll(b *testing.B) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40
@@ -79,7 +79,7 @@ func BenchmarkScrollbackPageInOnScroll(b *testing.B) {
 // BenchmarkScrollbackToolOutput measures residency when tools emit large
 // outputs. The per-block .output cap bounds each block to tuiMaxToolOutput.
 func BenchmarkScrollbackToolOutput(b *testing.B) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40
@@ -106,7 +106,7 @@ func BenchmarkScrollbackToolOutput(b *testing.B) {
 // subagent modal accumulator past the cap. Without capModalBuffer the builder
 // grows unbounded; with it, residency is bounded by tuiMaxModalBuffer.
 func BenchmarkSubagentModalBuffer(b *testing.B) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40
