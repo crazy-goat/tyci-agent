@@ -344,6 +344,39 @@ func TestParseTasks_TasksArrayEmpty(t *testing.T) {
 	}
 }
 
+// TestSetSubAgentRunner_RegistersTool is the regression test for the wiring bug:
+// the "subagent" tool is advertised in the schema, so it must also be present in
+// the executable registry. Before the fix, SetSubAgentRunner was never called and
+// RunTool returned "unknown tool: subagent".
+func TestSetSubAgentRunner_RegistersTool(t *testing.T) {
+	if _, ok := toolRegistry["subagent"]; ok {
+		t.Fatal("precondition: subagent should not be registered before SetSubAgentRunner")
+	}
+	t.Cleanup(func() {
+		delete(toolRegistry, "subagent")
+		subagentToolInstance = nil
+	})
+
+	SetSubAgentRunner(&mockRunner{})
+
+	tool, ok := toolRegistry["subagent"]
+	if !ok {
+		t.Fatal("subagent tool not registered after SetSubAgentRunner")
+	}
+	if tool.Name() != "subagent" {
+		t.Errorf("expected registered tool name 'subagent', got %q", tool.Name())
+	}
+
+	// RunTool must now dispatch to it rather than returning "unknown tool".
+	res := RunTool(context.Background(), "subagent", map[string]any{})
+	if res.Success {
+		t.Fatal("expected failure for empty task, but tool should still be reached")
+	}
+	if strings.Contains(res.Error, "unknown tool") {
+		t.Errorf("subagent still not reachable via RunTool: %q", res.Error)
+	}
+}
+
 func TestSubagentTool_MissingRunner(t *testing.T) {
 	tool := &SubagentTool{}
 	// Context without runner

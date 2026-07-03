@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/providers"
@@ -13,19 +14,43 @@ import (
 // agentRunner implements tools.SubAgentRunner by wrapping agent.Run.
 type agentRunner struct{}
 
-func (r *agentRunner) RunTask(ctx context.Context, task string, model string, temperature float64) (string, error) {
-	// Resolve provider and model
-	prov, mName, ok := providers.FindModel(model)
-	if !ok {
-		// Fallback to context values
-		prov = providers.ProviderFromContext(ctx)
+// resolveProviderModel picks the provider and bare model name for a subagent.
+//
+// An explicit "provider/model" override is resolved via the registry. Otherwise
+// the subagent inherits the parent's provider from context — which is already
+// configured with a valid API key — instead of re-guessing via FindModel, whose
+// bare-name lookup iterates the provider map in random order and can land on a
+// different (unconfigured) provider that happens to list the same model.
+func resolveProviderModel(ctx context.Context, model string) (providers.Provider, string, error) {
+	if strings.Contains(model, "/") {
+		if prov, mName, ok := providers.FindModel(model); ok {
+			return prov, mName, nil
+		}
+		return nil, "", fmt.Errorf("no provider available for model %q", model)
+	}
+
+	prov := providers.ProviderFromContext(ctx)
+	mName := model
+	if mName == "" {
 		mName = providers.ModelFromContext(ctx)
 	}
 	if prov == nil {
-		return "", fmt.Errorf("no provider available for model %q", model)
+		// No parent provider in context (e.g. tests) — fall back to lookup.
+		if p, m, ok := providers.FindModel(mName); ok {
+			return p, m, nil
+		}
+		return nil, "", fmt.Errorf("no provider available for model %q", model)
 	}
 	if mName == "" {
-		return "", fmt.Errorf("no model specified")
+		return nil, "", fmt.Errorf("no model specified")
+	}
+	return prov, mName, nil
+}
+
+func (r *agentRunner) RunTask(ctx context.Context, task string, model string, temperature float64) (string, error) {
+	prov, mName, err := resolveProviderModel(ctx, model)
+	if err != nil {
+		return "", err
 	}
 
 	// Create collector to capture output
@@ -47,7 +72,7 @@ func (r *agentRunner) RunTask(ctx context.Context, task string, model string, te
 		Schema:        tools.GetSubagentToolsSchemaJSON(),
 	}
 
-	_, err := agent.Run(ctx, prov, c, &msgs, cfg)
+	_, err = agent.Run(ctx, prov, c, &msgs, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -55,18 +80,9 @@ func (r *agentRunner) RunTask(ctx context.Context, task string, model string, te
 }
 
 func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model string, temperature float64, system string) (string, error) {
-	// Resolve provider and model
-	prov, mName, ok := providers.FindModel(model)
-	if !ok {
-		// Fallback to context values
-		prov = providers.ProviderFromContext(ctx)
-		mName = providers.ModelFromContext(ctx)
-	}
-	if prov == nil {
-		return "", fmt.Errorf("no provider available for model %q", model)
-	}
-	if mName == "" {
-		return "", fmt.Errorf("no model specified")
+	prov, mName, err := resolveProviderModel(ctx, model)
+	if err != nil {
+		return "", err
 	}
 
 	// Create collector to capture output
@@ -88,7 +104,7 @@ func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model 
 		Schema:        tools.GetSubagentToolsSchemaJSON(),
 	}
 
-	_, err := agent.Run(ctx, prov, c, &msgs, cfg)
+	_, err = agent.Run(ctx, prov, c, &msgs, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -110,6 +126,11 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 }
 
 func main() {
+	// Register the subagent runner so the "subagent" tool (advertised in the
+	// tool schema) is actually executable. Without this, RunTool returns
+	// "unknown tool: subagent".
+	tools.SetSubAgentRunner(&agentRunner{})
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
