@@ -448,7 +448,6 @@ func TestDynamicProviderStream_authJSONLiteralEnvRef_resolvesAtRuntime(t *testin
 // the goroutine in dynamicProvider.Stream can finish without panicking.
 type recordingTransport struct {
 	captured chan string
-	header   string
 	inner    http.RoundTripper
 }
 

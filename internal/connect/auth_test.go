@@ -346,11 +346,11 @@ func TestLooksLikeEnvRef(t *testing.T) {
 	}{
 		{"$FOO", true},
 		{"$FOO_BAR", true},
-		{"$", false},          // bare "$" — not a valid ref
-		{"", false},           // empty
-		{"FOO", false},        // no dollar
+		{"$", false},           // bare "$" — not a valid ref
+		{"", false},            // empty
+		{"FOO", false},         // no dollar
 		{"sk-$literal", false}, // starts with sk-, not dollar
-		{"$", false},          // explicit edge case
+		{"$", false},           // explicit edge case
 	}
 
 	for _, tt := range tests {
