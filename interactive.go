@@ -14,6 +14,7 @@ import (
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
+	"github.com/decodo/tyci/tools"
 )
 
 type interactiveState struct {
@@ -139,6 +140,7 @@ func (s *interactiveState) handleCommand(line string, cancel context.CancelFunc)
 	case line == "/new":
 		cancel()
 		s.conversation = nil
+		tools.ClearTodoList()
 		fmt.Print("\033[2J\033[H")
 		return false, true
 	case line == "/model" || strings.HasPrefix(line, "/model "):

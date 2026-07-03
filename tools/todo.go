@@ -116,6 +116,14 @@ func findTodoIndex(id int) int {
 	return -1
 }
 
+// ClearTodoList resets the todo list (used on /new).
+func ClearTodoList() {
+	todoState.Lock()
+	todoState.items = nil
+	todoState.nextID = 1
+	todoState.Unlock()
+}
+
 func formatTodosLocked() string {
 	if len(todoState.items) == 0 {
 		return "Todo list is empty."

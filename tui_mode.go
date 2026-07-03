@@ -10,6 +10,7 @@ import (
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
+	"github.com/decodo/tyci/tools"
 )
 
 func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp *display.TUI, cfg agent.Config, baseCtx context.Context, sessionPath string) {
@@ -105,6 +106,7 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 		if line == "/new" {
 			iterCancel()
 			conversation = nil
+			tools.ClearTodoList()
 			tuiDisp.Reset()
 			if totalUsage.Input > 0 || totalUsage.Output > 0 {
 				tuiDisp.ShowTotalUsage(totalUsage)
