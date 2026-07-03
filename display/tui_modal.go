@@ -6,6 +6,22 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// closeSubagentModal is the single source of truth for closing the subagent
+// modal. ESC, Enter (when done), and outside-click all funnel through here.
+func (m *TuiModel) closeSubagentModal() {
+	m.subagentModalActive = false
+	m.subagentModalContent.Reset()
+	m.subagentModalToolIdx = -1
+	m.subagentModalDone = false
+	// Restore scroll state from before modal opened
+	m.atBottom = m.savedAtBottom
+	m.scrollLine = m.savedScrollLine
+	// Clear any pending selection so it doesn't bleed into the main view.
+	m.selectionVersion++
+	m.selection = SelectionState{}
+	m.selectionFlash = false
+}
+
 func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -39,13 +55,7 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Close modal on ESC — always (even if running).
 			// The subagent keeps running in background; its output
 			// goes to the inline tool block after modal closes.
-			m.subagentModalActive = false
-			m.subagentModalContent.Reset()
-			m.subagentModalToolIdx = -1
-			m.subagentModalDone = false
-			// Restore scroll state from before modal opened
-			m.atBottom = m.savedAtBottom
-			m.scrollLine = m.savedScrollLine
+			m.closeSubagentModal()
 			return m, nil
 
 		case tea.KeyCtrlC:
@@ -56,13 +66,7 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			// Close modal on Enter when done
 			if m.subagentModalDone {
-				m.subagentModalActive = false
-				m.subagentModalContent.Reset()
-				m.subagentModalToolIdx = -1
-				m.subagentModalDone = false
-				// Restore scroll state from before modal opened
-				m.atBottom = m.savedAtBottom
-				m.scrollLine = m.savedScrollLine
+				m.closeSubagentModal()
 			}
 			return m, nil
 
@@ -117,8 +121,7 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseMsg:
-		// Only handle scroll wheel inside the modal; ignore all clicks
-		// so they don't leak through to background tool blocks.
+		// Scroll wheel always works regardless of position.
 		if msg.Button == tea.MouseButtonWheelUp {
 			m = m.clearSelection()
 			if m.subagentModalScroll < m.subagentModalMaxScroll() {
@@ -137,7 +140,23 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		// Block all other mouse events (clicks, drags) from leaking through.
+		// For click events (press or release), hit-test the modal body.
+		// We use MouseActionPress to match ESC semantics (immediate dismiss).
+		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+			layout := m.subagentModalLayout()
+			inModal := msg.X >= layout.left && msg.X < layout.left+layout.popupWidth &&
+				msg.Y >= layout.top && msg.Y < layout.top+layout.boxHeight
+			if !inModal {
+				// Click outside modal body → close it (same as ESC).
+				m.closeSubagentModal()
+				return m, nil
+			}
+			// Click inside modal body — block from leaking to background
+			// tool blocks. (Future #76: start text selection here.)
+			return m, nil
+		}
+		// Block all other mouse events (motion, release, drags) from
+		// leaking through to background tool blocks.
 		return m, nil
 
 	case tuiMsgBlock:

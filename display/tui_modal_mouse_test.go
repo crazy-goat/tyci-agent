@@ -8,7 +8,7 @@ import (
 
 // ─── Subagent modal: mouse event blocking ────────────────────────────────
 
-func TestSubagentModal_MouseClick_DoesNotOpenToolModal(t *testing.T) {
+func TestSubagentModal_OutsideClick_ClosesModal(t *testing.T) {
 	// Set up a model with a tool block behind the modal.
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.ready = true
@@ -24,19 +24,114 @@ func TestSubagentModal_MouseClick_DoesNotOpenToolModal(t *testing.T) {
 	m.subagentModalTitle = "test"
 	m.subagentModalContent.WriteString("modal content")
 	m.subagentModalDone = true
+	m.savedAtBottom = true
+	m.savedScrollLine = 42
 
-	// Simulate a left-click at y=5 (would be on the background tool block)
-	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	// Click at (0, 0) — outside the modal body (modal at 120x40 starts at left=6, top=3)
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 0, Y: 0}
 	result, _ := m.updateSubagentModal(msg)
 	m2 := result.(TuiModel)
 
-	// The subagent modal should still be active (not replaced by tool modal)
-	if !m2.subagentModalActive {
-		t.Fatal("subagent modal should still be active after click — clicks should be blocked")
+	if m2.subagentModalActive {
+		t.Fatal("subagent modal should be closed after outside click")
+	}
+	// Verify scroll state restored
+	if !m2.atBottom {
+		t.Fatal("atBottom should be restored to savedAtBottom value")
+	}
+	if m2.scrollLine != 42 {
+		t.Fatalf("scrollLine should be restored to 42, got %d", m2.scrollLine)
 	}
 }
 
-func TestSubagentModal_MouseRelease_DoesNotOpenToolModal(t *testing.T) {
+func TestSubagentModal_InsideBodyClick_DoesNotClose(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m.ready = true
+	m.width = 120
+	m.height = 40
+
+	// Modal at 120x40: left=6, top=3, popupWidth=108, boxHeight=34
+	// Content area: x=[6,114), y=[5,34] — click in the middle
+	m.subagentModalActive = true
+	m.subagentModalTitle = "test"
+	m.subagentModalContent.WriteString("modal content")
+	m.subagentModalDone = true
+
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 50, Y: 20}
+	result, _ := m.updateSubagentModal(msg)
+	m2 := result.(TuiModel)
+
+	if !m2.subagentModalActive {
+		t.Fatal("subagent modal should remain active after click inside body")
+	}
+}
+
+func TestSubagentModal_TitleBarClick_DoesNotClose(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m.ready = true
+	m.width = 120
+	m.height = 40
+
+	// Modal at 120x40: left=6, top=3 — click on the title bar (top row of modal)
+	m.subagentModalActive = true
+	m.subagentModalTitle = "test"
+	m.subagentModalContent.WriteString("modal content")
+	m.subagentModalDone = true
+
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 50, Y: 3}
+	result, _ := m.updateSubagentModal(msg)
+	m2 := result.(TuiModel)
+
+	if !m2.subagentModalActive {
+		t.Fatal("subagent modal should remain active after click on title bar")
+	}
+}
+
+func TestSubagentModal_MouseMotion_DoesNotClose(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m.ready = true
+	m.width = 120
+	m.height = 40
+
+	m.subagentModalActive = true
+	m.subagentModalTitle = "test"
+	m.subagentModalContent.WriteString("modal content")
+	m.subagentModalDone = true
+
+	// Motion outside modal — should NOT close (only press closes)
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: 0, Y: 0}
+	result, _ := m.updateSubagentModal(msg)
+	m2 := result.(TuiModel)
+
+	if !m2.subagentModalActive {
+		t.Fatal("modal should remain active after mouse motion")
+	}
+}
+
+func TestSubagentModal_MouseRelease_DoesNotClose(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m.ready = true
+	m.width = 120
+	m.height = 40
+
+	m.subagentModalActive = true
+	m.subagentModalTitle = "test"
+	m.subagentModalContent.WriteString("modal content")
+	m.subagentModalDone = true
+
+	// Release outside modal — should NOT close (we dismiss on press, not release)
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, X: 0, Y: 0}
+	result, _ := m.updateSubagentModal(msg)
+	m2 := result.(TuiModel)
+
+	if !m2.subagentModalActive {
+		t.Fatal("modal should remain active after mouse release")
+	}
+}
+
+func TestSubagentModal_OutsideClick_NoLeakToBackgroundBlocks(t *testing.T) {
+	// Regression: clicking outside the modal must NOT leak to background
+	// tool block handlers (issue #75 property).
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.ready = true
 	m.width = 120
@@ -50,35 +145,76 @@ func TestSubagentModal_MouseRelease_DoesNotOpenToolModal(t *testing.T) {
 	m.subagentModalContent.WriteString("modal content")
 	m.subagentModalDone = true
 
-	// Simulate a mouse release (click-release cycle)
-	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease}
+	// Click outside — modal closes, but the click should NOT have leaked
+	// to the block-click handler (it was consumed by the modal handler).
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 0, Y: 0}
 	result, _ := m.updateSubagentModal(msg)
 	m2 := result.(TuiModel)
 
-	if !m2.subagentModalActive {
-		t.Fatal("subagent modal should still be active after mouse release")
+	if m2.subagentModalActive {
+		t.Fatal("modal should be closed")
 	}
+	// The click was consumed — no tool modal should have been opened.
+	// (If it leaked, openToolModalAt would have set subagentModalActive=true again)
 }
 
-func TestSubagentModal_MouseMotion_DoesNotOpenToolModal(t *testing.T) {
+func TestSubagentModal_OutsideClick_ClearsSelection(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
 	m.ready = true
 	m.width = 120
 	m.height = 40
 
-	m.blocks = append(m.blocks, block{kind: "tool", toolName: "bash", toolState: "done", content: "output"})
-
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
 	m.subagentModalContent.WriteString("modal content")
 	m.subagentModalDone = true
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 5, CursorX: 10, CursorY: 5}
 
-	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion}
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 0, Y: 0}
 	result, _ := m.updateSubagentModal(msg)
 	m2 := result.(TuiModel)
 
-	if !m2.subagentModalActive {
-		t.Fatal("subagent modal should still be active after mouse motion")
+	if m2.selection.Active {
+		t.Fatal("selection should be cleared on modal close")
+	}
+}
+
+func TestSubagentModal_OutsideClick_Idempotent(t *testing.T) {
+	// Closing an already-closed modal should be a no-op.
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m.ready = true
+	m.width = 120
+	m.height = 40
+
+	// Modal is NOT active — simulate what happens if a stale press arrives
+	m.subagentModalActive = false
+
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 0, Y: 0}
+	result, _ := m.updateSubagentModal(msg)
+	m2 := result.(TuiModel)
+
+	if m2.subagentModalActive {
+		t.Fatal("modal should remain inactive (idempotent close)")
+	}
+}
+
+func TestSubagentModal_StillStreaming_OutsideClickStillCloses(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m.ready = true
+	m.width = 120
+	m.height = 40
+
+	m.subagentModalActive = true
+	m.subagentModalTitle = "test"
+	m.subagentModalContent.WriteString("partial output")
+	m.subagentModalDone = false // still streaming
+
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 0, Y: 0}
+	result, _ := m.updateSubagentModal(msg)
+	m2 := result.(TuiModel)
+
+	if m2.subagentModalActive {
+		t.Fatal("modal should close on outside click even while streaming")
 	}
 }
 
@@ -303,13 +439,37 @@ func TestSubagentModal_Update_MouseClickBlocked(t *testing.T) {
 	m.subagentModalContent.WriteString("modal content")
 	m.subagentModalDone = true
 
-	// Go through Update() to test routing
-	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+	// Click inside the modal body through Update() — should NOT leak
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 50, Y: 20}
 	result, _ := m.Update(msg)
 	m2 := result.(TuiModel)
 
 	if !m2.subagentModalActive {
-		t.Fatal("subagent modal should still be active after click through Update()")
+		t.Fatal("subagent modal should still be active after inside click through Update()")
+	}
+}
+
+func TestSubagentModal_Update_OutsideClick_Closes(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil)
+	m.ready = true
+	m.width = 120
+	m.height = 40
+
+	m.blocks = append(m.blocks, block{kind: "tool", toolName: "bash", toolState: "done", content: "output"})
+	m.toolQueue = append(m.toolQueue, 0)
+
+	m.subagentModalActive = true
+	m.subagentModalTitle = "test"
+	m.subagentModalContent.WriteString("modal content")
+	m.subagentModalDone = true
+
+	// Click outside modal through Update() — should close modal
+	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 0, Y: 0}
+	result, _ := m.Update(msg)
+	m2 := result.(TuiModel)
+
+	if m2.subagentModalActive {
+		t.Fatal("subagent modal should be closed after outside click through Update()")
 	}
 }
 
