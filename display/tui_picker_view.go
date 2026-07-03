@@ -209,7 +209,7 @@ func (m TuiModel) renderModelPickerContent() string {
 	if totalModels == 0 {
 		b.WriteString(normalStyle.Render("  No matching models"))
 	} else {
-		hint := fmt.Sprintf("  %d model(s) — ↑↓/PgUp/PgDn navigate, Enter select, f fav, d default, Esc cancel", totalModels)
+		hint := fmt.Sprintf("  %d model(s) — ↑↓/PgUp/PgDn navigate, Enter select, Ctrl+F fav, Ctrl+D default, Esc cancel", totalModels)
 		hintStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245")).
 			Width(popupWidth - 2)

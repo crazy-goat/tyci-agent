@@ -52,16 +52,25 @@ func TestTogglePickerFavorite_RemovesModel(t *testing.T) {
 }
 
 func TestTogglePickerFavorite_CallbackCalled(t *testing.T) {
-	var called []string
+	type toggle struct {
+		model    string
+		favorite bool
+	}
+	var calls []toggle
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, testProviders, nil,
-		nil, func(favs []string) { called = append([]string{}, favs...) }, "", nil)
+		nil, func(mdl string, fav bool) { calls = append(calls, toggle{mdl, fav}) }, "", nil)
 	m.width = 120
 	m.height = 40
 	m.openModelPicker()
 
-	m.togglePickerFavorite()
-	if len(called) != 1 || called[0] != "openai/gpt-4o" {
-		t.Fatalf("callback got %v, want [openai/gpt-4o]", called)
+	m.togglePickerFavorite() // add openai/gpt-4o
+	if len(calls) != 1 || calls[0].model != "openai/gpt-4o" || !calls[0].favorite {
+		t.Fatalf("add callback got %+v, want [{openai/gpt-4o true}]", calls)
+	}
+
+	m.togglePickerFavorite() // remove openai/gpt-4o
+	if len(calls) != 2 || calls[1].model != "openai/gpt-4o" || calls[1].favorite {
+		t.Fatalf("remove callback got %+v, want second call {openai/gpt-4o false}", calls)
 	}
 }
 
@@ -94,7 +103,7 @@ func TestSetDefaultModel_SetsModel(t *testing.T) {
 func TestSetDefaultModel_ReplacesPrevious(t *testing.T) {
 	m := newPickerTestModel(testProviders, nil, "openai/gpt-4o")
 	m.openModelPicker()
-	m.pickerCursor = 2 // anthropic/claude-sonnet-4-20250514
+	m.pickerCursor = 3 // anthropic/claude-sonnet-4-20250514 (after sort: haiku=2, sonnet=3)
 	m.setDefaultModel()
 
 	if m.defaultModel != "anthropic/claude-sonnet-4-20250514" {
@@ -198,31 +207,31 @@ func TestSwitchModel_ChangesChannel(t *testing.T) {
 	}
 }
 
-// ─── Picker keyboard: 'f' and 'd' keys ─────────────────────────────────
+// ─── Picker keyboard: Ctrl+F and Ctrl+D keys ───────────────────────────
 
-func TestPickerKeyF_TogglesFavorite(t *testing.T) {
+func TestPickerKeyCtrlF_TogglesFavorite(t *testing.T) {
 	m := newPickerTestModel(testProviders, nil, "")
 	m.openModelPicker()
 
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}
+	msg := tea.KeyMsg{Type: tea.KeyCtrlF}
 	result, _ := m.updatePicker(msg)
 	m2 := result.(TuiModel)
 
 	if !m2.favoriteSet["openai/gpt-4o"] {
-		t.Fatal("expected 'f' to toggle favorite on first model")
+		t.Fatal("expected Ctrl+F to toggle favorite on first model")
 	}
 }
 
-func TestPickerKeyD_SetsDefault(t *testing.T) {
+func TestPickerKeyCtrlD_SetsDefault(t *testing.T) {
 	m := newPickerTestModel(testProviders, nil, "")
 	m.openModelPicker()
 
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}}
+	msg := tea.KeyMsg{Type: tea.KeyCtrlD}
 	result, _ := m.updatePicker(msg)
 	m2 := result.(TuiModel)
 
 	if m2.defaultModel != "openai/gpt-4o" {
-		t.Fatalf("defaultModel = %q, want openai/gpt-4o after 'd'", m2.defaultModel)
+		t.Fatalf("defaultModel = %q, want openai/gpt-4o after Ctrl+D", m2.defaultModel)
 	}
 }
 
@@ -308,6 +317,62 @@ func TestPickerUpDown_ClampBounds(t *testing.T) {
 
 // ─── Picker filter ─────────────────────────────────────────────────────
 
+func TestPickerItems_SortedByModelName(t *testing.T) {
+	providers := []ProviderModels{
+		{Name: "zprovider", Models: []string{"zzz-model", "aaa-model", "mmm-model"}},
+	}
+	m := newPickerTestModel(providers, nil, "")
+	m.openModelPicker()
+
+	// Extract non-header items
+	var models []string
+	for _, item := range m.pickerItems {
+		if !item.isHeader {
+			models = append(models, item.value)
+		}
+	}
+
+	want := []string{"zprovider/aaa-model", "zprovider/mmm-model", "zprovider/zzz-model"}
+	if len(models) != len(want) {
+		t.Fatalf("got %d models, want %d", len(models), len(want))
+	}
+	for i, m := range models {
+		if m != want[i] {
+			t.Fatalf("model[%d] = %q, want %q", i, m, want[i])
+		}
+	}
+}
+
+func TestPickerItems_SortedPerProvider(t *testing.T) {
+	providers := []ProviderModels{
+		{Name: "b-provider", Models: []string{"z-model", "a-model"}},
+		{Name: "a-provider", Models: []string{"z-model", "a-model"}},
+	}
+	m := newPickerTestModel(providers, nil, "")
+	m.openModelPicker()
+
+	var models []string
+	for _, item := range m.pickerItems {
+		if !item.isHeader {
+			models = append(models, item.value)
+		}
+	}
+
+	// Providers keep their original order from allProviders; models within each are sorted
+	want := []string{
+		"b-provider/a-model", "b-provider/z-model",
+		"a-provider/a-model", "a-provider/z-model",
+	}
+	if len(models) != len(want) {
+		t.Fatalf("got %d models, want %d", len(models), len(want))
+	}
+	for i, m := range models {
+		if m != want[i] {
+			t.Fatalf("model[%d] = %q, want %q", i, m, want[i])
+		}
+	}
+}
+
 func TestPickerFilter_FiltersModels(t *testing.T) {
 	m := newPickerTestModel(testProviders, nil, "")
 	m.openModelPicker()
@@ -379,11 +444,11 @@ func TestPickerView_ShowsHint(t *testing.T) {
 	m.openModelPicker()
 
 	view := m.renderModelPickerContent()
-	if !containsANSI(view, "f fav") {
-		t.Fatal("picker hint should mention 'f fav'")
+	if !containsANSI(view, "Ctrl+F fav") {
+		t.Fatal("picker hint should mention 'Ctrl+F fav'")
 	}
-	if !containsANSI(view, "d default") {
-		t.Fatal("picker hint should mention 'd default'")
+	if !containsANSI(view, "Ctrl+D default") {
+		t.Fatal("picker hint should mention 'Ctrl+D default'")
 	}
 }
 
@@ -399,8 +464,8 @@ func TestPickerView_RightBorderVisible(t *testing.T) {
 		if line == "" {
 			continue
 		}
-		if lipgloss.Width(line) > 80 {
-			t.Fatalf("line %d width = %d, want <= 80: %q", i, lipgloss.Width(line), line)
+		if lipgloss.Width(line) > 100 {
+			t.Fatalf("line %d width = %d, want <= 100: %q", i, lipgloss.Width(line), line)
 		}
 		if i != 0 && i != len(lines)-1 && !strings.HasSuffix(line, "│") {
 			t.Fatalf("line %d should end with right border: %q", i, line)

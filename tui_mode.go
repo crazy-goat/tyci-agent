@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/decodo/tyci/agent"
@@ -98,21 +99,32 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 
 		drainModelChanges()
 
-		line = strings.TrimSpace(line)
-		if line == "/exit" {
-			iterCancel()
-			return
-		}
-		if line == "/new" {
-			iterCancel()
-			conversation = nil
-			tools.ClearTodoList()
-			tuiDisp.Reset()
-			if totalUsage.Input > 0 || totalUsage.Output > 0 {
-				tuiDisp.ShowTotalUsage(totalUsage)
+		rawLine := line
+		trimmed := strings.TrimSpace(line)
+		if rawLine != "" && !strings.HasPrefix(rawLine, " ") && strings.HasPrefix(trimmed, "/") {
+			// Slash commands: raw input starts with "/" (no leading space)
+			switch {
+			case trimmed == "/exit":
+				iterCancel()
+				return
+			case trimmed == "/new":
+				iterCancel()
+				conversation = nil
+				tools.ClearTodoList()
+				tuiDisp.Reset()
+				if totalUsage.Input > 0 || totalUsage.Output > 0 {
+					tuiDisp.ShowTotalUsage(totalUsage)
+				}
+				continue
+			default:
+				cmd := strings.Fields(trimmed)[0]
+				tuiDisp.Error(fmt.Errorf("Unknown command: %s", cmd))
+				tuiDisp.ResetStatus()
+				iterCancel()
+				continue
 			}
-			continue
 		}
+		line = trimmed
 		if line == "" {
 			iterCancel()
 			continue

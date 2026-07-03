@@ -98,7 +98,7 @@ type TuiModel struct {
 	models          []string          // all available models (format: "provider/model")
 	favoriteModels  []string          // favorite models for quick Tab/Shift+Tab cycling
 	favoriteSet     map[string]bool   // set lookup for favorites (for picker rendering)
-	onFavoriteChanged func([]string)  // called when favorites change (persist to config)
+	onFavoriteToggled func(model string, favorite bool) // called when a favorite is toggled (persist to config)
 	defaultModel    string            // default model (one, highlighted in picker)
 	onDefaultChanged func(string)     // called when default model changes (persist to config)
 	favIdx          int               // index of current model in favoriteModels slice
@@ -180,13 +180,13 @@ type TuiModel struct {
 	historyPath  string // path to history file for persistence
 }
 
-func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}, favoriteModels []string, onFavoriteChanged func([]string), defaultModel string, onDefaultChanged func(string)) TuiModel {
+func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string)) TuiModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type message (Enter send, Alt+Enter / Ctrl+N newline)"
 	ta.CharLimit = 0
 	ta.ShowLineNumbers = false
 	ta.SetWidth(80)
-	ta.SetHeight(3)
+	ta.SetHeight(1)
 	focusedStyle, blurredStyle := textarea.DefaultStyles()
 	focusedStyle.CursorLine = lipgloss.NewStyle()
 	blurredStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -228,7 +228,7 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		models:               models,
 		favoriteModels:       favoriteModels,
 		favoriteSet:          favoriteSet,
-		onFavoriteChanged:    onFavoriteChanged,
+		onFavoriteToggled:    onFavoriteToggled,
 		defaultModel:         defaultModel,
 		onDefaultChanged:     onDefaultChanged,
 		favIdx:               favIdx,

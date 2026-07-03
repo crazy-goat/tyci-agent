@@ -1,6 +1,7 @@
 package display
 
 import (
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -84,17 +85,21 @@ func (m TuiModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Ignore tab in picker mode
 			return m, nil
 
-		default:
-			// 'f' key toggles favorite on the selected model
-			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'f' {
+		case tea.KeyCtrlF:
+			// Ctrl+F toggles favorite on the selected model (only when filter is empty)
+			if m.pickerFilter == "" {
 				m.togglePickerFavorite()
-				return m, nil
 			}
-			// 'd' key sets the selected model as default
-			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'd' {
+			return m, nil
+
+		case tea.KeyCtrlD:
+			// Ctrl+D sets the selected model as default (only when filter is empty)
+			if m.pickerFilter == "" {
 				m.setDefaultModel()
-				return m, nil
 			}
+			return m, nil
+
+		default:
 			// Add character to filter
 			if msg.Type == tea.KeyRunes {
 				m.pickerFilter += string(msg.Runes)
@@ -172,6 +177,7 @@ func (m *TuiModel) rebuildPickerItems() {
 		if len(matched) == 0 {
 			continue
 		}
+		sort.Strings(matched)
 		// Add header
 		m.pickerItems = append(m.pickerItems, pickerItem{isHeader: true, label: prov.Name})
 		for _, label := range matched {
@@ -230,13 +236,16 @@ func (m *TuiModel) togglePickerFavorite() {
 			}
 		}
 		m.favoriteModels = newFavs
+		if m.onFavoriteToggled != nil {
+			m.onFavoriteToggled(model, false)
+		}
 	} else {
 		// Add to favorites
 		m.favoriteSet[model] = true
 		m.favoriteModels = append(m.favoriteModels, model)
-	}
-	if m.onFavoriteChanged != nil {
-		m.onFavoriteChanged(m.favoriteModels)
+		if m.onFavoriteToggled != nil {
+			m.onFavoriteToggled(model, true)
+		}
 	}
 }
 

@@ -55,6 +55,13 @@ func (m *TuiModel) capInputHeight() {
 		lines = 10
 	}
 	m.input.SetHeight(lines)
+	// SetHeight changes viewport.Height but does not call the textarea's
+	// unexported repositionView(). If a previous Update scrolled the viewport
+	// down (because the old height was too small to show the cursor), those
+	// lines are now hidden above the viewport. Sending PageUp scrolls the
+	// viewport back to the top; the trailing repositionView in Update then
+	// brings the cursor back into view if content exceeds the new height.
+	m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 }
 
 // ─── Block handling ───────────────────────────────────────────────────────

@@ -91,7 +91,22 @@ func (m *TuiModel) switchModel(delta int) {
 	if len(list) == 0 {
 		return
 	}
-	m.favIdx = (m.favIdx + delta + len(list)) % len(list)
+	// Include the current model in the cycle even if it isn't a favorite, so
+	// Tab always starts from where you are — without persisting it as one.
+	inList := false
+	cur := 0
+	for i, mm := range list {
+		if mm == m.modelName {
+			inList = true
+			cur = i
+			break
+		}
+	}
+	if !inList {
+		list = append([]string{m.modelName}, list...)
+		cur = 0
+	}
+	m.favIdx = (cur + delta + len(list)) % len(list)
 	newModel := list[m.favIdx]
 	m.modelName = newModel
 	if m.modelChanges != nil {

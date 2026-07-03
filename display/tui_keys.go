@@ -32,6 +32,19 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyEnter:
 		if msg.Alt {
+			// Pre-set height so that repositionView inside the textarea's
+			// Update already uses the correct viewport height. Without this,
+			// repositionView runs with the old (smaller) height, decides the
+			// new cursor line is out of view, scrolls down, and then
+			// SetHeight in capInputHeight can't undo that scroll — the first
+			// line of input disappears.
+			newH := m.input.LineCount() + 1
+			if newH < 1 {
+				newH = 1
+			} else if newH > 10 {
+				newH = 10
+			}
+			m.input.SetHeight(newH)
 			m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			m.capInputHeight()
 			return m, nil
@@ -45,6 +58,14 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.submit(), nil
 	case tea.KeyCtrlN, tea.KeyCtrlJ:
+		// Same pre-set height logic as Alt+Enter above.
+		newH := m.input.LineCount() + 1
+		if newH < 1 {
+			newH = 1
+		} else if newH > 10 {
+			newH = 10
+		}
+		m.input.SetHeight(newH)
 		m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		m.capInputHeight()
 		return m, nil

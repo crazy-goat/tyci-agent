@@ -89,12 +89,12 @@ func (s *interactiveState) loop() {
 		if err != nil {
 			continue
 		}
-		line = strings.TrimSpace(line)
 		if exit, handled := s.handleCommand(line, iterCancel); exit {
 			return
 		} else if handled {
 			continue
 		}
+		line = strings.TrimSpace(line)
 		if line == "" {
 			iterCancel()
 			continue
@@ -131,7 +131,13 @@ func (s *interactiveState) handleReadError(err error, cancel context.CancelFunc)
 	return false
 }
 
-func (s *interactiveState) handleCommand(line string, cancel context.CancelFunc) (exit bool, handled bool) {
+func (s *interactiveState) handleCommand(raw string, cancel context.CancelFunc) (exit bool, handled bool) {
+	// " /cmd" (space before /) is NOT a command — only inputs starting
+	// exactly with "/" are treated as slash commands.
+	if !strings.HasPrefix(raw, "/") {
+		return false, false
+	}
+	line := strings.TrimSpace(raw)
 	switch {
 	case line == "/exit":
 		cancel()
@@ -147,8 +153,11 @@ func (s *interactiveState) handleCommand(line string, cancel context.CancelFunc)
 		cancel()
 		s.handleModelCommand(strings.TrimSpace(strings.TrimPrefix(line, "/model")))
 		return false, true
+	default:
+		cmd := strings.Fields(line)[0]
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
+		return false, true
 	}
-	return false, false
 }
 
 func (s *interactiveState) handleModelCommand(arg string) {

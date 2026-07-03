@@ -77,3 +77,31 @@ func SetFavoriteModels(models []string) error {
 	cfg.FavoriteModels = models
 	return SaveTyciConfig(cfg)
 }
+
+// AddFavoriteModel adds a single model to the favorites, reloading the config
+// first so concurrent tyci sessions don't clobber each other's favorites.
+// No-op if the model is already a favorite.
+func AddFavoriteModel(model string) error {
+	cfg := LoadTyciConfig()
+	for _, f := range cfg.FavoriteModels {
+		if f == model {
+			return nil
+		}
+	}
+	cfg.FavoriteModels = append(cfg.FavoriteModels, model)
+	return SaveTyciConfig(cfg)
+}
+
+// RemoveFavoriteModel removes a single model from the favorites, reloading the
+// config first so concurrent sessions only ever conflict on the same model.
+func RemoveFavoriteModel(model string) error {
+	cfg := LoadTyciConfig()
+	out := cfg.FavoriteModels[:0]
+	for _, f := range cfg.FavoriteModels {
+		if f != model {
+			out = append(out, f)
+		}
+	}
+	cfg.FavoriteModels = out
+	return SaveTyciConfig(cfg)
+}

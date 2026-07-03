@@ -6,6 +6,20 @@ import (
 	"testing"
 )
 
+// TestMain redirects HOME to a throwaway dir for the whole package so that a
+// test which forgets setupConfigTest can never clobber the real ~/.tyci/config.json.
+func TestMain(m *testing.M) {
+	tmp, err := os.MkdirTemp("", "tyci-agent-test-home")
+	if err == nil {
+		os.Setenv("HOME", tmp)
+	}
+	code := m.Run()
+	if err == nil {
+		os.RemoveAll(tmp)
+	}
+	os.Exit(code)
+}
+
 // setupConfigTest overrides the config directory for isolated testing.
 func setupConfigTest(t *testing.T) {
 	t.Helper()
@@ -16,6 +30,8 @@ func setupConfigTest(t *testing.T) {
 }
 
 func TestTyciConfig_MarshalRoundTrip(t *testing.T) {
+	setupConfigTest(t)
+
 	cfg := TyciConfig{
 		DefaultModel:   "openai/gpt-4o",
 		FavoriteModels: []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"},
@@ -123,6 +139,60 @@ func TestDefaultModel_PersistsWithFavorites(t *testing.T) {
 	}
 	if len(cfg.FavoriteModels) != 2 {
 		t.Fatalf("FavoriteModels len = %d, want 2", len(cfg.FavoriteModels))
+	}
+}
+
+func TestAddFavoriteModel_AppendsAndDedupes(t *testing.T) {
+	setupConfigTest(t)
+
+	if err := AddFavoriteModel("openai/gpt-4o"); err != nil {
+		t.Fatalf("AddFavoriteModel: %v", err)
+	}
+	if err := AddFavoriteModel("anthropic/claude-sonnet-4-20250514"); err != nil {
+		t.Fatalf("AddFavoriteModel: %v", err)
+	}
+	// Duplicate should be a no-op.
+	if err := AddFavoriteModel("openai/gpt-4o"); err != nil {
+		t.Fatalf("AddFavoriteModel (dup): %v", err)
+	}
+
+	got := GetFavoriteModels()
+	if len(got) != 2 {
+		t.Fatalf("GetFavoriteModels = %v, want 2 entries", got)
+	}
+}
+
+func TestRemoveFavoriteModel(t *testing.T) {
+	setupConfigTest(t)
+
+	SetFavoriteModels([]string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"})
+	if err := RemoveFavoriteModel("openai/gpt-4o"); err != nil {
+		t.Fatalf("RemoveFavoriteModel: %v", err)
+	}
+
+	got := GetFavoriteModels()
+	if len(got) != 1 || got[0] != "anthropic/claude-sonnet-4-20250514" {
+		t.Fatalf("GetFavoriteModels = %v, want [anthropic/claude-sonnet-4-20250514]", got)
+	}
+}
+
+// TestAddFavoriteModel_ReconcilesFromDisk simulates a second session adding a
+// favorite: the add reloads the on-disk config first, so a favorite written by
+// another session in the meantime is preserved rather than clobbered.
+func TestAddFavoriteModel_ReconcilesFromDisk(t *testing.T) {
+	setupConfigTest(t)
+
+	// Another session persisted this favorite.
+	SetFavoriteModels([]string{"anthropic/claude-sonnet-4-20250514"})
+
+	// This session adds a different one.
+	if err := AddFavoriteModel("openai/gpt-4o"); err != nil {
+		t.Fatalf("AddFavoriteModel: %v", err)
+	}
+
+	got := GetFavoriteModels()
+	if len(got) != 2 {
+		t.Fatalf("GetFavoriteModels = %v, want both favorites preserved", got)
 	}
 }
 

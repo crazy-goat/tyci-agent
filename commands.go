@@ -271,23 +271,17 @@ var tuiCmd = &cobra.Command{
 			model = agent.ResolveModel("", agentName)
 		}
 
-		// Load favorite models from config. Default model is always included.
+		// Load favorite models from config. The current model is added to the
+		// Tab-cycle by the TUI at runtime (see switchModel); it is intentionally
+		// NOT persisted here so toggling favorites can't silently save it.
 		favorites := agent.GetFavoriteModels()
-		if model != "" {
-			found := false
-			for _, f := range favorites {
-				if f == model {
-					found = true
-					break
-				}
-			}
-			if !found {
-				favorites = append([]string{model}, favorites...)
-			}
-		}
 
-		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels, favorites, func(newFavs []string) {
-			_ = agent.SetFavoriteModels(newFavs)
+		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels, favorites, func(mdl string, favorite bool) {
+			if favorite {
+				_ = agent.AddFavoriteModel(mdl)
+			} else {
+				_ = agent.RemoveFavoriteModel(mdl)
+			}
 		}, agent.GetDefaultModel(), func(newDefault string) {
 			_ = agent.SetDefaultModel(newDefault)
 		})
