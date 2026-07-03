@@ -146,6 +146,12 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 			err   error
 		}
 		resultCh := make(chan agentResult, 1)
+		// Issue #88: wire the pending-message queue drain callback. The
+		// TUI's NextMessages drains the channel of user lines typed
+		// during the in-flight request and returns them in FIFO order;
+		// the agent loop appends each as a user RichMessage and forces
+		// one more runOnce so the model sees them as a single turn.
+		cfg.NextMessages = tuiDisp.NextMessages
 		go func() {
 			u, e := agent.Run(iterCtx, provider, tuiDisp, &conversation, cfg)
 			resultCh <- agentResult{usage: u, err: e}

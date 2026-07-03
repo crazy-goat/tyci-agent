@@ -28,6 +28,13 @@ type Config struct {
 	Session        *session.Session // optional session logging / resume
 	ProviderName   string           // provider name for session metadata
 	FallbackModels []string         // full "provider/model" strings for fallback
+
+	// NextMessages is called by the agent loop after each runOnce to drain
+	// any user messages queued while a request was in flight (issue #88).
+	// The callback returns the messages in FIFO order. If it returns a
+	// non-empty slice while the agent would otherwise return (no more
+	// tool calls), the agent runs one additional iteration to deliver them.
+	NextMessages func() []string
 }
 
 // Run executes the agent loop. It will make at most MaxRetries retries on
@@ -144,10 +151,36 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				return totalUsage, lastErr
 			}
 		}
-		if !more {
+		// Issue #88: drain the pending-message queue after EVERY runOnce
+		// (not only when more == false). This is the "next safe point":
+		// the model has just returned, tool results have been appended,
+		// and the next runOnce will call the model again. Draining here
+		// means the model sees the user's queued follow-ups on the very
+		// next call — including in the middle of a tool-call loop —
+		// rather than waiting for the entire turn to finish.
+		drained := false
+		if cfg.NextMessages != nil {
+			if pending := cfg.NextMessages(); len(pending) > 0 {
+				for _, line := range pending {
+					*msgs = append(*msgs, providers.RichMessage{
+						Role:    "user",
+						Content: []providers.ContentBlock{{Type: "text", Text: line}},
+					})
+					if cfg.Session != nil {
+						blocks := []session.ContentBlock{{Type: "text", Text: line}}
+						_ = cfg.Session.WriteMessage("user", blocks, nil)
+					}
+				}
+				drained = true
+			}
+		}
+		if !more && !drained {
 			// runOnce emitted d.Total as part of the Summary block.
 			return totalUsage, nil
 		}
+		// If more == true, loop continues naturally (tool call).
+		// If more == false but drained, loop continues (forced) so the
+		// model sees the queued messages. MaxIterations still applies.
 	}
 
 	if cfg.MaxIterations > 0 {
