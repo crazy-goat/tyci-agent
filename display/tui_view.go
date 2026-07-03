@@ -63,7 +63,7 @@ func (m TuiModel) renderFrame() string {
 			Render("tyci TUI\nType a message, Enter to send\nCtrl+C to quit\nTab/Shift+Tab: switch model\n/model: pick model\nClick tool block to expand/collapse\nDrag to select and copy text\nSet TYCI_TUI_MOUSE=0 for native terminal selection")
 		b.WriteString(msg)
 		b.WriteString("\n")
-		msgHeight--
+		msgHeight -= lipgloss.Height(msg)
 	}
 
 	// Build a flat, cached line list covering only the visible viewport.
