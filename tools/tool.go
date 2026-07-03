@@ -10,10 +10,10 @@ import (
 // This keeps the tools package as a leaf layer with no upward dependencies.
 type SubAgentRunner interface {
 	// RunTask executes a single agent task and returns the result text.
-	RunTask(ctx context.Context, task string, model string, temperature float64) (string, error)
+	RunTask(ctx context.Context, task string, model string) (string, error)
 
 	// RunTaskWithSystem executes a single agent task with a custom system prompt.
-	RunTaskWithSystem(ctx context.Context, task string, model string, temperature float64, system string) (string, error)
+	RunTaskWithSystem(ctx context.Context, task string, model string, system string) (string, error)
 }
 
 type ToolResult struct {
@@ -38,12 +38,13 @@ func GetToolsSchema() []map[string]any {
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"pattern":     map[string]any{"description": "Glob pattern or array, e.g. **/*.ts or src/**/*.{ts,tsx}"},
-						"cwd":         map[string]any{"type": "string", "description": "Base directory (default: .)"},
-						"exclude":     map[string]any{"description": "Glob pattern or array to exclude"},
-						"limit":       map[string]any{"type": "integer", "description": "Max paths (default: 500)"},
-						"includeDirs": map[string]any{"type": "boolean", "description": "Include directories (default: false)"},
-						"absolute":    map[string]any{"type": "boolean", "description": "Return absolute paths (default: false)"},
+						"pattern":          map[string]any{"description": "Glob pattern or array, e.g. **/*.ts or src/**/*.{ts,tsx}"},
+						"cwd":              map[string]any{"type": "string", "description": "Base directory (default: .)"},
+						"exclude":          map[string]any{"description": "Glob pattern or array to exclude"},
+						"respectGitignore": map[string]any{"type": "boolean", "description": "Skip paths matched by .gitignore/.aiignore (default: true). Set false to include ignored files."},
+						"limit":            map[string]any{"type": "integer", "description": "Max paths (default: 500)"},
+						"includeDirs":      map[string]any{"type": "boolean", "description": "Include directories (default: false)"},
+						"absolute":         map[string]any{"type": "boolean", "description": "Return absolute paths (default: false)"},
 					},
 					"required": []string{"pattern"},
 				},
@@ -57,16 +58,17 @@ func GetToolsSchema() []map[string]any {
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"pattern":       map[string]any{"type": "string", "description": "Text or regex to search for"},
-						"cwd":           map[string]any{"type": "string", "description": "Base directory (default: .)"},
-						"include":       map[string]any{"description": "Glob pattern or array to include (default: **/*)"},
-						"exclude":       map[string]any{"description": "Glob pattern or array to exclude"},
-						"mode":          map[string]any{"type": "string", "enum": []string{"text", "regex", "word"}, "description": "Search mode (default: text)"},
-						"caseSensitive": map[string]any{"type": "boolean", "description": "Case-sensitive search (default: true)"},
-						"context":       map[string]any{"type": "integer", "description": "Lines before/after each match (default: 0)"},
-						"limit":         map[string]any{"type": "integer", "description": "Max results (default: 100)"},
-						"output":        map[string]any{"type": "string", "enum": []string{"lines", "files", "count"}, "description": "Output format (default: lines)"},
-						"maxLineLength": map[string]any{"type": "integer", "description": "Trim long lines (default: 300)"},
+						"pattern":          map[string]any{"type": "string", "description": "Text or regex to search for"},
+						"cwd":              map[string]any{"type": "string", "description": "Base directory (default: .)"},
+						"include":          map[string]any{"description": "Glob pattern or array to include (default: **/*)"},
+						"exclude":          map[string]any{"description": "Glob pattern or array to exclude"},
+						"respectGitignore": map[string]any{"type": "boolean", "description": "Skip paths matched by .gitignore/.aiignore (default: true). Set false to search ignored files."},
+						"mode":             map[string]any{"type": "string", "enum": []string{"text", "regex", "word"}, "description": "Search mode (default: text)"},
+						"caseSensitive":    map[string]any{"type": "boolean", "description": "Case-sensitive search (default: true)"},
+						"context":          map[string]any{"type": "integer", "description": "Lines before/after each match (default: 0)"},
+						"limit":            map[string]any{"type": "integer", "description": "Max results (default: 100)"},
+						"output":           map[string]any{"type": "string", "enum": []string{"lines", "files", "count"}, "description": "Output format (default: lines)"},
+						"maxLineLength":    map[string]any{"type": "integer", "description": "Trim long lines (default: 300)"},
 					},
 					"required": []string{"pattern"},
 				},
@@ -95,7 +97,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "read",
-				"description": "Read file contents. Use offset/limit for ranges. Set lineNumbers=true when you need exact line numbers for edits.",
+				"description": "Read file contents. Use offset/limit for ranges. Set lineNumbers=true when you need exact line numbers for edits. Code files return their outline (symbol map: types, functions, methods, constants, fields) by default to save tokens — use symbol=NAME to pull one definition, offset/limit for a range, or full=true for the whole file. When exploring unfamiliar code, this outline-first flow is far more token-efficient than reading top-to-bottom.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -103,8 +105,26 @@ func GetToolsSchema() []map[string]any {
 						"offset":      map[string]any{"type": "integer", "description": "Start line, 1-indexed"},
 						"limit":       map[string]any{"type": "integer", "description": "Maximum lines to read"},
 						"lineNumbers": map[string]any{"type": "boolean", "description": "Prefix lines as N| text (default: false)"},
+						"outline":     map[string]any{"type": "boolean", "description": "Return only the symbol map (definitions + line numbers) instead of full contents. Use this first when exploring a large or unfamiliar code file to survey it cheaply; falls back to a normal read for non-code files."},
+						"symbol":      map[string]any{"type": "string", "description": "Return the exact source body of the named definition (function/class/method/type). Use after outline to read one symbol precisely instead of guessing line ranges."},
+						"full":        map[string]any{"type": "boolean", "description": "Force reading the entire file. Code files return an outline by default; set full=true to override and get all contents."},
 					},
 					"required": []string{"path"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "usages",
+				"description": "Find in-file references to a symbol using the AST. When exploring how a function/type/variable is used within a file, prefer this over grep: it excludes matches inside comments and string literals and marks which occurrence is the DEFINITION, so you get real call sites without noise. Single-file scope; for cross-file search use grep.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string", "description": "File path to search"},
+						"name": map[string]any{"type": "string", "description": "Symbol name to find references to"},
+					},
+					"required": []string{"path", "name"},
 				},
 			},
 		},
@@ -162,20 +182,18 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "subagent",
-				"description": "Delegate complex or independent tasks to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description. The child agent has access to read/write/edit/bash tools. Runs until completion (no timeout). For single task use 'task' (string). For parallel execution use 'tasks' (array).",
+				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has read/grep/glob/usages/write/edit/bash/todo tools (it cannot spawn further subagents) and a bounded tool-call budget, so keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array).",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"task": map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/edit/bash tools."},
+						"task":  map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/edit/bash tools."},
 						"agent": map[string]any{"type": "string", "description": "Named agent to use (looks up ~/.tyci/agents/<name>.md for system prompt and config)"},
 						"tasks": map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
-							"task":        map[string]any{"type": "string", "description": "Clear task description for this parallel subtask. The child agent has read/write/edit/bash tools."},
-							"agent":       map[string]any{"type": "string", "description": "Named agent to use"},
-							"model":       map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
-							"temperature": map[string]any{"type": "number", "description": "Optional temperature (0.0-2.0)"},
+							"task":  map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has read/grep/glob/usages/write/edit/bash/todo tools."},
+							"agent": map[string]any{"type": "string", "description": "Named agent to use"},
+							"model": map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
 						}, "required": []string{"task"}}},
-						"model":       map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
-						"temperature": map[string]any{"type": "number", "description": "Optional temperature (0.0-2.0, default: 0.7)"},
+						"model": map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
 					},
 				},
 			},
@@ -260,14 +278,15 @@ func GetSubagentToolsSchemaJSON() json.RawMessage {
 }
 
 var toolRegistry = map[string]Tool{
-	"bash":       &BashTool{},
-	"glob":       &GlobTool{},
-	"grep":       &GrepTool{},
-	"todo":       &TodoTool{},
-	"read":       &ReadTool{},
-	"write":      &WriteTool{},
-	"edit":       &EditTool{},
-	"load_skill": &LoadSkillTool{},
+	"bash":        &BashTool{},
+	"glob":        &GlobTool{},
+	"grep":        &GrepTool{},
+	"todo":        &TodoTool{},
+	"read":        &ReadTool{},
+	"usages":      &UsagesTool{},
+	"write":       &WriteTool{},
+	"edit":        &EditTool{},
+	"load_skill":  &LoadSkillTool{},
 	"list_skills": &ListSkillsTool{},
 }
 

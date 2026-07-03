@@ -15,6 +15,11 @@ import (
 func finishPromptRun(disp display.Display, sess *session.Session, sessionPath string, usage stream.Usage, err error) {
 	status := "ok"
 	exitCode := 0
+	if err != nil && errors.Is(err, agent.ErrMaxIterations) {
+		// Iteration-cap stop: warning already shown by agent.Run. Finish
+		// normally (exit 0) rather than reporting it as a hard error.
+		err = nil
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			disp.End()

@@ -135,13 +135,35 @@ func formatTodosLocked() string {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		if item.ParentID > 0 {
-			fmt.Fprintf(&b, "%d. [%s] %s parent:%d %s", item.ID, item.Status, item.Priority, item.ParentID, item.Content)
-		} else {
-			fmt.Fprintf(&b, "%d. [%s] %s %s", item.ID, item.Status, item.Priority, item.Content)
-		}
+		b.WriteString(formatTodoLine(item))
 	}
 	return b.String()
+}
+
+func formatTodoLine(item todoItem) string {
+	if item.ParentID > 0 {
+		return fmt.Sprintf("%d. [%s] %s parent:%d %s", item.ID, item.Status, item.Priority, item.ParentID, item.Content)
+	}
+	return fmt.Sprintf("%d. [%s] %s %s", item.ID, item.Status, item.Priority, item.Content)
+}
+
+// PendingTodos returns formatted lines for todo items that are still open,
+// i.e. status "todo" or "doing". Items that are "done" or "blocked" are
+// excluded ("blocked" is treated as a deliberate, resolved state). The agent
+// loop uses this to remind itself before finishing a turn that left work open.
+func PendingTodos() []string {
+	todoState.Lock()
+	defer todoState.Unlock()
+	items := append([]todoItem(nil), todoState.items...)
+	sort.SliceStable(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+	var out []string
+	for _, item := range items {
+		if item.Status != "todo" && item.Status != "doing" {
+			continue
+		}
+		out = append(out, formatTodoLine(item))
+	}
+	return out
 }
 
 func validStatus(s string) bool {

@@ -42,6 +42,9 @@ func (t *GlobTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
 
+	ig := newIgnoreMatcherFromInput(input)
+	hidden := 0
+
 	var results []string
 	truncated := false
 	err = filepath.WalkDir(cwdAbs, func(path string, d os.DirEntry, err error) error {
@@ -49,6 +52,9 @@ func (t *GlobTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			return nil
 		}
 		if path == cwdAbs {
+			if ig != nil {
+				ig.loadDir(cwdAbs, "")
+			}
 			return nil
 		}
 		rel, err := filepath.Rel(cwdAbs, path)
@@ -62,6 +68,20 @@ func (t *GlobTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		}
 		if matchesAny(excludeMatchers, rel) {
 			return nil
+		}
+		if ig != nil {
+			if ig.Ignored(rel, d.IsDir()) {
+				if d.IsDir() || matchesAny(matchers, rel) {
+					hidden++
+				}
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() {
+				ig.loadDir(path, rel)
+			}
 		}
 		if d.IsDir() && !includeDirs {
 			return nil
@@ -92,6 +112,7 @@ func (t *GlobTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	if truncated {
 		fmt.Fprintf(&b, " (limit %d reached)", limit)
 	}
+	b.WriteString(ignoreNote(hidden))
 	b.WriteString(":")
 	for _, p := range results {
 		b.WriteByte('\n')

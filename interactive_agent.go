@@ -41,9 +41,13 @@ func (s *interactiveState) runAgentIteration(iterCtx context.Context, iterCancel
 			fmt.Fprint(os.Stdout, "\n")
 			return false
 		}
-		s.display.End()
-		fmt.Fprintf(os.Stdout, "Error: %v\n", err)
-		return false
+		// The iteration-cap warning is already shown by agent.Run; treat it as
+		// a graceful stop rather than surfacing it as an error to the user.
+		if !errors.Is(err, agent.ErrMaxIterations) {
+			s.display.End()
+			fmt.Fprintf(os.Stdout, "Error: %v\n", err)
+			return false
+		}
 	}
 	s.display.End()
 	fmt.Fprint(os.Stdout, "\n")

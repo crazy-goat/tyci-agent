@@ -70,3 +70,104 @@ func mustMkdir(t testing.TB, path string) {
 		t.Fatal(err)
 	}
 }
+
+func TestGlobTool_GitignoreFiltering(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".gitignore"), "secret.txt\nbuild/\n")
+	writeFile(t, filepath.Join(dir, ".aiignore"), "*.ai.txt\n")
+	writeFile(t, filepath.Join(dir, "keep.txt"), "")
+	writeFile(t, filepath.Join(dir, "secret.txt"), "")
+	writeFile(t, filepath.Join(dir, "notes.ai.txt"), "")
+	mustMkdir(t, filepath.Join(dir, "build"))
+	writeFile(t, filepath.Join(dir, "build", "out.txt"), "")
+
+	res := (&GlobTool{}).Run(context.Background(), map[string]any{"cwd": dir, "pattern": "**/*.txt"})
+	if !res.Success {
+		t.Fatalf("glob failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "keep.txt") {
+		t.Fatalf("expected keep.txt present, got: %s", res.Content)
+	}
+	for _, hidden := range []string{"secret.txt", "notes.ai.txt", "build/out.txt"} {
+		if strings.Contains(res.Content, hidden) {
+			t.Fatalf("expected %s ignored, got: %s", hidden, res.Content)
+		}
+	}
+	if !strings.Contains(res.Content, "hidden by .gitignore/.aiignore") {
+		t.Fatalf("expected filtered-count note, got: %s", res.Content)
+	}
+
+	// Opt out: ignored files reappear and the note is gone.
+	res = (&GlobTool{}).Run(context.Background(), map[string]any{"cwd": dir, "pattern": "**/*.txt", "respectGitignore": false})
+	if !res.Success {
+		t.Fatalf("glob (opt-out) failed: %s", res.Error)
+	}
+	// build/ stays hidden — it is a builtin exclude, not just gitignore.
+	if !strings.Contains(res.Content, "secret.txt") || !strings.Contains(res.Content, "notes.ai.txt") {
+		t.Fatalf("expected ignored files with opt-out, got: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "hidden by") {
+		t.Fatalf("did not expect note with opt-out, got: %s", res.Content)
+	}
+}
+
+func TestGrepTool_GitignoreFiltering(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".gitignore"), "ignored.txt\n")
+	writeFile(t, filepath.Join(dir, "kept.txt"), "hit\n")
+	writeFile(t, filepath.Join(dir, "ignored.txt"), "hit\n")
+
+	res := (&GrepTool{}).Run(context.Background(), map[string]any{"cwd": dir, "pattern": "hit"})
+	if !res.Success {
+		t.Fatalf("grep failed: %s", res.Error)
+	}
+	if strings.Contains(res.Content, "ignored.txt") {
+		t.Fatalf("expected ignored.txt skipped, got: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "kept.txt") || !strings.Contains(res.Content, "hidden by") {
+		t.Fatalf("expected kept.txt and note, got: %s", res.Content)
+	}
+
+	res = (&GrepTool{}).Run(context.Background(), map[string]any{"cwd": dir, "pattern": "hit", "respectGitignore": false})
+	if !res.Success {
+		t.Fatalf("grep (opt-out) failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "ignored.txt") {
+		t.Fatalf("expected ignored.txt searched with opt-out, got: %s", res.Content)
+	}
+}
+
+func TestGitignoreNegationAndNested(t *testing.T) {
+	dir := t.TempDir()
+	// Root ignores all logs but re-includes keep.log.
+	writeFile(t, filepath.Join(dir, ".gitignore"), "*.log\n!keep.log\n")
+	writeFile(t, filepath.Join(dir, "drop.log"), "")
+	writeFile(t, filepath.Join(dir, "keep.log"), "")
+	// Nested ignore applies only to its subtree.
+	mustMkdir(t, filepath.Join(dir, "sub"))
+	writeFile(t, filepath.Join(dir, "sub", ".gitignore"), "local.txt\n")
+	writeFile(t, filepath.Join(dir, "sub", "local.txt"), "")
+	writeFile(t, filepath.Join(dir, "sub", "shared.txt"), "")
+	writeFile(t, filepath.Join(dir, "top.txt"), "")
+
+	res := (&GlobTool{}).Run(context.Background(), map[string]any{"cwd": dir, "pattern": "**/*"})
+	if !res.Success {
+		t.Fatalf("glob failed: %s", res.Error)
+	}
+	for _, want := range []string{"keep.log", "top.txt", "sub/shared.txt"} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("expected %s present, got: %s", want, res.Content)
+		}
+	}
+	for _, notWant := range []string{"drop.log", "sub/local.txt"} {
+		if strings.Contains(res.Content, notWant) {
+			t.Fatalf("expected %s ignored, got: %s", notWant, res.Content)
+		}
+	}
+	// Nested ignore must not leak to the root: a root local.txt survives.
+	writeFile(t, filepath.Join(dir, "local.txt"), "")
+	res = (&GlobTool{}).Run(context.Background(), map[string]any{"cwd": dir, "pattern": "local.txt"})
+	if !res.Success || !strings.Contains(res.Content, "local.txt") {
+		t.Fatalf("expected root local.txt present, got: %s", res.Content)
+	}
+}

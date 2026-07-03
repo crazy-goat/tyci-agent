@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,6 +17,12 @@ import (
 	"github.com/decodo/tyci/stream"
 )
 
+// subagentTimeoutSec is a per-subagent wall-clock backstop. The iteration cap
+// bounds model turns, but a single wedged tool call (e.g. a hung shell command)
+// could otherwise block the parent's tool call forever; this ensures the parent
+// always gets an answer.
+const subagentTimeoutSec = 600
+
 type SubagentTool struct {
 	Runner SubAgentRunner
 }
@@ -24,10 +31,9 @@ func (t *SubagentTool) Name() string { return "subagent" }
 
 // subagentTask represents a single task for a subagent.
 type subagentTask struct {
-	Task        string   `json:"task"`
-	Agent       string   `json:"agent,omitempty"`
-	Model       string   `json:"model,omitempty"`
-	Temperature *float64 `json:"temperature,omitempty"`
+	Task  string `json:"task"`
+	Agent string `json:"agent,omitempty"`
+	Model string `json:"model,omitempty"`
 }
 
 // subagentResult holds the outcome of one subagent execution.
@@ -54,7 +60,7 @@ type collector struct {
 
 func newCollector() *collector { return &collector{} }
 
-func (c *collector) Request(content string)           {}
+func (c *collector) Request(content string) {}
 func (c *collector) Thinking(text string) {
 	c.mu.Lock()
 	c.thinking.WriteString(text)
@@ -202,8 +208,8 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		return ToolResult{Type: "result", Success: false, Error: "no tasks provided"}
 	}
 
-	// Run tasks concurrently (no timeout – runs until completion)
-	results := runTasks(ctx, t.Runner, tasks, 0)
+	// Run tasks concurrently, each bounded by subagentTimeoutSec.
+	results := runTasks(ctx, t.Runner, tasks, subagentTimeoutSec)
 
 	// Single task → return plain text (backward compatible)
 	if len(results) == 1 {
@@ -266,12 +272,6 @@ func parseTasks(input map[string]any, defaultModel string) ([]subagentTask, erro
 	if m, ok := input["model"].(string); ok && m != "" {
 		t.Model = m
 	}
-	if temp, ok := input["temperature"]; ok {
-		switch v := temp.(type) {
-		case float64:
-			t.Temperature = &v
-		}
-	}
 	return []subagentTask{t}, nil
 }
 
@@ -286,12 +286,6 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 	}
 	if model, ok := m["model"].(string); ok && model != "" {
 		t.Model = model
-	}
-	if temp, ok := m["temperature"]; ok {
-		switch v := temp.(type) {
-		case float64:
-			t.Temperature = &v
-		}
 	}
 	return t, nil
 }
@@ -366,11 +360,6 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		mName = providers.ModelFromContext(ctx)
 	}
 
-	temperature := 0.7
-	if task.Temperature != nil {
-		temperature = *task.Temperature
-	}
-
 	// Get tool index for streaming (passed by agent.executeTools)
 	toolIdx := 0
 	if idx, ok := ctx.Value(stream.ToolIdxCtxKey{}).(int); ok {
@@ -386,12 +375,12 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		// Look up markdown agent for system prompt
 		sysPrompt := getAgentSystemPrompt(task.Agent)
 		if sysPrompt != "" {
-			content, err = runner.RunTaskWithSystem(runCtx, task.Task, mName, temperature, sysPrompt)
+			content, err = runner.RunTaskWithSystem(runCtx, task.Task, mName, sysPrompt)
 		} else {
-			content, err = runner.RunTask(runCtx, task.Task, mName, temperature)
+			content, err = runner.RunTask(runCtx, task.Task, mName)
 		}
 	} else {
-		content, err = runner.RunTask(runCtx, task.Task, mName, temperature)
+		content, err = runner.RunTask(runCtx, task.Task, mName)
 	}
 
 	// Flush any remaining partial line
@@ -404,7 +393,14 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 
 	if err != nil {
 		res.Success = false
-		res.Error = err.Error()
+		// A hit timeout surfaces as a bare "context deadline exceeded"; make it
+		// actionable so the parent understands the child was cut off, not that
+		// its task was malformed.
+		if timeoutSec > 0 && errors.Is(err, context.DeadlineExceeded) {
+			res.Error = fmt.Sprintf("subagent exceeded its %ds time limit and was stopped; narrow the task or split it", timeoutSec)
+		} else {
+			res.Error = err.Error()
+		}
 	} else {
 		res.Success = true
 	}

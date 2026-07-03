@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -47,39 +48,26 @@ func resolveProviderModel(ctx context.Context, model string) (providers.Provider
 	return prov, mName, nil
 }
 
-func (r *agentRunner) RunTask(ctx context.Context, task string, model string, temperature float64) (string, error) {
-	prov, mName, err := resolveProviderModel(ctx, model)
-	if err != nil {
-		return "", err
-	}
+// subagentMaxIterations bounds a single subagent's tool-call turns. Hitting it
+// is surfaced to the parent (see run) rather than silently returning a partial
+// result, so the parent can tell the child ran out of budget.
+const subagentMaxIterations = 10
 
-	// Create collector to capture output
-	c := &collector{}
-	msgs := []providers.RichMessage{
-		{
-			Role:    "user",
-			Content: []providers.ContentBlock{{Type: "text", Text: task}},
-		},
-	}
-
-	cfg := agent.Config{
-		Model:         mName,
-		System:        providers.BuildSystemPrompt(),
-		MaxRetries:    1,
-		MaxIterations: 10,
-		Debug:         false,
-		Tools:         &subagentToolRunner{},
-		Schema:        tools.GetSubagentToolsSchemaJSON(),
-	}
-
-	_, err = agent.Run(ctx, prov, c, &msgs, cfg)
-	if err != nil {
-		return "", err
-	}
-	return c.text.String(), nil
+// RunTask runs a plain subagent (no named agent) with the dedicated subagent
+// system prompt.
+func (r *agentRunner) RunTask(ctx context.Context, task string, model string) (string, error) {
+	return r.run(ctx, task, model, providers.BuildSubagentSystemPrompt())
 }
 
-func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model string, temperature float64, system string) (string, error) {
+// RunTaskWithSystem runs a subagent with a named agent's custom system prompt.
+func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model string, system string) (string, error) {
+	return r.run(ctx, task, model, system)
+}
+
+// run executes one subagent turn and normalizes the outcome into a result the
+// parent can act on: a clear error when the child hit its iteration limit or
+// produced no text at all, instead of a "successful" empty/truncated result.
+func (r *agentRunner) run(ctx context.Context, task, model, system string) (string, error) {
 	prov, mName, err := resolveProviderModel(ctx, model)
 	if err != nil {
 		return "", err
@@ -98,17 +86,28 @@ func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model 
 		Model:         mName,
 		System:        system,
 		MaxRetries:    1,
-		MaxIterations: 10,
+		MaxIterations: subagentMaxIterations,
 		Debug:         false,
 		Tools:         &subagentToolRunner{},
 		Schema:        tools.GetSubagentToolsSchemaJSON(),
 	}
 
 	_, err = agent.Run(ctx, prov, c, &msgs, cfg)
+	text := strings.TrimSpace(c.text.String())
+
+	if errors.Is(err, agent.ErrMaxIterations) {
+		if text == "" {
+			return "", fmt.Errorf("subagent hit its %d-iteration limit without producing a final answer (likely stuck in a tool-call loop); narrow the task or split it into smaller subagent calls", subagentMaxIterations)
+		}
+		return text + fmt.Sprintf("\n\n[note: subagent stopped at its %d-iteration limit; the result above may be incomplete]", subagentMaxIterations), nil
+	}
 	if err != nil {
 		return "", err
 	}
-	return c.text.String(), nil
+	if text == "" {
+		return "", fmt.Errorf("subagent finished without producing any text output")
+	}
+	return text, nil
 }
 
 // subagentToolRunner wraps the global tool registry so subagents can use tools.

@@ -15,6 +15,23 @@ import (
 )
 
 func BuildSystemPrompt() string {
+	return buildSystemPrompt(true, "")
+}
+
+// BuildSubagentSystemPrompt is the system prompt for a headless child agent
+// spawned via the subagent tool. It drops the subagent tool from the listing
+// (children cannot spawn further children) and states the subagent contract:
+// work autonomously, never ask questions, and end the turn with a single
+// self-contained final message that IS the result the parent receives.
+func BuildSubagentSystemPrompt() string {
+	return buildSystemPrompt(false, `
+You are a SUBAGENT spawned by a parent agent to complete ONE task and report back.
+- You cannot ask questions — there is no user to reply. Make reasonable assumptions and proceed.
+- Do the whole task, then END YOUR TURN with a single self-contained final message that IS your result (the findings/answer/summary the parent needs). The parent sees only your final text, not your tool calls or thinking.
+- Do not stop early and do not loop. If you get blocked, state in your final message what you did and exactly what is blocking you.`)
+}
+
+func buildSystemPrompt(includeSubagent bool, roleNote string) string {
 	wd, _ := os.Getwd()
 	if wd == "" {
 		wd = "."
@@ -28,7 +45,15 @@ func BuildSystemPrompt() string {
 		tempDir = "%TEMP%"
 	}
 
-	prompt := fmt.Sprintf(`You coding agent. Non-interactive. No ask question. Just do.
+	// The subagent tool is only advertised to the top-level agent; children run
+	// with a schema that omits it, so listing it here would tempt them to call
+	// a tool that does not exist.
+	subagentLine := ""
+	if includeSubagent {
+		subagentLine = "\n- subagent(task, tasks?, model?): delegate independent work to child agents."
+	}
+
+	prompt := fmt.Sprintf(`You coding agent. Non-interactive. No ask question. Just do.%s
 
 Context:
 - Date: %s
@@ -41,14 +66,14 @@ Tools available:
 - glob(pattern, cwd?, exclude?, limit?, includeDirs?, absolute?): find files by glob. Returns relative paths by default.
 - grep(pattern, cwd?, include?, exclude?, mode?, caseSensitive?, context?, limit?, output?, maxLineLength?): search contents. mode: text/regex/word. output: lines/files/count.
 - todo(action, id?, content?, status?, priority?, parentId?): manage per-run todo list. actions: add/update/doing/blocked/done/remove/list/clear.
-- read(path, offset?, limit?, lineNumbers?): read file contents. Use lineNumbers=true for exact line edits.
+- read(path, offset?, limit?, lineNumbers?, outline?, symbol?, full?): read file contents. Code files return an outline by default; use symbol=NAME or full=true for bodies.
+- usages(path, name): find in-file references to a symbol via the AST (excludes comments/strings).
 - write(path, content, range?): write file. range: line number, 'from...to', 'before:N', 'after:N', 'all', or -1/'append'. Defaults to whole file.
 - edit(path, oldString, newString, occurrence?, dryRun?): replace exact text. Default requires one match; occurrence can be number or 'all'.
-- bash(description, command, timeout?): run shell command when no tool fits.
-- subagent(task, tasks?, model?, temperature?): delegate independent work to child agents.
+- bash(description, command, timeout?): run shell command when no tool fits.%s
 
 Be terse. No fluff. Short sentence. Get job done.
-`, date, wd, osName, tempDir)
+`, roleNote, date, wd, osName, tempDir, subagentLine)
 
 	// Append AGENTS.md from CWD if present
 	if agentsMd, err := os.ReadFile(filepath.Join(wd, "AGENTS.md")); err == nil {

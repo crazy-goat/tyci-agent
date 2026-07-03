@@ -58,6 +58,9 @@ func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
 
+	ig := newIgnoreMatcherFromInput(input)
+	hidden := 0
+
 	counts := map[string]int{}
 	filesSet := map[string]bool{}
 	var blocks []grepBlock
@@ -69,6 +72,9 @@ func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			return nil
 		}
 		if path == cwdAbs {
+			if ig != nil {
+				ig.loadDir(cwdAbs, "")
+			}
 			return nil
 		}
 		rel, err := filepath.Rel(cwdAbs, path)
@@ -78,6 +84,20 @@ func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() && matchesAny(excludeMatchers, rel) {
 			return filepath.SkipDir
+		}
+		if ig != nil {
+			if ig.Ignored(rel, d.IsDir()) {
+				if d.IsDir() || matchesAny(includeMatchers, rel) {
+					hidden++
+				}
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() {
+				ig.loadDir(path, rel)
+			}
 		}
 		if d.IsDir() {
 			return nil
@@ -120,6 +140,7 @@ func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		if truncated || len(files) > shown {
 			fmt.Fprintf(&b, " (showing %d)", shown)
 		}
+		b.WriteString(ignoreNote(hidden))
 		b.WriteString(":")
 		for _, f := range files[:shown] {
 			b.WriteByte('\n')
@@ -132,6 +153,7 @@ func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		if truncated || len(files) > shown {
 			fmt.Fprintf(&b, " (showing %d)", shown)
 		}
+		b.WriteString(ignoreNote(hidden))
 		b.WriteString(":")
 		for _, f := range files[:shown] {
 			fmt.Fprintf(&b, "\n%s: %d", f, counts[f])
@@ -143,6 +165,7 @@ func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		if truncated {
 			fmt.Fprintf(&b, " (limit %d reached)", limit)
 		}
+		b.WriteString(ignoreNote(hidden))
 		b.WriteString(":")
 		for _, block := range blocks {
 			if contextLines > 0 {

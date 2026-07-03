@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/decodo/tyci/api"
 	"github.com/decodo/tyci/display"
@@ -35,7 +36,29 @@ type Config struct {
 	// non-empty slice while the agent would otherwise return (no more
 	// tool calls), the agent runs one additional iteration to deliver them.
 	NextMessages func() []string
+
+	// PendingTodos, if set, is called when the agent would otherwise finish
+	// the turn (the model produced no tool calls and no user messages are
+	// queued). It returns the formatted lines of still-open todo items
+	// (status todo/doing). When non-empty, the agent injects a system
+	// reminder — framed as coming from the harness, not the user — asking
+	// the model to either finish those tasks or explicitly resolve them
+	// (done/blocked), then runs one more iteration. This happens at most
+	// maxTodoReminders times per turn to avoid nagging in a loop.
+	PendingTodos func() []string
 }
+
+// maxTodoReminders bounds how many times, within a single turn, the agent
+// will nudge itself about unfinished todos before giving up and returning.
+const maxTodoReminders = 2
+
+// ErrMaxIterations is returned by Run when the loop reaches MaxIterations
+// without the model finishing its turn. Top-level callers treat it as a
+// graceful stop (the warning is already shown via the display), but the
+// subagent runner surfaces it so the parent agent learns the child ran out
+// of budget — likely stuck in a tool-call loop — instead of silently
+// receiving an empty or truncated "successful" result.
+var ErrMaxIterations = errors.New("agent reached max tool-call iterations without finishing")
 
 // Run executes the agent loop. It will make at most MaxRetries retries on
 // transient errors, and at most MaxIterations tool-call iterations.
@@ -49,6 +72,9 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 	}
 
 	var totalUsage stream.Usage
+
+	// Tracks how many todo reminders we've injected this turn (see maxTodoReminders).
+	todoReminders := 0
 
 	// Track fallback state across iterations
 	fs := fallbackState{
@@ -174,7 +200,31 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				drained = true
 			}
 		}
+		// A real user follow-up starts a fresh sub-task; reset the reminder
+		// budget so we're willing to nag again about whatever it leaves open.
+		if drained {
+			todoReminders = 0
+		}
 		if !more && !drained {
+			// The model thinks it's done. Before returning, check whether it
+			// left todos open and, if so, nudge it once more (up to
+			// maxTodoReminders) with a harness-authored reminder — not a user
+			// message — asking it to finish or explicitly resolve them.
+			if cfg.PendingTodos != nil && todoReminders < maxTodoReminders {
+				if pending := cfg.PendingTodos(); len(pending) > 0 {
+					todoReminders++
+					reminder := buildTodoReminder(pending)
+					*msgs = append(*msgs, providers.RichMessage{
+						Role:    "user",
+						Content: []providers.ContentBlock{{Type: "text", Text: reminder}},
+					})
+					if cfg.Session != nil {
+						blocks := []session.ContentBlock{{Type: "text", Text: reminder}}
+						_ = cfg.Session.WriteMessage("user", blocks, nil)
+					}
+					continue
+				}
+			}
 			// runOnce emitted d.Total as part of the Summary block.
 			return totalUsage, nil
 		}
@@ -185,8 +235,32 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 
 	if cfg.MaxIterations > 0 {
 		d.Text(fmt.Sprintf("\n⚠️ Agent executed %d tool-call iterations – possible infinite loop. Stopping.\n", cfg.MaxIterations))
+		return totalUsage, ErrMaxIterations
 	}
 	return totalUsage, nil
+}
+
+// buildTodoReminder produces the harness-authored reminder injected when the
+// agent tries to finish with open todos. It is deliberately framed as an
+// automated system check (not a user message) and asks the model to either do
+// the remaining work or explicitly resolve each item (done/blocked) — it must
+// never leave items in todo/doing without explanation, and must not mark work
+// done that it did not actually complete.
+func buildTodoReminder(pending []string) string {
+	var b strings.Builder
+	b.WriteString("<system-reminder>\n")
+	b.WriteString("You indicated you are finished, but the following todo items are still open (status todo/doing):\n\n")
+	for _, line := range pending {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	b.WriteString("\nThis is an automated check from the harness, not a message from the user. ")
+	b.WriteString("Are you sure you're done? If these tasks still need doing, complete them now. ")
+	b.WriteString("If a task is no longer relevant or cannot be done, set its status explicitly ")
+	b.WriteString("(done, or blocked with a brief reason) via the todo tool. Do not leave items in ")
+	b.WriteString("todo/doing without explanation, and do not mark anything done that you did not actually complete.\n")
+	b.WriteString("</system-reminder>")
+	return b.String()
 }
 
 // withModel returns a copy of Config with the given model name.
