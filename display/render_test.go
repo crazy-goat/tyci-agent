@@ -593,8 +593,8 @@ func TestMinimal_Summary_TimeAlignmentWithOtherLines(t *testing.T) {
 // with re-renders.
 func newTestMinimal(width int) *Minimal {
 	return &Minimal{
-		terminalWidth: width,
-		blockStart:    time.Now(),
-		done:          make(chan struct{}),
+		testWidth:  width,
+		blockStart: time.Now(),
+		done:       make(chan struct{}),
 	}
 }

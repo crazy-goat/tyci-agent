@@ -91,9 +91,11 @@ func (m *TuiModel) clampScroll() {
 	}
 }
 
-// visibleLines returns the number of terminal lines available for message display.
+// visibleLines returns the number of terminal rows available for messages.
+// The frame lays out as: msgHeight message rows + 1 status row + m.input.Height()
+// input rows = m.height total, so msgHeight = m.height - 1 - m.input.Height().
 func (m TuiModel) visibleLines() int {
-	return max(1, m.height-m.input.Height()-2)
+	return max(1, m.height-m.input.Height()-1)
 }
 
 func (m *TuiModel) blockAtVisibleLine(visY int) int {

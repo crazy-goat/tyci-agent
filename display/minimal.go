@@ -30,8 +30,7 @@ const (
 )
 
 type Minimal struct {
-	mu            sync.Mutex
-	terminalWidth int
+	mu sync.Mutex
 
 	curPrefix  string
 	curContent strings.Builder
@@ -50,13 +49,16 @@ type Minimal struct {
 
 	// done signals the background ticker to exit. Closed by End().
 	done chan struct{}
+
+	// testWidth, when > 0, overrides the dynamic terminal width query.
+	// Used by tests to simulate narrow/wide terminals.
+	testWidth int
 }
 
 func NewMinimal() *Minimal {
 	m := &Minimal{
-		terminalWidth: getTerminalWidth(),
-		blockStart:    time.Now(),
-		done:          make(chan struct{}),
+		blockStart: time.Now(),
+		done:       make(chan struct{}),
 	}
 	go m.runTicker()
 	return m
@@ -122,11 +124,26 @@ func formatElapsed(d time.Duration) string {
 }
 
 func (m *Minimal) width() int {
-	w := m.terminalWidth
+	if m.testWidth > 0 {
+		return m.testWidth
+	}
+	w := queryTerminalWidth()
 	if w < 20 {
 		w = 20
 	}
 	return w
+}
+
+// queryTerminalWidth returns the current terminal width by querying the OS.
+// Unlike getTerminalWidth, it skips the COLUMNS env var so resizes are visible.
+func queryTerminalWidth() int {
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		w, _, err := term.GetSize(int(os.Stdout.Fd()))
+		if err == nil && w > 0 {
+			return w
+		}
+	}
+	return 100
 }
 
 // fitLine truncates s to maxW visible characters, appending "..." when cut.

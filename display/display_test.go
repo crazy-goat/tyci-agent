@@ -387,7 +387,7 @@ func TestTerminal_Thinking_LongLine(t *testing.T) {
 
 	// Create a terminal with known width for deterministic test
 	term := NewTerminal()
-	term.termWidth = 20                                    // force narrow width
+	term.testWidth = 20                                    // force narrow width
 	longText := "0123456789012345678901234567890123456789" // 40 chars
 	term.Thinking(longText)
 	sync()
@@ -414,7 +414,7 @@ func TestTerminal_ToolCallStart_LongLine(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 30 // force narrow width
+	term.testWidth = 30 // force narrow width
 	// Description that's long
 	term.ToolCallStart("bash")
 	term.ToolCallDelta(`{"description": "this is a very long description that should wrap to multiple lines", "command": "ls -la"}`)
@@ -436,7 +436,7 @@ func TestTerminal_ToolCallEnd_LongLine(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 20
+	term.testWidth = 20
 	term.ToolCallStart("bash")
 	term.ToolCallDelta(`{"description": "test", "command": "echo hello"}`)
 	term.ToolCallEnd("bash", "0123456789012345678901234567890123456789") // 40 chars
@@ -458,7 +458,7 @@ func TestTerminal_Summary_LongLine(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 30 // narrow width
+	term.testWidth = 30 // narrow width
 	term.Summary(stream.Usage{Input: 12345, Output: 67890, CacheRead: 111, CacheWrite: 222}, stream.Stats{})
 	sync()
 
@@ -478,7 +478,7 @@ func TestTerminal_Thinking_NoWrapForShortLine(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 80
+	term.testWidth = 80
 	term.Thinking("short")
 	sync()
 
@@ -504,7 +504,7 @@ func TestTerminal_Thinking_StreamingChunks(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 20
+	term.testWidth = 20
 
 	// First chunk
 	term.Thinking("first chunk ")
@@ -536,7 +536,7 @@ func TestTerminal_Thinking_StreamingWithNewlines(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 20
+	term.testWidth = 20
 
 	// First chunk ends with newline
 	term.Thinking("first line\n")
@@ -564,7 +564,7 @@ func TestTerminal_Thinking_LongLineInMiddleOfText(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 20
+	term.testWidth = 20
 
 	// Single call with multiple lines, middle line is long
 	term.Thinking("normal line\nthis line is extremely long and should be properly wrapped with background color\nanother normal line")
@@ -594,7 +594,7 @@ func TestTerminal_ToolCallEnd_LongResult(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 20
+	term.testWidth = 20
 
 	term.ToolCallStart("bash")
 	term.ToolCallDelta(`{"description": "test", "command": "echo hello"}`)
@@ -614,7 +614,7 @@ func TestTerminal_ToolCall_StreamingDeltas(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 40
+	term.testWidth = 40
 
 	// Simulate streaming tool call arguments in multiple chunks
 	term.ToolCallStart("bash")
@@ -648,7 +648,7 @@ func TestTerminal_ToolCall_StreamingDeltasWithWrap(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 30
+	term.testWidth = 30
 
 	term.ToolCallStart("bash")
 	term.ToolCallDelta(`{"description": "this is a very long description that should wrap"`)
@@ -671,7 +671,7 @@ func TestTerminal_ToolCall_FullFlow(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 40
+	term.testWidth = 40
 
 	// Full lifecycle: start → delta → delta → end
 	term.ToolCallStart("bash")
@@ -708,7 +708,7 @@ func TestTerminal_ToolCall_ReadHidesResult(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 40
+	term.testWidth = 40
 
 	// For read tool, ToolCallEnd should NOT render the result
 	term.ToolCallStart("read")
@@ -730,7 +730,7 @@ func TestTerminal_ToolCall_SameLine(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 80
+	term.testWidth = 80
 
 	term.ToolCallStart("read")
 	term.ToolCallDelta(`{"path": "main.go"}`)
@@ -764,7 +764,7 @@ func TestTerminal_ToolCall_SameLineMultipleDeltas(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 80
+	term.testWidth = 80
 
 	// Stream deltas that build up the full arguments
 	term.ToolCallStart("bash")
@@ -796,7 +796,7 @@ func TestTerminal_ToolCallDelta_EmptyDoesNothing(t *testing.T) {
 	defer restore()
 
 	term := NewTerminal()
-	term.termWidth = 40
+	term.testWidth = 40
 
 	term.ToolCallStart("bash")
 	term.ToolCallDelta("") // should do nothing

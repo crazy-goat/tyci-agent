@@ -49,13 +49,15 @@ type Terminal struct {
 	curBlock blockKind
 	curBg    string
 
-	termWidth int
 	cursorCol int // current column position on the current terminal line
+
+	// testWidth, when > 0, overrides the dynamic terminal width query.
+	// Used by tests to simulate narrow/wide terminals.
+	testWidth int
 }
 
 func NewTerminal() *Terminal {
 	t := &Terminal{
-		termWidth: getTerminalWidth(),
 		cursorCol: 0,
 	}
 	if TerminalIsDark() {
@@ -68,6 +70,17 @@ func NewTerminal() *Terminal {
 		t.bgUsage = "\033[48;2;230;230;230m"
 	}
 	return t
+}
+
+// width returns the current terminal width by querying the OS. It is called
+// on every render so that terminal resizes are picked up immediately.
+// When testWidth is set (>0) it returns that value instead, allowing tests
+// to simulate a specific terminal width without mocking the OS.
+func (t *Terminal) width() int {
+	if t.testWidth > 0 {
+		return t.testWidth
+	}
+	return queryTerminalWidth()
 }
 
 func (t *Terminal) continueBlock(kind blockKind, bg string) bool {
@@ -113,7 +126,7 @@ func (t *Terminal) Thinking(text string) {
 		startCol = t.cursorCol
 	}
 
-	text = wrapText(text, t.termWidth, startCol)
+	text = wrapText(text, t.width(), startCol)
 	text = strings.ReplaceAll(text, "\n", "\n"+clearLine)
 
 	if isNew {
@@ -179,7 +192,7 @@ func (t *Terminal) ToolCallStart(name string) {
 	t.newBlock(blockTool, t.bgTools)
 
 	out := fmt.Sprintf("🔧 %s ", name)
-	out = wrapText(out, t.termWidth, 0)
+	out = wrapText(out, t.width(), 0)
 	out = strings.ReplaceAll(out, "\n", "\n"+clearLine)
 	fmt.Fprint(os.Stdout, out)
 	t.cursorCol = visibleWidth("🔧 " + name + " ")
@@ -190,7 +203,7 @@ func (t *Terminal) ToolCallDelta(delta string) {
 		return
 	}
 	out := delta
-	out = wrapText(out, t.termWidth, t.cursorCol)
+	out = wrapText(out, t.width(), t.cursorCol)
 	out = strings.ReplaceAll(out, "\n", "\n"+clearLine)
 
 	fmt.Fprint(os.Stdout, out)
@@ -219,7 +232,7 @@ func (t *Terminal) ToolCallEnd(name string, result string) {
 	}
 	// append result to the current tool block
 	out := "\n" + result
-	out = wrapText(out, t.termWidth, 0)
+	out = wrapText(out, t.width(), 0)
 	out = strings.ReplaceAll(out, "\n", "\n"+clearLine)
 	fmt.Fprint(os.Stdout, out)
 
@@ -238,7 +251,7 @@ func (t *Terminal) ToolCallEnd(name string, result string) {
 func (t *Terminal) ToolBlock(msg string) {
 	t.newBlock(blockToolExec, t.bgUsage)
 	line := msg
-	line = wrapText(line, t.termWidth, 0)
+	line = wrapText(line, t.width(), 0)
 	line = strings.ReplaceAll(line, "\n", "\n"+clearLine)
 	fmt.Fprint(os.Stdout, line)
 
@@ -255,7 +268,7 @@ func (t *Terminal) ToolBlock(msg string) {
 
 func (t *Terminal) Summary(usage stream.Usage, stats stream.Stats) {
 	t.newBlock(blockUsage, t.bgUsage)
-	line := buildAlignedUsageLine(t.termWidth, "Usage:", usage, stats)
+	line := buildAlignedUsageLine(t.width(), "Usage:", usage, stats)
 	line = strings.ReplaceAll(line, "\n", "\n"+clearLine)
 	fmt.Fprint(os.Stdout, line)
 
