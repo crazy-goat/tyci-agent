@@ -58,11 +58,21 @@ func (m TuiModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case tea.KeySpace:
+			m.pickerFilter += " "
+			m.rebuildPickerItems()
+			return m, nil
+
 		case tea.KeyTab, tea.KeyShiftTab:
 			// Ignore tab in picker mode
 			return m, nil
 
 		default:
+			// 'f' key toggles favorite on the selected model
+			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'f' {
+				m.togglePickerFavorite()
+				return m, nil
+			}
 			// Add character to filter
 			if msg.Type == tea.KeyRunes {
 				m.pickerFilter += string(msg.Runes)
@@ -173,6 +183,32 @@ func (m *TuiModel) pickerSelectedModel() string {
 		idx++
 	}
 	return ""
+}
+
+// togglePickerFavorite toggles the favorite status of the currently selected model.
+func (m *TuiModel) togglePickerFavorite() {
+	model := m.pickerSelectedModel()
+	if model == "" {
+		return
+	}
+	if m.favoriteSet[model] {
+		// Remove from favorites
+		delete(m.favoriteSet, model)
+		newFavs := m.favoriteModels[:0]
+		for _, f := range m.favoriteModels {
+			if f != model {
+				newFavs = append(newFavs, f)
+			}
+		}
+		m.favoriteModels = newFavs
+	} else {
+		// Add to favorites
+		m.favoriteSet[model] = true
+		m.favoriteModels = append(m.favoriteModels, model)
+	}
+	if m.onFavoriteChanged != nil {
+		m.onFavoriteChanged(m.favoriteModels)
+	}
 }
 
 // ─── Scroll helpers ───────────────────────────────────────────────────────

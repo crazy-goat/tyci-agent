@@ -39,7 +39,7 @@ func (m TuiModel) renderModelPickerContent() string {
 	}
 
 	// Title
-	title := " Select Model (type to filter, Enter to select, Esc to cancel) "
+	title := " Select Model (type to filter, Enter to select, f to fav, Esc to cancel) "
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("252")).
@@ -91,6 +91,12 @@ func (m TuiModel) renderModelPickerContent() string {
 	normalStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("252")).
 		Width(popupWidth - 2)
+	// Favorite indicator style
+	favStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("214"))
+	favSelectedStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("208")).
+		Background(lipgloss.Color("45"))
 
 	// Build filtered items with scrolling
 	modelIdx := 0
@@ -127,12 +133,29 @@ func (m TuiModel) renderModelPickerContent() string {
 		isVisible := renderedModels >= visibleStart && renderedModels < visibleStart+availableLines
 
 		if isVisible {
+			isFav := m.favoriteSet[item.value]
+			var favMark string
+			if isFav {
+				if isSelected {
+					favMark = favSelectedStyle.Render(" ★")
+				} else {
+					favMark = favStyle.Render(" ★")
+				}
+			} else {
+				if isSelected {
+					favMark = lipgloss.NewStyle().Background(lipgloss.Color("45")).Render("  ")
+				} else {
+					favMark = "  "
+				}
+			}
+
 			var line string
 			if isSelected {
 				line = selectedStyle.Render("▸ " + item.label)
 			} else {
 				line = normalStyle.Render("  " + item.label)
 			}
+			b.WriteString(favMark)
 			b.WriteString(line)
 			b.WriteString("\n")
 			headerRendered++
@@ -152,7 +175,7 @@ func (m TuiModel) renderModelPickerContent() string {
 		b.WriteString(normalStyle.Render("  No matching models"))
 		b.WriteString("\n")
 	} else {
-		hint := fmt.Sprintf("  %d model(s) — ↑/↓ to navigate, Enter to select, Esc to cancel", totalModels)
+		hint := fmt.Sprintf("  %d model(s) — ↑/↓ navigate, Enter select, f toggle fav, Esc cancel", totalModels)
 		hintStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245")).
 			Width(popupWidth - 2)

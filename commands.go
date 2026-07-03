@@ -238,9 +238,20 @@ var tuiCmd = &cobra.Command{
 			defer dl.Close()
 		}
 
+		authKeys, err := connect.ListKeys()
+		authSet := make(map[string]bool)
+		if err == nil {
+			for _, k := range authKeys {
+				authSet[k] = true
+			}
+		}
+
 		var allModels []string
 		var allProviderModels []display.ProviderModels
 		for _, p := range providers.ListProviders() {
+			if !authSet[p.Name()] {
+				continue
+			}
 			pm := display.ProviderModels{Name: p.Name()}
 			for _, m := range p.Models() {
 				allModels = append(allModels, p.Name()+"/"+m)
@@ -259,7 +270,25 @@ var tuiCmd = &cobra.Command{
 			agentName, _ := cmd.Flags().GetString("agent")
 			model = agent.ResolveModel("", agentName)
 		}
-		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels)
+
+		// Load favorite models from config. Default model is always included.
+		favorites := agent.GetFavoriteModels()
+		if model != "" {
+			found := false
+			for _, f := range favorites {
+				if f == model {
+					found = true
+					break
+				}
+			}
+			if !found {
+				favorites = append([]string{model}, favorites...)
+			}
+		}
+
+		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels, favorites, func(newFavs []string) {
+			_ = agent.SetFavoriteModels(newFavs)
+		})
 		runTUI(provider, modelName, tuiDisp, cfg, ctx, sessionPath)
 		return nil
 	},
@@ -518,10 +547,22 @@ func listModels(toComplete string) []string {
 	registerProviders()
 	toComplete = strings.ToLower(toComplete)
 
+	// Build set of providers that have auth.json entries
+	authKeys, err := connect.ListKeys()
+	authSet := make(map[string]bool)
+	if err == nil {
+		for _, k := range authKeys {
+			authSet[k] = true
+		}
+	}
+
 	// Empty prefix: suggest provider namespaces to keep the list short and fast.
 	if toComplete == "" {
 		seen := make(map[string]struct{})
 		for _, p := range providers.ListProviders() {
+			if !authSet[p.Name()] {
+				continue
+			}
 			seen[p.Name()+"/"] = struct{}{}
 		}
 		prefixes := make([]string, 0, len(seen))
@@ -534,6 +575,9 @@ func listModels(toComplete string) []string {
 
 	seen := make(map[string]struct{})
 	for _, p := range providers.ListProviders() {
+		if !authSet[p.Name()] {
+			continue
+		}
 		prefix := p.Name() + "/"
 		for _, m := range p.Models() {
 			full := prefix + m

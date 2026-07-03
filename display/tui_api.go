@@ -26,11 +26,11 @@ type TUI struct {
 	flushDone      chan struct{}
 }
 
-func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels) *TUI {
+func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels, favoriteModels []string, onFavoriteChanged func([]string)) *TUI {
 	results := make(chan string, 8)
 	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
-	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel)
+	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel, favoriteModels, onFavoriteChanged)
 
 	// Own the terminal ourselves via a custom event-driven painter: no idle
 	// ticker and instant key echo. bubbletea's nil renderer no-ops all terminal

@@ -94,10 +94,14 @@ type TuiModel struct {
 	statusMessage string // transient user-facing status, e.g. copy result
 	modelName     string // model name shown in status bar
 
-	// Model switching (Tab/Shift+Tab)
-	models       []string      // available models (format: "provider/model")
-	modelIdx     int           // index of current model in models slice
-	modelChanges chan<- string // channel to notify outer TUI of model changes
+	// Model switching (Tab/Shift+Tab) — uses favoriteModels when available.
+	models          []string          // all available models (format: "provider/model")
+	favoriteModels  []string          // favorite models for quick Tab/Shift+Tab cycling
+	favoriteSet     map[string]bool   // set lookup for favorites (for picker rendering)
+	onFavoriteChanged func([]string)  // called when favorites change (persist to config)
+	favIdx          int               // index of current model in favoriteModels slice
+	modelIdx        int               // index of current model in models slice (for picker)
+	modelChanges    chan<- string      // channel to notify outer TUI of model changes
 
 	// Model picker (/model command)
 	pickerActive bool
@@ -174,7 +178,7 @@ type TuiModel struct {
 	historyPath  string // path to history file for persistence
 }
 
-func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}) TuiModel {
+func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}, favoriteModels []string, onFavoriteChanged func([]string)) TuiModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type message (Enter send, Alt+Enter / Ctrl+N newline)"
 	ta.CharLimit = 0
@@ -199,6 +203,17 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 			break
 		}
 	}
+	favIdx := 0
+	for i, m := range favoriteModels {
+		if m == modelName {
+			favIdx = i
+			break
+		}
+	}
+	favoriteSet := make(map[string]bool, len(favoriteModels))
+	for _, m := range favoriteModels {
+		favoriteSet[m] = true
+	}
 
 	return TuiModel{
 		blocks:               make([]block, 0, 1024),
@@ -209,6 +224,10 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		toolQueue:            make([]int, 0, 16),
 		modelName:            modelName,
 		models:               models,
+		favoriteModels:       favoriteModels,
+		favoriteSet:          favoriteSet,
+		onFavoriteChanged:    onFavoriteChanged,
+		favIdx:               favIdx,
 		modelIdx:             modelIdx,
 		modelChanges:         modelChanges,
 		allProviders:         allProviders,

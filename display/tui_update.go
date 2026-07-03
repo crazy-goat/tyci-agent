@@ -84,11 +84,15 @@ func (m TuiModel) handleResizeFlush() (tea.Model, tea.Cmd) {
 }
 
 func (m *TuiModel) switchModel(delta int) {
-	if len(m.models) == 0 {
+	list := m.favoriteModels
+	if len(list) == 0 {
+		list = m.models
+	}
+	if len(list) == 0 {
 		return
 	}
-	m.modelIdx = (m.modelIdx + delta + len(m.models)) % len(m.models)
-	newModel := m.models[m.modelIdx]
+	m.favIdx = (m.favIdx + delta + len(list)) % len(list)
+	newModel := list[m.favIdx]
 	m.modelName = newModel
 	if m.modelChanges != nil {
 		select {
