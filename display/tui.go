@@ -156,6 +156,14 @@ type TuiModel struct {
 	// Total line count cache (invalidated on block add/change/resize)
 	cachedTotalLines int
 
+	// Message region cache (issue #84). The message region is the transcript
+	// area between the top bar and the status bar. The status tick fires every
+	// 250ms while a request is in flight; without this cache, every tick
+	// rebuilds the full frame string even though the message region hasn't
+	// changed. Pointer so it survives the value-copy bubbletea performs on
+	// every Update (same pattern as scrollback and painter).
+	messageRegion *messageRegionCache
+
 	// Scrollback disk cache: keeps rendered lines for old blocks out of RAM.
 	// Old blocks (beyond the resident window) are flushed to a temp file; their
 	// in-memory content/cachedLines/output are nil and paged back in on demand
@@ -287,6 +295,7 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		toolDisplayCache:     make(map[int]string),
 		cachedTotalLines:     -1,
 		scrollback:           &scrollbackCache{},
+		messageRegion:        &messageRegionCache{},
 		toolCount:            toolCount,
 		skillCount:           skillCount,
 		mcpCount:             mcpCount,

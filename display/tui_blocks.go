@@ -96,6 +96,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 					m.blocks[idx].duration = time.Since(m.blocks[idx].startTime)
 					m.blocks[idx].cachedLines = nil
 					delete(m.toolDisplayCache, idx)
+					m.invalidateTotalLines()
 				}
 			}
 			m.subagentModalDone = true
@@ -160,6 +161,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.streamWraps = make(map[int]*streamWrap)
 		m.toolDisplayCache = make(map[int]string)
 		m.cachedTotalLines = -1
+		m.invalidateMessageRegion()
 		m.subagentModalActive = false
 		m.subagentModalContent.Reset()
 		// Issue #88: /new also drops any pending user messages queued
