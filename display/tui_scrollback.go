@@ -203,6 +203,29 @@ func (sc *scrollbackCache) close() {
 	}
 }
 
+// dropResidentCaches releases the per-block render caches for a block that has
+// just been flushed to the scrollback file.
+//
+// flushBlock drops the block's heavy fields (content/cachedLines/output) but it
+// only touches the block struct — it can't reach the model's cache maps. Those
+// maps mirror the same rendered bytes:
+//   - mdCacheRendered[idx] holds the full rendered ANSI for every text/thinking/
+//     error/block block — a near-exact duplicate of cachedLines (joined vs
+//     split). Left in place, it keeps a complete copy of every flushed block's
+//     rendered output resident forever, so the scrollback budget frees only ~half
+//     the memory and the map itself grows without bound over a long session.
+//   - toolDisplayCache[idx] / streamWraps[idx] are smaller per-block caches with
+//     the same lifetime problem.
+//
+// The display path for a flushed block pages its lines back from disk
+// (getBlockLines→ensureBlockResident) and never consults these maps, so dropping
+// them is safe; they are rebuilt lazily if the block is paged in and re-rendered.
+func (m *TuiModel) dropResidentCaches(idx int) {
+	delete(m.mdCacheRendered, idx)
+	delete(m.toolDisplayCache, idx)
+	delete(m.streamWraps, idx)
+}
+
 // blockLinesBytes returns the total byte length of a slice of line strings.
 func blockLinesBytes(lines []string) int {
 	n := 0
@@ -249,6 +272,7 @@ func (m *TuiModel) maybeFlushOldBlocks() {
 			continue
 		}
 		m.scrollback.flushBlock(b, m.width)
+		m.dropResidentCaches(i)
 	}
 }
 
@@ -306,6 +330,7 @@ func (m *TuiModel) ensureBlockResident(idx int) []string {
 				continue
 			}
 			m.scrollback.flushBlock(bj, m.width)
+			m.dropResidentCaches(j)
 		}
 	}
 	return lines

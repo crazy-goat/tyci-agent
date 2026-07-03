@@ -2,7 +2,6 @@ package tools
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -87,10 +86,12 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return t.runStreaming(ctx, c)
 	}
 
-	// Otherwise use buffers
-	var out bytes.Buffer
-	c.Stdout = &out
-	c.Stderr = &out
+	// Otherwise use buffers. cappedBuffer bounds retained memory so a single
+	// command dumping gigabytes (cat huge.log, find /) can't balloon the heap
+	// or the conversation history — we keep only the head+tail window.
+	out := newCappedBuffer(bashHeadMax, bashTailMax)
+	c.Stdout = out
+	c.Stderr = out
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := c.Start(); err != nil {
@@ -111,9 +112,9 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			if ctx.Err() == context.Canceled {
 				return ToolResult{Type: "result", Success: false, Error: "bash tool cancelled"}
 			}
-			return ToolResult{Type: "result", Success: false, Error: formatExitError(err, out.String())}
+			return ToolResult{Type: "result", Success: false, Error: formatExitError(err, out.result())}
 		}
-		return ToolResult{Type: "result", Success: true, Content: out.String()}
+		return ToolResult{Type: "result", Success: true, Content: out.result()}
 
 	case <-ctx.Done():
 		_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
@@ -146,7 +147,10 @@ func (t *BashTool) runStreaming(ctx context.Context, c *exec.Cmd) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
 
-	var fullOutput strings.Builder
+	// Bound the retained output to a head+tail window (see cappedBuffer). The
+	// live per-line stream to the TUI below is unaffected — only the buffer we
+	// keep and hand back to the model is capped.
+	fullOutput := newCappedBuffer(bashHeadMax, bashTailMax)
 
 	// Read lines from both pipes
 	lineCh := make(chan string, 64)
@@ -189,12 +193,12 @@ func (t *BashTool) runStreaming(ctx context.Context, c *exec.Cmd) ToolResult {
 					if ctx.Err() == context.Canceled {
 						return ToolResult{Type: "result", Success: false, Error: "bash tool cancelled"}
 					}
-					return ToolResult{Type: "result", Success: false, Error: formatExitError(err, fullOutput.String())}
+					return ToolResult{Type: "result", Success: false, Error: formatExitError(err, fullOutput.result())}
 				}
-				return ToolResult{Type: "result", Success: true, Content: strings.TrimRight(fullOutput.String(), "\n")}
+				return ToolResult{Type: "result", Success: true, Content: strings.TrimRight(fullOutput.result(), "\n")}
 			}
-			fullOutput.WriteString(line)
-			fullOutput.WriteString("\n")
+			_, _ = fullOutput.Write([]byte(line))
+			_, _ = fullOutput.Write(newline)
 			if f := stream.Output(ctx); f != nil {
 				f(toolIdx, line)
 			}

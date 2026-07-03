@@ -114,6 +114,73 @@ func TestScrollbackBudgetEvictsOldBlocks(t *testing.T) {
 	m.scrollback.close()
 }
 
+// mdCacheRenderedBytes totals the byte length of all cached rendered-ANSI
+// strings held in the mdCacheRendered map. This map mirrors cachedLines and is
+// the largest per-block cache, so it must be bounded alongside the resident
+// window — otherwise a long session leaks a full copy of every rendered block.
+func mdCacheRenderedBytes(m *TuiModel) int {
+	n := 0
+	for _, s := range m.mdCacheRendered {
+		n += len(s)
+	}
+	return n
+}
+
+func TestScrollbackDropsRenderCachesOnFlush(t *testing.T) {
+	// Regression: mdCacheRendered/toolDisplayCache/streamWraps held a full
+	// duplicate of every flushed block's rendered output. flushBlock dropped
+	// cachedLines but left these maps, so resident RAM was ~2x the budget for
+	// resident blocks and grew without bound (one entry per historical block).
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
+	m.width = 80
+	m.height = 24
+
+	big := strings.Repeat("line of content here\n", 1600) // ~32 KiB rendered
+	for i := 0; i < 24; i++ {
+		if i%2 == 0 {
+			m.appendOrAppend("text", "You: "+itoa(i)+" "+big)
+		} else {
+			m.appendOrAppend("text", "agent "+itoa(i)+" "+big)
+		}
+	}
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	m.forceRenderDirtyBlocks()
+	// Trigger eviction of old blocks past the resident budget.
+	m.maybeFlushOldBlocks()
+
+	flushedCount := 0
+	for i := range m.blocks {
+		if m.blocks[i].flushed {
+			flushedCount++
+			if _, ok := m.mdCacheRendered[i]; ok {
+				t.Errorf("flushed block %d still holds an mdCacheRendered entry", i)
+			}
+			if _, ok := m.toolDisplayCache[i]; ok {
+				t.Errorf("flushed block %d still holds a toolDisplayCache entry", i)
+			}
+			if _, ok := m.streamWraps[i]; ok {
+				t.Errorf("flushed block %d still holds a streamWraps entry", i)
+			}
+		}
+	}
+	if flushedCount == 0 {
+		t.Fatal("expected some blocks flushed over the budget")
+	}
+
+	// The render-cache map must stay near the resident budget, not grow to the
+	// full history size. Allow a little slack for the resident window.
+	if got := mdCacheRenderedBytes(&m); got > tuiScrollbackResidentBudget*2 {
+		t.Errorf("mdCacheRendered bytes = %d, want <= %d (leak: unbounded render cache)",
+			got, tuiScrollbackResidentBudget*2)
+	}
+
+	// Paging an old block back in must still work (render survives via disk).
+	if got := m.getBlockLines(0, false); got == nil {
+		t.Fatal("flushed block should page back in even after its render cache was dropped")
+	}
+	m.scrollback.close()
+}
+
 func TestScrollbackResizeRewrapsPagedLines(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil)
 	m.width = 80

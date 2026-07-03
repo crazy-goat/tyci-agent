@@ -10,8 +10,8 @@ import (
 )
 
 // painter is a minimal, event-driven terminal renderer used in place of
-// bubbletea's ticker-based standard renderer (enabled via tea.WithoutRenderer
-// and TYCI_TUI_PAINTER=1).
+// bubbletea's ticker-based standard renderer (bubbletea runs with
+// tea.WithoutRenderer so the painter owns the terminal).
 //
 // bubbletea's standard renderer wakes a goroutine at the configured framerate
 // even when nothing changes, which sets a small but nonzero idle-CPU floor and

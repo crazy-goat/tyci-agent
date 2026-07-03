@@ -110,21 +110,10 @@ func (m *TuiModel) buildFlatRenderLines() []flatRenderLine {
 			startLine = 0
 		}
 	} else {
-		// At bottom — show the last msgHeight lines
+		// At bottom — show the last msgHeight lines. The painter scrolls the
+		// message region in hardware (scroll region + SU) so per-line shifts are
+		// cheap, so we pin exactly to the bottom for genuinely smooth scrolling.
 		startLine = totalLines - msgHeight
-		if startLine > 0 && m.agentBusy() && m.painter == nil {
-			// Jump-scroll while the agent is streaming: hold the viewport
-			// start fixed so existing rows stay stationary (the renderer's
-			// line diff skips them) and new lines fill downward; jump by a
-			// quarter screen only when the content outgrows the window. Smooth
-			// per-line scrolling would shift every row on every append,
-			// forcing a full-screen repaint each time.
-			//
-			// The custom painter is exempt: it scrolls the message region in
-			// hardware (scroll region + SU) so per-line shifts are cheap, so we
-			// let it pin exactly to the bottom for genuinely smooth scrolling.
-			startLine = jumpScrollStart(startLine, msgHeight)
-		}
 		if startLine < 0 {
 			startLine = 0
 		}

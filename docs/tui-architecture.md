@@ -112,8 +112,8 @@ so `flushLoop` (`tui_api.go`) batches appends:
 ## 4. The custom painter (`tui_painter.go`)
 
 To get true 0% idle CPU and instant key echo we bypass bubbletea's ticker
-renderer and drive the terminal ourselves. This is **on by default**; set
-`TYCI_TUI_PAINTER=0` to fall back to the standard renderer.
+renderer and drive the terminal ourselves. The painter is the only renderer —
+bubbletea always runs with `tea.WithoutRenderer()`.
 
 ### How it's wired
 
@@ -199,7 +199,6 @@ markers.
 | **Event-driven painter** (drop the ticker) | ✅ shipped, default | 0% idle CPU, instant key echo. §4. |
 | **Hardware scroll region** (DECSTBM + SU) | ✅ shipped | ~40× less output per streamed line for a full-height transcript. §4. |
 | **Synchronized output** (DEC 2026) | ✅ shipped | Atomic frames, no flicker. Cheap (~a few bytes/frame), safe. |
-| **Jump-scroll** (quantize viewport start) | ✅ standard renderer only | Quarter-screen steps (`msgHeight/4`). Superseded by hardware scroll under the painter. |
 | **Per-block markdown cache** | ✅ shipped | `mdCacheRendered` + `dirtyBlocks` + `streamWraps`. §2. |
 | **Virtual viewport** | ✅ shipped | Render O(visible), not O(history). §2. |
 | **Streaming coalescing** | ✅ shipped | Cold/hot windows batch repaints. §3. |
@@ -280,8 +279,6 @@ become eligible for eviction.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `TYCI_TUI_PAINTER` | on | Set `0`/`false`/`off`/`no` to use bubbletea's standard renderer instead of the custom painter. |
-| `TYCI_TUI_FPS` | 30 | Framerate for the **standard renderer only** (5–60). Directly sets its idle CPU floor. Ignored by the painter. |
 | `TYCI_TUI_MOUSE` | on | Set `0`/`false`/`off`/`no` to disable mouse tracking (enables native terminal selection instead of the built-in drag-to-copy). |
 
 ---

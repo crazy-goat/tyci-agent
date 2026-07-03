@@ -3,7 +3,6 @@ package display
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,16 +32,11 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	cancel := make(chan struct{}, 1)
 	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel)
 
-	var opts []tea.ProgramOption
-	if tuiPainterEnabled() {
-		// Own the terminal ourselves via a custom event-driven painter: no
-		// idle ticker and instant key echo. bubbletea's nil renderer no-ops
-		// all terminal control, so the painter handles alt-screen/mouse/cursor.
-		m.painter = newPainter(os.Stdout, tuiMouseEnabled())
-		opts = append(opts, tea.WithoutRenderer())
-	} else {
-		opts = append(opts, tea.WithAltScreen(), tea.WithFPS(tuiFPS()))
-	}
+	// Own the terminal ourselves via a custom event-driven painter: no idle
+	// ticker and instant key echo. bubbletea's nil renderer no-ops all terminal
+	// control, so the painter handles alt-screen/mouse/cursor. See tui_painter.go.
+	m.painter = newPainter(os.Stdout, tuiMouseEnabled())
+	opts := []tea.ProgramOption{tea.WithoutRenderer()}
 	if tuiMouseEnabled() {
 		// Needed even in painter mode so bubbletea's input reader delivers
 		// mouse events; the enable escape itself is written by the painter.
@@ -63,19 +57,14 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	go t.flushLoop()
 	go func() {
 		// bubbletea skips all terminal init when the renderer is disabled
-		// (WithoutRenderer), so in painter mode we do it ourselves: raw mode,
-		// initial window size, and resize forwarding. Must happen before Run().
-		var restoreTerm func()
-		if m.painter != nil {
-			restoreTerm = setupPainterTerminal(p)
-		}
+		// (WithoutRenderer), so we do it ourselves: raw mode, initial window
+		// size, and resize forwarding. Must happen before Run().
+		restoreTerm := setupPainterTerminal(p)
 		_, err := p.Run()
 		// p.Run() returns after bubbletea's own shutdown (including recovered
 		// panics), so this is the right place to restore the terminal state the
 		// painter set up — the nil renderer never does it.
-		if m.painter != nil {
-			m.painter.stop()
-		}
+		m.painter.stop()
 		// Release the scrollback cache file (old rendered history paged to disk).
 		m.scrollback.close()
 		if restoreTerm != nil {
@@ -88,20 +77,6 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	}()
 
 	return t
-}
-
-// tuiFPS returns the renderer framerate. bubbletea's standard renderer wakes
-// up at this rate even when idle (each tick snapshots and compares the frame
-// buffer), so the FPS directly sets the idle CPU floor. 30 is a good default;
-// low-end boxes can lower it via TYCI_TUI_FPS at the cost of up to 1/fps of
-// extra input-echo latency.
-func tuiFPS() int {
-	if v := os.Getenv("TYCI_TUI_FPS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 5 && n <= 60 {
-			return n
-		}
-	}
-	return 30
 }
 
 // setupPainterTerminal performs the terminal initialization bubbletea skips
@@ -136,16 +111,6 @@ func setupPainterTerminal(p *tea.Program) func() {
 			_ = term.Restore(inFd, oldState)
 		}
 	}
-}
-
-// tuiPainterEnabled reports whether to use the custom event-driven painter
-// (tui_painter.go) instead of bubbletea's ticker-based renderer. It is on by
-// default — the painter eliminates idle ticker wakeups (0% idle CPU), removes
-// key-echo latency, and scrolls the transcript in hardware. Set TYCI_TUI_PAINTER
-// to 0/false/off/no to fall back to bubbletea's standard renderer.
-func tuiPainterEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("TYCI_TUI_PAINTER")))
-	return !(v == "0" || v == "false" || v == "off" || v == "no")
 }
 
 // Coalescing windows for flushLoop. The first chunk after a quiet period
