@@ -7,6 +7,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// statusTickCmd returns a command that ticks every 100ms while a request
+// is in flight, keeping the elapsed-time counter in the status bar live.
+func statusTickCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
+		return statusTickMsg{}
+	})
+}
+
 func (m TuiModel) Init() tea.Cmd {
 	return textarea.Blink
 }
@@ -31,6 +39,12 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.version == m.selectionVersion && m.selection.Active {
 			m = m.copySelection()
 			return m, copyFeedbackCmd(m)
+		}
+		return m, nil
+	case statusTickMsg:
+		// Keep ticking while request is in flight; stop when idle.
+		if !m.reading {
+			return m, statusTickCmd()
 		}
 		return m, nil
 	case statusMessageClearMsg:

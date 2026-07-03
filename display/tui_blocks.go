@@ -128,6 +128,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	case "done":
 		m.status = "idle"
 		m.reading = true
+		m.requestStartTime = time.Time{}
 		// Force-render all dirty blocks now that streaming is complete
 		m.forceRenderDirtyBlocks()
 	case "block":
@@ -146,6 +147,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.atBottom = true
 		m.reading = true
 		m.status = "idle"
+		m.requestStartTime = time.Time{}
 		m.lastUsage = stream.Usage{}
 		m.lastStats = stream.Stats{}
 		m.dirtyBlocks = make(map[int]bool)

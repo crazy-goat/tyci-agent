@@ -56,7 +56,7 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.openModelPicker()
 			return m, nil
 		}
-		return m.submit(), nil
+		return m.submit(), statusTickCmd()
 	case tea.KeyCtrlN, tea.KeyCtrlJ:
 		// Same pre-set height logic as Alt+Enter above.
 		newH := m.input.LineCount() + 1

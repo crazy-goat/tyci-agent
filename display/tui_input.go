@@ -2,6 +2,7 @@ package display
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -23,6 +24,7 @@ func (m TuiModel) submit() tea.Model {
 	}
 	m.historyIdx = -1
 	m.reading = false
+	m.requestStartTime = time.Now()
 	// User messages must not use kind "text": assistant text streams are
 	// coalesced with the previous text block while tokens arrive. If the user
 	// prompt were a text block too, the next assistant response could be appended

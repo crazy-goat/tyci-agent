@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -25,15 +26,21 @@ func (m TuiModel) buildStatus() string {
 	}
 
 	if !m.reading {
+		elapsed := time.Since(m.requestStartTime)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		elapsedSuffix := fmt.Sprintf(" %.1fs", elapsed.Seconds())
+
 		switch m.status {
 		case "thinking":
-			leftParts = append(leftParts, "⟳ thinking...")
+			leftParts = append(leftParts, "⟳ thinking..."+elapsedSuffix)
 		case "responding":
-			leftParts = append(leftParts, "⟳ responding...")
+			leftParts = append(leftParts, "⟳ responding..."+elapsedSuffix)
 		case "tool":
-			leftParts = append(leftParts, "⟳ tool...")
+			leftParts = append(leftParts, "⟳ tool..."+elapsedSuffix)
 		default:
-			leftParts = append(leftParts, "⟳ working...")
+			leftParts = append(leftParts, "⟳ working..."+elapsedSuffix)
 		}
 	}
 

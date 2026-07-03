@@ -26,6 +26,10 @@ type tuiInputSubmitted string
 // resizeFlushMsg is sent after a debounce delay to flush resize changes.
 type resizeFlushMsg struct{}
 
+// statusTickMsg triggers a status-bar repaint while a request is in flight,
+// so the elapsed-time counter stays live.
+type statusTickMsg struct{}
+
 // ProviderModels groups model names under a provider name.
 type ProviderModels struct {
 	Name   string
@@ -89,9 +93,10 @@ type TuiModel struct {
 	quitting      bool
 	lastUsage     stream.Usage
 	lastStats     stream.Stats
-	reading       bool
-	status        string // "idle", "thinking", "responding", "tool"
-	statusMessage string // transient user-facing status, e.g. copy result
+	reading            bool
+	requestStartTime   time.Time // set on submit, cleared on done/reset; used by buildStatus for live elapsed counter
+	status             string   // "idle", "thinking", "responding", "tool"
+	statusMessage      string   // transient user-facing status, e.g. copy result
 	modelName     string // model name shown in status bar
 
 	// Model switching (Tab/Shift+Tab) — uses favoriteModels when available.
