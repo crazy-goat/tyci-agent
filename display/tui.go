@@ -51,8 +51,7 @@ type block struct {
 	duration  time.Duration // frozen duration when tool finished (0 = still running)
 
 	// Markdown rendering cache (for "thinking" and "text" blocks)
-	rendered string // cached ANSI-rendered output
-	dirty    bool   // content changed since last render
+	dirty bool // content changed since last render
 
 	// Render caches
 	cachedLineCount int      // number of display lines for this block (0 = not computed)

@@ -31,6 +31,12 @@ func (m *TuiModel) appendTool(queueIdx int, content string) {
 	blockIdx := m.toolQueue[queueIdx]
 	if blockIdx >= 0 && blockIdx < len(m.blocks) && m.blocks[blockIdx].kind == "tool" {
 		m.blocks[blockIdx].output += content
+		// Bound the raw tool output buffer so a chatty tool (e.g. bash cat-ing
+		// a huge log) can't grow the heap unbounded. Keep the tail — that's
+		// what the click-to-expand modal shows.
+		if len(m.blocks[blockIdx].output) > tuiMaxToolOutput {
+			m.blocks[blockIdx].output = capToolOutput(m.blocks[blockIdx].output, tuiMaxToolOutput)
+		}
 	}
 }
 
@@ -46,6 +52,10 @@ func (m *TuiModel) finishToolAt(result string) {
 				m.blocks[idx].output += "\n"
 			}
 			m.blocks[idx].output += result
+		}
+		// Apply the output cap after appending the final result too.
+		if len(m.blocks[idx].output) > tuiMaxToolOutput {
+			m.blocks[idx].output = capToolOutput(m.blocks[idx].output, tuiMaxToolOutput)
 		}
 		m.blocks[idx].toolState = "done"
 		m.blocks[idx].duration = time.Since(m.blocks[idx].startTime)

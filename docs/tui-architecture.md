@@ -203,6 +203,10 @@ markers.
 | **Per-block markdown cache** | ✅ shipped | `mdCacheRendered` + `dirtyBlocks` + `streamWraps`. §2. |
 | **Virtual viewport** | ✅ shipped | Render O(visible), not O(history). §2. |
 | **Streaming coalescing** | ✅ shipped | Cold/hot windows batch repaints. §3. |
+| **Scrollback compaction** | ✅ shipped | `compactBlocks(tuiMaxHistory)` drops oldest blocks + reindexes caches. §5a. |
+| **Tool output cap** | ✅ shipped | `tuiMaxToolOutput` (1 MiB) bounds each tool block's `.output`. §5a. |
+| **Subagent modal cap** | ✅ shipped | `tuiMaxModalBuffer` (1 MiB) bounds the streaming modal accumulator. §5a. |
+| **Dead `rendered` field removal** | ✅ shipped | Was only ever zeroed, never read; removed to shrink `block`. |
 | **`View()` memoization** | ❌ rejected | See below. |
 | **Intra-line column diff** | ❌ rejected | Repaint only changed *characters* in a line. Complex with ANSI/wide chars; negligible gain over line-level diff. |
 | **Absolute-CUP skip jumps** | ❌ rejected | Use absolute cursor moves instead of `\n` to skip runs of unchanged lines. Micro-optimization, not worth the complexity. |
@@ -224,6 +228,38 @@ On inspection it's a net negative here:
   I/O dedup already neutralizes.
 - A correct memo would need a cache key covering **every** view-affecting field
   (~20 of them). Miss one and the UI freezes / goes stale. High risk, ~no reward.
+
+### 5a. Memory bounds (`tui_memory.go`)
+
+The TUI retains every block ever shown so the user can scroll back through the
+whole conversation. Without bounds, a long coding session — thousands of tool
+calls, each with full file contents in `.output` — grows the heap without limit:
+the `m.blocks` slice and the per-block index maps (`mdCacheRendered`,
+`toolDisplayCache`, `streamWraps`, `dirtyBlocks`) all keep references to evicted
+content, so the GC can never reclaim it. Three mechanisms cap the worst case:
+
+- **Scrollback compaction** — `compactBlocks(tuiMaxHistory)` runs whenever a new
+  block is appended (`tool-start`, `usage`, `error`, `block`, and the new-block
+  path of `appendOrAppend`). When `len(m.blocks)` exceeds the cap (500), the
+  oldest blocks are dropped and every index-keyed map is rebuilt with shifted
+  keys, which also frees the cached strings for the evicted blocks. The tool
+  queue is reindexed in lockstep. The cost is O(cap) but only when the cap is
+  exceeded — the streaming append-to-last-block path never triggers it.
+- **Tool output cap** — `tuiMaxToolOutput` (1 MiB) bounds each tool block's raw
+  `.output` buffer (the source shown in the click-to-expand modal). `appendTool`
+  and `finishToolAt` trim to the tail at a line boundary, so a chatty tool
+  (e.g. `bash` printing a 50 MB log) can't blow up the heap. The modal still
+  shows the most recent output.
+- **Subagent modal cap** — `tuiMaxModalBuffer` (1 MiB) bounds the modal streaming
+  accumulator (`subagentModalContent`). A runaway child agent streaming forever
+  would otherwise keep the builder growing until the modal is closed.
+
+The compaction reindex is the subtle part: the maps are keyed by block index, so
+after dropping `d` oldest blocks, the entry at key `k` must move to `k-d`, and
+entries with `k < d` are dropped. `reindexBoolMap`/`reindexStringMap`/
+`reindexStreamWrapMap` do this. If a still-open subagent modal's backing block is
+evicted, the modal is closed and its buffer reset — otherwise the user would be
+staring at a modal whose block no longer exists.
 
 ---
 
@@ -249,3 +285,10 @@ On inspection it's a net negative here:
 - **Keep the terminal-restore path intact** (`painter.stop()` + `restoreTerm()` in
   `NewTUI`'s run goroutine). The nil renderer never restores anything, so if this
   is skipped the user's terminal is left in raw mode / alt screen on exit.
+- **Every new-block path must call `compactBlocks(tuiMaxHistory)`.** The index
+  maps are keyed by block position, so any append that can grow `m.blocks` past
+  the cap must compact, or the maps leak entries for evicted blocks. The
+  streaming append-to-last-block path is exempt (it never adds a block).
+- **After compaction, index-keyed maps must be reindexed, not cleared.** Clearing
+  would force a full re-render of every retained block on the next View; reindexing
+  preserves the cached renders of blocks that survived.

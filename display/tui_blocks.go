@@ -33,6 +33,8 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		// Appending a block never changes how earlier blocks render (width is
 		// unchanged), so only the total-line cache needs invalidation.
 		m.invalidateTotalLines()
+		// Bound memory: drop oldest blocks past the cap, reindexing caches.
+		m.compactBlocks(tuiMaxHistory)
 
 		// Track subagent tool index for modal (but don't auto-open).
 		// Modal opens on user click on the subagent block.
@@ -100,6 +102,9 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		// Subagent progress captured for modal (even if not active), never to inline block
 		if msg.toolIdx == m.subagentModalToolIdx {
 			m.subagentModalContent.WriteString(msg.content)
+			// Bound the modal accumulator so a runaway child agent can't grow
+			// the buffer past tuiMaxModalBuffer. Keep the tail (most recent).
+			capModalBuffer(m.subagentModalContent, tuiMaxModalBuffer)
 		} else {
 			m.appendTool(msg.toolIdx, msg.content)
 		}
@@ -116,6 +121,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.blocks = append(m.blocks, block{kind: "usage", content: line, dirty: true})
 		m.dirtyBlocks[idx] = true
 		m.invalidateTotalLines()
+		m.compactBlocks(tuiMaxHistory)
 	case "error":
 		// New error block → force-render previous dirty blocks
 		m.forceRenderDirtyBlocks()
@@ -123,6 +129,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.blocks = append(m.blocks, block{kind: "error", content: msg.content, dirty: true})
 		m.dirtyBlocks[idx] = true
 		m.invalidateTotalLines()
+		m.compactBlocks(tuiMaxHistory)
 	case "done":
 		m.status = "idle"
 		m.reading = true
@@ -135,6 +142,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.blocks = append(m.blocks, block{kind: "block", content: msg.content, dirty: true})
 		m.dirtyBlocks[idx] = true
 		m.invalidateTotalLines()
+		m.compactBlocks(tuiMaxHistory)
 	case "set-model":
 		m.modelName = msg.content
 	case "reset":
@@ -182,11 +190,11 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 			idx := len(m.blocks)
 			m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
 			m.dirtyBlocks[idx] = true
+			m.compactBlocks(tuiMaxHistory)
 			return
 		}
 		last.content += content
 		last.dirty = true
-		last.rendered = "" // invalidate cache
 		last.cachedLineCount = 0
 		last.cachedLines = nil
 		idx := len(m.blocks) - 1
@@ -204,6 +212,7 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 	m.dirtyBlocks[idx] = true
 	// Adding a block only shifts line offsets; earlier blocks render the same.
 	m.invalidateTotalLines()
+	m.compactBlocks(tuiMaxHistory)
 }
 
 // jsonMaybeComplete reports whether s could be a complete JSON document, used
