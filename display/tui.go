@@ -156,6 +156,10 @@ type TuiModel struct {
 	// Update) never copies the cache's sync.Mutex.
 	scrollback *scrollbackCache
 
+	// Current working directory (set once at startup).
+	cwd  string // absolute path of working directory
+	home string // user home directory (for ~ shortening)
+
 	// Metadata for the currently visible transcript lines. Built by View().
 	renderBuffer      RenderBuffer
 	modalRenderBuffer RenderBuffer

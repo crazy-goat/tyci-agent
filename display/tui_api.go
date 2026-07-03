@@ -32,6 +32,14 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	cancel := make(chan struct{}, 1)
 	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel, favoriteModels, onFavoriteToggled, defaultModel, onDefaultChanged)
 
+	// Capture working directory and home for the top status bar.
+	if dir, err := os.Getwd(); err == nil {
+		m.cwd = dir
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		m.home = h
+	}
+
 	// Own the terminal ourselves via a custom event-driven painter: no idle
 	// ticker and instant key echo. bubbletea's nil renderer no-ops all terminal
 	// control, so the painter handles alt-screen/mouse/cursor. See tui_painter.go.
