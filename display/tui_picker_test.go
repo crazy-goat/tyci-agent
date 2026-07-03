@@ -1,9 +1,11 @@
 package display
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // helper: build a TuiModel with given providers, favorites and default for picker tests.
@@ -382,6 +384,27 @@ func TestPickerView_ShowsHint(t *testing.T) {
 	}
 	if !containsANSI(view, "d default") {
 		t.Fatal("picker hint should mention 'd default'")
+	}
+}
+
+func TestPickerView_RightBorderVisible(t *testing.T) {
+	m := newPickerTestModel(testProviders, nil, "")
+	m.openModelPicker()
+
+	lines := strings.Split(stripANSI(m.renderModelPickerContent()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected picker content to have multiple lines, got %d", len(lines))
+	}
+	for i, line := range lines {
+		if line == "" {
+			continue
+		}
+		if lipgloss.Width(line) > 80 {
+			t.Fatalf("line %d width = %d, want <= 80: %q", i, lipgloss.Width(line), line)
+		}
+		if i != 0 && i != len(lines)-1 && !strings.HasSuffix(line, "│") {
+			t.Fatalf("line %d should end with right border: %q", i, line)
+		}
 	}
 }
 

@@ -51,6 +51,23 @@ func (m TuiModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case tea.KeyPgUp:
+			m.pickerCursor -= 10
+			if m.pickerCursor < 0 {
+				m.pickerCursor = 0
+			}
+			return m, nil
+
+		case tea.KeyPgDown:
+			m.pickerCursor += 10
+			if m.pickerCursor >= m.pickerModelCount() {
+				m.pickerCursor = m.pickerModelCount() - 1
+			}
+			if m.pickerCursor < 0 {
+				m.pickerCursor = 0
+			}
+			return m, nil
+
 		case tea.KeyBackspace:
 			if len(m.pickerFilter) > 0 {
 				m.pickerFilter = m.pickerFilter[:len(m.pickerFilter)-1]

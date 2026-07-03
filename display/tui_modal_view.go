@@ -121,8 +121,6 @@ func (m TuiModel) renderSubagentModalView() string {
 	bordered := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("63")).
-		Width(popupWidth).
-		MaxWidth(popupWidth).
 		Render(box)
 
 	// Place it centered

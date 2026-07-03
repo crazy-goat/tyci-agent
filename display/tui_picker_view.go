@@ -28,18 +28,24 @@ func (m TuiModel) renderModelPickerContent() string {
 	var b strings.Builder
 
 	// Popup dimensions
-	popupWidth := m.width - 8
+	popupWidth := m.width - 16
 	if popupWidth < 40 {
 		popupWidth = 40
 	}
+	if popupWidth > 100 {
+		popupWidth = 100
+	}
 	// Cap max height
-	maxPopupHeight := m.height - 4
+	maxPopupHeight := m.height - 12
 	if maxPopupHeight < 10 {
 		maxPopupHeight = 10
 	}
+	if maxPopupHeight > 30 {
+		maxPopupHeight = 30
+	}
 
 	// Title
-	title := " Select Model (type to filter, Enter select, f fav, d default, Esc cancel) "
+	title := " Select Model "
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("252")).
@@ -72,7 +78,7 @@ func (m TuiModel) renderModelPickerContent() string {
 	b.WriteString("\n")
 
 	// Available lines for items
-	availableLines := maxPopupHeight - 5 // title + filter + sep + hint + bottom margin
+	availableLines := maxPopupHeight - 6 // title + filter + sep + items + sep2 + hint + bottom margin
 	if availableLines < 1 {
 		availableLines = 1
 	}
@@ -194,25 +200,26 @@ func (m TuiModel) renderModelPickerContent() string {
 		headerRendered++
 	}
 
+	// Separator before hint
+	sep2 := strings.Repeat("─", popupWidth-2)
+	b.WriteString(sepStyle.Render(sep2))
+	b.WriteString("\n")
+
 	// Hint at bottom
 	if totalModels == 0 {
 		b.WriteString(normalStyle.Render("  No matching models"))
-		b.WriteString("\n")
 	} else {
-		hint := fmt.Sprintf("  %d model(s) — ↑/↓ navigate, Enter select, f fav, d default, Esc cancel", totalModels)
+		hint := fmt.Sprintf("  %d model(s) — ↑↓/PgUp/PgDn navigate, Enter select, f fav, d default, Esc cancel", totalModels)
 		hintStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245")).
 			Width(popupWidth - 2)
 		b.WriteString(hintStyle.Render(hint))
-		b.WriteString("\n")
 	}
 
 	// Wrap in a bordered box
 	content := b.String()
 	boxStyle := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("63")).
-		Width(popupWidth).
-		MaxWidth(popupWidth)
+		BorderForeground(lipgloss.Color("63"))
 	return boxStyle.Render(content)
 }
