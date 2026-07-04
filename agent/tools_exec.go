@@ -33,7 +33,7 @@ func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.Too
 			// Determine timeout per tool type
 			var toolTimeout time.Duration
 			switch call.Name {
-			case "read", "write", "edit":
+			case "read", "write":
 				toolTimeout = 30 * time.Second
 			case "bash":
 				toolTimeout = 120 * time.Second // default

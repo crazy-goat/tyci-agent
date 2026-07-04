@@ -8,12 +8,93 @@ import (
 	"testing"
 )
 
-func TestEditTool_RequiresUniqueByDefault(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Write mode tests (content + optional range)
+// ---------------------------------------------------------------------------
+
+func TestWriteTool_WriteAll(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.txt")
+	tool := &WriteTool{}
+
+	res := tool.Run(context.Background(), map[string]any{
+		"path": path, "content": "hello",
+	})
+	if !res.Success {
+		t.Fatalf("write all failed: %s", res.Error)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "hello" {
+		t.Fatalf("expected 'hello', got %q", string(data))
+	}
+}
+
+func TestWriteTool_Append(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.txt")
+	writeFile(t, path, "hello")
+	tool := &WriteTool{}
+
+	res := tool.Run(context.Background(), map[string]any{
+		"path": path, "content": " world", "range": "append",
+	})
+	if !res.Success {
+		t.Fatalf("append failed: %s", res.Error)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "hello world" {
+		t.Fatalf("expected 'hello world', got %q", string(data))
+	}
+}
+
+func TestWriteTool_InsertBeforeAfter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.txt")
+	writeFile(t, path, "a\nc\n")
+	tool := &WriteTool{}
+
+	res := tool.Run(context.Background(), map[string]any{"path": path, "content": "b", "range": "before:2"})
+	if !res.Success {
+		t.Fatalf("insert before failed: %s", res.Error)
+	}
+	res = tool.Run(context.Background(), map[string]any{"path": path, "content": "d", "range": "after:3"})
+	if !res.Success {
+		t.Fatalf("insert after failed: %s", res.Error)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "a\nb\nc\nd\n" {
+		t.Fatalf("unexpected file: %q", string(data))
+	}
+}
+
+func TestWriteTool_ReplaceLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.txt")
+	writeFile(t, path, "a\nb\nc\nd\n")
+	tool := &WriteTool{}
+
+	res := tool.Run(context.Background(), map[string]any{
+		"path": path, "content": "x\ny", "range": "2...3",
+	})
+	if !res.Success {
+		t.Fatalf("replace lines failed: %s", res.Error)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "a\nx\ny\nd\n" {
+		t.Fatalf("unexpected file: %q", string(data))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Edit mode tests (oldString + newString)
+// ---------------------------------------------------------------------------
+
+func TestWriteTool_EditRequiresUniqueByDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "x.txt")
 	writeFile(t, path, "foo\nbar\nfoo\n")
 
-	res := (&EditTool{}).Run(context.Background(), map[string]any{
+	res := (&WriteTool{}).Run(context.Background(), map[string]any{
 		"path": path, "oldString": "foo", "newString": "baz",
 	})
 	if res.Success {
@@ -24,11 +105,11 @@ func TestEditTool_RequiresUniqueByDefault(t *testing.T) {
 	}
 }
 
-func TestEditTool_OccurrenceDryRunAndAll(t *testing.T) {
+func TestWriteTool_EditOccurrenceDryRunAndAll(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "x.txt")
 	writeFile(t, path, "foo\nbar\nfoo\n")
-	tool := &EditTool{}
+	tool := &WriteTool{}
 
 	res := tool.Run(context.Background(), map[string]any{
 		"path": path, "oldString": "foo", "newString": "baz", "occurrence": 2, "dryRun": true,
@@ -53,22 +134,85 @@ func TestEditTool_OccurrenceDryRunAndAll(t *testing.T) {
 	}
 }
 
-func TestWriteTool_InsertBeforeAfter(t *testing.T) {
+func TestWriteTool_EditNotFound(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "x.txt")
-	writeFile(t, path, "a\nc\n")
-	tool := &WriteTool{}
+	writeFile(t, path, "hello world")
 
-	res := tool.Run(context.Background(), map[string]any{"path": path, "content": "b", "range": "before:2"})
-	if !res.Success {
-		t.Fatalf("insert before failed: %s", res.Error)
+	res := (&WriteTool{}).Run(context.Background(), map[string]any{
+		"path": path, "oldString": "zzz", "newString": "aaa",
+	})
+	if res.Success {
+		t.Fatalf("expected failure for missing oldString")
 	}
-	res = tool.Run(context.Background(), map[string]any{"path": path, "content": "d", "range": "after:3"})
+	if !strings.Contains(res.Error, "not found") {
+		t.Fatalf("expected 'not found', got %q", res.Error)
+	}
+}
+
+func TestWriteTool_EditSingleOccurrence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.txt")
+	writeFile(t, path, "foo\nbar\nbaz\n")
+
+	res := (&WriteTool{}).Run(context.Background(), map[string]any{
+		"path": path, "oldString": "bar", "newString": "qux",
+	})
 	if !res.Success {
-		t.Fatalf("insert after failed: %s", res.Error)
+		t.Fatalf("edit failed: %s", res.Error)
 	}
 	data, _ := os.ReadFile(path)
-	if string(data) != "a\nb\nc\nd\n" {
+	if string(data) != "foo\nqux\nbaz\n" {
+		t.Fatalf("unexpected file: %q", string(data))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Mixed: edit + write both work through one tool
+// ---------------------------------------------------------------------------
+
+func TestWriteTool_EditThenWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.txt")
+	writeFile(t, path, "hello\nworld\n")
+
+	tool := &WriteTool{}
+	res := tool.Run(context.Background(), map[string]any{
+		"path": path, "oldString": "hello", "newString": "hi",
+	})
+	if !res.Success {
+		t.Fatalf("edit failed: %s", res.Error)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "hi\nworld\n" {
+		t.Fatalf("after edit: %q", string(data))
+	}
+
+	res = tool.Run(context.Background(), map[string]any{
+		"path": path, "content": "overwritten",
+	})
+	if !res.Success {
+		t.Fatalf("write failed: %s", res.Error)
+	}
+	data, _ = os.ReadFile(path)
+	if string(data) != "overwritten" {
+		t.Fatalf("after write: %q", string(data))
+	}
+}
+
+func TestWriteTool_EditMultiple(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.txt")
+	writeFile(t, path, "x x x")
+
+	res := (&WriteTool{}).Run(context.Background(), map[string]any{
+		"path": path, "oldString": "x", "newString": "y", "occurrence": "all",
+	})
+	if !res.Success {
+		t.Fatalf("edit all failed: %s", res.Error)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "y y y" {
 		t.Fatalf("unexpected file: %q", string(data))
 	}
 }

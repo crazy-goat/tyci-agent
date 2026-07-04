@@ -97,33 +97,19 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "write",
-				"description": "Write file content. Overwrites by default. range can replace, insert, or append.",
+				"description": "Write file content or replace text. Use content (with optional range) to write; use oldString+newString to replace exact text (edit mode).",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"path":    map[string]any{"type": "string", "description": "File path to write"},
-						"content": map[string]any{"type": "string", "description": "Content to write"},
-						"range":   map[string]any{"description": "Optional: line number, 'from...to', 'before:N', 'after:N', 'all', or -1/'append'"},
+						"path":       map[string]any{"type": "string", "description": "File path to write"},
+						"content":    map[string]any{"type": "string", "description": "Content to write (write mode; omit when using oldString)"},
+						"range":      map[string]any{"description": "Write mode only: line number, 'from...to', 'before:N', 'after:N', 'all', or -1/'append'"},
+						"oldString":  map[string]any{"type": "string", "description": "Exact text to replace (edit mode; triggers edit when present)"},
+						"newString":  map[string]any{"type": "string", "description": "Replacement text (edit mode; required with oldString)"},
+						"occurrence": map[string]any{"description": "Edit mode only: occurrence number or 'all'. Default requires exactly one match"},
+						"dryRun":     map[string]any{"type": "boolean", "description": "Edit mode only: preview without writing (default: false)"},
 					},
-					"required": []string{"path", "content"},
-				},
-			},
-		},
-		{
-			"type": "function",
-			"function": map[string]any{
-				"name":        "edit",
-				"description": "Replace exact text in a file. By default oldString must match exactly once.",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"path":       map[string]any{"type": "string", "description": "File path"},
-						"oldString":  map[string]any{"type": "string", "description": "Exact text to replace"},
-						"newString":  map[string]any{"type": "string", "description": "Replacement text"},
-						"occurrence": map[string]any{"description": "Optional: occurrence number or 'all'. Default requires exactly one match"},
-						"dryRun":     map[string]any{"type": "boolean", "description": "Preview without writing (default: false)"},
-					},
-					"required": []string{"path", "oldString", "newString"},
+					"required": []string{"path"},
 				},
 			},
 		},
@@ -254,7 +240,6 @@ var toolRegistry = map[string]Tool{
 	"todo":        &TodoTool{},
 	"read":        &ReadTool{},
 	"write":       &WriteTool{},
-	"edit":        &EditTool{},
 	"skills":      &SkillsTool{},
 	"web":         &WebTool{},
 }
