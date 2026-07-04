@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/decodo/tyci/tools"
 )
 
 func (m TuiModel) renderToolBlock(idx int, b block) string {
@@ -73,6 +74,17 @@ func formatToolCall(toolName, rawJSON string) string {
 		}
 	case "todo":
 		if action, ok := args["action"].(string); ok && action != "" {
+			// Status-changing actions (doing/done/blocked) take an id —
+			// surface the matching item so the call isn't ambiguous in
+			// the transcript (e.g. "todo(doing)" alone is opaque).
+			if action == "doing" || action == "done" || action == "blocked" {
+				if id, ok := args["id"].(float64); ok && id > 0 {
+					if content := lookupTodoContent(int(id)); content != "" {
+						return "todo(" + action + ", " + fmt.Sprintf("%d", int(id)) + ". " + truncateString(content, 40) + ")"
+					}
+					return "todo(" + action + ", " + fmt.Sprintf("%d", int(id)) + ")"
+				}
+			}
 			if content, ok := args["content"].(string); ok && content != "" {
 				return "todo(" + action + ": " + truncateString(content, 50) + ")"
 			}
@@ -156,4 +168,16 @@ func formatDuration(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
+}
+
+// lookupTodoContent returns the content of a todo item by id, or "".
+// Used by formatToolCall to enrich todo(doing/done/blocked, N) renders with
+// what the item actually says, so the transcript is self-explanatory.
+func lookupTodoContent(id int) string {
+	for _, item := range tools.AllTodoItems() {
+		if item.ID == id {
+			return strings.TrimSpace(item.Content)
+		}
+	}
+	return ""
 }

@@ -1,6 +1,11 @@
 package display
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/decodo/tyci/tools"
+)
 
 func TestFormatToolCall_Web(t *testing.T) {
 	tests := []struct {
@@ -127,6 +132,13 @@ func TestFormatToolCall_Find(t *testing.T) {
 }
 
 func TestFormatToolCall_Todo(t *testing.T) {
+	// Populate the in-memory todo list so status-change actions can resolve
+	// the item by id; without this the renderer falls back to "todo(doing, 1)".
+	tools.ClearTodoList()
+	tool := &tools.TodoTool{}
+	mustRun(t, tool, map[string]any{"action": "add", "content": "Fuzz the parser"})
+	mustRun(t, tool, map[string]any{"action": "add", "content": "Write the docs"})
+
 	tests := []struct {
 		name    string
 		args    string
@@ -147,6 +159,21 @@ func TestFormatToolCall_Todo(t *testing.T) {
 			args: "",
 			want: "todo(...)",
 		},
+		{
+			name: "doing with id resolves item",
+			args: `{"action":"doing","id":1}`,
+			want: "todo(doing, 1. Fuzz the parser)",
+		},
+		{
+			name: "done with id resolves item",
+			args: `{"action":"done","id":2}`,
+			want: "todo(done, 2. Write the docs)",
+		},
+		{
+			name: "doing with unknown id falls back",
+			args: `{"action":"doing","id":99}`,
+			want: "todo(doing, 99)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -156,6 +183,16 @@ func TestFormatToolCall_Todo(t *testing.T) {
 				t.Errorf("formatToolCall(\"todo\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
+	}
+
+	tools.ClearTodoList()
+}
+
+func mustRun(t *testing.T, tool *tools.TodoTool, input map[string]any) {
+	t.Helper()
+	res := tool.Run(context.Background(), input)
+	if !res.Success {
+		t.Fatalf("todo %v: %s", input, res.Error)
 	}
 }
 

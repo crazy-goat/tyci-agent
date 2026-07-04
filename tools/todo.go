@@ -10,6 +10,17 @@ import (
 
 type TodoTool struct{}
 
+// TodoItem is the exported view of a todo entry. The internal `todoItem`
+// keeps the storage struct private; callers outside this package read
+// state via AllTodoItems.
+type TodoItem struct {
+	ID       int
+	Content  string
+	Status   string
+	Priority string
+	ParentID int
+}
+
 type todoItem struct {
 	ID       int
 	Content  string
@@ -23,6 +34,20 @@ var todoState = struct {
 	nextID int
 	items  []todoItem
 }{nextID: 1}
+
+// AllTodoItems returns a snapshot of every todo in current state, sorted by id.
+// Used by the TUI to enrich todo(doing/done/blocked, N) renders and read
+// backwards-compatibly from the display package.
+func AllTodoItems() []TodoItem {
+	todoState.Lock()
+	defer todoState.Unlock()
+	out := make([]TodoItem, len(todoState.items))
+	for i, it := range todoState.items {
+		out[i] = TodoItem{ID: it.ID, Content: it.Content, Status: it.Status, Priority: it.Priority, ParentID: it.ParentID}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
 
 func (t *TodoTool) Name() string { return "todo" }
 
