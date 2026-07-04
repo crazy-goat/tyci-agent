@@ -79,7 +79,7 @@ type block struct {
 
 func defaultMaxLines(toolName string) int {
 	switch toolName {
-	case "read", "write", "edit":
+	case "read", "write":
 		return 1
 	case "bash":
 		return 3

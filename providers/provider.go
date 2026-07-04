@@ -63,12 +63,10 @@ Context:
 - Can use temp directory: %s
 
 Tools available:
-- glob(pattern, cwd?, exclude?, limit?, includeDirs?, absolute?): find files by glob. Returns relative paths by default.
-- grep(pattern, cwd?, include?, exclude?, mode?, caseSensitive?, context?, limit?, output?, maxLineLength?): search contents. mode: text/regex/word. output: lines/files/count.
+- find(pattern, cwd?, exclude?, limit?, includeDirs?, absolute?): find files by glob pattern or search their contents. Use method="glob" for file path patterns (e.g. **/*.go) or method="grep" for text/regex/word search inside files. Returns relative paths by default.
 - todo(action, id?, content?, status?, priority?, parentId?): manage per-run todo list. actions: add/update/doing/blocked/done/remove/list/clear.
 - read(path, offset?, limit?, lineNumbers?, outline?, symbol?, full?): read file contents. Code files return an outline by default; use symbol=NAME or full=true for bodies.
-- write(path, content, range?): write file. range: line number, 'from...to', 'before:N', 'after:N', 'all', or -1/'append'. Defaults to whole file.
-- edit(path, oldString, newString, occurrence?, dryRun?): replace exact text. Default requires one match; occurrence can be number or 'all'.
+- write(path, content, range?, oldString?, newString?, occurrence?, dryRun?): write file or replace text. Use content+range for writing; use oldString+newString for replacements.
 - bash(description, command, timeout?): run shell command when no tool fits.%s
 
 Be terse. No fluff. Short sentence. Get job done.

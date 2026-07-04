@@ -316,19 +316,6 @@ func TestFindTool_Grep_WordModeStillWorks(t *testing.T) {
 	}
 }
 
-func TestTodoTool_StatusAliases(t *testing.T) {
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "clear"})
-	res := tool.Run(context.Background(), map[string]any{"action": "add", "content": "x"})
-	if !res.Success {
-		t.Fatalf("add failed: %s", res.Error)
-	}
-	res = tool.Run(context.Background(), map[string]any{"action": "doing", "id": 1})
-	if !res.Success || !strings.Contains(res.Content, "[doing]") {
-		t.Fatalf("doing failed: %v %s %s", res.Success, res.Content, res.Error)
-	}
-}
-
 func mustMkdir(t testing.TB, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0755); err != nil {

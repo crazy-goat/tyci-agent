@@ -62,7 +62,7 @@ func formatToolCall(toolName, rawJSON string) string {
 			}
 			return "todo(" + action + ")"
 		}
-	case "read", "write", "edit":
+	case "read", "write":
 		if path, ok := args["path"].(string); ok && path != "" {
 			return toolName + "(" + path + ")"
 		}

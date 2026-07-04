@@ -401,7 +401,7 @@ func TestUpdateSubagentModal_ForwardsDoneMessage(t *testing.T) {
 // ─── handleBlockMsg interaction tests ────────────────────────────────────
 
 func TestTuiModel_ToolStart_NonSubagent_DoesNotOpenModal(t *testing.T) {
-	tools := []string{"bash", "read", "write", "edit"}
+	tools := []string{"bash", "read", "write", "skills"}
 	for _, toolName := range tools {
 		m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 		m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: toolName})

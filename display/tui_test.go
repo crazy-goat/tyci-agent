@@ -1048,7 +1048,7 @@ func TestToolBlock_RenderBlock_RunningVsDone(t *testing.T) {
 	m.width = 80
 
 	// Create blocks and fill them via handlers to set all fields correctly
-	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "edit"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "write"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"path": "x.go"}`})
 
 	// Snapshot running render
@@ -1074,7 +1074,7 @@ func TestToolBlock_RenderBlock_RunningVsDone(t *testing.T) {
 	if strings.Contains(done, "⟳") {
 		t.Errorf("done render should NOT contain spinner, got: %q", done)
 	}
-	if !strings.Contains(done, "edit(x.go)") {
+	if !strings.Contains(done, "write(x.go)") {
 		t.Errorf("done render should contain 'edit(x.go)', got: %q", done)
 	}
 }
