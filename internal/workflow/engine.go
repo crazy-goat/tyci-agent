@@ -107,8 +107,16 @@ func (e *Engine) luaModels(L *lua.LState) int {
 
 // luaAgents returns configured agent names.
 func (e *Engine) luaAgents(L *lua.LState) int {
-	// TODO: implement agent listing
+	names, err := agent.ListAgents()
+	if err != nil {
+		arr := L.NewTable()
+		L.Push(arr)
+		return 1
+	}
 	arr := L.NewTable()
+	for i, name := range names {
+		arr.RawSetInt(i+1, lua.LString(name))
+	}
 	L.Push(arr)
 	return 1
 }
