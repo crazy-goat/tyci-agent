@@ -152,6 +152,67 @@ func TestFindTool_Glob_GitignoreNegationAndNested(t *testing.T) {
 	}
 }
 
+func TestFindTool_Glob_CharacterClassesAndBraces(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.go"), "")
+	writeFile(t, filepath.Join(dir, "b.go"), "")
+	writeFile(t, filepath.Join(dir, "1.go"), "")
+	writeFile(t, filepath.Join(dir, "main.rs"), "")
+	writeFile(t, filepath.Join(dir, "notes.txt"), "")
+	mustMkdir(t, filepath.Join(dir, "src"))
+	writeFile(t, filepath.Join(dir, "src", "foo.go"), "")
+	writeFile(t, filepath.Join(dir, "src", "bar.go"), "")
+	writeFile(t, filepath.Join(dir, "src", "0_test.go"), "")
+
+	// Character class [a-z]
+	res := (&FindTool{}).Run(context.Background(), map[string]any{"cwd": dir, "pattern": "[a-z].go", "limit": 100})
+	if !res.Success {
+		t.Fatalf("find [a-z].go failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "a.go") || !strings.Contains(res.Content, "b.go") {
+		t.Fatalf("expected a.go and b.go, got: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "1.go") || strings.Contains(res.Content, "main.rs") {
+		t.Fatalf("expected only .go files matching [a-z], got: %s", res.Content)
+	}
+
+	// Negation [!a-z]
+	res = (&FindTool{}).Run(context.Background(), map[string]any{"cwd": dir, "pattern": "[!a-z].go", "limit": 100})
+	if !res.Success {
+		t.Fatalf("find [!a-z].go failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "1.go") {
+		t.Fatalf("expected 1.go (non-alpha start), got: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "a.go") || strings.Contains(res.Content, "b.go") {
+		t.Fatalf("expected no alpha-start .go files, got: %s", res.Content)
+	}
+
+	// Brace expansion {go,rs}
+	res = (&FindTool{}).Run(context.Background(), map[string]any{"cwd": dir, "pattern": "*.{go,rs}", "limit": 100})
+	if !res.Success {
+		t.Fatalf("find *.{go,rs} failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "a.go") || !strings.Contains(res.Content, "main.rs") {
+		t.Fatalf("expected a.go and main.rs, got: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "notes.txt") {
+		t.Fatalf("expected no .txt files, got: %s", res.Content)
+	}
+
+	// Subdirectory with character class
+	res = (&FindTool{}).Run(context.Background(), map[string]any{"cwd": dir, "pattern": "src/[a-z]*.go", "limit": 100})
+	if !res.Success {
+		t.Fatalf("find src/[a-z]*.go failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "src/foo.go") || !strings.Contains(res.Content, "src/bar.go") {
+		t.Fatalf("expected src/foo.go and src/bar.go, got: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "src/0_test.go") {
+		t.Fatalf("expected no src/0_test.go, got: %s", res.Content)
+	}
+}
+
 func TestFindTool_DefaultMethodIsGlob(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "test.txt"), "content")

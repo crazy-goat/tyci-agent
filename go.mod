@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/bogdanfinn/fhttp v0.6.8
 	github.com/bogdanfinn/tls-client v1.15.1
 	github.com/charmbracelet/bubbles v1.0.0

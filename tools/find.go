@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 type FindTool struct{}
@@ -306,92 +308,37 @@ func (t *FindTool) runGrep(input map[string]any) ToolResult {
 // Glob helpers (shared with grep mode via compilation)
 // ---------------------------------------------------------------------------
 
-type globMatcher struct{ re *regexp.Regexp }
-
-func compileGlobMatchers(patterns []string) ([]globMatcher, error) {
-	var out []globMatcher
+// compileGlobMatchers validates glob patterns and returns them as a slice.
+// Validation uses doublestar, which natively handles:
+//   - ** (globstar), * (single-segment wildcard), ? (single char)
+//   - [abc] / [^abc] character classes (fixes #98)
+//   - {a,b,c} alternatives (including nested braces)
+func compileGlobMatchers(patterns []string) ([]string, error) {
+	var out []string
 	for _, p := range patterns {
 		if p == "" {
 			continue
 		}
-		for _, expanded := range expandBraces(filepath.ToSlash(p)) {
-			re, err := regexp.Compile(globToRegex(expanded))
-			if err != nil {
-				return nil, fmt.Errorf("invalid glob %q: %w", p, err)
-			}
-			out = append(out, globMatcher{re: re})
+		p = filepath.ToSlash(p)
+		if !doublestar.ValidatePattern(p) {
+			return nil, fmt.Errorf("invalid glob pattern %q", p)
 		}
+		out = append(out, p)
 	}
 	return out, nil
 }
 
-func matchesAny(matchers []globMatcher, path string) bool {
-	if len(matchers) == 0 {
+func matchesAny(patterns []string, path string) bool {
+	if len(patterns) == 0 {
 		return false
 	}
 	path = filepath.ToSlash(path)
-	for _, m := range matchers {
-		if m.re.MatchString(path) {
+	for _, p := range patterns {
+		if ok, _ := doublestar.Match(p, path); ok {
 			return true
 		}
 	}
 	return false
-}
-
-func globToRegex(pattern string) string {
-	var b strings.Builder
-	b.WriteString("^")
-	for i := 0; i < len(pattern); {
-		c := pattern[i]
-		switch c {
-		case '*':
-			if i+1 < len(pattern) && pattern[i+1] == '*' {
-				if i+2 < len(pattern) && pattern[i+2] == '/' {
-					b.WriteString("(?:.*/)?")
-					i += 3
-				} else {
-					b.WriteString(".*")
-					i += 2
-				}
-			} else {
-				b.WriteString("[^/]*")
-				i++
-			}
-		case '?':
-			b.WriteString("[^/]")
-			i++
-		case '.', '+', '(', ')', '|', '^', '$', '[', ']', '\\':
-			b.WriteByte('\\')
-			b.WriteByte(c)
-			i++
-		default:
-			b.WriteByte(c)
-			i++
-		}
-	}
-	b.WriteString("$")
-	return b.String()
-}
-
-func expandBraces(pattern string) []string {
-	start := strings.IndexByte(pattern, '{')
-	if start < 0 {
-		return []string{pattern}
-	}
-	end := strings.IndexByte(pattern[start:], '}')
-	if end < 0 {
-		return []string{pattern}
-	}
-	end += start
-	prefix, suffix := pattern[:start], pattern[end+1:]
-	parts := strings.Split(pattern[start+1:end], ",")
-	var out []string
-	for _, part := range parts {
-		for _, rest := range expandBraces(suffix) {
-			out = append(out, prefix+part+rest)
-		}
-	}
-	return out
 }
 
 // ---------------------------------------------------------------------------
