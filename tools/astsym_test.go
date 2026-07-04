@@ -220,21 +220,4 @@ func TestReadTool_LargeFileWithRangeNoAutoOutline(t *testing.T) {
 	}
 }
 
-func TestUsagesTool_ExcludesCommentsAndStrings(t *testing.T) {
-	path := writeAstFixture(t)
-	res := (&UsagesTool{}).Run(context.Background(), map[string]any{"path": path, "name": "Helper"})
-	if !res.Success {
-		t.Fatalf("expected success, got: %s", res.Error)
-	}
-	// Real occurrences: the definition (func Helper) and the call (Helper(...)).
-	// The comment mention and the string "Helper is only..." must be excluded.
-	if strings.Count(res.Content, "Helper") == 0 {
-		t.Fatalf("expected hits; got:\n%s", res.Content)
-	}
-	if !strings.Contains(res.Content, "[DEFINITION]") {
-		t.Fatalf("expected the definition to be marked; got:\n%s", res.Content)
-	}
-	if !strings.Contains(res.Content, "2 hits") {
-		t.Fatalf("expected exactly 2 hits (def + call), comment/string excluded; got:\n%s", res.Content)
-	}
-}
+

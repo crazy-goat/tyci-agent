@@ -67,7 +67,6 @@ Tools available:
 - grep(pattern, cwd?, include?, exclude?, mode?, caseSensitive?, context?, limit?, output?, maxLineLength?): search contents. mode: text/regex/word. output: lines/files/count.
 - todo(action, id?, content?, status?, priority?, parentId?): manage per-run todo list. actions: add/update/doing/blocked/done/remove/list/clear.
 - read(path, offset?, limit?, lineNumbers?, outline?, symbol?, full?): read file contents. Code files return an outline by default; use symbol=NAME or full=true for bodies.
-- usages(path, name): find in-file references to a symbol via the AST (excludes comments/strings).
 - write(path, content, range?): write file. range: line number, 'from...to', 'before:N', 'after:N', 'all', or -1/'append'. Defaults to whole file.
 - edit(path, oldString, newString, occurrence?, dryRun?): replace exact text. Default requires one match; occurrence can be number or 'all'.
 - bash(description, command, timeout?): run shell command when no tool fits.%s

@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -31,11 +30,10 @@ func readFileForAST(path string) ([]byte, error) {
 // runtime (no CGO). Shared by three surfaces:
 //   - read(outline=true)  -> structure map (signatures + line numbers)
 //   - read(symbol=NAME)   -> exact body of one definition
-//   - usages(name=NAME)   -> in-file references, classified, comments/strings excluded
 //
 // Language support is heuristic over tree-sitter node type names, which are
 // reasonably consistent across grammars. Unsupported files degrade gracefully
-// (outline/symbol fall back to a normal read; usages reports it).
+// (outline/symbol fall back to a normal read).
 
 // parseAST detects the language from the path and parses src into an AST.
 // ok is false when the file type has no available grammar.
@@ -70,12 +68,6 @@ func isDefinitionType(nt string) bool {
 		}
 	}
 	return false
-}
-
-// isIdentifierType reports whether a node type names an identifier occurrence.
-func isIdentifierType(nt string) bool {
-	return nt == "name" || nt == "identifier" ||
-		strings.HasSuffix(nt, "_identifier") || strings.HasSuffix(nt, "_name")
 }
 
 func langName(path string) string {
@@ -182,63 +174,4 @@ func astSymbol(path string, src []byte, name string) (content string, supported,
 	return fmt.Sprintf("[%s in %s: lines %d-%d]\n%s", name, path, start, end, node.Text(src)), true, true
 }
 
-// astUsages lists in-file occurrences of name, classified as DEFINITION or use.
-// Occurrences inside comments and string literals are not identifier nodes in
-// the AST, so they are excluded — the precision a text search cannot match.
-func astUsages(path string, src []byte, name string) (content string, supported bool) {
-	root, lang, ok := parseAST(path, src)
-	if !ok {
-		return "", false
-	}
-	srcLines := strings.Split(string(src), "\n")
-	var lines []string
-	ts.Walk(root, func(n *ts.Node, depth int) ts.WalkAction {
-		if !n.IsNamed() || !isIdentifierType(n.Type(lang)) || n.Text(src) != name {
-			return ts.WalkContinue
-		}
-		row := int(n.StartPoint().Row)
-		kind := "use"
-		if p := n.Parent(); p != nil && isDefinitionType(p.Type(lang)) {
-			if nn := p.ChildByFieldName("name", lang); nn != nil && nn.StartByte() == n.StartByte() {
-				kind = "DEFINITION"
-			}
-		}
-		text := ""
-		if row < len(srcLines) {
-			text = strings.TrimSpace(srcLines[row])
-		}
-		lines = append(lines, fmt.Sprintf("%d| [%s] %s", row+1, kind, text))
-		return ts.WalkContinue
-	})
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "[Usages of %q in %s — %d hits (comments and strings excluded)]\n", name, path, len(lines))
-	b.WriteString(strings.Join(lines, "\n"))
-	return b.String(), true
-}
-
-// UsagesTool finds in-file references to a symbol using the AST.
-type UsagesTool struct{}
-
-func (t *UsagesTool) Name() string { return "usages" }
-
-func (t *UsagesTool) Run(ctx context.Context, input map[string]any) ToolResult {
-	path, ok := input["path"].(string)
-	if !ok || path == "" {
-		return ToolResult{Type: "result", Success: false, Error: "path required"}
-	}
-	name := stringParam(input, "name", "")
-	if name == "" {
-		return ToolResult{Type: "result", Success: false, Error: "name required"}
-	}
-	src, err := readFileForAST(path)
-	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: err.Error()}
-	}
-	content, supported := astUsages(path, src, name)
-	if !supported {
-		return ToolResult{Type: "result", Success: false,
-			Error: fmt.Sprintf("usages: no grammar for %s; use grep instead", path)}
-	}
-	return ToolResult{Type: "result", Success: true, Content: content}
-}

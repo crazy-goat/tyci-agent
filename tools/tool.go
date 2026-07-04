@@ -116,21 +116,6 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
-				"name":        "usages",
-				"description": "Find in-file references to a symbol using the AST. When exploring how a function/type/variable is used within a file, prefer this over grep: it excludes matches inside comments and string literals and marks which occurrence is the DEFINITION, so you get real call sites without noise. Single-file scope; for cross-file search use grep.",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"path": map[string]any{"type": "string", "description": "File path to search"},
-						"name": map[string]any{"type": "string", "description": "Symbol name to find references to"},
-					},
-					"required": []string{"path", "name"},
-				},
-			},
-		},
-		{
-			"type": "function",
-			"function": map[string]any{
 				"name":        "write",
 				"description": "Write file content. Overwrites by default. range can replace, insert, or append.",
 				"parameters": map[string]any{
@@ -182,14 +167,14 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "subagent",
-				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has read/grep/glob/usages/write/edit/bash/todo tools (it cannot spawn further subagents) and a bounded tool-call budget, so keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array).",
+				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has read/grep/glob/write/edit/bash/todo tools (it cannot spawn further subagents) and a bounded tool-call budget, so keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array).",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"task":  map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/edit/bash tools."},
 						"agent": map[string]any{"type": "string", "description": "Named agent to use (looks up ~/.tyci/agents/<name>.md for system prompt and config)"},
 						"tasks": map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
-							"task":  map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has read/grep/glob/usages/write/edit/bash/todo tools."},
+							"task":  map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has read/grep/glob/write/edit/bash/todo tools."},
 							"agent": map[string]any{"type": "string", "description": "Named agent to use"},
 							"model": map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
 						}, "required": []string{"task"}}},
@@ -301,7 +286,6 @@ var toolRegistry = map[string]Tool{
 	"grep":        &GrepTool{},
 	"todo":        &TodoTool{},
 	"read":        &ReadTool{},
-	"usages":      &UsagesTool{},
 	"write":       &WriteTool{},
 	"edit":        &EditTool{},
 	"load_skill":  &LoadSkillTool{},
