@@ -18,7 +18,10 @@ import (
 	"github.com/bogdanfinn/tls-client/profiles"
 )
 
-// WebTool implements a unified web search/lookup/get tool.
+// WebTool implements a unified web tool with three methods:
+//   - search: real-time web search via Exa AI (for current events, docs, anything post-training)
+//   - lookup: fast encyclopedic lookup via DuckDuckGo + Wikipedia (enough for most knowledge questions)
+//   - get: fetch a URL with browser TLS impersonation, returns Markdown by default
 type WebTool struct {
 	client tls_client.HttpClient
 	once   sync.Once
@@ -78,7 +81,7 @@ func (t *WebTool) Run(ctx context.Context, input map[string]any) ToolResult {
 
 	default:
 		return ToolResult{Type: "result", Success: false,
-			Error: "method must be one of: search, lookup, get"}
+			Error: "method must be one of: search (real-time web), lookup (encyclopedic facts), get (fetch URL)"}
 	}
 }
 
@@ -317,9 +320,13 @@ func (t *WebTool) webLookup(ctx context.Context, term string) ToolResult {
 	// Step 1: DuckDuckGo Instant Answer
 	ddgURL := fmt.Sprintf("https://api.duckduckgo.com/?q=%s&format=json&no_html=1", url.QueryEscape(term))
 	ddgResp, err := t.doGet(ctx, client, ddgURL)
-	if err == nil {
+	if err != nil {
+		b.WriteString(fmt.Sprintf("⚠️ DuckDuckGo unavailable: %s\n\n", err))
+	} else {
 		var ddg ddgResponse
-		if json.Unmarshal([]byte(ddgResp), &ddg) == nil {
+		if err := json.Unmarshal([]byte(ddgResp), &ddg); err != nil {
+			b.WriteString(fmt.Sprintf("⚠️ DuckDuckGo response parse error: %s\n\n", err))
+		} else {
 			if ddg.AbstractText != "" {
 				b.WriteString(fmt.Sprintf("**Abstract** (%s):\n%s\n\n", ddg.AbstractSource, ddg.AbstractText))
 			}
@@ -338,31 +345,42 @@ func (t *WebTool) webLookup(ctx context.Context, term string) ToolResult {
 					}
 				}
 			}
-			if ddg.AbstractText != "" || ddg.Answer != "" || len(ddg.RelatedTopics) > 0 {
-				b.WriteString("\n")
+			if ddg.AbstractText == "" && ddg.Answer == "" && len(ddg.RelatedTopics) == 0 {
+				b.WriteString("(no instant answer from DuckDuckGo)\n")
 			}
+			b.WriteString("\n")
 		}
 	}
 
 	// Step 2: Wikipedia summary
 	wikiURL := fmt.Sprintf("https://en.wikipedia.org/api/rest_v1/page/summary/%s", url.PathEscape(term))
 	wikiResp, err := t.doGet(ctx, client, wikiURL)
-	if err == nil {
+	if err != nil {
+		b.WriteString(fmt.Sprintf("⚠️ Wikipedia summary unavailable: %s\n\n", err))
+	} else {
 		var wiki wikiSummary
-		if json.Unmarshal([]byte(wikiResp), &wiki) == nil && wiki.Extract != "" {
+		if err := json.Unmarshal([]byte(wikiResp), &wiki); err != nil {
+			b.WriteString(fmt.Sprintf("⚠️ Wikipedia response parse error: %s\n\n", err))
+		} else if wiki.Extract != "" {
 			b.WriteString(fmt.Sprintf("**Wikipedia**: %s\n%s\n\n", wiki.Title, wiki.Extract))
+		} else {
+			b.WriteString("(no summary found on Wikipedia)\n\n")
 		}
 	}
 
-	// Step 3: Wikipedia search fallback
-	if b.Len() < 50 {
+	// Step 3: Wikipedia search fallback (only if we got very little so far)
+	if b.Len() < 100 {
 		searchURL := fmt.Sprintf(
 			"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=%s&format=json&origin=*",
 			url.QueryEscape(term))
 		searchResp, err := t.doGet(ctx, client, searchURL)
-		if err == nil {
+		if err != nil {
+			b.WriteString(fmt.Sprintf("⚠️ Wikipedia search unavailable: %s\n\n", err))
+		} else {
 			var ws wikiSearchResponse
-			if json.Unmarshal([]byte(searchResp), &ws) == nil && len(ws.Query.Search) > 0 {
+			if err := json.Unmarshal([]byte(searchResp), &ws); err != nil {
+				b.WriteString(fmt.Sprintf("⚠️ Wikipedia search parse error: %s\n\n", err))
+			} else if len(ws.Query.Search) > 0 {
 				b.WriteString("**Wikipedia search results**:\n")
 				for i, s := range ws.Query.Search {
 					if i >= 10 {
@@ -371,14 +389,16 @@ func (t *WebTool) webLookup(ctx context.Context, term string) ToolResult {
 					b.WriteString(fmt.Sprintf("- %s\n", s.Title))
 				}
 				b.WriteString("\n")
+			} else {
+				b.WriteString("(no Wikipedia search results)\n\n")
 			}
 		}
 	}
 
 	result := strings.TrimSpace(b.String())
-	if result == "" {
-		return ToolResult{Type: "result", Success: false,
-			Error: fmt.Sprintf("no information found for %q", term)}
+	if result == "" || strings.Count(result, "\n") <= 1 {
+		return ToolResult{Type: "result", Success: true,
+			Content: fmt.Sprintf("No information found for %q. All backends returned empty or failed.", term)}
 	}
 
 	return ToolResult{Type: "result", Success: true, Content: result}
@@ -400,13 +420,6 @@ func (t *WebTool) webGet(ctx context.Context, rawURL, format string) ToolResult 
 	}
 
 	switch format {
-	case "json":
-		var pretty bytes.Buffer
-		if json.Indent(&pretty, []byte(body), "", "  ") == nil {
-			return ToolResult{Type: "result", Success: true, Content: pretty.String()}
-		}
-		return ToolResult{Type: "result", Success: true, Content: body}
-
 	case "original":
 		return ToolResult{Type: "result", Success: true, Content: body}
 

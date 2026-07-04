@@ -227,15 +227,15 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "web",
-				"description": "Access the web: search with Exa AI, lookup facts via DuckDuckGo/Wikipedia, or fetch a URL. Uses browser TLS impersonation. method=search: real-time web search; method=lookup: fast factual lookup; method=get: fetch URL and return content.",
+				"description": "Access the web. Use method=search for real-time web search (current events, docs, anything not in training data). Use method=lookup for fast encyclopedic facts, Wikipedia summaries, and quick references — it's enough for most knowledge questions and cheaper. Use method=get to fetch a specific URL.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"method":     map[string]any{"type": "string", "enum": []string{"search", "lookup", "get"}, "description": "Dispatch selector: search, lookup, or get"},
+						"method":     map[string]any{"type": "string", "enum": []string{"search", "lookup", "get"}, "description": "search=real-time web search (Exa AI, needs internet); lookup=encyclopedic facts (DuckDuckGo+Wikipedia, works for most knowledge); get=fetch URL"},
 						"what":       map[string]any{"type": "string", "description": "Search query, lookup term, or URL to fetch"},
 						"numResults": map[string]any{"type": "integer", "description": "search only — number of results (default 8, max 25)"},
 						"type":       map[string]any{"type": "string", "enum": []string{"auto", "fast", "deep"}, "description": "search only — Exa search mode (default auto)"},
-						"format":     map[string]any{"type": "string", "enum": []string{"markdown", "json", "original"}, "description": "get only — output format (default markdown)"},
+						"format":     map[string]any{"type": "string", "enum": []string{"markdown", "original"}, "description": "get only — output format (default markdown)"},
 					},
 					"required": []string{"method", "what"},
 				},
