@@ -2,13 +2,16 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -375,6 +378,12 @@ func newContentMatcher(pattern, mode string, caseSensitive bool) (*contentMatche
 	return m, nil
 }
 
+// canFastPath returns true when we can use a quick bytes.Contains check
+// to skip files that can't possibly match, avoiding line-by-line scanning.
+func (m *contentMatcher) canFastPath() bool {
+	return m.mode == "text" && m.caseSensitive && m.re == nil
+}
+
 func (m *contentMatcher) Match(line string) bool {
 	switch m.mode {
 	case "regex":
@@ -416,15 +425,124 @@ type grepBlock struct {
 	lines      []string
 }
 
+// bufPool holds 1 MiB buffers for pooled file I/O, avoiding per-file allocations
+// for the common case of small-to-medium files.
+var bufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 1<<20) // 1 MiB
+		return &b
+	},
+}
+
+const (
+	// maxGrepFileSize is the default maximum file size (100 MiB) for grep.
+	// Files larger than this are silently skipped.
+	maxGrepFileSize = 100 << 20 // 100 MiB
+
+	// binaryPeekSize is how many bytes we read from the start of a file
+	// to check for NUL bytes (binary detection).
+	binaryPeekSize = 8000
+)
+
+// grepFile searches a file for the given pattern and returns matching blocks.
+//
+// Optimizations vs the previous implementation:
+//   - Pooled 1 MiB buffer instead of os.ReadFile (avoids large allocations)
+//   - Binary detection: skips files with a NUL byte in the first 8 KiB
+//   - Size limit: skips files larger than 100 MiB
+//   - Fast path: for literal (text, case-sensitive) patterns, uses bytes.Contains
+//     to quickly reject files with no possible match before line-by-line scanning
 func grepFile(path, rel string, matcher *contentMatcher, contextLines, maxLineLength int) ([]grepBlock, int, error) {
-	data, err := os.ReadFile(path)
+	// 1. Stat file for size check
+	fi, err := os.Stat(path)
 	if err != nil {
 		return nil, 0, err
 	}
+
+	// Skip files larger than the limit
+	if fi.Size() > maxGrepFileSize {
+		return nil, 0, nil
+	}
+
+	// 2. Open the file
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+
+	// 3. Read first chunk for binary detection (and as the start of our data buffer)
+	head := make([]byte, binaryPeekSize)
+	n, err := io.ReadFull(f, head)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return nil, 0, err
+	}
+	head = head[:n]
+
+	// Binary detection: if the first 8 KiB contains a NUL byte, skip.
+	if bytes.IndexByte(head, 0) >= 0 {
+		return nil, 0, nil
+	}
+
+	// 4. Read remaining file content
+	var data []byte
+	remaining := fi.Size() - int64(n)
+	switch {
+	case remaining <= 0:
+		// Entire file fits in the head buffer
+		data = head
+	case fi.Size() <= int64(cap(head)*2):
+		// Small file (≤ 16 KiB — head is 8 KiB, so ≤ 16 KiB): single allocation
+		data = make([]byte, fi.Size())
+		copy(data, head)
+		_, err := io.ReadFull(f, data[n:])
+		if err != nil && err != io.EOF {
+			return nil, 0, err
+		}
+	case fi.Size() <= 1<<20:
+		// File ≤ 1 MiB: use pooled buffer
+		bufp := bufPool.Get().(*[]byte)
+		defer bufPool.Put(bufp)
+		buf := *bufp
+		copy(buf, head)
+		total := n
+		for {
+			nn, err := f.Read(buf[total:])
+			total += nn
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return nil, 0, err
+			}
+		}
+		data = buf[:total]
+	default:
+		// File > 1 MiB but ≤ maxGrepFileSize: direct allocation
+		data = make([]byte, fi.Size())
+		copy(data, head)
+		_, err := io.ReadFull(f, data[n:])
+		if err != nil && err != io.EOF {
+			return nil, 0, err
+		}
+	}
+
+	// 5. Fast path: quick bytes.Contains for literal patterns.
+	// If the literal isn't in the file at all, skip scanning entirely.
+	if matcher.canFastPath() {
+		literal := []byte(matcher.pattern)
+		if !bytes.Contains(data, literal) {
+			return nil, 0, nil
+		}
+	}
+
+	// 6. Check UTF-8 validity
 	if len(data) > 0 && !utf8.Valid(data) {
 		return nil, 0, nil
 	}
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+
+	// 7. Scan lines and match (existing logic)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var lines []string
 	for scanner.Scan() {

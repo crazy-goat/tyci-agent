@@ -225,6 +225,97 @@ func TestFindTool_DefaultMethodIsGlob(t *testing.T) {
 	}
 }
 
+func TestFindTool_Grep_BinaryDetection(t *testing.T) {
+	dir := t.TempDir()
+	// Binary file: contains NUL byte
+	binaryContent := []byte("hello\x00world\nhit\n")
+	writeFile(t, filepath.Join(dir, "binary.bin"), string(binaryContent))
+	// Normal text file
+	writeFile(t, filepath.Join(dir, "text.txt"), "hit\n")
+
+	res := (&FindTool{}).Run(context.Background(), map[string]any{"method": "grep", "cwd": dir, "pattern": "hit"})
+	if !res.Success {
+		t.Fatalf("find grep failed: %s", res.Error)
+	}
+	if strings.Contains(res.Content, "binary.bin") {
+		t.Fatalf("expected binary file skipped, got: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "text.txt") {
+		t.Fatalf("expected text.txt present, got: %s", res.Content)
+	}
+}
+
+func TestFindTool_Grep_FastPathLiteralSkipsNonMatching(t *testing.T) {
+	dir := t.TempDir()
+	// File without the literal
+	writeFile(t, filepath.Join(dir, "no_match.txt"), "foo\nbar\nbaz\n")
+	// File with the literal
+	writeFile(t, filepath.Join(dir, "has_match.txt"), "this has hit in it\n")
+
+	res := (&FindTool{}).Run(context.Background(), map[string]any{"method": "grep", "cwd": dir, "pattern": "hit", "mode": "text", "caseSensitive": true})
+	if !res.Success {
+		t.Fatalf("find grep failed: %s", res.Error)
+	}
+	if strings.Contains(res.Content, "no_match.txt") {
+		t.Fatalf("expected no_match.txt skipped by fast path, got: %s", res.Content)
+	}
+	if !strings.Contains(res.Content, "has_match.txt") {
+		t.Fatalf("expected has_match.txt present, got: %s", res.Content)
+	}
+}
+
+func TestFindTool_Grep_FastPathCaseInsensitive(t *testing.T) {
+	dir := t.TempDir()
+	// Case-insensitive should still work
+	writeFile(t, filepath.Join(dir, "match.txt"), "HIT\nhit\n")
+	writeFile(t, filepath.Join(dir, "no_match.txt"), "foo\n")
+
+	res := (&FindTool{}).Run(context.Background(), map[string]any{"method": "grep", "cwd": dir, "pattern": "hit", "mode": "text", "caseSensitive": false})
+	if !res.Success {
+		t.Fatalf("find grep failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "match.txt") {
+		t.Fatalf("expected match.txt found with case-insensitive, got: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "no_match.txt") {
+		t.Fatalf("expected no_match.txt skipped, got: %s", res.Content)
+	}
+}
+
+func TestFindTool_Grep_RegexModeStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "match.txt"), "hello\nworld\nhit\n")
+	writeFile(t, filepath.Join(dir, "other.txt"), "no\n")
+
+	res := (&FindTool{}).Run(context.Background(), map[string]any{"method": "grep", "cwd": dir, "pattern": "h.t", "mode": "regex"})
+	if !res.Success {
+		t.Fatalf("find grep regex failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "match.txt") {
+		t.Fatalf("expected match.txt found with regex, got: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "other.txt") {
+		t.Fatalf("expected other.txt skipped, got: %s", res.Content)
+	}
+}
+
+func TestFindTool_Grep_WordModeStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "match.txt"), "hit\n")
+	writeFile(t, filepath.Join(dir, "partial.txt"), "hitting\n")
+
+	res := (&FindTool{}).Run(context.Background(), map[string]any{"method": "grep", "cwd": dir, "pattern": "hit", "mode": "word"})
+	if !res.Success {
+		t.Fatalf("find grep word failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "match.txt") {
+		t.Fatalf("expected match.txt found with word mode, got: %s", res.Content)
+	}
+	if strings.Contains(res.Content, "partial.txt") {
+		t.Fatalf("expected partial.txt NOT found with word mode, got: %s", res.Content)
+	}
+}
+
 func TestTodoTool_StatusAliases(t *testing.T) {
 	tool := &TodoTool{}
 	tool.Run(context.Background(), map[string]any{"action": "clear"})
