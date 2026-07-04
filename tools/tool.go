@@ -186,25 +186,13 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
-				"name":        "load_skill",
-				"description": "Load a skill by name and return its full content. Skills are markdown files stored in ~/.tyci/skills/<name>/SKILL.md.",
+				"name":        "skills",
+				"description": "Manage skills. Call without parameters to list all available skills. Call with name to load a specific skill's full content. Skills are markdown files stored in ~/.tyci/skills/<name>/SKILL.md.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"name": map[string]any{"type": "string", "description": "Name of the skill to load (directory name)"},
+						"name": map[string]any{"type": "string", "description": "Name of the skill to load (directory name). If omitted, lists all available skills."},
 					},
-					"required": []string{"name"},
-				},
-			},
-		},
-		{
-			"type": "function",
-			"function": map[string]any{
-				"name":        "list_skills",
-				"description": "List all available skills with their descriptions.",
-				"parameters": map[string]any{
-					"type":       "object",
-					"properties": map[string]any{},
 				},
 			},
 		},
@@ -288,8 +276,7 @@ var toolRegistry = map[string]Tool{
 	"read":        &ReadTool{},
 	"write":       &WriteTool{},
 	"edit":        &EditTool{},
-	"load_skill":  &LoadSkillTool{},
-	"list_skills": &ListSkillsTool{},
+	"skills": &SkillsTool{},
 	"web":         &WebTool{},
 }
 

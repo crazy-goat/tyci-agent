@@ -86,7 +86,7 @@ Be terse. No fluff. Short sentence. Get job done.
 	skillsDir := filepath.Join(os.Getenv("HOME"), ".tyci", "skills")
 	if skillNames, err := listSkillNames(skillsDir); err == nil && len(skillNames) > 0 {
 		prompt += "\n---\nAvailable skills: " + strings.Join(skillNames, ", ")
-		prompt += "\nUse load_skill(name) to load a skill's full content.\n"
+		prompt += "\nUse skills(name) to load a skill's full content.\n"
 	}
 
 	return prompt

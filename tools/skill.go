@@ -8,41 +8,34 @@ import (
 	"github.com/decodo/tyci/internal/skills"
 )
 
-type LoadSkillTool struct{}
+type SkillsTool struct{}
 
-func (t *LoadSkillTool) Name() string {
-	return "load_skill"
+func (t *SkillsTool) Name() string {
+	return "skills"
 }
 
-func (t *LoadSkillTool) Run(ctx context.Context, input map[string]any) ToolResult {
-	name, ok := input["name"].(string)
-	if !ok || name == "" {
-		return ToolResult{Type: "result", Success: false, Error: "name required"}
+func (t *SkillsTool) Run(ctx context.Context, input map[string]any) ToolResult {
+	name, hasName := input["name"].(string)
+
+	// If name provided, load the skill
+	if hasName && name != "" {
+		dir := skills.SkillsDir()
+		skill, err := skills.LoadSkill(dir, name)
+		if err != nil {
+			return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "# Skill: %s\n", skill.Name)
+		if skill.Description != "" {
+			fmt.Fprintf(&b, "\nDescription: %s\n", skill.Description)
+		}
+		fmt.Fprintf(&b, "\n---\n\n%s", skill.Content)
+
+		return ToolResult{Type: "result", Success: true, Content: b.String()}
 	}
 
-	dir := skills.SkillsDir()
-	skill, err := skills.LoadSkill(dir, name)
-	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: err.Error()}
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "# Skill: %s\n", skill.Name)
-	if skill.Description != "" {
-		fmt.Fprintf(&b, "\nDescription: %s\n", skill.Description)
-	}
-	fmt.Fprintf(&b, "\n---\n\n%s", skill.Content)
-
-	return ToolResult{Type: "result", Success: true, Content: b.String()}
-}
-
-type ListSkillsTool struct{}
-
-func (t *ListSkillsTool) Name() string {
-	return "list_skills"
-}
-
-func (t *ListSkillsTool) Run(ctx context.Context, input map[string]any) ToolResult {
+	// No name — list available skills
 	dir := skills.SkillsDir()
 	names, err := skills.ListSkills(dir)
 	if err != nil {
