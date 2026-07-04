@@ -38,6 +38,22 @@ func (m TuiModel) renderToolBlock(idx int, b block) string {
 // formatToolCall parses the raw JSON tool arguments and returns a human-readable
 // summary like "read(main.go)" or "bash(Build display package)".
 func formatToolCall(toolName, rawJSON string) string {
+	// Skills has a different default: no args means "list"
+	if toolName == "skills" {
+		if rawJSON == "" {
+			return "skills(list)"
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(rawJSON), &args); err != nil {
+			return "skills(list)"
+		}
+		name, ok := args["name"].(string)
+		if ok && name != "" {
+			return "skills(" + name + ")"
+		}
+		return "skills(list)"
+	}
+
 	if rawJSON == "" {
 		return toolName + "(...)"
 	}
@@ -76,6 +92,15 @@ func formatToolCall(toolName, rawJSON string) string {
 	case "subagent":
 		if title := subagentTitleFromArgs(args); title != "" {
 			return "subagent(" + truncateString(title, 60) + ")"
+		}
+	case "web":
+		method, _ := args["method"].(string)
+		what, _ := args["what"].(string)
+		if method != "" && what != "" {
+			return "web(" + method + ", " + truncateString(what, 60) + ")"
+		}
+		if method != "" {
+			return "web(" + method + ")"
 		}
 	}
 
