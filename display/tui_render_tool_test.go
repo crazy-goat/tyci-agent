@@ -2,6 +2,7 @@ package display
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/decodo/tyci/tools"
@@ -174,6 +175,21 @@ func TestFormatToolCall_Todo(t *testing.T) {
 			args: `{"action":"doing","id":99}`,
 			want: "todo(doing, 99)",
 		},
+		{
+			name: "update with id resolves item",
+			args: `{"action":"update","id":1}`,
+			want: "todo(update, 1. Fuzz the parser)",
+		},
+		{
+			name: "remove with id resolves item",
+			args: `{"action":"remove","id":2}`,
+			want: "todo(remove, 2. Write the docs)",
+		},
+		{
+			name: "update with unknown id falls back",
+			args: `{"action":"update","id":42}`,
+			want: "todo(update, 42)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -186,6 +202,58 @@ func TestFormatToolCall_Todo(t *testing.T) {
 	}
 
 	tools.ClearTodoList()
+}
+
+// TestPrintTodoRenderMatrix dumps, for every todo action variant, the exact
+// line the TUI shows next to "tool" — useful as a visual regression reference.
+// Run with `go test ./display/ -run TestPrintTodoRenderMatrix -v` and grep
+// for "TUI>" in the output.
+func TestPrintTodoRenderMatrix(t *testing.T) {
+	tools.ClearTodoList()
+	tool := &tools.TodoTool{}
+	mustRun(t, tool, map[string]any{"action": "add", "content": "Fix bug in parser", "priority": "high"})
+	mustRun(t, tool, map[string]any{"action": "add", "content": "Update docs"})
+	mustRun(t, tool, map[string]any{"action": "add", "content": "Refactor config", "priority": "low", "parentId": 2})
+
+	cases := []map[string]any{
+		{"action": "add", "content": "Write tests", "priority": "high"},
+		{"action": "add", "content": "Subtask", "parentId": 1},
+		{"action": "add"}, // <- error: no content
+		{"action": "add", "content": "Bare add"},
+		{"action": "update", "id": 1, "status": "doing"},
+		{"action": "update", "id": 2, "priority": "low"},
+		{"action": "update", "id": 3, "content": "Refactor config loader"},
+		{"action": "update", "id": 1, "parentId": 2},
+		{"action": "update", "id": 1, "content": "Renamed", "status": "blocked", "priority": "high", "parentId": 0},
+		{"action": "update"},                              // <- no id
+		{"action": "update", "id": 99, "status": "todo"},  // <- error: not found
+		{"action": "doing", "id": 1},
+		{"action": "doing", "id": 99}, // <- unknown id
+		{"action": "blocked", "id": 2},
+		{"action": "done", "id": 3},
+		{"action": "remove", "id": 3},
+		{"action": "remove"},                              // <- error: no id
+		{"action": "clear"},
+		{"action": "list"},
+		{"action": "explode"}, // <- error: invalid
+		{},                    // default action = list
+	}
+
+	for _, args := range cases {
+		b, _ := json.Marshal(args)
+		line := formatToolCall("todo", string(b))
+		t.Logf("TUI> tool %s", line)
+	}
+
+	tools.ClearTodoList()
+}
+
+func mustMarshal(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func mustRun(t *testing.T, tool *tools.TodoTool, input map[string]any) {

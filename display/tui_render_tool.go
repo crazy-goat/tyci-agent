@@ -74,16 +74,16 @@ func formatToolCall(toolName, rawJSON string) string {
 		}
 	case "todo":
 		if action, ok := args["action"].(string); ok && action != "" {
-			// Status-changing actions (doing/done/blocked) take an id —
-			// surface the matching item so the call isn't ambiguous in
-			// the transcript (e.g. "todo(doing)" alone is opaque).
-			if action == "doing" || action == "done" || action == "blocked" {
-				if id, ok := args["id"].(float64); ok && id > 0 {
-					if content := lookupTodoContent(int(id)); content != "" {
-						return "todo(" + action + ", " + fmt.Sprintf("%d", int(id)) + ". " + truncateString(content, 40) + ")"
-					}
-					return "todo(" + action + ", " + fmt.Sprintf("%d", int(id)) + ")"
+			// Surface the matching item for any action that targets a single
+			// todo by id (doing/done/blocked/update/remove). Without the
+			// disambiguation "todo(update)" / "todo(done)" is opaque in the
+			// transcript — show id plus the resolved content.
+			id, _ := args["id"].(float64)
+			if id > 0 && targetsSingleItem(action) {
+				if content := lookupTodoContent(int(id)); content != "" {
+					return "todo(" + action + ", " + fmt.Sprintf("%d", int(id)) + ". " + truncateString(content, 40) + ")"
 				}
+				return "todo(" + action + ", " + fmt.Sprintf("%d", int(id)) + ")"
 			}
 			if content, ok := args["content"].(string); ok && content != "" {
 				return "todo(" + action + ": " + truncateString(content, 50) + ")"
@@ -180,4 +180,15 @@ func lookupTodoContent(id int) string {
 		}
 	}
 	return ""
+}
+
+// targetsSingleItem reports whether the todo action operates on a single
+// todo identified by id (used to decide whether to surface the id+content
+// in the TUI render).
+func targetsSingleItem(action string) bool {
+	switch action {
+	case "doing", "done", "blocked", "update", "remove":
+		return true
+	}
+	return false
 }
