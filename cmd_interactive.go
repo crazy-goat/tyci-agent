@@ -39,6 +39,17 @@ type toolsAdapter struct{}
 func (toolsAdapter) Run(ctx context.Context, name string, args map[string]any) (string, error) {
 	res := tools.RunTool(ctx, name, args)
 	if res.Success {
+		// Surface res.Truncated to the calling LLM as a stable, parseable
+		// suffix marker. Without this, a parent that invokes the subagent
+		// tool in single-task mode (the most common case) only sees the
+		// "may be incomplete" wording inline and must guess at it. The
+		// parallel-array path already encodes truncated per-item via
+		// json.Marshal, so this only closes the single-task gap. The
+		// marker literal is exported (tools.TruncatedMarker) so a test
+		// in tools/ can lock the format down and drift is caught.
+		if res.Truncated {
+			return res.Content + "\n\n" + tools.TruncatedMarker, nil
+		}
 		return res.Content, nil
 	}
 	return "", fmt.Errorf("%s", res.Error)

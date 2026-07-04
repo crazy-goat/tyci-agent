@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +24,14 @@ import (
 // always gets an answer.
 const subagentTimeoutSec = 600
 
+// ErrSubagentTruncated is returned (wrapped via fmt.Errorf %w) by a
+// SubAgentRunner when the child hit its MaxIterations cap. Tools package
+// callers use errors.Is to detect this — distinct from "child failed" or
+// "child returned empty result" — and surface it via subagentResult.Truncated
+// and ToolResult.Truncated. Sentinel lives in tools/ (not agent/) so the
+// layering remains: tools has no upward dependency on agent.
+var ErrSubagentTruncated = errors.New("subagent hit its max-iterations cap")
+
 type SubagentTool struct {
 	Runner SubAgentRunner
 }
@@ -31,9 +40,10 @@ func (t *SubagentTool) Name() string { return "subagent" }
 
 // subagentTask represents a single task for a subagent.
 type subagentTask struct {
-	Task  string `json:"task"`
-	Agent string `json:"agent,omitempty"`
-	Model string `json:"model,omitempty"`
+	Task          string `json:"task"`
+	Agent         string `json:"agent,omitempty"`
+	Model         string `json:"model,omitempty"`
+	MaxIterations *int   `json:"max_iterations,omitempty"`
 }
 
 // subagentResult holds the outcome of one subagent execution.
@@ -46,6 +56,10 @@ type subagentResult struct {
 	ToolCalls int          `json:"tool_calls"`
 	Usage     stream.Usage `json:"usage"`
 	Model     string       `json:"model,omitempty"`
+	// Truncated is true when the child ran to its MaxIterations cap and
+	// self-stopped with a partial answer (still a "success" but flagged so
+	// the parent distinguishes from a clean completion).
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // collector implements display.Display and captures all output (thread-safe).
@@ -217,7 +231,7 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		if !r.Success {
 			return ToolResult{Type: "result", Success: false, Error: r.Error}
 		}
-		return ToolResult{Type: "result", Success: true, Content: r.Content}
+		return ToolResult{Type: "result", Success: true, Content: r.Content, Truncated: r.Truncated}
 	}
 
 	// Multiple tasks → return JSON array
@@ -272,7 +286,46 @@ func parseTasks(input map[string]any, defaultModel string) ([]subagentTask, erro
 	if m, ok := input["model"].(string); ok && m != "" {
 		t.Model = m
 	}
+	if mi, ok := input["max_iterations"]; ok {
+		v, err := toInt(mi)
+		if err != nil {
+			return nil, fmt.Errorf("max_iterations: %w", err)
+		}
+		t.MaxIterations = &v
+	}
 	return []subagentTask{t}, nil
+}
+
+// toInt accepts any JSON number preserved by encoding/json (float64) or a
+// plain int (from tests / typed callers). Rejects NaN/Inf and values outside
+// the int range so a runaway model value (e.g. max_iterations: 1e20) doesn't
+// silently saturate to math.MaxInt64 and let the child run forever.
+func toInt(v any) (int, error) {
+	switch x := v.(type) {
+	case int:
+		return x, nil
+	case int64:
+		return int(x), nil
+	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return 0, fmt.Errorf("expected integer, got %v", x)
+		}
+		if x > float64(math.MaxInt) || x < float64(math.MinInt) {
+			return 0, fmt.Errorf("value out of int range: %v", x)
+		}
+		return int(x), nil
+	case float32:
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return 0, fmt.Errorf("expected integer, got %v", x)
+		}
+		f := float64(x)
+		if f > float64(math.MaxInt) || f < float64(math.MinInt) {
+			return 0, fmt.Errorf("value out of int range: %v", x)
+		}
+		return int(x), nil
+	default:
+		return 0, fmt.Errorf("expected integer, got %T", v)
+	}
 }
 
 func taskFromMap(m map[string]any) (subagentTask, error) {
@@ -286,6 +339,13 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 	}
 	if model, ok := m["model"].(string); ok && model != "" {
 		t.Model = model
+	}
+	if mi, ok := m["max_iterations"]; ok {
+		v, err := toInt(mi)
+		if err != nil {
+			return subagentTask{}, fmt.Errorf("max_iterations: %w", err)
+		}
+		t.MaxIterations = &v
 	}
 	return t, nil
 }
@@ -360,6 +420,8 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		mName = providers.ModelFromContext(ctx)
 	}
 
+	opts := SubagentOptions{MaxIterations: task.MaxIterations}
+
 	// Get tool index for streaming (passed by agent.executeTools)
 	toolIdx := 0
 	if idx, ok := ctx.Value(stream.ToolIdxCtxKey{}).(int); ok {
@@ -375,12 +437,12 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		// Look up markdown agent for system prompt
 		sysPrompt := getAgentSystemPrompt(task.Agent)
 		if sysPrompt != "" {
-			content, err = runner.RunTaskWithSystem(runCtx, task.Task, mName, sysPrompt)
+			content, err = runner.RunTaskWithSystem(runCtx, task.Task, mName, sysPrompt, opts)
 		} else {
-			content, err = runner.RunTask(runCtx, task.Task, mName)
+			content, err = runner.RunTask(runCtx, task.Task, mName, opts)
 		}
 	} else {
-		content, err = runner.RunTask(runCtx, task.Task, mName)
+		content, err = runner.RunTask(runCtx, task.Task, mName, opts)
 	}
 
 	// Flush any remaining partial line
@@ -398,6 +460,12 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		// its task was malformed.
 		if timeoutSec > 0 && errors.Is(err, context.DeadlineExceeded) {
 			res.Error = fmt.Sprintf("subagent exceeded its %ds time limit and was stopped; narrow the task or split it", timeoutSec)
+		} else if errors.Is(err, ErrSubagentTruncated) {
+			// Hit the iteration cap but produced text: surface as a partial
+			// success, not an error. The content already carries the
+			// [note: ...] context from the runner.
+			res.Success = true
+			res.Truncated = true
 		} else {
 			res.Error = err.Error()
 		}

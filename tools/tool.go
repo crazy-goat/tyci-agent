@@ -5,22 +5,75 @@ import (
 	"encoding/json"
 )
 
+// SubagentOptions are per-call knobs the parent supplies for a single
+// subagent invocation. Built per-call in main.go and tools/subagent.go;
+// not serialized, so future fields are added as Go struct additions.
+type SubagentOptions struct {
+	// MaxIterations caps the child agent's tool-call turns. Semantics
+	// (mirrors agent.Options.MaxIterations):
+	//   - nil       → use ResolveMaxIter's default (currently unlimited)
+	//   - 0 or <0   → unlimited
+	//   - >0        → cap the child at that many turns
+	// Note: 0 is *not* "no turns allowed" — it's "use the unlimited
+	// default". A parent that wants to forbid tool calls entirely must
+	// avoid invoking the subagent at all (or use a child without tools).
+	MaxIterations *int
+}
+
+// DefaultSubagentMaxIterations is the cap applied when SubagentOptions has
+// no explicit MaxIterations. -1 means unlimited. Defined as a constant (not
+// a function) so both main.go and tests see the same value.
+const DefaultSubagentMaxIterations = -1
+
+// TruncatedMarker is the literal suffix appended to a single-task subagent
+// result's content when the result is flagged as truncated, so the parent
+// LLM has a stable, parseable token (in addition to the inline [note: ...]
+// prose). The parallel-array path encodes truncation per-item via
+// json.Marshal; single-task has no such structural path because the agent
+// runner turns tool results into a `(string, error)` at the package
+// boundary, so this marker is the only way to surface the flag. Exported
+// because the package-main caller (cmd_interactive.go toolsAdapter) needs
+// to use the same literal.
+const TruncatedMarker = "[truncated=true]"
+
+// ResolveMaxIter converts SubagentOptions into the concrete cap to pass to
+// agent.Options.MaxIterations. Separated from main.go so it can be table-
+// tested in tools/subagent_test.go.
+func ResolveMaxIter(opts SubagentOptions) int {
+	if opts.MaxIterations == nil {
+		return DefaultSubagentMaxIterations
+	}
+	v := *opts.MaxIterations
+	if v <= 0 {
+		return DefaultSubagentMaxIterations
+	}
+	return v
+}
+
 // SubAgentRunner is the interface that tools/subagent.go uses to run
 // agent tasks without importing the agent package directly.
 // This keeps the tools package as a leaf layer with no upward dependencies.
 type SubAgentRunner interface {
 	// RunTask executes a single agent task and returns the result text.
-	RunTask(ctx context.Context, task string, model string) (string, error)
+	RunTask(ctx context.Context, task string, model string, opts SubagentOptions) (string, error)
 
 	// RunTaskWithSystem executes a single agent task with a custom system prompt.
-	RunTaskWithSystem(ctx context.Context, task string, model string, system string) (string, error)
+	RunTaskWithSystem(ctx context.Context, task string, model string, system string, opts SubagentOptions) (string, error)
 }
 
+// ToolResult is the outcome of a single tool execution, returned to the
+// calling LLM as a JSON-encoded tool message.
 type ToolResult struct {
 	Type    string `json:"type"`
 	Success bool   `json:"success"`
 	Content string `json:"content,omitempty"`
 	Error   string `json:"error,omitempty"`
+	// Truncated is true when the tool ran to completion but the result is
+	// known to be incomplete (e.g. a subagent hit its MaxIterations cap and
+	// the child self-stopped with a partial answer). The content is still
+	// usable, but callers and parents should treat it with reduced
+	// confidence. Distinct from Success=false.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 type Tool interface {
@@ -133,7 +186,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "subagent",
-				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has read/write/find/bash/todo tools (it cannot spawn further subagents) and a bounded tool-call budget, so keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array).",
+				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has read/write/find/bash/todo tools (it cannot spawn further subagents) and is bounded by an optional max_iterations cap and a 600s wall-clock timeout; keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array).",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -143,8 +196,10 @@ func GetToolsSchema() []map[string]any {
 							"task":  map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has read/write/find/bash/todo tools."},
 							"agent": map[string]any{"type": "string", "description": "Named agent to use"},
 							"model": map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
+							"max_iterations": map[string]any{"type": "integer", "description": "Cap this child's tool-call turns. Set a positive integer to bound a risky subtask (e.g. exploration, code review); omit to use the runner default (currently unlimited, bounded by a 600s wall-clock timeout). 0 and negative values mean unlimited."},
 						}, "required": []string{"task"}}},
 						"model": map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
+						"max_iterations": map[string]any{"type": "integer", "description": "Cap on the child's tool-call turns. Omit or 0 to use the runner's default (currently unlimited); negative = unlimited. Useful for bounding long-running subtasks like exploration or code review."},
 					},
 				},
 			},

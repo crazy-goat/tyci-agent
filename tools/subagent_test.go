@@ -3,28 +3,30 @@ package tools
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/stream"
 )
 
 // mockRunner implements SubAgentRunner for testing
 type mockRunner struct {
-	RunTaskFunc func(ctx context.Context, task string, model string) (string, error)
+	RunTaskFunc func(ctx context.Context, task string, model string, opts SubagentOptions) (string, error)
 }
 
-func (m *mockRunner) RunTask(ctx context.Context, task string, model string) (string, error) {
+func (m *mockRunner) RunTask(ctx context.Context, task string, model string, opts SubagentOptions) (string, error) {
 	if m.RunTaskFunc != nil {
-		return m.RunTaskFunc(ctx, task, model)
+		return m.RunTaskFunc(ctx, task, model, opts)
 	}
 	return "mock response", nil
 }
 
-func (m *mockRunner) RunTaskWithSystem(ctx context.Context, task string, model string, system string) (string, error) {
+func (m *mockRunner) RunTaskWithSystem(ctx context.Context, task string, model string, system string, opts SubagentOptions) (string, error) {
 	if m.RunTaskFunc != nil {
-		return m.RunTaskFunc(ctx, task, model)
+		return m.RunTaskFunc(ctx, task, model, opts)
 	}
 	return "mock response with custom system", nil
 }
@@ -32,11 +34,11 @@ func (m *mockRunner) RunTaskWithSystem(ctx context.Context, task string, model s
 // failingRunner always returns an error
 type failingRunner struct{}
 
-func (f *failingRunner) RunTask(ctx context.Context, task string, model string) (string, error) {
+func (f *failingRunner) RunTask(ctx context.Context, task string, model string, opts SubagentOptions) (string, error) {
 	return "", fmt.Errorf("agent failed")
 }
 
-func (f *failingRunner) RunTaskWithSystem(ctx context.Context, task string, model string, system string) (string, error) {
+func (f *failingRunner) RunTaskWithSystem(ctx context.Context, task string, model string, system string, opts SubagentOptions) (string, error) {
 	return "", fmt.Errorf("agent failed")
 }
 
@@ -422,5 +424,292 @@ func TestStreamingCollector_PreservesThreadSafety(t *testing.T) {
 	lines := mo.lines()
 	if len(lines) != 40 {
 		t.Errorf("expected 40 lines, got %d", len(lines))
+	}
+}
+
+func TestParseTasks_MaxIterations_Single(t *testing.T) {
+	v := 25
+	input := map[string]any{"task": "do it", "max_iterations": v}
+	tasks, err := parseTasks(input, "default/model")
+	if err != nil {
+		t.Fatalf("parseTasks: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].MaxIterations == nil || *tasks[0].MaxIterations != v {
+		t.Errorf("expected MaxIterations=%d, got %v", v, tasks[0].MaxIterations)
+	}
+}
+
+func TestParseTasks_MaxIterations_PerItem(t *testing.T) {
+	v1, v2 := 5, -1
+	input := map[string]any{
+		"tasks": []any{
+			map[string]any{"task": "t1", "max_iterations": v1},
+			map[string]any{"task": "t2", "max_iterations": v2},
+			map[string]any{"task": "t3"}, // omitted → nil
+		},
+	}
+	tasks, err := parseTasks(input, "default/model")
+	if err != nil {
+		t.Fatalf("parseTasks: %v", err)
+	}
+	if len(tasks) != 3 {
+		t.Fatalf("expected 3 tasks, got %d", len(tasks))
+	}
+	if tasks[0].MaxIterations == nil || *tasks[0].MaxIterations != v1 {
+		t.Errorf("tasks[0].MaxIterations: expected %d, got %v", v1, tasks[0].MaxIterations)
+	}
+	if tasks[1].MaxIterations == nil || *tasks[1].MaxIterations != v2 {
+		t.Errorf("tasks[1].MaxIterations: expected %d, got %v", v2, tasks[1].MaxIterations)
+	}
+	if tasks[2].MaxIterations != nil {
+		t.Errorf("tasks[2].MaxIterations: expected nil, got %v", *tasks[2].MaxIterations)
+	}
+}
+
+func TestParseTasks_MaxIterations_InvalidType(t *testing.T) {
+	input := map[string]any{"task": "do it", "max_iterations": "not a number"}
+	_, err := parseTasks(input, "default/model")
+	if err == nil {
+		t.Fatal("expected error for non-integer max_iterations")
+	}
+	if !strings.Contains(err.Error(), "max_iterations") {
+		t.Errorf("expected error mentioning 'max_iterations', got %v", err)
+	}
+}
+
+// TestResolveMaxIter locks down the contract used by main.go: nil → default
+// (unlimited), 0/negative → unlimited, positive → that value. Regression
+// guard against the previous ad-hoc `*opts.MaxIterations != 0` check.
+func TestResolveMaxIter(t *testing.T) {
+	cases := []struct {
+		name string
+		opts SubagentOptions
+		want int
+	}{
+		{"nil → unlimited", SubagentOptions{MaxIterations: nil}, DefaultSubagentMaxIterations},
+		{"zero → unlimited", SubagentOptions{MaxIterations: ptr(0)}, DefaultSubagentMaxIterations},
+		{"negative → unlimited", SubagentOptions{MaxIterations: ptr(-1)}, DefaultSubagentMaxIterations},
+		{"deeply negative → unlimited", SubagentOptions{MaxIterations: ptr(-1000)}, DefaultSubagentMaxIterations},
+		{"positive one", SubagentOptions{MaxIterations: ptr(1)}, 1},
+		{"positive fifty", SubagentOptions{MaxIterations: ptr(50)}, 50},
+		{"math.MaxInt", SubagentOptions{MaxIterations: ptr(math.MaxInt)}, math.MaxInt},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ResolveMaxIter(c.opts)
+			if got != c.want {
+				t.Errorf("ResolveMaxIter(%+v) = %d, want %d", c.opts, got, c.want)
+			}
+		})
+	}
+}
+
+func ptr(i int) *int { return &i }
+
+// TestParseTasks_MaxIterations_Float64 covers the real production path:
+// encoding/json always delivers JSON numbers as float64, not int. The
+// toInt helper must accept and faithfully truncate them.
+func TestParseTasks_MaxIterations_Float64(t *testing.T) {
+	cases := []struct {
+		name string
+		in   float64
+		want int
+	}{
+		{"integer-valued", 25.0, 25},
+		{"zero", 0.0, 0},
+		{"negative whole", -1.0, -1},
+		{"large safe value", 1e9, 1_000_000_000},
+		{"truncation toward zero (positive fraction)", 9.9, 9},
+		{"truncation toward zero (negative fraction)", -9.9, -9},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			input := map[string]any{"task": "x", "max_iterations": c.in}
+			tasks, err := parseTasks(input, "")
+			if err != nil {
+				t.Fatalf("parseTasks: %v", err)
+			}
+			if tasks[0].MaxIterations == nil || *tasks[0].MaxIterations != c.want {
+				t.Errorf("got %v, want %d", tasks[0].MaxIterations, c.want)
+			}
+		})
+	}
+}
+
+// TestToInt_RejectsBadFloats ensures a runaway model value can't silently
+// let a child agent run to math.MaxInt64 iterations.
+func TestToInt_RejectsBadFloats(t *testing.T) {
+	cases := []struct {
+		name string
+		in   float64
+	}{
+		{"positive infinity", math.Inf(1)},
+		{"negative infinity", math.Inf(-1)},
+		{"NaN", math.NaN()},
+		{"overflow positive", 1e30},
+		{"overflow negative", -1e30},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := toInt(c.in)
+			if err == nil {
+				t.Errorf("toInt(%v): expected error, got nil", c.in)
+			}
+		})
+	}
+}
+
+// TestRunSingleTask_PropagatesMaxIter ensures the parsed MaxIterations
+// actually flows through to the runner interface — not lost in the build of
+// SubagentOptions inside runSingleTask.
+func TestRunSingleTask_PropagatesMaxIter(t *testing.T) {
+	var captured *int
+	runner := &mockRunner{
+		RunTaskFunc: func(_ context.Context, _ string, _ string, opts SubagentOptions) (string, error) {
+			captured = opts.MaxIterations
+			return "ok", nil
+		},
+	}
+	v := 42
+	task := subagentTask{Task: "do", MaxIterations: &v}
+	res := runSingleTask(context.Background(), runner, task, 0)
+	if !res.Success || res.Content != "ok" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if captured == nil || *captured != v {
+		t.Errorf("runner received MaxIterations=%v, want %d", captured, v)
+	}
+}
+
+// TestRunSingleTask_NilMaxIter passes nil through (parent omitted the
+// field); the runner should see nil and resolve via the default.
+func TestRunSingleTask_NilMaxIter(t *testing.T) {
+	var captured *int
+	runner := &mockRunner{
+		RunTaskFunc: func(_ context.Context, _ string, _ string, opts SubagentOptions) (string, error) {
+			captured = opts.MaxIterations
+			return "ok", nil
+		},
+	}
+	task := subagentTask{Task: "do"} // MaxIterations nil
+	runSingleTask(context.Background(), runner, task, 0)
+	if captured != nil {
+		t.Errorf("runner received MaxIterations=%v, want nil", captured)
+	}
+}
+
+// TestRunSingleTask_TruncatedOnCapHit is the headline fix from the code
+// review: when the runner returns ErrSubagentTruncated (even with text)
+// the subagentResult must be Success=true with Truncated=true, so the
+// parent can distinguish a partial answer from a clean completion.
+func TestRunSingleTask_TruncatedOnCapHit(t *testing.T) {
+	runner := &mockRunner{
+		RunTaskFunc: func(_ context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			return "partial answer\n\n[note: ...]", fmt.Errorf("hit cap: %w", ErrSubagentTruncated)
+		},
+	}
+	res := runSingleTask(context.Background(), runner, subagentTask{Task: "x"}, 0)
+	if !res.Success {
+		t.Errorf("expected Success=true on partial truncation, got false (Error=%q)", res.Error)
+	}
+	if !res.Truncated {
+		t.Errorf("expected Truncated=true, got false")
+	}
+	if res.Error != "" {
+		t.Errorf("expected empty Error on partial truncation, got %q", res.Error)
+	}
+	if res.Content != "partial answer\n\n[note: ...]" {
+		t.Errorf("unexpected Content: %q", res.Content)
+	}
+}
+
+// TestRunSingleTask_TruncatedOnEmptyText documents the wrapper-side
+// behavior: when the runner returns ErrSubagentTruncated, runSingleTask
+// treats it as "truncated" regardless of whether text came back. main.go
+// is responsible for the upstream policy (empty + wrapped → hard error
+// before reaching here, see agentRunner.run); the tools-side wrapper just
+// surfaces the sentinel faithfully.
+func TestRunSingleTask_TruncatedOnEmptyText(t *testing.T) {
+	runner := &mockRunner{
+		RunTaskFunc: func(_ context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			return "", fmt.Errorf("hit cap: %w", ErrSubagentTruncated)
+		},
+	}
+	res := runSingleTask(context.Background(), runner, subagentTask{Task: "x"}, 0)
+	if !res.Success {
+		t.Errorf("expected Success=true when runner wraps ErrSubagentTruncated, got false (Error=%q)", res.Error)
+	}
+	if !res.Truncated {
+		t.Errorf("expected Truncated=true, got false")
+	}
+	if res.Error != "" {
+		t.Errorf("expected empty Error on truncated sentinel, got %q", res.Error)
+	}
+}
+
+// TestTruncatedMarker_Stable locks the marker string so format drift
+// between tools/subagent.go (the producer) and the main-package adapter
+// (the consumer) is caught by tests.
+func TestTruncatedMarker_Stable(t *testing.T) {
+	const want = "[truncated=true]"
+	if TruncatedMarker != want {
+		t.Errorf("TruncatedMarker drifted from %q to %q", want, TruncatedMarker)
+	}
+}
+
+// TestRunSingleTask_TruncatedFlagReachesToolResult is the end-to-end Go-level
+// contract for the propagation chain: SetSubAgentRunner(...)
+// → tools.RunTool("subagent", ...) → ToolResult with Truncated=true on the
+// single-task code path. Parallel-array case mirrors this via the embedded
+// subagentResult.Truncated (json tag). The parent-LLM-facing string is the
+// adapter's job and is verified separately by the integration smoke test.
+func TestRunSingleTask_TruncatedFlagReachesToolResult(t *testing.T) {
+	t.Cleanup(func() {
+		delete(toolRegistry, "subagent")
+		subagentToolInstance = nil
+	})
+	SetSubAgentRunner(&mockRunner{
+		RunTaskFunc: func(_ context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			return "partial answer\n\n[note: ...]", fmt.Errorf("hit cap: %w", ErrSubagentTruncated)
+		},
+	})
+
+	ctx := providers.WithModel(context.Background(), "test/model")
+	res := RunTool(ctx, "subagent", map[string]any{"task": "x"})
+	if !res.Success {
+		t.Fatalf("expected success on partial truncation, got error: %q", res.Error)
+	}
+	if !res.Truncated {
+		t.Errorf("expected ToolResult.Truncated=true, got false (parent LLM would lose the signal)")
+	}
+	if res.Content != "partial answer\n\n[note: ...]" {
+		t.Errorf("unexpected Content: %q", res.Content)
+	}
+}
+
+// TestRunSingleTask_CleanSuccessNotTruncated is the negative half: a clean
+// (non-cap-hit) execution must NOT set Truncated, so the marker isn't
+// spuriously appended to a complete answer.
+func TestRunSingleTask_CleanSuccessNotTruncated(t *testing.T) {
+	t.Cleanup(func() {
+		delete(toolRegistry, "subagent")
+		subagentToolInstance = nil
+	})
+	SetSubAgentRunner(&mockRunner{
+		RunTaskFunc: func(_ context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			return "complete answer", nil
+		},
+	})
+
+	ctx := providers.WithModel(context.Background(), "test/model")
+	res := RunTool(ctx, "subagent", map[string]any{"task": "x"})
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+	if res.Truncated {
+		t.Errorf("expected Truncated=false on clean completion, got true")
+	}
+	if res.Content != "complete answer" {
+		t.Errorf("unexpected Content: %q", res.Content)
 	}
 }
