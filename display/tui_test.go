@@ -1075,7 +1075,7 @@ func TestToolBlock_RenderBlock_RunningVsDone(t *testing.T) {
 		t.Errorf("done render should NOT contain spinner, got: %q", done)
 	}
 	if !strings.Contains(done, "write(x.go)") {
-		t.Errorf("done render should contain 'edit(x.go)', got: %q", done)
+		t.Errorf("done render should contain 'write(x.go)', got: %q", done)
 	}
 }
 
