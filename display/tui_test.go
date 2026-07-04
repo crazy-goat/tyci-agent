@@ -161,16 +161,16 @@ func TestTuiModel_RenderToolBlock_FormatToolCall(t *testing.T) {
 			want:     "bash(list files)",
 		},
 		{
-			name:     "glob with pattern",
-			toolName: "glob",
+			name:     "find with pattern (default glob)",
+			toolName: "find",
 			content:  `{"pattern": "**/*.go"}`,
-			want:     "glob(**/*.go)",
+			want:     "find(**/*.go)",
 		},
 		{
-			name:     "grep with pattern",
-			toolName: "grep",
-			content:  `{"pattern": "TODO"}`,
-			want:     "grep(TODO)",
+			name:     "find with grep method",
+			toolName: "find",
+			content:  `{"method": "grep", "pattern": "TODO"}`,
+			want:     "find(grep, TODO)",
 		},
 		{
 			name:     "todo with action",

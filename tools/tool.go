@@ -33,42 +33,22 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
-				"name":        "glob",
-				"description": "Find files using glob patterns. Returns paths relative to cwd unless absolute=true.",
+				"name":        "find",
+				"description": "Find files by glob pattern or search their contents. Use method=\"glob\" for file path patterns (e.g. **/*.go) or method=\"grep\" for text/regex/word search inside files.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"pattern":          map[string]any{"description": "Glob pattern or array, e.g. **/*.ts or src/**/*.{ts,tsx}"},
+						"method":           map[string]any{"type": "string", "enum": []string{"glob", "grep"}, "description": "Search method: \"glob\" to find files by path pattern, \"grep\" to search file contents (default: \"glob\")"},
+						"pattern":          map[string]any{"description": "Glob pattern (method: glob) or text/regex (method: grep)"},
 						"cwd":              map[string]any{"type": "string", "description": "Base directory (default: .)"},
-						"exclude":          map[string]any{"description": "Glob pattern or array to exclude"},
-						"respectGitignore": map[string]any{"type": "boolean", "description": "Skip paths matched by .gitignore/.aiignore (default: true). Set false to include ignored files."},
-						"limit":            map[string]any{"type": "integer", "description": "Max paths (default: 500)"},
-						"includeDirs":      map[string]any{"type": "boolean", "description": "Include directories (default: false)"},
-						"absolute":         map[string]any{"type": "boolean", "description": "Return absolute paths (default: false)"},
-					},
-					"required": []string{"pattern"},
-				},
-			},
-		},
-		{
-			"type": "function",
-			"function": map[string]any{
-				"name":        "grep",
-				"description": "Search file contents using text, regex, or whole-word mode. Returns matches with file and line numbers by default.",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"pattern":          map[string]any{"type": "string", "description": "Text or regex to search for"},
-						"cwd":              map[string]any{"type": "string", "description": "Base directory (default: .)"},
-						"include":          map[string]any{"description": "Glob pattern or array to include (default: **/*)"},
-						"exclude":          map[string]any{"description": "Glob pattern or array to exclude"},
-						"respectGitignore": map[string]any{"type": "boolean", "description": "Skip paths matched by .gitignore/.aiignore (default: true). Set false to search ignored files."},
-						"mode":             map[string]any{"type": "string", "enum": []string{"text", "regex", "word"}, "description": "Search mode (default: text)"},
-						"caseSensitive":    map[string]any{"type": "boolean", "description": "Case-sensitive search (default: true)"},
-						"context":          map[string]any{"type": "integer", "description": "Lines before/after each match (default: 0)"},
-						"limit":            map[string]any{"type": "integer", "description": "Max results (default: 100)"},
-						"output":           map[string]any{"type": "string", "enum": []string{"lines", "files", "count"}, "description": "Output format (default: lines)"},
-						"maxLineLength":    map[string]any{"type": "integer", "description": "Trim long lines (default: 300)"},
+						"include":          map[string]any{"description": "Grep only — glob pattern or array to include (default: **/*)"},
+						"exclude":          map[string]any{"description": "Glob pattern or array to exclude (default: .git/**, node_modules/**, etc.)"},
+						"mode":             map[string]any{"type": "string", "enum": []string{"text", "regex", "word"}, "description": "Grep only — search mode (default: text)"},
+						"caseSensitive":    map[string]any{"type": "boolean", "description": "Grep only — case-sensitive search (default: true)"},
+						"context":          map[string]any{"type": "integer", "description": "Grep only — lines of context before/after each match (default: 0)"},
+						"limit":            map[string]any{"type": "integer", "description": "Max results (default: 500 for glob, 100 for grep)"},
+						"output":           map[string]any{"type": "string", "enum": []string{"lines", "files", "count"}, "description": "Grep only — output format (default: lines)"},
+						"maxLineLength":    map[string]any{"type": "integer", "description": "Grep only — trim long lines (default: 300)"},
 					},
 					"required": []string{"pattern"},
 				},
@@ -167,14 +147,14 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "subagent",
-				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has read/grep/glob/write/edit/bash/todo tools (it cannot spawn further subagents) and a bounded tool-call budget, so keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array).",
+				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has read/write/find/edit/bash/todo tools (it cannot spawn further subagents) and a bounded tool-call budget, so keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array).",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"task":  map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/edit/bash tools."},
 						"agent": map[string]any{"type": "string", "description": "Named agent to use (looks up ~/.tyci/agents/<name>.md for system prompt and config)"},
 						"tasks": map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
-							"task":  map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has read/grep/glob/write/edit/bash/todo tools."},
+							"task":  map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has read/write/find/edit/bash/todo tools."},
 							"agent": map[string]any{"type": "string", "description": "Named agent to use"},
 							"model": map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
 						}, "required": []string{"task"}}},
@@ -270,13 +250,12 @@ func GetSubagentToolsSchemaJSON() json.RawMessage {
 
 var toolRegistry = map[string]Tool{
 	"bash":        &BashTool{},
-	"glob":        &GlobTool{},
-	"grep":        &GrepTool{},
+	"find":        &FindTool{},
 	"todo":        &TodoTool{},
 	"read":        &ReadTool{},
 	"write":       &WriteTool{},
 	"edit":        &EditTool{},
-	"skills": &SkillsTool{},
+	"skills":      &SkillsTool{},
 	"web":         &WebTool{},
 }
 

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -279,22 +278,4 @@ func listDirectory(path string) ToolResult {
 		}
 	}
 	return ToolResult{Type: "result", Success: true, Content: b.String()}
-}
-
-func intParam(input map[string]any, key string, defaultVal int) int {
-	val, ok := input[key]
-	if !ok {
-		return defaultVal
-	}
-	switch v := val.(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	case string:
-		if parsed, err := strconv.Atoi(v); err == nil {
-			return parsed
-		}
-	}
-	return defaultVal
 }

@@ -12,14 +12,135 @@ import (
 	"unicode/utf8"
 )
 
-type GrepTool struct{}
+type FindTool struct{}
 
-func (t *GrepTool) Name() string { return "grep" }
+func (t *FindTool) Name() string { return "find" }
 
-func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
+func (t *FindTool) Run(ctx context.Context, input map[string]any) ToolResult {
+	method := stringParam(input, "method", "glob")
+	switch method {
+	case "glob":
+		return t.runGlob(input)
+	case "grep":
+		return t.runGrep(input)
+	default:
+		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("unknown method %q; use \"glob\" or \"grep\"", method)}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Glob mode
+// ---------------------------------------------------------------------------
+
+func (t *FindTool) runGlob(input map[string]any) ToolResult {
+	patterns := stringListParam(input, "pattern", nil)
+	if len(patterns) == 0 {
+		return ToolResult{Type: "result", Success: false, Error: "pattern required (method: \"glob\")"}
+	}
+	cwd := stringParam(input, "cwd", ".")
+	excludes := defaultExcludes(input)
+	limit := intParam(input, "limit", 500)
+	if limit <= 0 {
+		limit = 500
+	}
+
+	cwdAbs, err := filepath.Abs(cwd)
+	if err != nil {
+		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
+
+	matchers, err := compileGlobMatchers(patterns)
+	if err != nil {
+		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
+	excludeMatchers, err := compileGlobMatchers(excludes)
+	if err != nil {
+		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
+
+	ig := newIgnoreMatcherFromInput(input)
+	hidden := 0
+
+	var results []string
+	truncated := false
+	err = filepath.WalkDir(cwdAbs, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if path == cwdAbs {
+			if ig != nil {
+				ig.loadDir(cwdAbs, "")
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(cwdAbs, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+
+		if d.IsDir() && matchesAny(excludeMatchers, rel) {
+			return filepath.SkipDir
+		}
+		if matchesAny(excludeMatchers, rel) {
+			return nil
+		}
+		if ig != nil {
+			if ig.Ignored(rel, d.IsDir()) {
+				if d.IsDir() || matchesAny(matchers, rel) {
+					hidden++
+				}
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() {
+				ig.loadDir(path, rel)
+			}
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !matchesAny(matchers, rel) {
+			return nil
+		}
+
+		results = append(results, rel)
+		if len(results) >= limit {
+			truncated = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
+
+	sort.Strings(results)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Found %d paths", len(results))
+	if truncated {
+		fmt.Fprintf(&b, " (limit %d reached)", limit)
+	}
+	b.WriteString(ignoreNote(hidden))
+	b.WriteString(":")
+	for _, p := range results {
+		b.WriteByte('\n')
+		b.WriteString(p)
+	}
+	return ToolResult{Type: "result", Success: true, Content: b.String()}
+}
+
+// ---------------------------------------------------------------------------
+// Grep mode
+// ---------------------------------------------------------------------------
+
+func (t *FindTool) runGrep(input map[string]any) ToolResult {
 	pattern, ok := input["pattern"].(string)
 	if !ok || pattern == "" {
-		return ToolResult{Type: "result", Success: false, Error: "pattern required"}
+		return ToolResult{Type: "result", Success: false, Error: "pattern required (method: \"grep\")"}
 	}
 	cwd := stringParam(input, "cwd", ".")
 	includes := stringListParam(input, "include", []string{"**/*"})
@@ -180,6 +301,102 @@ func (t *GrepTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	}
 	return ToolResult{Type: "result", Success: true, Content: b.String()}
 }
+
+// ---------------------------------------------------------------------------
+// Glob helpers (shared with grep mode via compilation)
+// ---------------------------------------------------------------------------
+
+type globMatcher struct{ re *regexp.Regexp }
+
+func compileGlobMatchers(patterns []string) ([]globMatcher, error) {
+	var out []globMatcher
+	for _, p := range patterns {
+		if p == "" {
+			continue
+		}
+		for _, expanded := range expandBraces(filepath.ToSlash(p)) {
+			re, err := regexp.Compile(globToRegex(expanded))
+			if err != nil {
+				return nil, fmt.Errorf("invalid glob %q: %w", p, err)
+			}
+			out = append(out, globMatcher{re: re})
+		}
+	}
+	return out, nil
+}
+
+func matchesAny(matchers []globMatcher, path string) bool {
+	if len(matchers) == 0 {
+		return false
+	}
+	path = filepath.ToSlash(path)
+	for _, m := range matchers {
+		if m.re.MatchString(path) {
+			return true
+		}
+	}
+	return false
+}
+
+func globToRegex(pattern string) string {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); {
+		c := pattern[i]
+		switch c {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				if i+2 < len(pattern) && pattern[i+2] == '/' {
+					b.WriteString("(?:.*/)?")
+					i += 3
+				} else {
+					b.WriteString(".*")
+					i += 2
+				}
+			} else {
+				b.WriteString("[^/]*")
+				i++
+			}
+		case '?':
+			b.WriteString("[^/]")
+			i++
+		case '.', '+', '(', ')', '|', '^', '$', '[', ']', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+			i++
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	b.WriteString("$")
+	return b.String()
+}
+
+func expandBraces(pattern string) []string {
+	start := strings.IndexByte(pattern, '{')
+	if start < 0 {
+		return []string{pattern}
+	}
+	end := strings.IndexByte(pattern[start:], '}')
+	if end < 0 {
+		return []string{pattern}
+	}
+	end += start
+	prefix, suffix := pattern[:start], pattern[end+1:]
+	parts := strings.Split(pattern[start+1:end], ",")
+	var out []string
+	for _, part := range parts {
+		for _, rest := range expandBraces(suffix) {
+			out = append(out, prefix+part+rest)
+		}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// Grep helpers
+// ---------------------------------------------------------------------------
 
 type contentMatcher struct {
 	mode          string

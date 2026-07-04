@@ -48,13 +48,12 @@ func formatToolCall(toolName, rawJSON string) string {
 	}
 
 	switch toolName {
-	case "glob":
+	case "find":
 		if pattern := formatArg(args["pattern"]); pattern != "" {
-			return "glob(" + truncateString(pattern, 60) + ")"
-		}
-	case "grep":
-		if pattern := formatArg(args["pattern"]); pattern != "" {
-			return "grep(" + truncateString(pattern, 60) + ")"
+			if method, ok := args["method"].(string); ok && method != "" {
+				return "find(" + method + ", " + truncateString(pattern, 60) + ")"
+			}
+			return "find(" + truncateString(pattern, 60) + ")"
 		}
 	case "todo":
 		if action, ok := args["action"].(string); ok && action != "" {
