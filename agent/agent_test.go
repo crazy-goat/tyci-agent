@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -19,7 +20,7 @@ import (
 // silentDisplay is a minimal Display implementation for tests.
 type silentDisplay struct{}
 
-func (s *silentDisplay) Request(string)                      {}
+func (s *silentDisplay) Request(string)                     {}
 func (s *silentDisplay) Thinking(string)                    {}
 func (s *silentDisplay) Text(string)                        {}
 func (s *silentDisplay) ToolCallStart(string)               {}
@@ -28,7 +29,7 @@ func (s *silentDisplay) ToolCallEnd(string, string)         {}
 func (s *silentDisplay) ToolFinish()                        {}
 func (s *silentDisplay) ToolBlock(string)                   {}
 func (s *silentDisplay) Summary(stream.Usage, stream.Stats) {}
-func (s *silentDisplay) Total(stream.Usage)                  {}
+func (s *silentDisplay) Total(stream.Usage)                 {}
 func (s *silentDisplay) Error(error)                        {}
 func (s *silentDisplay) End()                               {}
 
@@ -245,6 +246,42 @@ func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d: %#v", len(msgs), msgs)
+	}
+}
+
+func TestRunCompactsLongHistory(t *testing.T) {
+	dir := t.TempDir()
+	s, err := session.Open(dir+"/compact.jsonl", "/test", "mock-1", "mock")
+	if err != nil {
+		t.Fatalf("session.Open: %v", err)
+	}
+	defer s.Close()
+	for i := 0; i < 6; i++ {
+		text := fmt.Sprintf("user-%d", i)
+		if err := s.WriteMessage("user", []session.ContentBlock{{Type: "text", Text: text}}, nil); err != nil {
+			t.Fatalf("WriteMessage(user): %v", err)
+		}
+	}
+	msgs := make([]providers.RichMessage, 0, 6)
+	for i := 0; i < 6; i++ {
+		msgs = append(msgs, providers.RichMessage{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: fmt.Sprintf("user-%d", i)}}})
+	}
+	p := &mockProvider{chunks: []string{"done"}}
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{Model: "mock-1", MaxRetries: 1, Session: s, Compaction: CompactionConfig{Enabled: true, TriggerMessages: 4, TailMessages: 2, ToolChars: 64}}); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if len(msgs) != 4 {
+		t.Fatalf("expected compacted history of 4 messages, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" || !strings.Contains(msgs[0].Content[0].Text, "Conversation summary") {
+		t.Fatalf("expected summary message first, got %#v", msgs[0])
+	}
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(data), `"type":"compaction"`) {
+		t.Fatalf("expected compaction event in session file, got %s", string(data))
 	}
 }
 

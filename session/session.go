@@ -25,6 +25,7 @@ type EventType string
 const (
 	TypeSession    EventType = "session"
 	TypeMessage    EventType = "message"
+	TypeCompaction EventType = "compaction"
 	TypeSessionEnd EventType = "session_end"
 )
 
@@ -95,6 +96,16 @@ type SessionEnd struct {
 	TotalUsage *Usage    `json:"total_usage,omitempty"`
 }
 
+type CompactionEvent struct {
+	Type          EventType        `json:"type"`
+	ID            string           `json:"id"`
+	Timestamp     string           `json:"timestamp"`
+	Summary       MessagePayload   `json:"summary"`
+	TailStartID   string           `json:"tail_start_id,omitempty"`
+	TailMessages  []MessagePayload `json:"tail_messages,omitempty"`
+	DroppedEvents int              `json:"dropped_events,omitempty"`
+}
+
 // ─── Session ──────────────────────────────────────────────────────────────
 
 // Session manages the append-only JSONL file.
@@ -104,16 +115,16 @@ type Session struct {
 	mu      sync.Mutex
 	closed  bool
 	encoder *json.Encoder
+	path    string
 
 	// Resume state
 	isResume bool
-	messages []ParsedLine // all parsed lines from resumed session
 }
 
 // ParsedLine holds a raw line and its parsed event type for resume.
 type ParsedLine struct {
 	Raw     string
-	MsgType string // "user", "assistant", "toolResult", "session_end"
+	MsgType string // "user", "assistant", "toolResult", "compaction", "session_end"
 	Payload json.RawMessage
 }
 
@@ -136,7 +147,8 @@ func Open(path, cwd, model, provider string) (*Session, error) {
 	}
 
 	s := &Session{
-		id: id,
+		id:   id,
+		path: path,
 	}
 
 	// Check if file exists → resume
@@ -153,13 +165,10 @@ func Open(path, cwd, model, provider string) (*Session, error) {
 		s.encoder = json.NewEncoder(f)
 		s.isResume = true
 
-		// Parse existing lines to rebuild conversation
-		msgs, err := parseSessionFile(path)
-		if err != nil {
+		if _, err := parseSessionFile(path); err != nil {
 			f.Close()
 			return nil, fmt.Errorf("parse session for resume: %w", err)
 		}
-		s.messages = msgs
 	} else {
 		// Create new file
 		f, err := os.Create(path)
@@ -257,6 +266,31 @@ type MessageOptions struct {
 }
 
 // WriteSessionEnd writes the final session_end event.
+func (s *Session) WriteCompaction(summary string, tailStartID string, tailMessages []MessagePayload, droppedEvents int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("session closed")
+	}
+	id, err := newID()
+	if err != nil {
+		return err
+	}
+	ev := CompactionEvent{
+		Type:      TypeCompaction,
+		ID:        id,
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Summary: MessagePayload{
+			Role:    "user",
+			Content: []ContentBlock{{Type: "text", Text: summary}},
+		},
+		TailStartID:   tailStartID,
+		TailMessages:  tailMessages,
+		DroppedEvents: droppedEvents,
+	}
+	return s.encoder.Encode(ev)
+}
+
 func (s *Session) WriteSessionEnd(status string, exitCode int, totalUsage *Usage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -292,14 +326,60 @@ func (s *Session) Close() error {
 
 func (s *Session) ID() string     { return s.id }
 func (s *Session) IsResume() bool { return s.isResume }
+func (s *Session) Path() string   { return s.path }
 
 // Messages returns the parsed messages from a resumed session.
 // Returns nil for a fresh session.
-func (s *Session) Messages() []ParsedLine { return s.messages }
+func (s *Session) Messages() []ParsedLine {
+	if !s.isResume || s.path == "" {
+		return nil
+	}
+	msgs, err := parseSessionFile(s.path)
+	if err != nil {
+		return nil
+	}
+	return msgs
+}
 
 // ─── Resume parsing ───────────────────────────────────────────────────────
 
 // parseSessionFile reads a JSONL session file and returns parsed lines.
+func LastNMessageMetadata(path string, n int) (string, int) {
+	if n <= 0 {
+		return "", 0
+	}
+	lines, err := parseSessionFile(path)
+	if err != nil || len(lines) == 0 {
+		return "", 0
+	}
+	count := 0
+	startIdx := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if lines[i].MsgType == "user" || lines[i].MsgType == "assistant" || lines[i].MsgType == "toolResult" {
+			count++
+			startIdx = i
+			if count == n {
+				break
+			}
+		}
+	}
+	if startIdx == -1 {
+		return "", 0
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(lines[startIdx].Raw), &raw); err != nil {
+		return "", count
+	}
+	id, _ := raw["id"].(string)
+	dropped := 0
+	for _, line := range lines[:startIdx] {
+		if line.MsgType == "user" || line.MsgType == "assistant" || line.MsgType == "toolResult" {
+			dropped++
+		}
+	}
+	return id, dropped
+}
+
 func parseSessionFile(path string) ([]ParsedLine, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -330,10 +410,8 @@ func parseSessionFile(path string) ([]ParsedLine, error) {
 
 		switch typeHolder.Type {
 		case TypeSession:
-			// Header - skip, just store
 			pl.MsgType = "header"
 		case TypeMessage:
-			// Parse message to determine role
 			var msgEv struct {
 				Message struct {
 					Role string `json:"role"`
@@ -344,6 +422,8 @@ func parseSessionFile(path string) ([]ParsedLine, error) {
 			} else {
 				pl.MsgType = "unknown"
 			}
+		case TypeCompaction:
+			pl.MsgType = "compaction"
 		case TypeSessionEnd:
 			pl.MsgType = "session_end"
 		}
@@ -385,12 +465,11 @@ func DefaultPath(cwd string) (string, error) {
 // ─── Resume: rebuild conversation ─────────────────────────────────────────
 
 // RebuildMessages reconstructs []providers.RichMessage from parsed session lines.
-// It walks forward from the last header, collecting all message events and
-// preserving the full content block structure.
+// It walks forward from the last header, applying any compaction event and then
+// collecting the effective tail message history.
 func RebuildMessages(lines []ParsedLine) ([]providers.RichMessage, error) {
 	var msgs []providers.RichMessage
 
-	// Find start index (after header)
 	startIdx := 0
 	for i, l := range lines {
 		if l.MsgType == "header" {
@@ -399,79 +478,87 @@ func RebuildMessages(lines []ParsedLine) ([]providers.RichMessage, error) {
 		}
 	}
 
-	// Walk forward, collecting all message events (skip session_end)
 	for _, l := range lines[startIdx:] {
 		if l.MsgType == "session_end" {
 			continue
 		}
-
-		var raw map[string]any
-		if err := json.Unmarshal([]byte(l.Raw), &raw); err != nil {
+		if l.MsgType == "compaction" {
+			compacted, ok := rebuildCompactionLine(l.Raw)
+			if ok {
+				msgs = compacted
+			}
 			continue
 		}
-
-		msgRaw, ok := raw["message"].(map[string]any)
+		msg, ok := rebuildMessageLine(l.Raw)
 		if !ok {
 			continue
 		}
-
-		role, _ := msgRaw["role"].(string)
-		contentRaw, _ := msgRaw["content"].([]any)
-
-		var blocks []providers.ContentBlock
-		for _, blockRaw := range contentRaw {
-			b, ok := blockRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-			t, _ := b["type"].(string)
-
-			var cb providers.ContentBlock
-			cb.Type = t
-
-			switch t {
-			case "text":
-				cb.Text, _ = b["text"].(string)
-				if id, _ := b["toolCallId"].(string); id != "" {
-					cb.ToolCallID = id
-				}
-				if name, _ := b["toolName"].(string); name != "" {
-					cb.ToolName = name
-				}
-				if isErr, _ := b["isError"].(bool); isErr {
-					cb.IsError = true
-				}
-			case "thinking":
-				cb.Thinking, _ = b["thinking"].(string)
-			case "toolCall":
-				cb.ID, _ = b["id"].(string)
-				cb.Name, _ = b["name"].(string)
-				if args, ok := b["arguments"]; ok {
-					switch v := args.(type) {
-					case string:
-						cb.Arguments = json.RawMessage(v)
-					case map[string]any, []any:
-						if data, err := json.Marshal(v); err == nil {
-							cb.Arguments = data
-						}
-					}
-				}
-			case "toolResult":
-				cb.Text, _ = b["text"].(string)
-				cb.ToolCallID, _ = b["toolCallId"].(string)
-				cb.ToolName, _ = b["toolName"].(string)
-				if isErr, _ := b["isError"].(bool); isErr {
-					cb.IsError = true
-				}
-			}
-
-			blocks = append(blocks, cb)
-		}
-
-		msgs = append(msgs, providers.RichMessage{Role: role, Content: blocks})
+		msgs = append(msgs, msg)
 	}
 
 	return msgs, nil
+}
+
+func rebuildCompactionLine(raw string) ([]providers.RichMessage, bool) {
+	var ev struct {
+		Summary struct {
+			Role    string         `json:"role"`
+			Content []ContentBlock `json:"content"`
+		} `json:"summary"`
+		TailMessages []struct {
+			Role    string         `json:"role"`
+			Content []ContentBlock `json:"content"`
+		} `json:"tail_messages"`
+	}
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		return nil, false
+	}
+	var msgs []providers.RichMessage
+	if summary := contentBlocksToRichMessage(ev.Summary.Role, ev.Summary.Content); summary != nil {
+		msgs = append(msgs, *summary)
+	}
+	for _, tail := range ev.TailMessages {
+		if msg := contentBlocksToRichMessage(tail.Role, tail.Content); msg != nil {
+			msgs = append(msgs, *msg)
+		}
+	}
+	return msgs, true
+}
+
+func rebuildMessageLine(raw string) (providers.RichMessage, bool) {
+	var ev struct {
+		Message struct {
+			Role    string         `json:"role"`
+			Content []ContentBlock `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		return providers.RichMessage{}, false
+	}
+	msg := contentBlocksToRichMessage(ev.Message.Role, ev.Message.Content)
+	if msg == nil {
+		return providers.RichMessage{}, false
+	}
+	return *msg, true
+}
+
+func contentBlocksToRichMessage(role string, blocks []ContentBlock) *providers.RichMessage {
+	content := make([]providers.ContentBlock, 0, len(blocks))
+	for _, block := range blocks {
+		cb := providers.ContentBlock{
+			Type:       block.Type,
+			Text:       block.Text,
+			Thinking:   block.Thinking,
+			ID:         block.ID,
+			Name:       block.Name,
+			Arguments:  block.Arguments,
+			IsError:    block.IsError,
+			ToolCallID: block.ToolCallID,
+			ToolName:   block.ToolName,
+		}
+		content = append(content, cb)
+	}
+	return &providers.RichMessage{Role: role, Content: content}
 }
 
 // ─── ReadCloser support ───────────────────────────────────────────────────

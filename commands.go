@@ -139,6 +139,7 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 		ProviderName:   provider.Name(),
 		FallbackModels: fallbackModels,
 		PendingTodos:   tools.PendingTodos,
+		Compaction:     agent.CompactionConfig{Enabled: true},
 	}
 	ctx = providers.WithProvider(ctx, provider)
 	ctx = providers.WithModel(ctx, modelName)
@@ -475,9 +476,9 @@ var agentGetCmd = &cobra.Command{
 }
 
 var agentSetCmd = &cobra.Command{
-	Use:   "set <name> [model]",
-	Short: "Set agent model",
-	Args:  cobra.MaximumNArgs(2),
+	Use:               "set <name> [model]",
+	Short:             "Set agent model",
+	Args:              cobra.MaximumNArgs(2),
 	ValidArgsFunction: agentSetValidArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
@@ -522,9 +523,9 @@ var agentDeleteCmd = &cobra.Command{
 }
 
 var agentSetFallbackCmd = &cobra.Command{
-	Use:   "set-fallback <name> [model...]",
-	Short: "Set fallback models for an agent",
-	Args:  cobra.MinimumNArgs(1),
+	Use:               "set-fallback <name> [model...]",
+	Short:             "Set fallback models for an agent",
+	Args:              cobra.MinimumNArgs(1),
 	ValidArgsFunction: agentSetFallbackValidArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {

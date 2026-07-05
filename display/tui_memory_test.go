@@ -242,6 +242,57 @@ func TestScrollbackResetOnNew(t *testing.T) {
 	}
 }
 
+func TestScrollbackPageInRestoresToolPayloads(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.width = 80
+	m.height = 24
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"command":"ls -la"}`})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "line1\nline2\nline3"})
+	m.forceRenderDirtyBlocks()
+
+	_ = m.getBlockLines(0, false)
+	beforeContent := m.blocks[0].content
+	beforeOutput := m.blocks[0].output
+	m.scrollback.flushBlock(&m.blocks[0], m.width)
+	if m.blocks[0].content != "" || m.blocks[0].output != "" {
+		t.Fatal("flush should drop in-memory tool payloads")
+	}
+
+	lines := m.getBlockLines(0, false)
+	if len(lines) == 0 {
+		t.Fatal("expected paged-in tool block to keep rendered lines")
+	}
+	if m.blocks[0].content != beforeContent {
+		t.Fatalf("restored content = %q, want %q", m.blocks[0].content, beforeContent)
+	}
+	if m.blocks[0].output != beforeOutput {
+		t.Fatalf("restored output = %q, want %q", m.blocks[0].output, beforeOutput)
+	}
+	m.scrollback.close()
+}
+
+func TestOpenGenericToolModalPagesInFlushedTool(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.width = 80
+	m.height = 24
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"command":"ls -la"}`})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "full tool output"})
+	m.forceRenderDirtyBlocks()
+	_ = m.getBlockLines(0, false)
+	m.scrollback.flushBlock(&m.blocks[0], m.width)
+
+	m.openGenericToolModal(0)
+	if !m.subagentModalActive {
+		t.Fatal("expected modal active after opening flushed tool")
+	}
+	if got := m.subagentModalContent.String(); got != "full tool output" {
+		t.Fatalf("modal content = %q, want %q", got, "full tool output")
+	}
+	m.scrollback.close()
+}
+
 // itoa is a tiny strconv.Itoa replacement to keep this test file import-light.
 func itoa(n int) string {
 	if n == 0 {

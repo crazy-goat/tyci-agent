@@ -187,6 +187,12 @@ func (m TuiModel) handleModalMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *TuiModel) openGenericToolModal(idx int) {
+	if idx < 0 || idx >= len(m.blocks) {
+		return
+	}
+	if m.blocks[idx].flushed {
+		m.ensureBlockResident(idx)
+	}
 	m.subagentModalActive = true
 	m.subagentModalContent.Reset()
 	m.subagentModalScroll = 0

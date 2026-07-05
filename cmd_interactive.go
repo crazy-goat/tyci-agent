@@ -20,18 +20,18 @@ type collector struct {
 	text strings.Builder
 }
 
-func (c *collector) Thinking(text string)            { c.text.WriteString(text) }
-func (c *collector) Text(text string)                { c.text.WriteString(text) }
-func (c *collector) Request(string)                  {}
-func (c *collector) ToolCallStart(name string)       {}
-func (c *collector) ToolCallDelta(delta string)      {}
-func (c *collector) ToolCallEnd(name, result string) {}
-func (c *collector) ToolFinish()                     {}
-func (c *collector) ToolBlock(msg string)            {}
+func (c *collector) Thinking(text string)                           { c.text.WriteString(text) }
+func (c *collector) Text(text string)                               { c.text.WriteString(text) }
+func (c *collector) Request(string)                                 {}
+func (c *collector) ToolCallStart(name string)                      {}
+func (c *collector) ToolCallDelta(delta string)                     {}
+func (c *collector) ToolCallEnd(name, result string)                {}
+func (c *collector) ToolFinish()                                    {}
+func (c *collector) ToolBlock(msg string)                           {}
 func (c *collector) Summary(usage stream.Usage, stats stream.Stats) {}
 func (c *collector) Total(usage stream.Usage)                       {}
-func (c *collector) Error(err error)                 {}
-func (c *collector) End()                            {}
+func (c *collector) Error(err error)                                {}
+func (c *collector) End()                                           {}
 
 // toolsAdapter implements the tools.Runner interface by delegating to tools.RunTool.
 type toolsAdapter struct{}
@@ -166,7 +166,7 @@ func replaySessionToDisplay(disp display.Display, sessionPath string) {
 		}
 
 		evType, _ := raw["type"].(string)
-		if evType == "session" || evType == "session_end" {
+		if evType == "session" || evType == "session_end" || evType == "compaction" {
 			continue
 		}
 

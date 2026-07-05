@@ -715,9 +715,37 @@ func TestRebuildMessages_SkipsMalformedLines(t *testing.T) {
 		t.Fatalf("RebuildMessages() error: %v", err)
 	}
 
-	// Should only have the valid message (skip malformed line)
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 valid message, got %d", len(msgs))
+	}
+}
+
+func TestRebuildMessages_UsesLatestCompactionTail(t *testing.T) {
+	lines := []ParsedLine{
+		{Raw: `{"type":"session","version":1}`, MsgType: "header"},
+		{Raw: `{"type":"message","id":"m1","message":{"role":"user","content":[{"type":"text","text":"old user"}]}}`, MsgType: "user"},
+		{Raw: `{"type":"compaction","id":"c1","summary":{"role":"user","content":[{"type":"text","text":"summary text"}]},"tail_start_id":"m2","tail_messages":[{"role":"assistant","content":[{"type":"text","text":"recent assistant"}]},{"role":"user","content":[{"type":"text","text":"recent user"}]}]}`, MsgType: "compaction"},
+		{Raw: `{"type":"message","id":"m3","message":{"role":"assistant","content":[{"type":"text","text":"new answer"}]}}`, MsgType: "assistant"},
+	}
+
+	msgs, err := RebuildMessages(lines)
+	if err != nil {
+		t.Fatalf("RebuildMessages() error: %v", err)
+	}
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(msgs))
+	}
+	if msgs[0].Content[0].Text != "summary text" {
+		t.Fatalf("expected compaction summary first, got %#v", msgs[0])
+	}
+	if msgs[1].Content[0].Text != "recent assistant" {
+		t.Fatalf("expected compacted tail assistant, got %#v", msgs[1])
+	}
+	if msgs[2].Content[0].Text != "recent user" {
+		t.Fatalf("expected compacted tail user, got %#v", msgs[2])
+	}
+	if msgs[3].Content[0].Text != "new answer" {
+		t.Fatalf("expected post-compaction message, got %#v", msgs[3])
 	}
 }
 

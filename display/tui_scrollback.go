@@ -95,47 +95,68 @@ func (sc *scrollbackCache) flushBlock(b *block, width int) {
 		return
 	}
 	if err := sc.ensureOpen(); err != nil {
-		return // degrade: keep resident
+		return
 	}
-	// Flush any buffered writes so the seek offset is accurate, then position
-	// at end of file for the append.
 	off, err := sc.file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return
 	}
 
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(b.cachedLines)))
-	if _, err := sc.file.Write(hdr[:]); err != nil {
+	written, err := sc.writeBlockRecord(b)
+	if err != nil {
 		return
-	}
-	written := 4
-	for _, line := range b.cachedLines {
-		var ln [4]byte
-		binary.BigEndian.PutUint32(ln[:], uint32(len(line)))
-		if _, err := sc.file.Write(ln[:]); err != nil {
-			return
-		}
-		n, err := sc.file.Write([]byte(line))
-		if err != nil {
-			return
-		}
-		written += 4 + n
 	}
 	b.fileOffset = off
 	b.fileBytes = written
 	b.flushedWidth = width
 	b.flushed = true
-	// Drop heavy in-memory fields.
 	sc.residentBytes -= blockLinesBytes(b.cachedLines)
 	b.cachedLines = nil
 	b.content = ""
 	b.output = ""
 }
 
-// pageIn reads a flushed block's rendered lines back from the cache file and
-// restores them to b.cachedLines. Returns nil if the block isn't flushed or the
-// read fails (caller should treat as empty/lost — shouldn't happen in practice).
+func (sc *scrollbackCache) writeBlockRecord(b *block) (int, error) {
+	written := 0
+	if err := writeUint32(sc.file, uint32(len(b.cachedLines))); err != nil {
+		return written, err
+	}
+	written += 4
+	for _, line := range b.cachedLines {
+		n, err := writeSizedString(sc.file, line)
+		written += n
+		if err != nil {
+			return written, err
+		}
+	}
+	for _, payload := range []string{b.content, b.output} {
+		n, err := writeSizedString(sc.file, payload)
+		written += n
+		if err != nil {
+			return written, err
+		}
+	}
+	return written, nil
+}
+
+func writeUint32(w io.Writer, v uint32) error {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], v)
+	_, err := w.Write(buf[:])
+	return err
+}
+
+func writeSizedString(w io.Writer, s string) (int, error) {
+	if err := writeUint32(w, uint32(len(s))); err != nil {
+		return 0, err
+	}
+	n, err := w.Write([]byte(s))
+	return 4 + n, err
+}
+
+// pageIn reads a flushed block's rendered lines and raw payloads back from the
+// cache file and restores them to the block. Returns nil if the block isn't
+// flushed or the read fails.
 func (sc *scrollbackCache) pageIn(b *block) []string {
 	if !b.flushed || sc.file == nil {
 		return nil
@@ -145,34 +166,60 @@ func (sc *scrollbackCache) pageIn(b *block) []string {
 		return nil
 	}
 	r := bufio.NewReader(io.LimitReader(sc.file, int64(b.fileBytes)))
-	var hdr [4]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+	n, err := readUint32(r)
+	if err != nil {
 		return nil
 	}
-	n := int(binary.BigEndian.Uint32(hdr[:]))
-	if n < 0 || n > 1<<20 { // sanity cap
+	if n < 0 || n > 1<<20 {
 		return nil
 	}
 	lines := make([]string, n)
 	for i := 0; i < n; i++ {
-		var ln [4]byte
-		if _, err := io.ReadFull(r, ln[:]); err != nil {
+		lines[i], err = readSizedString(r)
+		if err != nil {
 			return nil
 		}
-		l := int(binary.BigEndian.Uint32(ln[:]))
-		if l < 0 || l > 1<<20 {
-			return nil
-		}
-		s := make([]byte, l)
-		if _, err := io.ReadFull(r, s); err != nil {
-			return nil
-		}
-		lines[i] = string(s)
+	}
+	content, err := readSizedString(r)
+	if err != nil {
+		return nil
+	}
+	output, err := readSizedString(r)
+	if err != nil {
+		return nil
 	}
 	b.cachedLines = lines
+	b.content = content
+	b.output = output
 	b.flushed = false
 	sc.residentBytes += blockLinesBytes(lines)
 	return lines
+}
+
+func readUint32(r io.Reader) (int, error) {
+	var buf [4]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
+		return 0, err
+	}
+	return int(binary.BigEndian.Uint32(buf[:])), nil
+}
+
+func readSizedString(r io.Reader) (string, error) {
+	n, err := readUint32(r)
+	if err != nil {
+		return "", err
+	}
+	if n < 0 || n > 1<<26 {
+		return "", io.ErrUnexpectedEOF
+	}
+	if n == 0 {
+		return "", nil
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return "", err
+	}
+	return string(buf), nil
 }
 
 // reset clears all cache state (used on /new). Closes the file; a new one is
