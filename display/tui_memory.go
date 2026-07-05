@@ -1,6 +1,23 @@
 package display
 
-import "strings"
+import (
+	"runtime/debug"
+	"strings"
+)
+
+// periodicFreeOSMemory hands memory that's already been dropped by the
+// caches above (dirtyBlocks, mdCacheRendered, flushed tool output, trimmed
+// conversation history) back to the OS on every block-lifecycle event
+// (tool/thinking/text/etc. — these fire rarely enough, unlike render ticks
+// or streamed tokens, that running this on each one is cheap). Go's GC frees
+// objects but doesn't proactively scavenge the heap, so RSS otherwise looks
+// like it never comes down over a long session even though nothing is
+// actually still referenced. Runs the scavenge off the calling goroutine
+// since it can take a few ms.
+func periodicFreeOSMemory(counter *int) {
+	*counter++
+	go debug.FreeOSMemory()
+}
 
 // Memory bounds for the TUI transcript.
 //

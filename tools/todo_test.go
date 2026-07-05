@@ -46,3 +46,159 @@ func TestTodoTool_ClearAndList(t *testing.T) {
 		t.Fatalf("expected empty list, got: %s", res.Content)
 	}
 }
+
+// add_batch is the parallelism-friendly alternative: one call appends many
+// items and returns the full list in a single round-trip. These tests pin
+// down happy-path assignment, atomicity on bad inputs, and the surface
+// errors the LLM will see.
+func TestTodoTool_AddBatch_HappyPath(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+
+	res := tool.Run(context.Background(), map[string]any{
+		"action": "add_batch",
+		"items": []any{
+			map[string]any{"content": "alpha"},
+			map[string]any{"content": "beta", "priority": "high"},
+			map[string]any{"content": "gamma", "status": "doing", "priority": "low"},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("add_batch failed: %s", res.Error)
+	}
+	// All three ids rendered in the formatted full list.
+	for _, sub := range []string{"1. [todo] normal alpha", "2. [todo] high beta", "3. [doing] low gamma"} {
+		if !strings.Contains(res.Content, sub) {
+			t.Fatalf("expected rendered line %q in result, got:\n%s", sub, res.Content)
+		}
+	}
+
+	// A list call returns the same shape, no drift.
+	res = tool.Run(context.Background(), map[string]any{"action": "list"})
+	if !res.Success {
+		t.Fatalf("list failed: %s", res.Error)
+	}
+	for _, sub := range []string{"alpha", "beta", "gamma"} {
+		if !strings.Contains(res.Content, sub) {
+			t.Fatalf("list missing %q, got:\n%s", sub, res.Content)
+		}
+	}
+}
+
+func TestTodoTool_AddBatch_AssignsConsecutiveIds(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "pre-existing"})
+
+	res := tool.Run(context.Background(), map[string]any{
+		"action": "add_batch",
+		"items": []any{
+			map[string]any{"content": "x"},
+			map[string]any{"content": "y"},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("add_batch failed: %s", res.Error)
+	}
+	// First add took id 1, batch should take 2 and 3 — not 1 and 2 again.
+	for _, sub := range []string{"2. [", "3. ["} {
+		if !strings.Contains(res.Content, sub) {
+			t.Fatalf("expected line with %q, got:\n%s", sub, res.Content)
+		}
+	}
+}
+
+func TestTodoTool_AddBatch_WithParentID(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "parent"})
+
+	res := tool.Run(context.Background(), map[string]any{
+		"action": "add_batch",
+		"items": []any{
+			map[string]any{"content": "child-a", "parentId": 1},
+			map[string]any{"content": "child-b", "parentId": 1},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("add_batch failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "parent:1 child-a") {
+		t.Fatalf("expected parent:1 child-a line, got:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "parent:1 child-b") {
+		t.Fatalf("expected parent:1 child-b line, got:\n%s", res.Content)
+	}
+}
+
+func TestTodoTool_AddBatch_AtomicOnBadStatusInMiddle(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+
+	res := tool.Run(context.Background(), map[string]any{
+		"action": "add_batch",
+		"items": []any{
+			map[string]any{"content": "good-before"},
+			map[string]any{"content": "bad-one", "status": "nope"},
+			map[string]any{"content": "good-after"},
+		},
+	})
+	if res.Success {
+		t.Fatalf("expected failure on bad status, got: %s", res.Content)
+	}
+	if !strings.Contains(res.Error, "items[1]") || !strings.Contains(res.Error, "invalid status") {
+		t.Fatalf("error should pinpoint items[1] and mention invalid status, got: %s", res.Error)
+	}
+
+	// And nothing got added — partial-apply would be a footgun.
+	res = tool.Run(context.Background(), map[string]any{"action": "list"})
+	if !strings.Contains(res.Content, "Todo list is empty") {
+		t.Fatalf("expected empty list after rolled-back batch, got: %s", res.Content)
+	}
+}
+
+func TestTodoTool_AddBatch_RejectsEmptyAndMissingItems(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+
+	for name, args := range map[string]map[string]any{
+		"missing items key":    {"action": "add_batch"},
+		"items null":           {"action": "add_batch", "items": nil},
+		"items wrong type":     {"action": "add_batch", "items": "not an array"},
+		"items empty array":    {"action": "add_batch", "items": []any{}},
+		"item missing content": {"action": "add_batch", "items": []any{map[string]any{}}},
+		"item not an object":   {"action": "add_batch", "items": []any{"plain string"}},
+		"bad parentId":         {"action": "add_batch", "items": []any{map[string]any{"content": "x", "parentId": 999}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := tool.Run(context.Background(), args)
+			if res.Success {
+				t.Fatalf("expected failure, got success: %s", res.Content)
+			}
+		})
+	}
+
+	// None of the above should have mutated state.
+	res := tool.Run(context.Background(), map[string]any{"action": "list"})
+	if !strings.Contains(res.Content, "Todo list is empty") {
+		t.Fatalf("expected empty list after rejected batches, got: %s", res.Content)
+	}
+}
+
+// TestMaxParallelFor drives the dispatcher-side knob: TodoTool must
+// advertise MaxParallel=1 so a user who batches several todo calls in
+// one LLM response gets them serialised by the executor (concurrent
+// calls race in-process even though each Run holds its own mutex).
+// Locking down the registry value here means a future refactor that
+// drops the method (or accidentally sets it to 0) fails this test.
+func TestMaxParallelFor(t *testing.T) {
+	if got := MaxParallelFor("todo"); got != 1 {
+		t.Fatalf("MaxParallelFor(\"todo\") = %d, want 1 — the dispatcher relies on this to serialize batched todo calls", got)
+	}
+	if got := MaxParallelFor("read"); got != 0 {
+		t.Fatalf("MaxParallelFor(\"read\") = %d, want 0 (default = unbounded)", got)
+	}
+	if got := MaxParallelFor("does-not-exist"); got != 0 {
+		t.Fatalf("MaxParallelFor(<missing>) = %d, want 0", got)
+	}
+}

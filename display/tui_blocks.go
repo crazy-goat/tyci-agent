@@ -10,6 +10,10 @@ import (
 
 func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	switch msg.kind {
+	case "thinking", "text", "tool-start", "tool-end", "block", "error":
+		periodicFreeOSMemory(&m.blockEventCount)
+	}
+	switch msg.kind {
 	case "request-start":
 		// Reset the elapsed-time counter at the start of each API turn so the
 		// status bar shows per-turn wall time instead of accumulating from

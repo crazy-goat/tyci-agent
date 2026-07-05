@@ -91,17 +91,17 @@ func GetToolsSchema() []map[string]any {
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"method":           map[string]any{"type": "string", "enum": []string{"glob", "grep"}, "description": "Search method: \"glob\" to find files by path pattern, \"grep\" to search file contents (default: \"glob\")"},
-						"pattern":          map[string]any{"description": "Glob pattern (method: glob) or text/regex (method: grep)"},
-						"cwd":              map[string]any{"type": "string", "description": "Base directory (default: .)"},
-						"include":          map[string]any{"description": "Grep only — glob pattern or array to include (default: **/*)"},
-						"exclude":          map[string]any{"description": "Glob pattern or array to exclude (default: .git/**, node_modules/**, etc.)"},
-						"mode":             map[string]any{"type": "string", "enum": []string{"text", "regex", "word"}, "description": "Grep only — search mode (default: text)"},
-						"caseSensitive":    map[string]any{"type": "boolean", "description": "Grep only — case-sensitive search (default: true)"},
-						"context":          map[string]any{"type": "integer", "description": "Grep only — lines of context before/after each match (default: 0)"},
-						"limit":            map[string]any{"type": "integer", "description": "Max results (default: 500 for glob, 100 for grep)"},
-						"output":           map[string]any{"type": "string", "enum": []string{"lines", "files", "count"}, "description": "Grep only — output format (default: lines)"},
-						"maxLineLength":    map[string]any{"type": "integer", "description": "Grep only — trim long lines (default: 300)"},
+						"method":        map[string]any{"type": "string", "enum": []string{"glob", "grep"}, "description": "Search method: \"glob\" to find files by path pattern, \"grep\" to search file contents (default: \"glob\")"},
+						"pattern":       map[string]any{"description": "Glob pattern (method: glob) or text/regex (method: grep)"},
+						"cwd":           map[string]any{"type": "string", "description": "Base directory (default: .)"},
+						"include":       map[string]any{"description": "Grep only — glob pattern or array to include (default: **/*)"},
+						"exclude":       map[string]any{"description": "Glob pattern or array to exclude (default: .git/**, node_modules/**, etc.)"},
+						"mode":          map[string]any{"type": "string", "enum": []string{"text", "regex", "word"}, "description": "Grep only — search mode (default: text)"},
+						"caseSensitive": map[string]any{"type": "boolean", "description": "Grep only — case-sensitive search (default: true)"},
+						"context":       map[string]any{"type": "integer", "description": "Grep only — lines of context before/after each match (default: 0)"},
+						"limit":         map[string]any{"type": "integer", "description": "Max results (default: 500 for glob, 100 for grep)"},
+						"output":        map[string]any{"type": "string", "enum": []string{"lines", "files", "count"}, "description": "Grep only — output format (default: lines)"},
+						"maxLineLength": map[string]any{"type": "integer", "description": "Grep only — trim long lines (default: 300)"},
 					},
 					"required": []string{"pattern"},
 				},
@@ -111,16 +111,30 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "todo",
-				"description": "Manage a per-run in-memory todo list. Use for multi-step tasks. Returns the full list.",
+				"description": "Manage a per-run in-memory todo list. Use for multi-step tasks. Returns the full list. When you need to add several unrelated items at once, prefer action=\"add_batch\" with items=[...] instead of issuing N separate add calls — the result returns the full new list with assigned ids in one round-trip.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"action":   map[string]any{"type": "string", "enum": []string{"add", "update", "doing", "blocked", "done", "remove", "list", "clear"}},
+						"action":   map[string]any{"type": "string", "enum": []string{"add", "add_batch", "update", "doing", "blocked", "done", "remove", "list", "clear"}},
 						"id":       map[string]any{"type": "integer", "description": "Todo id for update/done/remove"},
-						"content":  map[string]any{"type": "string", "description": "Todo text"},
+						"content":  map[string]any{"type": "string", "description": "Todo text (used by add)"},
 						"status":   map[string]any{"type": "string", "enum": []string{"todo", "doing", "done", "blocked"}, "description": "Default: todo"},
 						"priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high"}, "description": "Default: normal"},
 						"parentId": map[string]any{"type": "integer", "description": "Optional parent todo id"},
+						"items": map[string]any{
+							"type":        "array",
+							"description": "add_batch only — list of new todo items to add atomically. Each item takes the same fields as a single add call (content required, status/priority optional, parentId optional). Items are appended in the given order and assigned consecutive ids.",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"content":  map[string]any{"type": "string", "description": "Todo text"},
+									"status":   map[string]any{"type": "string", "enum": []string{"todo", "doing", "done", "blocked"}, "description": "Default: todo"},
+									"priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high"}, "description": "Default: normal"},
+									"parentId": map[string]any{"type": "integer", "description": "Optional parent todo id"},
+								},
+								"required": []string{"content"},
+							},
+						},
 					},
 					"required": []string{"action"},
 				},
@@ -193,12 +207,12 @@ func GetToolsSchema() []map[string]any {
 						"task":  map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/bash tools."},
 						"agent": map[string]any{"type": "string", "description": "Named agent to use (looks up ~/.tyci/agents/<name>.md for system prompt and config)"},
 						"tasks": map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
-							"task":  map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has read/write/find/bash/todo tools."},
-							"agent": map[string]any{"type": "string", "description": "Named agent to use"},
-							"model": map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
+							"task":           map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has read/write/find/bash/todo tools."},
+							"agent":          map[string]any{"type": "string", "description": "Named agent to use"},
+							"model":          map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
 							"max_iterations": map[string]any{"type": "integer", "description": "Cap this child's tool-call turns. Set a positive integer to bound a risky subtask (e.g. exploration, code review); omit to use the runner default (currently unlimited, bounded by a 600s wall-clock timeout). 0 and negative values mean unlimited."},
 						}, "required": []string{"task"}}},
-						"model": map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
+						"model":          map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
 						"max_iterations": map[string]any{"type": "integer", "description": "Cap on the child's tool-call turns. Omit or 0 to use the runner's default (currently unlimited); negative = unlimited. Useful for bounding long-running subtasks like exploration or code review."},
 					},
 				},
@@ -290,13 +304,13 @@ func GetSubagentToolsSchemaJSON() json.RawMessage {
 }
 
 var toolRegistry = map[string]Tool{
-	"bash":        &BashTool{},
-	"find":        &FindTool{},
-	"todo":        &TodoTool{},
-	"read":        &ReadTool{},
-	"write":       &WriteTool{},
-	"skills":      &SkillsTool{},
-	"web":         &WebTool{},
+	"bash":   &BashTool{},
+	"find":   &FindTool{},
+	"todo":   &TodoTool{},
+	"read":   &ReadTool{},
+	"write":  &WriteTool{},
+	"skills": &SkillsTool{},
+	"web":    &WebTool{},
 }
 
 // subagentToolInstance is the singleton SubagentTool used by the registry.
@@ -321,4 +335,25 @@ func RunTool(ctx context.Context, name string, arguments map[string]any) ToolRes
 	}
 
 	return ToolResult{Type: "result", Success: false, Error: "unknown tool: " + name}
+}
+
+// MaxParallelFor reports the dispatcher's per-tool concurrency limit for the
+// given tool name. 0 (the default for tools that don't implement MaxParallel)
+// means no limit — calls run concurrently like every other tool. 1 forces
+// the dispatcher to run calls of that tool serially inside a single goroutine
+// when several appear in the same LLM response. Used by agent.executeTools
+// to honour tools whose state is not safe under concurrent calls from the
+// same batch. MCP tools are always reported as 0 (no special handling).
+func MaxParallelFor(name string) int {
+	if mcpRunner := GetMCPToolRunner(); mcpRunner != nil && mcpRunner.HasTool(name) {
+		return 0
+	}
+	tool, ok := toolRegistry[name]
+	if !ok {
+		return 0
+	}
+	if mp, ok := tool.(interface{ MaxParallel() int }); ok {
+		return mp.MaxParallel()
+	}
+	return 0
 }

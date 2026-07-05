@@ -156,6 +156,13 @@ type TuiModel struct {
 	// Total line count cache (invalidated on block add/change/resize)
 	cachedTotalLines int
 
+	// Periodic OS memory release: freed slices/maps (e.g. dropped tool
+	// output, flushed blocks) are only GC-eligible, not necessarily
+	// returned to the OS. Count block-lifecycle events and nudge the
+	// runtime every memFreeEveryBlocks so long sessions don't look like
+	// they're leaking in RSS. See maybeFreeOSMemory.
+	blockEventCount int
+
 	// Message region cache (issue #84). The message region is the transcript
 	// area between the top bar and the status bar. The status tick fires every
 	// 250ms while a request is in flight; without this cache, every tick

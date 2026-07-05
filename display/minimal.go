@@ -47,6 +47,11 @@ type Minimal struct {
 	toolBlockStart time.Time
 	toolBlockOpen  bool
 
+	// blockEventCount drives the same periodic OS-memory release as the TUI
+	// (see maybeFreeOSMemory in tui_blocks.go) — freed conversation-history
+	// entries are GC-eligible but not returned to the OS on their own.
+	blockEventCount int
+
 	// done signals the background ticker to exit. Closed by End().
 	done chan struct{}
 
@@ -285,12 +290,14 @@ func (m *Minimal) feed(prefix, text string) {
 func (m *Minimal) Thinking(text string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	periodicFreeOSMemory(&m.blockEventCount)
 	m.feed(prefixThinking, text)
 }
 
 func (m *Minimal) Text(text string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	periodicFreeOSMemory(&m.blockEventCount)
 	m.feed(prefixResponse, text)
 }
 
@@ -348,6 +355,7 @@ func (m *Minimal) ToolCallDelta(delta string) {
 func (m *Minimal) ToolCallEnd(name string, result string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	periodicFreeOSMemory(&m.blockEventCount)
 	if m.curToolName != name {
 		// Stale End call — this line belongs to a different (later) tool.
 		return

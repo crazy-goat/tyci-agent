@@ -51,6 +51,13 @@ func AllTodoItems() []TodoItem {
 
 func (t *TodoTool) Name() string { return "todo" }
 
+// MaxParallel limits the dispatcher to concurrent calls of this tool from a
+// single LLM response. Return 1 to force sequential execution when the model
+// batches several todo calls into one tool-call block — todo mutates shared
+// in-process state and concurrent calls race even though Run holds the
+// per-call mutex. Other tools omit this method (treated as 0 = unbounded).
+func (t *TodoTool) MaxParallel() int { return 1 }
+
 func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	action := stringParam(input, "action", "list")
 	id := intParam(input, "id", 0)
@@ -67,21 +74,71 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		if content == "" {
 			return ToolResult{Type: "result", Success: false, Error: "missing required field \"content\" — fix: todo(action=\"add\", content=\"Write integration tests\") [defaults: status=todo, priority=normal]"}
 		}
-		if status == "" {
-			status = "todo"
+		st, prio, perr := normalizeAddFields("", status, priority)
+		if perr != "" {
+			return ToolResult{Type: "result", Success: false, Error: perr}
 		}
-		if priority == "" {
-			priority = "normal"
+		item := todoItem{ID: todoState.nextID, Content: content, Status: st, Priority: prio, ParentID: parentID}
+		if _, hasParent := input["parentId"]; hasParent && parentID != 0 && findTodoIndex(parentID) < 0 {
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid parentId=%d for todo(add content=%q) — parent doesn't exist — use 0 to add a top-level todo, or pick from existing ids [%s]", parentID, content, existingIDsLocked())}
 		}
-		if !validStatus(status) {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid status=%q for todo(add) — allowed: todo, doing, done, blocked — fix: drop \"status\" to use default \"todo\", or pick one of the allowed values", status)}
-		}
-		if !validPriority(priority) {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid priority=%q for todo(add) — allowed: low, normal, high — fix: drop \"priority\" to use default \"normal\", or pick one of the allowed values", priority)}
-		}
-		item := todoItem{ID: todoState.nextID, Content: content, Status: status, Priority: priority, ParentID: parentID}
 		todoState.nextID++
 		todoState.items = append(todoState.items, item)
+	case "add_batch":
+		rawItems, ok := input["items"]
+		if !ok || rawItems == nil {
+			return ToolResult{Type: "result", Success: false, Error: "todo(add_batch) requires \"items\" — fix: todo(action=\"add_batch\", items=[{content:\"...\"}, {content:\"...\"}]) — each entry takes content (required), status, priority, parentId (optional)"}
+		}
+		items, ok := rawItems.([]any)
+		if !ok {
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(add_batch) requires \"items\" to be an array — got %T — fix: pass items=[{content:\"...\"}, ...]", rawItems)}
+		}
+		if len(items) == 0 {
+			return ToolResult{Type: "result", Success: false, Error: "todo(add_batch) requires at least one entry — fix: items=[{content:\"first\"}, {content:\"second\"}] — for a single item use todo(action=\"add\", content=\"...\")"}
+		}
+		// Pre-validate every entry before mutating state, so a bad item in the
+		// middle doesn't leave us with a partially-applied batch.
+		type prepared struct {
+			content   string
+			status    string
+			priority  string
+			parentID  int
+			hasParent bool
+		}
+		prep := make([]prepared, 0, len(items))
+		for i, raw := range items {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(add_batch): items[%d] must be an object — got %T — fix: items=[{content:\"...\"}, ...]", i, raw)}
+			}
+			c := stringParam(m, "content", "")
+			if c == "" {
+				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(add_batch): items[%d] missing required \"content\" — fix: every entry needs content; drop the entry or set content=\"...\"", i)}
+			}
+			s := stringParam(m, "status", "")
+			p := stringParam(m, "priority", "")
+			st, prio, perr := normalizeAddFields("", s, p)
+			if perr != "" {
+				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(add_batch): items[%d] (content=%q) — %s", i, c, perr)}
+			}
+			pid := intParam(m, "parentId", 0)
+			_, hasParent := m["parentId"]
+			if hasParent && pid != 0 && findTodoIndex(pid) < 0 {
+				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(add_batch): items[%d] (content=%q) — invalid parentId=%d, doesn't exist — fix: use 0 for top-level, or pick from existing ids [%s]", i, c, pid, existingIDsLocked())}
+			}
+			prep = append(prep, prepared{content: c, status: st, priority: prio, parentID: pid, hasParent: hasParent})
+		}
+		// All entries valid — append atomically under the held lock.
+		for _, p := range prep {
+			todoState.items = append(todoState.items, todoItem{
+				ID:       todoState.nextID,
+				Content:  p.content,
+				Status:   p.status,
+				Priority: p.priority,
+				ParentID: p.parentID,
+			})
+			todoState.nextID++
+		}
 	case "update":
 		if id == 0 {
 			return ToolResult{Type: "result", Success: false, Error: "todo(update) requires an \"id\" — fix: todo(action=\"list\") to read ids, then todo(action=\"update\", id=N, ...) with at least one of content/status/priority/parentId"}
@@ -181,6 +238,26 @@ func findTodoIndex(id int) int {
 		}
 	}
 	return -1
+}
+
+// normalizeAddFields applies defaults (status=todo, priority=normal) and
+// validates the result. Returns the normalized pair or a non-empty error
+// ready to surface to the LLM. The first arg is unused — kept as a small
+// placeholder for future per-action nuance (e.g. add_block starting status).
+func normalizeAddFields(_ string, status string, priority string) (string, string, string) {
+	if status == "" {
+		status = "todo"
+	}
+	if priority == "" {
+		priority = "normal"
+	}
+	if !validStatus(status) {
+		return "", "", fmt.Sprintf("invalid status=%q — allowed: todo, doing, done, blocked — fix: drop \"status\" to use default \"todo\", or pick one of the allowed values", status)
+	}
+	if !validPriority(priority) {
+		return "", "", fmt.Sprintf("invalid priority=%q — allowed: low, normal, high — fix: drop \"priority\" to use default \"normal\", or pick one of the allowed values", priority)
+	}
+	return status, priority, ""
 }
 
 // ClearTodoList resets the todo list (used on /new).
