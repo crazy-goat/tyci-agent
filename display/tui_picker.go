@@ -173,30 +173,78 @@ func (m *TuiModel) selectModel(model string) {
 	m.closeModelPicker()
 }
 
-// rebuildPickerItems builds the filtered picker items list from allProviders.
+// rebuildPickerItems builds the filtered picker items list.
+// Layout (when filter is empty):
+//   1. Default section (single defaultModel, if set)
+//   2. Favorites section (favoriteModels in stored order)
+//   3. All providers, sorted alphabetically, with models sorted within each.
+//      Default and favorites models are excluded from provider sections
+//      (they only appear in their dedicated sections at the top) so each
+//      model is shown exactly once.
+// When a filter is active, only the provider sections are shown (filtered),
+// in alphabetical order. Default/Favorites sections are skipped while
+// filtering so the user can type to find any model — including favorites.
 func (m *TuiModel) rebuildPickerItems() {
 	m.pickerItems = nil
 	modelCount := 0
 	filter := strings.ToLower(m.pickerFilter)
 
-	for _, prov := range m.allProviders {
-		// Collect matching models for this provider
+	// Tracks models already shown in Default/Favorites sections, so we can
+	// skip them in provider sections (no duplication).
+	used := make(map[string]bool, 2+len(m.favoriteModels))
+	if m.defaultModel != "" {
+		used[m.defaultModel] = true
+	}
+	for _, f := range m.favoriteModels {
+		used[f] = true
+	}
+
+	addItem := func(header, label, value string) {
+		if header != "" {
+			m.pickerItems = append(m.pickerItems, pickerItem{isHeader: true, label: header})
+			return
+		}
+		m.pickerItems = append(m.pickerItems, pickerItem{isHeader: false, label: label, value: value})
+		modelCount++
+	}
+
+	if filter == "" {
+		// Default section (single entry).
+		if m.defaultModel != "" {
+			addItem("Default", "", "")
+			addItem("", m.defaultModel, m.defaultModel)
+		}
+
+		// Favorites section (in favoriteModels order).
+		if len(m.favoriteModels) > 0 {
+			addItem("Favorites", "", "")
+			for _, f := range m.favoriteModels {
+				addItem("", f, f)
+			}
+		}
+	}
+
+	// Providers, sorted alphabetically; models within each sorted.
+	provs := make([]ProviderModels, len(m.allProviders))
+	copy(provs, m.allProviders)
+	sort.Slice(provs, func(i, j int) bool { return provs[i].Name < provs[j].Name })
+
+	for _, prov := range provs {
 		var matched []string
 		for _, model := range prov.Models {
 			label := prov.Name + "/" + model
-			if filter == "" || strings.Contains(strings.ToLower(label), filter) {
-				matched = append(matched, label)
+			if (filter == "" && used[label]) || (filter != "" && !strings.Contains(strings.ToLower(label), filter)) {
+				continue
 			}
+			matched = append(matched, label)
 		}
 		if len(matched) == 0 {
 			continue
 		}
 		sort.Strings(matched)
-		// Add header
-		m.pickerItems = append(m.pickerItems, pickerItem{isHeader: true, label: prov.Name})
+		addItem(prov.Name, "", "")
 		for _, label := range matched {
-			m.pickerItems = append(m.pickerItems, pickerItem{isHeader: false, label: label, value: label})
-			modelCount++
+			addItem("", label, label)
 		}
 	}
 

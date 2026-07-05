@@ -27,7 +27,9 @@ var testProviders = []ProviderModels{
 func TestTogglePickerFavorite_AddsModel(t *testing.T) {
 	m := newPickerTestModel(testProviders, nil, "")
 	m.openModelPicker()
-	// cursor starts at 0 => first model = openai/gpt-4o
+	// Cursor=2 targets openai/gpt-4o (provider order is alphabetical: anthropic < openai;
+	// models within each provider are sorted, so openai has gpt-4o(2), gpt-4o-mini(3)).
+	m.pickerCursor = 2
 	m.togglePickerFavorite()
 
 	if !m.favoriteSet["openai/gpt-4o"] {
@@ -62,6 +64,9 @@ func TestTogglePickerFavorite_CallbackCalled(t *testing.T) {
 	m.width = 120
 	m.height = 40
 	m.openModelPicker()
+	// cursor=2 => openai/gpt-4o (alphabetical: anthropic first, then openai;
+	// within openai models are sorted: gpt-4o(2), gpt-4o-mini(3))
+	m.pickerCursor = 2
 
 	m.togglePickerFavorite() // add openai/gpt-4o
 	if len(calls) != 1 || calls[0].model != "openai/gpt-4o" || !calls[0].favorite {
@@ -77,7 +82,12 @@ func TestTogglePickerFavorite_CallbackCalled(t *testing.T) {
 func TestTogglePickerFavorite_ToggleSecondModel(t *testing.T) {
 	m := newPickerTestModel(testProviders, []string{"openai/gpt-4o"}, "")
 	m.openModelPicker()
-	m.pickerCursor = 1 // openai/gpt-4o-mini
+	// Favorites already contains openai/gpt-4o, so it is pulled out of the openai
+	// provider section. Layout:
+	//   Favorites:  openai/gpt-4o (0)
+	//   anthropic:  claude-haiku (1), claude-sonnet (2)
+	//   openai:     gpt-4o-mini (3)
+	m.pickerCursor = 3 // openai/gpt-4o-mini
 	m.togglePickerFavorite()
 
 	if len(m.favoriteModels) != 2 {
@@ -93,7 +103,9 @@ func TestTogglePickerFavorite_ToggleSecondModel(t *testing.T) {
 func TestSetDefaultModel_SetsModel(t *testing.T) {
 	m := newPickerTestModel(testProviders, nil, "")
 	m.openModelPicker()
-	m.setDefaultModel() // cursor at 0 => openai/gpt-4o
+	// cursor=2 => openai/gpt-4o (alphabetical: anthropic first, then openai)
+	m.pickerCursor = 2
+	m.setDefaultModel()
 
 	if m.defaultModel != "openai/gpt-4o" {
 		t.Fatalf("defaultModel = %q, want openai/gpt-4o", m.defaultModel)
@@ -103,7 +115,11 @@ func TestSetDefaultModel_SetsModel(t *testing.T) {
 func TestSetDefaultModel_ReplacesPrevious(t *testing.T) {
 	m := newPickerTestModel(testProviders, nil, "openai/gpt-4o")
 	m.openModelPicker()
-	m.pickerCursor = 3 // anthropic/claude-sonnet-4-20250514 (after sort: haiku=2, sonnet=3)
+	// Cursor=2 targets anthropic/claude-sonnet-4-20250514:
+	//   Default:    openai/gpt-4o (0)
+	//   anthropic:  claude-haiku (1), claude-sonnet (2)
+	//   openai:     gpt-4o (3), gpt-4o-mini (4)
+	m.pickerCursor = 2 // anthropic/claude-sonnet-4-20250514
 	m.setDefaultModel()
 
 	if m.defaultModel != "anthropic/claude-sonnet-4-20250514" {
@@ -118,6 +134,8 @@ func TestSetDefaultModel_CallbackCalled(t *testing.T) {
 	m.width = 120
 	m.height = 40
 	m.openModelPicker()
+	// cursor=2 => openai/gpt-4o (alphabetical: anthropic first, then openai)
+	m.pickerCursor = 2
 
 	m.setDefaultModel()
 	if got != "openai/gpt-4o" {
@@ -212,6 +230,8 @@ func TestSwitchModel_ChangesChannel(t *testing.T) {
 func TestPickerKeyCtrlF_TogglesFavorite(t *testing.T) {
 	m := newPickerTestModel(testProviders, nil, "")
 	m.openModelPicker()
+	// cursor=2 => openai/gpt-4o (alphabetical: anthropic first, then openai)
+	m.pickerCursor = 2
 
 	msg := tea.KeyMsg{Type: tea.KeyCtrlF}
 	result, _ := m.updatePicker(msg)
@@ -225,6 +245,8 @@ func TestPickerKeyCtrlF_TogglesFavorite(t *testing.T) {
 func TestPickerKeyCtrlD_SetsDefault(t *testing.T) {
 	m := newPickerTestModel(testProviders, nil, "")
 	m.openModelPicker()
+	// cursor=2 => openai/gpt-4o (alphabetical: anthropic first, then openai)
+	m.pickerCursor = 2
 
 	msg := tea.KeyMsg{Type: tea.KeyCtrlD}
 	result, _ := m.updatePicker(msg)
@@ -242,7 +264,8 @@ func TestPickerKeyEnter_SelectsModel(t *testing.T) {
 	m.width = 120
 	m.height = 40
 	m.openModelPicker()
-	// cursor at 0 => openai/gpt-4o
+	// cursor=2 => openai/gpt-4o (alphabetical: anthropic first, then openai)
+	m.pickerCursor = 2
 
 	msg := tea.KeyMsg{Type: tea.KeyEnter}
 	result, _ := m.updatePicker(msg)
@@ -358,10 +381,11 @@ func TestPickerItems_SortedPerProvider(t *testing.T) {
 		}
 	}
 
-	// Providers keep their original order from allProviders; models within each are sorted
+	// Providers are sorted alphabetically; models within each provider are sorted.
+	// a-provider < b-provider, so a-provider models come first.
 	want := []string{
-		"b-provider/a-model", "b-provider/z-model",
 		"a-provider/a-model", "a-provider/z-model",
+		"b-provider/a-model", "b-provider/z-model",
 	}
 	if len(models) != len(want) {
 		t.Fatalf("got %d models, want %d", len(models), len(want))
@@ -493,7 +517,12 @@ func findSubstring(s, substr string) bool {
 func TestSelectModel_UpdatesFavIdx(t *testing.T) {
 	m := newPickerTestModel(testProviders, []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"}, "")
 	m.openModelPicker()
-	m.pickerCursor = 2 // anthropic/claude-sonnet-4-20250514
+	// Favorites contains both models, so they're pulled out of the provider
+	// sections. Layout:
+	//   Favorites:  openai/gpt-4o (0), anthropic/claude-sonnet (1)
+	//   anthropic:  claude-haiku (2)
+	//   openai:     gpt-4o-mini (3)
+	m.pickerCursor = 1 // anthropic/claude-sonnet-4-20250514 (from Favorites)
 
 	m.selectModel("anthropic/claude-sonnet-4-20250514")
 

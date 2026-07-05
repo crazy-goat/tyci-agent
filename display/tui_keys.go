@@ -132,6 +132,9 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			m.quitting = true
 			return true, m, tea.Quit
 		}
+	case tea.KeyCtrlP:
+		m.openModelPicker()
+		return true, m, nil
 	}
 	return false, m, nil
 }
