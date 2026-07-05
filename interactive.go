@@ -25,6 +25,7 @@ type interactiveState struct {
 	cfg         agent.Config
 	baseCtx     context.Context
 	sessionPath string
+	sessionPtr  *session.Session
 
 	conversation []providers.RichMessage
 	totalUsage   stream.Usage
@@ -149,6 +150,10 @@ func (s *interactiveState) handleCommand(raw string, cancel context.CancelFunc) 
 		tools.ClearTodoList()
 		fmt.Print("\033[2J\033[H")
 		return false, true
+	case line == "/resume" || strings.HasPrefix(line, "/resume "):
+		arg := strings.TrimSpace(strings.TrimPrefix(line, "/resume"))
+		s.handleResume(arg)
+		return false, true
 	case line == "/model" || strings.HasPrefix(line, "/model "):
 		cancel()
 		s.handleModelCommand(strings.TrimSpace(strings.TrimPrefix(line, "/model")))
@@ -232,4 +237,72 @@ func (s *interactiveState) switchModel(spec string) {
 	s.cfg.Model = m
 	s.cfg.ProviderName = p.Name()
 	fmt.Fprintf(os.Stdout, "Switched to %s/%s\n", p.Name(), m)
+}
+
+func (s *interactiveState) handleResume(arg string) {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		fmt.Fprintln(os.Stderr, "Usage: /resume <index|path>")
+		return
+	}
+	path, err := resolveSessionRef(".", arg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "/resume: %v\n", err)
+		return
+	}
+	summary, msgs, total, corrupt, err := session.LoadForReplay(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "/resume: %v\n", err)
+		return
+	}
+	if len(corrupt) > 0 {
+		fmt.Fprintf(os.Stderr, "/resume: %d corrupt lines skipped\n", len(corrupt))
+	}
+
+	// Close current session cleanly before swapping.
+	if s.sessionPtr != nil {
+		_ = s.sessionPtr.Close()
+	}
+	s.sessionPtr = nil
+	s.sessionPath = ""
+
+	wd, _ := os.Getwd()
+	newSess, err := session.Open(path, wd, s.modelName, s.provider.Name())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "/resume: reopen failed: %v\n", err)
+		return
+	}
+	s.sessionPtr = newSess
+	s.sessionPath = path
+	s.conversation = msgs
+	s.totalUsage = stream.Usage{
+		Input:     total.Input,
+		Output:    total.Output,
+		Reasoning: total.Reasoning,
+		CacheRead: total.CacheRead,
+	}
+	if summary.Provider != "" && summary.Model != "" {
+		if p, m, ok := providers.FindModel(summary.Provider + "/" + summary.Model); ok {
+			s.provider = p
+			s.modelName = m
+			s.cfg.Model = m
+			s.cfg.ProviderName = p.Name()
+		}
+	}
+
+	fmt.Printf("\033[2J\033[H")
+	for _, m := range msgs {
+		printReplayMessage(m)
+	}
+	fmt.Fprintf(os.Stdout, "\nResumed session %s (%d messages, usage in/out: %d/%d)\n",
+		summary.ID, len(msgs), total.Input, total.Output)
+	fmt.Printf("\033]133;C\007")
+}
+
+func printReplayMessage(m providers.RichMessage) {
+	fmt.Printf("[%s]\n", m.Role)
+	for _, c := range m.Content {
+		fmt.Println(c)
+	}
+	fmt.Println("---")
 }

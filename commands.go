@@ -67,6 +67,7 @@ func init() {
 	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(providerCmd)
+	rootCmd.AddCommand(sessionCmd)
 	rootCmd.AddCommand(completionCmd)
 }
 

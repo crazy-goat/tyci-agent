@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -496,7 +497,7 @@ func RebuildMessages(lines []ParsedLine) ([]providers.RichMessage, error) {
 		msgs = append(msgs, msg)
 	}
 
-	return msgs, nil
+	return sanitizeMessageSequence(msgs), nil
 }
 
 func rebuildCompactionLine(raw string) ([]providers.RichMessage, bool) {
@@ -561,6 +562,38 @@ func contentBlocksToRichMessage(role string, blocks []ContentBlock) *providers.R
 	return &providers.RichMessage{Role: role, Content: content}
 }
 
+func sanitizeMessageSequence(msgs []providers.RichMessage) []providers.RichMessage {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	seenToolCalls := make(map[string]struct{})
+	out := make([]providers.RichMessage, 0, len(msgs))
+	for _, msg := range msgs {
+		keep := true
+		if msg.Role == "toolResult" {
+			for _, block := range msg.Content {
+				if block.Type != "text" || block.ToolCallID == "" {
+					continue
+				}
+				if _, ok := seenToolCalls[block.ToolCallID]; !ok {
+					keep = false
+					break
+				}
+			}
+		}
+		if !keep {
+			continue
+		}
+		out = append(out, msg)
+		for _, block := range msg.Content {
+			if block.Type == "toolCall" && block.ID != "" {
+				seenToolCalls[block.ID] = struct{}{}
+			}
+		}
+	}
+	return out
+}
+
 // ─── ReadCloser support ───────────────────────────────────────────────────
 
 // ReadAllMessages reads a session file and returns all messages as raw JSON maps.
@@ -580,4 +613,204 @@ func ReadAllMessages(r io.Reader) ([]map[string]any, error) {
 		msgs = append(msgs, raw)
 	}
 	return msgs, scanner.Err()
+}
+// SessionDir returns the directory where session files for the given cwd
+// are stored: ~/.tyci/sessions/<encoded-cwd>/.
+//
+// The cwd encoding mirrors DefaultPath (slashes are turned into "--", empty
+// becomes "root") so callers can map a session file path back to either a
+// logical cwd or just iterate by directory.
+func SessionDir(cwd string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	encoded := strings.ReplaceAll(cwd, "/", "--")
+	if encoded == "" {
+		encoded = "root"
+	}
+	return filepath.Join(home, ".tyci", "sessions", encoded), nil
+}
+
+// SessionDirFromPath returns the directory segment of a session file path,
+// i.e. everything up to and including the encoded cwd directory. Useful for
+// resuming from a path: callers pass the file's directory to ListEntries.
+func SessionDirFromPath(path string) string {
+	return filepath.Dir(path)
+}
+
+// ListEntries returns session files in dir, newest first. Each entry includes
+// the path, file size, and modification time. Files with extension .jsonl are
+// listed; everything else (lockfiles, partials) is ignored.
+func ListEntries(dir string) ([]SessionEntry, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]SessionEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, SessionEntry{
+			Path:    filepath.Join(dir, e.Name()),
+			Name:    e.Name(),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ModTime.After(out[j].ModTime)
+	})
+	return out, nil
+}
+
+// SessionEntry is one row in the output of ListEntries.
+type SessionEntry struct {
+	Path    string
+	Name    string
+	Size    int64
+	ModTime time.Time
+}
+
+// DeleteSession removes a session file. It does not refuse to delete files
+// that look like correct JSONL, only refuses missing paths so callers get a
+// clear error instead of a silent success.
+func DeleteSession(path string) error {
+	if path == "" {
+		return fmt.Errorf("empty path")
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ─── Replay helper used by /resume ────────────────────────────────────────
+
+// TotalUsage is the aggregated token/cost summary emitted by LoadForReplay.
+// It mirrors the shape used by interactive session output so the caller can
+// print it directly without re-summing.
+type TotalUsage struct {
+	Input       int
+	Output      int
+	Reasoning   int
+	CacheRead   int
+	CacheWrite  int
+	TotalTokens int
+	TotalCost   float64
+}
+
+// TotalUsageFromMap builds a TotalUsage from a key→count map (as produced by
+// keeping raw "input"/"output" sums during a single replay). It is a tiny
+// convenience helper kept here so the same code path can be reused.
+func TotalUsageFromMap(m map[string]int) TotalUsage {
+	return TotalUsage{
+		Input:  m["input"],
+		Output: m["output"],
+	}
+}
+
+// ReplaySummary is the data returned by LoadForReplay for swapping an
+// interactive session onto a different on-disk file.
+type ReplaySummary struct {
+	ID       string
+	Provider string
+	Model    string
+
+	Messages []providers.RichMessage
+	Usage    Usage
+
+	CorruptLines int
+}
+
+// LoadForReplay reads a session file, accumulates usage and rebuilds the
+// conversation. It is the entry point used by the interactive /resume command.
+func LoadForReplay(path string) (ReplaySummary, []providers.RichMessage, TotalUsage, []string, error) {
+	var zero ReplaySummary
+	lines, err := parseSessionFile(path)
+	if err != nil {
+		return zero, nil, TotalUsage{}, nil, err
+	}
+
+	var corrupt []string
+	var summary ReplaySummary
+	var msgs []providers.RichMessage
+	usage := Usage{}
+	total := TotalUsage{}
+
+	for _, l := range lines {
+		switch l.MsgType {
+		case "header":
+			var h Header
+			if err := json.Unmarshal([]byte(l.Raw), &h); err == nil {
+				summary.ID = h.ID
+				summary.Provider = h.Provider
+				summary.Model = h.Model
+			}
+		case "compaction":
+			rebuilt, ok := rebuildCompactionLine(l.Raw)
+			if !ok {
+				corrupt = append(corrupt, l.Raw)
+				continue
+			}
+			msgs = rebuilt
+		case "session_end":
+			continue
+		case "user", "assistant", "toolResult":
+			msg, ok := rebuildMessageLine(l.Raw)
+			if !ok {
+				corrupt = append(corrupt, l.Raw)
+				continue
+			}
+			msgs = append(msgs, msg)
+			if l.MsgType == "assistant" {
+				var ev struct {
+					Usage *Usage `json:"usage"`
+				}
+				if jerr := json.Unmarshal([]byte(l.Raw), &ev); jerr == nil && ev.Usage != nil {
+					usage.Input += ev.Usage.Input
+					usage.Output += ev.Usage.Output
+					usage.Reasoning += ev.Usage.Reasoning
+					usage.CacheRead += ev.Usage.CacheRead
+					usage.CacheWrite += ev.Usage.CacheWrite
+					if ev.Usage.TotalTokens > 0 {
+						usage.TotalTokens += ev.Usage.TotalTokens
+					}
+					if ev.Usage.TotalCost > 0 {
+						usage.TotalCost += ev.Usage.TotalCost
+					}
+				}
+			}
+		default:
+			corrupt = append(corrupt, l.Raw)
+		}
+	}
+
+	total.Input = usage.Input
+	total.Output = usage.Output
+	total.Reasoning = usage.Reasoning
+	total.CacheRead = usage.CacheRead
+	total.CacheWrite = usage.CacheWrite
+	total.TotalTokens = usage.TotalTokens
+	total.TotalCost = usage.TotalCost
+
+	summary.Messages = msgs
+	summary.Usage = usage
+	summary.CorruptLines = len(corrupt)
+
+	return summary, msgs, total, corrupt, nil
 }

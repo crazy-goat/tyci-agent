@@ -285,6 +285,28 @@ func TestRunCompactsLongHistory(t *testing.T) {
 	}
 }
 
+func TestRunCompactionKeepsToolCallBeforeToolResult(t *testing.T) {
+	msgs := []providers.RichMessage{
+		{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: "u1"}}},
+		{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: "u2"}}},
+		{Role: "assistant", Content: []providers.ContentBlock{{Type: "toolCall", ID: "call-1", Name: "bash", Arguments: []byte(`{"cmd":"ls"}`)}}},
+		{Role: "toolResult", Content: []providers.ContentBlock{{Type: "text", Text: "result", ToolCallID: "call-1", ToolName: "bash"}}},
+	}
+	maybeCompactHistory(&msgs, nil, CompactionConfig{Enabled: true, TriggerMessages: 3, TailMessages: 2, ToolChars: 64})
+	if len(msgs) != 3 {
+		t.Fatalf("expected compaction to keep toolCall/toolResult pair in tail, got %d messages", len(msgs))
+	}
+	if msgs[0].Role != "user" || !strings.Contains(msgs[0].Content[0].Text, "Conversation summary") {
+		t.Fatalf("expected summary first, got %#v", msgs)
+	}
+	if msgs[1].Role != "assistant" || msgs[1].Content[0].Type != "toolCall" {
+		t.Fatalf("expected toolCall preserved after summary, got %#v", msgs)
+	}
+	if msgs[2].Role != "toolResult" || msgs[2].Content[0].ToolCallID != "call-1" {
+		t.Fatalf("expected matching toolResult preserved after toolCall, got %#v", msgs)
+	}
+}
+
 func TestRun_ToolCall_ShowsToolBlockDuringStream(t *testing.T) {
 	p := &mockToolProvider{
 		events: []stream.Event{

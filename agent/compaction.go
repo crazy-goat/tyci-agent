@@ -46,6 +46,7 @@ func maybeCompactHistory(msgs *[]providers.RichMessage, sess *session.Session, c
 		return
 	}
 	cut := len(*msgs) - cfg.TailMessages
+	cut = adjustCompactionCut(*msgs, cut)
 	if cut <= 1 {
 		return
 	}
@@ -144,6 +145,36 @@ func truncateMiddle(s string, max int) string {
 		tail = 0
 	}
 	return s[:head] + " … " + s[len(s)-tail:]
+}
+
+func adjustCompactionCut(msgs []providers.RichMessage, cut int) int {
+	for cut > 1 && tailHasOrphanToolResults(msgs[cut:]) {
+		cut--
+	}
+	return cut
+}
+
+func tailHasOrphanToolResults(msgs []providers.RichMessage) bool {
+	seen := make(map[string]struct{})
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			if block.Type == "toolCall" && block.ID != "" {
+				seen[block.ID] = struct{}{}
+			}
+		}
+		if msg.Role != "toolResult" {
+			continue
+		}
+		for _, block := range msg.Content {
+			if block.ToolCallID == "" {
+				continue
+			}
+			if _, ok := seen[block.ToolCallID]; !ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func richMessagesToSessionPayloads(msgs []providers.RichMessage) []session.MessagePayload {

@@ -749,6 +749,28 @@ func TestRebuildMessages_UsesLatestCompactionTail(t *testing.T) {
 	}
 }
 
+func TestRebuildMessages_DropsOrphanToolResults(t *testing.T) {
+	lines := []ParsedLine{
+		{Raw: `{"type":"session","version":1}`, MsgType: "header"},
+		{Raw: `{"type":"message","id":"t1","message":{"role":"toolResult","content":[{"type":"text","text":"orphan result","toolCallId":"call-orphan","toolName":"bash"}]}}`, MsgType: "toolResult"},
+		{Raw: `{"type":"message","id":"a1","message":{"role":"assistant","content":[{"type":"text","text":"running tool"},{"type":"toolCall","id":"call-1","name":"bash","arguments":"{\"cmd\":\"ls\"}"}]}}`, MsgType: "assistant"},
+		{Raw: `{"type":"message","id":"t2","message":{"role":"toolResult","content":[{"type":"text","text":"matched result","toolCallId":"call-1","toolName":"bash"}]}}`, MsgType: "toolResult"},
+	}
+	msgs, err := RebuildMessages(lines)
+	if err != nil {
+		t.Fatalf("RebuildMessages() error: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages after dropping orphan tool result, got %d", len(msgs))
+	}
+	if msgs[0].Role != "assistant" || msgs[1].Role != "toolResult" {
+		t.Fatalf("unexpected roles after sanitize: %#v", msgs)
+	}
+	if msgs[1].Content[0].ToolCallID != "call-1" {
+		t.Fatalf("expected matched tool result to survive, got %#v", msgs[1])
+	}
+}
+
 // ─── parseSessionFile edge cases ────────────────────────────────────────
 
 func TestParseSessionFile_SkipsEmptyLines(t *testing.T) {
