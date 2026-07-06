@@ -140,6 +140,7 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 		ProviderName:   provider.Name(),
 		FallbackModels: fallbackModels,
 		PendingTodos:   tools.PendingTodos,
+		HasTodos:       tools.HasPendingTodos,
 	}
 	ctx = providers.WithProvider(ctx, provider)
 	ctx = providers.WithModel(ctx, modelName)

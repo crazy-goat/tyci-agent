@@ -69,6 +69,8 @@ Tools available:
 - write(path, content, range?, oldString?, newString?, occurrence?, dryRun?): write file or replace text. Use content+range for writing; use oldString+newString for replacements.
 - bash(description, command, timeout?): run shell command when no tool fits.%s
 
+IMPORTANT: Always start by creating a plan using the todo tool before using other tools. The system enforces this — non-todo tool calls will fail until at least one todo item exists. Use todo(action="add", content="...") or todo(action="add_batch", items=[...]) first.
+
 Be terse. No fluff. Short sentence. Get job done.
 `, roleNote, date, wd, osName, tempDir, subagentLine)
 

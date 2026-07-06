@@ -46,6 +46,14 @@ type Config struct {
 	// (done/blocked), then runs one more iteration. This happens at most
 	// maxTodoReminders times per turn to avoid nagging in a loop.
 	PendingTodos func() []string
+
+	// HasTodos, if set, is called before executing tool calls to enforce
+	// the "plan first" policy. It returns true when at least one todo
+	// item exists (regardless of status). Non-todo tools are blocked with
+	// an actionable error until the model creates a plan via the todo
+	// tool. This ensures the model thinks through its approach before
+	// acting.
+	HasTodos func() bool
 }
 
 // maxTodoReminders bounds how many times, within a single turn, the agent

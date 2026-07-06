@@ -310,6 +310,23 @@ func PendingTodos() []string {
 	return out
 }
 
+// HasPendingTodos returns true when the todo list contains at least one
+// item with status "todo" or "doing". Used by the agent loop to enforce
+// the "plan first" policy — non-todo tools are blocked unless the agent
+// has active (uncompleted) work in its plan. Once all items are "done"
+// or "blocked", the guard re-engages and the LLM must add a new plan
+// or reopen an existing item before using other tools.
+func HasPendingTodos() bool {
+	todoState.Lock()
+	defer todoState.Unlock()
+	for _, it := range todoState.items {
+		if it.Status == "todo" || it.Status == "doing" {
+			return true
+		}
+	}
+	return false
+}
+
 func validStatus(s string) bool {
 	switch s {
 	case "todo", "doing", "done", "blocked":

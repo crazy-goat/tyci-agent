@@ -11,6 +11,44 @@ import (
 	"github.com/decodo/tyci/tools"
 )
 
+// planRequiredError is the message returned to the LLM when it attempts
+// to use non-todo tools without first creating a plan. The message is
+// deliberately actionable: it tells the model exactly what to do next.
+const planRequiredError = "Error: You must create a plan using the todo tool before using other tools. Call todo(action=\"add\", content=\"...\") or todo(action=\"add_batch\", items=[...]) to outline your approach, then proceed with the actual work."
+
+// enforcePlanGuard checks whether a plan (todo items) exists before
+// allowing non-todo tool calls. When cfg.HasTodos is set and returns
+// false, any tool call whose name is not "todo" is replaced with an
+// error result in the returned results slice. Todo calls are collected
+// for normal execution. Returns:
+//   - toExecute: the todo tool calls that still need to run (nil if all blocked)
+//   - origIdx:   the original indices in toolCalls for each entry in toExecute
+//   - results:   the full results array with errors pre-filled for blocked calls
+//
+// When the guard is not active (nil callback or plan exists), returns
+// (toolCalls, sequential indices, nil) so the caller falls through to
+// the normal execution path.
+func enforcePlanGuard(cfg Config, toolCalls []stream.ToolCall) ([]stream.ToolCall, []int, []string) {
+	if cfg.HasTodos == nil || cfg.HasTodos() {
+		return toolCalls, nil, nil
+	}
+
+	results := make([]string, len(toolCalls))
+	var toExecute []stream.ToolCall
+	var origIdx []int
+
+	for i, tc := range toolCalls {
+		if tc.Name == "todo" {
+			toExecute = append(toExecute, tc)
+			origIdx = append(origIdx, i)
+		} else {
+			results[i] = planRequiredError
+		}
+	}
+
+	return toExecute, origIdx, results
+}
+
 func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.ToolCall) []string {
 	results := make([]string, len(toolCalls))
 

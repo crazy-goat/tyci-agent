@@ -16,7 +16,26 @@ type streamProgressDisplay interface {
 func executeAndAppendToolResults(ctx context.Context, d display.Display, msgs *[]providers.RichMessage, cfg Config, toolCalls []stream.ToolCall, toolDeltas map[string]*strings.Builder) {
 	showToolCalls(d, toolCalls, toolDeltas)
 	ctx = installToolStreaming(ctx, d)
-	results := executeTools(ctx, cfg.Tools, toolCalls)
+
+	// Enforce "plan first" policy: block non-todo tools when no plan exists.
+	toExecute, origIdx, guardResults := enforcePlanGuard(cfg, toolCalls)
+
+	var results []string
+	if guardResults != nil {
+		// Guard is active — execute only the allowed (todo) calls and
+		// merge their results back into the pre-filled results array.
+		if len(toExecute) > 0 {
+			execResults := executeTools(ctx, cfg.Tools, toExecute)
+			for i, res := range execResults {
+				guardResults[origIdx[i]] = res
+			}
+		}
+		results = guardResults
+	} else {
+		// Guard not active — execute all calls normally.
+		results = executeTools(ctx, cfg.Tools, toolCalls)
+	}
+
 	appendToolResults(d, msgs, cfg, toolCalls, results)
 }
 

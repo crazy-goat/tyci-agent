@@ -202,3 +202,116 @@ func TestMaxParallelFor(t *testing.T) {
 		t.Fatalf("MaxParallelFor(<missing>) = %d, want 0", got)
 	}
 }
+
+// HasPendingTodos tests verify that the plan-guard only considers items
+// with status "todo" or "doing" as active work. Once all items are
+// "done" or "blocked", the guard re-engages and blocks non-todo tools.
+
+func TestHasPendingTodos_EmptyList(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+
+	if HasPendingTodos() {
+		t.Error("empty list: expected false")
+	}
+}
+
+func TestHasPendingTodos_AllTodo(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 1"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 2"})
+
+	if !HasPendingTodos() {
+		t.Error("all items todo: expected true")
+	}
+}
+
+func TestHasPendingTodos_AllDoing(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "wip"})
+	tool.Run(context.Background(), map[string]any{"action": "doing", "id": 1})
+
+	if !HasPendingTodos() {
+		t.Error("single doing item: expected true")
+	}
+}
+
+func TestHasPendingTodos_AllDone(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 1"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 2"})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 2})
+
+	if HasPendingTodos() {
+		t.Error("all items done: expected false")
+	}
+}
+
+func TestHasPendingTodos_AllBlocked(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "blocked step"})
+	tool.Run(context.Background(), map[string]any{"action": "blocked", "id": 1})
+
+	if HasPendingTodos() {
+		t.Error("all items blocked: expected false")
+	}
+}
+
+func TestHasPendingTodos_MixedDoneAndTodo(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "done step"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "pending step"})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
+
+	if !HasPendingTodos() {
+		t.Error("one done + one todo: expected true")
+	}
+}
+
+func TestHasPendingTodos_MixedDoneAndDoing(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "done step"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "wip step"})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
+	tool.Run(context.Background(), map[string]any{"action": "doing", "id": 2})
+
+	if !HasPendingTodos() {
+		t.Error("one done + one doing: expected true")
+	}
+}
+
+func TestHasPendingTodos_MixedDoneAndBlocked(t *testing.T) {
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "done step"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "blocked step"})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
+	tool.Run(context.Background(), map[string]any{"action": "blocked", "id": 2})
+
+	if HasPendingTodos() {
+		t.Error("one done + one blocked: expected false")
+	}
+}
+
+func TestHasPendingTodos_LastItemDone(t *testing.T) {
+	// Simulates the exact scenario the user described: LLM had a plan,
+	// completed everything, guard should re-engage.
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "clear"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "investigate bug"})
+	tool.Run(context.Background(), map[string]any{"action": "doing", "id": 1})
+	if !HasPendingTodos() {
+		t.Fatal("doing: expected true")
+	}
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
+	if HasPendingTodos() {
+		t.Error("last item done: expected false — guard should re-engage")
+	}
+}
