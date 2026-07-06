@@ -9,6 +9,16 @@ import (
 
 // RichMessagesToChat converts RichMessage slice to ChatMessage slice,
 // optionally prepending a system message.
+//
+// It sanitizes tool-related fields to stay compatible with strict OpenAI
+// providers (e.g. DeepSeek, GLM, Xiaomi) that reject:
+//   - assistant messages whose tool_calls[].function.name is empty,
+//   - "tool" role messages without a tool_call_id.
+//
+// Tool calls with an empty name are dropped (a model emitting a tool_call
+// without a name is malformed and cannot be dispatched). Tool results
+// without a tool_call_id are dropped entirely — an orphan tool message
+// has no matching assistant tool_call and breaks the conversation pairing.
 func RichMessagesToChat(msgs []RichMessage, system string) []api.ChatMessage {
 	result := make([]api.ChatMessage, 0, len(msgs)+1)
 	if system != "" {
@@ -36,6 +46,13 @@ func RichMessagesToChat(msgs []RichMessage, system string) []api.ChatMessage {
 			case "thinking":
 				// Skip thinking blocks for OpenAI
 			case "toolCall":
+				// Drop malformed tool calls without a function name. A
+				// tool_call with no name cannot be dispatched and triggers
+				// "tool_calls[0] is missing a function name" 400s on
+				// strict providers (GLM, DeepSeek, OpenAI).
+				if block.Name == "" {
+					continue
+				}
 				args := ""
 				if block.Arguments != nil {
 					args = string(block.Arguments)
@@ -54,6 +71,13 @@ func RichMessagesToChat(msgs []RichMessage, system string) []api.ChatMessage {
 					toolCallID = block.ToolCallID
 				}
 			}
+		}
+
+		// Tool-role messages without a tool_call_id are rejected by strict
+		// providers ("missing field `tool_call_id`"). The pairing is
+		// already broken (no matching assistant tool_call), so drop them.
+		if role == "tool" && toolCallID == "" {
+			continue
 		}
 
 		msg := api.ChatMessage{

@@ -322,6 +322,60 @@ data: [DONE]
 	}
 }
 
+// TestStreamChat_ToolCalls_Malformed verifies the parser drops tool calls
+// without a function name (which would otherwise trigger
+// "tool_calls[0] is missing a function name" 400s on strict providers) and
+// back-fills a stable ID when the provider returns none (so the matching
+// tool-result message can carry the required tool_call_id).
+func TestStreamChat_ToolCalls_Malformed(t *testing.T) {
+	sseEvents := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"","arguments":"{}"}}]}}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":1,"type":"function","function":{"name":"bash","arguments":"{\"cmd\":\"ls\"}"}}]}}]}
+data: {"choices":[{"finish_reason":"tool_calls"}]}
+data: [DONE]
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		events = append(events, e)
+		return nil
+	}
+
+	body := ChatRequest{
+		Model:    "gpt-4",
+		Stream:   true,
+		Messages: []ChatMessage{{Role: "user", Content: "go"}},
+	}
+
+	if err := StreamChat(testCtx(), "test-key", server.URL, body, emit); err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+
+	var toolCalls []stream.ToolCall
+	for _, e := range events {
+		if tc, ok := e.(stream.ToolCall); ok {
+			toolCalls = append(toolCalls, tc)
+		}
+	}
+
+	// Only the named tool call survives; the nameless one is dropped.
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected 1 tool call (nameless dropped), got %d", len(toolCalls))
+	}
+	if toolCalls[0].Name != "bash" {
+		t.Errorf("expected Name 'bash', got %q", toolCalls[0].Name)
+	}
+	// ID was missing from the stream — parser must back-fill a stable one.
+	if toolCalls[0].ID == "" {
+		t.Errorf("expected non-empty back-filled ID, got empty")
+	}
+}
+
 func TestStreamChat_Reasoning(t *testing.T) {
 	sseEvents := `data: {"choices":[{"delta":{"reasoning":"thinking..."}}]}
 data: {"choices":[{"delta":{"content":"Hello"}}]}

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -115,15 +116,27 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 			})
 		}
 
-		// Add tool call blocks
-		for _, tc := range toolCalls {
+		// Add tool call blocks. Skip malformed tool calls without a name —
+		// a nameless tool_call cannot be dispatched and, when replayed in a
+		// follow-up request, triggers "tool_calls[0] is missing a function
+		// name" 400s on strict OpenAI-compatible providers (GLM, DeepSeek).
+		// An empty ID is back-filled with a stable value so the matching
+		// tool-result message can carry the required tool_call_id.
+		for i, tc := range toolCalls {
+			if tc.Name == "" {
+				continue
+			}
 			var args json.RawMessage
 			if tc.Arguments != "" {
 				args = json.RawMessage(tc.Arguments)
 			}
+			id := tc.ID
+			if id == "" {
+				id = fmt.Sprintf("call_%d", i)
+			}
 			content = append(content, providers.ContentBlock{
 				Type:      "toolCall",
-				ID:        tc.ID,
+				ID:        id,
 				Name:      tc.Name,
 				Arguments: args,
 			})

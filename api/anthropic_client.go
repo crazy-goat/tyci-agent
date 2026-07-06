@@ -263,13 +263,21 @@ func (c *AnthropicClient) parseSSEStream(ctx context.Context, body io.Reader, em
 				}
 
 			case "content_block_stop":
+				// Skip malformed tool_use blocks (no name); generate a
+				// stable fallback ID when the provider returned none.
 				if acc, ok := toolAcc[chunk.Index]; ok {
-					if err := emit(stream.ToolCall{
-						ID:        acc.ID,
-						Name:      acc.Name,
-						Arguments: acc.Arguments.String(),
-					}); err != nil {
-						return err
+					if acc.Name != "" {
+						id := acc.ID
+						if id == "" {
+							id = fmt.Sprintf("toolu_%d", chunk.Index)
+						}
+						if err := emit(stream.ToolCall{
+							ID:        id,
+							Name:      acc.Name,
+							Arguments: acc.Arguments.String(),
+						}); err != nil {
+							return err
+						}
 					}
 					delete(toolAcc, chunk.Index)
 				}
@@ -323,9 +331,18 @@ func (c *AnthropicClient) parseSSEStream(ctx context.Context, body io.Reader, em
 		}
 	}
 
-	for _, acc := range toolAcc {
+	// Skip malformed entries (no name); generate a stable fallback ID
+	// when the provider returned none so the tool result can be paired.
+	for i, acc := range toolAcc {
+		if acc.Name == "" {
+			continue
+		}
+		id := acc.ID
+		if id == "" {
+			id = fmt.Sprintf("toolu_%d", i)
+		}
 		if err := emit(stream.ToolCall{
-			ID:        acc.ID,
+			ID:        id,
 			Name:      acc.Name,
 			Arguments: acc.Arguments.String(),
 		}); err != nil {

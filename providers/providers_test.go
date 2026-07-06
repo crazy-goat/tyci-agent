@@ -16,10 +16,10 @@ import (
 
 func TestRichMessagesToChat(t *testing.T) {
 	tests := []struct {
-		name    string
-		msgs    []RichMessage
-		system  string
-		want    []api.ChatMessage
+		name   string
+		msgs   []RichMessage
+		system string
+		want   []api.ChatMessage
 	}{
 		{
 			name:   "empty messages",
@@ -137,6 +137,59 @@ func TestRichMessagesToChat(t *testing.T) {
 				{Role: "tool", Content: "error occurred", ToolCallID: "call_2"},
 			},
 		},
+		{
+			// Regression: a toolCall block without a function name must be
+			// dropped — strict OpenAI-compatible providers (GLM, DeepSeek)
+			// reject "tool_calls[0] is missing a function name" with 400.
+			name: "toolCall with empty name is dropped",
+			msgs: []RichMessage{
+				{
+					Role: "assistant",
+					Content: []ContentBlock{
+						{Type: "toolCall", ID: "call_1", Name: "", Arguments: json.RawMessage(`{"command":"ls"}`)},
+					},
+				},
+			},
+			want: []api.ChatMessage{
+				{Role: "assistant", Content: ""},
+			},
+		},
+		{
+			// Regression: a "tool" role message without tool_call_id must be
+			// dropped — DeepSeek rejects "missing field `tool_call_id`".
+			name: "tool message without tool_call_id is dropped",
+			msgs: []RichMessage{
+				{
+					Role: "toolResult",
+					Content: []ContentBlock{
+						{Type: "text", Text: "orphan result"},
+					},
+				},
+			},
+			want: []api.ChatMessage{},
+		},
+		{
+			// Mixed: a well-formed toolCall is kept while a nameless one in
+			// the same assistant message is dropped.
+			name: "only malformed toolCalls dropped, valid kept",
+			msgs: []RichMessage{
+				{
+					Role: "assistant",
+					Content: []ContentBlock{
+						{Type: "toolCall", ID: "bad", Name: "", Arguments: json.RawMessage(`{}`)},
+						{Type: "toolCall", ID: "good", Name: "bash", Arguments: json.RawMessage(`{"command":"ls"}`)},
+					},
+				},
+			},
+			want: []api.ChatMessage{
+				{
+					Role: "assistant",
+					ToolCalls: []api.ChatToolCall{
+						{ID: "good", Type: "function", Function: api.ChatFunctionCall{Name: "bash", Arguments: `{"command":"ls"}`}},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -218,7 +271,10 @@ func TestRichMessagesToAnthropic(t *testing.T) {
 						{
 							Type:      "tool_result",
 							ToolUseID: "call_123",
-							Content:   []struct{ Type string `json:"type"`; Text string `json:"text"` }{{Type: "text", Text: "result data"}},
+							Content: []struct {
+								Type string `json:"type"`
+								Text string `json:"text"`
+							}{{Type: "text", Text: "result data"}},
 						},
 					},
 				},
@@ -290,8 +346,11 @@ func TestRichMessagesToAnthropic(t *testing.T) {
 						{
 							Type:      "tool_result",
 							ToolUseID: "call_2",
-							Content:   []struct{ Type string `json:"type"`; Text string `json:"text"` }{{Type: "text", Text: "error"}},
-							IsError:   true,
+							Content: []struct {
+								Type string `json:"type"`
+								Text string `json:"text"`
+							}{{Type: "text", Text: "error"}},
+							IsError: true,
 						},
 					},
 				},
@@ -617,13 +676,13 @@ func TestMustLoadConfig(t *testing.T) {
 
 func TestParseURI_table(t *testing.T) {
 	tests := []struct {
-		name         string
-		uri          string
-		wantAPIType  string
-		wantToken    string
-		wantHost     string
-		wantPath     string
-		wantErr      bool
+		name        string
+		uri         string
+		wantAPIType string
+		wantToken   string
+		wantHost    string
+		wantPath    string
+		wantErr     bool
 	}{
 		{
 			name:        "openai without token",

@@ -239,6 +239,11 @@ func (c *GeminiClient) parseSSEStream(ctx context.Context, body io.Reader, emit 
 					if err := json.Unmarshal(*part.FunctionCall, &fc); err != nil {
 						continue
 					}
+					// Skip malformed function calls without a name — they
+					// cannot be dispatched and break downstream pairing.
+					if fc.Name == "" {
+						continue
+					}
 					toolID := fmt.Sprintf("%s_%d", fc.Name, len(toolCalls))
 
 					if err := emit(stream.ToolCallStart{ID: toolID, Name: fc.Name}); err != nil {

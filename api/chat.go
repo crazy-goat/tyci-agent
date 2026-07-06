@@ -265,11 +265,21 @@ func StreamChat(ctx context.Context, apiKey, endpoint string, body ChatRequest, 
 		}
 	}
 
-	for _, tc := range toolAcc {
-		if tc.Name == "" && tc.Arguments.Len() == 0 {
+	// Emit accumulated tool calls. Skip malformed entries: a tool call
+	// without a name cannot be dispatched and triggers
+	// "tool_calls[0] is missing a function name" 400s on strict providers,
+	// and an empty ID later causes "missing field `tool_call_id`" on the
+	// matching tool-result message. We generate a stable ID when the
+	// provider returned none so the tool result can be paired back.
+	for i, tc := range toolAcc {
+		if tc.Name == "" {
 			continue
 		}
-		if err := emit(stream.ToolCall{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments.String()}); err != nil {
+		id := tc.ID
+		if id == "" {
+			id = fmt.Sprintf("call_%d", i)
+		}
+		if err := emit(stream.ToolCall{ID: id, Name: tc.Name, Arguments: tc.Arguments.String()}); err != nil {
 			return err
 		}
 	}

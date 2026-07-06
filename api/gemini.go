@@ -133,6 +133,11 @@ func StreamGemini(ctx context.Context, apiKey, endpoint string, body GeminiReque
 					if err := json.Unmarshal(*part.FunctionCall, &fc); err != nil {
 						continue
 					}
+					// Skip malformed function calls without a name — they
+					// cannot be dispatched and break downstream pairing.
+					if fc.Name == "" {
+						continue
+					}
 					// Generate a unique tool call ID (Gemini doesn't provide one)
 					toolID := fmt.Sprintf("%s_%d", fc.Name, len(toolCalls))
 
