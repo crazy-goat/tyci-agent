@@ -14,7 +14,6 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/mattn/go-runewidth v0.0.19
-	github.com/odvcencio/gotreesitter v0.20.9
 	github.com/spf13/cobra v1.10.2
 	github.com/yuin/gopher-lua v1.1.2
 	golang.org/x/sys v0.45.0

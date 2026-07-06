@@ -144,7 +144,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "read",
-				"description": "Read file contents. Use offset/limit for ranges. Set lineNumbers=true when you need exact line numbers for edits. Code files return their outline (symbol map: types, functions, methods, constants, fields) by default to save tokens — use symbol=NAME to pull one definition, offset/limit for a range, or full=true for the whole file. When exploring unfamiliar code, this outline-first flow is far more token-efficient than reading top-to-bottom.",
+				"description": "Read file contents. Use offset/limit for ranges. Set lineNumbers=true when you need exact line numbers for edits. Returns full contents; truncate/inspect with offset and limit.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -152,9 +152,6 @@ func GetToolsSchema() []map[string]any {
 						"offset":      map[string]any{"type": "integer", "description": "Start line, 1-indexed"},
 						"limit":       map[string]any{"type": "integer", "description": "Maximum lines to read"},
 						"lineNumbers": map[string]any{"type": "boolean", "description": "Prefix lines as N| text (default: false)"},
-						"outline":     map[string]any{"type": "boolean", "description": "Return only the symbol map (definitions + line numbers) instead of full contents. Use this first when exploring a large or unfamiliar code file to survey it cheaply; falls back to a normal read for non-code files."},
-						"symbol":      map[string]any{"type": "string", "description": "Return the exact source body of the named definition (function/class/method/type). Use after outline to read one symbol precisely instead of guessing line ranges."},
-						"full":        map[string]any{"type": "boolean", "description": "Force reading the entire file. Code files return an outline by default; set full=true to override and get all contents."},
 					},
 					"required": []string{"path"},
 				},

@@ -136,43 +136,9 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
 
-	// AST-backed structural reads. Both degrade gracefully to a normal read
-	// when the file type has no grammar.
-	if boolParam(input, "outline", false) {
-		if content, supported := astOutline(path, data); supported {
-			return ToolResult{Type: "result", Success: true, Content: content}
-		}
-	}
-	if sym := stringParam(input, "symbol", ""); sym != "" {
-		if content, supported, found := astSymbol(path, data, sym); supported {
-			if !found {
-				return ToolResult{Type: "result", Success: false,
-					Error: fmt.Sprintf("symbol %q not found in %s (try outline=true to list symbols)", sym, path)}
-			}
-			return ToolResult{Type: "result", Success: true, Content: content}
-		}
-	}
-
 	text := string(data)
 	lines := strings.Split(text, "\n")
 	totalFileLines := len(lines)
-
-	// Auto-outline: default to the structure map for any code file so the agent
-	// surveys cheaply instead of pulling the whole body, then pulls specific
-	// parts with symbol/offset/full. Skipped when the caller asked for specific
-	// content (offset/limit/symbol) or full=true, and only when the file has
-	// extractable symbols (astOutline returns supported=false for non-code, so
-	// those read normally).
-	if offset == 0 && limit == 0 &&
-		stringParam(input, "symbol", "") == "" &&
-		!boolParam(input, "full", false) {
-		if content, supported := astOutline(path, data); supported {
-			content += fmt.Sprintf(
-				"\n\n[Code file (%d lines): showing outline only. Use symbol=NAME for one definition, offset/limit for a line range, or full=true to read everything.]",
-				totalFileLines)
-			return ToolResult{Type: "result", Success: true, Content: content}
-		}
-	}
 
 	// offset jest 1-indeksowany (linie), zamień na 0-indeksowany
 	startLine := 0
