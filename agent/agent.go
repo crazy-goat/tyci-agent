@@ -46,7 +46,6 @@ type Config struct {
 	// (done/blocked), then runs one more iteration. This happens at most
 	// maxTodoReminders times per turn to avoid nagging in a loop.
 	PendingTodos func() []string
-	Compaction   CompactionConfig
 }
 
 // maxTodoReminders bounds how many times, within a single turn, the agent
@@ -86,10 +85,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 		fullModel: "",
 	}
 
-	cfg.Compaction = cfg.Compaction.normalized()
-
 	for iter := 0; cfg.MaxIterations <= 0 || iter < cfg.MaxIterations; iter++ {
-		maybeCompactHistory(msgs, cfg.Session, cfg.Compaction)
 		// runOnce accumulates usage into totalUsage and emits d.Total
 		// only when it reaches the Summary line. totalEmitted reports
 		// whether the call already showed the Costs line; if not, the

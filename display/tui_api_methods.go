@@ -12,6 +12,24 @@ func (t *TUI) ModelChanges() <-chan string {
 	return t.modelChanges
 }
 
+// SelectedResume returns a channel that yields the chosen session file path
+// when the user presses Enter in the /resume picker. On Esc, "" is sent so the
+// caller can distinguish "user dismissed" from "no picker was open". The
+// channel is unbuffered and serves one picker session per openResumePicker
+// call: callers must always read exactly one value (or close the TUI).
+func (t *TUI) SelectedResume() <-chan string {
+	return t.resumeCh
+}
+
+// OpenResumePicker sends a message to the bubbletea program to activate the
+// /resume picker with the entries to display. Caller-supplied order isn't
+// trusted — the picker sorts newest-first itself so a local "session list"
+// walking in alphabetic order still ends up correct. Does NOT block on the
+// channel; the calling goroutine owns the read on SelectedResume().
+func (t *TUI) OpenResumePicker(entries []TuiResumeEntry) {
+	t.prog.Send(tuiResumeRequestMsg{entries: entries})
+}
+
 // SetModel updates the model name displayed in the status bar.
 func (t *TUI) SetModel(name string) {
 	t.prog.Send(tuiMsgBlock{kind: "set-model", content: name})

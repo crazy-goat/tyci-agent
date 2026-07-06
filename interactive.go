@@ -71,12 +71,24 @@ func (s *interactiveState) replaySession() {
 	if s.cfg.Session == nil || !s.cfg.Session.IsResume() || s.sessionPath == "" {
 		return
 	}
-	replaySessionToDisplay(s.display, s.sessionPath)
 	parsedLines := s.cfg.Session.Messages()
 	rebuiltMsgs, _ := session.RebuildMessages(parsedLines)
 	if len(rebuiltMsgs) > 0 {
 		s.conversation = rebuiltMsgs
-		fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", s.cfg.Session.ID(), len(s.conversation))
+	}
+
+	// Re-render the transcript so the user can scroll back through it.
+	// We use replaySessionToDisplay (one ToolBlock per message,
+	// kind="block") instead of pushing every text/thinking/toolCall
+	// through Display.Text/Thinking: that previous path went through
+	// glamour and produced race conditions where selection Y coordinates
+	// resolved onto wrong rows during the user's mouse drag, blanking
+	// the screen on release. The new path uses pure wrapText — selection
+	// highlights track the actual on-screen characters.
+	replaySessionToDisplay(s.display, s.sessionPath)
+
+	if len(rebuiltMsgs) > 0 {
+		fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", s.cfg.Session.ID(), len(rebuiltMsgs))
 	}
 }
 
@@ -290,19 +302,12 @@ func (s *interactiveState) handleResume(arg string) {
 		}
 	}
 
-	fmt.Printf("\033[2J\033[H")
-	for _, m := range msgs {
-		printReplayMessage(m)
-	}
+	// Render the swapped-in transcript so the user can scroll it.
+	// We use the deterministic block-per-message replay path so the
+	// visible lines match exactly what was drawn — necessary for
+	// mouse selection across lines and PgUp/PgDown anchoring.
+	replaySessionToDisplay(s.display, path)
 	fmt.Fprintf(os.Stdout, "\nResumed session %s (%d messages, usage in/out: %d/%d)\n",
 		summary.ID, len(msgs), total.Input, total.Output)
 	fmt.Printf("\033]133;C\007")
-}
-
-func printReplayMessage(m providers.RichMessage) {
-	fmt.Printf("[%s]\n", m.Role)
-	for _, c := range m.Content {
-		fmt.Println(c)
-	}
-	fmt.Println("---")
 }

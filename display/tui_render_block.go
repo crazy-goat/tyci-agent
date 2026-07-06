@@ -94,6 +94,14 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 		// Update cache
 		delete(m.dirtyBlocks, idx)
 		delete(m.streamWraps, idx)
+		if rendered == "" {
+			// Empty render → keep the empty-block invariant: cachedLines is
+			// non-nil but empty, cachedLineCount == 0. Never cache [""] which
+			// would show up as a spurious blank line.
+			m.blocks[idx].cachedLines = []string{}
+			m.blocks[idx].cachedLineCount = 0
+			return rendered
+		}
 		m.mdCacheRendered[idx] = rendered
 		m.blocks[idx].cachedLineCount = lineCount(rendered)
 		m.blocks[idx].cachedLines = strings.Split(rendered, "\n")

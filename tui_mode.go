@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/decodo/tyci/agent"
@@ -22,14 +23,19 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 	provider := initialProvider
 	modelName := initialModelName
 
-	// Replay session history if resuming
+	// Replay session history if resuming. We use the stable block-per-
+	// message replay path so the transcript IS visible (user wanted to
+	// scroll it) but selection + scroll stay sane on long sessions:
+	// renderErrorOrBlock (no glamour) keeps cachedLines deterministic,
+	// and per-message blocks let the existing scroll heuristics handle
+	// pagination correctly.
 	if cfg.Session != nil && cfg.Session.IsResume() && sessionPath != "" {
-		replaySessionToDisplay(tuiDisp, sessionPath)
 		parsedLines := cfg.Session.Messages()
 		rebuiltMsgs, _ := session.RebuildMessages(parsedLines)
 		if len(rebuiltMsgs) > 0 {
 			conversation = rebuiltMsgs
 		}
+		replaySessionToDisplay(tuiDisp, sessionPath)
 	}
 
 	// Close TUI on exit, write session end
@@ -72,10 +78,82 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 		}
 	}
 
+	// resumeSession swaps the running session + conversation onto a previously-
+	// recorded JSONL file. Used both by the slash command (with an explicit path
+	// arg) and after a successful pick from the /resume popup. Errors surface
+	// to the TUI as error blocks; the active iteration is cancelled after the
+	// swap so the next prompt writes to the *resumed* session rather than the
+	// abandoned one. Mirrors the interactive implementation so /resume behaves
+	// identically across modes.
+	resumeSession := func(resumePath string, cancellation context.CancelFunc) error {
+		wd, _ := os.Getwd()
+		summary, msgs, total, corrupt, err := session.LoadForReplay(resumePath)
+		if err != nil {
+			return fmt.Errorf("load: %w", err)
+		}
+		if len(corrupt) > 0 {
+			tuiDisp.ToolBlock(fmt.Sprintf("⚠️  %d corrupt lines skipped", len(corrupt)))
+		}
+
+		// Close the current session cleanly before swapping so we don't leak
+		// its file handle or write a session_end twice on exit. Write the
+		// session_end event BEFORE Close() — WriteSessionEnd refuses to
+		// encode into a closed writer, and the outer defer will try again
+		// on process exit, so we want it to be a no-op then.
+		if cfg.Session != nil {
+			agent.WriteSessionEnd(cfg.Session, "ok", 0, &totalUsage)
+		}
+		cfg.Session = nil
+
+		// Reopen the chosen session in append mode. This sets IsResume()=true
+		// so subsequent runs treat it as historical context rather than a
+		// fresh log.
+		newSess, err := session.Open(resumePath, wd, modelName, provider.Name())
+		if err != nil {
+			return fmt.Errorf("reopen: %w", err)
+		}
+		cfg.Session = newSess
+		cfg.ProviderName = provider.Name()
+		sessionPath = resumePath
+
+		// Reset conversation to the rebuilt history and replay it to the
+		// display so the user sees what they resumed. model/provider may
+		// also be restored if the resumed session used a different one.
+		totalUsage = stream.Usage{
+			Input:     total.Input,
+			Output:    total.Output,
+			Reasoning: total.Reasoning,
+			CacheRead: total.CacheRead,
+		}
+		if summary.Provider != "" && summary.Model != "" {
+			if p, m, ok := providers.FindModel(summary.Provider + "/" + summary.Model); ok {
+				provider = p
+				modelName = m
+				cfg.Model = m
+				cfg.ProviderName = p.Name()
+				tuiDisp.SetModel(m)
+			}
+		}
+		// Drop the in-flight iteration — its context is no longer relevant
+		// since the conversation it was going to write to just changed.
+		if cancellation != nil {
+			cancellation()
+		}
+		// Render the swapped-in transcript as a fresh stream of stable
+		// blocks (one ToolBlock per message). The user picked this
+		// session explicitly, so the deterministic no-glamour rendering
+		// keeps scrolling and mouse selection working.
+		tuiDisp.Reset()
+		replaySessionToDisplay(tuiDisp, resumePath)
+		conversation = msgs
+		fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", summary.ID, len(conversation))
+		return nil
+	}
+
 	for {
 		iterCtx, iterCancel := context.WithCancel(baseCtx)
 
-		// Wait for user input or model change
+		// Wait for user input, model change, or /resume selection.
 		var line string
 		select {
 		case newModel, ok := <-tuiDisp.ModelChanges():
@@ -92,6 +170,24 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 			}
 			line = l
 
+		case resumePath, ok := <-tuiDisp.SelectedResume():
+			iterCancel()
+			if !ok {
+				// Channel closed without a value — only happens if the TUI
+				// is shutting down. Quit the loop to be safe.
+				return
+			}
+			if resumePath == "" {
+				// User pressed Esc in the picker. Stay in the loop; do nothing.
+				continue
+			}
+			if err := resumeSession(resumePath, iterCancel); err != nil {
+				tuiDisp.Error(err)
+				tuiDisp.ResetStatus()
+				continue
+			}
+			continue
+
 		case <-tuiDisp.DoneCh():
 			iterCancel()
 			return
@@ -102,18 +198,59 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 		rawLine := line
 		trimmed := strings.TrimSpace(line)
 		if rawLine != "" && !strings.HasPrefix(rawLine, " ") && strings.HasPrefix(trimmed, "/") {
-			// Slash commands: raw input starts with "/" (no leading space)
+			// Slash commands: raw input starts with "/" (no leading space).
+			arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/resume"))
 			switch {
 			case trimmed == "/exit":
 				iterCancel()
 				return
 			case trimmed == "/new":
 				iterCancel()
+				// Cleanly terminate the live session so /new doesn't leave
+				// the file open with no closing event. /resume rebuilds
+				// later, so we need a proper boundary here.
+				if cfg.Session != nil {
+					agent.WriteSessionEnd(cfg.Session, "ok", 0, &totalUsage)
+				}
+				cfg.Session = nil
 				conversation = nil
+				totalUsage = stream.Usage{}
 				tools.ClearTodoList()
 				tuiDisp.Reset()
-				if totalUsage.Input > 0 || totalUsage.Output > 0 {
-					tuiDisp.ShowTotalUsage(totalUsage)
+				continue
+			case trimmed == "/resume":
+				// Bare /resume: list cwd's sessions in the popup picker.
+				iterCancel()
+				wd, _ := os.Getwd()
+				entries, err := session.ResumeEntries(wd)
+				if err != nil {
+					tuiDisp.Error(fmt.Errorf("/resume: %v", err))
+					tuiDisp.ResetStatus()
+					continue
+				}
+				if len(entries) == 0 {
+					dir, _ := session.SessionDir(wd)
+					tuiDisp.ToolBlock(fmt.Sprintf("ℹ️  No sessions in %s", dir))
+					continue
+				}
+				tuiEntries := resumeEntriesToTUI(entries)
+				tuiDisp.OpenResumePicker(tuiEntries)
+				continue
+			case strings.HasPrefix(trimmed, "/resume "):
+				// /resume <path|index>: forward to resolveSessionRef so the
+				// caller can pass either a file path or a numeric 1-based
+				// index into the session list (matching the cobra CLI).
+				iterCancel()
+				path, err := resolveSessionRef(".", arg)
+				if err != nil {
+					tuiDisp.Error(fmt.Errorf("/resume: %v", err))
+					tuiDisp.ResetStatus()
+					continue
+				}
+				if err := resumeSession(path, iterCancel); err != nil {
+					tuiDisp.Error(fmt.Errorf("/resume: %v", err))
+					tuiDisp.ResetStatus()
+					continue
 				}
 				continue
 			default:
@@ -134,6 +271,20 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 			Role:    "user",
 			Content: []providers.ContentBlock{{Type: "text", Text: line}},
 		})
+
+		// Lazily create the session file the first time the user submits a
+		// prompt in this TUI. Pre-creating it at startup would leave an
+		// empty JSONL on disk for every TUI the user opens without ever
+		// typing — defeating the "one session per conversation" model.
+		// An explicit --session (handled by initCommon) is opened eagerly
+		// and reused here.
+		if cfg.Session == nil && sessionPath != "" {
+			wd, _ := os.Getwd()
+			newSess, _, err := ensureLazySession(nil, sessionPath, wd, modelName, provider.Name())
+			if err == nil && newSess != nil {
+				cfg.Session = newSess
+			}
+		}
 
 		if cfg.Session != nil {
 			blocks := []session.ContentBlock{{Type: "text", Text: line}}
@@ -181,6 +332,23 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 			}
 		}
 	}
+}
+
+// resumeEntriesToTUI converts session-package rows to the display-package
+// TUI rows. Kept in the main package (not in display) so display doesn't
+// pull in session internals — and so a future port that uses an in-memory
+// session store can plug in its own adapter without changing the picker.
+func resumeEntriesToTUI(entries []session.ResumeEntry) []display.TuiResumeEntry {
+	out := make([]display.TuiResumeEntry, len(entries))
+	for i, e := range entries {
+		out[i] = display.TuiResumeEntry{
+			Path:        e.Path,
+			Name:        e.Name,
+			ModTime:     e.ModTime.Time(),
+			FirstPrompt: e.FirstPrompt,
+		}
+	}
+	return out
 }
 
 // watchESC starts a goroutine that monitors the terminal for the ESC key (0x1b).

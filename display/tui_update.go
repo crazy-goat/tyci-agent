@@ -30,6 +30,9 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.historySearchActive {
 		return m.updateHistorySearch(msg)
 	}
+	if m.resumePickerActive {
+		return m.updateResumePicker(msg)
+	}
 	if m.pickerActive {
 		return m.updatePicker(msg)
 	}
@@ -61,6 +64,12 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.statusMessage == msg.message {
 			m.statusMessage = ""
 		}
+		return m, nil
+	case tuiResumeRequestMsg:
+		// /resume opened (typically bubbles in while reading=true). Make
+		// sure no active model-picker is also active — the two popup
+		// modes are mutually exclusive for the centered overlay.
+		m.openResumePicker(msg.entries)
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)

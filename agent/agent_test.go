@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -246,64 +245,6 @@ func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d: %#v", len(msgs), msgs)
-	}
-}
-
-func TestRunCompactsLongHistory(t *testing.T) {
-	dir := t.TempDir()
-	s, err := session.Open(dir+"/compact.jsonl", "/test", "mock-1", "mock")
-	if err != nil {
-		t.Fatalf("session.Open: %v", err)
-	}
-	defer s.Close()
-	for i := 0; i < 6; i++ {
-		text := fmt.Sprintf("user-%d", i)
-		if err := s.WriteMessage("user", []session.ContentBlock{{Type: "text", Text: text}}, nil); err != nil {
-			t.Fatalf("WriteMessage(user): %v", err)
-		}
-	}
-	msgs := make([]providers.RichMessage, 0, 6)
-	for i := 0; i < 6; i++ {
-		msgs = append(msgs, providers.RichMessage{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: fmt.Sprintf("user-%d", i)}}})
-	}
-	p := &mockProvider{chunks: []string{"done"}}
-	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{Model: "mock-1", MaxRetries: 1, Session: s, Compaction: CompactionConfig{Enabled: true, TriggerMessages: 4, TailMessages: 2, ToolChars: 64}}); err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
-	if len(msgs) != 4 {
-		t.Fatalf("expected compacted history of 4 messages, got %d", len(msgs))
-	}
-	if msgs[0].Role != "user" || !strings.Contains(msgs[0].Content[0].Text, "Conversation summary") {
-		t.Fatalf("expected summary message first, got %#v", msgs[0])
-	}
-	data, err := os.ReadFile(s.Path())
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	if !strings.Contains(string(data), `"type":"compaction"`) {
-		t.Fatalf("expected compaction event in session file, got %s", string(data))
-	}
-}
-
-func TestRunCompactionKeepsToolCallBeforeToolResult(t *testing.T) {
-	msgs := []providers.RichMessage{
-		{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: "u1"}}},
-		{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: "u2"}}},
-		{Role: "assistant", Content: []providers.ContentBlock{{Type: "toolCall", ID: "call-1", Name: "bash", Arguments: []byte(`{"cmd":"ls"}`)}}},
-		{Role: "toolResult", Content: []providers.ContentBlock{{Type: "text", Text: "result", ToolCallID: "call-1", ToolName: "bash"}}},
-	}
-	maybeCompactHistory(&msgs, nil, CompactionConfig{Enabled: true, TriggerMessages: 3, TailMessages: 2, ToolChars: 64})
-	if len(msgs) != 3 {
-		t.Fatalf("expected compaction to keep toolCall/toolResult pair in tail, got %d messages", len(msgs))
-	}
-	if msgs[0].Role != "user" || !strings.Contains(msgs[0].Content[0].Text, "Conversation summary") {
-		t.Fatalf("expected summary first, got %#v", msgs)
-	}
-	if msgs[1].Role != "assistant" || msgs[1].Content[0].Type != "toolCall" {
-		t.Fatalf("expected toolCall preserved after summary, got %#v", msgs)
-	}
-	if msgs[2].Role != "toolResult" || msgs[2].Content[0].ToolCallID != "call-1" {
-		t.Fatalf("expected matching toolResult preserved after toolCall, got %#v", msgs)
 	}
 }
 

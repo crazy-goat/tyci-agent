@@ -21,6 +21,25 @@ func (s *interactiveState) submitUserLine(line string) {
 		Role:    "user",
 		Content: []providers.ContentBlock{{Type: "text", Text: line}},
 	})
+
+	// Lazily create the session file the first time the user actually
+	// submits a prompt in this REPL. Pre-creating it at startup would
+	// leave an empty JSONL on disk for every repl the user opens without
+	// ever typing — defeating the "one session per conversation" model.
+	// An explicit --session (handled by initCommon) is opened eagerly and
+	// already lives in s.cfg.Session / s.sessionPtr at this point.
+	if s.cfg.Session == nil && s.sessionPath != "" {
+		wd, _ := os.Getwd()
+		newSess, path, err := ensureLazySession(nil, s.sessionPath, wd, s.modelName, s.provider.Name())
+		if err == nil && newSess != nil {
+			s.cfg.Session = newSess
+			s.sessionPtr = newSess
+			if path != "" {
+				s.sessionPath = path
+			}
+		}
+	}
+
 	if s.cfg.Session != nil {
 		blocks := []session.ContentBlock{{Type: "text", Text: line}}
 		_ = s.cfg.Session.WriteMessage("user", blocks, nil)

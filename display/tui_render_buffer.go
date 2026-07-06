@@ -80,8 +80,14 @@ func (m TuiModel) visibleRenderBufferSnapshot() RenderBuffer {
 			rb.Add(line.Text, line.SourceKind, line.BlockIndex, line.SourceLine, len(rb.Lines))
 		}
 	}
+	// Pad the viewport up to msgHeight so the message region clips correctly.
+	// These are structural padding lines (below the transcript), NOT content
+	// blank lines — mark them with a distinct SourceKind so they can be told
+	// apart from in-content blanks when debugging, and so downstream code
+	// (which keys off SourceKind/BlockIndex) never folds them into a block's
+	// cachedLines.
 	for len(rb.Lines) < msgHeight {
-		rb.Add("", "empty", -1, -1, len(rb.Lines))
+		rb.Add("", "viewport-pad", -1, -1, len(rb.Lines))
 	}
 	return rb
 }

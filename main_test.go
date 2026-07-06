@@ -194,14 +194,24 @@ func (c *captureDisplay) Total(usage stream.Usage) {}
 func (c *captureDisplay) Error(err error) {}
 func (c *captureDisplay) End()            {}
 
+// TestReplaySessionToDisplay verifies the long-session-safe replay path:
+// every event in the JSONL hits the display ONLY through ToolBlock (so
+// glamour / streaming wrappers never run on replay), the dropped per-
+// event routes (Thinking/Text/ToolCallStart/...) stay silent, and
+// selected spans resolve to concrete characters on screen.
+//
+// The legacy test in this slot asserted the opposite: it expected every
+// Thinking/Text/ToolCallStart/End call. That code path produced the
+// "screen blanks on selection release" and "PgUp/PgDown loses the scroll
+// anchor" bugs on long sessions — see the docstring on
+// replaySessionToDisplay for the full write-up.
 func TestReplaySessionToDisplay(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/replay.jsonl"
 
-	// Write a session file manually
 	content := `{"type":"session","version":1,"id":"test","timestamp":"...","cwd":"/test","model":"mock","provider":"mock"}
 {"type":"message","id":"m1","timestamp":"...","message":{"role":"assistant","content":[{"type":"thinking","thinking":"thinking text"},{"type":"text","text":"hello world"},{"type":"toolCall","id":"tc1","name":"bash","arguments":"{\"command\":\"ls\"}"}]},"usage":{"input":10,"output":5}}
-{"type":"message","id":"m2","timestamp":"...","message":{"role":"toolResult","content":[{"type":"text","text":"file1\\nfile2","toolCallId":"tc1","toolName":"bash"}]}}
+{"type":"message","id":"m2","timestamp":"...","message":{"role":"toolResult","content":[{"type":"text","text":"file1\nfile2","toolCallId":"tc1","toolName":"bash"}]}}
 {"type":"session_end","id":"test","timestamp":"...","status":"ok","exit_code":0}
 `
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -211,25 +221,52 @@ func TestReplaySessionToDisplay(t *testing.T) {
 	c := newCapture()
 	replaySessionToDisplay(c, path)
 
-	if len(c.thinking) != 1 || c.thinking[0] != "thinking text" {
-		t.Errorf("thinking: got %v, want ['thinking text']", c.thinking)
+	// Per-event paths must NOT fire — those raced with selection / scroll.
+	if len(c.thinking) != 0 {
+		t.Errorf("thinking calls should be elided on replay, got %v", c.thinking)
 	}
-	if len(c.text) != 1 || c.text[0] != "hello world" {
-		t.Errorf("text: got %v, want ['hello world']", c.text)
+	if len(c.text) != 0 {
+		t.Errorf("text calls should be elided on replay, got %v", c.text)
 	}
-	if len(c.toolStarts) != 1 || c.toolStarts[0] != "bash" {
-		t.Errorf("toolStarts: got %v, want ['bash']", c.toolStarts)
+	if len(c.toolStarts) != 0 {
+		t.Errorf("toolStart calls should be elided on replay, got %v", c.toolStarts)
 	}
-	if len(c.toolDeltas) != 1 || c.toolDeltas[0] != `{"command":"ls"}` {
-		t.Errorf("toolDeltas: got %v, want ['{\"command\":\"ls\"}']", c.toolDeltas)
+	if len(c.toolDeltas) != 0 {
+		t.Errorf("toolDelta calls should be elided on replay, got %v", c.toolDeltas)
 	}
-	if len(c.toolEnds) != 1 {
-		t.Fatalf("toolEnds: got %v", c.toolEnds)
+	if len(c.toolEnds) != 0 {
+		t.Errorf("toolEnd calls should be elided on replay, got %v", c.toolEnds)
 	}
-	if !strings.Contains(c.toolEnds[0], "file1") || !strings.Contains(c.toolEnds[0], "file2") {
-		t.Errorf("toolEnds[0] = %q, want containing 'file1' and 'file2'", c.toolEnds[0])
+	if len(c.summaries) != 0 {
+		t.Errorf("summary calls should be elided on replay, got %v", c.summaries)
 	}
-	if len(c.summaries) != 1 || c.summaries[0].Input != 10 || c.summaries[0].Output != 5 {
-		t.Errorf("summaries: got %v", c.summaries)
+
+	// Two real messages + the trailing marker → at least 3 ToolBlocks.
+	if len(c.toolBlocks) < 3 {
+		t.Fatalf("expected at least 3 ToolBlocks (assistant, toolResult, continuation), got %d", len(c.toolBlocks))
+	}
+
+	first := c.toolBlocks[0]
+	if !strings.Contains(first, "[Assistant thinking: 13 chars / 1 lines — collapsed]") {
+		t.Errorf("first block should contain collapsed thinking summary, got:\n%s", first)
+	}
+	if !strings.Contains(first, "[Assistant]\nhello world") {
+		t.Errorf("first block should contain assistant text, got:\n%s", first)
+	}
+	if !strings.Contains(first, "[Assistant tool calls]") {
+		t.Errorf("first block should contain the tool call summary, got:\n%s", first)
+	}
+
+	second := c.toolBlocks[1]
+	if !strings.Contains(second, "[Tool result: bash]") {
+		t.Errorf("second block should be the bash tool result, got:\n%s", second)
+	}
+	if !strings.Contains(second, "file1") || !strings.Contains(second, "file2") {
+		t.Errorf("tool result body should contain stdout, got:\n%s", second)
+	}
+
+	last := c.toolBlocks[len(c.toolBlocks)-1]
+	if !strings.Contains(last, "Continuing from session end") {
+		t.Errorf("last block must be the continuation marker, got:\n%s", last)
 	}
 }

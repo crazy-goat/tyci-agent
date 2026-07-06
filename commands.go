@@ -140,7 +140,6 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 		ProviderName:   provider.Name(),
 		FallbackModels: fallbackModels,
 		PendingTodos:   tools.PendingTodos,
-		Compaction:     agent.CompactionConfig{Enabled: true},
 	}
 	ctx = providers.WithProvider(ctx, provider)
 	ctx = providers.WithModel(ctx, modelName)
@@ -150,20 +149,29 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 	var sessionPath string
 	noSession, _ := cmd.Flags().GetBool("no-session")
 	if !noSession {
-		sessionPath, _ = cmd.Flags().GetString("session")
-		if sessionPath == "" {
-			var err error
-			sessionPath, err = session.DefaultPath(wd)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: cannot determine session path: %v\n", err)
-			}
-		}
-		if sessionPath != "" {
+		explicitSession, _ := cmd.Flags().GetString("session")
+		if explicitSession != "" {
+			sessionPath = explicitSession
+			// Explicit --session: open immediately so /resume-style workflow
+			// works at startup (history replay, header inspection, etc.).
 			var err error
 			sess, err = session.Open(sessionPath, wd, modelName, provider.Name())
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: session: %v (continuing without session)\n", err)
 				sess = nil
+				sessionPath = ""
+			}
+		} else {
+			// Auto-generated session path. Resolve it but DON'T create the
+			// file yet — that would leave an empty session.jsonl on disk for
+			// every repl/TUI the user opens without ever typing a prompt.
+			// The session is opened lazily by ensureSession() the moment we
+			// are about to write user input (interactive.submitUserLine,
+			// tui_mode before agent.Run, and runPrompt).
+			var err error
+			sessionPath, err = session.DefaultPath(wd)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: cannot determine session path: %v\n", err)
 				sessionPath = ""
 			}
 		}

@@ -139,7 +139,7 @@ func (m TuiModel) selectedText() string {
 		if line.Y < start.Y || line.Y > end.Y {
 			continue
 		}
-		if line.SourceKind == "empty" || line.SourceKind == "modal-empty" {
+		if line.SourceKind == "empty" || line.SourceKind == "modal-empty" || line.SourceKind == "viewport-pad" {
 			parts = append(parts, "")
 			continue
 		}

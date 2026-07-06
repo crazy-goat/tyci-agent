@@ -50,6 +50,10 @@ func renderMarkdownWithCache(content string, useBar bool, width int) string {
 		out, err := renderer.Render(content)
 		if err == nil {
 			out = strings.Trim(out, "\n")
+			// glamour leaves whitespace-only padding lines and does not
+			// collapse blank runs like the streaming wrapper does — normalize
+			// them so force-render output matches streamWrap's line count.
+			out = collapseMarkdownBlankLines(out)
 			if useBar {
 				bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
 				textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
@@ -95,6 +99,11 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 					m.mdCacheRendered[idx] = rendered
 					m.blocks[idx].cachedLineCount = lineCount(rendered)
 					m.blocks[idx].cachedLines = strings.Split(rendered, "\n")
+				} else {
+					// Empty render → keep the empty-block invariant so the next
+					// access doesn't build a bogus [""] cache.
+					m.blocks[idx].cachedLines = []string{}
+					m.blocks[idx].cachedLineCount = 0
 				}
 				m.blocks[idx].dirty = false
 				delete(m.dirtyBlocks, idx)
@@ -105,6 +114,9 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 					m.mdCacheRendered[idx] = rendered
 					m.blocks[idx].cachedLineCount = lineCount(rendered)
 					m.blocks[idx].cachedLines = strings.Split(rendered, "\n")
+				} else {
+					m.blocks[idx].cachedLines = []string{}
+					m.blocks[idx].cachedLineCount = 0
 				}
 				m.blocks[idx].dirty = false
 				delete(m.dirtyBlocks, idx)

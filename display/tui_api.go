@@ -25,6 +25,12 @@ type TUI struct {
 	// a status message rather than blocking the event loop.
 	queue chan string
 
+	// Resume picker reply channel: written to by the bubbletea event loop
+	// (via closeResumePicker) with the chosen session file path on Enter,
+	// or "" on Esc. Unbuffered so the outer runTUI loop receives each
+	// picker session in lock-step with the key press that closes it.
+	resumeCh chan string
+
 	// Streaming coalescing
 	mu             sync.Mutex
 	pendingKind    string // "thinking" or "text"
@@ -38,8 +44,10 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
 	queue := make(chan string, 16)
+	resumeCh := make(chan string) // unbuffered: closes in lock-step with the picker commit
 	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel, favoriteModels, onFavoriteToggled, defaultModel, onDefaultChanged, toolCount, skillCount, mcpCount)
 	m.queue = queue
+	m.resumeCh = resumeCh
 
 	// Capture working directory and home for the top status bar.
 	if dir, err := os.Getwd(); err == nil {
@@ -72,6 +80,7 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 		modelChanges: modelChanges,
 		cancel:       cancel,
 		queue:        queue,
+		resumeCh:     resumeCh,
 		done:         make(chan struct{}),
 		flushWake:    make(chan struct{}, 1),
 		flushDone:    make(chan struct{}),
@@ -90,6 +99,13 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 		m.painter.stop()
 		// Release the scrollback cache file (old rendered history paged to disk).
 		m.scrollback.close()
+		// Close the resume-picker reply channel. If the user was sitting in
+		// the popup when bubbletea exited (e.g. Ctrl+C), the outer runTUI
+		// loop's select on SelectedResume() would otherwise block forever
+		// waiting for a value that will never arrive.
+		if resumeCh != nil {
+			close(resumeCh)
+		}
 		if restoreTerm != nil {
 			restoreTerm()
 		}

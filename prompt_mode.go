@@ -19,6 +19,19 @@ func runPrompt(provider providers.Provider, disp display.Display, prompt string,
 	sigCh, sigDone := watchInterrupt(runCtx, runCancel)
 	stopESC := watchESC(runCancel)
 
+	// For one-shot `tyci run --prompt ...` we always have a user prompt,
+	// so it's safe — and correct — to materialize the session file here.
+	// initCommon leaves sess nil for auto-generated paths and only opens
+	// eagerly for explicit --session (resume). For the auto-gen path we
+	// need to open the file right before the first write; doing it later
+	// (after agent.Run) would skip writing the user line itself.
+	wd, _ := os.Getwd()
+	opened, _, lerr := ensureLazySession(sess, sessionPath, wd, cfg.Model, provider.Name())
+	if lerr == nil && opened != nil {
+		sess = opened
+		cfg.Session = opened
+	}
+
 	messages := buildPromptMessages(prompt, disp, sess, sessionPath)
 	writePromptToSession(sess, prompt)
 
@@ -61,7 +74,16 @@ func buildPromptMessages(prompt string, disp display.Display, sess *session.Sess
 		return messages
 	}
 	fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages) from %s\n", sess.ID(), len(rebuiltMsgs), sessionPath)
-	replaySessionToDisplay(disp, sessionPath)
+	// One-shot run mode: render a compact summary (no full replay). A
+	// huge session would otherwise flood the terminal and bury the
+	// prompt output in stale scrolling text. The model still sees
+	// `rebuiltMsgs` so context is preserved.
+	summary, _, total, corrupt, err := session.LoadForReplay(sessionPath)
+	if err == nil {
+		summarizeResume(disp, summary.ID, rebuiltMsgs, total, len(corrupt))
+	} else {
+		fmt.Fprintf(os.Stderr, "Warning: cannot summarize session: %v\n", err)
+	}
 	return append(rebuiltMsgs, providers.RichMessage{
 		Role:    "user",
 		Content: []providers.ContentBlock{{Type: "text", Text: prompt}},

@@ -28,6 +28,16 @@ type tuiMsgBlock struct {
 
 type tuiInputSubmitted string
 
+// tuiResumeRequestMsg is sent by TUI.OpenResumePicker to activate the
+// /resume popup. The bubbletea event loop captures it inside Update() and
+// activates the picker state (cursor at 0 = newest); on Enter/Esc, the
+// key handler writes back to m.resumeCh — an unbuffered channel shared
+// with the outer TUI so the caller's select on SelectedResume() can drive
+// the resume flow in lock step with the user's key press.
+type tuiResumeRequestMsg struct {
+	entries []TuiResumeEntry // caller-supplied; sorted newest-first on the model side
+}
+
 // resizeFlushMsg is sent after a debounce delay to flush resize changes.
 type resizeFlushMsg struct{}
 
@@ -46,6 +56,21 @@ type pickerItem struct {
 	isHeader bool
 	label    string // display text
 	value    string // "provider/model" for model items, empty for headers
+}
+
+// TuiResumeEntry is the data shape the resume picker renders. Defined in
+// the display package (instead of importing session.ResumeEntry directly)
+// so the picker stays decoupled from the on-disk format and can be
+// constructed by an outer caller — typically runTUI, which calls into the
+// session package to enumerate the cwd's sessions. Path is the absolute
+// file the picker will hand back via the SelectedResume channel; ModTime
+// is rendered as the timestamp column; FirstPrompt is the column-2
+// preview drawn from the first user message in the JSONL.
+type TuiResumeEntry struct {
+	Path        string
+	Name        string
+	ModTime     time.Time
+	FirstPrompt string
 }
 
 type block struct {
@@ -121,6 +146,20 @@ type TuiModel struct {
 	pickerCursor int              // index into pickerItems (only model entries)
 	pickerItems  []pickerItem     // filtered list for display
 	allProviders []ProviderModels // grouped provider->models for the picker
+
+	// Resume picker (/resume command). Similar shape to the model picker:
+	// shown as a full-screen popup with arrow-key navigation, Enter loads,
+	// Esc closes without action. Entries are pre-resolved (cwd-derived) by
+	// the caller so the picker only renders a sorted list and a chosen path
+	// flows back over resumeCh — the model stays unaware of the on-disk
+	// session dir layout. resumeCh is an unbuffered channel shared with the
+	// outer TUI: a successful Enter sends the chosen path, an Esc sends "".
+	// The channel header survives bubbletea's value-copy of the model on
+	// every Update, so it's safe to read from this struct in the key handler.
+	resumePickerActive  bool                                  // true while the popup is open
+	resumePickerEntries []TuiResumeEntry                       // sorted (newest first) entries to list
+	resumePickerCursor  int                                    // index into resumePickerEntries
+	resumeCh            chan string                            // set once at construction; nil disables picker
 
 	// Cancel signal: sent on when ESC pressed during agent run
 	cancelCh chan<- struct{}
