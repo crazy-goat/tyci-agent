@@ -1,10 +1,12 @@
 package display
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/decodo/tyci/tools"
 )
 
 // ─── displayPath ──────────────────────────────────────────────────────────
@@ -283,6 +285,9 @@ func TestBuildTopBar_ShowsCounts(t *testing.T) {
 	m.mcpCount = 3
 
 	bar := m.buildTopBar()
+	if !strings.Contains(bar, "todos: -") {
+		t.Fatalf("buildTopBar should show 'todos: -' when no todos, got %q", bar)
+	}
 	if !strings.Contains(bar, "skills: 12") {
 		t.Fatalf("buildTopBar should show 'skills: 12', got %q", bar)
 	}
@@ -306,6 +311,9 @@ func TestBuildTopBar_ShowsZeroCounts(t *testing.T) {
 	m.mcpCount = 0
 
 	bar := m.buildTopBar()
+	if !strings.Contains(bar, "todos: -") {
+		t.Fatalf("buildTopBar should show 'todos: -' when no todos, got %q", bar)
+	}
 	if !strings.Contains(bar, "skills: 0") {
 		t.Fatalf("buildTopBar should show 'skills: 0' even when zero, got %q", bar)
 	}
@@ -330,7 +338,10 @@ func TestBuildTopBar_CountsUseDistinctColors(t *testing.T) {
 
 	bar := m.buildTopBar()
 
-	// Verify all three counters are present with their labels.
+	// Verify all four counters are present with their labels.
+	if !strings.Contains(bar, "todos:") {
+		t.Fatalf("buildTopBar should show 'todos:', got %q", bar)
+	}
 	if !strings.Contains(bar, "skills: 5") {
 		t.Fatalf("buildTopBar should show 'skills: 5', got %q", bar)
 	}
@@ -361,7 +372,7 @@ func TestBuildTopBar_ZeroCountsUseDimmedColor(t *testing.T) {
 	bar := m.buildTopBar()
 
 	// Zero counts should still be rendered (not omitted).
-	if !strings.Contains(bar, "skills: 0") {
+	if !strings.Contains(bar, "todos: -") {
 		t.Fatalf("buildTopBar should show 'skills: 0' even when zero, got %q", bar)
 	}
 	if !strings.Contains(bar, "tools: 0") {
@@ -388,7 +399,10 @@ func TestBuildTopBar_LongPathTruncatedPreservesCounts(t *testing.T) {
 	if w != 60 {
 		t.Fatalf("buildTopBar width = %d, want 60", w)
 	}
-	// All three counters must still be visible after truncation.
+	// All four counters must still be visible after truncation.
+	if !strings.Contains(bar, "todos:") {
+		t.Fatalf("todos counter should be visible after path truncation, got %q", bar)
+	}
 	if !strings.Contains(bar, "skills: 12") {
 		t.Fatalf("skills counter should be visible after path truncation, got %q", bar)
 	}
@@ -404,10 +418,10 @@ func TestBuildTopBar_LongPathTruncatedPreservesCounts(t *testing.T) {
 	}
 }
 
-func TestBuildTopBar_DropsMcpFirst(t *testing.T) {
+func TestBuildTopBar_DropsMcpAndToolsFirst(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
-	m.width = 25 // very narrow — must drop mcp counter
+	m.width = 25 // very narrow — must drop mcp and tools counters
 	m.height = 24
 	m.cwd = "/home/user/projects/tyci-agent"
 	m.home = "/home/user"
@@ -424,19 +438,23 @@ func TestBuildTopBar_DropsMcpFirst(t *testing.T) {
 	if strings.Contains(bar, "mcp:") {
 		t.Fatalf("mcp counter should be dropped in tight width, got %q", bar)
 	}
-	// skills and tools should still be visible.
-	if !strings.Contains(bar, "skills: 12") {
-		t.Fatalf("skills counter should remain when mcp is dropped, got %q", bar)
+	// tools should be dropped second.
+	if strings.Contains(bar, "tools:") {
+		t.Fatalf("tools counter should be dropped second, got %q", bar)
 	}
-	if !strings.Contains(bar, "tools: 18") {
-		t.Fatalf("tools counter should remain when mcp is dropped, got %q", bar)
+	// todos and skills should still be visible.
+	if !strings.Contains(bar, "todos:") {
+		t.Fatalf("todos counter should remain when others are dropped, got %q", bar)
+	}
+	if !strings.Contains(bar, "skills: 12") {
+		t.Fatalf("skills counter should remain when others are dropped, got %q", bar)
 	}
 }
 
-func TestBuildTopBar_DropsToolsSecond(t *testing.T) {
+func TestBuildTopBar_DropsToolsAndTodosSecond(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
-	m.width = 20 // extremely narrow — must drop mcp and tools
+	m.width = 20 // extremely narrow — must drop mcp, tools, and todos
 	m.height = 24
 	m.cwd = "/home/user/projects/tyci-agent"
 	m.home = "/home/user"
@@ -455,6 +473,10 @@ func TestBuildTopBar_DropsToolsSecond(t *testing.T) {
 	}
 	if strings.Contains(bar, "tools:") {
 		t.Fatalf("tools counter should be dropped second, got %q", bar)
+	}
+	// todos should also be dropped (or skills is last to drop).
+	if strings.Contains(bar, "todos:") {
+		t.Fatalf("todos counter should be dropped before skills, got %q", bar)
 	}
 	// skills should remain (last to drop).
 	if !strings.Contains(bar, "skills: 12") {
@@ -478,12 +500,15 @@ func TestBuildTopBar_KeepsSkillsAfterDroppingOthers(t *testing.T) {
 	if w != 18 {
 		t.Fatalf("buildTopBar width = %d, want 18", w)
 	}
-	// Only skills should remain (mcp and tools dropped).
+	// Only skills should remain (mcp, tools, todos dropped).
 	if strings.Contains(bar, "mcp:") {
 		t.Fatalf("mcp counter should be dropped, got %q", bar)
 	}
 	if strings.Contains(bar, "tools:") {
 		t.Fatalf("tools counter should be dropped, got %q", bar)
+	}
+	if strings.Contains(bar, "todos:") {
+		t.Fatalf("todos counter should be dropped before skills, got %q", bar)
 	}
 	if !strings.Contains(bar, "skills:") {
 		t.Fatalf("skills counter should be the last to drop, got %q", bar)
@@ -500,5 +525,149 @@ func TestNewModel_StoresCountFields(t *testing.T) {
 	}
 	if m.mcpCount != 1 {
 		t.Fatalf("mcpCount = %d, want 1", m.mcpCount)
+	}
+}
+
+// ─── Todo counts (done/total) ─────────────────────────────────────────────
+
+func TestBuildTopBar_TodosNoItems(t *testing.T) {
+	// Clear any leftover todos from other tests.
+	tools.ClearTodoList()
+
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.cwd = "/home/user"
+	m.home = "/home/user"
+
+	bar := m.buildTopBar()
+	if !strings.Contains(bar, "todos: -") {
+		t.Fatalf("buildTopBar should show 'todos: -' when no todos, got %q", bar)
+	}
+}
+
+func TestBuildTopBar_TodosAllTodo(t *testing.T) {
+	tool := &tools.TodoTool{}
+	tools.ClearTodoList()
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 1"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 2"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 3"})
+
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.cwd = "/home/user"
+	m.home = "/home/user"
+
+	bar := m.buildTopBar()
+	// All items are "todo" (not done), so done=0, total=3.
+	if !strings.Contains(bar, "todos: 0/3") {
+		t.Fatalf("buildTopBar should show 'todos: 0/3' when 0 of 3 are done, got %q", bar)
+	}
+}
+
+func TestBuildTopBar_TodosAllDone(t *testing.T) {
+	tool := &tools.TodoTool{}
+	tools.ClearTodoList()
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 1"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 2"})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 2})
+
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.cwd = "/home/user"
+	m.home = "/home/user"
+
+	bar := m.buildTopBar()
+	if !strings.Contains(bar, "todos: 2/2") {
+		t.Fatalf("buildTopBar should show 'todos: 2/2' when all done, got %q", bar)
+	}
+}
+
+func TestBuildTopBar_TodosPartialDone(t *testing.T) {
+	tool := &tools.TodoTool{}
+	tools.ClearTodoList()
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "done step"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "todo step"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "doing step"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "blocked step"})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
+	tool.Run(context.Background(), map[string]any{"action": "doing", "id": 3})
+	tool.Run(context.Background(), map[string]any{"action": "blocked", "id": 4})
+
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.cwd = "/home/user"
+	m.home = "/home/user"
+
+	bar := m.buildTopBar()
+	// 1 done out of 4 total.
+	if !strings.Contains(bar, "todos: 1/4") {
+		t.Fatalf("buildTopBar should show 'todos: 1/4' when 1 of 4 done, got %q", bar)
+	}
+}
+
+func TestBuildTopBar_TodosSingleItem(t *testing.T) {
+	tool := &tools.TodoTool{}
+	tools.ClearTodoList()
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "single task"})
+
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.cwd = "/home/user"
+	m.home = "/home/user"
+
+	bar := m.buildTopBar()
+	if !strings.Contains(bar, "todos: 0/1") {
+		t.Fatalf("buildTopBar should show 'todos: 0/1' for single undone item, got %q", bar)
+	}
+
+	// Mark it done.
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
+
+	bar = m.buildTopBar()
+	if !strings.Contains(bar, "todos: 1/1") {
+		t.Fatalf("buildTopBar should show 'todos: 1/1' for single done item, got %q", bar)
+	}
+}
+
+func TestBuildTopBar_TodosWithCountsPreserved(t *testing.T) {
+	tool := &tools.TodoTool{}
+	tools.ClearTodoList()
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "a"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "b"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "c"})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 2})
+
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 5, 7, 2)
+	m.ready = true
+	m.width = 80
+	m.height = 24
+	m.cwd = "/home/user"
+	m.home = "/home/user"
+
+	bar := m.buildTopBar()
+	// 2 done out of 3 total.
+	if !strings.Contains(bar, "todos: 2/3") {
+		t.Fatalf("buildTopBar should show 'todos: 2/3', got %q", bar)
+	}
+	if !strings.Contains(bar, "skills: 7") {
+		t.Fatalf("buildTopBar should show 'skills: 7', got %q", bar)
+	}
+	if !strings.Contains(bar, "tools: 5") {
+		t.Fatalf("buildTopBar should show 'tools: 5', got %q", bar)
+	}
+	if !strings.Contains(bar, "mcp: 2") {
+		t.Fatalf("buildTopBar should show 'mcp: 2', got %q", bar)
 	}
 }

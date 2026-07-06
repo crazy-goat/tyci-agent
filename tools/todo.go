@@ -327,6 +327,21 @@ func HasPendingTodos() bool {
 	return false
 }
 
+// TodoCounts returns the number of done items and the total number of items
+// in the todo list. Used by the TUI top bar to display a quick summary like
+// "todos: 3/10" (3 done out of 10 total).
+func TodoCounts() (done int, total int) {
+	todoState.Lock()
+	defer todoState.Unlock()
+	for _, it := range todoState.items {
+		total++
+		if it.Status == "done" {
+			done++
+		}
+	}
+	return
+}
+
 func validStatus(s string) bool {
 	switch s {
 	case "todo", "doing", "done", "blocked":

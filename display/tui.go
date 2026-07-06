@@ -266,6 +266,10 @@ type TuiModel struct {
 	// channel. nil in unit tests that never call submit() while busy.
 	queue chan string
 
+	// Todo list modal (shown when clicking todos counter in top bar)
+	todoModalActive bool
+	todoModalScroll int
+
 	// Context counts for the top status bar (computed in commands.go and passed in).
 	toolCount  int // total tools available (built-in + Lua + MCP)
 	skillCount int // skills loaded from skills directory

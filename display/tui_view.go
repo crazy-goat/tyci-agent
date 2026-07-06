@@ -23,7 +23,7 @@ func (m TuiModel) View() string {
 // normal transcript view, and 0 (disabled) for full-screen overlays and states
 // that never scroll a stream, where a plain line diff is correct and cheaper.
 func (m TuiModel) paintScrollBottom() int {
-	if !m.ready || m.quitting || m.subagentModalActive || m.pickerActive || m.historySearchActive || m.resumePickerActive {
+	if !m.ready || m.quitting || m.todoModalActive || m.subagentModalActive || m.pickerActive || m.historySearchActive || m.resumePickerActive {
 		return 0
 	}
 	return m.visibleLines()
@@ -45,6 +45,11 @@ func (m TuiModel) renderFrame() string {
 	// ── Resume picker overlay mode ──
 	if m.resumePickerActive {
 		return m.renderResumePickerView()
+	}
+
+	// ── Todo list modal overlay mode ──
+	if m.todoModalActive {
+		return m.renderTodoModalView()
 	}
 
 	// ── Subagent modal overlay mode ──

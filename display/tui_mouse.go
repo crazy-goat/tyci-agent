@@ -11,6 +11,16 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Shift {
 		return m, nil
 	}
+
+	// Top bar click (row 0): detect clicks on the todos counter.
+	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && msg.Y == 0 {
+		if m.topBarCounterHit(msg.X) == "todos" {
+			m.openTodoModal()
+			return m, nil
+		}
+		return m, nil
+	}
+
 	if msg.Button == tea.MouseButtonWheelUp {
 		m = m.clearSelection()
 		m.atBottom = false

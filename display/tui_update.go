@@ -36,6 +36,9 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.pickerActive {
 		return m.updatePicker(msg)
 	}
+	if m.todoModalActive {
+		return m.updateTodoModal(msg)
+	}
 	if m.subagentModalActive {
 		return m.updateSubagentModal(msg)
 	}

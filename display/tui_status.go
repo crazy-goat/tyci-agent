@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/decodo/tyci/tools"
 )
 
 func (m TuiModel) buildStatus() string {
@@ -132,17 +133,27 @@ func (m TuiModel) buildTopBar() string {
 	// ── Counter definitions ─────────────────────────────────────────────
 	type counterDef struct {
 		label     string
-		value     int
+		value     string
 		dropOrder int // 1 = dropped first
 	}
+
+	// Fetch current todo counts from the tools package. These can change
+	// during a session as the model adds/completes items via the todo tool.
+	todoDone, todoTotal := tools.TodoCounts()
+	todoStr := fmt.Sprintf("%d/%d", todoDone, todoTotal)
+	if todoTotal == 0 {
+		todoStr = "-"
+	}
+
 	counters := []counterDef{
-		{label: "skills:", value: m.skillCount, dropOrder: 3},
-		{label: "tools:", value: m.toolCount, dropOrder: 2},
-		{label: "mcp:", value: m.mcpCount, dropOrder: 1},
+		{label: "todos:", value: todoStr, dropOrder: 3},
+		{label: "skills:", value: fmt.Sprintf("%d", m.skillCount), dropOrder: 4},
+		{label: "tools:", value: fmt.Sprintf("%d", m.toolCount), dropOrder: 2},
+		{label: "mcp:", value: fmt.Sprintf("%d", m.mcpCount), dropOrder: 1},
 	}
 
 	renderCounter := func(c counterDef) string {
-		return fmt.Sprintf("%s %d", c.label, c.value)
+		return fmt.Sprintf("%s %s", c.label, c.value)
 	}
 
 	type activeCounter struct {
