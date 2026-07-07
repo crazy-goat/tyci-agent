@@ -119,17 +119,15 @@ func GetToolsSchema() []map[string]any {
 						"id":       map[string]any{"type": "integer", "description": "Todo id for update/done/remove"},
 						"content":  map[string]any{"type": "string", "description": "Todo text (used by add)"},
 						"status":   map[string]any{"type": "string", "enum": []string{"todo", "doing", "done", "blocked"}, "description": "Default: todo"},
-						"priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high"}, "description": "Default: normal"},
 						"parentId": map[string]any{"type": "integer", "description": "Optional parent todo id"},
 						"items": map[string]any{
 							"type":        "array",
-							"description": "add_batch only — list of new todo items to add atomically. Each item takes the same fields as a single add call (content required, status/priority optional, parentId optional). Items are appended in the given order and assigned consecutive ids.",
+							"description": "add_batch only — array of todo entries to create. Each: {content: string (required), status?: 'todo'|'doing'|'done'|'blocked', parentId?: number}. Example: [{content:\"Write tests\"}, {content:\"Fix bug\", status:\"doing\"}]",
 							"items": map[string]any{
 								"type": "object",
 								"properties": map[string]any{
 									"content":  map[string]any{"type": "string", "description": "Todo text"},
 									"status":   map[string]any{"type": "string", "enum": []string{"todo", "doing", "done", "blocked"}, "description": "Default: todo"},
-									"priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high"}, "description": "Default: normal"},
 									"parentId": map[string]any{"type": "integer", "description": "Optional parent todo id"},
 								},
 								"required": []string{"content"},

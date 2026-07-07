@@ -221,7 +221,7 @@ func TestPrintTodoRenderMatrix(t *testing.T) {
 		{"action": "add"}, // <- error: no content
 		{"action": "add", "content": "Bare add"},
 		{"action": "update", "id": 1, "status": "doing"},
-		{"action": "update", "id": 2, "priority": "low"},
+		{"action": "update", "id": 2, "content": "Update docs (lowered)"},
 		{"action": "update", "id": 3, "content": "Refactor config loader"},
 		{"action": "update", "id": 1, "parentId": 2},
 		{"action": "update", "id": 1, "content": "Renamed", "status": "blocked", "priority": "high", "parentId": 0},

@@ -17,7 +17,6 @@ type TodoItem struct {
 	ID       int
 	Content  string
 	Status   string
-	Priority string
 	ParentID int
 }
 
@@ -25,7 +24,6 @@ type todoItem struct {
 	ID       int
 	Content  string
 	Status   string
-	Priority string
 	ParentID int
 }
 
@@ -43,7 +41,7 @@ func AllTodoItems() []TodoItem {
 	defer todoState.Unlock()
 	out := make([]TodoItem, len(todoState.items))
 	for i, it := range todoState.items {
-		out[i] = TodoItem{ID: it.ID, Content: it.Content, Status: it.Status, Priority: it.Priority, ParentID: it.ParentID}
+		out[i] = TodoItem{ID: it.ID, Content: it.Content, Status: it.Status, ParentID: it.ParentID}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
@@ -63,7 +61,6 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	id := intParam(input, "id", 0)
 	content := stringParam(input, "content", "")
 	status := stringParam(input, "status", "")
-	priority := stringParam(input, "priority", "")
 	parentID := intParam(input, "parentId", 0)
 
 	todoState.Lock()
@@ -72,13 +69,13 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	switch action {
 	case "add":
 		if content == "" {
-			return ToolResult{Type: "result", Success: false, Error: "missing required field \"content\" — fix: todo(action=\"add\", content=\"Write integration tests\") [defaults: status=todo, priority=normal]"}
+			return ToolResult{Type: "result", Success: false, Error: "missing required field \"content\" — fix: todo(action=\"add\", content=\"Write integration tests\") [defaults: status=todo]"}
 		}
-		st, prio, perr := normalizeAddFields("", status, priority)
+		st, perr := normalizeAddFields("", status)
 		if perr != "" {
 			return ToolResult{Type: "result", Success: false, Error: perr}
 		}
-		item := todoItem{ID: todoState.nextID, Content: content, Status: st, Priority: prio, ParentID: parentID}
+		item := todoItem{ID: todoState.nextID, Content: content, Status: st, ParentID: parentID}
 		if _, hasParent := input["parentId"]; hasParent && parentID != 0 && findTodoIndex(parentID) < 0 {
 			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid parentId=%d for todo(add content=%q) — parent doesn't exist — use 0 to add a top-level todo, or pick from existing ids [%s]", parentID, content, existingIDsLocked())}
 		}
@@ -87,7 +84,7 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	case "add_batch":
 		rawItems, ok := input["items"]
 		if !ok || rawItems == nil {
-			return ToolResult{Type: "result", Success: false, Error: "todo(add_batch) requires \"items\" — fix: todo(action=\"add_batch\", items=[{content:\"...\"}, {content:\"...\"}]) — each entry takes content (required), status, priority, parentId (optional)"}
+			return ToolResult{Type: "result", Success: false, Error: "todo(add_batch) requires \"items\" — fix: todo(action=\"add_batch\", items=[{content:\"...\"}, {content:\"...\"}]) — each entry takes content (required), status, parentId (optional)"}
 		}
 		items, ok := rawItems.([]any)
 		if !ok {
@@ -101,7 +98,6 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		type prepared struct {
 			content   string
 			status    string
-			priority  string
 			parentID  int
 			hasParent bool
 		}
@@ -116,8 +112,7 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(add_batch): items[%d] missing required \"content\" — fix: every entry needs content; drop the entry or set content=\"...\"", i)}
 			}
 			s := stringParam(m, "status", "")
-			p := stringParam(m, "priority", "")
-			st, prio, perr := normalizeAddFields("", s, p)
+			st, perr := normalizeAddFields("", s)
 			if perr != "" {
 				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(add_batch): items[%d] (content=%q) — %s", i, c, perr)}
 			}
@@ -126,7 +121,7 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			if hasParent && pid != 0 && findTodoIndex(pid) < 0 {
 				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(add_batch): items[%d] (content=%q) — invalid parentId=%d, doesn't exist — fix: use 0 for top-level, or pick from existing ids [%s]", i, c, pid, existingIDsLocked())}
 			}
-			prep = append(prep, prepared{content: c, status: st, priority: prio, parentID: pid, hasParent: hasParent})
+			prep = append(prep, prepared{content: c, status: st, parentID: pid, hasParent: hasParent})
 		}
 		// All entries valid — append atomically under the held lock.
 		for _, p := range prep {
@@ -134,14 +129,13 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 				ID:       todoState.nextID,
 				Content:  p.content,
 				Status:   p.status,
-				Priority: p.priority,
 				ParentID: p.parentID,
 			})
 			todoState.nextID++
 		}
 	case "update":
 		if id == 0 {
-			return ToolResult{Type: "result", Success: false, Error: "todo(update) requires an \"id\" — fix: todo(action=\"list\") to read ids, then todo(action=\"update\", id=N, ...) with at least one of content/status/priority/parentId"}
+			return ToolResult{Type: "result", Success: false, Error: "todo(update) requires an \"id\" — fix: todo(action=\"list\") to read ids, then todo(action=\"update\", id=N, ...) with at least one of content/status/parentId"}
 		}
 		idx := findTodoIndex(id)
 		if idx < 0 {
@@ -159,13 +153,6 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			todoState.items[idx].Status = status
 			changed = true
 		}
-		if priority != "" {
-			if !validPriority(priority) {
-				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid priority=%q for todo(update id=%d) — allowed: low, normal, high — current priority=%q — fix: drop \"priority\" to keep it, or pick one of the allowed values", priority, id, todoState.items[idx].Priority)}
-			}
-			todoState.items[idx].Priority = priority
-			changed = true
-		}
 		if _, ok := input["parentId"]; ok {
 			if parentID != 0 && findTodoIndex(parentID) < 0 {
 				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid parentId=%d for todo(update id=%d) — parent doesn't exist — use 0 to detach, or pick from existing ids [%s]", parentID, id, existingIDsLocked())}
@@ -174,7 +161,7 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			changed = true
 		}
 		if !changed {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(update id=%d) specified no field to change — fix: pass at least one of content=\"...\", status=todo|doing|done|blocked, priority=low|normal|high, parentId=<int>", id)}
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(update id=%d) specified no field to change — fix: pass at least one of content=\"...\", status=todo|doing|done|blocked, parentId=<int>", id)}
 		}
 	case "doing", "blocked":
 		if id == 0 {
@@ -240,24 +227,18 @@ func findTodoIndex(id int) int {
 	return -1
 }
 
-// normalizeAddFields applies defaults (status=todo, priority=normal) and
-// validates the result. Returns the normalized pair or a non-empty error
-// ready to surface to the LLM. The first arg is unused — kept as a small
-// placeholder for future per-action nuance (e.g. add_block starting status).
-func normalizeAddFields(_ string, status string, priority string) (string, string, string) {
+// normalizeAddFields applies defaults (status=todo) and validates the result.
+// Returns the normalized status or a non-empty error ready to surface to the
+// LLM. The first arg is unused — kept as a small placeholder for future
+// per-action nuance (e.g. add_block starting status).
+func normalizeAddFields(_ string, status string) (string, string) {
 	if status == "" {
 		status = "todo"
 	}
-	if priority == "" {
-		priority = "normal"
-	}
 	if !validStatus(status) {
-		return "", "", fmt.Sprintf("invalid status=%q — allowed: todo, doing, done, blocked — fix: drop \"status\" to use default \"todo\", or pick one of the allowed values", status)
+		return "", fmt.Sprintf("invalid status=%q — allowed: todo, doing, done, blocked — fix: drop \"status\" to use default \"todo\", or pick one of the allowed values", status)
 	}
-	if !validPriority(priority) {
-		return "", "", fmt.Sprintf("invalid priority=%q — allowed: low, normal, high — fix: drop \"priority\" to use default \"normal\", or pick one of the allowed values", priority)
-	}
-	return status, priority, ""
+	return status, ""
 }
 
 // ClearTodoList resets the todo list (used on /new).
@@ -286,9 +267,9 @@ func formatTodosLocked() string {
 
 func formatTodoLine(item todoItem) string {
 	if item.ParentID > 0 {
-		return fmt.Sprintf("%d. [%s] %s parent:%d %s", item.ID, item.Status, item.Priority, item.ParentID, item.Content)
+		return fmt.Sprintf("%d. [%s] parent:%d %s", item.ID, item.Status, item.ParentID, item.Content)
 	}
-	return fmt.Sprintf("%d. [%s] %s %s", item.ID, item.Status, item.Priority, item.Content)
+	return fmt.Sprintf("%d. [%s] %s", item.ID, item.Status, item.Content)
 }
 
 // PendingTodos returns formatted lines for todo items that are still open,
@@ -345,14 +326,6 @@ func TodoCounts() (done int, total int) {
 func validStatus(s string) bool {
 	switch s {
 	case "todo", "doing", "done", "blocked":
-		return true
-	}
-	return false
-}
-
-func validPriority(s string) bool {
-	switch s {
-	case "low", "normal", "high":
 		return true
 	}
 	return false

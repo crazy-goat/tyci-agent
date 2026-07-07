@@ -197,7 +197,7 @@ func (m TuiModel) renderTodoModalView() string {
 }
 
 // formatTodoModalLine renders a single todo item for the modal.
-// Format: "  [status]  priority  content" with status icon and color.
+// Format: "  [status]  content" with status icon and color.
 func formatTodoModalLine(it tools.TodoItem, maxWidth int) string {
 	var icon string
 	var statusColor lipgloss.TerminalColor
@@ -218,9 +218,8 @@ func formatTodoModalLine(it tools.TodoItem, maxWidth int) string {
 
 	iconStyled := lipgloss.NewStyle().Foreground(statusColor).Render(icon)
 	statusStyled := lipgloss.NewStyle().Foreground(statusColor).Render(fmt.Sprintf("[%s]", it.Status))
-	priorityStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(it.Priority)
 
-	line := fmt.Sprintf(" %s %s  %s  %s", iconStyled, statusStyled, priorityStyled, it.Content)
+	line := fmt.Sprintf(" %s %s  %s", iconStyled, statusStyled, it.Content)
 	if len(line) > maxWidth {
 		line = line[:maxWidth]
 	}

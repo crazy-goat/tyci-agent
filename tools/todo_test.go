@@ -67,7 +67,7 @@ func TestTodoTool_AddBatch_HappyPath(t *testing.T) {
 		t.Fatalf("add_batch failed: %s", res.Error)
 	}
 	// All three ids rendered in the formatted full list.
-	for _, sub := range []string{"1. [todo] normal alpha", "2. [todo] high beta", "3. [doing] low gamma"} {
+	for _, sub := range []string{"1. [todo] alpha", "2. [todo] beta", "3. [doing] gamma"} {
 		if !strings.Contains(res.Content, sub) {
 			t.Fatalf("expected rendered line %q in result, got:\n%s", sub, res.Content)
 		}

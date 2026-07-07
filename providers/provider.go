@@ -64,7 +64,7 @@ Context:
 
 Tools available:
 - find(pattern, cwd?, exclude?, limit?, includeDirs?, absolute?): find files by glob pattern or search their contents. Use method="glob" for file path patterns (e.g. **/*.go) or method="grep" for text/regex/word search inside files. Returns relative paths by default.
-- todo(action, id?, content?, status?, priority?, parentId?): manage per-run todo list. actions: add/update/doing/blocked/done/remove/list/clear.
+- todo(action, id?, content?, status?, parentId?): manage per-run todo list. actions: add/update/doing/blocked/done/remove/list/clear.
 - read(path, offset?, limit?, lineNumbers?): read file contents. Returns full file; use offset/limit for ranges, lineNumbers=true to prefix each line with its number.
 - write(path, content, range?, oldString?, newString?, occurrence?, dryRun?): write file or replace text. Use content+range for writing; use oldString+newString for replacements.
 - bash(description, command, timeout?): run shell command when no tool fits.%s
