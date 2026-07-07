@@ -44,21 +44,20 @@ func (m *TuiModel) selectHistorySearchEntry(entry string) {
 
 // rebuildHistorySearchResults filters inputHistory to entries whose lowercased
 // text contains the lowercased filter substring. Results are ordered newest
-// first (same as inputHistory iteration from the end).
+// first (same as inputHistory iteration from the end). Duplicate entries are
+// shown only once (the newest occurrence wins).
 func (m *TuiModel) rebuildHistorySearchResults() {
-	if m.historySearchFilter == "" {
-		// Show all history, newest first
-		m.historySearchResults = make([]string, 0, len(m.inputHistory))
-		for i := len(m.inputHistory) - 1; i >= 0; i-- {
-			m.historySearchResults = append(m.historySearchResults, m.inputHistory[i])
+	filter := strings.ToLower(m.historySearchFilter)
+	seen := make(map[string]struct{}, len(m.inputHistory))
+	m.historySearchResults = make([]string, 0, len(m.inputHistory))
+	for i := len(m.inputHistory) - 1; i >= 0; i-- {
+		entry := m.inputHistory[i]
+		if _, ok := seen[entry]; ok {
+			continue
 		}
-	} else {
-		filter := strings.ToLower(m.historySearchFilter)
-		m.historySearchResults = make([]string, 0, len(m.inputHistory))
-		for i := len(m.inputHistory) - 1; i >= 0; i-- {
-			if strings.Contains(strings.ToLower(m.inputHistory[i]), filter) {
-				m.historySearchResults = append(m.historySearchResults, m.inputHistory[i])
-			}
+		seen[entry] = struct{}{}
+		if filter == "" || strings.Contains(strings.ToLower(entry), filter) {
+			m.historySearchResults = append(m.historySearchResults, entry)
 		}
 	}
 	// Clamp cursor
