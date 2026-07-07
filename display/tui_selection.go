@@ -162,7 +162,7 @@ func (m TuiModel) selectedText() string {
 				to = lipgloss.Width(plain)
 			}
 		}
-		parts = append(parts, cutCells(plain, from, to))
+		parts = append(parts, strings.TrimRight(cutCells(plain, from, to), " \t"))
 	}
 	return strings.TrimRight(strings.Join(parts, "\n"), "\n")
 }

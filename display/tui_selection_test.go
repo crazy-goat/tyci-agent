@@ -307,3 +307,71 @@ func TestBlockAtVisibleLine_ConsecutiveToolsNoSpacer(t *testing.T) {
 		t.Fatalf("blockAtVisibleLine(1) = %d, want 1 (tool2)", idx)
 	}
 }
+
+// ─── Trailing-whitespace trimming (selectedText change) ─────────────────
+
+// TestTuiSelection_TrailingSpacesTrimmed verifies that each selected line
+// has trailing spaces and tabs stripped before joining (regression: the
+// selectedText change added strings.TrimRight(…, " \t") per line).
+func TestTuiSelection_TrailingSpacesTrimmed(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "hello     ", SourceKind: "text", Y: 0},
+		{PlainText: "world\t\t", SourceKind: "text", Y: 1},
+		{PlainText: "foo  bar", SourceKind: "text", Y: 2},
+	}}
+	// Select full width of all three lines.
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 2}
+
+	m = m.copySelection()
+
+	// Each line's trailing whitespace should be trimmed.
+	if *copied != "hello\nworld\nfoo  bar" {
+		t.Fatalf("expected trailing whitespace trimmed, got %q", *copied)
+	}
+}
+
+// TestTuiSelection_TrailingWhitespaceInPartialSelection verifies that even
+// when the selection starts/ends mid-line, the trailing part of each full
+// selection row is still trimmed of spaces/tabs.
+func TestTuiSelection_TrailingWhitespaceInPartialSelection(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "  leading", SourceKind: "text", Y: 0},
+		{PlainText: "mid  ", SourceKind: "text", Y: 1},
+		{PlainText: "trailing   ", SourceKind: "text", Y: 2},
+	}}
+	// Select from (2,0) to (5,2) — partial on first and last line.
+	m.selection = SelectionState{Active: true, AnchorX: 2, AnchorY: 0, CursorX: 5, CursorY: 2}
+
+	m = m.copySelection()
+
+	// Line 0 (Y=0): "  leading" → cutCells("  leading", 2, width) = "leading" → TrimRight → "leading"
+	// Line 1 (Y=1): "mid  " → cutCells("mid  ", 0, width) = "mid  " → TrimRight → "mid"
+	// Line 2 (Y=2): "trailing   " → cutCells("trailing   ", 0, 5) = "trail" → TrimRight → "trail"
+	want := "leading\nmid\ntrail"
+	if *copied != want {
+		t.Fatalf("got %q, want %q", *copied, want)
+	}
+}
+
+// TestTuiSelection_NoTrailingWhitespace verifies that lines without trailing
+// whitespace are not affected by the TrimRight change.
+func TestTuiSelection_NoTrailingWhitespace(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "clean", SourceKind: "text", Y: 0},
+		{PlainText: "lines", SourceKind: "text", Y: 1},
+		{PlainText: "here", SourceKind: "text", Y: 2},
+	}}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 5, CursorY: 1}
+
+	m = m.copySelection()
+
+	if *copied != "clean\nlines" {
+		t.Fatalf("unexpected copy: %q", *copied)
+	}
+}
