@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/providers"
@@ -18,6 +19,7 @@ import (
 func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp *display.TUI, cfg agent.Config, baseCtx context.Context, sessionPath string) {
 	var conversation []providers.RichMessage
 	var totalUsage stream.Usage
+	titleSet := false // track whether terminal title has been set
 
 	// Mutable provider/model that can change via Tab/Shift+Tab
 	provider := initialProvider
@@ -217,6 +219,8 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 				totalUsage = stream.Usage{}
 				tools.ClearTodoList()
 				tuiDisp.Reset()
+				fmt.Fprint(os.Stdout, ansi.SetWindowTitle("tyci"))
+				titleSet = false
 				continue
 			case trimmed == "/resume":
 				// Bare /resume: list cwd's sessions in the popup picker.
@@ -265,6 +269,19 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 		if line == "" {
 			iterCancel()
 			continue
+		}
+
+		// Set terminal title on the very first user prompt (and never again
+		// until /new resets it). Show "tyci:" followed by the prompt truncated
+		// to 32 characters so the tab/window label stays readable.
+		if !titleSet {
+			title := line
+			runes := []rune(line)
+			if len(runes) > 32 {
+				title = string(runes[:32])
+			}
+			fmt.Fprint(os.Stdout, ansi.SetWindowTitle("tyci: "+title))
+			titleSet = true
 		}
 
 		conversation = append(conversation, providers.RichMessage{
