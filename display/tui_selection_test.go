@@ -375,3 +375,128 @@ func TestTuiSelection_NoTrailingWhitespace(t *testing.T) {
 		t.Fatalf("unexpected copy: %q", *copied)
 	}
 }
+
+// ─── Gutter stripping (selectedText change) ────────────────────────────
+
+// TestTuiSelection_StripsTextGutter verifies that the "  " (2-space) prefix
+// glamour adds to every text line is stripped when copying.
+func TestTuiSelection_StripsTextGutter(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "  Hello world", SourceKind: "text", Y: 0},
+		{PlainText: "  Line two", SourceKind: "text", Y: 1},
+	}}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 1}
+	m = m.copySelection()
+	if *copied != "Hello world\nLine two" {
+		t.Fatalf("expected gutter stripped, got %q", *copied)
+	}
+}
+
+// TestTuiSelection_StripsTextGutterPartialSelection verifies that coordinate
+// adjustment works correctly when the user selects part of a line with gutter.
+func TestTuiSelection_StripsTextGutterPartialSelection(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "  Hello world", SourceKind: "text", Y: 0},
+	}}
+	// Select from column 2 to column 7  →  "Hello " (after strip: col 0→5 = "Hello")
+	m.selection = SelectionState{Active: true, AnchorX: 2, AnchorY: 0, CursorX: 7, CursorY: 0}
+	m = m.copySelection()
+	if *copied != "Hello" {
+		t.Fatalf("expected 'Hello' after gutter adjustment, got %q", *copied)
+	}
+}
+
+// TestTuiSelection_StripsThinkingGutter verifies that the "│ " prefix on
+// thinking blocks is stripped when copying.
+func TestTuiSelection_StripsThinkingGutter(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "│ thinking content", SourceKind: "thinking", Y: 0},
+		{PlainText: "│ more thinking", SourceKind: "thinking", Y: 1},
+	}}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 1}
+	m = m.copySelection()
+	if *copied != "thinking content\nmore thinking" {
+		t.Fatalf("expected '│ ' stripped, got %q", *copied)
+	}
+}
+
+// TestTuiSelection_StripsToolGutter verifies that the "┃ tool " prefix on
+// tool blocks is stripped when copying.
+func TestTuiSelection_StripsToolGutter(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "┃ tool bash(Test) 153ms", SourceKind: "tool", Y: 0},
+	}}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
+	m = m.copySelection()
+	if *copied != "bash(Test) 153ms" {
+		t.Fatalf("expected '┃ tool ' stripped, got %q", *copied)
+	}
+}
+
+// TestTuiSelection_StripsErrorGutter verifies that the "│ " prefix on error
+// blocks is stripped when copying.
+func TestTuiSelection_StripsErrorGutter(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "│ error message", SourceKind: "error", Y: 0},
+	}}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
+	m = m.copySelection()
+	if *copied != "error message" {
+		t.Fatalf("expected '│ ' stripped, got %q", *copied)
+	}
+}
+
+// TestTuiSelection_StripsBlockGutter verifies that the "│ " prefix on info
+// blocks is stripped when copying.
+func TestTuiSelection_StripsBlockGutter(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "│ info block", SourceKind: "block", Y: 0},
+	}}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
+	m = m.copySelection()
+	if *copied != "info block" {
+		t.Fatalf("expected '│ ' stripped, got %q", *copied)
+	}
+}
+
+// TestTuiSelection_DoesNotStripUserLine verifies that "user" source kind
+// (which has no visual gutter) is copied as-is.
+func TestTuiSelection_DoesNotStripUserLine(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "You: hello", SourceKind: "user", Y: 0},
+	}}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
+	m = m.copySelection()
+	if *copied != "You: hello" {
+		t.Fatalf("expected unchanged, got %q", *copied)
+	}
+}
+
+// TestTuiSelection_TextLineWithoutGutter verifies that text lines that do
+// NOT start with "  " (e.g. during streaming before glamour) are not affected.
+func TestTuiSelection_TextLineWithoutGutter(t *testing.T) {
+	copied := withClipboardStub(t)
+	m := newSelectionTestModel()
+	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+		{PlainText: "No prefix here", SourceKind: "text", Y: 0},
+	}}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
+	m = m.copySelection()
+	if *copied != "No prefix here" {
+		t.Fatalf("expected unchanged, got %q", *copied)
+	}
+}

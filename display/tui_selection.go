@@ -120,6 +120,38 @@ func (m TuiModel) renderSelectableLine(line string, y int) string {
 	return renderSelectedSpan(plain, from, to, lineWidth, style)
 }
 
+// gutterLen returns the number of leading characters that form the visual
+// gutter/indent for a given source kind. These are stripped when copying
+// selection text so the user doesn't copy display-only prefixes.
+func gutterLen(sourceKind, plain string) int {
+	switch sourceKind {
+	case "text":
+		// Glamour's "dark" style adds 2 leading spaces to every text line.
+		if strings.HasPrefix(plain, "  ") {
+			return 2
+		}
+		return 0
+	case "thinking", "error", "block":
+		// "│ " or "┃ " (bar + space)
+		if strings.HasPrefix(plain, "│ ") || strings.HasPrefix(plain, "┃ ") || strings.HasPrefix(plain, "| ") {
+			return 2
+		}
+		return 0
+	case "tool":
+		// "┃ tool " (bar + space + "tool" + space = 7 runes)
+		if strings.HasPrefix(plain, "┃ tool ") {
+			return 7
+		}
+		// Fallback: just the bar+space
+		if strings.HasPrefix(plain, "┃ ") || strings.HasPrefix(plain, "│ ") || strings.HasPrefix(plain, "| ") {
+			return 2
+		}
+		return 0
+	default:
+		return 0
+	}
+}
+
 func (m TuiModel) selectedText() string {
 	start, end, ok := m.normalizeSelection()
 	if !ok {
@@ -144,6 +176,12 @@ func (m TuiModel) selectedText() string {
 			continue
 		}
 		plain := line.plain()
+		prefixLen := gutterLen(line.SourceKind, plain)
+		// Strip gutter by advancing past prefixLen runes (the prefix may
+		// contain multi-byte Unicode characters like │ or ┃).
+		runes := []rune(plain)
+		content := string(runes[prefixLen:])
+
 		from, to := 0, lipgloss.Width(plain)
 		if line.Y == start.Y {
 			from = start.X
@@ -162,7 +200,17 @@ func (m TuiModel) selectedText() string {
 				to = lipgloss.Width(plain)
 			}
 		}
-		parts = append(parts, strings.TrimRight(cutCells(plain, from, to), " \t"))
+		// Shift coordinates from the original (with-gutter) coordinate space
+		// into the content (no-gutter) space.
+		from -= prefixLen
+		to -= prefixLen
+		if from < 0 {
+			from = 0
+		}
+		if to < from {
+			to = from
+		}
+		parts = append(parts, strings.TrimRight(cutCells(content, from, to), " \t"))
 	}
 	return strings.TrimRight(strings.Join(parts, "\n"), "\n")
 }
