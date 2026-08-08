@@ -255,20 +255,103 @@ to zakres etapu 5.
   czyli bez regresji względem etapu 3. Uwaga: etap 3 zapisał „pełny build ma 7" —
   inna miara (`grep` po samych nazwach vs po całych liniach `nm`), nie zmiana stanu.
 
-## Etap 5 — fallback poza agentem (0,5d)
+## Etap 5 — fallback poza agentem (0,5d) — ZROBIONE
 
-- [ ] `Config.FallbackModels []string` → `[]ModelClient` rozwiązane przez wywołującego
-- [ ] `agent/fallback.go` przestaje wołać `providers.FindModel`
-- [ ] `providers.WithProvider` / `ProviderFromContext` → `ModelClient` w kontekście (`main.go:35`, `run_once.go:16`)
-- [ ] weryfikacja: `agent` nie importuje `providers`
-- [ ] **kryterium akceptacji: provider fallbackowy dziecka też dostaje izolowany pool.**
-      Znalezione przy etapie 4: `main.go:withIsolatedPool` owija tylko provider główny,
-      a `agent/fallback.go:35` bierze świeży provider z globalnego katalogu — ten
-      pójdzie po współdzielony `api.defaultClient`. Dziś nieosiągalne, bo `cfg`
-      budowany w `agentRunner.run` nie ustawia `FallbackModels`, więc `tryFallback`
-      w przebiegu dziecka nie wystrzeli. Utajone: gdyby subagenty dostały modele
-      zapasowe, izolacja przestałaby je obejmować bez błędu kompilacji. Gdy fallback
-      rozwiązuje wywołujący, może owinąć wszystkie providery razem — stąd to tutaj.
+- [x] `Config.FallbackModels []string` → `Fallbacks []connector.ModelClient` rozwiązane przez wywołującego
+      (`commands.go:resolveFallbacks`, `main.go:resolveModelClient`, `internal/workflow/engine.go`)
+- [x] `agent/fallback.go` przestaje wołać `providers.FindModel` — iteruje `cfg.Fallbacks`,
+      już rozwiązane; jedyny błąd możliwy w pętli to nieudany `Stream`, nie "nie znaleziono"
+- [x] `providers.WithProvider`/`ProviderFromContext` + `WithModel`/`ModelFromContext`
+      (`providers/context.go`, usunięty) → `connector.WithModelClient`/`ModelClientFromContext` —
+      jedna wartość w kontekście, bo `ModelClient` niesie już swój model
+- [x] weryfikacja: `agent` nie importuje `providers` (`go list -deps ./agent` — patrz niżej)
+- [x] **kryterium akceptacji: provider fallbackowy dziecka też dostaje izolowany pool.**
+      `main.go:withIsolatedPool` wiąże teraz provider główny ORAZ każdy fallback z JEDNYM
+      prywatnym `http.Client` (współdzielonym w ramach jednego przebiegu dziecka, bo primary
+      i fallback nigdy nie działają równolegle). `agentRunner.run` przepuszcza przez ten sam
+      wrapper listę fallbacków, która dziś jest zawsze pusta (nazwane subagenty nie mają
+      jeszcze podłączonego `GetFallbackModels` — to zostaje poza zakresem, patrz odstępstwa),
+      więc mechanizm jest gotowy, zanim ktoś go faktycznie użyje.
+      Testy: `TestWithIsolatedPool_WrapsFallbacksWithPrimary`,
+      `TestWithIsolatedPool_FallbackPoolDistinctAcrossChildren`.
+
+### Odstępstwa od planu (świadome)
+
+**Etapy 4 i 5 planu ("suggested commit sequence") połączone w jeden commit
+zamiast dwóch.** Plan proponował: commit 4 — `Run` bierze `ModelClient`
++ `fallback.go` przestaje wołać `FindModel`; commit 5 — osobno przełączyć
+przenoszenie kontekstu. Nie da się rozdzielić bez commitu przejściowego, który
+byłby czerwony albo wymuszał tymczasowy dual-write: `agent/run_once.go` woła
+`providers.WithProvider(ctx, p)`, gdzie `p` jest `providers.Provider` — w
+chwili, gdy `Run` zaczyna przyjmować `ModelClient` (który nie jest
+`providers.Provider`), `run_once.go` fizycznie nie ma już czym wywołać
+`WithProvider`. Napisanie/odczyt konteksu muszą więc zmienić się w tym samym
+kroku co sygnatura `Run` — stąd jeden commit
+(`250481e agent: fallback rozwiazywany przez wywolujacego, ModelClient w kontekscie`)
+obejmujący oba punkty planu.
+
+**`session/session.go` też przestał importować `providers`, mimo że plan
+("Design decisions ALREADY MADE") mówił wprost: "Keep the aliases in
+providers — the CLI and session still use them."** Odkryte przy weryfikacji
+`go list -deps ./agent`: `agent` importuje `session` (typ `*session.Session`
+w `Config.Session`), a `session.go` importował `providers` wyłącznie po
+aliasy `RichMessage`/`ContentBlock` (te same typy co `connector.Message`/
+`ContentBlock` — `providers` tylko re-eksportuje `connector`). Bez tej zmiany
+"`agent` nie importuje `providers`" byłoby prawdziwe tylko dla importów
+bezpośrednich, a `go list -deps ./agent | grep providers` i tak by coś
+wypisało — czyli nagłówkowe kryterium etapu byłoby fałszywe. Naprawa: to samo
+mechaniczne przepisanie na `connector.Message`/`ContentBlock`, które dostał
+`agent/` w commicie 3 — zero zmiany zachowania (alias to ten sam typ), test
+session/ nie wymagał modyfikacji. `providers` zostaje właścicielem aliasów;
+`session` teraz woli własną, bezpośrednią nazwę, tak jak `agent`.
+
+**`resolveModelClient` (dawne `resolveProviderModel`) dostało nową gałąź, bez
+odpowiednika w kodzie sprzed etapu.** Stary kod trzymał `providers.Provider`
+i `model string` jako DWIE niezależne wartości w kontekście, więc subagent z
+jawnym bare-name override (`model` różny od modelu rodzica, bez `/`) po
+prostu dostawał `(rodzicProvider, nowyModel)` — provider nie wiedział o
+żadnym konkretnym modelu, więc nie było czego przerabiać. `ModelClient` niesie
+swój model na trwałe, więc gdy override różni się od `mc.Model()`,
+`resolveModelClient` musi odtworzyć nowy `ModelClient` na tym samym providerze
+przez `providers.GetProvider(mc.Provider())` (odczyt z globalnego katalogu po
+nazwie). Zachowanie funkcjonalnie identyczne — provider rodzica, inny model —
+ale ścieżka kodu jest nowa, bo poprzednio nie było jej czym pokryć: żaden
+istniejący test tego przypadku nie używał (override w testach i tools/
+zawsze był albo `""`, albo pełnym `"provider/model"`). Dodany test:
+`TestResolveModelClient_BareOverrideDifferentModelReusesProvider`.
+
+**Dwa martwe pola `fallbackState.active`/`.fullModel` usunięte przy okazji.**
+Ustawiane w `agent/fallback.go`, nigdy odczytywane (`grep` to potwierdza).
+Nie do uniknięcia: przy zamianie `provider+model+fullModel` na jedno pole
+`mc connector.ModelClient` trzeba było dotknąć każdego pola struktury; to nie
+jest osobne "ulepszenie na boku", tylko efekt obowiązkowej przebudowy.
+
+**Dług zastany zauważony i ŚWIADOMIE nietknięty:** `agent.Config.ProviderName`
+jest zapisywany w sześciu miejscach (`commands.go`, `interactive.go` ×2,
+`tui_mode.go` ×3) i nigdzie w całym repo nie jest odczytywany — pole
+write-only sprzed tego etapu. Nie naprawiane tutaj: nie ma z tym nic
+wspólnego zakres Etapu 5, a "nie commitować nieproszonych poprawek" jest
+twardym ograniczeniem tego zadania.
+
+**`Config.Model` i `Config.ProviderName` zostają w strukturze, mimo że `agent`
+już ich wewnętrznie nie potrzebuje** (`runOnce`/`fallback.go` czytają
+`mc.Model()`/`mc.Provider()`). Powód: wywołujący (`prompt_mode.go:29`,
+`interactive.go`, `tui_mode.go`) czytają/piszą `cfg.Model` do własnych celów
+(nazwa sesji, przełączanie modelu), niezależnych od tego, jak `Run` go
+zużywa. Usunięcie pola złamałoby te call site'y bez żadnej korzyści.
+
+### Weryfikacja
+
+- `go build` + `go vet` + `go test ./... -count=1` zielone we wszystkich czterech
+  kombinacjach tagów (brak, `noanthropic`, `nogemini`, `noanthropic nogemini`),
+- `go test -race ./agent/ ./providers/ ./tools/ .` zielone,
+- `gofmt -l .` puste,
+- `git diff --stat a04f9a8..HEAD -- providers/testdata` **puste** — wire format przeżył,
+- `go list -deps ./agent | grep decodo/tyci/providers` → **puste** (dowód nagłówkowy etapu),
+- nazwy testów: 6 przekształceń 1:1 (`TestResolveProviderModel_*` →
+  `TestResolveModelClient_*`), 16 dodanych (nowe pakiety `connector`/`providers`
+  + jeden nowy przypadek `resolveModelClient` + dwa testy izolacji fallbacków),
+  0 usunięć bez odpowiednika.
 
 ## Etap 6 — frontend jako sterownik (2d)
 
