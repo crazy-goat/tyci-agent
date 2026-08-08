@@ -732,8 +732,19 @@ budowanie tej infrastruktury tutaj byłoby robieniem etapu 7 w commicie etapu 6.
 
 ## Etap 7 — connectory testowe (1d)
 
-- [ ] `connector/connectortest/fake.go` — skryptowana sekwencja `stream.Event`
-- [ ] `flaky.go` — dekorator wstrzykujący 429 / 500 / EOF w środku streamu
+Etap rozbity na 7A (zrobione), 7B i 7C — podział opisany pod listą.
+
+- [x] `connector/connectortest/fake.go` — skryptowana sekwencja `stream.Event`.
+      Konfiguracja literałem struktury (jak `conductor.Options`, `agent.Config`,
+      `connector.Endpoint`), tryby: `Turns`, `OnExhausted`, `StreamErr`,
+      `BlockUntilCancel`. `Fake` świadomie NIE implementuje
+      `connector.HTTPInjector` — cichy fallback tego interfejsu jest testowany
+      właśnie klientami, które go nie mają; pilnuje tego osobny test.
+- [x] `flaky.go` — dekorator wstrzykujący 429 / 500 / EOF w środku streamu.
+      Awarie per-wywołanie (`Failures[n]`, `nil` = przejście do owiniętego
+      klienta), dwa miejsca awarii: błąd z samego `Stream` (ścieżka fallbacku)
+      i `stream.StreamError` po N eventach (ścieżka retry). Konstruktory błędów
+      są związane z realnym konsumentem testem na `api.IsRetryable`.
 - [ ] `record.go` / `replay.go` — nagrywanie do JSONL, odtwarzanie w CI bez klucza API
 - [ ] przepisać testy retry/fallback z `httptest` na `Flaky`
 - [ ] zastąpić `mockProvider` z `agent/agent_test.go` przez `Fake`
@@ -743,19 +754,53 @@ budowanie tej infrastruktury tutaj byłoby robieniem etapu 7 w commicie etapu 6.
       `t.Parallel()`, ale to bezpieczeństwo z przypadku. Connector testowy
       wstrzyknięty przez `Deps.HTTP` pokrywa ten sam przypadek bez globalu.
 
+#### Co zrobiło 7A
+
+Pakiet `connector/connectortest` (`Fake` + `Flaky`, z własnymi testami) i trzej
+pierwsi konsumenci przepięci od razu, żeby API nie powstało w próżni:
+`conductor/conductor_test.go` (lokalny `fakeClient` usunięty),
+`tools/subagent_test.go`, `providers/providers_test.go`. Z 16 ręcznie pisanych
+atrap `connector.ModelClient` zostało 13 (11 w `agent/`, 2 w
+`main_resolve_test.go`).
+
+#### Co zostało na 7B
+
+- 11 atrap w `agent/` (`mockProvider`, `mockToolProvider`, `mockFailingProvider`,
+  `mockTextProvider`, `blockingProvider`, `alwaysToolProvider`, trzy
+  `planGuard*Provider`, `counterProvider`, `countingTextProvider`). Uwaga na
+  `Usage` w `Finish`: atrapy różnią się liczbami i testy na nie asertują —
+  różnica ma zostać jawna w `Turns` w miejscu wywołania.
+- `main_resolve_test.go` — `bareModelClient` i `recordingClient`. To NIE jest
+  mechaniczna podmiana: `bareModelClient` istnieje po to, żeby *nie*
+  implementować `connector.HTTPInjector`, a `recordingClient` po to, żeby go
+  implementować i zapamiętywać wstrzyknięte klienty HTTP. `Fake` świadomie nie
+  ma `WithHTTP`, więc `recordingClient` potrzebuje osobnego typu albo zostaje.
+- przepisanie testów retry/fallback z `httptest` na `Flaky`.
+- wycofanie `api.defaultClientProvider`.
+
+#### Co zostało na 7C
+
+- `record.go` / `replay.go` (JSONL) — świadomie odłożone, nie było potrzebne do
+  przepięcia atrap.
+- zabezpieczenie `Conductor` przed równoległym `Submit` + test pod `-race`.
+- martwy `if` w `tui_mode.go:277-279`, martwa stała `subagentDefaultMaxIterations`
+  w `main.go:130`.
+
 ### Do poprawy — wyszło przy etapie 6
 
 Pierwsze dwie pozycje to wprost zamówienie na etap 7: bez nich `Fake` nie pokryje
 tego, co dziś pokrywają lokalne atrapy, i przepisanie testów byłoby regresem
 pokrycia. Reszta to dług znaleziony po drodze i świadomie nietknięty.
 
-- [ ] **`Fake` musi umieć wisieć do anulowania, nie tylko odgrywać skrypt.**
+- [x] **`Fake` musi umieć wisieć do anulowania, nie tylko odgrywać skrypt.**
       Atrapa w `conductor/conductor_test.go:39-58` ma tryb `blockUntilCancel`:
       `Stream` ignoruje skrypt, blokuje się i zgłasza anulowanie jako
       `stream.StreamError{ctx.Err()}` — czyli tak, jak robią to prawdziwe
       connectory. Naiwny `Fake` odgrywający tylko sekwencję eventów tego nie ma,
       a bez tego nie da się przetestować `Interrupt()` ani żadnej ścieżki ESC.
       Zaprojektować to od razu, nie doklejać potem.
+      Zrobione w 7A jako pole `Fake.BlockUntilCancel`; ten sam tryb obsługuje
+      `blockingProvider` z `agent/agent_test.go:1155-1172`, który znika w 7B.
 - [ ] **`Conductor` nie pilnuje równoległego `Submit`.** Kontrakt „wszystkie
       metody z gorutyny prowadzącej rozmowę, wyjątkiem jest `Interrupt`" jest
       komentarzem (`conductor/conductor.go:89-91`), nie mechanizmem. Dziś żaden
