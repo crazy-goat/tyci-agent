@@ -160,7 +160,8 @@ func (b bareModelClient) Stream(context.Context, connector.Request) (<-chan stre
 
 func TestWithIsolatedPool_PassesThroughNonInjector(t *testing.T) {
 	mc := bareModelClient{name: "not-an-injector"}
-	if got := withIsolatedPool(mc); got != connector.ModelClient(mc) {
+	got, _ := withIsolatedPool(mc, nil)
+	if got != connector.ModelClient(mc) {
 		t.Errorf("withIsolatedPool replaced a non-injector ModelClient: %v", got)
 	}
 }
@@ -187,8 +188,8 @@ func TestWithIsolatedPool_FreshClientPerCall(t *testing.T) {
 	inj := &recordingInjector{fakeProvider: fakeProvider{name: "injector"}}
 	mc := providers.Client(inj, "m")
 
-	withIsolatedPool(mc)
-	withIsolatedPool(mc)
+	withIsolatedPool(mc, nil)
+	withIsolatedPool(mc, nil)
 
 	if len(inj.got) != 2 {
 		t.Fatalf("WithHTTP called %d times, want 2", len(inj.got))
@@ -206,7 +207,7 @@ func TestWithIsolatedPool_FreshClientPerCall(t *testing.T) {
 func TestWithIsolatedPool_TransportSettings(t *testing.T) {
 	inj := &recordingInjector{fakeProvider: fakeProvider{name: "injector"}}
 	mc := providers.Client(inj, "m")
-	withIsolatedPool(mc)
+	withIsolatedPool(mc, nil)
 
 	cl, ok := inj.got[0].(*http.Client)
 	if !ok {
@@ -240,8 +241,8 @@ func TestWithIsolatedPool_RealProviderGetsCopy(t *testing.T) {
 	}, providers.Deps{})
 	mc := providers.Client(base, "m")
 
-	a := withIsolatedPool(mc)
-	b := withIsolatedPool(mc)
+	a, _ := withIsolatedPool(mc, nil)
+	b, _ := withIsolatedPool(mc, nil)
 
 	if a == mc || b == mc {
 		t.Error("withIsolatedPool returned the shared client instead of a copy")
@@ -251,5 +252,67 @@ func TestWithIsolatedPool_RealProviderGetsCopy(t *testing.T) {
 	}
 	if a.Provider() != "real" || b.Provider() != "real" {
 		t.Error("the copies lost the provider identity")
+	}
+}
+
+// TestWithIsolatedPool_WrapsFallbacksWithPrimary is the Etap 5 acceptance
+// criterion: a child's fallback client must be bound to the SAME isolated
+// pool as its primary — not left on the shared default client. Before this
+// stage the agent resolved fallbacks itself, mid-run, from the global
+// catalog — invisibly to this wrapper — so a fallback triggered inside a
+// child run would have silently escaped isolation. Now the caller resolves
+// every fallback up front and can wrap them together with the primary.
+func TestWithIsolatedPool_WrapsFallbacksWithPrimary(t *testing.T) {
+	primaryInj := &recordingInjector{fakeProvider: fakeProvider{name: "primary"}}
+	fb1Inj := &recordingInjector{fakeProvider: fakeProvider{name: "fb1"}}
+	fb2Inj := &recordingInjector{fakeProvider: fakeProvider{name: "fb2"}}
+
+	primary := providers.Client(primaryInj, "m")
+	fallbacks := []connector.ModelClient{
+		providers.Client(fb1Inj, "m"),
+		providers.Client(fb2Inj, "m"),
+	}
+
+	boundPrimary, boundFallbacks := withIsolatedPool(primary, fallbacks)
+
+	if len(boundFallbacks) != 2 {
+		t.Fatalf("expected 2 bound fallbacks, got %d", len(boundFallbacks))
+	}
+	if len(primaryInj.got) != 1 || len(fb1Inj.got) != 1 || len(fb2Inj.got) != 1 {
+		t.Fatalf("expected WithHTTP called once on each of primary/fb1/fb2, got %d/%d/%d",
+			len(primaryInj.got), len(fb1Inj.got), len(fb2Inj.got))
+	}
+
+	pool := primaryInj.got[0]
+	if pool == nil {
+		t.Fatal("primary got a nil client — no isolation")
+	}
+	// The whole point: the fallback must NOT be left on the shared default
+	// client. It must get a real, private pool — and the SAME one the
+	// primary got, since within one child run they are never used
+	// concurrently.
+	if fb1Inj.got[0] != pool || fb2Inj.got[0] != pool {
+		t.Error("fallback clients did not get the primary's isolated pool — they would fall back to the shared default client")
+	}
+	// And it must still be the same one exposed via the returned ModelClients.
+	if boundPrimary == nil {
+		t.Fatal("withIsolatedPool returned a nil primary")
+	}
+}
+
+// A second call (a second, parallel child) must mint its own pool, distinct
+// from the first child's — fallback isolation must not accidentally start
+// sharing pools ACROSS children.
+func TestWithIsolatedPool_FallbackPoolDistinctAcrossChildren(t *testing.T) {
+	fbA := &recordingInjector{fakeProvider: fakeProvider{name: "fbA"}}
+	fbB := &recordingInjector{fakeProvider: fakeProvider{name: "fbB"}}
+
+	_, _ = withIsolatedPool(providers.Client(&recordingInjector{fakeProvider: fakeProvider{name: "p1"}}, "m"),
+		[]connector.ModelClient{providers.Client(fbA, "m")})
+	_, _ = withIsolatedPool(providers.Client(&recordingInjector{fakeProvider: fakeProvider{name: "p2"}}, "m"),
+		[]connector.ModelClient{providers.Client(fbB, "m")})
+
+	if fbA.got[0] == fbB.got[0] {
+		t.Error("two different children's fallback clients shared one connection pool")
 	}
 }

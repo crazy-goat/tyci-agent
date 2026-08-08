@@ -64,35 +64,55 @@ func resolveModelClient(ctx context.Context, model string) (connector.ModelClien
 	return providers.Client(prov, mName), nil
 }
 
-// withIsolatedPool binds mc to an HTTP client with its own connection pool,
-// so a child agent shares nothing with its parent: parent cancellation cannot
-// leak into subagent requests and vice versa.
+// withIsolatedPool binds mc, and every entry in fallbacks, to ONE HTTP client
+// with its own connection pool, so a child agent shares nothing with its
+// parent: parent cancellation cannot leak into subagent requests and vice
+// versa. Primary and fallback share the pool because within a single child
+// run they are never used concurrently — agent.Run tries them one after
+// another, never in parallel.
 //
 // This used to live in tools/subagent.go, which stuffed the client into the
 // child's context under an api-package context key. The transport is not
 // something the tools package should know about, and the api layer no longer
-// reads the context at all; a provider now carries its own client instead.
+// reads the context at all; a client now carries its own transport instead.
 //
-// Granularity is unchanged: agentRunner.run is entered exactly once per
-// tools.SubAgentRunner.RunTask/RunTaskWithSystem call, i.e. once per
+// Etap 5 (docs/architecture-refactor.md) closed a latent gap here: before the
+// caller resolved fallbacks, agent/fallback.go pulled a fresh provider from
+// the global catalog mid-run, invisibly to this wrapper — a fallback
+// triggered inside a child run would have silently fallen back to the shared
+// api.defaultClient instead of the child's isolated pool. Now that the
+// caller resolves every fallback up front, it can wrap them together with
+// the primary in the same call, so the gap cannot reopen without also
+// changing this function.
+//
+// Granularity is otherwise unchanged: agentRunner.run is entered exactly once
+// per tools.SubAgentRunner.RunTask/RunTaskWithSystem call, i.e. once per
 // runSingleTask, so a parallel subagent(tasks=[a,b,c]) still creates three
 // pools — one per child.
 //
 // A ModelClient that does not implement connector.HTTPInjector (every fake in
 // the test suite) is returned untouched and keeps today's "no isolation"
 // behaviour.
-func withIsolatedPool(mc connector.ModelClient) connector.ModelClient {
-	inj, ok := mc.(connector.HTTPInjector)
-	if !ok {
-		return mc
-	}
-	return inj.WithHTTP(&http.Client{
+func withIsolatedPool(mc connector.ModelClient, fallbacks []connector.ModelClient) (connector.ModelClient, []connector.ModelClient) {
+	pool := &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:        2,
 			MaxIdleConnsPerHost: 1,
 			IdleConnTimeout:     30 * time.Second,
 		},
-	})
+	}
+	bind := func(c connector.ModelClient) connector.ModelClient {
+		inj, ok := c.(connector.HTTPInjector)
+		if !ok {
+			return c
+		}
+		return inj.WithHTTP(pool)
+	}
+	boundFallbacks := make([]connector.ModelClient, len(fallbacks))
+	for i, fb := range fallbacks {
+		boundFallbacks[i] = bind(fb)
+	}
+	return bind(mc), boundFallbacks
 }
 
 // subagentDefaultMaxIterations is the default cap on a subagent's tool-call
@@ -125,7 +145,14 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	if err != nil {
 		return "", err
 	}
-	mc = withIsolatedPool(mc)
+	// No fallback models are resolved for subagents today — a named agent's
+	// fallback config is not threaded through the SubAgentRunner interface,
+	// so this is always nil in production. It still goes through the same
+	// wrapper as the primary client so that isolation cannot regress the
+	// moment fallback support is added here (see withIsolatedPool's doc
+	// comment and TestWithIsolatedPool_WrapsFallbacksWithPrimary).
+	var fallbacks []connector.ModelClient
+	mc, fallbacks = withIsolatedPool(mc, fallbacks)
 
 	// Resolve the iteration cap: explicit parent override wins; otherwise the
 	// (unlimited) default. Tools.ResolveMaxIter centralizes nil/0/negative
@@ -149,6 +176,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		Debug:         false,
 		Tools:         &subagentToolRunner{},
 		Schema:        tools.GetSubagentToolsSchemaJSON(),
+		Fallbacks:     fallbacks,
 	}
 
 	_, err = agent.Run(ctx, mc, c, &msgs, cfg)
