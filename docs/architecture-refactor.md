@@ -359,7 +359,7 @@ tego usprawiedliwienia co `Model` — nie czyta go nikt, ani agent, ani wywołuj
   + jeden nowy przypadek `resolveModelClient` + dwa testy izolacji fallbacków),
   0 usunięć bez odpowiednika.
 
-## Etap 6 — frontend jako sterownik (2d)
+## Etap 6 — frontend jako sterownik (2d) — ZROBIONE
 
 **Rozstrzygnięte PRZED tym etapem:** `Provider.FreeModels()` było w produkcji
 martwe (jedyna nietestowa implementacja zwracała `nil` bezwarunkowo).
@@ -1033,8 +1033,8 @@ wchodzą w okolice refactoru.
   `go build -tags ...` przechodzi, więc `make minimal` działa; problem dotyczył tylko
   uruchamiania testów z tagami. Naprawione w etapie 3 (helpery przeniesione do
   nieotagowanego pliku, testy gemini wydzielone pod `!nogemini`).
-- [ ] `gofmt` całego repo zrobiony w osobnym commicie (8caa1ff) — przed etapem 2.
-- [ ] **`IsConfigured()` powtarza lookup niezmienny w pętli.** `p.authSource().Key(p.name)`
+- [x] `gofmt` całego repo zrobiony w osobnym commicie (8caa1ff) — przed etapem 2.
+- [x] **`IsConfigured()` powtarza lookup niezmienny w pętli.** `p.authSource().Key(p.name)`
   nie zależy od `e`, a stoi w `for _, e := range p.entries` — dla providera bez klucza
   wykonuje się tyle razy, ile ma modeli (617 dla `nano-gpt`). `connect.GetKey` →
   `LoadAuth()` czyta i parsuje `auth.json` przy każdym wywołaniu, bez cache.
@@ -1044,8 +1044,45 @@ wchodzą w okolice refactoru.
   uczynił niezmienność widoczną. Naprawa: wyciągnąć wywołanie przed pętlę + dekorator
   z cache na `AuthSource` (to jest właśnie miejsce, w którym takie coś należy).
   Nie pilne: 11,8 ms nikogo nie boli, page cache to amortyzuje.
-- [ ] **`IsConfigured` sprawdza token z URI surowo, `Stream` go rozwiązuje.** Wpis
+  **Zrobione:** lookup przeniesiony pod pętlę (`providers/config.go`,
+  `dynamicProvider.IsConfigured`) — każdy wpis z tokenem w URI wciąż zwiera
+  obwód bez żadnego I/O (żadnej zmiany w tej gałęzi), a providery bez tokenu
+  czytają `auth.json` najwyżej raz na wywołanie, nie raz na model. Test ze
+  szpiegowanym `AuthSource` (`TestDynamicProviderIsConfigured_authSourceCalledOncePerProvider`,
+  `..._uriTokenShortCircuitsBeforeAuthSource`) przypina obie właściwości i
+  celowo PADA na starej pętli (zweryfikowane mutation-checkiem: licznik 3
+  wywołań zamiast 1). Commit `d2cd0f2`.
+  **Świadomie NIE zrobione:** dekorator z cache na `AuthSource`. Po tej
+  naprawie koszt to O(providerzy) — ~128 odczytów zamiast ~3800 (11,8 ms →
+  ~0,4 ms) na realnym katalogu. Cache zbiłby to do jednego odczytu na cały
+  proces, ale za cenę realnego bug-a: długo żyjący REPL/TUI przestałby widzieć
+  klucz dodany przez `tyci provider auth set` z drugiego terminala, dopóki
+  proces by nie padł. 0,4 ms nie jest wart staleness bug — rozstrzygnięcie, nie
+  zaległość.
+- [x] **`IsConfigured` sprawdza token z URI surowo, `Stream` go rozwiązuje.** Wpis
   z nierozwiązywalnym `$FOO` pokazuje się jako skonfigurowany i wywala się dopiero
   przy żądaniu. Asymetria zastana, świadomie zachowana w etapie 4 (inaczej
   `provider list` zacząłby ukrywać providerów, których użytkownik skonfigurował) —
   do rozstrzygnięcia jako konwencja, nie do „naprawienia" po cichu.
+  **Zrobione:** werdykt `IsConfigured()` zostaje DOKŁADNIE taki jak wcześniej
+  (żaden istniejący test się nie zmienił) — asymetria jest już konwencją, nie
+  bugiem. Dodany trzeci, diagnostyczny kanał: `Provider.ConfigWarnings() []string`
+  nazywa zmienne środowiskowe, do których odwołują się wpisy URI providera i
+  które są puste/nieustawione (zdeduplikowane, posortowane —
+  `dynamicProvider.ConfigWarnings`, `providers/config.go`). `provider list`
+  drukuje je pod providerem bez zmiany `✓`/`(not configured)`
+  (`commands.go`). `resolveAPIKey` nazywa brakującą zmienną w komunikacie
+  błędu, gdy `uriKey` jest referencją środowiskową (`connect.LooksLikeEnvRef`);
+  ścieżka bez referencji zachowuje dotychczasowy komunikat co do znaku
+  (`TestDynamicProvider_ResolveAPIKeyErrorMessage`, niezmieniony). Dwie atrapy
+  `Provider` w testach (`fakeProvider`, `catalogStub`) dostały jednoliniowe
+  `ConfigWarnings` zwracające `nil` — sprawdzone grepem, że nie ma czwartej
+  implementacji. Commit `4b59f9a`.
+  **Świadomie NIE zrobione:** `ConfigWarnings` widzi tylko referencje z URI, nie
+  z `auth.json` — `AuthFile.Key` zwraca goły string po `connect.ResolveToken`,
+  więc nierozwiązana referencja zapisana ręcznie w `auth.json` jest z tej
+  strony nieodróżnialna od braku klucza. W praktyce ta ścieżka wymaga ręcznej
+  edycji pliku, bo `provider auth set` (`commands.go:760`) odrzuca
+  nierozwiązywalne `$FOO` już przy zapisie. Pokrycie tego wymagałoby zmiany
+  interfejsu `AuthSource`, który dziś zwraca goły `string` — poza zakresem tej
+  naprawy.
