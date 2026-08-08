@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -9,17 +10,20 @@ import (
 	"testing"
 
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/stream"
 )
 
-// fakeModelClient is a minimal connector.ModelClient for tests that only need
-// to set a default model in context — it never actually streams.
-type fakeModelClient struct{ model string }
-
-func (f fakeModelClient) Provider() string { return "test-provider" }
-func (f fakeModelClient) Model() string    { return f.model }
-func (f fakeModelClient) Stream(context.Context, connector.Request) (<-chan stream.Event, error) {
-	return nil, fmt.Errorf("fakeModelClient does not stream")
+// fakeModelClient returns the minimal connector.ModelClient these tests need:
+// an identity to put in the context, and a Stream that refuses to run. The
+// subagent path under test reads the default model off the context and never
+// sends a request, so a client that streamed would only hide a mistake.
+func fakeModelClient(model string) *connectortest.Fake {
+	return &connectortest.Fake{
+		ProviderName: "test-provider",
+		ModelName:    model,
+		StreamErr:    errors.New("fakeModelClient does not stream"),
+	}
 }
 
 // mockRunner implements SubAgentRunner for testing
@@ -684,7 +688,7 @@ func TestRunSingleTask_TruncatedFlagReachesToolResult(t *testing.T) {
 		},
 	})
 
-	ctx := connector.WithModelClient(context.Background(), fakeModelClient{model: "test/model"})
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
 	res := RunTool(ctx, "subagent", map[string]any{"task": "x"})
 	if !res.Success {
 		t.Fatalf("expected success on partial truncation, got error: %q", res.Error)
@@ -711,7 +715,7 @@ func TestRunSingleTask_CleanSuccessNotTruncated(t *testing.T) {
 		},
 	})
 
-	ctx := connector.WithModelClient(context.Background(), fakeModelClient{model: "test/model"})
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
 	res := RunTool(ctx, "subagent", map[string]any{"task": "x"})
 	if !res.Success {
 		t.Fatalf("expected success, got error: %q", res.Error)

@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/stream"
+	"github.com/decodo/tyci/connector/connectortest"
 )
 
 // =============================================================================
@@ -303,17 +302,14 @@ func (s *catalogStub) IsConfigured() bool { return s.configured }
 func (s *catalogStub) Models() []string   { return s.models }
 
 // Client returns a client that carries an identity and nothing else — the
-// catalog tests never send a request.
+// catalog tests never send a request, and StreamErr makes sure a test that
+// started sending one would say so instead of quietly succeeding.
 func (s *catalogStub) Client(model string) connector.ModelClient {
-	return stubClient{name: s.name, model: model}
-}
-
-type stubClient struct{ name, model string }
-
-func (c stubClient) Provider() string { return c.name }
-func (c stubClient) Model() string    { return c.model }
-func (c stubClient) Stream(context.Context, connector.Request) (<-chan stream.Event, error) {
-	return nil, errors.New("stubClient does not stream")
+	return &connectortest.Fake{
+		ProviderName: s.name,
+		ModelName:    model,
+		StreamErr:    errors.New("catalogStub client does not stream"),
+	}
 }
 
 // A Catalog is a value: two of them share nothing, so a test that registers a
