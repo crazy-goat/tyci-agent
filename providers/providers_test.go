@@ -297,9 +297,10 @@ type catalogStub struct {
 	models     []string
 }
 
-func (s *catalogStub) Name() string       { return s.name }
-func (s *catalogStub) IsConfigured() bool { return s.configured }
-func (s *catalogStub) Models() []string   { return s.models }
+func (s *catalogStub) Name() string             { return s.name }
+func (s *catalogStub) IsConfigured() bool       { return s.configured }
+func (s *catalogStub) Models() []string         { return s.models }
+func (s *catalogStub) ConfigWarnings() []string { return nil }
 
 // Client returns a client that carries an identity and nothing else — the
 // catalog tests never send a request, and StreamErr makes sure a test that

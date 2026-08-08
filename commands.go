@@ -450,6 +450,14 @@ var providerListCmd = &cobra.Command{
 				fmt.Fprintf(os.Stdout, "  %s (not configured)\n", p.Name())
 			}
 
+			// A warning does not change the ✓/✗ above — see ConfigWarnings —
+			// it flags a credential that IS present but looks unresolvable,
+			// so the user finds out here instead of from a bare "no API key"
+			// error at request time.
+			for _, envVar := range p.ConfigWarnings() {
+				fmt.Fprintf(os.Stdout, "    warning: URI references $%s, but env var %s is empty or unset\n", envVar, envVar)
+			}
+
 			if showModels {
 				models := p.Models()
 

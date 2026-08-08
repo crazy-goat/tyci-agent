@@ -535,6 +535,135 @@ func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 // =============================================================================
+// ConfigWarnings — unresolvable "$FOO" in a URI, without flipping IsConfigured
+// =============================================================================
+//
+// Problem: IsConfigured checks the URI token RAW (see the comment on
+// dynamicProvider.IsConfigured) — an entry carrying an unresolvable "$FOO"
+// still counts as configured, so `provider list` shows ✓, the TUI offers the
+// model, and catalogResolver{requireConfigured:true} lets it through. The
+// failure then surfaces only at request time, from resolveAPIKey, with a
+// message that never mentions "$FOO" — the user has a key, it just didn't
+// resolve, but the error reads as if there is no key at all.
+//
+// ConfigWarnings is the deliberately unverified boolean's second channel: it
+// names the unresolved env var without changing IsConfigured's verdict.
+
+// Pins the decision NOT to make IsConfigured resolve the URI token: an
+// unresolvable "$FOO" in a URI must keep reporting true. Flipping this would
+// make such a provider silently vanish from `provider list`, from
+// Catalog.FindModel's bare-name search, and from catalogResolver — a silent
+// disappearance is worse than the delayed, now-informative error.
+func TestDynamicProviderIsConfigured_uriEnvRefUnresolved_staysConfigured(t *testing.T) {
+	_ = os.Unsetenv("TYCI_TEST_CONFIGWARN_UNSET")
+	p := &dynamicProvider{
+		name:    "envref-prov",
+		entries: []ModelEntry{{Name: "m", URI: "openai://m@$TYCI_TEST_CONFIGWARN_UNSET@api.example.invalid"}},
+	}
+	if !p.IsConfigured() {
+		t.Error("IsConfigured() = false, want true: an unresolvable $VAR in the URI must NOT downgrade the verdict")
+	}
+}
+
+// A single unresolved env var reference yields exactly that variable's name.
+func TestConfigWarnings_unresolvedEnvRef(t *testing.T) {
+	_ = os.Unsetenv("TYCI_TEST_CONFIGWARN_FOO")
+	p := &dynamicProvider{
+		name:    "envref-prov",
+		entries: []ModelEntry{{Name: "m", URI: "openai://m@$TYCI_TEST_CONFIGWARN_FOO@api.example.invalid"}},
+	}
+	got := p.ConfigWarnings()
+	want := []string{"TYCI_TEST_CONFIGWARN_FOO"}
+	if len(got) != len(want) || (len(got) > 0 && got[0] != want[0]) {
+		t.Errorf("ConfigWarnings() = %v, want %v", got, want)
+	}
+}
+
+// A resolvable env var reference reports nothing.
+func TestConfigWarnings_resolvedEnvRef_nil(t *testing.T) {
+	t.Setenv("TYCI_TEST_CONFIGWARN_RESOLVED", "sk-real-key")
+	p := &dynamicProvider{
+		name:    "envref-prov",
+		entries: []ModelEntry{{Name: "m", URI: "openai://m@$TYCI_TEST_CONFIGWARN_RESOLVED@api.example.invalid"}},
+	}
+	if got := p.ConfigWarnings(); got != nil {
+		t.Errorf("ConfigWarnings() = %v, want nil", got)
+	}
+}
+
+// Two entries referencing the SAME unresolved var must collapse to one
+// element — 617 models sharing one env var must not become 617 warning lines.
+func TestConfigWarnings_deduplicatesSameVar(t *testing.T) {
+	_ = os.Unsetenv("TYCI_TEST_CONFIGWARN_DUP")
+	p := &dynamicProvider{
+		name: "envref-prov",
+		entries: []ModelEntry{
+			{Name: "m1", URI: "openai://m1@$TYCI_TEST_CONFIGWARN_DUP@api.example.invalid"},
+			{Name: "m2", URI: "openai://m2@$TYCI_TEST_CONFIGWARN_DUP@api.example.invalid"},
+		},
+	}
+	got := p.ConfigWarnings()
+	if len(got) != 1 || got[0] != "TYCI_TEST_CONFIGWARN_DUP" {
+		t.Errorf("ConfigWarnings() = %v, want exactly one entry %q", got, "TYCI_TEST_CONFIGWARN_DUP")
+	}
+}
+
+// No env-var references anywhere in the catalog reports nothing, whether the
+// provider has a plain token, no token, or no entries at all.
+func TestConfigWarnings_noEnvRefs_nil(t *testing.T) {
+	p := &dynamicProvider{
+		name: "plain-prov",
+		entries: []ModelEntry{
+			{Name: "m1", URI: "openai://m1@sk-plain-token@api.example.invalid"},
+			{Name: "m2", URI: "openai://m2@api.example.invalid"},
+		},
+	}
+	if got := p.ConfigWarnings(); got != nil {
+		t.Errorf("ConfigWarnings() = %v, want nil", got)
+	}
+}
+
+// resolveAPIKey / Stream must name the missing env var, not just say "no API
+// key" — see TestDynamicProvider_ResolveAPIKeyErrorMessage for the unchanged
+// message on the path with no env reference at all.
+func TestDynamicProvider_ResolveAPIKeyErrorMessage_NamesUnresolvedEnvRef(t *testing.T) {
+	t.Setenv("TYCI_TEST_RESOLVEKEY_FOO", "") // present in the shell, but empty
+	p := &dynamicProvider{name: "envref-prov", auth: &stubAuth{}}
+
+	_, err := p.resolveAPIKey("$TYCI_TEST_RESOLVEKEY_FOO")
+	if err == nil {
+		t.Fatal("resolveAPIKey returned no error with an unresolvable $VAR and no other credential")
+	}
+	want := `envref-prov is set to "$TYCI_TEST_RESOLVEKEY_FOO" but env var TYCI_TEST_RESOLVEKEY_FOO is empty or unset`
+	if err.Error() != want {
+		t.Errorf("error = %q,\nwant    %q", err.Error(), want)
+	}
+	if strings.Contains(err.Error(), "no API key for") {
+		t.Errorf("error still uses the generic 'no API key' phrasing: %q", err.Error())
+	}
+}
+
+// End-to-end: Stream surfaces the same named error, exercised via a URI token
+// instead of calling resolveAPIKey directly. resolveAPIKey runs before the
+// streaming goroutine is spawned, so the error comes back synchronously.
+func TestDynamicProviderStream_unresolvedURIEnvRef_namesVar(t *testing.T) {
+	_ = os.Unsetenv("TYCI_TEST_STREAM_ENVREF_FOO")
+	p := &dynamicProvider{
+		name:    "stream-envref-prov",
+		entries: []ModelEntry{{Name: "m", URI: "openai://m@$TYCI_TEST_STREAM_ENVREF_FOO@api.example.invalid"}},
+		auth:    &stubAuth{},
+	}
+
+	_, err := p.Stream(context.Background(), Request{Model: "m"})
+	if err == nil {
+		t.Fatal("Stream() returned no error; want one naming the unresolved env var")
+	}
+	if !strings.Contains(err.Error(), "TYCI_TEST_STREAM_ENVREF_FOO") {
+		t.Errorf("Stream() error = %q, want it to name TYCI_TEST_STREAM_ENVREF_FOO", err.Error())
+	}
+}
+
+// =============================================================================
 // kindFor — build-tag exclusions must not fall back to another protocol
 // =============================================================================
 

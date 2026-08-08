@@ -20,9 +20,10 @@ type fakeProvider struct {
 	models     []string
 }
 
-func (f *fakeProvider) Name() string       { return f.name }
-func (f *fakeProvider) IsConfigured() bool { return f.configured }
-func (f *fakeProvider) Models() []string   { return f.models }
+func (f *fakeProvider) Name() string             { return f.name }
+func (f *fakeProvider) IsConfigured() bool       { return f.configured }
+func (f *fakeProvider) Models() []string         { return f.models }
+func (f *fakeProvider) ConfigWarnings() []string { return nil }
 
 // Client mints the fake's own ModelClient. A fake provider owning its client
 // is the point of Provider.Client being a method: the test decides what its

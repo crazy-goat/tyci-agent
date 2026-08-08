@@ -131,6 +131,20 @@ type Provider interface {
 	// passed an unlisted name straight through, and the "model not found in
 	// provider" error surfaces at request time.
 	Client(model string) connector.ModelClient
+
+	// ConfigWarnings reports credential problems that IsConfigured deliberately
+	// does NOT report as "not configured" — today, a URI token that looks like
+	// "$FOO" but does not resolve through the environment. A single bool
+	// cannot carry both "is there a usable credential" (what routing needs:
+	// FindModel, catalogResolver, `provider list`'s ✓/✗) and "is something
+	// about this credential suspicious" (what a human needs to know to fix a
+	// silent 401) — collapsing the second into the first would make
+	// IsConfigured's verdict flip out from under callers that only asked the
+	// first question. IsConfigured's boolean stays exactly as it is today (see
+	// the comment on dynamicProvider.IsConfigured); this is the second,
+	// additive channel for the diagnostic that boolean cannot express.
+	// Nil means nothing to report.
+	ConfigWarnings() []string
 }
 
 var DefaultRetryConfig = api.RetryConfig{MaxRetries: 5, BaseBackoff: 4, MaxBackoff: 128}

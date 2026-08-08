@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/decodo/tyci/connector"
@@ -297,6 +298,47 @@ func (p *dynamicProvider) IsConfigured() bool {
 	return p.authSource().Key(p.name) != ""
 }
 
+// ConfigWarnings reports URI tokens that look like "$FOO" but do not resolve
+// through the environment right now. IsConfigured deliberately does not
+// downgrade such an entry to "not configured" (see the comment there); this
+// is where the same fact surfaces without changing that verdict.
+//
+// Only URI tokens are inspected. A literal "$FOO" stored in auth.json via
+// hand-editing the file (rather than `provider auth set`, which already
+// rejects an unresolvable "$FOO" at write time) would be an equally silent
+// footgun, but AuthFile.Key only returns the resolved value — by the time it
+// reaches here, an unresolved auth.json reference is indistinguishable from
+// "no key at all". Surfacing that too would require AuthSource itself to stop
+// returning a bare string, which is out of scope here.
+//
+// The result is deduplicated (many model entries commonly share one env var)
+// and sorted (so `provider list` output — and this method — never flickers
+// between runs due to map/slice iteration order).
+func (p *dynamicProvider) ConfigWarnings() []string {
+	seen := make(map[string]bool)
+	var vars []string
+	for _, e := range p.entries {
+		_, token, _, _, err := parseURI(e.URI)
+		if err != nil || !connect.LooksLikeEnvRef(token) {
+			continue
+		}
+		if connect.ResolveToken(token) != "" {
+			continue
+		}
+		name := strings.TrimPrefix(token, "$")
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		vars = append(vars, name)
+	}
+	if vars == nil {
+		return nil
+	}
+	sort.Strings(vars)
+	return vars
+}
+
 func (p *dynamicProvider) Models() []string {
 	var models []string
 	for _, e := range p.entries {
@@ -420,6 +462,13 @@ func uriOptions(uri string) map[string]string {
 func (p *dynamicProvider) resolveAPIKey(uriKey string) (string, error) {
 	if apiKey := (AuthChain{LiteralAuth(uriKey), p.authSource()}).Key(p.name); apiKey != "" {
 		return apiKey, nil
+	}
+	// uriKey looking like "$FOO" and failing to resolve is a DIFFERENT failure
+	// than "no credential configured at all" (ConfigWarnings already flagged
+	// it in `provider list`, before any request was sent) — name the variable
+	// instead of implying the user never set a key.
+	if connect.LooksLikeEnvRef(uriKey) {
+		return "", fmt.Errorf("%s is set to %q but env var %s is empty or unset", p.name, uriKey, strings.TrimPrefix(uriKey, "$"))
 	}
 	return "", fmt.Errorf("no API key for %q (set via 'tyci provider auth set', %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
 }
