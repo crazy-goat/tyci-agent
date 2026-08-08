@@ -15,7 +15,7 @@ package providers
 //   - the API token is embedded literally in the URI, so neither ~/.tyci/auth.json
 //     nor *_API_KEY environment variables are ever consulted,
 //   - parseURI hard-codes "https://"+host, so the fake server must speak TLS;
-//     the insecure client is injected through api.HTTPClientKey.
+//     the insecure client is injected through the provider's own Deps.HTTP.
 //
 // Regenerate with:
 //
@@ -36,7 +36,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/api"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -206,13 +205,9 @@ func TestWireGolden(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			ctx = context.WithValue(ctx, api.HTTPClientKey{}, client)
 
 			uri := fmt.Sprintf("%s://%s@%s@%s", tc.apiType, tc.model, tc.token, srv.Listener.Addr().String())
-			p := &dynamicProvider{
-				name:    "wiretest-" + tc.apiType,
-				entries: []ModelEntry{{Name: tc.model, URI: uri}},
-			}
+			p := NewProvider("wiretest-"+tc.apiType, []ModelEntry{{Name: tc.model, URI: uri}}, Deps{HTTP: client})
 
 			ch, err := p.Stream(ctx, dirtyRequest(tc.model))
 			if err != nil {

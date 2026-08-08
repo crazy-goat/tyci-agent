@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/api"
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
@@ -387,7 +386,7 @@ func TestDynamicProviderStream_authJSONLiteralEnvRef_resolvesAtRuntime(t *testin
 	captured := make(chan string, 1)
 	tr := &recordingTransport{captured: captured, inner: &http.Transport{}}
 	customClient := &http.Client{Transport: tr}
-	ctx := context.WithValue(context.Background(), api.HTTPClientKey{}, customClient)
+	ctx := context.Background()
 
 	// Verify the auth.json path that connect.AuthPath() resolves to.
 	authDir := filepath.Join(dir, ".tyci")
@@ -399,17 +398,16 @@ func TestDynamicProviderStream_authJSONLiteralEnvRef_resolvesAtRuntime(t *testin
 		t.Fatal(err)
 	}
 
-	p := &dynamicProvider{
-		name: "nexos",
-		entries: []ModelEntry{
-			// We use a non-routable host so the request will fail — we only
-			// care that the bearer token MIME-match the expected resolved value.
-			// dynProvider sends the request from a goroutine, then closes the
-			// channel; the goroutine will hit a connect error which surfaces
-			// as a stream.StreamError event.
-			{Name: "MiniMax M3", URI: "openai://MiniMax M3@@127.0.0.1:1"},
-		},
-	}
+	// The recording client is injected through the provider's own Deps.HTTP,
+	// which is the only injection path now that api.HTTPClientKey is gone.
+	p := NewProvider("nexos", []ModelEntry{
+		// We use a non-routable host so the request will fail — we only
+		// care that the bearer token MIME-match the expected resolved value.
+		// dynProvider sends the request from a goroutine, then closes the
+		// channel; the goroutine will hit a connect error which surfaces
+		// as a stream.StreamError event.
+		{Name: "MiniMax M3", URI: "openai://MiniMax M3@@127.0.0.1:1"},
+	}, Deps{HTTP: customClient})
 
 	ch, err := p.Stream(ctx, Request{Model: "MiniMax M3"})
 	if err != nil {
