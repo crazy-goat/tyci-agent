@@ -191,32 +191,46 @@ func TestChatUsage_UnmarshalJSON_InvalidJSON(t *testing.T) {
 	}
 }
 
-// Test ClientFromContext
-func TestClientFromContext_DefaultClient(t *testing.T) {
-	ctx := context.Background()
-	client := ClientFromContext(ctx)
+// Test doer — the client-selection rule that replaced the api-package context
+// key. The three cases below are the same three guarantees the deleted
+// context-lookup tests asserted, restated against the injection path (a field
+// on the streamer, filled from connector.Endpoint.HTTP).
+
+// Same guarantee as the deleted default-client case: nothing injected ->
+// shared default client.
+func TestDoer_NoInjectionUsesDefaultClient(t *testing.T) {
+	client := doer(nil)
 	if client == nil {
-		t.Error("expected non-nil client")
+		t.Fatal("expected non-nil client")
 	}
-	if client != defaultClient {
+	if client != HTTPDoer(defaultClient) {
 		t.Error("expected default client")
 	}
 }
 
-func TestClientFromContext_OverrideFromContext(t *testing.T) {
+// Same guarantee as the deleted override case: an explicitly supplied client
+// is the one used.
+func TestDoer_InjectedClientWins(t *testing.T) {
 	customClient := &http.Client{}
-	ctx := context.WithValue(context.Background(), HTTPClientKey{}, customClient)
-	client := ClientFromContext(ctx)
-	if client != customClient {
-		t.Error("expected custom client from context")
+	if client := doer(customClient); client != HTTPDoer(customClient) {
+		t.Error("expected the injected client")
+	}
+	// Any HTTPDoer, not just *http.Client.
+	stub := &stubDoer{}
+	if client := doer(stub); client != HTTPDoer(stub) {
+		t.Error("expected the injected non-*http.Client doer")
 	}
 }
 
-func TestClientFromContext_NilClientInContext(t *testing.T) {
-	ctx := context.WithValue(context.Background(), HTTPClientKey{}, nil)
-	client := ClientFromContext(ctx)
-	if client != defaultClient {
-		t.Error("expected default client when nil in context")
+// Same guarantee as the deleted nil-in-context case: an explicit nil client
+// must be ignored in favour of the default, not used. The old context lookup
+// guarded this with `cl != nil`; doer keeps the guard so a typed-nil
+// *http.Client (easy to produce via providers.Deps{HTTP: someNilClientVar})
+// degrades instead of panicking inside net/http.
+func TestDoer_TypedNilClientUsesDefaultClient(t *testing.T) {
+	var nilClient *http.Client
+	if client := doer(nilClient); client != HTTPDoer(defaultClient) {
+		t.Error("expected default client when a typed-nil *http.Client is injected")
 	}
 }
 
@@ -676,22 +690,22 @@ data: {"choices":[{"finish_reason":"stop"}]}
 data: [DONE]
 `
 
-// The HTTP field is a real injection point AND it outranks the client carried
-// in the context. Both halves matter: the field is what connector.Endpoint
-// will use from Etap 4 on, and the context fallback is what keeps today's
-// subagent connection pool working (see doer()).
-func TestChatStreamer_HTTPFieldWinsOverContext(t *testing.T) {
-	var contextServerHits int
+// The HTTP field is a real injection point AND it outranks the shared default
+// client. Both halves matter: the field is what connector.Endpoint carries
+// (populated by providers.Deps.HTTP), and nothing else may quietly override it.
+func TestChatStreamer_HTTPFieldWinsOverDefaultClient(t *testing.T) {
+	// A perfectly usable server the default client could reach — the injected
+	// doer must mean it is never contacted.
+	var defaultClientHits int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		contextServerHits++
+		defaultClientHits++
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
 		_, _ = w.Write([]byte("data: [DONE]\n"))
 	}))
 	defer server.Close()
 
-	// A perfectly usable client in the context — it must be ignored.
-	ctx := context.WithValue(context.Background(), HTTPClientKey{}, server.Client())
+	ctx := context.Background()
 
 	doer := &stubDoer{body: stubSSE}
 	var texts []string
@@ -710,8 +724,8 @@ func TestChatStreamer_HTTPFieldWinsOverContext(t *testing.T) {
 	if doer.calls != 1 {
 		t.Fatalf("injected doer got %d requests, want 1", doer.calls)
 	}
-	if contextServerHits != 0 {
-		t.Errorf("client from context was used %d times despite the HTTP field", contextServerHits)
+	if defaultClientHits != 0 {
+		t.Errorf("the default client was used %d times despite the HTTP field", defaultClientHits)
 	}
 	if len(texts) != 1 || texts[0] != "from-field" {
 		t.Errorf("text deltas = %v, want [from-field] (response came from the wrong client)", texts)
@@ -725,24 +739,37 @@ func TestChatStreamer_HTTPFieldWinsOverContext(t *testing.T) {
 	}
 }
 
-// With HTTP left nil the context still decides — the Etap 4 fallback path.
-func TestChatStreamer_NilHTTPFallsBackToContext(t *testing.T) {
-	var contextServerHits int
+// With HTTP left nil the shared default client takes the request. This is the
+// production path for every provider built without its own Deps.HTTP, and it
+// is what api.defaultClient exists for now that the context lookup is gone.
+func TestChatStreamer_NilHTTPFallsBackToDefaultClient(t *testing.T) {
+	var hits int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		contextServerHits++
+		hits++
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
 		_, _ = w.Write([]byte("data: [DONE]\n"))
 	}))
 	defer server.Close()
 
-	ctx := context.WithValue(context.Background(), HTTPClientKey{}, server.Client())
-	emit := func(stream.Event) error { return nil }
+	// Point the default-client hook at a client that can reach the test server,
+	// then assert the nil-HTTP streamer really went through it.
+	orig := defaultClientProvider
+	used := 0
+	defaultClientProvider = func() *http.Client {
+		used++
+		return server.Client()
+	}
+	defer func() { defaultClientProvider = orig }()
 
-	if err := (ChatStreamer{}).Stream(ctx, "k", server.URL, ChatRequest{Model: "gpt-4"}, emit); err != nil {
+	emit := func(stream.Event) error { return nil }
+	if err := (ChatStreamer{}).Stream(context.Background(), "k", server.URL, ChatRequest{Model: "gpt-4"}, emit); err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
-	if contextServerHits != 1 {
-		t.Fatalf("client from context got %d requests, want 1", contextServerHits)
+	if used != 1 {
+		t.Errorf("defaultClientProvider was consulted %d times, want 1", used)
+	}
+	if hits != 1 {
+		t.Fatalf("default client got %d requests, want 1", hits)
 	}
 }

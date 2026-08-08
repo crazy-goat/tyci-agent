@@ -74,7 +74,7 @@ func (s GeminiStreamer) Stream(ctx context.Context, apiKey, endpoint string, bod
 	req.Header.Set("Accept", "text/event-stream")
 	applyExtraHeaders(req, s.Headers)
 
-	resp, err := doer(ctx, s.HTTP).Do(req)
+	resp, err := doer(s.HTTP).Do(req)
 	if err != nil {
 		return err
 	}

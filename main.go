@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/providers"
@@ -48,6 +50,36 @@ func resolveProviderModel(ctx context.Context, model string) (providers.Provider
 	return prov, mName, nil
 }
 
+// withIsolatedPool binds prov to an HTTP client with its own connection pool,
+// so a child agent shares nothing with its parent: parent cancellation cannot
+// leak into subagent requests and vice versa.
+//
+// This used to live in tools/subagent.go, which stuffed the client into the
+// child's context under an api-package context key. The transport is not
+// something the tools package should know about, and the api layer no longer
+// reads the context at all; a provider now carries its own client instead.
+//
+// Granularity is unchanged: agentRunner.run is entered exactly once per
+// tools.SubAgentRunner.RunTask/RunTaskWithSystem call, i.e. once per
+// runSingleTask, so a parallel subagent(tasks=[a,b,c]) still creates three
+// pools — one per child.
+//
+// A Provider that does not implement HTTPInjector (every fake in the test
+// suite) is returned untouched and keeps today's "no isolation" behaviour.
+func withIsolatedPool(prov providers.Provider) providers.Provider {
+	inj, ok := prov.(providers.HTTPInjector)
+	if !ok {
+		return prov
+	}
+	return inj.WithHTTP(&http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        2,
+			MaxIdleConnsPerHost: 1,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	})
+}
+
 // subagentDefaultMaxIterations is the default cap on a subagent's tool-call
 // turns. Re-exported as tools.DefaultSubagentMaxIterations so both main.go
 // and tools/ agree on the value. Behavior change vs. the previous
@@ -78,6 +110,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	if err != nil {
 		return "", err
 	}
+	prov = withIsolatedPool(prov)
 
 	// Resolve the iteration cap: explicit parent override wins; otherwise the
 	// (unlimited) default. Tools.ResolveMaxIter centralizes nil/0/negative

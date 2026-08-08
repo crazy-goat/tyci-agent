@@ -399,7 +399,8 @@ func TestDynamicProviderStream_authJSONLiteralEnvRef_resolvesAtRuntime(t *testin
 	}
 
 	// The recording client is injected through the provider's own Deps.HTTP,
-	// which is the only injection path now that api.HTTPClientKey is gone.
+	// which is the only injection path left now that the api-package context
+	// key is gone.
 	p := NewProvider("nexos", []ModelEntry{
 		// We use a non-routable host so the request will fail — we only
 		// care that the bearer token MIME-match the expected resolved value.

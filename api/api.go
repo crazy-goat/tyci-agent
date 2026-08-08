@@ -18,21 +18,27 @@ type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-// doer picks the client for one request: an explicitly injected HTTPDoer
-// always wins, otherwise the context decides (and falls back to the shared
-// default client).
+// doer picks the client for one request: an explicitly injected HTTPDoer wins,
+// otherwise the shared default client is used.
 //
-// The ClientFromContext fallback is scheduled for removal in Etap 4 of
-// docs/architecture-refactor.md, once providers.Provider becomes a struct
-// with its own HTTP field and can inject a doer when it builds the connector.
-// Until then the context is the ONLY injection path in the running program
-// (tools/subagent.go builds an isolated connection pool that way), so
-// dropping the fallback here would silently break it.
-func doer(ctx context.Context, h HTTPDoer) HTTPDoer {
+// Injection is the only override left. It arrives as a field on the streamer,
+// filled from connector.Endpoint.HTTP, which providers.NewProvider populates
+// from its Deps.HTTP — so a caller that needs its own transport or its own
+// connection pool says so when it builds the provider. There is deliberately
+// no context read here any more: a request's transport is a construction-time
+// decision, not something an arbitrary ancestor can swap out invisibly.
+//
+// A typed-nil *http.Client is treated as "nothing injected" rather than being
+// used and panicking inside net/http; the removed context-key lookup guarded
+// the same case.
+func doer(h HTTPDoer) HTTPDoer {
+	if cl, ok := h.(*http.Client); ok && cl == nil {
+		return defaultClientProvider()
+	}
 	if h != nil {
 		return h
 	}
-	return ClientFromContext(ctx)
+	return defaultClientProvider()
 }
 
 // applyExtraHeaders sets caller-supplied headers on req. It runs AFTER the
@@ -44,8 +50,9 @@ func applyExtraHeaders(req *http.Request, extra map[string]string) {
 	}
 }
 
-// defaultClient is the shared HTTP client used by all API streaming functions.
-// It reuses connections and avoids allocating a new Transport per request.
+// defaultClient is the shared HTTP client used by every streamer that was not
+// given one of its own. It reuses connections and avoids allocating a new
+// Transport per request.
 var defaultClient = &http.Client{
 	Transport: &http.Transport{
 		MaxIdleConns:        4,
@@ -57,19 +64,6 @@ var defaultClient = &http.Client{
 // defaultClientProvider returns the shared HTTP client.
 // Extracted as a variable so tests can override it.
 var defaultClientProvider = func() *http.Client { return defaultClient }
-
-// HTTPClientKey is the context key for overriding the HTTP client per-request.
-// Used by subagent to create its own isolated HTTP connection pool.
-type HTTPClientKey struct{}
-
-// ClientFromContext returns an HTTP client from context if set, otherwise
-// falls back to the global default client provider.
-func ClientFromContext(ctx context.Context) *http.Client {
-	if cl, ok := ctx.Value(HTTPClientKey{}).(*http.Client); ok && cl != nil {
-		return cl
-	}
-	return defaultClientProvider()
-}
 
 type RetryableError struct {
 	Code       int

@@ -28,9 +28,9 @@ func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-// Endpoint.HTTP and Endpoint.Headers must reach the wire. Without this the
-// fields are decoration: nothing in the running program populates them yet
-// (that lands in Etap 4), so only a test can prove the plumbing exists.
+// Endpoint.HTTP and Endpoint.Headers must reach the wire. HTTP is populated in
+// production by providers.NewProvider (from its Deps.HTTP); Headers is still
+// always empty, so only a test proves that half of the plumbing exists.
 func TestEndpointHTTPAndHeadersReachTheRequest(t *testing.T) {
 	doer := &stubDoer{}
 	c, err := NewOpenAI(Endpoint{
@@ -60,10 +60,10 @@ func TestEndpointHTTPAndHeadersReachTheRequest(t *testing.T) {
 	}
 }
 
-// A nil Endpoint.HTTP must not panic and must not reach for the injected doer:
-// it falls through to api.ClientFromContext, which is still the production
-// path until Etap 4.
-func TestEndpointNilHTTPUsesContextClient(t *testing.T) {
+// A nil Endpoint.HTTP must not panic: it falls through to the api layer's
+// shared default client. That is the production path for every provider built
+// without its own Deps.HTTP.
+func TestEndpointNilHTTPUsesDefaultClient(t *testing.T) {
 	c, err := NewOpenAI(Endpoint{BaseURL: "https://127.0.0.1:1", Path: "/v1/chat/completions"})
 	if err != nil {
 		t.Fatalf("NewOpenAI: %v", err)
@@ -73,6 +73,6 @@ func TestEndpointNilHTTPUsesContextClient(t *testing.T) {
 	// The cancelled context makes the default client fail fast; all we assert
 	// is that we got there at all instead of panicking on a nil doer.
 	if err := c.Stream(ctx, Request{Model: "gpt-4"}, func(stream.Event) error { return nil }); err == nil {
-		t.Fatal("expected an error from the context client, got nil")
+		t.Fatal("expected an error from the default client, got nil")
 	}
 }

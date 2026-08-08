@@ -6,14 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/decodo/tyci/api"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/stream"
 )
@@ -402,17 +400,10 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		defer cancel()
 	}
 
-	// Create isolated HTTP client with its own connection pool — share nothing
-	// with parent agent. This prevents parent cancellation from leaking into
-	// subagent requests and vice versa.
-	isolatedClient := &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConns:        2,
-			MaxIdleConnsPerHost: 1,
-			IdleConnTimeout:     30 * time.Second,
-		},
-	}
-	runCtx = context.WithValue(runCtx, api.HTTPClientKey{}, isolatedClient)
+	// The child's isolated HTTP connection pool is created by the runner (see
+	// agentRunner.run in main.go), which binds it to the provider it resolves.
+	// It used to be stuffed into runCtx here; the transport is no longer
+	// something this package has to know about.
 
 	mName := task.Model
 	if mName == "" {
