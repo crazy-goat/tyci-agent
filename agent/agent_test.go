@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 )
@@ -32,66 +33,20 @@ func (s *silentDisplay) Total(stream.Usage)                 {}
 func (s *silentDisplay) Error(error)                        {}
 func (s *silentDisplay) End()                               {}
 
-type mockProvider struct {
-	chunks []string
-}
-
-func (m *mockProvider) Provider() string { return "mock" }
-func (m *mockProvider) Model() string    { return "mock-1" }
-
-func (m *mockProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
-	ch := make(chan stream.Event, 4)
-	go func() {
-		defer close(ch)
-		for _, c := range m.chunks {
-			select {
-			case ch <- stream.TextDelta{Text: c}:
-			case <-ctx.Done():
-				return
-			}
-		}
-		ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
-	}()
-	return ch, nil
-}
-
-// mockToolProvider emits a predefined sequence of events once, then returns empty finish.
-type mockToolProvider struct {
-	mu     sync.Mutex
-	events []stream.Event
-	called bool
-}
-
-func (m *mockToolProvider) Provider() string { return "mock-tool" }
-func (m *mockToolProvider) Model() string    { return "mock-tool-1" }
-
-func (m *mockToolProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
-	m.mu.Lock()
-	if m.called {
-		m.mu.Unlock()
-		// Subsequent calls: no tools, just finish
-		ch := make(chan stream.Event, 1)
-		ch <- stream.Finish{Usage: stream.Usage{Input: 0, Output: 0}}
-		close(ch)
-		return ch, nil
-	}
-	m.called = true
-	events := m.events
-	m.mu.Unlock()
-
-	ch := make(chan stream.Event, 4)
-	go func() {
-		defer close(ch)
-		for _, e := range events {
-			select {
-			case ch <- e:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return ch, nil
-}
+// The model doubles in this package are connectortest.Fake literals. Two
+// things about them are load-bearing and therefore spelled out at every call
+// site rather than hidden behind a helper:
+//
+//   - the Usage on the final Finish. runOnce only emits Summary/Total when
+//     hasUsage(lastUsage) is true, so a zero Usage is not a cosmetic
+//     difference — it decides whether a Costs line appears at all.
+//   - what happens after the script runs out. Fake's default (OnExhausted
+//     nil) is Finish{Reason: "stop"} with zero usage, which is exactly what
+//     the old mockToolProvider did on its second and later calls; a double
+//     that must instead close the channel with no Finish says so with
+//     OnExhausted: []stream.Event{}.
+//
+// Finish.Reason itself is not load-bearing: runOnce reads only e.Usage.
 
 // mockToolRunner records tool calls and returns canned results.
 type mockToolRunner struct {
@@ -202,7 +157,11 @@ func (c *captureDisplay) Request(content string) {}
 func (c *captureDisplay) ToolFinish()            {}
 
 func TestRunAppendsAssistantMessage(t *testing.T) {
-	p := &mockProvider{chunks: []string{"Hello", " world"}}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "Hello"},
+		stream.TextDelta{Text: " world"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := &silentDisplay{}
 	msgs := []connector.Message{{
 		Role:    "user",
@@ -228,7 +187,9 @@ func TestRunAppendsAssistantMessage(t *testing.T) {
 }
 
 func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
-	p := &mockProvider{chunks: nil}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := &silentDisplay{}
 	msgs := []connector.Message{{
 		Role:    "user",
@@ -245,14 +206,16 @@ func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
 }
 
 func TestRun_ToolCall_ShowsToolBlockDuringStream(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "I'll look that up."},
 			stream.ToolCallStart{ID: "tc1", Name: "read"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"path": "file.go"}`},
 			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "file.go"}`},
 			stream.Finish{Usage: stream.Usage{Input: 10, Output: 5}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
@@ -321,11 +284,13 @@ func TestRun_ToolCall_ShowsToolBlockDuringStream(t *testing.T) {
 }
 
 func TestRun_ToolCall_NoToolBlockWithoutTools(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "No tools needed."},
 			stream.Finish{Usage: stream.Usage{Input: 5, Output: 3}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -348,8 +313,10 @@ func TestRun_ToolCall_NoToolBlockWithoutTools(t *testing.T) {
 }
 
 func TestRun_ToolCall_MultipleTools(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.ToolCallStart{ID: "tc1", Name: "read"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"path": "a.go"}`},
 			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "a.go"}`},
@@ -357,7 +324,7 @@ func TestRun_ToolCall_MultipleTools(t *testing.T) {
 			stream.ToolCallDelta{ID: "tc2", Delta: `{"command": "ls"}`},
 			stream.ToolCall{ID: "tc2", Name: "bash", Arguments: `{"command": "ls"}`},
 			stream.Finish{Usage: stream.Usage{Input: 20, Output: 10}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
@@ -406,14 +373,16 @@ func TestRun_ToolCall_MultipleTools(t *testing.T) {
 }
 
 func TestRun_ToolCall_TextAndTools(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "I'll check that file. "},
 			stream.ToolCallStart{ID: "tc1", Name: "read"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"path": "x.go"}`},
 			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "x.go"}`},
 			stream.Finish{Usage: stream.Usage{Input: 15, Output: 7}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
@@ -447,11 +416,13 @@ func TestRun_ToolCall_TextAndTools(t *testing.T) {
 
 func TestRun_ToolCall_ToolCallWithoutDelta(t *testing.T) {
 	// Some providers send ToolCall directly without ToolCallStart/Delta
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "echo hi"}`},
 			stream.Finish{Usage: stream.Usage{Input: 5, Output: 2}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
@@ -484,12 +455,14 @@ func TestRun_ToolCall_ToolCallWithoutDelta(t *testing.T) {
 }
 
 func TestRun_ToolCall_EmptyResult(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.ToolCallStart{ID: "tc1", Name: "bash"},
 			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "false"}`},
 			stream.Finish{Usage: stream.Usage{Input: 5, Output: 2}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
@@ -516,10 +489,12 @@ func TestRun_ToolCall_EmptyResult(t *testing.T) {
 }
 
 func TestRun_ToolCall_StreamError(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.StreamError{Err: errors.New("connection lost")},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -602,63 +577,14 @@ func TestWriteSessionEvents(t *testing.T) {
 
 // ─── Fallback tests ──────────────────────────────────────────────────────
 
-// mockFailingProvider always returns an error from Stream().
-type mockFailingProvider struct {
-	name  string
-	model string
-	err   error
-}
-
-func (m *mockFailingProvider) Provider() string { return m.name }
-func (m *mockFailingProvider) Model() string    { return m.model }
-
-func (m *mockFailingProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
-	if m.err == nil {
-		return nil, errors.New("mockFailingProvider: no error configured")
-	}
-	return nil, m.err
-}
-
-// newFailingProvider is a small helper for tests that only need an
-// always-failing provider with a plain (non-retryable) error message.
-func newFailingProvider(name, model, msg string) *mockFailingProvider {
-	return &mockFailingProvider{name: name, model: model, err: errors.New(msg)}
-}
-
-// mockTextProvider returns fixed text chunks then finishes (no tools).
-type mockTextProvider struct {
-	name   string
-	model  string
-	chunks []string
-}
-
-func (m *mockTextProvider) Provider() string { return m.name }
-func (m *mockTextProvider) Model() string    { return m.model }
-
-func (m *mockTextProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
-	ch := make(chan stream.Event, 4)
-	go func() {
-		defer close(ch)
-		for _, c := range m.chunks {
-			select {
-			case ch <- stream.TextDelta{Text: c}:
-			case <-ctx.Done():
-				return
-			}
-		}
-		ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
-	}()
-	return ch, nil
-}
-
-// mockToolProvider returns events once, then returns empty finish on subsequent calls.
-// This is already defined above but we extend it here for the tests.
-
 func TestRunFallbackPrimaryFailsFallbackSucceeds(t *testing.T) {
 	// Primary provider returns error, fallback succeeds with text
-	primary := &mockFailingProvider{name: "fb-primary", model: "primary-1", err: errors.New("server error 500")}
+	primary := &connectortest.Fake{ProviderName: "fb-primary", ModelName: "primary-1", StreamErr: errors.New("server error 500")}
 
-	fallback := &mockTextProvider{name: "fb-fallback", model: "fb-1", chunks: []string{"fallback response"}}
+	fallback := &connectortest.Fake{ProviderName: "fb-fallback", ModelName: "fb-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "fallback response"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -693,10 +619,10 @@ func TestRunFallbackPrimaryFailsFallbackSucceeds(t *testing.T) {
 
 func TestRunFallbackAllFallbacksFail(t *testing.T) {
 	// Primary fails, all fallbacks also fail
-	primary := &mockFailingProvider{name: "fb-p1", model: "p1", err: errors.New("primary dead")}
+	primary := &connectortest.Fake{ProviderName: "fb-p1", ModelName: "p1", StreamErr: errors.New("primary dead")}
 
-	fallback1 := &mockFailingProvider{name: "fb-f1", model: "f1", err: errors.New("fb1 dead")}
-	fallback2 := &mockFailingProvider{name: "fb-f2", model: "f2", err: errors.New("fb2 dead")}
+	fallback1 := &connectortest.Fake{ProviderName: "fb-f1", ModelName: "f1", StreamErr: errors.New("fb1 dead")}
+	fallback2 := &connectortest.Fake{ProviderName: "fb-f2", ModelName: "f2", StreamErr: errors.New("fb2 dead")}
 
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -720,7 +646,7 @@ func TestRunFallbackAllFallbacksFail(t *testing.T) {
 
 func TestRunFallbackPrimaryFailsWithNoFallbacks(t *testing.T) {
 	// Primary fails with non-retryable error, no fallbacks configured
-	primary := &mockFailingProvider{name: "fb-nofb", model: "nofb-1", err: errors.New("non-retryable")}
+	primary := &connectortest.Fake{ProviderName: "fb-nofb", ModelName: "nofb-1", StreamErr: errors.New("non-retryable")}
 
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -744,15 +670,17 @@ func TestRunFallbackPrimaryFailsWithNoFallbacks(t *testing.T) {
 
 func TestRunFallbackWithTools(t *testing.T) {
 	// Primary fails, fallback succeeds and produces tools
-	primary := &mockFailingProvider{name: "fb-tp", model: "tp-1", err: errors.New("down")}
+	primary := &connectortest.Fake{ProviderName: "fb-tp", ModelName: "tp-1", StreamErr: errors.New("down")}
 
-	fallback := &mockToolProvider{
-		events: []stream.Event{
+	fallback := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.ToolCallStart{ID: "tc1", Name: "read"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"path": "file.go"}`},
 			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "file.go"}`},
 			stream.Finish{Usage: stream.Usage{Input: 10, Output: 5}},
-		},
+		}},
 	}
 
 	d := newCaptureDisplay()
@@ -793,9 +721,12 @@ func TestRunFallbackWithTools(t *testing.T) {
 
 func TestRunFallbackNoToolsTextOnly(t *testing.T) {
 	// Primary fails, fallback succeeds with text only (no tools)
-	primary := &mockFailingProvider{name: "fb-ntp", model: "ntp-1", err: errors.New("down")}
+	primary := &connectortest.Fake{ProviderName: "fb-ntp", ModelName: "ntp-1", StreamErr: errors.New("down")}
 
-	fallback := &mockTextProvider{name: "fb-ntf", model: "ntf-1", chunks: []string{"just text, no tools"}}
+	fallback := &connectortest.Fake{ProviderName: "fb-ntf", ModelName: "ntf-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "just text, no tools"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -823,17 +754,19 @@ func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 	// After fallback, subsequent iterations use the fallback provider/model.
 	// We simulate two iterations: first fails, fallback succeeds,
 	// second iteration (no tools) should use the fallback.
-	primary := &mockFailingProvider{name: "fb-sess", model: "sess-1", err: errors.New("down")}
+	primary := &connectortest.Fake{ProviderName: "fb-sess", ModelName: "sess-1", StreamErr: errors.New("down")}
 
 	// The fallback returns text first, then on second call returns different text
-	fallback := &mockToolProvider{
-		events: []stream.Event{
+	fallback := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "first call "},
 			stream.ToolCallStart{ID: "tc1", Name: "bash"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"command": "echo hello"}`},
 			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "echo hello"}`},
 			stream.Finish{Usage: stream.Usage{Input: 5, Output: 3}},
-		},
+		}},
 	}
 
 	d := newCaptureDisplay()
@@ -860,8 +793,8 @@ func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 		t.Errorf("expected tool result 'hello world', got %+v", d.toolCallEnds)
 	}
 
-	// The fallback provider was used (the text came from mockToolProvider)
-	// which returned "first call " text
+	// The fallback provider was used: its first scripted turn returned
+	// the "first call " text.
 	if len(d.text) == 0 || !strings.Contains(strings.Join(d.text, ""), "first call") {
 		t.Errorf("expected text from fallback, got %q", strings.Join(d.text, ""))
 	}
@@ -869,7 +802,10 @@ func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 
 func TestRunNoFallbackNormalPath(t *testing.T) {
 	// No fallback configured — standard path should work fine
-	p := &mockProvider{chunks: []string{"hello world"}}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "hello world"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
 		Role:    "user",
@@ -909,7 +845,10 @@ func assertTotalCalled(t *testing.T, d *captureDisplay) {
 }
 
 func TestRun_TotalCalledOnSuccess(t *testing.T) {
-	p := &mockProvider{chunks: []string{"hello"}}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "hello"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
 		Role:    "user",
@@ -930,8 +869,11 @@ func TestRun_TotalCalledOnFallbackSuccess(t *testing.T) {
 	// Regression: primary provider fails, fallback succeeds. Previously the
 	// `return totalUsage, nil` inside the `if !fbMore` branch skipped the
 	// Total() call.
-	primary := &mockFailingProvider{name: "fb-tot-p", model: "tot-p-1", err: errors.New("primary down")}
-	fallback := &mockTextProvider{name: "fb-tot-fb", model: "tot-fb-1", chunks: []string{"fallback ok"}}
+	primary := &connectortest.Fake{ProviderName: "fb-tot-p", ModelName: "tot-p-1", StreamErr: errors.New("primary down")}
+	fallback := &connectortest.Fake{ProviderName: "fb-tot-fb", ModelName: "tot-fb-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "fallback ok"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -954,9 +896,9 @@ func TestRun_TotalCalledOnAllFallbacksExhausted(t *testing.T) {
 	// Primary fails, every fallback fails — we should still see Total() so
 	// the user sees accumulated cost (likely 0, but the summary should be
 	// emitted).
-	primary := &mockFailingProvider{name: "fb-all-p", model: "all-p-1", err: errors.New("primary down")}
-	fb1 := &mockFailingProvider{name: "fb-all-f1", model: "all-f1", err: errors.New("fb1 down")}
-	fb2 := &mockFailingProvider{name: "fb-all-f2", model: "all-f2", err: errors.New("fb2 down")}
+	primary := &connectortest.Fake{ProviderName: "fb-all-p", ModelName: "all-p-1", StreamErr: errors.New("primary down")}
+	fb1 := &connectortest.Fake{ProviderName: "fb-all-f1", ModelName: "all-f1", StreamErr: errors.New("fb1 down")}
+	fb2 := &connectortest.Fake{ProviderName: "fb-all-f2", ModelName: "all-f2", StreamErr: errors.New("fb2 down")}
 
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -977,7 +919,7 @@ func TestRun_TotalCalledOnAllFallbacksExhausted(t *testing.T) {
 
 func TestRun_TotalCalledOnContextCancel(t *testing.T) {
 	// Stream returns context.Canceled, Run should still emit Total.
-	cancelledProvider := &blockingProvider{name: "fb-ctx", model: "blocking-1"}
+	cancelledProvider := &connectortest.Fake{ProviderName: "fb-ctx", ModelName: "blocking-1", BlockUntilCancel: true}
 
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -1001,7 +943,7 @@ func TestRun_TotalCalledOnContextCancel(t *testing.T) {
 
 func TestRun_TotalCalledOnNonRetryable(t *testing.T) {
 	// Plain non-retryable error (e.g. plain errors.New) with no fallbacks.
-	primary := &mockFailingProvider{name: "fb-nr", model: "nr-1", err: errors.New("fatal")}
+	primary := &connectortest.Fake{ProviderName: "fb-nr", ModelName: "nr-1", StreamErr: errors.New("fatal")}
 
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -1022,7 +964,7 @@ func TestRun_TotalCalledOnAllRetriesExhausted(t *testing.T) {
 	// retries exhausted. We cancel ctx during the first backoff to avoid
 	// waiting 4+8+16+... seconds in the test. io.EOF is recognised as
 	// retryable by api.IsRetryable.
-	primary := &mockFailingProvider{name: "fb-rx", model: "rx-1", err: io.EOF}
+	primary := &connectortest.Fake{ProviderName: "fb-rx", ModelName: "rx-1", StreamErr: io.EOF}
 
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -1089,14 +1031,16 @@ func TestRun_TotalCalledOnEveryToolTurn(t *testing.T) {
 	// totalUsage (which now includes the just-finished iteration's
 	// tokens). The follow-up iteration is empty (no usage) so it
 	// does not produce an extra Total().
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "first "},
 			stream.ToolCallStart{ID: "tc1", Name: "bash"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"command": "echo hi"}`},
 			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "echo hi"}`},
 			stream.Finish{Usage: stream.Usage{Input: 5, Output: 3}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
@@ -1128,8 +1072,11 @@ func TestRun_TotalNotDuplicatedOnFallbackSuccess(t *testing.T) {
 	// line was printed twice (once by runOnce inside tryFallback, once
 	// by agent.Run before returning). User reported this as a duplicate
 	// "Costs: in=88 out=43 cin=2304 cout=88" line.
-	primary := &mockFailingProvider{name: "fb-dup-p", model: "dup-p-1", err: errors.New("rate limited")}
-	fallback := &mockTextProvider{name: "fb-dup-fb", model: "dup-fb-1", chunks: []string{"hello"}}
+	primary := &connectortest.Fake{ProviderName: "fb-dup-p", ModelName: "dup-p-1", StreamErr: errors.New("rate limited")}
+	fallback := &connectortest.Fake{ProviderName: "fb-dup-fb", ModelName: "dup-fb-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "hello"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 
 	d := newCaptureDisplay()
 	msgs := []connector.Message{{
@@ -1147,26 +1094,4 @@ func TestRun_TotalNotDuplicatedOnFallbackSuccess(t *testing.T) {
 	if got := len(d.totals); got != 1 {
 		t.Fatalf("expected exactly 1 Total() call after fallback success, got %d", got)
 	}
-}
-
-// blockingProvider blocks the stream until the context is cancelled, then
-// returns ctx.Err(). It exercises the context.Canceled return path in
-// agent.Run.
-type blockingProvider struct {
-	name  string
-	model string
-}
-
-func (b *blockingProvider) Provider() string { return b.name }
-func (b *blockingProvider) Model() string    { return b.model }
-
-func (b *blockingProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
-	ch := make(chan stream.Event, 1)
-	go func() {
-		defer close(ch)
-		<-ctx.Done()
-		// No usage reported on cancel — totalUsage stays at zero.
-		ch <- stream.StreamError{Err: ctx.Err()}
-	}()
-	return ch, nil
 }

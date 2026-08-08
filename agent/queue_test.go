@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 )
@@ -47,7 +48,10 @@ func (q *queueCallback) callback() func() []string {
 // returns no messages, the agent must return after the first runOnce
 // completes with `more == false`. No extra iteration is forced.
 func TestRun_NextMessages_EmptyDoesNotForceIteration(t *testing.T) {
-	p := &mockProvider{chunks: []string{"done"}}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "done"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
 	msgs := []connector.Message{{
@@ -174,13 +178,16 @@ func TestRun_NextMessages_FIFOOrder(t *testing.T) {
 // tool-calling runOnce must be drained and produce exactly one
 // additional runOnce before the agent returns.
 func TestRun_NextMessages_DrainsAfterToolCall(t *testing.T) {
-	// mockToolProvider: first call returns a tool call (forcing more),
-	// second call returns a plain text response (forcing more=false).
-	toolP := &mockToolProvider{
-		events: []stream.Event{
+	// First call returns a tool call (forcing more); the script then
+	// runs out, so the second call is Fake's default bare Finish
+	// (forcing more=false).
+	toolP := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "x"}`},
 			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
-		},
+		}},
 	}
 	d := &silentDisplay{}
 	runner := newMockToolRunner()
@@ -235,7 +242,10 @@ func TestRun_NextMessages_DrainsAfterToolCall(t *testing.T) {
 // the agent must behave exactly as before — no extra iterations, no
 // extra appends.
 func TestRun_NextMessages_NilCallbackNoEffect(t *testing.T) {
-	p := &mockProvider{chunks: []string{"hello"}}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "hello"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := &silentDisplay{}
 	msgs := []connector.Message{{
 		Role:    "user",
