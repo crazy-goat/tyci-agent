@@ -730,9 +730,10 @@ budowanie tej infrastruktury tutaj byłoby robieniem etapu 7 w commicie etapu 6.
   w komentarzu, nie wymuszony. Żaden dzisiejszy frontend go nie łamie; gdyby
   doszedł frontend RPC, trzeba będzie albo mutexa na całości, albo kolejki.
 
-## Etap 7 — connectory testowe (1d)
+## Etap 7 — connectory testowe (1d) — ZROBIONE
 
-Etap rozbity na 7A (zrobione), 7B i 7C — podział opisany pod listą.
+Etap rozbity na 7A, 7B i 7C — wszystkie zrobione, podział opisany pod listą.
+Czego etap świadomie nie zrobił, jest wypisane w „Czego etap 7 NIE zrobił".
 
 - [x] `connector/connectortest/fake.go` — skryptowana sekwencja `stream.Event`.
       Konfiguracja literałem struktury (jak `conductor.Options`, `agent.Config`,
@@ -745,7 +746,16 @@ Etap rozbity na 7A (zrobione), 7B i 7C — podział opisany pod listą.
       klienta), dwa miejsca awarii: błąd z samego `Stream` (ścieżka fallbacku)
       i `stream.StreamError` po N eventach (ścieżka retry). Konstruktory błędów
       są związane z realnym konsumentem testem na `api.IsRetryable`.
-- [ ] `record.go` / `replay.go` — nagrywanie do JSONL, odtwarzanie w CI bez klucza API
+- **`record.go` / `replay.go` — świadomie NIE powstaną.** Pozycja skreślona
+      w 7C, nie przeoczona. Po 7B wszystkie testy chodzą na `Fake`/`Flaky`
+      i nagrywarka nie ma ani jednego konsumenta — a ten refaktor wyciął już
+      `FreeModels` dokładnie za to, że była metodą interfejsu, której nikt nie
+      miał czym wypełnić. Zbudowanie teraz nagrywarki bez użytkownika byłoby
+      powtórzeniem tego samego błędu w nowym miejscu.
+      Kiedy warto wrócić: gdy pojawi się scenariusz „nagraj prawdziwą rozmowę
+      prawdziwym kluczem, odtwarzaj ją w CI bez klucza" — czyli gdy zacznie
+      brakować pokrycia dla wire-formatu żywego providera, którego `Fake` z
+      definicji nie odtwarza, bo siedzi *nad* transportem.
 - [x] pokryć `Flaky` ścieżkę awarii w środku streamu. Pozycja brzmiała
       pierwotnie „przepisać testy retry/fallback z `httptest` na `Flaky`" i
       w tym brzmieniu nie miała przedmiotu: żaden test retry ani fallback nie
@@ -813,13 +823,63 @@ więc gdyby ktoś dorobił `Fake.WithHTTP`, test głośno pęknie.
 `HTTPInjector` implementować i zapamiętywać wstrzyknięte klienty HTTP, czego
 `Fake` z definicji nie robi.
 
-#### Co zostało na 7C
+#### Co zrobiło 7C
 
-- `record.go` / `replay.go` (JSONL) — świadomie odłożone, nie było potrzebne do
-  przepięcia atrap.
-- zabezpieczenie `Conductor` przed równoległym `Submit` + test pod `-race`.
-- martwy `if` w `tui_mode.go:277-279`, martwa stała `subagentDefaultMaxIterations`
-  w `main.go:130`.
+Domknięcie etapu: jedna zmiana projektowa i dwa usunięcia martwego kodu, każde
+osobnym commitem. Zero zmian w goldenach.
+
+- **`Conductor` odrzuca równoległy `Submit`.** Kontrakt przestał być
+  komentarzem. Drugi, równoległy `Submit` dostaje jawny `ErrTurnInFlight`
+  (sentinel obok `ErrNoResolver`). Odrzucone warianty i powód, dla którego
+  odpadły: **mutex** po cichu zserializowałby wywołania, więc błąd frontendu
+  wyglądałby jak zawieszenie zamiast jak błąd; **kolejka** to osobna funkcja,
+  której nikt nie zamawiał, z własnymi pytaniami o kolejność i anulowanie.
+  Rozstrzygające jest **gdzie** stoi sprawdzenie: `Submit` zaczynał od
+  dopisania wiadomości użytkownika do rozmowy i zapisania jej do logu sesji,
+  więc odrzucenie podjęte gdziekolwiek później zostawiałoby ślad po
+  wywołaniu, które „nie przeszło". Zajęcie tury jest atomowe (jedno
+  `test-and-set` w pojedynczej sekcji krytycznej pod istniejącym `c.mu`)
+  i wykonuje się **przed pierwszą mutacją stanu**; flaga jest zdejmowana
+  w `defer` zarejestrowanym natychmiast, więc ani wcześniejszy `return`, ani
+  panika w pętli agenta nie zostawią conductora zajętego na zawsze.
+  Zakres celowo wąski: chroniony jest `Submit` przed drugim `Submit`.
+  `Messages()`, `Usage()`, `SetHistory()` i reszta **dalej** należą do
+  gorutyny prowadzącej rozmowę — rozsypanie mutexów po getterach to inna,
+  większa zmiana projektowa i nie została zrobiona. `Interrupt` bez zmian.
+  Test `TestConductor_ConcurrentSubmitIsRejected` (pod `-race`) dowodzi
+  trzech rzeczy: dokładnie jeden `Submit` przechodzi, odrzucony **nie
+  zostawił śladu** w rozmowie, a po zakończeniu pierwszego kolejny `Submit`
+  znowu przechodzi. Który z dwóch promptów wygrywa, należy do schedulera
+  i test tego nie zakłada.
+- **Martwy `if` w gałęzi ESC** (`tui_mode.go`) usunięty. Odbiór z kanału
+  został — czekanie na zakończenie agenta jest nośne, bo agent wciąż pisze do
+  display i ekran nie może być przemalowany przed jego końcem — ale bez
+  przypisania i bez warunku, za to z komentarzem mówiącym **dlaczego** wynik
+  jest odrzucany (błąd został już pokazany przez `d.Error()` w `agent.Run`).
+- **Martwa stała `subagentDefaultMaxIterations`** (`main.go`) usunięta.
+  Komentarz nad nią opisywał jednak realną zmianę zachowania (domyślna wartość
+  przestała być zakodowanym na sztywno 10, więc wywołania pomijające
+  `MaxIterations` chodzą bez ograniczenia) — ta wiedza dotyczy
+  `tools.DefaultSubagentMaxIterations`, nie martwego aliasu, więc została
+  **przeniesiona** do komentarza przy samej stałej, a nie skasowana razem
+  z kodem, który ją przechowywał.
+- `record.go` / `replay.go` — skreślone z planu, uzasadnienie przy samej
+  pozycji wyżej.
+
+#### Czego etap 7 NIE zrobił
+
+- **Wstrzykiwalny `BaseBackoff` w pętli retry** — nadal nie zrobione, opis
+  długu niżej w „Do poprawy". To zmiana projektowa w kodzie produkcyjnym tego
+  samego gatunku co `agent.Sink` czy `providers.AuthSource` i zasługuje na
+  własną decyzję, nie na doklejenie do etapu o connectorach testowych. Koszt,
+  który za to płacimy dziś, jest wyliczony przy tamtej pozycji: ścieżka retry
+  dla błędów bez nagłówka `Retry-After` (500, EOF) pozostaje niepokryta, bo
+  test musiałby naprawdę przespać cztery sekundy.
+- **`Conductor` pisze do `os.Stderr`** w `session_lazy.go` — nietknięte,
+  patrz „Do poprawy".
+- Dwie ręcznie pisane atrapy `connector.ModelClient` w `main_resolve_test.go`
+  (`recordingClient`, `recordingInjector`) **zostają celowo**: implementują
+  `HTTPInjector`, czego `Fake` z definicji nie robi.
 
 ### Do poprawy — wyszło przy etapie 6
 
@@ -868,28 +928,34 @@ pokrycia. Reszta to dług znaleziony po drodze i świadomie nietknięty.
       wyczerpane" bez gimnastyki z anulowaniem i bez czekania. Do rozstrzygnięcia:
       pole `BaseBackoff` w `agent.Config` przekazywane do `RetryConfig`, czy
       wstrzykiwany `Sleep func(context.Context, time.Duration) error`.
-- [ ] **`Conductor` nie pilnuje równoległego `Submit`.** Kontrakt „wszystkie
+- [x] **`Conductor` nie pilnuje równoległego `Submit`.** Kontrakt „wszystkie
       metody z gorutyny prowadzącej rozmowę, wyjątkiem jest `Interrupt`" jest
       komentarzem (`conductor/conductor.go:89-91`), nie mechanizmem. Dziś żaden
       frontend go nie łamie, ale frontend po RPC — czyli dokładnie to, po co ta
       separacja powstała — złamie go pierwszego dnia. Do rozstrzygnięcia: mutex,
       kolejka, czy jawny błąd „turn already in flight". Test na to jest tani i
       naturalnie należy do etapu 7 (`-race` + dwa równoległe `Submit`).
+      Zrobione w 7C jako `ErrTurnInFlight` — rozstrzygnięcie i, co ważniejsze,
+      **miejsce** sprawdzenia opisane w „Co zrobiło 7C".
 - [ ] **`Conductor` pisze do `os.Stderr` w jednym miejscu**
       (`conductor/session_lazy.go:44`, ostrzeżenie „continuing without session").
       Przeniesione dosłownie, więc nie jest regresem, ale w pakiecie, którego
       cały sens polega na tym, że nie wie, jaki ma frontend, jest to zgrzyt.
       Kandydat na wstrzykiwany hook `Warn func(error)` — dokładnie tak, jak
       `providers.AuthFile` rozwiązał ten sam problem w etapie 4.
-- [ ] **Martwy `if` z pustym ciałem w gałęzi ESC** (`tui_mode.go:277-279`):
+- [x] **Martwy `if` z pustym ciałem w gałęzi ESC** (`tui_mode.go:277-279`):
       `if !errors.Is(res.err, context.Canceled) && res.err != nil { }` plus
       komentarz „Real error, not just cancellation". Warunek jest policzony i
       wyrzucony. Albo błąd ma być pokazany, albo warunek ma zniknąć — dziś
       wygląda jak niedokończona obsługa błędu i przy `-race`/lincie nikt tego
       nie złapie, bo formalnie jest poprawny.
-- [ ] **Martwa stała `subagentDefaultMaxIterations`** (`main.go:130`) — alias na
+      Zrobione w 7C: warunek zniknął, bo błąd JEST już pokazany przez
+      `agent.Run`; został sam odbiór z kanału, który jest nośny.
+- [x] **Martwa stała `subagentDefaultMaxIterations`** (`main.go:130`) — alias na
       `tools.DefaultSubagentMaxIterations`, nieużywany nigdzie. Ten sam gatunek
       długu co usunięte w etapie 6 pola `agent.Config`.
+      Zrobione w 7C, razem z przeniesieniem wiedzy z jej komentarza do
+      `tools/tool.go`.
 - [ ] **Gdyby „free models" miały kiedyś wrócić** (wycięte w etapie 6), muszą
       wrócić jako właściwość wpisu w katalogu (`ModelEntry`), nie jako druga
       metoda interfejsu `Provider`. Poprzedni kształt zgnił dokładnie dlatego,

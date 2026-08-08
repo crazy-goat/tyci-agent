@@ -26,8 +26,9 @@ import (
 // them interfaces this package declares for its own consumers. The scripted
 // connector.ModelClient that used to sit alongside them is gone — stage 7 of
 // the refactor moved it into connector/connectortest, where every package
-// that needs a fake model can reach it. The record/replay pair from that
-// stage is still to come.
+// that needs a fake model can reach it. The record/replay pair once planned
+// alongside it was struck from that stage: with every test running on
+// Fake/Flaky it would have had no consumer.
 // ---------------------------------------------------------------------------
 
 // recorder is an agent.Sink that keeps what it was told, and nothing else.
