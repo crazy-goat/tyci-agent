@@ -219,7 +219,7 @@ var runCmd = &cobra.Command{
 		if prompt == "" {
 			return fmt.Errorf("--prompt is required")
 		}
-		provider, modelName, cfg, ctx, sess, sessionPath, _, dl, err := initCommon(cmd)
+		provider, modelName, cfg, ctx, _, sessionPath, _, dl, err := initCommon(cmd)
 		if err != nil {
 			return err
 		}
@@ -232,7 +232,10 @@ var runCmd = &cobra.Command{
 		// full-screen experience, use `tyci console` or
 		// `tyci tui` instead.
 		disp := display.NewMinimal()
-		runPrompt(provider, modelName, disp, prompt, cfg, ctx, sess, sessionPath)
+		// No resolver: a one-shot run has nowhere to type /model, so
+		// SwitchModel is not reachable and does not need a catalog.
+		cond := newConductor(provider, modelName, disp, cfg, sessionPath, nil)
+		runPrompt(cond, disp, prompt, ctx)
 		return nil
 	},
 }
