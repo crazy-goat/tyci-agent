@@ -120,15 +120,6 @@ func withIsolatedPool(mc connector.ModelClient, fallbacks []connector.ModelClien
 	return bind(mc), boundFallbacks
 }
 
-// subagentDefaultMaxIterations is the default cap on a subagent's tool-call
-// turns. Re-exported as tools.DefaultSubagentMaxIterations so both main.go
-// and tools/ agree on the value. Behavior change vs. the previous
-// hard-coded constant of 10: callers that omit MaxIterations now run
-// unbounded (subject to tools.SubagentOptions semantics + the 600s wall-
-// clock timeout in tools/subagent.go). Callers that want a finite cap
-// should pass an explicit positive integer.
-const subagentDefaultMaxIterations = tools.DefaultSubagentMaxIterations
-
 // RunTask runs a plain subagent (no named agent) with the dedicated subagent
 // system prompt.
 func (r *agentRunner) RunTask(ctx context.Context, task string, model string, opts tools.SubagentOptions) (string, error) {
