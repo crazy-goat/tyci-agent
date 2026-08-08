@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/decodo/tyci/stream"
@@ -644,4 +646,103 @@ func as(err error, target any) bool {
 		}
 	}
 	return false
+}
+
+// =============================================================================
+// HTTPDoer injection
+// =============================================================================
+
+// stubDoer is an HTTPDoer that answers from memory and remembers what it got.
+type stubDoer struct {
+	got   *http.Request
+	body  string
+	calls int
+}
+
+func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
+	d.calls++
+	d.got = req
+	return &http.Response{
+		StatusCode: 200,
+		Status:     "200 OK",
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(d.body)),
+		Request:    req,
+	}, nil
+}
+
+const stubSSE = `data: {"choices":[{"delta":{"content":"from-field"}}]}
+data: {"choices":[{"finish_reason":"stop"}]}
+data: [DONE]
+`
+
+// The HTTP field is a real injection point AND it outranks the client carried
+// in the context. Both halves matter: the field is what connector.Endpoint
+// will use from Etap 4 on, and the context fallback is what keeps today's
+// subagent connection pool working (see doer()).
+func TestChatStreamer_HTTPFieldWinsOverContext(t *testing.T) {
+	var contextServerHits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contextServerHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("data: [DONE]\n"))
+	}))
+	defer server.Close()
+
+	// A perfectly usable client in the context — it must be ignored.
+	ctx := context.WithValue(context.Background(), HTTPClientKey{}, server.Client())
+
+	doer := &stubDoer{body: stubSSE}
+	var texts []string
+	emit := func(e stream.Event) error {
+		if td, ok := e.(stream.TextDelta); ok {
+			texts = append(texts, td.Text)
+		}
+		return nil
+	}
+
+	s := ChatStreamer{HTTP: doer, Headers: map[string]string{"X-Tyci-Test": "1"}}
+	if err := s.Stream(ctx, "test-key", server.URL, ChatRequest{Model: "gpt-4"}, emit); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	if doer.calls != 1 {
+		t.Fatalf("injected doer got %d requests, want 1", doer.calls)
+	}
+	if contextServerHits != 0 {
+		t.Errorf("client from context was used %d times despite the HTTP field", contextServerHits)
+	}
+	if len(texts) != 1 || texts[0] != "from-field" {
+		t.Errorf("text deltas = %v, want [from-field] (response came from the wrong client)", texts)
+	}
+	// Endpoint.Headers land on the request, after the protocol defaults.
+	if got := doer.got.Header.Get("X-Tyci-Test"); got != "1" {
+		t.Errorf("X-Tyci-Test = %q, want %q", got, "1")
+	}
+	if got := doer.got.Header.Get("Authorization"); got != "Bearer test-key" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer test-key")
+	}
+}
+
+// With HTTP left nil the context still decides — the Etap 4 fallback path.
+func TestChatStreamer_NilHTTPFallsBackToContext(t *testing.T) {
+	var contextServerHits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contextServerHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("data: [DONE]\n"))
+	}))
+	defer server.Close()
+
+	ctx := context.WithValue(context.Background(), HTTPClientKey{}, server.Client())
+	emit := func(stream.Event) error { return nil }
+
+	if err := (ChatStreamer{}).Stream(ctx, "k", server.URL, ChatRequest{Model: "gpt-4"}, emit); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if contextServerHits != 1 {
+		t.Fatalf("client from context got %d requests, want 1", contextServerHits)
+	}
 }
