@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/internal/tyciconfig"
 	"github.com/decodo/tyci/stream"
@@ -203,10 +203,17 @@ type ModelEntry struct {
 	URI  string
 }
 
+// defaultConnectors is the connector set every dynamicProvider uses unless it
+// carries its own. The registry is a value, so this is a package default —
+// not a global registry the connector package would have to own.
+var defaultConnectors = connector.DefaultRegistry()
+
 // dynamicProvider implements Provider using config entries.
 type dynamicProvider struct {
 	name    string
 	entries []ModelEntry
+	// registry is optional; nil means defaultConnectors.
+	registry *connector.Registry
 }
 
 func (p *dynamicProvider) Name() string { return p.name }
@@ -252,24 +259,90 @@ func (p *dynamicProvider) FreeModels() []string {
 }
 
 func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan stream.Event, error) {
-	var entry *ModelEntry
-	for _, e := range p.entries {
-		if e.Name == req.Model {
-			entry = &e
-			break
-		}
-	}
+	entry := p.findEntry(req.Model)
 	if entry == nil {
 		return nil, fmt.Errorf("model %q not found in provider %q", req.Model, p.name)
 	}
 
-	apiType, apiKey, baseURL, endpointPath, err := parseURI(entry.URI)
+	apiType, uriKey, baseURL, endpointPath, err := parseURI(entry.URI)
 	if err != nil {
 		return nil, err
 	}
 
+	apiKey, err := p.resolveAPIKey(uriKey)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := p.connectors().New(p.kindFor(apiType), connector.Endpoint{
+		BaseURL: baseURL,
+		Path:    endpointPath,
+		APIKey:  apiKey,
+		Options: uriOptions(entry.URI),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan stream.Event, 64)
+	go func() {
+		defer close(ch)
+		if err := conn.Stream(ctx, req, forward(ch, ctx)); err != nil {
+			select {
+			case ch <- stream.StreamError{Err: err}:
+			case <-ctx.Done():
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
+// findEntry returns the entry for a model name, or nil.
+func (p *dynamicProvider) findEntry(model string) *ModelEntry {
+	for i := range p.entries {
+		if p.entries[i].Name == model {
+			return &p.entries[i]
+		}
+	}
+	return nil
+}
+
+// connectors returns the registry to build connectors from, defaulting to the
+// built-in set. The field exists so callers can inject fakes; until Etap 4
+// turns Provider into a struct, nothing sets it.
+func (p *dynamicProvider) connectors() *connector.Registry {
+	if p.registry != nil {
+		return p.registry
+	}
+	return defaultConnectors
+}
+
+// kindFor maps a URI api_type to a connector kind. Anything the registry does
+// not know is treated as an OpenAI-style chat-completions API — this preserves
+// the `default:` branch of the switch that used to live in Stream.
+func (p *dynamicProvider) kindFor(apiType string) string {
+	if p.connectors().Has(apiType) {
+		return apiType
+	}
+	return connector.KindOpenAI
+}
+
+// uriOptions extracts the connector options encoded in the URI query string.
+// Returns nil when there is nothing to pass.
+func uriOptions(uri string) map[string]string {
+	parsed, err := tyciconfig.Parse(uri)
+	if err != nil || !parsed.Reasoning {
+		return nil
+	}
+	return map[string]string{connector.OptReasoning: "true"}
+}
+
+// resolveAPIKey resolves the credential for this provider: the token from the
+// URI first, then auth.json, then env vars.
+func (p *dynamicProvider) resolveAPIKey(uriKey string) (string, error) {
 	// Resolve $ENV_VAR references in token
-	apiKey = connect.ResolveToken(apiKey)
+	apiKey := connect.ResolveToken(uriKey)
 
 	// If no API key in URI, try auth.json
 	if apiKey == "" {
@@ -294,87 +367,9 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 	}
 
 	if apiKey == "" {
-		return nil, fmt.Errorf("no API key for %q (set via 'tyci provider auth set', %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
+		return "", fmt.Errorf("no API key for %q (set via 'tyci provider auth set', %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
 	}
-
-	endpoint := baseURL + endpointPath
-	ch := make(chan stream.Event, 64)
-
-	switch apiType {
-	case "anthropic":
-		anthropicMsgs := RichMessagesToAnthropic(req.Messages)
-		body := api.AnthropicRequest{
-			Model:     req.Model,
-			MaxTokens: 4096,
-			Stream:    true,
-			System:    req.System,
-			Messages:  anthropicMsgs,
-			Tools:     api.ConvertToolsToAnthropic(req.Tools),
-		}
-		go func() {
-			defer close(ch)
-			if err := api.StreamAnthropic(ctx, apiKey, endpoint, body, forward(ch, ctx)); err != nil {
-				select {
-				case ch <- stream.StreamError{Err: err}:
-				case <-ctx.Done():
-				}
-			}
-		}()
-
-	case "gemini":
-		contents, system := RichMessagesToGemini(req.Messages)
-		body := api.GeminiRequest{
-			Contents: contents,
-			Stream:   true,
-		}
-		if system != "" {
-			body.SystemInstruction = &struct {
-				Parts []api.GeminiPart `json:"parts"`
-			}{Parts: []api.GeminiPart{{Text: system}}}
-		} else if req.System != "" {
-			body.SystemInstruction = &struct {
-				Parts []api.GeminiPart `json:"parts"`
-			}{Parts: []api.GeminiPart{{Text: req.System}}}
-		}
-		// Convert tools from OpenAI format to Gemini functionDeclarations
-		if len(req.Tools) > 0 && string(req.Tools) != "null" && string(req.Tools) != "[]" {
-			body.Tools = convertToolsToGemini(req.Tools)
-		}
-		go func() {
-			defer close(ch)
-			if err := api.StreamGemini(ctx, apiKey, endpoint, body, forward(ch, ctx)); err != nil {
-				select {
-				case ch <- stream.StreamError{Err: err}:
-				case <-ctx.Done():
-				}
-			}
-		}()
-
-	default: // "openai" or any other chat-completion-like API
-		// Only send reasoning field if ?reasoning=true is in the URI
-		reasoning := false
-		if parsedURI, err := tyciconfig.Parse(entry.URI); err == nil {
-			reasoning = parsedURI.Reasoning
-		}
-		chatMsgs := RichMessagesToChat(req.Messages, req.System)
-		body := api.ChatRequest{
-			Model:    req.Model,
-			Stream:   true,
-			Messages: chatMsgs,
-			Tools:    req.Tools,
-		}
-		if reasoning {
-			body.Reasoning = true
-		}
-		go func() {
-			defer close(ch)
-			if err := api.StreamChat(ctx, apiKey, endpoint, body, forward(ch, ctx)); err != nil {
-				ch <- stream.StreamError{Err: err}
-			}
-		}()
-	}
-
-	return ch, nil
+	return apiKey, nil
 }
 
 // forward creates an emit function for stream events.
@@ -431,46 +426,4 @@ func parseModel(uri string) string {
 		return ""
 	}
 	return u.Model
-}
-
-// convertToolsToGemini converts tool schemas from OpenAI format to Gemini functionDeclarations format.
-// OpenAI format:  [{"type":"function","function":{"name":"...","description":"...","parameters":{...}}}]
-// Gemini format: [{"functionDeclarations":[{"name":"...","description":"...","parameters":{...}}]}]
-func convertToolsToGemini(tools json.RawMessage) []api.GeminiTools {
-	var openaiTools []map[string]any
-	if err := json.Unmarshal(tools, &openaiTools); err != nil {
-		return nil
-	}
-
-	declarations := make([]api.GeminiToolDeclaration, 0, len(openaiTools))
-	for _, t := range openaiTools {
-		fn, ok := t["function"].(map[string]any)
-		if !ok {
-			continue
-		}
-		name, _ := fn["name"].(string)
-		if name == "" {
-			continue
-		}
-		desc, _ := fn["description"].(string)
-
-		var params json.RawMessage
-		if p, ok := fn["parameters"]; ok {
-			if data, err := json.Marshal(p); err == nil {
-				params = data
-			}
-		}
-
-		declarations = append(declarations, api.GeminiToolDeclaration{
-			Name:        name,
-			Description: desc,
-			Parameters:  params,
-		})
-	}
-
-	if len(declarations) == 0 {
-		return nil
-	}
-
-	return []api.GeminiTools{{FunctionDeclarations: declarations}}
 }

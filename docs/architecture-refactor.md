@@ -58,15 +58,23 @@ Plik ma `//go:build !noanthropic && !nogemini` — do skasowania w etapie 3 raze
 Goldeny z etapu 0 przeszły bez `-update` — dowód, że zachowanie nietknięte.
 `display.Display` zostaje dla call-site'ów; docelowo do usunięcia po etapie 6.
 
-## Etap 2 — pakiet `connector` (1,5–2d)
+## Etap 2 — pakiet `connector` (1,5–2d) — ZROBIONE
 
-- [ ] `connector/connector.go`: `Connector`, `Endpoint`, `Factory`, `Registry` (wartość, nie global)
-- [ ] `connector/openai.go` + przeniesienie `RichMessagesToChat`
-- [ ] `connector/anthropic.go` + `RichMessagesToAnthropic`, `ConvertToolsToAnthropic`
-- [ ] `connector/gemini.go` + `RichMessagesToGemini`, `convertToolsToGemini`
-- [ ] ciała connectorów najpierw tylko wołają dzisiejsze `api.StreamX` (bez zmiany HTTP)
-- [ ] `dynamicProvider.Stream` skrócone do: URI → klucz → `registry.New` → `conn.Stream`
-- [ ] golden files z etapu 0 nadal przechodzą
+- [x] `connector/connector.go`: `Connector`, `Endpoint`, `Factory`, `Registry` (wartość, nie global)
+- [x] `connector/openai.go` + przeniesienie `RichMessagesToChat`
+- [x] `connector/anthropic.go` + `RichMessagesToAnthropic` (`ConvertToolsToAnthropic` została w `api/` — używa jej też `anthropic_client.go` i ma stub pod build tagi; przeniesienie wymagałoby zmian w `api/`, czyli wyjścia poza etap)
+- [x] `connector/gemini.go` + `RichMessagesToGemini`, `convertToolsToGemini`
+- [x] ciała connectorów najpierw tylko wołają dzisiejsze `api.StreamX` (bez zmiany HTTP)
+- [x] `dynamicProvider.Stream` skrócone do: URI → klucz → `registry.New` → `conn.Stream` (125 → 39 linii)
+- [x] golden files z etapu 0 nadal przechodzą **bez** `-update`
+
+Kanoniczne typy wiadomości (`Message`, `ContentBlock`, `Request`) mieszkają teraz
+w `connector`; `providers` trzyma aliasy ze znakiem `=`, więc `agent/`, `session/`,
+`display/`, `tools/` i `main` nie wymagały ANI JEDNEJ zmiany. `pakiet api/` nietknięty.
+
+Jedyna świadoma mikro-zmiana zachowania: wysyłka `stream.StreamError` jest teraz
+jednolita i robi `select` na `ctx.Done()`. Wcześniej gałąź openai blokowała bez
+`select` (anthropic i gemini już miały). Widoczne tylko przy już anulowanym ctx.
 
 ## Etap 3 — `HTTPDoer` (1d)
 
@@ -75,6 +83,8 @@ Goldeny z etapu 0 przeszły bez `-update` — dowód, że zachowanie nietknięte
 - [ ] `ClientFromContext` jako fallback gdy `Endpoint.HTTP == nil`, potem usunąć
 - [ ] to samo pole w `internal/mcp/http.go`, `internal/connect/{connect,modelsdev}.go`
 - [ ] usunąć martwy `api/client.go`
+- [ ] usunąć martwy `tyciconfig.ProviderURI.FullEndpoint()` (`internal/tyciconfig/uri.go:109`) — nieużywany i ROZJECHANY z `providers.parseURI`: powiela switch po apiType, ale bez `appendChatPath`, więc dla ścieżki typu `/zen/go/v1` policzyłby inny URL niż realny
+- [ ] `default:` w starym switchu był de facto martwy — `tyciconfig.Parse` normalizuje każdy nieznany scheme do `openai` (`uri.go:45-51`); fallback żyje teraz w `providers.kindFor` przez `Registry.Has`, zweryfikować czy nadal potrzebny
 - [ ] usunąć build tagi + `api/anthropic_stub.go`, `api/gemini_stub.go`
 - [ ] `make minimal` = nierejestrowanie connectorów (jedna linia)
 
@@ -164,3 +174,14 @@ wchodzą w okolice refactoru.
 - [ ] **`ConvertToolsToAnthropic` przy błędzie parsowania zwraca format OpenAI as-is** i loguje globalnym `log.Printf` (`api/anthropic.go:362`)
 
 Do posprzątania przy przenoszeniu (nie bug): `config.go:Stream` robi `for _, e := range p.entries { entry = &e; break }` — poprawne przy `go 1.25`, ale wygląda jak klasyczny aliasing pętli.
+
+---
+
+## Dług zastany (nie nasza regresja, znalezione po drodze)
+
+- [ ] `go test -tags "noanthropic nogemini" ./api/` **nie kompiluje się** — `testCtx()`
+  siedzi w `api/anthropic_test.go` (plik z `//go:build !noanthropic`), a używa go
+  `api/api_test.go`. Zweryfikowane na czystym drzewie przed etapem 2: ten sam błąd.
+  `go build -tags ...` przechodzi, więc `make minimal` działa; problem dotyczy tylko
+  uruchamiania testów z tagami. Znika naturalnie w etapie 3 razem z tagami.
+- [ ] `gofmt` całego repo zrobiony w osobnym commicie (8caa1ff) — przed etapem 2.

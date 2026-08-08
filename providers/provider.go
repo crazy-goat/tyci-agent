@@ -2,7 +2,6 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -92,39 +92,19 @@ Be terse. No fluff. Short sentence. Get job done.
 	return prompt
 }
 
+// The canonical message types live in package connector, because providers
+// imports connector (and never the other way round). These are type aliases,
+// not new types, so every existing consumer — agent, session, the CLI —
+// keeps compiling unchanged and the two spellings stay interchangeable.
+
 // ContentBlock represents a single content block within a RichMessage.
-type ContentBlock struct {
-	Type     string `json:"type"` // "text", "thinking", "toolCall", "toolResult"
-	Text     string `json:"text,omitempty"`
-	Thinking string `json:"thinking,omitempty"`
-
-	// Tool call fields
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
-
-	// Tool result fields
-	IsError    bool   `json:"isError,omitempty"`
-	ToolCallID string `json:"toolCallId,omitempty"`
-	ToolName   string `json:"toolName,omitempty"`
-}
+type ContentBlock = connector.ContentBlock
 
 // RichMessage is the canonical message type used throughout the agent loop.
-// It carries structured content blocks instead of a flat text string,
-// allowing providers to build their own wire format.
-type RichMessage struct {
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
-}
+type RichMessage = connector.Message
 
 // Request is passed to Provider.Stream.
-type Request struct {
-	Model    string
-	System   string
-	Messages []RichMessage
-	Tools    json.RawMessage
-	Debug    bool
-}
+type Request = connector.Request
 
 type Provider interface {
 	Name() string
