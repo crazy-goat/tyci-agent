@@ -30,7 +30,7 @@ import (
 // Fake deliberately does NOT implement connector.HTTPInjector. That interface
 // has an intentionally silent fallback on a failed type assertion (see the
 // comment on connector.HTTPInjector), and several tests exist precisely to
-// pin the behaviour of a client that does not implement it — main.go's
+// pin the behavior of a client that does not implement it — main.go's
 // withIsolatedPool keeping the shared HTTP client, for one. A Fake that
 // satisfied HTTPInjector would stop those tests from testing anything. A
 // variant that needs WithHTTP belongs in a separate type.

@@ -128,13 +128,13 @@ func drain(ch <-chan stream.Event) {
 	}()
 }
 
-// The constructors below produce errors that api.IsRetryable recognises, so a
+// The constructors below produce errors that api.IsRetryable recognizes, so a
 // Flaky built from them drives the agent's retry loop rather than its error
 // path. TestFlaky_InjectedErrorsAreRetryable pins that.
 
 // RateLimited returns the 429 a provider sends when it wants the client to
 // back off. retryAfter is the raw Retry-After header value ("10" for ten
-// seconds); api.CalcBackoff honours it. Pass "" to leave the header out.
+// seconds); api.CalcBackoff honors it. Pass "" to leave the header out.
 func RateLimited(retryAfter string) error {
 	return &api.RetryableError{
 		Code:       429,

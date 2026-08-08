@@ -6,7 +6,7 @@ package providers
 // dynamicProvider.Stream for every supported apiType.
 //
 // These tests are a safety net for the connector refactor (docs/architecture-refactor.md,
-// Etap 0). They deliberately assert on TODAY's behaviour — including its quirks —
+// Etap 0). They deliberately assert on TODAY's behavior — including its quirks —
 // so that any silent change in message conversion, endpoint resolution, headers or
 // stream-event mapping shows up as a diff.
 //
@@ -225,13 +225,13 @@ func TestWireGolden(t *testing.T) {
 
 			reqJSON, err := json.MarshalIndent(gotRecord, "", "  ")
 			if err != nil {
-				t.Fatalf("marshalling request record: %v", err)
+				t.Fatalf("marshaling request record: %v", err)
 			}
 			assertGolden(t, goldenPath("wire_"+tc.apiType+"_request.golden.json"), reqJSON)
 
 			evJSON, err := json.MarshalIndent(events, "", "  ")
 			if err != nil {
-				t.Fatalf("marshalling event records: %v", err)
+				t.Fatalf("marshaling event records: %v", err)
 			}
 			assertGolden(t, goldenPath("wire_"+tc.apiType+"_events.golden.json"), evJSON)
 		})
@@ -339,10 +339,10 @@ func assertGolden(t *testing.T, path string, got []byte) {
 
 	var gotVal, wantVal any
 	if err := json.Unmarshal(got, &gotVal); err != nil {
-		t.Fatalf("unmarshalling produced JSON for %s: %v", path, err)
+		t.Fatalf("unmarshaling produced JSON for %s: %v", path, err)
 	}
 	if err := json.Unmarshal(want, &wantVal); err != nil {
-		t.Fatalf("unmarshalling golden %s: %v", path, err)
+		t.Fatalf("unmarshaling golden %s: %v", path, err)
 	}
 
 	if !reflect.DeepEqual(gotVal, wantVal) {

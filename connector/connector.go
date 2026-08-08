@@ -43,7 +43,7 @@ func IsKnownKind(kind string) bool { return knownKinds[kind] }
 
 // ErrExcluded is the error for a known protocol that this binary was built
 // without. The wording matches the api/*_stub.go message it replaces, so the
-// user-visible behaviour of a minimal build is unchanged.
+// user-visible behavior of a minimal build is unchanged.
 func ErrExcluded(kind string) error {
 	return fmt.Errorf("%s support excluded at build time (rebuild without -tags no%s)", kind, kind)
 }

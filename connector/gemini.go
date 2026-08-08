@@ -16,7 +16,7 @@ import (
 // this connector should build its own URL
 // (/v1beta/models/<model>:streamGenerateContent) and send x-goog-api-key
 // instead of Authorization: Bearer. Both are deliberately left broken here —
-// the golden files freeze today's behaviour and the fix needs a real API key
+// the golden files freeze today's behavior and the fix needs a real API key
 // to verify.
 type gemini struct {
 	ep Endpoint

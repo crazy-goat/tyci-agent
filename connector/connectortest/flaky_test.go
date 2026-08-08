@@ -227,7 +227,7 @@ func TestFlaky_MidStreamErrorSurvivesAsRetryable(t *testing.T) {
 	}
 }
 
-// A cancelled context must not leave the injecting goroutine wedged.
+// A canceled context must not leave the injecting goroutine wedged.
 func TestFlaky_CancelDuringInjection(t *testing.T) {
 	f := &Flaky{Client: &Fake{BlockUntilCancel: true}, Failures: []Failure{{
 		Err: ServerError(), MidStream: true, AfterEvents: 1,

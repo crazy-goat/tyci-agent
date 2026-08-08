@@ -455,7 +455,7 @@ var providerListCmd = &cobra.Command{
 			// so the user finds out here instead of from a bare "no API key"
 			// error at request time.
 			for _, envVar := range p.ConfigWarnings() {
-				fmt.Fprintf(os.Stdout, "    warning: URI references $%s, but env var %s is empty or unset\n", envVar, envVar)
+				_, _ = fmt.Fprintf(os.Stdout, "    warning: URI references $%s, but env var %s is empty or unset\n", envVar, envVar)
 			}
 
 			if showModels {

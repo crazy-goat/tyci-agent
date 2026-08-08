@@ -720,7 +720,7 @@ func TestDynamicProviderKindFor_registeredKindPassesThrough(t *testing.T) {
 
 // An api_type that is not a protocol we implement must error too, never
 // silently become openai. In practice tyciconfig.Parse already normalizes any
-// unrecognised URI scheme to "openai" (see TestParseURI_table), so this branch
+// unrecognized URI scheme to "openai" (see TestParseURI_table), so this branch
 // is unreachable through parseURI — it guards direct callers.
 func TestDynamicProviderKindFor_unknownKindErrors(t *testing.T) {
 	p := &dynamicProvider{name: "kindfor-unknown"}

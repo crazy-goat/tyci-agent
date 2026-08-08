@@ -429,7 +429,7 @@ func (p *dynamicProvider) authSource() AuthSource {
 //
 // It deliberately does NOT fall back to the OpenAI connector. The `default:`
 // branch of the old switch in Stream was already dead: tyciconfig.Parse
-// normalizes every unrecognised URI scheme to "openai"
+// normalizes every unrecognized URI scheme to "openai"
 // (internal/tyciconfig/uri.go), and LoadProvidersJSON only ever produces the
 // three known api_types — so apiType arriving here is always a known kind.
 // A fallback would only ever fire for a kind that IS known but is missing from

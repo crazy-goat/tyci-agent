@@ -251,7 +251,7 @@ func (s *interactiveState) switchModel(spec string) {
 		}
 		return
 	}
-	fmt.Fprintf(os.Stdout, "Switched to %s/%s\n", s.cond.Provider(), s.cond.Model())
+	_, _ = fmt.Fprintf(os.Stdout, "Switched to %s/%s\n", s.cond.Provider(), s.cond.Model())
 }
 
 func (s *interactiveState) handleResume(arg string) {

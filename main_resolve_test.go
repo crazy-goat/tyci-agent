@@ -154,7 +154,7 @@ func TestResolveModelClient_NoContextNoMatch(t *testing.T) {
 // connectortest.Fake is a connector.ModelClient that does NOT implement
 // connector.HTTPInjector — deliberately, and a test in that package pins it
 // (TestFake_DoesNotImplementHTTPInjector). It must pass through
-// withIsolatedPool untouched, keeping today's "no isolation" behaviour instead
+// withIsolatedPool untouched, keeping today's "no isolation" behavior instead
 // of failing.
 //
 // Asserting this against the shared fake rather than a one-off local double is

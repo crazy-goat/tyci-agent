@@ -10,7 +10,7 @@ import (
 
 // catalogResolver is what keeps package conductor free of package providers:
 // the conductor changes models through this interface and never sees the
-// catalog. These tests pin the two behaviours the frontends rely on.
+// catalog. These tests pin the two behaviors the frontends rely on.
 
 var _ conductor.ModelResolver = catalogResolver{}
 

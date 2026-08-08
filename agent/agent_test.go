@@ -842,9 +842,9 @@ func TestRunFallback_MidStreamFailureAfterPartialText(t *testing.T) {
 // first backoff and therefore never reaches a recovery.
 //
 // It runs in milliseconds despite the un-injectable backoff, and the reason is
-// worth writing down: api.CalcBackoff honours a 429's Retry-After header
+// worth writing down: api.CalcBackoff honors a 429's Retry-After header
 // verbatim, so RateLimited("0") asks for a zero-second wait and
-// sleepWithCountdown returns immediately. That is a real provider behaviour,
+// sleepWithCountdown returns immediately. That is a real provider behavior,
 // not a test hack — but it is also the ONLY way in, and it does not help the
 // 500/EOF cases, which always take BaseBackoff's four seconds. See the debt
 // note on the un-injectable backoff in docs/architecture-refactor.md.

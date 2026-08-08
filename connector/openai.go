@@ -15,7 +15,7 @@ const OptReasoning = "reasoning"
 
 // openAI speaks the OpenAI chat-completions protocol, which most third-party
 // providers (DeepSeek, GLM, Xiaomi, OpenRouter, ...) also expose. It is the
-// fallback protocol for any api_type we do not recognise.
+// fallback protocol for any api_type we do not recognize.
 type openAI struct {
 	ep        Endpoint
 	reasoning bool

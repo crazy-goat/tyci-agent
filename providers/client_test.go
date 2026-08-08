@@ -39,7 +39,7 @@ func recordingClientProvider(t *testing.T, name string) (Provider, *[]Request) {
 
 // drainEvents waits for the provider's streaming goroutine to finish. Stream
 // hands back a channel and closes it when the connector returns, so draining
-// it is the synchronisation point for anything the connector recorded.
+// it is the synchronization point for anything the connector recorded.
 func drainEvents(ch <-chan stream.Event) {
 	for range ch {
 	}

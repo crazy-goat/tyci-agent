@@ -70,7 +70,7 @@ func TestEndpointNilHTTPUsesDefaultClient(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	// The cancelled context makes the default client fail fast; all we assert
+	// The canceled context makes the default client fail fast; all we assert
 	// is that we got there at all instead of panicking on a nil doer.
 	if err := c.Stream(ctx, Request{Model: "gpt-4"}, func(stream.Event) error { return nil }); err == nil {
 		t.Fatal("expected an error from the default client, got nil")

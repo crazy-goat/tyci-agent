@@ -377,7 +377,7 @@ func TestCatalog_FindModelQualified(t *testing.T) {
 		t.Fatalf("FindModel(prov/m1) = %v, %q, %v", p, m, ok)
 	}
 	// The bare name after the slash is passed through unvalidated — today's
-	// behaviour, relied on by `--model provider/anything`.
+	// behavior, relied on by `--model provider/anything`.
 	if _, m, ok := c.FindModel("prov/not-listed"); !ok || m != "not-listed" {
 		t.Errorf("FindModel(prov/not-listed) = %q, %v; want pass-through", m, ok)
 	}

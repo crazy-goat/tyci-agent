@@ -27,7 +27,7 @@ func finishPromptRun(cond *conductor.Conductor, disp display.Display, err error)
 		if errors.Is(err, context.Canceled) {
 			disp.End()
 			fmt.Fprint(os.Stdout, "\n")
-			cond.EndSession("cancelled", 130)
+			cond.EndSession("canceled", 130)
 			printSessionPath(sessionPath)
 			os.Exit(130)
 		}

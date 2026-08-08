@@ -166,7 +166,7 @@ func TestFake_BlockUntilCancel(t *testing.T) {
 	}
 }
 
-// A cancelled context stops the replay instead of blocking forever on a
+// A canceled context stops the replay instead of blocking forever on a
 // channel nobody reads.
 func TestFake_CancelStopsReplay(t *testing.T) {
 	long := make([]stream.Event, 100)

@@ -92,7 +92,7 @@ func resolveModelClient(ctx context.Context, model string) (connector.ModelClien
 //
 // A ModelClient that does not implement connector.HTTPInjector (every fake in
 // the test suite) is returned untouched and keeps today's "no isolation"
-// behaviour. That fallback used to be the whole injection path's default
+// behavior. That fallback used to be the whole injection path's default
 // failure mode, because it ran through three interfaces and a type assertion
 // at each hop. It is now a single hop: every client the providers package
 // hands out implements connector.HTTPInjector, and providers/client.go asserts

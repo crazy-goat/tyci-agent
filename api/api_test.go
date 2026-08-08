@@ -223,7 +223,7 @@ func TestDoer_InjectedClientWins(t *testing.T) {
 }
 
 // Same guarantee as the deleted nil-in-context case: an explicit nil client
-// must be ignored in favour of the default, not used. The old context lookup
+// must be ignored in favor of the default, not used. The old context lookup
 // guarded this with `cl != nil`; doer keeps the guard so a typed-nil
 // *http.Client (easy to produce via providers.Deps{HTTP: someNilClientVar})
 // degrades instead of panicking inside net/http.

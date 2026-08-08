@@ -104,7 +104,7 @@ type Options struct {
 //     while Submit is still running.
 //   - Submit defends itself: a second, concurrent Submit is rejected with
 //     ErrTurnInFlight instead of corrupting the conversation. That is a
-//     diagnostic, not a licence — everything else here (Messages, Usage,
+//     diagnostic, not a license — everything else here (Messages, Usage,
 //     SetHistory, SwitchModel, the session calls) still belongs to the one
 //     goroutine driving the conversation.
 type Conductor struct {
