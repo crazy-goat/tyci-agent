@@ -114,6 +114,19 @@ type Provider interface {
 	Stream(ctx context.Context, req Request) (<-chan stream.Event, error)
 }
 
+// HTTPInjector is the optional half of Provider: an implementation that can
+// return a copy of itself bound to a specific HTTP client.
+//
+// It is separate from Provider on purpose. The agent must not know that HTTP
+// exists, and every fake provider in the test suite would otherwise have to
+// implement a method it has no use for. Callers that need their own transport
+// — today only the subagent runner, which gives each child its own connection
+// pool — type-assert to this interface and silently keep the shared default
+// client when the assertion fails.
+type HTTPInjector interface {
+	WithHTTP(connector.HTTPDoer) Provider
+}
+
 var DefaultRetryConfig = api.RetryConfig{MaxRetries: 5, BaseBackoff: 4, MaxBackoff: 128}
 
 // listSkillNames returns the names of all skills in the given directory.

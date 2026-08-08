@@ -69,9 +69,10 @@ type Endpoint struct {
 	// defaults (so they can override e.g. Authorization). Nothing populates
 	// this map today, which is why the wire format is unchanged.
 	Headers map[string]string
-	// HTTP is the client to send with. nil means "let the api layer resolve
-	// one from the context" — see api.ClientFromContext, which stays until
-	// Etap 4 gives the provider its own HTTP field.
+	// HTTP is the client to send with. It is filled in by whoever builds the
+	// Endpoint — in production providers.NewProvider passes its own Deps.HTTP
+	// through. nil is a meaningful value meaning "no client of my own": the
+	// api layer then falls back to its shared default client.
 	HTTP HTTPDoer
 	// Options carries connector-specific switches resolved from the provider
 	// URI query string (currently only "reasoning" for the OpenAI connector).

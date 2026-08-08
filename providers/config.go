@@ -96,11 +96,7 @@ func RegisterProvidersFromConfig(path string) {
 		if len(list) == 0 {
 			continue
 		}
-		p := &dynamicProvider{
-			name:    groupName,
-			entries: list,
-		}
-		Register(p)
+		Register(NewProvider(groupName, list, Deps{}))
 	}
 }
 
@@ -175,11 +171,7 @@ func RegisterProvidersFromProvidersJSON(path string) error {
 		if len(list) == 0 {
 			continue
 		}
-		p := &dynamicProvider{
-			name:    groupName,
-			entries: list,
-		}
-		Register(p)
+		Register(NewProvider(groupName, list, Deps{}))
 	}
 	return nil
 }
@@ -208,14 +200,75 @@ type ModelEntry struct {
 // not a global registry the connector package would have to own.
 var defaultConnectors = connector.DefaultRegistry()
 
+// Deps are the collaborators a provider carries explicitly instead of
+// reaching for package globals. Every field is optional; a zero Deps yields
+// exactly the production defaults.
+type Deps struct {
+	// Auth resolves the provider-level credential. nil means DefaultAuth()
+	// (auth.json, then environment).
+	Auth AuthSource
+	// Connectors is the set of wire protocols this provider may build. nil
+	// means the built-in registry for this binary.
+	Connectors *connector.Registry
+	// HTTP is the client every connector this provider builds will send with.
+	// nil means the api layer's shared default client — that is the normal
+	// production case; only a caller that needs its own connection pool (the
+	// subagent) or its own transport (tests) fills this in.
+	HTTP connector.HTTPDoer
+}
+
+// NewProvider builds a Provider serving the given model catalog.
+//
+// This is the only constructor: everything the provider needs at request time
+// arrives through it, so nothing in the request path consults a global.
+func NewProvider(name string, entries []ModelEntry, deps Deps) Provider {
+	return newDynamicProvider(name, entries, deps)
+}
+
+func newDynamicProvider(name string, entries []ModelEntry, deps Deps) *dynamicProvider {
+	if deps.Auth == nil {
+		deps.Auth = defaultAuthSource
+	}
+	if deps.Connectors == nil {
+		deps.Connectors = defaultConnectors
+	}
+	// deps.HTTP stays nil on purpose: "no client of my own" is a meaningful
+	// value that hands the choice to the api layer's shared default client.
+	return &dynamicProvider{
+		name:     name,
+		entries:  entries,
+		registry: deps.Connectors,
+		auth:     deps.Auth,
+		http:     deps.HTTP,
+	}
+}
+
 // dynamicProvider implements Provider using config entries.
 type dynamicProvider struct {
 	name    string
 	entries []ModelEntry
-	// registry is optional; nil means defaultConnectors.
+	// registry is optional; nil means defaultConnectors. NewProvider always
+	// fills it, but hand-built literals (tests) may leave it zero.
 	registry *connector.Registry
 	// auth is optional; nil means defaultAuthSource.
 	auth AuthSource
+	// http is the client injected into every Endpoint this provider builds.
+	// nil is meaningful — see Deps.HTTP.
+	http connector.HTTPDoer
+}
+
+// WithHTTP returns a copy of the provider bound to h. It returns a copy rather
+// than mutating: a single provider value is shared by every parallel subagent,
+// so mutating it here would let one child's connection pool leak into another.
+//
+// This is deliberately NOT a method on the Provider interface. Putting it
+// there would force every fake and every future implementation to carry an
+// HTTP concern it has no use for; callers type-assert to HTTPInjector instead
+// and fall back to today's "no isolation" behaviour when it is absent.
+func (p *dynamicProvider) WithHTTP(h connector.HTTPDoer) Provider {
+	c := *p
+	c.http = h
+	return &c
 }
 
 func (p *dynamicProvider) Name() string { return p.name }
@@ -280,6 +333,7 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 		BaseURL: baseURL,
 		Path:    endpointPath,
 		APIKey:  apiKey,
+		HTTP:    p.http,
 		Options: uriOptions(entry.URI),
 	})
 	if err != nil {
@@ -310,9 +364,9 @@ func (p *dynamicProvider) findEntry(model string) *ModelEntry {
 	return nil
 }
 
-// connectors returns the registry to build connectors from, defaulting to the
-// built-in set. The field exists so callers can inject fakes; until Etap 4
-// turns Provider into a struct, nothing sets it.
+// connectors returns the registry to build connectors from. NewProvider fills
+// the field from Deps.Connectors (production: the built-in set; tests: their
+// own registry of fakes); the nil fallback only covers hand-built literals.
 func (p *dynamicProvider) connectors() *connector.Registry {
 	if p.registry != nil {
 		return p.registry

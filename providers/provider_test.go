@@ -536,3 +536,154 @@ func TestDynamicProviderKindFor_unknownKindErrors(t *testing.T) {
 		t.Fatalf("kindFor error = %q, want unsupported api_type", err.Error())
 	}
 }
+
+// =============================================================================
+// Injected dependencies: the provider carries them, it does not fetch globals
+// =============================================================================
+
+// capturingFactory records the Endpoint it was handed and returns a connector
+// that does nothing. It is what proves an injected dependency actually travels
+// from Deps all the way to the connector.
+type capturingConnector struct{ ep connector.Endpoint }
+
+func (c *capturingConnector) Kind() string { return connector.KindOpenAI }
+func (c *capturingConnector) Stream(context.Context, Request, func(stream.Event) error) error {
+	return nil
+}
+
+func capturingRegistry(kind string) (*connector.Registry, *connector.Endpoint) {
+	var seen connector.Endpoint
+	r := connector.NewRegistry()
+	r.Register(kind, func(ep connector.Endpoint) (connector.Connector, error) {
+		seen = ep
+		return &capturingConnector{ep: ep}, nil
+	})
+	return r, &seen
+}
+
+// Deps.HTTP must land in connector.Endpoint.HTTP — that is the whole point of
+// the provider becoming an explicitly constructed struct.
+func TestNewProvider_InjectsHTTPIntoEndpoint(t *testing.T) {
+	reg, seen := capturingRegistry(connector.KindOpenAI)
+	doer := &stubDoer{}
+
+	p := NewProvider("injected-http", []ModelEntry{
+		{Name: "m", URI: "openai://m@sk-tok@api.example.invalid"},
+	}, Deps{Connectors: reg, HTTP: doer})
+
+	ch, err := p.Stream(context.Background(), Request{Model: "m"})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for range ch {
+	}
+
+	if seen.HTTP == nil {
+		t.Fatal("Endpoint.HTTP is nil — the provider's HTTP client never reached the connector")
+	}
+	if seen.HTTP != connector.HTTPDoer(doer) {
+		t.Errorf("Endpoint.HTTP = %v, want the injected doer", seen.HTTP)
+	}
+	// The rest of the endpoint is still resolved from the URI.
+	if seen.APIKey != "sk-tok" {
+		t.Errorf("Endpoint.APIKey = %q, want %q", seen.APIKey, "sk-tok")
+	}
+	if got := seen.URL(); got != "https://api.example.invalid/v1/chat/completions" {
+		t.Errorf("Endpoint.URL() = %q", got)
+	}
+}
+
+// A provider built without an HTTP client leaves Endpoint.HTTP nil, which is
+// how the api layer's shared default client stays the production path.
+func TestNewProvider_NilHTTPStaysNil(t *testing.T) {
+	reg, seen := capturingRegistry(connector.KindOpenAI)
+
+	p := NewProvider("no-http", []ModelEntry{
+		{Name: "m", URI: "openai://m@sk-tok@api.example.invalid"},
+	}, Deps{Connectors: reg})
+
+	ch, err := p.Stream(context.Background(), Request{Model: "m"})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for range ch {
+	}
+	if seen.HTTP != nil {
+		t.Errorf("Endpoint.HTTP = %v, want nil", seen.HTTP)
+	}
+}
+
+// A zero Deps must reproduce the production defaults rather than leaving nil
+// fields behind — the registration path (RegisterProvidersFromConfig) relies
+// on it.
+func TestNewProvider_ZeroDepsGetsDefaults(t *testing.T) {
+	p := newDynamicProvider("defaults", nil, Deps{})
+	if p.registry != defaultConnectors {
+		t.Error("zero Deps did not get the default connector registry")
+	}
+	if p.auth == nil {
+		t.Error("zero Deps did not get the default AuthSource")
+	}
+	if p.http != nil {
+		t.Error("zero Deps invented an HTTP client; nil is the meaningful default")
+	}
+}
+
+// WithHTTP must return a COPY. Parallel subagents share one provider value, so
+// mutating the receiver would let one child's connection pool leak into
+// another's requests.
+func TestWithHTTP_ReturnsCopy(t *testing.T) {
+	reg, _ := capturingRegistry(connector.KindOpenAI)
+	base := newDynamicProvider("copy-me", []ModelEntry{{Name: "m", URI: "openai://m@sk@h"}}, Deps{Connectors: reg})
+
+	a := &stubDoer{}
+	b := &stubDoer{}
+	withA := base.WithHTTP(a)
+	withB := base.WithHTTP(b)
+
+	if base.http != nil {
+		t.Error("WithHTTP mutated the receiver")
+	}
+	if withA == Provider(base) || withB == Provider(base) {
+		t.Error("WithHTTP returned the receiver instead of a copy")
+	}
+	if got := withA.(*dynamicProvider).http; got != connector.HTTPDoer(a) {
+		t.Errorf("first copy bound to %v, want a", got)
+	}
+	if got := withB.(*dynamicProvider).http; got != connector.HTTPDoer(b) {
+		t.Errorf("second copy bound to %v, want b", got)
+	}
+	// The copies still serve the same catalog.
+	if withA.Name() != "copy-me" || len(withA.(*dynamicProvider).entries) != 1 {
+		t.Error("WithHTTP copy lost the catalog")
+	}
+}
+
+// The provider built by NewProvider satisfies the optional HTTPInjector
+// interface main.go type-asserts against.
+func TestNewProvider_ImplementsHTTPInjector(t *testing.T) {
+	p := NewProvider("injector", nil, Deps{})
+	inj, ok := p.(HTTPInjector)
+	if !ok {
+		t.Fatal("NewProvider result does not implement HTTPInjector")
+	}
+	doer := &stubDoer{}
+	bound := inj.WithHTTP(doer)
+	if bound.(*dynamicProvider).http != connector.HTTPDoer(doer) {
+		t.Error("WithHTTP via HTTPInjector did not bind the client")
+	}
+}
+
+// stubDoer is a do-nothing HTTPDoer used as an identity marker.
+type stubDoer struct{ calls int }
+
+func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
+	d.calls++
+	return &http.Response{
+		StatusCode: 200,
+		Status:     "200 OK",
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("data: [DONE]\n")),
+		Request:    req,
+	}, nil
+}
