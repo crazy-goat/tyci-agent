@@ -18,9 +18,9 @@ type fakeProvider struct {
 }
 
 func (f *fakeProvider) Name() string         { return f.name }
-func (f *fakeProvider) IsConfigured() bool    { return f.configured }
-func (f *fakeProvider) Models() []string      { return f.models }
-func (f *fakeProvider) FreeModels() []string  { return f.free }
+func (f *fakeProvider) IsConfigured() bool   { return f.configured }
+func (f *fakeProvider) Models() []string     { return f.models }
+func (f *fakeProvider) FreeModels() []string { return f.free }
 func (f *fakeProvider) Stream(context.Context, providers.Request) (<-chan stream.Event, error) {
 	return nil, nil
 }

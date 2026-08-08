@@ -198,7 +198,7 @@ func TestTuiSelection_ScreenYMapping(t *testing.T) {
 
 	// openToolModalAt should accept message-area Y in range [0, visibleLines()-1]
 	// and reject negative values (which would come from top bar clicks).
-	m.openToolModalAt(-1) // should be no-op (top bar)
+	m.openToolModalAt(-1)               // should be no-op (top bar)
 	m.openToolModalAt(m.visibleLines()) // should be no-op (past end)
 	// No crash means success.
 }

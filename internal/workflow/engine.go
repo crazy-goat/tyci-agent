@@ -180,7 +180,7 @@ func (e *Engine) luaResumeSession(L *lua.LState) int {
 	}
 
 	var sessionData struct {
-		Model    string                 `json:"model"`
+		Model    string                  `json:"model"`
 		Messages []providers.RichMessage `json:"messages"`
 	}
 	if err := json.Unmarshal(data, &sessionData); err != nil {
@@ -321,7 +321,7 @@ func (e *Engine) sessionSave(L *lua.LState) int {
 	path := L.CheckString(2)
 
 	sessionData := struct {
-		Model    string                 `json:"model"`
+		Model    string                  `json:"model"`
 		Messages []providers.RichMessage `json:"messages"`
 	}{
 		Model:    session.model,
@@ -406,11 +406,11 @@ func (c *responseCollector) ToolCallStart(name string) {
 	c.toolCalls++
 }
 
-func (c *responseCollector) Request(content string)           {}
-func (c *responseCollector) ToolCallDelta(delta string) {}
+func (c *responseCollector) Request(content string)          {}
+func (c *responseCollector) ToolCallDelta(delta string)      {}
 func (c *responseCollector) ToolCallEnd(name, result string) {}
-func (c *responseCollector) ToolFinish()                    {}
-func (c *responseCollector) ToolBlock(msg string) {}
+func (c *responseCollector) ToolFinish()                     {}
+func (c *responseCollector) ToolBlock(msg string)            {}
 
 func (c *responseCollector) Summary(usage stream.Usage, stats stream.Stats) {
 	c.usage = usage

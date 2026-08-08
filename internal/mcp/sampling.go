@@ -33,10 +33,10 @@ type ModelHint struct {
 
 // SamplingResult represents the result of a sampling request.
 type SamplingResult struct {
-	Model       string          `json:"model"`
-	Role        string          `json:"role"`
-	Content     json.RawMessage `json:"content"`
-	StopReason  string          `json:"stopReason,omitempty"`
+	Model      string          `json:"model"`
+	Role       string          `json:"role"`
+	Content    json.RawMessage `json:"content"`
+	StopReason string          `json:"stopReason,omitempty"`
 }
 
 // SamplingResultContent represents the content in a sampling result.
@@ -53,8 +53,8 @@ type ElicitationRequest struct {
 
 // ElicitationResult represents the result of an elicitation request.
 type ElicitationResult struct {
-	Action   string          `json:"action"` // "accept", "cancel", "decline"
-	Content  json.RawMessage `json:"content,omitempty"`
+	Action  string          `json:"action"` // "accept", "cancel", "decline"
+	Content json.RawMessage `json:"content,omitempty"`
 }
 
 // SamplingHandler is called when an MCP server requests sampling.

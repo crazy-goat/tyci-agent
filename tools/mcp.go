@@ -17,7 +17,7 @@ type MCPToolRunner struct {
 	tools   map[string]*mcpTool // prefixed name -> tool info
 
 	// Sampling/Elicitation handlers
-	samplingFunc  func(ctx context.Context, messages []mcp.SamplingMessage, model string) (string, error)
+	samplingFunc    func(ctx context.Context, messages []mcp.SamplingMessage, model string) (string, error)
 	elicitationFunc func(ctx context.Context, message string) (string, error)
 }
 

@@ -108,7 +108,7 @@ func (m TuiModel) renderTodoModalView() string {
 		Bold(true).
 		Foreground(lipgloss.Color("252")).
 		Background(lipgloss.Color("60")).
-		Width(popupWidth - 2).
+		Width(popupWidth-2).
 		Padding(0, 1)
 	title := titleStyle.Render(titleText)
 
@@ -168,7 +168,7 @@ func (m TuiModel) renderTodoModalView() string {
 	}
 	footerStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245")).
-		Width(popupWidth - 2).
+		Width(popupWidth-2).
 		Padding(0, 1)
 	footer := footerStyle.Render(footerText)
 

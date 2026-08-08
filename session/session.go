@@ -614,6 +614,7 @@ func ReadAllMessages(r io.Reader) ([]map[string]any, error) {
 	}
 	return msgs, scanner.Err()
 }
+
 // SessionDir returns the directory where session files for the given cwd
 // are stored: ~/.tyci/sessions/<encoded-cwd>/.
 //

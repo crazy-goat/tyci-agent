@@ -116,29 +116,29 @@ func defaultMaxLines(toolName string) int {
 }
 
 type TuiModel struct {
-	width, height int
-	blocks        []block
-	input         textarea.Model
-	ready         bool
-	quitting      bool
-	lastUsage     stream.Usage
-	lastStats     stream.Stats
-	reading            bool
-	requestStartTime   time.Time // set on submit, cleared on done/reset; used by buildStatus for live elapsed counter
-	status             string   // "idle", "thinking", "responding", "tool"
-	statusMessage      string   // transient user-facing status, e.g. copy result
-	modelName     string // model name shown in status bar
+	width, height    int
+	blocks           []block
+	input            textarea.Model
+	ready            bool
+	quitting         bool
+	lastUsage        stream.Usage
+	lastStats        stream.Stats
+	reading          bool
+	requestStartTime time.Time // set on submit, cleared on done/reset; used by buildStatus for live elapsed counter
+	status           string    // "idle", "thinking", "responding", "tool"
+	statusMessage    string    // transient user-facing status, e.g. copy result
+	modelName        string    // model name shown in status bar
 
 	// Model switching (Tab/Shift+Tab) — uses favoriteModels when available.
-	models          []string          // all available models (format: "provider/model")
-	favoriteModels  []string          // favorite models for quick Tab/Shift+Tab cycling
-	favoriteSet     map[string]bool   // set lookup for favorites (for picker rendering)
+	models            []string                          // all available models (format: "provider/model")
+	favoriteModels    []string                          // favorite models for quick Tab/Shift+Tab cycling
+	favoriteSet       map[string]bool                   // set lookup for favorites (for picker rendering)
 	onFavoriteToggled func(model string, favorite bool) // called when a favorite is toggled (persist to config)
-	defaultModel    string            // default model (one, highlighted in picker)
-	onDefaultChanged func(string)     // called when default model changes (persist to config)
-	favIdx          int               // index of current model in favoriteModels slice
-	modelIdx        int               // index of current model in models slice (for picker)
-	modelChanges    chan<- string      // channel to notify outer TUI of model changes
+	defaultModel      string                            // default model (one, highlighted in picker)
+	onDefaultChanged  func(string)                      // called when default model changes (persist to config)
+	favIdx            int                               // index of current model in favoriteModels slice
+	modelIdx          int                               // index of current model in models slice (for picker)
+	modelChanges      chan<- string                     // channel to notify outer TUI of model changes
 
 	// Model picker (/model command)
 	pickerActive bool
@@ -156,10 +156,10 @@ type TuiModel struct {
 	// outer TUI: a successful Enter sends the chosen path, an Esc sends "".
 	// The channel header survives bubbletea's value-copy of the model on
 	// every Update, so it's safe to read from this struct in the key handler.
-	resumePickerActive  bool                                  // true while the popup is open
-	resumePickerEntries []TuiResumeEntry                       // sorted (newest first) entries to list
-	resumePickerCursor  int                                    // index into resumePickerEntries
-	resumeCh            chan string                            // set once at construction; nil disables picker
+	resumePickerActive  bool             // true while the popup is open
+	resumePickerEntries []TuiResumeEntry // sorted (newest first) entries to list
+	resumePickerCursor  int              // index into resumePickerEntries
+	resumeCh            chan string      // set once at construction; nil disables picker
 
 	// Cancel signal: sent on when ESC pressed during agent run
 	cancelCh chan<- struct{}

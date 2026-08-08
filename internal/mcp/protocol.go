@@ -76,9 +76,9 @@ type ToolListResult struct {
 
 // InitializeParams represents parameters for the initialize request.
 type InitializeParams struct {
-	ProtocolVersion string         `json:"protocolVersion"`
-	Capabilities    ClientCaps     `json:"capabilities"`
-	ClientInfo      ClientInfo     `json:"clientInfo"`
+	ProtocolVersion string     `json:"protocolVersion"`
+	Capabilities    ClientCaps `json:"capabilities"`
+	ClientInfo      ClientInfo `json:"clientInfo"`
 }
 
 // ClientInfo contains client identification.
@@ -94,9 +94,9 @@ type ClientCaps struct {
 
 // InitializeResult represents the result of the initialize request.
 type InitializeResult struct {
-	ProtocolVersion string         `json:"protocolVersion"`
-	Capabilities    ServerCaps     `json:"capabilities"`
-	ServerInfo      ServerInfo     `json:"serverInfo"`
+	ProtocolVersion string     `json:"protocolVersion"`
+	Capabilities    ServerCaps `json:"capabilities"`
+	ServerInfo      ServerInfo `json:"serverInfo"`
 }
 
 // ServerInfo contains server identification.

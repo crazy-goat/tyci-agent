@@ -175,12 +175,13 @@ func (m *TuiModel) selectModel(model string) {
 
 // rebuildPickerItems builds the filtered picker items list.
 // Layout (when filter is empty):
-//   1. Default section (single defaultModel, if set)
-//   2. Favorites section (favoriteModels in stored order)
-//   3. All providers, sorted alphabetically, with models sorted within each.
-//      Default and favorites models are excluded from provider sections
-//      (they only appear in their dedicated sections at the top) so each
-//      model is shown exactly once.
+//  1. Default section (single defaultModel, if set)
+//  2. Favorites section (favoriteModels in stored order)
+//  3. All providers, sorted alphabetically, with models sorted within each.
+//     Default and favorites models are excluded from provider sections
+//     (they only appear in their dedicated sections at the top) so each
+//     model is shown exactly once.
+//
 // When a filter is active, only the provider sections are shown (filtered),
 // in alphabetical order. Default/Favorites sections are skipped while
 // filtering so the user can type to find any model — including favorites.

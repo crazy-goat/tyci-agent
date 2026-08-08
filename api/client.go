@@ -48,7 +48,7 @@ type Message struct {
 
 // ToolDef represents a tool definition
 type ToolDef struct {
-	Type     string          `json:"type"`
+	Type     string         `json:"type"`
 	Function ToolDefinition `json:"function"`
 }
 
@@ -61,9 +61,9 @@ type ToolDefinition struct {
 
 // ToolCall represents a tool call from the model
 type ToolCall struct {
-	ID        string `json:"id"`
-	Type      string `json:"type"`
-	Function  FunctionCall `json:"function"`
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function FunctionCall `json:"function"`
 }
 
 // FunctionCall contains the function name and arguments

@@ -12,7 +12,7 @@ func TestBuildStatus_ShowsElapsedTimeWhenReading(t *testing.T) {
 	// "reading" means busy/request-in-flight (confusing name, but !reading = idle).
 	// Here m.reading is true and we set requestStartTime to verify the suffix appears.
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
-	m.reading = false          // request in flight
+	m.reading = false // request in flight
 	m.status = "tool"
 	m.requestStartTime = time.Now().Add(-5300 * time.Millisecond) // 5.3s ago
 	m.width = 100
@@ -32,7 +32,7 @@ func TestBuildStatus_NoSuffixWhenIdle(t *testing.T) {
 	// When m.reading == true (idle), no suffix should appear even if
 	// requestStartTime is set (defensive: stale timestamp).
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
-	m.reading = true           // idle
+	m.reading = true // idle
 	m.status = "tool"
 	m.requestStartTime = time.Now().Add(-1000 * time.Millisecond)
 	m.width = 100
@@ -50,7 +50,7 @@ func TestBuildStatus_NoSuffixWhenIdle(t *testing.T) {
 func TestBuildStatus_NoSuffixWhenRequestStartTimeIsZero(t *testing.T) {
 	// When requestStartTime is the zero value, no suffix even if reading.
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
-	m.reading = false          // request in flight (but start time is zero — edge case)
+	m.reading = false // request in flight (but start time is zero — edge case)
 	m.status = "responding"
 	m.requestStartTime = time.Time{} // zero value
 	m.width = 100

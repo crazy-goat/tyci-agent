@@ -171,15 +171,15 @@ func (m *TuiModel) blockAtVisibleLine(visY int) int {
 //     changes that don't go through the dirty-flag path, without needing
 //     invalidate calls scattered across 20+ event handlers.
 type messageRegionCache struct {
-	cached            string // the last rendered message region ("" = not built yet)
-	dirty             bool   // true when block layout/content changed
-	scrollLine        int    // scroll position when cache was built
-	atBottom          bool   // atBottom when cache was built
-	selectionVersion  int    // selection version when cache was built
-	selectionActive   bool   // selection active when cache was built
-	selectionFlash    bool   // selection flash when cache was built
-	width             int    // terminal width when cache was built
-	hasContent        bool   // whether blocks existed when cache was built
+	cached           string // the last rendered message region ("" = not built yet)
+	dirty            bool   // true when block layout/content changed
+	scrollLine       int    // scroll position when cache was built
+	atBottom         bool   // atBottom when cache was built
+	selectionVersion int    // selection version when cache was built
+	selectionActive  bool   // selection active when cache was built
+	selectionFlash   bool   // selection flash when cache was built
+	width            int    // terminal width when cache was built
+	hasContent       bool   // whether blocks existed when cache was built
 }
 
 // invalidateMessageRegion marks the message region cache as stale so the next
