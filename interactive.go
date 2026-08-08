@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/conductor"
 	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/internal/readline"
@@ -17,25 +17,22 @@ import (
 	"github.com/decodo/tyci/tools"
 )
 
+// interactiveState is the console REPL. It owns the line editor, the slash
+// commands and everything printed to the terminal; the conversation itself —
+// history, model client, session log, usage — belongs to the conductor.
 type interactiveState struct {
-	provider    providers.Provider
-	modelName   string
+	cond        *conductor.Conductor
 	display     display.Display
 	historyFile string
-	cfg         agent.Config
 	baseCtx     context.Context
-	sessionPath string
-	sessionPtr  *session.Session
 
-	conversation []providers.RichMessage
-	totalUsage   stream.Usage
-	editor       *readline.LineEditor
+	editor *readline.LineEditor
 }
 
-func runInteractive(provider providers.Provider, modelName string, disp display.Display, historyFile string, cfg agent.Config, baseCtx context.Context, sessionPath string) {
+func runInteractive(cond *conductor.Conductor, disp display.Display, historyFile string, baseCtx context.Context) {
 	st := &interactiveState{
-		provider: provider, modelName: modelName, display: disp,
-		historyFile: historyFile, cfg: cfg, baseCtx: baseCtx, sessionPath: sessionPath,
+		cond: cond, display: disp,
+		historyFile: historyFile, baseCtx: baseCtx,
 	}
 	st.init()
 	defer st.close()
@@ -59,22 +56,23 @@ func (s *interactiveState) close() {
 	if s.editor != nil {
 		s.editor.Close()
 	}
-	if s.cfg.Session != nil {
-		agent.WriteSessionEnd(s.cfg.Session, "ok", 0, &s.totalUsage)
-		if s.sessionPath != "" {
-			fmt.Fprintf(os.Stderr, "📁 Session: %s\n", s.sessionPath)
+	if s.cond.Session() != nil {
+		s.cond.EndSession("ok", 0)
+		if path := s.cond.SessionPath(); path != "" {
+			fmt.Fprintf(os.Stderr, "📁 Session: %s\n", path)
 		}
 	}
 }
 
 func (s *interactiveState) replaySession() {
-	if s.cfg.Session == nil || !s.cfg.Session.IsResume() || s.sessionPath == "" {
+	sess := s.cond.Session()
+	if sess == nil || !sess.IsResume() || s.cond.SessionPath() == "" {
 		return
 	}
-	parsedLines := s.cfg.Session.Messages()
+	parsedLines := sess.Messages()
 	rebuiltMsgs, _ := session.RebuildMessages(parsedLines)
 	if len(rebuiltMsgs) > 0 {
-		s.conversation = rebuiltMsgs
+		s.cond.SetHistory(rebuiltMsgs)
 	}
 
 	// Re-render the transcript so the user can scroll back through it.
@@ -85,10 +83,10 @@ func (s *interactiveState) replaySession() {
 	// resolved onto wrong rows during the user's mouse drag, blanking
 	// the screen on release. The new path uses pure wrapText — selection
 	// highlights track the actual on-screen characters.
-	replaySessionToDisplay(s.display, s.sessionPath)
+	replaySessionToDisplay(s.display, s.cond.SessionPath())
 
 	if len(rebuiltMsgs) > 0 {
-		fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", s.cfg.Session.ID(), len(rebuiltMsgs))
+		fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", sess.ID(), len(rebuiltMsgs))
 	}
 }
 
@@ -112,8 +110,10 @@ func (s *interactiveState) loop() {
 			iterCancel()
 			continue
 		}
-		s.submitUserLine(line)
-		if fatal := s.runAgentIteration(iterCtx, iterCancel); fatal {
+		if s.editor != nil {
+			s.editor.AddHistory(line)
+		}
+		if fatal := s.runAgentIteration(iterCtx, iterCancel, line); fatal {
 			return
 		}
 	}
@@ -158,7 +158,11 @@ func (s *interactiveState) handleCommand(raw string, cancel context.CancelFunc) 
 		return true, true
 	case line == "/new":
 		cancel()
-		s.conversation = nil
+		// Console /new drops the conversation but keeps writing to the
+		// same session file — deliberately unlike the TUI, which starts a
+		// fresh log. Preserved as-is; the difference is now visible in the
+		// two conductor calls rather than buried in two copies of a loop.
+		s.cond.ClearHistory()
 		tools.ClearTodoList()
 		fmt.Print("\033[2J\033[H")
 		return false, true
@@ -199,7 +203,7 @@ func (s *interactiveState) listAvailableModels() {
 	fmt.Fprintln(os.Stdout, "Available models (providers configured in auth.json):")
 	fmt.Fprintln(os.Stdout, "")
 	any := false
-	current := s.provider.Name() + "/" + s.modelName
+	current := s.cond.Provider() + "/" + s.cond.Model()
 	for _, name := range keys {
 		p, ok := providers.GetProvider(name)
 		if !ok {
@@ -234,18 +238,20 @@ func (s *interactiveState) switchModel(spec string) {
 		fmt.Fprintf(os.Stderr, "Invalid model %q: expected 'provider/model-name'\n", spec)
 		return
 	}
-	p, m, ok := providers.FindModel(spec)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "Model %q not found. Run '/model' to see available models.\n", spec)
+	if err := s.cond.SwitchModel(spec); err != nil {
+		var notFound *modelNotFoundError
+		var notConfigured *providerNotConfiguredError
+		switch {
+		case errors.As(err, &notFound):
+			fmt.Fprintf(os.Stderr, "Model %q not found. Run '/model' to see available models.\n", spec)
+		case errors.As(err, &notConfigured):
+			fmt.Fprintf(os.Stderr, "Provider %q is not configured. Add a key via 'tyci provider auth set %s <key>'.\n", notConfigured.provider, notConfigured.provider)
+		default:
+			fmt.Fprintf(os.Stderr, "/model: %v\n", err)
+		}
 		return
 	}
-	if !p.IsConfigured() {
-		fmt.Fprintf(os.Stderr, "Provider %q is not configured. Add a key via 'tyci provider auth set %s <key>'.\n", p.Name(), p.Name())
-		return
-	}
-	s.provider = p
-	s.modelName = m
-	fmt.Fprintf(os.Stdout, "Switched to %s/%s\n", p.Name(), m)
+	fmt.Fprintf(os.Stdout, "Switched to %s/%s\n", s.cond.Provider(), s.cond.Model())
 }
 
 func (s *interactiveState) handleResume(arg string) {
@@ -268,33 +274,20 @@ func (s *interactiveState) handleResume(arg string) {
 		fmt.Fprintf(os.Stderr, "/resume: %d corrupt lines skipped\n", len(corrupt))
 	}
 
-	// Close current session cleanly before swapping.
-	if s.sessionPtr != nil {
-		_ = s.sessionPtr.Close()
-	}
-	s.sessionPtr = nil
-	s.sessionPath = ""
-
-	wd, _ := os.Getwd()
-	newSess, err := session.Open(path, wd, s.modelName, s.provider.Name())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "/resume: reopen failed: %v\n", err)
-		return
-	}
-	s.sessionPtr = newSess
-	s.sessionPath = path
-	s.conversation = msgs
-	s.totalUsage = stream.Usage{
+	if err := s.cond.Resume(path, msgs, stream.Usage{
 		Input:     total.Input,
 		Output:    total.Output,
 		Reasoning: total.Reasoning,
 		CacheRead: total.CacheRead,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "/resume: reopen failed: %v\n", err)
+		return
 	}
+	// Follow the resumed session back to the model it was recorded with,
+	// when that model still resolves. A failure here is not worth a message:
+	// the conversation continues on the model already in use.
 	if summary.Provider != "" && summary.Model != "" {
-		if p, m, ok := providers.FindModel(summary.Provider + "/" + summary.Model); ok {
-			s.provider = p
-			s.modelName = m
-		}
+		_ = s.cond.SwitchModel(summary.Provider + "/" + summary.Model)
 	}
 
 	// Render the swapped-in transcript so the user can scroll it.

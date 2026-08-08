@@ -262,7 +262,10 @@ var consoleCmd = &cobra.Command{
 			defer dl.Close()
 		}
 		disp := display.NewTerminal()
-		runInteractive(provider, modelName, disp, historyFile, cfg, ctx, sessionPath)
+		// requireConfigured: /model in the console refuses a provider
+		// without credentials and says how to add one.
+		cond := newConductor(provider, modelName, disp, cfg, sessionPath, catalogResolver{requireConfigured: true})
+		runInteractive(cond, disp, historyFile, ctx)
 		return nil
 	},
 }
