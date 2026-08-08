@@ -523,11 +523,212 @@ zostają.
   wpisu w katalogu (`ModelEntry`), nie jako druga metoda interfejsu — poprzedni
   kształt zgnił właśnie dlatego, że nikt nie miał czym go wypełnić.
 
-- [ ] `Conductor`: `conversation` + `cfg` + `ModelClient` + sesja
-- [ ] API: `Submit(prompt)`, `Interrupt()`, `SwitchModel()`
-- [ ] przeniesienie logiki z `interactive_agent.go`, `tui_mode.go:19-350`, `commands.go:86-330`
-- [ ] TUI/console tylko wołają metody i renderują eventy
-- [ ] smoke test: headless driver bez żadnego UI
+### `Conductor` — ZROBIONE
+
+- [x] `Conductor`: `conversation` + `cfg` + `ModelClient` + sesja (`conductor/conductor.go`)
+- [x] API: `Submit(ctx, prompt)`, `Interrupt()`, `SwitchModel(spec)` — plus `Resume`
+      i operacje na stanie, patrz niżej
+- [x] przeniesienie logiki z `interactive_agent.go`, `tui_mode.go`, `prompt_mode.go`
+      oraz punktu konstrukcji w `commands.go`
+- [x] TUI/konsola tylko wołają metody i renderują eventy
+- [x] smoke test: headless driver bez żadnego UI
+      (`TestConductor_HeadlessConversation`)
+
+#### Kształt API
+
+```go
+type ModelResolver interface {
+    Resolve(spec string) (connector.ModelClient, error)
+}
+
+type Options struct {
+    Client      connector.ModelClient // model, na którym zaczyna rozmowa
+    Sink        agent.Sink            // dokąd lecą eventy pętli
+    Config      agent.Config          // Config.Session = log, którego Conductor staje się właścicielem
+    Resolver    ModelResolver         // opcjonalny; bez niego SwitchModel zwraca ErrNoResolver
+    History     []connector.Message   // zasianie rozmowy (wznowienie)
+    SessionPath string                // pusty = brak persystencji
+    WorkDir     string                // pusty = os.Getwd() w chwili otwierania pliku
+}
+
+func New(opts Options) *Conductor
+
+func (c *Conductor) Submit(ctx context.Context, prompt string) (stream.Usage, error)
+func (c *Conductor) Interrupt()
+func (c *Conductor) SwitchModel(spec string) error
+func (c *Conductor) Resume(path string, msgs []connector.Message, usage stream.Usage) error
+
+func (c *Conductor) Model() string
+func (c *Conductor) Provider() string
+func (c *Conductor) Usage() stream.Usage
+func (c *Conductor) Messages() []connector.Message
+func (c *Conductor) SetHistory(msgs []connector.Message)
+func (c *Conductor) ClearHistory()
+func (c *Conductor) ResetUsage()
+func (c *Conductor) Session() *session.Session
+func (c *Conductor) SessionPath() string
+func (c *Conductor) EnsureSession() *session.Session
+func (c *Conductor) EndSession(status string, exitCode int)
+```
+
+Granica przebiega tak: **`Conductor` mówi, co się stało; frontend decyduje, jak
+to wygląda.** W `Conductorze` jest historia rozmowy, `agent.Config`, aktualny
+`ModelClient`, log sesji, akumulacja `stream.Usage`, leniwe zakładanie pliku
+sesji, `agent.Run` i anulowanie tury. We froncie zostaje wszystko, co jest
+decyzją prezentacji albo własnością terminala: teksty błędów i ich `\n`,
+`display.End()`, kody wyjścia, replay transkryptu, picker `/resume`, tytuł okna,
+listowanie modeli, a także **kto nasłuchuje SIGINT-a i ESC-a** — `Interrupt()`
+mówi tylko „przerwij bieżącą turę", nie „obsłuż klawiaturę".
+
+`Conductor` nie importuje `providers`. Zmiana modelu idzie przez
+`ModelResolver` — interfejs zadeklarowany po stronie konsumenta, dokładnie jak
+`agent.Sink` i `connector.HTTPDoer`. Implementacja (`main.catalogResolver`)
+siedzi w CLI, bo katalog jest własnością CLI.
+
+#### Rozstrzygnięcie pułapki `SwitchModel` / globalnego katalogu
+
+Notatka do etapu mówiła, że `main.resolveModelClient` musi sięgać po globalne
+`providers.GetProvider(mc.Provider())`, bo z `connector.ModelClient` nie da się
+wrócić do katalogu, i że `SwitchModel` uderzy w ten sam problem. **Nie uderza**,
+i to nie przypadkiem: `SwitchModel` dostaje od użytkownika pełną specyfikację
+`provider/model`, więc nie musi niczego odzyskiwać z bieżącego klienta —
+`ModelResolver.Resolve(spec)` zwraca gotowego klienta i to wystarcza. Katalog
+zostaje po stronie `main`, `Conductor` widzi tylko funkcję jednego argumentu.
+Przypadek `resolveModelClient` (subagent z gołą nazwą modelu, która ma
+odziedziczyć providera rodzica) jest inny — tam specyfikacja jest *niepełna* —
+i dlatego zostaje w `main` nietknięty. To ta sama granica z dwóch stron:
+niepełne specyfikacje wymagają katalogu, więc rozwiązuje je ten, kto katalog ma.
+
+#### Odstępstwa od planu (świadome)
+
+**Trzy zmiany zachowania, wszystkie wymuszone przez zejście do jednego
+właściciela stanu. Żadna nie jest kosmetyczna, więc wszystkie są tu wypisane.**
+
+1. **`/resume` w konsoli faktycznie przepina sesję, którą widzi agent.**
+   `interactive.handleResume` ustawiał `s.sessionPtr`, ale **nigdy**
+   `s.cfg.Session`. Po wznowieniu (jeśli użytkownik zdążył wcześniej cokolwiek
+   napisać) agent pisał dalej do porzuconego pliku, `close()` zapisywał
+   `session_end` do starego, a na ekranie pojawiała się ścieżka nowego. Przy
+   jednym polu w `Conductorze` taki rozjazd nie jest reprezentowalny. Błąd
+   zastany, wywrócony przy okazji unifikacji — nie dało się go „zachować".
+2. **`/resume` w konsoli zamyka porzuconą sesję przez `WriteSessionEnd` zamiast
+   gołego `Close()`** — czyli tak, jak od zawsze robiło to TUI. Ta sama
+   przyczyna: `Conductor.Resume` jest jeden.
+3. **TUI: usage z tury przerwanej ESC-em jest doliczana do sumy.** Gałąź `ESC`
+   w `runTUI` jako jedyna gubiła częściowe zużycie (gałąź `resultCh` doliczała
+   je nawet przy anulowaniu). `Conductor` sumuje w jednym miejscu, w `Submit`,
+   więc niespójność znika. Widoczne wyłącznie w polu `usage` zdarzenia
+   `session_end`.
+
+**Mikroprzesunięcie: watchery przerwania są uzbrajane odrobinę wcześniej.**
+Dotąd konsola dopisywała wiadomość użytkownika i otwierała plik sesji *przed*
+`startInterruptWatcher`; teraz robi to `Submit`, więc watcher jest już
+uzbrojony. Okno to kilka mikrosekund na zapis jednej linii JSONL; skutek jest
+taki, że Ctrl+C trafiony dokładnie w to okno anuluje turę zamiast zabić proces.
+
+**`/new` NADAL działa inaczej w konsoli i w TUI — celowo.** Konsola tylko
+czyści rozmowę (`ClearHistory`), TUI dodatkowo kończy log i zeruje usage
+(`EndSession` + `ClearHistory` + `ResetUsage`). To zastana różnica, której ten
+etap nie miał prawa ujednolicać. Zmieniło się tylko to, że jest ona teraz
+**widoczna** — trzy wywołania obok jednego — zamiast być zakopana w dwóch
+kopiach pętli.
+
+**Sprawdzenie `IsConfigured` przy zmianie modelu zostało rozdzielone flagą.**
+`catalogResolver{requireConfigured: true}` dla konsoli (`/model` odmawia
+providerowi bez klucza i mówi, jak go dodać), `catalogResolver{}` dla TUI
+(lista modeli jest już przefiltrowana po `auth.json`, a ciche odrzucenie
+ulubionego modelu wyglądałoby jak martwy klawisz). Jedyny skutek uboczny:
+`/resume` w konsoli, który próbuje wrócić do modelu zapisanego w sesji, nie
+przełączy się na providera, który w międzyczasie stracił klucz — zostanie na
+działającym modelu zamiast przełączyć się na martwy.
+
+**`ensureLazySession` + `normalizeCWD` przeniesione do `conductor/` w całości,
+z testami.** Leniwe zakładanie pliku sesji jest właściwością `Conductora`, nie
+`main`. To jedyne miejsce, w którym `Conductor` pisze na własny strumień
+(`os.Stderr`) zamiast do `Sink`: ostrzeżenie „nie dało się otworzyć logu,
+lecę dalej bez niego". Świadomie zostawione dosłownie takie, jakie było — to ta
+sama klasa diagnostyki, którą `agent/session_log.go` emituje od zawsze, a nie
+decyzja o wyglądzie. Kandydat na wstrzykiwany hook, gdyby kiedyś pojawił się
+frontend, któremu stderr przeszkadza.
+
+**`main.go:agentRunner` i `internal/workflow/engine.go` ZOSTAJĄ przy
+`agent.Run`.** Oba to wywołujący headless, którym `Conductor` nic nie daje:
+
+- `agentRunner.run` buduje jedną wiadomość, woła `agent.Run` raz i normalizuje
+  wynik na `tools.ErrSubagentTruncated`. Nie ma rozmowy do posiadania (`msgs`
+  żyje jeden przebieg), nie ma sesji, nie ma zmiany modelu ani przerwania.
+  Adopcja oszczędziłaby trzy linie i dołożyła alokację.
+- `engine.sessionAwait` trzyma `session.messages` w obiekcie Lua, który jest
+  serializowany do tablic Lua (`sessionMessages`, `sessionSave`, `sessionLoad`)
+  i dopisuje wiadomości o **dowolnej roli** (`sessionSystem` wstawia `system`).
+  `Conductor.Submit` dopisuje wyłącznie `user`, więc adopcja wymagałaby
+  dołożenia do API `AppendMessage(role, ...)` — czyli poszerzenia kontraktu pod
+  jedynego wywołującego, który i tak nie ma frontendu do odseparowania.
+
+Kryterium było: „jeśli adopcja upraszcza — zrób; jeśli nie daje nic — zostaw
+i napisz dlaczego". Tu nie dawała nic w obu przypadkach.
+
+**Etapy migracji rozbite na cztery commity, od najprostszego sterownika.**
+`conductor` (nieużywany) → `prompt_mode` → konsola → TUI. Każdy zielony osobno;
+`main` przez trzy commity trzymał własną kopię `ensureLazySession`, skasowaną
+dopiero wtedy, gdy ostatni sterownik przestał jej używać.
+
+#### Weryfikacja
+
+- **6/6 commitów zielonych osobno.** Sprawdzone w jednorazowym
+  `git worktree --detach`, commit po commicie: `go build ./... && go vet ./... &&
+  go test ./... -count=1 && gofmt -l .` (puste) + `go build` z tagami
+  `noanthropic`, `nogemini`, `noanthropic nogemini`. Worktree usunięty.
+- `go build` + `go vet` + `go test ./... -count=1` zielone we wszystkich czterech
+  kombinacjach tagów (brak, `noanthropic`, `nogemini`, `noanthropic nogemini`),
+- `go test -race ./conductor/ ./agent/ ./providers/ ./tools/ .` zielone,
+- `gofmt -l .` puste,
+- `git diff --stat 0ad2271..HEAD -- providers/testdata` **puste** — wire format
+  przeżył, ani jednego `-update`,
+- `go list -deps ./conductor | grep decodo/tyci/providers` → **puste**
+  (kryterium nagłówkowe tego etapu),
+- `go list -deps ./agent | grep decodo/tyci/providers` → **puste**
+  (kryterium nagłówkowe całego refaktoru, nietknięte),
+- nazwy testów: 1026 → 1043 (`comm` na posortowanych listach `func Test*`):
+  **17 dodanych, 0 usuniętych, 0 przekształceń.** Cztery testy
+  `TestEnsureLazySession_*` przeniosły się z `main` do `conductor` razem z
+  kodem — ta sama nazwa, ten sam plik, inny pakiet, więc `comm` ich nie widzi.
+- sterowniki: `interactive_agent.go` 99→62, `tui_mode.go` 372→320,
+  `prompt_mode.go` 102→92, `interactive.go` 308→301, `cmd_interactive.go`
+  533→483 (leniwa sesja wyszła), `commands.go` 922→940 (+18: konstrukcja
+  `Conductora` i komentarze przy trzech `RunE`). Razem −135 linii w sterownikach
+  przy +421 liniach nowego, testowanego pakietu.
+
+#### Smoke test headless
+
+`TestConductor_HeadlessConversation` prowadzi pełną rozmowę: prompt użytkownika
+→ model prosi o narzędzie → narzędzie działa → model odpowiada. Współpracownicy
+to skryptowany `connector.ModelClient` (atrapa oddająca ustaloną sekwencję
+`stream.Event` na wywołanie), `Sink` zapisujący do slice'ów i `ToolRunner`
+oparty o mapę. **Ani jednego UI: bez TUI, bez terminala, bez readline, bez
+`os.Stdout`.** Asercje pokrywają dokładnie to, co dotąd było nieosiągalne bez
+podniesienia frontendu: dwa wywołania modelu (drugie z doklejonym wynikiem
+narzędzia), wykonanie narzędzia z argumentami przesłanymi strumieniem,
+zsumowane usage z obu tur oraz role wiadomości w rozmowie, którą `Conductor`
+teraz posiada (`user, assistant, toolResult, assistant`).
+
+Atrapy są lokalne dla pakietu. Etap 7 (`connector/connectortest`) je zastąpi —
+budowanie tej infrastruktury tutaj byłoby robieniem etapu 7 w commicie etapu 6.
+
+#### Znalezione po drodze, ŚWIADOMIE nietknięte
+
+- **Martwy `if` w `runTUI`, gałąź ESC:** `if !errors.Is(res.err,
+  context.Canceled) && res.err != nil { }` — ciało puste od zawsze, z
+  komentarzem „Real error, not just cancellation". Zachowane dosłownie: to
+  zastany kod, a nie coś, co ten etap wprowadził.
+- **`interactive.listAvailableModels` i `handleResume` to nadal 100 linii
+  formatowania w `interactive.go`.** Jest to prezentacja, więc zostaje we
+  froncie zgodnie z podziałem — ale `listAvailableModels` mogłoby żyć obok
+  `provider list` w `commands.go` zamiast w pliku REPL-a.
+- **`Conductor` nie ma dziś żadnego zabezpieczenia przed równoległym `Submit`.**
+  Kontrakt („wszystkie metody poza `Interrupt` z jednej gorutyny") jest opisany
+  w komentarzu, nie wymuszony. Żaden dzisiejszy frontend go nie łamie; gdyby
+  doszedł frontend RPC, trzeba będzie albo mutexa na całości, albo kolejki.
 
 ## Etap 7 — connectory testowe (1d)
 
