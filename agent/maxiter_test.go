@@ -32,7 +32,6 @@ func TestRun_MaxIterations_ReturnsSentinel(t *testing.T) {
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
 	}
 	_, err := Run(context.Background(), alwaysToolProvider{}, &silentDisplay{}, &msgs, Config{
-		Model:         "always-1",
 		MaxRetries:    1,
 		MaxIterations: 3,
 		Tools:         newMockToolRunner(),

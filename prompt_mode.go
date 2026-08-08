@@ -12,7 +12,10 @@ import (
 	"github.com/decodo/tyci/session"
 )
 
-func runPrompt(provider providers.Provider, disp display.Display, prompt string, cfg agent.Config, ctx context.Context, sess *session.Session, sessionPath string) {
+// runPrompt executes one non-interactive turn. modelName is passed explicitly
+// rather than read off cfg: agent.Config carries no model name, because the
+// model is a property of the client handed to agent.Run (see agent.Config).
+func runPrompt(provider providers.Provider, modelName string, disp display.Display, prompt string, cfg agent.Config, ctx context.Context, sess *session.Session, sessionPath string) {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
@@ -26,7 +29,7 @@ func runPrompt(provider providers.Provider, disp display.Display, prompt string,
 	// need to open the file right before the first write; doing it later
 	// (after agent.Run) would skip writing the user line itself.
 	wd, _ := os.Getwd()
-	opened, _, lerr := ensureLazySession(sess, sessionPath, wd, cfg.Model, provider.Name())
+	opened, _, lerr := ensureLazySession(sess, sessionPath, wd, modelName, provider.Name())
 	if lerr == nil && opened != nil {
 		sess = opened
 		cfg.Session = opened
@@ -35,7 +38,7 @@ func runPrompt(provider providers.Provider, disp display.Display, prompt string,
 	messages := buildPromptMessages(prompt, disp, sess, sessionPath)
 	writePromptToSession(sess, prompt)
 
-	usage, err := agent.Run(runCtx, providers.Client(provider, cfg.Model), disp, &messages, cfg)
+	usage, err := agent.Run(runCtx, providers.Client(provider, modelName), disp, &messages, cfg)
 
 	stopESC()
 	signal.Stop(sigCh)

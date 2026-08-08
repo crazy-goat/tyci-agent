@@ -209,7 +209,7 @@ func TestRunAppendsAssistantMessage(t *testing.T) {
 		Content: []connector.ContentBlock{{Type: "text", Text: "Hi"}},
 	}}
 
-	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
+	if _, err := Run(context.Background(), p, d, &msgs, Config{MaxRetries: 1}); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -235,7 +235,7 @@ func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
 		Content: []connector.ContentBlock{{Type: "text", Text: "Hi"}},
 	}}
 
-	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
+	if _, err := Run(context.Background(), p, d, &msgs, Config{MaxRetries: 1}); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -263,7 +263,6 @@ func TestRun_ToolCall_ShowsToolBlockDuringStream(t *testing.T) {
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -335,7 +334,6 @@ func TestRun_ToolCall_NoToolBlockWithoutTools(t *testing.T) {
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 	}); err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -371,7 +369,6 @@ func TestRun_ToolCall_MultipleTools(t *testing.T) {
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -427,7 +424,6 @@ func TestRun_ToolCall_TextAndTools(t *testing.T) {
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -466,7 +462,6 @@ func TestRun_ToolCall_ToolCallWithoutDelta(t *testing.T) {
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -505,7 +500,6 @@ func TestRun_ToolCall_EmptyResult(t *testing.T) {
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -534,7 +528,6 @@ func TestRun_ToolCall_StreamError(t *testing.T) {
 	}}
 
 	_, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 	})
 	if err == nil {
@@ -674,7 +667,6 @@ func TestRunFallbackPrimaryFailsFallbackSucceeds(t *testing.T) {
 	}}
 
 	cfg := Config{
-		Model:      "primary-1",
 		MaxRetries: 1,
 		Fallbacks:  []connector.ModelClient{fallback},
 	}
@@ -713,7 +705,6 @@ func TestRunFallbackAllFallbacksFail(t *testing.T) {
 	}}
 
 	cfg := Config{
-		Model:      "p1",
 		MaxRetries: 1,
 		Fallbacks:  []connector.ModelClient{fallback1, fallback2},
 	}
@@ -738,7 +729,6 @@ func TestRunFallbackPrimaryFailsWithNoFallbacks(t *testing.T) {
 	}}
 
 	cfg := Config{
-		Model:      "nofb-1",
 		MaxRetries: 1,
 		Fallbacks:  nil, // no fallback configured
 	}
@@ -774,7 +764,6 @@ func TestRunFallbackWithTools(t *testing.T) {
 	}}
 
 	cfg := Config{
-		Model:      "tp-1",
 		MaxRetries: 1,
 		Fallbacks:  []connector.ModelClient{fallback},
 		Tools:      runner,
@@ -815,7 +804,6 @@ func TestRunFallbackNoToolsTextOnly(t *testing.T) {
 	}}
 
 	cfg := Config{
-		Model:      "ntp-1",
 		MaxRetries: 1,
 		Fallbacks:  []connector.ModelClient{fallback},
 	}
@@ -857,7 +845,6 @@ func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 	}}
 
 	cfg := Config{
-		Model:      "sess-1",
 		MaxRetries: 1,
 		Fallbacks:  []connector.ModelClient{fallback},
 		Tools:      runner,
@@ -890,7 +877,6 @@ func TestRunNoFallbackNormalPath(t *testing.T) {
 	}}
 
 	cfg := Config{
-		Model:      "mock-1",
 		MaxRetries: 1,
 		Fallbacks:  nil,
 	}
@@ -930,7 +916,7 @@ func TestRun_TotalCalledOnSuccess(t *testing.T) {
 		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
-	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
+	if _, err := Run(context.Background(), p, d, &msgs, Config{MaxRetries: 1}); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -954,7 +940,6 @@ func TestRun_TotalCalledOnFallbackSuccess(t *testing.T) {
 	}}
 
 	_, err := Run(context.Background(), primary, d, &msgs, Config{
-		Model:      "tot-p-1",
 		MaxRetries: 1,
 		Fallbacks:  []connector.ModelClient{fallback},
 	})
@@ -980,7 +965,6 @@ func TestRun_TotalCalledOnAllFallbacksExhausted(t *testing.T) {
 	}}
 
 	_, err := Run(context.Background(), primary, d, &msgs, Config{
-		Model:      "all-p-1",
 		MaxRetries: 1,
 		Fallbacks:  []connector.ModelClient{fb1, fb2},
 	})
@@ -1007,7 +991,7 @@ func TestRun_TotalCalledOnContextCancel(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := Run(ctx, cancelledProvider, d, &msgs, Config{Model: "blocking-1", MaxRetries: 1})
+	_, err := Run(ctx, cancelledProvider, d, &msgs, Config{MaxRetries: 1})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled error, got %v", err)
 	}
@@ -1025,7 +1009,7 @@ func TestRun_TotalCalledOnNonRetryable(t *testing.T) {
 		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
-	_, err := Run(context.Background(), primary, d, &msgs, Config{Model: "nr-1", MaxRetries: 3})
+	_, err := Run(context.Background(), primary, d, &msgs, Config{MaxRetries: 3})
 	if err == nil {
 		t.Fatal("expected error from non-retryable failure")
 	}
@@ -1074,7 +1058,7 @@ func TestRun_TotalCalledOnAllRetriesExhausted(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := Run(ctx, primary, d, &msgs, Config{Model: "rx-1", MaxRetries: 5})
+		_, err := Run(ctx, primary, d, &msgs, Config{MaxRetries: 5})
 		done <- err
 	}()
 
@@ -1123,7 +1107,6 @@ func TestRun_TotalCalledOnEveryToolTurn(t *testing.T) {
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -1155,7 +1138,6 @@ func TestRun_TotalNotDuplicatedOnFallbackSuccess(t *testing.T) {
 	}}
 
 	if _, err := Run(context.Background(), primary, d, &msgs, Config{
-		Model:      "dup-p-1",
 		MaxRetries: 1,
 		Fallbacks:  []connector.ModelClient{fallback},
 	}); err != nil {

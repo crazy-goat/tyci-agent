@@ -246,8 +246,6 @@ func (s *interactiveState) switchModel(spec string) {
 	}
 	s.provider = p
 	s.modelName = m
-	s.cfg.Model = m
-	s.cfg.ProviderName = p.Name()
 	fmt.Fprintf(os.Stdout, "Switched to %s/%s\n", p.Name(), m)
 }
 
@@ -297,8 +295,6 @@ func (s *interactiveState) handleResume(arg string) {
 		if p, m, ok := providers.FindModel(summary.Provider + "/" + summary.Model); ok {
 			s.provider = p
 			s.modelName = m
-			s.cfg.Model = m
-			s.cfg.ProviderName = p.Name()
 		}
 	}
 

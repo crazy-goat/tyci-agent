@@ -59,8 +59,6 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 		}
 		provider = p
 		modelName = m
-		cfg.Model = m
-		cfg.ProviderName = p.Name()
 	}
 
 	// drainModelChanges applies all queued model changes before running a prompt.
@@ -115,7 +113,6 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 			return fmt.Errorf("reopen: %w", err)
 		}
 		cfg.Session = newSess
-		cfg.ProviderName = provider.Name()
 		sessionPath = resumePath
 
 		// Reset conversation to the rebuilt history and replay it to the
@@ -131,8 +128,6 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 			if p, m, ok := providers.FindModel(summary.Provider + "/" + summary.Model); ok {
 				provider = p
 				modelName = m
-				cfg.Model = m
-				cfg.ProviderName = p.Name()
 				tuiDisp.SetModel(m)
 			}
 		}

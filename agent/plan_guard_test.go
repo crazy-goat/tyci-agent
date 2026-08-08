@@ -165,7 +165,6 @@ func TestRun_PlanGuard_BlocksBashWithoutPlan(t *testing.T) {
 	}
 
 	_, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "pg-1",
 		MaxRetries: 1,
 		HasTodos:   func() bool { return false },
 	})
@@ -253,7 +252,6 @@ func TestRun_PlanGuard_AllowsBashAfterTodoPlan(t *testing.T) {
 	}
 
 	_, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "pgt-1",
 		MaxRetries: 1,
 		HasTodos:   func() bool { return true }, // simulates: plan exists
 		Tools:      newMockToolRunner(),
@@ -396,7 +394,6 @@ func TestRun_PlanGuard_AllDone_BlocksBash(t *testing.T) {
 	}
 
 	_, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "pgad-1",
 		MaxRetries: 1,
 		HasTodos:   func() bool { return false }, // all items are "done"
 	})

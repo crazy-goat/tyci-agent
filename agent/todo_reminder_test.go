@@ -48,7 +48,6 @@ func TestRun_TodoReminder_NudgesUpToLimit(t *testing.T) {
 	}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "count-1",
 		MaxRetries: 1,
 		PendingTodos: func() []string {
 			return []string{"1. [doing] high finish the thing"}
@@ -83,7 +82,6 @@ func TestRun_TodoReminder_NoNudgeWhenEmpty(t *testing.T) {
 	}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:        "count-1",
 		MaxRetries:   1,
 		PendingTodos: func() []string { return nil },
 	}); err != nil {
@@ -111,7 +109,6 @@ func TestRun_TodoReminder_StopsWhenResolved(t *testing.T) {
 
 	remaining := 1 // pending on the first finish, resolved thereafter
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "count-1",
 		MaxRetries: 1,
 		PendingTodos: func() []string {
 			if remaining > 0 {

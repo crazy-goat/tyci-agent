@@ -169,7 +169,6 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	}
 
 	cfg := agent.Config{
-		Model:         mc.Model(),
 		System:        system,
 		MaxRetries:    1,
 		MaxIterations: maxIter,

@@ -56,7 +56,6 @@ func TestRun_NextMessages_EmptyDoesNotForceIteration(t *testing.T) {
 	}}
 
 	cfg := Config{
-		Model:        "mock-1",
 		MaxRetries:   1,
 		NextMessages: queue.callback(),
 	}
@@ -98,7 +97,6 @@ func TestRun_NextMessages_OneAfterPlainResponseForcesOneMoreIteration(t *testing
 	queue.set([]string{"follow-up"})
 
 	cfg := Config{
-		Model:        "counter-1",
 		MaxRetries:   1,
 		NextMessages: queue.callback(),
 	}
@@ -148,7 +146,6 @@ func TestRun_NextMessages_FIFOOrder(t *testing.T) {
 	queue.set([]string{"first follow-up", "second follow-up", "third follow-up"})
 
 	cfg := Config{
-		Model:        "counter-1",
 		MaxRetries:   1,
 		NextMessages: queue.callback(),
 	}
@@ -200,7 +197,6 @@ func TestRun_NextMessages_DrainsAfterToolCall(t *testing.T) {
 	queue.set([]string{"and now what?"})
 
 	cfg := Config{
-		Model:        "mock-tool-1",
 		MaxRetries:   1,
 		Tools:        runner,
 		NextMessages: queue.callback(),
@@ -246,7 +242,7 @@ func TestRun_NextMessages_NilCallbackNoEffect(t *testing.T) {
 		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
-	cfg := Config{Model: "mock-1", MaxRetries: 1, NextMessages: nil}
+	cfg := Config{MaxRetries: 1, NextMessages: nil}
 	if _, err := Run(context.Background(), p, d, &msgs, cfg); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -277,7 +273,6 @@ func TestRun_NextMessages_WritesToSession(t *testing.T) {
 		Content: []connector.ContentBlock{{Type: "text", Text: "initial"}},
 	}}
 	cfg := Config{
-		Model:        "counter-1",
 		MaxRetries:   1,
 		Session:      sess,
 		NextMessages: queue.callback(),
@@ -339,7 +334,6 @@ func TestRun_NextMessages_RespectsMaxIterations(t *testing.T) {
 		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 	cfg := Config{
-		Model:         "counter-1",
 		MaxRetries:    1,
 		MaxIterations: 2,
 		NextMessages:  queue.callback(),

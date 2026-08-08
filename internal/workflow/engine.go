@@ -286,7 +286,6 @@ func (e *Engine) sessionAwait(L *lua.LState) int {
 	// Build config
 	systemPrompt := providers.BuildSystemPrompt()
 	cfg := agent.Config{
-		Model:         modelName,
 		System:        systemPrompt,
 		MaxRetries:    1,
 		MaxIterations: 10,

@@ -17,8 +17,15 @@ type ToolRunner interface {
 	Run(ctx context.Context, name string, args map[string]any) (string, error)
 }
 
+// Config is everything the agent loop needs beyond the model client itself.
+//
+// It deliberately carries NO model or provider name: those are properties of
+// the connector.ModelClient handed to Run, read back via mc.Model() /
+// mc.Provider(). Two sources of truth for "which model is this" is exactly
+// how a request ends up going to one model while the session header records
+// another. A caller that needs the name for its own purposes (session
+// bookkeeping, a status bar) keeps its own variable.
 type Config struct {
-	Model         string
 	System        string
 	MaxRetries    int
 	MaxIterations int // max tool-call iterations; -1 or 0 means unlimited
@@ -26,7 +33,6 @@ type Config struct {
 	Tools         ToolRunner
 	Schema        json.RawMessage
 	Session       *session.Session // optional session logging / resume
-	ProviderName  string           // provider name for session metadata
 
 	// Fallbacks are already-resolved fallback models, tried in order when
 	// the primary (or the previously-active fallback) fails. The agent does

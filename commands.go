@@ -131,14 +131,12 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 	debugFlag, _ := cmd.Flags().GetBool("debug")
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 	cfg := agent.Config{
-		Model:         modelName,
 		System:        providers.BuildSystemPrompt(),
 		MaxRetries:    maxRetries,
 		MaxIterations: maxIterations,
 		Debug:         debugFlag,
 		Tools:         toolsAdapter{},
 		Schema:        tools.GetToolsSchemaJSON(),
-		ProviderName:  provider.Name(),
 		Fallbacks:     fallbacks,
 		PendingTodos:  tools.PendingTodos,
 		HasTodos:      tools.HasPendingTodos,
@@ -221,7 +219,7 @@ var runCmd = &cobra.Command{
 		if prompt == "" {
 			return fmt.Errorf("--prompt is required")
 		}
-		provider, _, cfg, ctx, sess, sessionPath, _, dl, err := initCommon(cmd)
+		provider, modelName, cfg, ctx, sess, sessionPath, _, dl, err := initCommon(cmd)
 		if err != nil {
 			return err
 		}
@@ -234,7 +232,7 @@ var runCmd = &cobra.Command{
 		// full-screen experience, use `tyci console` or
 		// `tyci tui` instead.
 		disp := display.NewMinimal()
-		runPrompt(provider, disp, prompt, cfg, ctx, sess, sessionPath)
+		runPrompt(provider, modelName, disp, prompt, cfg, ctx, sess, sessionPath)
 		return nil
 	},
 }
