@@ -274,7 +274,12 @@ func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan strea
 		return nil, err
 	}
 
-	conn, err := p.connectors().New(p.kindFor(apiType), connector.Endpoint{
+	kind, err := p.kindFor(apiType)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := p.connectors().New(kind, connector.Endpoint{
 		BaseURL: baseURL,
 		Path:    endpointPath,
 		APIKey:  apiKey,
@@ -318,14 +323,25 @@ func (p *dynamicProvider) connectors() *connector.Registry {
 	return defaultConnectors
 }
 
-// kindFor maps a URI api_type to a connector kind. Anything the registry does
-// not know is treated as an OpenAI-style chat-completions API — this preserves
-// the `default:` branch of the switch that used to live in Stream.
-func (p *dynamicProvider) kindFor(apiType string) string {
+// kindFor maps a URI api_type to a connector kind.
+//
+// It deliberately does NOT fall back to the OpenAI connector. The `default:`
+// branch of the old switch in Stream was already dead: tyciconfig.Parse
+// normalizes every unrecognised URI scheme to "openai"
+// (internal/tyciconfig/uri.go), and LoadProvidersJSON only ever produces the
+// three known api_types — so apiType arriving here is always a known kind.
+// A fallback would only ever fire for a kind that IS known but is missing from
+// the registry (a build without anthropic/gemini), and quietly sending an
+// Anthropic-shaped request to a chat-completions endpoint is far worse than
+// the error the api/*_stub.go files used to return.
+func (p *dynamicProvider) kindFor(apiType string) (string, error) {
 	if p.connectors().Has(apiType) {
-		return apiType
+		return apiType, nil
 	}
-	return connector.KindOpenAI
+	if connector.IsKnownKind(apiType) {
+		return "", connector.ErrExcluded(apiType)
+	}
+	return "", fmt.Errorf("unsupported api_type %q", apiType)
 }
 
 // uriOptions extracts the connector options encoded in the URI query string.

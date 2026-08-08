@@ -1,3 +1,5 @@
+//go:build !nogemini
+
 package connector
 
 import (

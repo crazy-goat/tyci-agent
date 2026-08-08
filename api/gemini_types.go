@@ -1,3 +1,5 @@
+//go:build !nogemini
+
 package api
 
 import "encoding/json"

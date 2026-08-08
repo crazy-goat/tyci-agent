@@ -1,3 +1,5 @@
+//go:build !nogemini
+
 package connector
 
 import (
@@ -19,6 +21,8 @@ import (
 type gemini struct {
 	ep Endpoint
 }
+
+func init() { registerBuiltin(KindGemini, NewGemini) }
 
 // NewGemini builds a Gemini generateContent connector.
 func NewGemini(ep Endpoint) (Connector, error) {

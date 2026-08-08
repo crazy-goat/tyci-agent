@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -466,4 +467,72 @@ func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 		Header:     make(http.Header),
 		Request:    req,
 	}, nil
+}
+
+// =============================================================================
+// kindFor — build-tag exclusions must not fall back to another protocol
+// =============================================================================
+
+// A binary built with -tags noanthropic has no anthropic connector, so
+// DefaultRegistry() ends up holding only openai (+gemini). kindFor must then
+// fail loudly instead of routing the request through the OpenAI connector,
+// which would POST an Anthropic-shaped body to /v1/messages and get a
+// confusing 400 back. The registry is injected here so the test runs in the
+// default (untagged) build too.
+func TestDynamicProviderKindFor_excludedConnectorErrors(t *testing.T) {
+	onlyOpenAI := connector.NewRegistry()
+	onlyOpenAI.Register(connector.KindOpenAI, connector.NewOpenAI)
+
+	p := &dynamicProvider{
+		name:     "kindfor-excluded",
+		entries:  []ModelEntry{{Name: "claude-x", URI: "anthropic://claude-x@sk-tok@api.example.invalid"}},
+		registry: onlyOpenAI,
+	}
+
+	if _, err := p.kindFor(connector.KindAnthropic); err == nil {
+		t.Fatal("kindFor returned no error for a connector missing from the registry")
+	} else if got, want := err.Error(), "anthropic support excluded at build time (rebuild without -tags noanthropic)"; got != want {
+		t.Fatalf("kindFor error = %q, want %q", got, want)
+	}
+
+	// The same must hold end to end: Stream may not reach the network.
+	if _, err := p.Stream(context.Background(), Request{Model: "claude-x"}); err == nil {
+		t.Fatal("Stream returned no error for an excluded connector kind")
+	} else if !strings.Contains(err.Error(), "excluded at build time") {
+		t.Fatalf("Stream error = %q, want the build-time exclusion message", err.Error())
+	}
+}
+
+// Every connector actually compiled into this binary still resolves to itself
+// — the guard above must not turn into "everything errors". Driven off the
+// default registry rather than a literal list, so it holds under
+// -tags noanthropic/nogemini as well.
+func TestDynamicProviderKindFor_registeredKindPassesThrough(t *testing.T) {
+	p := &dynamicProvider{name: "kindfor-ok"}
+	kinds := defaultConnectors.Kinds()
+	if len(kinds) == 0 {
+		t.Fatal("default registry is empty")
+	}
+	for _, kind := range kinds {
+		got, err := p.kindFor(kind)
+		if err != nil {
+			t.Fatalf("kindFor(%q): %v", kind, err)
+		}
+		if got != kind {
+			t.Errorf("kindFor(%q) = %q, want %q", kind, got, kind)
+		}
+	}
+}
+
+// An api_type that is not a protocol we implement must error too, never
+// silently become openai. In practice tyciconfig.Parse already normalizes any
+// unrecognised URI scheme to "openai" (see TestParseURI_table), so this branch
+// is unreachable through parseURI — it guards direct callers.
+func TestDynamicProviderKindFor_unknownKindErrors(t *testing.T) {
+	p := &dynamicProvider{name: "kindfor-unknown"}
+	if _, err := p.kindFor("cohere"); err == nil {
+		t.Fatal("kindFor returned no error for an unimplemented api_type")
+	} else if !strings.Contains(err.Error(), `unsupported api_type "cohere"`) {
+		t.Fatalf("kindFor error = %q, want unsupported api_type", err.Error())
+	}
 }

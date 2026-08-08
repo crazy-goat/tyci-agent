@@ -27,6 +27,27 @@ const (
 	KindGemini    = "gemini"
 )
 
+// knownKinds lists every protocol this codebase implements, whether or not it
+// is compiled into the current binary. It is deliberately NOT derived from the
+// registry: the point is to tell "we know this protocol but it was tagged out"
+// apart from "we have never heard of this api_type". Under
+// -tags noanthropic/nogemini the registry loses entries; this list does not.
+var knownKinds = map[string]bool{
+	KindOpenAI:    true,
+	KindAnthropic: true,
+	KindGemini:    true,
+}
+
+// IsKnownKind reports whether kind names a protocol this codebase implements.
+func IsKnownKind(kind string) bool { return knownKinds[kind] }
+
+// ErrExcluded is the error for a known protocol that this binary was built
+// without. The wording matches the api/*_stub.go message it replaces, so the
+// user-visible behaviour of a minimal build is unchanged.
+func ErrExcluded(kind string) error {
+	return fmt.Errorf("%s support excluded at build time (rebuild without -tags no%s)", kind, kind)
+}
+
 // HTTPDoer is the minimal HTTP surface a connector needs. It exists so an
 // Endpoint can carry an injected client instead of reaching for a global one.
 type HTTPDoer interface {
@@ -123,11 +144,21 @@ func (r *Registry) New(kind string, ep Endpoint) (Connector, error) {
 	return f(ep)
 }
 
+// builtinFactories holds the connectors compiled into this binary. Each
+// connector file adds itself from its own init(), so a build tag that drops
+// the file (noanthropic, nogemini) drops the registration with it — there is
+// no single place listing all three that would need a matching #ifdef.
+var builtinFactories = map[string]Factory{}
+
+// registerBuiltin is called from each connector file's init().
+func registerBuiltin(kind string, f Factory) { builtinFactories[kind] = f }
+
 // DefaultRegistry returns a Registry with the built-in connectors registered.
+// Callers get a fresh copy, so mutating it cannot affect anyone else.
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
-	r.Register(KindOpenAI, NewOpenAI)
-	r.Register(KindAnthropic, NewAnthropic)
-	r.Register(KindGemini, NewGemini)
+	for kind, f := range builtinFactories {
+		r.Register(kind, f)
+	}
 	return r
 }

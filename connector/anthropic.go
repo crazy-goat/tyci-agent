@@ -1,3 +1,5 @@
+//go:build !noanthropic
+
 package connector
 
 import (
@@ -17,6 +19,8 @@ const anthropicMaxTokens = 4096
 type anthropic struct {
 	ep Endpoint
 }
+
+func init() { registerBuiltin(KindAnthropic, NewAnthropic) }
 
 // NewAnthropic builds an Anthropic messages connector.
 func NewAnthropic(ep Endpoint) (Connector, error) {

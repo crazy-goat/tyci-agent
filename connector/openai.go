@@ -21,6 +21,8 @@ type openAI struct {
 	reasoning bool
 }
 
+func init() { registerBuiltin(KindOpenAI, NewOpenAI) }
+
 // NewOpenAI builds an OpenAI chat-completions connector.
 func NewOpenAI(ep Endpoint) (Connector, error) {
 	return &openAI{ep: ep, reasoning: ep.option(OptReasoning) == "true"}, nil
