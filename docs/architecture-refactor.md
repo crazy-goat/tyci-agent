@@ -16,8 +16,10 @@ connector  openai │ anthropic │ gemini │ responses ║ fake │ replay │
 HTTPDoer  (wstrzykiwany per connector)
 ```
 
-Kluczowe: `Provider` przestaje być interfejsem, staje się jedną strukturą.
-Wymienny jest connector, nie provider.
+Kluczowe: wymienny jest connector, nie provider — jest jedna implementacja
+providera, jawnie konstruowana z wstrzykniętymi zależnościami. Sam `Provider`
+zostaje interfejsem, bo inaczej agent byłby związany z typem konkretnym
+(patrz odstępstwa etapu 4).
 
 ## Stan wyjściowy
 
@@ -152,16 +154,98 @@ dotyczy buildu minimalnego i jest naprawą opisanej wyżej pułapki: nieznany ap
 (nieosiągalny przez `parseURI`) daje teraz błąd `unsupported api_type` zamiast cichego
 przekierowania na connector openai.
 
-## Etap 4 — provider jako struktura (1d)
+## Etap 4 — provider jako struktura (1d) — ZROBIONE
 
-- [ ] `providers.Provider` interface → struct (`catalog`, `auth`, `connectors`, `http`)
-- [ ] usunąć `api.ClientFromContext` / `api.HTTPClientKey` — dopiero tu jest czym je
-      zastąpić: provider-struktura wstrzykuje `HTTPDoer` do `connector.Endpoint.HTTP`.
-      Do przepisania: `tools/subagent.go:408-415` (izolowany pool) oraz wstrzyknięcia
-      w `providers/provider_test.go` i `providers/wire_golden_test.go`
-- [ ] `AuthSource` jako interfejs (auth.json / env / literal)
-- [ ] `providers.Default` zostaje dla CLI; testy budują własny katalog
-- [ ] przepisać `providers/providers_test.go` (844 linii)
+- [x] `providers.Provider`: implementacja staje się jawnie konstruowaną strukturą
+      (`Catalog` jako wartość, `AuthSource`, `connectors`, `http`) — **interfejs
+      `Provider` zostaje**, patrz odstępstwa
+- [x] usunąć `api.ClientFromContext` / `api.HTTPClientKey` — provider wstrzykuje
+      `HTTPDoer` do `connector.Endpoint.HTTP`. Izolowany pool przeniesiony
+      z `tools/subagent.go` do `main.go:withIsolatedPool`; wstrzyknięcia
+      w `providers/provider_test.go` i `providers/wire_golden_test.go` idą przez `Deps.HTTP`
+- [x] `AuthSource` jako interfejs (`LiteralAuth` / `AuthFile` / `EnvAuth` / `AuthChain`)
+- [x] `providers.Default` zostaje dla CLI; `Catalog` jest wartością, testy budują własny
+- [x] goldeny z etapu 0 nadal przechodzą **bez** `-update`
+
+### Odstępstwa od planu (świadome)
+
+**`providers.Provider` ZOSTAJE interfejsem.** „interface → struct" z nagłówka planu
+zawężone do implementacji: `dynamicProvider` przestaje sięgać po `defaultConnectors`,
+`connect.GetKey` i `os.Getenv`, a dostaje je przez `NewProvider(name, entries, Deps)`.
+Gdyby `Provider` przestał być interfejsem, `agent.Run(ctx, p providers.Provider, ...)`
+związałby agenta z typem konkretnym — dokładne odwrócenie celu refaktoru — i wywaliłby
+fake'i z `main_resolve_test.go` oraz `agent/agent_test.go`. Wymienność zostaje na
+poziomie connectora, jak mówi diagram.
+
+**`WithHTTP` NIE wchodzi do interfejsu `Provider`.** Jest metodą konkretnego typu plus
+opcjonalnym interfejsem `providers.HTTPInjector`. Inaczej każdy fake providera musiałby
+implementować troskę o HTTP, o której agent nie ma prawa wiedzieć. `main.go` robi
+type-assert; provider bez tej metody zostaje nietknięty i ma dzisiejsze zachowanie
+„brak izolacji" — czyli to, co fake'i mają dziś.
+
+**`WithHTTP` zwraca kopię, nigdy nie mutuje odbiornika.** Równoległe subagenty
+(`subagent(tasks=[...])` → `runTasks` → goroutine per task) współdzielą jedną wartość
+providera; mutacja przelałaby pool jednego dziecka do requestów drugiego.
+Test: `TestWithHTTP_ReturnsCopy`, `TestWithIsolatedPool_FreshClientPerCall`.
+
+**Ziarnistość izolowanego poolu bez zmian.** Dziś jeden `*http.Client` na
+`runSingleTask`. Po przeniesieniu: jeden na wejście w `agentRunner.run`, a `run` jest
+wołane dokładnie raz na `RunTask`/`RunTaskWithSystem`, czyli raz na `runSingleTask`.
+Równoległe `subagent(tasks=[a,b,c])` nadal tworzy trzy poole.
+
+**Brak realnej różnicy semantycznej po wyjęciu klienta z kontekstu.** Plan podejrzewał,
+że klient z kontekstu obejmował *dowolne* wywołanie warstwy `api` w biegu dziecka,
+a po zmianie obejmuje tylko strumienie providera. Zweryfikowane: `api` wykonuje HTTP
+wyłącznie w trzech miejscach (`chat.go:147`, `anthropic.go:120`, `gemini.go:77`), wszystkie
+przez `doer()`, a jedynymi nietestowymi konstruktorami streamerów są trzy connectory
+budowane wyłącznie przez `dynamicProvider.Stream`. Pozostali konsumenci HTTP w biegu
+dziecka (`tools/web.go`, `internal/mcp`, `internal/connect`) zawsze mieli własnych
+klientów i nigdy nie czytali klucza kontekstowego. Zbiór objętych wywołań jest ten sam.
+
+**`doer()` zachowuje osłonę na typed-nil `*http.Client`.** Skasowany
+`ClientFromContext` miał `cl != nil`; `Deps.HTTP` to interfejs, więc
+`Deps{HTTP: jakisNilowyKlient}` łatwo wyprodukować. Bez osłony byłaby to panika
+w `net/http` zamiast dawnego zjazdu na `defaultClient`.
+
+**`api.defaultClient` ZOSTAJE.** To domyślka, nie odczyt kontekstu: provider z `http == nil`
+mówi „nie mam własnego klienta" i to jest normalna ścieżka produkcyjna.
+
+**`providers/providers_test.go` nie wymagał przepisania.** Plan mówił „844 linie" — liczba
+zastana z przed etapu 2. Plik ma dziś 282 linie i pokrywa `LoadConfig` / `MustLoadConfig` /
+`parseURI` / `parseModel`, czyli rzeczy nietknięte przez ten etap. Dopisane zostały testy
+`Catalog`; nic nie zostało usunięte.
+
+**Bugi wire-formatu Gemini przeniesione POZA etap 4** (patrz „Bugi znalezione przy etapie 0").
+Goldeny są siatką bezpieczeństwa tego refaktoru — celowe pęknięcie ich w tym samym etapie
+odebrałoby możliwość odróżnienia „refaktor coś zepsuł" od „zmieniliśmy zachowanie świadomie".
+
+**Nazwy testów: 6 przekształceń, 0 usunięć.** `TestClientFromContext_{DefaultClient,
+OverrideFromContext,NilClientInContext}` → `TestDoer_{NoInjectionUsesDefaultClient,
+InjectedClientWins,TypedNilClientUsesDefaultClient}` (te same trzy gwarancje przez nową
+ścieżkę wstrzyknięcia). `TestChatStreamer_{HTTPFieldWinsOverContext,
+NilHTTPFallsBackToContext}` → `...OverDefaultClient` / `...ToDefaultClient` oraz
+`TestEndpointNilHTTPUsesContextClient` → `...UsesDefaultClient` — same nazwy stały się
+nieprawdziwe po zniknięciu kontekstu.
+
+**Stara notatka „`config.go:Stream` robi `for _, e := range p.entries`" jest nieaktualna.**
+Etap 2 zamienił tę pętlę na `findEntry`, który indeksuje `p.entries[i]`. Nie ma czego
+sprzątać; notatka skasowana.
+
+**Etap 5 nietknięty świadomie.** `agent/fallback.go` nadal woła globalne
+`providers.FindModel`, a `providers.WithProvider` / `ProviderFromContext` zostają —
+to zakres etapu 5.
+
+### Weryfikacja
+
+- `go build` + `go vet` + `go test ./... -count=1` zielone we wszystkich czterech
+  kombinacjach tagów (brak, `noanthropic`, `nogemini`, `noanthropic nogemini`),
+- `gofmt -l .` puste,
+- `git diff --stat d724940..HEAD -- providers/testdata` **puste** — wire format przeżył,
+- `grep -rn "ClientFromContext\|HTTPClientKey" --include="*.go" .` → nic (także w komentarzach),
+- `go tool nm` na buildzie `-tags "noanthropic nogemini"`: zero symboli anthropic/gemini
+  (pełny build: 25 unikalnych). Te same liczby na binarce zbudowanej z `d724940`,
+  czyli bez regresji względem etapu 3. Uwaga: etap 3 zapisał „pełny build ma 7" —
+  inna miara (`grep` po samych nazwach vs po całych liniach `nm`), nie zmiana stanu.
 
 ## Etap 5 — fallback poza agentem (0,5d)
 
@@ -219,14 +303,18 @@ robota z innym cyklem sprzężenia zwrotnego.
 
 - [x] **openai: wiele `toolResult` w jednej wiadomości zlewa się w jedną** — teksty sklejone bez separatora, `tool_call_id` nadpisany przez ostatni blok (`convert.go:68-73`). Czysta logika, wzorzec poprawny obok (anthropic/gemini). Naprawione przed etapem 1, żeby etap 2 przenosił poprawny kod zamiast uzbrajać pułapkę. Uwaga: bug był uśpiony — `agent/run_tools.go:64` emituje 1 wiadomość na 1 tool call, a resume odtwarza 1:1.
 
-### Po etapie 2 — bo connector jest właśnie tym, co je rozplątuje
+### Osobne zadanie PO etapie 4 — nie „przy okazji" żadnego etapu
 
 Gemini: trzy defekty rozsmarowane po `parseURI` (ścieżka), switchu w `config.go`
 (model), `api/gemini.go` (nagłówek). `case "gemini": // different path structure`
 jest wprost objawem brakującej abstrakcji — connector sam buduje swój URL i nagłówki.
-Naprawa teraz = wpisanie logiki w switch, który i tak znika. Wymaga dokumentacji
-Gemini + realnego wywołania z kluczem. Etap 3 tego NIE ruszył (goldeny nadal zamrażają
-zły format) — `TODO` w `connector/gemini.go` przeniesiony na etap 4.
+Wymaga dokumentacji Gemini + realnego wywołania z kluczem.
+
+Znacznik wędrował: etap 2 → 3 → 4. Zatrzymany tutaj jako **samodzielne zadanie po
+etapie 4**, bo goldeny są siatką bezpieczeństwa refaktoru: naprawa wire-formatu
+w tym samym etapie co przenoszenie kodu odbiera możliwość odróżnienia „przeniesienie
+coś zepsuło" od „zmieniliśmy zachowanie świadomie". `TODO` w `connector/gemini.go`
+zostaje na miejscu do tego czasu.
 
 - [ ] **gemini: `role: "assistant"`** w `contents[]` — Gemini zna tylko `user`/`model` (`convert.go:173-176`)
 - [ ] **gemini: brak ścieżki i modelu** — `POST /` zamiast `/v1beta/models/<model>:streamGenerateContent`; `GeminiRequest` nie ma pola `model`, więc `req.Model` jest gubiony
@@ -241,8 +329,6 @@ wchodzą w okolice refactoru.
 - [ ] **bloki `thinking` odrzucane we wszystkich 3 konwerterach** — istotne dla Anthropic extended thinking (wymaga odesłania podpisanych bloków)
 - [ ] **`Finish.Reason` nieznormalizowany** — `tool_calls` / `tool_use` / `STOP` / `stop` (gemini miesza wielkość liter)
 - [ ] **`ConvertToolsToAnthropic` przy błędzie parsowania zwraca format OpenAI as-is** i loguje globalnym `log.Printf` (`api/anthropic.go:362`)
-
-Do posprzątania przy przenoszeniu (nie bug): `config.go:Stream` robi `for _, e := range p.entries { entry = &e; break }` — poprawne przy `go 1.25`, ale wygląda jak klasyczny aliasing pętli.
 
 ---
 
