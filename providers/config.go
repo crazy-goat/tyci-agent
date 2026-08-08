@@ -214,30 +214,27 @@ type dynamicProvider struct {
 	entries []ModelEntry
 	// registry is optional; nil means defaultConnectors.
 	registry *connector.Registry
+	// auth is optional; nil means defaultAuthSource.
+	auth AuthSource
 }
 
 func (p *dynamicProvider) Name() string { return p.name }
 
 func (p *dynamicProvider) IsConfigured() bool {
 	for _, e := range p.entries {
+		// The URI token is checked RAW, not through LiteralAuth: an entry
+		// carrying an unresolvable "$FOO" still counts as configured here,
+		// while Stream would refuse it. That asymmetry is pre-existing and
+		// deliberately preserved — the `provider list` output must not start
+		// hiding providers the user did configure.
 		_, token, _, _, err := parseURI(e.URI)
 		if err == nil && token != "" {
 			return true
 		}
-		// Check auth.json. Resolve "$ENV_VAR" references so a literal
-		// "$FOO" entry (from single-quoted shell input or hand-edits)
-		// is treated as configured only when FOO is actually exported.
-		if key, ok, err := connect.GetKey(p.name); err == nil && ok {
-			if resolved := connect.ResolveToken(key); resolved != "" {
-				return true
-			}
-		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: reading auth.json: %v\n", err)
-		}
-		if os.Getenv(strings.ToUpper(p.name+"_API_KEY")) != "" {
-			return true
-		}
-		if os.Getenv("OPENCODE_API_KEY") != "" {
+		// Everything below the URI is the provider-level lookup, which is the
+		// very same AuthSource resolveAPIKey consults — no second copy of the
+		// auth.json/env precedence.
+		if p.authSource().Key(p.name) != "" {
 			return true
 		}
 	}
@@ -323,6 +320,16 @@ func (p *dynamicProvider) connectors() *connector.Registry {
 	return defaultConnectors
 }
 
+// authSource returns the credential lookup for this provider, defaulting to
+// auth.json + environment. Both IsConfigured and resolveAPIKey go through it,
+// so there is exactly one description of the precedence.
+func (p *dynamicProvider) authSource() AuthSource {
+	if p.auth != nil {
+		return p.auth
+	}
+	return defaultAuthSource
+}
+
 // kindFor maps a URI api_type to a connector kind.
 //
 // It deliberately does NOT fall back to the OpenAI connector. The `default:`
@@ -355,37 +362,13 @@ func uriOptions(uri string) map[string]string {
 }
 
 // resolveAPIKey resolves the credential for this provider: the token from the
-// URI first, then auth.json, then env vars.
+// URI first, then whatever the provider's AuthSource offers (by default
+// auth.json, then env vars).
 func (p *dynamicProvider) resolveAPIKey(uriKey string) (string, error) {
-	// Resolve $ENV_VAR references in token
-	apiKey := connect.ResolveToken(uriKey)
-
-	// If no API key in URI, try auth.json
-	if apiKey == "" {
-		if key, ok, err := connect.GetKey(p.name); err == nil && ok {
-			// Resolve "$ENV_VAR" refs stored in auth.json, too. This
-			// allows entries like "nexos": "$NEXOS_API_KEY" to work
-			// even when the user accidentally single-quoted the value
-			// at `provider auth set` time.
-			apiKey = connect.ResolveToken(key)
-		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: reading auth.json: %v\n", err)
-		}
+	if apiKey := (AuthChain{LiteralAuth(uriKey), p.authSource()}).Key(p.name); apiKey != "" {
+		return apiKey, nil
 	}
-
-	// If still no API key, try env vars
-	if apiKey == "" {
-		envKey := strings.ToUpper(p.name) + "_API_KEY"
-		apiKey = os.Getenv(envKey)
-		if apiKey == "" {
-			apiKey = os.Getenv("OPENCODE_API_KEY")
-		}
-	}
-
-	if apiKey == "" {
-		return "", fmt.Errorf("no API key for %q (set via 'tyci provider auth set', %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
-	}
-	return apiKey, nil
+	return "", fmt.Errorf("no API key for %q (set via 'tyci provider auth set', %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
 }
 
 // forward creates an emit function for stream events.
