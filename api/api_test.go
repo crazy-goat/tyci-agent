@@ -752,22 +752,13 @@ func TestChatStreamer_NilHTTPFallsBackToDefaultClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Point the default-client hook at a client that can reach the test server,
-	// then assert the nil-HTTP streamer really went through it.
-	orig := defaultClientProvider
-	used := 0
-	defaultClientProvider = func() *http.Client {
-		used++
-		return server.Client()
-	}
-	defer func() { defaultClientProvider = orig }()
-
+	// No hook to point anywhere: httptest speaks plain HTTP on 127.0.0.1, so
+	// the real shared client reaches the server unaided. That the streamer
+	// picks that client rather than some other one is asserted directly, and
+	// without a global, by TestDoer_NoInjectionUsesDefaultClient.
 	emit := func(stream.Event) error { return nil }
 	if err := (ChatStreamer{}).Stream(context.Background(), "k", server.URL, ChatRequest{Model: "gpt-4"}, emit); err != nil {
 		t.Fatalf("Stream: %v", err)
-	}
-	if used != 1 {
-		t.Errorf("defaultClientProvider was consulted %d times, want 1", used)
 	}
 	if hits != 1 {
 		t.Fatalf("default client got %d requests, want 1", hits)

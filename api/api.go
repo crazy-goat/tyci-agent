@@ -33,12 +33,12 @@ type HTTPDoer interface {
 // the same case.
 func doer(h HTTPDoer) HTTPDoer {
 	if cl, ok := h.(*http.Client); ok && cl == nil {
-		return defaultClientProvider()
+		return defaultClient
 	}
 	if h != nil {
 		return h
 	}
-	return defaultClientProvider()
+	return defaultClient
 }
 
 // applyExtraHeaders sets caller-supplied headers on req. It runs AFTER the
@@ -53,6 +53,13 @@ func applyExtraHeaders(req *http.Request, extra map[string]string) {
 // defaultClient is the shared HTTP client used by every streamer that was not
 // given one of its own. It reuses connections and avoids allocating a new
 // Transport per request.
+//
+// It is read directly by doer, with no indirection in between. There used to
+// be a defaultClientProvider function variable here whose only reason to exist
+// was letting one test swap the client out; a mutable package-level seam is
+// safe only as long as nobody in this package calls t.Parallel(), which is a
+// guarantee nothing enforces. The test in question reaches a httptest server
+// over plain HTTP on 127.0.0.1, which this client can do unaided.
 var defaultClient = &http.Client{
 	Transport: &http.Transport{
 		MaxIdleConns:        4,
@@ -60,10 +67,6 @@ var defaultClient = &http.Client{
 		IdleConnTimeout:     90 * time.Second,
 	},
 }
-
-// defaultClientProvider returns the shared HTTP client.
-// Extracted as a variable so tests can override it.
-var defaultClientProvider = func() *http.Client { return defaultClient }
 
 type RetryableError struct {
 	Code       int
