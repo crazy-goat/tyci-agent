@@ -746,13 +746,27 @@ Etap rozbity na 7A (zrobione), 7B i 7C — podział opisany pod listą.
       i `stream.StreamError` po N eventach (ścieżka retry). Konstruktory błędów
       są związane z realnym konsumentem testem na `api.IsRetryable`.
 - [ ] `record.go` / `replay.go` — nagrywanie do JSONL, odtwarzanie w CI bez klucza API
-- [ ] przepisać testy retry/fallback z `httptest` na `Flaky`
-- [ ] zastąpić `mockProvider` z `agent/agent_test.go` przez `Fake`
-- [ ] wycofać `api.defaultClientProvider` — mutowalna zmienna globalna istniejąca
+- [x] pokryć `Flaky` ścieżkę awarii w środku streamu. Pozycja brzmiała
+      pierwotnie „przepisać testy retry/fallback z `httptest` na `Flaky`" i
+      w tym brzmieniu nie miała przedmiotu: żaden test retry ani fallback nie
+      chodził przez `httptest`. Testy agenta zawsze używały atrap w procesie,
+      a `httptest` w `api/` obsługuje testy samej warstwy HTTP (parsowanie SSE,
+      nagłówki, kody stanu), których `Flaky` nie zastąpi, bo siedzi *nad*
+      transportem. Zamiast przepisywania doszły dwa testy na to, czego nie
+      umiała żadna atrapa — awarię po N wyemitowanych eventach:
+      `TestRunFallback_MidStreamFailureAfterPartialText` (ścieżka fallbacku) i
+      `TestRun_RetryRecoversAfterMidStreamRateLimit` (ścieżka retry, pierwszy
+      w ogóle test udanego retry w tym pakiecie).
+- [x] zastąpić `mockProvider` z `agent/agent_test.go` przez `Fake` — razem
+      z pozostałymi dziesięcioma atrapami w `agent/` i `bareModelClient`
+      z `main_resolve_test.go`.
+- [x] wycofać `api.defaultClientProvider` — mutowalna zmienna globalna istniejąca
       wyłącznie jako seam testowy (`api/api_test.go:757-763` podmienia ją i
       przywraca w `defer`). Dziś bezpieczna, bo w `api/` nie ma ani jednego
-      `t.Parallel()`, ale to bezpieczeństwo z przypadku. Connector testowy
-      wstrzyknięty przez `Deps.HTTP` pokrywa ten sam przypadek bez globalu.
+      `t.Parallel()`, ale to bezpieczeństwo z przypadku. Ostatecznie nie
+      potrzeba było nawet connectora testowego: `httptest` mówi zwykłym HTTP
+      pod `127.0.0.1`, więc prawdziwy `defaultClient` dosięga serwera bez
+      żadnej podmiany.
 
 #### Co zrobiło 7A
 
@@ -763,20 +777,41 @@ pierwsi konsumenci przepięci od razu, żeby API nie powstało w próżni:
 atrap `connector.ModelClient` zostało 13 (11 w `agent/`, 2 w
 `main_resolve_test.go`).
 
-#### Co zostało na 7B
+#### Co zrobiło 7B
 
-- 11 atrap w `agent/` (`mockProvider`, `mockToolProvider`, `mockFailingProvider`,
-  `mockTextProvider`, `blockingProvider`, `alwaysToolProvider`, trzy
-  `planGuard*Provider`, `counterProvider`, `countingTextProvider`). Uwaga na
-  `Usage` w `Finish`: atrapy różnią się liczbami i testy na nie asertują —
-  różnica ma zostać jawna w `Turns` w miejscu wywołania.
-- `main_resolve_test.go` — `bareModelClient` i `recordingClient`. To NIE jest
-  mechaniczna podmiana: `bareModelClient` istnieje po to, żeby *nie*
-  implementować `connector.HTTPInjector`, a `recordingClient` po to, żeby go
-  implementować i zapamiętywać wstrzyknięte klienty HTTP. `Fake` świadomie nie
-  ma `WithHTTP`, więc `recordingClient` potrzebuje osobnego typu albo zostaje.
-- przepisanie testów retry/fallback z `httptest` na `Flaky`.
-- wycofanie `api.defaultClientProvider`.
+Wszystkie 11 atrap w `agent/` przepięte na `connectortest.Fake` — z 16 ręcznie
+pisanych atrap `connector.ModelClient` sprzed etapu 7 zostały dwie, obie
+w `main_resolve_test.go` i obie z powodu, dla którego `Fake` się nie nadaje
+(patrz niżej). Zero zmian w kodzie produkcyjnym poza wycofaniem
+`defaultClientProvider`.
+
+Co wyszło przy przepinaniu:
+
+- **`Usage` w `Finish` jest nośne, `Reason` nie.** `runOnce` czyta wyłącznie
+  `e.Usage` i emituje `Summary`/`Total` tylko gdy `hasUsage(lastUsage)` — zerowe
+  `Usage` decyduje o tym, czy linia kosztów w ogóle się pojawi, więc każda
+  liczba stoi jawnie w literale `Turns` w miejscu wywołania. `Finish.Reason`
+  nie jest czytany nigdzie, więc różnica `"stop"` vs `""` jest kosmetyczna.
+- **`planGuard*Provider` dały się przepiąć.** Obawa, że reagują na treść
+  żądania, się nie potwierdziła: decydowały wyłącznie po numerze wywołania.
+  Ich końcowe wywołania zamykały kanał bez żadnego eventu, co zapisane jest
+  jawnie jako `OnExhausted: []stream.Event{}` — pominięcie pola dałoby gołe
+  `Finish`, czyli co innego.
+- **Dwie atrapy odpowiadały tak samo na KAŻDE wywołanie**
+  (`countingTextProvider`, `alwaysToolProvider`), nie tylko na pierwsze. Ich
+  skrypt siedzi w `OnExhausted` przy pustym `Turns`, bo `OnExhausted`
+  obowiązuje od tury zerowej.
+- **`Fake.Calls()` liczy dokładnie to, co liczyły `p.calls` i `callCount()`** —
+  każde wejście w `Stream`, niezależnie od wyniku.
+- Przy okazji zniknął martwy helper `newFailingProvider` (nieużywany).
+
+`main_resolve_test.go`: `bareModelClient` przepięty na `Fake` i to jest
+wzmocnienie, nie kosmetyka — `TestWithIsolatedPool_PassesThroughNonInjector`
+sprawdza teraz realny wspólny fake zamiast atrapy zrobionej pod ten jeden test,
+więc gdyby ktoś dorobił `Fake.WithHTTP`, test głośno pęknie.
+`recordingInjector`/`recordingClient` **zostają**: istnieją po to, żeby
+`HTTPInjector` implementować i zapamiętywać wstrzyknięte klienty HTTP, czego
+`Fake` z definicji nie robi.
 
 #### Co zostało na 7C
 
@@ -801,6 +836,38 @@ pokrycia. Reszta to dług znaleziony po drodze i świadomie nietknięty.
       Zaprojektować to od razu, nie doklejać potem.
       Zrobione w 7A jako pole `Fake.BlockUntilCancel`; ten sam tryb obsługuje
       `blockingProvider` z `agent/agent_test.go:1155-1172`, który znika w 7B.
+- [ ] **Backoff w pętli retry nie jest wstrzykiwalny — i to jest jedyny powód,
+      dla którego testy retry robią gimnastykę z anulowaniem kontekstu.**
+      Znalezione przy 7B, świadomie nietknięte: uczynienie go wstrzykiwalnym to
+      zmiana projektowa w kodzie produkcyjnym, tego samego gatunku co `agent.Sink`
+      czy `providers.AuthSource`, i zasługuje na własną decyzję.
+      Czego brakuje: `agent/agent.go:147-149` liczy backoff przez
+      `api.CalcBackoff(attempt, lastErr, api.RetryConfig{MaxRetries: cfg.MaxRetries})`
+      i śpi przez `sleepWithCountdown`. `RetryConfig` ma pole `BaseBackoff`,
+      ale pętla go nie wypełnia, więc `WithDefaults` wstawia 4 — **minimum
+      cztery sekundy snu na próbę**, rosnące wykładniczo. Ani `agent.Config`,
+      ani `Run` nie mają czym tego przestawić, a `sleepWithCountdown` woła
+      `time.After` bezpośrednio.
+      Co to kosztuje dziś: `TestRun_TotalCalledOnAllRetriesExhausted`
+      (`agent/agent_test.go`) uruchamia `Run` w gorutynie i pollinguje display
+      w oczekiwaniu na `ToolBlock("retry 1/5 …")`, żeby anulować kontekst
+      w trakcie pierwszego backoffu. Cała ta konstrukcja istnieje wyłącznie po
+      to, żeby nie spać. Z tego samego powodu nowy test awarii w środku streamu
+      (`TestRunFallback_MidStreamFailureAfterPartialText`) musi używać błędu
+      **nie**retryowalnego — retryowalny wpuściłby go w tę samą pułapkę.
+      Jedyna dziś istniejąca furtka — i jest wąska: `CalcBackoff` honoruje
+      nagłówek `Retry-After` z 429 dosłownie, więc `connectortest.RateLimited("0")`
+      prosi o zerowy sen i `sleepWithCountdown` wraca natychmiast. Korzysta
+      z tego `TestRun_RetryRecoversAfterMidStreamRateLimit` — nowy w 7B,
+      pokrywa **udany** retry, którego nie pokrywało nic (jedyny wcześniejszy
+      test retry anuluje kontekst w pierwszym backoffie i nigdy nie dochodzi do
+      odzyskania). Furtka nie działa dla 500 ani EOF: tam zawsze idą cztery
+      sekundy z `BaseBackoff`, więc ścieżka retry dla błędów bez `Retry-After`
+      pozostaje niepokryta.
+      Co by dało wstrzyknięcie: skrypt „500, 500, potem sukces" i „retry
+      wyczerpane" bez gimnastyki z anulowaniem i bez czekania. Do rozstrzygnięcia:
+      pole `BaseBackoff` w `agent.Config` przekazywane do `RetryConfig`, czy
+      wstrzykiwany `Sleep func(context.Context, time.Duration) error`.
 - [ ] **`Conductor` nie pilnuje równoległego `Submit`.** Kontrakt „wszystkie
       metody z gorutyny prowadzącej rozmowę, wyjątkiem jest `Interrupt`" jest
       komentarzem (`conductor/conductor.go:89-91`), nie mechanizmem. Dziś żaden
