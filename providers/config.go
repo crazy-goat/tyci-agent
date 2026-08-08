@@ -304,10 +304,6 @@ func (p *dynamicProvider) Models() []string {
 	return models
 }
 
-func (p *dynamicProvider) FreeModels() []string {
-	return nil
-}
-
 func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan stream.Event, error) {
 	entry := p.findEntry(req.Model)
 	if entry == nil {

@@ -206,7 +206,6 @@ func (s *interactiveState) listAvailableModels() {
 			continue
 		}
 		models := append([]string{}, p.Models()...)
-		models = append(models, p.FreeModels()...)
 		if len(models) == 0 {
 			continue
 		}

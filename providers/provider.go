@@ -110,7 +110,6 @@ type Provider interface {
 	Name() string
 	IsConfigured() bool
 	Models() []string
-	FreeModels() []string
 	Stream(ctx context.Context, req Request) (<-chan stream.Event, error)
 }
 

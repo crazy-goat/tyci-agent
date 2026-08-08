@@ -16,10 +16,9 @@ type recordingProvider struct {
 	last Request
 }
 
-func (r *recordingProvider) Name() string         { return r.name }
-func (r *recordingProvider) IsConfigured() bool   { return true }
-func (r *recordingProvider) Models() []string     { return nil }
-func (r *recordingProvider) FreeModels() []string { return nil }
+func (r *recordingProvider) Name() string       { return r.name }
+func (r *recordingProvider) IsConfigured() bool { return true }
+func (r *recordingProvider) Models() []string   { return nil }
 func (r *recordingProvider) Stream(ctx context.Context, req Request) (<-chan stream.Event, error) {
 	r.last = req
 	return nil, errors.New("recordingProvider does not stream")

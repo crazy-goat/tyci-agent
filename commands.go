@@ -299,10 +299,6 @@ var tuiCmd = &cobra.Command{
 				allModels = append(allModels, p.Name()+"/"+m)
 				pm.Models = append(pm.Models, m)
 			}
-			for _, m := range p.FreeModels() {
-				allModels = append(allModels, p.Name()+"/"+m)
-				pm.Models = append(pm.Models, m)
-			}
 			if len(pm.Models) > 0 {
 				allProviderModels = append(allProviderModels, pm)
 			}
@@ -438,15 +434,11 @@ var providerListCmd = &cobra.Command{
 
 			if showModels {
 				models := p.Models()
-				freeModels := p.FreeModels()
 
 				for _, m := range models {
 					fmt.Fprintf(os.Stdout, "    %s/%s\n", p.Name(), m)
 				}
-				for _, m := range freeModels {
-					fmt.Fprintf(os.Stdout, "    %s/%s (free)\n", p.Name(), m)
-				}
-				if len(models) == 0 && len(freeModels) == 0 {
+				if len(models) == 0 {
 					fmt.Fprintln(os.Stdout, "    (no models)")
 				}
 			}
@@ -627,12 +619,6 @@ func listModels(toComplete string) []string {
 		}
 		prefix := p.Name() + "/"
 		for _, m := range p.Models() {
-			full := prefix + m
-			if strings.Contains(strings.ToLower(full), toComplete) {
-				seen[full] = struct{}{}
-			}
-		}
-		for _, m := range p.FreeModels() {
 			full := prefix + m
 			if strings.Contains(strings.ToLower(full), toComplete) {
 				seen[full] = struct{}{}

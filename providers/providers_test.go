@@ -295,13 +295,11 @@ type catalogStub struct {
 	name       string
 	configured bool
 	models     []string
-	free       []string
 }
 
-func (s *catalogStub) Name() string         { return s.name }
-func (s *catalogStub) IsConfigured() bool   { return s.configured }
-func (s *catalogStub) Models() []string     { return s.models }
-func (s *catalogStub) FreeModels() []string { return s.free }
+func (s *catalogStub) Name() string       { return s.name }
+func (s *catalogStub) IsConfigured() bool { return s.configured }
+func (s *catalogStub) Models() []string   { return s.models }
 func (s *catalogStub) Stream(ctx context.Context, req Request) (<-chan stream.Event, error) {
 	return nil, errors.New("catalogStub does not stream")
 }
@@ -379,22 +377,19 @@ func TestCatalog_FindModelQualified(t *testing.T) {
 	}
 }
 
-// FindModel: a bare name only matches a CONFIGURED provider's Models(), but
-// falls through to FreeModels() of any provider, configured or not.
+// FindModel: a bare name matches a CONFIGURED provider's Models() and nothing
+// else. There is no second pass — the FreeModels() fall-through was removed
+// because no non-test implementation ever returned anything from it.
 func TestCatalog_FindModelBareName(t *testing.T) {
 	c := NewCatalog()
 	c.Register(&catalogStub{name: "unconfigured", models: []string{"paid-model"}})
 	c.Register(&catalogStub{name: "configured", configured: true, models: []string{"live-model"}})
-	c.Register(&catalogStub{name: "freebie", free: []string{"free-model"}})
 
 	if p, m, ok := c.FindModel("live-model"); !ok || p.Name() != "configured" || m != "live-model" {
 		t.Errorf("FindModel(live-model) = %v, %q, %v", p, m, ok)
 	}
 	if _, _, ok := c.FindModel("paid-model"); ok {
 		t.Error("FindModel matched a model on an unconfigured provider")
-	}
-	if p, _, ok := c.FindModel("free-model"); !ok || p.Name() != "freebie" {
-		t.Errorf("FindModel(free-model) did not fall through to FreeModels: %v, %v", p, ok)
 	}
 	if _, _, ok := c.FindModel("nothing-like-this"); ok {
 		t.Error("FindModel matched a model nobody lists")

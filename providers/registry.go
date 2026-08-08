@@ -48,9 +48,9 @@ func (c *Catalog) GetProvider(name string) (Provider, bool) {
 // FindModel resolves a model spec to a provider and a bare model name.
 //
 // A "provider/model" spec is resolved by exact provider name. A bare model
-// name is searched for first among configured providers, then among free
-// models — in both cases in map iteration order, which is deliberately
-// unspecified.
+// name is searched for among CONFIGURED providers only, in map iteration
+// order, which is deliberately unspecified. A bare name listed solely by
+// providers without a credential does not resolve.
 func (c *Catalog) FindModel(model string) (Provider, string, bool) {
 	if strings.Contains(model, "/") {
 		parts := strings.SplitN(model, "/", 2)
@@ -65,13 +65,6 @@ func (c *Catalog) FindModel(model string) (Provider, string, bool) {
 				if m == model {
 					return p, model, true
 				}
-			}
-		}
-	}
-	for _, p := range c.providers {
-		for _, m := range p.FreeModels() {
-			if m == model {
-				return p, model, true
 			}
 		}
 	}
