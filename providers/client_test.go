@@ -78,12 +78,14 @@ func TestClient_StreamForcesBoundModel(t *testing.T) {
 	}
 }
 
-// WithHTTP must forward to the wrapped provider's HTTPInjector when present.
-// This is the regression this stage explicitly calls out: main.go's
-// withIsolatedPool type-asserts a ModelClient to connector.HTTPInjector, and
-// if modelClient did not forward, that assertion would always fail —
-// silently turning off subagent connection-pool isolation for every model
-// client, with no compile error to catch it.
+// WithHTTP must actually reach the wire: the injected client has to land in
+// connector.Endpoint.HTTP. This is the regression this stage calls out —
+// main.go's withIsolatedPool type-asserts a ModelClient to
+// connector.HTTPInjector, and anything that dropped the client along the way
+// would silently turn off subagent connection-pool isolation with no compile
+// error to catch it. The assertion itself can no longer fail (see the
+// `var _ connector.HTTPInjector` line in client.go); this test covers the
+// rest of the hop, which no signature can prove.
 func TestClient_WithHTTPForwardsToProvider(t *testing.T) {
 	reg, seen := capturingRegistry(connector.KindOpenAI)
 	base := newDynamicProvider("injected", []ModelEntry{
@@ -108,21 +110,5 @@ func TestClient_WithHTTPForwardsToProvider(t *testing.T) {
 	// The bound copy must keep its identity — same provider, same model.
 	if bound.Provider() != "injected" || bound.Model() != "m" {
 		t.Errorf("WithHTTP changed identity: Provider()=%q Model()=%q", bound.Provider(), bound.Model())
-	}
-}
-
-// A modelClient wrapping a Provider that does NOT implement HTTPInjector must
-// return an unchanged, still-usable client instead of panicking or losing the
-// binding — the same "no isolation, but no crash" contract
-// providers.HTTPInjector documents. Built by hand because no exported path can
-// produce this shape any more: the only provider that mints a modelClient is
-// dynamicProvider, which is always an HTTPInjector.
-func TestClient_WithHTTPNoopWhenProviderIsNotInjector(t *testing.T) {
-	mc := &modelClient{p: &catalogStub{name: "no-injector", configured: true}, model: "m1"}
-
-	bound := mc.WithHTTP(&stubDoer{})
-
-	if bound.Provider() != "no-injector" || bound.Model() != "m1" {
-		t.Errorf("no-op WithHTTP changed identity: Provider()=%q Model()=%q", bound.Provider(), bound.Model())
 	}
 }

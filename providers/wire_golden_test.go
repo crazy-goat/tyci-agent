@@ -209,7 +209,7 @@ func TestWireGolden(t *testing.T) {
 			uri := fmt.Sprintf("%s://%s@%s@%s", tc.apiType, tc.model, tc.token, srv.Listener.Addr().String())
 			p := NewProvider("wiretest-"+tc.apiType, []ModelEntry{{Name: tc.model, URI: uri}}, Deps{HTTP: client})
 
-			ch, err := p.Stream(ctx, dirtyRequest(tc.model))
+			ch, err := p.Client(tc.model).Stream(ctx, dirtyRequest(tc.model))
 			if err != nil {
 				t.Fatalf("Stream: %v", err)
 			}

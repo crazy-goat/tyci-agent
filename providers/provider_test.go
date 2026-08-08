@@ -410,7 +410,7 @@ func TestDynamicProviderStream_authJSONLiteralEnvRef_resolvesAtRuntime(t *testin
 		{Name: "MiniMax M3", URI: "openai://MiniMax M3@@127.0.0.1:1"},
 	}, Deps{HTTP: customClient})
 
-	ch, err := p.Stream(ctx, Request{Model: "MiniMax M3"})
+	ch, err := p.Client("MiniMax M3").Stream(ctx, Request{Model: "MiniMax M3"})
 	if err != nil {
 		t.Fatalf("Stream() returned error directly: %v", err)
 	}
@@ -570,7 +570,7 @@ func TestNewProvider_InjectsHTTPIntoEndpoint(t *testing.T) {
 		{Name: "m", URI: "openai://m@sk-tok@api.example.invalid"},
 	}, Deps{Connectors: reg, HTTP: doer})
 
-	ch, err := p.Stream(context.Background(), Request{Model: "m"})
+	ch, err := p.Client("m").Stream(context.Background(), Request{Model: "m"})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
@@ -601,7 +601,7 @@ func TestNewProvider_NilHTTPStaysNil(t *testing.T) {
 		{Name: "m", URI: "openai://m@sk-tok@api.example.invalid"},
 	}, Deps{Connectors: reg})
 
-	ch, err := p.Stream(context.Background(), Request{Model: "m"})
+	ch, err := p.Client("m").Stream(context.Background(), Request{Model: "m"})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
@@ -628,7 +628,7 @@ func TestNewProvider_ZeroDepsGetsDefaults(t *testing.T) {
 	}
 }
 
-// WithHTTP must return a COPY. Parallel subagents share one provider value, so
+// withHTTP must return a COPY. Parallel subagents share one provider value, so
 // mutating the receiver would let one child's connection pool leak into
 // another's requests.
 func TestWithHTTP_ReturnsCopy(t *testing.T) {
@@ -637,39 +637,47 @@ func TestWithHTTP_ReturnsCopy(t *testing.T) {
 
 	a := &stubDoer{}
 	b := &stubDoer{}
-	withA := base.WithHTTP(a)
-	withB := base.WithHTTP(b)
+	withA := base.withHTTP(a)
+	withB := base.withHTTP(b)
 
 	if base.http != nil {
-		t.Error("WithHTTP mutated the receiver")
+		t.Error("withHTTP mutated the receiver")
 	}
-	if withA == Provider(base) || withB == Provider(base) {
-		t.Error("WithHTTP returned the receiver instead of a copy")
+	if withA == base || withB == base {
+		t.Error("withHTTP returned the receiver instead of a copy")
 	}
-	if got := withA.(*dynamicProvider).http; got != connector.HTTPDoer(a) {
+	if got := withA.http; got != connector.HTTPDoer(a) {
 		t.Errorf("first copy bound to %v, want a", got)
 	}
-	if got := withB.(*dynamicProvider).http; got != connector.HTTPDoer(b) {
+	if got := withB.http; got != connector.HTTPDoer(b) {
 		t.Errorf("second copy bound to %v, want b", got)
 	}
 	// The copies still serve the same catalog.
-	if withA.Name() != "copy-me" || len(withA.(*dynamicProvider).entries) != 1 {
-		t.Error("WithHTTP copy lost the catalog")
+	if withA.Name() != "copy-me" || len(withA.entries) != 1 {
+		t.Error("withHTTP copy lost the catalog")
 	}
 }
 
-// The provider built by NewProvider satisfies the optional HTTPInjector
-// interface main.go type-asserts against.
-func TestNewProvider_ImplementsHTTPInjector(t *testing.T) {
-	p := NewProvider("injector", nil, Deps{})
-	inj, ok := p.(HTTPInjector)
+// The client a real provider hands out satisfies connector.HTTPInjector — the
+// interface main.go type-asserts against. providers/client.go also asserts
+// this at build time; this test states the same guarantee at the level a
+// caller sees it, and checks that the injected client really lands.
+func TestProviderClient_ImplementsHTTPInjector(t *testing.T) {
+	reg, seen := capturingRegistry(connector.KindOpenAI)
+	p := NewProvider("injector", []ModelEntry{
+		{Name: "m", URI: "openai://m@sk-tok@api.example.invalid"},
+	}, Deps{Connectors: reg})
+
+	inj, ok := p.Client("m").(connector.HTTPInjector)
 	if !ok {
-		t.Fatal("NewProvider result does not implement HTTPInjector")
+		t.Fatal("the client from Provider.Client does not implement connector.HTTPInjector")
 	}
 	doer := &stubDoer{}
-	bound := inj.WithHTTP(doer)
-	if bound.(*dynamicProvider).http != connector.HTTPDoer(doer) {
-		t.Error("WithHTTP via HTTPInjector did not bind the client")
+	if _, err := inj.WithHTTP(doer).Stream(context.Background(), Request{Model: "m"}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if seen.HTTP != connector.HTTPDoer(doer) {
+		t.Errorf("Endpoint.HTTP = %v, want the injected doer", seen.HTTP)
 	}
 }
 

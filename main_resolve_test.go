@@ -22,9 +22,6 @@ type fakeProvider struct {
 func (f *fakeProvider) Name() string       { return f.name }
 func (f *fakeProvider) IsConfigured() bool { return f.configured }
 func (f *fakeProvider) Models() []string   { return f.models }
-func (f *fakeProvider) Stream(context.Context, providers.Request) (<-chan stream.Event, error) {
-	return nil, nil
-}
 
 // Client mints the fake's own ModelClient. A fake provider owning its client
 // is the point of Provider.Client being a method: the test decides what its
@@ -257,7 +254,7 @@ func TestWithIsolatedPool_TransportSettings(t *testing.T) {
 	}
 }
 
-// A real provider from providers.NewProvider is an HTTPInjector, so the
+// A client minted by a real provider is a connector.HTTPInjector, so the
 // production path really does get isolation — and the original value is not
 // mutated, because parallel children share it.
 func TestWithIsolatedPool_RealProviderGetsCopy(t *testing.T) {

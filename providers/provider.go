@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/decodo/tyci/api"
 	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/stream"
 )
 
 func BuildSystemPrompt() string {
@@ -103,19 +101,26 @@ type ContentBlock = connector.ContentBlock
 // RichMessage is the canonical message type used throughout the agent loop.
 type RichMessage = connector.Message
 
-// Request is passed to Provider.Stream.
+// Request is what a connector.ModelClient sends.
 type Request = connector.Request
 
-// Provider is one named entry in the model catalog.
+// Provider is the CATALOG: one named entry answering questions about which
+// models it serves and whether it has a credential, plus the factory that
+// turns such an entry into something able to send a request.
 //
-// Name/IsConfigured/Models are catalog questions, asked only by the CLI.
-// Client is the factory that turns a catalog entry into something that can
-// actually send a request. Minting the client is a METHOD here, not a
-// package-level Client(p, model) function, because the provider is the only
-// thing that knows how to reach its own models (URI, auth, connector kind) —
-// a free function would have to take the interface and then go looking for
-// the transport behind it, which is the type-assertion-shaped hole this
-// design removes.
+// It deliberately has no Stream. Sending bytes is the job of
+// connector.ModelClient, which is the only abstraction package agent ever
+// sees, and Client is the only door to it. Before this split the two
+// abstractions were glued together, which is how FreeModels() could sit dead
+// on the interface for as long as it did — nobody could tell whether it was a
+// catalog question or a transport concern.
+//
+// Minting the client is a METHOD, not a package-level Client(p, model)
+// function, because the provider is the only thing that knows how to reach
+// its own models (URI, auth, connector kind). A free function would have to
+// take the interface and then go looking for the transport behind it, i.e.
+// type-assert — and a failed assertion there degrades silently. As a method
+// it is checked by the compiler.
 type Provider interface {
 	Name() string
 	IsConfigured() bool
@@ -126,21 +131,6 @@ type Provider interface {
 	// passed an unlisted name straight through, and the "model not found in
 	// provider" error surfaces at request time.
 	Client(model string) connector.ModelClient
-
-	Stream(ctx context.Context, req Request) (<-chan stream.Event, error)
-}
-
-// HTTPInjector is the optional half of Provider: an implementation that can
-// return a copy of itself bound to a specific HTTP client.
-//
-// It is separate from Provider on purpose. The agent must not know that HTTP
-// exists, and every fake provider in the test suite would otherwise have to
-// implement a method it has no use for. Callers that need their own transport
-// — today only the subagent runner, which gives each child its own connection
-// pool — type-assert to this interface and silently keep the shared default
-// client when the assertion fails.
-type HTTPInjector interface {
-	WithHTTP(connector.HTTPDoer) Provider
 }
 
 var DefaultRetryConfig = api.RetryConfig{MaxRetries: 5, BaseBackoff: 4, MaxBackoff: 128}

@@ -16,13 +16,24 @@ func (p *dynamicProvider) Client(model string) connector.ModelClient {
 }
 
 // modelClient is the providers-side implementation of connector.ModelClient:
-// one provider bound to one model. It is the ONLY exported way to send a
-// request through a provider — the catalog answers questions about models,
-// this answers requests.
+// one provider bound to one model. It is the ONLY way to send a request
+// through a provider — the catalog answers questions about models, this
+// answers requests.
+//
+// The provider field is the CONCRETE type, not the Provider interface. That is
+// what makes the HTTP-injection path below a single, compiler-checked hop
+// instead of a chain of type assertions that fail silently.
 type modelClient struct {
-	p     Provider
+	p     *dynamicProvider
 	model string
 }
+
+// modelClient must satisfy connector.HTTPInjector. main.go's withIsolatedPool
+// gives each subagent its own connection pool by type-asserting a ModelClient
+// to that interface, and a failed assertion there is invisible: the request
+// just goes out over the shared pool and the isolation is gone with no error
+// anywhere. This line turns that runtime failure mode into a build failure.
+var _ connector.HTTPInjector = (*modelClient)(nil)
 
 func (c *modelClient) Provider() string { return c.p.Name() }
 func (c *modelClient) Model() string    { return c.model }
@@ -34,20 +45,16 @@ func (c *modelClient) Stream(ctx context.Context, req connector.Request) (<-chan
 	return c.p.Stream(ctx, req)
 }
 
-// WithHTTP implements connector.HTTPInjector whenever the wrapped provider
-// implements HTTPInjector, and is a no-op otherwise. This forwarding is the
-// whole point of modelClient existing as a struct rather than a closure:
-// main.go's withIsolatedPool type-asserts a ModelClient against
-// connector.HTTPInjector, and without this method that assertion would
-// always fail — silently dropping subagent connection-pool isolation for
-// every ModelClient, since none of them would satisfy the interface. See
-// TestClient_WithHTTPForwardsToProvider.
+// WithHTTP implements connector.HTTPInjector: it returns a client whose every
+// request goes out over h.
+//
+// This is the whole injection chain, one link. It used to be three —
+// providers.HTTPInjector → clientAdapter.WithHTTP → connector.HTTPInjector —
+// with a type assertion at each hop, so forgetting to forward at any of them
+// compiled fine and merely lost subagent pool isolation at runtime. Here both
+// hops are static: c.p is the concrete provider, and the rebound provider
+// mints its own client, so there is exactly one description of how a provider
+// becomes a ModelClient. See TestClient_WithHTTPForwardsToProvider.
 func (c *modelClient) WithHTTP(h connector.HTTPDoer) connector.ModelClient {
-	inj, ok := c.p.(HTTPInjector)
-	if !ok {
-		return c
-	}
-	// The rebound provider mints its own client, so there is exactly one
-	// description of how a provider becomes a ModelClient.
-	return inj.WithHTTP(h).Client(c.model)
+	return c.p.withHTTP(h).Client(c.model)
 }

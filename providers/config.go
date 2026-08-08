@@ -257,15 +257,16 @@ type dynamicProvider struct {
 	http connector.HTTPDoer
 }
 
-// WithHTTP returns a copy of the provider bound to h. It returns a copy rather
+// withHTTP returns a copy of the provider bound to h. It returns a copy rather
 // than mutating: a single provider value is shared by every parallel subagent,
 // so mutating it here would let one child's connection pool leak into another.
 //
-// This is deliberately NOT a method on the Provider interface. Putting it
-// there would force every fake and every future implementation to carry an
-// HTTP concern it has no use for; callers type-assert to HTTPInjector instead
-// and fall back to today's "no isolation" behaviour when it is absent.
-func (p *dynamicProvider) WithHTTP(h connector.HTTPDoer) Provider {
+// It is unexported and returns the concrete type. Transport is not part of the
+// Provider contract — the catalog has no business knowing HTTP exists — and
+// the only caller is modelClient.WithHTTP, inside this package, which is how
+// the injection stays a compiler-checked hop rather than a type assertion that
+// can quietly not match.
+func (p *dynamicProvider) withHTTP(h connector.HTTPDoer) *dynamicProvider {
 	c := *p
 	c.http = h
 	return &c

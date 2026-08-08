@@ -47,13 +47,18 @@ func FullModel(mc ModelClient) string {
 // HTTPInjector is the optional half of ModelClient: an implementation that
 // can return a copy of itself bound to a specific HTTP client.
 //
-// It is separate from ModelClient on purpose, mirroring providers.HTTPInjector
-// (the interface it replaces at the agent/main boundary): the agent must not
-// know that HTTP exists, and every fake ModelClient in the test suite would
-// otherwise have to implement a method it has no use for. Callers that need
-// their own transport — today only the subagent runner, which gives each
-// child its own connection pool — type-assert to this interface and silently
-// keep the shared default client when the assertion fails.
+// It is separate from ModelClient on purpose, and it is the ONLY interface in
+// the injection path: the agent must not know that HTTP exists, and every fake
+// ModelClient in the test suite would otherwise have to implement a method it
+// has no use for. Callers that need their own transport — today only the
+// subagent runner, which gives each child its own connection pool —
+// type-assert to this interface and silently keep the shared default client
+// when the assertion fails.
+//
+// That silent fallback is intended only for fakes. Every client the providers
+// package hands out satisfies this interface, guaranteed at build time by a
+// `var _ connector.HTTPInjector` assertion in providers/client.go, so the
+// production path cannot lose isolation by accident.
 type HTTPInjector interface {
 	WithHTTP(HTTPDoer) ModelClient
 }

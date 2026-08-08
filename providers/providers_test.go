@@ -301,9 +301,6 @@ type catalogStub struct {
 func (s *catalogStub) Name() string       { return s.name }
 func (s *catalogStub) IsConfigured() bool { return s.configured }
 func (s *catalogStub) Models() []string   { return s.models }
-func (s *catalogStub) Stream(ctx context.Context, req Request) (<-chan stream.Event, error) {
-	return nil, errors.New("catalogStub does not stream")
-}
 
 // Client returns a client that carries an identity and nothing else — the
 // catalog tests never send a request.
