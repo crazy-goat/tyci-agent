@@ -12,7 +12,7 @@ import (
 
 // gemini speaks the Gemini generateContent protocol.
 //
-// TODO(etap-3, docs/architecture-refactor.md "Bugi znalezione przy etapie 0"):
+// TODO(etap-4, docs/architecture-refactor.md "Bugi znalezione przy etapie 0"):
 // this connector should build its own URL
 // (/v1beta/models/<model>:streamGenerateContent) and send x-goog-api-key
 // instead of Authorization: Bearer. Both are deliberately left broken here —

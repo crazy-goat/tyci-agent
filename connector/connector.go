@@ -61,7 +61,7 @@ type Endpoint struct {
 	BaseURL string
 	// Path is the request path. Today it is computed by providers.parseURI,
 	// which still knows the per-apiType defaults; moving that knowledge into
-	// the connectors is Etap 3 of docs/architecture-refactor.md.
+	// the connectors is Etap 4 of docs/architecture-refactor.md.
 	Path string
 	// APIKey is the already-resolved credential (URI → auth.json → env).
 	APIKey string

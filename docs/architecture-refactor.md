@@ -76,21 +76,89 @@ Jedyna świadoma mikro-zmiana zachowania: wysyłka `stream.StreamError` jest ter
 jednolita i robi `select` na `ctx.Done()`. Wcześniej gałąź openai blokowała bez
 `select` (anthropic i gemini już miały). Widoczne tylko przy już anulowanym ctx.
 
-## Etap 3 — `HTTPDoer` (1d)
+## Etap 3 — `HTTPDoer` (1d) — ZROBIONE
 
-- [ ] `type HTTPDoer interface{ Do(*http.Request) (*http.Response, error) }`
-- [ ] `api.StreamX(...)` → metody na strukturze z polem `HTTPDoer`
-- [ ] `ClientFromContext` jako fallback gdy `Endpoint.HTTP == nil`, potem usunąć
-- [ ] to samo pole w `internal/mcp/http.go`, `internal/connect/{connect,modelsdev}.go`
-- [ ] usunąć martwy `api/client.go`
-- [ ] usunąć martwy `tyciconfig.ProviderURI.FullEndpoint()` (`internal/tyciconfig/uri.go:109`) — nieużywany i ROZJECHANY z `providers.parseURI`: powiela switch po apiType, ale bez `appendChatPath`, więc dla ścieżki typu `/zen/go/v1` policzyłby inny URL niż realny
-- [ ] `default:` w starym switchu był de facto martwy — `tyciconfig.Parse` normalizuje każdy nieznany scheme do `openai` (`uri.go:45-51`); fallback żyje teraz w `providers.kindFor` przez `Registry.Has`, zweryfikować czy nadal potrzebny
-- [ ] usunąć build tagi + `api/anthropic_stub.go`, `api/gemini_stub.go`
-- [ ] `make minimal` = nierejestrowanie connectorów (jedna linia)
+- [x] `type HTTPDoer interface{ Do(*http.Request) (*http.Response, error) }` (`api/api.go`)
+- [x] `api.StreamX(...)` → metody `ChatStreamer` / `AnthropicStreamer` / `GeminiStreamer`,
+      każda z polami `HTTP HTTPDoer` i `Headers map[string]string`
+- [x] `ClientFromContext` jako fallback gdy `Endpoint.HTTP == nil` — **fallback ZOSTAJE do etapu 4**
+- [x] `connector.Endpoint.HTTP` i `.Headers` faktycznie konsumowane (były martwymi polami po etapie 2)
+- [x] wstrzykiwalny klient w `internal/connect/{connect,modelsdev}.go` (`internal/mcp/http.go` miał już pole)
+- [x] usunąć martwy `api/client.go` (+ `chat_client.go`, `anthropic_client.go`,
+      `gemini_client.go` i ich dwa stuby — razem 1070 linii porzuconej
+      równoległej implementacji `Streamer`/`StreamRequest`/`*Client`)
+- [x] usunąć martwy `tyciconfig.ProviderURI.FullEndpoint()`
+- [x] `default:` w starym switchu potwierdzony jako martwy — `tyciconfig.Parse`
+      normalizuje każdy nieznany scheme do `openai` (`uri.go:45-51`, pokryte przez
+      `TestParseURI_table`). Fallback na openai w `providers.kindFor` **usunięty całkiem**
+- [x] usunąć `api/anthropic_stub.go`, `api/gemini_stub.go`
+- [x] build tagi przeniesione z `api/` na poziom `connector/`; rejestracja per-kind
+- [x] goldeny z etapu 0 nadal przechodzą **bez** `-update`
+
+### Odstępstwa od planu (świadome)
+
+**`ClientFromContext` i `HTTPClientKey` zostają.** Plan mówił „potem usunąć" — zawężone.
+Kontekst jest dziś JEDYNĄ drogą wstrzyknięcia klienta: realny konsument to izolowany
+pool połączeń subagenta (`tools/subagent.go:408-415`) plus golden testy. Usunięcie
+fallbacku wymaga, żeby ktoś podał `HTTPDoer` przy budowie providera — a provider staje
+się strukturą dopiero w etapie 4. Wybór klienta: `if s.HTTP != nil { s.HTTP } else
+{ ClientFromContext(ctx) }`, komentarz przy `api.doer()` wskazuje etap 4.
+
+**Build tagi NIE znikają, tylko się przeprowadzają.** Plan zakładał „usunąć build tagi",
+ale `make minimal` musi nadal fizycznie nie zawierać kodu anthropic/gemini — inaczej
+„minimal" przestaje być minimalny. Zamiast tego:
+
+- `connector/anthropic.go` + `connector/gemini.go` (i ich testy) dostają tagi
+  `!noanthropic` / `!nogemini`; `api/anthropic{,_types}.go` i `api/gemini{,_types}.go` też,
+- rejestracja w domyślnym rejestrze składa się per-kind: każdy plik connectora dopisuje
+  swoją fabrykę z `init()` do `connector.builtinFactories`, więc tag usuwający plik
+  usuwa też rejestrację — nie ma jednego miejsca wymieniającego trójkę,
+- `Makefile` bez zmian (`minimal` = te same dwa tagi).
+
+Zweryfikowane `go tool nm`: build `-tags "noanthropic nogemini"` nie zawiera ani jednego
+symbolu anthropic/gemini (pełny build ma 7), binarka jest o ~72 kB mniejsza.
+
+**Pułapka, którą to odkryło:** po etapie 2 `providers.kindFor` używało `Registry.Has`
+z fallbackiem na openai. W buildzie minimalnym URI `anthropic://` pojechałoby wtedy po
+cichu connectorem openai — Anthropic-owy request na endpoint chat-completions, czyli
+cichy zły request zamiast czytelnego błędu ze stuba. Naprawione: `connector.IsKnownKind`
++ `connector.ErrExcluded` dają dokładnie dawny komunikat („anthropic support excluded at
+build time (rebuild without -tags noanthropic)"), a fallback na openai zniknął całkiem.
+Testy: `TestDynamicProviderKindFor_*` w `providers/provider_test.go` (działają bez tagów,
+bo wstrzykują własny rejestr).
+
+**`providers/wire_golden_test.go` zachowuje tag `!noanthropic && !nogemini`.** Plan
+zakładał skasowanie go razem ze stubami. Nie da się: plik asertuje goldeny anthropic
+i gemini, których build bez tych connectorów z definicji nie wyprodukuje.
+
+**`connector.Endpoint.Headers` skonsumowane** (plan tego nie wymieniał). Nagłówki są
+ustawiane PO domyślnych, więc mogą je nadpisać; mapa jest dziś zawsze pusta, więc bajty
+na drucie się nie zmieniają. Dowód, że pole nie jest dekoracją:
+`connector/endpoint_http_test.go`.
+
+**Dług zastany naprawiony przy okazji:** `go test -tags "noanthropic nogemini" ./api/`
+znów się kompiluje. Helpery `testCtx()` i `as()` przeniesione z plików pod tagami do
+nieotagowanego `api/api_test.go`, a testy `TestStreamGemini_*` wydzielone do
+`api/gemini_test.go` pod `//go:build !nogemini`. Sprawdzone wszystkie cztery kombinacje
+tagów: build + vet + test.
+
+**`internal/connect`:** trzy `&http.Client{}` (2× `connect.go`, 1× `modelsdev.go`)
+zastąpione parametrem `HTTPDoer` na fetcherach i jednym `defaultHTTPClient` w
+wywołaniach z CLI. Bez `Timeout`, dokładnie jak zastąpione literały.
+`fetchModelsDev` przeszło z `client.Get` na `NewRequest`+`Do` (ten sam request).
+
+Zero zmian obserwowalnego zachowania w pełnym buildzie. Jedyna zmiana zachowania
+dotyczy buildu minimalnego i jest naprawą opisanej wyżej pułapki: nieznany api_type
+(nieosiągalny przez `parseURI`) daje teraz błąd `unsupported api_type` zamiast cichego
+przekierowania na connector openai.
 
 ## Etap 4 — provider jako struktura (1d)
 
 - [ ] `providers.Provider` interface → struct (`catalog`, `auth`, `connectors`, `http`)
+- [ ] usunąć `api.ClientFromContext` / `api.HTTPClientKey` — dopiero tu jest czym je
+      zastąpić: provider-struktura wstrzykuje `HTTPDoer` do `connector.Endpoint.HTTP`.
+      Do przepisania: `tools/subagent.go:408-415` (izolowany pool) oraz wstrzyknięcia
+      w `providers/provider_test.go` i `providers/wire_golden_test.go`
 - [ ] `AuthSource` jako interfejs (auth.json / env / literal)
 - [ ] `providers.Default` zostaje dla CLI; testy budują własny katalog
 - [ ] przepisać `providers/providers_test.go` (844 linii)
@@ -157,7 +225,8 @@ Gemini: trzy defekty rozsmarowane po `parseURI` (ścieżka), switchu w `config.g
 (model), `api/gemini.go` (nagłówek). `case "gemini": // different path structure`
 jest wprost objawem brakującej abstrakcji — connector sam buduje swój URL i nagłówki.
 Naprawa teraz = wpisanie logiki w switch, który i tak znika. Wymaga dokumentacji
-Gemini + realnego wywołania z kluczem.
+Gemini + realnego wywołania z kluczem. Etap 3 tego NIE ruszył (goldeny nadal zamrażają
+zły format) — `TODO` w `connector/gemini.go` przeniesiony na etap 4.
 
 - [ ] **gemini: `role: "assistant"`** w `contents[]` — Gemini zna tylko `user`/`model` (`convert.go:173-176`)
 - [ ] **gemini: brak ścieżki i modelu** — `POST /` zamiast `/v1beta/models/<model>:streamGenerateContent`; `GeminiRequest` nie ma pola `model`, więc `req.Model` jest gubiony
@@ -179,9 +248,10 @@ Do posprzątania przy przenoszeniu (nie bug): `config.go:Stream` robi `for _, e 
 
 ## Dług zastany (nie nasza regresja, znalezione po drodze)
 
-- [ ] `go test -tags "noanthropic nogemini" ./api/` **nie kompiluje się** — `testCtx()`
+- [x] `go test -tags "noanthropic nogemini" ./api/` **nie kompilował się** — `testCtx()`
   siedzi w `api/anthropic_test.go` (plik z `//go:build !noanthropic`), a używa go
   `api/api_test.go`. Zweryfikowane na czystym drzewie przed etapem 2: ten sam błąd.
-  `go build -tags ...` przechodzi, więc `make minimal` działa; problem dotyczy tylko
-  uruchamiania testów z tagami. Znika naturalnie w etapie 3 razem z tagami.
+  `go build -tags ...` przechodzi, więc `make minimal` działa; problem dotyczył tylko
+  uruchamiania testów z tagami. Naprawione w etapie 3 (helpery przeniesione do
+  nieotagowanego pliku, testy gemini wydzielone pod `!nogemini`).
 - [ ] `gofmt` całego repo zrobiony w osobnym commicie (8caa1ff) — przed etapem 2.
