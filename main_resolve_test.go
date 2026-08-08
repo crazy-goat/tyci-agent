@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/stream"
 )
@@ -28,7 +29,7 @@ func (f *fakeProvider) Models() []string   { return f.models }
 // clients can do (here: nothing but carry an identity) instead of inheriting
 // a transport it has no use for.
 func (f *fakeProvider) Client(model string) connector.ModelClient {
-	return bareModelClient{name: f.name, model: model}
+	return &connectortest.Fake{ProviderName: f.name, ModelName: model}
 }
 
 func TestResolveModelClient_ExplicitOverride(t *testing.T) {
@@ -149,20 +150,17 @@ func TestResolveModelClient_NoContextNoMatch(t *testing.T) {
 // withIsolatedPool — the subagent's own connection pool
 // =============================================================================
 
-// bareModelClient is a connector.ModelClient that does NOT implement
-// connector.HTTPInjector — the shape of every hand-written fake ModelClient in
-// the agent/tools test suites. It must pass through withIsolatedPool
-// untouched, keeping today's "no isolation" behaviour instead of failing.
-type bareModelClient struct{ name, model string }
-
-func (b bareModelClient) Provider() string { return b.name }
-func (b bareModelClient) Model() string    { return b.model }
-func (b bareModelClient) Stream(context.Context, connector.Request) (<-chan stream.Event, error) {
-	return nil, nil
-}
-
+// connectortest.Fake is a connector.ModelClient that does NOT implement
+// connector.HTTPInjector — deliberately, and a test in that package pins it
+// (TestFake_DoesNotImplementHTTPInjector). It must pass through
+// withIsolatedPool untouched, keeping today's "no isolation" behaviour instead
+// of failing.
+//
+// Asserting this against the shared fake rather than a one-off local double is
+// the point: if someone ever gives Fake a WithHTTP, this test breaks loudly
+// instead of quietly continuing to test a double nothing else uses.
 func TestWithIsolatedPool_PassesThroughNonInjector(t *testing.T) {
-	mc := bareModelClient{name: "not-an-injector"}
+	mc := &connectortest.Fake{ProviderName: "not-an-injector"}
 	got, _ := withIsolatedPool(mc, nil)
 	if got != connector.ModelClient(mc) {
 		t.Errorf("withIsolatedPool replaced a non-injector ModelClient: %v", got)
