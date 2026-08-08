@@ -34,7 +34,12 @@
       },
       {
         "role": "tool",
-        "content": "18C, cloudyupstream weather service exploded",
+        "content": "18C, cloudy",
+        "tool_call_id": "call_1"
+      },
+      {
+        "role": "tool",
+        "content": "upstream weather service exploded",
         "tool_call_id": "call_2"
       }
     ],

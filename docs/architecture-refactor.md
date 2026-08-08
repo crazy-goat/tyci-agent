@@ -136,7 +136,7 @@ robota z innym cyklem sprzężenia zwrotnego.
 
 ### Teraz — tanie, weryfikowalne offline
 
-- [ ] **openai: wiele `toolResult` w jednej wiadomości zlewa się w jedną** — teksty sklejone bez separatora, `tool_call_id` nadpisany przez ostatni blok (`convert.go:68-73`). Czysta logika, wzorzec poprawny obok (anthropic/gemini). Do naprawy przed etapem 1, żeby etap 2 przenosił poprawny kod zamiast uzbrajać pułapkę. Uwaga: bug jest uśpiony — `agent/run_tools.go:64` emituje 1 wiadomość na 1 tool call, a resume odtwarza 1:1.
+- [x] **openai: wiele `toolResult` w jednej wiadomości zlewa się w jedną** — teksty sklejone bez separatora, `tool_call_id` nadpisany przez ostatni blok (`convert.go:68-73`). Czysta logika, wzorzec poprawny obok (anthropic/gemini). Naprawione przed etapem 1, żeby etap 2 przenosił poprawny kod zamiast uzbrajać pułapkę. Uwaga: bug był uśpiony — `agent/run_tools.go:64` emituje 1 wiadomość na 1 tool call, a resume odtwarza 1:1.
 
 ### Po etapie 2 — bo connector jest właśnie tym, co je rozplątuje
 

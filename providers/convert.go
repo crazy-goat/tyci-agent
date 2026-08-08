@@ -31,18 +31,39 @@ func RichMessagesToChat(msgs []RichMessage, system string) []api.ChatMessage {
 			role = "tool"
 		}
 
+		// OpenAI (and strict-compatible providers) require one "tool" role
+		// message per tool_call_id — a single message can't carry more than
+		// one result. So each tool-result block in this RichMessage becomes
+		// its own ChatMessage, mirroring what RichMessagesToAnthropic and
+		// RichMessagesToGemini already do per-block. Blocks without a
+		// ToolCallID are dropped: strict providers reject "tool" messages
+		// missing `tool_call_id`, and the pairing is already broken (no
+		// matching assistant tool_call).
+		if role == "tool" {
+			for _, block := range m.Content {
+				isToolResult := block.Type == "toolResult" ||
+					// Tool results are also stored as text blocks with
+					// ToolCallID/ToolName (see agent/run_tools.go).
+					(block.Type == "text" && block.ToolCallID != "")
+				if !isToolResult || block.ToolCallID == "" {
+					continue
+				}
+				result = append(result, api.ChatMessage{
+					Role:       role,
+					Content:    block.Text,
+					ToolCallID: block.ToolCallID,
+				})
+			}
+			continue
+		}
+
 		var textParts []string
 		var toolCalls []api.ChatToolCall
-		var toolCallID string
 
 		for _, block := range m.Content {
 			switch block.Type {
 			case "text":
 				textParts = append(textParts, block.Text)
-				// Tool results are stored as text blocks with ToolCallID/ToolName
-				if block.ToolCallID != "" {
-					toolCallID = block.ToolCallID
-				}
 			case "thinking":
 				// Skip thinking blocks for OpenAI
 			case "toolCall":
@@ -65,19 +86,7 @@ func RichMessagesToChat(msgs []RichMessage, system string) []api.ChatMessage {
 						Arguments: args,
 					},
 				})
-			case "toolResult":
-				textParts = append(textParts, block.Text)
-				if block.ToolCallID != "" {
-					toolCallID = block.ToolCallID
-				}
 			}
-		}
-
-		// Tool-role messages without a tool_call_id are rejected by strict
-		// providers ("missing field `tool_call_id`"). The pairing is
-		// already broken (no matching assistant tool_call), so drop them.
-		if role == "tool" && toolCallID == "" {
-			continue
 		}
 
 		msg := api.ChatMessage{
@@ -87,9 +96,6 @@ func RichMessagesToChat(msgs []RichMessage, system string) []api.ChatMessage {
 
 		if len(toolCalls) > 0 {
 			msg.ToolCalls = toolCalls
-		}
-		if toolCallID != "" {
-			msg.ToolCallID = toolCallID
 		}
 
 		result = append(result, msg)
