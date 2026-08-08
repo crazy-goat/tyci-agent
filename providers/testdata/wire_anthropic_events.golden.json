@@ -1,0 +1,42 @@
+[
+  {
+    "type": "TextDelta",
+    "text": "Hello"
+  },
+  {
+    "type": "TextDelta",
+    "text": " world"
+  },
+  {
+    "type": "ToolCallStart",
+    "id": "tu_1",
+    "name": "get_weather"
+  },
+  {
+    "type": "ToolCallDelta",
+    "id": "tu_1",
+    "delta": "{\"location\":"
+  },
+  {
+    "type": "ToolCallDelta",
+    "id": "tu_1",
+    "delta": "\"London\"}"
+  },
+  {
+    "type": "ToolCall",
+    "id": "tu_1",
+    "name": "get_weather",
+    "arguments": "{\"location\":\"London\"}"
+  },
+  {
+    "type": "Finish",
+    "reason": "tool_use",
+    "usage": {
+      "input": 10,
+      "output": 5,
+      "reasoning": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    }
+  }
+]

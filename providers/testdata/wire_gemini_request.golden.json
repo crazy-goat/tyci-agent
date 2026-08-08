@@ -1,0 +1,87 @@
+{
+  "method": "POST",
+  "path": "/",
+  "headers": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer tok-gemini",
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "What is the weather in London?"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "parts": [
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "location": "London"
+              }
+            }
+          }
+        ],
+        "role": "assistant"
+      },
+      {
+        "parts": [
+          {
+            "functionResponse": {
+              "name": "get_weather",
+              "response": {
+                "name": "get_weather",
+                "content": "18C, cloudy"
+              }
+            }
+          },
+          {
+            "functionResponse": {
+              "name": "get_weather",
+              "response": {
+                "name": "get_weather",
+                "content": "upstream weather service exploded"
+              }
+            }
+          }
+        ],
+        "role": "function"
+      }
+    ],
+    "stream": true,
+    "systemInstruction": {
+      "parts": [
+        {
+          "text": "You are a terse test agent. Answer with tools when possible."
+        }
+      ]
+    },
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "name": "get_weather",
+            "description": "Get the current weather for a location.",
+            "parameters": {
+              "properties": {
+                "location": {
+                  "description": "City name",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "location"
+              ],
+              "type": "object"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

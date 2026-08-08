@@ -1,0 +1,84 @@
+{
+  "method": "POST",
+  "path": "/v1/messages",
+  "headers": {
+    "Accept": "text/event-stream",
+    "Anthropic-Version": "2023-06-01",
+    "Authorization": "Bearer tok-anthropic",
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "model": "wire-anthropic-model",
+    "max_tokens": 4096,
+    "stream": true,
+    "system": "You are a terse test agent. Answer with tools when possible.",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What is the weather in London?"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "call_1",
+            "name": "get_weather",
+            "input": {
+              "location": "London"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "call_1",
+            "content": [
+              {
+                "type": "text",
+                "text": "18C, cloudy"
+              }
+            ]
+          },
+          {
+            "type": "tool_result",
+            "tool_use_id": "call_2",
+            "content": [
+              {
+                "type": "text",
+                "text": "upstream weather service exploded"
+              }
+            ],
+            "is_error": true
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "description": "Get the current weather for a location.",
+        "input_schema": {
+          "properties": {
+            "location": {
+              "description": "City name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "location"
+          ],
+          "type": "object"
+        },
+        "name": "get_weather"
+      }
+    ]
+  }
+}
