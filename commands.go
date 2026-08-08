@@ -9,6 +9,7 @@ import (
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/internal/debug"
@@ -106,9 +107,9 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 	if agentName == "" {
 		agentName = "default"
 	}
-	var fallbackModels []string
+	var fallbacks []connector.ModelClient
 	if fb := agent.GetFallbackModels(agentName); len(fb) > 0 {
-		fallbackModels = fb
+		fallbacks = resolveFallbacks(fb)
 	}
 
 	var ctx context.Context
@@ -130,20 +131,19 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 	debugFlag, _ := cmd.Flags().GetBool("debug")
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 	cfg := agent.Config{
-		Model:          modelName,
-		System:         providers.BuildSystemPrompt(),
-		MaxRetries:     maxRetries,
-		MaxIterations:  maxIterations,
-		Debug:          debugFlag,
-		Tools:          toolsAdapter{},
-		Schema:         tools.GetToolsSchemaJSON(),
-		ProviderName:   provider.Name(),
-		FallbackModels: fallbackModels,
-		PendingTodos:   tools.PendingTodos,
-		HasTodos:       tools.HasPendingTodos,
+		Model:         modelName,
+		System:        providers.BuildSystemPrompt(),
+		MaxRetries:    maxRetries,
+		MaxIterations: maxIterations,
+		Debug:         debugFlag,
+		Tools:         toolsAdapter{},
+		Schema:        tools.GetToolsSchemaJSON(),
+		ProviderName:  provider.Name(),
+		Fallbacks:     fallbacks,
+		PendingTodos:  tools.PendingTodos,
+		HasTodos:      tools.HasPendingTodos,
 	}
-	ctx = providers.WithProvider(ctx, provider)
-	ctx = providers.WithModel(ctx, modelName)
+	ctx = connector.WithModelClient(ctx, providers.Client(provider, modelName))
 
 	wd, _ := os.Getwd()
 	var sess *session.Session
@@ -188,6 +188,25 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 	}
 
 	return provider, modelName, cfg, ctx, sess, sessionPath, historyFile, dl, nil
+}
+
+// resolveFallbacks resolves each "provider/model" fallback spec to a
+// connector.ModelClient at setup time — the agent no longer resolves
+// fallback specs itself (see agent.Config.Fallbacks). A spec that fails to
+// resolve is reported here and skipped, which is a deliberate relocation:
+// agent.Run used to discover this lazily, mid-run, and report it via a
+// ToolBlock on the display; now it is reported once, at startup, on stderr.
+func resolveFallbacks(specs []string) []connector.ModelClient {
+	var out []connector.ModelClient
+	for _, spec := range specs {
+		p, m, ok := providers.FindModel(spec)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Warning: fallback model %q not found, skipping\n", spec)
+			continue
+		}
+		out = append(out, providers.Client(p, m))
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------

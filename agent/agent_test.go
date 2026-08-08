@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 )
@@ -36,12 +36,10 @@ type mockProvider struct {
 	chunks []string
 }
 
-func (m *mockProvider) Name() string         { return "mock" }
-func (m *mockProvider) IsConfigured() bool   { return true }
-func (m *mockProvider) Models() []string     { return []string{"mock-1"} }
-func (m *mockProvider) FreeModels() []string { return nil }
+func (m *mockProvider) Provider() string { return "mock" }
+func (m *mockProvider) Model() string    { return "mock-1" }
 
-func (m *mockProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+func (m *mockProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	ch := make(chan stream.Event, 4)
 	go func() {
 		defer close(ch)
@@ -64,12 +62,10 @@ type mockToolProvider struct {
 	called bool
 }
 
-func (m *mockToolProvider) Name() string         { return "mock-tool" }
-func (m *mockToolProvider) IsConfigured() bool   { return true }
-func (m *mockToolProvider) Models() []string     { return []string{"mock-tool-1"} }
-func (m *mockToolProvider) FreeModels() []string { return nil }
+func (m *mockToolProvider) Provider() string { return "mock-tool" }
+func (m *mockToolProvider) Model() string    { return "mock-tool-1" }
 
-func (m *mockToolProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+func (m *mockToolProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	m.mu.Lock()
 	if m.called {
 		m.mu.Unlock()
@@ -208,9 +204,9 @@ func (c *captureDisplay) ToolFinish()            {}
 func TestRunAppendsAssistantMessage(t *testing.T) {
 	p := &mockProvider{chunks: []string{"Hello", " world"}}
 	d := &silentDisplay{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hi"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
@@ -234,9 +230,9 @@ func TestRunAppendsAssistantMessage(t *testing.T) {
 func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
 	p := &mockProvider{chunks: nil}
 	d := &silentDisplay{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hi"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
@@ -261,9 +257,9 @@ func TestRun_ToolCall_ShowsToolBlockDuringStream(t *testing.T) {
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("read", "file content")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "read file.go"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "read file.go"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -333,9 +329,9 @@ func TestRun_ToolCall_NoToolBlockWithoutTools(t *testing.T) {
 		},
 	}
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hello"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -369,9 +365,9 @@ func TestRun_ToolCall_MultipleTools(t *testing.T) {
 	runner := newMockToolRunner()
 	runner.SetResult("read", "content of a.go")
 	runner.SetResult("bash", "file1\nfile2")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "list and read"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "list and read"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -425,9 +421,9 @@ func TestRun_ToolCall_TextAndTools(t *testing.T) {
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("read", "package main")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "read x.go"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "read x.go"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -464,9 +460,9 @@ func TestRun_ToolCall_ToolCallWithoutDelta(t *testing.T) {
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("bash", "hi")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "echo"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "echo"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -503,9 +499,9 @@ func TestRun_ToolCall_EmptyResult(t *testing.T) {
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	// No result set → Run returns empty string, no error
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "run"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "run"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -532,9 +528,9 @@ func TestRun_ToolCall_StreamError(t *testing.T) {
 		},
 	}
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	_, err := Run(context.Background(), p, d, &msgs, Config{
@@ -620,12 +616,10 @@ type mockFailingProvider struct {
 	err   error
 }
 
-func (m *mockFailingProvider) Name() string         { return m.name }
-func (m *mockFailingProvider) IsConfigured() bool   { return true }
-func (m *mockFailingProvider) Models() []string     { return []string{m.model} }
-func (m *mockFailingProvider) FreeModels() []string { return nil }
+func (m *mockFailingProvider) Provider() string { return m.name }
+func (m *mockFailingProvider) Model() string    { return m.model }
 
-func (m *mockFailingProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+func (m *mockFailingProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	if m.err == nil {
 		return nil, errors.New("mockFailingProvider: no error configured")
 	}
@@ -645,12 +639,10 @@ type mockTextProvider struct {
 	chunks []string
 }
 
-func (m *mockTextProvider) Name() string         { return m.name }
-func (m *mockTextProvider) IsConfigured() bool   { return true }
-func (m *mockTextProvider) Models() []string     { return []string{m.model} }
-func (m *mockTextProvider) FreeModels() []string { return nil }
+func (m *mockTextProvider) Provider() string { return m.name }
+func (m *mockTextProvider) Model() string    { return m.model }
 
-func (m *mockTextProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+func (m *mockTextProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	ch := make(chan stream.Event, 4)
 	go func() {
 		defer close(ch)
@@ -675,19 +667,16 @@ func TestRunFallbackPrimaryFailsFallbackSucceeds(t *testing.T) {
 
 	fallback := &mockTextProvider{name: "fb-fallback", model: "fb-1", chunks: []string{"fallback response"}}
 
-	// Register the fallback so FindModel can resolve it
-	providers.Register(fallback)
-
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hello"}},
 	}}
 
 	cfg := Config{
-		Model:          "primary-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-fallback/fb-1"},
+		Model:      "primary-1",
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -717,19 +706,16 @@ func TestRunFallbackAllFallbacksFail(t *testing.T) {
 	fallback1 := &mockFailingProvider{name: "fb-f1", model: "f1", err: errors.New("fb1 dead")}
 	fallback2 := &mockFailingProvider{name: "fb-f2", model: "f2", err: errors.New("fb2 dead")}
 
-	providers.Register(fallback1)
-	providers.Register(fallback2)
-
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hello"}},
 	}}
 
 	cfg := Config{
-		Model:          "p1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-f1/f1", "fb-f2/f2"},
+		Model:      "p1",
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback1, fallback2},
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -746,15 +732,15 @@ func TestRunFallbackPrimaryFailsWithNoFallbacks(t *testing.T) {
 	primary := &mockFailingProvider{name: "fb-nofb", model: "nofb-1", err: errors.New("non-retryable")}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hello"}},
 	}}
 
 	cfg := Config{
-		Model:          "nofb-1",
-		MaxRetries:     1,
-		FallbackModels: nil, // no fallback configured
+		Model:      "nofb-1",
+		MaxRetries: 1,
+		Fallbacks:  nil, // no fallback configured
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -779,21 +765,19 @@ func TestRunFallbackWithTools(t *testing.T) {
 		},
 	}
 
-	providers.Register(fallback)
-
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("read", "file content from fallback")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "read file"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "read file"}},
 	}}
 
 	cfg := Config{
-		Model:          "tp-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"mock-tool/mock-tool-1"},
-		Tools:          runner,
+		Model:      "tp-1",
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
+		Tools:      runner,
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -824,18 +808,16 @@ func TestRunFallbackNoToolsTextOnly(t *testing.T) {
 
 	fallback := &mockTextProvider{name: "fb-ntf", model: "ntf-1", chunks: []string{"just text, no tools"}}
 
-	providers.Register(fallback)
-
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hello"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hello"}},
 	}}
 
 	cfg := Config{
-		Model:          "ntp-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-ntf/ntf-1"},
+		Model:      "ntp-1",
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -866,21 +848,19 @@ func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 		},
 	}
 
-	providers.Register(fallback)
-
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("bash", "hello world")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "run bash"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "run bash"}},
 	}}
 
 	cfg := Config{
-		Model:          "sess-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"mock-tool/mock-tool-1"},
-		Tools:          runner,
+		Model:      "sess-1",
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
+		Tools:      runner,
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -904,15 +884,15 @@ func TestRunNoFallbackNormalPath(t *testing.T) {
 	// No fallback configured — standard path should work fine
 	p := &mockProvider{chunks: []string{"hello world"}}
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	cfg := Config{
-		Model:          "mock-1",
-		MaxRetries:     1,
-		FallbackModels: nil,
+		Model:      "mock-1",
+		MaxRetries: 1,
+		Fallbacks:  nil,
 	}
 
 	_, err := Run(context.Background(), p, d, &msgs, cfg)
@@ -945,9 +925,9 @@ func assertTotalCalled(t *testing.T, d *captureDisplay) {
 func TestRun_TotalCalledOnSuccess(t *testing.T) {
 	p := &mockProvider{chunks: []string{"hello"}}
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
@@ -966,18 +946,17 @@ func TestRun_TotalCalledOnFallbackSuccess(t *testing.T) {
 	// Total() call.
 	primary := &mockFailingProvider{name: "fb-tot-p", model: "tot-p-1", err: errors.New("primary down")}
 	fallback := &mockTextProvider{name: "fb-tot-fb", model: "tot-fb-1", chunks: []string{"fallback ok"}}
-	providers.Register(fallback)
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	_, err := Run(context.Background(), primary, d, &msgs, Config{
-		Model:          "tot-p-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-tot-fb/tot-fb-1"},
+		Model:      "tot-p-1",
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
 	})
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -993,19 +972,17 @@ func TestRun_TotalCalledOnAllFallbacksExhausted(t *testing.T) {
 	primary := &mockFailingProvider{name: "fb-all-p", model: "all-p-1", err: errors.New("primary down")}
 	fb1 := &mockFailingProvider{name: "fb-all-f1", model: "all-f1", err: errors.New("fb1 down")}
 	fb2 := &mockFailingProvider{name: "fb-all-f2", model: "all-f2", err: errors.New("fb2 down")}
-	providers.Register(fb1)
-	providers.Register(fb2)
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	_, err := Run(context.Background(), primary, d, &msgs, Config{
-		Model:          "all-p-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-all-f1/all-f1", "fb-all-f2/all-f2"},
+		Model:      "all-p-1",
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fb1, fb2},
 	})
 	if err == nil {
 		t.Fatal("expected error when all fallbacks fail")
@@ -1019,9 +996,9 @@ func TestRun_TotalCalledOnContextCancel(t *testing.T) {
 	cancelledProvider := &blockingProvider{name: "fb-ctx", model: "blocking-1"}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1043,9 +1020,9 @@ func TestRun_TotalCalledOnNonRetryable(t *testing.T) {
 	primary := &mockFailingProvider{name: "fb-nr", model: "nr-1", err: errors.New("fatal")}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	_, err := Run(context.Background(), primary, d, &msgs, Config{Model: "nr-1", MaxRetries: 3})
@@ -1064,9 +1041,9 @@ func TestRun_TotalCalledOnAllRetriesExhausted(t *testing.T) {
 	primary := &mockFailingProvider{name: "fb-rx", model: "rx-1", err: io.EOF}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1140,9 +1117,9 @@ func TestRun_TotalCalledOnEveryToolTurn(t *testing.T) {
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("bash", "hi")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "echo"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "echo"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -1170,18 +1147,17 @@ func TestRun_TotalNotDuplicatedOnFallbackSuccess(t *testing.T) {
 	// "Costs: in=88 out=43 cin=2304 cout=88" line.
 	primary := &mockFailingProvider{name: "fb-dup-p", model: "dup-p-1", err: errors.New("rate limited")}
 	fallback := &mockTextProvider{name: "fb-dup-fb", model: "dup-fb-1", chunks: []string{"hello"}}
-	providers.Register(fallback)
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	if _, err := Run(context.Background(), primary, d, &msgs, Config{
-		Model:          "dup-p-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-dup-fb/dup-fb-1"},
+		Model:      "dup-p-1",
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
 	}); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -1199,12 +1175,10 @@ type blockingProvider struct {
 	model string
 }
 
-func (b *blockingProvider) Name() string         { return b.name }
-func (b *blockingProvider) IsConfigured() bool   { return true }
-func (b *blockingProvider) Models() []string     { return []string{b.model} }
-func (b *blockingProvider) FreeModels() []string { return nil }
+func (b *blockingProvider) Provider() string { return b.name }
+func (b *blockingProvider) Model() string    { return b.model }
 
-func (b *blockingProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+func (b *blockingProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	ch := make(chan stream.Event, 1)
 	go func() {
 		defer close(ch)

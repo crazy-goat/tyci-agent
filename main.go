@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/tools"
 )
@@ -17,40 +18,53 @@ import (
 // agentRunner implements tools.SubAgentRunner by wrapping agent.Run.
 type agentRunner struct{}
 
-// resolveProviderModel picks the provider and bare model name for a subagent.
+// resolveModelClient picks the resolved model client for a subagent.
 //
 // An explicit "provider/model" override is resolved via the registry. Otherwise
-// the subagent inherits the parent's provider from context — which is already
-// configured with a valid API key — instead of re-guessing via FindModel, whose
-// bare-name lookup iterates the provider map in random order and can land on a
-// different (unconfigured) provider that happens to list the same model.
-func resolveProviderModel(ctx context.Context, model string) (providers.Provider, string, error) {
+// the subagent inherits the parent's model client from context — which is
+// already configured with a valid API key — instead of re-guessing via
+// FindModel, whose bare-name lookup iterates the provider map in random order
+// and can land on a different (unconfigured) provider that happens to list
+// the same model.
+func resolveModelClient(ctx context.Context, model string) (connector.ModelClient, error) {
 	if strings.Contains(model, "/") {
 		if prov, mName, ok := providers.FindModel(model); ok {
-			return prov, mName, nil
+			return providers.Client(prov, mName), nil
 		}
-		return nil, "", fmt.Errorf("no provider available for model %q", model)
+		return nil, fmt.Errorf("no provider available for model %q", model)
 	}
 
-	prov := providers.ProviderFromContext(ctx)
+	mc := connector.ModelClientFromContext(ctx)
+	if mc == nil {
+		// No parent model client in context (e.g. tests) — fall back to lookup.
+		if p, m, ok := providers.FindModel(model); ok {
+			return providers.Client(p, m), nil
+		}
+		return nil, fmt.Errorf("no provider available for model %q", model)
+	}
 	mName := model
 	if mName == "" {
-		mName = providers.ModelFromContext(ctx)
-	}
-	if prov == nil {
-		// No parent provider in context (e.g. tests) — fall back to lookup.
-		if p, m, ok := providers.FindModel(mName); ok {
-			return p, m, nil
-		}
-		return nil, "", fmt.Errorf("no provider available for model %q", model)
+		mName = mc.Model()
 	}
 	if mName == "" {
-		return nil, "", fmt.Errorf("no model specified")
+		return nil, fmt.Errorf("no model specified")
 	}
-	return prov, mName, nil
+	if mName == mc.Model() {
+		return mc, nil
+	}
+	// Explicit bare-name override that differs from the parent's default:
+	// keep the parent's provider (its already-resolved credential), bound to
+	// the new model. The provider must be registered under its own name in
+	// the catalog for this lookup to succeed — true for every real provider,
+	// each registered exactly once at startup.
+	prov, ok := providers.GetProvider(mc.Provider())
+	if !ok {
+		return nil, fmt.Errorf("provider %q not found", mc.Provider())
+	}
+	return providers.Client(prov, mName), nil
 }
 
-// withIsolatedPool binds prov to an HTTP client with its own connection pool,
+// withIsolatedPool binds mc to an HTTP client with its own connection pool,
 // so a child agent shares nothing with its parent: parent cancellation cannot
 // leak into subagent requests and vice versa.
 //
@@ -64,12 +78,13 @@ func resolveProviderModel(ctx context.Context, model string) (providers.Provider
 // runSingleTask, so a parallel subagent(tasks=[a,b,c]) still creates three
 // pools — one per child.
 //
-// A Provider that does not implement HTTPInjector (every fake in the test
-// suite) is returned untouched and keeps today's "no isolation" behaviour.
-func withIsolatedPool(prov providers.Provider) providers.Provider {
-	inj, ok := prov.(providers.HTTPInjector)
+// A ModelClient that does not implement connector.HTTPInjector (every fake in
+// the test suite) is returned untouched and keeps today's "no isolation"
+// behaviour.
+func withIsolatedPool(mc connector.ModelClient) connector.ModelClient {
+	inj, ok := mc.(connector.HTTPInjector)
 	if !ok {
-		return prov
+		return mc
 	}
 	return inj.WithHTTP(&http.Client{
 		Transport: &http.Transport{
@@ -106,11 +121,11 @@ func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model 
 // detect it via errors.Is and surface subagentResult.Truncated /
 // ToolResult.Truncated without parsing free-form suffixes.
 func (r *agentRunner) run(ctx context.Context, task, model, system string, opts tools.SubagentOptions) (string, error) {
-	prov, mName, err := resolveProviderModel(ctx, model)
+	mc, err := resolveModelClient(ctx, model)
 	if err != nil {
 		return "", err
 	}
-	prov = withIsolatedPool(prov)
+	mc = withIsolatedPool(mc)
 
 	// Resolve the iteration cap: explicit parent override wins; otherwise the
 	// (unlimited) default. Tools.ResolveMaxIter centralizes nil/0/negative
@@ -119,15 +134,15 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 
 	// Create collector to capture output
 	c := &collector{}
-	msgs := []providers.RichMessage{
+	msgs := []connector.Message{
 		{
 			Role:    "user",
-			Content: []providers.ContentBlock{{Type: "text", Text: task}},
+			Content: []connector.ContentBlock{{Type: "text", Text: task}},
 		},
 	}
 
 	cfg := agent.Config{
-		Model:         mName,
+		Model:         mc.Model(),
 		System:        system,
 		MaxRetries:    1,
 		MaxIterations: maxIter,
@@ -136,7 +151,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		Schema:        tools.GetSubagentToolsSchemaJSON(),
 	}
 
-	_, err = agent.Run(ctx, prov, c, &msgs, cfg)
+	_, err = agent.Run(ctx, mc, c, &msgs, cfg)
 	text := strings.TrimSpace(c.text.String())
 
 	if errors.Is(err, agent.ErrMaxIterations) {

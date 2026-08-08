@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -206,7 +206,10 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		return ToolResult{Type: "result", Success: false, Error: "subagent runner not configured"}
 	}
 
-	defaultModel := providers.ModelFromContext(ctx)
+	var defaultModel string
+	if mc := connector.ModelClientFromContext(ctx); mc != nil {
+		defaultModel = mc.Model()
+	}
 	if defaultModel == "" {
 		return ToolResult{Type: "result", Success: false, Error: "no model specified and no default model set"}
 	}
@@ -408,7 +411,9 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	mName := task.Model
 	if mName == "" {
 		// No override – use the same provider and model as the parent
-		mName = providers.ModelFromContext(ctx)
+		if mc := connector.ModelClientFromContext(ctx); mc != nil {
+			mName = mc.Model()
+		}
 	}
 
 	opts := SubagentOptions{MaxIterations: task.MaxIterations}

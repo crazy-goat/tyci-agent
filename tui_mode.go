@@ -321,7 +321,7 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 		// one more runOnce so the model sees them as a single turn.
 		cfg.NextMessages = tuiDisp.NextMessages
 		go func() {
-			u, e := agent.Run(iterCtx, provider, tuiDisp, &conversation, cfg)
+			u, e := agent.Run(iterCtx, providers.Client(provider, modelName), tuiDisp, &conversation, cfg)
 			resultCh <- agentResult{usage: u, err: e}
 		}()
 

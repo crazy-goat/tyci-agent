@@ -8,9 +8,19 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
+
+// fakeModelClient is a minimal connector.ModelClient for tests that only need
+// to set a default model in context — it never actually streams.
+type fakeModelClient struct{ model string }
+
+func (f fakeModelClient) Provider() string { return "test-provider" }
+func (f fakeModelClient) Model() string    { return f.model }
+func (f fakeModelClient) Stream(context.Context, connector.Request) (<-chan stream.Event, error) {
+	return nil, fmt.Errorf("fakeModelClient does not stream")
+}
 
 // mockRunner implements SubAgentRunner for testing
 type mockRunner struct {
@@ -674,7 +684,7 @@ func TestRunSingleTask_TruncatedFlagReachesToolResult(t *testing.T) {
 		},
 	})
 
-	ctx := providers.WithModel(context.Background(), "test/model")
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient{model: "test/model"})
 	res := RunTool(ctx, "subagent", map[string]any{"task": "x"})
 	if !res.Success {
 		t.Fatalf("expected success on partial truncation, got error: %q", res.Error)
@@ -701,7 +711,7 @@ func TestRunSingleTask_CleanSuccessNotTruncated(t *testing.T) {
 		},
 	})
 
-	ctx := providers.WithModel(context.Background(), "test/model")
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient{model: "test/model"})
 	res := RunTool(ctx, "subagent", map[string]any{"task": "x"})
 	if !res.Success {
 		t.Fatalf("expected success, got error: %q", res.Error)

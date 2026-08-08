@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -127,12 +127,10 @@ type planGuardProvider struct {
 	called bool
 }
 
-func (p *planGuardProvider) Name() string         { return "pg" }
-func (p *planGuardProvider) IsConfigured() bool   { return true }
-func (p *planGuardProvider) Models() []string     { return []string{"pg-1"} }
-func (p *planGuardProvider) FreeModels() []string { return nil }
+func (p *planGuardProvider) Provider() string { return "pg" }
+func (p *planGuardProvider) Model() string    { return "pg-1" }
 
-func (p *planGuardProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+func (p *planGuardProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	p.mu.Lock()
 	first := !p.called
 	p.called = true
@@ -162,8 +160,8 @@ func (p *planGuardProvider) Stream(ctx context.Context, req providers.Request) (
 func TestRun_PlanGuard_BlocksBashWithoutPlan(t *testing.T) {
 	p := &planGuardProvider{}
 	d := &captureDisplay{}
-	msgs := []providers.RichMessage{
-		{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: "do something"}}},
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "do something"}}},
 	}
 
 	_, err := Run(context.Background(), p, d, &msgs, Config{
@@ -209,12 +207,10 @@ type planGuardTodoProvider struct {
 	calls int
 }
 
-func (p *planGuardTodoProvider) Name() string         { return "pgt" }
-func (p *planGuardTodoProvider) IsConfigured() bool   { return true }
-func (p *planGuardTodoProvider) Models() []string     { return []string{"pgt-1"} }
-func (p *planGuardTodoProvider) FreeModels() []string { return nil }
+func (p *planGuardTodoProvider) Provider() string { return "pgt" }
+func (p *planGuardTodoProvider) Model() string    { return "pgt-1" }
 
-func (p *planGuardTodoProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+func (p *planGuardTodoProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	p.mu.Lock()
 	call := p.calls
 	p.calls++
@@ -252,8 +248,8 @@ func (p *planGuardTodoProvider) Stream(ctx context.Context, req providers.Reques
 func TestRun_PlanGuard_AllowsBashAfterTodoPlan(t *testing.T) {
 	p := &planGuardTodoProvider{}
 	d := &captureDisplay{}
-	msgs := []providers.RichMessage{
-		{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: "do something"}}},
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "do something"}}},
 	}
 
 	_, err := Run(context.Background(), p, d, &msgs, Config{
@@ -286,12 +282,10 @@ type planGuardAllDoneProvider struct {
 	called bool
 }
 
-func (p *planGuardAllDoneProvider) Name() string         { return "pgad" }
-func (p *planGuardAllDoneProvider) IsConfigured() bool   { return true }
-func (p *planGuardAllDoneProvider) Models() []string     { return []string{"pgad-1"} }
-func (p *planGuardAllDoneProvider) FreeModels() []string { return nil }
+func (p *planGuardAllDoneProvider) Provider() string { return "pgad" }
+func (p *planGuardAllDoneProvider) Model() string    { return "pgad-1" }
 
-func (p *planGuardAllDoneProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+func (p *planGuardAllDoneProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	p.mu.Lock()
 	first := !p.called
 	p.called = true
@@ -397,8 +391,8 @@ func TestEnforcePlanGuard_AllDone_MixedBatch(t *testing.T) {
 func TestRun_PlanGuard_AllDone_BlocksBash(t *testing.T) {
 	p := &planGuardAllDoneProvider{}
 	d := &captureDisplay{}
-	msgs := []providers.RichMessage{
-		{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: "do something else"}}},
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "do something else"}}},
 	}
 
 	_, err := Run(context.Background(), p, d, &msgs, Config{

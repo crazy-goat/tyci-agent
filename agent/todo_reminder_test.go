@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -17,12 +17,10 @@ type countingTextProvider struct {
 	calls int
 }
 
-func (m *countingTextProvider) Name() string         { return "count" }
-func (m *countingTextProvider) IsConfigured() bool   { return true }
-func (m *countingTextProvider) Models() []string     { return []string{"count-1"} }
-func (m *countingTextProvider) FreeModels() []string { return nil }
+func (m *countingTextProvider) Provider() string { return "count" }
+func (m *countingTextProvider) Model() string    { return "count-1" }
 
-func (m *countingTextProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+func (m *countingTextProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	m.mu.Lock()
 	m.calls++
 	m.mu.Unlock()
@@ -45,8 +43,8 @@ func (m *countingTextProvider) callCount() int {
 func TestRun_TodoReminder_NudgesUpToLimit(t *testing.T) {
 	p := &countingTextProvider{}
 	d := &silentDisplay{}
-	msgs := []providers.RichMessage{
-		{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: "do it"}}},
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "do it"}}},
 	}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -80,8 +78,8 @@ func TestRun_TodoReminder_NudgesUpToLimit(t *testing.T) {
 func TestRun_TodoReminder_NoNudgeWhenEmpty(t *testing.T) {
 	p := &countingTextProvider{}
 	d := &silentDisplay{}
-	msgs := []providers.RichMessage{
-		{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: "do it"}}},
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "do it"}}},
 	}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -107,8 +105,8 @@ func TestRun_TodoReminder_NoNudgeWhenEmpty(t *testing.T) {
 func TestRun_TodoReminder_StopsWhenResolved(t *testing.T) {
 	p := &countingTextProvider{}
 	d := &silentDisplay{}
-	msgs := []providers.RichMessage{
-		{Role: "user", Content: []providers.ContentBlock{{Type: "text", Text: "do it"}}},
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "do it"}}},
 	}
 
 	remaining := 1 // pending on the first finish, resolved thereafter

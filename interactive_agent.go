@@ -49,7 +49,7 @@ func (s *interactiveState) submitUserLine(line string) {
 func (s *interactiveState) runAgentIteration(iterCtx context.Context, iterCancel context.CancelFunc) bool {
 	sigCh, sigDone := s.startInterruptWatcher(iterCtx, iterCancel)
 	stopESC := watchESC(iterCancel)
-	usage, err := agent.Run(iterCtx, s.provider, s.display, &s.conversation, s.cfg)
+	usage, err := agent.Run(iterCtx, providers.Client(s.provider, s.modelName), s.display, &s.conversation, s.cfg)
 	stopESC()
 	s.stopInterruptWatcher(sigCh, sigDone, iterCancel)
 	s.addUsage(usage)

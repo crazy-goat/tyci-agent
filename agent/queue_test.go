@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 )
@@ -50,9 +50,9 @@ func TestRun_NextMessages_EmptyDoesNotForceIteration(t *testing.T) {
 	p := &mockProvider{chunks: []string{"done"}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	cfg := Config{
@@ -88,9 +88,9 @@ func TestRun_NextMessages_OneAfterPlainResponseForcesOneMoreIteration(t *testing
 	}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	// First call to callback: return the queued follow-up. Second call
@@ -140,9 +140,9 @@ func TestRun_NextMessages_FIFOOrder(t *testing.T) {
 	p := &counterProvider{responses: [][]string{{"ack"}, {"ack"}}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	queue.set([]string{"first follow-up", "second follow-up", "third follow-up"})
@@ -188,9 +188,9 @@ func TestRun_NextMessages_DrainsAfterToolCall(t *testing.T) {
 	d := &silentDisplay{}
 	runner := newMockToolRunner()
 	runner.SetResult("read", "ok")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "read x"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "read x"}},
 	}}
 
 	queue := &queueCallback{}
@@ -241,9 +241,9 @@ func TestRun_NextMessages_DrainsAfterToolCall(t *testing.T) {
 func TestRun_NextMessages_NilCallbackNoEffect(t *testing.T) {
 	p := &mockProvider{chunks: []string{"hello"}}
 	d := &silentDisplay{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	cfg := Config{Model: "mock-1", MaxRetries: 1, NextMessages: nil}
@@ -272,9 +272,9 @@ func TestRun_NextMessages_WritesToSession(t *testing.T) {
 	queue := &queueCallback{}
 	queue.set([]string{"follow-up A", "follow-up B"})
 
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "initial"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "initial"}},
 	}}
 	cfg := Config{
 		Model:        "counter-1",
@@ -334,9 +334,9 @@ func TestRun_NextMessages_RespectsMaxIterations(t *testing.T) {
 	// nil because we don't pre-set anything else.
 	queue.set([]string{"q1"})
 
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 	cfg := Config{
 		Model:         "counter-1",
@@ -374,12 +374,10 @@ type counterProvider struct {
 	calls     int
 }
 
-func (p *counterProvider) Name() string         { return "counter" }
-func (p *counterProvider) IsConfigured() bool   { return true }
-func (p *counterProvider) Models() []string     { return []string{"counter-1"} }
-func (p *counterProvider) FreeModels() []string { return nil }
+func (p *counterProvider) Provider() string { return "counter" }
+func (p *counterProvider) Model() string    { return "counter-1" }
 
-func (p *counterProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
+func (p *counterProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	p.mu.Lock()
 	idx := p.calls
 	if idx >= len(p.responses) {
