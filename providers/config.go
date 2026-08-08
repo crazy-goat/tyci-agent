@@ -280,19 +280,21 @@ func (p *dynamicProvider) IsConfigured() bool {
 		// carrying an unresolvable "$FOO" still counts as configured here,
 		// while Stream would refuse it. That asymmetry is pre-existing and
 		// deliberately preserved — the `provider list` output must not start
-		// hiding providers the user did configure.
+		// hiding providers the user did configure. (ConfigWarnings surfaces
+		// the unresolvable case separately; see providers/provider.go.)
 		_, token, _, _, err := parseURI(e.URI)
 		if err == nil && token != "" {
 			return true
 		}
-		// Everything below the URI is the provider-level lookup, which is the
-		// very same AuthSource resolveAPIKey consults — no second copy of the
-		// auth.json/env precedence.
-		if p.authSource().Key(p.name) != "" {
-			return true
-		}
 	}
-	return false
+	// Loop-invariant: p.authSource().Key(p.name) depends only on p.name, never
+	// on the entry e, so evaluating it once per entry (the old shape) bought
+	// nothing but repeated auth.json reads — up to len(p.entries) of them for
+	// a provider with no key at all. Every entry that DOES carry a URI token
+	// already returned above without touching authSource, so moving this
+	// below the loop costs at most one auth.json read per provider (zero for
+	// a provider whose first entry has a token), instead of one per model.
+	return p.authSource().Key(p.name) != ""
 }
 
 func (p *dynamicProvider) Models() []string {

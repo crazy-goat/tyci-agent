@@ -134,6 +134,72 @@ func TestDynamicProviderIsConfigured_notConfigured(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// IsConfigured — the AuthSource lookup must be loop-invariant, not per-entry
+// =============================================================================
+
+// spyAuthSource counts how many times Key was called, to prove IsConfigured
+// stopped re-reading auth.json once per model entry (it used to: the lookup
+// sat inside `for _, e := range p.entries` despite not depending on e).
+type spyAuthSource struct {
+	key   string
+	calls int
+}
+
+func (s *spyAuthSource) Key(string) string {
+	s.calls++
+	return s.key
+}
+
+// A provider with several entries, none carrying a URI token, and no
+// provider-level key: IsConfigured must be false, and the AuthSource lookup —
+// which depends only on p.name, never on which entry is being examined — must
+// run AT MOST ONCE per call, not once per entry.
+func TestDynamicProviderIsConfigured_authSourceCalledOncePerProvider(t *testing.T) {
+	spy := &spyAuthSource{key: ""}
+	p := &dynamicProvider{
+		name: "many-models",
+		entries: []ModelEntry{
+			{Name: "m1", URI: "openai://m1@api.example.invalid"},
+			{Name: "m2", URI: "openai://m2@api.example.invalid"},
+			{Name: "m3", URI: "openai://m3@api.example.invalid"},
+		},
+		auth: spy,
+	}
+
+	if p.IsConfigured() {
+		t.Error("IsConfigured() = true, want false: no URI token and no provider key")
+	}
+	if spy.calls != 1 {
+		t.Errorf("AuthSource.Key called %d times, want exactly 1 (loop-invariant lookup must not repeat per entry)", spy.calls)
+	}
+}
+
+// A provider whose FIRST entry already carries a URI token must short-circuit
+// before ever consulting the AuthSource — the URI token wins WITHOUT any I/O.
+// This is the property a naive "just hoist the call above the loop" fix would
+// have broken (it would call authSource().Key unconditionally on every
+// IsConfigured, even when the very first entry already answers the question).
+func TestDynamicProviderIsConfigured_uriTokenShortCircuitsBeforeAuthSource(t *testing.T) {
+	spy := &spyAuthSource{key: ""}
+	p := &dynamicProvider{
+		name: "uri-token-first",
+		entries: []ModelEntry{
+			{Name: "m1", URI: "openai://m1@sk-uri-token@api.example.invalid"},
+			{Name: "m2", URI: "openai://m2@api.example.invalid"},
+			{Name: "m3", URI: "openai://m3@api.example.invalid"},
+		},
+		auth: spy,
+	}
+
+	if !p.IsConfigured() {
+		t.Error("IsConfigured() = false, want true: first entry has a URI token")
+	}
+	if spy.calls != 0 {
+		t.Errorf("AuthSource.Key called %d times, want 0: a URI token must short-circuit before any auth.json/env lookup", spy.calls)
+	}
+}
+
 func TestDynamicProviderStream_usesAuthJSON(t *testing.T) {
 	dir := t.TempDir()
 	origHome := os.Getenv("HOME")
