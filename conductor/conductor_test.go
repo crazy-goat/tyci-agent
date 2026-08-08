@@ -13,6 +13,7 @@ import (
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 )
@@ -20,60 +21,13 @@ import (
 // ---------------------------------------------------------------------------
 // Local doubles.
 //
-// These are deliberately local to the package. Stage 7 of the refactor
-// introduces connector/connectortest (a scripted Fake, a Flaky decorator, a
-// record/replay pair) and will replace them; building that infrastructure
-// here would be doing stage 7's work in stage 6's commit.
+// What is left here is deliberately local: a Sink and a ToolRunner, both of
+// them interfaces this package declares for its own consumers. The scripted
+// connector.ModelClient that used to sit alongside them is gone — stage 7 of
+// the refactor moved it into connector/connectortest, where every package
+// that needs a fake model can reach it. The record/replay pair from that
+// stage is still to come.
 // ---------------------------------------------------------------------------
-
-// fakeClient is a connector.ModelClient that replays one scripted slice of
-// stream.Event per Stream call and records the requests it was given.
-type fakeClient struct {
-	provider string
-	model    string
-	turns    [][]stream.Event
-
-	calls    int
-	requests []connector.Request
-
-	// blockUntilCancel makes Stream ignore the script and hang until the
-	// context is cancelled, then report the cancellation the way every real
-	// connector does — as a stream.StreamError carrying ctx.Err().
-	blockUntilCancel bool
-}
-
-func (f *fakeClient) Provider() string { return f.provider }
-func (f *fakeClient) Model() string    { return f.model }
-
-func (f *fakeClient) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
-	f.requests = append(f.requests, req)
-	turn := f.calls
-	f.calls++
-
-	ch := make(chan stream.Event, 16)
-	go func() {
-		defer close(ch)
-		if f.blockUntilCancel {
-			<-ctx.Done()
-			ch <- stream.StreamError{Err: ctx.Err()}
-			return
-		}
-		if turn >= len(f.turns) {
-			// Script exhausted: finish the turn with no content so the
-			// agent loop stops instead of spinning.
-			ch <- stream.Finish{Reason: "stop"}
-			return
-		}
-		for _, ev := range f.turns[turn] {
-			select {
-			case ch <- ev:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return ch, nil
-}
 
 // recorder is an agent.Sink that keeps what it was told, and nothing else.
 // It writes to no terminal, holds no file descriptor and needs no TTY.
@@ -149,10 +103,10 @@ func (m mapResolver) Resolve(spec string) (connector.ModelClient, error) {
 // loop it exercises used to live inside runTUI / runInteractive / runPrompt,
 // each of which needs a display, a terminal and a cobra command to reach.
 func TestConductor_HeadlessConversation(t *testing.T) {
-	client := &fakeClient{
-		provider: "fakeprov",
-		model:    "fakemodel",
-		turns: [][]stream.Event{
+	client := &connectortest.Fake{
+		ProviderName: "fakeprov",
+		ModelName:    "fakemodel",
+		Turns: [][]stream.Event{
 			{
 				stream.ToolCallStart{ID: "call-1", Name: "echo"},
 				stream.ToolCall{ID: "call-1", Name: "echo", Arguments: `{"text":"hello"}`},
@@ -184,21 +138,21 @@ func TestConductor_HeadlessConversation(t *testing.T) {
 
 	// The model was asked twice: once for the tool call, once with the
 	// tool result fed back in. That round trip is the conversation.
-	if client.calls != 2 {
-		t.Fatalf("model called %d times, want 2", client.calls)
+	if client.Calls() != 2 {
+		t.Fatalf("model called %d times, want 2", client.Calls())
 	}
-	if got := len(client.requests[0].Messages); got != 1 {
+	if got := len(client.Requests()[0].Messages); got != 1 {
 		t.Errorf("first request carried %d messages, want 1 (the user prompt)", got)
 	}
-	if len(client.requests[1].Messages) <= len(client.requests[0].Messages) {
+	if len(client.Requests()[1].Messages) <= len(client.Requests()[0].Messages) {
 		t.Errorf("second request did not grow: %d then %d messages",
-			len(client.requests[0].Messages), len(client.requests[1].Messages))
+			len(client.Requests()[0].Messages), len(client.Requests()[1].Messages))
 	}
-	if client.requests[0].System != "be brief" {
-		t.Errorf("system prompt = %q, want %q", client.requests[0].System, "be brief")
+	if client.Requests()[0].System != "be brief" {
+		t.Errorf("system prompt = %q, want %q", client.Requests()[0].System, "be brief")
 	}
-	if client.requests[0].Model != "fakemodel" {
-		t.Errorf("request model = %q, want fakemodel", client.requests[0].Model)
+	if client.Requests()[0].Model != "fakemodel" {
+		t.Errorf("request model = %q, want fakemodel", client.Requests()[0].Model)
 	}
 
 	// The tool actually ran, with the arguments the model streamed.
@@ -249,9 +203,9 @@ func messageRoles(msgs []connector.Message) []string {
 // the split every frontend needs (the TUI shows the turn, session_end records
 // the total).
 func TestConductor_SubmitAccumulatesUsageAcrossTurns(t *testing.T) {
-	client := &fakeClient{
-		provider: "p", model: "m",
-		turns: [][]stream.Event{
+	client := &connectortest.Fake{
+		ProviderName: "p", ModelName: "m",
+		Turns: [][]stream.Event{
 			{stream.TextDelta{Text: "one"}, stream.Finish{Usage: stream.Usage{Input: 3, Output: 1}}},
 			{stream.TextDelta{Text: "two"}, stream.Finish{Usage: stream.Usage{Input: 4, Output: 2}}},
 		},
@@ -281,9 +235,9 @@ func TestConductor_SubmitAccumulatesUsageAcrossTurns(t *testing.T) {
 // the conversation worth owning in one place: the second prompt is sent with
 // the first turn still in the request.
 func TestConductor_SubmitKeepsHistoryAcrossTurns(t *testing.T) {
-	client := &fakeClient{
-		provider: "p", model: "m",
-		turns: [][]stream.Event{
+	client := &connectortest.Fake{
+		ProviderName: "p", ModelName: "m",
+		Turns: [][]stream.Event{
 			{stream.TextDelta{Text: "one"}, stream.Finish{}},
 			{stream.TextDelta{Text: "two"}, stream.Finish{}},
 		},
@@ -296,7 +250,7 @@ func TestConductor_SubmitKeepsHistoryAcrossTurns(t *testing.T) {
 	if _, err := c.Submit(context.Background(), "b"); err != nil {
 		t.Fatalf("Submit b: %v", err)
 	}
-	if got := len(client.requests[1].Messages); got != 3 {
+	if got := len(client.Requests()[1].Messages); got != 3 {
 		t.Errorf("second request had %d messages, want 3 (user, assistant, user)", got)
 	}
 	if got := messageRoles(c.Messages()); strings.Join(got, ",") != "user,assistant,user,assistant" {
@@ -307,8 +261,8 @@ func TestConductor_SubmitKeepsHistoryAcrossTurns(t *testing.T) {
 // TestConductor_SeedsHistoryFromOptions covers the resume path's entry point:
 // a conductor built with History sends that history on the very first turn.
 func TestConductor_SeedsHistoryFromOptions(t *testing.T) {
-	client := &fakeClient{provider: "p", model: "m",
-		turns: [][]stream.Event{{stream.Finish{}}}}
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m",
+		Turns: [][]stream.Event{{stream.Finish{}}}}
 	seed := []connector.Message{
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "earlier"}}},
 		{Role: "assistant", Content: []connector.ContentBlock{{Type: "text", Text: "sure"}}},
@@ -318,7 +272,7 @@ func TestConductor_SeedsHistoryFromOptions(t *testing.T) {
 	if _, err := c.Submit(context.Background(), "now"); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
-	if got := len(client.requests[0].Messages); got != 3 {
+	if got := len(client.Requests()[0].Messages); got != 3 {
 		t.Fatalf("first request had %d messages, want 3", got)
 	}
 }
@@ -331,7 +285,7 @@ func TestConductor_SeedsHistoryFromOptions(t *testing.T) {
 // "user pressed ESC": another goroutine calls Interrupt while Submit is
 // blocked on the model, and Submit returns context.Canceled.
 func TestConductor_InterruptCancelsInFlightTurn(t *testing.T) {
-	client := &fakeClient{provider: "p", model: "m", blockUntilCancel: true}
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m", BlockUntilCancel: true}
 	c := New(Options{Client: client, Sink: &recorder{}, Config: agent.Config{}})
 
 	done := make(chan error, 1)
@@ -365,8 +319,8 @@ func TestConductor_InterruptCancelsInFlightTurn(t *testing.T) {
 // TestConductor_InterruptIdleIsNoop guards the obvious foot-gun: a frontend
 // that wires a key to Interrupt will call it while nothing is running.
 func TestConductor_InterruptIdleIsNoop(t *testing.T) {
-	client := &fakeClient{provider: "p", model: "m",
-		turns: [][]stream.Event{{stream.TextDelta{Text: "fine"}, stream.Finish{}}}}
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m",
+		Turns: [][]stream.Event{{stream.TextDelta{Text: "fine"}, stream.Finish{}}}}
 	c := New(Options{Client: client, Sink: &recorder{}})
 
 	c.Interrupt()
@@ -383,10 +337,10 @@ func TestConductor_InterruptIdleIsNoop(t *testing.T) {
 // changes models through an interface it declares itself, with no provider
 // catalog anywhere in sight.
 func TestConductor_SwitchModelUsesResolver(t *testing.T) {
-	first := &fakeClient{provider: "p1", model: "m1",
-		turns: [][]stream.Event{{stream.Finish{}}}}
-	second := &fakeClient{provider: "p2", model: "m2",
-		turns: [][]stream.Event{{stream.Finish{}}}}
+	first := &connectortest.Fake{ProviderName: "p1", ModelName: "m1",
+		Turns: [][]stream.Event{{stream.Finish{}}}}
+	second := &connectortest.Fake{ProviderName: "p2", ModelName: "m2",
+		Turns: [][]stream.Event{{stream.Finish{}}}}
 	c := New(Options{
 		Client:   first,
 		Sink:     &recorder{},
@@ -405,18 +359,18 @@ func TestConductor_SwitchModelUsesResolver(t *testing.T) {
 	if _, err := c.Submit(context.Background(), "hi"); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
-	if first.calls != 0 || second.calls != 1 {
-		t.Errorf("calls: first=%d second=%d, want 0 and 1", first.calls, second.calls)
+	if first.Calls() != 0 || second.Calls() != 1 {
+		t.Errorf("calls: first=%d second=%d, want 0 and 1", first.Calls(), second.Calls())
 	}
 }
 
 // TestConductor_SwitchModelKeepsConversation locks the "mid-conversation model
 // change" contract: history and usage survive the switch.
 func TestConductor_SwitchModelKeepsConversation(t *testing.T) {
-	first := &fakeClient{provider: "p1", model: "m1",
-		turns: [][]stream.Event{{stream.TextDelta{Text: "a"}, stream.Finish{Usage: stream.Usage{Input: 5}}}}}
-	second := &fakeClient{provider: "p2", model: "m2",
-		turns: [][]stream.Event{{stream.Finish{}}}}
+	first := &connectortest.Fake{ProviderName: "p1", ModelName: "m1",
+		Turns: [][]stream.Event{{stream.TextDelta{Text: "a"}, stream.Finish{Usage: stream.Usage{Input: 5}}}}}
+	second := &connectortest.Fake{ProviderName: "p2", ModelName: "m2",
+		Turns: [][]stream.Event{{stream.Finish{}}}}
 	c := New(Options{
 		Client:   first,
 		Sink:     &recorder{},
@@ -442,7 +396,7 @@ func TestConductor_SwitchModelKeepsConversation(t *testing.T) {
 // leaves the conversation on the model it was already using — the TUI shows
 // the old model again precisely because nothing changed underneath.
 func TestConductor_SwitchModelResolverErrorKeepsClient(t *testing.T) {
-	first := &fakeClient{provider: "p1", model: "m1"}
+	first := &connectortest.Fake{ProviderName: "p1", ModelName: "m1"}
 	c := New(Options{
 		Client:   first,
 		Sink:     &recorder{},
@@ -461,7 +415,7 @@ func TestConductor_SwitchModelResolverErrorKeepsClient(t *testing.T) {
 // TestConductor_SwitchModelWithoutResolver documents what a frontend that
 // never offers model switching (one-shot prompt mode) gets back.
 func TestConductor_SwitchModelWithoutResolver(t *testing.T) {
-	c := New(Options{Client: &fakeClient{provider: "p", model: "m"}, Sink: &recorder{}})
+	c := New(Options{Client: &connectortest.Fake{ProviderName: "p", ModelName: "m"}, Sink: &recorder{}})
 	if err := c.SwitchModel("x/y"); !errors.Is(err, ErrNoResolver) {
 		t.Fatalf("err = %v, want ErrNoResolver", err)
 	}
@@ -479,8 +433,8 @@ func TestConductor_SessionOpensOnFirstSubmitNotAtStartup(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lazy.jsonl")
 
-	client := &fakeClient{provider: "prov", model: "mod",
-		turns: [][]stream.Event{{stream.TextDelta{Text: "ok"}, stream.Finish{}}}}
+	client := &connectortest.Fake{ProviderName: "prov", ModelName: "mod",
+		Turns: [][]stream.Event{{stream.TextDelta{Text: "ok"}, stream.Finish{}}}}
 	c := New(Options{Client: client, Sink: &recorder{}, SessionPath: path, WorkDir: dir})
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -513,8 +467,8 @@ func TestConductor_SessionOpensOnFirstSubmitNotAtStartup(t *testing.T) {
 // TestConductor_NoSessionPathWritesNothing covers --no-session: the conductor
 // still runs a full conversation, it just persists nothing.
 func TestConductor_NoSessionPathWritesNothing(t *testing.T) {
-	client := &fakeClient{provider: "p", model: "m",
-		turns: [][]stream.Event{{stream.TextDelta{Text: "ok"}, stream.Finish{}}}}
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m",
+		Turns: [][]stream.Event{{stream.TextDelta{Text: "ok"}, stream.Finish{}}}}
 	c := New(Options{Client: client, Sink: &recorder{}})
 
 	if _, err := c.Submit(context.Background(), "hi"); err != nil {
@@ -532,8 +486,8 @@ func TestConductor_NoSessionPathWritesNothing(t *testing.T) {
 func TestConductor_EndSessionWritesSessionEndOnce(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "end.jsonl")
-	client := &fakeClient{provider: "p", model: "m",
-		turns: [][]stream.Event{{stream.Finish{Usage: stream.Usage{Input: 11, Output: 2}}}}}
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m",
+		Turns: [][]stream.Event{{stream.Finish{Usage: stream.Usage{Input: 11, Output: 2}}}}}
 	c := New(Options{Client: client, Sink: &recorder{}, SessionPath: path, WorkDir: dir})
 
 	if _, err := c.Submit(context.Background(), "hi"); err != nil {
@@ -559,8 +513,8 @@ func TestConductor_EndSessionWritesSessionEndOnce(t *testing.T) {
 func TestConductor_ClearHistoryKeepsSession(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "clear.jsonl")
-	client := &fakeClient{provider: "p", model: "m",
-		turns: [][]stream.Event{
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m",
+		Turns: [][]stream.Event{
 			{stream.TextDelta{Text: "a"}, stream.Finish{Usage: stream.Usage{Input: 4}}},
 			{stream.Finish{}},
 		}}
@@ -589,7 +543,7 @@ func TestConductor_ClearHistoryKeepsSession(t *testing.T) {
 	if _, err := c.Submit(context.Background(), "two"); err != nil {
 		t.Fatalf("second Submit: %v", err)
 	}
-	if got := len(client.requests[1].Messages); got != 1 {
+	if got := len(client.Requests()[1].Messages); got != 1 {
 		t.Errorf("cleared history leaked into the next request: %d messages", got)
 	}
 	c.EndSession("ok", 0)
@@ -612,8 +566,8 @@ func TestConductor_ResumeSwapsSessionAndHistory(t *testing.T) {
 	_ = seed.WriteMessage("user", []session.ContentBlock{{Type: "text", Text: "history"}}, nil)
 	_ = seed.Close()
 
-	client := &fakeClient{provider: "p", model: "m",
-		turns: [][]stream.Event{
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m",
+		Turns: [][]stream.Event{
 			{stream.TextDelta{Text: "a"}, stream.Finish{Usage: stream.Usage{Input: 9}}},
 			{stream.Finish{}},
 		}}
@@ -666,7 +620,7 @@ func TestConductor_ResumeSwapsSessionAndHistory(t *testing.T) {
 // the error and does not take the conversation down with it.
 func TestConductor_ResumeOpenErrorKeepsRunning(t *testing.T) {
 	dir := t.TempDir()
-	c := New(Options{Client: &fakeClient{provider: "p", model: "m"}, Sink: &recorder{}, WorkDir: dir})
+	c := New(Options{Client: &connectortest.Fake{ProviderName: "p", ModelName: "m"}, Sink: &recorder{}, WorkDir: dir})
 	// A directory is not a session file.
 	if err := c.Resume(dir, nil, stream.Usage{}); err == nil {
 		t.Fatal("expected an error resuming onto a directory")
@@ -685,8 +639,8 @@ func TestConductor_MaxIterationsIsReturnedNotSwallowed(t *testing.T) {
 		stream.ToolCall{ID: "t", Name: "echo", Arguments: `{}`},
 		stream.Finish{Reason: "tool_calls"},
 	}
-	client := &fakeClient{provider: "p", model: "m",
-		turns: [][]stream.Event{toolTurn, toolTurn}}
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m",
+		Turns: [][]stream.Event{toolTurn, toolTurn}}
 	c := New(Options{
 		Client: client,
 		Sink:   &recorder{},
