@@ -1,0 +1,46 @@
+[
+  {
+    "type": "ThinkingDelta",
+    "text": "let me check the tool"
+  },
+  {
+    "type": "TextDelta",
+    "text": "Hello"
+  },
+  {
+    "type": "TextDelta",
+    "text": " world"
+  },
+  {
+    "type": "ToolCallStart",
+    "id": "call_1",
+    "name": "get_weather"
+  },
+  {
+    "type": "ToolCallDelta",
+    "id": "call_1",
+    "delta": "{\"loc"
+  },
+  {
+    "type": "ToolCallDelta",
+    "id": "call_1",
+    "delta": "ation\":\"NY\"}"
+  },
+  {
+    "type": "ToolCall",
+    "id": "call_1",
+    "name": "get_weather",
+    "arguments": "{\"location\":\"NY\"}"
+  },
+  {
+    "type": "Finish",
+    "reason": "tool_calls",
+    "usage": {
+      "input": 10,
+      "output": 5,
+      "reasoning": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    }
+  }
+]

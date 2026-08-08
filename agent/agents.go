@@ -45,10 +45,10 @@ type MarkdownAgentFrontmatter struct {
 
 // MarkdownAgent represents a full agent definition loaded from a .md file.
 type MarkdownAgent struct {
-	Name           string
-	Frontmatter    MarkdownAgentFrontmatter
-	SystemPrompt   string
-	FilePath       string
+	Name         string
+	Frontmatter  MarkdownAgentFrontmatter
+	SystemPrompt string
+	FilePath     string
 }
 
 // AgentsDirPath returns the path to the markdown agents directory.

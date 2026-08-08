@@ -10,7 +10,7 @@ import (
 
 // AuthConfig represents authentication configuration for an MCP server.
 type AuthConfig struct {
-	Type     string `json:"type,omitempty"`     // "bearer", "none"
+	Type     string `json:"type,omitempty"`      // "bearer", "none"
 	TokenEnv string `json:"token_env,omitempty"` // env var name for token
 	Token    string `json:"token,omitempty"`     // literal token (not recommended)
 }

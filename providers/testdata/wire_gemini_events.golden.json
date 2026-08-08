@@ -1,0 +1,33 @@
+[
+  {
+    "type": "TextDelta",
+    "text": "Hello"
+  },
+  {
+    "type": "ToolCallStart",
+    "id": "get_weather_0",
+    "name": "get_weather"
+  },
+  {
+    "type": "ToolCallDelta",
+    "id": "get_weather_0",
+    "delta": "{\"location\":\"NY\"}"
+  },
+  {
+    "type": "ToolCall",
+    "id": "get_weather_0",
+    "name": "get_weather",
+    "arguments": "{\"location\":\"NY\"}"
+  },
+  {
+    "type": "Finish",
+    "reason": "STOP",
+    "usage": {
+      "input": 10,
+      "output": 5,
+      "reasoning": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    }
+  }
+]

@@ -9,41 +9,37 @@ import (
 	"time"
 
 	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
 
 type fallbackState struct {
-	active    bool // true if we've switched to a fallback
-	idx       int  // index into FallbackModels currently in use (-1 = primary)
-	provider  providers.Provider
-	model     string
-	fullModel string
+	idx int // index into cfg.Fallbacks currently in use (-1 = primary)
+	mc  connector.ModelClient
 }
 
-func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichMessage, cfg Config, fs *fallbackState, totalUsage *stream.Usage, origErr error) (bool, error) {
+// tryFallback attempts to switch to the next fallback model. cfg.Fallbacks
+// entries are already-resolved connector.ModelClient values — the caller
+// resolved them (and reported any that failed to resolve) before calling
+// Run, so there is no "not found" case here: only "the stream failed".
+// It updates fs with the new client on success.
+// Returns (more, nil) on success, (false, err) if all fallbacks exhausted.
+// origErr is the error that triggered the fallback.
+func tryFallback(ctx context.Context, d Sink, msgs *[]connector.Message, cfg Config, fs *fallbackState, totalUsage *stream.Usage, origErr error) (bool, error) {
 	var lastErr error
 
 	// Format the reason from the original error
 	reason := formatFallbackReason(origErr)
 
-	for fs.idx+1 < len(cfg.FallbackModels) {
+	for fs.idx+1 < len(cfg.Fallbacks) {
 		fs.idx++
-		fbFull := cfg.FallbackModels[fs.idx]
-
-		// Resolve the fallback model to a provider
-		fbProvider, fbModel, ok := providers.FindModel(fbFull)
-		if !ok {
-			d.ToolBlock(fmt.Sprintf("fallback model %q not found, skipping", fbFull))
-			lastErr = fmt.Errorf("fallback model %q not found", fbFull)
-			continue
-		}
+		fb := cfg.Fallbacks[fs.idx]
+		fbFull := connector.FullModel(fb)
 
 		d.ToolBlock(fmt.Sprintf("Switching to fallback model: %s\nReason: %s", fbFull, reason))
 
 		// Try the fallback
-		more, _, _, err := runOnce(ctx, fbProvider, d, msgs, cfg.withModel(fbModel), totalUsage)
+		more, _, _, err := runOnce(ctx, fb, d, msgs, cfg, totalUsage)
 		if err != nil {
 			lastErr = err
 			d.ToolBlock(fmt.Sprintf("fallback %s also failed: %v", fbFull, err))
@@ -51,10 +47,7 @@ func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichM
 		}
 
 		// Fallback succeeded — update state
-		fs.active = true
-		fs.provider = fbProvider
-		fs.model = fbModel
-		fs.fullModel = fbFull
+		fs.mc = fb
 
 		return more, nil
 	}

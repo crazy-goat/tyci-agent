@@ -191,8 +191,8 @@ func (c *captureDisplay) Summary(usage stream.Usage, stats stream.Stats) {
 	c.mu.Unlock()
 }
 func (c *captureDisplay) Total(usage stream.Usage) {}
-func (c *captureDisplay) Error(err error) {}
-func (c *captureDisplay) End()            {}
+func (c *captureDisplay) Error(err error)          {}
+func (c *captureDisplay) End()                     {}
 
 // TestReplaySessionToDisplay verifies the long-session-safe replay path:
 // every event in the JSONL hits the display ONLY through ToolBlock (so

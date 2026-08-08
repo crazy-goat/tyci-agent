@@ -23,6 +23,11 @@ type SubagentOptions struct {
 // DefaultSubagentMaxIterations is the cap applied when SubagentOptions has
 // no explicit MaxIterations. -1 means unlimited. Defined as a constant (not
 // a function) so both main.go and tests see the same value.
+//
+// This is a deliberate behavior change from the hard-coded 10 that preceded
+// it: a caller that omits MaxIterations now runs unbounded, held only by
+// SubagentOptions' semantics and the wall-clock backstop in subagent.go. A
+// caller that wants a finite cap has to pass an explicit positive integer.
 const DefaultSubagentMaxIterations = -1
 
 // TruncatedMarker is the literal suffix appended to a single-task subagent

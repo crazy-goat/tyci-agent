@@ -2,117 +2,339 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"testing"
+	"time"
 
+	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/stream"
 )
 
 // fakeProvider is a minimal providers.Provider for exercising
-// resolveProviderModel without any network access.
+// resolveModelClient without any network access.
 type fakeProvider struct {
 	name       string
 	configured bool
 	models     []string
-	free       []string
 }
 
-func (f *fakeProvider) Name() string         { return f.name }
-func (f *fakeProvider) IsConfigured() bool    { return f.configured }
-func (f *fakeProvider) Models() []string      { return f.models }
-func (f *fakeProvider) FreeModels() []string  { return f.free }
-func (f *fakeProvider) Stream(context.Context, providers.Request) (<-chan stream.Event, error) {
-	return nil, nil
+func (f *fakeProvider) Name() string             { return f.name }
+func (f *fakeProvider) IsConfigured() bool       { return f.configured }
+func (f *fakeProvider) Models() []string         { return f.models }
+func (f *fakeProvider) ConfigWarnings() []string { return nil }
+
+// Client mints the fake's own ModelClient. A fake provider owning its client
+// is the point of Provider.Client being a method: the test decides what its
+// clients can do (here: nothing but carry an identity) instead of inheriting
+// a transport it has no use for.
+func (f *fakeProvider) Client(model string) connector.ModelClient {
+	return &connectortest.Fake{ProviderName: f.name, ModelName: model}
 }
 
-func TestResolveProviderModel_ExplicitOverride(t *testing.T) {
+func TestResolveModelClient_ExplicitOverride(t *testing.T) {
 	prov := &fakeProvider{name: "explicit-prov", configured: true, models: []string{"m1"}}
 	providers.Register(prov)
 
-	got, model, err := resolveProviderModel(context.Background(), "explicit-prov/m1")
+	got, err := resolveModelClient(context.Background(), "explicit-prov/m1")
 	if err != nil {
-		t.Fatalf("resolveProviderModel: %v", err)
+		t.Fatalf("resolveModelClient: %v", err)
 	}
-	if got != prov {
-		t.Errorf("expected provider %q, got %v", prov.name, got)
+	if got.Provider() != "explicit-prov" {
+		t.Errorf("expected provider %q, got %q", "explicit-prov", got.Provider())
 	}
-	if model != "m1" {
-		t.Errorf("expected model %q, got %q", "m1", model)
+	if got.Model() != "m1" {
+		t.Errorf("expected model %q, got %q", "m1", got.Model())
 	}
 }
 
-func TestResolveProviderModel_UnknownExplicitOverride(t *testing.T) {
-	_, _, err := resolveProviderModel(context.Background(), "does-not-exist/m1")
+func TestResolveModelClient_UnknownExplicitOverride(t *testing.T) {
+	_, err := resolveModelClient(context.Background(), "does-not-exist/m1")
 	if err == nil {
 		t.Fatal("expected error for unknown provider in explicit override")
 	}
 }
 
-// TestResolveProviderModel_InheritsParentProvider is the regression test for the
+// TestResolveModelClient_InheritsParentProvider is the regression test for the
 // auth bug: with a bare model name, the subagent must reuse the parent's
 // provider from context — NOT re-guess via FindModel, which iterates the
 // provider map in random order and could land on a different provider that
 // happens to list the same model (and lacks a valid key).
-func TestResolveProviderModel_InheritsParentProvider(t *testing.T) {
+func TestResolveModelClient_InheritsParentProvider(t *testing.T) {
 	parent := &fakeProvider{name: "parent-prov", configured: true, models: []string{"shared-model"}}
 	other := &fakeProvider{name: "other-prov", configured: true, models: []string{"shared-model"}}
 	providers.Register(parent)
 	providers.Register(other)
 
-	ctx := providers.WithProvider(context.Background(), parent)
-	ctx = providers.WithModel(ctx, "shared-model")
+	ctx := connector.WithModelClient(context.Background(), parent.Client("shared-model"))
 
-	got, model, err := resolveProviderModel(ctx, "shared-model")
+	got, err := resolveModelClient(ctx, "shared-model")
 	if err != nil {
-		t.Fatalf("resolveProviderModel: %v", err)
+		t.Fatalf("resolveModelClient: %v", err)
 	}
-	if got != parent {
-		t.Errorf("expected parent provider to be inherited, got %v", got)
+	if got.Provider() != "parent-prov" {
+		t.Errorf("expected parent provider to be inherited, got %q", got.Provider())
 	}
-	if model != "shared-model" {
-		t.Errorf("expected model %q, got %q", "shared-model", model)
+	if got.Model() != "shared-model" {
+		t.Errorf("expected model %q, got %q", "shared-model", got.Model())
 	}
 }
 
-func TestResolveProviderModel_EmptyModelUsesContext(t *testing.T) {
+func TestResolveModelClient_EmptyModelUsesContext(t *testing.T) {
 	parent := &fakeProvider{name: "ctx-prov", configured: true, models: []string{"ctx-model"}}
 	providers.Register(parent)
 
-	ctx := providers.WithProvider(context.Background(), parent)
-	ctx = providers.WithModel(ctx, "ctx-model")
+	ctx := connector.WithModelClient(context.Background(), parent.Client("ctx-model"))
 
-	got, model, err := resolveProviderModel(ctx, "")
+	got, err := resolveModelClient(ctx, "")
 	if err != nil {
-		t.Fatalf("resolveProviderModel: %v", err)
+		t.Fatalf("resolveModelClient: %v", err)
 	}
-	if got != parent {
-		t.Errorf("expected context provider, got %v", got)
+	if got.Provider() != "ctx-prov" {
+		t.Errorf("expected context provider, got %q", got.Provider())
 	}
-	if model != "ctx-model" {
-		t.Errorf("expected model from context %q, got %q", "ctx-model", model)
+	if got.Model() != "ctx-model" {
+		t.Errorf("expected model from context %q, got %q", "ctx-model", got.Model())
 	}
 }
 
-func TestResolveProviderModel_NoContextFallsBackToLookup(t *testing.T) {
+// TestResolveModelClient_BareOverrideDifferentModelReusesProvider covers the
+// case a plain "inherit the context ModelClient" cannot: an explicit bare
+// model name that differs from the parent's current model. The parent's
+// already-resolved provider (its credential) must still be reused, bound to
+// the new model — this is the one path that has to fall back to a catalog
+// lookup by provider name, since a ModelClient only carries ONE model.
+func TestResolveModelClient_BareOverrideDifferentModelReusesProvider(t *testing.T) {
+	parent := &fakeProvider{name: "multi-model-prov", configured: true, models: []string{"big-model", "small-model"}}
+	providers.Register(parent)
+
+	ctx := connector.WithModelClient(context.Background(), parent.Client("big-model"))
+
+	got, err := resolveModelClient(ctx, "small-model")
+	if err != nil {
+		t.Fatalf("resolveModelClient: %v", err)
+	}
+	if got.Provider() != "multi-model-prov" {
+		t.Errorf("expected the parent's provider to be reused, got %q", got.Provider())
+	}
+	if got.Model() != "small-model" {
+		t.Errorf("expected the override model %q, got %q", "small-model", got.Model())
+	}
+}
+
+func TestResolveModelClient_NoContextFallsBackToLookup(t *testing.T) {
 	prov := &fakeProvider{name: "lookup-prov", configured: true, models: []string{"lookup-model"}}
 	providers.Register(prov)
 
-	// No provider in context → must fall back to FindModel on the bare name.
-	got, model, err := resolveProviderModel(context.Background(), "lookup-model")
+	// No model client in context → must fall back to FindModel on the bare name.
+	got, err := resolveModelClient(context.Background(), "lookup-model")
 	if err != nil {
-		t.Fatalf("resolveProviderModel: %v", err)
+		t.Fatalf("resolveModelClient: %v", err)
 	}
-	if got != prov {
-		t.Errorf("expected looked-up provider, got %v", got)
+	if got.Provider() != "lookup-prov" {
+		t.Errorf("expected looked-up provider, got %q", got.Provider())
 	}
-	if model != "lookup-model" {
-		t.Errorf("expected model %q, got %q", "lookup-model", model)
+	if got.Model() != "lookup-model" {
+		t.Errorf("expected model %q, got %q", "lookup-model", got.Model())
 	}
 }
 
-func TestResolveProviderModel_NoContextNoMatch(t *testing.T) {
-	_, _, err := resolveProviderModel(context.Background(), "totally-unknown-model")
+func TestResolveModelClient_NoContextNoMatch(t *testing.T) {
+	_, err := resolveModelClient(context.Background(), "totally-unknown-model")
 	if err == nil {
-		t.Fatal("expected error when no context provider and no registry match")
+		t.Fatal("expected error when no context model client and no registry match")
+	}
+}
+
+// =============================================================================
+// withIsolatedPool — the subagent's own connection pool
+// =============================================================================
+
+// connectortest.Fake is a connector.ModelClient that does NOT implement
+// connector.HTTPInjector — deliberately, and a test in that package pins it
+// (TestFake_DoesNotImplementHTTPInjector). It must pass through
+// withIsolatedPool untouched, keeping today's "no isolation" behavior instead
+// of failing.
+//
+// Asserting this against the shared fake rather than a one-off local double is
+// the point: if someone ever gives Fake a WithHTTP, this test breaks loudly
+// instead of quietly continuing to test a double nothing else uses.
+func TestWithIsolatedPool_PassesThroughNonInjector(t *testing.T) {
+	mc := &connectortest.Fake{ProviderName: "not-an-injector"}
+	got, _ := withIsolatedPool(mc, nil)
+	if got != connector.ModelClient(mc) {
+		t.Errorf("withIsolatedPool replaced a non-injector ModelClient: %v", got)
+	}
+}
+
+// recordingInjector is a Provider whose ModelClient implements
+// connector.HTTPInjector and remembers every HTTP client it was handed, so
+// withIsolatedPool can be exercised without any network. main.go only ever
+// sees ModelClients, so recording at that level is what the wrapper's
+// contract is actually about; how a real provider rebuilds itself around an
+// injected client is providers' own business and is covered there
+// (TestClient_WithHTTPForwardsToProvider).
+type recordingInjector struct {
+	fakeProvider
+	got []connector.HTTPDoer
+}
+
+func (r *recordingInjector) Client(model string) connector.ModelClient {
+	return &recordingClient{inj: r, model: model}
+}
+
+type recordingClient struct {
+	inj   *recordingInjector
+	model string
+}
+
+func (c *recordingClient) Provider() string { return c.inj.name }
+func (c *recordingClient) Model() string    { return c.model }
+func (c *recordingClient) Stream(context.Context, connector.Request) (<-chan stream.Event, error) {
+	return nil, nil
+}
+
+// WithHTTP records the injected client and returns a copy, mirroring the real
+// implementation: parallel children share the value they are bound from.
+func (c *recordingClient) WithHTTP(h connector.HTTPDoer) connector.ModelClient {
+	c.inj.got = append(c.inj.got, h)
+	return &recordingClient{inj: c.inj, model: c.model}
+}
+
+// Each call must mint a FRESH pool: two subagents running in parallel may not
+// end up sharing one. This is the property that made the original code put the
+// client inside runSingleTask rather than at process start.
+func TestWithIsolatedPool_FreshClientPerCall(t *testing.T) {
+	inj := &recordingInjector{fakeProvider: fakeProvider{name: "injector"}}
+	mc := inj.Client("m")
+
+	withIsolatedPool(mc, nil)
+	withIsolatedPool(mc, nil)
+
+	if len(inj.got) != 2 {
+		t.Fatalf("WithHTTP called %d times, want 2", len(inj.got))
+	}
+	if inj.got[0] == nil || inj.got[1] == nil {
+		t.Fatal("withIsolatedPool injected a nil client")
+	}
+	if inj.got[0] == inj.got[1] {
+		t.Error("two calls shared one client — parallel subagents would share a connection pool")
+	}
+}
+
+// The transport settings are the contract: a small, private pool. These are the
+// exact numbers the code carried in tools/subagent.go before the move.
+func TestWithIsolatedPool_TransportSettings(t *testing.T) {
+	inj := &recordingInjector{fakeProvider: fakeProvider{name: "injector"}}
+	mc := inj.Client("m")
+	withIsolatedPool(mc, nil)
+
+	cl, ok := inj.got[0].(*http.Client)
+	if !ok {
+		t.Fatalf("injected doer is %T, want *http.Client", inj.got[0])
+	}
+	tr, ok := cl.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport is %T, want *http.Transport", cl.Transport)
+	}
+	if tr.MaxIdleConns != 2 {
+		t.Errorf("MaxIdleConns = %d, want 2", tr.MaxIdleConns)
+	}
+	if tr.MaxIdleConnsPerHost != 1 {
+		t.Errorf("MaxIdleConnsPerHost = %d, want 1", tr.MaxIdleConnsPerHost)
+	}
+	if tr.IdleConnTimeout != 30*time.Second {
+		t.Errorf("IdleConnTimeout = %v, want 30s", tr.IdleConnTimeout)
+	}
+	// The pool must be private, never the api layer's shared transport.
+	if tr == http.DefaultTransport {
+		t.Error("isolated client reuses http.DefaultTransport")
+	}
+}
+
+// A client minted by a real provider is a connector.HTTPInjector, so the
+// production path really does get isolation — and the original value is not
+// mutated, because parallel children share it.
+func TestWithIsolatedPool_RealProviderGetsCopy(t *testing.T) {
+	base := providers.NewProvider("real", []providers.ModelEntry{
+		{Name: "m", URI: "openai://m@sk@api.example.invalid"},
+	}, providers.Deps{})
+	mc := base.Client("m")
+
+	a, _ := withIsolatedPool(mc, nil)
+	b, _ := withIsolatedPool(mc, nil)
+
+	if a == mc || b == mc {
+		t.Error("withIsolatedPool returned the shared client instead of a copy")
+	}
+	if a == b {
+		t.Error("two children got the same client value")
+	}
+	if a.Provider() != "real" || b.Provider() != "real" {
+		t.Error("the copies lost the provider identity")
+	}
+}
+
+// TestWithIsolatedPool_WrapsFallbacksWithPrimary is the Etap 5 acceptance
+// criterion: a child's fallback client must be bound to the SAME isolated
+// pool as its primary — not left on the shared default client. Before this
+// stage the agent resolved fallbacks itself, mid-run, from the global
+// catalog — invisibly to this wrapper — so a fallback triggered inside a
+// child run would have silently escaped isolation. Now the caller resolves
+// every fallback up front and can wrap them together with the primary.
+func TestWithIsolatedPool_WrapsFallbacksWithPrimary(t *testing.T) {
+	primaryInj := &recordingInjector{fakeProvider: fakeProvider{name: "primary"}}
+	fb1Inj := &recordingInjector{fakeProvider: fakeProvider{name: "fb1"}}
+	fb2Inj := &recordingInjector{fakeProvider: fakeProvider{name: "fb2"}}
+
+	primary := primaryInj.Client("m")
+	fallbacks := []connector.ModelClient{
+		fb1Inj.Client("m"),
+		fb2Inj.Client("m"),
+	}
+
+	boundPrimary, boundFallbacks := withIsolatedPool(primary, fallbacks)
+
+	if len(boundFallbacks) != 2 {
+		t.Fatalf("expected 2 bound fallbacks, got %d", len(boundFallbacks))
+	}
+	if len(primaryInj.got) != 1 || len(fb1Inj.got) != 1 || len(fb2Inj.got) != 1 {
+		t.Fatalf("expected WithHTTP called once on each of primary/fb1/fb2, got %d/%d/%d",
+			len(primaryInj.got), len(fb1Inj.got), len(fb2Inj.got))
+	}
+
+	pool := primaryInj.got[0]
+	if pool == nil {
+		t.Fatal("primary got a nil client — no isolation")
+	}
+	// The whole point: the fallback must NOT be left on the shared default
+	// client. It must get a real, private pool — and the SAME one the
+	// primary got, since within one child run they are never used
+	// concurrently.
+	if fb1Inj.got[0] != pool || fb2Inj.got[0] != pool {
+		t.Error("fallback clients did not get the primary's isolated pool — they would fall back to the shared default client")
+	}
+	// And it must still be the same one exposed via the returned ModelClients.
+	if boundPrimary == nil {
+		t.Fatal("withIsolatedPool returned a nil primary")
+	}
+}
+
+// A second call (a second, parallel child) must mint its own pool, distinct
+// from the first child's — fallback isolation must not accidentally start
+// sharing pools ACROSS children.
+func TestWithIsolatedPool_FallbackPoolDistinctAcrossChildren(t *testing.T) {
+	fbA := &recordingInjector{fakeProvider: fakeProvider{name: "fbA"}}
+	fbB := &recordingInjector{fakeProvider: fakeProvider{name: "fbB"}}
+
+	p1 := &recordingInjector{fakeProvider: fakeProvider{name: "p1"}}
+	p2 := &recordingInjector{fakeProvider: fakeProvider{name: "p2"}}
+
+	_, _ = withIsolatedPool(p1.Client("m"), []connector.ModelClient{fbA.Client("m")})
+	_, _ = withIsolatedPool(p2.Client("m"), []connector.ModelClient{fbB.Client("m")})
+
+	if fbA.got[0] == fbB.got[0] {
+		t.Error("two different children's fallback clients shared one connection pool")
 	}
 }

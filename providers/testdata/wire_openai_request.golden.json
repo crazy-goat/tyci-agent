@@ -1,0 +1,68 @@
+{
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer tok-openai",
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "model": "wire-openai-model",
+    "stream": true,
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a terse test agent. Answer with tools when possible."
+      },
+      {
+        "role": "user",
+        "content": "What is the weather in London?"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"location\":\"London\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "18C, cloudy",
+        "tool_call_id": "call_1"
+      },
+      {
+        "role": "tool",
+        "content": "upstream weather service exploded",
+        "tool_call_id": "call_2"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a location.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "location": {
+                "type": "string",
+                "description": "City name"
+              }
+            },
+            "required": [
+              "location"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

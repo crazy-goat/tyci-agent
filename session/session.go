@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -465,11 +465,11 @@ func DefaultPath(cwd string) (string, error) {
 
 // ─── Resume: rebuild conversation ─────────────────────────────────────────
 
-// RebuildMessages reconstructs []providers.RichMessage from parsed session lines.
+// RebuildMessages reconstructs []connector.Message from parsed session lines.
 // It walks forward from the last header, applying any compaction event and then
 // collecting the effective tail message history.
-func RebuildMessages(lines []ParsedLine) ([]providers.RichMessage, error) {
-	var msgs []providers.RichMessage
+func RebuildMessages(lines []ParsedLine) ([]connector.Message, error) {
+	var msgs []connector.Message
 
 	startIdx := 0
 	for i, l := range lines {
@@ -500,7 +500,7 @@ func RebuildMessages(lines []ParsedLine) ([]providers.RichMessage, error) {
 	return sanitizeMessageSequence(msgs), nil
 }
 
-func rebuildCompactionLine(raw string) ([]providers.RichMessage, bool) {
+func rebuildCompactionLine(raw string) ([]connector.Message, bool) {
 	var ev struct {
 		Summary struct {
 			Role    string         `json:"role"`
@@ -514,7 +514,7 @@ func rebuildCompactionLine(raw string) ([]providers.RichMessage, bool) {
 	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
 		return nil, false
 	}
-	var msgs []providers.RichMessage
+	var msgs []connector.Message
 	if summary := contentBlocksToRichMessage(ev.Summary.Role, ev.Summary.Content); summary != nil {
 		msgs = append(msgs, *summary)
 	}
@@ -526,7 +526,7 @@ func rebuildCompactionLine(raw string) ([]providers.RichMessage, bool) {
 	return msgs, true
 }
 
-func rebuildMessageLine(raw string) (providers.RichMessage, bool) {
+func rebuildMessageLine(raw string) (connector.Message, bool) {
 	var ev struct {
 		Message struct {
 			Role    string         `json:"role"`
@@ -534,19 +534,19 @@ func rebuildMessageLine(raw string) (providers.RichMessage, bool) {
 		} `json:"message"`
 	}
 	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
-		return providers.RichMessage{}, false
+		return connector.Message{}, false
 	}
 	msg := contentBlocksToRichMessage(ev.Message.Role, ev.Message.Content)
 	if msg == nil {
-		return providers.RichMessage{}, false
+		return connector.Message{}, false
 	}
 	return *msg, true
 }
 
-func contentBlocksToRichMessage(role string, blocks []ContentBlock) *providers.RichMessage {
-	content := make([]providers.ContentBlock, 0, len(blocks))
+func contentBlocksToRichMessage(role string, blocks []ContentBlock) *connector.Message {
+	content := make([]connector.ContentBlock, 0, len(blocks))
 	for _, block := range blocks {
-		cb := providers.ContentBlock{
+		cb := connector.ContentBlock{
 			Type:       block.Type,
 			Text:       block.Text,
 			Thinking:   block.Thinking,
@@ -559,15 +559,15 @@ func contentBlocksToRichMessage(role string, blocks []ContentBlock) *providers.R
 		}
 		content = append(content, cb)
 	}
-	return &providers.RichMessage{Role: role, Content: content}
+	return &connector.Message{Role: role, Content: content}
 }
 
-func sanitizeMessageSequence(msgs []providers.RichMessage) []providers.RichMessage {
+func sanitizeMessageSequence(msgs []connector.Message) []connector.Message {
 	if len(msgs) == 0 {
 		return msgs
 	}
 	seenToolCalls := make(map[string]struct{})
-	out := make([]providers.RichMessage, 0, len(msgs))
+	out := make([]connector.Message, 0, len(msgs))
 	for _, msg := range msgs {
 		keep := true
 		if msg.Role == "toolResult" {
@@ -614,6 +614,7 @@ func ReadAllMessages(r io.Reader) ([]map[string]any, error) {
 	}
 	return msgs, scanner.Err()
 }
+
 // SessionDir returns the directory where session files for the given cwd
 // are stored: ~/.tyci/sessions/<encoded-cwd>/.
 //
@@ -731,7 +732,7 @@ type ReplaySummary struct {
 	Provider string
 	Model    string
 
-	Messages []providers.RichMessage
+	Messages []connector.Message
 	Usage    Usage
 
 	CorruptLines int
@@ -739,7 +740,7 @@ type ReplaySummary struct {
 
 // LoadForReplay reads a session file, accumulates usage and rebuilds the
 // conversation. It is the entry point used by the interactive /resume command.
-func LoadForReplay(path string) (ReplaySummary, []providers.RichMessage, TotalUsage, []string, error) {
+func LoadForReplay(path string) (ReplaySummary, []connector.Message, TotalUsage, []string, error) {
 	var zero ReplaySummary
 	lines, err := parseSessionFile(path)
 	if err != nil {
@@ -748,7 +749,7 @@ func LoadForReplay(path string) (ReplaySummary, []providers.RichMessage, TotalUs
 
 	var corrupt []string
 	var summary ReplaySummary
-	var msgs []providers.RichMessage
+	var msgs []connector.Message
 	usage := Usage{}
 	total := TotalUsage{}
 

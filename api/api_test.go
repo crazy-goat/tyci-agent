@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/decodo/tyci/stream"
@@ -189,32 +191,46 @@ func TestChatUsage_UnmarshalJSON_InvalidJSON(t *testing.T) {
 	}
 }
 
-// Test ClientFromContext
-func TestClientFromContext_DefaultClient(t *testing.T) {
-	ctx := context.Background()
-	client := ClientFromContext(ctx)
+// Test doer — the client-selection rule that replaced the api-package context
+// key. The three cases below are the same three guarantees the deleted
+// context-lookup tests asserted, restated against the injection path (a field
+// on the streamer, filled from connector.Endpoint.HTTP).
+
+// Same guarantee as the deleted default-client case: nothing injected ->
+// shared default client.
+func TestDoer_NoInjectionUsesDefaultClient(t *testing.T) {
+	client := doer(nil)
 	if client == nil {
-		t.Error("expected non-nil client")
+		t.Fatal("expected non-nil client")
 	}
-	if client != defaultClient {
+	if client != HTTPDoer(defaultClient) {
 		t.Error("expected default client")
 	}
 }
 
-func TestClientFromContext_OverrideFromContext(t *testing.T) {
+// Same guarantee as the deleted override case: an explicitly supplied client
+// is the one used.
+func TestDoer_InjectedClientWins(t *testing.T) {
 	customClient := &http.Client{}
-	ctx := context.WithValue(context.Background(), HTTPClientKey{}, customClient)
-	client := ClientFromContext(ctx)
-	if client != customClient {
-		t.Error("expected custom client from context")
+	if client := doer(customClient); client != HTTPDoer(customClient) {
+		t.Error("expected the injected client")
+	}
+	// Any HTTPDoer, not just *http.Client.
+	stub := &stubDoer{}
+	if client := doer(stub); client != HTTPDoer(stub) {
+		t.Error("expected the injected non-*http.Client doer")
 	}
 }
 
-func TestClientFromContext_NilClientInContext(t *testing.T) {
-	ctx := context.WithValue(context.Background(), HTTPClientKey{}, nil)
-	client := ClientFromContext(ctx)
-	if client != defaultClient {
-		t.Error("expected default client when nil in context")
+// Same guarantee as the deleted nil-in-context case: an explicit nil client
+// must be ignored in favor of the default, not used. The old context lookup
+// guarded this with `cl != nil`; doer keeps the guard so a typed-nil
+// *http.Client (easy to produce via providers.Deps{HTTP: someNilClientVar})
+// degrades instead of panicking inside net/http.
+func TestDoer_TypedNilClientUsesDefaultClient(t *testing.T) {
+	var nilClient *http.Client
+	if client := doer(nilClient); client != HTTPDoer(defaultClient) {
+		t.Error("expected default client when a typed-nil *http.Client is injected")
 	}
 }
 
@@ -244,7 +260,7 @@ data: [DONE]
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	}
 
-	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	err := ChatStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err != nil {
 		t.Fatalf("StreamChat: %v", err)
 	}
@@ -299,7 +315,7 @@ data: [DONE]
 		Messages: []ChatMessage{{Role: "user", Content: "weather?"}},
 	}
 
-	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	err := ChatStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err != nil {
 		t.Fatalf("StreamChat: %v", err)
 	}
@@ -352,8 +368,8 @@ data: [DONE]
 		Messages: []ChatMessage{{Role: "user", Content: "go"}},
 	}
 
-	if err := StreamChat(testCtx(), "test-key", server.URL, body, emit); err != nil {
-		t.Fatalf("StreamChat: %v", err)
+	if err := (ChatStreamer{}).Stream(testCtx(), "test-key", server.URL, body, emit); err != nil {
+		t.Fatalf("ChatStreamer.Stream: %v", err)
 	}
 
 	var toolCalls []stream.ToolCall
@@ -401,7 +417,7 @@ data: [DONE]
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	}
 
-	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	err := ChatStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err != nil {
 		t.Fatalf("StreamChat: %v", err)
 	}
@@ -450,7 +466,7 @@ data: [DONE]
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	}
 
-	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	err := ChatStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err != nil {
 		t.Fatalf("StreamChat: %v", err)
 	}
@@ -495,7 +511,7 @@ func TestStreamChat_EmptyStream(t *testing.T) {
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	}
 
-	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	err := ChatStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err != nil {
 		t.Fatalf("StreamChat: %v", err)
 	}
@@ -523,7 +539,7 @@ func TestStreamChat_Error429(t *testing.T) {
 	emit := func(e stream.Event) error { return nil }
 	body := ChatRequest{Model: "gpt-4", Stream: true, Messages: []ChatMessage{{Role: "user", Content: "hi"}}}
 
-	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	err := ChatStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err == nil {
 		t.Fatal("expected error for 429")
 	}
@@ -546,7 +562,7 @@ func TestStreamChat_Error500(t *testing.T) {
 	emit := func(e stream.Event) error { return nil }
 	body := ChatRequest{Model: "gpt-4", Stream: true, Messages: []ChatMessage{{Role: "user", Content: "hi"}}}
 
-	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	err := ChatStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err == nil {
 		t.Fatal("expected error for 500")
 	}
@@ -569,7 +585,7 @@ func TestStreamChat_Error400(t *testing.T) {
 	emit := func(e stream.Event) error { return nil }
 	body := ChatRequest{Model: "gpt-4", Stream: true, Messages: []ChatMessage{{Role: "user", Content: "hi"}}}
 
-	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	err := ChatStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err == nil {
 		t.Fatal("expected error for 400")
 	}
@@ -603,7 +619,7 @@ data: [DONE]
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	}
 
-	err := StreamChat(testCtx(), "test-key", server.URL, body, emit)
+	err := ChatStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err != nil {
 		t.Fatalf("StreamChat: %v", err)
 	}
@@ -627,204 +643,11 @@ data: [DONE]
 	}
 }
 
-// Test StreamGemini
-func TestStreamGemini_TextResponse(t *testing.T) {
-	sseEvents := `data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}
-data: [DONE]
-`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(sseEvents))
-	}))
-	defer server.Close()
-
-	var events []stream.Event
-	emit := func(e stream.Event) error {
-		events = append(events, e)
-		return nil
-	}
-
-	body := GeminiRequest{
-		Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}},
-		Stream:   true,
-	}
-
-	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
-	if err != nil {
-		t.Fatalf("StreamGemini: %v", err)
-	}
-
-	var texts []string
-	var finish stream.Finish
-	for _, e := range events {
-		switch v := e.(type) {
-		case stream.TextDelta:
-			texts = append(texts, v.Text)
-		case stream.Finish:
-			finish = v
-		}
-	}
-
-	if len(texts) != 1 || texts[0] != "Hello" {
-		t.Errorf("expected text 'Hello', got %v", texts)
-	}
-	if finish.Usage.Input != 10 {
-		t.Errorf("expected input 10, got %d", finish.Usage.Input)
-	}
-	if finish.Usage.Output != 5 {
-		t.Errorf("expected output 5, got %d", finish.Usage.Output)
-	}
-}
-
-func TestStreamGemini_ToolCalls(t *testing.T) {
-	sseEvents := `data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"NY"}}}]},"finishReason":"STOP"}]}
-data: [DONE]
-`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(sseEvents))
-	}))
-	defer server.Close()
-
-	var events []stream.Event
-	emit := func(e stream.Event) error {
-		events = append(events, e)
-		return nil
-	}
-
-	body := GeminiRequest{
-		Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "weather?"}}}},
-		Stream:   true,
-	}
-
-	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
-	if err != nil {
-		t.Fatalf("StreamGemini: %v", err)
-	}
-
-	var toolCalls []stream.ToolCall
-	for _, e := range events {
-		if tc, ok := e.(stream.ToolCall); ok {
-			toolCalls = append(toolCalls, tc)
-		}
-	}
-
-	if len(toolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(toolCalls))
-	}
-	if toolCalls[0].Name != "get_weather" {
-		t.Errorf("expected name 'get_weather', got %q", toolCalls[0].Name)
-	}
-}
-
-func TestStreamGemini_EmptyStream(t *testing.T) {
-	sseEvents := "data: [DONE]\n"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(sseEvents))
-	}))
-	defer server.Close()
-
-	var events []stream.Event
-	emit := func(e stream.Event) error {
-		events = append(events, e)
-		return nil
-	}
-
-	body := GeminiRequest{
-		Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}},
-		Stream:   true,
-	}
-
-	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
-	if err != nil {
-		t.Fatalf("StreamGemini: %v", err)
-	}
-
-	var finish *stream.Finish
-	for _, e := range events {
-		if f, ok := e.(stream.Finish); ok {
-			finish = &f
-			break
-		}
-	}
-	if finish == nil {
-		t.Fatal("expected Finish event")
-	}
-	if finish.Reason != "stop" {
-		t.Errorf("expected reason 'stop', got %q", finish.Reason)
-	}
-}
-
-func TestStreamGemini_Error429(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "20")
-		w.WriteHeader(429)
-		_, _ = w.Write([]byte(`{"error":"rate limited"}`))
-	}))
-	defer server.Close()
-
-	emit := func(e stream.Event) error { return nil }
-	body := GeminiRequest{Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}}, Stream: true}
-
-	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
-	if err == nil {
-		t.Fatal("expected error for 429")
-	}
-	var re *RetryableError
-	if !as(err, &re) {
-		t.Fatalf("expected RetryableError, got %T: %v", err, err)
-	}
-	if re.Code != 429 {
-		t.Errorf("expected code 429, got %d", re.Code)
-	}
-}
-
-func TestStreamGemini_Error500(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(500)
-		_, _ = w.Write([]byte("server error"))
-	}))
-	defer server.Close()
-
-	emit := func(e stream.Event) error { return nil }
-	body := GeminiRequest{Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}}, Stream: true}
-
-	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
-	if err == nil {
-		t.Fatal("expected error for 500")
-	}
-	var re *RetryableError
-	if !as(err, &re) {
-		t.Fatalf("expected RetryableError, got %T: %v", err, err)
-	}
-	if re.Code != 500 {
-		t.Errorf("expected code 500, got %d", re.Code)
-	}
-}
-
-func TestStreamGemini_Error400(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(400)
-		_, _ = w.Write([]byte("bad request"))
-	}))
-	defer server.Close()
-
-	emit := func(e stream.Event) error { return nil }
-	body := GeminiRequest{Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}}, Stream: true}
-
-	err := StreamGemini(testCtx(), "test-key", server.URL, body, emit)
-	if err == nil {
-		t.Fatal("expected error for 400")
-	}
-	// 400 is not retryable
-	var re *RetryableError
-	if as(err, &re) {
-		t.Error("400 should not be RetryableError")
-	}
+// testCtx returns a background context for tests. It lives in this untagged
+// file (it used to sit in anthropic_test.go, behind //go:build !noanthropic)
+// so that `go test -tags "noanthropic nogemini" ./api/` still compiles.
+func testCtx() context.Context {
+	return context.Background()
 }
 
 // Helper to wrap errors.As for testing
@@ -837,4 +660,107 @@ func as(err error, target any) bool {
 		}
 	}
 	return false
+}
+
+// =============================================================================
+// HTTPDoer injection
+// =============================================================================
+
+// stubDoer is an HTTPDoer that answers from memory and remembers what it got.
+type stubDoer struct {
+	got   *http.Request
+	body  string
+	calls int
+}
+
+func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
+	d.calls++
+	d.got = req
+	return &http.Response{
+		StatusCode: 200,
+		Status:     "200 OK",
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(d.body)),
+		Request:    req,
+	}, nil
+}
+
+const stubSSE = `data: {"choices":[{"delta":{"content":"from-field"}}]}
+data: {"choices":[{"finish_reason":"stop"}]}
+data: [DONE]
+`
+
+// The HTTP field is a real injection point AND it outranks the shared default
+// client. Both halves matter: the field is what connector.Endpoint carries
+// (populated by providers.Deps.HTTP), and nothing else may quietly override it.
+func TestChatStreamer_HTTPFieldWinsOverDefaultClient(t *testing.T) {
+	// A perfectly usable server the default client could reach — the injected
+	// doer must mean it is never contacted.
+	var defaultClientHits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defaultClientHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("data: [DONE]\n"))
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+
+	doer := &stubDoer{body: stubSSE}
+	var texts []string
+	emit := func(e stream.Event) error {
+		if td, ok := e.(stream.TextDelta); ok {
+			texts = append(texts, td.Text)
+		}
+		return nil
+	}
+
+	s := ChatStreamer{HTTP: doer, Headers: map[string]string{"X-Tyci-Test": "1"}}
+	if err := s.Stream(ctx, "test-key", server.URL, ChatRequest{Model: "gpt-4"}, emit); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	if doer.calls != 1 {
+		t.Fatalf("injected doer got %d requests, want 1", doer.calls)
+	}
+	if defaultClientHits != 0 {
+		t.Errorf("the default client was used %d times despite the HTTP field", defaultClientHits)
+	}
+	if len(texts) != 1 || texts[0] != "from-field" {
+		t.Errorf("text deltas = %v, want [from-field] (response came from the wrong client)", texts)
+	}
+	// Endpoint.Headers land on the request, after the protocol defaults.
+	if got := doer.got.Header.Get("X-Tyci-Test"); got != "1" {
+		t.Errorf("X-Tyci-Test = %q, want %q", got, "1")
+	}
+	if got := doer.got.Header.Get("Authorization"); got != "Bearer test-key" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer test-key")
+	}
+}
+
+// With HTTP left nil the shared default client takes the request. This is the
+// production path for every provider built without its own Deps.HTTP, and it
+// is what api.defaultClient exists for now that the context lookup is gone.
+func TestChatStreamer_NilHTTPFallsBackToDefaultClient(t *testing.T) {
+	var hits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("data: [DONE]\n"))
+	}))
+	defer server.Close()
+
+	// No hook to point anywhere: httptest speaks plain HTTP on 127.0.0.1, so
+	// the real shared client reaches the server unaided. That the streamer
+	// picks that client rather than some other one is asserted directly, and
+	// without a global, by TestDoer_NoInjectionUsesDefaultClient.
+	emit := func(stream.Event) error { return nil }
+	if err := (ChatStreamer{}).Stream(context.Background(), "k", server.URL, ChatRequest{Model: "gpt-4"}, emit); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if hits != 1 {
+		t.Fatalf("default client got %d requests, want 1", hits)
+	}
 }

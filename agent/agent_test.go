@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 )
@@ -32,70 +33,20 @@ func (s *silentDisplay) Total(stream.Usage)                 {}
 func (s *silentDisplay) Error(error)                        {}
 func (s *silentDisplay) End()                               {}
 
-type mockProvider struct {
-	chunks []string
-}
-
-func (m *mockProvider) Name() string         { return "mock" }
-func (m *mockProvider) IsConfigured() bool   { return true }
-func (m *mockProvider) Models() []string     { return []string{"mock-1"} }
-func (m *mockProvider) FreeModels() []string { return nil }
-
-func (m *mockProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
-	ch := make(chan stream.Event, 4)
-	go func() {
-		defer close(ch)
-		for _, c := range m.chunks {
-			select {
-			case ch <- stream.TextDelta{Text: c}:
-			case <-ctx.Done():
-				return
-			}
-		}
-		ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
-	}()
-	return ch, nil
-}
-
-// mockToolProvider emits a predefined sequence of events once, then returns empty finish.
-type mockToolProvider struct {
-	mu     sync.Mutex
-	events []stream.Event
-	called bool
-}
-
-func (m *mockToolProvider) Name() string         { return "mock-tool" }
-func (m *mockToolProvider) IsConfigured() bool   { return true }
-func (m *mockToolProvider) Models() []string     { return []string{"mock-tool-1"} }
-func (m *mockToolProvider) FreeModels() []string { return nil }
-
-func (m *mockToolProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
-	m.mu.Lock()
-	if m.called {
-		m.mu.Unlock()
-		// Subsequent calls: no tools, just finish
-		ch := make(chan stream.Event, 1)
-		ch <- stream.Finish{Usage: stream.Usage{Input: 0, Output: 0}}
-		close(ch)
-		return ch, nil
-	}
-	m.called = true
-	events := m.events
-	m.mu.Unlock()
-
-	ch := make(chan stream.Event, 4)
-	go func() {
-		defer close(ch)
-		for _, e := range events {
-			select {
-			case ch <- e:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return ch, nil
-}
+// The model doubles in this package are connectortest.Fake literals. Two
+// things about them are load-bearing and therefore spelled out at every call
+// site rather than hidden behind a helper:
+//
+//   - the Usage on the final Finish. runOnce only emits Summary/Total when
+//     hasUsage(lastUsage) is true, so a zero Usage is not a cosmetic
+//     difference — it decides whether a Costs line appears at all.
+//   - what happens after the script runs out. Fake's default (OnExhausted
+//     nil) is Finish{Reason: "stop"} with zero usage, which is exactly what
+//     the old mockToolProvider did on its second and later calls; a double
+//     that must instead close the channel with no Finish says so with
+//     OnExhausted: []stream.Event{}.
+//
+// Finish.Reason itself is not load-bearing: runOnce reads only e.Usage.
 
 // mockToolRunner records tool calls and returns canned results.
 type mockToolRunner struct {
@@ -129,7 +80,7 @@ func (r *mockToolRunner) SetResult(name, result string) {
 	r.mu.Unlock()
 }
 
-// captureDisplay implements display.Display and records all calls for assertion.
+// captureDisplay implements agent.Sink and records all calls for assertion.
 type captureDisplay struct {
 	mu             sync.Mutex
 	thinking       []string
@@ -206,14 +157,18 @@ func (c *captureDisplay) Request(content string) {}
 func (c *captureDisplay) ToolFinish()            {}
 
 func TestRunAppendsAssistantMessage(t *testing.T) {
-	p := &mockProvider{chunks: []string{"Hello", " world"}}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "Hello"},
+		stream.TextDelta{Text: " world"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := &silentDisplay{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hi"}},
 	}}
 
-	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
+	if _, err := Run(context.Background(), p, d, &msgs, Config{MaxRetries: 1}); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -232,14 +187,16 @@ func TestRunAppendsAssistantMessage(t *testing.T) {
 }
 
 func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
-	p := &mockProvider{chunks: nil}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := &silentDisplay{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hi"}},
 	}}
 
-	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
+	if _, err := Run(context.Background(), p, d, &msgs, Config{MaxRetries: 1}); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -249,25 +206,26 @@ func TestRunSkipsEmptyAssistantMessage(t *testing.T) {
 }
 
 func TestRun_ToolCall_ShowsToolBlockDuringStream(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "I'll look that up."},
 			stream.ToolCallStart{ID: "tc1", Name: "read"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"path": "file.go"}`},
 			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "file.go"}`},
 			stream.Finish{Usage: stream.Usage{Input: 10, Output: 5}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("read", "file content")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "read file.go"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "read file.go"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -326,20 +284,21 @@ func TestRun_ToolCall_ShowsToolBlockDuringStream(t *testing.T) {
 }
 
 func TestRun_ToolCall_NoToolBlockWithoutTools(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "No tools needed."},
 			stream.Finish{Usage: stream.Usage{Input: 5, Output: 3}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hello"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 	}); err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -354,8 +313,10 @@ func TestRun_ToolCall_NoToolBlockWithoutTools(t *testing.T) {
 }
 
 func TestRun_ToolCall_MultipleTools(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.ToolCallStart{ID: "tc1", Name: "read"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"path": "a.go"}`},
 			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "a.go"}`},
@@ -363,19 +324,18 @@ func TestRun_ToolCall_MultipleTools(t *testing.T) {
 			stream.ToolCallDelta{ID: "tc2", Delta: `{"command": "ls"}`},
 			stream.ToolCall{ID: "tc2", Name: "bash", Arguments: `{"command": "ls"}`},
 			stream.Finish{Usage: stream.Usage{Input: 20, Output: 10}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("read", "content of a.go")
 	runner.SetResult("bash", "file1\nfile2")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "list and read"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "list and read"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -413,25 +373,26 @@ func TestRun_ToolCall_MultipleTools(t *testing.T) {
 }
 
 func TestRun_ToolCall_TextAndTools(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "I'll check that file. "},
 			stream.ToolCallStart{ID: "tc1", Name: "read"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"path": "x.go"}`},
 			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "x.go"}`},
 			stream.Finish{Usage: stream.Usage{Input: 15, Output: 7}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("read", "package main")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "read x.go"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "read x.go"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -455,22 +416,23 @@ func TestRun_ToolCall_TextAndTools(t *testing.T) {
 
 func TestRun_ToolCall_ToolCallWithoutDelta(t *testing.T) {
 	// Some providers send ToolCall directly without ToolCallStart/Delta
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "echo hi"}`},
 			stream.Finish{Usage: stream.Usage{Input: 5, Output: 2}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("bash", "hi")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "echo"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "echo"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -493,23 +455,24 @@ func TestRun_ToolCall_ToolCallWithoutDelta(t *testing.T) {
 }
 
 func TestRun_ToolCall_EmptyResult(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.ToolCallStart{ID: "tc1", Name: "bash"},
 			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "false"}`},
 			stream.Finish{Usage: stream.Usage{Input: 5, Output: 2}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	// No result set → Run returns empty string, no error
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "run"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "run"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -526,19 +489,20 @@ func TestRun_ToolCall_EmptyResult(t *testing.T) {
 }
 
 func TestRun_ToolCall_StreamError(t *testing.T) {
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.StreamError{Err: errors.New("connection lost")},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	_, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 	})
 	if err == nil {
@@ -613,81 +577,24 @@ func TestWriteSessionEvents(t *testing.T) {
 
 // ─── Fallback tests ──────────────────────────────────────────────────────
 
-// mockFailingProvider always returns an error from Stream().
-type mockFailingProvider struct {
-	name  string
-	model string
-	err   error
-}
-
-func (m *mockFailingProvider) Name() string         { return m.name }
-func (m *mockFailingProvider) IsConfigured() bool   { return true }
-func (m *mockFailingProvider) Models() []string     { return []string{m.model} }
-func (m *mockFailingProvider) FreeModels() []string { return nil }
-
-func (m *mockFailingProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
-	if m.err == nil {
-		return nil, errors.New("mockFailingProvider: no error configured")
-	}
-	return nil, m.err
-}
-
-// newFailingProvider is a small helper for tests that only need an
-// always-failing provider with a plain (non-retryable) error message.
-func newFailingProvider(name, model, msg string) *mockFailingProvider {
-	return &mockFailingProvider{name: name, model: model, err: errors.New(msg)}
-}
-
-// mockTextProvider returns fixed text chunks then finishes (no tools).
-type mockTextProvider struct {
-	name   string
-	model  string
-	chunks []string
-}
-
-func (m *mockTextProvider) Name() string         { return m.name }
-func (m *mockTextProvider) IsConfigured() bool   { return true }
-func (m *mockTextProvider) Models() []string     { return []string{m.model} }
-func (m *mockTextProvider) FreeModels() []string { return nil }
-
-func (m *mockTextProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
-	ch := make(chan stream.Event, 4)
-	go func() {
-		defer close(ch)
-		for _, c := range m.chunks {
-			select {
-			case ch <- stream.TextDelta{Text: c}:
-			case <-ctx.Done():
-				return
-			}
-		}
-		ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
-	}()
-	return ch, nil
-}
-
-// mockToolProvider returns events once, then returns empty finish on subsequent calls.
-// This is already defined above but we extend it here for the tests.
-
 func TestRunFallbackPrimaryFailsFallbackSucceeds(t *testing.T) {
 	// Primary provider returns error, fallback succeeds with text
-	primary := &mockFailingProvider{name: "fb-primary", model: "primary-1", err: errors.New("server error 500")}
+	primary := &connectortest.Fake{ProviderName: "fb-primary", ModelName: "primary-1", StreamErr: errors.New("server error 500")}
 
-	fallback := &mockTextProvider{name: "fb-fallback", model: "fb-1", chunks: []string{"fallback response"}}
-
-	// Register the fallback so FindModel can resolve it
-	providers.Register(fallback)
+	fallback := &connectortest.Fake{ProviderName: "fb-fallback", ModelName: "fb-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "fallback response"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hello"}},
 	}}
 
 	cfg := Config{
-		Model:          "primary-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-fallback/fb-1"},
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -712,24 +619,20 @@ func TestRunFallbackPrimaryFailsFallbackSucceeds(t *testing.T) {
 
 func TestRunFallbackAllFallbacksFail(t *testing.T) {
 	// Primary fails, all fallbacks also fail
-	primary := &mockFailingProvider{name: "fb-p1", model: "p1", err: errors.New("primary dead")}
+	primary := &connectortest.Fake{ProviderName: "fb-p1", ModelName: "p1", StreamErr: errors.New("primary dead")}
 
-	fallback1 := &mockFailingProvider{name: "fb-f1", model: "f1", err: errors.New("fb1 dead")}
-	fallback2 := &mockFailingProvider{name: "fb-f2", model: "f2", err: errors.New("fb2 dead")}
-
-	providers.Register(fallback1)
-	providers.Register(fallback2)
+	fallback1 := &connectortest.Fake{ProviderName: "fb-f1", ModelName: "f1", StreamErr: errors.New("fb1 dead")}
+	fallback2 := &connectortest.Fake{ProviderName: "fb-f2", ModelName: "f2", StreamErr: errors.New("fb2 dead")}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hello"}},
 	}}
 
 	cfg := Config{
-		Model:          "p1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-f1/f1", "fb-f2/f2"},
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback1, fallback2},
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -743,18 +646,17 @@ func TestRunFallbackAllFallbacksFail(t *testing.T) {
 
 func TestRunFallbackPrimaryFailsWithNoFallbacks(t *testing.T) {
 	// Primary fails with non-retryable error, no fallbacks configured
-	primary := &mockFailingProvider{name: "fb-nofb", model: "nofb-1", err: errors.New("non-retryable")}
+	primary := &connectortest.Fake{ProviderName: "fb-nofb", ModelName: "nofb-1", StreamErr: errors.New("non-retryable")}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "Hello"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "Hello"}},
 	}}
 
 	cfg := Config{
-		Model:          "nofb-1",
-		MaxRetries:     1,
-		FallbackModels: nil, // no fallback configured
+		MaxRetries: 1,
+		Fallbacks:  nil, // no fallback configured
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -768,32 +670,31 @@ func TestRunFallbackPrimaryFailsWithNoFallbacks(t *testing.T) {
 
 func TestRunFallbackWithTools(t *testing.T) {
 	// Primary fails, fallback succeeds and produces tools
-	primary := &mockFailingProvider{name: "fb-tp", model: "tp-1", err: errors.New("down")}
+	primary := &connectortest.Fake{ProviderName: "fb-tp", ModelName: "tp-1", StreamErr: errors.New("down")}
 
-	fallback := &mockToolProvider{
-		events: []stream.Event{
+	fallback := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.ToolCallStart{ID: "tc1", Name: "read"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"path": "file.go"}`},
 			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "file.go"}`},
 			stream.Finish{Usage: stream.Usage{Input: 10, Output: 5}},
-		},
+		}},
 	}
-
-	providers.Register(fallback)
 
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("read", "file content from fallback")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "read file"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "read file"}},
 	}}
 
 	cfg := Config{
-		Model:          "tp-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"mock-tool/mock-tool-1"},
-		Tools:          runner,
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
+		Tools:      runner,
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -820,22 +721,22 @@ func TestRunFallbackWithTools(t *testing.T) {
 
 func TestRunFallbackNoToolsTextOnly(t *testing.T) {
 	// Primary fails, fallback succeeds with text only (no tools)
-	primary := &mockFailingProvider{name: "fb-ntp", model: "ntp-1", err: errors.New("down")}
+	primary := &connectortest.Fake{ProviderName: "fb-ntp", ModelName: "ntp-1", StreamErr: errors.New("down")}
 
-	fallback := &mockTextProvider{name: "fb-ntf", model: "ntf-1", chunks: []string{"just text, no tools"}}
-
-	providers.Register(fallback)
+	fallback := &connectortest.Fake{ProviderName: "fb-ntf", ModelName: "ntf-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "just text, no tools"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hello"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hello"}},
 	}}
 
 	cfg := Config{
-		Model:          "ntp-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-ntf/ntf-1"},
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -849,38 +750,200 @@ func TestRunFallbackNoToolsTextOnly(t *testing.T) {
 	}
 }
 
+// TestRunFallback_MidStreamFailureAfterPartialText covers the failure shape no
+// hand-written double in this package could produce: the request succeeds, the
+// model starts answering, and the stream dies half-way through. Until
+// connectortest.Flaky every fallback test here failed at Stream() itself, so
+// the "partial answer already on screen, then switch models" path — a real
+// production path — was untested.
+//
+// The injected error is deliberately NOT retryable, because this test is about
+// the fallback path: a retryable one would send Run into the retry loop first.
+// That loop's backoff comes from api.CalcBackoff with a BaseBackoff that
+// defaults to 4 and cannot be injected — four seconds minimum per attempt,
+// unless the error happens to be a 429 carrying Retry-After (which is the
+// narrow door TestRun_RetryRecoversAfterMidStreamRateLimit goes through).
+// Non-retryable goes straight to the fallback with no sleep at all.
+// (See the debt note on the un-injectable backoff in docs/architecture-refactor.md.)
+func TestRunFallback_MidStreamFailureAfterPartialText(t *testing.T) {
+	// Two TextDeltas reach the display, then the stream dies. The third
+	// chunk and the Finish of the wrapped Fake are never reached, which is
+	// why Text()'s zero Usage does not matter here.
+	primary := &connectortest.Flaky{
+		Client: connectortest.Text("Here is the ", "first half of ", "the answer."),
+		Failures: []connectortest.Failure{{
+			MidStream:   true,
+			AfterEvents: 2,
+			Err:         errors.New("connection reset mid-stream"),
+		}},
+	}
+
+	fallback := &connectortest.Fake{ProviderName: "fb-mid", ModelName: "mid-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "complete answer from the fallback"},
+		stream.Finish{Usage: stream.Usage{Input: 7, Output: 4}},
+	}}}
+
+	d := newCaptureDisplay()
+	msgs := []connector.Message{{
+		Role:    "user",
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	if _, err := Run(context.Background(), primary, d, &msgs, Config{
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
+	}); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// The primary was called exactly once — the failure sent Run to the
+	// fallback, not back to the primary.
+	if got := primary.Calls(); got != 1 {
+		t.Errorf("primary Stream calls = %d, want 1", got)
+	}
+
+	// The half-answer really did reach the display before the failure...
+	shown := strings.Join(d.text, "")
+	if !strings.Contains(shown, "Here is the first half of ") {
+		t.Errorf("expected the partial primary answer on screen, got %q", shown)
+	}
+	// ...and the fallback's answer followed it.
+	if !strings.Contains(shown, "complete answer from the fallback") {
+		t.Errorf("expected the fallback answer on screen, got %q", shown)
+	}
+
+	// The truncated turn must NOT be recorded as an assistant message:
+	// runOnce bails on StreamError before appending, so the conversation
+	// carries only the fallback's complete answer.
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (user, assistant), got %d: %#v", len(msgs), msgs)
+	}
+	if msgs[1].Role != "assistant" {
+		t.Fatalf("expected assistant message, got %q", msgs[1].Role)
+	}
+	if msgs[1].Content[0].Text != "complete answer from the fallback" {
+		t.Errorf("assistant text = %q, want only the fallback's answer",
+			msgs[1].Content[0].Text)
+	}
+
+	// The user still gets exactly one cost summary, carrying the fallback's
+	// usage — the dead primary reported none.
+	if got := len(d.totals); got != 1 {
+		t.Fatalf("expected exactly 1 Total() call, got %d", got)
+	}
+	if d.totals[0].Input != 7 || d.totals[0].Output != 4 {
+		t.Errorf("Total = %+v, want Input 7 / Output 4 from the fallback", d.totals[0])
+	}
+}
+
+// TestRun_RetryRecoversAfterMidStreamRateLimit covers the retry loop's success
+// case, which nothing covered before: the only retry test in this package
+// (TestRun_TotalCalledOnAllRetriesExhausted) cancels the context during the
+// first backoff and therefore never reaches a recovery.
+//
+// It runs in milliseconds despite the un-injectable backoff, and the reason is
+// worth writing down: api.CalcBackoff honors a 429's Retry-After header
+// verbatim, so RateLimited("0") asks for a zero-second wait and
+// sleepWithCountdown returns immediately. That is a real provider behavior,
+// not a test hack — but it is also the ONLY way in, and it does not help the
+// 500/EOF cases, which always take BaseBackoff's four seconds. See the debt
+// note on the un-injectable backoff in docs/architecture-refactor.md.
+func TestRun_RetryRecoversAfterMidStreamRateLimit(t *testing.T) {
+	primary := &connectortest.Flaky{
+		Client: &connectortest.Fake{ProviderName: "rl", ModelName: "rl-1", Turns: [][]stream.Event{
+			{
+				stream.TextDelta{Text: "starting to answ"},
+				stream.TextDelta{Text: "er when the 429 lands"},
+				stream.Finish{Usage: stream.Usage{Input: 3, Output: 2}},
+			},
+			{
+				stream.TextDelta{Text: "the retried answer"},
+				stream.Finish{Usage: stream.Usage{Input: 9, Output: 6}},
+			},
+		}},
+		// Only the first call fails; the second passes through untouched.
+		Failures: []connectortest.Failure{{
+			MidStream:   true,
+			AfterEvents: 1,
+			Err:         connectortest.RateLimited("0"),
+		}},
+	}
+
+	d := newCaptureDisplay()
+	msgs := []connector.Message{{
+		Role:    "user",
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	if _, err := Run(context.Background(), primary, d, &msgs, Config{MaxRetries: 3}); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if got := primary.Calls(); got != 2 {
+		t.Errorf("Stream calls = %d, want 2 (one failure, one retry)", got)
+	}
+
+	// The retry really went through the retry loop, not the fallback path.
+	sawRetry := false
+	for _, tb := range d.toolBlocks {
+		if strings.HasPrefix(tb, "retry 1/3") {
+			sawRetry = true
+		}
+	}
+	if !sawRetry {
+		t.Errorf("expected a retry notice on the display, got %v", d.toolBlocks)
+	}
+
+	// The truncated first attempt left its half-sentence on screen but must
+	// not be recorded: only the retried turn becomes an assistant message.
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (user, assistant), got %d: %#v", len(msgs), msgs)
+	}
+	if msgs[1].Content[0].Text != "the retried answer" {
+		t.Errorf("assistant text = %q, want only the retried answer", msgs[1].Content[0].Text)
+	}
+
+	// Usage is the retried turn's alone — the abandoned attempt never
+	// reached its Finish, so its 3/2 must not be counted.
+	if got := len(d.totals); got != 1 {
+		t.Fatalf("expected exactly 1 Total() call, got %d", got)
+	}
+	if d.totals[0].Input != 9 || d.totals[0].Output != 6 {
+		t.Errorf("Total = %+v, want Input 9 / Output 6 from the retried turn", d.totals[0])
+	}
+}
+
 func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 	// After fallback, subsequent iterations use the fallback provider/model.
 	// We simulate two iterations: first fails, fallback succeeds,
 	// second iteration (no tools) should use the fallback.
-	primary := &mockFailingProvider{name: "fb-sess", model: "sess-1", err: errors.New("down")}
+	primary := &connectortest.Fake{ProviderName: "fb-sess", ModelName: "sess-1", StreamErr: errors.New("down")}
 
 	// The fallback returns text first, then on second call returns different text
-	fallback := &mockToolProvider{
-		events: []stream.Event{
+	fallback := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "first call "},
 			stream.ToolCallStart{ID: "tc1", Name: "bash"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"command": "echo hello"}`},
 			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "echo hello"}`},
 			stream.Finish{Usage: stream.Usage{Input: 5, Output: 3}},
-		},
+		}},
 	}
-
-	providers.Register(fallback)
 
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("bash", "hello world")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "run bash"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "run bash"}},
 	}}
 
 	cfg := Config{
-		Model:          "sess-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"mock-tool/mock-tool-1"},
-		Tools:          runner,
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
+		Tools:      runner,
 	}
 
 	_, err := Run(context.Background(), primary, d, &msgs, cfg)
@@ -893,8 +956,8 @@ func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 		t.Errorf("expected tool result 'hello world', got %+v", d.toolCallEnds)
 	}
 
-	// The fallback provider was used (the text came from mockToolProvider)
-	// which returned "first call " text
+	// The fallback provider was used: its first scripted turn returned
+	// the "first call " text.
 	if len(d.text) == 0 || !strings.Contains(strings.Join(d.text, ""), "first call") {
 		t.Errorf("expected text from fallback, got %q", strings.Join(d.text, ""))
 	}
@@ -902,17 +965,19 @@ func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 
 func TestRunNoFallbackNormalPath(t *testing.T) {
 	// No fallback configured — standard path should work fine
-	p := &mockProvider{chunks: []string{"hello world"}}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "hello world"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	cfg := Config{
-		Model:          "mock-1",
-		MaxRetries:     1,
-		FallbackModels: nil,
+		MaxRetries: 1,
+		Fallbacks:  nil,
 	}
 
 	_, err := Run(context.Background(), p, d, &msgs, cfg)
@@ -943,14 +1008,17 @@ func assertTotalCalled(t *testing.T, d *captureDisplay) {
 }
 
 func TestRun_TotalCalledOnSuccess(t *testing.T) {
-	p := &mockProvider{chunks: []string{"hello"}}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "hello"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
-	if _, err := Run(context.Background(), p, d, &msgs, Config{Model: "mock-1", MaxRetries: 1}); err != nil {
+	if _, err := Run(context.Background(), p, d, &msgs, Config{MaxRetries: 1}); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
@@ -964,20 +1032,21 @@ func TestRun_TotalCalledOnFallbackSuccess(t *testing.T) {
 	// Regression: primary provider fails, fallback succeeds. Previously the
 	// `return totalUsage, nil` inside the `if !fbMore` branch skipped the
 	// Total() call.
-	primary := &mockFailingProvider{name: "fb-tot-p", model: "tot-p-1", err: errors.New("primary down")}
-	fallback := &mockTextProvider{name: "fb-tot-fb", model: "tot-fb-1", chunks: []string{"fallback ok"}}
-	providers.Register(fallback)
+	primary := &connectortest.Fake{ProviderName: "fb-tot-p", ModelName: "tot-p-1", StreamErr: errors.New("primary down")}
+	fallback := &connectortest.Fake{ProviderName: "fb-tot-fb", ModelName: "tot-fb-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "fallback ok"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	_, err := Run(context.Background(), primary, d, &msgs, Config{
-		Model:          "tot-p-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-tot-fb/tot-fb-1"},
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
 	})
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -990,22 +1059,19 @@ func TestRun_TotalCalledOnAllFallbacksExhausted(t *testing.T) {
 	// Primary fails, every fallback fails — we should still see Total() so
 	// the user sees accumulated cost (likely 0, but the summary should be
 	// emitted).
-	primary := &mockFailingProvider{name: "fb-all-p", model: "all-p-1", err: errors.New("primary down")}
-	fb1 := &mockFailingProvider{name: "fb-all-f1", model: "all-f1", err: errors.New("fb1 down")}
-	fb2 := &mockFailingProvider{name: "fb-all-f2", model: "all-f2", err: errors.New("fb2 down")}
-	providers.Register(fb1)
-	providers.Register(fb2)
+	primary := &connectortest.Fake{ProviderName: "fb-all-p", ModelName: "all-p-1", StreamErr: errors.New("primary down")}
+	fb1 := &connectortest.Fake{ProviderName: "fb-all-f1", ModelName: "all-f1", StreamErr: errors.New("fb1 down")}
+	fb2 := &connectortest.Fake{ProviderName: "fb-all-f2", ModelName: "all-f2", StreamErr: errors.New("fb2 down")}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	_, err := Run(context.Background(), primary, d, &msgs, Config{
-		Model:          "all-p-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-all-f1/all-f1", "fb-all-f2/all-f2"},
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fb1, fb2},
 	})
 	if err == nil {
 		t.Fatal("expected error when all fallbacks fail")
@@ -1016,12 +1082,12 @@ func TestRun_TotalCalledOnAllFallbacksExhausted(t *testing.T) {
 
 func TestRun_TotalCalledOnContextCancel(t *testing.T) {
 	// Stream returns context.Canceled, Run should still emit Total.
-	cancelledProvider := &blockingProvider{name: "fb-ctx", model: "blocking-1"}
+	cancelledProvider := &connectortest.Fake{ProviderName: "fb-ctx", ModelName: "blocking-1", BlockUntilCancel: true}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1030,7 +1096,7 @@ func TestRun_TotalCalledOnContextCancel(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := Run(ctx, cancelledProvider, d, &msgs, Config{Model: "blocking-1", MaxRetries: 1})
+	_, err := Run(ctx, cancelledProvider, d, &msgs, Config{MaxRetries: 1})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled error, got %v", err)
 	}
@@ -1040,15 +1106,15 @@ func TestRun_TotalCalledOnContextCancel(t *testing.T) {
 
 func TestRun_TotalCalledOnNonRetryable(t *testing.T) {
 	// Plain non-retryable error (e.g. plain errors.New) with no fallbacks.
-	primary := &mockFailingProvider{name: "fb-nr", model: "nr-1", err: errors.New("fatal")}
+	primary := &connectortest.Fake{ProviderName: "fb-nr", ModelName: "nr-1", StreamErr: errors.New("fatal")}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
-	_, err := Run(context.Background(), primary, d, &msgs, Config{Model: "nr-1", MaxRetries: 3})
+	_, err := Run(context.Background(), primary, d, &msgs, Config{MaxRetries: 3})
 	if err == nil {
 		t.Fatal("expected error from non-retryable failure")
 	}
@@ -1061,12 +1127,12 @@ func TestRun_TotalCalledOnAllRetriesExhausted(t *testing.T) {
 	// retries exhausted. We cancel ctx during the first backoff to avoid
 	// waiting 4+8+16+... seconds in the test. io.EOF is recognised as
 	// retryable by api.IsRetryable.
-	primary := &mockFailingProvider{name: "fb-rx", model: "rx-1", err: io.EOF}
+	primary := &connectortest.Fake{ProviderName: "fb-rx", ModelName: "rx-1", StreamErr: io.EOF}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1097,7 +1163,7 @@ func TestRun_TotalCalledOnAllRetriesExhausted(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := Run(ctx, primary, d, &msgs, Config{Model: "rx-1", MaxRetries: 5})
+		_, err := Run(ctx, primary, d, &msgs, Config{MaxRetries: 5})
 		done <- err
 	}()
 
@@ -1128,25 +1194,26 @@ func TestRun_TotalCalledOnEveryToolTurn(t *testing.T) {
 	// totalUsage (which now includes the just-finished iteration's
 	// tokens). The follow-up iteration is empty (no usage) so it
 	// does not produce an extra Total().
-	p := &mockToolProvider{
-		events: []stream.Event{
+	p := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "first "},
 			stream.ToolCallStart{ID: "tc1", Name: "bash"},
 			stream.ToolCallDelta{ID: "tc1", Delta: `{"command": "echo hi"}`},
 			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "echo hi"}`},
 			stream.Finish{Usage: stream.Usage{Input: 5, Output: 3}},
-		},
+		}},
 	}
 	d := newCaptureDisplay()
 	runner := newMockToolRunner()
 	runner.SetResult("bash", "hi")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "echo"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "echo"}},
 	}}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
-		Model:      "mock-tool-1",
 		MaxRetries: 1,
 		Tools:      runner,
 	}); err != nil {
@@ -1168,20 +1235,21 @@ func TestRun_TotalNotDuplicatedOnFallbackSuccess(t *testing.T) {
 	// line was printed twice (once by runOnce inside tryFallback, once
 	// by agent.Run before returning). User reported this as a duplicate
 	// "Costs: in=88 out=43 cin=2304 cout=88" line.
-	primary := &mockFailingProvider{name: "fb-dup-p", model: "dup-p-1", err: errors.New("rate limited")}
-	fallback := &mockTextProvider{name: "fb-dup-fb", model: "dup-fb-1", chunks: []string{"hello"}}
-	providers.Register(fallback)
+	primary := &connectortest.Fake{ProviderName: "fb-dup-p", ModelName: "dup-p-1", StreamErr: errors.New("rate limited")}
+	fallback := &connectortest.Fake{ProviderName: "fb-dup-fb", ModelName: "dup-fb-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "hello"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 
 	d := newCaptureDisplay()
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	if _, err := Run(context.Background(), primary, d, &msgs, Config{
-		Model:          "dup-p-1",
-		MaxRetries:     1,
-		FallbackModels: []string{"fb-dup-fb/dup-fb-1"},
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
 	}); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -1189,28 +1257,4 @@ func TestRun_TotalNotDuplicatedOnFallbackSuccess(t *testing.T) {
 	if got := len(d.totals); got != 1 {
 		t.Fatalf("expected exactly 1 Total() call after fallback success, got %d", got)
 	}
-}
-
-// blockingProvider blocks the stream until the context is cancelled, then
-// returns ctx.Err(). It exercises the context.Canceled return path in
-// agent.Run.
-type blockingProvider struct {
-	name  string
-	model string
-}
-
-func (b *blockingProvider) Name() string         { return b.name }
-func (b *blockingProvider) IsConfigured() bool   { return true }
-func (b *blockingProvider) Models() []string     { return []string{b.model} }
-func (b *blockingProvider) FreeModels() []string { return nil }
-
-func (b *blockingProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
-	ch := make(chan stream.Event, 1)
-	go func() {
-		defer close(ch)
-		<-ctx.Done()
-		// No usage reported on cancel — totalUsage stays at zero.
-		ch <- stream.StreamError{Err: ctx.Err()}
-	}()
-	return ch, nil
 }

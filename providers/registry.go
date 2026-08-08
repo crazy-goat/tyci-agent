@@ -5,17 +5,32 @@ import (
 	"strings"
 )
 
-var (
-	providers = make(map[string]Provider)
-)
-
-func Register(p Provider) {
-	providers[p.Name()] = p
+// Catalog is a set of providers keyed by name. It is a value, not a package
+// global: the CLI uses the package-level Default, while tests (and any future
+// embedder) build their own and stay isolated from each other.
+type Catalog struct {
+	providers map[string]Provider
 }
 
-func ListProviders() []Provider {
+// NewCatalog returns an empty Catalog.
+func NewCatalog() *Catalog {
+	return &Catalog{providers: make(map[string]Provider)}
+}
+
+// Default is the process-wide catalog the CLI registers into and reads from.
+// The package-level Register/ListProviders/GetProvider/FindModel functions are
+// thin wrappers over it.
+var Default = NewCatalog()
+
+// Register adds (or replaces) a provider under its own name.
+func (c *Catalog) Register(p Provider) {
+	c.providers[p.Name()] = p
+}
+
+// ListProviders returns every registered provider, sorted by name.
+func (c *Catalog) ListProviders() []Provider {
 	var result []Provider
-	for _, p := range providers {
+	for _, p := range c.providers {
 		result = append(result, p)
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -24,20 +39,27 @@ func ListProviders() []Provider {
 	return result
 }
 
-func GetProvider(name string) (Provider, bool) {
-	p, ok := providers[name]
+// GetProvider looks a provider up by exact name.
+func (c *Catalog) GetProvider(name string) (Provider, bool) {
+	p, ok := c.providers[name]
 	return p, ok
 }
 
-func FindModel(model string) (Provider, string, bool) {
+// FindModel resolves a model spec to a provider and a bare model name.
+//
+// A "provider/model" spec is resolved by exact provider name. A bare model
+// name is searched for among CONFIGURED providers only, in map iteration
+// order, which is deliberately unspecified. A bare name listed solely by
+// providers without a credential does not resolve.
+func (c *Catalog) FindModel(model string) (Provider, string, bool) {
 	if strings.Contains(model, "/") {
 		parts := strings.SplitN(model, "/", 2)
-		if p, ok := providers[parts[0]]; ok {
+		if p, ok := c.providers[parts[0]]; ok {
 			return p, parts[1], true
 		}
 		return nil, "", false
 	}
-	for _, p := range providers {
+	for _, p := range c.providers {
 		if p.IsConfigured() {
 			for _, m := range p.Models() {
 				if m == model {
@@ -46,12 +68,17 @@ func FindModel(model string) (Provider, string, bool) {
 			}
 		}
 	}
-	for _, p := range providers {
-		for _, m := range p.FreeModels() {
-			if m == model {
-				return p, model, true
-			}
-		}
-	}
 	return nil, "", false
 }
+
+// The package-level functions below operate on Default. They exist so the CLI
+// and the agent keep a single well-known catalog without threading it through
+// every call site.
+
+func Register(p Provider) { Default.Register(p) }
+
+func ListProviders() []Provider { return Default.ListProviders() }
+
+func GetProvider(name string) (Provider, bool) { return Default.GetProvider(name) }
+
+func FindModel(model string) (Provider, string, bool) { return Default.FindModel(model) }

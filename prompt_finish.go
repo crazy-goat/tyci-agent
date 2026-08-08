@@ -7,12 +7,15 @@ import (
 	"os"
 
 	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/conductor"
 	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/session"
-	"github.com/decodo/tyci/stream"
 )
 
-func finishPromptRun(disp display.Display, sess *session.Session, sessionPath string, usage stream.Usage, err error) {
+// finishPromptRun turns the outcome of a one-shot turn into what the user
+// sees and the process exits with. Deciding that is the frontend's half of
+// the split: the conductor reports what happened, this decides how it looks.
+func finishPromptRun(cond *conductor.Conductor, disp display.Display, err error) {
+	sessionPath := cond.SessionPath()
 	status := "ok"
 	exitCode := 0
 	if err != nil && errors.Is(err, agent.ErrMaxIterations) {
@@ -24,7 +27,7 @@ func finishPromptRun(disp display.Display, sess *session.Session, sessionPath st
 		if errors.Is(err, context.Canceled) {
 			disp.End()
 			fmt.Fprint(os.Stdout, "\n")
-			agent.WriteSessionEnd(sess, "cancelled", 130, &usage)
+			cond.EndSession("canceled", 130)
 			printSessionPath(sessionPath)
 			os.Exit(130)
 		}
@@ -32,7 +35,7 @@ func finishPromptRun(disp display.Display, sess *session.Session, sessionPath st
 		status = "error"
 		exitCode = 1
 	}
-	agent.WriteSessionEnd(sess, status, exitCode, &usage)
+	cond.EndSession(status, exitCode)
 
 	if err != nil {
 		printSessionPath(sessionPath)

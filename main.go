@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/tools"
 )
@@ -15,47 +18,107 @@ import (
 // agentRunner implements tools.SubAgentRunner by wrapping agent.Run.
 type agentRunner struct{}
 
-// resolveProviderModel picks the provider and bare model name for a subagent.
+// resolveModelClient picks the resolved model client for a subagent.
 //
 // An explicit "provider/model" override is resolved via the registry. Otherwise
-// the subagent inherits the parent's provider from context — which is already
-// configured with a valid API key — instead of re-guessing via FindModel, whose
-// bare-name lookup iterates the provider map in random order and can land on a
-// different (unconfigured) provider that happens to list the same model.
-func resolveProviderModel(ctx context.Context, model string) (providers.Provider, string, error) {
+// the subagent inherits the parent's model client from context — which is
+// already configured with a valid API key — instead of re-guessing via
+// FindModel, whose bare-name lookup iterates the provider map in random order
+// and can land on a different (unconfigured) provider that happens to list
+// the same model.
+func resolveModelClient(ctx context.Context, model string) (connector.ModelClient, error) {
 	if strings.Contains(model, "/") {
 		if prov, mName, ok := providers.FindModel(model); ok {
-			return prov, mName, nil
+			return prov.Client(mName), nil
 		}
-		return nil, "", fmt.Errorf("no provider available for model %q", model)
+		return nil, fmt.Errorf("no provider available for model %q", model)
 	}
 
-	prov := providers.ProviderFromContext(ctx)
+	mc := connector.ModelClientFromContext(ctx)
+	if mc == nil {
+		// No parent model client in context (e.g. tests) — fall back to lookup.
+		if p, m, ok := providers.FindModel(model); ok {
+			return p.Client(m), nil
+		}
+		return nil, fmt.Errorf("no provider available for model %q", model)
+	}
 	mName := model
 	if mName == "" {
-		mName = providers.ModelFromContext(ctx)
-	}
-	if prov == nil {
-		// No parent provider in context (e.g. tests) — fall back to lookup.
-		if p, m, ok := providers.FindModel(mName); ok {
-			return p, m, nil
-		}
-		return nil, "", fmt.Errorf("no provider available for model %q", model)
+		mName = mc.Model()
 	}
 	if mName == "" {
-		return nil, "", fmt.Errorf("no model specified")
+		return nil, fmt.Errorf("no model specified")
 	}
-	return prov, mName, nil
+	if mName == mc.Model() {
+		return mc, nil
+	}
+	// Explicit bare-name override that differs from the parent's default:
+	// keep the parent's provider (its already-resolved credential), bound to
+	// the new model. The provider must be registered under its own name in
+	// the catalog for this lookup to succeed — true for every real provider,
+	// each registered exactly once at startup.
+	prov, ok := providers.GetProvider(mc.Provider())
+	if !ok {
+		return nil, fmt.Errorf("provider %q not found", mc.Provider())
+	}
+	return prov.Client(mName), nil
 }
 
-// subagentDefaultMaxIterations is the default cap on a subagent's tool-call
-// turns. Re-exported as tools.DefaultSubagentMaxIterations so both main.go
-// and tools/ agree on the value. Behavior change vs. the previous
-// hard-coded constant of 10: callers that omit MaxIterations now run
-// unbounded (subject to tools.SubagentOptions semantics + the 600s wall-
-// clock timeout in tools/subagent.go). Callers that want a finite cap
-// should pass an explicit positive integer.
-const subagentDefaultMaxIterations = tools.DefaultSubagentMaxIterations
+// withIsolatedPool binds mc, and every entry in fallbacks, to ONE HTTP client
+// with its own connection pool, so a child agent shares nothing with its
+// parent: parent cancellation cannot leak into subagent requests and vice
+// versa. Primary and fallback share the pool because within a single child
+// run they are never used concurrently — agent.Run tries them one after
+// another, never in parallel.
+//
+// This used to live in tools/subagent.go, which stuffed the client into the
+// child's context under an api-package context key. The transport is not
+// something the tools package should know about, and the api layer no longer
+// reads the context at all; a client now carries its own transport instead.
+//
+// Etap 5 (docs/architecture-refactor.md) closed a latent gap here: before the
+// caller resolved fallbacks, agent/fallback.go pulled a fresh provider from
+// the global catalog mid-run, invisibly to this wrapper — a fallback
+// triggered inside a child run would have silently fallen back to the shared
+// api.defaultClient instead of the child's isolated pool. Now that the
+// caller resolves every fallback up front, it can wrap them together with
+// the primary in the same call, so the gap cannot reopen without also
+// changing this function.
+//
+// Granularity is otherwise unchanged: agentRunner.run is entered exactly once
+// per tools.SubAgentRunner.RunTask/RunTaskWithSystem call, i.e. once per
+// runSingleTask, so a parallel subagent(tasks=[a,b,c]) still creates three
+// pools — one per child.
+//
+// A ModelClient that does not implement connector.HTTPInjector (every fake in
+// the test suite) is returned untouched and keeps today's "no isolation"
+// behavior. That fallback used to be the whole injection path's default
+// failure mode, because it ran through three interfaces and a type assertion
+// at each hop. It is now a single hop: every client the providers package
+// hands out implements connector.HTTPInjector, and providers/client.go asserts
+// that at BUILD time, so the assertion below cannot start failing silently
+// for production clients.
+func withIsolatedPool(mc connector.ModelClient, fallbacks []connector.ModelClient) (connector.ModelClient, []connector.ModelClient) {
+	pool := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        2,
+			MaxIdleConnsPerHost: 1,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
+	bind := func(c connector.ModelClient) connector.ModelClient {
+		inj, ok := c.(connector.HTTPInjector)
+		if !ok {
+			return c
+		}
+		return inj.WithHTTP(pool)
+	}
+	boundFallbacks := make([]connector.ModelClient, len(fallbacks))
+	for i, fb := range fallbacks {
+		boundFallbacks[i] = bind(fb)
+	}
+	return bind(mc), boundFallbacks
+}
 
 // RunTask runs a plain subagent (no named agent) with the dedicated subagent
 // system prompt.
@@ -74,10 +137,18 @@ func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model 
 // detect it via errors.Is and surface subagentResult.Truncated /
 // ToolResult.Truncated without parsing free-form suffixes.
 func (r *agentRunner) run(ctx context.Context, task, model, system string, opts tools.SubagentOptions) (string, error) {
-	prov, mName, err := resolveProviderModel(ctx, model)
+	mc, err := resolveModelClient(ctx, model)
 	if err != nil {
 		return "", err
 	}
+	// No fallback models are resolved for subagents today — a named agent's
+	// fallback config is not threaded through the SubAgentRunner interface,
+	// so this is always nil in production. It still goes through the same
+	// wrapper as the primary client so that isolation cannot regress the
+	// moment fallback support is added here (see withIsolatedPool's doc
+	// comment and TestWithIsolatedPool_WrapsFallbacksWithPrimary).
+	var fallbacks []connector.ModelClient
+	mc, fallbacks = withIsolatedPool(mc, fallbacks)
 
 	// Resolve the iteration cap: explicit parent override wins; otherwise the
 	// (unlimited) default. Tools.ResolveMaxIter centralizes nil/0/negative
@@ -86,24 +157,24 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 
 	// Create collector to capture output
 	c := &collector{}
-	msgs := []providers.RichMessage{
+	msgs := []connector.Message{
 		{
 			Role:    "user",
-			Content: []providers.ContentBlock{{Type: "text", Text: task}},
+			Content: []connector.ContentBlock{{Type: "text", Text: task}},
 		},
 	}
 
 	cfg := agent.Config{
-		Model:         mName,
 		System:        system,
 		MaxRetries:    1,
 		MaxIterations: maxIter,
 		Debug:         false,
 		Tools:         &subagentToolRunner{},
 		Schema:        tools.GetSubagentToolsSchemaJSON(),
+		Fallbacks:     fallbacks,
 	}
 
-	_, err = agent.Run(ctx, prov, c, &msgs, cfg)
+	_, err = agent.Run(ctx, mc, c, &msgs, cfg)
 	text := strings.TrimSpace(c.text.String())
 
 	if errors.Is(err, agent.ErrMaxIterations) {

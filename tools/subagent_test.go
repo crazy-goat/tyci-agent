@@ -2,15 +2,29 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/stream"
 )
+
+// fakeModelClient returns the minimal connector.ModelClient these tests need:
+// an identity to put in the context, and a Stream that refuses to run. The
+// subagent path under test reads the default model off the context and never
+// sends a request, so a client that streamed would only hide a mistake.
+func fakeModelClient(model string) *connectortest.Fake {
+	return &connectortest.Fake{
+		ProviderName: "test-provider",
+		ModelName:    model,
+		StreamErr:    errors.New("fakeModelClient does not stream"),
+	}
+}
 
 // mockRunner implements SubAgentRunner for testing
 type mockRunner struct {
@@ -674,7 +688,7 @@ func TestRunSingleTask_TruncatedFlagReachesToolResult(t *testing.T) {
 		},
 	})
 
-	ctx := providers.WithModel(context.Background(), "test/model")
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
 	res := RunTool(ctx, "subagent", map[string]any{"task": "x"})
 	if !res.Success {
 		t.Fatalf("expected success on partial truncation, got error: %q", res.Error)
@@ -701,7 +715,7 @@ func TestRunSingleTask_CleanSuccessNotTruncated(t *testing.T) {
 		},
 	})
 
-	ctx := providers.WithModel(context.Background(), "test/model")
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
 	res := RunTool(ctx, "subagent", map[string]any{"task": "x"})
 	if !res.Success {
 		t.Fatalf("expected success, got error: %q", res.Error)

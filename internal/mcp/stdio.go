@@ -23,10 +23,10 @@ type StdioClient struct {
 	stdin  io.WriteCloser
 	stdout *bufio.Reader
 
-	mu               sync.Mutex
-	nextID           int
-	pending          map[int]chan *Response
-	samplingHandler  SamplingHandler
+	mu                 sync.Mutex
+	nextID             int
+	pending            map[int]chan *Response
+	samplingHandler    SamplingHandler
 	elicitationHandler ElicitationHandler
 }
 

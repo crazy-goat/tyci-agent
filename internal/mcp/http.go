@@ -20,11 +20,11 @@ type HTTPClient struct {
 	url  string
 	auth string // "bearer" or ""
 
-	mu               sync.Mutex
-	nextID           int
-	client           *http.Client
-	headers          http.Header
-	samplingHandler  SamplingHandler
+	mu                 sync.Mutex
+	nextID             int
+	client             *http.Client
+	headers            http.Header
+	samplingHandler    SamplingHandler
 	elicitationHandler ElicitationHandler
 }
 

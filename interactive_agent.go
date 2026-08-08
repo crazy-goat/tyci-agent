@@ -8,51 +8,18 @@ import (
 	"os/signal"
 
 	"github.com/decodo/tyci/agent"
-	"github.com/decodo/tyci/providers"
-	"github.com/decodo/tyci/session"
-	"github.com/decodo/tyci/stream"
 )
 
-func (s *interactiveState) submitUserLine(line string) {
-	if s.editor != nil {
-		s.editor.AddHistory(line)
-	}
-	s.conversation = append(s.conversation, providers.RichMessage{
-		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: line}},
-	})
-
-	// Lazily create the session file the first time the user actually
-	// submits a prompt in this REPL. Pre-creating it at startup would
-	// leave an empty JSONL on disk for every repl the user opens without
-	// ever typing — defeating the "one session per conversation" model.
-	// An explicit --session (handled by initCommon) is opened eagerly and
-	// already lives in s.cfg.Session / s.sessionPtr at this point.
-	if s.cfg.Session == nil && s.sessionPath != "" {
-		wd, _ := os.Getwd()
-		newSess, path, err := ensureLazySession(nil, s.sessionPath, wd, s.modelName, s.provider.Name())
-		if err == nil && newSess != nil {
-			s.cfg.Session = newSess
-			s.sessionPtr = newSess
-			if path != "" {
-				s.sessionPath = path
-			}
-		}
-	}
-
-	if s.cfg.Session != nil {
-		blocks := []session.ContentBlock{{Type: "text", Text: line}}
-		_ = s.cfg.Session.WriteMessage("user", blocks, nil)
-	}
-}
-
-func (s *interactiveState) runAgentIteration(iterCtx context.Context, iterCancel context.CancelFunc) bool {
+// runAgentIteration hands one user line to the conductor and renders the
+// outcome. Arming SIGINT and ESC is the console's job — it owns the terminal
+// — while what "interrupted" and "failed" look like on screen is a rendering
+// decision that deliberately stayed here too.
+func (s *interactiveState) runAgentIteration(iterCtx context.Context, iterCancel context.CancelFunc, line string) bool {
 	sigCh, sigDone := s.startInterruptWatcher(iterCtx, iterCancel)
 	stopESC := watchESC(iterCancel)
-	usage, err := agent.Run(iterCtx, s.provider, s.display, &s.conversation, s.cfg)
+	_, err := s.cond.Submit(iterCtx, line)
 	stopESC()
 	s.stopInterruptWatcher(sigCh, sigDone, iterCancel)
-	s.addUsage(usage)
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -92,8 +59,4 @@ func (s *interactiveState) stopInterruptWatcher(sigCh chan os.Signal, sigDone ch
 	signal.Stop(sigCh)
 	cancel()
 	<-sigDone
-}
-
-func (s *interactiveState) addUsage(usage stream.Usage) {
-	s.totalUsage.Add(usage)
 }

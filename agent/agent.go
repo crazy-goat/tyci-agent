@@ -8,8 +8,7 @@ import (
 	"strings"
 
 	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 )
@@ -18,17 +17,30 @@ type ToolRunner interface {
 	Run(ctx context.Context, name string, args map[string]any) (string, error)
 }
 
+// Config is everything the agent loop needs beyond the model client itself.
+//
+// It deliberately carries NO model or provider name: those are properties of
+// the connector.ModelClient handed to Run, read back via mc.Model() /
+// mc.Provider(). Two sources of truth for "which model is this" is exactly
+// how a request ends up going to one model while the session header records
+// another. A caller that needs the name for its own purposes (session
+// bookkeeping, a status bar) keeps its own variable.
 type Config struct {
-	Model          string
-	System         string
-	MaxRetries     int
-	MaxIterations  int // max tool-call iterations; -1 or 0 means unlimited
-	Debug          bool
-	Tools          ToolRunner
-	Schema         json.RawMessage
-	Session        *session.Session // optional session logging / resume
-	ProviderName   string           // provider name for session metadata
-	FallbackModels []string         // full "provider/model" strings for fallback
+	System        string
+	MaxRetries    int
+	MaxIterations int // max tool-call iterations; -1 or 0 means unlimited
+	Debug         bool
+	Tools         ToolRunner
+	Schema        json.RawMessage
+	Session       *session.Session // optional session logging / resume
+
+	// Fallbacks are already-resolved fallback models, tried in order when
+	// the primary (or the previously-active fallback) fails. The agent does
+	// not resolve "provider/model" strings itself — the caller does, before
+	// calling Run, so the agent never needs to know about the provider
+	// catalog. A spec that fails to resolve is the caller's problem to
+	// report; by the time it reaches here every entry is a working client.
+	Fallbacks []connector.ModelClient
 
 	// NextMessages is called by the agent loop after each runOnce to drain
 	// any user messages queued while a request was in flight (issue #88).
@@ -71,10 +83,10 @@ var ErrMaxIterations = errors.New("agent reached max tool-call iterations withou
 // Run executes the agent loop. It will make at most MaxRetries retries on
 // transient errors, and at most MaxIterations tool-call iterations.
 // If MaxIterations <= 0, there is no iteration limit.
-// If cfg.FallbackModels is set, non-retryable errors will try fallback models
+// If cfg.Fallbacks is set, non-retryable errors will try fallback models
 // before giving up. Once a fallback succeeds, it is used for the rest of the session.
 // Returns total usage accumulated during the run.
-func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config) (stream.Usage, error) {
+func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connector.Message, cfg Config) (stream.Usage, error) {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 5
 	}
@@ -85,20 +97,14 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 	todoReminders := 0
 
 	// Track fallback state across iterations
-	fs := fallbackState{
-		active:    false,
-		idx:       -1,
-		provider:  p,
-		model:     cfg.Model,
-		fullModel: "",
-	}
+	fs := fallbackState{idx: -1, mc: mc}
 
 	for iter := 0; cfg.MaxIterations <= 0 || iter < cfg.MaxIterations; iter++ {
 		// runOnce accumulates usage into totalUsage and emits d.Total
 		// only when it reaches the Summary line. totalEmitted reports
 		// whether the call already showed the Costs line; if not, the
 		// caller must emit it (typically on error/early-return paths).
-		more, _, totalEmitted, err := runOnce(ctx, fs.provider, d, msgs, cfg.withModel(fs.model), &totalUsage)
+		more, _, totalEmitted, err := runOnce(ctx, fs.mc, d, msgs, cfg, &totalUsage)
 		if err != nil {
 			// Check for context cancellation first
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -109,7 +115,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 			}
 
 			// Try fallback models if available
-			if len(cfg.FallbackModels) > 0 {
+			if len(cfg.Fallbacks) > 0 {
 				fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage, err)
 				if fbErr == nil {
 					// Fallback succeeded — runOnce inside tryFallback
@@ -147,7 +153,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 					}
 					return totalUsage, err
 				}
-				more, _, totalEmitted, err = runOnce(ctx, fs.provider, d, msgs, cfg.withModel(fs.model), &totalUsage)
+				more, _, totalEmitted, err = runOnce(ctx, fs.mc, d, msgs, cfg, &totalUsage)
 				if err == nil {
 					recovered = true
 					break
@@ -155,7 +161,7 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				lastErr = err
 				if !api.IsRetryable(err) {
 					// Non-retryable during retry — try fallback if available
-					if len(cfg.FallbackModels) > 0 {
+					if len(cfg.Fallbacks) > 0 {
 						fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage, err)
 						if fbErr == nil {
 							if !fbMore {
@@ -196,9 +202,9 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 		if cfg.NextMessages != nil {
 			if pending := cfg.NextMessages(); len(pending) > 0 {
 				for _, line := range pending {
-					*msgs = append(*msgs, providers.RichMessage{
+					*msgs = append(*msgs, connector.Message{
 						Role:    "user",
-						Content: []providers.ContentBlock{{Type: "text", Text: line}},
+						Content: []connector.ContentBlock{{Type: "text", Text: line}},
 					})
 					if cfg.Session != nil {
 						blocks := []session.ContentBlock{{Type: "text", Text: line}}
@@ -222,9 +228,9 @@ func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]p
 				if pending := cfg.PendingTodos(); len(pending) > 0 {
 					todoReminders++
 					reminder := buildTodoReminder(pending)
-					*msgs = append(*msgs, providers.RichMessage{
+					*msgs = append(*msgs, connector.Message{
 						Role:    "user",
-						Content: []providers.ContentBlock{{Type: "text", Text: reminder}},
+						Content: []connector.ContentBlock{{Type: "text", Text: reminder}},
 					})
 					if cfg.Session != nil {
 						blocks := []session.ContentBlock{{Type: "text", Text: reminder}}
@@ -270,14 +276,3 @@ func buildTodoReminder(pending []string) string {
 	b.WriteString("</system-reminder>")
 	return b.String()
 }
-
-// withModel returns a copy of Config with the given model name.
-func (c Config) withModel(model string) Config {
-	c.Model = model
-	return c
-}
-
-// tryFallback attempts to switch to the next fallback model.
-// It updates fs with the new provider/model on success.
-// Returns (more, nil) on success, (false, err) if all fallbacks exhausted.
-// origErr is the error that triggered the fallback.

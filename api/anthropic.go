@@ -84,7 +84,19 @@ type toolAccumulator struct {
 	Arguments strings.Builder
 }
 
-func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body AnthropicRequest, emit func(stream.Event) error) error {
+// AnthropicStreamer streams a request against the Anthropic Messages
+// protocol. The zero value is usable and behaves exactly like the old
+// package-level StreamAnthropic function.
+type AnthropicStreamer struct {
+	// HTTP is the client to send with. nil means "resolve from the context"
+	// (see doer); it is the seam the connector layer injects through.
+	HTTP HTTPDoer
+	// Headers are extra request headers, applied after the protocol defaults.
+	Headers map[string]string
+}
+
+// Stream POSTs body to endpoint and calls emit for every decoded SSE event.
+func (s AnthropicStreamer) Stream(ctx context.Context, apiKey, endpoint string, body AnthropicRequest, emit func(stream.Event) error) error {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -103,8 +115,9 @@ func StreamAnthropic(ctx context.Context, apiKey, endpoint string, body Anthropi
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("anthropic-version", "2023-06-01")
+	applyExtraHeaders(req, s.Headers)
 
-	resp, err := ClientFromContext(ctx).Do(req)
+	resp, err := doer(s.HTTP).Do(req)
 	if err != nil {
 		return err
 	}

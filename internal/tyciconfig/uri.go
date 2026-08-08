@@ -104,17 +104,3 @@ func Parse(uri string) (ProviderURI, error) {
 		Reasoning: reasoning,
 	}, nil
 }
-
-// FullEndpoint returns the complete endpoint URL including the default path for the API type.
-func (u ProviderURI) FullEndpoint() string {
-	endpointPath := u.Path
-	switch u.APIType {
-	case "anthropic":
-		endpointPath += "/v1/messages"
-	case "gemini":
-		// Gemini uses different path structure
-	default:
-		endpointPath += "/v1/chat/completions"
-	}
-	return "https://" + u.Host + endpointPath
-}

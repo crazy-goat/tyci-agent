@@ -9,6 +9,7 @@ import (
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/internal/debug"
@@ -106,9 +107,9 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 	if agentName == "" {
 		agentName = "default"
 	}
-	var fallbackModels []string
+	var fallbacks []connector.ModelClient
 	if fb := agent.GetFallbackModels(agentName); len(fb) > 0 {
-		fallbackModels = fb
+		fallbacks = resolveFallbacks(fb)
 	}
 
 	var ctx context.Context
@@ -130,20 +131,17 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 	debugFlag, _ := cmd.Flags().GetBool("debug")
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 	cfg := agent.Config{
-		Model:          modelName,
-		System:         providers.BuildSystemPrompt(),
-		MaxRetries:     maxRetries,
-		MaxIterations:  maxIterations,
-		Debug:          debugFlag,
-		Tools:          toolsAdapter{},
-		Schema:         tools.GetToolsSchemaJSON(),
-		ProviderName:   provider.Name(),
-		FallbackModels: fallbackModels,
-		PendingTodos:   tools.PendingTodos,
-		HasTodos:       tools.HasPendingTodos,
+		System:        providers.BuildSystemPrompt(),
+		MaxRetries:    maxRetries,
+		MaxIterations: maxIterations,
+		Debug:         debugFlag,
+		Tools:         toolsAdapter{},
+		Schema:        tools.GetToolsSchemaJSON(),
+		Fallbacks:     fallbacks,
+		PendingTodos:  tools.PendingTodos,
+		HasTodos:      tools.HasPendingTodos,
 	}
-	ctx = providers.WithProvider(ctx, provider)
-	ctx = providers.WithModel(ctx, modelName)
+	ctx = connector.WithModelClient(ctx, provider.Client(modelName))
 
 	wd, _ := os.Getwd()
 	var sess *session.Session
@@ -190,6 +188,25 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 	return provider, modelName, cfg, ctx, sess, sessionPath, historyFile, dl, nil
 }
 
+// resolveFallbacks resolves each "provider/model" fallback spec to a
+// connector.ModelClient at setup time — the agent no longer resolves
+// fallback specs itself (see agent.Config.Fallbacks). A spec that fails to
+// resolve is reported here and skipped, which is a deliberate relocation:
+// agent.Run used to discover this lazily, mid-run, and report it via a
+// ToolBlock on the display; now it is reported once, at startup, on stderr.
+func resolveFallbacks(specs []string) []connector.ModelClient {
+	var out []connector.ModelClient
+	for _, spec := range specs {
+		p, m, ok := providers.FindModel(spec)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Warning: fallback model %q not found, skipping\n", spec)
+			continue
+		}
+		out = append(out, p.Client(m))
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // run
 // ---------------------------------------------------------------------------
@@ -202,7 +219,7 @@ var runCmd = &cobra.Command{
 		if prompt == "" {
 			return fmt.Errorf("--prompt is required")
 		}
-		provider, _, cfg, ctx, sess, sessionPath, _, dl, err := initCommon(cmd)
+		provider, modelName, cfg, ctx, _, sessionPath, _, dl, err := initCommon(cmd)
 		if err != nil {
 			return err
 		}
@@ -215,7 +232,10 @@ var runCmd = &cobra.Command{
 		// full-screen experience, use `tyci console` or
 		// `tyci tui` instead.
 		disp := display.NewMinimal()
-		runPrompt(provider, disp, prompt, cfg, ctx, sess, sessionPath)
+		// No resolver: a one-shot run has nowhere to type /model, so
+		// SwitchModel is not reachable and does not need a catalog.
+		cond := newConductor(provider, modelName, disp, cfg, sessionPath, nil)
+		runPrompt(cond, disp, prompt, ctx)
 		return nil
 	},
 }
@@ -242,7 +262,10 @@ var consoleCmd = &cobra.Command{
 			defer dl.Close()
 		}
 		disp := display.NewTerminal()
-		runInteractive(provider, modelName, disp, historyFile, cfg, ctx, sessionPath)
+		// requireConfigured: /model in the console refuses a provider
+		// without credentials and says how to add one.
+		cond := newConductor(provider, modelName, disp, cfg, sessionPath, catalogResolver{requireConfigured: true})
+		runInteractive(cond, disp, historyFile, ctx)
 		return nil
 	},
 }
@@ -282,10 +305,6 @@ var tuiCmd = &cobra.Command{
 				allModels = append(allModels, p.Name()+"/"+m)
 				pm.Models = append(pm.Models, m)
 			}
-			for _, m := range p.FreeModels() {
-				allModels = append(allModels, p.Name()+"/"+m)
-				pm.Models = append(pm.Models, m)
-			}
 			if len(pm.Models) > 0 {
 				allProviderModels = append(allProviderModels, pm)
 			}
@@ -319,7 +338,19 @@ var tuiCmd = &cobra.Command{
 		}, agent.GetDefaultModel(), func(newDefault string) {
 			_ = agent.SetDefaultModel(newDefault)
 		}, toolsCount, skillsCount, mcpCount)
-		runTUI(provider, modelName, tuiDisp, cfg, ctx, sessionPath)
+
+		// Issue #88: wire the pending-message queue drain callback. The
+		// TUI's NextMessages drains the channel of user lines typed
+		// during the in-flight request and returns them in FIFO order;
+		// the agent loop appends each as a user message and forces one
+		// more runOnce so the model sees them as a single turn.
+		cfg.NextMessages = tuiDisp.NextMessages
+
+		// No requireConfigured: the Tab-cycle and the picker only offer
+		// providers that are already in auth.json (see authSet above), and
+		// silently refusing a favorite would read as a dead key press.
+		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath, catalogResolver{})
+		runTUI(cond, tuiDisp, ctx)
 		return nil
 	},
 }
@@ -419,17 +450,21 @@ var providerListCmd = &cobra.Command{
 				fmt.Fprintf(os.Stdout, "  %s (not configured)\n", p.Name())
 			}
 
+			// A warning does not change the ✓/✗ above — see ConfigWarnings —
+			// it flags a credential that IS present but looks unresolvable,
+			// so the user finds out here instead of from a bare "no API key"
+			// error at request time.
+			for _, envVar := range p.ConfigWarnings() {
+				_, _ = fmt.Fprintf(os.Stdout, "    warning: URI references $%s, but env var %s is empty or unset\n", envVar, envVar)
+			}
+
 			if showModels {
 				models := p.Models()
-				freeModels := p.FreeModels()
 
 				for _, m := range models {
 					fmt.Fprintf(os.Stdout, "    %s/%s\n", p.Name(), m)
 				}
-				for _, m := range freeModels {
-					fmt.Fprintf(os.Stdout, "    %s/%s (free)\n", p.Name(), m)
-				}
-				if len(models) == 0 && len(freeModels) == 0 {
+				if len(models) == 0 {
 					fmt.Fprintln(os.Stdout, "    (no models)")
 				}
 			}
@@ -610,12 +645,6 @@ func listModels(toComplete string) []string {
 		}
 		prefix := p.Name() + "/"
 		for _, m := range p.Models() {
-			full := prefix + m
-			if strings.Contains(strings.ToLower(full), toComplete) {
-				seen[full] = struct{}{}
-			}
-		}
-		for _, m := range p.FreeModels() {
 			full := prefix + m
 			if strings.Contains(strings.ToLower(full), toComplete) {
 				seen[full] = struct{}{}

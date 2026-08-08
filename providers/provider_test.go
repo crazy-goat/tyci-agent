@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -131,6 +131,72 @@ func TestDynamicProviderIsConfigured_notConfigured(t *testing.T) {
 
 	if p.IsConfigured() {
 		t.Error("IsConfigured() should return false when no key is available")
+	}
+}
+
+// =============================================================================
+// IsConfigured — the AuthSource lookup must be loop-invariant, not per-entry
+// =============================================================================
+
+// spyAuthSource counts how many times Key was called, to prove IsConfigured
+// stopped re-reading auth.json once per model entry (it used to: the lookup
+// sat inside `for _, e := range p.entries` despite not depending on e).
+type spyAuthSource struct {
+	key   string
+	calls int
+}
+
+func (s *spyAuthSource) Key(string) string {
+	s.calls++
+	return s.key
+}
+
+// A provider with several entries, none carrying a URI token, and no
+// provider-level key: IsConfigured must be false, and the AuthSource lookup —
+// which depends only on p.name, never on which entry is being examined — must
+// run AT MOST ONCE per call, not once per entry.
+func TestDynamicProviderIsConfigured_authSourceCalledOncePerProvider(t *testing.T) {
+	spy := &spyAuthSource{key: ""}
+	p := &dynamicProvider{
+		name: "many-models",
+		entries: []ModelEntry{
+			{Name: "m1", URI: "openai://m1@api.example.invalid"},
+			{Name: "m2", URI: "openai://m2@api.example.invalid"},
+			{Name: "m3", URI: "openai://m3@api.example.invalid"},
+		},
+		auth: spy,
+	}
+
+	if p.IsConfigured() {
+		t.Error("IsConfigured() = true, want false: no URI token and no provider key")
+	}
+	if spy.calls != 1 {
+		t.Errorf("AuthSource.Key called %d times, want exactly 1 (loop-invariant lookup must not repeat per entry)", spy.calls)
+	}
+}
+
+// A provider whose FIRST entry already carries a URI token must short-circuit
+// before ever consulting the AuthSource — the URI token wins WITHOUT any I/O.
+// This is the property a naive "just hoist the call above the loop" fix would
+// have broken (it would call authSource().Key unconditionally on every
+// IsConfigured, even when the very first entry already answers the question).
+func TestDynamicProviderIsConfigured_uriTokenShortCircuitsBeforeAuthSource(t *testing.T) {
+	spy := &spyAuthSource{key: ""}
+	p := &dynamicProvider{
+		name: "uri-token-first",
+		entries: []ModelEntry{
+			{Name: "m1", URI: "openai://m1@sk-uri-token@api.example.invalid"},
+			{Name: "m2", URI: "openai://m2@api.example.invalid"},
+			{Name: "m3", URI: "openai://m3@api.example.invalid"},
+		},
+		auth: spy,
+	}
+
+	if !p.IsConfigured() {
+		t.Error("IsConfigured() = false, want true: first entry has a URI token")
+	}
+	if spy.calls != 0 {
+		t.Errorf("AuthSource.Key called %d times, want 0: a URI token must short-circuit before any auth.json/env lookup", spy.calls)
 	}
 }
 
@@ -386,7 +452,7 @@ func TestDynamicProviderStream_authJSONLiteralEnvRef_resolvesAtRuntime(t *testin
 	captured := make(chan string, 1)
 	tr := &recordingTransport{captured: captured, inner: &http.Transport{}}
 	customClient := &http.Client{Transport: tr}
-	ctx := context.WithValue(context.Background(), api.HTTPClientKey{}, customClient)
+	ctx := context.Background()
 
 	// Verify the auth.json path that connect.AuthPath() resolves to.
 	authDir := filepath.Join(dir, ".tyci")
@@ -398,19 +464,19 @@ func TestDynamicProviderStream_authJSONLiteralEnvRef_resolvesAtRuntime(t *testin
 		t.Fatal(err)
 	}
 
-	p := &dynamicProvider{
-		name: "nexos",
-		entries: []ModelEntry{
-			// We use a non-routable host so the request will fail — we only
-			// care that the bearer token MIME-match the expected resolved value.
-			// dynProvider sends the request from a goroutine, then closes the
-			// channel; the goroutine will hit a connect error which surfaces
-			// as a stream.StreamError event.
-			{Name: "MiniMax M3", URI: "openai://MiniMax M3@@127.0.0.1:1"},
-		},
-	}
+	// The recording client is injected through the provider's own Deps.HTTP,
+	// which is the only injection path left now that the api-package context
+	// key is gone.
+	p := NewProvider("nexos", []ModelEntry{
+		// We use a non-routable host so the request will fail — we only
+		// care that the bearer token MIME-match the expected resolved value.
+		// dynProvider sends the request from a goroutine, then closes the
+		// channel; the goroutine will hit a connect error which surfaces
+		// as a stream.StreamError event.
+		{Name: "MiniMax M3", URI: "openai://MiniMax M3@@127.0.0.1:1"},
+	}, Deps{HTTP: customClient})
 
-	ch, err := p.Stream(ctx, Request{Model: "MiniMax M3"})
+	ch, err := p.Client("MiniMax M3").Stream(ctx, Request{Model: "MiniMax M3"})
 	if err != nil {
 		t.Fatalf("Stream() returned error directly: %v", err)
 	}
@@ -464,6 +530,362 @@ func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 		Status:     "401 Unauthorized",
 		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"unauthorized"}}`)),
 		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
+
+// =============================================================================
+// ConfigWarnings — unresolvable "$FOO" in a URI, without flipping IsConfigured
+// =============================================================================
+//
+// Problem: IsConfigured checks the URI token RAW (see the comment on
+// dynamicProvider.IsConfigured) — an entry carrying an unresolvable "$FOO"
+// still counts as configured, so `provider list` shows ✓, the TUI offers the
+// model, and catalogResolver{requireConfigured:true} lets it through. The
+// failure then surfaces only at request time, from resolveAPIKey, with a
+// message that never mentions "$FOO" — the user has a key, it just didn't
+// resolve, but the error reads as if there is no key at all.
+//
+// ConfigWarnings is the deliberately unverified boolean's second channel: it
+// names the unresolved env var without changing IsConfigured's verdict.
+
+// Pins the decision NOT to make IsConfigured resolve the URI token: an
+// unresolvable "$FOO" in a URI must keep reporting true. Flipping this would
+// make such a provider silently vanish from `provider list`, from
+// Catalog.FindModel's bare-name search, and from catalogResolver — a silent
+// disappearance is worse than the delayed, now-informative error.
+func TestDynamicProviderIsConfigured_uriEnvRefUnresolved_staysConfigured(t *testing.T) {
+	_ = os.Unsetenv("TYCI_TEST_CONFIGWARN_UNSET")
+	p := &dynamicProvider{
+		name:    "envref-prov",
+		entries: []ModelEntry{{Name: "m", URI: "openai://m@$TYCI_TEST_CONFIGWARN_UNSET@api.example.invalid"}},
+	}
+	if !p.IsConfigured() {
+		t.Error("IsConfigured() = false, want true: an unresolvable $VAR in the URI must NOT downgrade the verdict")
+	}
+}
+
+// A single unresolved env var reference yields exactly that variable's name.
+func TestConfigWarnings_unresolvedEnvRef(t *testing.T) {
+	_ = os.Unsetenv("TYCI_TEST_CONFIGWARN_FOO")
+	p := &dynamicProvider{
+		name:    "envref-prov",
+		entries: []ModelEntry{{Name: "m", URI: "openai://m@$TYCI_TEST_CONFIGWARN_FOO@api.example.invalid"}},
+	}
+	got := p.ConfigWarnings()
+	want := []string{"TYCI_TEST_CONFIGWARN_FOO"}
+	if len(got) != len(want) || (len(got) > 0 && got[0] != want[0]) {
+		t.Errorf("ConfigWarnings() = %v, want %v", got, want)
+	}
+}
+
+// A resolvable env var reference reports nothing.
+func TestConfigWarnings_resolvedEnvRef_nil(t *testing.T) {
+	t.Setenv("TYCI_TEST_CONFIGWARN_RESOLVED", "sk-real-key")
+	p := &dynamicProvider{
+		name:    "envref-prov",
+		entries: []ModelEntry{{Name: "m", URI: "openai://m@$TYCI_TEST_CONFIGWARN_RESOLVED@api.example.invalid"}},
+	}
+	if got := p.ConfigWarnings(); got != nil {
+		t.Errorf("ConfigWarnings() = %v, want nil", got)
+	}
+}
+
+// Two entries referencing the SAME unresolved var must collapse to one
+// element — 617 models sharing one env var must not become 617 warning lines.
+func TestConfigWarnings_deduplicatesSameVar(t *testing.T) {
+	_ = os.Unsetenv("TYCI_TEST_CONFIGWARN_DUP")
+	p := &dynamicProvider{
+		name: "envref-prov",
+		entries: []ModelEntry{
+			{Name: "m1", URI: "openai://m1@$TYCI_TEST_CONFIGWARN_DUP@api.example.invalid"},
+			{Name: "m2", URI: "openai://m2@$TYCI_TEST_CONFIGWARN_DUP@api.example.invalid"},
+		},
+	}
+	got := p.ConfigWarnings()
+	if len(got) != 1 || got[0] != "TYCI_TEST_CONFIGWARN_DUP" {
+		t.Errorf("ConfigWarnings() = %v, want exactly one entry %q", got, "TYCI_TEST_CONFIGWARN_DUP")
+	}
+}
+
+// No env-var references anywhere in the catalog reports nothing, whether the
+// provider has a plain token, no token, or no entries at all.
+func TestConfigWarnings_noEnvRefs_nil(t *testing.T) {
+	p := &dynamicProvider{
+		name: "plain-prov",
+		entries: []ModelEntry{
+			{Name: "m1", URI: "openai://m1@sk-plain-token@api.example.invalid"},
+			{Name: "m2", URI: "openai://m2@api.example.invalid"},
+		},
+	}
+	if got := p.ConfigWarnings(); got != nil {
+		t.Errorf("ConfigWarnings() = %v, want nil", got)
+	}
+}
+
+// resolveAPIKey / Stream must name the missing env var, not just say "no API
+// key" — see TestDynamicProvider_ResolveAPIKeyErrorMessage for the unchanged
+// message on the path with no env reference at all.
+func TestDynamicProvider_ResolveAPIKeyErrorMessage_NamesUnresolvedEnvRef(t *testing.T) {
+	t.Setenv("TYCI_TEST_RESOLVEKEY_FOO", "") // present in the shell, but empty
+	p := &dynamicProvider{name: "envref-prov", auth: &stubAuth{}}
+
+	_, err := p.resolveAPIKey("$TYCI_TEST_RESOLVEKEY_FOO")
+	if err == nil {
+		t.Fatal("resolveAPIKey returned no error with an unresolvable $VAR and no other credential")
+	}
+	want := `envref-prov is set to "$TYCI_TEST_RESOLVEKEY_FOO" but env var TYCI_TEST_RESOLVEKEY_FOO is empty or unset`
+	if err.Error() != want {
+		t.Errorf("error = %q,\nwant    %q", err.Error(), want)
+	}
+	if strings.Contains(err.Error(), "no API key for") {
+		t.Errorf("error still uses the generic 'no API key' phrasing: %q", err.Error())
+	}
+}
+
+// End-to-end: Stream surfaces the same named error, exercised via a URI token
+// instead of calling resolveAPIKey directly. resolveAPIKey runs before the
+// streaming goroutine is spawned, so the error comes back synchronously.
+func TestDynamicProviderStream_unresolvedURIEnvRef_namesVar(t *testing.T) {
+	_ = os.Unsetenv("TYCI_TEST_STREAM_ENVREF_FOO")
+	p := &dynamicProvider{
+		name:    "stream-envref-prov",
+		entries: []ModelEntry{{Name: "m", URI: "openai://m@$TYCI_TEST_STREAM_ENVREF_FOO@api.example.invalid"}},
+		auth:    &stubAuth{},
+	}
+
+	_, err := p.Stream(context.Background(), Request{Model: "m"})
+	if err == nil {
+		t.Fatal("Stream() returned no error; want one naming the unresolved env var")
+	}
+	if !strings.Contains(err.Error(), "TYCI_TEST_STREAM_ENVREF_FOO") {
+		t.Errorf("Stream() error = %q, want it to name TYCI_TEST_STREAM_ENVREF_FOO", err.Error())
+	}
+}
+
+// =============================================================================
+// kindFor — build-tag exclusions must not fall back to another protocol
+// =============================================================================
+
+// A binary built with -tags noanthropic has no anthropic connector, so
+// DefaultRegistry() ends up holding only openai (+gemini). kindFor must then
+// fail loudly instead of routing the request through the OpenAI connector,
+// which would POST an Anthropic-shaped body to /v1/messages and get a
+// confusing 400 back. The registry is injected here so the test runs in the
+// default (untagged) build too.
+func TestDynamicProviderKindFor_excludedConnectorErrors(t *testing.T) {
+	onlyOpenAI := connector.NewRegistry()
+	onlyOpenAI.Register(connector.KindOpenAI, connector.NewOpenAI)
+
+	p := &dynamicProvider{
+		name:     "kindfor-excluded",
+		entries:  []ModelEntry{{Name: "claude-x", URI: "anthropic://claude-x@sk-tok@api.example.invalid"}},
+		registry: onlyOpenAI,
+	}
+
+	if _, err := p.kindFor(connector.KindAnthropic); err == nil {
+		t.Fatal("kindFor returned no error for a connector missing from the registry")
+	} else if got, want := err.Error(), "anthropic support excluded at build time (rebuild without -tags noanthropic)"; got != want {
+		t.Fatalf("kindFor error = %q, want %q", got, want)
+	}
+
+	// The same must hold end to end: Stream may not reach the network.
+	if _, err := p.Stream(context.Background(), Request{Model: "claude-x"}); err == nil {
+		t.Fatal("Stream returned no error for an excluded connector kind")
+	} else if !strings.Contains(err.Error(), "excluded at build time") {
+		t.Fatalf("Stream error = %q, want the build-time exclusion message", err.Error())
+	}
+}
+
+// Every connector actually compiled into this binary still resolves to itself
+// — the guard above must not turn into "everything errors". Driven off the
+// default registry rather than a literal list, so it holds under
+// -tags noanthropic/nogemini as well.
+func TestDynamicProviderKindFor_registeredKindPassesThrough(t *testing.T) {
+	p := &dynamicProvider{name: "kindfor-ok"}
+	kinds := defaultConnectors.Kinds()
+	if len(kinds) == 0 {
+		t.Fatal("default registry is empty")
+	}
+	for _, kind := range kinds {
+		got, err := p.kindFor(kind)
+		if err != nil {
+			t.Fatalf("kindFor(%q): %v", kind, err)
+		}
+		if got != kind {
+			t.Errorf("kindFor(%q) = %q, want %q", kind, got, kind)
+		}
+	}
+}
+
+// An api_type that is not a protocol we implement must error too, never
+// silently become openai. In practice tyciconfig.Parse already normalizes any
+// unrecognized URI scheme to "openai" (see TestParseURI_table), so this branch
+// is unreachable through parseURI — it guards direct callers.
+func TestDynamicProviderKindFor_unknownKindErrors(t *testing.T) {
+	p := &dynamicProvider{name: "kindfor-unknown"}
+	if _, err := p.kindFor("cohere"); err == nil {
+		t.Fatal("kindFor returned no error for an unimplemented api_type")
+	} else if !strings.Contains(err.Error(), `unsupported api_type "cohere"`) {
+		t.Fatalf("kindFor error = %q, want unsupported api_type", err.Error())
+	}
+}
+
+// =============================================================================
+// Injected dependencies: the provider carries them, it does not fetch globals
+// =============================================================================
+
+// capturingFactory records the Endpoint it was handed and returns a connector
+// that does nothing. It is what proves an injected dependency actually travels
+// from Deps all the way to the connector.
+type capturingConnector struct{ ep connector.Endpoint }
+
+func (c *capturingConnector) Kind() string { return connector.KindOpenAI }
+func (c *capturingConnector) Stream(context.Context, Request, func(stream.Event) error) error {
+	return nil
+}
+
+func capturingRegistry(kind string) (*connector.Registry, *connector.Endpoint) {
+	var seen connector.Endpoint
+	r := connector.NewRegistry()
+	r.Register(kind, func(ep connector.Endpoint) (connector.Connector, error) {
+		seen = ep
+		return &capturingConnector{ep: ep}, nil
+	})
+	return r, &seen
+}
+
+// Deps.HTTP must land in connector.Endpoint.HTTP — that is the whole point of
+// the provider becoming an explicitly constructed struct.
+func TestNewProvider_InjectsHTTPIntoEndpoint(t *testing.T) {
+	reg, seen := capturingRegistry(connector.KindOpenAI)
+	doer := &stubDoer{}
+
+	p := NewProvider("injected-http", []ModelEntry{
+		{Name: "m", URI: "openai://m@sk-tok@api.example.invalid"},
+	}, Deps{Connectors: reg, HTTP: doer})
+
+	ch, err := p.Client("m").Stream(context.Background(), Request{Model: "m"})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for range ch {
+	}
+
+	if seen.HTTP == nil {
+		t.Fatal("Endpoint.HTTP is nil — the provider's HTTP client never reached the connector")
+	}
+	if seen.HTTP != connector.HTTPDoer(doer) {
+		t.Errorf("Endpoint.HTTP = %v, want the injected doer", seen.HTTP)
+	}
+	// The rest of the endpoint is still resolved from the URI.
+	if seen.APIKey != "sk-tok" {
+		t.Errorf("Endpoint.APIKey = %q, want %q", seen.APIKey, "sk-tok")
+	}
+	if got := seen.URL(); got != "https://api.example.invalid/v1/chat/completions" {
+		t.Errorf("Endpoint.URL() = %q", got)
+	}
+}
+
+// A provider built without an HTTP client leaves Endpoint.HTTP nil, which is
+// how the api layer's shared default client stays the production path.
+func TestNewProvider_NilHTTPStaysNil(t *testing.T) {
+	reg, seen := capturingRegistry(connector.KindOpenAI)
+
+	p := NewProvider("no-http", []ModelEntry{
+		{Name: "m", URI: "openai://m@sk-tok@api.example.invalid"},
+	}, Deps{Connectors: reg})
+
+	ch, err := p.Client("m").Stream(context.Background(), Request{Model: "m"})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for range ch {
+	}
+	if seen.HTTP != nil {
+		t.Errorf("Endpoint.HTTP = %v, want nil", seen.HTTP)
+	}
+}
+
+// A zero Deps must reproduce the production defaults rather than leaving nil
+// fields behind — the registration path (RegisterProvidersFromConfig) relies
+// on it.
+func TestNewProvider_ZeroDepsGetsDefaults(t *testing.T) {
+	p := newDynamicProvider("defaults", nil, Deps{})
+	if p.registry != defaultConnectors {
+		t.Error("zero Deps did not get the default connector registry")
+	}
+	if p.auth == nil {
+		t.Error("zero Deps did not get the default AuthSource")
+	}
+	if p.http != nil {
+		t.Error("zero Deps invented an HTTP client; nil is the meaningful default")
+	}
+}
+
+// withHTTP must return a COPY. Parallel subagents share one provider value, so
+// mutating the receiver would let one child's connection pool leak into
+// another's requests.
+func TestWithHTTP_ReturnsCopy(t *testing.T) {
+	reg, _ := capturingRegistry(connector.KindOpenAI)
+	base := newDynamicProvider("copy-me", []ModelEntry{{Name: "m", URI: "openai://m@sk@h"}}, Deps{Connectors: reg})
+
+	a := &stubDoer{}
+	b := &stubDoer{}
+	withA := base.withHTTP(a)
+	withB := base.withHTTP(b)
+
+	if base.http != nil {
+		t.Error("withHTTP mutated the receiver")
+	}
+	if withA == base || withB == base {
+		t.Error("withHTTP returned the receiver instead of a copy")
+	}
+	if got := withA.http; got != connector.HTTPDoer(a) {
+		t.Errorf("first copy bound to %v, want a", got)
+	}
+	if got := withB.http; got != connector.HTTPDoer(b) {
+		t.Errorf("second copy bound to %v, want b", got)
+	}
+	// The copies still serve the same catalog.
+	if withA.Name() != "copy-me" || len(withA.entries) != 1 {
+		t.Error("withHTTP copy lost the catalog")
+	}
+}
+
+// The client a real provider hands out satisfies connector.HTTPInjector — the
+// interface main.go type-asserts against. providers/client.go also asserts
+// this at build time; this test states the same guarantee at the level a
+// caller sees it, and checks that the injected client really lands.
+func TestProviderClient_ImplementsHTTPInjector(t *testing.T) {
+	reg, seen := capturingRegistry(connector.KindOpenAI)
+	p := NewProvider("injector", []ModelEntry{
+		{Name: "m", URI: "openai://m@sk-tok@api.example.invalid"},
+	}, Deps{Connectors: reg})
+
+	inj, ok := p.Client("m").(connector.HTTPInjector)
+	if !ok {
+		t.Fatal("the client from Provider.Client does not implement connector.HTTPInjector")
+	}
+	doer := &stubDoer{}
+	if _, err := inj.WithHTTP(doer).Stream(context.Background(), Request{Model: "m"}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if seen.HTTP != connector.HTTPDoer(doer) {
+		t.Errorf("Endpoint.HTTP = %v, want the injected doer", seen.HTTP)
+	}
+}
+
+// stubDoer is a do-nothing HTTPDoer used as an identity marker.
+type stubDoer struct{ calls int }
+
+func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
+	d.calls++
+	return &http.Response{
+		StatusCode: 200,
+		Status:     "200 OK",
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("data: [DONE]\n")),
 		Request:    req,
 	}, nil
 }

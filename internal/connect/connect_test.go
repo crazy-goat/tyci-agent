@@ -2,6 +2,7 @@ package connect
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,7 +24,7 @@ func TestFetchOpenAIModels_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models, err := fetchOpenAIModels(srv.URL, "")
+	models, err := fetchOpenAIModels(http.DefaultClient, srv.URL, "")
 	if err != nil {
 		t.Fatalf("fetchOpenAIModels() error: %v", err)
 	}
@@ -50,7 +51,7 @@ func TestFetchOpenAIModels_FallbackToModels(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models, err := fetchOpenAIModels(srv.URL, "")
+	models, err := fetchOpenAIModels(http.DefaultClient, srv.URL, "")
 	if err != nil {
 		t.Fatalf("fetchOpenAIModels() error: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestFetchOpenAIModels_AllPathsFail(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := fetchOpenAIModels(srv.URL, "")
+	_, err := fetchOpenAIModels(http.DefaultClient, srv.URL, "")
 	if err == nil {
 		t.Fatal("expected error when all paths return 404")
 	}
@@ -87,7 +88,7 @@ func TestFetchOpenAIModels_WithAuthHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := fetchOpenAIModels(srv.URL, "sk-test-token")
+	_, err := fetchOpenAIModels(http.DefaultClient, srv.URL, "sk-test-token")
 	if err != nil {
 		t.Fatalf("fetchOpenAIModels() error: %v", err)
 	}
@@ -112,7 +113,7 @@ func TestFetchOpenAIModels_EnvVarToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := fetchOpenAIModels(srv.URL, "$TEST_FETCH_TOKEN")
+	_, err := fetchOpenAIModels(http.DefaultClient, srv.URL, "$TEST_FETCH_TOKEN")
 	if err != nil {
 		t.Fatalf("fetchOpenAIModels() error: %v", err)
 	}
@@ -128,7 +129,7 @@ func TestFetchOpenAIModels_NonJSONResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := fetchOpenAIModels(srv.URL, "")
+	_, err := fetchOpenAIModels(http.DefaultClient, srv.URL, "")
 	if err == nil {
 		t.Fatal("expected error for non-JSON response")
 	}
@@ -288,5 +289,43 @@ func TestAddProvider_TokenEnvVarExpansion(t *testing.T) {
 	key, ok, _ := GetKey("test-provider")
 	if !ok || key != "sk-env-expanded" {
 		t.Errorf("expected resolved token 'sk-env-expanded' in auth.json, got %q", key)
+	}
+}
+
+// ─── HTTPDoer injection ─────────────────────────────────────────────────
+
+// stubDoer answers from memory so the fetcher never touches a socket.
+type stubDoer struct {
+	calls int
+	url   string
+}
+
+func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
+	d.calls++
+	d.url = req.URL.String()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"m-1"}]}`)),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
+
+// The doer parameter is the injection seam: no http.Client is constructed
+// inside the fetcher any more.
+func TestFetchOpenAIModels_UsesInjectedDoer(t *testing.T) {
+	d := &stubDoer{}
+	models, err := fetchOpenAIModels(d, "https://api.example.invalid", "")
+	if err != nil {
+		t.Fatalf("fetchOpenAIModels() error: %v", err)
+	}
+	if d.calls != 1 {
+		t.Fatalf("injected doer got %d requests, want 1", d.calls)
+	}
+	if d.url != "https://api.example.invalid/models" {
+		t.Errorf("URL = %q, want %q", d.url, "https://api.example.invalid/models")
+	}
+	if len(models) != 1 || models[0] != "m-1" {
+		t.Errorf("models = %v, want [m-1]", models)
 	}
 }

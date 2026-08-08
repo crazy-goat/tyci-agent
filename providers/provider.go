@@ -1,8 +1,6 @@
 package providers
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +9,7 @@ import (
 	"time"
 
 	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/stream"
+	"github.com/decodo/tyci/connector"
 )
 
 func BuildSystemPrompt() string {
@@ -92,46 +90,61 @@ Be terse. No fluff. Short sentence. Get job done.
 	return prompt
 }
 
+// The canonical message types live in package connector, because providers
+// imports connector (and never the other way round). These are type aliases,
+// not new types, so every existing consumer — agent, session, the CLI —
+// keeps compiling unchanged and the two spellings stay interchangeable.
+
 // ContentBlock represents a single content block within a RichMessage.
-type ContentBlock struct {
-	Type     string `json:"type"` // "text", "thinking", "toolCall", "toolResult"
-	Text     string `json:"text,omitempty"`
-	Thinking string `json:"thinking,omitempty"`
-
-	// Tool call fields
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
-
-	// Tool result fields
-	IsError    bool   `json:"isError,omitempty"`
-	ToolCallID string `json:"toolCallId,omitempty"`
-	ToolName   string `json:"toolName,omitempty"`
-}
+type ContentBlock = connector.ContentBlock
 
 // RichMessage is the canonical message type used throughout the agent loop.
-// It carries structured content blocks instead of a flat text string,
-// allowing providers to build their own wire format.
-type RichMessage struct {
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
-}
+type RichMessage = connector.Message
 
-// Request is passed to Provider.Stream.
-type Request struct {
-	Model    string
-	System   string
-	Messages []RichMessage
-	Tools    json.RawMessage
-	Debug    bool
-}
+// Request is what a connector.ModelClient sends.
+type Request = connector.Request
 
+// Provider is the CATALOG: one named entry answering questions about which
+// models it serves and whether it has a credential, plus the factory that
+// turns such an entry into something able to send a request.
+//
+// It deliberately has no Stream. Sending bytes is the job of
+// connector.ModelClient, which is the only abstraction package agent ever
+// sees, and Client is the only door to it. Before this split the two
+// abstractions were glued together, which is how FreeModels() could sit dead
+// on the interface for as long as it did — nobody could tell whether it was a
+// catalog question or a transport concern.
+//
+// Minting the client is a METHOD, not a package-level Client(p, model)
+// function, because the provider is the only thing that knows how to reach
+// its own models (URI, auth, connector kind). A free function would have to
+// take the interface and then go looking for the transport behind it, i.e.
+// type-assert — and a failed assertion there degrades silently. As a method
+// it is checked by the compiler.
 type Provider interface {
 	Name() string
 	IsConfigured() bool
 	Models() []string
-	FreeModels() []string
-	Stream(ctx context.Context, req Request) (<-chan stream.Event, error)
+
+	// Client returns a ModelClient bound to model on this provider. The name
+	// is deliberately NOT validated: `--model provider/anything` has always
+	// passed an unlisted name straight through, and the "model not found in
+	// provider" error surfaces at request time.
+	Client(model string) connector.ModelClient
+
+	// ConfigWarnings reports credential problems that IsConfigured deliberately
+	// does NOT report as "not configured" — today, a URI token that looks like
+	// "$FOO" but does not resolve through the environment. A single bool
+	// cannot carry both "is there a usable credential" (what routing needs:
+	// FindModel, catalogResolver, `provider list`'s ✓/✗) and "is something
+	// about this credential suspicious" (what a human needs to know to fix a
+	// silent 401) — collapsing the second into the first would make
+	// IsConfigured's verdict flip out from under callers that only asked the
+	// first question. IsConfigured's boolean stays exactly as it is today (see
+	// the comment on dynamicProvider.IsConfigured); this is the second,
+	// additive channel for the diagnostic that boolean cannot express.
+	// Nil means nothing to report.
+	ConfigWarnings() []string
 }
 
 var DefaultRetryConfig = api.RetryConfig{MaxRetries: 5, BaseBackoff: 4, MaxBackoff: 128}

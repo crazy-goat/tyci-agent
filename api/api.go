@@ -11,31 +11,61 @@ import (
 	"time"
 )
 
-// defaultClient is the shared HTTP client used by all API streaming functions.
-// It reuses connections and avoids allocating a new Transport per request.
+// HTTPDoer is the minimal HTTP surface the streamers need. Taking an
+// interface (instead of *http.Client) is what makes the transport injectable
+// per streamer, and what lets tests hand in a recording double.
+type HTTPDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// doer picks the client for one request: an explicitly injected HTTPDoer wins,
+// otherwise the shared default client is used.
+//
+// Injection is the only override left. It arrives as a field on the streamer,
+// filled from connector.Endpoint.HTTP, which providers.NewProvider populates
+// from its Deps.HTTP — so a caller that needs its own transport or its own
+// connection pool says so when it builds the provider. There is deliberately
+// no context read here any more: a request's transport is a construction-time
+// decision, not something an arbitrary ancestor can swap out invisibly.
+//
+// A typed-nil *http.Client is treated as "nothing injected" rather than being
+// used and panicking inside net/http; the removed context-key lookup guarded
+// the same case.
+func doer(h HTTPDoer) HTTPDoer {
+	if cl, ok := h.(*http.Client); ok && cl == nil {
+		return defaultClient
+	}
+	if h != nil {
+		return h
+	}
+	return defaultClient
+}
+
+// applyExtraHeaders sets caller-supplied headers on req. It runs AFTER the
+// protocol defaults, so an Endpoint can override e.g. Authorization; with an
+// empty map (today's only case) it is a no-op and the wire bytes are unchanged.
+func applyExtraHeaders(req *http.Request, extra map[string]string) {
+	for k, v := range extra {
+		req.Header.Set(k, v)
+	}
+}
+
+// defaultClient is the shared HTTP client used by every streamer that was not
+// given one of its own. It reuses connections and avoids allocating a new
+// Transport per request.
+//
+// It is read directly by doer, with no indirection in between. There used to
+// be a defaultClientProvider function variable here whose only reason to exist
+// was letting one test swap the client out; a mutable package-level seam is
+// safe only as long as nobody in this package calls t.Parallel(), which is a
+// guarantee nothing enforces. The test in question reaches a httptest server
+// over plain HTTP on 127.0.0.1, which this client can do unaided.
 var defaultClient = &http.Client{
 	Transport: &http.Transport{
 		MaxIdleConns:        4,
 		MaxIdleConnsPerHost: 2,
 		IdleConnTimeout:     90 * time.Second,
 	},
-}
-
-// defaultClientProvider returns the shared HTTP client.
-// Extracted as a variable so tests can override it.
-var defaultClientProvider = func() *http.Client { return defaultClient }
-
-// HTTPClientKey is the context key for overriding the HTTP client per-request.
-// Used by subagent to create its own isolated HTTP connection pool.
-type HTTPClientKey struct{}
-
-// ClientFromContext returns an HTTP client from context if set, otherwise
-// falls back to the global default client provider.
-func ClientFromContext(ctx context.Context) *http.Client {
-	if cl, ok := ctx.Value(HTTPClientKey{}).(*http.Client); ok && cl != nil {
-		return cl
-	}
-	return defaultClientProvider()
 }
 
 type RetryableError struct {

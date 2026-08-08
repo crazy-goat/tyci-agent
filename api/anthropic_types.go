@@ -1,3 +1,5 @@
+//go:build !noanthropic
+
 package api
 
 import "encoding/json"

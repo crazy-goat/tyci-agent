@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
-	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/internal/tyciconfig"
 	"github.com/decodo/tyci/stream"
@@ -96,11 +97,7 @@ func RegisterProvidersFromConfig(path string) {
 		if len(list) == 0 {
 			continue
 		}
-		p := &dynamicProvider{
-			name:    groupName,
-			entries: list,
-		}
-		Register(p)
+		Register(NewProvider(groupName, list, Deps{}))
 	}
 }
 
@@ -175,11 +172,7 @@ func RegisterProvidersFromProvidersJSON(path string) error {
 		if len(list) == 0 {
 			continue
 		}
-		p := &dynamicProvider{
-			name:    groupName,
-			entries: list,
-		}
-		Register(p)
+		Register(NewProvider(groupName, list, Deps{}))
 	}
 	return nil
 }
@@ -203,38 +196,147 @@ type ModelEntry struct {
 	URI  string
 }
 
+// defaultConnectors is the connector set every dynamicProvider uses unless it
+// carries its own. The registry is a value, so this is a package default —
+// not a global registry the connector package would have to own.
+var defaultConnectors = connector.DefaultRegistry()
+
+// Deps are the collaborators a provider carries explicitly instead of
+// reaching for package globals. Every field is optional; a zero Deps yields
+// exactly the production defaults.
+type Deps struct {
+	// Auth resolves the provider-level credential. nil means DefaultAuth()
+	// (auth.json, then environment).
+	Auth AuthSource
+	// Connectors is the set of wire protocols this provider may build. nil
+	// means the built-in registry for this binary.
+	Connectors *connector.Registry
+	// HTTP is the client every connector this provider builds will send with.
+	// nil means the api layer's shared default client — that is the normal
+	// production case; only a caller that needs its own connection pool (the
+	// subagent) or its own transport (tests) fills this in.
+	HTTP connector.HTTPDoer
+}
+
+// NewProvider builds a Provider serving the given model catalog.
+//
+// This is the only constructor: everything the provider needs at request time
+// arrives through it, so nothing in the request path consults a global.
+func NewProvider(name string, entries []ModelEntry, deps Deps) Provider {
+	return newDynamicProvider(name, entries, deps)
+}
+
+func newDynamicProvider(name string, entries []ModelEntry, deps Deps) *dynamicProvider {
+	if deps.Auth == nil {
+		deps.Auth = defaultAuthSource
+	}
+	if deps.Connectors == nil {
+		deps.Connectors = defaultConnectors
+	}
+	// deps.HTTP stays nil on purpose: "no client of my own" is a meaningful
+	// value that hands the choice to the api layer's shared default client.
+	return &dynamicProvider{
+		name:     name,
+		entries:  entries,
+		registry: deps.Connectors,
+		auth:     deps.Auth,
+		http:     deps.HTTP,
+	}
+}
+
 // dynamicProvider implements Provider using config entries.
 type dynamicProvider struct {
 	name    string
 	entries []ModelEntry
+	// registry is optional; nil means defaultConnectors. NewProvider always
+	// fills it, but hand-built literals (tests) may leave it zero.
+	registry *connector.Registry
+	// auth is optional; nil means defaultAuthSource.
+	auth AuthSource
+	// http is the client injected into every Endpoint this provider builds.
+	// nil is meaningful — see Deps.HTTP.
+	http connector.HTTPDoer
+}
+
+// withHTTP returns a copy of the provider bound to h. It returns a copy rather
+// than mutating: a single provider value is shared by every parallel subagent,
+// so mutating it here would let one child's connection pool leak into another.
+//
+// It is unexported and returns the concrete type. Transport is not part of the
+// Provider contract — the catalog has no business knowing HTTP exists — and
+// the only caller is modelClient.WithHTTP, inside this package, which is how
+// the injection stays a compiler-checked hop rather than a type assertion that
+// can quietly not match.
+func (p *dynamicProvider) withHTTP(h connector.HTTPDoer) *dynamicProvider {
+	c := *p
+	c.http = h
+	return &c
 }
 
 func (p *dynamicProvider) Name() string { return p.name }
 
 func (p *dynamicProvider) IsConfigured() bool {
 	for _, e := range p.entries {
+		// The URI token is checked RAW, not through LiteralAuth: an entry
+		// carrying an unresolvable "$FOO" still counts as configured here,
+		// while Stream would refuse it. That asymmetry is pre-existing and
+		// deliberately preserved — the `provider list` output must not start
+		// hiding providers the user did configure. (ConfigWarnings surfaces
+		// the unresolvable case separately; see providers/provider.go.)
 		_, token, _, _, err := parseURI(e.URI)
 		if err == nil && token != "" {
 			return true
 		}
-		// Check auth.json. Resolve "$ENV_VAR" references so a literal
-		// "$FOO" entry (from single-quoted shell input or hand-edits)
-		// is treated as configured only when FOO is actually exported.
-		if key, ok, err := connect.GetKey(p.name); err == nil && ok {
-			if resolved := connect.ResolveToken(key); resolved != "" {
-				return true
-			}
-		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: reading auth.json: %v\n", err)
-		}
-		if os.Getenv(strings.ToUpper(p.name+"_API_KEY")) != "" {
-			return true
-		}
-		if os.Getenv("OPENCODE_API_KEY") != "" {
-			return true
-		}
 	}
-	return false
+	// Loop-invariant: p.authSource().Key(p.name) depends only on p.name, never
+	// on the entry e, so evaluating it once per entry (the old shape) bought
+	// nothing but repeated auth.json reads — up to len(p.entries) of them for
+	// a provider with no key at all. Every entry that DOES carry a URI token
+	// already returned above without touching authSource, so moving this
+	// below the loop costs at most one auth.json read per provider (zero for
+	// a provider whose first entry has a token), instead of one per model.
+	return p.authSource().Key(p.name) != ""
+}
+
+// ConfigWarnings reports URI tokens that look like "$FOO" but do not resolve
+// through the environment right now. IsConfigured deliberately does not
+// downgrade such an entry to "not configured" (see the comment there); this
+// is where the same fact surfaces without changing that verdict.
+//
+// Only URI tokens are inspected. A literal "$FOO" stored in auth.json via
+// hand-editing the file (rather than `provider auth set`, which already
+// rejects an unresolvable "$FOO" at write time) would be an equally silent
+// footgun, but AuthFile.Key only returns the resolved value — by the time it
+// reaches here, an unresolved auth.json reference is indistinguishable from
+// "no key at all". Surfacing that too would require AuthSource itself to stop
+// returning a bare string, which is out of scope here.
+//
+// The result is deduplicated (many model entries commonly share one env var)
+// and sorted (so `provider list` output — and this method — never flickers
+// between runs due to map/slice iteration order).
+func (p *dynamicProvider) ConfigWarnings() []string {
+	seen := make(map[string]bool)
+	var vars []string
+	for _, e := range p.entries {
+		_, token, _, _, err := parseURI(e.URI)
+		if err != nil || !connect.LooksLikeEnvRef(token) {
+			continue
+		}
+		if connect.ResolveToken(token) != "" {
+			continue
+		}
+		name := strings.TrimPrefix(token, "$")
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		vars = append(vars, name)
+	}
+	if vars == nil {
+		return nil
+	}
+	sort.Strings(vars)
+	return vars
 }
 
 func (p *dynamicProvider) Models() []string {
@@ -247,134 +349,128 @@ func (p *dynamicProvider) Models() []string {
 	return models
 }
 
-func (p *dynamicProvider) FreeModels() []string {
-	return nil
-}
-
 func (p *dynamicProvider) Stream(ctx context.Context, req Request) (<-chan stream.Event, error) {
-	var entry *ModelEntry
-	for _, e := range p.entries {
-		if e.Name == req.Model {
-			entry = &e
-			break
-		}
-	}
+	entry := p.findEntry(req.Model)
 	if entry == nil {
 		return nil, fmt.Errorf("model %q not found in provider %q", req.Model, p.name)
 	}
 
-	apiType, apiKey, baseURL, endpointPath, err := parseURI(entry.URI)
+	apiType, uriKey, baseURL, endpointPath, err := parseURI(entry.URI)
 	if err != nil {
 		return nil, err
 	}
 
-	// Resolve $ENV_VAR references in token
-	apiKey = connect.ResolveToken(apiKey)
-
-	// If no API key in URI, try auth.json
-	if apiKey == "" {
-		if key, ok, err := connect.GetKey(p.name); err == nil && ok {
-			// Resolve "$ENV_VAR" refs stored in auth.json, too. This
-			// allows entries like "nexos": "$NEXOS_API_KEY" to work
-			// even when the user accidentally single-quoted the value
-			// at `provider auth set` time.
-			apiKey = connect.ResolveToken(key)
-		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: reading auth.json: %v\n", err)
-		}
+	apiKey, err := p.resolveAPIKey(uriKey)
+	if err != nil {
+		return nil, err
 	}
 
-	// If still no API key, try env vars
-	if apiKey == "" {
-		envKey := strings.ToUpper(p.name) + "_API_KEY"
-		apiKey = os.Getenv(envKey)
-		if apiKey == "" {
-			apiKey = os.Getenv("OPENCODE_API_KEY")
-		}
+	kind, err := p.kindFor(apiType)
+	if err != nil {
+		return nil, err
 	}
 
-	if apiKey == "" {
-		return nil, fmt.Errorf("no API key for %q (set via 'tyci provider auth set', %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
+	conn, err := p.connectors().New(kind, connector.Endpoint{
+		BaseURL: baseURL,
+		Path:    endpointPath,
+		APIKey:  apiKey,
+		HTTP:    p.http,
+		Options: uriOptions(entry.URI),
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	endpoint := baseURL + endpointPath
 	ch := make(chan stream.Event, 64)
-
-	switch apiType {
-	case "anthropic":
-		anthropicMsgs := RichMessagesToAnthropic(req.Messages)
-		body := api.AnthropicRequest{
-			Model:     req.Model,
-			MaxTokens: 4096,
-			Stream:    true,
-			System:    req.System,
-			Messages:  anthropicMsgs,
-			Tools:     api.ConvertToolsToAnthropic(req.Tools),
-		}
-		go func() {
-			defer close(ch)
-			if err := api.StreamAnthropic(ctx, apiKey, endpoint, body, forward(ch, ctx)); err != nil {
-				select {
-				case ch <- stream.StreamError{Err: err}:
-				case <-ctx.Done():
-				}
+	go func() {
+		defer close(ch)
+		if err := conn.Stream(ctx, req, forward(ch, ctx)); err != nil {
+			select {
+			case ch <- stream.StreamError{Err: err}:
+			case <-ctx.Done():
 			}
-		}()
-
-	case "gemini":
-		contents, system := RichMessagesToGemini(req.Messages)
-		body := api.GeminiRequest{
-			Contents: contents,
-			Stream:   true,
 		}
-		if system != "" {
-			body.SystemInstruction = &struct {
-				Parts []api.GeminiPart `json:"parts"`
-			}{Parts: []api.GeminiPart{{Text: system}}}
-		} else if req.System != "" {
-			body.SystemInstruction = &struct {
-				Parts []api.GeminiPart `json:"parts"`
-			}{Parts: []api.GeminiPart{{Text: req.System}}}
-		}
-		// Convert tools from OpenAI format to Gemini functionDeclarations
-		if len(req.Tools) > 0 && string(req.Tools) != "null" && string(req.Tools) != "[]" {
-			body.Tools = convertToolsToGemini(req.Tools)
-		}
-		go func() {
-			defer close(ch)
-			if err := api.StreamGemini(ctx, apiKey, endpoint, body, forward(ch, ctx)); err != nil {
-				select {
-				case ch <- stream.StreamError{Err: err}:
-				case <-ctx.Done():
-				}
-			}
-		}()
-
-	default: // "openai" or any other chat-completion-like API
-		// Only send reasoning field if ?reasoning=true is in the URI
-		reasoning := false
-		if parsedURI, err := tyciconfig.Parse(entry.URI); err == nil {
-			reasoning = parsedURI.Reasoning
-		}
-		chatMsgs := RichMessagesToChat(req.Messages, req.System)
-		body := api.ChatRequest{
-			Model:    req.Model,
-			Stream:   true,
-			Messages: chatMsgs,
-			Tools:    req.Tools,
-		}
-		if reasoning {
-			body.Reasoning = true
-		}
-		go func() {
-			defer close(ch)
-			if err := api.StreamChat(ctx, apiKey, endpoint, body, forward(ch, ctx)); err != nil {
-				ch <- stream.StreamError{Err: err}
-			}
-		}()
-	}
+	}()
 
 	return ch, nil
+}
+
+// findEntry returns the entry for a model name, or nil.
+func (p *dynamicProvider) findEntry(model string) *ModelEntry {
+	for i := range p.entries {
+		if p.entries[i].Name == model {
+			return &p.entries[i]
+		}
+	}
+	return nil
+}
+
+// connectors returns the registry to build connectors from. NewProvider fills
+// the field from Deps.Connectors (production: the built-in set; tests: their
+// own registry of fakes); the nil fallback only covers hand-built literals.
+func (p *dynamicProvider) connectors() *connector.Registry {
+	if p.registry != nil {
+		return p.registry
+	}
+	return defaultConnectors
+}
+
+// authSource returns the credential lookup for this provider, defaulting to
+// auth.json + environment. Both IsConfigured and resolveAPIKey go through it,
+// so there is exactly one description of the precedence.
+func (p *dynamicProvider) authSource() AuthSource {
+	if p.auth != nil {
+		return p.auth
+	}
+	return defaultAuthSource
+}
+
+// kindFor maps a URI api_type to a connector kind.
+//
+// It deliberately does NOT fall back to the OpenAI connector. The `default:`
+// branch of the old switch in Stream was already dead: tyciconfig.Parse
+// normalizes every unrecognized URI scheme to "openai"
+// (internal/tyciconfig/uri.go), and LoadProvidersJSON only ever produces the
+// three known api_types — so apiType arriving here is always a known kind.
+// A fallback would only ever fire for a kind that IS known but is missing from
+// the registry (a build without anthropic/gemini), and quietly sending an
+// Anthropic-shaped request to a chat-completions endpoint is far worse than
+// the error the api/*_stub.go files used to return.
+func (p *dynamicProvider) kindFor(apiType string) (string, error) {
+	if p.connectors().Has(apiType) {
+		return apiType, nil
+	}
+	if connector.IsKnownKind(apiType) {
+		return "", connector.ErrExcluded(apiType)
+	}
+	return "", fmt.Errorf("unsupported api_type %q", apiType)
+}
+
+// uriOptions extracts the connector options encoded in the URI query string.
+// Returns nil when there is nothing to pass.
+func uriOptions(uri string) map[string]string {
+	parsed, err := tyciconfig.Parse(uri)
+	if err != nil || !parsed.Reasoning {
+		return nil
+	}
+	return map[string]string{connector.OptReasoning: "true"}
+}
+
+// resolveAPIKey resolves the credential for this provider: the token from the
+// URI first, then whatever the provider's AuthSource offers (by default
+// auth.json, then env vars).
+func (p *dynamicProvider) resolveAPIKey(uriKey string) (string, error) {
+	if apiKey := (AuthChain{LiteralAuth(uriKey), p.authSource()}).Key(p.name); apiKey != "" {
+		return apiKey, nil
+	}
+	// uriKey looking like "$FOO" and failing to resolve is a DIFFERENT failure
+	// than "no credential configured at all" (ConfigWarnings already flagged
+	// it in `provider list`, before any request was sent) — name the variable
+	// instead of implying the user never set a key.
+	if connect.LooksLikeEnvRef(uriKey) {
+		return "", fmt.Errorf("%s is set to %q but env var %s is empty or unset", p.name, uriKey, strings.TrimPrefix(uriKey, "$"))
+	}
+	return "", fmt.Errorf("no API key for %q (set via 'tyci provider auth set', %s_API_KEY env var, OPENCODE_API_KEY, or use a free model)", p.name, strings.ToUpper(p.name))
 }
 
 // forward creates an emit function for stream events.
@@ -431,46 +527,4 @@ func parseModel(uri string) string {
 		return ""
 	}
 	return u.Model
-}
-
-// convertToolsToGemini converts tool schemas from OpenAI format to Gemini functionDeclarations format.
-// OpenAI format:  [{"type":"function","function":{"name":"...","description":"...","parameters":{...}}}]
-// Gemini format: [{"functionDeclarations":[{"name":"...","description":"...","parameters":{...}}]}]
-func convertToolsToGemini(tools json.RawMessage) []api.GeminiTools {
-	var openaiTools []map[string]any
-	if err := json.Unmarshal(tools, &openaiTools); err != nil {
-		return nil
-	}
-
-	declarations := make([]api.GeminiToolDeclaration, 0, len(openaiTools))
-	for _, t := range openaiTools {
-		fn, ok := t["function"].(map[string]any)
-		if !ok {
-			continue
-		}
-		name, _ := fn["name"].(string)
-		if name == "" {
-			continue
-		}
-		desc, _ := fn["description"].(string)
-
-		var params json.RawMessage
-		if p, ok := fn["parameters"]; ok {
-			if data, err := json.Marshal(p); err == nil {
-				params = data
-			}
-		}
-
-		declarations = append(declarations, api.GeminiToolDeclaration{
-			Name:        name,
-			Description: desc,
-			Parameters:  params,
-		})
-	}
-
-	if len(declarations) == 0 {
-		return nil
-	}
-
-	return []api.GeminiTools{{FunctionDeclarations: declarations}}
 }

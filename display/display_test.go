@@ -965,6 +965,7 @@ func TestBuildUsageLineNoTiming_NoTimingInOutput(t *testing.T) {
 
 func TestMinimal_ToolCallStart(t *testing.T) {
 	m := NewMinimal()
+	defer m.End()
 	m.ToolCallStart("bash")
 	// Minimal writes to stdout but we can't easily capture it in unit test
 	// Just ensure it doesn't panic
@@ -972,6 +973,7 @@ func TestMinimal_ToolCallStart(t *testing.T) {
 
 func TestMinimal_ToolCallDelta(t *testing.T) {
 	m := NewMinimal()
+	defer m.End()
 	m.ToolCallStart("bash")
 	m.ToolCallDelta(`{"description": "test"}`)
 	// Just ensure no panic
@@ -979,6 +981,7 @@ func TestMinimal_ToolCallDelta(t *testing.T) {
 
 func TestMinimal_ToolCall_FullFlow(t *testing.T) {
 	m := NewMinimal()
+	defer m.End()
 	m.ToolCallStart("bash")
 	m.ToolCallDelta(`{"command": "ls"}`)
 	m.ToolCallEnd("bash", "file1\nfile2")
@@ -987,6 +990,7 @@ func TestMinimal_ToolCall_FullFlow(t *testing.T) {
 
 func TestMinimal_ToolCallDelta_Multiple(t *testing.T) {
 	m := NewMinimal()
+	defer m.End()
 	m.ToolCallStart("bash")
 	m.ToolCallDelta(`{"description": "`)
 	m.ToolCallDelta(`list`)
@@ -997,6 +1001,7 @@ func TestMinimal_ToolCallDelta_Multiple(t *testing.T) {
 
 func TestMinimal_ToolBlock_NoPanic(t *testing.T) {
 	m := NewMinimal()
+	defer m.End()
 	m.ToolBlock("⏳ waiting for tools...")
 	m.ToolBlock("second call")
 	// Just ensure no panic
@@ -1004,6 +1009,7 @@ func TestMinimal_ToolBlock_NoPanic(t *testing.T) {
 
 func TestMinimal_ToolBlock_ThenToolCall(t *testing.T) {
 	m := NewMinimal()
+	defer m.End()
 	m.ToolBlock("⏳ waiting for tools...")
 	m.ToolCallStart("bash")
 	m.ToolCallDelta(`{"command": "ls"}`)

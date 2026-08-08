@@ -6,13 +6,21 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/conductor"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 )
 
-func runPrompt(provider providers.Provider, disp display.Display, prompt string, cfg agent.Config, ctx context.Context, sess *session.Session, sessionPath string) {
+// runPrompt executes one non-interactive turn.
+//
+// Everything that used to make this function a second implementation of the
+// conversation loop — appending the user message, opening the session file,
+// writing the prompt to it, calling agent.Run, accumulating usage — now lives
+// in the conductor. What is left here is genuinely one-shot-CLI business:
+// which signals mean "stop", and whether a resumed transcript is replayed in
+// full or summarized (it is summarized; a huge session would bury the answer).
+func runPrompt(cond *conductor.Conductor, disp display.Display, prompt string, ctx context.Context) {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
@@ -21,28 +29,24 @@ func runPrompt(provider providers.Provider, disp display.Display, prompt string,
 
 	// For one-shot `tyci run --prompt ...` we always have a user prompt,
 	// so it's safe — and correct — to materialize the session file here.
-	// initCommon leaves sess nil for auto-generated paths and only opens
-	// eagerly for explicit --session (resume). For the auto-gen path we
-	// need to open the file right before the first write; doing it later
-	// (after agent.Run) would skip writing the user line itself.
-	wd, _ := os.Getwd()
-	opened, _, lerr := ensureLazySession(sess, sessionPath, wd, cfg.Model, provider.Name())
-	if lerr == nil && opened != nil {
-		sess = opened
-		cfg.Session = opened
+	// initCommon leaves the conductor's session nil for auto-generated
+	// paths and only opens eagerly for explicit --session (resume). We need
+	// the file open before deciding what history to prepend, because that
+	// decision reads IsResume() off the session itself.
+	sess := cond.EnsureSession()
+
+	if hist := resumeHistory(disp, sess, cond.SessionPath()); len(hist) > 0 {
+		cond.SetHistory(hist)
 	}
 
-	messages := buildPromptMessages(prompt, disp, sess, sessionPath)
-	writePromptToSession(sess, prompt)
-
-	usage, err := agent.Run(runCtx, provider, disp, &messages, cfg)
+	_, err := cond.Submit(runCtx, prompt)
 
 	stopESC()
 	signal.Stop(sigCh)
 	runCancel()
 	<-sigDone
 
-	finishPromptRun(disp, sess, sessionPath, usage, err)
+	finishPromptRun(cond, disp, err)
 }
 
 func watchInterrupt(ctx context.Context, cancel context.CancelFunc) (chan os.Signal, chan struct{}) {
@@ -60,18 +64,18 @@ func watchInterrupt(ctx context.Context, cancel context.CancelFunc) (chan os.Sig
 	return sigCh, sigDone
 }
 
-func buildPromptMessages(prompt string, disp display.Display, sess *session.Session, sessionPath string) []providers.RichMessage {
-	messages := []providers.RichMessage{{
-		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: prompt}},
-	}}
+// resumeHistory rebuilds the transcript of a resumed session so the model
+// keeps its context, and tells the user what was loaded. It returns nil when
+// there is nothing to resume. The prompt itself is not appended here — that
+// is the conductor's job, on Submit.
+func resumeHistory(disp display.Display, sess *session.Session, sessionPath string) []connector.Message {
 	if sess == nil || !sess.IsResume() {
-		return messages
+		return nil
 	}
 	parsedLines := sess.Messages()
 	rebuiltMsgs, err := session.RebuildMessages(parsedLines)
 	if err != nil || len(rebuiltMsgs) == 0 {
-		return messages
+		return nil
 	}
 	fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages) from %s\n", sess.ID(), len(rebuiltMsgs), sessionPath)
 	// One-shot run mode: render a compact summary (no full replay). A
@@ -84,16 +88,5 @@ func buildPromptMessages(prompt string, disp display.Display, sess *session.Sess
 	} else {
 		fmt.Fprintf(os.Stderr, "Warning: cannot summarize session: %v\n", err)
 	}
-	return append(rebuiltMsgs, providers.RichMessage{
-		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: prompt}},
-	})
-}
-
-func writePromptToSession(sess *session.Session, prompt string) {
-	if sess == nil || prompt == "" {
-		return
-	}
-	blocks := []session.ContentBlock{{Type: "text", Text: prompt}}
-	_ = sess.WriteMessage("user", blocks, nil)
+	return rebuiltMsgs
 }

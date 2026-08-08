@@ -75,7 +75,7 @@ func EnsureProvidersJSON() error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat providers.json: %w", err)
 	}
-	body, err := fetchModelsDev()
+	body, err := fetchModelsDev(defaultHTTPClient)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func EnsureProvidersJSON() error {
 // if non-empty, providers outside the filter are dropped before writing.
 // dryRun if true, only reports what would be imported without writing.
 func RefreshModels(providerFilter string, dryRun bool) ([]RefreshProvider, error) {
-	body, err := fetchModelsDev()
+	body, err := fetchModelsDev(defaultHTTPClient)
 	if err != nil {
 		return nil, fmt.Errorf("fetching models.dev: %w", err)
 	}
@@ -155,10 +155,13 @@ func parseFilter(providerFilter string) map[string]bool {
 }
 
 // fetchModelsDev fetches the models.dev API.
-func fetchModelsDev() ([]byte, error) {
-	client := &http.Client{}
+func fetchModelsDev(doer HTTPDoer) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, modelsDevURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetching %s: %w", modelsDevURL, err)
+	}
 
-	resp, err := client.Get(modelsDevURL)
+	resp, err := doer.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching %s: %w", modelsDevURL, err)
 	}

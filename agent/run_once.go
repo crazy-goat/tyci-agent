@@ -7,21 +7,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
 
-func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config, totalUsage *stream.Usage) (more bool, usage *stream.Usage, totalEmitted bool, err error) {
-	ctx = providers.WithProvider(ctx, p)
-	ctx = providers.WithModel(ctx, cfg.Model)
+func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connector.Message, cfg Config, totalUsage *stream.Usage) (more bool, usage *stream.Usage, totalEmitted bool, err error) {
+	ctx = connector.WithModelClient(ctx, mc)
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	d.Request(roundInputLabel(*msgs))
 
-	events, streamErr := p.Stream(streamCtx, providers.Request{
-		Model:    cfg.Model,
+	events, streamErr := mc.Stream(streamCtx, connector.Request{
+		Model:    mc.Model(),
 		System:   cfg.System,
 		Messages: *msgs,
 		Tools:    cfg.Schema,
@@ -98,11 +96,11 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 	hasTools := len(toolCalls) > 0
 
 	if hasText || hasTools {
-		var content []providers.ContentBlock
+		var content []connector.ContentBlock
 
 		// Add thinking block first (before text, chronologically)
 		if thinkingBuf.Len() > 0 {
-			content = append(content, providers.ContentBlock{
+			content = append(content, connector.ContentBlock{
 				Type:     "thinking",
 				Thinking: thinkingBuf.String(),
 			})
@@ -110,7 +108,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 
 		// Add text block
 		if hasText {
-			content = append(content, providers.ContentBlock{
+			content = append(content, connector.ContentBlock{
 				Type: "text",
 				Text: textBuf.String(),
 			})
@@ -134,7 +132,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 			if id == "" {
 				id = fmt.Sprintf("call_%d", i)
 			}
-			content = append(content, providers.ContentBlock{
+			content = append(content, connector.ContentBlock{
 				Type:      "toolCall",
 				ID:        id,
 				Name:      tc.Name,
@@ -142,7 +140,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 			})
 		}
 
-		msg := providers.RichMessage{
+		msg := connector.Message{
 			Role:    "assistant",
 			Content: content,
 		}
@@ -150,7 +148,7 @@ func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs 
 
 		// Write assistant message to session
 		if cfg.Session != nil {
-			writeAssistantSessionEvent(cfg.Session, p.Name(), cfg.Model, msg, &lastUsage)
+			writeAssistantSessionEvent(cfg.Session, mc.Provider(), mc.Model(), msg, &lastUsage)
 		}
 	}
 
@@ -203,7 +201,7 @@ func hasUsage(u stream.Usage) bool {
 // to the model for the current round: "user prompt" for the first round
 // and "return of tool" for subsequent rounds that feed tool results
 // back. The run-mode Minimal display uses this for the [ REQ] line.
-func roundInputLabel(msgs []providers.RichMessage) string {
+func roundInputLabel(msgs []connector.Message) string {
 	if n := len(msgs); n > 0 {
 		switch msgs[n-1].Role {
 		case "user":

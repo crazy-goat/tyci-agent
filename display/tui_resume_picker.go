@@ -269,8 +269,8 @@ func (m TuiModel) renderResumePickerContent() string {
 	}
 
 	// Fixed layout for the date column at 22 chars wide (YYYY-MM-DD HH:MM:SS).
-	dateWidth := 21 // external width; with the gutter that follows it totals 23 visible cols
-	innerWidth := popupWidth - 4 // 2 chars of side margin inside the rounded border
+	dateWidth := 21                           // external width; with the gutter that follows it totals 23 visible cols
+	innerWidth := popupWidth - 4              // 2 chars of side margin inside the rounded border
 	promptWidth := innerWidth - dateWidth - 2 // 1 space before date + 1 space between cols
 
 	rendered := 0

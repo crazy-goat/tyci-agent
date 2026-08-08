@@ -10,9 +10,9 @@ import (
 
 func TestFormatToolCall_Web(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    string
-		want    string
+		name string
+		args string
+		want string
 	}{
 		{
 			name: "full search",
@@ -63,9 +63,9 @@ func TestFormatToolCall_Web(t *testing.T) {
 
 func TestFormatToolCall_Skills(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    string
-		want    string
+		name string
+		args string
+		want string
 	}{
 		{
 			name: "with name",
@@ -101,9 +101,9 @@ func TestFormatToolCall_Skills(t *testing.T) {
 
 func TestFormatToolCall_Find(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    string
-		want    string
+		name string
+		args string
+		want string
 	}{
 		{
 			name: "with method and pattern",
@@ -141,9 +141,9 @@ func TestFormatToolCall_Todo(t *testing.T) {
 	mustRun(t, tool, map[string]any{"action": "add", "content": "Write the docs"})
 
 	tests := []struct {
-		name    string
-		args    string
-		want    string
+		name string
+		args string
+		want string
 	}{
 		{
 			name: "action and content",
@@ -225,14 +225,14 @@ func TestPrintTodoRenderMatrix(t *testing.T) {
 		{"action": "update", "id": 3, "content": "Refactor config loader"},
 		{"action": "update", "id": 1, "parentId": 2},
 		{"action": "update", "id": 1, "content": "Renamed", "status": "blocked", "priority": "high", "parentId": 0},
-		{"action": "update"},                              // <- no id
-		{"action": "update", "id": 99, "status": "todo"},  // <- error: not found
+		{"action": "update"},                             // <- no id
+		{"action": "update", "id": 99, "status": "todo"}, // <- error: not found
 		{"action": "doing", "id": 1},
 		{"action": "doing", "id": 99}, // <- unknown id
 		{"action": "blocked", "id": 2},
 		{"action": "done", "id": 3},
 		{"action": "remove", "id": 3},
-		{"action": "remove"},                              // <- error: no id
+		{"action": "remove"}, // <- error: no id
 		{"action": "clear"},
 		{"action": "list"},
 		{"action": "explode"}, // <- error: invalid
@@ -266,9 +266,9 @@ func mustRun(t *testing.T, tool *tools.TodoTool, input map[string]any) {
 
 func TestFormatToolCall_Read(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    string
-		want    string
+		name string
+		args string
+		want string
 	}{
 		{
 			name: "with path",
@@ -294,9 +294,9 @@ func TestFormatToolCall_Read(t *testing.T) {
 
 func TestFormatToolCall_Write(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    string
-		want    string
+		name string
+		args string
+		want string
 	}{
 		{
 			name: "with path",
@@ -322,9 +322,9 @@ func TestFormatToolCall_Write(t *testing.T) {
 
 func TestFormatToolCall_Bash(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    string
-		want    string
+		name string
+		args string
+		want string
 	}{
 		{
 			name: "with description",
@@ -355,9 +355,9 @@ func TestFormatToolCall_Bash(t *testing.T) {
 
 func TestFormatToolCall_Subagent(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    string
-		want    string
+		name string
+		args string
+		want string
 	}{
 		{
 			name: "single task",

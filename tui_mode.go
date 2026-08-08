@@ -8,22 +8,18 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/conductor"
 	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 	"github.com/decodo/tyci/tools"
 )
 
-func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp *display.TUI, cfg agent.Config, baseCtx context.Context, sessionPath string) {
-	var conversation []providers.RichMessage
-	var totalUsage stream.Usage
+// runTUI is the full-screen frontend. It reads user input, dispatches slash
+// commands and paints; the conversation behind it — history, model client,
+// session log, usage — is the conductor's.
+func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Context) {
 	titleSet := false // track whether terminal title has been set
-
-	// Mutable provider/model that can change via Tab/Shift+Tab
-	provider := initialProvider
-	modelName := initialModelName
 
 	// Replay session history if resuming. We use the stable block-per-
 	// message replay path so the transcript IS visible (user wanted to
@@ -31,36 +27,28 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 	// renderErrorOrBlock (no glamour) keeps cachedLines deterministic,
 	// and per-message blocks let the existing scroll heuristics handle
 	// pagination correctly.
-	if cfg.Session != nil && cfg.Session.IsResume() && sessionPath != "" {
-		parsedLines := cfg.Session.Messages()
+	if sess := cond.Session(); sess != nil && sess.IsResume() && cond.SessionPath() != "" {
+		parsedLines := sess.Messages()
 		rebuiltMsgs, _ := session.RebuildMessages(parsedLines)
 		if len(rebuiltMsgs) > 0 {
-			conversation = rebuiltMsgs
+			cond.SetHistory(rebuiltMsgs)
 		}
-		replaySessionToDisplay(tuiDisp, sessionPath)
+		replaySessionToDisplay(tuiDisp, cond.SessionPath())
 	}
 
 	// Close TUI on exit, write session end
 	defer func() {
-		if cfg.Session != nil {
-			agent.WriteSessionEnd(cfg.Session, "ok", 0, &totalUsage)
-		}
+		cond.EndSession("ok", 0)
 		tuiDisp.Close()
 	}()
 
-	// updateModel resolves a new model string and updates provider/config.
-	// This is in-memory only for the current TUI process. It does not write
-	// agents/config files, and /new must not reset it.
+	// updateModel resolves a new model string and points the conversation at
+	// it. This is in-memory only for the current TUI process. It does not
+	// write agents/config files, and /new must not reset it.
 	updateModel := func(newModel string) {
-		p, m, ok := providers.FindModel(newModel)
-		if !ok {
-			tuiDisp.SetModel(modelName) // revert TUI display to previous model
-			return
+		if err := cond.SwitchModel(newModel); err != nil {
+			tuiDisp.SetModel(cond.Model()) // revert TUI display to previous model
 		}
-		provider = p
-		modelName = m
-		cfg.Model = m
-		cfg.ProviderName = p.Name()
 	}
 
 	// drainModelChanges applies all queued model changes before running a prompt.
@@ -85,10 +73,10 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 	// arg) and after a successful pick from the /resume popup. Errors surface
 	// to the TUI as error blocks; the active iteration is cancelled after the
 	// swap so the next prompt writes to the *resumed* session rather than the
-	// abandoned one. Mirrors the interactive implementation so /resume behaves
-	// identically across modes.
+	// abandoned one. Mirrors the console implementation so /resume behaves
+	// identically across modes — which is now true because both call the same
+	// conductor method rather than reimplementing it.
 	resumeSession := func(resumePath string, cancellation context.CancelFunc) error {
-		wd, _ := os.Getwd()
 		summary, msgs, total, corrupt, err := session.LoadForReplay(resumePath)
 		if err != nil {
 			return fmt.Errorf("load: %w", err)
@@ -97,43 +85,26 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 			tuiDisp.ToolBlock(fmt.Sprintf("⚠️  %d corrupt lines skipped", len(corrupt)))
 		}
 
-		// Close the current session cleanly before swapping so we don't leak
-		// its file handle or write a session_end twice on exit. Write the
-		// session_end event BEFORE Close() — WriteSessionEnd refuses to
-		// encode into a closed writer, and the outer defer will try again
-		// on process exit, so we want it to be a no-op then.
-		if cfg.Session != nil {
-			agent.WriteSessionEnd(cfg.Session, "ok", 0, &totalUsage)
-		}
-		cfg.Session = nil
-
-		// Reopen the chosen session in append mode. This sets IsResume()=true
-		// so subsequent runs treat it as historical context rather than a
-		// fresh log.
-		newSess, err := session.Open(resumePath, wd, modelName, provider.Name())
-		if err != nil {
-			return fmt.Errorf("reopen: %w", err)
-		}
-		cfg.Session = newSess
-		cfg.ProviderName = provider.Name()
-		sessionPath = resumePath
-
-		// Reset conversation to the rebuilt history and replay it to the
-		// display so the user sees what they resumed. model/provider may
-		// also be restored if the resumed session used a different one.
-		totalUsage = stream.Usage{
+		// Conductor.Resume closes the current session cleanly before
+		// swapping so we don't leak its file handle or write a session_end
+		// twice on exit — including the ordering trap that the session_end
+		// event has to be written BEFORE Close(), because WriteSessionEnd
+		// refuses to encode into a closed writer and the outer defer will
+		// try again on process exit.
+		if err := cond.Resume(resumePath, msgs, stream.Usage{
 			Input:     total.Input,
 			Output:    total.Output,
 			Reasoning: total.Reasoning,
 			CacheRead: total.CacheRead,
+		}); err != nil {
+			return fmt.Errorf("reopen: %w", err)
 		}
+
+		// model/provider may also be restored if the resumed session used a
+		// different one.
 		if summary.Provider != "" && summary.Model != "" {
-			if p, m, ok := providers.FindModel(summary.Provider + "/" + summary.Model); ok {
-				provider = p
-				modelName = m
-				cfg.Model = m
-				cfg.ProviderName = p.Name()
-				tuiDisp.SetModel(m)
+			if err := cond.SwitchModel(summary.Provider + "/" + summary.Model); err == nil {
+				tuiDisp.SetModel(cond.Model())
 			}
 		}
 		// Drop the in-flight iteration — its context is no longer relevant
@@ -147,8 +118,7 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 		// keeps scrolling and mouse selection working.
 		tuiDisp.Reset()
 		replaySessionToDisplay(tuiDisp, resumePath)
-		conversation = msgs
-		fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", summary.ID, len(conversation))
+		fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", summary.ID, len(msgs))
 		return nil
 	}
 
@@ -210,13 +180,12 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 				iterCancel()
 				// Cleanly terminate the live session so /new doesn't leave
 				// the file open with no closing event. /resume rebuilds
-				// later, so we need a proper boundary here.
-				if cfg.Session != nil {
-					agent.WriteSessionEnd(cfg.Session, "ok", 0, &totalUsage)
-				}
-				cfg.Session = nil
-				conversation = nil
-				totalUsage = stream.Usage{}
+				// later, so we need a proper boundary here. Unlike the
+				// console, the TUI also zeroes the usage total, because the
+				// next prompt starts a fresh log.
+				cond.EndSession("ok", 0)
+				cond.ClearHistory()
+				cond.ResetUsage()
 				tools.ClearTodoList()
 				tuiDisp.Reset()
 				fmt.Fprint(os.Stdout, ansi.SetWindowTitle("tyci"))
@@ -284,62 +253,38 @@ func runTUI(initialProvider providers.Provider, initialModelName string, tuiDisp
 			titleSet = true
 		}
 
-		conversation = append(conversation, providers.RichMessage{
-			Role:    "user",
-			Content: []providers.ContentBlock{{Type: "text", Text: line}},
-		})
-
-		// Lazily create the session file the first time the user submits a
-		// prompt in this TUI. Pre-creating it at startup would leave an
-		// empty JSONL on disk for every TUI the user opens without ever
-		// typing — defeating the "one session per conversation" model.
-		// An explicit --session (handled by initCommon) is opened eagerly
-		// and reused here.
-		if cfg.Session == nil && sessionPath != "" {
-			wd, _ := os.Getwd()
-			newSess, _, err := ensureLazySession(nil, sessionPath, wd, modelName, provider.Name())
-			if err == nil && newSess != nil {
-				cfg.Session = newSess
-			}
-		}
-
-		if cfg.Session != nil {
-			blocks := []session.ContentBlock{{Type: "text", Text: line}}
-			_ = cfg.Session.WriteMessage("user", blocks, nil)
-		}
-
-		// Run agent in a goroutine so we can interrupt it via ESC
+		// Run the turn in a goroutine so we can interrupt it via ESC.
+		// Submit records the user line, lazily materializes the session file
+		// on the first prompt and drives the agent loop; the pending-message
+		// queue drain callback (issue #88) is wired into the conductor's
+		// agent.Config once, at construction.
 		type agentResult struct {
 			usage stream.Usage
 			err   error
 		}
 		resultCh := make(chan agentResult, 1)
-		// Issue #88: wire the pending-message queue drain callback. The
-		// TUI's NextMessages drains the channel of user lines typed
-		// during the in-flight request and returns them in FIFO order;
-		// the agent loop appends each as a user RichMessage and forces
-		// one more runOnce so the model sees them as a single turn.
-		cfg.NextMessages = tuiDisp.NextMessages
 		go func() {
-			u, e := agent.Run(iterCtx, provider, tuiDisp, &conversation, cfg)
+			u, e := cond.Submit(iterCtx, line)
 			resultCh <- agentResult{usage: u, err: e}
 		}()
 
 		select {
 		case <-tuiDisp.CancelCh():
 			// ESC pressed — cancel the agent run
+			cond.Interrupt()
 			iterCancel()
-			res := <-resultCh // wait for agent to finish
-			if !errors.Is(res.err, context.Canceled) && res.err != nil {
-				// Real error, not just cancellation
-			}
+			// Wait for the agent to finish before painting anything
+			// else — it is still writing to the display. The result
+			// itself is dropped on purpose: a cancellation is what we
+			// just asked for, and a real error has already been shown
+			// to the user by agent.Run via d.Error().
+			<-resultCh
 			tuiDisp.ResetStatus()
 			// User probably wants to retry with a new prompt
 			continue
 
 		case res := <-resultCh:
 			iterCancel()
-			totalUsage.Add(res.usage)
 
 			tuiDisp.Done(res.usage, stream.Stats{})
 

@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 )
@@ -47,16 +48,18 @@ func (q *queueCallback) callback() func() []string {
 // returns no messages, the agent must return after the first runOnce
 // completes with `more == false`. No extra iteration is forced.
 func TestRun_NextMessages_EmptyDoesNotForceIteration(t *testing.T) {
-	p := &mockProvider{chunks: []string{"done"}}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "done"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	cfg := Config{
-		Model:        "mock-1",
 		MaxRetries:   1,
 		NextMessages: queue.callback(),
 	}
@@ -82,15 +85,21 @@ func TestRun_NextMessages_EmptyDoesNotForceIteration(t *testing.T) {
 func TestRun_NextMessages_OneAfterPlainResponseForcesOneMoreIteration(t *testing.T) {
 	// First runOnce emits "first", second emits "second" so we can
 	// distinguish the two assistant turns in msgs.
-	p := &counterProvider{responses: [][]string{
-		{"first"},
-		{"second"},
+	p := &connectortest.Fake{ProviderName: "counter", ModelName: "counter-1", Turns: [][]stream.Event{
+		{
+			stream.TextDelta{Text: "first"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+		{
+			stream.TextDelta{Text: "second"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
 	}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	// First call to callback: return the queued follow-up. Second call
@@ -98,7 +107,6 @@ func TestRun_NextMessages_OneAfterPlainResponseForcesOneMoreIteration(t *testing
 	queue.set([]string{"follow-up"})
 
 	cfg := Config{
-		Model:        "counter-1",
 		MaxRetries:   1,
 		NextMessages: queue.callback(),
 	}
@@ -124,8 +132,8 @@ func TestRun_NextMessages_OneAfterPlainResponseForcesOneMoreIteration(t *testing
 		t.Errorf("msgs[3] text = %q, want %q (second runOnce response)", msgs[3].Content[0].Text, "second")
 	}
 	// And the provider must have been called exactly twice.
-	if p.calls != 2 {
-		t.Errorf("counterProvider.calls = %d, want 2", p.calls)
+	if p.Calls() != 2 {
+		t.Errorf("Fake.Calls() = %d, want 2", p.Calls())
 	}
 }
 
@@ -137,18 +145,26 @@ func TestRun_NextMessages_FIFOOrder(t *testing.T) {
 	// drain forces one more call, which also gets "ack". We just need
 	// any assistant turn after the three queued user messages, so the
 	// same content on both calls is fine.
-	p := &counterProvider{responses: [][]string{{"ack"}, {"ack"}}}
+	p := &connectortest.Fake{ProviderName: "counter", ModelName: "counter-1", Turns: [][]stream.Event{
+		{
+			stream.TextDelta{Text: "ack"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+		{
+			stream.TextDelta{Text: "ack"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+	}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
 	queue.set([]string{"first follow-up", "second follow-up", "third follow-up"})
 
 	cfg := Config{
-		Model:        "counter-1",
 		MaxRetries:   1,
 		NextMessages: queue.callback(),
 	}
@@ -177,20 +193,23 @@ func TestRun_NextMessages_FIFOOrder(t *testing.T) {
 // tool-calling runOnce must be drained and produce exactly one
 // additional runOnce before the agent returns.
 func TestRun_NextMessages_DrainsAfterToolCall(t *testing.T) {
-	// mockToolProvider: first call returns a tool call (forcing more),
-	// second call returns a plain text response (forcing more=false).
-	toolP := &mockToolProvider{
-		events: []stream.Event{
+	// First call returns a tool call (forcing more); the script then
+	// runs out, so the second call is Fake's default bare Finish
+	// (forcing more=false).
+	toolP := &connectortest.Fake{
+		ProviderName: "mock-tool",
+		ModelName:    "mock-tool-1",
+		Turns: [][]stream.Event{{
 			stream.ToolCall{ID: "tc1", Name: "read", Arguments: `{"path": "x"}`},
 			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
-		},
+		}},
 	}
 	d := &silentDisplay{}
 	runner := newMockToolRunner()
 	runner.SetResult("read", "ok")
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "read x"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "read x"}},
 	}}
 
 	queue := &queueCallback{}
@@ -200,7 +219,6 @@ func TestRun_NextMessages_DrainsAfterToolCall(t *testing.T) {
 	queue.set([]string{"and now what?"})
 
 	cfg := Config{
-		Model:        "mock-tool-1",
 		MaxRetries:   1,
 		Tools:        runner,
 		NextMessages: queue.callback(),
@@ -239,14 +257,17 @@ func TestRun_NextMessages_DrainsAfterToolCall(t *testing.T) {
 // the agent must behave exactly as before — no extra iterations, no
 // extra appends.
 func TestRun_NextMessages_NilCallbackNoEffect(t *testing.T) {
-	p := &mockProvider{chunks: []string{"hello"}}
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "hello"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
 	d := &silentDisplay{}
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 
-	cfg := Config{Model: "mock-1", MaxRetries: 1, NextMessages: nil}
+	cfg := Config{MaxRetries: 1, NextMessages: nil}
 	if _, err := Run(context.Background(), p, d, &msgs, cfg); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -267,17 +288,25 @@ func TestRun_NextMessages_WritesToSession(t *testing.T) {
 	}
 	defer func() { _ = sess.Close() }()
 
-	p := &counterProvider{responses: [][]string{{"ack"}, {"ack"}}}
+	p := &connectortest.Fake{ProviderName: "counter", ModelName: "counter-1", Turns: [][]stream.Event{
+		{
+			stream.TextDelta{Text: "ack"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+		{
+			stream.TextDelta{Text: "ack"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+	}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
 	queue.set([]string{"follow-up A", "follow-up B"})
 
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "initial"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "initial"}},
 	}}
 	cfg := Config{
-		Model:        "counter-1",
 		MaxRetries:   1,
 		Session:      sess,
 		NextMessages: queue.callback(),
@@ -323,10 +352,19 @@ func TestRun_NextMessages_WritesToSession(t *testing.T) {
 // returns a new message, the agent must stop after 2 iterations.
 func TestRun_NextMessages_RespectsMaxIterations(t *testing.T) {
 	// Set MaxIterations=2 so the agent runs runOnce at most twice.
-	// counterProvider: call 1 returns "a", call 2 returns "b", call 3+
+	// The Fake: call 1 returns "a", call 2 returns "b", call 3+
 	// returns empty finish (forcing more=false in both cases, so the
 	// drain sees an empty queue and returns).
-	p := &counterProvider{responses: [][]string{{"a"}, {"b"}}}
+	p := &connectortest.Fake{ProviderName: "counter", ModelName: "counter-1", Turns: [][]stream.Event{
+		{
+			stream.TextDelta{Text: "a"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+		{
+			stream.TextDelta{Text: "b"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+	}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
 	// First drain returns a follow-up (forces one more runOnce). The
@@ -334,12 +372,11 @@ func TestRun_NextMessages_RespectsMaxIterations(t *testing.T) {
 	// nil because we don't pre-set anything else.
 	queue.set([]string{"q1"})
 
-	msgs := []providers.RichMessage{{
+	msgs := []connector.Message{{
 		Role:    "user",
-		Content: []providers.ContentBlock{{Type: "text", Text: "hi"}},
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
 	}}
 	cfg := Config{
-		Model:         "counter-1",
 		MaxRetries:    1,
 		MaxIterations: 2,
 		NextMessages:  queue.callback(),
@@ -354,60 +391,13 @@ func TestRun_NextMessages_RespectsMaxIterations(t *testing.T) {
 	if len(msgs) != 4 {
 		t.Errorf("expected 4 messages, got %d: %#v", len(msgs), msgs)
 	}
-	// counterProvider must have been called exactly twice (the cap).
-	if p.calls != 2 {
-		t.Errorf("counterProvider.calls = %d, want 2", p.calls)
+	// The model client must have been called exactly twice (the cap).
+	if p.Calls() != 2 {
+		t.Errorf("Fake.Calls() = %d, want 2", p.Calls())
 	}
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────
-
-// counterProvider emits a different response on each call so tests can
-// assert the agent ran runOnce exactly N times. The first slice in
-// responses is sent on the first call, the second on the next call, etc.
-// After all responses are exhausted, an empty Finish is returned and any
-// subsequent call returns the same. This makes the agent's `more` flag
-// false after the last configured response, ending the loop.
-type counterProvider struct {
-	mu        sync.Mutex
-	responses [][]string
-	calls     int
-}
-
-func (p *counterProvider) Name() string         { return "counter" }
-func (p *counterProvider) IsConfigured() bool   { return true }
-func (p *counterProvider) Models() []string     { return []string{"counter-1"} }
-func (p *counterProvider) FreeModels() []string { return nil }
-
-func (p *counterProvider) Stream(ctx context.Context, req providers.Request) (<-chan stream.Event, error) {
-	p.mu.Lock()
-	idx := p.calls
-	if idx >= len(p.responses) {
-		p.calls++
-		p.mu.Unlock()
-		ch := make(chan stream.Event, 1)
-		ch <- stream.Finish{Usage: stream.Usage{Input: 0, Output: 0}}
-		close(ch)
-		return ch, nil
-	}
-	chunks := p.responses[idx]
-	p.calls++
-	p.mu.Unlock()
-
-	ch := make(chan stream.Event, 4)
-	go func() {
-		defer close(ch)
-		for _, c := range chunks {
-			select {
-			case ch <- stream.TextDelta{Text: c}:
-			case <-ctx.Done():
-				return
-			}
-		}
-		ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
-	}()
-	return ch, nil
-}
 
 func splitLines(s string) []string {
 	var out []string

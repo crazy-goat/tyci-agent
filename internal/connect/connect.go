@@ -17,6 +17,20 @@ type uriEntry struct {
 	URI string `json:"uri"`
 }
 
+// HTTPDoer is the HTTP surface this package needs. It mirrors api.HTTPDoer
+// and internal/mcp's injected client; declared locally so connect keeps its
+// dependency-free position at the bottom of the import graph.
+type HTTPDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// defaultHTTPClient is the client the CLI entry points hand to the fetchers
+// when the caller has nothing better. One shared client — and therefore one
+// connection pool — instead of a fresh &http.Client{} (with its own
+// Transport) constructed inside every function. Deliberately without a
+// Timeout, which is what the replaced literals had.
+var defaultHTTPClient HTTPDoer = &http.Client{}
+
 // AddProvider adds a provider with auth separation:
 // 1. Fetches models from the API
 // 2. Saves the key to auth.json (not in URIs)
@@ -43,7 +57,7 @@ func AddProvider(name, apiType, baseURL, token string, test bool, testModel stri
 	resolvedToken := ResolveToken(token)
 
 	// Fetch models
-	modelIDs, err := fetchOpenAIModels(baseURL, resolvedToken)
+	modelIDs, err := fetchOpenAIModels(defaultHTTPClient, baseURL, resolvedToken)
 	if err != nil {
 		return fmt.Errorf("fetching models: %w", err)
 	}
@@ -118,7 +132,7 @@ func AddProvider(name, apiType, baseURL, token string, test bool, testModel stri
 			modelName = modelIDs[0]
 		}
 		if modelName != "" {
-			if err := testConnectivity(baseURL, resolvedToken, modelName); err != nil {
+			if err := testConnectivity(defaultHTTPClient, baseURL, resolvedToken, modelName); err != nil {
 				fmt.Fprintf(os.Stdout, "\u26a0\ufe0f Connectivity test failed: %v\n", err)
 			} else {
 				fmt.Fprintf(os.Stdout, "\u2713 Connectivity check passed (%s returned 200)\n", modelName)
@@ -130,9 +144,7 @@ func AddProvider(name, apiType, baseURL, token string, test bool, testModel stri
 }
 
 // testConnectivity makes a lightweight API call to verify the endpoint works
-func testConnectivity(baseURL, token, model string) error {
-	client := &http.Client{}
-
+func testConnectivity(doer HTTPDoer, baseURL, token, model string) error {
 	// Try OpenAI-compatible chat completions endpoint
 	for _, path := range []string{"/v1/chat/completions", "/chat/completions"} {
 		payload := map[string]any{
@@ -152,7 +164,7 @@ func testConnectivity(baseURL, token, model string) error {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 
-		resp, err := client.Do(req)
+		resp, err := doer.Do(req)
 		if err != nil {
 			continue
 		}
@@ -170,9 +182,7 @@ func testConnectivity(baseURL, token, model string) error {
 	return fmt.Errorf("no working endpoint found at %s", baseURL)
 }
 
-func fetchOpenAIModels(baseURL, token string) ([]string, error) {
-	client := &http.Client{}
-
+func fetchOpenAIModels(doer HTTPDoer, baseURL, token string) ([]string, error) {
 	for _, path := range []string{"/models", "/v1/models"} {
 		req, err := http.NewRequest("GET", baseURL+path, nil)
 		if err != nil {
@@ -186,7 +196,7 @@ func fetchOpenAIModels(baseURL, token string) ([]string, error) {
 			req.Header.Set("Authorization", "Bearer "+key)
 		}
 
-		resp, err := client.Do(req)
+		resp, err := doer.Do(req)
 		if err != nil {
 			return nil, err
 		}
