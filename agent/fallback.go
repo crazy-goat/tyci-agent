@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/stream"
 )
@@ -22,7 +21,7 @@ type fallbackState struct {
 	fullModel string
 }
 
-func tryFallback(ctx context.Context, d display.Display, msgs *[]providers.RichMessage, cfg Config, fs *fallbackState, totalUsage *stream.Usage, origErr error) (bool, error) {
+func tryFallback(ctx context.Context, d Sink, msgs *[]providers.RichMessage, cfg Config, fs *fallbackState, totalUsage *stream.Usage, origErr error) (bool, error) {
 	var lastErr error
 
 	// Format the reason from the original error

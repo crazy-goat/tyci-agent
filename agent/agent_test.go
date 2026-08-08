@@ -129,7 +129,7 @@ func (r *mockToolRunner) SetResult(name, result string) {
 	r.mu.Unlock()
 }
 
-// captureDisplay implements display.Display and records all calls for assertion.
+// captureDisplay implements agent.Sink and records all calls for assertion.
 type captureDisplay struct {
 	mu             sync.Mutex
 	thinking       []string

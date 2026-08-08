@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
@@ -74,7 +73,7 @@ var ErrMaxIterations = errors.New("agent reached max tool-call iterations withou
 // If cfg.FallbackModels is set, non-retryable errors will try fallback models
 // before giving up. Once a fallback succeeds, it is used for the rest of the session.
 // Returns total usage accumulated during the run.
-func Run(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config) (stream.Usage, error) {
+func Run(ctx context.Context, p providers.Provider, d Sink, msgs *[]providers.RichMessage, cfg Config) (stream.Usage, error) {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 5
 	}

@@ -7,12 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/stream"
 )
 
-func runOnce(ctx context.Context, p providers.Provider, d display.Display, msgs *[]providers.RichMessage, cfg Config, totalUsage *stream.Usage) (more bool, usage *stream.Usage, totalEmitted bool, err error) {
+func runOnce(ctx context.Context, p providers.Provider, d Sink, msgs *[]providers.RichMessage, cfg Config, totalUsage *stream.Usage) (more bool, usage *stream.Usage, totalEmitted bool, err error) {
 	ctx = providers.WithProvider(ctx, p)
 	ctx = providers.WithModel(ctx, cfg.Model)
 	streamCtx, cancel := context.WithCancel(ctx)

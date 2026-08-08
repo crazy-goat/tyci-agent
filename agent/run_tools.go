@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/stream"
 )
@@ -13,7 +12,7 @@ type streamProgressDisplay interface {
 	StreamProgress(toolIdx int, line string)
 }
 
-func executeAndAppendToolResults(ctx context.Context, d display.Display, msgs *[]providers.RichMessage, cfg Config, toolCalls []stream.ToolCall, toolDeltas map[string]*strings.Builder) {
+func executeAndAppendToolResults(ctx context.Context, d Sink, msgs *[]providers.RichMessage, cfg Config, toolCalls []stream.ToolCall, toolDeltas map[string]*strings.Builder) {
 	showToolCalls(d, toolCalls, toolDeltas)
 	ctx = installToolStreaming(ctx, d)
 
@@ -39,7 +38,7 @@ func executeAndAppendToolResults(ctx context.Context, d display.Display, msgs *[
 	appendToolResults(d, msgs, cfg, toolCalls, results)
 }
 
-func showToolCalls(d display.Display, toolCalls []stream.ToolCall, toolDeltas map[string]*strings.Builder) {
+func showToolCalls(d Sink, toolCalls []stream.ToolCall, toolDeltas map[string]*strings.Builder) {
 	for _, tc := range toolCalls {
 		d.ToolCallStart(tc.Name)
 		if delta, ok := toolDeltas[tc.ID]; ok && delta.Len() > 0 {
@@ -50,7 +49,7 @@ func showToolCalls(d display.Display, toolCalls []stream.ToolCall, toolDeltas ma
 	}
 }
 
-func installToolStreaming(ctx context.Context, d display.Display) context.Context {
+func installToolStreaming(ctx context.Context, d Sink) context.Context {
 	if s, ok := d.(streamProgressDisplay); ok {
 		return stream.WithOutput(ctx, func(toolIdx int, line string) {
 			s.StreamProgress(toolIdx, line)
@@ -59,7 +58,7 @@ func installToolStreaming(ctx context.Context, d display.Display) context.Contex
 	return ctx
 }
 
-func appendToolResults(d display.Display, msgs *[]providers.RichMessage, cfg Config, toolCalls []stream.ToolCall, results []string) {
+func appendToolResults(d Sink, msgs *[]providers.RichMessage, cfg Config, toolCalls []stream.ToolCall, results []string) {
 	for i, tc := range toolCalls {
 		d.ToolCallEnd(tc.Name, results[i])
 		*msgs = append(*msgs, providers.RichMessage{

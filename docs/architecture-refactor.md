@@ -48,12 +48,15 @@ Golden zamraża metodę, ścieżkę, whitelistę nagłówków i ciało; drugi go
 Regeneracja: `go test ./providers/ -run TestWireGolden -update`.
 Plik ma `//go:build !noanthropic && !nogemini` — do skasowania w etapie 3 razem ze stubami.
 
-## Etap 1 — odwrócenie `agent → display` (0,5d)
+## Etap 1 — odwrócenie `agent → display` (0,5d) — ZROBIONE
 
-- [ ] `agent.Sink` = kopia dzisiejszego `display.Display`
-- [ ] sygnatury w `agent.go` / `run_once.go` / `fallback.go` na `Sink`
-- [ ] zero zmian w `display/` (typowanie strukturalne załatwia sprawę)
-- [ ] weryfikacja: `go list -deps ./agent | grep display` → pusto
+- [x] `agent.Sink` = kopia dzisiejszego `display.Display` (`agent/sink.go`)
+- [x] sygnatury w `agent.go` / `run_once.go` / `fallback.go` / `run_tools.go` na `Sink` (7 miejsc)
+- [x] zero zmian w `display/` (typowanie strukturalne załatwia sprawę)
+- [x] weryfikacja: `go list -deps ./agent | grep display` → pusto
+
+Goldeny z etapu 0 przeszły bez `-update` — dowód, że zachowanie nietknięte.
+`display.Display` zostaje dla call-site'ów; docelowo do usunięcia po etapie 6.
 
 ## Etap 2 — pakiet `connector` (1,5–2d)
 
