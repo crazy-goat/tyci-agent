@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/connector"
@@ -327,6 +328,131 @@ func TestConductor_InterruptIdleIsNoop(t *testing.T) {
 	if _, err := c.Submit(context.Background(), "hi"); err != nil {
 		t.Fatalf("Submit after idle Interrupt: %v", err)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Concurrent Submit
+// ---------------------------------------------------------------------------
+
+// outcome pairs a Submit's error with the prompt that produced it, because
+// which of two racing goroutines wins is the scheduler's business.
+type outcome struct {
+	prompt string
+	err    error
+}
+
+// TestConductor_ConcurrentSubmitIsRejected is the mechanism behind the type
+// comment's contract. Two goroutines call Submit at the same moment on the
+// same conductor; exactly one may drive the conversation.
+//
+// The interesting assertion is not the error — it is that the loser changed
+// nothing. Submit's first act used to be appending the user turn, so a
+// rejection decided any later would still have grown the conversation and
+// written a line to the session log on its way to failing.
+//
+// Run under -race: no frontend does this today, but a frontend speaking to the
+// conductor over RPC is the entire reason the boundary exists, and it will.
+func TestConductor_ConcurrentSubmitIsRejected(t *testing.T) {
+	// The winner hangs until interrupted, which is what keeps the turn in
+	// flight long enough for the loser to be turned away.
+	blocking := &connectortest.Fake{ProviderName: "p", ModelName: "m", BlockUntilCancel: true}
+	free := &connectortest.Fake{ProviderName: "p2", ModelName: "m2",
+		Turns: [][]stream.Event{{stream.TextDelta{Text: "done"}, stream.Finish{}}}}
+	c := New(Options{
+		Client:   blocking,
+		Sink:     &recorder{},
+		Resolver: mapResolver{models: map[string]connector.ModelClient{"p2/m2": free}},
+	})
+
+	results := make(chan outcome, 2)
+	start := make(chan struct{})
+	for _, prompt := range []string{"alpha", "beta"} {
+		go func() {
+			<-start // line both goroutines up on the same instant
+			_, err := c.Submit(context.Background(), prompt)
+			results <- outcome{prompt: prompt, err: err}
+		}()
+	}
+	close(start)
+
+	// The winner cannot return before it is interrupted, so the first result
+	// to arrive is necessarily the rejection. Which of the two prompts lost
+	// is up to the scheduler, and the test never assumes.
+	loser := awaitOutcome(t, results, "the rejection")
+	if !errors.Is(loser.err, ErrTurnInFlight) {
+		t.Fatalf("first Submit to return gave err = %v, want ErrTurnInFlight", loser.err)
+	}
+
+	for {
+		c.mu.Lock()
+		running := c.cancel != nil
+		c.mu.Unlock()
+		if running {
+			break
+		}
+	}
+	c.Interrupt()
+
+	winner := awaitOutcome(t, results, "the interrupted winner")
+	if !errors.Is(winner.err, context.Canceled) {
+		t.Fatalf("winning Submit err = %v, want context.Canceled", winner.err)
+	}
+	if winner.prompt == loser.prompt {
+		t.Fatalf("both results came from the same goroutine: %q", winner.prompt)
+	}
+	if blocking.Calls() != 1 {
+		t.Errorf("model called %d times, want 1 — only the winner may reach it", blocking.Calls())
+	}
+
+	// (b) The rejected Submit left no trace. Checked once the winner has
+	// returned, so the conversation is read with a happens-before edge to
+	// the goroutine that wrote it rather than underneath it: an interrupted
+	// turn appends nothing of its own (see
+	// TestConductor_InterruptCancelsInFlightTurn), so anything beyond the
+	// single winning user turn could only have come from the loser.
+	if got := messageRoles(c.Messages()); strings.Join(got, ",") != "user" {
+		t.Errorf("conversation roles = %v, want exactly one user turn", got)
+	}
+	if got := userText(t, c.Messages()[0]); got != winner.prompt {
+		t.Errorf("conversation holds %q, want the winner's prompt %q", got, winner.prompt)
+	}
+
+	// (c) The claim really was released: a later Submit runs normally.
+	if err := c.SwitchModel("p2/m2"); err != nil {
+		t.Fatalf("SwitchModel: %v", err)
+	}
+	if _, err := c.Submit(context.Background(), "after"); err != nil {
+		t.Fatalf("Submit after the contested turn: %v", err)
+	}
+	if free.Calls() != 1 {
+		t.Errorf("follow-up turn reached the model %d times, want 1", free.Calls())
+	}
+}
+
+// awaitOutcome is a backstop, not synchronization: the test never waits out
+// the timeout on a healthy conductor. It exists because the interesting
+// regression — a Submit that neither runs nor is rejected — presents as two
+// goroutines blocked forever, and a named failure beats the package-level
+// timeout and a goroutine dump.
+func awaitOutcome(t *testing.T, results <-chan outcome, what string) outcome {
+	t.Helper()
+	select {
+	case o := <-results:
+		return o
+	case <-time.After(30 * time.Second):
+		t.Fatalf("timed out waiting for %s: no Submit returned", what)
+		return outcome{}
+	}
+}
+
+// userText pulls the text of a user message, failing the test if the shape is
+// not the one Submit writes.
+func userText(t *testing.T, m connector.Message) string {
+	t.Helper()
+	if m.Role != "user" || len(m.Content) != 1 {
+		t.Fatalf("not a submitted user message: %+v", m)
+	}
+	return m.Content[0].Text
 }
 
 // ---------------------------------------------------------------------------

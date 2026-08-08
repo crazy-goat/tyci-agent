@@ -52,6 +52,16 @@ type ModelResolver interface {
 // (one-shot prompt mode) can leave Options.Resolver nil.
 var ErrNoResolver = errors.New("conductor: no model resolver configured")
 
+// ErrTurnInFlight is returned by a Submit that arrives while another Submit is
+// still running. One conversation runs one turn at a time.
+//
+// It is an error rather than a wait on purpose. A mutex would quietly
+// serialize the two calls, and the frontend bug that produced them would show
+// up as an unexplained hang instead of a message; a queue is a feature nobody
+// asked for, with its own questions about ordering and cancellation. An
+// immediate error says exactly what is wrong at the moment it goes wrong.
+var ErrTurnInFlight = errors.New("conductor: a turn is already in flight")
+
 // Options is everything a Conductor needs at construction time.
 type Options struct {
 	// Client is the model client the conversation starts on. Required.
@@ -87,9 +97,16 @@ type Options struct {
 // Conductor drives one conversation.
 //
 // All methods must be called from the goroutine that drives the conversation,
-// with one deliberate exception: Interrupt is safe to call from any goroutine
-// at any time, because "stop what you are doing" is by definition something a
-// frontend needs to say while Submit is still running.
+// with two exceptions:
+//
+//   - Interrupt is safe to call from any goroutine at any time, because "stop
+//     what you are doing" is by definition something a frontend needs to say
+//     while Submit is still running.
+//   - Submit defends itself: a second, concurrent Submit is rejected with
+//     ErrTurnInFlight instead of corrupting the conversation. That is a
+//     diagnostic, not a licence — everything else here (Messages, Usage,
+//     SetHistory, SwitchModel, the session calls) still belongs to the one
+//     goroutine driving the conversation.
 type Conductor struct {
 	client   connector.ModelClient
 	sink     agent.Sink
@@ -101,10 +118,12 @@ type Conductor struct {
 	sessionPath  string
 	workDir      string
 
-	// mu guards cancel only: it is the sole field touched from a second
-	// goroutine (Interrupt) while Submit is in flight.
-	mu     sync.Mutex
-	cancel context.CancelFunc
+	// mu guards cancel and inFlight — the only fields touched from a second
+	// goroutine (Interrupt, or a stray concurrent Submit) while a turn is
+	// running.
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	inFlight bool
 }
 
 // New builds a Conductor over opts.
@@ -128,7 +147,30 @@ func New(opts Options) *Conductor {
 // and every frontend treats them as such: context.Canceled means the user
 // interrupted, and agent.ErrMaxIterations means the loop hit its cap after
 // the agent already warned about it through the Sink.
+//
+// A Submit that arrives while another one is running returns ErrTurnInFlight
+// and does nothing else: no user turn appended, no session line written, no
+// model call. The claim is taken before the first mutation precisely so that a
+// rejected Submit leaves no trace to clean up.
 func (c *Conductor) Submit(ctx context.Context, prompt string) (stream.Usage, error) {
+	// Claim the turn: test and set in one critical section, so two callers
+	// racing here cannot both come away believing they won.
+	c.mu.Lock()
+	if c.inFlight {
+		c.mu.Unlock()
+		return stream.Usage{}, ErrTurnInFlight
+	}
+	c.inFlight = true
+	c.mu.Unlock()
+	// Released in a defer registered immediately, so neither an early return
+	// below nor a panic in the agent loop can strand the conversation with a
+	// turn that never ends.
+	defer func() {
+		c.mu.Lock()
+		c.inFlight = false
+		c.mu.Unlock()
+	}()
+
 	c.conversation = append(c.conversation, connector.Message{
 		Role:    "user",
 		Content: []connector.ContentBlock{{Type: "text", Text: prompt}},
