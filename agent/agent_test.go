@@ -757,11 +757,14 @@ func TestRunFallbackNoToolsTextOnly(t *testing.T) {
 // the "partial answer already on screen, then switch models" path — a real
 // production path — was untested.
 //
-// The injected error is deliberately NOT retryable. A retryable one would send
-// Run into its retry loop, whose backoff comes from api.CalcBackoff with a
-// BaseBackoff that defaults to 4 and cannot be injected — a minimum four-second
-// sleep per attempt. Non-retryable goes straight to the fallback with no sleep.
-// (See the debt note in docs/architecture-refactor.md.)
+// The injected error is deliberately NOT retryable, because this test is about
+// the fallback path: a retryable one would send Run into the retry loop first.
+// That loop's backoff comes from api.CalcBackoff with a BaseBackoff that
+// defaults to 4 and cannot be injected — four seconds minimum per attempt,
+// unless the error happens to be a 429 carrying Retry-After (which is the
+// narrow door TestRun_RetryRecoversAfterMidStreamRateLimit goes through).
+// Non-retryable goes straight to the fallback with no sleep at all.
+// (See the debt note on the un-injectable backoff in docs/architecture-refactor.md.)
 func TestRunFallback_MidStreamFailureAfterPartialText(t *testing.T) {
 	// Two TextDeltas reach the display, then the stream dies. The third
 	// chunk and the Finish of the wrapped Fake are never reached, which is
@@ -830,6 +833,83 @@ func TestRunFallback_MidStreamFailureAfterPartialText(t *testing.T) {
 	}
 	if d.totals[0].Input != 7 || d.totals[0].Output != 4 {
 		t.Errorf("Total = %+v, want Input 7 / Output 4 from the fallback", d.totals[0])
+	}
+}
+
+// TestRun_RetryRecoversAfterMidStreamRateLimit covers the retry loop's success
+// case, which nothing covered before: the only retry test in this package
+// (TestRun_TotalCalledOnAllRetriesExhausted) cancels the context during the
+// first backoff and therefore never reaches a recovery.
+//
+// It runs in milliseconds despite the un-injectable backoff, and the reason is
+// worth writing down: api.CalcBackoff honours a 429's Retry-After header
+// verbatim, so RateLimited("0") asks for a zero-second wait and
+// sleepWithCountdown returns immediately. That is a real provider behaviour,
+// not a test hack — but it is also the ONLY way in, and it does not help the
+// 500/EOF cases, which always take BaseBackoff's four seconds. See the debt
+// note on the un-injectable backoff in docs/architecture-refactor.md.
+func TestRun_RetryRecoversAfterMidStreamRateLimit(t *testing.T) {
+	primary := &connectortest.Flaky{
+		Client: &connectortest.Fake{ProviderName: "rl", ModelName: "rl-1", Turns: [][]stream.Event{
+			{
+				stream.TextDelta{Text: "starting to answ"},
+				stream.TextDelta{Text: "er when the 429 lands"},
+				stream.Finish{Usage: stream.Usage{Input: 3, Output: 2}},
+			},
+			{
+				stream.TextDelta{Text: "the retried answer"},
+				stream.Finish{Usage: stream.Usage{Input: 9, Output: 6}},
+			},
+		}},
+		// Only the first call fails; the second passes through untouched.
+		Failures: []connectortest.Failure{{
+			MidStream:   true,
+			AfterEvents: 1,
+			Err:         connectortest.RateLimited("0"),
+		}},
+	}
+
+	d := newCaptureDisplay()
+	msgs := []connector.Message{{
+		Role:    "user",
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	if _, err := Run(context.Background(), primary, d, &msgs, Config{MaxRetries: 3}); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if got := primary.Calls(); got != 2 {
+		t.Errorf("Stream calls = %d, want 2 (one failure, one retry)", got)
+	}
+
+	// The retry really went through the retry loop, not the fallback path.
+	sawRetry := false
+	for _, tb := range d.toolBlocks {
+		if strings.HasPrefix(tb, "retry 1/3") {
+			sawRetry = true
+		}
+	}
+	if !sawRetry {
+		t.Errorf("expected a retry notice on the display, got %v", d.toolBlocks)
+	}
+
+	// The truncated first attempt left its half-sentence on screen but must
+	// not be recorded: only the retried turn becomes an assistant message.
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (user, assistant), got %d: %#v", len(msgs), msgs)
+	}
+	if msgs[1].Content[0].Text != "the retried answer" {
+		t.Errorf("assistant text = %q, want only the retried answer", msgs[1].Content[0].Text)
+	}
+
+	// Usage is the retried turn's alone — the abandoned attempt never
+	// reached its Finish, so its 3/2 must not be counted.
+	if got := len(d.totals); got != 1 {
+		t.Fatalf("expected exactly 1 Total() call, got %d", got)
+	}
+	if d.totals[0].Input != 9 || d.totals[0].Output != 6 {
+		t.Errorf("Total = %+v, want Input 9 / Output 6 from the retried turn", d.totals[0])
 	}
 }
 
