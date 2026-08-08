@@ -85,9 +85,15 @@ func TestRun_NextMessages_EmptyDoesNotForceIteration(t *testing.T) {
 func TestRun_NextMessages_OneAfterPlainResponseForcesOneMoreIteration(t *testing.T) {
 	// First runOnce emits "first", second emits "second" so we can
 	// distinguish the two assistant turns in msgs.
-	p := &counterProvider{responses: [][]string{
-		{"first"},
-		{"second"},
+	p := &connectortest.Fake{ProviderName: "counter", ModelName: "counter-1", Turns: [][]stream.Event{
+		{
+			stream.TextDelta{Text: "first"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+		{
+			stream.TextDelta{Text: "second"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
 	}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
@@ -126,8 +132,8 @@ func TestRun_NextMessages_OneAfterPlainResponseForcesOneMoreIteration(t *testing
 		t.Errorf("msgs[3] text = %q, want %q (second runOnce response)", msgs[3].Content[0].Text, "second")
 	}
 	// And the provider must have been called exactly twice.
-	if p.calls != 2 {
-		t.Errorf("counterProvider.calls = %d, want 2", p.calls)
+	if p.Calls() != 2 {
+		t.Errorf("Fake.Calls() = %d, want 2", p.Calls())
 	}
 }
 
@@ -139,7 +145,16 @@ func TestRun_NextMessages_FIFOOrder(t *testing.T) {
 	// drain forces one more call, which also gets "ack". We just need
 	// any assistant turn after the three queued user messages, so the
 	// same content on both calls is fine.
-	p := &counterProvider{responses: [][]string{{"ack"}, {"ack"}}}
+	p := &connectortest.Fake{ProviderName: "counter", ModelName: "counter-1", Turns: [][]stream.Event{
+		{
+			stream.TextDelta{Text: "ack"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+		{
+			stream.TextDelta{Text: "ack"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+	}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
 	msgs := []connector.Message{{
@@ -273,7 +288,16 @@ func TestRun_NextMessages_WritesToSession(t *testing.T) {
 	}
 	defer func() { _ = sess.Close() }()
 
-	p := &counterProvider{responses: [][]string{{"ack"}, {"ack"}}}
+	p := &connectortest.Fake{ProviderName: "counter", ModelName: "counter-1", Turns: [][]stream.Event{
+		{
+			stream.TextDelta{Text: "ack"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+		{
+			stream.TextDelta{Text: "ack"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+	}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
 	queue.set([]string{"follow-up A", "follow-up B"})
@@ -328,10 +352,19 @@ func TestRun_NextMessages_WritesToSession(t *testing.T) {
 // returns a new message, the agent must stop after 2 iterations.
 func TestRun_NextMessages_RespectsMaxIterations(t *testing.T) {
 	// Set MaxIterations=2 so the agent runs runOnce at most twice.
-	// counterProvider: call 1 returns "a", call 2 returns "b", call 3+
+	// The Fake: call 1 returns "a", call 2 returns "b", call 3+
 	// returns empty finish (forcing more=false in both cases, so the
 	// drain sees an empty queue and returns).
-	p := &counterProvider{responses: [][]string{{"a"}, {"b"}}}
+	p := &connectortest.Fake{ProviderName: "counter", ModelName: "counter-1", Turns: [][]stream.Event{
+		{
+			stream.TextDelta{Text: "a"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+		{
+			stream.TextDelta{Text: "b"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+	}}
 	d := &silentDisplay{}
 	queue := &queueCallback{}
 	// First drain returns a follow-up (forces one more runOnce). The
@@ -358,58 +391,13 @@ func TestRun_NextMessages_RespectsMaxIterations(t *testing.T) {
 	if len(msgs) != 4 {
 		t.Errorf("expected 4 messages, got %d: %#v", len(msgs), msgs)
 	}
-	// counterProvider must have been called exactly twice (the cap).
-	if p.calls != 2 {
-		t.Errorf("counterProvider.calls = %d, want 2", p.calls)
+	// The model client must have been called exactly twice (the cap).
+	if p.Calls() != 2 {
+		t.Errorf("Fake.Calls() = %d, want 2", p.Calls())
 	}
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────
-
-// counterProvider emits a different response on each call so tests can
-// assert the agent ran runOnce exactly N times. The first slice in
-// responses is sent on the first call, the second on the next call, etc.
-// After all responses are exhausted, an empty Finish is returned and any
-// subsequent call returns the same. This makes the agent's `more` flag
-// false after the last configured response, ending the loop.
-type counterProvider struct {
-	mu        sync.Mutex
-	responses [][]string
-	calls     int
-}
-
-func (p *counterProvider) Provider() string { return "counter" }
-func (p *counterProvider) Model() string    { return "counter-1" }
-
-func (p *counterProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
-	p.mu.Lock()
-	idx := p.calls
-	if idx >= len(p.responses) {
-		p.calls++
-		p.mu.Unlock()
-		ch := make(chan stream.Event, 1)
-		ch <- stream.Finish{Usage: stream.Usage{Input: 0, Output: 0}}
-		close(ch)
-		return ch, nil
-	}
-	chunks := p.responses[idx]
-	p.calls++
-	p.mu.Unlock()
-
-	ch := make(chan stream.Event, 4)
-	go func() {
-		defer close(ch)
-		for _, c := range chunks {
-			select {
-			case ch <- stream.TextDelta{Text: c}:
-			case <-ctx.Done():
-				return
-			}
-		}
-		ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
-	}()
-	return ch, nil
-}
 
 func splitLines(s string) []string {
 	var out []string

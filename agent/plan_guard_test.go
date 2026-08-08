@@ -3,10 +3,10 @@ package agent
 import (
 	"context"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -120,37 +120,27 @@ func TestEnforcePlanGuard_MixedBatch(t *testing.T) {
 // Integration tests with agent.Run
 // ---------------------------------------------------------------------------
 
-// planGuardProvider emits a bash tool call on the first invocation, then
+// The three integration doubles below are plain scripts keyed on the call
+// number — none of them looks at the request — so connectortest.Fake covers
+// them exactly. Each ends with OnExhausted: []stream.Event{}, the empty
+// literal that means "close the channel emitting nothing": that is what the
+// hand-written doubles did on their trailing calls, and it differs from
+// leaving the field out (which would emit a bare Finish).
+
+// planGuardBash emits a bash tool call on the first invocation, then
 // finishes. Used to test that the guard blocks non-todo tools.
-type planGuardProvider struct {
-	mu     sync.Mutex
-	called bool
-}
-
-func (p *planGuardProvider) Provider() string { return "pg" }
-func (p *planGuardProvider) Model() string    { return "pg-1" }
-
-func (p *planGuardProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
-	p.mu.Lock()
-	first := !p.called
-	p.called = true
-	p.mu.Unlock()
-
-	ch := make(chan stream.Event, 4)
-	if first {
-		// Emit a bash tool call.
-		go func() {
-			defer close(ch)
-			ch <- stream.ToolCallStart{Name: "bash"}
-			ch <- stream.ToolCallDelta{Delta: `{"command":"echo hello"}`}
-			ch <- stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command":"echo hello"}`}
-			ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
-		}()
-	} else {
-		// No tool calls — just finish.
-		close(ch)
+func planGuardBash() *connectortest.Fake {
+	return &connectortest.Fake{
+		ProviderName: "pg",
+		ModelName:    "pg-1",
+		Turns: [][]stream.Event{{
+			stream.ToolCallStart{Name: "bash"},
+			stream.ToolCallDelta{Delta: `{"command":"echo hello"}`},
+			stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command":"echo hello"}`},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		}},
+		OnExhausted: []stream.Event{},
 	}
-	return ch, nil
 }
 
 // TestRun_PlanGuard_BlocksBashWithoutPlan verifies that when HasTodos
@@ -158,7 +148,7 @@ func (p *planGuardProvider) Stream(ctx context.Context, req connector.Request) (
 // to create a plan first. The LLM sees the error and (in real usage)
 // would switch to using the todo tool.
 func TestRun_PlanGuard_BlocksBashWithoutPlan(t *testing.T) {
-	p := &planGuardProvider{}
+	p := planGuardBash()
 	d := &captureDisplay{}
 	msgs := []connector.Message{
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "do something"}}},
@@ -199,53 +189,36 @@ func TestRun_PlanGuard_BlocksBashWithoutPlan(t *testing.T) {
 	}
 }
 
-// planGuardTodoProvider emits a todo tool call on the first invocation
+// planGuardTodoThenBash emits a todo tool call on the first invocation
 // (creating a plan), then a bash tool call on the second, then finishes.
-type planGuardTodoProvider struct {
-	mu    sync.Mutex
-	calls int
-}
-
-func (p *planGuardTodoProvider) Provider() string { return "pgt" }
-func (p *planGuardTodoProvider) Model() string    { return "pgt-1" }
-
-func (p *planGuardTodoProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
-	p.mu.Lock()
-	call := p.calls
-	p.calls++
-	p.mu.Unlock()
-
-	ch := make(chan stream.Event, 4)
-	switch call {
-	case 0:
-		// First call: emit a todo add call (creating a plan).
-		go func() {
-			defer close(ch)
-			ch <- stream.ToolCallStart{Name: "todo"}
-			ch <- stream.ToolCallDelta{Delta: `{"action":"add","content":"Step 1: explore"}`}
-			ch <- stream.ToolCall{ID: "tc-todo", Name: "todo", Arguments: `{"action":"add","content":"Step 1: explore"}`}
-			ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
-		}()
-	case 1:
-		// Second call: now that plan exists, emit a bash call.
-		go func() {
-			defer close(ch)
-			ch <- stream.ToolCallStart{Name: "bash"}
-			ch <- stream.ToolCallDelta{Delta: `{"command":"echo ok"}`}
-			ch <- stream.ToolCall{ID: "tc-bash", Name: "bash", Arguments: `{"command":"echo ok"}`}
-			ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
-		}()
-	default:
-		// Finish.
-		close(ch)
+func planGuardTodoThenBash() *connectortest.Fake {
+	return &connectortest.Fake{
+		ProviderName: "pgt",
+		ModelName:    "pgt-1",
+		Turns: [][]stream.Event{
+			{
+				// First call: emit a todo add call (creating a plan).
+				stream.ToolCallStart{Name: "todo"},
+				stream.ToolCallDelta{Delta: `{"action":"add","content":"Step 1: explore"}`},
+				stream.ToolCall{ID: "tc-todo", Name: "todo", Arguments: `{"action":"add","content":"Step 1: explore"}`},
+				stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+			},
+			{
+				// Second call: now that plan exists, emit a bash call.
+				stream.ToolCallStart{Name: "bash"},
+				stream.ToolCallDelta{Delta: `{"command":"echo ok"}`},
+				stream.ToolCall{ID: "tc-bash", Name: "bash", Arguments: `{"command":"echo ok"}`},
+				stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+			},
+		},
+		OnExhausted: []stream.Event{},
 	}
-	return ch, nil
 }
 
 // TestRun_PlanGuard_AllowsBashAfterTodoPlan verifies that once a todo
 // item exists, the guard lets other tools through.
 func TestRun_PlanGuard_AllowsBashAfterTodoPlan(t *testing.T) {
-	p := &planGuardTodoProvider{}
+	p := planGuardTodoThenBash()
 	d := &captureDisplay{}
 	msgs := []connector.Message{
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "do something"}}},
@@ -272,36 +245,21 @@ func TestRun_PlanGuard_AllowsBashAfterTodoPlan(t *testing.T) {
 // Tests for "all done" guard re-engagement
 // ---------------------------------------------------------------------------
 
-// planGuardAllDoneProvider emits a bash tool call on the first invocation,
-// then finishes (no tool calls). Used to verify that the guard blocks
-// when all todos are done.
-type planGuardAllDoneProvider struct {
-	mu     sync.Mutex
-	called bool
-}
-
-func (p *planGuardAllDoneProvider) Provider() string { return "pgad" }
-func (p *planGuardAllDoneProvider) Model() string    { return "pgad-1" }
-
-func (p *planGuardAllDoneProvider) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
-	p.mu.Lock()
-	first := !p.called
-	p.called = true
-	p.mu.Unlock()
-
-	ch := make(chan stream.Event, 4)
-	if first {
-		go func() {
-			defer close(ch)
-			ch <- stream.ToolCallStart{Name: "bash"}
-			ch <- stream.ToolCallDelta{Delta: `{"command":"ls"}`}
-			ch <- stream.ToolCall{ID: "tc-bash", Name: "bash", Arguments: `{"command":"ls"}`}
-			ch <- stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}}
-		}()
-	} else {
-		close(ch)
+// planGuardAllDone emits a bash tool call on the first invocation, then
+// finishes (no tool calls). Used to verify that the guard blocks when all
+// todos are done.
+func planGuardAllDone() *connectortest.Fake {
+	return &connectortest.Fake{
+		ProviderName: "pgad",
+		ModelName:    "pgad-1",
+		Turns: [][]stream.Event{{
+			stream.ToolCallStart{Name: "bash"},
+			stream.ToolCallDelta{Delta: `{"command":"ls"}`},
+			stream.ToolCall{ID: "tc-bash", Name: "bash", Arguments: `{"command":"ls"}`},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		}},
+		OnExhausted: []stream.Event{},
 	}
-	return ch, nil
 }
 
 // TestEnforcePlanGuard_AllDone_BlocksNonTodo verifies that when the
@@ -387,7 +345,7 @@ func TestEnforcePlanGuard_AllDone_MixedBatch(t *testing.T) {
 // TestRun_PlanGuard_AllDone_BlocksBash is a full integration test:
 // LLM has completed all todos → tries bash → gets blocked → must use todo.
 func TestRun_PlanGuard_AllDone_BlocksBash(t *testing.T) {
-	p := &planGuardAllDoneProvider{}
+	p := planGuardAllDone()
 	d := &captureDisplay{}
 	msgs := []connector.Message{
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "do something else"}}},
