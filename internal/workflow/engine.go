@@ -292,7 +292,7 @@ func (e *Engine) sessionAwait(L *lua.LState) int {
 	}
 
 	// Run agent
-	_, err := agent.Run(e.ctx, providers.Client(provider, modelName), collector, &session.messages, cfg)
+	_, err := agent.Run(e.ctx, provider.Client(modelName), collector, &session.messages, cfg)
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))

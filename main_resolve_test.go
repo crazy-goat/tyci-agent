@@ -26,6 +26,14 @@ func (f *fakeProvider) Stream(context.Context, providers.Request) (<-chan stream
 	return nil, nil
 }
 
+// Client mints the fake's own ModelClient. A fake provider owning its client
+// is the point of Provider.Client being a method: the test decides what its
+// clients can do (here: nothing but carry an identity) instead of inheriting
+// a transport it has no use for.
+func (f *fakeProvider) Client(model string) connector.ModelClient {
+	return bareModelClient{name: f.name, model: model}
+}
+
 func TestResolveModelClient_ExplicitOverride(t *testing.T) {
 	prov := &fakeProvider{name: "explicit-prov", configured: true, models: []string{"m1"}}
 	providers.Register(prov)
@@ -60,7 +68,7 @@ func TestResolveModelClient_InheritsParentProvider(t *testing.T) {
 	providers.Register(parent)
 	providers.Register(other)
 
-	ctx := connector.WithModelClient(context.Background(), providers.Client(parent, "shared-model"))
+	ctx := connector.WithModelClient(context.Background(), parent.Client("shared-model"))
 
 	got, err := resolveModelClient(ctx, "shared-model")
 	if err != nil {
@@ -78,7 +86,7 @@ func TestResolveModelClient_EmptyModelUsesContext(t *testing.T) {
 	parent := &fakeProvider{name: "ctx-prov", configured: true, models: []string{"ctx-model"}}
 	providers.Register(parent)
 
-	ctx := connector.WithModelClient(context.Background(), providers.Client(parent, "ctx-model"))
+	ctx := connector.WithModelClient(context.Background(), parent.Client("ctx-model"))
 
 	got, err := resolveModelClient(ctx, "")
 	if err != nil {
@@ -102,7 +110,7 @@ func TestResolveModelClient_BareOverrideDifferentModelReusesProvider(t *testing.
 	parent := &fakeProvider{name: "multi-model-prov", configured: true, models: []string{"big-model", "small-model"}}
 	providers.Register(parent)
 
-	ctx := connector.WithModelClient(context.Background(), providers.Client(parent, "big-model"))
+	ctx := connector.WithModelClient(context.Background(), parent.Client("big-model"))
 
 	got, err := resolveModelClient(ctx, "small-model")
 	if err != nil {
@@ -164,19 +172,38 @@ func TestWithIsolatedPool_PassesThroughNonInjector(t *testing.T) {
 	}
 }
 
-// recordingInjector is a Provider that also implements providers.HTTPInjector
-// and remembers every client it was handed. providers.Client(...) forwards
-// WithHTTP to it, so wrapping it and calling withIsolatedPool exercises the
-// whole chain: main.go's type-assert against connector.HTTPInjector →
-// providers.clientAdapter.WithHTTP → this provider's WithHTTP.
+// recordingInjector is a Provider whose ModelClient implements
+// connector.HTTPInjector and remembers every HTTP client it was handed, so
+// withIsolatedPool can be exercised without any network. main.go only ever
+// sees ModelClients, so recording at that level is what the wrapper's
+// contract is actually about; how a real provider rebuilds itself around an
+// injected client is providers' own business and is covered there
+// (TestClient_WithHTTPForwardsToProvider).
 type recordingInjector struct {
 	fakeProvider
 	got []connector.HTTPDoer
 }
 
-func (r *recordingInjector) WithHTTP(h connector.HTTPDoer) providers.Provider {
-	r.got = append(r.got, h)
-	return r
+func (r *recordingInjector) Client(model string) connector.ModelClient {
+	return &recordingClient{inj: r, model: model}
+}
+
+type recordingClient struct {
+	inj   *recordingInjector
+	model string
+}
+
+func (c *recordingClient) Provider() string { return c.inj.name }
+func (c *recordingClient) Model() string    { return c.model }
+func (c *recordingClient) Stream(context.Context, connector.Request) (<-chan stream.Event, error) {
+	return nil, nil
+}
+
+// WithHTTP records the injected client and returns a copy, mirroring the real
+// implementation: parallel children share the value they are bound from.
+func (c *recordingClient) WithHTTP(h connector.HTTPDoer) connector.ModelClient {
+	c.inj.got = append(c.inj.got, h)
+	return &recordingClient{inj: c.inj, model: c.model}
 }
 
 // Each call must mint a FRESH pool: two subagents running in parallel may not
@@ -184,7 +211,7 @@ func (r *recordingInjector) WithHTTP(h connector.HTTPDoer) providers.Provider {
 // client inside runSingleTask rather than at process start.
 func TestWithIsolatedPool_FreshClientPerCall(t *testing.T) {
 	inj := &recordingInjector{fakeProvider: fakeProvider{name: "injector"}}
-	mc := providers.Client(inj, "m")
+	mc := inj.Client("m")
 
 	withIsolatedPool(mc, nil)
 	withIsolatedPool(mc, nil)
@@ -204,7 +231,7 @@ func TestWithIsolatedPool_FreshClientPerCall(t *testing.T) {
 // exact numbers the code carried in tools/subagent.go before the move.
 func TestWithIsolatedPool_TransportSettings(t *testing.T) {
 	inj := &recordingInjector{fakeProvider: fakeProvider{name: "injector"}}
-	mc := providers.Client(inj, "m")
+	mc := inj.Client("m")
 	withIsolatedPool(mc, nil)
 
 	cl, ok := inj.got[0].(*http.Client)
@@ -237,7 +264,7 @@ func TestWithIsolatedPool_RealProviderGetsCopy(t *testing.T) {
 	base := providers.NewProvider("real", []providers.ModelEntry{
 		{Name: "m", URI: "openai://m@sk@api.example.invalid"},
 	}, providers.Deps{})
-	mc := providers.Client(base, "m")
+	mc := base.Client("m")
 
 	a, _ := withIsolatedPool(mc, nil)
 	b, _ := withIsolatedPool(mc, nil)
@@ -265,10 +292,10 @@ func TestWithIsolatedPool_WrapsFallbacksWithPrimary(t *testing.T) {
 	fb1Inj := &recordingInjector{fakeProvider: fakeProvider{name: "fb1"}}
 	fb2Inj := &recordingInjector{fakeProvider: fakeProvider{name: "fb2"}}
 
-	primary := providers.Client(primaryInj, "m")
+	primary := primaryInj.Client("m")
 	fallbacks := []connector.ModelClient{
-		providers.Client(fb1Inj, "m"),
-		providers.Client(fb2Inj, "m"),
+		fb1Inj.Client("m"),
+		fb2Inj.Client("m"),
 	}
 
 	boundPrimary, boundFallbacks := withIsolatedPool(primary, fallbacks)
@@ -305,10 +332,11 @@ func TestWithIsolatedPool_FallbackPoolDistinctAcrossChildren(t *testing.T) {
 	fbA := &recordingInjector{fakeProvider: fakeProvider{name: "fbA"}}
 	fbB := &recordingInjector{fakeProvider: fakeProvider{name: "fbB"}}
 
-	_, _ = withIsolatedPool(providers.Client(&recordingInjector{fakeProvider: fakeProvider{name: "p1"}}, "m"),
-		[]connector.ModelClient{providers.Client(fbA, "m")})
-	_, _ = withIsolatedPool(providers.Client(&recordingInjector{fakeProvider: fakeProvider{name: "p2"}}, "m"),
-		[]connector.ModelClient{providers.Client(fbB, "m")})
+	p1 := &recordingInjector{fakeProvider: fakeProvider{name: "p1"}}
+	p2 := &recordingInjector{fakeProvider: fakeProvider{name: "p2"}}
+
+	_, _ = withIsolatedPool(p1.Client("m"), []connector.ModelClient{fbA.Client("m")})
+	_, _ = withIsolatedPool(p2.Client("m"), []connector.ModelClient{fbB.Client("m")})
 
 	if fbA.got[0] == fbB.got[0] {
 		t.Error("two different children's fallback clients shared one connection pool")

@@ -29,7 +29,7 @@ type agentRunner struct{}
 func resolveModelClient(ctx context.Context, model string) (connector.ModelClient, error) {
 	if strings.Contains(model, "/") {
 		if prov, mName, ok := providers.FindModel(model); ok {
-			return providers.Client(prov, mName), nil
+			return prov.Client(mName), nil
 		}
 		return nil, fmt.Errorf("no provider available for model %q", model)
 	}
@@ -38,7 +38,7 @@ func resolveModelClient(ctx context.Context, model string) (connector.ModelClien
 	if mc == nil {
 		// No parent model client in context (e.g. tests) — fall back to lookup.
 		if p, m, ok := providers.FindModel(model); ok {
-			return providers.Client(p, m), nil
+			return p.Client(m), nil
 		}
 		return nil, fmt.Errorf("no provider available for model %q", model)
 	}
@@ -61,7 +61,7 @@ func resolveModelClient(ctx context.Context, model string) (connector.ModelClien
 	if !ok {
 		return nil, fmt.Errorf("provider %q not found", mc.Provider())
 	}
-	return providers.Client(prov, mName), nil
+	return prov.Client(mName), nil
 }
 
 // withIsolatedPool binds mc, and every entry in fallbacks, to ONE HTTP client

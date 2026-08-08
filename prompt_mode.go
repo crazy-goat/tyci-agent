@@ -38,7 +38,7 @@ func runPrompt(provider providers.Provider, modelName string, disp display.Displ
 	messages := buildPromptMessages(prompt, disp, sess, sessionPath)
 	writePromptToSession(sess, prompt)
 
-	usage, err := agent.Run(runCtx, providers.Client(provider, modelName), disp, &messages, cfg)
+	usage, err := agent.Run(runCtx, provider.Client(modelName), disp, &messages, cfg)
 
 	stopESC()
 	signal.Stop(sigCh)

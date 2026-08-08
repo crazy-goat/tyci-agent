@@ -7,45 +7,47 @@ import (
 	"github.com/decodo/tyci/stream"
 )
 
-// clientAdapter binds a Provider to one model, so it can be handed to
-// package agent as a connector.ModelClient without agent needing to know
-// about the provider catalog, model.json, or auth resolution.
-type clientAdapter struct {
+// Client implements Provider.Client: it binds this provider to one model so
+// the result can be handed to package agent as a connector.ModelClient,
+// without agent needing to know about the provider catalog, model.json, or
+// auth resolution.
+func (p *dynamicProvider) Client(model string) connector.ModelClient {
+	return &modelClient{p: p, model: model}
+}
+
+// modelClient is the providers-side implementation of connector.ModelClient:
+// one provider bound to one model. It is the ONLY exported way to send a
+// request through a provider — the catalog answers questions about models,
+// this answers requests.
+type modelClient struct {
 	p     Provider
 	model string
 }
 
-// Client returns a connector.ModelClient bound to model on provider p. It is
-// the seam between the provider catalog and the agent loop: the caller (CLI,
-// main.go, workflow engine) resolves "provider/model" to a Provider and a
-// bare model name exactly as before, then wraps them with Client before
-// handing the result to agent.Run.
-func Client(p Provider, model string) connector.ModelClient {
-	return &clientAdapter{p: p, model: model}
-}
+func (c *modelClient) Provider() string { return c.p.Name() }
+func (c *modelClient) Model() string    { return c.model }
 
-func (c *clientAdapter) Provider() string { return c.p.Name() }
-func (c *clientAdapter) Model() string    { return c.model }
-
-// Stream forwards to the wrapped Provider, forcing req.Model to the bound
+// Stream forwards to the wrapped provider, forcing req.Model to the bound
 // model so a caller can never send a client's request to the wrong model.
-func (c *clientAdapter) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
+func (c *modelClient) Stream(ctx context.Context, req connector.Request) (<-chan stream.Event, error) {
 	req.Model = c.model
 	return c.p.Stream(ctx, req)
 }
 
-// WithHTTP implements connector.HTTPInjector whenever the wrapped Provider
+// WithHTTP implements connector.HTTPInjector whenever the wrapped provider
 // implements HTTPInjector, and is a no-op otherwise. This forwarding is the
-// whole point of clientAdapter existing as a struct rather than a closure:
+// whole point of modelClient existing as a struct rather than a closure:
 // main.go's withIsolatedPool type-asserts a ModelClient against
 // connector.HTTPInjector, and without this method that assertion would
 // always fail — silently dropping subagent connection-pool isolation for
 // every ModelClient, since none of them would satisfy the interface. See
 // TestClient_WithHTTPForwardsToProvider.
-func (c *clientAdapter) WithHTTP(h connector.HTTPDoer) connector.ModelClient {
+func (c *modelClient) WithHTTP(h connector.HTTPDoer) connector.ModelClient {
 	inj, ok := c.p.(HTTPInjector)
 	if !ok {
 		return c
 	}
-	return &clientAdapter{p: inj.WithHTTP(h), model: c.model}
+	// The rebound provider mints its own client, so there is exactly one
+	// description of how a provider becomes a ModelClient.
+	return inj.WithHTTP(h).Client(c.model)
 }

@@ -2,31 +2,52 @@ package providers
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
 
-// recordingProvider is a minimal Provider that remembers the last Request it
-// was streamed, so tests can check what clientAdapter.Stream actually forwards.
-type recordingProvider struct {
-	name string
-	last Request
+// requestRecorder is a connector that remembers every Request it was asked to
+// stream, so a test can see what a ModelClient actually forwarded down to the
+// wire layer.
+type requestRecorder struct{ seen *[]Request }
+
+func (c *requestRecorder) Kind() string { return connector.KindOpenAI }
+func (c *requestRecorder) Stream(_ context.Context, req Request, _ func(stream.Event) error) error {
+	*c.seen = append(*c.seen, req)
+	return nil
 }
 
-func (r *recordingProvider) Name() string       { return r.name }
-func (r *recordingProvider) IsConfigured() bool { return true }
-func (r *recordingProvider) Models() []string   { return nil }
-func (r *recordingProvider) Stream(ctx context.Context, req Request) (<-chan stream.Event, error) {
-	r.last = req
-	return nil, errors.New("recordingProvider does not stream")
+// recordingClientProvider builds a real provider whose only connector records
+// requests. The test goes through the production path (Provider.Client →
+// modelClient.Stream → connector) rather than a hand-written provider stub,
+// because after the catalog/transport split a stub Provider mints its OWN
+// client and would never exercise modelClient at all.
+func recordingClientProvider(t *testing.T, name string) (Provider, *[]Request) {
+	t.Helper()
+	var seen []Request
+	reg := connector.NewRegistry()
+	reg.Register(connector.KindOpenAI, func(ep connector.Endpoint) (connector.Connector, error) {
+		return &requestRecorder{seen: &seen}, nil
+	})
+	p := NewProvider(name, []ModelEntry{
+		{Name: "big-1", URI: "openai://big-1@sk-tok@api.example.invalid"},
+	}, Deps{Connectors: reg})
+	return p, &seen
+}
+
+// drainEvents waits for the provider's streaming goroutine to finish. Stream
+// hands back a channel and closes it when the connector returns, so draining
+// it is the synchronisation point for anything the connector recorded.
+func drainEvents(ch <-chan stream.Event) {
+	for range ch {
+	}
 }
 
 func TestClient_ProviderAndModel(t *testing.T) {
-	p := &recordingProvider{name: "acme"}
-	mc := Client(p, "big-1")
+	p, _ := recordingClientProvider(t, "acme")
+	mc := p.Client("big-1")
 
 	if got := mc.Provider(); got != "acme" {
 		t.Errorf("Provider() = %q, want %q", got, "acme")
@@ -40,20 +61,27 @@ func TestClient_ProviderAndModel(t *testing.T) {
 // on the incoming Request — a caller cannot accidentally send a client's
 // request to the wrong model.
 func TestClient_StreamForcesBoundModel(t *testing.T) {
-	p := &recordingProvider{name: "acme"}
-	mc := Client(p, "big-1")
+	p, seen := recordingClientProvider(t, "acme")
+	mc := p.Client("big-1")
 
-	_, _ = mc.Stream(context.Background(), connector.Request{Model: "some-other-model"})
+	ch, err := mc.Stream(context.Background(), connector.Request{Model: "some-other-model"})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	drainEvents(ch)
 
-	if p.last.Model != "big-1" {
-		t.Errorf("forwarded Request.Model = %q, want the bound model %q", p.last.Model, "big-1")
+	if len(*seen) != 1 {
+		t.Fatalf("connector saw %d requests, want 1", len(*seen))
+	}
+	if (*seen)[0].Model != "big-1" {
+		t.Errorf("forwarded Request.Model = %q, want the bound model %q", (*seen)[0].Model, "big-1")
 	}
 }
 
-// WithHTTP must forward to the wrapped Provider's HTTPInjector when present.
+// WithHTTP must forward to the wrapped provider's HTTPInjector when present.
 // This is the regression this stage explicitly calls out: main.go's
 // withIsolatedPool type-asserts a ModelClient to connector.HTTPInjector, and
-// if clientAdapter did not forward, that assertion would always fail —
+// if modelClient did not forward, that assertion would always fail —
 // silently turning off subagent connection-pool isolation for every model
 // client, with no compile error to catch it.
 func TestClient_WithHTTPForwardsToProvider(t *testing.T) {
@@ -62,10 +90,10 @@ func TestClient_WithHTTPForwardsToProvider(t *testing.T) {
 		{Name: "m", URI: "openai://m@sk-tok@api.example.invalid"},
 	}, Deps{Connectors: reg})
 
-	mc := Client(base, "m")
+	mc := base.Client("m")
 	inj, ok := mc.(connector.HTTPInjector)
 	if !ok {
-		t.Fatal("clientAdapter does not implement connector.HTTPInjector")
+		t.Fatal("modelClient does not implement connector.HTTPInjector")
 	}
 
 	doer := &stubDoer{}
@@ -83,19 +111,16 @@ func TestClient_WithHTTPForwardsToProvider(t *testing.T) {
 	}
 }
 
-// A ModelClient wrapping a Provider that does NOT implement HTTPInjector
-// (every fake in the agent/main test suites) must return an unchanged,
-// still-usable client instead of panicking or losing the binding — the same
-// "no isolation, but no crash" contract providers.HTTPInjector documents.
+// A modelClient wrapping a Provider that does NOT implement HTTPInjector must
+// return an unchanged, still-usable client instead of panicking or losing the
+// binding — the same "no isolation, but no crash" contract
+// providers.HTTPInjector documents. Built by hand because no exported path can
+// produce this shape any more: the only provider that mints a modelClient is
+// dynamicProvider, which is always an HTTPInjector.
 func TestClient_WithHTTPNoopWhenProviderIsNotInjector(t *testing.T) {
-	p := &catalogStub{name: "no-injector", configured: true}
-	mc := Client(p, "m1")
+	mc := &modelClient{p: &catalogStub{name: "no-injector", configured: true}, model: "m1"}
 
-	inj, ok := mc.(connector.HTTPInjector)
-	if !ok {
-		t.Fatal("clientAdapter does not implement connector.HTTPInjector")
-	}
-	bound := inj.WithHTTP(&stubDoer{})
+	bound := mc.WithHTTP(&stubDoer{})
 
 	if bound.Provider() != "no-injector" || bound.Model() != "m1" {
 		t.Errorf("no-op WithHTTP changed identity: Provider()=%q Model()=%q", bound.Provider(), bound.Model())

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -302,6 +303,20 @@ func (s *catalogStub) IsConfigured() bool { return s.configured }
 func (s *catalogStub) Models() []string   { return s.models }
 func (s *catalogStub) Stream(ctx context.Context, req Request) (<-chan stream.Event, error) {
 	return nil, errors.New("catalogStub does not stream")
+}
+
+// Client returns a client that carries an identity and nothing else — the
+// catalog tests never send a request.
+func (s *catalogStub) Client(model string) connector.ModelClient {
+	return stubClient{name: s.name, model: model}
+}
+
+type stubClient struct{ name, model string }
+
+func (c stubClient) Provider() string { return c.name }
+func (c stubClient) Model() string    { return c.model }
+func (c stubClient) Stream(context.Context, connector.Request) (<-chan stream.Event, error) {
+	return nil, errors.New("stubClient does not stream")
 }
 
 // A Catalog is a value: two of them share nothing, so a test that registers a

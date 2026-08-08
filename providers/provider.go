@@ -106,10 +106,27 @@ type RichMessage = connector.Message
 // Request is passed to Provider.Stream.
 type Request = connector.Request
 
+// Provider is one named entry in the model catalog.
+//
+// Name/IsConfigured/Models are catalog questions, asked only by the CLI.
+// Client is the factory that turns a catalog entry into something that can
+// actually send a request. Minting the client is a METHOD here, not a
+// package-level Client(p, model) function, because the provider is the only
+// thing that knows how to reach its own models (URI, auth, connector kind) —
+// a free function would have to take the interface and then go looking for
+// the transport behind it, which is the type-assertion-shaped hole this
+// design removes.
 type Provider interface {
 	Name() string
 	IsConfigured() bool
 	Models() []string
+
+	// Client returns a ModelClient bound to model on this provider. The name
+	// is deliberately NOT validated: `--model provider/anything` has always
+	// passed an unlisted name straight through, and the "model not found in
+	// provider" error surfaces at request time.
+	Client(model string) connector.ModelClient
+
 	Stream(ctx context.Context, req Request) (<-chan stream.Event, error)
 }
 

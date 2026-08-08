@@ -141,7 +141,7 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 		PendingTodos:  tools.PendingTodos,
 		HasTodos:      tools.HasPendingTodos,
 	}
-	ctx = connector.WithModelClient(ctx, providers.Client(provider, modelName))
+	ctx = connector.WithModelClient(ctx, provider.Client(modelName))
 
 	wd, _ := os.Getwd()
 	var sess *session.Session
@@ -202,7 +202,7 @@ func resolveFallbacks(specs []string) []connector.ModelClient {
 			fmt.Fprintf(os.Stderr, "Warning: fallback model %q not found, skipping\n", spec)
 			continue
 		}
-		out = append(out, providers.Client(p, m))
+		out = append(out, p.Client(m))
 	}
 	return out
 }
