@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/stream"
 )
 
-func runOnce(ctx context.Context, p providers.Provider, d Sink, msgs *[]providers.RichMessage, cfg Config, totalUsage *stream.Usage) (more bool, usage *stream.Usage, totalEmitted bool, err error) {
+func runOnce(ctx context.Context, p providers.Provider, d Sink, msgs *[]connector.Message, cfg Config, totalUsage *stream.Usage) (more bool, usage *stream.Usage, totalEmitted bool, err error) {
 	ctx = providers.WithProvider(ctx, p)
 	ctx = providers.WithModel(ctx, cfg.Model)
 	streamCtx, cancel := context.WithCancel(ctx)
@@ -19,7 +20,7 @@ func runOnce(ctx context.Context, p providers.Provider, d Sink, msgs *[]provider
 
 	d.Request(roundInputLabel(*msgs))
 
-	events, streamErr := p.Stream(streamCtx, providers.Request{
+	events, streamErr := p.Stream(streamCtx, connector.Request{
 		Model:    cfg.Model,
 		System:   cfg.System,
 		Messages: *msgs,
@@ -97,11 +98,11 @@ func runOnce(ctx context.Context, p providers.Provider, d Sink, msgs *[]provider
 	hasTools := len(toolCalls) > 0
 
 	if hasText || hasTools {
-		var content []providers.ContentBlock
+		var content []connector.ContentBlock
 
 		// Add thinking block first (before text, chronologically)
 		if thinkingBuf.Len() > 0 {
-			content = append(content, providers.ContentBlock{
+			content = append(content, connector.ContentBlock{
 				Type:     "thinking",
 				Thinking: thinkingBuf.String(),
 			})
@@ -109,7 +110,7 @@ func runOnce(ctx context.Context, p providers.Provider, d Sink, msgs *[]provider
 
 		// Add text block
 		if hasText {
-			content = append(content, providers.ContentBlock{
+			content = append(content, connector.ContentBlock{
 				Type: "text",
 				Text: textBuf.String(),
 			})
@@ -133,7 +134,7 @@ func runOnce(ctx context.Context, p providers.Provider, d Sink, msgs *[]provider
 			if id == "" {
 				id = fmt.Sprintf("call_%d", i)
 			}
-			content = append(content, providers.ContentBlock{
+			content = append(content, connector.ContentBlock{
 				Type:      "toolCall",
 				ID:        id,
 				Name:      tc.Name,
@@ -141,7 +142,7 @@ func runOnce(ctx context.Context, p providers.Provider, d Sink, msgs *[]provider
 			})
 		}
 
-		msg := providers.RichMessage{
+		msg := connector.Message{
 			Role:    "assistant",
 			Content: content,
 		}
@@ -202,7 +203,7 @@ func hasUsage(u stream.Usage) bool {
 // to the model for the current round: "user prompt" for the first round
 // and "return of tool" for subsequent rounds that feed tool results
 // back. The run-mode Minimal display uses this for the [ REQ] line.
-func roundInputLabel(msgs []providers.RichMessage) string {
+func roundInputLabel(msgs []connector.Message) string {
 	if n := len(msgs); n > 0 {
 		switch msgs[n-1].Role {
 		case "user":

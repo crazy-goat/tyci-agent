@@ -5,13 +5,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 )
 
-func writeAssistantSessionEvent(s *session.Session, providerName, model string, msg providers.RichMessage, usage *stream.Usage) {
-	// Convert providers.ContentBlock to session.ContentBlock (they have identical structure)
+func writeAssistantSessionEvent(s *session.Session, providerName, model string, msg connector.Message, usage *stream.Usage) {
+	// Convert connector.ContentBlock to session.ContentBlock (they have identical structure)
 	blocks := make([]session.ContentBlock, len(msg.Content))
 	for i, cb := range msg.Content {
 		blocks[i] = session.ContentBlock{

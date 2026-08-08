@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
@@ -73,7 +74,7 @@ var ErrMaxIterations = errors.New("agent reached max tool-call iterations withou
 // If cfg.FallbackModels is set, non-retryable errors will try fallback models
 // before giving up. Once a fallback succeeds, it is used for the rest of the session.
 // Returns total usage accumulated during the run.
-func Run(ctx context.Context, p providers.Provider, d Sink, msgs *[]providers.RichMessage, cfg Config) (stream.Usage, error) {
+func Run(ctx context.Context, p providers.Provider, d Sink, msgs *[]connector.Message, cfg Config) (stream.Usage, error) {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 5
 	}
@@ -195,9 +196,9 @@ func Run(ctx context.Context, p providers.Provider, d Sink, msgs *[]providers.Ri
 		if cfg.NextMessages != nil {
 			if pending := cfg.NextMessages(); len(pending) > 0 {
 				for _, line := range pending {
-					*msgs = append(*msgs, providers.RichMessage{
+					*msgs = append(*msgs, connector.Message{
 						Role:    "user",
-						Content: []providers.ContentBlock{{Type: "text", Text: line}},
+						Content: []connector.ContentBlock{{Type: "text", Text: line}},
 					})
 					if cfg.Session != nil {
 						blocks := []session.ContentBlock{{Type: "text", Text: line}}
@@ -221,9 +222,9 @@ func Run(ctx context.Context, p providers.Provider, d Sink, msgs *[]providers.Ri
 				if pending := cfg.PendingTodos(); len(pending) > 0 {
 					todoReminders++
 					reminder := buildTodoReminder(pending)
-					*msgs = append(*msgs, providers.RichMessage{
+					*msgs = append(*msgs, connector.Message{
 						Role:    "user",
-						Content: []providers.ContentBlock{{Type: "text", Text: reminder}},
+						Content: []connector.ContentBlock{{Type: "text", Text: reminder}},
 					})
 					if cfg.Session != nil {
 						blocks := []session.ContentBlock{{Type: "text", Text: reminder}}
