@@ -1,10 +1,14 @@
 package providers
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/decodo/tyci/stream"
 )
 
 // =============================================================================
@@ -278,5 +282,147 @@ func TestParseModel(t *testing.T) {
 				t.Errorf("parseModel(%q) = %q, want %q", tt.uri, got, tt.want)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Catalog tests
+// =============================================================================
+
+// catalogStub is a minimal Provider for exercising the catalog. It never
+// streams; only the metadata methods matter here.
+type catalogStub struct {
+	name       string
+	configured bool
+	models     []string
+	free       []string
+}
+
+func (s *catalogStub) Name() string         { return s.name }
+func (s *catalogStub) IsConfigured() bool   { return s.configured }
+func (s *catalogStub) Models() []string     { return s.models }
+func (s *catalogStub) FreeModels() []string { return s.free }
+func (s *catalogStub) Stream(ctx context.Context, req Request) (<-chan stream.Event, error) {
+	return nil, errors.New("catalogStub does not stream")
+}
+
+// A Catalog is a value: two of them share nothing, so a test that registers a
+// provider cannot leak into another test (or into Default).
+func TestCatalog_IsolatedFromDefault(t *testing.T) {
+	c := NewCatalog()
+	c.Register(&catalogStub{name: "catalog-isolated-provider"})
+
+	if _, ok := c.GetProvider("catalog-isolated-provider"); !ok {
+		t.Fatal("provider missing from the catalog it was registered in")
+	}
+	if _, ok := Default.GetProvider("catalog-isolated-provider"); ok {
+		t.Error("registering into a local Catalog leaked into Default")
+	}
+	if _, ok := NewCatalog().GetProvider("catalog-isolated-provider"); ok {
+		t.Error("two Catalog values share state")
+	}
+}
+
+// Register replaces an entry with the same name rather than accumulating.
+func TestCatalog_RegisterReplacesSameName(t *testing.T) {
+	c := NewCatalog()
+	c.Register(&catalogStub{name: "dup", models: []string{"old"}})
+	c.Register(&catalogStub{name: "dup", models: []string{"new"}})
+
+	list := c.ListProviders()
+	if len(list) != 1 {
+		t.Fatalf("got %d providers, want 1", len(list))
+	}
+	if got := list[0].Models(); len(got) != 1 || got[0] != "new" {
+		t.Errorf("models = %v, want [new] (second Register did not replace the first)", got)
+	}
+}
+
+// ListProviders is sorted by name so CLI output is stable.
+func TestCatalog_ListProvidersSorted(t *testing.T) {
+	c := NewCatalog()
+	for _, n := range []string{"zeta", "alpha", "mu"} {
+		c.Register(&catalogStub{name: n})
+	}
+	var got []string
+	for _, p := range c.ListProviders() {
+		got = append(got, p.Name())
+	}
+	want := []string{"alpha", "mu", "zeta"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+// FindModel: "provider/model" resolves by exact provider name and does not
+// care whether the provider is configured; an unknown prefix fails.
+func TestCatalog_FindModelQualified(t *testing.T) {
+	c := NewCatalog()
+	c.Register(&catalogStub{name: "prov", models: []string{"m1"}})
+
+	p, m, ok := c.FindModel("prov/m1")
+	if !ok || p.Name() != "prov" || m != "m1" {
+		t.Fatalf("FindModel(prov/m1) = %v, %q, %v", p, m, ok)
+	}
+	// The bare name after the slash is passed through unvalidated — today's
+	// behaviour, relied on by `--model provider/anything`.
+	if _, m, ok := c.FindModel("prov/not-listed"); !ok || m != "not-listed" {
+		t.Errorf("FindModel(prov/not-listed) = %q, %v; want pass-through", m, ok)
+	}
+	if _, _, ok := c.FindModel("nope/m1"); ok {
+		t.Error("FindModel resolved an unknown provider prefix")
+	}
+}
+
+// FindModel: a bare name only matches a CONFIGURED provider's Models(), but
+// falls through to FreeModels() of any provider, configured or not.
+func TestCatalog_FindModelBareName(t *testing.T) {
+	c := NewCatalog()
+	c.Register(&catalogStub{name: "unconfigured", models: []string{"paid-model"}})
+	c.Register(&catalogStub{name: "configured", configured: true, models: []string{"live-model"}})
+	c.Register(&catalogStub{name: "freebie", free: []string{"free-model"}})
+
+	if p, m, ok := c.FindModel("live-model"); !ok || p.Name() != "configured" || m != "live-model" {
+		t.Errorf("FindModel(live-model) = %v, %q, %v", p, m, ok)
+	}
+	if _, _, ok := c.FindModel("paid-model"); ok {
+		t.Error("FindModel matched a model on an unconfigured provider")
+	}
+	if p, _, ok := c.FindModel("free-model"); !ok || p.Name() != "freebie" {
+		t.Errorf("FindModel(free-model) did not fall through to FreeModels: %v, %v", p, ok)
+	}
+	if _, _, ok := c.FindModel("nothing-like-this"); ok {
+		t.Error("FindModel matched a model nobody lists")
+	}
+}
+
+// The package-level helpers must be wrappers over Default, not a second map.
+func TestPackageLevelHelpersUseDefault(t *testing.T) {
+	const name = "package-level-wrapper-probe"
+	Register(&catalogStub{name: name, configured: true, models: []string{"probe-model"}})
+	t.Cleanup(func() { delete(Default.providers, name) })
+
+	if _, ok := Default.GetProvider(name); !ok {
+		t.Fatal("Register() did not write into Default")
+	}
+	if _, ok := GetProvider(name); !ok {
+		t.Error("GetProvider() did not read from Default")
+	}
+	if p, m, ok := FindModel(name + "/probe-model"); !ok || p.Name() != name || m != "probe-model" {
+		t.Error("FindModel() did not read from Default")
+	}
+	var found bool
+	for _, p := range ListProviders() {
+		if p.Name() == name {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("ListProviders() did not read from Default")
 	}
 }
