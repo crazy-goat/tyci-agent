@@ -11,6 +11,39 @@ import (
 	"time"
 )
 
+// HTTPDoer is the minimal HTTP surface the streamers need. Taking an
+// interface (instead of *http.Client) is what makes the transport injectable
+// per streamer, and what lets tests hand in a recording double.
+type HTTPDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// doer picks the client for one request: an explicitly injected HTTPDoer
+// always wins, otherwise the context decides (and falls back to the shared
+// default client).
+//
+// The ClientFromContext fallback is scheduled for removal in Etap 4 of
+// docs/architecture-refactor.md, once providers.Provider becomes a struct
+// with its own HTTP field and can inject a doer when it builds the connector.
+// Until then the context is the ONLY injection path in the running program
+// (tools/subagent.go builds an isolated connection pool that way), so
+// dropping the fallback here would silently break it.
+func doer(ctx context.Context, h HTTPDoer) HTTPDoer {
+	if h != nil {
+		return h
+	}
+	return ClientFromContext(ctx)
+}
+
+// applyExtraHeaders sets caller-supplied headers on req. It runs AFTER the
+// protocol defaults, so an Endpoint can override e.g. Authorization; with an
+// empty map (today's only case) it is a no-op and the wire bytes are unchanged.
+func applyExtraHeaders(req *http.Request, extra map[string]string) {
+	for k, v := range extra {
+		req.Header.Set(k, v)
+	}
+}
+
 // defaultClient is the shared HTTP client used by all API streaming functions.
 // It reuses connections and avoids allocating a new Transport per request.
 var defaultClient = &http.Client{

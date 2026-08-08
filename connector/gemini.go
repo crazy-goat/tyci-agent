@@ -46,7 +46,8 @@ func (c *gemini) Stream(ctx context.Context, req Request, emit func(stream.Event
 	if len(req.Tools) > 0 && string(req.Tools) != "null" && string(req.Tools) != "[]" {
 		body.Tools = toolsToGemini(req.Tools)
 	}
-	return api.StreamGemini(ctx, c.ep.APIKey, c.ep.URL(), body, emit)
+	s := api.GeminiStreamer{HTTP: c.ep.HTTP, Headers: c.ep.Headers}
+	return s.Stream(ctx, c.ep.APIKey, c.ep.URL(), body, emit)
 }
 
 // messagesToGemini converts a Message slice to Gemini content and system

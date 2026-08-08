@@ -44,11 +44,13 @@ type Endpoint struct {
 	Path string
 	// APIKey is the already-resolved credential (URI → auth.json → env).
 	APIKey string
-	// Headers are extra headers to send. Not consumed yet — the api.StreamX
-	// functions still set their own headers (Etap 3).
+	// Headers are extra headers to send, applied after the protocol's own
+	// defaults (so they can override e.g. Authorization). Nothing populates
+	// this map today, which is why the wire format is unchanged.
 	Headers map[string]string
-	// HTTP is the client to use; nil means "use the default". Not consumed
-	// yet either — api.ClientFromContext still decides (Etap 3).
+	// HTTP is the client to send with. nil means "let the api layer resolve
+	// one from the context" — see api.ClientFromContext, which stays until
+	// Etap 4 gives the provider its own HTTP field.
 	HTTP HTTPDoer
 	// Options carries connector-specific switches resolved from the provider
 	// URI query string (currently only "reasoning" for the OpenAI connector).

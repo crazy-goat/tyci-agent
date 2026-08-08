@@ -3,7 +3,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -126,7 +125,7 @@ data: [DONE]
 		Messages:  []AnthropicMessage{{Role: "user", Content: []AnthropicContentBlock{{Type: "text", Text: "hi"}}}},
 	}
 
-	err := StreamAnthropic(testCtx(), "test-key", server.URL, body, emit)
+	err := AnthropicStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err != nil {
 		t.Fatalf("StreamAnthropic: %v", err)
 	}
@@ -186,7 +185,7 @@ data: [DONE]
 		Messages:  []AnthropicMessage{{Role: "user", Content: []AnthropicContentBlock{{Type: "text", Text: "weather?"}}}},
 	}
 
-	err := StreamAnthropic(testCtx(), "test-key", server.URL, body, emit)
+	err := AnthropicStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err != nil {
 		t.Fatalf("StreamAnthropic: %v", err)
 	}
@@ -236,7 +235,7 @@ func TestStreamAnthropic_EmptyStream(t *testing.T) {
 		Messages:  []AnthropicMessage{{Role: "user", Content: []AnthropicContentBlock{{Type: "text", Text: "hi"}}}},
 	}
 
-	err := StreamAnthropic(testCtx(), "test-key", server.URL, body, emit)
+	err := AnthropicStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err != nil {
 		t.Fatalf("StreamAnthropic: %v", err)
 	}
@@ -266,7 +265,7 @@ func TestStreamAnthropic_ErrorStatusCode(t *testing.T) {
 	emit := func(e stream.Event) error { return nil }
 	body := AnthropicRequest{Model: "claude-sonnet-4-20250514", MaxTokens: 100, Stream: true}
 
-	err := StreamAnthropic(testCtx(), "test-key", server.URL, body, emit)
+	err := AnthropicStreamer{}.Stream(testCtx(), "test-key", server.URL, body, emit)
 	if err == nil {
 		t.Fatal("expected error for 429")
 	}
@@ -277,9 +276,4 @@ func TestStreamAnthropic_ErrorStatusCode(t *testing.T) {
 	if re.Code != 429 {
 		t.Errorf("expected code 429, got %d", re.Code)
 	}
-}
-
-// testCtx returns a background context for tests.
-func testCtx() context.Context {
-	return context.Background()
 }

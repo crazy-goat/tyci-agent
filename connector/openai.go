@@ -39,7 +39,8 @@ func (c *openAI) Stream(ctx context.Context, req Request, emit func(stream.Event
 	if c.reasoning {
 		body.Reasoning = true
 	}
-	return api.StreamChat(ctx, c.ep.APIKey, c.ep.URL(), body, emit)
+	s := api.ChatStreamer{HTTP: c.ep.HTTP, Headers: c.ep.Headers}
+	return s.Stream(ctx, c.ep.APIKey, c.ep.URL(), body, emit)
 }
 
 // messagesToChat converts a Message slice to a ChatMessage slice,

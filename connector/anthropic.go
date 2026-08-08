@@ -32,13 +32,14 @@ func (c *anthropic) Stream(ctx context.Context, req Request, emit func(stream.Ev
 		Stream:    true,
 		System:    req.System,
 		Messages:  messagesToAnthropic(req.Messages),
-		// The tool-schema conversion stays in package api: it is also used by
-		// api.AnthropicClient, and api/anthropic_stub.go has to keep a
-		// build-tagged no-op counterpart. Moving it here would force changes
-		// in api/, which Etap 2 explicitly avoids.
+		// The tool-schema conversion still lives in package api next to the
+		// SSE parser it belongs to; both are behind the same !noanthropic
+		// tag, so this file and api/anthropic.go appear and disappear
+		// together.
 		Tools: api.ConvertToolsToAnthropic(req.Tools),
 	}
-	return api.StreamAnthropic(ctx, c.ep.APIKey, c.ep.URL(), body, emit)
+	s := api.AnthropicStreamer{HTTP: c.ep.HTTP, Headers: c.ep.Headers}
+	return s.Stream(ctx, c.ep.APIKey, c.ep.URL(), body, emit)
 }
 
 // messagesToAnthropic converts a Message slice to an AnthropicMessage slice.
