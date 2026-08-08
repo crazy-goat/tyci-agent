@@ -361,52 +361,167 @@ tego usprawiedliwienia co `Model` — nie czyta go nikt, ani agent, ani wywołuj
 
 ## Etap 6 — frontend jako sterownik (2d)
 
-**Do rozstrzygnięcia PRZED tym etapem:** `Provider.FreeModels()` jest w produkcji
-martwe. Jedyna nietestowa implementacja (`dynamicProvider`) zwraca `nil`
-bezwarunkowo, więc druga pętla w `Catalog.FindModel` nigdy nic nie znajduje, a
-`commands.go:285,424,618` i `interactive.go:209` iterują po zawsze pustym slice'ie.
-Wyciąć czy zaimplementować — ale nie wciągać martwej metody do projektu
-`Conductor`, bo to sposób, w jaki interfejsy gniją. (Komentarz przy
-`Catalog.FindModel` opisuje dziś tę pętlę jakby była żywa.)
+**Rozstrzygnięte PRZED tym etapem:** `Provider.FreeModels()` było w produkcji
+martwe (jedyna nietestowa implementacja zwracała `nil` bezwarunkowo).
+**Decyzja: wycięte, nie zaimplementowane** — patrz „Sprzątanie przed `Conductor`"
+niżej. Metoda nie wchodzi do projektu `Conductor`.
 
-### Do posprzątania PRZED `Conductor` — wyszło przy etapie 5
+### Sprzątanie przed `Conductor` — ZROBIONE
 
 `Conductor` projektuje się wokół `agent.Config` i `connector.ModelClient`. Trzy
 z poniższych to pola i abstrakcje, które etap 5 zostawił w stanie „istnieje, ale
 nikt tego nie czyta". Przeniesienie ich do nowego API utrwaliłoby błąd, więc
-kolejność jest: najpierw sprzątanie, potem `Conductor`.
+kolejność była: najpierw sprzątanie, potem `Conductor`.
 
-- [ ] **`agent.Config.Model` — agent to ignoruje.** Po etapie 5 nietestowy `agent/`
-      nie ma ani jednego odczytu `cfg.Model`; model bierze się z `mc.Model()`
-      (`run_once.go:22`). Pole zostało, a pisze do niego 6 miejsc (`commands.go:134`,
-      `interactive.go:249,300`, `tui_mode.go:62,134`, `main.go:172`). Dwa źródła
-      prawdy, jedno martwe: przy rozjeździe agent użyje klienta, a `prompt_mode.go:29`
-      (zakładanie sesji) zobaczy co innego. Dziś się zgadzają tylko dlatego, że
-      `prompt_mode.go:38` buduje klienta *z* `cfg.Model` — konwencja, nie konstrukcja.
-      Decyzja: usunąć z `Config` (wywołujący trzymają własną zmienną) czy zostawić
-      jako pole wywołującego z jawnym „agent tego nie czyta".
-- [ ] **`agent.Config.ProviderName` — martwe i mylące.** Ustawiane w 6 miejscach,
-      nieczytane nigdzie w repo. Komentarz obiecuje „provider name for session
-      metadata", a metadane sesji biorą od etapu 5 `mc.Provider()`
-      (`run_once.go:151`). Do usunięcia razem z powyższym — jeden commit.
-- [ ] **`providers.Provider` to już interfejs katalogu, nie strumienia.**
-      `Provider.Stream` jest wołane z dokładnie jednego miejsca w repo —
-      `providers/client.go:34`, czyli z adaptera `clientAdapter`. Reszta
-      (`Name`, `IsConfigured`, `Models`, `FreeModels`) to pytania o katalog, zadawane
-      wyłącznie przez CLI. To domyka pytanie o `FreeModels` wyżej: to nie wada
-      `Provider` jako abstrakcji strumienia, tylko skutek zlepienia dwóch abstrakcji
-      w jedną. Rozdzielenie katalog/transport jest teraz tanie i powinno poprzedzić
-      `Conductor`, który i tak musi zdecydować, co widzi frontend (katalog do
-      `SwitchModel`) a co agent (`ModelClient`).
-- [ ] **`HTTPInjector` w dwóch pakietach, wstrzyknięcie przez trzy ogniwa.**
-      `providers.HTTPInjector` → `clientAdapter.WithHTTP` → `connector.HTTPInjector`.
-      Każde ogniwo musi przekazać dalej; pominięcie któregokolwiek nie daje błędu
-      kompilacji — type assertion po prostu nie przechodzi i request leci po
-      współdzielonym poolu, czyli izolacja subagenta ginie bez śladu (patrz komentarz
-      w `providers/client.go:37-45`). Pilnuje tego jeden test w środkowym ogniwie
-      (`TestClient_WithHTTPForwardsToProvider`). Cicha awaria jest tu domyślnym trybem
-      porażki. Rozstrzygnąć razem z podziałem `Provider` — jeśli transport zostaje
-      tylko na `ModelClient`, łańcuch skraca się do jednego ogniwa.
+- [x] **`agent.Config.Model` — agent to ignorował.** Pole usunięte z `Config`.
+      Model jest wyłącznie właściwością `connector.ModelClient` podanego do `Run`
+      (`mc.Model()`); wywołujący, którzy potrzebują nazwy do własnych celów,
+      trzymają własną zmienną. `runPrompt` dostał jawny parametr `modelName`
+      (czytał `cfg.Model` przy zakładaniu sesji i przy budowie klienta);
+      `commands.go` / `interactive.go` / `tui_mode.go` miały już `provider` +
+      `modelName` obok `cfg`, więc zapisy do `cfg` były czystą duplikacją;
+      `main.go` i `internal/workflow/engine.go` tylko pisały. Dwa źródła prawdy →
+      jedno. Komentarz „agent tego nie czyta" świadomie NIE został zostawiony —
+      to właśnie stan, który usuwaliśmy.
+      Commit `8d90b5d`.
+- [x] **`agent.Config.ProviderName` — martwe i mylące.** Usunięte tym samym
+      commitem. Metadane sesji biorą `mc.Provider()` (`run_once.go`).
+- [x] **`Provider.FreeModels()` wycięte.** Metoda wypadła z interfejsu, z
+      `dynamicProvider` i z trzech atrap w testach; zniknęła druga pętla w
+      `Catalog.FindModel` (razem z komentarzem, który opisywał ją jakby była żywa)
+      oraz cztery martwe pętle w CLI. Zachowawcze *przez konstrukcję* — każde
+      użycie iterowało po `nil`; dowód per użycie w opisie commita `76a8629`.
+      Jedyne miejsce z wpływem na sterowanie, `provider list --models`, miało
+      warunek `len(models) == 0 && len(freeModels) == 0`, który redukuje się do
+      `len(models) == 0`, więc komunikat „(no models)" pojawia się dokładnie tam,
+      gdzie dotąd.
+- [x] **`providers.Provider` jest już wyłącznie interfejsem katalogu.**
+      `Stream` wypadło z interfejsu; `Provider` = `Name` + `IsConfigured` +
+      `Models` + `Client(model) connector.ModelClient`. Jedyną drogą do wysłania
+      requestu jest `connector.ModelClient`. Commity `bec3622` (fabryka staje się
+      metodą) i `60c32db` (`Stream` zdjęte z interfejsu).
+- [x] **`HTTPInjector` — trzy ogniwa → jedno.** `providers.HTTPInjector` usunięty
+      całkiem, `dynamicProvider.WithHTTP` → nieeksportowane `withHTTP`
+      zwracające typ konkretny. Zostaje jedno ogniwo, `connector.HTTPInjector`
+      na `modelClient`, i jedna zamierzona assertion w
+      `main.go:withIsolatedPool` (atrapy `ModelClienta` jej nie spełniają i mają
+      przechodzić bez izolacji, jak dotąd). Żeby nie mogła po cichu przestać
+      działać dla ścieżki produkcyjnej, `providers/client.go` ma
+      `var _ connector.HTTPInjector = (*modelClient)(nil)` — awaria runtime
+      zamieniona na awarię builda. Commit `60c32db`.
+
+#### Projekt podziału `Provider` i dlaczego tak
+
+`Provider` **zostaje interfejsem** (ograniczenie z etapu 4: struktura zepsułaby
+każdą atrapę i wciągnęła typ konkretny do sygnatur). Podział wygląda tak:
+
+```
+Provider (katalog)                 connector.ModelClient (transport)
+  Name() / IsConfigured()            Provider() / Model()
+  Models()                           Stream(ctx, Request)
+  Client(model) ──────────────────▶  (+ opcjonalnie connector.HTTPInjector)
+```
+
+Kluczowa decyzja: **fabryka `ModelClient` jest metodą `Provider`, nie funkcją
+pakietową.** Dawne `providers.Client(p Provider, model string)` zniknęło.
+Powód jest wprost o cichej awarii: funkcja przyjmująca interfejs `Provider`,
+który nie ma już `Stream`, musiałaby transport *odnaleźć za* interfejsem, czyli
+przez type assertion — a nieudana assertion w takim miejscu degraduje bez
+błędu. Jako metoda jest sprawdzana przez kompilator: każda implementacja
+`Provider` musi umieć wydać swojego klienta i sama decyduje, co ten klient
+potrafi. To także dlatego atrapy w testach są dziś *lżejsze*, nie cięższe —
+katalogowa atrapa nie dziedziczy transportu, o który nie prosiła.
+
+Skutek dla łańcucha HTTP: `modelClient` trzyma `*dynamicProvider` (typ
+konkretny), więc `modelClient.WithHTTP(h)` = `c.p.withHTTP(h).Client(c.model)` —
+oba skoki statyczne, nie ma czego nie dopasować. Zostaje jedna assertion, w
+`main.go`, i jest to jedyne miejsce, gdzie „brak izolacji" jest poprawną
+odpowiedzią (atrapy). `var _` w `providers/client.go` gwarantuje, że nigdy nie
+jest to odpowiedź dla klienta z produkcji.
+
+Wypadło przy tym z zasięgu `dynamicProvider.Stream`: metoda została na typie
+**nieeksportowanym**, więc spoza pakietu `providers` nie ma żadnej drogi do
+strumienia poza `connector.ModelClient`. Testy w `providers/`, które budowały
+providera przez `NewProvider`, streamują teraz przez `p.Client(model).Stream(...)`,
+czyli przez ścieżkę produkcyjną — dotyczy to też `wire_golden_test.go`.
+
+#### Odstępstwa od planu (świadome)
+
+**Zadania „rozdziel `Provider`" i „skróć łańcuch `HTTPInjector`" nie dały się
+rozdzielić na dwa commity po granicy zadań.** Plan przewidywał osobny commit na
+każde. Granica nie jest jednak szwem, który się kompiluje: w chwili, gdy
+`Provider` traci `Stream`, `modelClient` musi trzymać typ konkretny (trzymanie
+`Provider` + assertion do jakiegoś „streamera" odtworzyłoby dokładnie ten tryb
+cichej awarii, który usuwamy), a `modelClient` z polem `*dynamicProvider`
+unieważnia sygnaturę `providers.HTTPInjector` (`WithHTTP(HTTPDoer) Provider`) —
+Go nie ma kowariancji zwracanego typu, więc interfejs przestaje być spełniany
+przez cokolwiek i musi zniknąć w tym samym commicie. Rozbicie poszło więc po
+szwie, który *da się* skompilować: `bec3622` wprowadza nową fabrykę
+(`Provider.Client`), `60c32db` usuwa starą drogę (`Stream` z interfejsu +
+`providers.HTTPInjector`). Każdy z dwóch commitów jest zielony osobno.
+
+**`dynamicProvider.Stream` zostało eksportowane.** Zdjęcie go z interfejsu
+wystarcza: typ jest nieeksportowany, a `NewProvider` zwraca `Provider`, więc
+metoda jest nieosiągalna spoza pakietu. Przemianowanie na `stream` dołożyłoby
+tylko kolizję czytelniczą z importowanym pakietem `stream`.
+
+**Ziarnistość i semantyka izolowanego poolu bez zmian.** `withIsolatedPool`
+nadal daje jeden `*http.Client` na wejście w `agentRunner.run` (czyli na
+`RunTask`/`RunTaskWithSystem`), wspólny dla modelu głównego i wszystkich jego
+fallbacków. Oba testy izolacji fallbacków z etapu 5 przechodzą bez zmian w
+asercjach; zmieniła się tylko atrapa — `recordingInjector` nagrywa wstrzyknięty
+klient na poziomie `ModelClient`, a nie `Provider`, bo `withIsolatedPool` widzi
+wyłącznie `ModelClienty` i to jest poziom, na którym jego kontrakt istnieje.
+
+**Nazwy testów: 1 przekształcenie 1:1, 1 dodanie, 2 usunięcia (netto −1).**
+`TestNewProvider_ImplementsHTTPInjector` → `TestProviderClient_ImplementsHTTPInjector`
+(ta sama gwarancja przeniesiona z providera na klienta, plus sprawdzenie, że
+wstrzyknięty klient faktycznie ląduje w `Endpoint.HTTP`).
+`TestClient_WithHTTPNoopWhenProviderIsNotInjector` **usunięty bez następcy**:
+gałąź, którą opisywał, przestała istnieć (każdy `modelClient` owija
+`dynamicProvider`, który zawsze jest `HTTPInjectorem`). Gwarancję „`ModelClient`
+bez `HTTPInjectora` przechodzi `withIsolatedPool` nietknięty" trzyma
+`TestWithIsolatedPool_PassesThroughNonInjector` w `main_resolve_test.go`.
+Atrapa `recordingProvider` (nie test) usunięta jako niepotrzebna — po podziale
+atrapa `Providera` wydaje WŁASNEGO klienta, więc nie dotknęłaby `modelClient`
+ani razu; `TestClient_{ProviderAndModel,StreamForcesBoundModel}` idą teraz przez
+prawdziwy provider z nagrywającym connectorem.
+
+**`TestCatalog_FindModelBareName` stracił przypadek „freebie"** — asercja
+opisywała usuniętą pętlę `FreeModels`. Test i jego dwie pozostałe asercje
+zostają.
+
+#### Weryfikacja
+
+- **4/4 commitów zielonych osobno.** Sprawdzone w jednorazowym
+  `git worktree --detach`, commit po commicie: `go build ./... && go vet ./... &&
+  go test ./... -count=1 && gofmt -l .` (puste) + `go build` z tagami
+  `noanthropic`, `nogemini`, `noanthropic nogemini`. Worktree usunięty.
+- `go build` + `go vet` + `go test ./... -count=1` zielone we wszystkich czterech
+  kombinacjach tagów (brak, `noanthropic`, `nogemini`, `noanthropic nogemini`),
+- `go test -race ./agent/ ./providers/ ./tools/ .` zielone,
+- `gofmt -l .` puste,
+- `git diff --stat ace8e16..HEAD -- providers/testdata` **puste** — wire format
+  przeżył, ani jednego `-update`,
+- `go list -deps ./agent | grep decodo/tyci/providers` → **puste**
+  (kryterium nagłówkowe całego refaktoru),
+- `grep -rn "FreeModels" --include="*.go" .` → dwa komentarze opisujące usunięcie,
+  zero kodu; `grep -rn "providers.HTTPInjector"` → jeden komentarz historyczny
+  (opis skróconego łańcucha w `providers/client.go`), zero kodu,
+- nazwy testów: 1027 → 1026 (`comm` na posortowanych listach `func Test*` przed
+  i po): 1 przekształcenie 1:1, 1 dodany, 2 usunięte — wyliczone wyżej.
+
+#### Znalezione po drodze, ŚWIADOMIE nietknięte
+
+- **`subagentDefaultMaxIterations` w `main.go:125` jest martwą stałą** —
+  zdefiniowana jako alias `tools.DefaultSubagentMaxIterations` i nigdzie nie
+  używana (`tools.ResolveMaxIter` robi to samo po stronie `tools/`). Nie ruszane:
+  poza zakresem.
+- **`display.ProviderModels` dostaje dziś tylko modele płatne** — po wycięciu
+  `FreeModels` nie ma już ścieżki, którą TUI mogłoby dostać model oznaczony jako
+  darmowy. Jeśli „free models" mają kiedyś wrócić, muszą wrócić jako właściwość
+  wpisu w katalogu (`ModelEntry`), nie jako druga metoda interfejsu — poprzedni
+  kształt zgnił właśnie dlatego, że nikt nie miał czym go wypełnić.
 
 - [ ] `Conductor`: `conversation` + `cfg` + `ModelClient` + sesja
 - [ ] API: `Submit(prompt)`, `Interrupt()`, `SwitchModel()`
