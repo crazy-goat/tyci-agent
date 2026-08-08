@@ -750,6 +750,89 @@ func TestRunFallbackNoToolsTextOnly(t *testing.T) {
 	}
 }
 
+// TestRunFallback_MidStreamFailureAfterPartialText covers the failure shape no
+// hand-written double in this package could produce: the request succeeds, the
+// model starts answering, and the stream dies half-way through. Until
+// connectortest.Flaky every fallback test here failed at Stream() itself, so
+// the "partial answer already on screen, then switch models" path — a real
+// production path — was untested.
+//
+// The injected error is deliberately NOT retryable. A retryable one would send
+// Run into its retry loop, whose backoff comes from api.CalcBackoff with a
+// BaseBackoff that defaults to 4 and cannot be injected — a minimum four-second
+// sleep per attempt. Non-retryable goes straight to the fallback with no sleep.
+// (See the debt note in docs/architecture-refactor.md.)
+func TestRunFallback_MidStreamFailureAfterPartialText(t *testing.T) {
+	// Two TextDeltas reach the display, then the stream dies. The third
+	// chunk and the Finish of the wrapped Fake are never reached, which is
+	// why Text()'s zero Usage does not matter here.
+	primary := &connectortest.Flaky{
+		Client: connectortest.Text("Here is the ", "first half of ", "the answer."),
+		Failures: []connectortest.Failure{{
+			MidStream:   true,
+			AfterEvents: 2,
+			Err:         errors.New("connection reset mid-stream"),
+		}},
+	}
+
+	fallback := &connectortest.Fake{ProviderName: "fb-mid", ModelName: "mid-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "complete answer from the fallback"},
+		stream.Finish{Usage: stream.Usage{Input: 7, Output: 4}},
+	}}}
+
+	d := newCaptureDisplay()
+	msgs := []connector.Message{{
+		Role:    "user",
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	if _, err := Run(context.Background(), primary, d, &msgs, Config{
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
+	}); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// The primary was called exactly once — the failure sent Run to the
+	// fallback, not back to the primary.
+	if got := primary.Calls(); got != 1 {
+		t.Errorf("primary Stream calls = %d, want 1", got)
+	}
+
+	// The half-answer really did reach the display before the failure...
+	shown := strings.Join(d.text, "")
+	if !strings.Contains(shown, "Here is the first half of ") {
+		t.Errorf("expected the partial primary answer on screen, got %q", shown)
+	}
+	// ...and the fallback's answer followed it.
+	if !strings.Contains(shown, "complete answer from the fallback") {
+		t.Errorf("expected the fallback answer on screen, got %q", shown)
+	}
+
+	// The truncated turn must NOT be recorded as an assistant message:
+	// runOnce bails on StreamError before appending, so the conversation
+	// carries only the fallback's complete answer.
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (user, assistant), got %d: %#v", len(msgs), msgs)
+	}
+	if msgs[1].Role != "assistant" {
+		t.Fatalf("expected assistant message, got %q", msgs[1].Role)
+	}
+	if msgs[1].Content[0].Text != "complete answer from the fallback" {
+		t.Errorf("assistant text = %q, want only the fallback's answer",
+			msgs[1].Content[0].Text)
+	}
+
+	// The user still gets exactly one cost summary, carrying the fallback's
+	// usage — the dead primary reported none.
+	if got := len(d.totals); got != 1 {
+		t.Fatalf("expected exactly 1 Total() call, got %d", got)
+	}
+	if d.totals[0].Input != 7 || d.totals[0].Output != 4 {
+		t.Errorf("Total = %+v, want Input 7 / Output 4 from the fallback", d.totals[0])
+	}
+}
+
 func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 	// After fallback, subsequent iterations use the fallback provider/model.
 	// We simulate two iterations: first fails, fallback succeeds,
