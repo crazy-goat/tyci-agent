@@ -273,10 +273,12 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 			// ESC pressed — cancel the agent run
 			cond.Interrupt()
 			iterCancel()
-			res := <-resultCh // wait for agent to finish
-			if !errors.Is(res.err, context.Canceled) && res.err != nil {
-				// Real error, not just cancellation
-			}
+			// Wait for the agent to finish before painting anything
+			// else — it is still writing to the display. The result
+			// itself is dropped on purpose: a cancellation is what we
+			// just asked for, and a real error has already been shown
+			// to the user by agent.Run via d.Error().
+			<-resultCh
 			tuiDisp.ResetStatus()
 			// User probably wants to retry with a new prompt
 			continue
