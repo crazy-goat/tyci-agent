@@ -183,6 +183,14 @@ implementować troskę o HTTP, o której agent nie ma prawa wiedzieć. `main.go`
 type-assert; provider bez tej metody zostaje nietknięty i ma dzisiejsze zachowanie
 „brak izolacji" — czyli to, co fake'i mają dziś.
 
+Koszt tego kompromisu, świadomy: wstrzykiwanie transportu jest niewidoczne w kontrakcie
+`Provider`, więc implementacja, która nie jest `*dynamicProvider`, po cichu nie dostaje
+izolacji i nic tego nie wykryje przy kompilacji. Luka w etapie 5 (provider fallbackowy)
+mogła zaistnieć dokładnie dlatego. Podobnie `Deps.HTTP == nil` prowadzi do globalnego
+`api.defaultClient` — provider nie jest pełnym właścicielem swojego transportu, bo
+normalna ścieżka produkcyjna celowo trzyma jeden klient na proces (reużycie połączeń).
+„Wszystko wstrzykiwalne" jest więc prawdą dla wywołującego, który się o to zgłosi.
+
 **`WithHTTP` zwraca kopię, nigdy nie mutuje odbiornika.** Równoległe subagenty
 (`subagent(tasks=[...])` → `runTasks` → goroutine per task) współdzielą jedną wartość
 providera; mutacja przelałaby pool jednego dziecka do requestów drugiego.
@@ -253,8 +261,24 @@ to zakres etapu 5.
 - [ ] `agent/fallback.go` przestaje wołać `providers.FindModel`
 - [ ] `providers.WithProvider` / `ProviderFromContext` → `ModelClient` w kontekście (`main.go:35`, `run_once.go:16`)
 - [ ] weryfikacja: `agent` nie importuje `providers`
+- [ ] **kryterium akceptacji: provider fallbackowy dziecka też dostaje izolowany pool.**
+      Znalezione przy etapie 4: `main.go:withIsolatedPool` owija tylko provider główny,
+      a `agent/fallback.go:35` bierze świeży provider z globalnego katalogu — ten
+      pójdzie po współdzielony `api.defaultClient`. Dziś nieosiągalne, bo `cfg`
+      budowany w `agentRunner.run` nie ustawia `FallbackModels`, więc `tryFallback`
+      w przebiegu dziecka nie wystrzeli. Utajone: gdyby subagenty dostały modele
+      zapasowe, izolacja przestałaby je obejmować bez błędu kompilacji. Gdy fallback
+      rozwiązuje wywołujący, może owinąć wszystkie providery razem — stąd to tutaj.
 
 ## Etap 6 — frontend jako sterownik (2d)
+
+**Do rozstrzygnięcia PRZED tym etapem:** `Provider.FreeModels()` jest w produkcji
+martwe. Jedyna nietestowa implementacja (`dynamicProvider`) zwraca `nil`
+bezwarunkowo, więc druga pętla w `Catalog.FindModel` nigdy nic nie znajduje, a
+`commands.go:285,424,618` i `interactive.go:209` iterują po zawsze pustym slice'ie.
+Wyciąć czy zaimplementować — ale nie wciągać martwej metody do projektu
+`Conductor`, bo to sposób, w jaki interfejsy gniją. (Komentarz przy
+`Catalog.FindModel` opisuje dziś tę pętlę jakby była żywa.)
 
 - [ ] `Conductor`: `conversation` + `cfg` + `ModelClient` + sesja
 - [ ] API: `Submit(prompt)`, `Interrupt()`, `SwitchModel()`
@@ -269,6 +293,11 @@ to zakres etapu 5.
 - [ ] `record.go` / `replay.go` — nagrywanie do JSONL, odtwarzanie w CI bez klucza API
 - [ ] przepisać testy retry/fallback z `httptest` na `Flaky`
 - [ ] zastąpić `mockProvider` z `agent/agent_test.go` przez `Fake`
+- [ ] wycofać `api.defaultClientProvider` — mutowalna zmienna globalna istniejąca
+      wyłącznie jako seam testowy (`api/api_test.go:757-763` podmienia ją i
+      przywraca w `defer`). Dziś bezpieczna, bo w `api/` nie ma ani jednego
+      `t.Parallel()`, ale to bezpieczeństwo z przypadku. Connector testowy
+      wstrzyknięty przez `Deps.HTTP` pokrywa ten sam przypadek bez globalu.
 
 ---
 
@@ -276,7 +305,9 @@ to zakres etapu 5.
 
 Ryzyka:
 - etap 2 przenosi konwersje wiadomości — najbardziej podatne na cichy regres (stąd etap 0)
-- `agent/agent_test.go` (1216 linii) i `providers/providers_test.go` (844) do przepisania — mechaniczne, ale objętościowe
+- `agent/agent_test.go` (1216 linii) do przepisania — mechaniczne, ale objętościowe.
+  `providers/providers_test.go` figurowało tu jako 844 linie: to liczba sprzed
+  rozbicia w etapie 2, dziś plik ma 282 linie i etap 4 nie musiał go przepisywać.
 
 Zyski poza czystością: znikają build tagi i pliki stubów, znika martwy `api/client.go`,
 testy retry przestają potrzebować serwera HTTP.
@@ -341,3 +372,18 @@ wchodzą w okolice refactoru.
   uruchamiania testów z tagami. Naprawione w etapie 3 (helpery przeniesione do
   nieotagowanego pliku, testy gemini wydzielone pod `!nogemini`).
 - [ ] `gofmt` całego repo zrobiony w osobnym commicie (8caa1ff) — przed etapem 2.
+- [ ] **`IsConfigured()` powtarza lookup niezmienny w pętli.** `p.authSource().Key(p.name)`
+  nie zależy od `e`, a stoi w `for _, e := range p.entries` — dla providera bez klucza
+  wykonuje się tyle razy, ile ma modeli (617 dla `nano-gpt`). `connect.GetKey` →
+  `LoadAuth()` czyta i parsuje `auth.json` przy każdym wywołaniu, bez cache.
+  Zmierzone na realnym katalogu (128 providerów, 3827 modeli): `FindModel` na
+  nietrafionej nazwie bez prefiksu = **11,8 ms** i ~3800 odczytów pliku. To O(modele)
+  tam, gdzie potrzeba O(providerzy). Stary kod miał identyczną pętlę — etap 4 tylko
+  uczynił niezmienność widoczną. Naprawa: wyciągnąć wywołanie przed pętlę + dekorator
+  z cache na `AuthSource` (to jest właśnie miejsce, w którym takie coś należy).
+  Nie pilne: 11,8 ms nikogo nie boli, page cache to amortyzuje.
+- [ ] **`IsConfigured` sprawdza token z URI surowo, `Stream` go rozwiązuje.** Wpis
+  z nierozwiązywalnym `$FOO` pokazuje się jako skonfigurowany i wywala się dopiero
+  przy żądaniu. Asymetria zastana, świadomie zachowana w etapie 4 (inaczej
+  `provider list` zacząłby ukrywać providerów, których użytkownik skonfigurował) —
+  do rozstrzygnięcia jako konwencja, nie do „naprawienia" po cichu.
