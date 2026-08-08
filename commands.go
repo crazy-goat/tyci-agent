@@ -338,7 +338,19 @@ var tuiCmd = &cobra.Command{
 		}, agent.GetDefaultModel(), func(newDefault string) {
 			_ = agent.SetDefaultModel(newDefault)
 		}, toolsCount, skillsCount, mcpCount)
-		runTUI(provider, modelName, tuiDisp, cfg, ctx, sessionPath)
+
+		// Issue #88: wire the pending-message queue drain callback. The
+		// TUI's NextMessages drains the channel of user lines typed
+		// during the in-flight request and returns them in FIFO order;
+		// the agent loop appends each as a user message and forces one
+		// more runOnce so the model sees them as a single turn.
+		cfg.NextMessages = tuiDisp.NextMessages
+
+		// No requireConfigured: the Tab-cycle and the picker only offer
+		// providers that are already in auth.json (see authSet above), and
+		// silently refusing a favorite would read as a dead key press.
+		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath, catalogResolver{})
+		runTUI(cond, tuiDisp, ctx)
 		return nil
 	},
 }
