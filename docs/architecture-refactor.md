@@ -743,6 +743,46 @@ budowanie tej infrastruktury tutaj byłoby robieniem etapu 7 w commicie etapu 6.
       `t.Parallel()`, ale to bezpieczeństwo z przypadku. Connector testowy
       wstrzyknięty przez `Deps.HTTP` pokrywa ten sam przypadek bez globalu.
 
+### Do poprawy — wyszło przy etapie 6
+
+Pierwsze dwie pozycje to wprost zamówienie na etap 7: bez nich `Fake` nie pokryje
+tego, co dziś pokrywają lokalne atrapy, i przepisanie testów byłoby regresem
+pokrycia. Reszta to dług znaleziony po drodze i świadomie nietknięty.
+
+- [ ] **`Fake` musi umieć wisieć do anulowania, nie tylko odgrywać skrypt.**
+      Atrapa w `conductor/conductor_test.go:39-58` ma tryb `blockUntilCancel`:
+      `Stream` ignoruje skrypt, blokuje się i zgłasza anulowanie jako
+      `stream.StreamError{ctx.Err()}` — czyli tak, jak robią to prawdziwe
+      connectory. Naiwny `Fake` odgrywający tylko sekwencję eventów tego nie ma,
+      a bez tego nie da się przetestować `Interrupt()` ani żadnej ścieżki ESC.
+      Zaprojektować to od razu, nie doklejać potem.
+- [ ] **`Conductor` nie pilnuje równoległego `Submit`.** Kontrakt „wszystkie
+      metody z gorutyny prowadzącej rozmowę, wyjątkiem jest `Interrupt`" jest
+      komentarzem (`conductor/conductor.go:89-91`), nie mechanizmem. Dziś żaden
+      frontend go nie łamie, ale frontend po RPC — czyli dokładnie to, po co ta
+      separacja powstała — złamie go pierwszego dnia. Do rozstrzygnięcia: mutex,
+      kolejka, czy jawny błąd „turn already in flight". Test na to jest tani i
+      naturalnie należy do etapu 7 (`-race` + dwa równoległe `Submit`).
+- [ ] **`Conductor` pisze do `os.Stderr` w jednym miejscu**
+      (`conductor/session_lazy.go:44`, ostrzeżenie „continuing without session").
+      Przeniesione dosłownie, więc nie jest regresem, ale w pakiecie, którego
+      cały sens polega na tym, że nie wie, jaki ma frontend, jest to zgrzyt.
+      Kandydat na wstrzykiwany hook `Warn func(error)` — dokładnie tak, jak
+      `providers.AuthFile` rozwiązał ten sam problem w etapie 4.
+- [ ] **Martwy `if` z pustym ciałem w gałęzi ESC** (`tui_mode.go:277-279`):
+      `if !errors.Is(res.err, context.Canceled) && res.err != nil { }` plus
+      komentarz „Real error, not just cancellation". Warunek jest policzony i
+      wyrzucony. Albo błąd ma być pokazany, albo warunek ma zniknąć — dziś
+      wygląda jak niedokończona obsługa błędu i przy `-race`/lincie nikt tego
+      nie złapie, bo formalnie jest poprawny.
+- [ ] **Martwa stała `subagentDefaultMaxIterations`** (`main.go:130`) — alias na
+      `tools.DefaultSubagentMaxIterations`, nieużywany nigdzie. Ten sam gatunek
+      długu co usunięte w etapie 6 pola `agent.Config`.
+- [ ] **Gdyby „free models" miały kiedyś wrócić** (wycięte w etapie 6), muszą
+      wrócić jako właściwość wpisu w katalogu (`ModelEntry`), nie jako druga
+      metoda interfejsu `Provider`. Poprzedni kształt zgnił dokładnie dlatego,
+      że był metodą, której nikt nie miał czym wypełnić.
+
 ---
 
 ## Uwagi
