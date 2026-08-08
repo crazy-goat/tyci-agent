@@ -340,6 +340,12 @@ już ich wewnętrznie nie potrzebuje** (`runOnce`/`fallback.go` czytają
 (nazwa sesji, przełączanie modelu), niezależnych od tego, jak `Run` go
 zużywa. Usunięcie pola złamałoby te call site'y bez żadnej korzyści.
 
+Rozstrzygnięcie obu odłożone na **przed etap 6** — patrz „Do posprzątania PRZED
+`Conductor`" w sekcji etapu 6. Powód, dla którego nie zostaje to tu na zawsze:
+`Conductor` przenosi `agent.Config` do nowego API, a pole, którego agent nie
+czyta, w nowym API wygląda jak kontrakt. `ProviderName` nie ma przy tym nawet
+tego usprawiedliwienia co `Model` — nie czyta go nikt, ani agent, ani wywołujący.
+
 ### Weryfikacja
 
 - `go build` + `go vet` + `go test ./... -count=1` zielone we wszystkich czterech
@@ -362,6 +368,45 @@ bezwarunkowo, więc druga pętla w `Catalog.FindModel` nigdy nic nie znajduje, a
 Wyciąć czy zaimplementować — ale nie wciągać martwej metody do projektu
 `Conductor`, bo to sposób, w jaki interfejsy gniją. (Komentarz przy
 `Catalog.FindModel` opisuje dziś tę pętlę jakby była żywa.)
+
+### Do posprzątania PRZED `Conductor` — wyszło przy etapie 5
+
+`Conductor` projektuje się wokół `agent.Config` i `connector.ModelClient`. Trzy
+z poniższych to pola i abstrakcje, które etap 5 zostawił w stanie „istnieje, ale
+nikt tego nie czyta". Przeniesienie ich do nowego API utrwaliłoby błąd, więc
+kolejność jest: najpierw sprzątanie, potem `Conductor`.
+
+- [ ] **`agent.Config.Model` — agent to ignoruje.** Po etapie 5 nietestowy `agent/`
+      nie ma ani jednego odczytu `cfg.Model`; model bierze się z `mc.Model()`
+      (`run_once.go:22`). Pole zostało, a pisze do niego 6 miejsc (`commands.go:134`,
+      `interactive.go:249,300`, `tui_mode.go:62,134`, `main.go:172`). Dwa źródła
+      prawdy, jedno martwe: przy rozjeździe agent użyje klienta, a `prompt_mode.go:29`
+      (zakładanie sesji) zobaczy co innego. Dziś się zgadzają tylko dlatego, że
+      `prompt_mode.go:38` buduje klienta *z* `cfg.Model` — konwencja, nie konstrukcja.
+      Decyzja: usunąć z `Config` (wywołujący trzymają własną zmienną) czy zostawić
+      jako pole wywołującego z jawnym „agent tego nie czyta".
+- [ ] **`agent.Config.ProviderName` — martwe i mylące.** Ustawiane w 6 miejscach,
+      nieczytane nigdzie w repo. Komentarz obiecuje „provider name for session
+      metadata", a metadane sesji biorą od etapu 5 `mc.Provider()`
+      (`run_once.go:151`). Do usunięcia razem z powyższym — jeden commit.
+- [ ] **`providers.Provider` to już interfejs katalogu, nie strumienia.**
+      `Provider.Stream` jest wołane z dokładnie jednego miejsca w repo —
+      `providers/client.go:34`, czyli z adaptera `clientAdapter`. Reszta
+      (`Name`, `IsConfigured`, `Models`, `FreeModels`) to pytania o katalog, zadawane
+      wyłącznie przez CLI. To domyka pytanie o `FreeModels` wyżej: to nie wada
+      `Provider` jako abstrakcji strumienia, tylko skutek zlepienia dwóch abstrakcji
+      w jedną. Rozdzielenie katalog/transport jest teraz tanie i powinno poprzedzić
+      `Conductor`, który i tak musi zdecydować, co widzi frontend (katalog do
+      `SwitchModel`) a co agent (`ModelClient`).
+- [ ] **`HTTPInjector` w dwóch pakietach, wstrzyknięcie przez trzy ogniwa.**
+      `providers.HTTPInjector` → `clientAdapter.WithHTTP` → `connector.HTTPInjector`.
+      Każde ogniwo musi przekazać dalej; pominięcie któregokolwiek nie daje błędu
+      kompilacji — type assertion po prostu nie przechodzi i request leci po
+      współdzielonym poolu, czyli izolacja subagenta ginie bez śladu (patrz komentarz
+      w `providers/client.go:37-45`). Pilnuje tego jeden test w środkowym ogniwie
+      (`TestClient_WithHTTPForwardsToProvider`). Cicha awaria jest tu domyślnym trybem
+      porażki. Rozstrzygnąć razem z podziałem `Provider` — jeśli transport zostaje
+      tylko na `ModelClient`, łańcuch skraca się do jednego ogniwa.
 
 - [ ] `Conductor`: `conversation` + `cfg` + `ModelClient` + sesja
 - [ ] API: `Submit(prompt)`, `Interrupt()`, `SwitchModel()`
