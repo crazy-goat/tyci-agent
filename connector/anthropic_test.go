@@ -3,10 +3,13 @@
 package connector
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"testing"
 
 	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/stream"
 )
 
 // =============================================================================
@@ -182,6 +185,70 @@ func TestMessagesToAnthropic(t *testing.T) {
 					if got[i].Content[j].Text != tt.want[i].Content[j].Text {
 						t.Errorf("[%d][%d] Text = %q, want %q", i, j, got[i].Content[j].Text, tt.want[i].Content[j].Text)
 					}
+				}
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Request.Temperature wire-format tests
+// =============================================================================
+
+// TestAnthropicStream_Temperature verifies that Request.Temperature reaches
+// the Anthropic wire body as a top-level "temperature" field, is completely
+// absent when unset, and — crucially — is still present (with value 0) when
+// the caller explicitly asked for deterministic sampling via a pointer to
+// zero. Asserted on the actual marshaled JSON, not on the Go struct, so a
+// regression in the json tag would be caught too.
+func TestAnthropicStream_Temperature(t *testing.T) {
+	ptr := func(v float64) *float64 { return &v }
+
+	tests := []struct {
+		name        string
+		temperature *float64
+		wantPresent bool
+		wantValue   float64
+	}{
+		{name: "set", temperature: ptr(0.7), wantPresent: true, wantValue: 0.7},
+		{name: "nil omits the key", temperature: nil, wantPresent: false},
+		{name: "zero pointer still present", temperature: ptr(0), wantPresent: true, wantValue: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doer := &stubDoer{}
+			c, err := NewAnthropic(Endpoint{
+				BaseURL: "https://api.example.invalid",
+				Path:    "/v1/messages",
+				APIKey:  "sk-test",
+				HTTP:    doer,
+			})
+			if err != nil {
+				t.Fatalf("NewAnthropic: %v", err)
+			}
+
+			req := Request{Model: "claude-x", Temperature: tt.temperature}
+			if err := c.Stream(context.Background(), req, func(stream.Event) error { return nil }); err != nil {
+				t.Fatalf("Stream: %v", err)
+			}
+
+			bodyBytes, err := io.ReadAll(doer.got.Body)
+			if err != nil {
+				t.Fatalf("reading captured request body: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+				t.Fatalf("unmarshal request body: %v (body: %s)", err, bodyBytes)
+			}
+
+			temp, present := payload["temperature"]
+			if present != tt.wantPresent {
+				t.Fatalf("temperature key present = %v, want %v (body: %s)", present, tt.wantPresent, bodyBytes)
+			}
+			if tt.wantPresent {
+				if got, ok := temp.(float64); !ok || got != tt.wantValue {
+					t.Errorf("temperature = %v, want %v", temp, tt.wantValue)
 				}
 			}
 		})

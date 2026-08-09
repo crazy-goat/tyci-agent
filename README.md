@@ -108,7 +108,9 @@ tyci run --agent my-agent --prompt "Hello"
 ├── providers.json      # Cached models.dev provider catalog (auto-downloaded)
 ├── model.json          # Custom provider / model definitions (from `provider add`)
 ├── auth.json           # API keys per provider (permissions 0600)
-├── agents.json         # Named agent configurations
+├── agents.json         # Named agent configurations (name -> model + fallback)
+├── agents/             # Markdown agent definitions (<name>.md, global)
+│   └── .managed.json   # sha256 bookkeeping for the builtin definitions (see below)
 ├── history             # Readline history file
 ├── debug/              # Debug logs (when --no-debug is not set)
 └── sessions/           # Auto-generated session files (JSONL)
@@ -215,7 +217,89 @@ tyci agent get <name>                    # Show agent model assignment
 tyci agent set <name> <provider>/<model> # Assign model to agent
 tyci agent delete <name>                 # Remove agent
 tyci agent set-fallback <name> <m1> [<m2> ...]  # Set fallback models (positional)
+tyci agent sync [--force]                # Unpack/update builtin agent definitions (see below)
 ```
+
+#### Markdown agent definitions
+
+Beyond the model-only presets above, an agent can be declared as a markdown file with
+YAML frontmatter. The body becomes the agent's system prompt — by default *appended*
+as a role on top of the standard subagent prompt (see `system_prompt_mode` below), so
+you only need to describe what the agent specializes in, not restate its contract.
+
+Definitions are read from two locations, project overriding global on name collision —
+the same precedence `.tyci.json` has over `~/.tyci/agents.json`:
+
+- `./.tyci/agents/<name>.md` — project-local, committed with the repo
+- `~/.tyci/agents/<name>.md` — global
+
+```markdown
+---
+description: Reviews Go diffs for correctness
+model: anthropic/claude-sonnet-5
+tools: read, find, bash
+max_iterations: 20
+---
+
+You review Go diffs. Report only defects that change behavior.
+```
+
+| Field | Effect |
+|-------|--------|
+| `description` | Listed in the parent's system prompt so the model knows the agent exists |
+| `model` | Model the child runs on (`provider/model`); overridden by a per-call `model` |
+| `tools` | Comma-separated whitelist; enforced in the child's schema *and* at call time |
+| `max_iterations` | Caps the child's tool-call turns; overridden by a per-call `max_iterations` |
+| `temperature` | Sampling temperature, `0`–`2`. `0` is a real value ("deterministic"), not "unset" |
+| `fallback` | Models tried in order when the primary fails; an unresolvable spec is skipped, never fatal |
+| `system` | Optional — overrides the markdown body as the *source text* used for the system prompt (still subject to `system_prompt_mode` below) |
+| `system_prompt_mode` | `append` (default) or `replace` — see below |
+
+`system_prompt_mode` controls how the body (or `system`, if set) is combined with the
+standard subagent system prompt (contract, date/cwd/OS, tool descriptions, the
+project's `AGENTS.md`, available skills):
+
+- `append` (default): the body is a **role** layered on top of that standard prompt —
+  the agent keeps the subagent contract and every bit of environment context, and only
+  needs to describe its specialization.
+- `replace`: the body **is** the entire system prompt, verbatim. Full control, but full
+  responsibility for restating anything the agent needs — including the subagent
+  contract and `AGENTS.md` — since none of it is added automatically.
+
+Omitting `system_prompt_mode` is equivalent to `append`. This is a deliberate behavior
+change: earlier versions always replaced the whole prompt with the body, which silently
+dropped the project's `AGENTS.md` and the subagent contract — harmful for an agent that
+writes to the repo. Definitions that relied on full replacement must now set
+`system_prompt_mode: replace` explicitly.
+
+Invoke one with the `subagent` tool: `subagent(agent: "reviewer", task: "...")`.
+An unknown agent name is an error, not a silent fallback. `subagent` is never granted
+to a child, even if listed in `tools` — subagents cannot spawn subagents.
+
+A `temperature` outside `0`–`2` makes the whole definition unparseable, and unparseable
+definitions are skipped silently — the agent simply will not appear in the list.
+Anthropic accepts only `0`–`1`; the narrower limit is enforced by its API, not here,
+since a definition does not know which provider it will ultimately run on.
+
+##### Builtin agents
+
+tyci ships three ready-to-use definitions baked into the binary — `locator`, `reviewer`,
+`implementer` — so `subagent(agent: "locator", ...)` works with no setup. On every
+startup tyci unpacks them into `~/.tyci/agents/`, updating any that changed in a newer
+tyci release, **but only for files it can prove it last wrote and you have not touched**:
+
+- Never edited a builtin file? It gets updated automatically when you upgrade tyci.
+- Edited it yourself (even a whitespace change)? That freezes it — permanently. tyci
+  will never overwrite it again on its own, so your edit is safe across every future
+  upgrade. Copy it to `.tyci/agents/` (project-local) if you want your own version to
+  win over a future global one instead.
+- Deleted it? That is respected as a deliberate choice, not resurrected on the next run.
+  Bring it back with `tyci agent sync --force`, which also overwrites any local edits —
+  see `tyci agent sync --help` for the full explanation.
+
+The builtin definitions deliberately omit `model`, so they inherit whatever model the
+parent agent is running on and work unmodified with every provider — nothing to
+configure to try them.
 
 ### Display Modes
 

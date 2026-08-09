@@ -6,13 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -351,34 +350,6 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 	return t, nil
 }
 
-// getAgentSystemPrompt retrieves the system prompt for a named markdown agent.
-// Returns empty string if agent not found.
-func getAgentSystemPrompt(agentName string) string {
-	// Import agent package to get markdown agent
-	// We avoid direct import by reading the file ourselves
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		return ""
-	}
-	path := filepath.Join(home, ".tyci", "agents", agentName+".md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-
-	content := string(data)
-	if !strings.HasPrefix(content, "---") {
-		return ""
-	}
-
-	parts := strings.SplitN(content[3:], "---", 2)
-	if len(parts) < 2 {
-		return ""
-	}
-
-	return strings.TrimSpace(parts[1])
-}
-
 func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, timeoutSec int) []subagentResult {
 	results := make([]subagentResult, len(tasks))
 	var wg sync.WaitGroup
@@ -396,6 +367,23 @@ func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, 
 }
 
 func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask, timeoutSec int) subagentResult {
+	// Resolve the named agent definition, if any, before anything else. An
+	// unknown agent name used to silently degrade to a plain subagent with
+	// the parent's defaults — indistinguishable from success and a trap for
+	// a typo'd name. Fail loudly instead.
+	var def agentdefs.Def
+	if task.Agent != "" {
+		var ok bool
+		def, ok = agentdefs.Get("", task.Agent)
+		if !ok {
+			return subagentResult{
+				Task:    task.Task,
+				Success: false,
+				Error:   fmt.Sprintf("agent %q not found (looked in ~/.tyci/agents and ./.tyci/agents)", task.Agent),
+			}
+		}
+	}
+
 	runCtx := ctx
 	if timeoutSec > 0 {
 		var cancel context.CancelFunc
@@ -408,15 +396,44 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	// It used to be stuffed into runCtx here; the transport is no longer
 	// something this package has to know about.
 
+	// Model precedence: explicit per-task override wins, then the named
+	// agent's frontmatter `model`, then the parent's model inherited via
+	// context. Before this, def.Model was read nowhere — a named agent
+	// declared as a cheap model still burned the parent's (often expensive)
+	// model on every call.
 	mName := task.Model
 	if mName == "" {
-		// No override – use the same provider and model as the parent
+		mName = def.Model
+	}
+	if mName == "" {
 		if mc := connector.ModelClientFromContext(ctx); mc != nil {
 			mName = mc.Model()
 		}
 	}
 
-	opts := SubagentOptions{MaxIterations: task.MaxIterations}
+	// max_iterations precedence: explicit per-task override wins, then the
+	// named agent's frontmatter `max_iterations` (only when positive — 0/unset
+	// means "the definition didn't say"), then nil so ResolveMaxIter applies
+	// its own default downstream.
+	maxIter := task.MaxIterations
+	if maxIter == nil && def.MaxIterations > 0 {
+		v := def.MaxIterations
+		maxIter = &v
+	}
+
+	// Temperature and Fallback are read straight off the named agent's
+	// definition — unlike Model/MaxIterations there is no per-task override
+	// for either (the subagent tool schema deliberately does not expose
+	// them; see tools.go's "subagent" schema comment), so def is the only
+	// source. When task.Agent is empty, def is the zero value: Temperature
+	// is nil and Fallback is nil, i.e. nothing changes for a plain subagent.
+	opts := SubagentOptions{
+		MaxIterations:    maxIter,
+		Tools:            def.Tools,
+		Temperature:      def.Temperature,
+		Fallbacks:        def.Fallback,
+		SystemPromptMode: def.SystemPromptMode,
+	}
 
 	// Get tool index for streaming (passed by agent.executeTools)
 	toolIdx := 0
@@ -426,17 +443,13 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 
 	c := newStreamingCollector(ctx, toolIdx)
 
-	// Run the task via the runner interface
+	// Run the task via the runner interface. def.SystemPrompt is empty when
+	// no agent was named (def is the zero value), so this also covers the
+	// plain-subagent case without a separate branch on task.Agent.
 	var content string
 	var err error
-	if task.Agent != "" {
-		// Look up markdown agent for system prompt
-		sysPrompt := getAgentSystemPrompt(task.Agent)
-		if sysPrompt != "" {
-			content, err = runner.RunTaskWithSystem(runCtx, task.Task, mName, sysPrompt, opts)
-		} else {
-			content, err = runner.RunTask(runCtx, task.Task, mName, opts)
-		}
+	if def.SystemPrompt != "" {
+		content, err = runner.RunTaskWithSystem(runCtx, task.Task, mName, def.SystemPrompt, opts)
 	} else {
 		content, err = runner.RunTask(runCtx, task.Task, mName, opts)
 	}

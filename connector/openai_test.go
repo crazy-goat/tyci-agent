@@ -1,10 +1,13 @@
 package connector
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"testing"
 
 	"github.com/decodo/tyci/api"
+	"github.com/decodo/tyci/stream"
 )
 
 // =============================================================================
@@ -327,5 +330,69 @@ func TestMessagesToChat_toolResult_singleBlock_unchangedShape(t *testing.T) {
 	}
 	if len(got[0].ToolCalls) != 0 {
 		t.Errorf("message 0 ToolCalls = %+v, want none", got[0].ToolCalls)
+	}
+}
+
+// =============================================================================
+// Request.Temperature wire-format tests
+// =============================================================================
+
+// TestOpenAIStream_Temperature verifies that Request.Temperature reaches the
+// chat-completions wire body as a top-level "temperature" field, is
+// completely absent when unset, and stays present (with value 0) for a
+// pointer to zero — the "fully deterministic" case that a plain float64
+// could not distinguish from "not set". Asserted on the actual marshaled
+// JSON, not on the Go struct.
+func TestOpenAIStream_Temperature(t *testing.T) {
+	ptr := func(v float64) *float64 { return &v }
+
+	tests := []struct {
+		name        string
+		temperature *float64
+		wantPresent bool
+		wantValue   float64
+	}{
+		{name: "set", temperature: ptr(1.3), wantPresent: true, wantValue: 1.3},
+		{name: "nil omits the key", temperature: nil, wantPresent: false},
+		{name: "zero pointer still present", temperature: ptr(0), wantPresent: true, wantValue: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doer := &stubDoer{}
+			c, err := NewOpenAI(Endpoint{
+				BaseURL: "https://api.example.invalid",
+				Path:    "/v1/chat/completions",
+				APIKey:  "sk-test",
+				HTTP:    doer,
+			})
+			if err != nil {
+				t.Fatalf("NewOpenAI: %v", err)
+			}
+
+			req := Request{Model: "gpt-4", Temperature: tt.temperature}
+			if err := c.Stream(context.Background(), req, func(stream.Event) error { return nil }); err != nil {
+				t.Fatalf("Stream: %v", err)
+			}
+
+			bodyBytes, err := io.ReadAll(doer.got.Body)
+			if err != nil {
+				t.Fatalf("reading captured request body: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+				t.Fatalf("unmarshal request body: %v (body: %s)", err, bodyBytes)
+			}
+
+			temp, present := payload["temperature"]
+			if present != tt.wantPresent {
+				t.Fatalf("temperature key present = %v, want %v (body: %s)", present, tt.wantPresent, bodyBytes)
+			}
+			if tt.wantPresent {
+				if got, ok := temp.(float64); !ok || got != tt.wantValue {
+					t.Errorf("temperature = %v, want %v", temp, tt.wantValue)
+				}
+			}
+		})
 	}
 }

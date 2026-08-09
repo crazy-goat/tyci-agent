@@ -18,6 +18,25 @@ type SubagentOptions struct {
 	// default". A parent that wants to forbid tool calls entirely must
 	// avoid invoking the subagent at all (or use a child without tools).
 	MaxIterations *int
+
+	// Tools, when non-empty, restricts the child to these tool names.
+	// Empty/nil means "every tool except subagent" (today's behavior).
+	Tools []string
+
+	// Temperature, when non-nil, is the sampling temperature for the child.
+	// Pointer because 0 is meaningful ("deterministic"), not "unset".
+	Temperature *float64
+
+	// Fallbacks are "provider/model" specs, NOT resolved clients: the tools
+	// package is a leaf and must not reach into the provider catalog. The
+	// composition root (main.go) resolves them, exactly as it already does
+	// for the top-level agent — see agent.Config.Fallbacks.
+	Fallbacks []string
+
+	// SystemPromptMode mirrors agentdefs.Def.SystemPromptMode ("append" or
+	// "replace"). The tools package does not build prompts — it only carries
+	// the mode to the composition root, which owns providers.
+	SystemPromptMode string
 }
 
 // DefaultSubagentMaxIterations is the cap applied when SubagentOptions has
@@ -205,7 +224,7 @@ func GetToolsSchema() []map[string]any {
 					"type": "object",
 					"properties": map[string]any{
 						"task":  map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/bash tools."},
-						"agent": map[string]any{"type": "string", "description": "Named agent to use (looks up ~/.tyci/agents/<name>.md for system prompt and config)"},
+						"agent": map[string]any{"type": "string", "description": "Named agent to use. Definitions live in ./.tyci/agents/<name>.md (project) or ~/.tyci/agents/<name>.md (global), project winning; each supplies the child's system prompt and may pin its model, max_iterations and allowed tools. The available names are listed in the system prompt; an unknown name is an error, not a fallback."},
 						"tasks": map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
 							"task":           map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has read/write/find/bash/todo tools."},
 							"agent":          map[string]any{"type": "string", "description": "Named agent to use"},
@@ -301,6 +320,45 @@ func GetSubagentToolsSchema() []map[string]any {
 
 func GetSubagentToolsSchemaJSON() json.RawMessage {
 	return subagentToolsSchema
+}
+
+// GetSubagentToolsSchemaJSONFor returns the subagent-visible tool schema
+// restricted to allowed (a named agent's frontmatter `tools:` list).
+// Empty/nil allowed means no restriction — returns the cached
+// GetSubagentToolsSchemaJSON() unchanged, so the common case (no
+// whitelist) stays a cheap map lookup instead of a fresh marshal per call.
+//
+// "subagent" is dropped even if allowed lists it explicitly: recursion into
+// child subagents is never permitted, regardless of what an agent
+// definition's frontmatter says. An allowed name that matches no known tool
+// is silently skipped, not an error — a typo in an agent's `tools:` line
+// should degrade to "that tool is unavailable", not a startup crash.
+func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
+	if len(allowed) == 0 {
+		return GetSubagentToolsSchemaJSON()
+	}
+	want := make(map[string]bool, len(allowed))
+	for _, name := range allowed {
+		if name == "subagent" {
+			continue
+		}
+		want[name] = true
+	}
+	schema := GetSubagentToolsSchema()
+	filtered := make([]map[string]any, 0, len(schema))
+	for _, s := range schema {
+		fn, ok := s["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, ok := fn["name"].(string)
+		if !ok || !want[name] {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	data, _ := json.Marshal(filtered)
+	return data
 }
 
 var toolRegistry = map[string]Tool{

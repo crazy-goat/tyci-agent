@@ -19,11 +19,12 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 	d.Request(roundInputLabel(*msgs))
 
 	events, streamErr := mc.Stream(streamCtx, connector.Request{
-		Model:    mc.Model(),
-		System:   cfg.System,
-		Messages: *msgs,
-		Tools:    cfg.Schema,
-		Debug:    cfg.Debug,
+		Model:       mc.Model(),
+		System:      cfg.System,
+		Messages:    *msgs,
+		Tools:       cfg.Schema,
+		Debug:       cfg.Debug,
+		Temperature: cfg.Temperature,
 	})
 	if streamErr != nil {
 		// Provider failed before streaming started. runOnce does not emit

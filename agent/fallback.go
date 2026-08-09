@@ -25,6 +25,11 @@ type fallbackState struct {
 // It updates fs with the new client on success.
 // Returns (more, nil) on success, (false, err) if all fallbacks exhausted.
 // origErr is the error that triggered the fallback.
+//
+// Note: runOnce below is called with the SAME cfg the primary used, so
+// cfg.Temperature (and every other request-shaping field) automatically
+// carries over to the fallback model — there is no separate "fallback
+// config" to keep in sync.
 func tryFallback(ctx context.Context, d Sink, msgs *[]connector.Message, cfg Config, fs *fallbackState, totalUsage *stream.Usage, origErr error) (bool, error) {
 	var lastErr error
 

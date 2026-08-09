@@ -37,4 +37,16 @@ type Request struct {
 	Messages []Message
 	Tools    json.RawMessage
 	Debug    bool
+
+	// Temperature, when non-nil, is forwarded to the provider's sampling
+	// parameter. A pointer (not a plain float64) because 0 is a meaningful
+	// value — "fully deterministic" — and must be distinguishable from
+	// "the caller did not set it".
+	//
+	// Deliberately unvalidated here: acceptable ranges differ per provider
+	// (Anthropic 0..1, OpenAI and Gemini 0..2) and connector/api is a dumb
+	// transport layer. Range enforcement belongs to the server, which
+	// returns a readable 400 — silently clamping here would mask a config
+	// typo instead of surfacing it.
+	Temperature *float64
 }

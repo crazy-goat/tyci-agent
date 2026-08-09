@@ -3,6 +3,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -186,6 +187,70 @@ func TestStreamGemini_Error500(t *testing.T) {
 	}
 	if re.Code != 500 {
 		t.Errorf("expected code 500, got %d", re.Code)
+	}
+}
+
+// =============================================================================
+// GeminiRequest.GenerationConfig.Temperature wire-format tests
+// =============================================================================
+
+// TestGeminiRequest_Temperature_Marshaling verifies Temperature lands under
+// the nested "generationConfig" object rather than top-level — the one
+// respect in which Gemini's request shape differs from Anthropic's and
+// OpenAI's. When GenerationConfig is nil (the connector's job is to leave
+// it nil unless Temperature was set), "generationConfig" must not appear
+// in the JSON at all, not even as "{}" — the golden-file guarantee this
+// layer must not break for existing (temperature-less) requests.
+func TestGeminiRequest_Temperature_Marshaling(t *testing.T) {
+	ptr := func(v float64) *float64 { return &v }
+
+	tests := []struct {
+		name            string
+		genConfig       *GeminiGenerationConfig
+		wantConfigKey   bool
+		wantTempPresent bool
+		wantValue       float64
+	}{
+		{name: "set", genConfig: &GeminiGenerationConfig{Temperature: ptr(1.1)}, wantConfigKey: true, wantTempPresent: true, wantValue: 1.1},
+		{name: "nil GenerationConfig omits the key entirely", genConfig: nil, wantConfigKey: false},
+		{name: "zero pointer still present", genConfig: &GeminiGenerationConfig{Temperature: ptr(0)}, wantConfigKey: true, wantTempPresent: true, wantValue: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := GeminiRequest{
+				Contents:         []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}},
+				GenerationConfig: tt.genConfig,
+			}
+			data, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(data, &payload); err != nil {
+				t.Fatalf("Unmarshal: %v (data: %s)", err, data)
+			}
+			genConfig, present := payload["generationConfig"]
+			if present != tt.wantConfigKey {
+				t.Fatalf("generationConfig key present = %v, want %v (data: %s)", present, tt.wantConfigKey, data)
+			}
+			if !tt.wantConfigKey {
+				return
+			}
+			configMap, ok := genConfig.(map[string]any)
+			if !ok {
+				t.Fatalf("generationConfig is not an object: %T (%v)", genConfig, genConfig)
+			}
+			temp, tempPresent := configMap["temperature"]
+			if tempPresent != tt.wantTempPresent {
+				t.Fatalf("generationConfig.temperature present = %v, want %v (data: %s)", tempPresent, tt.wantTempPresent, data)
+			}
+			if tt.wantTempPresent {
+				if got, ok := temp.(float64); !ok || got != tt.wantValue {
+					t.Errorf("generationConfig.temperature = %v, want %v", temp, tt.wantValue)
+				}
+			}
+		})
 	}
 }
 

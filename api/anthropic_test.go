@@ -255,6 +255,52 @@ func TestStreamAnthropic_EmptyStream(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// AnthropicRequest.Temperature wire-format tests
+// =============================================================================
+
+// TestAnthropicRequest_Temperature_Marshaling mirrors
+// TestChatRequest_Temperature_Marshaling for the Anthropic request shape:
+// set -> top-level "temperature"; nil -> key absent; zero pointer -> key
+// present with value 0.
+func TestAnthropicRequest_Temperature_Marshaling(t *testing.T) {
+	ptr := func(v float64) *float64 { return &v }
+
+	tests := []struct {
+		name        string
+		temperature *float64
+		wantPresent bool
+		wantValue   float64
+	}{
+		{name: "set", temperature: ptr(0.4), wantPresent: true, wantValue: 0.4},
+		{name: "nil omits the key", temperature: nil, wantPresent: false},
+		{name: "zero pointer still present", temperature: ptr(0), wantPresent: true, wantValue: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := AnthropicRequest{Model: "claude-x", MaxTokens: 100, Temperature: tt.temperature}
+			data, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(data, &payload); err != nil {
+				t.Fatalf("Unmarshal: %v (data: %s)", err, data)
+			}
+			temp, present := payload["temperature"]
+			if present != tt.wantPresent {
+				t.Fatalf("temperature key present = %v, want %v (data: %s)", present, tt.wantPresent, data)
+			}
+			if tt.wantPresent {
+				if got, ok := temp.(float64); !ok || got != tt.wantValue {
+					t.Errorf("temperature = %v, want %v", temp, tt.wantValue)
+				}
+			}
+		})
+	}
+}
+
 func TestStreamAnthropic_ErrorStatusCode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(429)

@@ -53,4 +53,19 @@ type GeminiRequest struct {
 		Parts []GeminiPart `json:"parts"`
 	} `json:"systemInstruction,omitempty"`
 	Tools []GeminiTools `json:"tools,omitempty"`
+	// GenerationConfig carries sampling parameters. Gemini, unlike Anthropic
+	// and the OpenAI chat-completions protocol, does not accept temperature
+	// at the top level — it must sit inside this nested object. The pointer
+	// is nil (not merely empty-struct) whenever no generation-config field
+	// is set, so omitempty drops the whole "generationConfig" key rather
+	// than sending "generationConfig":{}.
+	GenerationConfig *GeminiGenerationConfig `json:"generationConfig,omitempty"`
+}
+
+// GeminiGenerationConfig holds sampling parameters nested under
+// GeminiRequest.GenerationConfig. Temperature is a pointer for the same
+// reason as AnthropicRequest.Temperature and ChatRequest.Temperature: 0 is
+// a meaningful, explicit value distinct from "unset".
+type GeminiGenerationConfig struct {
+	Temperature *float64 `json:"temperature,omitempty"`
 }

@@ -63,6 +63,89 @@ func TestBuildSystemPrompt_emptyAgentsMd(t *testing.T) {
 	}
 }
 
+// TestBuildSubagentSystemPromptWithRole_ContainsRoleContractAndCwd is the
+// core append-mode contract: a named agent's role must show up ALONGSIDE the
+// subagent contract and the environment context (cwd), not instead of them.
+// This is the exact regression this refactor fixes — before it, a named
+// agent's body replaced the whole prompt and lost both.
+func TestBuildSubagentSystemPromptWithRole_ContainsRoleContractAndCwd(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prompt := BuildSubagentSystemPromptWithRole("ROLA: you review Go diffs for correctness.")
+
+	if !strings.Contains(prompt, "ROLA: you review Go diffs for correctness.") {
+		t.Errorf("expected role text in prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "You are a SUBAGENT spawned by a parent agent") {
+		t.Errorf("expected the subagent contract in prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, wd) {
+		t.Errorf("expected cwd %q in prompt:\n%s", wd, prompt)
+	}
+}
+
+// TestBuildSubagentSystemPromptWithRole_OmitsAvailableAgents locks in the
+// existing "children cannot spawn further children" rule for the new
+// composition path: appending a role must not reintroduce the "Available
+// agents" section that BuildSystemPrompt shows only to the top-level agent.
+func TestBuildSubagentSystemPromptWithRole_OmitsAvailableAgents(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+
+	writeAgentDef(t, filepath.Join(tmp, ".tyci", "agents"), "reviewer", "Reviews Go diffs")
+
+	prompt := BuildSubagentSystemPromptWithRole("some role")
+	if strings.Contains(prompt, "Available agents") {
+		t.Errorf("expected no 'Available agents' section in a subagent's prompt:\n%s", prompt)
+	}
+}
+
+// TestBuildSubagentSystemPromptWithRole_IncludesAgentsMd checks that the
+// project's AGENTS.md still reaches a named agent's prompt in append mode —
+// the whole point of append mode is that this context is no longer lost.
+func TestBuildSubagentSystemPromptWithRole_IncludesAgentsMd(t *testing.T) {
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	if err := os.WriteFile(filepath.Join(tmp, "AGENTS.md"), []byte("Use tabs. Prefer table-driven tests."), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prompt := BuildSubagentSystemPromptWithRole("ROLA")
+
+	if !strings.Contains(prompt, "Additional instructions from AGENTS.md") {
+		t.Errorf("expected AGENTS.md section in prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Use tabs. Prefer table-driven tests.") {
+		t.Errorf("expected AGENTS.md content in prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "ROLA") {
+		t.Errorf("expected role in prompt alongside AGENTS.md:\n%s", prompt)
+	}
+	// The role must come after the AGENTS.md section, per the doc comment on
+	// BuildSubagentSystemPromptWithRole: it is appended last, once the agent
+	// already has its contract, context and AGENTS.md.
+	if strings.Index(prompt, "AGENTS.md") > strings.Index(prompt, "Your role:") {
+		t.Errorf("expected the role section to come after AGENTS.md:\n%s", prompt)
+	}
+}
+
+// TestBuildSubagentSystemPromptWithRole_EmptyRoleReturnsBasePrompt checks the
+// degenerate case: an empty role must not leave a dangling "Your role:"
+// separator with nothing after it.
+func TestBuildSubagentSystemPromptWithRole_EmptyRoleReturnsBasePrompt(t *testing.T) {
+	prompt := BuildSubagentSystemPromptWithRole("")
+	if strings.Contains(prompt, "Your role:") {
+		t.Errorf("expected no role section for an empty role:\n%s", prompt)
+	}
+	if prompt != BuildSubagentSystemPrompt() {
+		t.Errorf("expected empty role to return exactly the base subagent prompt")
+	}
+}
+
 func TestDynamicProviderIsConfigured_withAuthJSON(t *testing.T) {
 	// Setup: create a temporary HOME with auth.json containing a key
 	dir := t.TempDir()
