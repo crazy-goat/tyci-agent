@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/decodo/tyci/internal/agentdefs"
 )
 
 // AgentsFile is the name of the local config file (in current working directory).
@@ -51,13 +51,11 @@ type MarkdownAgent struct {
 	FilePath     string
 }
 
-// AgentsDirPath returns the path to the markdown agents directory.
+// AgentsDirPath returns the path to the global markdown agents directory
+// (used for display purposes; agent discovery itself also looks at the
+// project-local directory via internal/agentdefs).
 func AgentsDirPath() string {
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		home = "~"
-	}
-	return filepath.Join(home, GlobalConfigDir, MarkdownAgentsDir)
+	return agentdefs.GlobalDir()
 }
 
 // MarshalJSON writes as plain string if no fallback, object otherwise.
@@ -135,109 +133,86 @@ func LoadAgents() (Agents, error) {
 		}
 	}
 
-	// Load markdown agents (they become entries with just model set)
-	mdAgents, _ := LoadMarkdownAgents(AgentsDirPath())
-	for _, md := range mdAgents {
-		if _, exists := result[md.Name]; !exists {
-			result[md.Name] = AgentEntry{Model: md.Frontmatter.Model}
+	// Load markdown agents from both the global (~/.tyci/agents) and
+	// project-local (<cwd>/.tyci/agents) directories; the project-local
+	// definition wins on name collisions. They become entries with just the
+	// model set, and never override an agent already defined in JSON config.
+	for _, def := range agentdefs.List("") {
+		if _, exists := result[def.Name]; !exists {
+			result[def.Name] = AgentEntry{Model: def.Model}
 		}
 	}
 
 	return result, nil
 }
 
+// markdownAgentFromDef converts an internal/agentdefs.Def (the single
+// parser for markdown agent files) into the public MarkdownAgent facade
+// type, so callers outside this package keep seeing the same shape.
+func markdownAgentFromDef(def agentdefs.Def) MarkdownAgent {
+	// def.Temperature is *float64 (nil means "unset" in agentdefs), but the
+	// public MarkdownAgentFrontmatter.Temperature stays a plain float64 for
+	// backward compatibility with existing callers of this package. Unwrap
+	// the pointer here, at the facade boundary: nil becomes 0.0, which is
+	// indistinguishable from an explicit "temperature: 0" at this level.
+	var temperature float64
+	if def.Temperature != nil {
+		temperature = *def.Temperature
+	}
+
+	return MarkdownAgent{
+		Name: def.Name,
+		Frontmatter: MarkdownAgentFrontmatter{
+			Model:          def.Model,
+			Tools:          strings.Join(def.Tools, ", "),
+			MaxIterations:  def.MaxIterations,
+			Temperature:    temperature,
+			SystemPrompt:   def.SystemPrompt,
+			Description:    def.Description,
+			FallbackModels: def.Fallback,
+		},
+		SystemPrompt: def.SystemPrompt,
+		FilePath:     def.Path,
+	}
+}
+
 // LoadMarkdownAgents reads .md files from the given directory.
 // Each file must have YAML frontmatter between --- markers.
 // The markdown body becomes the system prompt.
+// This is a thin, single-directory wrapper around internal/agentdefs, which
+// is the single place in the repo that actually parses these files.
 func LoadMarkdownAgents(dir string) ([]MarkdownAgent, error) {
-	entries, err := os.ReadDir(dir)
+	defs, err := agentdefs.LoadDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read agents dir: %w", err)
+		return nil, err
 	}
-
-	var agents []MarkdownAgent
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-
-		path := filepath.Join(dir, entry.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-
-		agent, err := parseMarkdownAgent(entry.Name(), data)
-		if err != nil {
-			continue
-		}
-		agent.FilePath = path
-		agents = append(agents, *agent)
+	agents := make([]MarkdownAgent, 0, len(defs))
+	for _, def := range defs {
+		agents = append(agents, markdownAgentFromDef(def))
 	}
-
 	return agents, nil
 }
 
-// parseMarkdownAgent parses a markdown agent file with YAML frontmatter.
-func parseMarkdownAgent(filename string, data []byte) (*MarkdownAgent, error) {
-	content := string(data)
-
-	// Look for YAML frontmatter between --- markers
-	if !strings.HasPrefix(content, "---") {
-		return nil, fmt.Errorf("no frontmatter")
-	}
-
-	parts := strings.SplitN(content[3:], "---", 2)
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("unclosed frontmatter")
-	}
-
-	var fm MarkdownAgentFrontmatter
-	if err := yaml.Unmarshal([]byte(parts[0]), &fm); err != nil {
-		return nil, fmt.Errorf("parse frontmatter: %w", err)
-	}
-
-	systemPrompt := strings.TrimSpace(parts[1])
-	if fm.SystemPrompt != "" {
-		systemPrompt = fm.SystemPrompt
-	}
-
-	// Use filename without .md as agent name
-	name := strings.TrimSuffix(filename, ".md")
-
-	return &MarkdownAgent{
-		Name:         name,
-		Frontmatter:  fm,
-		SystemPrompt: systemPrompt,
-	}, nil
-}
-
-// GetMarkdownAgent returns a markdown agent by name.
+// GetMarkdownAgent returns a markdown agent by name, looking in both the
+// global (~/.tyci/agents) and project-local (<cwd>/.tyci/agents)
+// directories. The project-local definition wins on name collisions.
 func GetMarkdownAgent(name string) (*MarkdownAgent, error) {
-	agents, err := LoadMarkdownAgents(AgentsDirPath())
-	if err != nil {
-		return nil, err
+	def, ok := agentdefs.Get("", name)
+	if !ok {
+		return nil, fmt.Errorf("markdown agent %q not found", name)
 	}
-	for _, a := range agents {
-		if a.Name == name {
-			return &a, nil
-		}
-	}
-	return nil, fmt.Errorf("markdown agent %q not found", name)
+	agent := markdownAgentFromDef(def)
+	return &agent, nil
 }
 
-// ListMarkdownAgents returns names of all markdown agents.
+// ListMarkdownAgents returns names of all markdown agents visible from the
+// current working directory: global (~/.tyci/agents) plus project-local
+// (<cwd>/.tyci/agents), merged with project-local taking precedence.
 func ListMarkdownAgents() ([]string, error) {
-	agents, err := LoadMarkdownAgents(AgentsDirPath())
-	if err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(agents))
-	for _, a := range agents {
-		names = append(names, a.Name)
+	defs := agentdefs.List("")
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
+		names = append(names, def.Name)
 	}
 	sort.Strings(names)
 	return names, nil

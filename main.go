@@ -11,6 +11,8 @@ import (
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/internal/agentdefs"
+	"github.com/decodo/tyci/internal/debug"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/tools"
 )
@@ -126,9 +128,34 @@ func (r *agentRunner) RunTask(ctx context.Context, task string, model string, op
 	return r.run(ctx, task, model, providers.BuildSubagentSystemPrompt(), opts)
 }
 
-// RunTaskWithSystem runs a subagent with a named agent's custom system prompt.
+// RunTaskWithSystem runs a subagent with a named agent's system prompt.
+//
+// opts.SystemPromptMode picks how `system` (the definition's markdown body,
+// or its frontmatter `system` override — see agentdefs.Def.SystemPrompt) is
+// used:
+//   - "replace": `system` IS the entire system prompt, verbatim — today's
+//     pre-existing behavior, kept for definitions that opt in explicitly and
+//     want full control (and accept full responsibility for restating
+//     anything they need, e.g. the subagent contract or cwd).
+//   - anything else, INCLUDING the empty string: `system` is treated as a
+//     ROLE layered on top of the standard subagent prompt via
+//     providers.BuildSubagentSystemPromptWithRole, so the agent keeps the
+//     subagent contract, environment context, tool descriptions and the
+//     project's AGENTS.md.
+//
+// Append is the default branch (not replace) because replace was the ONLY
+// behavior before this switch existed, and it silently strips a named agent
+// of the subagent contract and AGENTS.md — actively harmful for an agent
+// that writes to the repo. Definitions that omit `system_prompt_mode`
+// entirely get agentdefs.Def.SystemPromptMode normalized to "append" already
+// (see agentdefs.Parse), so an empty opts.SystemPromptMode here only occurs
+// for a caller that bypasses agentdefs — and append is still the safe choice
+// for it.
 func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model string, system string, opts tools.SubagentOptions) (string, error) {
-	return r.run(ctx, task, model, system, opts)
+	if opts.SystemPromptMode == "replace" {
+		return r.run(ctx, task, model, system, opts)
+	}
+	return r.run(ctx, task, model, providers.BuildSubagentSystemPromptWithRole(system), opts)
 }
 
 // run executes one subagent turn and normalizes the outcome into a result the
@@ -141,14 +168,30 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	if err != nil {
 		return "", err
 	}
-	// No fallback models are resolved for subagents today — a named agent's
-	// fallback config is not threaded through the SubAgentRunner interface,
-	// so this is always nil in production. It still goes through the same
-	// wrapper as the primary client so that isolation cannot regress the
-	// moment fallback support is added here (see withIsolatedPool's doc
-	// comment and TestWithIsolatedPool_WrapsFallbacksWithPrimary).
-	var fallbacks []connector.ModelClient
-	mc, fallbacks = withIsolatedPool(mc, fallbacks)
+	// Resolve the named agent's fallback specs (opts.Fallbacks — "provider/
+	// model" strings from its frontmatter, threaded through SubagentOptions
+	// by tools/subagent.go). Unlike the top-level agent (see resolveFallbacks
+	// in commands.go), a subagent cannot report unresolved specs on stderr:
+	// it runs mid-session, frequently under the Bubble Tea TUI, and an
+	// unguarded stderr write there corrupts the screen instead of politely
+	// wrapping a line. resolveFallbacksQuiet reports nothing itself; any
+	// unresolved spec is logged to the debug log (if one is active) and
+	// otherwise dropped — a fallback is best-effort by nature, so a typo'd
+	// spec must not turn into a hard failure for the whole subagent when the
+	// primary model is perfectly capable of running on its own.
+	clients, unresolved := resolveFallbacksQuiet(opts.Fallbacks)
+	if len(unresolved) > 0 {
+		if dl := debug.FromContext(ctx); dl != nil {
+			for _, spec := range unresolved {
+				_, _ = fmt.Fprintf(dl, "subagent: fallback model %q not found, skipping\n", spec)
+			}
+		}
+	}
+	// Whatever resolved (possibly none) still goes through the same wrapper
+	// as the primary client, so isolation cannot regress now that fallback
+	// support is wired up (see withIsolatedPool's doc comment and
+	// TestWithIsolatedPool_WrapsFallbacksWithPrimary).
+	mc, fallbacks := withIsolatedPool(mc, clients)
 
 	// Resolve the iteration cap: explicit parent override wins; otherwise the
 	// (unlimited) default. Tools.ResolveMaxIter centralizes nil/0/negative
@@ -169,9 +212,10 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		MaxRetries:    1,
 		MaxIterations: maxIter,
 		Debug:         false,
-		Tools:         &subagentToolRunner{},
-		Schema:        tools.GetSubagentToolsSchemaJSON(),
+		Tools:         &subagentToolRunner{allowed: opts.Tools},
+		Schema:        tools.GetSubagentToolsSchemaJSONFor(opts.Tools),
 		Fallbacks:     fallbacks,
+		Temperature:   opts.Temperature,
 	}
 
 	_, err = agent.Run(ctx, mc, c, &msgs, cfg)
@@ -203,11 +247,32 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 }
 
 // subagentToolRunner wraps the global tool registry so subagents can use tools.
-type subagentToolRunner struct{}
+type subagentToolRunner struct {
+	// allowed, when non-empty, restricts which tools this child may actually
+	// invoke (from a named agent's frontmatter `tools:` list). The schema
+	// passed to the model (tools.GetSubagentToolsSchemaJSONFor) is only a
+	// hint — a model can still emit a call for a tool it wasn't offered
+	// (stale cached tool list, hallucinated name, etc.) — so this is the
+	// real enforcement point. Empty/nil means no restriction (today's
+	// behavior): every tool except "subagent" is allowed.
+	allowed []string
+}
 
 func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[string]any) (string, error) {
 	if name == "subagent" {
 		return "", fmt.Errorf("subagent tool is not available to subagents (recursion denied)")
+	}
+	if len(r.allowed) > 0 {
+		permitted := false
+		for _, a := range r.allowed {
+			if a == name {
+				permitted = true
+				break
+			}
+		}
+		if !permitted {
+			return "", fmt.Errorf("tool %q is not in this agent's allowed tools list", name)
+		}
 	}
 	res := tools.RunTool(ctx, name, args)
 	if res.Success {
@@ -221,6 +286,18 @@ func main() {
 	// tool schema) is actually executable. Without this, RunTool returns
 	// "unknown tool: subagent".
 	tools.SetSubAgentRunner(&agentRunner{})
+
+	// Unpack the builtin agent definitions (internal/agentdefs/builtin) into
+	// ~/.tyci/agents/ so tyci is useful with zero setup. This runs on every
+	// invocation, including `tyci --help`, so it must stay cheap and silent:
+	// Sync's steady-state cost is a handful of file stats/reads plus a few
+	// sha256 sums over KB-sized files, and any error is swallowed rather than
+	// reported. Reporting it would mean deciding where to put the message —
+	// stderr corrupts `--print`/piped output and the TUI, and there is no
+	// display object here yet to route it through — for a background
+	// convenience step whose failure never blocks anything the user asked
+	// for. `tyci agent sync` (commands.go) is the one place this is loud.
+	_, _ = agentdefs.Sync(agentdefs.GlobalDir(), false)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -2,9 +2,12 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -519,6 +522,477 @@ func TestResolveMaxIter(t *testing.T) {
 }
 
 func ptr(i int) *int { return &i }
+
+// =============================================================================
+// Agent-definition wiring: agentdefs.Get(...) → SubagentOptions/model/system
+// =============================================================================
+//
+// These tests exercise runSingleTask's precedence rules for a named agent's
+// frontmatter (model, max_iterations, tools, system prompt) against a
+// per-task override and the parent's inherited model. They are hermetic:
+// each test gets its own HOME and cwd so agentdefs never sees the real
+// ~/.tyci/agents.
+
+// recordingRunner captures everything runSingleTask handed to the
+// SubAgentRunner interface, plus which method was called — the mockRunner
+// above collapses RunTask/RunTaskWithSystem into one callback and drops the
+// system prompt, which is exactly what these tests need to observe.
+type recordingRunner struct {
+	called       bool
+	withSystem   bool
+	gotModel     string
+	gotSystem    string
+	gotOpts      SubagentOptions
+	returnErr    error
+	returnResult string
+}
+
+func (r *recordingRunner) RunTask(_ context.Context, _ string, model string, opts SubagentOptions) (string, error) {
+	r.called = true
+	r.withSystem = false
+	r.gotModel = model
+	r.gotOpts = opts
+	if r.returnResult == "" && r.returnErr == nil {
+		return "ok", nil
+	}
+	return r.returnResult, r.returnErr
+}
+
+func (r *recordingRunner) RunTaskWithSystem(_ context.Context, _ string, model string, system string, opts SubagentOptions) (string, error) {
+	r.called = true
+	r.withSystem = true
+	r.gotModel = model
+	r.gotSystem = system
+	r.gotOpts = opts
+	if r.returnResult == "" && r.returnErr == nil {
+		return "ok", nil
+	}
+	return r.returnResult, r.returnErr
+}
+
+// setupHermeticAgentDirs points agentdefs at a throwaway HOME (global agents
+// dir) and cwd (project-local agents dir), so tests never touch the real
+// ~/.tyci/agents. Returns the project-local .tyci/agents directory, already
+// created, where test agent .md files should be written.
+func setupHermeticAgentDirs(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wd := t.TempDir()
+	t.Chdir(wd)
+
+	projectAgentsDir := filepath.Join(wd, ".tyci", "agents")
+	if err := os.MkdirAll(projectAgentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	return projectAgentsDir
+}
+
+func writeTestAgent(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ctxWithParentModel builds a context carrying a parent ModelClient, the
+// same way agent.executeTools would when invoking the subagent tool.
+func ctxWithParentModel(model string) context.Context {
+	return connector.WithModelClient(context.Background(), fakeModelClient(model))
+}
+
+// --- Model precedence: task.Model > def.Model > parent model ---------------
+
+func TestRunSingleTask_ModelPrecedence_TaskWins(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\nmodel: def-model\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent", Model: "task-model"}
+	res := runSingleTask(ctxWithParentModel("parent-model"), r, task, 0)
+
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+	if r.gotModel != "task-model" {
+		t.Errorf("expected task.Model to win, got %q", r.gotModel)
+	}
+}
+
+func TestRunSingleTask_ModelPrecedence_DefWins(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\nmodel: def-model\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"} // no task.Model
+	res := runSingleTask(ctxWithParentModel("parent-model"), r, task, 0)
+
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+	if r.gotModel != "def-model" {
+		t.Errorf("expected def.Model to win over parent model, got %q", r.gotModel)
+	}
+}
+
+func TestRunSingleTask_ModelPrecedence_ParentWins(t *testing.T) {
+	// No agent at all — nothing to look up, so def.Model is never in play.
+	setupHermeticAgentDirs(t)
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x"}
+	res := runSingleTask(ctxWithParentModel("parent-model"), r, task, 0)
+
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+	if r.gotModel != "parent-model" {
+		t.Errorf("expected parent model as last resort, got %q", r.gotModel)
+	}
+}
+
+// --- max_iterations precedence: task > def (if >0) > default (nil) --------
+
+func TestRunSingleTask_MaxIterPrecedence_TaskWinsOverDef(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\nmax_iterations: 7\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent", MaxIterations: ptr(3)}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.MaxIterations == nil || *r.gotOpts.MaxIterations != 3 {
+		t.Errorf("expected task.MaxIterations=3 to win, got %v", r.gotOpts.MaxIterations)
+	}
+}
+
+func TestRunSingleTask_MaxIterPrecedence_DefWinsOverDefault(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\nmax_iterations: 7\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"} // no per-task override
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.MaxIterations == nil || *r.gotOpts.MaxIterations != 7 {
+		t.Errorf("expected def.MaxIterations=7 to flow through, got %v", r.gotOpts.MaxIterations)
+	}
+}
+
+func TestRunSingleTask_MaxIterPrecedence_NeitherSetIsNil(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	// No max_iterations in the frontmatter at all.
+	writeTestAgent(t, dir, "myagent", "---\ndescription: no cap here\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.MaxIterations != nil {
+		t.Errorf("expected nil MaxIterations so ResolveMaxIter applies its default, got %v", *r.gotOpts.MaxIterations)
+	}
+}
+
+// --- System prompt: def.SystemPrompt routes to RunTaskWithSystem -----------
+
+func TestRunSingleTask_SystemPromptFromDef_UsesRunTaskWithSystem(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\ndescription: has a body\n---\nYou are a careful reviewer.")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"}
+	res := runSingleTask(context.Background(), r, task, 0)
+
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+	if !r.withSystem {
+		t.Fatal("expected RunTaskWithSystem to be called, RunTask was called instead")
+	}
+	if r.gotSystem != "You are a careful reviewer." {
+		t.Errorf("expected the agent's markdown body as system prompt, got %q", r.gotSystem)
+	}
+}
+
+func TestRunSingleTask_NoAgent_UsesPlainRunTask(t *testing.T) {
+	setupHermeticAgentDirs(t)
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x"} // no Agent
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.withSystem {
+		t.Error("expected RunTask (no system prompt) for a plain subagent, RunTaskWithSystem was called")
+	}
+}
+
+// --- Unknown agent: hard failure, not a silent fallback ---------------------
+
+// TestRunSingleTask_UnknownAgent_HardFails locks in the deliberate behavior
+// change from the old code: a typo'd agent name used to silently degrade to
+// a plain subagent using the parent's model/prompt, which was
+// indistinguishable from a correctly-resolved agent and masked typos. It now
+// fails outright and never touches the runner.
+func TestRunSingleTask_UnknownAgent_HardFails(t *testing.T) {
+	setupHermeticAgentDirs(t) // no agent files written — "ghost" cannot exist
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "ghost"}
+	res := runSingleTask(context.Background(), r, task, 0)
+
+	if res.Success {
+		t.Fatal("expected failure for unknown agent, got success")
+	}
+	if r.called {
+		t.Error("runner must not be invoked when the named agent cannot be resolved")
+	}
+	wantSubstr := `agent "ghost" not found (looked in ~/.tyci/agents and ./.tyci/agents)`
+	if res.Error != wantSubstr {
+		t.Errorf("unexpected error message: got %q, want %q", res.Error, wantSubstr)
+	}
+}
+
+// --- def.Tools flows into SubagentOptions.Tools -----------------------------
+
+func TestRunSingleTask_DefToolsReachesOptions(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\ntools: read, bash\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	want := []string{"read", "bash"}
+	if len(r.gotOpts.Tools) != len(want) {
+		t.Fatalf("expected Tools=%v, got %v", want, r.gotOpts.Tools)
+	}
+	for i, name := range want {
+		if r.gotOpts.Tools[i] != name {
+			t.Errorf("Tools[%d]: expected %q, got %q", i, name, r.gotOpts.Tools[i])
+		}
+	}
+}
+
+// --- def.SystemPromptMode flows into SubagentOptions.SystemPromptMode ------
+
+// TestRunSingleTask_SystemPromptMode_AppendReachesOptions covers the default
+// mode: agentdefs.Parse normalizes an omitted `system_prompt_mode` to
+// "append" (see agentdefs_test.go), and runSingleTask must carry that value
+// through to SubagentOptions unchanged so main.go's RunTaskWithSystem can act
+// on it.
+func TestRunSingleTask_SystemPromptMode_AppendReachesOptions(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\ndescription: no mode set\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.SystemPromptMode != "append" {
+		t.Errorf("expected SystemPromptMode=%q, got %q", "append", r.gotOpts.SystemPromptMode)
+	}
+}
+
+// TestRunSingleTask_SystemPromptMode_ReplaceReachesOptions covers the
+// explicit opt-in: `system_prompt_mode: replace` in the frontmatter must
+// reach SubagentOptions.SystemPromptMode as "replace".
+func TestRunSingleTask_SystemPromptMode_ReplaceReachesOptions(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\nsystem_prompt_mode: replace\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.SystemPromptMode != "replace" {
+		t.Errorf("expected SystemPromptMode=%q, got %q", "replace", r.gotOpts.SystemPromptMode)
+	}
+}
+
+func TestRunSingleTask_NoAgent_ToolsIsNil(t *testing.T) {
+	setupHermeticAgentDirs(t)
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.Tools != nil {
+		t.Errorf("expected nil Tools for a plain subagent, got %v", r.gotOpts.Tools)
+	}
+}
+
+// --- def.Temperature flows into SubagentOptions.Temperature ----------------
+
+func TestRunSingleTask_DefTemperatureReachesOptions(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\ntemperature: 0.4\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.Temperature == nil || *r.gotOpts.Temperature != 0.4 {
+		t.Errorf("expected Temperature=0.4, got %v", r.gotOpts.Temperature)
+	}
+}
+
+// temperature: 0 is a legal, meaningful value ("deterministic") and must
+// still reach SubagentOptions as a non-nil pointer to 0 — not nil, which
+// would mean "unset".
+func TestRunSingleTask_DefTemperatureZeroReachesOptionsAsNonNil(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\ntemperature: 0\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.Temperature == nil {
+		t.Fatal("expected a non-nil pointer to 0.0, got nil")
+	}
+	if *r.gotOpts.Temperature != 0.0 {
+		t.Errorf("expected Temperature=0.0, got %v", *r.gotOpts.Temperature)
+	}
+}
+
+func TestRunSingleTask_NoAgent_TemperatureIsNil(t *testing.T) {
+	setupHermeticAgentDirs(t)
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.Temperature != nil {
+		t.Errorf("expected nil Temperature for a plain subagent, got %v", *r.gotOpts.Temperature)
+	}
+}
+
+func TestRunSingleTask_NoTemperatureInFrontmatter_IsNil(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\ndescription: no temperature here\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.Temperature != nil {
+		t.Errorf("expected nil Temperature when frontmatter omits it, got %v", *r.gotOpts.Temperature)
+	}
+}
+
+// --- def.Fallback flows into SubagentOptions.Fallbacks ----------------------
+
+func TestRunSingleTask_DefFallbackReachesOptions(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\nfallback:\n  - acme/big\n  - acme/small\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	want := []string{"acme/big", "acme/small"}
+	if len(r.gotOpts.Fallbacks) != len(want) {
+		t.Fatalf("expected Fallbacks=%v, got %v", want, r.gotOpts.Fallbacks)
+	}
+	for i, spec := range want {
+		if r.gotOpts.Fallbacks[i] != spec {
+			t.Errorf("Fallbacks[%d]: expected %q, got %q", i, spec, r.gotOpts.Fallbacks[i])
+		}
+	}
+}
+
+func TestRunSingleTask_NoAgent_FallbacksIsNil(t *testing.T) {
+	setupHermeticAgentDirs(t)
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.Fallbacks != nil {
+		t.Errorf("expected nil Fallbacks for a plain subagent, got %v", r.gotOpts.Fallbacks)
+	}
+}
+
+func TestRunSingleTask_NoFallbackInFrontmatter_IsNil(t *testing.T) {
+	dir := setupHermeticAgentDirs(t)
+	writeTestAgent(t, dir, "myagent", "---\ndescription: no fallback here\n---\nbody")
+
+	r := &recordingRunner{}
+	task := subagentTask{Task: "x", Agent: "myagent"}
+	runSingleTask(context.Background(), r, task, 0)
+
+	if r.gotOpts.Fallbacks != nil {
+		t.Errorf("expected nil Fallbacks when frontmatter omits it, got %v", r.gotOpts.Fallbacks)
+	}
+}
+
+// =============================================================================
+// GetSubagentToolsSchemaJSONFor — the tool-whitelist filter
+// =============================================================================
+
+// schemaToolNames extracts the "function.name" of every entry in a marshaled
+// tool schema, for order-insensitive comparisons.
+func schemaToolNames(t *testing.T, data []byte) map[string]bool {
+	t.Helper()
+	var arr []map[string]any
+	if err := json.Unmarshal(data, &arr); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
+	}
+	names := make(map[string]bool, len(arr))
+	for _, entry := range arr {
+		fn, ok := entry["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, ok := fn["name"].(string)
+		if ok {
+			names[name] = true
+		}
+	}
+	return names
+}
+
+func TestGetSubagentToolsSchemaJSONFor_EmptyReturnsFullSchema(t *testing.T) {
+	got := GetSubagentToolsSchemaJSONFor(nil)
+	want := GetSubagentToolsSchemaJSON()
+	if string(got) != string(want) {
+		t.Errorf("expected empty allowed list to return the cached full schema unchanged")
+	}
+	names := schemaToolNames(t, got)
+	if names["subagent"] {
+		t.Error("full subagent schema must never include \"subagent\" itself")
+	}
+	if !names["bash"] || !names["read"] {
+		t.Errorf("expected an unrestricted schema to include bash/read, got %v", names)
+	}
+}
+
+func TestGetSubagentToolsSchemaJSONFor_FiltersToAllowed(t *testing.T) {
+	got := GetSubagentToolsSchemaJSONFor([]string{"read", "bash"})
+	names := schemaToolNames(t, got)
+	if len(names) != 2 || !names["read"] || !names["bash"] {
+		t.Errorf("expected exactly {read, bash}, got %v", names)
+	}
+}
+
+func TestGetSubagentToolsSchemaJSONFor_RejectsExplicitSubagent(t *testing.T) {
+	got := GetSubagentToolsSchemaJSONFor([]string{"read", "subagent"})
+	names := schemaToolNames(t, got)
+	if names["subagent"] {
+		t.Error("explicit \"subagent\" in the allowed list must still be dropped — recursion is never allowed")
+	}
+	if !names["read"] {
+		t.Errorf("expected \"read\" to survive the filter, got %v", names)
+	}
+}
+
+func TestGetSubagentToolsSchemaJSONFor_UnknownNameSkipped(t *testing.T) {
+	got := GetSubagentToolsSchemaJSONFor([]string{"read", "not-a-real-tool"})
+	names := schemaToolNames(t, got)
+	if len(names) != 1 || !names["read"] {
+		t.Errorf("expected only {read} (unknown name silently skipped), got %v", names)
+	}
+}
 
 // TestParseTasks_MaxIterations_Float64 covers the real production path:
 // encoding/json always delivers JSON numbers as float64, not int. The

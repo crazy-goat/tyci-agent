@@ -10,6 +10,7 @@ import (
 
 	"github.com/decodo/tyci/api"
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/internal/agentdefs"
 )
 
 func BuildSystemPrompt() string {
@@ -27,6 +28,37 @@ You are a SUBAGENT spawned by a parent agent to complete ONE task and report bac
 - You cannot ask questions — there is no user to reply. Make reasonable assumptions and proceed.
 - Do the whole task, then END YOUR TURN with a single self-contained final message that IS your result (the findings/answer/summary the parent needs). The parent sees only your final text, not your tool calls or thinking.
 - Do not stop early and do not loop. If you get blocked, state in your final message what you did and exactly what is blocking you.`)
+}
+
+// BuildSubagentSystemPromptWithRole returns the standard subagent system
+// prompt with a named agent's role appended. The role is the ROLE only — a
+// description of the agent's specialization (its markdown definition body) —
+// because the harness already supplies the subagent contract, environment
+// context (date/cwd/OS), tool descriptions, the project's AGENTS.md and the
+// skills list via BuildSubagentSystemPrompt. A definition author therefore
+// never has to restate any of that, and it cannot silently drift out of sync
+// with the harness as the contract or AGENTS.md evolve — which is exactly
+// what happened before this function existed: a named agent's body REPLACED
+// the whole prompt, so it lost the contract, AGENTS.md and everything else.
+//
+// The role is appended AFTER the base prompt is fully assembled, rather than
+// threaded through the existing roleNote parameter (which buildSystemPrompt
+// splices in at the very top, ahead of the AGENTS.md and skills sections —
+// see BuildSubagentSystemPrompt's fixed contract note above). Putting a named
+// agent's role there too would bury the environment context and AGENTS.md
+// beneath agent-specific prose; a role read LAST, once the model already
+// knows the contract and where it is running, reads as a specialization
+// layered on stable ground instead. It is joined with the same "\n---\n"
+// separator buildSystemPrompt already uses for AGENTS.md and skills, so the
+// role shows up as one more clearly delimited section, never silently glued
+// onto the prose above it.
+func BuildSubagentSystemPromptWithRole(role string) string {
+	prompt := BuildSubagentSystemPrompt()
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return prompt
+	}
+	return prompt + "\n---\nYour role:\n" + role
 }
 
 func buildSystemPrompt(includeSubagent bool, roleNote string) string {
@@ -48,7 +80,7 @@ func buildSystemPrompt(includeSubagent bool, roleNote string) string {
 	// a tool that does not exist.
 	subagentLine := ""
 	if includeSubagent {
-		subagentLine = "\n- subagent(task, tasks?, model?): delegate independent work to child agents."
+		subagentLine = "\n- subagent(task, tasks?, model?, agent?): delegate independent work to child agents."
 	}
 
 	prompt := fmt.Sprintf(`You coding agent. Non-interactive. No ask question. Just do.%s
@@ -85,6 +117,24 @@ Be terse. No fluff. Short sentence. Get job done.
 	if skillNames, err := listSkillNames(skillsDir); err == nil && len(skillNames) > 0 {
 		prompt += "\n---\nAvailable skills: " + strings.Join(skillNames, ", ")
 		prompt += "\nUse skills(name) to load a skill's full content.\n"
+	}
+
+	// List available agents (name + description only) so the model can
+	// discover the subagent tool's agent parameter instead of guessing a
+	// filename. Only the top-level agent gets this: children cannot spawn
+	// further children (see subagentLine above), so listing agents to them
+	// would tempt a call to a tool they don't have.
+	if includeSubagent {
+		if defs := agentdefs.List(wd); len(defs) > 0 {
+			prompt += "\n---\nAvailable agents for subagent(agent=\"name\"):\n"
+			for _, def := range defs {
+				line := "- " + def.Name
+				if def.Description != "" {
+					line += " — " + def.Description
+				}
+				prompt += line + "\n"
+			}
+		}
 	}
 
 	return prompt

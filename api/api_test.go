@@ -643,6 +643,54 @@ data: [DONE]
 	}
 }
 
+// =============================================================================
+// ChatRequest.Temperature wire-format tests
+// =============================================================================
+
+// TestChatRequest_Temperature_Marshaling verifies the *float64 field
+// marshals to a top-level "temperature" key when set, disappears entirely
+// when nil (omitempty on a nil pointer — the golden-file guarantee this
+// layer must not break), and — the case a plain float64 could never
+// support — is still emitted with value 0 for a pointer to the zero value,
+// since 0 is a meaningful "fully deterministic" request, not "unset".
+func TestChatRequest_Temperature_Marshaling(t *testing.T) {
+	ptr := func(v float64) *float64 { return &v }
+
+	tests := []struct {
+		name        string
+		temperature *float64
+		wantPresent bool
+		wantValue   float64
+	}{
+		{name: "set", temperature: ptr(0.9), wantPresent: true, wantValue: 0.9},
+		{name: "nil omits the key", temperature: nil, wantPresent: false},
+		{name: "zero pointer still present", temperature: ptr(0), wantPresent: true, wantValue: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ChatRequest{Model: "gpt-4", Temperature: tt.temperature}
+			data, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(data, &payload); err != nil {
+				t.Fatalf("Unmarshal: %v (data: %s)", err, data)
+			}
+			temp, present := payload["temperature"]
+			if present != tt.wantPresent {
+				t.Fatalf("temperature key present = %v, want %v (data: %s)", present, tt.wantPresent, data)
+			}
+			if tt.wantPresent {
+				if got, ok := temp.(float64); !ok || got != tt.wantValue {
+					t.Errorf("temperature = %v, want %v", temp, tt.wantValue)
+				}
+			}
+		})
+	}
+}
+
 // testCtx returns a background context for tests. It lives in this untagged
 // file (it used to sit in anthropic_test.go, behind //go:build !noanthropic)
 // so that `go test -tags "noanthropic nogemini" ./api/` still compiles.

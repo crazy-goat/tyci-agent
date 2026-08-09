@@ -7,6 +7,20 @@ import (
 	"testing"
 )
 
+// writeMarkdownAgent writes a minimal markdown agent definition file named
+// "<name>.md" into dir, creating dir if needed.
+func writeMarkdownAgent(t *testing.T, dir, name, frontmatter, body string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := "---\n" + frontmatter + "\n---\n" + body
+	path := filepath.Join(dir, name+".md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
 func TestAgentEntryMarshalNoFallback(t *testing.T) {
 	// Without fallback → should marshal as plain string
 	entry := AgentEntry{Model: "openai/gpt-4o"}
@@ -518,5 +532,171 @@ func TestResolveModel_FullPriorityChain(t *testing.T) {
 				t.Errorf("ResolveModel(%q, %q) = %q, want %q", tt.model, tt.agentName, got, tt.want)
 			}
 		})
+	}
+}
+
+// --- Markdown agent tests: per-project discovery on top of internal/agentdefs ---
+
+func TestListMarkdownAgents_ProjectLocalVisible(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wd := t.TempDir()
+	t.Chdir(wd)
+
+	writeMarkdownAgent(t, filepath.Join(wd, ".tyci", "agents"), "reviewer", "model: anthropic/claude-opus", "You review code.")
+
+	names, err := ListMarkdownAgents()
+	if err != nil {
+		t.Fatalf("ListMarkdownAgents: %v", err)
+	}
+	if len(names) != 1 || names[0] != "reviewer" {
+		t.Errorf("ListMarkdownAgents() = %v, want [reviewer]", names)
+	}
+}
+
+func TestGetMarkdownAgent_ProjectLocalVisible(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wd := t.TempDir()
+	t.Chdir(wd)
+
+	writeMarkdownAgent(t, filepath.Join(wd, ".tyci", "agents"), "reviewer", "model: anthropic/claude-opus", "You review code.")
+
+	got, err := GetMarkdownAgent("reviewer")
+	if err != nil {
+		t.Fatalf("GetMarkdownAgent: %v", err)
+	}
+	if got.Name != "reviewer" {
+		t.Errorf("Name = %q, want %q", got.Name, "reviewer")
+	}
+	if got.Frontmatter.Model != "anthropic/claude-opus" {
+		t.Errorf("Model = %q, want %q", got.Frontmatter.Model, "anthropic/claude-opus")
+	}
+	if got.SystemPrompt != "You review code." {
+		t.Errorf("SystemPrompt = %q, want %q", got.SystemPrompt, "You review code.")
+	}
+}
+
+func TestGetMarkdownAgent_ProjectOverridesGlobal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wd := t.TempDir()
+	t.Chdir(wd)
+
+	writeMarkdownAgent(t, filepath.Join(home, GlobalConfigDir, "agents"), "coder", "model: openai/global-model", "Global coder.")
+	writeMarkdownAgent(t, filepath.Join(wd, ".tyci", "agents"), "coder", "model: openai/project-model", "Project coder.")
+
+	got, err := GetMarkdownAgent("coder")
+	if err != nil {
+		t.Fatalf("GetMarkdownAgent: %v", err)
+	}
+	if got.Frontmatter.Model != "openai/project-model" {
+		t.Errorf("Model = %q, want project-local model %q (project should override global)", got.Frontmatter.Model, "openai/project-model")
+	}
+
+	names, err := ListMarkdownAgents()
+	if err != nil {
+		t.Fatalf("ListMarkdownAgents: %v", err)
+	}
+	if len(names) != 1 || names[0] != "coder" {
+		t.Errorf("ListMarkdownAgents() = %v, want a single deduped [coder]", names)
+	}
+}
+
+func TestLoadAgents_PicksUpProjectLocalMarkdownAgent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wd := t.TempDir()
+	t.Chdir(wd)
+
+	writeMarkdownAgent(t, filepath.Join(wd, ".tyci", "agents"), "reviewer", "model: anthropic/claude-opus", "You review code.")
+
+	agents, err := LoadAgents()
+	if err != nil {
+		t.Fatalf("LoadAgents: %v", err)
+	}
+	entry, ok := agents["reviewer"]
+	if !ok {
+		t.Fatal("LoadAgents() did not include project-local markdown agent 'reviewer'")
+	}
+	if entry.Model != "anthropic/claude-opus" {
+		t.Errorf("entry.Model = %q, want %q", entry.Model, "anthropic/claude-opus")
+	}
+}
+
+func TestLoadAgents_JSONConfigWinsOverMarkdownAgent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wd := t.TempDir()
+	t.Chdir(wd)
+
+	// A markdown agent named "reviewer" ...
+	writeMarkdownAgent(t, filepath.Join(wd, ".tyci", "agents"), "reviewer", "model: markdown/model", "Markdown reviewer.")
+	// ... and a JSON config entry with the same name but a different model.
+	if err := SetAgent("reviewer", "json/model"); err != nil {
+		t.Fatalf("SetAgent: %v", err)
+	}
+
+	agents, err := LoadAgents()
+	if err != nil {
+		t.Fatalf("LoadAgents: %v", err)
+	}
+	entry, ok := agents["reviewer"]
+	if !ok {
+		t.Fatal("LoadAgents() missing 'reviewer'")
+	}
+	if entry.Model != "json/model" {
+		t.Errorf("entry.Model = %q, want %q (JSON config must win over markdown agent)", entry.Model, "json/model")
+	}
+}
+
+func TestMarkdownAgentFrontmatter_TemperatureSet(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wd := t.TempDir()
+	t.Chdir(wd)
+
+	writeMarkdownAgent(t, filepath.Join(wd, ".tyci", "agents"), "tempagent", "model: anthropic/claude-opus\ntemperature: 0.7", "Deterministic-ish.")
+
+	got, err := GetMarkdownAgent("tempagent")
+	if err != nil {
+		t.Fatalf("GetMarkdownAgent: %v", err)
+	}
+	if got.Frontmatter.Temperature != 0.7 {
+		t.Errorf("Frontmatter.Temperature = %v, want 0.7", got.Frontmatter.Temperature)
+	}
+}
+
+func TestMarkdownAgentFrontmatter_TemperatureUnsetDefaultsToZero(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wd := t.TempDir()
+	t.Chdir(wd)
+
+	writeMarkdownAgent(t, filepath.Join(wd, ".tyci", "agents"), "notempagent", "model: anthropic/claude-opus", "No temperature set.")
+
+	got, err := GetMarkdownAgent("notempagent")
+	if err != nil {
+		t.Fatalf("GetMarkdownAgent: %v", err)
+	}
+	if got.Frontmatter.Temperature != 0 {
+		t.Errorf("Frontmatter.Temperature = %v, want 0 (unset unwraps to zero value)", got.Frontmatter.Temperature)
+	}
+}
+
+func TestMarkdownAgentFrontmatter_ToolsJoinedFromCommaList(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wd := t.TempDir()
+	t.Chdir(wd)
+
+	writeMarkdownAgent(t, filepath.Join(wd, ".tyci", "agents"), "toolagent", "model: anthropic/claude-opus\ntools: read, bash", "Does stuff.")
+
+	got, err := GetMarkdownAgent("toolagent")
+	if err != nil {
+		t.Fatalf("GetMarkdownAgent: %v", err)
+	}
+	if got.Frontmatter.Tools != "read, bash" {
+		t.Errorf("Frontmatter.Tools = %q, want %q", got.Frontmatter.Tools, "read, bash")
 	}
 }

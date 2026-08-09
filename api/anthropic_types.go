@@ -33,4 +33,9 @@ type AnthropicRequest struct {
 	System    string             `json:"system,omitempty"`
 	Messages  []AnthropicMessage `json:"messages"`
 	Tools     json.RawMessage    `json:"tools,omitempty"`
+	// Temperature is a pointer so the zero value (fully deterministic
+	// sampling) can be sent explicitly; omitempty on a *float64 only omits
+	// a nil pointer, never a pointer to 0. See connector.Request.Temperature
+	// for why this layer never validates or clamps the value.
+	Temperature *float64 `json:"temperature,omitempty"`
 }

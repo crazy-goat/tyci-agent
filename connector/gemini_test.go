@@ -3,8 +3,12 @@
 package connector
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"testing"
+
+	"github.com/decodo/tyci/stream"
 )
 
 // =============================================================================
@@ -167,6 +171,83 @@ func TestToolsToGemini(t *testing.T) {
 			}
 			if totalDecls != tt.want {
 				t.Errorf("got %d function declarations, want %d", totalDecls, tt.want)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Request.Temperature wire-format tests
+// =============================================================================
+
+// TestGeminiStream_Temperature verifies that Request.Temperature reaches the
+// Gemini wire body nested under "generationConfig.temperature" — Gemini,
+// unlike Anthropic and the OpenAI chat-completions protocol, does not accept
+// temperature top-level. When Temperature is nil, both "generationConfig"
+// and "temperature" must be entirely absent from the JSON (the connector
+// must not allocate an empty GenerationConfig). A pointer to zero must still
+// produce the key with value 0, distinguishing "deterministic" from "unset".
+func TestGeminiStream_Temperature(t *testing.T) {
+	ptr := func(v float64) *float64 { return &v }
+
+	tests := []struct {
+		name            string
+		temperature     *float64
+		wantConfigKey   bool
+		wantTempPresent bool
+		wantValue       float64
+	}{
+		{name: "set", temperature: ptr(1.5), wantConfigKey: true, wantTempPresent: true, wantValue: 1.5},
+		{name: "nil omits generationConfig entirely", temperature: nil, wantConfigKey: false, wantTempPresent: false},
+		{name: "zero pointer still present", temperature: ptr(0), wantConfigKey: true, wantTempPresent: true, wantValue: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doer := &stubDoer{}
+			c, err := NewGemini(Endpoint{
+				BaseURL: "https://api.example.invalid",
+				Path:    "/v1beta/models/gemini-x:streamGenerateContent",
+				APIKey:  "sk-test",
+				HTTP:    doer,
+			})
+			if err != nil {
+				t.Fatalf("NewGemini: %v", err)
+			}
+
+			req := Request{Model: "gemini-x", Temperature: tt.temperature}
+			if err := c.Stream(context.Background(), req, func(stream.Event) error { return nil }); err != nil {
+				t.Fatalf("Stream: %v", err)
+			}
+
+			bodyBytes, err := io.ReadAll(doer.got.Body)
+			if err != nil {
+				t.Fatalf("reading captured request body: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+				t.Fatalf("unmarshal request body: %v (body: %s)", err, bodyBytes)
+			}
+
+			genConfig, present := payload["generationConfig"]
+			if present != tt.wantConfigKey {
+				t.Fatalf("generationConfig key present = %v, want %v (body: %s)", present, tt.wantConfigKey, bodyBytes)
+			}
+			if !tt.wantConfigKey {
+				return
+			}
+			configMap, ok := genConfig.(map[string]any)
+			if !ok {
+				t.Fatalf("generationConfig is not an object: %T (%v)", genConfig, genConfig)
+			}
+			temp, tempPresent := configMap["temperature"]
+			if tempPresent != tt.wantTempPresent {
+				t.Fatalf("generationConfig.temperature present = %v, want %v (body: %s)", tempPresent, tt.wantTempPresent, bodyBytes)
+			}
+			if tt.wantTempPresent {
+				if got, ok := temp.(float64); !ok || got != tt.wantValue {
+					t.Errorf("generationConfig.temperature = %v, want %v", temp, tt.wantValue)
+				}
 			}
 		})
 	}

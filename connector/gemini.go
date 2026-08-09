@@ -37,6 +37,13 @@ func (c *gemini) Stream(ctx context.Context, req Request, emit func(stream.Event
 		Contents: contents,
 		Stream:   true,
 	}
+	// Gemini nests sampling parameters under generationConfig rather than
+	// accepting them top-level. Only allocate it when Temperature is set,
+	// so a nil Request.Temperature produces no "generationConfig" key at
+	// all (see GeminiRequest.GenerationConfig doc comment).
+	if req.Temperature != nil {
+		body.GenerationConfig = &api.GeminiGenerationConfig{Temperature: req.Temperature}
+	}
 	if system != "" {
 		body.SystemInstruction = &struct {
 			Parts []api.GeminiPart `json:"parts"`

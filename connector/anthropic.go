@@ -40,7 +40,8 @@ func (c *anthropic) Stream(ctx context.Context, req Request, emit func(stream.Ev
 		// SSE parser it belongs to; both are behind the same !noanthropic
 		// tag, so this file and api/anthropic.go appear and disappear
 		// together.
-		Tools: api.ConvertToolsToAnthropic(req.Tools),
+		Tools:       api.ConvertToolsToAnthropic(req.Tools),
+		Temperature: req.Temperature,
 	}
 	s := api.AnthropicStreamer{HTTP: c.ep.HTTP, Headers: c.ep.Headers}
 	return s.Stream(ctx, c.ep.APIKey, c.ep.URL(), body, emit)

@@ -11,6 +11,7 @@ import (
 	"github.com/decodo/tyci/api"
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/display"
+	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/internal/debug"
 	"github.com/decodo/tyci/internal/readline"
@@ -188,23 +189,43 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 	return provider, modelName, cfg, ctx, sess, sessionPath, historyFile, dl, nil
 }
 
+// resolveFallbacksQuiet resolves each "provider/model" fallback spec to a
+// connector.ModelClient and reports nothing itself: it returns the resolved
+// clients alongside the specs that could not be resolved, leaving it to the
+// caller to decide how (or whether) to surface those. This split exists
+// because "resolve" and "report" have different constraints depending on who
+// is calling: the top-level CLI setup path (resolveFallbacks below) can
+// freely write to stderr before the TUI takes over the screen, but a subagent
+// resolving ITS OWN fallback list runs mid-session, often under the Bubble
+// Tea TUI, where an unguarded stderr write would corrupt the display (see
+// agentRunner.run in main.go, which logs unresolved specs to the debug log
+// instead).
+func resolveFallbacksQuiet(specs []string) (clients []connector.ModelClient, unresolved []string) {
+	for _, spec := range specs {
+		p, m, ok := providers.FindModel(spec)
+		if !ok {
+			unresolved = append(unresolved, spec)
+			continue
+		}
+		clients = append(clients, p.Client(m))
+	}
+	return clients, unresolved
+}
+
 // resolveFallbacks resolves each "provider/model" fallback spec to a
 // connector.ModelClient at setup time — the agent no longer resolves
 // fallback specs itself (see agent.Config.Fallbacks). A spec that fails to
 // resolve is reported here and skipped, which is a deliberate relocation:
 // agent.Run used to discover this lazily, mid-run, and report it via a
 // ToolBlock on the display; now it is reported once, at startup, on stderr.
+// This is the top-level-agent path only; a subagent's own fallback list goes
+// through resolveFallbacksQuiet instead (see its comment for why).
 func resolveFallbacks(specs []string) []connector.ModelClient {
-	var out []connector.ModelClient
-	for _, spec := range specs {
-		p, m, ok := providers.FindModel(spec)
-		if !ok {
-			fmt.Fprintf(os.Stderr, "Warning: fallback model %q not found, skipping\n", spec)
-			continue
-		}
-		out = append(out, p.Client(m))
+	clients, unresolved := resolveFallbacksQuiet(specs)
+	for _, spec := range unresolved {
+		fmt.Fprintf(os.Stderr, "Warning: fallback model %q not found, skipping\n", spec)
 	}
-	return out
+	return clients
 }
 
 // ---------------------------------------------------------------------------
@@ -596,12 +617,56 @@ var agentSetFallbackCmd = &cobra.Command{
 	},
 }
 
+var agentSyncForce bool
+
+var agentSyncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Unpack/update tyci's builtin agent definitions in ~/.tyci/agents/",
+	Long: `Unpack tyci's builtin agent definitions (locator, reviewer, implementer) into
+~/.tyci/agents/, and update the ones already there — but only when they are
+still exactly what tyci last wrote. A file you edited, or a name you deleted
+on purpose, is left alone.
+
+This runs automatically (and silently) on every tyci startup; this command
+exists to run it on demand and, unlike the automatic pass, report what it did.
+
+--force overwrites everything unconditionally, INCLUDING your local edits to
+builtin agent files and any builtin file you deleted (it comes back). Use it
+to deliberately reset to tyci's stock versions.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dir := agentdefs.GlobalDir()
+		res, err := agentdefs.Sync(dir, agentSyncForce)
+		if err != nil {
+			return fmt.Errorf("sync agent definitions: %w", err)
+		}
+
+		printed := false
+		report := func(label string, names []string) {
+			if len(names) == 0 {
+				return
+			}
+			printed = true
+			fmt.Printf("%s: %s\n", label, strings.Join(names, ", "))
+		}
+		report("Installed", res.Installed)
+		report("Updated", res.Updated)
+		report("Skipped (locally modified)", res.SkippedModified)
+		report("Skipped (deleted)", res.SkippedDeleted)
+		if !printed {
+			fmt.Printf("Everything up to date in %s\n", dir)
+		}
+		return nil
+	},
+}
+
 func init() {
 	agentCmd.AddCommand(agentListCmd)
 	agentCmd.AddCommand(agentGetCmd)
 	agentCmd.AddCommand(agentSetCmd)
 	agentCmd.AddCommand(agentDeleteCmd)
 	agentCmd.AddCommand(agentSetFallbackCmd)
+	agentSyncCmd.Flags().BoolVar(&agentSyncForce, "force", false, "overwrite all builtin agent files unconditionally, including local edits and deleted files")
+	agentCmd.AddCommand(agentSyncCmd)
 }
 
 // listModels returns known models in the format provider/model.

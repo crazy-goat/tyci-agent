@@ -34,6 +34,16 @@ type Config struct {
 	Schema        json.RawMessage
 	Session       *session.Session // optional session logging / resume
 
+	// Temperature, when non-nil, is forwarded on every connector.Request this
+	// run issues — to the primary model and, if it fails, to every fallback in
+	// turn (see runOnce and tryFallback below: both read cfg.Temperature, and
+	// tryFallback passes the same cfg straight through, so there is only one
+	// place this could get lost). A pointer, not a plain float64, because 0 is
+	// a meaningful value ("deterministic") and must stay distinguishable from
+	// "the caller never set it" — nil means the parameter is omitted from the
+	// wire request entirely, not sent as 0.
+	Temperature *float64
+
 	// Fallbacks are already-resolved fallback models, tried in order when
 	// the primary (or the previously-active fallback) fails. The agent does
 	// not resolve "provider/model" strings itself — the caller does, before
