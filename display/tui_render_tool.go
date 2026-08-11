@@ -102,8 +102,38 @@ func formatToolCall(toolName, rawJSON string) string {
 			return "bash(" + truncateString(cmd, 60) + ")"
 		}
 	case "subagent":
-		if title := subagentTitleFromArgs(args); title != "" {
+		title := subagentTitleFromArgs(args)
+		async, _ := args["async"].(bool)
+		switch {
+		case title != "" && async:
+			return "subagent(async, " + truncateString(title, 60) + ")"
+		case title != "":
 			return "subagent(" + truncateString(title, 60) + ")"
+		}
+	case "wait":
+		seconds := ""
+		if s, ok := args["seconds"].(float64); ok {
+			seconds = fmt.Sprintf("%d", int(s))
+		}
+		jobID, _ := args["job_id"].(string)
+		note, _ := args["note"].(string)
+		switch {
+		case jobID != "" && note != "":
+			return "wait(job=" + jobID + ", " + truncateString(note, 40) + ")"
+		case jobID != "":
+			return "wait(job=" + jobID + ", " + seconds + "s)"
+		case note != "":
+			return "wait(" + seconds + "s, " + truncateString(note, 50) + ")"
+		case seconds != "":
+			return "wait(" + seconds + "s)"
+		}
+	case "lock":
+		if path, ok := args["path"].(string); ok && path != "" {
+			return "lock(" + truncateString(path, 60) + ")"
+		}
+	case "unlock":
+		if path, ok := args["path"].(string); ok && path != "" {
+			return "unlock(" + truncateString(path, 60) + ")"
 		}
 	case "web":
 		method, _ := args["method"].(string)

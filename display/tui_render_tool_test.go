@@ -374,6 +374,11 @@ func TestFormatToolCall_Subagent(t *testing.T) {
 			args: "",
 			want: "subagent(...)",
 		},
+		{
+			name: "async single task",
+			args: `{"task":"Find all Go files","async":true}`,
+			want: "subagent(async, Find all Go files)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -383,6 +388,58 @@ func TestFormatToolCall_Subagent(t *testing.T) {
 				t.Errorf("formatToolCall(\"subagent\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatToolCall_Wait(t *testing.T) {
+	tests := []struct {
+		name string
+		args string
+		want string
+	}{
+		{
+			name: "plain wait with note",
+			args: `{"seconds":30,"note":"waiting for the deploy to finish"}`,
+			want: "wait(30s, waiting for the deploy to finish)",
+		},
+		{
+			name: "plain wait no note",
+			args: `{"seconds":10}`,
+			want: "wait(10s)",
+		},
+		{
+			name: "job_id with note",
+			args: `{"seconds":60,"job_id":"job-1-1","note":"checking the build job"}`,
+			want: "wait(job=job-1-1, checking the build job)",
+		},
+		{
+			name: "job_id without note",
+			args: `{"seconds":60,"job_id":"job-1-1"}`,
+			want: "wait(job=job-1-1, 60s)",
+		},
+		{
+			name: "empty args",
+			args: "",
+			want: "wait(...)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatToolCall("wait", tt.args)
+			if got != tt.want {
+				t.Errorf("formatToolCall(\"wait\", %q) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatToolCall_Lock(t *testing.T) {
+	if got, want := formatToolCall("lock", `{"path":"foo/bar.go","seconds":30}`), "lock(foo/bar.go)"; got != want {
+		t.Errorf("formatToolCall(\"lock\", ...) = %q, want %q", got, want)
+	}
+	if got, want := formatToolCall("unlock", `{"path":"foo/bar.go","holder":"holder-abc"}`), "unlock(foo/bar.go)"; got != want {
+		t.Errorf("formatToolCall(\"unlock\", ...) = %q, want %q", got, want)
 	}
 }
 
