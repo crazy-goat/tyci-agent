@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/decodo/tyci/locks"
 )
 
 // SubagentOptions are per-call knobs the parent supplies for a single
@@ -270,6 +272,36 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "lock",
+				"description": "Advisory-lock a file or directory path so other parallel subagents know you are working on it and avoid touching it. This is cooperative, not physical: it does not stop anyone from actually editing the path, it only lets other agents that check the lock know to steer clear. If you omit \"seconds\", the lock lasts until you release it with \"unlock\" or until your session ends. Returns a \"holder\" id in Content — remember it, you need it to call \"unlock\" later.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path":    map[string]any{"type": "string", "description": "File or directory path to lock"},
+						"seconds": map[string]any{"type": "integer", "description": "Optional TTL in seconds. Omit for a lock that lasts until explicit unlock or session end."},
+					},
+					"required": []string{"path"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "unlock",
+				"description": "Release an advisory lock previously acquired with the \"lock\" tool. Requires the same \"holder\" id that \"lock\" returned; fails if the path isn't locked, already expired, or held by a different holder.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path":   map[string]any{"type": "string", "description": "File or directory path to unlock"},
+						"holder": map[string]any{"type": "string", "description": "The holder id returned by the earlier \"lock\" call"},
+					},
+					"required": []string{"path", "holder"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "web",
 				"description": "Access the web. Use method=search for real-time web search (current events, docs, anything not in training data). Use method=lookup for fast encyclopedic facts, Wikipedia summaries, and quick references — it's enough for most knowledge questions and cheaper. Use method=get to fetch a specific URL.",
 				"parameters": map[string]any{
@@ -378,6 +410,8 @@ func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
 	return data
 }
 
+var lockRegistry = locks.NewRegistry()
+
 var toolRegistry = map[string]Tool{
 	"bash":   &BashTool{},
 	"find":   &FindTool{},
@@ -388,7 +422,9 @@ var toolRegistry = map[string]Tool{
 	"web":    &WebTool{},
 	// Waiter is nil until a future "jobs" package is wired in (see
 	// tools/wait.go); plain wait (no job_id) works without it.
-	"wait": &WaitTool{},
+	"wait":   &WaitTool{},
+	"lock":   &LockTool{Registry: lockRegistry},
+	"unlock": &UnlockTool{Registry: lockRegistry},
 }
 
 // subagentToolInstance is the singleton SubagentTool used by the registry.
