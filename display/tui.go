@@ -38,6 +38,38 @@ type tuiResumeRequestMsg struct {
 	entries []TuiResumeEntry // caller-supplied; sorted newest-first on the model side
 }
 
+// tuiBtwOpenMsg registers a new /btw entry and opens its live modal
+// immediately — before the background job has produced any output. Sent by
+// TUI.OpenBtw, strictly before the caller starts the job's goroutine, so
+// Update always registers the entry before any tuiBtwStreamMsg for the same
+// id can arrive.
+type tuiBtwOpenMsg struct {
+	id        string
+	question  string
+	createdAt time.Time
+}
+
+// tuiBtwJobIDMsg records the background job's ID on an already-open /btw
+// entry, once tools.JobRegistry.Start has returned one. Delivered as its own
+// message (like every other cross-goroutine mutation here) rather than
+// written directly to the entry, so the field is only ever touched from the
+// single bubbletea event-loop goroutine.
+type tuiBtwJobIDMsg struct {
+	id    string
+	jobID string
+}
+
+// tuiBtwStreamMsg carries streamed output for a /btw entry, keyed by id.
+// kind is one of "text", "thinking", "tool", "block", "error", "done".
+type tuiBtwStreamMsg struct {
+	id      string
+	kind    string
+	content string
+}
+
+// tuiBtwListOpenMsg opens the /btw list popup (bare "/btw").
+type tuiBtwListOpenMsg struct{}
+
 // resizeFlushMsg is sent after a debounce delay to flush resize changes.
 type resizeFlushMsg struct{}
 
@@ -100,6 +132,27 @@ type block struct {
 	flushedWidth int   // terminal width when the block was flushed (for resize re-wrap)
 	fileOffset   int64 // byte offset of this block's rendered lines in the cache file
 	fileBytes    int   // byte length of this block's rendered lines in the cache file
+}
+
+// BtwEntry records one /btw side-conversation forked from the main thread
+// during this TUI session. In-memory only — it does not survive a restart —
+// and its content is never merged back into the main conversation.
+//
+// content is a pointer (like subagentModalContent) so a TuiModel value copy
+// (bubbletea copies the model on every Update) never copies-after-write a
+// strings.Builder, which panics. All fields are mutated exclusively from the
+// bubbletea event-loop goroutine, driven by tuiBtwOpenMsg/tuiBtwJobIDMsg/
+// tuiBtwStreamMsg — never written directly from the goroutine running the
+// background job, which only ever posts messages through BtwSink.
+type BtwEntry struct {
+	ID        string
+	Question  string
+	JobID     string
+	CreatedAt time.Time
+
+	content *strings.Builder
+	done    bool
+	errMsg  string
 }
 
 func defaultMaxLines(toolName string) int {
@@ -269,6 +322,17 @@ type TuiModel struct {
 	// Todo list modal (shown when clicking todos counter in top bar)
 	todoModalActive bool
 	todoModalScroll int
+
+	// /btw side-conversations: entries recorded this session (newest last),
+	// the live/preview modal for one entry, and the list popup for browsing
+	// them all. See btw.go (main package) for how a job is started, and
+	// tui_btw.go for the update/render logic.
+	btwEntries     []*BtwEntry
+	btwModalActive bool
+	btwModalEntry  *BtwEntry
+	btwModalScroll int
+	btwListActive  bool
+	btwListCursor  int
 
 	// Context counts for the top status bar (computed in commands.go and passed in).
 	toolCount  int // total tools available (built-in + Lua + MCP)

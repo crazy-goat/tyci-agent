@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/decodo/tyci/stream"
 )
@@ -228,6 +229,37 @@ func (t *TUI) ShowTotalUsage(usage stream.Usage) {
 // toolIdx is the index of the tool in the current tool batch (0-based).
 func (t *TUI) StreamProgress(toolIdx int, line string) {
 	t.post(tuiMsgBlock{kind: "tool-progress", toolIdx: toolIdx, content: line + "\n"})
+}
+
+// OpenBtw registers a new /btw side-conversation and opens its live modal
+// immediately, before the background job has produced any output — the main
+// conversation is not blocked waiting for it. Call this BEFORE starting the
+// job's goroutine (see btw.go's startBtw): Send enqueues the message
+// synchronously from the caller's goroutine, so Update is guaranteed to
+// register the entry before any tuiBtwStreamMsg for the same id can arrive.
+func (t *TUI) OpenBtw(id, question string) {
+	t.prog.Send(tuiBtwOpenMsg{id: id, question: question, createdAt: time.Now()})
+}
+
+// SetBtwJobID records the background job's ID on the /btw entry once
+// tools.JobRegistry.Start has returned one. Delivered as a message (not a
+// direct field write) because the caller and the bubbletea event loop run on
+// different goroutines.
+func (t *TUI) SetBtwJobID(id, jobID string) {
+	t.prog.Send(tuiBtwJobIDMsg{id: id, jobID: jobID})
+}
+
+// BtwSink returns a Sink that streams a /btw child run's output to the entry
+// identified by id, live, through the same tea.Program the main conversation
+// renders through. id must already have been registered via OpenBtw.
+func (t *TUI) BtwSink(id string) *BtwSink {
+	return NewBtwSink(t, id)
+}
+
+// OpenBtwList opens the /btw list popup (bare "/btw"), showing every entry
+// recorded so far this session.
+func (t *TUI) OpenBtwList() {
+	t.prog.Send(tuiBtwListOpenMsg{})
 }
 
 func (t *TUI) ReadInput(_ context.Context, _ string) (string, error) {

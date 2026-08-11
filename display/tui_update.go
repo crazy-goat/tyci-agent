@@ -27,6 +27,20 @@ func (m TuiModel) Init() tea.Cmd {
 }
 
 func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// /btw entries must never lose streamed output just because some other
+	// popup happens to be open when it arrives — a background /btw job runs
+	// independently of whatever modal state the main thread is in. Dispatch
+	// these unconditionally, ahead of every other exclusivity check below.
+	switch msg.(type) {
+	case tuiBtwOpenMsg, tuiBtwJobIDMsg, tuiBtwStreamMsg:
+		return m.updateBtwMsg(msg)
+	}
+	if m.btwListActive {
+		return m.updateBtwList(msg)
+	}
+	if m.btwModalActive {
+		return m.updateBtwModal(msg)
+	}
 	if m.historySearchActive {
 		return m.updateHistorySearch(msg)
 	}
@@ -67,6 +81,9 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.statusMessage == msg.message {
 			m.statusMessage = ""
 		}
+		return m, nil
+	case tuiBtwListOpenMsg:
+		m.openBtwList()
 		return m, nil
 	case tuiResumeRequestMsg:
 		// /resume opened (typically bubbles in while reading=true). Make
