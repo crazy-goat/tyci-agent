@@ -135,6 +135,9 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	case tea.KeyCtrlP:
 		m.openModelPicker()
 		return true, m, nil
+	case tea.KeyCtrlB:
+		m.openJobsModal()
+		return true, m, nil
 	}
 	return false, m, nil
 }

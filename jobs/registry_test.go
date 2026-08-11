@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -154,6 +155,86 @@ func TestListReturnsSnapshots(t *testing.T) {
 	}
 	if list[0].ID != job.ID {
 		t.Fatalf("expected job ID %s, got %s", job.ID, list[0].ID)
+	}
+}
+
+func TestSetOnEvent_CalledOnStartAndCompletion(t *testing.T) {
+	r := NewRegistry()
+
+	var mu sync.Mutex
+	var statuses []Status
+	done := make(chan struct{})
+	r.SetOnEvent(func(j Job) {
+		mu.Lock()
+		statuses = append(statuses, j.Status)
+		if len(statuses) == 2 {
+			close(done)
+		}
+		mu.Unlock()
+	})
+
+	r.Start(context.Background(), "hooked", func(ctx context.Context) (string, bool, error) {
+		return "ok", false, nil
+	})
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for both onEvent calls")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(statuses) != 2 {
+		t.Fatalf("expected exactly 2 onEvent calls, got %d: %v", len(statuses), statuses)
+	}
+	if statuses[0] != StatusRunning {
+		t.Fatalf("expected first event to be running, got %s", statuses[0])
+	}
+	if statuses[1] != StatusDone {
+		t.Fatalf("expected second event to be the final status, got %s", statuses[1])
+	}
+}
+
+func TestSetOnEvent_NilIsNoop(t *testing.T) {
+	r := NewRegistry()
+	// nil is the default; explicitly setting it back to nil must not panic.
+	r.SetOnEvent(nil)
+
+	job := r.Start(context.Background(), "no-hook", func(ctx context.Context) (string, bool, error) {
+		return "ok", false, nil
+	})
+
+	if _, ok := r.Wait(context.Background(), job.ID, time.Second); !ok {
+		t.Fatalf("expected wait to find job")
+	}
+}
+
+// TestSetOnEvent_CanCallBackIntoRegistry ensures the hook fires outside any
+// internal lock: calling Get/List from within the callback must not deadlock.
+func TestSetOnEvent_CanCallBackIntoRegistry(t *testing.T) {
+	r := NewRegistry()
+	done := make(chan struct{})
+
+	r.SetOnEvent(func(j Job) {
+		if j.Status != StatusDone {
+			return
+		}
+		if _, ok := r.Get(j.ID); !ok {
+			t.Errorf("expected Get to find job %q from within onEvent callback", j.ID)
+		}
+		_ = r.List()
+		close(done)
+	})
+
+	r.Start(context.Background(), "callback", func(ctx context.Context) (string, bool, error) {
+		return "ok", false, nil
+	})
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out — onEvent callback likely deadlocked calling back into the registry")
 	}
 }
 

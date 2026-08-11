@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -76,6 +77,15 @@ type resizeFlushMsg struct{}
 // statusTickMsg triggers a status-bar repaint while a request is in flight,
 // so the elapsed-time counter stays live.
 type statusTickMsg struct{}
+
+// tuiMsgJobUpdate is sent by TUI.SetJobEventBus's subscriber goroutine
+// whenever jobs.Registry reports a background job's status changed (started
+// running, or reached a terminal status). Handled unconditionally at the top
+// of Update() — see tui_update.go — so backgroundJobs stays current no
+// matter which overlay (if any) is active.
+type tuiMsgJobUpdate struct {
+	Job jobs.Job
+}
 
 // ProviderModels groups model names under a provider name.
 type ProviderModels struct {
@@ -334,6 +344,15 @@ type TuiModel struct {
 	btwListActive  bool
 	btwListCursor  int
 
+	// Background jobs: async subagent jobs registered via jobs.Registry and
+	// mirrored here through the eventbus subscription set up by
+	// TUI.SetJobEventBus (see tui_jobs_api.go). nil-safe map; empty (or
+	// never wired) means the inline panel and Ctrl+B modal render nothing,
+	// so users who never touch subagent(async: true) see no UI change.
+	backgroundJobs  map[string]jobs.Job
+	jobsModalActive bool
+	jobsModalCursor int // index into the sorted (newest-first) job list
+
 	// Context counts for the top status bar (computed in commands.go and passed in).
 	toolCount  int // total tools available (built-in + Lua + MCP)
 	skillCount int // skills loaded from skills directory
@@ -410,6 +429,7 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		cachedTotalLines:     -1,
 		scrollback:           &scrollbackCache{},
 		messageRegion:        &messageRegionCache{},
+		backgroundJobs:       make(map[string]jobs.Job),
 		toolCount:            toolCount,
 		skillCount:           skillCount,
 		mcpCount:             mcpCount,

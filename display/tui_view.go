@@ -23,7 +23,7 @@ func (m TuiModel) View() string {
 // normal transcript view, and 0 (disabled) for full-screen overlays and states
 // that never scroll a stream, where a plain line diff is correct and cheaper.
 func (m TuiModel) paintScrollBottom() int {
-	if !m.ready || m.quitting || m.todoModalActive || m.subagentModalActive || m.pickerActive || m.historySearchActive || m.resumePickerActive || m.btwModalActive || m.btwListActive {
+	if !m.ready || m.quitting || m.todoModalActive || m.subagentModalActive || m.pickerActive || m.historySearchActive || m.resumePickerActive || m.btwModalActive || m.btwListActive || m.jobsModalActive {
 		return 0
 	}
 	return m.visibleLines()
@@ -52,6 +52,11 @@ func (m TuiModel) renderFrame() string {
 		return m.renderTodoModalView()
 	}
 
+	// ── Background jobs modal overlay mode (Ctrl+B) ──
+	if m.jobsModalActive {
+		return m.renderJobsModalView()
+	}
+
 	// ── Subagent modal overlay mode ──
 	if m.subagentModalActive {
 		return m.renderSubagentModalView()
@@ -74,7 +79,8 @@ func (m TuiModel) renderFrame() string {
 
 	var b strings.Builder
 	queueH := m.queuePanelHeight()
-	msgHeight := max(1, m.visibleLines()-queueH)
+	jobsH := m.jobsPanelHeight()
+	msgHeight := max(1, m.visibleLines()-queueH-jobsH)
 
 	// Top status bar (cwd)
 	b.WriteString(m.buildTopBar())
@@ -102,6 +108,12 @@ func (m TuiModel) renderFrame() string {
 		b.WriteString(statusStyle.Render(""))
 	}
 	b.WriteString("\n")
+
+	// Background jobs panel: shows async subagent jobs (see tools/subagent.go's
+	// async mode and TUI.SetJobEventBus). Renders zero-height when there are
+	// no background jobs, so the layout is unchanged for anyone who never
+	// uses subagent(async: true).
+	b.WriteString(m.renderJobsPanel(m.width))
 
 	// Queue panel (issue #88): shows pending user messages submitted while
 	// the agent is busy. Renders zero-height when the queue is empty, so the

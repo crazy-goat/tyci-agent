@@ -360,6 +360,10 @@ var tuiCmd = &cobra.Command{
 			_ = agent.SetDefaultModel(newDefault)
 		}, toolsCount, skillsCount, mcpCount)
 
+		// Show async subagent jobs (subagent(async: true), see tools/subagent.go)
+		// in the TUI's background-jobs panel/modal (Ctrl+B).
+		tuiDisp.SetJobEventBus(jobEventBus)
+
 		// Issue #88: wire the pending-message queue drain callback. The
 		// TUI's NextMessages drains the channel of user lines typed
 		// during the in-flight request and returns them in FIFO order;

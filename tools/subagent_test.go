@@ -611,7 +611,7 @@ func TestRunSingleTask_ModelPrecedence_TaskWins(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent", Model: "task-model"}
-	res := runSingleTask(ctxWithParentModel("parent-model"), r, task, 0)
+	res := runSingleTask(ctxWithParentModel("parent-model"), r, task, 0, true)
 
 	if !res.Success {
 		t.Fatalf("expected success, got error: %q", res.Error)
@@ -627,7 +627,7 @@ func TestRunSingleTask_ModelPrecedence_DefWins(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"} // no task.Model
-	res := runSingleTask(ctxWithParentModel("parent-model"), r, task, 0)
+	res := runSingleTask(ctxWithParentModel("parent-model"), r, task, 0, true)
 
 	if !res.Success {
 		t.Fatalf("expected success, got error: %q", res.Error)
@@ -643,7 +643,7 @@ func TestRunSingleTask_ModelPrecedence_ParentWins(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x"}
-	res := runSingleTask(ctxWithParentModel("parent-model"), r, task, 0)
+	res := runSingleTask(ctxWithParentModel("parent-model"), r, task, 0, true)
 
 	if !res.Success {
 		t.Fatalf("expected success, got error: %q", res.Error)
@@ -661,7 +661,7 @@ func TestRunSingleTask_MaxIterPrecedence_TaskWinsOverDef(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent", MaxIterations: ptr(3)}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.MaxIterations == nil || *r.gotOpts.MaxIterations != 3 {
 		t.Errorf("expected task.MaxIterations=3 to win, got %v", r.gotOpts.MaxIterations)
@@ -674,7 +674,7 @@ func TestRunSingleTask_MaxIterPrecedence_DefWinsOverDefault(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"} // no per-task override
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.MaxIterations == nil || *r.gotOpts.MaxIterations != 7 {
 		t.Errorf("expected def.MaxIterations=7 to flow through, got %v", r.gotOpts.MaxIterations)
@@ -688,7 +688,7 @@ func TestRunSingleTask_MaxIterPrecedence_NeitherSetIsNil(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.MaxIterations != nil {
 		t.Errorf("expected nil MaxIterations so ResolveMaxIter applies its default, got %v", *r.gotOpts.MaxIterations)
@@ -703,7 +703,7 @@ func TestRunSingleTask_SystemPromptFromDef_UsesRunTaskWithSystem(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"}
-	res := runSingleTask(context.Background(), r, task, 0)
+	res := runSingleTask(context.Background(), r, task, 0, true)
 
 	if !res.Success {
 		t.Fatalf("expected success, got error: %q", res.Error)
@@ -721,7 +721,7 @@ func TestRunSingleTask_NoAgent_UsesPlainRunTask(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x"} // no Agent
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.withSystem {
 		t.Error("expected RunTask (no system prompt) for a plain subagent, RunTaskWithSystem was called")
@@ -740,7 +740,7 @@ func TestRunSingleTask_UnknownAgent_HardFails(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "ghost"}
-	res := runSingleTask(context.Background(), r, task, 0)
+	res := runSingleTask(context.Background(), r, task, 0, true)
 
 	if res.Success {
 		t.Fatal("expected failure for unknown agent, got success")
@@ -762,7 +762,7 @@ func TestRunSingleTask_DefToolsReachesOptions(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	want := []string{"read", "bash"}
 	if len(r.gotOpts.Tools) != len(want) {
@@ -788,7 +788,7 @@ func TestRunSingleTask_SystemPromptMode_AppendReachesOptions(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.SystemPromptMode != "append" {
 		t.Errorf("expected SystemPromptMode=%q, got %q", "append", r.gotOpts.SystemPromptMode)
@@ -804,7 +804,7 @@ func TestRunSingleTask_SystemPromptMode_ReplaceReachesOptions(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.SystemPromptMode != "replace" {
 		t.Errorf("expected SystemPromptMode=%q, got %q", "replace", r.gotOpts.SystemPromptMode)
@@ -816,7 +816,7 @@ func TestRunSingleTask_NoAgent_ToolsIsNil(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.Tools != nil {
 		t.Errorf("expected nil Tools for a plain subagent, got %v", r.gotOpts.Tools)
@@ -831,7 +831,7 @@ func TestRunSingleTask_DefTemperatureReachesOptions(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.Temperature == nil || *r.gotOpts.Temperature != 0.4 {
 		t.Errorf("expected Temperature=0.4, got %v", r.gotOpts.Temperature)
@@ -847,7 +847,7 @@ func TestRunSingleTask_DefTemperatureZeroReachesOptionsAsNonNil(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.Temperature == nil {
 		t.Fatal("expected a non-nil pointer to 0.0, got nil")
@@ -862,7 +862,7 @@ func TestRunSingleTask_NoAgent_TemperatureIsNil(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.Temperature != nil {
 		t.Errorf("expected nil Temperature for a plain subagent, got %v", *r.gotOpts.Temperature)
@@ -875,7 +875,7 @@ func TestRunSingleTask_NoTemperatureInFrontmatter_IsNil(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.Temperature != nil {
 		t.Errorf("expected nil Temperature when frontmatter omits it, got %v", *r.gotOpts.Temperature)
@@ -890,7 +890,7 @@ func TestRunSingleTask_DefFallbackReachesOptions(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	want := []string{"acme/big", "acme/small"}
 	if len(r.gotOpts.Fallbacks) != len(want) {
@@ -908,7 +908,7 @@ func TestRunSingleTask_NoAgent_FallbacksIsNil(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.Fallbacks != nil {
 		t.Errorf("expected nil Fallbacks for a plain subagent, got %v", r.gotOpts.Fallbacks)
@@ -921,7 +921,7 @@ func TestRunSingleTask_NoFallbackInFrontmatter_IsNil(t *testing.T) {
 
 	r := &recordingRunner{}
 	task := subagentTask{Task: "x", Agent: "myagent"}
-	runSingleTask(context.Background(), r, task, 0)
+	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.Fallbacks != nil {
 		t.Errorf("expected nil Fallbacks when frontmatter omits it, got %v", r.gotOpts.Fallbacks)
@@ -1062,7 +1062,7 @@ func TestRunSingleTask_PropagatesMaxIter(t *testing.T) {
 	}
 	v := 42
 	task := subagentTask{Task: "do", MaxIterations: &v}
-	res := runSingleTask(context.Background(), runner, task, 0)
+	res := runSingleTask(context.Background(), runner, task, 0, true)
 	if !res.Success || res.Content != "ok" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
@@ -1082,7 +1082,7 @@ func TestRunSingleTask_NilMaxIter(t *testing.T) {
 		},
 	}
 	task := subagentTask{Task: "do"} // MaxIterations nil
-	runSingleTask(context.Background(), runner, task, 0)
+	runSingleTask(context.Background(), runner, task, 0, true)
 	if captured != nil {
 		t.Errorf("runner received MaxIterations=%v, want nil", captured)
 	}
@@ -1098,7 +1098,7 @@ func TestRunSingleTask_TruncatedOnCapHit(t *testing.T) {
 			return "partial answer\n\n[note: ...]", fmt.Errorf("hit cap: %w", ErrSubagentTruncated)
 		},
 	}
-	res := runSingleTask(context.Background(), runner, subagentTask{Task: "x"}, 0)
+	res := runSingleTask(context.Background(), runner, subagentTask{Task: "x"}, 0, true)
 	if !res.Success {
 		t.Errorf("expected Success=true on partial truncation, got false (Error=%q)", res.Error)
 	}
@@ -1125,7 +1125,7 @@ func TestRunSingleTask_TruncatedOnEmptyText(t *testing.T) {
 			return "", fmt.Errorf("hit cap: %w", ErrSubagentTruncated)
 		},
 	}
-	res := runSingleTask(context.Background(), runner, subagentTask{Task: "x"}, 0)
+	res := runSingleTask(context.Background(), runner, subagentTask{Task: "x"}, 0, true)
 	if !res.Success {
 		t.Errorf("expected Success=true when runner wraps ErrSubagentTruncated, got false (Error=%q)", res.Error)
 	}
@@ -1332,5 +1332,60 @@ func TestSubagentAsync_MixedBatchRejected(t *testing.T) {
 	}
 	if !strings.Contains(res.Error, "mix async") {
 		t.Errorf("expected error to mention mixing async tasks, got: %q", res.Error)
+	}
+}
+
+// TestSubagentAsync_DoesNotStreamToParentToolIdx is the regression test for
+// the bug runSingleTask's streamToParent parameter fixes: by the time an
+// async job's RunTask actually streams text, the parent's "subagent" tool
+// call has already returned and the TUI has closed toolIdx 9's block — so
+// nothing should be forwarded to the parent's stream.Output at all.
+func TestSubagentAsync_DoesNotStreamToParentToolIdx(t *testing.T) {
+	t.Cleanup(func() {
+		delete(toolRegistry, "subagent")
+		subagentToolInstance = nil
+		SetJobStarter(nil)
+	})
+	reg := jobs.NewRegistry()
+	SetJobStarter(testJobStarter{reg})
+
+	mo := &mockOutput{}
+	release := make(chan struct{})
+	SetSubAgentRunner(&mockRunner{
+		RunTaskFunc: func(ctx context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			// Mirrors main.go's agentRunner: drive the injected Sink directly.
+			if sink, ok := ctx.Value(SubagentSinkCtxKey{}).(SubagentSink); ok {
+				sink.Text("leaked line\n")
+			}
+			<-release
+			return "async result", nil
+		},
+	})
+
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
+	ctx = stream.WithOutput(ctx, mo.call)
+	ctx = context.WithValue(ctx, stream.ToolIdxCtxKey{}, 9)
+
+	res := RunTool(ctx, "subagent", map[string]any{"task": "slow thing", "async": true})
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+
+	var spawned []struct {
+		Task  string `json:"task"`
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal([]byte(res.Content), &spawned); err != nil {
+		t.Fatalf("unmarshal spawned jobs: %v (content: %q)", err, res.Content)
+	}
+
+	close(release)
+	status, ok := testJobWaiter{reg}.Wait(context.Background(), spawned[0].JobID, 2*time.Second)
+	if !ok || !status.Done {
+		t.Fatalf("job did not finish: ok=%v status=%+v", ok, status)
+	}
+
+	if lines := mo.lines(); len(lines) != 0 {
+		t.Errorf("expected no lines forwarded to the parent's stream.Output, got %q", lines)
 	}
 }

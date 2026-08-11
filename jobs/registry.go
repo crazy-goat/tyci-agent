@@ -9,12 +9,23 @@ import (
 )
 
 type Registry struct {
-	mu   sync.Mutex
-	jobs map[string]*Job
+	mu      sync.Mutex
+	jobs    map[string]*Job
+	onEvent func(Job)
 }
 
 func NewRegistry() *Registry {
 	return &Registry{jobs: make(map[string]*Job)}
+}
+
+// SetOnEvent registers fn to be called (outside any internal lock, so fn
+// may safely call back into the registry) whenever a job's status changes
+// (on Start → running, and on completion → done/failed/truncated). nil is
+// valid and is the default (no-op).
+func (r *Registry) SetOnEvent(fn func(Job)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onEvent = fn
 }
 
 var idCounter uint64
@@ -38,7 +49,12 @@ func (r *Registry) Start(ctx context.Context, description string, fn func(ctx co
 
 	r.mu.Lock()
 	r.jobs[job.ID] = job
+	onEvent := r.onEvent
 	r.mu.Unlock()
+
+	if onEvent != nil {
+		onEvent(job.Snapshot())
+	}
 
 	go func() {
 		result, truncated, err := fn(ctx)
@@ -55,9 +71,15 @@ func (r *Registry) Start(ctx context.Context, description string, fn func(ctx co
 		default:
 			job.Status = StatusDone
 		}
+		snapshot := job.Snapshot()
+		onEvent := r.onEvent
 		r.mu.Unlock()
 
 		close(job.done)
+
+		if onEvent != nil {
+			onEvent(snapshot)
+		}
 	}()
 
 	return job

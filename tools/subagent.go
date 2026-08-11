@@ -450,7 +450,7 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 	return t, nil
 }
 
-// runAsync registers each task as a background job via jobRegistry and
+// runAsync registers each task as a background job via jobStarter and
 // returns immediately with the assigned job ids, instead of blocking until
 // the tasks finish (runTasks' path). The job's context is detached from ctx
 // (context.WithoutCancel) because ctx dies with this tool call's turn, but
@@ -472,7 +472,7 @@ func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolR
 		jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subagentTimeoutSec*time.Second)
 		job := jobStarter.Start(jobCtx, task.Task, func(runCtx context.Context) (string, bool, error) {
 			defer cancel()
-			res := runSingleTask(runCtx, t.Runner, task, 0)
+			res := runSingleTask(runCtx, t.Runner, task, 0, false)
 			if !res.Success {
 				return res.Content, res.Truncated, errors.New(res.Error)
 			}
@@ -496,7 +496,7 @@ func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, 
 		wg.Add(1)
 		go func(idx int, t subagentTask) {
 			defer wg.Done()
-			results[idx] = runSingleTask(ctx, runner, t, timeoutSec)
+			results[idx] = runSingleTask(ctx, runner, t, timeoutSec, true)
 		}(i, task)
 	}
 
@@ -504,7 +504,16 @@ func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, 
 	return results
 }
 
-func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask, timeoutSec int) subagentResult {
+// streamToParent controls whether the child's output is forwarded live to
+// the parent TUI's tool block (via stream.ToolIdxCtxKey / stream.Output).
+// It must be false for a job spawned by runAsync: by the time the job
+// finishes, the parent's "subagent" tool call has already returned and the
+// TUI has closed that tool block, so toolIdx no longer refers to anything
+// live — forwarding into it would write to a stale or reused block instead
+// of just doing nothing. Job.Result (collected by the plain, non-streaming
+// collector below) remains the source of truth for async output, retrieved
+// later via the "wait" tool.
+func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask, timeoutSec int, streamToParent bool) subagentResult {
 	// Resolve the named agent definition, if any, before anything else. An
 	// unknown agent name used to silently degrade to a plain subagent with
 	// the parent's defaults — indistinguishable from success and a trap for
@@ -573,13 +582,20 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		SystemPromptMode: def.SystemPromptMode,
 	}
 
-	// Get tool index for streaming (passed by agent.executeTools)
-	toolIdx := 0
-	if idx, ok := ctx.Value(stream.ToolIdxCtxKey{}).(int); ok {
-		toolIdx = idx
+	// Get tool index for streaming (passed by agent.executeTools). Only
+	// resolved when streamToParent, so an async job never picks up the
+	// parent's (soon to be closed) toolIdx or its stream.Output callback —
+	// see runSingleTask's doc comment.
+	var c *streamingCollector
+	if streamToParent {
+		toolIdx := 0
+		if idx, ok := ctx.Value(stream.ToolIdxCtxKey{}).(int); ok {
+			toolIdx = idx
+		}
+		c = newStreamingCollector(ctx, toolIdx)
+	} else {
+		c = &streamingCollector{collector: newCollector()}
 	}
-
-	c := newStreamingCollector(ctx, toolIdx)
 
 	// Hand the runner our forwarding Sink via context (see SubagentSink's
 	// doc comment) so it drives agent.Run with this collector directly,

@@ -11,11 +11,22 @@ import (
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/eventbus"
 	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/internal/debug"
+	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/tools"
 )
+
+// jobEventBus is the single, process-wide bus carrying JobRegistry's
+// status-change events (topic "job.updated") to the TUI (the only
+// subscriber today, wired in commands.go's tuiCmd via TUI.SetJobEventBus —
+// see jobs.Registry.SetOnEvent). Package-level so both wiring sites share
+// the exact same instance without threading it through function
+// signatures; every other mode (console, --print, etc.) simply never
+// subscribes, so this costs them nothing.
+var jobEventBus = eventbus.New(32)
 
 // agentRunner implements tools.SubAgentRunner by wrapping agent.Run.
 type agentRunner struct{}
@@ -306,6 +317,11 @@ func main() {
 	// subagents alike — instead of each running on its own registry.
 	tools.SetJobWaiter(jobWaiterAdapter{reg: JobRegistry})
 	tools.SetJobStarter(jobStarterAdapter{reg: JobRegistry})
+
+	// Wire JobRegistry's status-change events onto jobEventBus so the TUI
+	// (see tuiCmd in commands.go) can show a live background-jobs panel. A
+	// no-op for every other mode, which never calls TUI.SetJobEventBus.
+	JobRegistry.SetOnEvent(func(j jobs.Job) { jobEventBus.Publish("job.updated", j) })
 
 	// Unpack the builtin agent definitions (internal/agentdefs/builtin) into
 	// ~/.tyci/agents/ so tyci is useful with zero setup. This runs on every

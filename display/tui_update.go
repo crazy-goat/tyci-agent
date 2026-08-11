@@ -27,6 +27,13 @@ func (m TuiModel) Init() tea.Cmd {
 }
 
 func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handled first and unconditionally: a background job can finish while
+	// any overlay (subagent modal, picker, …) is active, and backgroundJobs
+	// must stay current regardless of what's on screen.
+	if upd, ok := msg.(tuiMsgJobUpdate); ok {
+		m.applyJobUpdate(upd.Job)
+		return m, nil
+	}
 	// /btw entries must never lose streamed output just because some other
 	// popup happens to be open when it arrives — a background /btw job runs
 	// independently of whatever modal state the main thread is in. Dispatch
@@ -52,6 +59,9 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if m.todoModalActive {
 		return m.updateTodoModal(msg)
+	}
+	if m.jobsModalActive {
+		return m.updateJobsModal(msg)
 	}
 	if m.subagentModalActive {
 		return m.updateSubagentModal(msg)
