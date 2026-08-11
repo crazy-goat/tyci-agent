@@ -151,7 +151,7 @@ type toolEnd struct {
 	result string
 }
 
-func (s *testSink) Request(string)      {}
+func (s *testSink) Request(string) {}
 func (s *testSink) Thinking(text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -173,10 +173,10 @@ func (s *testSink) ToolCallEnd(name, result string) {
 	defer s.mu.Unlock()
 	s.toolEnds = append(s.toolEnds, toolEnd{name, result})
 }
-func (s *testSink) ToolFinish() {}
-func (s *testSink) ToolBlock(string) {}
+func (s *testSink) ToolFinish()                        {}
+func (s *testSink) ToolBlock(string)                   {}
 func (s *testSink) Summary(stream.Usage, stream.Stats) {}
-func (s *testSink) Total(stream.Usage) {}
+func (s *testSink) Total(stream.Usage)                 {}
 func (s *testSink) Error(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
