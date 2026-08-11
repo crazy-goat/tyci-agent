@@ -153,6 +153,19 @@ func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, i
 		// context-aware internally; an external timeout here would cut it
 		// off before it reports back, defeating the point of the tool.
 		toolTimeout = 0
+	case "lock", "unlock":
+		// A lock acquired without an explicit "seconds" is documented to
+		// live "until you release it or your session ends" (see the "lock"
+		// tool schema, tools/tool.go) — locks.Registry.Acquire implements
+		// that by releasing when ctx.Done() fires. Falling through to the
+		// 60s default here silently broke that contract: every no-TTL lock
+		// was actually bound to this per-call ctx, not the session, and
+		// auto-released 60s after being acquired regardless of what the
+		// caller intended. toolTimeout=0 lets ctx be whatever the caller's
+		// own session/run scope is. unlock doesn't need this (Release
+		// returns immediately, never outliving any timeout), grouped here
+		// only for the pair's symmetry.
+		toolTimeout = 0
 	default:
 		toolTimeout = 60 * time.Second
 	}
