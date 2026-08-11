@@ -8,7 +8,7 @@ import (
 )
 
 func (m TuiModel) subagentModalMaxScroll() int {
-	content := m.subagentModalContent.String()
+	content := m.subagentModalText()
 	lines := strings.Split(content, "\n")
 	totalLines := len(lines)
 	popupHeight := int(float64(m.height) * 0.9)
@@ -53,7 +53,7 @@ func (m TuiModel) renderSubagentModalView() string {
 	title := titleStyle.Render(fmt.Sprintf(" %s — %s ", m.subagentModalTitle, status))
 
 	// Build content with scroll
-	allLines := strings.Split(m.subagentModalContent.String(), "\n")
+	allLines := strings.Split(m.subagentModalText(), "\n")
 	totalLines := len(allLines)
 
 	var visibleStart int

@@ -43,12 +43,12 @@ func periodicFreeOSMemory(counter *int) {
 //     shown in the click-to-expand modal). Tool output (e.g. bash printing a
 //     50MB log) is the biggest single offender; we keep a tail slice so the
 //     modal still shows the end.
-//   - tuiMaxModalBuffer: cap on the subagent modal streaming buffer. A
-//     misbehaving child agent streaming forever would otherwise keep the
-//     builder growing until the modal is closed.
+//
+// Subagent streaming output goes through the same per-block .output buffer (the
+// modal renders that block), so tuiMaxToolOutput bounds a runaway child agent
+// too — there is no separate, globally shared modal accumulator.
 const (
-	tuiMaxToolOutput  = 1 << 20 // 1 MiB per tool block .output
-	tuiMaxModalBuffer = 1 << 20 // 1 MiB for the subagent modal accumulator
+	tuiMaxToolOutput = 1 << 20 // 1 MiB per tool block .output
 )
 
 // capToolOutput trims a tool block's raw output buffer to its last maxBytes,
@@ -65,23 +65,4 @@ func capToolOutput(s string, maxBytes int) string {
 		tail = tail[i+1:]
 	}
 	return tail
-}
-
-// capModalBuffer trims the subagent modal accumulator to its last maxBytes,
-// keeping the tail (the most recent streaming output, which is what the user
-// sees when the modal is pinned to the bottom).
-func capModalBuffer(b *strings.Builder, maxBytes int) {
-	if b == nil || maxBytes <= 0 {
-		return
-	}
-	if b.Len() <= maxBytes {
-		return
-	}
-	s := b.String()
-	tail := s[len(s)-maxBytes:]
-	if i := strings.IndexByte(tail, '\n'); i >= 0 && i < maxBytes/2 {
-		tail = tail[i+1:]
-	}
-	b.Reset()
-	b.WriteString(tail)
 }

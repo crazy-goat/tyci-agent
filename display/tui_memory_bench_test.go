@@ -120,7 +120,7 @@ func BenchmarkSubagentModalBuffer(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		m.handleBlockMsg(tuiMsgBlock{
 			kind:    "tool-progress",
-			toolIdx: m.subagentModalToolIdx,
+			toolIdx: m.subagentToolIdx,
 			content: chunk,
 		})
 	}

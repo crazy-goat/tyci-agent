@@ -22,7 +22,7 @@ func TestSubagentModal_OutsideClick_ClosesModal(t *testing.T) {
 	// Open subagent modal
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 	m.subagentModalDone = true
 	m.savedAtBottom = true
 	m.savedScrollLine = 42
@@ -54,7 +54,7 @@ func TestSubagentModal_InsideBodyClick_DoesNotClose(t *testing.T) {
 	// Content area: x=[6,114), y=[5,34] — click in the middle
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 	m.subagentModalDone = true
 
 	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 50, Y: 20}
@@ -75,7 +75,7 @@ func TestSubagentModal_TitleBarClick_DoesNotClose(t *testing.T) {
 	// Modal at 120x40: left=6, top=3 — click on the title bar (top row of modal)
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 	m.subagentModalDone = true
 
 	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 50, Y: 3}
@@ -95,7 +95,7 @@ func TestSubagentModal_MouseMotion_DoesNotClose(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 	m.subagentModalDone = true
 
 	// Motion outside modal — should NOT close (only press closes)
@@ -116,7 +116,7 @@ func TestSubagentModal_MouseRelease_DoesNotClose(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 	m.subagentModalDone = true
 
 	// Release outside modal — should NOT close (we dismiss on press, not release)
@@ -142,7 +142,7 @@ func TestSubagentModal_OutsideClick_NoLeakToBackgroundBlocks(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 	m.subagentModalDone = true
 
 	// Click outside — modal closes, but the click should NOT have leaked
@@ -166,7 +166,7 @@ func TestSubagentModal_OutsideClick_ClearsSelection(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 	m.subagentModalDone = true
 	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 5, CursorX: 10, CursorY: 5}
 
@@ -206,7 +206,7 @@ func TestSubagentModal_StillStreaming_OutsideClickStillCloses(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("partial output")
+	seedModalBlock(&m, "bash", "partial output")
 	m.subagentModalDone = false // still streaming
 
 	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 0, Y: 0}
@@ -231,7 +231,7 @@ func TestSubagentModal_WheelUp_ScrollsContent(t *testing.T) {
 	}
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString(longContent)
+	seedModalBlock(&m, "bash", longContent)
 	m.subagentModalDone = true
 	m.subagentModalScroll = 0
 
@@ -259,7 +259,7 @@ func TestSubagentModal_WheelDown_ScrollsContent(t *testing.T) {
 	}
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString(longContent)
+	seedModalBlock(&m, "bash", longContent)
 	m.subagentModalDone = true
 	m.subagentModalScroll = 50 // scrolled up
 
@@ -280,7 +280,7 @@ func TestSubagentModal_WheelDown_ClampsAtZero(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("short")
+	seedModalBlock(&m, "bash", "short")
 	m.subagentModalDone = true
 	m.subagentModalScroll = 0
 
@@ -305,7 +305,7 @@ func TestSubagentModal_WheelUp_ClampsAtMax(t *testing.T) {
 	}
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString(longContent)
+	seedModalBlock(&m, "bash", longContent)
 	m.subagentModalDone = true
 	m.subagentModalScroll = m.subagentModalMaxScroll() // already at max
 
@@ -436,7 +436,7 @@ func TestSubagentModal_Update_MouseClickBlocked(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 	m.subagentModalDone = true
 
 	// Click inside the modal body through Update() — should NOT leak
@@ -460,7 +460,7 @@ func TestSubagentModal_Update_OutsideClick_Closes(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 	m.subagentModalDone = true
 
 	// Click outside modal through Update() — should close modal
@@ -482,7 +482,7 @@ func newModalSelectionModel(content string) TuiModel {
 	m.height = 40
 	m.subagentModalActive = true
 	m.subagentModalTitle = "subagent task"
-	m.subagentModalContent.WriteString(content)
+	seedModalBlock(&m, "bash", content)
 	m.subagentModalDone = true
 	// Pre-build the modal render buffer so selection can resolve text.
 	_ = m.renderSubagentModalView()

@@ -5,7 +5,7 @@ import "strings"
 func (m TuiModel) visibleModalRenderBufferSnapshot() RenderBuffer {
 	layout := m.subagentModalLayout()
 	rb := newRenderBuffer(layout.contentHeight)
-	allLines := strings.Split(m.subagentModalContent.String(), "\n")
+	allLines := strings.Split(m.subagentModalText(), "\n")
 	totalLines := len(allLines)
 
 	visibleStart := 0

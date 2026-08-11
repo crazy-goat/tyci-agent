@@ -1,7 +1,6 @@
 package display
 
 import (
-	"encoding/json"
 	"strings"
 	"time"
 
@@ -49,20 +48,17 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		// tui_scrollback.go.
 		m.maybeFlushOldBlocks()
 
-		// Track subagent tool index for modal (but don't auto-open).
-		// Modal opens on user click on the subagent block.
+		// Track the subagent's queue index for arg-delta routing. Nothing about
+		// the modal is reset here: a new subagent must not wipe the output the
+		// user is currently reading — each block keeps its own buffer.
 		if msg.toolName == "subagent" {
-			m.subagentModalToolIdx = len(m.toolQueue) - 1
-			m.subagentModalContent.Reset()
-			m.subagentModalScroll = 0
-			m.subagentModalDone = false
-			m.subagentModalTitle = "subagent"
+			m.subagentToolIdx = len(m.toolQueue) - 1
 		}
 	case "tool-delta":
-		// For subagent: keep raw JSON args in the inline block for summary rendering,
-		// while progress/output goes only to the modal.
-		if m.subagentModalToolIdx >= 0 && msg.content != "" && len(m.toolQueue) > m.subagentModalToolIdx {
-			bidx := m.toolQueue[m.subagentModalToolIdx]
+		// For subagent: keep raw JSON args in the inline block for summary
+		// rendering; streamed progress lands in the block's .output instead.
+		if m.subagentToolIdx >= 0 && msg.content != "" && len(m.toolQueue) > m.subagentToolIdx {
+			bidx := m.toolQueue[m.subagentToolIdx]
 			if bidx >= 0 && bidx < len(m.blocks) && m.blocks[bidx].kind == "tool" && m.blocks[bidx].toolName == "subagent" {
 				m.blocks[bidx].content += msg.content
 				// The collapsed tool line only changes once the args JSON is
@@ -75,11 +71,10 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 					delete(m.toolDisplayCache, bidx)
 					m.invalidateTotalLines()
 
-					var args map[string]any
-					if json.Unmarshal([]byte(m.blocks[bidx].content), &args) == nil {
-						if title := subagentTitleFromArgs(args); title != "" {
-							m.subagentModalTitle = truncateString(title, 80)
-						}
+					// Only the heading of the block on screen can change; every
+					// other block's title is derived when it is opened.
+					if m.subagentModalBlockIdx == bidx {
+						m.subagentModalTitle = m.modalTitleForBlock(bidx)
 					}
 				}
 				break
@@ -87,38 +82,58 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		}
 		m.appendToLastTool(msg.content)
 	case "tool-end":
-		// Determine if this tool-end is for the subagent
-		isSubagentEnd := m.subagentModalToolIdx == 0 && m.subagentModalToolIdx >= 0 && len(m.toolQueue) > 0
+		// tool-end arrives in queue order, so the finishing tool is the block at
+		// the front of the queue. Verify it really is a subagent instead of
+		// trusting the tracked queue index alone.
+		frontIdx := -1
+		if len(m.toolQueue) > 0 {
+			frontIdx = m.toolQueue[0]
+		}
+		isSubagentEnd := frontIdx >= 0 && frontIdx < len(m.blocks) &&
+			m.blocks[frontIdx].kind == "tool" && m.blocks[frontIdx].toolName == "subagent"
 
 		if isSubagentEnd {
 			// For subagent: pop queue entry without appending result to block content
-			if len(m.toolQueue) > 0 {
-				idx := m.toolQueue[0]
-				m.toolQueue = m.toolQueue[1:]
-				if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].kind == "tool" {
-					m.blocks[idx].toolState = "done"
-					m.blocks[idx].duration = time.Since(m.blocks[idx].startTime)
-					m.blocks[idx].cachedLines = nil
-					delete(m.toolDisplayCache, idx)
-					m.invalidateTotalLines()
-				}
+			m.toolQueue = m.toolQueue[1:]
+			m.blocks[frontIdx].toolState = "done"
+			m.blocks[frontIdx].duration = time.Since(m.blocks[frontIdx].startTime)
+			m.blocks[frontIdx].cachedLines = nil
+			delete(m.toolDisplayCache, frontIdx)
+			m.invalidateTotalLines()
+			if m.subagentToolIdx == 0 {
+				m.subagentToolIdx = -1
+			} else if m.subagentToolIdx > 0 {
+				m.subagentToolIdx--
 			}
-			m.subagentModalDone = true
-			m.subagentModalToolIdx = -1
 		} else {
 			m.finishToolAt(msg.content)
 			// If subagent is deeper in queue, decrement its index
-			if m.subagentModalToolIdx > 0 {
-				m.subagentModalToolIdx--
+			if m.subagentToolIdx > 0 {
+				m.subagentToolIdx--
 			}
 		}
+		// "done" is a property of the block on screen, not of whichever tool
+		// happened to finish last.
+		if frontIdx >= 0 && m.subagentModalBlockIdx == frontIdx {
+			m.subagentModalDone = true
+		}
 	case "tool-progress":
-		// Subagent progress captured for modal (even if not active), never to inline block
-		if msg.toolIdx == m.subagentModalToolIdx {
-			m.subagentModalContent.WriteString(msg.content)
-			// Bound the modal accumulator so a runaway child agent can't grow
-			// the buffer past tuiMaxModalBuffer. Keep the tail (most recent).
-			capModalBuffer(m.subagentModalContent, tuiMaxModalBuffer)
+		// Progress for every tool (subagent included) accumulates in its own
+		// block, capped per block by appendTool. The modal just looks at it.
+		bidx := -1
+		if msg.toolIdx >= 0 && msg.toolIdx < len(m.toolQueue) {
+			bidx = m.toolQueue[msg.toolIdx]
+		}
+		if m.subagentModalActive && bidx >= 0 && bidx == m.subagentModalBlockIdx {
+			before := m.subagentModalLineCount()
+			m.appendTool(msg.toolIdx, msg.content)
+			// Keep a manually scrolled viewport anchored on the same text
+			// instead of letting growing output slide it towards the newest
+			// lines; the cap trimming the top shows up as a negative delta.
+			if m.subagentModalScroll > 0 {
+				m.subagentModalScroll += m.subagentModalLineCount() - before
+			}
+			m.clampSubagentModalScroll()
 		} else {
 			m.appendTool(msg.toolIdx, msg.content)
 		}
@@ -167,7 +182,9 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.cachedTotalLines = -1
 		m.invalidateMessageRegion()
 		m.subagentModalActive = false
-		m.subagentModalContent.Reset()
+		m.subagentModalBlockIdx = -1
+		m.subagentModalScroll = 0
+		m.subagentToolIdx = -1
 		// Issue #88: /new also drops any pending user messages queued
 		// while a request was in flight. The new conversation starts
 		// from a clean slate, with no carried-over follow-ups.

@@ -53,6 +53,22 @@ func (m *TuiModel) openBtwEntry(id, question string, createdAt time.Time) {
 	m.btwModalScroll = 0
 }
 
+// capBtwContent bounds a /btw entry's accumulated content the same way
+// capToolOutput bounds a tool block's .output — a long-running side
+// conversation is otherwise an unbounded strings.Builder with no other cap
+// applied to it (BtwEntry.content is independent of the tool-block system
+// tuiMaxToolOutput was written for, but the same "keep the tail" tradeoff
+// applies for the same reason: bounded memory, still show the end of a
+// runaway stream in the modal).
+func capBtwContent(b *strings.Builder) {
+	if b.Len() <= tuiMaxToolOutput {
+		return
+	}
+	trimmed := capToolOutput(b.String(), tuiMaxToolOutput)
+	b.Reset()
+	b.WriteString(trimmed)
+}
+
 // applyBtwStream applies one streamed chunk to the matching entry. Content
 // keeps accumulating even when that entry's modal isn't the one currently
 // on screen (e.g. the user opened the /btw list or another popup while the
@@ -66,10 +82,10 @@ func (m *TuiModel) applyBtwStream(msg tuiBtwStreamMsg) {
 	switch msg.kind {
 	case "text", "thinking", "tool", "block":
 		entry.content.WriteString(msg.content)
-		capModalBuffer(entry.content, tuiMaxModalBuffer)
+		capBtwContent(entry.content)
 	case "error":
 		entry.content.WriteString(msg.content)
-		capModalBuffer(entry.content, tuiMaxModalBuffer)
+		capBtwContent(entry.content)
 		entry.errMsg = msg.content
 	case "done":
 		entry.done = true

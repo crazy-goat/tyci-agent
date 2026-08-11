@@ -14,7 +14,7 @@ func TestSubagentModalView_RightBorderVisible(t *testing.T) {
 	m.height = 40
 	m.subagentModalActive = true
 	m.subagentModalTitle = "subagent"
-	m.subagentModalContent.WriteString("line 1\nline 2\nline 3")
+	seedModalBlock(&m, "bash", "line 1\nline 2\nline 3")
 
 	view := stripANSI(m.renderSubagentModalView())
 	lines := strings.Split(view, "\n")

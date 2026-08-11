@@ -148,7 +148,7 @@ type block struct {
 // during this TUI session. In-memory only — it does not survive a restart —
 // and its content is never merged back into the main conversation.
 //
-// content is a pointer (like subagentModalContent) so a TuiModel value copy
+// content is a pointer (like block.output) so a TuiModel value copy
 // (bubbletea copies the model on every Update) never copies-after-write a
 // strings.Builder, which panics. All fields are mutated exclusively from the
 // bubbletea event-loop goroutine, driven by tuiBtwOpenMsg/tuiBtwJobIDMsg/
@@ -236,13 +236,25 @@ type TuiModel struct {
 	savedScrollLine int
 	savedAtBottom   bool
 
-	// Subagent modal (live streaming output from child agents)
-	subagentModalActive  bool
-	subagentModalTitle   string           // task description (first ~60 chars)
-	subagentModalContent *strings.Builder // accumulated output
-	subagentModalScroll  int              // scroll offset within modal
-	subagentModalToolIdx int              // tool queue index for this modal
-	subagentModalDone    bool             // true when subagent finished (ESC to close)
+	// Tool output modal (live subagent stream and click-to-expand tool output).
+	// The modal owns no content of its own: it is a view onto one tool block's
+	// .output buffer (subagentModalBlockIdx). Every tool's progress accumulates
+	// in its own block, so opening/closing the modal or starting another tool
+	// can never drop what a block already collected.
+	subagentModalActive   bool
+	subagentModalTitle    string // task description (first ~60 chars)
+	subagentModalBlockIdx int    // block index the modal renders (-1 = none)
+	subagentModalScroll   int    // scroll offset within modal
+	subagentModalDone     bool   // true when the viewed tool finished (Enter to close)
+	// subagentModalStaticText backs the modal when subagentModalBlockIdx < 0
+	// — content not tied to any tool block, e.g. a finished background job's
+	// Result/Err shown from the jobs modal (Ctrl+B). See subagentModalText.
+	subagentModalStaticText string
+
+	// Queue index of the most recent "subagent" tool call. Used only to route
+	// streamed argument deltas to the right block when the subagent is not the
+	// last started tool; content routing goes through msg.toolIdx.
+	subagentToolIdx int
 
 	// Resize debounce
 	resizePending bool // if true, a resize is pending debounce
@@ -397,41 +409,41 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 	}
 
 	return TuiModel{
-		blocks:               make([]block, 0, 1024),
-		input:                ta,
-		submitResult:         submitResult,
-		ready:                true,
-		reading:              true,
-		toolQueue:            make([]int, 0, 16),
-		modelName:            modelName,
-		models:               models,
-		favoriteModels:       favoriteModels,
-		favoriteSet:          favoriteSet,
-		onFavoriteToggled:    onFavoriteToggled,
-		defaultModel:         defaultModel,
-		onDefaultChanged:     onDefaultChanged,
-		favIdx:               favIdx,
-		modelIdx:             modelIdx,
-		modelChanges:         modelChanges,
-		allProviders:         allProviders,
-		cancelCh:             cancelCh,
-		atBottom:             true,
-		savedAtBottom:        true,
-		inputHistory:         loadTuiHistory(historyPath),
-		historyIdx:           -1,
-		historyPath:          historyPath,
-		subagentModalToolIdx: -1,
-		subagentModalContent: &strings.Builder{},
-		dirtyBlocks:          make(map[int]bool),
-		mdCacheRendered:      make(map[int]string),
-		streamWraps:          make(map[int]*streamWrap),
-		toolDisplayCache:     make(map[int]string),
-		cachedTotalLines:     -1,
-		scrollback:           &scrollbackCache{},
-		messageRegion:        &messageRegionCache{},
-		backgroundJobs:       make(map[string]jobs.Job),
-		toolCount:            toolCount,
-		skillCount:           skillCount,
-		mcpCount:             mcpCount,
+		blocks:                make([]block, 0, 1024),
+		input:                 ta,
+		submitResult:          submitResult,
+		ready:                 true,
+		reading:               true,
+		toolQueue:             make([]int, 0, 16),
+		modelName:             modelName,
+		models:                models,
+		favoriteModels:        favoriteModels,
+		favoriteSet:           favoriteSet,
+		onFavoriteToggled:     onFavoriteToggled,
+		defaultModel:          defaultModel,
+		onDefaultChanged:      onDefaultChanged,
+		favIdx:                favIdx,
+		modelIdx:              modelIdx,
+		modelChanges:          modelChanges,
+		allProviders:          allProviders,
+		cancelCh:              cancelCh,
+		atBottom:              true,
+		savedAtBottom:         true,
+		inputHistory:          loadTuiHistory(historyPath),
+		historyIdx:            -1,
+		historyPath:           historyPath,
+		subagentToolIdx:       -1,
+		subagentModalBlockIdx: -1,
+		dirtyBlocks:           make(map[int]bool),
+		mdCacheRendered:       make(map[int]string),
+		streamWraps:           make(map[int]*streamWrap),
+		toolDisplayCache:      make(map[int]string),
+		cachedTotalLines:      -1,
+		scrollback:            &scrollbackCache{},
+		messageRegion:         &messageRegionCache{},
+		backgroundJobs:        make(map[string]jobs.Job),
+		toolCount:             toolCount,
+		skillCount:            skillCount,
+		mcpCount:              mcpCount,
 	}
 }

@@ -223,11 +223,11 @@ func TestOpenJobResultModal_DoneShowsResult(t *testing.T) {
 	if !m.subagentModalDone {
 		t.Error("expected subagentModalDone=true (static content, not live)")
 	}
-	if m.subagentModalToolIdx != -1 {
-		t.Errorf("expected subagentModalToolIdx=-1 (no live tool block bound), got %d", m.subagentModalToolIdx)
+	if m.subagentModalBlockIdx != -1 {
+		t.Errorf("expected subagentModalBlockIdx=-1 (no live tool block bound), got %d", m.subagentModalBlockIdx)
 	}
-	if !strings.Contains(m.subagentModalContent.String(), "the final answer") {
-		t.Errorf("expected content to show job result, got %q", m.subagentModalContent.String())
+	if !strings.Contains(m.subagentModalText(), "the final answer") {
+		t.Errorf("expected content to show job result, got %q", m.subagentModalText())
 	}
 	if m.subagentModalTitle != "task desc" {
 		t.Errorf("title = %q, want %q", m.subagentModalTitle, "task desc")
@@ -238,8 +238,8 @@ func TestOpenJobResultModal_FailedShowsError(t *testing.T) {
 	m := newTestModelForJobs()
 	j := jobs.Job{ID: "job-1", Description: "task", Status: jobs.StatusFailed, Err: "boom"}
 	m.openJobResultModal(j)
-	if !strings.Contains(m.subagentModalContent.String(), "boom") {
-		t.Errorf("expected content to show error, got %q", m.subagentModalContent.String())
+	if !strings.Contains(m.subagentModalText(), "boom") {
+		t.Errorf("expected content to show error, got %q", m.subagentModalText())
 	}
 }
 
@@ -247,8 +247,8 @@ func TestOpenJobResultModal_RunningShowsStillRunning(t *testing.T) {
 	m := newTestModelForJobs()
 	j := jobs.Job{ID: "job-1", Description: "task", Status: jobs.StatusRunning}
 	m.openJobResultModal(j)
-	if !strings.Contains(m.subagentModalContent.String(), "still running") {
-		t.Errorf("expected content to say still running, got %q", m.subagentModalContent.String())
+	if !strings.Contains(m.subagentModalText(), "still running") {
+		t.Errorf("expected content to say still running, got %q", m.subagentModalText())
 	}
 }
 
@@ -256,7 +256,7 @@ func TestOpenJobResultModal_TruncatedShowsMarker(t *testing.T) {
 	m := newTestModelForJobs()
 	j := jobs.Job{ID: "job-1", Description: "task", Status: jobs.StatusTruncated, Result: "partial"}
 	m.openJobResultModal(j)
-	content := m.subagentModalContent.String()
+	content := m.subagentModalText()
 	if !strings.Contains(content, "partial") || !strings.Contains(content, "truncated") {
 		t.Errorf("expected content to show partial result + truncated marker, got %q", content)
 	}
@@ -280,8 +280,8 @@ func TestUpdateJobsModal_EnterOpensSelectedJobResult(t *testing.T) {
 	if m2.jobsModalActive {
 		t.Error("expected jobsModalActive to close after Enter")
 	}
-	if !strings.Contains(m2.subagentModalContent.String(), "r-b") {
-		t.Errorf("expected result modal to show newest job's result, got %q", m2.subagentModalContent.String())
+	if !strings.Contains(m2.subagentModalText(), "r-b") {
+		t.Errorf("expected result modal to show newest job's result, got %q", m2.subagentModalText())
 	}
 }
 

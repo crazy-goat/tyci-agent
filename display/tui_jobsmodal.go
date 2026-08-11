@@ -33,33 +33,32 @@ func (m *TuiModel) closeJobsModal() {
 }
 
 // openJobResultModal shows a job's Result/Err as a static popup, reusing the
-// subagent modal's rendering (renderSubagentModalView / tui_modal_buffer.go)
-// exactly the way openGenericToolModal (tui_mouse.go) reuses it for a
-// finished tool block's output: toolIdx=-1 and Done=true mean "static
-// content, nothing streams into this buffer" — there is no live toolIdx to
-// bind to, because by the time a job is visible here its parent "subagent"
-// tool call has already returned (see runAsync's doc comment in
-// tools/subagent.go). This is deliberately not live-streamed; Job.Result is
-// already the complete, finished output for done/failed/truncated jobs.
+// subagent modal's rendering (renderSubagentModalView / tui_modal_buffer.go).
+// A job is not a tool block — by the time it's visible here its parent
+// "subagent" tool call has already returned (see runAsync's doc comment in
+// tools/subagent.go) — so it has nothing in m.blocks to point at: blockIdx
+// is left at -1 and subagentModalStaticText carries the content instead
+// (see subagentModalText). This is deliberately not live-streamed;
+// Job.Result is already the complete, finished output for
+// done/failed/truncated jobs.
 func (m *TuiModel) openJobResultModal(j jobs.Job) {
 	m.savedScrollLine = m.scrollLine
 	m.savedAtBottom = m.atBottom
 	m.subagentModalActive = true
-	m.subagentModalContent.Reset()
+	m.subagentModalBlockIdx = -1
 	m.subagentModalScroll = 0
 	m.subagentModalDone = true
-	m.subagentModalToolIdx = -1
 	m.subagentModalTitle = truncateString(j.Description, 80)
 
 	switch j.Status {
 	case jobs.StatusRunning:
-		m.subagentModalContent.WriteString("(still running)")
+		m.subagentModalStaticText = "(still running)"
 	case jobs.StatusFailed:
-		m.subagentModalContent.WriteString("error: " + j.Err)
+		m.subagentModalStaticText = "error: " + j.Err
 	case jobs.StatusTruncated:
-		m.subagentModalContent.WriteString(j.Result + "\n\n[truncated: hit its iteration cap]")
+		m.subagentModalStaticText = j.Result + "\n\n[truncated: hit its iteration cap]"
 	default: // StatusDone
-		m.subagentModalContent.WriteString(j.Result)
+		m.subagentModalStaticText = j.Result
 	}
 }
 
