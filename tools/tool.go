@@ -222,7 +222,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "subagent",
-				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has read/write/find/bash/todo tools (it cannot spawn further subagents) and is bounded by an optional max_iterations cap and a 600s wall-clock timeout; keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array).",
+				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has read/write/find/bash/todo tools (it cannot spawn further subagents) and is bounded by an optional max_iterations cap and a 600s wall-clock timeout; keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array). Set async=true (on every task in the call) to get a job_id back immediately instead of blocking — poll it later with the \"wait\" tool's job_id argument; you cannot mix async and non-async tasks in one call.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -233,9 +233,11 @@ func GetToolsSchema() []map[string]any {
 							"agent":          map[string]any{"type": "string", "description": "Named agent to use"},
 							"model":          map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
 							"max_iterations": map[string]any{"type": "integer", "description": "Cap this child's tool-call turns. Set a positive integer to bound a risky subtask (e.g. exploration, code review); omit to use the runner default (currently unlimited, bounded by a 600s wall-clock timeout). 0 and negative values mean unlimited."},
+							"async":          map[string]any{"type": "boolean", "description": "Run this task as a background job and return its job_id immediately instead of blocking. Must match every other task's async value in the same call."},
 						}, "required": []string{"task"}}},
 						"model":          map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
 						"max_iterations": map[string]any{"type": "integer", "description": "Cap on the child's tool-call turns. Omit or 0 to use the runner's default (currently unlimited); negative = unlimited. Useful for bounding long-running subtasks like exploration or code review."},
+						"async":          map[string]any{"type": "boolean", "description": "Run as a background job and return a job_id immediately instead of blocking until it finishes. Poll with wait(job_id=...)."},
 					},
 				},
 			},
@@ -420,9 +422,7 @@ var toolRegistry = map[string]Tool{
 	"write":  &WriteTool{},
 	"skills": &SkillsTool{},
 	"web":    &WebTool{},
-	// Waiter is nil until a future "jobs" package is wired in (see
-	// tools/wait.go); plain wait (no job_id) works without it.
-	"wait":   &WaitTool{},
+	"wait":   &WaitTool{Waiter: jobRegistryWaiter{jobRegistry}},
 	"lock":   &LockTool{Registry: lockRegistry},
 	"unlock": &UnlockTool{Registry: lockRegistry},
 }

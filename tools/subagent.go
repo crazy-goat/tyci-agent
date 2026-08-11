@@ -41,6 +41,10 @@ type subagentTask struct {
 	Agent         string `json:"agent,omitempty"`
 	Model         string `json:"model,omitempty"`
 	MaxIterations *int   `json:"max_iterations,omitempty"`
+	// Async, when true, makes the tool register a background job and return
+	// its id immediately instead of blocking until the task finishes. See
+	// SubagentTool.Run and runAsync.
+	Async bool `json:"async,omitempty"`
 }
 
 // subagentResult holds the outcome of one subagent execution.
@@ -264,6 +268,12 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		return ToolResult{Type: "result", Success: false, Error: "no tasks provided"}
 	}
 
+	if async, mixed := asyncTaskMode(tasks); mixed {
+		return ToolResult{Type: "result", Success: false, Error: "cannot mix async and non-async tasks in the same call; issue separate subagent calls"}
+	} else if async {
+		return t.runAsync(ctx, tasks)
+	}
+
 	// Run tasks concurrently, each bounded by subagentTimeoutSec.
 	results := runTasks(ctx, t.Runner, tasks, subagentTimeoutSec)
 
@@ -335,7 +345,29 @@ func parseTasks(input map[string]any, defaultModel string) ([]subagentTask, erro
 		}
 		t.MaxIterations = &v
 	}
+	if a, ok := input["async"].(bool); ok {
+		t.Async = a
+	}
 	return []subagentTask{t}, nil
+}
+
+// asyncTaskMode reports whether the batch should run async: async is true
+// only when every task requested it, mixed is true when some but not all
+// did (an ambiguous request the caller must reject rather than guess at).
+func asyncTaskMode(tasks []subagentTask) (async bool, mixed bool) {
+	n := 0
+	for _, t := range tasks {
+		if t.Async {
+			n++
+		}
+	}
+	if n == 0 {
+		return false, false
+	}
+	if n == len(tasks) {
+		return true, false
+	}
+	return false, true
 }
 
 // toInt accepts any JSON number preserved by encoding/json (float64) or a
@@ -389,7 +421,44 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 		}
 		t.MaxIterations = &v
 	}
+	if a, ok := m["async"].(bool); ok {
+		t.Async = a
+	}
 	return t, nil
+}
+
+// runAsync registers each task as a background job via jobRegistry and
+// returns immediately with the assigned job ids, instead of blocking until
+// the tasks finish (runTasks' path). The job's context is detached from ctx
+// (context.WithoutCancel) because ctx dies with this tool call's turn, but
+// the job must keep running after Run returns; a fresh wall-clock backstop
+// (subagentTimeoutSec, same as the sync path) replaces the cancellation the
+// job no longer inherits. Poll results via the "wait" tool's job_id mode.
+func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolResult {
+	type spawned struct {
+		Task  string `json:"task"`
+		JobID string `json:"job_id"`
+	}
+	out := make([]spawned, 0, len(tasks))
+	for _, task := range tasks {
+		task := task
+		jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subagentTimeoutSec*time.Second)
+		job := jobRegistry.Start(jobCtx, task.Task, func(runCtx context.Context) (string, bool, error) {
+			defer cancel()
+			res := runSingleTask(runCtx, t.Runner, task, 0)
+			if !res.Success {
+				return res.Content, res.Truncated, errors.New(res.Error)
+			}
+			return res.Content, res.Truncated, nil
+		})
+		out = append(out, spawned{Task: task.Task, JobID: job.ID})
+	}
+
+	data, err := json.Marshal(out)
+	if err != nil {
+		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("marshal spawned jobs: %v", err)}
+	}
+	return ToolResult{Type: "result", Success: true, Content: string(data)}
 }
 
 func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, timeoutSec int) []subagentResult {

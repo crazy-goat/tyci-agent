@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/connector/connectortest"
@@ -1199,5 +1200,77 @@ func TestRunSingleTask_CleanSuccessNotTruncated(t *testing.T) {
 	}
 	if res.Content != "complete answer" {
 		t.Errorf("unexpected Content: %q", res.Content)
+	}
+}
+
+// TestSubagentAsync_ReturnsJobIDImmediately verifies the tool call itself
+// never blocks on the (slow) task when async=true, and that the job later
+// completes with the task's result reachable through jobRegistry.
+func TestSubagentAsync_ReturnsJobIDImmediately(t *testing.T) {
+	t.Cleanup(func() {
+		delete(toolRegistry, "subagent")
+		subagentToolInstance = nil
+	})
+
+	release := make(chan struct{})
+	SetSubAgentRunner(&mockRunner{
+		RunTaskFunc: func(_ context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			<-release
+			return "async result", nil
+		},
+	})
+
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
+	res := RunTool(ctx, "subagent", map[string]any{"task": "slow thing", "async": true})
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+
+	var spawned []struct {
+		Task  string `json:"task"`
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal([]byte(res.Content), &spawned); err != nil {
+		t.Fatalf("unmarshal spawned jobs: %v (content: %q)", err, res.Content)
+	}
+	if len(spawned) != 1 || spawned[0].JobID == "" {
+		t.Fatalf("expected one spawned job with a job_id, got %+v", spawned)
+	}
+
+	if _, ok := jobRegistry.Get(spawned[0].JobID); !ok {
+		t.Fatalf("job %q not found in jobRegistry right after spawn — should be running, not absent", spawned[0].JobID)
+	}
+
+	close(release)
+
+	status, ok := jobRegistryWaiter{jobRegistry}.Wait(context.Background(), spawned[0].JobID, 2*time.Second)
+	if !ok {
+		t.Fatalf("wait: unknown job_id %q", spawned[0].JobID)
+	}
+	if !status.Done || !status.Success || status.Content != "async result" {
+		t.Errorf("unexpected final status: %+v", status)
+	}
+}
+
+// TestSubagentAsync_MixedBatchRejected ensures a batch that mixes async and
+// non-async tasks fails fast with a clear error instead of silently picking
+// one interpretation.
+func TestSubagentAsync_MixedBatchRejected(t *testing.T) {
+	t.Cleanup(func() {
+		delete(toolRegistry, "subagent")
+		subagentToolInstance = nil
+	})
+	SetSubAgentRunner(&mockRunner{})
+
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
+	res := RunTool(ctx, "subagent", map[string]any{"tasks": []any{
+		map[string]any{"task": "a", "async": true},
+		map[string]any{"task": "b", "async": false},
+	}})
+	if res.Success {
+		t.Fatalf("expected mixed async/non-async batch to be rejected, got success: %+v", res)
+	}
+	if !strings.Contains(res.Error, "mix async") {
+		t.Errorf("expected error to mention mixing async tasks, got: %q", res.Error)
 	}
 }
