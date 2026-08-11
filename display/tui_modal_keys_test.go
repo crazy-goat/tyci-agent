@@ -16,7 +16,7 @@ func TestSubagentModal_Y_CopiesFullBuffer(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("hello\nworld\nfoo")
+	seedModalBlock(&m, "bash", "hello\nworld\nfoo")
 	m.subagentModalDone = true
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
@@ -43,7 +43,7 @@ func TestSubagentModal_Y_TrimsTrailingNewline(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("hello\nworld\n")
+	seedModalBlock(&m, "bash", "hello\nworld\n")
 	m.subagentModalDone = true
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
@@ -67,7 +67,7 @@ func TestSubagentModal_Y_EmptyBuffer_ReportsNothingToCopy(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("")
+	seedModalBlock(&m, "bash", "")
 	m.subagentModalDone = true
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
@@ -91,7 +91,7 @@ func TestSubagentModal_Y_WhitespaceOnlyBuffer_ReportsNothingToCopy(t *testing.T)
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("   \n  \n")
+	seedModalBlock(&m, "bash", "   \n  \n")
 	m.subagentModalDone = true
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
@@ -115,7 +115,7 @@ func TestSubagentModal_Y_DoesNotClearSelection(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("alpha\nbeta\ngamma")
+	seedModalBlock(&m, "bash", "alpha\nbeta\ngamma")
 	m.subagentModalDone = true
 	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 3, CursorY: 0}
 
@@ -140,7 +140,7 @@ func TestSubagentModal_Y_BufferWithMultipleTrailingNewlines(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("line1\nline2\n\n\n")
+	seedModalBlock(&m, "bash", "line1\nline2\n\n\n")
 	m.subagentModalDone = true
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
@@ -164,7 +164,7 @@ func TestSubagentModal_Y_ReportLineCount(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("a\nb\nc\nd\ne")
+	seedModalBlock(&m, "bash", "a\nb\nc\nd\ne")
 	m.subagentModalDone = true
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
@@ -190,7 +190,7 @@ func TestSubagentModal_Y_NotActiveOnMainView(t *testing.T) {
 	m.reading = true
 
 	// Fill the modal buffer (even though it's not active)
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 
 	// Press 'y' through the top-level Update (not through updateSubagentModal)
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
@@ -212,7 +212,7 @@ func TestSubagentModal_Y_ModalStillStreaming(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("partial output so far")
+	seedModalBlock(&m, "bash", "partial output so far")
 	m.subagentModalDone = false // still streaming
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
@@ -235,7 +235,7 @@ func TestSubagentModal_FooterContainsYCopyAll(t *testing.T) {
 
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("some content here\nline 2\nline 3")
+	seedModalBlock(&m, "bash", "some content here\nline 2\nline 3")
 	m.subagentModalDone = true
 
 	view := m.renderSubagentModalView()

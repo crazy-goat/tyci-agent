@@ -22,9 +22,9 @@ func TestTuiModel_SubagentToolStart_DoesNotAutoOpenModal(t *testing.T) {
 	if m.subagentModalActive {
 		t.Error("subagent modal should NOT auto-open on tool-start")
 	}
-	// But subagentModalToolIdx should be set for later use
-	if m.subagentModalToolIdx != 0 {
-		t.Errorf("expected subagentModalToolIdx=0, got %d", m.subagentModalToolIdx)
+	// But subagentToolIdx should be set for later use
+	if m.subagentToolIdx != 0 {
+		t.Errorf("expected subagentToolIdx=0, got %d", m.subagentToolIdx)
 	}
 }
 
@@ -35,8 +35,7 @@ func TestTuiModel_SubagentToolProgress_GoesToModalWhenActive(t *testing.T) {
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
 
 	// Manually activate modal (simulating user click)
-	m.subagentModalActive = true
-	m.subagentModalContent.Reset()
+	m.openToolBlockModal(m.toolQueue[0])
 
 	if !m.subagentModalActive {
 		t.Fatal("modal should be active")
@@ -45,11 +44,11 @@ func TestTuiModel_SubagentToolProgress_GoesToModalWhenActive(t *testing.T) {
 	// Send tool-progress matching the subagent tool index
 	m.handleBlockMsg(tuiMsgBlock{
 		kind:    "tool-progress",
-		toolIdx: 0, // matches subagentModalToolIdx
+		toolIdx: 0, // matches subagentToolIdx
 		content: "subagent output line 1\n",
 	})
 
-	modalContent := m.subagentModalContent.String()
+	modalContent := m.subagentModalText()
 	if modalContent == "" {
 		t.Fatal("modal content should have received the tool-progress")
 	}
@@ -72,7 +71,7 @@ func TestTuiModel_SubagentToolProgress_GoesToModalWhenActive(t *testing.T) {
 		content: "subagent output line 2\n",
 	})
 
-	modalContent = m.subagentModalContent.String()
+	modalContent = m.subagentModalText()
 	if modalContent != "subagent output line 1\nsubagent output line 2\n" {
 		t.Errorf("unexpected modal content: %q", modalContent)
 	}
@@ -88,23 +87,27 @@ func TestTuiModel_SubagentToolProgress_GoesToInlineWhenModalNotActive(t *testing
 		t.Fatal("modal should not be active after tool-start")
 	}
 
-	// Send tool-progress — goes to modal content (captured for later), never to inline block
+	// Send tool-progress — accumulates in the block's output (captured for a
+	// later click), never in the inline block content
 	m.handleBlockMsg(tuiMsgBlock{
 		kind:    "tool-progress",
 		toolIdx: 0,
 		content: "working...\n",
 	})
 
-	// Modal content captures output even when modal not active
-	if m.subagentModalContent.String() != "working...\n" {
-		t.Errorf("modal content should be captured, got %q", m.subagentModalContent.String())
-	}
-
 	// Inline block should NOT have the content (no output in main thread)
 	if len(m.toolQueue) != 1 {
 		t.Fatalf("expected 1 tool in queue, got %d", len(m.toolQueue))
 	}
 	bidx := m.toolQueue[0]
+	if m.blocks[bidx].output != "working...\n" {
+		t.Errorf("progress should be captured in the block, got %q", m.blocks[bidx].output)
+	}
+	// Opening the modal later shows what was captured while it was closed.
+	m.openToolBlockModal(bidx)
+	if m.subagentModalText() != "working...\n" {
+		t.Errorf("modal should show the captured output, got %q", m.subagentModalText())
+	}
 	if m.blocks[bidx].content != "" {
 		t.Errorf("inline block should be empty (no output in main thread), got %q", m.blocks[bidx].content)
 	}
@@ -129,8 +132,8 @@ func TestTuiModel_SubagentToolProgress_WrongToolIdx_GoesToInline(t *testing.T) {
 	})
 
 	// Content should go to output field (for modal), not inline block content
-	if m.subagentModalContent.String() != "" {
-		t.Errorf("modal content should be empty, got %q", m.subagentModalContent.String())
+	if m.subagentModalText() != "" {
+		t.Errorf("modal content should be empty, got %q", m.subagentModalText())
 	}
 
 	// Inline block output should have the content (not content field)
@@ -160,17 +163,17 @@ func TestTuiModel_SubagentToolEnd_MarksDone(t *testing.T) {
 		t.Fatal("modal should not be auto-opened")
 	}
 
-	// Some progress
+	// Some progress, then open the modal on the running subagent
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-progress", toolIdx: 0, content: "working...\n"})
+	m.openToolBlockModal(m.toolQueue[0])
+	if m.subagentModalDone {
+		t.Fatal("modal on a running subagent should not be done")
+	}
 
 	// End subagent (finishToolAt pops from queue but we saved the block idx)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "task completed"})
 
-	// Modal should NOT be active (was never opened)
-	if m.subagentModalActive {
-		t.Error("modal should not be active after tool-end")
-	}
-	// But it should be marked as done
+	// The modal shows the subagent that just finished → marked as done
 	if !m.subagentModalDone {
 		t.Error("subagentModalDone should be true after tool-end")
 	}
@@ -200,7 +203,7 @@ func TestTuiModel_SubagentModal_Reset(t *testing.T) {
 
 	// Start subagent and populate
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
-	m.subagentModalActive = true // manually open
+	m.openToolBlockModal(m.toolQueue[0]) // manually open
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-progress", toolIdx: 0, content: "some output\n"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "done"})
 
@@ -210,8 +213,8 @@ func TestTuiModel_SubagentModal_Reset(t *testing.T) {
 	if m.subagentModalActive {
 		t.Error("reset should deactivate subagent modal")
 	}
-	if m.subagentModalContent.String() != "" {
-		t.Errorf("reset should clear modal content, got %q", m.subagentModalContent.String())
+	if m.subagentModalText() != "" {
+		t.Errorf("reset should clear modal content, got %q", m.subagentModalText())
 	}
 }
 
@@ -239,6 +242,7 @@ func TestTuiModel_SubagentModal_TitleSetFromDelta(t *testing.T) {
 	// Send delta with task description in JSON
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"task": "find all Go files and list them"}`})
 
+	m.openToolBlockModal(m.toolQueue[0])
 	if m.subagentModalTitle == "subagent" {
 		t.Error("modal title should be updated from task argument")
 	}
@@ -256,7 +260,7 @@ func TestTuiModel_SubagentModal_ScrollLimits(t *testing.T) {
 	}
 
 	// Add some content
-	m.subagentModalContent.WriteString("line1\nline2\nline3\n")
+	seedModalBlock(&m, "bash", "line1\nline2\nline3\n")
 
 	// Max scroll should account for content height
 	max := m.subagentModalMaxScroll()
@@ -282,8 +286,8 @@ func TestUpdateSubagentModal_EscapeClosesModalWhenDone(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.subagentModalActive = true
 	m.subagentModalDone = true
-	m.subagentModalContent.WriteString("some output")
-	m.subagentModalToolIdx = 0
+	seedModalBlock(&m, "bash", "some output")
+	m.subagentToolIdx = 0
 
 	// Press ESC
 	newModel, _ := m.updateSubagentModal(tea.KeyMsg{Type: tea.KeyEscape})
@@ -298,8 +302,8 @@ func TestUpdateSubagentModal_EscapeClosesModalEvenWhenRunning(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.subagentModalActive = true
 	m.subagentModalDone = false
-	m.subagentModalContent.WriteString("still working...")
-	m.subagentModalToolIdx = 0
+	seedModalBlock(&m, "bash", "still working...")
+	m.subagentToolIdx = 0
 
 	newModel, _ := m.updateSubagentModal(tea.KeyMsg{Type: tea.KeyEscape})
 	tm := newModel.(TuiModel)
@@ -360,9 +364,8 @@ func TestUpdateSubagentModal_ForwardsTuiMsgBlock(t *testing.T) {
 	// When modal is active, tuiMsgBlock messages (tool-progress, etc.)
 	// should still be processed by handleBlockMsg.
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
-	m.subagentModalActive = true
-	m.subagentModalToolIdx = 0
-	m.subagentModalContent.Reset()
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
+	m.openToolBlockModal(m.toolQueue[0])
 
 	// Simulate a tool-progress arriving while modal is active
 	// This goes through Update -> updateSubagentModal -> case tuiMsgBlock -> handleBlockMsg
@@ -373,8 +376,8 @@ func TestUpdateSubagentModal_ForwardsTuiMsgBlock(t *testing.T) {
 	})
 	tm := newModel.(TuiModel)
 
-	if tm.subagentModalContent.String() != "streaming line\n" {
-		t.Errorf("expected 'streaming line\\n' in modal, got %q", tm.subagentModalContent.String())
+	if tm.subagentModalText() != "streaming line\n" {
+		t.Errorf("expected 'streaming line\\n' in modal, got %q", tm.subagentModalText())
 	}
 }
 
@@ -422,25 +425,24 @@ func TestTuiModel_MultipleSubagentTools_HandlesToolIndexCorrectly(t *testing.T) 
 	if m.subagentModalActive {
 		t.Fatal("modal should not be auto-opened")
 	}
-	// subagentModalToolIdx should be 1 (second tool in queue)
-	if m.subagentModalToolIdx != 1 {
-		t.Errorf("expected subagentModalToolIdx=1, got %d", m.subagentModalToolIdx)
+	// subagentToolIdx should be 1 (second tool in queue)
+	if m.subagentToolIdx != 1 {
+		t.Errorf("expected subagentToolIdx=1, got %d", m.subagentToolIdx)
 	}
 
-	// Manually activate modal (simulate click)
-	m.subagentModalActive = true
-	m.subagentModalContent.Reset()
+	// Manually activate modal on the subagent block (simulate click)
+	m.openToolBlockModal(m.toolQueue[1])
 
 	// Progress for bash (toolIdx 0) should NOT go to modal
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-progress", toolIdx: 0, content: "bash output\n"})
-	if m.subagentModalContent.String() != "" {
-		t.Errorf("bash progress should NOT go to modal, got %q", m.subagentModalContent.String())
+	if m.subagentModalText() != "" {
+		t.Errorf("bash progress should NOT go to modal, got %q", m.subagentModalText())
 	}
 
 	// Progress for subagent (toolIdx 1) SHOULD go to modal
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-progress", toolIdx: 1, content: "subagent output\n"})
-	if m.subagentModalContent.String() != "subagent output\n" {
-		t.Errorf("subagent progress should go to modal, got %q", m.subagentModalContent.String())
+	if m.subagentModalText() != "subagent output\n" {
+		t.Errorf("subagent progress should go to modal, got %q", m.subagentModalText())
 	}
 }
 
@@ -496,72 +498,49 @@ func TestTuiModel_ClickOnSubagentBlock_OpensModal(t *testing.T) {
 
 	// Start subagent
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
-	// Send progress — captured to subagentModalContent (not inline block)
+	// Send progress — captured in the subagent block's output (not inline block)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-progress", toolIdx: 0, content: "modal output\n"})
 
 	if m.subagentModalActive {
 		t.Fatal("modal should NOT be auto-opened before click")
 	}
 
-	// Simulate clicking: modal content is already populated by tool-progress
-	m.subagentModalActive = true
+	// Simulate clicking: the modal starts showing the block's collected output
+	m.openToolBlockModal(m.toolQueue[0])
 
 	if !m.subagentModalActive {
 		t.Error("modal should be active after click")
 	}
-	if m.subagentModalContent.String() != "modal output\n" {
-		t.Errorf("modal should have captured output, got %q", m.subagentModalContent.String())
+	if m.subagentModalText() != "modal output\n" {
+		t.Errorf("modal should have captured output, got %q", m.subagentModalText())
 	}
 }
 
-// ─── Regression: strings.Builder copy-by-value panic ─────────────────────
-//
-// This test verifies that copying a TuiModel after the subagentModalContent
-// builder has been used does NOT panic. The bug was: subagentModalContent was
-// strings.Builder (value type), which panics when copied after use. Changed
-// to *strings.Builder. This test would catch a regression back to value type.
+// ─── Regression: model copied by value on every Update ───────────────────
 
-func TestSubagentModalContent_CopyAfterWrite_NoPanic(t *testing.T) {
-	// Create model, use builder, then copy — should not panic
+func TestSubagentModalContent_CopyByValue_KeepsText(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	seedModalBlock(&m, "bash", "hello from subagent\n")
 
-	// Write something to the builder (activating the copyCheck)
-	m.subagentModalContent.WriteString("hello from subagent\n")
-
-	// Copy the model by value (exactly what bubbletea does in Update)
-	// This would panic if subagentModalContent were strings.Builder (value)
+	// Copy the model by value (exactly what bubbletea does in Update).
 	m2 := m
 
-	// Use the copy — must not panic
-	got := m2.subagentModalContent.String()
-	if got != "hello from subagent\n" {
+	if got := m2.subagentModalText(); got != "hello from subagent\n" {
 		t.Errorf("copied model has wrong content: %q", got)
 	}
-
-	// Also ensure the original still works
-	orig := m.subagentModalContent.String()
-	if orig != "hello from subagent\n" {
-		t.Errorf("original model has wrong content: %q", orig)
-	}
-
-	// Write to the copy — both pointers should reference the same builder
-	m2.subagentModalContent.WriteString("more data\n")
-	final := m.subagentModalContent.String()
-	if final != "hello from subagent\nmore data\n" {
-		t.Errorf("original should see writes via copy: %q", final)
+	if got := m.subagentModalText(); got != "hello from subagent\n" {
+		t.Errorf("original model has wrong content: %q", got)
 	}
 }
 
 func TestSubagentModalContent_MultipleUpdateCycles_NoPanic(t *testing.T) {
 	// Simulate what bubbletea does: multiple Update calls that copy the model
-	// by value while the builder is being written to.
+	// by value while output is streaming into the viewed block.
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 
 	// Activate modal (simulating user click on a subagent block)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
-	m.subagentModalActive = true
-	m.subagentModalContent.Reset()
-	m.subagentModalToolIdx = 0
+	m.openToolBlockModal(m.toolQueue[0])
 
 	// Simulate multiple Update cycles, each copying the model by value
 	for i := 0; i < 50; i++ {
@@ -583,7 +562,7 @@ func TestSubagentModalContent_MultipleUpdateCycles_NoPanic(t *testing.T) {
 	}
 
 	// Final content should be present
-	content := m.subagentModalContent.String()
+	content := m.subagentModalText()
 	if content == "" {
 		t.Error("modal content should not be empty after many update cycles")
 	}

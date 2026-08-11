@@ -189,7 +189,7 @@ func TestRenderFrame_TopBarNotInModal(t *testing.T) {
 	// Open subagent modal
 	m.subagentModalActive = true
 	m.subagentModalTitle = "test"
-	m.subagentModalContent.WriteString("modal content")
+	seedModalBlock(&m, "bash", "modal content")
 	m.subagentModalDone = true
 
 	frame := m.renderFrame()

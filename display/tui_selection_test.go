@@ -109,7 +109,7 @@ func TestTuiSelection_ModalCopyUsesModalFallbackBuffer(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
 	m.subagentModalActive = true
-	m.subagentModalContent.WriteString("alpha\nbeta\ngamma")
+	seedModalBlock(&m, "bash", "alpha\nbeta\ngamma")
 	layout := m.subagentModalLayout()
 	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: layout.contentTop, CursorX: 4, CursorY: layout.contentTop + 1}
 

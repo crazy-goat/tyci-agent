@@ -272,7 +272,7 @@ func TestScrollbackPageInRestoresToolPayloads(t *testing.T) {
 	m.scrollback.close()
 }
 
-func TestOpenGenericToolModalPagesInFlushedTool(t *testing.T) {
+func TestOpenToolBlockModalPagesInFlushedTool(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 80
 	m.height = 24
@@ -283,11 +283,11 @@ func TestOpenGenericToolModalPagesInFlushedTool(t *testing.T) {
 	_ = m.getBlockLines(0, false)
 	m.scrollback.flushBlock(&m.blocks[0], m.width)
 
-	m.openGenericToolModal(0)
+	m.openToolBlockModal(0)
 	if !m.subagentModalActive {
 		t.Fatal("expected modal active after opening flushed tool")
 	}
-	if got := m.subagentModalContent.String(); got != "full tool output" {
+	if got := m.subagentModalText(); got != "full tool output" {
 		t.Fatalf("modal content = %q, want %q", got, "full tool output")
 	}
 	m.scrollback.close()
@@ -350,35 +350,27 @@ func TestAppendToolCapsOutput(t *testing.T) {
 	}
 }
 
-// ─── subagent modal buffer cap (kept) ──────────────────────────────────────
+// ─── subagent output cap (per block, shown by the modal) ───────────────────
 
-func TestCapModalBufferKeepsTail(t *testing.T) {
-	var b strings.Builder
-	b.WriteString(strings.Repeat("y", tuiMaxModalBuffer*2))
-	capModalBuffer(&b, tuiMaxModalBuffer)
-	if got := b.Len(); got > tuiMaxModalBuffer {
-		t.Errorf("modal buffer len = %d, exceeds cap %d", got, tuiMaxModalBuffer)
-	}
-	var b2 strings.Builder
-	b2.WriteString("small")
-	capModalBuffer(&b2, tuiMaxModalBuffer)
-	if b2.String() != "small" {
-		t.Errorf("small buffer changed to %q", b2.String())
-	}
-	capModalBuffer(nil, 1<<20)
-}
-
-func TestToolProgressCapsModalBuffer(t *testing.T) {
+func TestToolProgressCapsSubagentOutput(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.width, m.height = 80, 24
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
+	m.openToolBlockModal(m.toolQueue[0])
+	m.subagentModalScroll = 5
 	for i := 0; i < 10; i++ {
 		m.handleBlockMsg(tuiMsgBlock{
 			kind:    "tool-progress",
-			toolIdx: m.subagentModalToolIdx,
-			content: strings.Repeat("z", tuiMaxModalBuffer/4),
+			toolIdx: m.subagentToolIdx,
+			content: strings.Repeat("z\n", tuiMaxToolOutput/8),
 		})
 	}
-	if got := m.subagentModalContent.Len(); got > tuiMaxModalBuffer {
-		t.Errorf("modal content len = %d, exceeds cap %d", got, tuiMaxModalBuffer)
+	if got := len(m.subagentModalText()); got > tuiMaxToolOutput {
+		t.Errorf("modal content len = %d, exceeds cap %d", got, tuiMaxToolOutput)
+	}
+	// Capping drops lines from the top: the scroll offset must stay inside the
+	// remaining text so the modal never renders an empty range.
+	if maxScroll := m.subagentModalMaxScroll(); m.subagentModalScroll > maxScroll {
+		t.Errorf("scroll %d exceeds max %d after capping", m.subagentModalScroll, maxScroll)
 	}
 }
