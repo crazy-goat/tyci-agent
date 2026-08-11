@@ -314,6 +314,10 @@ func (m *TuiModel) maybeFlushOldBlocks() {
 		if b.flushed || b.dirty || queued[i] {
 			continue
 		}
+		// Flushing drops .output, which is exactly what an open modal renders.
+		if m.subagentModalActive && i == m.subagentModalBlockIdx {
+			continue
+		}
 		if b.cachedLines == nil {
 			// Nothing resident to flush (e.g. never rendered); skip.
 			continue

@@ -8,11 +8,14 @@ import (
 
 // closeSubagentModal is the single source of truth for closing the subagent
 // modal. ESC, Enter (when done), and outside-click all funnel through here.
+// Closing clears view state only: the block keeps its output, so reopening a
+// still-running subagent shows the stream continuing instead of an empty box.
 func (m *TuiModel) closeSubagentModal() {
 	m.subagentModalActive = false
-	m.subagentModalContent.Reset()
-	m.subagentModalToolIdx = -1
+	m.subagentModalBlockIdx = -1
+	m.subagentModalScroll = 0
 	m.subagentModalDone = false
+	m.subagentModalTitle = ""
 	// Restore scroll state from before modal opened
 	m.atBottom = m.savedAtBottom
 	m.scrollLine = m.savedScrollLine
@@ -115,7 +118,7 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// "y" (yank) — copy the entire modal buffer to clipboard.
 		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'y' {
-			fullText := strings.TrimRight(m.subagentModalContent.String(), "\n")
+			fullText := strings.TrimRight(m.subagentModalText(), "\n")
 			m = m.copyText("modal", fullText, false)
 			return m, copyFeedbackCmd(m)
 		}

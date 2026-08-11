@@ -1,7 +1,6 @@
 package display
 
 import (
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -104,19 +103,14 @@ func (m *TuiModel) openToolModalAt(y int) {
 	m.savedScrollLine = m.scrollLine
 	m.savedAtBottom = m.atBottom
 
-	if m.blocks[idx].toolName == "subagent" && !m.subagentModalActive {
-		m.subagentModalActive = true
-		m.subagentModalScroll = 0
-		for qi, bidx := range m.toolQueue {
-			if bidx == idx {
-				m.subagentModalToolIdx = qi
-				break
-			}
+	if m.blocks[idx].toolName == "subagent" {
+		if !m.subagentModalActive {
+			m.openToolBlockModal(idx)
 		}
 		return
 	}
-	if m.blocks[idx].toolName != "subagent" && m.blocks[idx].toolState == "done" {
-		m.openGenericToolModal(idx)
+	if m.blocks[idx].toolState == "done" {
+		m.openToolBlockModal(idx)
 	}
 }
 
@@ -194,31 +188,4 @@ func (m TuiModel) handleModalMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
-}
-
-func (m *TuiModel) openGenericToolModal(idx int) {
-	if idx < 0 || idx >= len(m.blocks) {
-		return
-	}
-	if m.blocks[idx].flushed {
-		m.ensureBlockResident(idx)
-	}
-	m.subagentModalActive = true
-	m.subagentModalContent.Reset()
-	m.subagentModalScroll = 0
-	m.subagentModalDone = true
-	title := m.blocks[idx].toolName
-	if m.blocks[idx].content != "" {
-		firstLine := strings.SplitN(m.blocks[idx].content, "\n", 2)[0]
-		if firstLine != "" {
-			title = truncateString(firstLine, 80)
-		}
-	}
-	m.subagentModalTitle = title
-	content := m.blocks[idx].output
-	if content == "" {
-		content = m.blocks[idx].content
-	}
-	m.subagentModalContent.WriteString(content)
-	m.subagentModalToolIdx = -1
 }
