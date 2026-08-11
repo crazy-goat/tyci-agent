@@ -148,6 +148,11 @@ func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, i
 		}
 	case "subagent":
 		toolTimeout = 0
+	case "wait":
+		// wait manages its own duration (clamped to MaxWaitSeconds) and is
+		// context-aware internally; an external timeout here would cut it
+		// off before it reports back, defeating the point of the tool.
+		toolTimeout = 0
 	default:
 		toolTimeout = 60 * time.Second
 	}

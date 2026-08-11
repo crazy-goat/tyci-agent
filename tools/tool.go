@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 // SubagentOptions are per-call knobs the parent supplies for a single
@@ -240,6 +241,22 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "wait",
+				"description": "Deliberately wait for a period of time instead of polling in a busy loop. Use when you know an operation (yours or a background job's) will take roughly N seconds and you want to pause before checking again — e.g. wait(seconds=600, note=\"waiting for the deploy to finish\") instead of repeatedly re-checking. If job_id is provided, waits for that background job to finish (or until timeout) and reports its status instead of just sleeping; omit job_id for a plain timed wait.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"seconds": map[string]any{"type": "integer", "description": fmt.Sprintf("How long to wait, in seconds. Clamped to [%d, %d].", MinWaitSeconds, MaxWaitSeconds)},
+						"job_id":  map[string]any{"type": "string", "description": "Optional id of a background job to wait/poll for instead of a plain sleep. Requires job tracking to be configured; omit for a plain wait."},
+						"note":    map[string]any{"type": "string", "description": "Optional note describing what you're waiting for, echoed back for context."},
+					},
+					"required": []string{"seconds"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "skills",
 				"description": "Manage skills. Call without parameters to list all available skills. Call with name to load a specific skill's full content. Skills are markdown files stored in ~/.tyci/skills/<name>/SKILL.md.",
 				"parameters": map[string]any{
@@ -369,6 +386,9 @@ var toolRegistry = map[string]Tool{
 	"write":  &WriteTool{},
 	"skills": &SkillsTool{},
 	"web":    &WebTool{},
+	// Waiter is nil until a future "jobs" package is wired in (see
+	// tools/wait.go); plain wait (no job_id) works without it.
+	"wait": &WaitTool{},
 }
 
 // subagentToolInstance is the singleton SubagentTool used by the registry.
