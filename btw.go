@@ -105,10 +105,21 @@ func btwConfig(base agent.Config) agent.Config {
 // sink streams the child's output live to the /btw modal; MarkDone is
 // called once agent.Run returns so the modal (and the /btw list) show it as
 // finished.
+//
+// client/fallbacks are wrapped through withIsolatedPool (the same wrapper
+// agentRunner.run uses for subagents) instead of running on cond.Client()
+// directly. Without this, /btw's background agent.Run shared the main
+// conversation's HTTP client/connection pool: /btw's request and the main
+// thread's next request would contend for and block on the same pool,
+// which is exactly the "btw hangs, then the next normal prompt hangs too"
+// symptom this fixes — a /btw side-conversation is a genuinely independent
+// agent run and must share nothing transport-level with the parent, same
+// as a subagent.
 func startBtw(ctx context.Context, cond *conductor.Conductor, question string, sink *display.BtwSink) *jobs.Job {
 	forked := forkMessagesForBtw(cond.Messages(), question)
 	cfg := btwConfig(cond.Config())
-	client := cond.Client()
+	client, fallbacks := withIsolatedPool(cond.Client(), cfg.Fallbacks)
+	cfg.Fallbacks = fallbacks
 
 	return JobRegistry.Start(ctx, question, func(jobCtx context.Context) (string, bool, error) {
 		_, err := agent.Run(jobCtx, client, sink, &forked, cfg)
