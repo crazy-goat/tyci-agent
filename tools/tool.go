@@ -412,7 +412,12 @@ func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
 	return data
 }
 
-var lockRegistry = locks.NewRegistry()
+// LockRegistry is the one shared advisory-lock registry behind the "lock"/
+// "unlock" tools. Exported (unlike the rest of this file's tool wiring) so
+// integration tests in package main can assert on real lock state — e.g.
+// that a lock taken inside an async subagent job is actually released —
+// without a parallel, tools-package-only accessor to keep in sync.
+var LockRegistry = locks.NewRegistry()
 
 var toolRegistry = map[string]Tool{
 	"bash":   &BashTool{},
@@ -425,8 +430,8 @@ var toolRegistry = map[string]Tool{
 	// Waiter is nil until SetJobWaiter is called; plain wait (no job_id)
 	// works without it.
 	"wait":   &WaitTool{},
-	"lock":   &LockTool{Registry: lockRegistry},
-	"unlock": &UnlockTool{Registry: lockRegistry},
+	"lock":   &LockTool{Registry: LockRegistry},
+	"unlock": &UnlockTool{Registry: LockRegistry},
 }
 
 // SetJobWaiter wires the "wait" tool's job_id polling path (tools/wait.go)
