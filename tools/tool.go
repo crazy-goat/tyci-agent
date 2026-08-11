@@ -422,9 +422,25 @@ var toolRegistry = map[string]Tool{
 	"write":  &WriteTool{},
 	"skills": &SkillsTool{},
 	"web":    &WebTool{},
-	"wait":   &WaitTool{Waiter: jobRegistryWaiter{jobRegistry}},
+	// Waiter is nil until SetJobWaiter is called; plain wait (no job_id)
+	// works without it.
+	"wait":   &WaitTool{},
 	"lock":   &LockTool{Registry: lockRegistry},
 	"unlock": &UnlockTool{Registry: lockRegistry},
+}
+
+// SetJobWaiter wires the "wait" tool's job_id polling path (tools/wait.go)
+// to a JobWaiter. Called once from main() with an adapter over the app's
+// shared jobs.Registry — the same registry the "subagent" tool's async
+// spawn path (SetJobStarter, subagent.go) runs on — so a job started
+// anywhere in the app can be polled via the wait tool. This package
+// deliberately does not import "jobs" itself (see JobWaiter's doc comment
+// on the import-cycle risk); the caller supplies an implementation that
+// satisfies the interface structurally.
+func SetJobWaiter(w JobWaiter) {
+	if wt, ok := toolRegistry["wait"].(*WaitTool); ok {
+		wt.Waiter = w
+	}
 }
 
 // subagentToolInstance is the singleton SubagentTool used by the registry.

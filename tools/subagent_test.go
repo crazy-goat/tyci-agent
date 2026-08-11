@@ -15,6 +15,7 @@ import (
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/connector/connectortest"
+	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -1203,14 +1204,51 @@ func TestRunSingleTask_CleanSuccessNotTruncated(t *testing.T) {
 	}
 }
 
+// testJobHandle/testJobStarter/testJobWaiter mirror the adapters main()
+// wires in production (over the app's shared jobs.Registry) so these tests
+// exercise SetJobStarter/SetJobWaiter's actual contract instead of a
+// tools-internal registry the package no longer owns (see SetJobStarter's
+// doc comment: main is the only layer allowed to import both tools and
+// jobs). Importing "jobs" here is fine — it's the same leaf-importing-leaf
+// relationship production code in main has, just from a _test.go file.
+type testJobHandle struct{ id string }
+
+func (h testJobHandle) ID() string { return h.id }
+
+type testJobStarter struct{ reg *jobs.Registry }
+
+func (s testJobStarter) Start(ctx context.Context, description string, fn func(context.Context) (string, bool, error)) JobHandle {
+	return testJobHandle{s.reg.Start(ctx, description, fn).ID}
+}
+
+type testJobWaiter struct{ reg *jobs.Registry }
+
+func (w testJobWaiter) Wait(ctx context.Context, id string, timeout time.Duration) (JobStatus, bool) {
+	job, ok := w.reg.Wait(ctx, id, timeout)
+	if !ok {
+		return JobStatus{}, false
+	}
+	return JobStatus{
+		ID:      job.ID,
+		Done:    job.Status != jobs.StatusRunning,
+		Success: job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
+		Content: job.Result,
+		Error:   job.Err,
+	}, true
+}
+
 // TestSubagentAsync_ReturnsJobIDImmediately verifies the tool call itself
 // never blocks on the (slow) task when async=true, and that the job later
-// completes with the task's result reachable through jobRegistry.
+// completes with the task's result reachable through the injected registry.
 func TestSubagentAsync_ReturnsJobIDImmediately(t *testing.T) {
 	t.Cleanup(func() {
 		delete(toolRegistry, "subagent")
 		subagentToolInstance = nil
+		SetJobStarter(nil)
 	})
+
+	reg := jobs.NewRegistry()
+	SetJobStarter(testJobStarter{reg})
 
 	release := make(chan struct{})
 	SetSubAgentRunner(&mockRunner{
@@ -1237,18 +1275,40 @@ func TestSubagentAsync_ReturnsJobIDImmediately(t *testing.T) {
 		t.Fatalf("expected one spawned job with a job_id, got %+v", spawned)
 	}
 
-	if _, ok := jobRegistry.Get(spawned[0].JobID); !ok {
-		t.Fatalf("job %q not found in jobRegistry right after spawn — should be running, not absent", spawned[0].JobID)
+	if _, ok := reg.Get(spawned[0].JobID); !ok {
+		t.Fatalf("job %q not found in registry right after spawn — should be running, not absent", spawned[0].JobID)
 	}
 
 	close(release)
 
-	status, ok := jobRegistryWaiter{jobRegistry}.Wait(context.Background(), spawned[0].JobID, 2*time.Second)
+	status, ok := testJobWaiter{reg}.Wait(context.Background(), spawned[0].JobID, 2*time.Second)
 	if !ok {
 		t.Fatalf("wait: unknown job_id %q", spawned[0].JobID)
 	}
 	if !status.Done || !status.Success || status.Content != "async result" {
 		t.Errorf("unexpected final status: %+v", status)
+	}
+}
+
+// TestSubagentAsync_NoJobStarterConfigured ensures async=true fails loudly
+// (not a panic, not a silent fallback to sync) when main() hasn't wired
+// SetJobStarter yet.
+func TestSubagentAsync_NoJobStarterConfigured(t *testing.T) {
+	t.Cleanup(func() {
+		delete(toolRegistry, "subagent")
+		subagentToolInstance = nil
+		SetJobStarter(nil)
+	})
+	SetJobStarter(nil)
+	SetSubAgentRunner(&mockRunner{})
+
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
+	res := RunTool(ctx, "subagent", map[string]any{"task": "x", "async": true})
+	if res.Success {
+		t.Fatalf("expected failure with no JobStarter configured, got success: %+v", res)
+	}
+	if !strings.Contains(res.Error, "not configured") {
+		t.Errorf("expected a clear 'not configured' error, got: %q", res.Error)
 	}
 }
 

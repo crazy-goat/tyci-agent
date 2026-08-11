@@ -35,6 +35,29 @@ type SubagentTool struct {
 
 func (t *SubagentTool) Name() string { return "subagent" }
 
+// JobHandle is the minimal handle Start returns — just enough for runAsync
+// to report the assigned id back to the model.
+type JobHandle interface{ ID() string }
+
+// JobStarter is the async-spawn counterpart to tools.JobWaiter (see
+// wait.go): a local, minimal contract so this package never imports "jobs"
+// (same import-cycle rationale as JobWaiter's doc comment). main() supplies
+// an adapter over the app's shared jobs.Registry via SetJobStarter.
+type JobStarter interface {
+	Start(ctx context.Context, description string, fn func(ctx context.Context) (result string, truncated bool, err error)) JobHandle
+}
+
+// jobStarter is nil until SetJobStarter is called; runAsync fails loudly
+// (not silently blocking or panicking) until then.
+var jobStarter JobStarter
+
+// SetJobStarter wires the "subagent" tool's async=true spawn path to a
+// JobStarter. Called once from main() with an adapter over the app's shared
+// jobs.Registry — the same registry /btw side-conversations and the "wait"
+// tool's job_id polling (SetJobWaiter) run on, so a job started here is
+// pollable from anywhere.
+func SetJobStarter(s JobStarter) { jobStarter = s }
+
 // subagentTask represents a single task for a subagent.
 type subagentTask struct {
 	Task          string `json:"task"`
@@ -435,6 +458,10 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 // (subagentTimeoutSec, same as the sync path) replaces the cancellation the
 // job no longer inherits. Poll results via the "wait" tool's job_id mode.
 func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolResult {
+	if jobStarter == nil {
+		return ToolResult{Type: "result", Success: false, Error: "async subagent spawn unavailable: job registry not configured"}
+	}
+
 	type spawned struct {
 		Task  string `json:"task"`
 		JobID string `json:"job_id"`
@@ -443,7 +470,7 @@ func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolR
 	for _, task := range tasks {
 		task := task
 		jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subagentTimeoutSec*time.Second)
-		job := jobRegistry.Start(jobCtx, task.Task, func(runCtx context.Context) (string, bool, error) {
+		job := jobStarter.Start(jobCtx, task.Task, func(runCtx context.Context) (string, bool, error) {
 			defer cancel()
 			res := runSingleTask(runCtx, t.Runner, task, 0)
 			if !res.Success {
@@ -451,7 +478,7 @@ func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolR
 			}
 			return res.Content, res.Truncated, nil
 		})
-		out = append(out, spawned{Task: task.Task, JobID: job.ID})
+		out = append(out, spawned{Task: task.Task, JobID: job.ID()})
 	}
 
 	data, err := json.Marshal(out)
