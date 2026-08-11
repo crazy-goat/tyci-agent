@@ -115,6 +115,38 @@ func (c *collector) Result() subagentResult {
 	}
 }
 
+// SubagentSink is the Sink-shaped callback set the runner (main.go's
+// agentRunner) must drive when executing a child agent, so the child's
+// Text/Thinking calls actually reach *streamingCollector's forwarding logic
+// and stream live to the parent TUI's subagent modal instead of only
+// appearing once the whole task finishes. It is passed to the runner via
+// context (SubagentSinkCtxKey), not a RunTask parameter, and the runner
+// asserts it to agent.Sink itself — defined structurally here (matching
+// agent.Sink's method set) so this package never has to import agent (see
+// ErrSubagentTruncated's comment on layering).
+type SubagentSink interface {
+	Request(content string)
+	Thinking(text string)
+	Text(text string)
+	ToolCallStart(name string)
+	ToolCallDelta(delta string)
+	ToolCallEnd(name string, result string)
+	ToolFinish()
+	ToolBlock(msg string)
+	Summary(usage stream.Usage, stats stream.Stats)
+	Total(usage stream.Usage)
+	Error(err error)
+	End()
+	// CollectedText returns the text accumulated so far via Text calls, so
+	// the runner can read back the final answer after agent.Run completes.
+	CollectedText() string
+}
+
+// SubagentSinkCtxKey is the context key under which runSingleTask stores the
+// SubagentSink for the runner to pick up and drive directly, instead of
+// building its own non-forwarding Sink.
+type SubagentSinkCtxKey struct{}
+
 // streamingCollector wraps collector and pushes output to stream.OnOutput
 // for live TUI display in the subagent modal.
 type streamingCollector struct {
@@ -187,6 +219,16 @@ func (s *streamingCollector) flushPartial() {
 		s.parentOutput(s.toolIdx, s.lineBuf.String())
 		s.lineBuf.Reset()
 	}
+}
+
+// CollectedText returns the text accumulated so far via Text calls,
+// satisfying SubagentSink so the runner can read back the final answer once
+// this collector — rather than a separate one — is the actual Sink that
+// drove agent.Run.
+func (s *streamingCollector) CollectedText() string {
+	s.collector.mu.Lock()
+	defer s.collector.mu.Unlock()
+	return s.collector.text.String()
 }
 
 // StreamProgress implements the streamer interface so that the subagent's
@@ -442,6 +484,13 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	}
 
 	c := newStreamingCollector(ctx, toolIdx)
+
+	// Hand the runner our forwarding Sink via context (see SubagentSink's
+	// doc comment) so it drives agent.Run with this collector directly,
+	// instead of building its own non-forwarding one — that was the actual
+	// bug behind the subagent modal staying blank while running: c existed
+	// but nothing ever called its Text/Thinking.
+	runCtx = context.WithValue(runCtx, SubagentSinkCtxKey{}, c)
 
 	// Run the task via the runner interface. def.SystemPrompt is empty when
 	// no agent was named (def is the zero value), so this also covers the

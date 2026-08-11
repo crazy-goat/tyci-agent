@@ -198,8 +198,21 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// semantics so this logic is unit-tested in tools/.
 	maxIter := tools.ResolveMaxIter(opts)
 
-	// Create collector to capture output
-	c := &collector{}
+	// Drive agent.Run with the streaming Sink tools/subagent.go stashed in
+	// ctx (see tools.SubagentSink) so the child's Text/Thinking calls reach
+	// the parent TUI's subagent modal live, instead of only surfacing once
+	// the whole task finishes. Fall back to a plain, non-forwarding
+	// collector when none is present (e.g. tests that call run directly).
+	var sink agent.Sink
+	var collectedText func() string
+	if injected, ok := ctx.Value(tools.SubagentSinkCtxKey{}).(tools.SubagentSink); ok {
+		sink = injected
+		collectedText = injected.CollectedText
+	} else {
+		c := &collector{}
+		sink = c
+		collectedText = func() string { return c.text.String() }
+	}
 	msgs := []connector.Message{
 		{
 			Role:    "user",
@@ -218,8 +231,8 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		Temperature:   opts.Temperature,
 	}
 
-	_, err = agent.Run(ctx, mc, c, &msgs, cfg)
-	text := strings.TrimSpace(c.text.String())
+	_, err = agent.Run(ctx, mc, sink, &msgs, cfg)
+	text := strings.TrimSpace(collectedText())
 
 	if errors.Is(err, agent.ErrMaxIterations) {
 		if text == "" {
