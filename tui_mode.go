@@ -209,6 +209,30 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				tuiEntries := resumeEntriesToTUI(entries)
 				tuiDisp.OpenResumePicker(tuiEntries)
 				continue
+			case trimmed == "/btw":
+				// Bare /btw: browse previous side-conversations from this session.
+				iterCancel()
+				tuiDisp.OpenBtwList()
+				continue
+			case strings.HasPrefix(trimmed, "/btw "):
+				// /btw <question>: fork the current conversation into a
+				// background side-conversation. Runs on baseCtx (not
+				// iterCtx, which the top of this loop cancels every
+				// iteration) so it keeps going independently of the main
+				// thread's turns.
+				iterCancel()
+				question := strings.TrimSpace(strings.TrimPrefix(trimmed, "/btw"))
+				if question == "" {
+					tuiDisp.Error(fmt.Errorf("/btw: question required"))
+					tuiDisp.ResetStatus()
+					continue
+				}
+				id := nextBtwID()
+				sink := tuiDisp.BtwSink(id)
+				tuiDisp.OpenBtw(id, question)
+				job := startBtw(baseCtx, cond, question, sink)
+				tuiDisp.SetBtwJobID(id, job.ID)
+				continue
 			case strings.HasPrefix(trimmed, "/resume "):
 				// /resume <path|index>: forward to resolveSessionRef so the
 				// caller can pass either a file path or a numeric 1-based

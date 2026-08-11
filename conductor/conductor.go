@@ -246,6 +246,20 @@ func (c *Conductor) Usage() stream.Usage { return c.usage }
 // appends to, so callers should read it, not retain it.
 func (c *Conductor) Messages() []connector.Message { return c.conversation }
 
+// Client is the connector.ModelClient currently driving this conversation.
+// Exposed so a caller can fork the conversation onto an independent run
+// (e.g. the TUI's /btw side-conversation) without duplicating model
+// resolution logic that already lives here.
+func (c *Conductor) Client() connector.ModelClient { return c.client }
+
+// Config is the agent.Config this conductor drives Submit with. Exposed for
+// the same reason as Client: a caller forking the conversation (e.g. /btw)
+// wants the same tool/schema/fallback behavior, minus the callbacks that are
+// specific to this conductor's own conversation (Session, NextMessages,
+// PendingTodos, HasTodos) — which it strips out itself, using this as the
+// base.
+func (c *Conductor) Config() agent.Config { return c.cfg }
+
 // SetHistory replaces the conversation wholesale. Intended for seeding a
 // fresh Conductor with a transcript the caller has already rebuilt from a
 // session file.

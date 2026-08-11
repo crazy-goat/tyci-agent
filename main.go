@@ -300,6 +300,11 @@ func main() {
 	// "unknown tool: subagent".
 	tools.SetSubAgentRunner(&agentRunner{})
 
+	// Wire the "wait" tool to the app's shared job registry (see btw.go) so
+	// job_id polling works against real background jobs, including /btw
+	// side-conversations.
+	tools.SetJobWaiter(jobWaiterAdapter{reg: JobRegistry})
+
 	// Unpack the builtin agent definitions (internal/agentdefs/builtin) into
 	// ~/.tyci/agents/ so tyci is useful with zero setup. This runs on every
 	// invocation, including `tyci --help`, so it must stay cheap and silent:
