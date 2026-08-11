@@ -123,8 +123,8 @@ func (m TuiModel) updateHistorySearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyBackspace:
-			if len(m.historySearchFilter) > 0 {
-				m.historySearchFilter = m.historySearchFilter[:len(m.historySearchFilter)-1]
+			if runes := []rune(m.historySearchFilter); len(runes) > 0 {
+				m.historySearchFilter = string(runes[:len(runes)-1])
 				m.rebuildHistorySearchResults()
 			}
 			return m, nil

@@ -70,8 +70,8 @@ func (m TuiModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyBackspace:
-			if len(m.pickerFilter) > 0 {
-				m.pickerFilter = m.pickerFilter[:len(m.pickerFilter)-1]
+			if runes := []rune(m.pickerFilter); len(runes) > 0 {
+				m.pickerFilter = string(runes[:len(runes)-1])
 				m.rebuildPickerItems()
 			}
 			return m, nil

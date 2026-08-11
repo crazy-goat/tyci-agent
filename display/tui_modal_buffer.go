@@ -23,8 +23,8 @@ func (m TuiModel) visibleModalRenderBufferSnapshot() RenderBuffer {
 	y := layout.contentTop
 	for i := visibleStart; i < visibleEnd && y <= layout.contentBottom; i++ {
 		line := allLines[i]
-		if len(line) > layout.popupWidth-4 {
-			line = line[:layout.popupWidth-4]
+		if runes := []rune(line); len(runes) > layout.popupWidth-4 {
+			line = string(runes[:layout.popupWidth-4])
 		}
 		rb.Add(line, "modal", -1, i, y)
 		y++

@@ -109,8 +109,8 @@ func (m TuiModel) renderHistorySearchContent() string {
 		if maxLen < 10 {
 			maxLen = 10
 		}
-		if len(entry) > maxLen {
-			entry = entry[:maxLen-3] + "..."
+		if runes := []rune(entry); len(runes) > maxLen {
+			entry = string(runes[:maxLen-3]) + "..."
 		}
 		if i == m.historySearchCursor {
 			b.WriteString(selectedStyle.Render("▸ " + entry))

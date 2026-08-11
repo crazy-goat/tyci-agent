@@ -591,13 +591,14 @@ func grepFile(path, rel string, matcher *contentMatcher, contextLines, maxLineLe
 }
 
 func truncateLine(s string, max int) string {
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
 	if max <= 1 {
 		return "…"
 	}
-	return s[:max-1] + "…"
+	return string(runes[:max-1]) + "…"
 }
 
 func sortedKeysBool(m map[string]bool) []string {

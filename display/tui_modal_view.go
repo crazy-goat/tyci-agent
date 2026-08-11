@@ -78,8 +78,8 @@ func (m TuiModel) renderSubagentModalView() string {
 	for i := visibleStart; i < visibleEnd; i++ {
 		line := allLines[i]
 		// Truncate long lines (no "...", just cut)
-		if len(line) > popupWidth-4 {
-			line = line[:popupWidth-4]
+		if runes := []rune(line); len(runes) > popupWidth-4 {
+			line = string(runes[:popupWidth-4])
 		}
 		y := layout.contentTop + len(contentLines)
 		renderedLine := lineStyle.Render(line)
