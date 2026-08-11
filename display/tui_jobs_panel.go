@@ -50,6 +50,23 @@ func (m TuiModel) sortedBackgroundJobs() []jobs.Job {
 	return out
 }
 
+// runningBackgroundJobs filters sortedBackgroundJobs down to jobs still in
+// progress. The inline panel uses this — not the full history — so a
+// finished job clears itself from the always-visible bar the moment it's
+// done, instead of accumulating there forever. Ctrl+B's modal still shows
+// everything via sortedBackgroundJobs, since that view exists specifically
+// to look back at completed jobs.
+func (m TuiModel) runningBackgroundJobs() []jobs.Job {
+	all := m.sortedBackgroundJobs()
+	out := make([]jobs.Job, 0, len(all))
+	for _, j := range all {
+		if j.Status == jobs.StatusRunning {
+			out = append(out, j)
+		}
+	}
+	return out
+}
+
 // jobStatusIcon returns a short glyph for a job's status, mirroring the
 // icon/color scheme formatTodoModalLine uses for todo items.
 func jobStatusIcon(status jobs.Status) (icon string, color lipgloss.TerminalColor) {
@@ -104,11 +121,14 @@ func formatJobLine(j jobs.Job, width int) string {
 }
 
 // renderJobsPanel renders the inline background-jobs panel that appears
-// between the status bar and the queue panel. Returns "" when there are no
-// background jobs, so a user who never uses subagent(async: true) sees no
-// layout change at all (mirrors renderQueuePanel's empty-queue contract).
+// between the status bar and the queue panel. Shows only jobs still
+// running — a finished one drops off the moment its status changes, so the
+// panel reads as "what's happening now", not an ever-growing log (that's
+// what Ctrl+B's modal is for). Returns "" when nothing is running, so a
+// user who never uses subagent(async: true) sees no layout change at all
+// (mirrors renderQueuePanel's empty-queue contract).
 func (m TuiModel) renderJobsPanel(width int) string {
-	list := m.sortedBackgroundJobs()
+	list := m.runningBackgroundJobs()
 	if len(list) == 0 {
 		return ""
 	}
@@ -142,7 +162,7 @@ func (m TuiModel) renderJobsPanel(width int) string {
 // jobsPanelHeight returns the terminal rows renderJobsPanel occupies at the
 // current backgroundJobs size, mirroring queuePanelHeight.
 func (m TuiModel) jobsPanelHeight() int {
-	n := len(m.backgroundJobs)
+	n := len(m.runningBackgroundJobs())
 	if n == 0 {
 		return 0
 	}

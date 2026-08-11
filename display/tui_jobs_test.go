@@ -122,6 +122,38 @@ func TestRenderJobsPanel_OneJobShowsIDStatusAndDescription(t *testing.T) {
 	}
 }
 
+// TestRenderJobsPanel_FinishedJobDropsOffButStaysInModal locks in the fix
+// for finished jobs piling up forever in the always-visible panel: once a
+// job leaves StatusRunning it must disappear from renderJobsPanel/
+// jobsPanelHeight, while sortedBackgroundJobs (what the Ctrl+B modal lists)
+// keeps it for later inspection.
+func TestRenderJobsPanel_FinishedJobDropsOffButStaysInModal(t *testing.T) {
+	m := newTestModelForJobs()
+	started := time.Now().Add(-time.Minute)
+	m.applyJobUpdate(jobs.Job{
+		ID: "job-1700000000-1", Description: "summarize the repo",
+		Status: jobs.StatusRunning, StartedAt: started,
+	})
+	if panel := m.renderJobsPanel(80); !strings.Contains(panel, "summarize the repo") {
+		t.Fatalf("expected the running job in the panel, got %q", panel)
+	}
+
+	m.applyJobUpdate(jobs.Job{
+		ID: "job-1700000000-1", Description: "summarize the repo",
+		Status: jobs.StatusDone, StartedAt: started, FinishedAt: time.Now(),
+	})
+
+	if panel := m.renderJobsPanel(80); panel != "" {
+		t.Errorf("expected an empty panel once the only job is done, got %q", panel)
+	}
+	if h := m.jobsPanelHeight(); h != 0 {
+		t.Errorf("jobsPanelHeight with only a done job = %d, want 0", h)
+	}
+	if list := m.sortedBackgroundJobs(); len(list) != 1 || list[0].Status != jobs.StatusDone {
+		t.Errorf("expected the done job to remain in sortedBackgroundJobs for the modal, got %+v", list)
+	}
+}
+
 func TestRenderJobsPanel_OverflowShowsMoreLine(t *testing.T) {
 	m := newTestModelForJobs()
 	now := time.Now()
