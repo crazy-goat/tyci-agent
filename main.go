@@ -305,7 +305,17 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 	return res.Content, fmt.Errorf("%s", res.Error)
 }
 
-func main() {
+// wireTools installs the composition-root wiring the tool registry needs to
+// actually run subagents/wait/jobs against the app's shared JobRegistry and
+// jobEventBus: tools.SetSubAgentRunner/SetJobWaiter/SetJobStarter and
+// JobRegistry's onEvent hook. Extracted from main() so integration tests can
+// call the EXACT same wiring code main() calls (see wiring_test.go) rather
+// than a hand-rolled reimplementation that could drift from production.
+// Idempotent: calling it again (e.g. after swapping JobRegistry/jobEventBus
+// for test isolation) simply re-points everything at the current globals,
+// with no duplicate event delivery — SetOnEvent replaces the previous hook,
+// it does not add to it.
+func wireTools() {
 	// Register the subagent runner so the "subagent" tool (advertised in the
 	// tool schema) is actually executable. Without this, RunTool returns
 	// "unknown tool: subagent".
@@ -322,6 +332,10 @@ func main() {
 	// (see tuiCmd in commands.go) can show a live background-jobs panel. A
 	// no-op for every other mode, which never calls TUI.SetJobEventBus.
 	JobRegistry.SetOnEvent(func(j jobs.Job) { jobEventBus.Publish("job.updated", j) })
+}
+
+func main() {
+	wireTools()
 
 	// Unpack the builtin agent definitions (internal/agentdefs/builtin) into
 	// ~/.tyci/agents/ so tyci is useful with zero setup. This runs on every

@@ -275,6 +275,64 @@ func TestText(t *testing.T) {
 	}
 }
 
+// Script lets a turn react to the PREVIOUS turn's request (e.g. a tool_result
+// appended to req.Messages) — the one thing a static Turns slice cannot do,
+// needed to drive a full round-trip through real tool wiring in tests
+// elsewhere in the repo (main package's wiring_test.go).
+func TestFake_ScriptReceivesRequestAndOverridesTurns(t *testing.T) {
+	var seenTurns []int
+	var seenModels []string
+	f := &Fake{
+		Turns: [][]stream.Event{{stream.Finish{Reason: "ignored"}}}, // must be ignored
+		Script: func(turn int, req connector.Request) []stream.Event {
+			seenTurns = append(seenTurns, turn)
+			seenModels = append(seenModels, req.Model)
+			return []stream.Event{stream.TextDelta{Text: "scripted"}, stream.Finish{Reason: "stop"}}
+		},
+	}
+
+	for i, model := range []string{"m0", "m1"} {
+		ch, err := f.Stream(context.Background(), connector.Request{Model: model})
+		if err != nil {
+			t.Fatalf("call %d: Stream: %v", i, err)
+		}
+		got := collect(t, ch)
+		if len(got) != 2 {
+			t.Fatalf("call %d: %d events, want 2 (Script's script, not Turns')", i, len(got))
+		}
+		if td, ok := got[0].(stream.TextDelta); !ok || td.Text != "scripted" {
+			t.Errorf("call %d: got[0] = %#v, want the Script's TextDelta", i, got[0])
+		}
+	}
+	if len(seenTurns) != 2 || seenTurns[0] != 0 || seenTurns[1] != 1 {
+		t.Fatalf("Script saw turns %v, want [0 1]", seenTurns)
+	}
+	if len(seenModels) != 2 || seenModels[0] != "m0" || seenModels[1] != "m1" {
+		t.Fatalf("Script saw models %v, want [m0 m1]", seenModels)
+	}
+}
+
+// StreamErr must still short-circuit before Script is ever consulted — it
+// models a request that never got off the ground, so there is no "turn" for
+// Script to react to.
+func TestFake_StreamErrTakesPrecedenceOverScript(t *testing.T) {
+	sentinel := errors.New("boom")
+	called := false
+	f := &Fake{
+		StreamErr: sentinel,
+		Script: func(int, connector.Request) []stream.Event {
+			called = true
+			return nil
+		},
+	}
+	if _, err := f.Stream(context.Background(), connector.Request{}); !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want %v", err, sentinel)
+	}
+	if called {
+		t.Error("Script was consulted despite StreamErr being set")
+	}
+}
+
 func TestFailing(t *testing.T) {
 	sentinel := errors.New("nope")
 	f := Failing(sentinel)

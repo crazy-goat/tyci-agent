@@ -71,6 +71,17 @@ type Fake struct {
 	// keeps a turn in flight long enough to interrupt it.
 	BlockUntilCancel bool
 
+	// Script, when set, replaces Turns/OnExhausted entirely: it is called
+	// with the zero-based call index and the full request (including every
+	// prior message, e.g. earlier tool_results) and returns the events for
+	// that turn. This is what a static Turns slice cannot do — react to a
+	// PREVIOUS turn's tool output, such as a job_id a tool call minted at
+	// runtime — needed to drive a full agent.Run round-trip through
+	// production tool wiring (see the "R-1" full-stack async test in
+	// package main's wiring_test.go). StreamErr still takes precedence
+	// (Script is not consulted when it's set).
+	Script func(turn int, req connector.Request) []stream.Event
+
 	mu       sync.Mutex
 	calls    int
 	requests []connector.Request
@@ -108,7 +119,12 @@ func (f *Fake) Stream(ctx context.Context, req connector.Request) (<-chan stream
 		return nil, f.StreamErr
 	}
 
-	events := f.eventsFor(turn)
+	var events []stream.Event
+	if f.Script != nil {
+		events = f.Script(turn, req)
+	} else {
+		events = f.eventsFor(turn)
+	}
 
 	ch := make(chan stream.Event, 16)
 	go func() {
