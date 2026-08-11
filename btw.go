@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -34,11 +35,14 @@ func (a jobWaiterAdapter) Wait(ctx context.Context, id string, timeout time.Dura
 		return tools.JobStatus{}, false
 	}
 	return tools.JobStatus{
-		ID:      job.ID,
-		Done:    job.Status != jobs.StatusRunning,
-		Success: job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
-		Content: job.Result,
-		Error:   job.Err,
+		ID:       job.ID,
+		Done:     job.Status != jobs.StatusRunning && job.Status != jobs.StatusWaitingAnswer,
+		Success:  job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
+		Content:  job.Result,
+		Error:    job.Err,
+		Waiting:  job.Status == jobs.StatusWaitingAnswer,
+		Question: job.Question,
+		Progress: job.Progress,
 	}, true
 }
 
@@ -54,8 +58,81 @@ func (j jobHandleAdapter) ID() string { return j.Job.ID }
 // pollable via the wait tool and shows up wherever JobRegistry is inspected.
 type jobStarterAdapter struct{ reg *jobs.Registry }
 
-func (a jobStarterAdapter) Start(ctx context.Context, description string, fn func(context.Context) (string, bool, error)) tools.JobHandle {
+func (a jobStarterAdapter) Start(ctx context.Context, description string, fn func(context.Context, string) (string, bool, error)) tools.JobHandle {
 	return jobHandleAdapter{a.reg.Start(ctx, description, fn)}
+}
+
+// jobAskerAdapter satisfies tools.JobAsker over JobRegistry.
+type jobAskerAdapter struct{ reg *jobs.Registry }
+
+func (a jobAskerAdapter) Ask(ctx context.Context, id, question string) (string, bool) {
+	return a.reg.Ask(ctx, id, question)
+}
+
+// jobAnswererAdapter satisfies tools.JobAnswerer over JobRegistry.
+type jobAnswererAdapter struct{ reg *jobs.Registry }
+
+func (a jobAnswererAdapter) Answer(id, text string) bool {
+	return a.reg.Answer(id, text)
+}
+
+// jobProgressAdapter satisfies tools.JobProgressReporter over JobRegistry.
+type jobProgressAdapter struct{ reg *jobs.Registry }
+
+func (a jobProgressAdapter) SetProgress(id, text string) bool {
+	return a.reg.SetProgress(id, text)
+}
+
+// jobResumerAdapter satisfies tools.JobResumer over JobRegistry and the
+// package-level resumable map (main.go): it forks a previously-recorded
+// conversation, appends task as a new user turn, and runs the fork as a
+// brand-new job — same shape as runAsync's spawn path (subagent.go), just
+// seeded from a stored transcript instead of a fresh one.
+type jobResumerAdapter struct{ reg *jobs.Registry }
+
+func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tools.JobHandle, error) {
+	resumableMu.Lock()
+	entry, ok := resumable[jobID]
+	resumableMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("job %q has no resumable conversation (only a finished async subagent or /btw job can be resumed)", jobID)
+	}
+
+	// forkMessagesForBtw's copy-then-append-user-turn shape is exactly what
+	// a resumed conversation needs too: a new backing array so nothing the
+	// new job appends can ever alias or mutate the stored transcript.
+	forked := forkMessagesForBtw(entry.msgs, task)
+
+	// Same detach-and-backstop pattern as runAsync (tools/subagent.go): the
+	// tool call's own ctx dies with this turn, but the resumed job must keep
+	// running after Resume returns.
+	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tools.SubagentTimeoutSec*time.Second)
+
+	job := a.reg.Start(jobCtx, task, func(runCtx context.Context, newJobID string) (string, bool, error) {
+		defer cancel()
+		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, newJobID)
+
+		c := &collector{}
+		_, err := agent.Run(runCtx, entry.mc, c, &forked, entry.cfg)
+		truncated := errors.Is(err, agent.ErrMaxIterations)
+		if truncated {
+			err = nil
+		}
+		text := strings.TrimSpace(c.text.String())
+
+		// Re-register so a resumed job can itself be resumed again
+		// (chaining), same condition as the original run in
+		// agentRunner.run: a usable transcript, not a hard failure.
+		if err == nil || truncated {
+			resumableMu.Lock()
+			resumable[newJobID] = resumableEntry{msgs: forked, mc: entry.mc, cfg: entry.cfg}
+			resumableMu.Unlock()
+		}
+
+		return text, truncated, err
+	})
+
+	return jobHandleAdapter{job}, nil
 }
 
 // btwIDCounter backs nextBtwID, mirroring jobs' own timestamp+counter ID
@@ -121,7 +198,8 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 	client, fallbacks := withIsolatedPool(cond.Client(), cfg.Fallbacks)
 	cfg.Fallbacks = fallbacks
 
-	return JobRegistry.Start(ctx, question, func(jobCtx context.Context) (string, bool, error) {
+	return JobRegistry.Start(ctx, question, func(jobCtx context.Context, jobID string) (string, bool, error) {
+		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
 		_, err := agent.Run(jobCtx, client, sink, &forked, cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {

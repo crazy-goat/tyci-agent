@@ -222,14 +222,14 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "subagent",
-				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has read/write/find/bash/todo tools (it cannot spawn further subagents) and is bounded by an optional max_iterations cap and a 600s wall-clock timeout; keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array). Set async=true (on every task in the call) to get a job_id back immediately instead of blocking — poll it later with the \"wait\" tool's job_id argument; you cannot mix async and non-async tasks in one call.",
+				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has every tool except subagent itself (no recursive spawning) — including lock/unlock for coordinating with sibling parallel subagents over shared file paths, wait(job_id=...) to check on a sibling's async job, ask to pose a blocking question back to whoever is waiting on this job, and report_progress for long tasks. When running several tasks in parallel over related files, mention in each task's instructions that it should lock the paths it touches and unlock when done. It is bounded by an optional max_iterations cap and a 600s wall-clock timeout; keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array). Set async=true (on every task in the call) to get a job_id back immediately instead of blocking — poll it later with the \"wait\" tool's job_id argument; you cannot mix async and non-async tasks in one call.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"task":  map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/bash tools."},
 						"agent": map[string]any{"type": "string", "description": "Named agent to use. Definitions live in ./.tyci/agents/<name>.md (project) or ~/.tyci/agents/<name>.md (global), project winning; each supplies the child's system prompt and may pin its model, max_iterations and allowed tools. The available names are listed in the system prompt; an unknown name is an error, not a fallback."},
 						"tasks": map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
-							"task":           map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has read/write/find/bash/todo tools."},
+							"task":           map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has every tool except subagent itself."},
 							"agent":          map[string]any{"type": "string", "description": "Named agent to use"},
 							"model":          map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
 							"max_iterations": map[string]any{"type": "integer", "description": "Cap this child's tool-call turns. Set a positive integer to bound a risky subtask (e.g. exploration, code review); omit to use the runner default (currently unlimited, bounded by a 600s wall-clock timeout). 0 and negative values mean unlimited."},
@@ -298,6 +298,64 @@ func GetToolsSchema() []map[string]any {
 						"holder": map[string]any{"type": "string", "description": "The holder id returned by the earlier \"lock\" call"},
 					},
 					"required": []string{"path", "holder"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "ask",
+				"description": "Ask a blocking question from inside an async background job (started via subagent(...,async:true) or a /btw side-conversation) — only usable there, not from a normal foreground turn. Blocks until the parent (or another agent) calls \"answer\" on this job's id, or until the job's own wall-clock limit is reached. Use sparingly, only for genuine ambiguity you can't resolve yourself.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"question": map[string]any{"type": "string", "description": "The question to ask, phrased so a one-shot text reply can answer it."},
+					},
+					"required": []string{"question"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "answer",
+				"description": "Reply to a background job currently shown as waiting_answer (via the \"wait\" tool) and unblock it. Requires the exact job_id and the text to hand back.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"job_id": map[string]any{"type": "string", "description": "The id of the job currently waiting for an answer."},
+						"text":   map[string]any{"type": "string", "description": "The answer text to deliver back to that job's pending \"ask\" call."},
+					},
+					"required": []string{"job_id", "text"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "report_progress",
+				"description": "Post a short status note from inside an async background job (started via subagent(...,async:true) or a /btw side-conversation) — only usable there. Visible via the \"wait\" tool's still-running response and the jobs panel, without ending the job. Use for long tasks so whoever is watching isn't left guessing.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"text": map[string]any{"type": "string", "description": "Short status note describing current progress."},
+					},
+					"required": []string{"text"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "resume",
+				"description": "Continue an already-finished async job's full conversation with a new task, as a brand-new job (new job_id — poll it with \"wait\" same as any async spawn). Only works on jobs that actually finished normally (done/truncated) via subagent(...,async:true) or /btw, not on synchronous calls or hard failures.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"job_id": map[string]any{"type": "string", "description": "The id of the finished async job to continue."},
+						"task":   map[string]any{"type": "string", "description": "The new message to append to that job's conversation before continuing it."},
+					},
+					"required": []string{"job_id", "task"},
 				},
 			},
 		},
@@ -432,6 +490,13 @@ var toolRegistry = map[string]Tool{
 	"wait":   &WaitTool{},
 	"lock":   &LockTool{Registry: LockRegistry},
 	"unlock": &UnlockTool{Registry: LockRegistry},
+	// jobAsker/jobAnswerer/jobProgressReporter/jobResumer are nil until
+	// SetJobAsker/SetJobAnswerer/SetJobProgressReporter/SetJobResumer are
+	// called; each tool fails loudly (not silently) until then.
+	"ask":             &AskTool{},
+	"answer":          &AnswerTool{},
+	"report_progress": &ReportProgressTool{},
+	"resume":          &ResumeTool{},
 }
 
 // SetJobWaiter wires the "wait" tool's job_id polling path (tools/wait.go)

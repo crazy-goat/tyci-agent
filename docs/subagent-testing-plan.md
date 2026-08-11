@@ -135,8 +135,41 @@ jak przed całą tą rundą zmian.
 
 ## Co NIE jest jeszcze zaimplementowane (nie testować, spodziewany brak)
 
-- `report_progress` / częściowy progres joba w panelu (dziś panel pokazuje
-  tylko `running`/`done`/`failed`/`truncated`, bez procentów/kroków).
-- `ask`/`answer` — subagent nie może zadać blokującego pytania rodzicowi.
-- `resume` — nie da się dopisać wiadomości do już skończonego joba/subagenta.
 - Auto-`/compact` przy 95% kontekstu — zaplanowane, niezaimplementowane.
+
+## 6. `ask`/`answer`, `report_progress`, `resume`
+
+- [ ] **6.1** W trakcie trwania joba async (spawn przez 1.1): job wywołuje
+      `ask(question: "...")` — panel jobów w tle pokazuje status
+      `waiting_answer` (zamiast `running`), a `wait(job_id: "<id>")` zwraca
+      komunikat zawierający dokładną treść pytania i instrukcję użycia
+      narzędzia `answer` z tym `job_id`.
+- [ ] **6.2** Zaraz po 6.1: wywołaj `answer(job_id: "<id z 6.1>", text: "...")`
+      z głównego wątku (albo z innego agenta) — job odblokowuje się
+      natychmiast, `ask` w środku joba dostaje dokładnie ten tekst z powrotem,
+      status wraca na `running`, a finalny wynik joba (widoczny przez
+      `wait`) odzwierciedla otrzymaną odpowiedź.
+- [ ] **6.3** `ask` na który **nikt nie odpowiada** — job **nie wisi w
+      nieskończoność**: odblokowuje się sam po osiągnięciu własnego limitu
+      czasu joba (600s dla async subagenta), zwracając komunikat mówiący
+      wprost, że nie było odpowiedzi i że agent ma kontynuować na własną rękę.
+      (W teście manualnym nie czekaj pełnych 600s — testy jednostkowe/
+      integracyjne już pokrywają to na krótszym, wstrzykniętym deadlinie;
+      manualnie wystarczy potwierdzić, że `ask` jest w ogóle dostępny tylko
+      wewnątrz joba w tle, nie z normalnej, pierwszoplanowej tury.)
+- [ ] **6.4** Job async wywołuje `report_progress(text: "...")` w trakcie
+      działania (przed zakończeniem) — `wait(job_id: "<id>")` wywołany, gdy
+      job jeszcze trwa, zawiera w komunikacie "still running" dokładną treść
+      ostatniego zgłoszonego progresu; ta sama treść jest widoczna też po
+      zakończeniu joba (progres nie jest czyszczony po `done`).
+- [ ] **6.5** `resume(job_id: "<id skończonego joba async>", task: "...")` —
+      dostajesz **nowy, inny** `job_id`; poll go przez `wait` jak każdy inny
+      job async. Nowy task powinien odwoływać się do czegoś, co padło
+      **tylko** w pierwszej turze (np. poproś model o powtórzenie liczby/
+      nazwy pliku wspomnianej wyłącznie w oryginalnym zadaniu) — sprawdź, że
+      wznowiony job faktycznie **widzi** ten wcześniejszy kontekst, a nie
+      zaczyna od zera.
+- [ ] **6.6** `resume` na `job_id`, który nie istnieje albo nigdy nie był
+      wznawialny (np. synchroniczny `subagent` bez `async:true`, albo job,
+      który zakończył się twardym błędem) — czysty błąd z sensownym opisem,
+      bez crasha i bez zawieszenia procesu.

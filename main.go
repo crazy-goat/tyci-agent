@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/decodo/tyci/agent"
@@ -27,6 +28,28 @@ import (
 // signatures; every other mode (console, --print, etc.) simply never
 // subscribes, so this costs them nothing.
 var jobEventBus = eventbus.New(32)
+
+// resumableEntry captures everything agent.Run needs to continue a
+// background job's conversation with a new user turn: the mutated messages
+// (agent.Run appends every turn onto the slice it's given, so by the time it
+// returns msgs holds the full transcript, not just the seed message), the
+// resolved model client (already wrapped via withIsolatedPool/fallback
+// resolution — reused as-is, never re-resolved), and the agent.Config used
+// for the run.
+type resumableEntry struct {
+	msgs []connector.Message
+	mc   connector.ModelClient
+	cfg  agent.Config
+}
+
+// resumableMu guards resumable. resumable is never pruned — same known,
+// already-documented characteristic as JobRegistry itself (see JobRegistry's
+// doc comment): every finished async job/btw conversation that ever ran
+// stays in memory for the lifetime of the process, in case something later
+// calls "resume" on it. Not treated as a new problem to solve here, just not
+// hidden either.
+var resumableMu sync.Mutex
+var resumable = map[string]resumableEntry{}
 
 // agentRunner implements tools.SubAgentRunner by wrapping agent.Run.
 type agentRunner struct{}
@@ -245,7 +268,22 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	_, err = agent.Run(ctx, mc, sink, &msgs, cfg)
 	text := strings.TrimSpace(collectedText())
 
-	if errors.Is(err, agent.ErrMaxIterations) {
+	// If this run is happening inside a background job (async subagent or
+	// /btw side-conversation — see tools.JobIDCtxKey's doc comment), and it
+	// actually produced a usable transcript (finished cleanly, or hit the
+	// iteration cap but still has real turns in msgs — as opposed to a hard
+	// failure where agent.Run may have barely started), stash the mutated
+	// msgs/mc/cfg so a later "resume" tool call can continue this exact
+	// conversation as a brand-new job. See resumableEntry's doc comment for
+	// why this map is never pruned.
+	truncated := errors.Is(err, agent.ErrMaxIterations)
+	if jobID, ok := ctx.Value(tools.JobIDCtxKey{}).(string); ok && jobID != "" && (err == nil || truncated) {
+		resumableMu.Lock()
+		resumable[jobID] = resumableEntry{msgs: msgs, mc: mc, cfg: cfg}
+		resumableMu.Unlock()
+	}
+
+	if truncated {
 		if text == "" {
 			// Hit the cap and produced nothing — return a hard error so
 			// the parent sees a clear failure and can decide to retry,
@@ -327,6 +365,10 @@ func wireTools() {
 	// subagents alike — instead of each running on its own registry.
 	tools.SetJobWaiter(jobWaiterAdapter{reg: JobRegistry})
 	tools.SetJobStarter(jobStarterAdapter{reg: JobRegistry})
+	tools.SetJobAsker(jobAskerAdapter{reg: JobRegistry})
+	tools.SetJobAnswerer(jobAnswererAdapter{reg: JobRegistry})
+	tools.SetJobProgressReporter(jobProgressAdapter{reg: JobRegistry})
+	tools.SetJobResumer(jobResumerAdapter{reg: JobRegistry})
 
 	// Wire JobRegistry's status-change events onto jobEventBus so the TUI
 	// (see tuiCmd in commands.go) can show a live background-jobs panel. A

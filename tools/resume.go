@@ -1,0 +1,61 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+// JobResumer is the local contract the "resume" tool needs — set once from
+// main() via SetJobResumer, over the app's shared jobs.Registry. Same
+// layering rule as the other job-facing tools in this package.
+type JobResumer interface {
+	// Resume continues a finished async job's conversation with a new user
+	// turn (task) and returns a handle to the NEW job that runs it — the
+	// original job_id is not reused. Returns an error if jobID is unknown
+	// or was never resumable (e.g. it was a synchronous subagent call, or
+	// it failed hard rather than finishing/truncating).
+	Resume(ctx context.Context, jobID, task string) (JobHandle, error)
+}
+
+// jobResumer is nil until SetJobResumer is called; the "resume" tool fails
+// loudly until then.
+var jobResumer JobResumer
+
+// SetJobResumer wires the "resume" tool to a JobResumer.
+func SetJobResumer(r JobResumer) { jobResumer = r }
+
+// ResumeTool implements the "resume" tool: continues an already-finished
+// async job's conversation with a new message, as a brand-new job. Poll the
+// new job_id with "wait" like any other async job.
+type ResumeTool struct{}
+
+func (t *ResumeTool) Name() string { return "resume" }
+
+func (t *ResumeTool) Run(ctx context.Context, input map[string]any) ToolResult {
+	jobID, _ := input["job_id"].(string)
+	if jobID == "" {
+		return ToolResult{Type: "result", Success: false, Error: "job_id is required"}
+	}
+	task, _ := input["task"].(string)
+	if task == "" {
+		return ToolResult{Type: "result", Success: false, Error: "task is required"}
+	}
+
+	if jobResumer == nil {
+		return ToolResult{Type: "result", Success: false, Error: "resume unavailable: job registry not configured"}
+	}
+
+	handle, err := jobResumer.Resume(ctx, jobID, task)
+	if err != nil {
+		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
+
+	data, err := json.Marshal(struct {
+		JobID string `json:"job_id"`
+	}{JobID: handle.ID()})
+	if err != nil {
+		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("marshal resumed job: %v", err)}
+	}
+	return ToolResult{Type: "result", Success: true, Content: string(data)}
+}

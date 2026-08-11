@@ -218,6 +218,21 @@ func lastToolResultText(req connector.Request) string {
 
 var jobIDPattern = regexp.MustCompile(`"job_id"\s*:\s*"([^"]+)"`)
 
+// snapshotByID returns the Snapshot() (a value copy, safe to read without
+// the registry's own lock) for id, or ok=false if unknown. Unlike
+// Registry.Get (which returns the LIVE *Job pointer, still mutated by the
+// registry under its own mutex), this is the only safe way for a test to
+// poll a job's evolving Status/Question/Progress fields without racing the
+// registry's writer goroutines.
+func snapshotByID(reg *jobs.Registry, id string) (jobs.Job, bool) {
+	for _, j := range reg.List() {
+		if j.ID == id {
+			return j, true
+		}
+	}
+	return jobs.Job{}, false
+}
+
 // extractJobID pulls the job_id a subagent(async=true) tool call minted out
 // of req's message history — the one thing a static Fake.Turns script
 // cannot do, and the reason Fake.Script exists.
@@ -368,7 +383,7 @@ func TestWiring_R6_WireToolsIdempotent(t *testing.T) {
 	defer unsub()
 
 	release := make(chan struct{})
-	job := JobRegistry.Start(context.Background(), "idempotent", func(ctx context.Context) (string, bool, error) {
+	job := JobRegistry.Start(context.Background(), "idempotent", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "ok", false, nil
 	})
@@ -727,7 +742,7 @@ func TestWiring_C6_SlowSubscriberDoesNotBlockOtherJobs(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			job := reg.Start(context.Background(), fmt.Sprintf("job-%d", i), func(ctx context.Context) (string, bool, error) {
+			job := reg.Start(context.Background(), fmt.Sprintf("job-%d", i), func(ctx context.Context, _ string) (string, bool, error) {
 				return "ok", false, nil
 			})
 			final, ok := reg.Wait(context.Background(), job.ID, 2*time.Second)
@@ -1008,6 +1023,310 @@ func TestWiring_R2_LockSharedBetweenMainThreadAndAsyncChild(t *testing.T) {
 	if !strings.Contains(final.Result, "already locked") {
 		t.Fatalf("expected a lock-conflict error, got %q", final.Err)
 	}
+}
+
+// =============================================================================
+// Q-1: ask/answer round trip through real production wiring — an async
+// subagent blocks in "ask", the test (playing "the parent") answers it via
+// the real JobRegistry, and the job's own result reflects the exact answer
+// text it received back.
+// =============================================================================
+
+func TestWiring_Q1_AskAnswerRoundTrip(t *testing.T) {
+	reg, _ := withTestWiring(t)
+	before := runtime.NumGoroutine()
+
+	childFake := &connectortest.Fake{ProviderName: "q1-child"}
+	childFake.Script = func(turn int, req connector.Request) []stream.Event {
+		if turn == 0 {
+			return []stream.Event{
+				stream.ToolCall{ID: "ask0", Name: "ask", Arguments: `{"question":"what color?"}`},
+				stream.Finish{Reason: "tool_calls"},
+			}
+		}
+		return []stream.Event{
+			stream.TextDelta{Text: "answer was: " + lastToolResultText(req)},
+			stream.Finish{Reason: "stop"},
+		}
+	}
+	providers.Register(&fixedClientProvider{name: "q1-child-prov", client: childFake})
+
+	ctx := connector.WithModelClient(context.Background(), connectortest.Text("n/a"))
+	spawnRes := tools.RunTool(ctx, "subagent", map[string]any{
+		"task": "ask a question and report the answer", "async": true, "model": "q1-child-prov/child-model",
+	})
+	if !spawnRes.Success {
+		t.Fatalf("spawn subagent: %s", spawnRes.Error)
+	}
+	m := jobIDPattern.FindStringSubmatch(spawnRes.Content)
+	if m == nil {
+		t.Fatalf("could not find job_id in spawn result: %q", spawnRes.Content)
+	}
+	jobID := m[1]
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		j, ok := snapshotByID(reg, jobID)
+		if !ok {
+			t.Fatal("job vanished from registry")
+		}
+		if j.Status == jobs.StatusWaitingAnswer {
+			if j.Question != "what color?" {
+				t.Fatalf("expected question %q, got %q", "what color?", j.Question)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for job to reach waiting_answer, last status: %s", j.Status)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !reg.Answer(jobID, "blue") {
+		t.Fatal("expected Answer to succeed against a job currently waiting")
+	}
+
+	final, ok := reg.Wait(context.Background(), jobID, 2*time.Second)
+	if !ok {
+		t.Fatal("job vanished from registry")
+	}
+	if final.Status != jobs.StatusDone {
+		t.Fatalf("job status = %s (err=%q), want done", final.Status, final.Err)
+	}
+	if final.Result != "answer was: blue" {
+		t.Fatalf("job result = %q, want it to reflect the exact answer text", final.Result)
+	}
+
+	waitForGoroutineSettle(t, before)
+}
+
+// =============================================================================
+// Q-2: an "ask" that's never answered must not hang forever — it unblocks
+// via the job's own wall-clock limit (modeled here with a short-deadline ctx
+// instead of waiting out the real 600s subagent timeout).
+// =============================================================================
+
+func TestWiring_Q2_AskNeverAnsweredUnblocksViaOwnTimeout(t *testing.T) {
+	reg, _ := withTestWiring(t)
+
+	release := make(chan struct{})
+
+	job := reg.Start(context.Background(), "never answered", func(ctx context.Context, jobID string) (string, bool, error) {
+		<-release
+		return "done", false, nil
+	})
+
+	// A short-deadline ctx carrying the job's id, exactly the shape the real
+	// "ask" tool builds (ctx = the job's own ctx, which the caller controls
+	// the deadline of) — exercises AskTool -> jobAsker -> JobRegistry.Ask
+	// without waiting out subagent.SubagentTimeoutSec (600s).
+	askCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	askCtx = context.WithValue(askCtx, tools.JobIDCtxKey{}, job.ID)
+
+	start := time.Now()
+	res := tools.RunTool(askCtx, "ask", map[string]any{"question": "anyone there?"})
+	elapsed := time.Since(start)
+
+	if res.Success {
+		t.Fatalf("expected ask to fail when never answered, got success: %+v", res)
+	}
+	if res.Error == "" {
+		t.Fatal("expected a non-empty, actionable error message")
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("ask took too long to unblock after its ctx deadline: %s", elapsed)
+	}
+
+	// Let the job finish (and wait for it) before returning, so
+	// withTestWiring's cleanup never races the job's own terminal onEvent
+	// call against swapping JobRegistry/jobEventBus back.
+	close(release)
+	if _, ok := reg.Wait(context.Background(), job.ID, time.Second); !ok {
+		t.Fatal("job vanished from registry")
+	}
+}
+
+// =============================================================================
+// P-1: report_progress surfaces via JobRegistry.Get while the job is still
+// running, and via wait()'s "still running" message.
+// =============================================================================
+
+func TestWiring_P1_ReportProgressVisibleWhileRunning(t *testing.T) {
+	reg, _ := withTestWiring(t)
+
+	release := make(chan struct{})
+	childFake := &connectortest.Fake{ProviderName: "p1-child"}
+	childFake.Script = func(turn int, req connector.Request) []stream.Event {
+		if turn == 0 {
+			return []stream.Event{
+				stream.ToolCall{ID: "rp0", Name: "report_progress", Arguments: `{"text":"halfway done"}`},
+				stream.Finish{Reason: "tool_calls"},
+			}
+		}
+		<-release
+		return []stream.Event{stream.TextDelta{Text: "finished"}, stream.Finish{Reason: "stop"}}
+	}
+	providers.Register(&fixedClientProvider{name: "p1-child-prov", client: childFake})
+
+	ctx := connector.WithModelClient(context.Background(), connectortest.Text("n/a"))
+	spawnRes := tools.RunTool(ctx, "subagent", map[string]any{
+		"task": "report progress then finish", "async": true, "model": "p1-child-prov/m",
+	})
+	if !spawnRes.Success {
+		t.Fatalf("spawn subagent: %s", spawnRes.Error)
+	}
+	m := jobIDPattern.FindStringSubmatch(spawnRes.Content)
+	if m == nil {
+		t.Fatalf("could not find job_id in spawn result: %q", spawnRes.Content)
+	}
+	jobID := m[1]
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		j, ok := snapshotByID(reg, jobID)
+		if !ok {
+			t.Fatal("job vanished from registry")
+		}
+		if j.Progress == "halfway done" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for progress to be recorded, last snapshot: %+v", j)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// wait()'s still-running response must surface the same progress note.
+	waitRes := tools.RunTool(context.Background(), "wait", map[string]any{"job_id": jobID, "seconds": 1})
+	if !waitRes.Success {
+		t.Fatalf("wait: %s", waitRes.Error)
+	}
+	if !strings.Contains(waitRes.Content, "halfway done") {
+		t.Fatalf("expected wait's still-running message to mention the reported progress, got %q", waitRes.Content)
+	}
+
+	close(release)
+
+	final, ok := reg.Wait(context.Background(), jobID, 2*time.Second)
+	if !ok {
+		t.Fatal("job vanished from registry")
+	}
+	if final.Status != jobs.StatusDone {
+		t.Fatalf("job status = %s (err=%q), want done", final.Status, final.Err)
+	}
+	if final.Progress != "halfway done" {
+		t.Fatalf("expected progress to persist after job finished, got %q", final.Progress)
+	}
+}
+
+// =============================================================================
+// U-1 / U-2: "resume" continues a finished async job's conversation as a
+// brand-new job, with visible access to the earlier context; a bogus/
+// unresumable job_id fails cleanly.
+// =============================================================================
+
+func TestWiring_U1_ResumeContinuesWithEarlierContext(t *testing.T) {
+	reg, _ := withTestWiring(t)
+
+	childFake := &connectortest.Fake{ProviderName: "u1-child"}
+	childFake.Script = func(turn int, req connector.Request) []stream.Event {
+		if turn == 0 {
+			return []stream.Event{
+				stream.TextDelta{Text: "the secret number is 42"},
+				stream.Finish{Reason: "stop"},
+			}
+		}
+		// This is the resumed call (turn 1 on the SAME Fake instance, since
+		// Resume reuses the original job's already-resolved model client).
+		// Prove the forked conversation carried the original exchange
+		// forward, not just the new task alone.
+		sawEarlier := false
+		for _, msg := range req.Messages {
+			for _, c := range msg.Content {
+				if strings.Contains(c.Text, "secret number is 42") {
+					sawEarlier = true
+				}
+			}
+		}
+		if !sawEarlier {
+			t.Errorf("resumed request did not carry the earlier exchange forward: %+v", req.Messages)
+		}
+		return []stream.Event{
+			stream.TextDelta{Text: "yes, it was 42"},
+			stream.Finish{Reason: "stop"},
+		}
+	}
+	providers.Register(&fixedClientProvider{name: "u1-child-prov", client: childFake})
+
+	ctx := connector.WithModelClient(context.Background(), connectortest.Text("n/a"))
+	spawnRes := tools.RunTool(ctx, "subagent", map[string]any{
+		"task": "tell me a secret number", "async": true, "model": "u1-child-prov/m",
+	})
+	if !spawnRes.Success {
+		t.Fatalf("spawn subagent: %s", spawnRes.Error)
+	}
+	m := jobIDPattern.FindStringSubmatch(spawnRes.Content)
+	if m == nil {
+		t.Fatalf("could not find job_id in spawn result: %q", spawnRes.Content)
+	}
+	origJobID := m[1]
+
+	orig, ok := reg.Wait(context.Background(), origJobID, 2*time.Second)
+	if !ok || orig.Status != jobs.StatusDone {
+		t.Fatalf("original job did not finish done: %+v", orig)
+	}
+
+	resumeRes := tools.RunTool(context.Background(), "resume", map[string]any{
+		"job_id": origJobID, "task": "what was the secret number?",
+	})
+	if !resumeRes.Success {
+		t.Fatalf("resume: %s", resumeRes.Error)
+	}
+	var out struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal([]byte(resumeRes.Content), &out); err != nil {
+		t.Fatalf("unmarshal resume result %q: %v", resumeRes.Content, err)
+	}
+	if out.JobID == "" || out.JobID == origJobID {
+		t.Fatalf("expected a new distinct job_id, got %q (original %q)", out.JobID, origJobID)
+	}
+
+	final, ok := reg.Wait(context.Background(), out.JobID, 2*time.Second)
+	if !ok {
+		t.Fatal("resumed job vanished from registry")
+	}
+	if final.Status != jobs.StatusDone {
+		t.Fatalf("resumed job status = %s (err=%q), want done", final.Status, final.Err)
+	}
+	if final.Result != "yes, it was 42" {
+		t.Fatalf("resumed job result = %q, want %q", final.Result, "yes, it was 42")
+	}
+
+	// Poll it via "wait" too, same as any other async job.
+	waitRes := tools.RunTool(context.Background(), "wait", map[string]any{"job_id": out.JobID, "seconds": 1})
+	if !waitRes.Success {
+		t.Fatalf("wait on resumed job: %s", waitRes.Error)
+	}
+	if !strings.Contains(waitRes.Content, "yes, it was 42") {
+		t.Fatalf("expected wait to surface the resumed job's result, got %q", waitRes.Content)
+	}
+}
+
+func TestWiring_U2_ResumeUnknownJobIDFailsCleanly(t *testing.T) {
+	withTestWiring(t)
+	before := runtime.NumGoroutine()
+
+	res := tools.RunTool(context.Background(), "resume", map[string]any{"job_id": "no-such-job", "task": "x"})
+	if res.Success {
+		t.Fatal("expected resume on an unknown job_id to fail")
+	}
+	if res.Error == "" {
+		t.Fatal("expected a non-empty, clean error message")
+	}
+
+	waitForGoroutineSettle(t, before)
 }
 
 // fixedClientProviderCheck is a compile-time reminder that fixedClientProvider

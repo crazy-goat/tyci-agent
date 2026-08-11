@@ -22,6 +22,15 @@ type JobStatus struct {
 	Success bool
 	Content string
 	Error   string
+	// Waiting is true when the job is currently blocked inside an "ask"
+	// tool call, waiting for someone to call "answer" on it. Only
+	// meaningful when Done is false.
+	Waiting bool
+	// Question is the pending question text while Waiting is true.
+	Question string
+	// Progress is the last status note the job reported via
+	// "report_progress", if any. Persists after the job finishes too.
+	Progress string
 }
 
 type JobWaiter interface {
@@ -82,10 +91,21 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			}
 			return ToolResult{Type: "result", Success: false, Error: status.Error}
 		}
+		if status.Waiting {
+			return ToolResult{
+				Type:    "result",
+				Success: true,
+				Content: fmt.Sprintf("job %s is waiting for an answer: %q. Call the \"answer\" tool with job_id=%q and your reply to unblock it.%s", jobID, status.Question, jobID, clampedNote),
+			}
+		}
+		progressNote := ""
+		if status.Progress != "" {
+			progressNote = fmt.Sprintf(" Latest progress: %s.", status.Progress)
+		}
 		return ToolResult{
 			Type:    "result",
 			Success: true,
-			Content: fmt.Sprintf("still running after %ds (job_id=%s). Call wait again to keep polling.%s", seconds, jobID, clampedNote),
+			Content: fmt.Sprintf("still running after %ds (job_id=%s). Call wait again to keep polling.%s%s", seconds, jobID, progressNote, clampedNote),
 		}
 	}
 

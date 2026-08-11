@@ -1217,7 +1217,7 @@ func (h testJobHandle) ID() string { return h.id }
 
 type testJobStarter struct{ reg *jobs.Registry }
 
-func (s testJobStarter) Start(ctx context.Context, description string, fn func(context.Context) (string, bool, error)) JobHandle {
+func (s testJobStarter) Start(ctx context.Context, description string, fn func(context.Context, string) (string, bool, error)) JobHandle {
 	return testJobHandle{s.reg.Start(ctx, description, fn).ID}
 }
 

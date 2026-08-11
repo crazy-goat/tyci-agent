@@ -15,11 +15,11 @@ import (
 	"github.com/decodo/tyci/stream"
 )
 
-// subagentTimeoutSec is a per-subagent wall-clock backstop. The iteration cap
+// SubagentTimeoutSec is a per-subagent wall-clock backstop. The iteration cap
 // bounds model turns, but a single wedged tool call (e.g. a hung shell command)
 // could otherwise block the parent's tool call forever; this ensures the parent
 // always gets an answer.
-const subagentTimeoutSec = 600
+const SubagentTimeoutSec = 600
 
 // ErrSubagentTruncated is returned (wrapped via fmt.Errorf %w) by a
 // SubAgentRunner when the child hit its MaxIterations cap. Tools package
@@ -44,8 +44,16 @@ type JobHandle interface{ ID() string }
 // (same import-cycle rationale as JobWaiter's doc comment). main() supplies
 // an adapter over the app's shared jobs.Registry via SetJobStarter.
 type JobStarter interface {
-	Start(ctx context.Context, description string, fn func(ctx context.Context) (result string, truncated bool, err error)) JobHandle
+	Start(ctx context.Context, description string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) JobHandle
 }
+
+// JobIDCtxKey is the context key under which an async job's own ID is
+// stashed (see runAsync) so tools invoked from inside that job — "ask" and
+// "report_progress" — can find out "which job am I running inside" without
+// this package importing "jobs" (same layering rule as JobWaiter/JobStarter
+// above). /btw side-conversations set the same key (see btw.go's startBtw)
+// so ask/report_progress work there too, for free.
+type JobIDCtxKey struct{}
 
 // jobStarter is nil until SetJobStarter is called; runAsync fails loudly
 // (not silently blocking or panicking) until then.
@@ -297,8 +305,8 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		return t.runAsync(ctx, tasks)
 	}
 
-	// Run tasks concurrently, each bounded by subagentTimeoutSec.
-	results := runTasks(ctx, t.Runner, tasks, subagentTimeoutSec)
+	// Run tasks concurrently, each bounded by SubagentTimeoutSec.
+	results := runTasks(ctx, t.Runner, tasks, SubagentTimeoutSec)
 
 	// Single task → return plain text (backward compatible)
 	if len(results) == 1 {
@@ -455,7 +463,7 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 // the tasks finish (runTasks' path). The job's context is detached from ctx
 // (context.WithoutCancel) because ctx dies with this tool call's turn, but
 // the job must keep running after Run returns; a fresh wall-clock backstop
-// (subagentTimeoutSec, same as the sync path) replaces the cancellation the
+// (SubagentTimeoutSec, same as the sync path) replaces the cancellation the
 // job no longer inherits. Poll results via the "wait" tool's job_id mode.
 func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolResult {
 	if jobStarter == nil {
@@ -469,9 +477,10 @@ func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolR
 	out := make([]spawned, 0, len(tasks))
 	for _, task := range tasks {
 		task := task
-		jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), subagentTimeoutSec*time.Second)
-		job := jobStarter.Start(jobCtx, task.Task, func(runCtx context.Context) (string, bool, error) {
+		jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SubagentTimeoutSec*time.Second)
+		job := jobStarter.Start(jobCtx, task.Task, func(runCtx context.Context, jobID string) (string, bool, error) {
 			defer cancel()
+			runCtx = context.WithValue(runCtx, JobIDCtxKey{}, jobID)
 			res := runSingleTask(runCtx, t.Runner, task, 0, false)
 			if !res.Success {
 				return res.Content, res.Truncated, errors.New(res.Error)
