@@ -655,7 +655,7 @@ func TestAskAnswerRoundTripWhenHandoffIsAvailable(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	if !reg.Answer(jobID, "blue") {
+	if !reg.Answer(jobID, "blue", true) {
 		t.Fatal("Answer failed against a job that should have been waiting")
 	}
 
