@@ -387,9 +387,11 @@ func TestRun_NextMessages_RespectsMaxIterations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
-	// We expect 4 messages: initial user, assistant, queued user, assistant.
-	if len(msgs) != 4 {
-		t.Errorf("expected 4 messages, got %d: %#v", len(msgs), msgs)
+	// We expect 5 messages: initial user, assistant, queued user, the
+	// harness-injected last-step warning (iter==MaxIterations-1==1, see
+	// buildLastStepWarning), and the final assistant reply.
+	if len(msgs) != 5 {
+		t.Errorf("expected 5 messages, got %d: %#v", len(msgs), msgs)
 	}
 	// The model client must have been called exactly twice (the cap).
 	if p.Calls() != 2 {
