@@ -96,9 +96,15 @@ func jobStatusIcon(status jobs.Status) (icon string, color lipgloss.TerminalColo
 }
 
 // jobDuration returns how long j has been (or was) running: FinishedAt-
-// StartedAt once finished, otherwise now-StartedAt for a live counter.
+// StartedAt once finished, otherwise now-StartedAt for a live counter. A
+// waiting-on-answer job has a zero FinishedAt too (it hasn't finished any
+// more than a running one has) — checking IsZero rather than switching on
+// StatusRunning specifically is what keeps this correct for every
+// unfinished status, not just the one that existed when this was written.
+// Before this covered StatusWaitingAnswer, FinishedAt.Sub(StartedAt) against
+// a zero FinishedAt produced a nonsense duration around -2562047h47m.
 func jobDuration(j jobs.Job) time.Duration {
-	if j.Status == jobs.StatusRunning {
+	if j.FinishedAt.IsZero() {
 		return time.Since(j.StartedAt).Round(time.Second)
 	}
 	return j.FinishedAt.Sub(j.StartedAt).Round(time.Second)
@@ -118,7 +124,10 @@ func shortJobID(id string) string {
 func formatJobLine(j jobs.Job, width int) string {
 	icon, color := jobStatusIcon(j.Status)
 	iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
-	prefix := fmt.Sprintf("%s #%s %-9s ", iconStyled, shortJobID(j.ID), j.Status)
+	// %-14s: "waiting_answer" (14 chars) is the longest Status value: a
+	// narrower field left this column ragged for exactly the status the
+	// jobs panel most needs to read cleanly at a glance.
+	prefix := fmt.Sprintf("%s #%s %-14s ", iconStyled, shortJobID(j.ID), j.Status)
 	suffix := fmt.Sprintf(" (%s)", jobDuration(j))
 	text := j.Description
 	if j.Status == jobs.StatusWaitingAnswer && j.Question != "" {

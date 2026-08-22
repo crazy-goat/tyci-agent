@@ -185,6 +185,19 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 	r.mu.Lock()
 	job.Status = StatusRunning
 	job.Question = ""
+	if !got {
+		// ctx.Done() won the select before an answer arrived. A racing
+		// Answer call reads job.answerCh under this same lock, so it can
+		// still land a value into the OLD channel in the narrow window
+		// between the select above and this Lock — Answer would report
+		// "delivered" for a reply nobody is listening for any more.
+		// Replacing the channel (instead of just draining it, which would
+		// need this same lock anyway) means that stale value, if one
+		// lands, is orphaned on a channel this job will never read from
+		// again — not left buffered for the NEXT Ask on this job to
+		// mistake for its own answer.
+		job.answerCh = nil
+	}
 	snapshot = job.Snapshot()
 	onEvent = r.onEvent
 	r.mu.Unlock()

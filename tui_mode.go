@@ -163,14 +163,6 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 					continue
 				}
 				startBtwQuestion(question)
-			case cmd == "/answer" || strings.HasPrefix(cmd, "/answer "):
-				arg := strings.TrimSpace(strings.TrimPrefix(cmd, "/answer"))
-				msg, ok := handleAnswerCommand(JobRegistry, arg)
-				if ok {
-					tuiDisp.ToolBlock("✅ " + msg)
-				} else {
-					tuiDisp.Error(fmt.Errorf("/answer: %s", msg))
-				}
 			}
 		}
 		return nil
@@ -302,19 +294,6 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 					continue
 				}
 				startBtwQuestion(question)
-				continue
-			case trimmed == "/answer" || strings.HasPrefix(trimmed, "/answer "):
-				// Doesn't touch the conversation or start a turn, unlike
-				// most cases here — just release this cycle's iterCtx.
-				iterCancel()
-				arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/answer"))
-				msg, ok := handleAnswerCommand(JobRegistry, arg)
-				if ok {
-					tuiDisp.ToolBlock("✅ " + msg)
-				} else {
-					tuiDisp.Error(fmt.Errorf("/answer: %s", msg))
-					tuiDisp.ResetStatus()
-				}
 				continue
 			case strings.HasPrefix(trimmed, "/resume "):
 				// /resume <path|index>: forward to resolveSessionRef so the

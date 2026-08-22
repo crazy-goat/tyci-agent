@@ -466,7 +466,13 @@ var tuiCmd = &cobra.Command{
 			}
 		}, agent.GetDefaultModel(), func(newDefault string) {
 			_ = agent.SetDefaultModel(newDefault)
-		}, toolsCount, skillsCount, mcpCount)
+		}, toolsCount, skillsCount, mcpCount, func(arg string) (string, bool) {
+			// Delivered synchronously from the TUI's key handler (see
+			// TuiModel.answerFunc), straight into the shared job registry —
+			// jobs.Registry is mutex-guarded, so this is safe off whatever
+			// goroutine happens to be running the agent turn.
+			return handleAnswerCommand(JobRegistry, arg)
+		})
 
 		// Show async subagent jobs (subagent(async: true), see tools/subagent.go)
 		// in the TUI's background-jobs panel/modal (Ctrl+B).

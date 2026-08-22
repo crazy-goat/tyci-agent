@@ -79,3 +79,44 @@ func TestFormatJobLine_ShowsQuestionWhenWaiting(t *testing.T) {
 		t.Fatalf("expected the panel line to show the pending question, got %q", line)
 	}
 }
+
+// TestJobDuration_WaitingAnswerIsNotNegative guards against the garbage
+// negative duration a waiting job produced before this fix: FinishedAt is
+// zero for any unfinished job, and jobDuration used to special-case only
+// StatusRunning, so StatusWaitingAnswer fell into
+// FinishedAt.Sub(StartedAt) against a zero FinishedAt — a duration around
+// -2562047h47m. Revert the IsZero check (restore the StatusRunning-only
+// special case) and this fails with exactly that negative value.
+func TestJobDuration_WaitingAnswerIsNotNegative(t *testing.T) {
+	j := jobs.Job{
+		Status:    jobs.StatusWaitingAnswer,
+		StartedAt: time.Now().Add(-3 * time.Second),
+	}
+	d := jobDuration(j)
+	if d < 0 {
+		t.Fatalf("expected a non-negative duration for a waiting job, got %s", d)
+	}
+}
+
+// TestFormatJobLine_WaitingAnswerAtNormalWidthKeepsQuestionReadable guards
+// against the negative-duration suffix (27 chars of "(-2562047h47m...)")
+// eating the width budget before the question is truncated, which left
+// nothing useful on screen at a normal 80-column terminal. This is a
+// budget check, not an exact-content check: it fails if the rendered line
+// contains the garbage negative-duration text, which is what happens when
+// jobDuration is reverted to its pre-fix form.
+func TestFormatJobLine_WaitingAnswerAtNormalWidthKeepsQuestionReadable(t *testing.T) {
+	j := jobs.Job{
+		ID:        "job-1-42",
+		Status:    jobs.StatusWaitingAnswer,
+		Question:  "should I also touch the tests, or leave them alone for now?",
+		StartedAt: time.Now(),
+	}
+	line := formatJobLine(j, 80)
+	if strings.Contains(line, "-2562047h") {
+		t.Fatalf("expected no garbage negative duration in the rendered line, got %q", line)
+	}
+	if !strings.Contains(line, "should I also touch") {
+		t.Fatalf("expected the start of the question to survive truncation at width 80, got %q", line)
+	}
+}

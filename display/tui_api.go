@@ -48,7 +48,7 @@ type TUI struct {
 	flushDone      chan struct{}
 }
 
-func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int) *TUI {
+func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int, onAnswer func(arg string) (msg string, ok bool)) *TUI {
 	results := make(chan string, 8)
 	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
@@ -59,6 +59,9 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	m.resumeCh = resumeCh
 	commands := make(chan string, 8)
 	m.commands = commands
+	// See TuiModel.answerFunc's doc comment (tui.go): delivered synchronously
+	// from handleLocalSlashCommand, never through submit() or m.commands.
+	m.answerFunc = onAnswer
 
 	// Capture working directory and home for the top status bar.
 	if dir, err := os.Getwd(); err == nil {
