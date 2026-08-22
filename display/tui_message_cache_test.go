@@ -260,8 +260,11 @@ func TestMessageRegionCache_StatusBarStillUpdates(t *testing.T) {
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 	m.renderFrame() // populate cache
 
-	// Simulate time passing (status tick).
+	// Simulate time passing (status tick). While a tool is running the status
+	// line times the TOOL, not the turn (see runningToolsStatus), so the
+	// block's start has to move too.
 	m.requestStartTime = time.Now().Add(-3500 * time.Millisecond) // 3.5s ago
+	m.blocks[0].startTime = time.Now().Add(-3500 * time.Millisecond)
 
 	frame2 := m.renderFrame()
 	plain := stripANSI(frame2)

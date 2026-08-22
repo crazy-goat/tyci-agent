@@ -123,7 +123,7 @@ func (m TuiModel) renderJobsModalView() string {
 		visibleEnd = totalLines
 	}
 
-	m.modalRenderBuffer = newRenderBuffer(contentHeight)
+	*m.modalRenderBuffer = newRenderBuffer(contentHeight)
 	contentLines := make([]string, 0, contentHeight)
 	for i := visibleStart; i < visibleEnd; i++ {
 		y := layout.contentTop + len(contentLines)

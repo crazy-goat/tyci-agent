@@ -15,8 +15,12 @@ type TUI struct {
 	prog         *tea.Program
 	results      chan string
 	modelChanges chan string
-	cancel       chan struct{} // sent on when ESC pressed during agent run
-	done         chan struct{}
+	// pendingToolDuration carries the figure from ToolCallDuration to the
+	// ToolCallEnd that immediately follows it. Only ever touched from the
+	// dispatcher's goroutine.
+	pendingToolDuration time.Duration
+	cancel              chan struct{} // sent on when ESC pressed during agent run
+	done                chan struct{}
 
 	// Pending-message queue: filled by the bubbletea event loop while the
 	// agent is busy (see issue #88). Drained by the agent loop via
@@ -24,6 +28,11 @@ type TUI struct {
 	// realistic follow-up count; if exceeded, additional submits drop with
 	// a status message rather than blocking the event loop.
 	queue chan string
+
+	// commands carries main-loop slash commands typed while a turn is in
+	// flight. Serviced at the same safe point as the pending-message queue —
+	// see Commands.
+	commands chan string
 
 	// Resume picker reply channel: written to by the bubbletea event loop
 	// (via closeResumePicker) with the chosen session file path on Enter,
@@ -48,6 +57,8 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel, favoriteModels, onFavoriteToggled, defaultModel, onDefaultChanged, toolCount, skillCount, mcpCount)
 	m.queue = queue
 	m.resumeCh = resumeCh
+	commands := make(chan string, 8)
+	m.commands = commands
 
 	// Capture working directory and home for the top status bar.
 	if dir, err := os.Getwd(); err == nil {
@@ -81,6 +92,7 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 		cancel:       cancel,
 		queue:        queue,
 		resumeCh:     resumeCh,
+		commands:     commands,
 		done:         make(chan struct{}),
 		flushWake:    make(chan struct{}, 1),
 		flushDone:    make(chan struct{}),

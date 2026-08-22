@@ -73,7 +73,7 @@ func (m TuiModel) renderSubagentModalView() string {
 	// Render visible lines
 	lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	contentLines := make([]string, 0, contentHeight)
-	m.modalRenderBuffer = newRenderBuffer(contentHeight)
+	*m.modalRenderBuffer = newRenderBuffer(contentHeight)
 
 	for i := visibleStart; i < visibleEnd; i++ {
 		line := allLines[i]

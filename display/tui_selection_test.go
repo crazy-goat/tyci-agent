@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/decodo/tyci/jobs"
 )
 
 func withClipboardStub(t *testing.T) *string {
@@ -30,7 +31,7 @@ func newSelectionTestModel() TuiModel {
 func TestTuiSelection_CopyUsesRenderBuffer(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "zero", SourceKind: "text", Y: 0},
 		{PlainText: "one", SourceKind: "text", Y: 1},
 		{PlainText: "two", SourceKind: "text", Y: 2},
@@ -203,6 +204,56 @@ func TestTuiSelection_ScreenYMapping(t *testing.T) {
 	// No crash means success.
 }
 
+// TestBlockAtVisibleLine_AfterView_MatchesWhatWasDrawn is the regression
+// test for the bug reported by the user: clicking a tool block opened a
+// DIFFERENT block than the one visually under the cursor. Root cause was
+// that renderBuffer/modalRenderBuffer were plain (non-pointer) fields —
+// buildMessageRegion (a pointer-receiver method) only ever mutated a
+// throwaway local copy of the model that View()'s value receiver had made,
+// so blockAtVisibleLine's "fast path" (m.renderBuffer.Lines) was always
+// empty in production and silently fell back to an independently
+// recomputed mapping that disagreed with the real draw whenever a
+// background-jobs panel was showing (the fallback didn't subtract
+// jobsPanelHeight/queuePanelHeight the way the real draw does). This test
+// calls View() on the SAME model value the way bubbletea's Update loop
+// does — through a value-receiver call, no pointer trick — then asserts
+// blockAtVisibleLine resolves every drawn tool-header row to the block
+// that row's own text names, with a running background job panel visible
+// so the previously-diverging height math is actually exercised.
+func TestBlockAtVisibleLine_AfterView_MatchesWhatWasDrawn(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.ready = true
+	m.width = 80
+	m.height = 40
+	m.blocks = []block{
+		{kind: "tool", toolName: "bash", toolState: "done", content: `{"command":"echo one"}`, output: "one"},
+		{kind: "tool", toolName: "bash", toolState: "done", content: `{"command":"echo two"}`, output: "two"},
+	}
+	m.backgroundJobs = map[string]jobs.Job{
+		"job-1": {ID: "job-1", Description: "some background task", Status: jobs.StatusRunning},
+	}
+	m.invalidateAllBlockLineCounts()
+
+	if got := m.jobsPanelHeight(); got == 0 {
+		t.Fatal("expected a visible jobs panel (one running job) so the panel-height math is actually exercised")
+	}
+
+	_ = m.View() // real draw path: populates m.renderBuffer through the shared pointer
+
+	if len(m.renderBuffer.Lines) == 0 {
+		t.Fatal("renderBuffer.Lines is empty after View() — the fast path never persisted, so every click falls back to a mapping that can disagree with what was drawn")
+	}
+
+	for _, line := range m.renderBuffer.Lines {
+		if line.BlockIndex < 0 {
+			continue
+		}
+		if got := m.blockAtVisibleLine(line.Y); got != line.BlockIndex {
+			t.Errorf("blockAtVisibleLine(%d) = %d, want %d (row's own recorded block, drawn text %q)", line.Y, got, line.BlockIndex, line.plain())
+		}
+	}
+}
+
 // TestBlockAtVisibleLine_SpacerReturnsMinusOne verifies that the fallback
 // path in blockAtVisibleLine correctly identifies spacer lines (the blank
 // line between a text block and a tool block) as belonging to no block.
@@ -316,7 +367,7 @@ func TestBlockAtVisibleLine_ConsecutiveToolsNoSpacer(t *testing.T) {
 func TestTuiSelection_TrailingSpacesTrimmed(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "hello     ", SourceKind: "text", Y: 0},
 		{PlainText: "world\t\t", SourceKind: "text", Y: 1},
 		{PlainText: "foo  bar", SourceKind: "text", Y: 2},
@@ -338,7 +389,7 @@ func TestTuiSelection_TrailingSpacesTrimmed(t *testing.T) {
 func TestTuiSelection_TrailingWhitespaceInPartialSelection(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "  leading", SourceKind: "text", Y: 0},
 		{PlainText: "mid  ", SourceKind: "text", Y: 1},
 		{PlainText: "trailing   ", SourceKind: "text", Y: 2},
@@ -362,7 +413,7 @@ func TestTuiSelection_TrailingWhitespaceInPartialSelection(t *testing.T) {
 func TestTuiSelection_NoTrailingWhitespace(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "clean", SourceKind: "text", Y: 0},
 		{PlainText: "lines", SourceKind: "text", Y: 1},
 		{PlainText: "here", SourceKind: "text", Y: 2},
@@ -383,7 +434,7 @@ func TestTuiSelection_NoTrailingWhitespace(t *testing.T) {
 func TestTuiSelection_StripsTextGutter(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "  Hello world", SourceKind: "text", Y: 0},
 		{PlainText: "  Line two", SourceKind: "text", Y: 1},
 	}}
@@ -399,7 +450,7 @@ func TestTuiSelection_StripsTextGutter(t *testing.T) {
 func TestTuiSelection_StripsTextGutterPartialSelection(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "  Hello world", SourceKind: "text", Y: 0},
 	}}
 	// Select from column 2 to column 7  →  "Hello " (after strip: col 0→5 = "Hello")
@@ -415,7 +466,7 @@ func TestTuiSelection_StripsTextGutterPartialSelection(t *testing.T) {
 func TestTuiSelection_StripsThinkingGutter(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "│ thinking content", SourceKind: "thinking", Y: 0},
 		{PlainText: "│ more thinking", SourceKind: "thinking", Y: 1},
 	}}
@@ -431,7 +482,7 @@ func TestTuiSelection_StripsThinkingGutter(t *testing.T) {
 func TestTuiSelection_StripsToolGutter(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "┃ tool bash(Test) 153ms", SourceKind: "tool", Y: 0},
 	}}
 	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
@@ -446,7 +497,7 @@ func TestTuiSelection_StripsToolGutter(t *testing.T) {
 func TestTuiSelection_StripsErrorGutter(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "│ error message", SourceKind: "error", Y: 0},
 	}}
 	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
@@ -461,7 +512,7 @@ func TestTuiSelection_StripsErrorGutter(t *testing.T) {
 func TestTuiSelection_StripsBlockGutter(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "│ info block", SourceKind: "block", Y: 0},
 	}}
 	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
@@ -476,7 +527,7 @@ func TestTuiSelection_StripsBlockGutter(t *testing.T) {
 func TestTuiSelection_DoesNotStripUserLine(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "You: hello", SourceKind: "user", Y: 0},
 	}}
 	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
@@ -491,7 +542,7 @@ func TestTuiSelection_DoesNotStripUserLine(t *testing.T) {
 func TestTuiSelection_TextLineWithoutGutter(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
-	m.renderBuffer = RenderBuffer{Lines: []RenderLine{
+	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
 		{PlainText: "No prefix here", SourceKind: "text", Y: 0},
 	}}
 	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}

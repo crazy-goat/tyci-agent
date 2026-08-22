@@ -12,6 +12,16 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	case "thinking", "text", "tool-start", "tool-end", "block", "error":
 		periodicFreeOSMemory(&m.blockEventCount)
 	}
+	// One choke point for every kind of untrusted text, because there is no
+	// kind that is trusted: model output, tool output and streamed progress
+	// are all arbitrary bytes drawn into a terminal that reads some of those
+	// bytes as commands. See tui_sanitize.go for what a raw ESC or CR does to
+	// the frame. Done here rather than at render time, when the TUI's own
+	// colour codes share the same strings.
+	switch msg.kind {
+	case "thinking", "text", "tool-delta", "tool-end", "tool-progress", "block", "error":
+		msg.content = sanitizeUntrusted(msg.content)
+	}
 	switch msg.kind {
 	case "request-start":
 		// Reset the elapsed-time counter at the start of each API turn so the
@@ -96,7 +106,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 			// For subagent: pop queue entry without appending result to block content
 			m.toolQueue = m.toolQueue[1:]
 			m.blocks[frontIdx].toolState = "done"
-			m.blocks[frontIdx].duration = time.Since(m.blocks[frontIdx].startTime)
+			m.blocks[frontIdx].duration = toolDuration(msg.duration, m.blocks[frontIdx].startTime)
 			m.blocks[frontIdx].cachedLines = nil
 			delete(m.toolDisplayCache, frontIdx)
 			m.invalidateTotalLines()
@@ -106,7 +116,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 				m.subagentToolIdx--
 			}
 		} else {
-			m.finishToolAt(msg.content)
+			m.finishToolAt(msg.content, msg.duration)
 			// If subagent is deeper in queue, decrement its index
 			if m.subagentToolIdx > 0 {
 				m.subagentToolIdx--

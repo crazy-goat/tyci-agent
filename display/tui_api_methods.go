@@ -41,6 +41,29 @@ func (t *TUI) Results() <-chan string {
 	return t.results
 }
 
+// Commands returns the channel that receives main-loop slash commands typed
+// while a turn is in flight (the main loop is blocked in the agent run then,
+// so it cannot read Results). The caller services them at a safe point — in
+// practice from the same NextMessages hook that drains queued user lines, so
+// the conversation is not being written to while a command reads it.
+func (t *TUI) Commands() <-chan string {
+	return t.commands
+}
+
+// DrainCommands takes every command queued so far, oldest first, and leaves
+// the channel empty. Returns nil when there is nothing to do.
+func (t *TUI) DrainCommands() []string {
+	var out []string
+	for {
+		select {
+		case c := <-t.commands:
+			out = append(out, c)
+		default:
+			return out
+		}
+	}
+}
+
 // DoneCh returns a channel that is closed when the TUI program exits.
 func (t *TUI) DoneCh() <-chan struct{} {
 	return t.done
@@ -88,6 +111,17 @@ func (t *TUI) NextMessages() []string {
 			return out
 		}
 	}
+}
+
+// HasPendingMessages reports whether a line is waiting to be read.
+//
+// Wired to tools.SetUserPending so a tool that can move its work to the
+// background does so the moment someone types, instead of making them wait out
+// the rest of a 30- or 60-second window. Reading the channel's length is
+// enough: nothing here needs to know what was typed, only that somebody is
+// waiting.
+func (t *TUI) HasPendingMessages() bool {
+	return len(t.queue) > 0
 }
 
 // ClearQueue drains the pending-message queue synchronously on the calling
@@ -168,9 +202,23 @@ func (t *TUI) ToolCallDelta(delta string) {
 	t.post(tuiMsgBlock{kind: "tool-delta", content: delta})
 }
 
+// ToolCallDuration reports how long the tool whose ToolCallEnd comes next
+// actually took. It satisfies the agent's optional toolDurationSink.
+//
+// The display cannot measure this itself: every ToolCallStart in a batch is
+// emitted before the batch runs and every ToolCallEnd after it finishes, so
+// timing from start to end shows the whole batch on every row. Stored on the
+// sender side and attached to the next tool-end message, which is safe because
+// both calls come from the dispatcher's own goroutine, in that order.
+func (t *TUI) ToolCallDuration(d time.Duration) {
+	t.pendingToolDuration = d
+}
+
 func (t *TUI) ToolCallEnd(name, result string) {
 	t.flushNow()
-	t.post(tuiMsgBlock{kind: "tool-end", content: result})
+	d := t.pendingToolDuration
+	t.pendingToolDuration = 0
+	t.post(tuiMsgBlock{kind: "tool-end", content: result, duration: d})
 }
 
 func (t *TUI) ToolBlock(msg string) {

@@ -25,6 +25,11 @@ type tuiMsgBlock struct {
 	// a "You: …" block in the transcript at this point — when the model
 	// actually sees them, not when the user typed them.
 	queuedLines []string
+	// duration: for "tool-end", how long that individual tool call took, as
+	// measured by the dispatcher. Zero means "not reported" — the block then
+	// falls back to timing from its own start, which for a batch of parallel
+	// calls is the whole batch's wall-clock.
+	duration time.Duration
 }
 
 type tuiInputSubmitted string
@@ -299,9 +304,18 @@ type TuiModel struct {
 	cwd  string // absolute path of working directory
 	home string // user home directory (for ~ shortening)
 
-	// Metadata for the currently visible transcript lines. Built by View().
-	renderBuffer      RenderBuffer
-	modalRenderBuffer RenderBuffer
+	// Metadata for the currently visible transcript lines. Built by
+	// buildMessageRegion/the modal render functions, which run through a
+	// pointer receiver on a value copy renderFrame()/View() made (View
+	// itself is a value receiver, per bubbletea's Model interface) — so
+	// like messageRegion/scrollback above, this must be a pointer or every
+	// write is discarded when that copy goes out of scope, leaving
+	// blockAtVisibleLine's fast path permanently empty and click handling
+	// silently falling back to a second, independently recomputed mapping
+	// that can disagree with what was actually drawn (wrong tool block
+	// opens on click).
+	renderBuffer      *RenderBuffer
+	modalRenderBuffer *RenderBuffer
 
 	// Custom event-driven renderer. Always set by NewTUI in production; nil only
 	// in tests that build a model without wiring a terminal. When non-nil, View()
@@ -329,11 +343,30 @@ type TuiModel struct {
 	historySearchResults []string // filtered matching history entries
 	stashedSearchInput   string   // textarea value preserved for Esc cancel
 
+	// "@" file-path completion (see tui_filecomplete.go). The index is built
+	// off the UI thread on first use and refreshed on a TTL, so a file the
+	// agent just created becomes completable without a restart.
+	fileCompleteActive bool
+	fileCompleteItems  []string
+	fileCompleteCursor int
+	fileCompleteAt     int // byte offset of the "@" being completed
+	fileCompleteEnd    int // byte offset just past the query (the cursor)
+	fileIndex          []string
+	fileIndexBuiltAt   time.Time
+	fileIndexPending   bool
+	fileIndexTruncated bool
+
 	// Pending-message queue snapshot (issue #88). Updated synchronously by
 	// the bubbletea event loop on submit (when busy) and on ESC/reset. The
 	// agent goroutine drains the actual channel (TUI.queue) via the
 	// NextMessages callback; this slice is purely for rendering.
 	queueItems []string
+
+	// commands carries the slash commands the main loop owns (see
+	// handleLocalSlashCommand) when it is not reading, i.e. while a turn is in
+	// flight. Without it those lines were queued as prompts and the model was
+	// asked to interpret a command meant for the interface.
+	commands chan string
 
 	// queue is the shared pending-message channel set by NewTUI after this
 	// model is constructed. bubbletea copies the model on every Update, but
@@ -441,6 +474,8 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		cachedTotalLines:      -1,
 		scrollback:            &scrollbackCache{},
 		messageRegion:         &messageRegionCache{},
+		renderBuffer:          &RenderBuffer{},
+		modalRenderBuffer:     &RenderBuffer{},
 		backgroundJobs:        make(map[string]jobs.Job),
 		toolCount:             toolCount,
 		skillCount:            skillCount,

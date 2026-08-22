@@ -140,7 +140,7 @@ func (m TuiModel) renderTodoModalView() string {
 	}
 
 	// Render visible lines
-	m.modalRenderBuffer = newRenderBuffer(contentHeight)
+	*m.modalRenderBuffer = newRenderBuffer(contentHeight)
 	contentLines := make([]string, 0, contentHeight)
 	for i := visibleStart; i < visibleEnd; i++ {
 		y := layout.contentTop + len(contentLines)

@@ -60,7 +60,12 @@ func (sw *streamWrap) render(content string, useBar bool, width int) (string, []
 
 func (m TuiModel) renderBlock(idx int, b block) string {
 	// ── Helper to render markdown with caching ──
-	tryRenderMarkdown := func(content string, useBar bool) string {
+	// dim=true renders the block as grey raw text instead of markdown.
+	// Deliberately not "markdown, then tint": glamour emits its own colour
+	// codes and each of its resets would drop the text back to the default
+	// foreground mid-line, so the block would come out streaked rather than
+	// uniformly grey. Reasoning text gains little from markdown anyway.
+	tryRenderMarkdown := func(content string, useBar, dim bool) string {
 		if content == "" {
 			return ""
 		}
@@ -89,8 +94,16 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 			return wrapped
 		}
 
-		// Not streaming → do glamour render (final rendering)
-		rendered := renderMarkdownWithCache(content, useBar, m.width)
+		// Not streaming → final rendering. The block has settled, so a run
+		// of identical lines can be collapsed now; doing it while streaming
+		// would rewrite the text the incremental wrapper has already wrapped.
+		content = collapseRepeatedLines(content)
+		var rendered string
+		if dim {
+			rendered = wrapRawText(content, useBar, m.width)
+		} else {
+			rendered = renderMarkdownWithCache(content, useBar, m.width)
+		}
 		// Update cache
 		delete(m.dirtyBlocks, idx)
 		delete(m.streamWraps, idx)
@@ -110,9 +123,9 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 
 	switch b.kind {
 	case "thinking":
-		return tryRenderMarkdown(b.content, true)
+		return tryRenderMarkdown(b.content, true, true)
 	case "text":
-		return tryRenderMarkdown(b.content, false)
+		return tryRenderMarkdown(b.content, false, false)
 	case "user":
 		return wrapRawText(b.content, false, m.width)
 	case "tool":
@@ -203,3 +216,17 @@ func renderErrorOrBlock(b block, width int) string {
 	}
 	return strings.TrimRight(out.String(), "\n")
 }
+
+// thinkingStyle greys out a model's reasoning so it is legible but visibly
+// secondary to the answer. Adaptive because the TUI runs on light and dark
+// terminals and a single grey is unreadable on one of them.
+var thinkingStyle = lipgloss.NewStyle().Foreground(thinkingFg).Italic(true)
+
+// thinkingBarStyle colours the "│ " gutter that marks a thinking block. Same
+// grey as the text: a coloured bar next to grey text reads as an accent, and
+// the whole block is meant to recede.
+var thinkingBarStyle = lipgloss.NewStyle().Foreground(thinkingFg)
+
+// thinkingFg is adaptive because the TUI runs on light and dark terminals and
+// a single grey is unreadable on one of them.
+var thinkingFg = lipgloss.AdaptiveColor{Light: "245", Dark: "243"}

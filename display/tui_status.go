@@ -39,7 +39,12 @@ func (m TuiModel) buildStatus() string {
 		case "responding":
 			leftParts = append(leftParts, "⟳ responding..."+elapsedSuffix)
 		case "tool":
-			leftParts = append(leftParts, "⟳ tool..."+elapsedSuffix)
+			// Named, and timed from the tool's own start. "tool... 13.7s" was
+			// the one status that answered neither of the questions a person
+			// actually has while watching it: which tool, and how long has
+			// THAT been going. The 13.7s was the whole turn's elapsed, so a
+			// slow tool one second in looked identical to a wedged one.
+			leftParts = append(leftParts, m.runningToolsStatus(elapsedSuffix))
 		default:
 			leftParts = append(leftParts, "⟳ working..."+elapsedSuffix)
 		}
@@ -259,3 +264,51 @@ func (m TuiModel) buildTopBar() string {
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────
+
+// runningToolsStatus describes the tools currently in flight: their names, and
+// how long the oldest of them has been running.
+//
+// fallback is used when the queue is empty — which happens for a moment
+// between the status flipping to "tool" and the first tool-start block
+// arriving, and would otherwise show a bare "⟳".
+func (m TuiModel) runningToolsStatus(fallback string) string {
+	var names []string
+	oldest := time.Time{}
+	for _, idx := range m.toolQueue {
+		if idx < 0 || idx >= len(m.blocks) {
+			continue
+		}
+		b := m.blocks[idx]
+		if b.kind != "tool" || b.toolState != "running" {
+			continue
+		}
+		names = append(names, b.toolName)
+		if oldest.IsZero() || b.startTime.Before(oldest) {
+			oldest = b.startTime
+		}
+	}
+	if len(names) == 0 {
+		return "⟳ tool..." + fallback
+	}
+
+	age := ""
+	if !oldest.IsZero() {
+		if d := time.Since(oldest); d >= 0 {
+			age = fmt.Sprintf(" %.1fs", d.Seconds())
+		}
+	}
+	if age == "" {
+		age = fallback
+	}
+
+	// Several at once is the parallel-batch case. Naming them all matters more
+	// than brevity here: "3 tools" tells you nothing about which one is slow.
+	if len(names) == 1 {
+		return "⟳ " + names[0] + age
+	}
+	const maxNamed = 4
+	if len(names) > maxNamed {
+		return fmt.Sprintf("⟳ %s +%d more%s", strings.Join(names[:maxNamed], ", "), len(names)-maxNamed, age)
+	}
+	return "⟳ " + strings.Join(names, ", ") + age
+}

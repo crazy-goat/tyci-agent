@@ -28,12 +28,7 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Button == tea.MouseButtonWheelDown {
-		m = m.clearSelection()
-		m.scrollLine -= 3
-		if m.scrollLine < 0 {
-			m.scrollLine = 0
-			m.atBottom = true
-		}
+		m.scrollDown(3)
 		return m, nil
 	}
 
@@ -93,7 +88,7 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *TuiModel) openToolModalAt(y int) {
-	if y < 0 || y >= m.visibleLines() {
+	if y < 0 || y >= m.messageRegionHeight() {
 		return
 	}
 	idx := m.blockAtVisibleLine(y)
@@ -103,13 +98,12 @@ func (m *TuiModel) openToolModalAt(y int) {
 	m.savedScrollLine = m.scrollLine
 	m.savedAtBottom = m.atBottom
 
-	if m.blocks[idx].toolName == "subagent" {
-		if !m.subagentModalActive {
-			m.openToolBlockModal(idx)
-		}
-		return
-	}
-	if m.blocks[idx].toolState == "done" {
+	// Any tool block, in any state. A running tool used to be ignored unless
+	// it was a subagent, so clicking a long bash command — the case where you
+	// most want to see what is happening — did nothing at all. The modal reads
+	// the block's live output, which is exactly what tool-progress is filling
+	// in while the command runs.
+	if !m.subagentModalActive {
 		m.openToolBlockModal(idx)
 	}
 }

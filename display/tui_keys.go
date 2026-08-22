@@ -7,6 +7,13 @@ import (
 )
 
 func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The "@" file-path popup claims Up/Down/Tab/Enter/Esc while it is open,
+	// and it has to be asked first: Tab below switches model, and the global
+	// handler binds the arrows to history. See tui_filecomplete.go.
+	if m.handleFileCompleteKey(msg) {
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyTab:
 		m.switchModel(1)
@@ -32,6 +39,7 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.clearSelection(), nil
 		}
 		m.input.Reset()
+		m.closeFileComplete()
 		return m, nil
 	case tea.KeyEnter:
 		if msg.Alt {
@@ -52,12 +60,8 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.capInputHeight()
 			return m, nil
 		}
-		line := strings.TrimSpace(m.input.Value())
-		switch strings.ToLower(line) {
-		case "/model":
-			m.input.Reset()
-			m.openModelPicker()
-			return m, nil
+		if handled, next := m.handleLocalSlashCommand(); handled {
+			return next, nil
 		}
 		return m.submit(), statusTickCmd()
 	case tea.KeyCtrlN, tea.KeyCtrlJ:
@@ -77,7 +81,64 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.capInputHeight()
+	// Opening, filtering and closing the "@" popup all follow from the text
+	// that is now in the input, rather than from tracking which key did what.
+	if scan := m.refreshFileComplete(); scan != nil {
+		return m, tea.Batch(cmd, scan)
+	}
 	return m, cmd
+}
+
+// handleLocalSlashCommand deals with the commands the TUI owns itself, before
+// the line is submitted or queued. Returns handled=false for anything else.
+//
+// Shared by both Enter paths on purpose. The busy handler used to fall
+// straight through to submit(), which meant a "/model" typed while the agent
+// was thinking was queued and later delivered to the model as a prompt — the
+// picker never opened, and the model was asked to interpret a command meant
+// for the interface. Its own comment claimed it mirrored the idle handler; it
+// did not, and one shared function is the only way to keep that claim true.
+//
+// Only commands with no effect on the conversation are handled here outright.
+// The rest (/new, /resume, /btw, /exit) belong to the main loop, which owns the
+// session and the history — but while a turn is in flight that loop is blocked
+// inside the agent run and is not reading, so they cannot simply fall through
+// to submit() either: that queued them as prompts and the model was handed a
+// command meant for the interface. So each one is either routed to the command
+// channel (safe to start mid-turn) or refused with the reason.
+func (m TuiModel) handleLocalSlashCommand() (bool, tea.Model) {
+	line := strings.TrimSpace(m.input.Value())
+	switch strings.ToLower(line) {
+	case "/model":
+		m.input.Reset()
+		m.input.SetHeight(1)
+		m.closeFileComplete()
+		m.openModelPicker()
+		return true, m
+	}
+	if m.reading || !strings.HasPrefix(line, "/") {
+		return false, m
+	}
+	lower := strings.ToLower(line)
+	switch {
+	case lower == "/btw" || strings.HasPrefix(lower, "/btw "):
+		// A side conversation is a fork, so it neither touches the running
+		// turn nor waits for it to end.
+		m.input.Reset()
+		m.input.SetHeight(1)
+		m.closeFileComplete()
+		if m.commands != nil {
+			enqueueOrStatus(m.commands, line, &m.statusMessage)
+		}
+		return true, m
+	case lower == "/new", lower == "/exit", lower == "/resume", strings.HasPrefix(lower, "/resume "):
+		// These replace or end the conversation the turn is writing to. The
+		// typed line is deliberately left in the input: press Esc to stop the
+		// turn, then Enter.
+		m.statusMessage = lower + " has to wait — it changes the conversation this turn is writing to. Esc stops the turn, then press Enter."
+		return true, m
+	}
+	return false, m
 }
 
 func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
@@ -85,16 +146,11 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	case tea.KeyPgUp:
 		m = m.clearSelection()
 		m.atBottom = false
-		m.scrollLine += max(1, m.visibleLines())
+		m.scrollLine += max(1, m.messageRegionHeight())
 		m.clampScroll()
 		return true, m, nil
 	case tea.KeyPgDown:
-		m = m.clearSelection()
-		m.scrollLine -= max(1, m.visibleLines())
-		if m.scrollLine < 0 {
-			m.scrollLine = 0
-			m.atBottom = true
-		}
+		m.scrollDown(max(1, m.messageRegionHeight()))
 		return true, m, nil
 	case tea.KeyCtrlUp:
 		m = m.clearSelection()
@@ -103,12 +159,7 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		m.clampScroll()
 		return true, m, nil
 	case tea.KeyCtrlDown:
-		m = m.clearSelection()
-		m.scrollLine--
-		if m.scrollLine < 0 {
-			m.scrollLine = 0
-			m.atBottom = true
-		}
+		m.scrollDown(1)
 		return true, m, nil
 	case tea.KeyUp:
 		return true, m.historyOlder(), nil
@@ -178,6 +229,9 @@ func (m TuiModel) handleKeyWhileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.capInputHeight()
 			return m, nil
 		}
+		if handled, next := m.handleLocalSlashCommand(); handled {
+			return next, nil
+		}
 		return m.submit(), nil
 	case tea.KeyCtrlN, tea.KeyCtrlJ:
 		// Ctrl+N / Ctrl+J: insert a newline in the textarea.
@@ -195,6 +249,11 @@ func (m TuiModel) handleKeyWhileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.capInputHeight()
+	// Opening, filtering and closing the "@" popup all follow from the text
+	// that is now in the input, rather than from tracking which key did what.
+	if scan := m.refreshFileComplete(); scan != nil {
+		return m, tea.Batch(cmd, scan)
+	}
 	return m, cmd
 }
 

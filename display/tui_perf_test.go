@@ -232,12 +232,12 @@ func TestStreamingPinsToExactBottom(t *testing.T) {
 		t.Fatalf("setup: status = %q, want responding", m.status)
 	}
 
-	msgHeight := m.visibleLines()
+	msgHeight := m.messageRegionHeight()
 	// The painter scrolls in hardware, so the viewport pins exactly to the
 	// bottom on every append — the newest line is always the last visible row.
 	for i := 0; i < 20; i++ {
 		m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "streamed line\n"})
-		lines := m.buildFlatRenderLines()
+		lines, _ := m.buildFlatRenderLines(msgHeight)
 		if len(lines) == 0 {
 			t.Fatal("no visible lines")
 		}

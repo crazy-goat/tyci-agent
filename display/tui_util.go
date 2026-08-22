@@ -47,8 +47,8 @@ func newRawWrapper(useBar bool, width int) rawWrapper {
 	}
 	w := rawWrapper{useBar: useBar, maxW: maxW}
 	if useBar {
-		w.bar = lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
-		w.style = lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
+		w.bar = thinkingBarStyle.Render("│")
+		w.style = thinkingStyle
 	}
 	return w
 }

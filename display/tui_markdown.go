@@ -5,13 +5,36 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/glamour/ansi"
+	"github.com/charmbracelet/glamour/styles"
 )
 
 var (
 	muRendererCache sync.Mutex
 	rendererCache   = make(map[int]*glamour.TermRenderer)
 )
+
+// inlineCodeFg is the colour of `inline code` spans.
+//
+// glamour's built-in dark style uses 203, a bright red. In a terminal that is
+// the colour of something being wrong: errors, failed tests, deleted lines.
+// Inline code is the most common span in an agent's answers — every file name
+// and function name is one — so a whole reply reads as a page of warnings.
+// 180 is a warm sand that stays legible on the 236 background glamour puts
+// behind code, and does not collide with the blue of headings, the grey of
+// thinking, or the red that genuinely does mean failure.
+const inlineCodeFg = "180"
+
+// markdownStyle is glamour's dark style with inline code recoloured. Built
+// fresh on each call rather than kept as a package var: StyleConfig is a
+// struct of pointers, and handing out a shared one invites a later caller to
+// mutate the copy every renderer shares.
+func markdownStyle() ansi.StyleConfig {
+	style := styles.DarkStyleConfig
+	fg := inlineCodeFg
+	style.Code.Color = &fg
+	return style
+}
 
 // getRenderer returns a cached glamour TermRenderer for the given wrap width,
 // creating one if needed.
@@ -22,7 +45,7 @@ func getRenderer(maxW int) *glamour.TermRenderer {
 		return r
 	}
 	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
+		glamour.WithStyles(markdownStyle()),
 		glamour.WithWordWrap(maxW),
 	)
 	if err != nil {
@@ -55,8 +78,8 @@ func renderMarkdownWithCache(content string, useBar bool, width int) string {
 			// them so force-render output matches streamWrap's line count.
 			out = collapseMarkdownBlankLines(out)
 			if useBar {
-				bar := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Render("│")
-				textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("150")).Italic(true)
+				bar := thinkingBarStyle.Render("│")
+				textStyle := thinkingStyle
 				var sb strings.Builder
 				for _, line := range strings.Split(out, "\n") {
 					// Strip ANSI codes first so TrimLeft works properly
@@ -94,7 +117,23 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 		if idx >= 0 && idx < len(m.blocks) {
 			b := m.blocks[idx]
 			if b.kind == "thinking" || b.kind == "text" {
-				rendered := renderMarkdownWithCache(b.content, b.kind == "thinking", m.width)
+				// Thinking is never markdown: glamour emits its own colours,
+				// and each of its resets would drop the text back to the
+				// default foreground mid-line, so the block comes out
+				// streaked instead of uniformly grey. This is the third place
+				// that renders a thinking block (with renderBlock's streaming
+				// and settled branches) and they must agree, or the block
+				// changes appearance as it is finalised.
+				// Same collapse as renderBlock's settled branch: this is the
+				// other place a finished block is rendered, and the two must
+				// produce the same text or the block changes as it settles.
+				content := collapseRepeatedLines(b.content)
+				var rendered string
+				if b.kind == "thinking" {
+					rendered = wrapRawText(content, true, m.width)
+				} else {
+					rendered = renderMarkdownWithCache(content, false, m.width)
+				}
 				if rendered != "" {
 					m.mdCacheRendered[idx] = rendered
 					m.blocks[idx].cachedLineCount = lineCount(rendered)

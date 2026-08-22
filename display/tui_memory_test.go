@@ -67,9 +67,11 @@ func TestScrollbackBudgetEvictsOldBlocks(t *testing.T) {
 	m.width = 80
 	m.height = 24
 
-	// Each block ~32 KiB of rendered content → 8+ blocks exceed the 256 KiB
-	// budget and trigger eviction of the oldest.
-	big := strings.Repeat("line of content here\n", 1600) // ~32 KiB
+	// Each block ~35 KiB of rendered content → 8+ blocks exceed the 256 KiB
+	// budget and trigger eviction of the oldest. Distinct lines, because
+	// identical ones are collapsed before rendering (collapseRepeatedLines)
+	// and the blocks would then be far too small to reach the budget.
+	big := distinctLines(1600) // ~35 KiB
 	for i := 0; i < 12; i++ {
 		if i%2 == 0 {
 			m.appendOrAppend("text", "You: "+itoa(i)+" "+big)
@@ -118,6 +120,19 @@ func TestScrollbackBudgetEvictsOldBlocks(t *testing.T) {
 // strings held in the mdCacheRendered map. This map mirrors cachedLines and is
 // the largest per-block cache, so it must be bounded alongside the resident
 // window — otherwise a long session leaks a full copy of every rendered block.
+// distinctLines builds n different lines. These tests are about the resident
+// memory budget, and identical lines are collapsed before rendering
+// (collapseRepeatedLines), which would make the fixture far too small.
+func distinctLines(n int) string {
+	var sb strings.Builder
+	for i := 0; i < n; i++ {
+		sb.WriteString("line of content here ")
+		sb.WriteString(itoa(i))
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
 func mdCacheRenderedBytes(m *TuiModel) int {
 	n := 0
 	for _, s := range m.mdCacheRendered {
@@ -135,7 +150,7 @@ func TestScrollbackDropsRenderCachesOnFlush(t *testing.T) {
 	m.width = 80
 	m.height = 24
 
-	big := strings.Repeat("line of content here\n", 1600) // ~32 KiB rendered
+	big := distinctLines(1600) // ~35 KiB rendered
 	for i := 0; i < 24; i++ {
 		if i%2 == 0 {
 			m.appendOrAppend("text", "You: "+itoa(i)+" "+big)

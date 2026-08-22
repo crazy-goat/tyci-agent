@@ -585,3 +585,67 @@ func TestNewModel_FavIdxMatchesModelName(t *testing.T) {
 		t.Fatalf("favIdx = %d, want 1 (matching modelName)", m.favIdx)
 	}
 }
+
+// ─── Ctrl+F / Ctrl+D while filtering ────────────────────────────────────
+
+// pickerKey feeds one key through the picker's own update path, rather than
+// calling the action directly — the bug being pinned here was in the key
+// handler, not in the action.
+func pickerKey(m TuiModel, key tea.KeyType) TuiModel {
+	next, _ := m.updatePicker(tea.KeyMsg{Type: key})
+	return next.(TuiModel)
+}
+
+func pickerType(m TuiModel, text string) TuiModel {
+	for _, r := range text {
+		next, _ := m.updatePicker(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(TuiModel)
+	}
+	return m
+}
+
+// TestCtrlFWorksWhileFiltering is the reported bug: with a filter typed, the
+// key handler silently dropped Ctrl+F. Filtering is how anyone finds a model
+// in a list of hundreds, so that disabled the feature in practice.
+func TestCtrlFWorksWhileFiltering(t *testing.T) {
+	m := newPickerTestModel(testProviders, nil, "")
+	m.openModelPicker()
+
+	m = pickerType(m, "mini")
+	if m.pickerFilter != "mini" {
+		t.Fatalf("setup: filter = %q", m.pickerFilter)
+	}
+	if got := m.pickerModelCount(); got != 1 {
+		t.Fatalf("setup: expected the filter to leave one model, got %d", got)
+	}
+	// pickerCursor indexes models only, never the section headers.
+	m.pickerCursor = 0
+	want := m.pickerSelectedModel()
+	if want != "openai/gpt-4o-mini" {
+		t.Fatalf("setup: highlighted %q", want)
+	}
+
+	m = pickerKey(m, tea.KeyCtrlF)
+
+	if !m.favoriteSet[want] {
+		t.Fatalf("Ctrl+F did nothing while the filter had text; favourites: %v", m.favoriteModels)
+	}
+}
+
+func TestCtrlDWorksWhileFiltering(t *testing.T) {
+	m := newPickerTestModel(testProviders, nil, "")
+	m.openModelPicker()
+
+	m = pickerType(m, "haiku")
+	m.pickerCursor = 0
+	want := m.pickerSelectedModel()
+	if want != "anthropic/claude-haiku" {
+		t.Fatalf("setup: highlighted %q", want)
+	}
+
+	m = pickerKey(m, tea.KeyCtrlD)
+
+	if m.defaultModel != want {
+		t.Fatalf("Ctrl+D did nothing while filtering; defaultModel = %q", m.defaultModel)
+	}
+}

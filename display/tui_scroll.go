@@ -86,12 +86,35 @@ func (m *TuiModel) agentBusy() bool {
 	return false
 }
 
+// scrollDown moves the viewport n lines towards the newest content, and
+// restores follow-the-bottom when it gets there.
+//
+// The "when it gets there" is the whole reason this is a function. Three call
+// sites (PgDn, Ctrl+Down, wheel-down) each tested `scrollLine < 0` before
+// setting atBottom, so a scroll that landed EXACTLY on line 0 left atBottom
+// false — and the wheel moves three lines at a time, so landing exactly on 0
+// is the common case, not the edge case. The result looked like the transcript
+// had frozen: with atBottom false and scrollLine 0 the region anchors its
+// content to the top and pads below it, and new output stops being followed.
+func (m *TuiModel) scrollDown(n int) {
+	*m = m.clearSelection()
+	m.scrollLine -= n
+	if m.scrollLine <= 0 {
+		m.scrollLine = 0
+		m.atBottom = true
+	}
+}
+
 // clampScroll ensures scrollLine is within valid range.
 func (m *TuiModel) clampScroll() {
 	if m.atBottom {
 		m.scrollLine = 0
 	}
-	if m.scrollLine == 0 {
+	// scrollLine 0 means "showing the newest content", which is what atBottom
+	// means; the renderer reads them together, so they must not disagree.
+	if m.scrollLine <= 0 {
+		m.scrollLine = 0
+		m.atBottom = true
 		return // auto-scrolling, no need to compute max
 	}
 	maxLine := m.totalRenderedLines()
@@ -108,6 +131,22 @@ func (m TuiModel) visibleLines() int {
 	return max(1, m.height-m.input.Height()-2)
 }
 
+// messageRegionHeight is how many terminal rows the transcript viewport
+// actually gets: visibleLines() minus the panels that render between the
+// status bar and the input.
+//
+// This is the single source of truth on purpose. The height used to be
+// recomputed at each call site, some subtracting the panels and some not, and
+// every disagreement showed up as a visible defect: the viewport window sized
+// against one number while the region drew against another, so the newest
+// lines fell off the bottom; mouse hit-testing resolved rows to the wrong
+// block; and the painter was told it could hardware-scroll rows that belonged
+// to a panel. If a new panel is ever added between the status bar and the
+// input, subtract it here and every consumer stays correct.
+func (m TuiModel) messageRegionHeight() int {
+	return max(1, m.visibleLines()-m.queuePanelHeight()-m.jobsPanelHeight()-m.fileCompleteHeight())
+}
+
 func (m *TuiModel) blockAtVisibleLine(visY int) int {
 	// Use the cached render buffer from the last View() call for fast lookup.
 	// The buffer is rebuilt on every render and maps screen Y → block index.
@@ -119,7 +158,7 @@ func (m *TuiModel) blockAtVisibleLine(visY int) int {
 	if visY < 0 {
 		return -1
 	}
-	msgHeight := m.visibleLines()
+	msgHeight := m.messageRegionHeight()
 	totalLines := m.totalRenderedLines()
 	var startLine int
 	if totalLines > msgHeight {
@@ -183,6 +222,7 @@ type messageRegionCache struct {
 	selectionActive  bool   // selection active when cache was built
 	selectionFlash   bool   // selection flash when cache was built
 	width            int    // terminal width when cache was built
+	msgHeight        int    // region height when cache was built
 	hasContent       bool   // whether blocks existed when cache was built
 }
 

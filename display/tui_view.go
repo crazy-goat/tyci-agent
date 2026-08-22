@@ -26,7 +26,7 @@ func (m TuiModel) paintScrollBottom() int {
 	if !m.ready || m.quitting || m.todoModalActive || m.subagentModalActive || m.pickerActive || m.historySearchActive || m.resumePickerActive || m.btwModalActive || m.btwListActive || m.jobsModalActive {
 		return 0
 	}
-	return m.visibleLines()
+	return m.messageRegionHeight()
 }
 
 func (m TuiModel) renderFrame() string {
@@ -78,9 +78,7 @@ func (m TuiModel) renderFrame() string {
 	}
 
 	var b strings.Builder
-	queueH := m.queuePanelHeight()
-	jobsH := m.jobsPanelHeight()
-	msgHeight := max(1, m.visibleLines()-queueH-jobsH)
+	msgHeight := m.messageRegionHeight()
 
 	// Top status bar (cwd)
 	b.WriteString(m.buildTopBar())
@@ -120,6 +118,10 @@ func (m TuiModel) renderFrame() string {
 	// layout is byte-identical to the pre-feature behavior in that case.
 	b.WriteString(m.renderQueuePanel(m.width))
 
+	// "@" file-path candidates sit directly above the input, and render as
+	// nothing at all when the popup is closed.
+	b.WriteString(m.renderFileComplete(m.width))
+
 	b.WriteString(m.input.View())
 	return b.String()
 }
@@ -136,6 +138,11 @@ func (m *TuiModel) buildMessageRegionCached(msgHeight int) string {
 	}
 	c := m.messageRegion
 	hasContent := len(m.blocks) > 0
+	// Height belongs in the cache key: the region is a fixed-height block of
+	// rows, so a cached one built at a different height is the wrong shape.
+	// It changes without any content change whenever a panel appears, the
+	// input grows a line, or the terminal is resized vertically at the same
+	// width — and reusing it then leaves the frame short or overflowing.
 	// Check if the cache is still valid: not dirty, has been built, and all
 	// state that affects the viewport (scroll, selection, width, content
 	// presence) is unchanged since the last build.
@@ -146,6 +153,7 @@ func (m *TuiModel) buildMessageRegionCached(msgHeight int) string {
 		c.selectionActive == m.selection.Active &&
 		c.selectionFlash == m.selectionFlash &&
 		c.width == m.width &&
+		c.msgHeight == msgHeight &&
 		c.hasContent == hasContent {
 		return c.cached
 	}
@@ -158,6 +166,7 @@ func (m *TuiModel) buildMessageRegionCached(msgHeight int) string {
 	c.selectionActive = m.selection.Active
 	c.selectionFlash = m.selectionFlash
 	c.width = m.width
+	c.msgHeight = msgHeight
 	c.hasContent = hasContent
 	return region
 }
@@ -181,7 +190,7 @@ func (m *TuiModel) buildMessageRegion(msgHeight int) string {
 		// Pad remaining rows with empty selectable lines so the region
 		// fills the viewport exactly (selection hit-testing + painter diff
 		// rely on a fixed-height region).
-		m.renderBuffer = newRenderBuffer(max(0, msgHeight))
+		*m.renderBuffer = newRenderBuffer(max(0, msgHeight))
 		for y := 0; y < msgHeight; y++ {
 			b.WriteString(m.renderSelectableLine("", y))
 			b.WriteString("\n")
@@ -190,43 +199,16 @@ func (m *TuiModel) buildMessageRegion(msgHeight int) string {
 		return strings.TrimSuffix(b.String(), "\n")
 	}
 
-	// Build a flat, cached line list covering only the visible viewport.
-	// Virtual viewport rendering avoids O(n) processing of all blocks.
-	allLines := m.buildFlatRenderLines()
-	m.renderBuffer = newRenderBuffer(msgHeight)
+	// Exactly msgHeight rows, already wrapped, anchored and padded — see
+	// buildViewportRows for why the anchoring cannot be done by slicing the
+	// line list.
+	rows := m.buildViewportRows(msgHeight)
+	*m.renderBuffer = newRenderBuffer(msgHeight)
 
-	rendered := 0
-	for _, line := range allLines {
-		if rendered >= msgHeight {
-			break
-		}
-		if m.width > 0 && lipgloss.Width(line.Text) > m.width {
-			wrapped := wrapText(line.Text, m.width, 0)
-			for _, wl := range strings.Split(wrapped, "\n") {
-				if rendered >= msgHeight {
-					break
-				}
-				wl = strings.TrimSuffix(wl, clearLine)
-				renderedLine := m.renderSelectableLine(wl, rendered)
-				b.WriteString(renderedLine)
-				b.WriteString("\n")
-				m.renderBuffer.Add(wl, line.SourceKind, line.BlockIndex, line.SourceLine, rendered)
-				rendered++
-			}
-		} else {
-			renderedLine := m.renderSelectableLine(line.Text, rendered)
-			b.WriteString(renderedLine)
-			b.WriteString("\n")
-			m.renderBuffer.Add(line.Text, line.SourceKind, line.BlockIndex, line.SourceLine, rendered)
-			rendered++
-		}
-	}
-	for rendered < msgHeight {
-		renderedLine := m.renderSelectableLine("", rendered)
-		b.WriteString(renderedLine)
+	for y, row := range rows {
+		b.WriteString(m.renderSelectableLine(row.Text, y))
 		b.WriteString("\n")
-		m.renderBuffer.Add("", "empty", -1, -1, rendered)
-		rendered++
+		m.renderBuffer.Add(row.Text, row.SourceKind, row.BlockIndex, row.SourceLine, y)
 	}
 
 	// Trim the trailing newline — the caller (renderFrame) adds its own

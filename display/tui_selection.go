@@ -33,7 +33,7 @@ func (m TuiModel) selectionYRange() (int, int) {
 		layout := m.subagentModalLayout()
 		return layout.contentTop, layout.contentBottom
 	}
-	return 0, m.visibleLines() - 1
+	return 0, m.messageRegionHeight() - 1
 }
 
 func (m TuiModel) transcriptY(y int) bool {
@@ -157,9 +157,9 @@ func (m TuiModel) selectedText() string {
 	if !ok {
 		return ""
 	}
-	rb := m.renderBuffer
+	rb := *m.renderBuffer
 	if m.subagentModalActive {
-		rb = m.modalRenderBuffer
+		rb = *m.modalRenderBuffer
 		if len(rb.Lines) == 0 {
 			rb = m.visibleModalRenderBufferSnapshot()
 		}

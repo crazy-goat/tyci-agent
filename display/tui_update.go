@@ -34,6 +34,13 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyJobUpdate(upd.Job)
 		return m, nil
 	}
+	// A finished file scan (tui_filecomplete.go) is pure state: it must land
+	// whatever overlay happens to be open, or the popup would sit on
+	// "scanning…" until the next keystroke.
+	if idx, ok := msg.(tuiFileIndexMsg); ok {
+		m.applyFileIndex(idx)
+		return m, nil
+	}
 	// /btw entries must never lose streamed output just because some other
 	// popup happens to be open when it arrives — a background /btw job runs
 	// independently of whatever modal state the main thread is in. Dispatch

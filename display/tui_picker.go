@@ -85,18 +85,18 @@ func (m TuiModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Ignore tab in picker mode
 			return m, nil
 
+		// Ctrl+F and Ctrl+D act on whatever is highlighted, filter or no
+		// filter. They used to be ignored while the filter had text, which
+		// disabled them in exactly the situation they are most useful: with a
+		// list of hundreds of models, typing a few letters to find the one you
+		// want IS how you get to it. Neither key inserts text, so there is
+		// nothing for them to conflict with while typing.
 		case tea.KeyCtrlF:
-			// Ctrl+F toggles favorite on the selected model (only when filter is empty)
-			if m.pickerFilter == "" {
-				m.togglePickerFavorite()
-			}
+			m.togglePickerFavorite()
 			return m, nil
 
 		case tea.KeyCtrlD:
-			// Ctrl+D sets the selected model as default (only when filter is empty)
-			if m.pickerFilter == "" {
-				m.setDefaultModel()
-			}
+			m.setDefaultModel()
 			return m, nil
 
 		default:

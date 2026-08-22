@@ -11,6 +11,8 @@ func (m TuiModel) submit() tea.Model {
 	line := strings.TrimSpace(m.input.Value())
 	m.input.Reset()
 	m.input.SetHeight(1)
+	// The line has been sent, so there is nothing left to complete.
+	m.closeFileComplete()
 	if line == "" {
 		return m
 	}

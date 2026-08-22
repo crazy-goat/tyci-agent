@@ -40,7 +40,19 @@ func (m *TuiModel) appendTool(queueIdx int, content string) {
 	}
 }
 
-func (m *TuiModel) finishToolAt(result string) {
+// toolDuration prefers the figure the dispatcher measured around the
+// individual call. Falling back to the block's own start time is only correct
+// for a batch of one: every ToolCallStart in a batch is emitted before the
+// batch runs, so for parallel calls that fallback reports the whole batch's
+// wall-clock on every row.
+func toolDuration(reported time.Duration, start time.Time) time.Duration {
+	if reported > 0 {
+		return reported
+	}
+	return time.Since(start)
+}
+
+func (m *TuiModel) finishToolAt(result string, reported time.Duration) {
 	if len(m.toolQueue) == 0 {
 		return
 	}
@@ -58,7 +70,7 @@ func (m *TuiModel) finishToolAt(result string) {
 			m.blocks[idx].output = capToolOutput(m.blocks[idx].output, tuiMaxToolOutput)
 		}
 		m.blocks[idx].toolState = "done"
-		m.blocks[idx].duration = time.Since(m.blocks[idx].startTime)
+		m.blocks[idx].duration = toolDuration(reported, m.blocks[idx].startTime)
 		m.blocks[idx].cachedLines = nil
 		m.blocks[idx].cachedLineCount = 0
 		delete(m.toolDisplayCache, idx)
