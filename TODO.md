@@ -11,7 +11,7 @@ gets `isolation: "worktree"`, the review runs against that worktree, and only a
 feature that came back clean is merged into `main`. The reason is not tidiness:
 the main checkout is where the person reads code and thinks about what to build
 next, and a tree carrying three half-finished features is unreadable for that.
-`main` therefore stays committed and clean between items.
+`main` therefore stays committed and clean between items. **Every closed step ends with a push**: merge the clean branch into `main`, run the full suite there, `git push origin main`, then remove the worktree and delete its branch. Nothing finished is allowed to exist only on this machine — that is how a session's work was nearly lost once already, sitting on an unpushed worktree branch that a cleanup would have deleted.
 
 The loop feeds itself. Anyone working an item — coder or reviewer — who trips
 over a real problem outside their scope does NOT fix it and does NOT stay quiet
