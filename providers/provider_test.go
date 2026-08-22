@@ -16,7 +16,7 @@ import (
 func TestBuildSystemPrompt_noAgentsMd(t *testing.T) {
 	// No AGENTS.md file present — prompt should not contain the separator
 	prompt := BuildSystemPrompt()
-	if strings.Contains(prompt, "Additional instructions from AGENTS.md") {
+	if strings.Contains(prompt, "--- AGENTS.md ---") {
 		t.Errorf("expected no AGENTS.md content when file is missing, but found it")
 	}
 }
@@ -37,7 +37,7 @@ func TestBuildSystemPrompt_withAgentsMd(t *testing.T) {
 	defer os.Chdir(origWd)
 
 	prompt := BuildSystemPrompt()
-	if !strings.Contains(prompt, "Additional instructions from AGENTS.md") {
+	if !strings.Contains(prompt, "--- AGENTS.md ---") {
 		t.Errorf("expected AGENTS.md content to be appended, but it's missing")
 	}
 	if !strings.Contains(prompt, "Use tabs for indentation.") {
@@ -58,7 +58,7 @@ func TestBuildSystemPrompt_emptyAgentsMd(t *testing.T) {
 	defer os.Chdir(origWd)
 
 	prompt := BuildSystemPrompt()
-	if strings.Contains(prompt, "Additional instructions from AGENTS.md") {
+	if strings.Contains(prompt, "--- AGENTS.md ---") {
 		t.Errorf("expected no AGENTS.md content when file is empty/whitespace")
 	}
 }
@@ -116,7 +116,7 @@ func TestBuildSubagentSystemPromptWithRole_IncludesAgentsMd(t *testing.T) {
 
 	prompt := BuildSubagentSystemPromptWithRole("ROLA")
 
-	if !strings.Contains(prompt, "Additional instructions from AGENTS.md") {
+	if !strings.Contains(prompt, "--- AGENTS.md ---") {
 		t.Errorf("expected AGENTS.md section in prompt:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "Use tabs. Prefer table-driven tests.") {

@@ -11,6 +11,7 @@ import (
 	"github.com/decodo/tyci/api"
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/internal/agentdefs"
+	"github.com/decodo/tyci/internal/instructions"
 )
 
 func BuildSystemPrompt() string {
@@ -75,42 +76,83 @@ func buildSystemPrompt(includeSubagent bool, roleNote string) string {
 		tempDir = "%TEMP%"
 	}
 
-	// The subagent tool is only advertised to the top-level agent; children run
-	// with a schema that omits it, so listing it here would tempt them to call
-	// a tool that does not exist.
-	subagentLine := ""
+	// Posture, tool list and contracts are assembled from three pieces rather
+	// than one template: what a top-level agent needs to know and what a child
+	// needs are genuinely different sets, and gating with %s placeholders
+	// inside one long format string is how they drifted apart before.
+	//
+	// The whole prompt is deliberately short. An earlier version ran to two
+	// long essays — one on delegation, one on batching — that between them
+	// restated the same context-window argument three times and carried a
+	// fifteen-line lua example. All of it was re-sent on every request, and
+	// none of it said the single most unusual thing about this harness: that
+	// async jobs NOTIFY you. Density beats completeness here; help(tool) is
+	// where completeness lives.
+	posture := ""
+	contracts := ""
+	toolLines := ""
 	if includeSubagent {
-		subagentLine = "\n- subagent(task, tasks?, model?, agent?): delegate independent work to child agents."
+		posture = `1. Work through MANY agents. subagent(tasks=[...], async=true) spawns parallel children, each with its own context window; you are NOTIFIED when one finishes or blocks on a question — never poll. Delegate anything that means reading more than about three files, and any two independent pieces of work (ONE call, tasks=[...]). Keep for yourself: single-file edits, work needing the exact bytes, work that depends on this conversation.
+`
+		contracts = `- A child BLOCKED on a question makes no progress and is discarded when it times out: answer(job_id, text) is your NEXT action.
+- Parallel children writing shared paths must lock/unlock them — say so in each task's text.
+`
+		toolLines = `- subagent(task|tasks, agent?, model?, async?): delegate to child agents; tasks=[...] runs them in parallel.
+- wait(seconds, job_id?): read a finished job's result, or pause deliberately.
+- answer(job_id, text): unblock a child waiting on a question.
+- resume(job_id, task): continue a finished async job — it keeps its whole conversation.
+- kill_job(job_id): stop a backgrounded shell command.
+- agents(name?): named agents usable as subagent(agent="name").
+`
+	} else {
+		posture = `1. Split work you can. You cannot spawn children, but everything below still applies: read narrowly, script your loops, and report a conclusion.
+`
+		toolLines = `- ask(question): block until the parent answers. Last resort — you stall completely while waiting.
+- report_progress(text): post a status note so whoever is watching is not guessing.
+- wait(seconds): pause deliberately.
+`
 	}
 
-	prompt := fmt.Sprintf(`You coding agent. Non-interactive. No ask question. Just do.%s
+	prompt := fmt.Sprintf(`You are tyci, a non-interactive coding agent. There is nobody to ask — decide and act.%s
 
-Context:
-- Date: %s
-- Working directory: %s
-- OS: %s
-- DO NOT leave working directory. Stay here or Piotr will find you and rip your legs off from your ass.
-- Can use temp directory: %s
+Context: date %s · working directory %s (do not leave it) · OS %s · temp dir %s.
 
-Tools available:
-- find(pattern, cwd?, exclude?, limit?, includeDirs?, absolute?): find files by glob pattern or search their contents. Use method="glob" for file path patterns (e.g. **/*.go) or method="grep" for text/regex/word search inside files. Returns relative paths by default.
-- todo(action, id?, content?, status?, parentId?): manage per-run todo list. actions: add/update/doing/blocked/done/remove/list/clear.
-- read(path, offset?, limit?, lineNumbers?): read file contents. Returns full file; use offset/limit for ranges, lineNumbers=true to prefix each line with its number.
-- write(path, content, range?, oldString?, newString?, occurrence?, dryRun?): write file or replace text. Use content+range for writing; use oldString+newString for replacements.
-- bash(description, command, timeout?): run shell command when no tool fits.%s
+Posture — four reflexes this environment is built around:
+%s2. Write your loops in lua. Any operation over three or more files, or a step that depends on what the last one returned, is ONE lua call: tool(name, args) inside the script, return the conclusion only. What a script reads is thrown away; what YOU read stays in this conversation forever and is re-sent with every later request.
+3. Remember in memory. When you work out something a future session would have to work out again — the real test command, a rule the compiler does not enforce, a decision and its reason — write a note. It is loaded into the next session's prompt.
+4. Never guess: call help(tool). The list below is one line per tool on purpose. Read help("lua") and help("subagent") before first use.
 
-IMPORTANT: Always start by creating a plan using the todo tool before using other tools. The system enforces this — non-todo tool calls will fail until at least one todo item exists. Use todo(action="add", content="...") or todo(action="add_batch", items=[...]) first.
+Contracts — enforced, not advice:
+- Your first tool call must be todo(...). Other tools are refused until a plan exists; todo(action="add_batch", items=[...]) is one call for the whole plan.
+- write refuses to modify a file you have not read, or that changed since. Read it again and redo the edit against what it says now.
+- bash moves to the background after 30s and notifies you when it finishes. Never re-run a backgrounded command.
+%s- Hooks may veto or annotate any tool call. A veto is policy, not a bug: change the call, do not retry it verbatim.
 
-Be terse. No fluff. Short sentence. Get job done.
-`, roleNote, date, wd, osName, tempDir, subagentLine)
+Tools — help(tool) for the manual:
+- find(pattern, method?): glob file paths, or grep file contents.
+- read(path, offset?, limit?, lineNumbers?): read a file.
+- write(path, ...): create or overwrite (content+range), or replace exact text (oldString+newString).
+- bash(description, command, ...): shell, when no tool fits.
+- lua(script, args?): a script that calls other tools; one round trip for a whole loop.
+- todo(action, ...): the run's plan. Required first.
+- memory(action, name?, content?): project notes that survive the session.
+- cron(action, name?, prompt?, schedule?): a prompt that runs later or repeatedly, on its own.
+- lock(path) / unlock(path, holder): advisory locks for parallel writes.
+%s- help(tool?) · skills(name?): manuals and skills.
+- web(method, what): search, lookup or fetch a URL.
 
-	// Append AGENTS.md from CWD if present
-	if agentsMd, err := os.ReadFile(filepath.Join(wd, "AGENTS.md")); err == nil {
-		content := strings.TrimSpace(string(agentsMd))
-		if content != "" {
-			prompt += "\n---\nAdditional instructions from AGENTS.md:\n" + content
-		}
-	}
+A child agent sees ONLY the task text you write — no history, no earlier findings. State what to do, which paths, and exactly what to return, in that order.
+
+Be terse.
+`, roleNote, date, wd, osName, tempDir, posture, contracts, toolLines)
+
+	// Standing project context: AGENTS.md plus any notes the agent wrote for
+	// itself in an earlier session. An earlier version of this read only
+	// ./AGENTS.md, which meant nothing was found when tyci ran from a
+	// subdirectory, there was no way to state something once for every
+	// project, and an oversized file was pasted into every request unbounded.
+	home, _ := os.UserHomeDir()
+	prompt += instructions.Load(home, wd)
 
 	// List available skills (names only, not content)
 	skillsDir := filepath.Join(os.Getenv("HOME"), ".tyci", "skills")

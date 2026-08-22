@@ -11,7 +11,15 @@
     "model": "wire-anthropic-model",
     "max_tokens": 4096,
     "stream": true,
-    "system": "You are a terse test agent. Answer with tools when possible.",
+    "system": [
+      {
+        "type": "text",
+        "text": "You are a terse test agent. Answer with tools when possible.",
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ],
     "messages": [
       {
         "role": "user",
@@ -57,13 +65,19 @@
                 "text": "upstream weather service exploded"
               }
             ],
-            "is_error": true
+            "is_error": true,
+            "cache_control": {
+              "type": "ephemeral"
+            }
           }
         ]
       }
     ],
     "tools": [
       {
+        "cache_control": {
+          "type": "ephemeral"
+        },
         "description": "Get the current weather for a location.",
         "input_schema": {
           "properties": {

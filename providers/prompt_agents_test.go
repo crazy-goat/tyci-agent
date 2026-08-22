@@ -112,3 +112,128 @@ func TestBuildSystemPrompt_projectAgentOverridesGlobal(t *testing.T) {
 		t.Errorf("expected exactly one 'reviewer' entry, got prompt:\n%s", prompt)
 	}
 }
+
+// TestSystemPromptCarriesTheMultiAgentPosture pins the part that actually
+// changes behaviour: countable triggers the model can evaluate against what is
+// in front of it, the fact that async jobs NOTIFY rather than need polling, and
+// the negative list that stops it delegating trivia.
+func TestSystemPromptCarriesTheMultiAgentPosture(t *testing.T) {
+	prompt := BuildSystemPrompt()
+
+	for _, want := range []string{
+		"MANY agents",
+		"three files",
+		"tasks=[...]",
+		"NOTIFIED",
+		"never poll",
+		"Keep for yourself",
+		"no earlier findings",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("top-level prompt is missing %q", want)
+		}
+	}
+}
+
+// TestSubagentPromptHasNoDelegationPolicy: children cannot spawn children, so
+// telling them when to delegate would describe a tool they do not have.
+func TestSubagentPromptHasNoDelegationPolicy(t *testing.T) {
+	prompt := BuildSubagentSystemPrompt()
+
+	if strings.Contains(prompt, "MANY agents") {
+		t.Error("subagent prompt advertises delegation, but children have no subagent tool")
+	}
+	if strings.Contains(prompt, "tasks=[...]") {
+		t.Error("subagent prompt describes a fan-out it cannot perform")
+	}
+}
+
+// TestPromptStatesTheLuaPosture: a one-line mention of the lua tool does not
+// get used, because the model's default is one tool call per step. The trigger
+// has to be countable, and the reason has to be the one that matters — context
+// spent, not time.
+func TestPromptStatesTheLuaPosture(t *testing.T) {
+	prompt := BuildSystemPrompt()
+
+	for _, want := range []string{
+		"loops in lua",
+		"three or more files",
+		"thrown away",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the lua posture is missing %q", want)
+		}
+	}
+}
+
+// TestSubagentsAlsoGetTheLuaPosture: a child loops over files as often as its
+// parent does, so withholding this would make the delegated half of the work
+// the slow half.
+func TestSubagentsAlsoGetTheLuaPosture(t *testing.T) {
+	if !strings.Contains(BuildSubagentSystemPrompt(), "loops in lua") {
+		t.Error("a subagent's prompt has no lua posture")
+	}
+}
+
+// TestPromptStatesTheEnforcedContracts. These four are not style advice: the
+// harness refuses calls over them, and a model that does not know they exist
+// reads each refusal as a bug and retries it.
+func TestPromptStatesTheEnforcedContracts(t *testing.T) {
+	prompt := BuildSystemPrompt()
+
+	for _, want := range []string{
+		"first tool call must be todo",
+		"write refuses to modify a file you have not read",
+		"moves to the background after 30s",
+		"Hooks may veto",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the contracts section is missing %q", want)
+		}
+	}
+}
+
+// TestPromptListsEveryToolTheModelHas. Half this environment used to be
+// invisible: the inline list named eight tools and the schema carried twenty,
+// so the rest existed only for a model that thought to call help().
+func TestPromptListsEveryToolTheModelHas(t *testing.T) {
+	prompt := BuildSystemPrompt()
+
+	for _, name := range []string{
+		"find", "read", "write", "bash", "lua", "todo", "memory", "help", "skills", "web",
+		"subagent", "wait", "answer", "resume", "kill_job", "agents", "lock", "unlock",
+	} {
+		if !strings.Contains(prompt, name+"(") {
+			t.Errorf("the tool list does not mention %s", name)
+		}
+	}
+}
+
+// TestSubagentPromptListsTheToolsOnlyAChildCanUse: ask and report_progress
+// work only inside a job, so they belong in the child's list and nowhere else.
+func TestSubagentPromptListsTheToolsOnlyAChildCanUse(t *testing.T) {
+	child := BuildSubagentSystemPrompt()
+	for _, name := range []string{"ask(", "report_progress("} {
+		if !strings.Contains(child, name) {
+			t.Errorf("a child's prompt does not mention %s", name)
+		}
+	}
+
+	parent := BuildSystemPrompt()
+	for _, name := range []string{"ask(question)", "report_progress(text)"} {
+		if strings.Contains(parent, name) {
+			t.Errorf("the top-level prompt offers %s, which only works inside a job", name)
+		}
+	}
+}
+
+// TestPromptStaysShort. The prompt is re-sent with every request, and an
+// earlier version had grown to two essays restating the same argument three
+// times plus a fifteen-line code example that already lives in help("lua").
+// Density is the point; this is the guard that keeps it.
+func TestPromptStaysShort(t *testing.T) {
+	const budget = 5000
+	if got := len(BuildSystemPrompt()); got > budget {
+		t.Errorf("system prompt is %d bytes, budget is %d — put the detail in help(tool) instead", got, budget)
+	}
+}
