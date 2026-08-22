@@ -1189,8 +1189,8 @@ func TestTruncatedMarker_Stable(t *testing.T) {
 // stamps TodoAgentCtxKey on the child's context, so the child's todo tool
 // calls land in the parent's list (tools/todo.go's per-agent todoStore).
 func TestRunSingleTask_ChildGetsOwnTodoList(t *testing.T) {
-	ClearTodoList()
-	t.Cleanup(ClearTodoList)
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
 
 	RunTool(context.Background(), "todo", map[string]any{"action": "add", "content": "parent plan"})
 
@@ -1218,8 +1218,8 @@ func TestRunSingleTask_ChildGetsOwnTodoList(t *testing.T) {
 // guarding against nextTodoAgentID handing out the same id under
 // concurrency, which would silently merge two siblings' lists.
 func TestRunTasks_SiblingChildrenGetDistinctTodoLists(t *testing.T) {
-	ClearTodoList()
-	t.Cleanup(ClearTodoList)
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
 
 	var mu sync.Mutex
 	seen := map[string]string{}

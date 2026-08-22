@@ -966,7 +966,17 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	// blocking path (runTasks -> runSingleTask directly) and the async path
 	// (runAsync's job body also calls runSingleTask), since both funnel
 	// through here.
-	runCtx = context.WithValue(runCtx, TodoAgentCtxKey{}, nextTodoAgentID())
+	//
+	// MarkTodoAgentDone is deferred right here, not wrapped around the
+	// runner call below: this id is only ever known inside this function,
+	// and every return path from here on (including the early ones above
+	// this point never reach it — they return before a list could exist)
+	// must mark the list terminal so it becomes eligible for eviction once
+	// this child is done, without risking a still-running child's list
+	// ever being dropped.
+	todoAgentID := nextTodoAgentID()
+	runCtx = context.WithValue(runCtx, TodoAgentCtxKey{}, todoAgentID)
+	defer MarkTodoAgentDone(todoAgentID)
 
 	// Every tool resolves relative paths against Workdir (see workdir.go), so
 	// this one line is what makes the child's reads, writes and shell commands

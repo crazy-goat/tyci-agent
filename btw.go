@@ -110,6 +110,11 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 
 	job := a.reg.Start(jobCtx, task, func(runCtx context.Context, newJobID string) (string, bool, error) {
 		defer cancel()
+		// newJobID is also this resumed conversation's todo-agent id (see
+		// todoAgentIDFromCtx's JobIDCtxKey fallback in tools/todo.go) —
+		// mark it done so its list becomes eligible for eviction once the
+		// job finishes, the same as any other /btw or subagent list.
+		defer tools.MarkTodoAgentDone(newJobID)
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, newJobID)
 
 		c := &collector{}
@@ -200,6 +205,11 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 
 	return JobRegistry.Start(ctx, question, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
+		// jobID is also this /btw side-conversation's todo-agent id (see
+		// todoAgentIDFromCtx's JobIDCtxKey fallback in tools/todo.go) —
+		// mark it done so its list becomes eligible for eviction once this
+		// job finishes.
+		defer tools.MarkTodoAgentDone(jobID)
 		_, err := agent.Run(jobCtx, client, sink, &forked, cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTodoTool_StatusAliases(t *testing.T) {
@@ -408,11 +409,26 @@ func childTodoCtx(agentID string) context.Context {
 	return context.WithValue(context.Background(), TodoAgentCtxKey{}, agentID)
 }
 
+// resetTodoStoreForTest wipes EVERY agent's list — main and all children —
+// unlike ClearTodoList (correctly, in production) which only ever touches
+// main. Any test that creates a child list via childTodoCtx must reset with
+// this, not ClearTodoList, in t.Cleanup: otherwise the child list leaks into
+// whichever test runs next, and eviction-sensitive assertions (how many
+// child lists exist, which one is oldest) become dependent on test order and
+// -count, exactly how the original eviction-on-creation bug (see
+// TestEviction_DropsOldestTerminalChildList_KeepsNewestAndMain) hid behind
+// `go test -count=1`.
+func resetTodoStoreForTest() {
+	todoStore.Lock()
+	todoStore.agents = map[string]*todoAgentList{}
+	todoStore.Unlock()
+}
+
 // TestChildTodos_DoNotAppearInParentList reverts to: a child's add lands in
 // AllTodoItems() (the main/TUI-facing list) too.
 func TestChildTodos_DoNotAppearInParentList(t *testing.T) {
-	ClearTodoList()
-	t.Cleanup(ClearTodoList)
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
 
 	tool := &TodoTool{}
 	if res := tool.Run(context.Background(), map[string]any{"action": "add", "content": "main plan"}); !res.Success {
@@ -432,8 +448,8 @@ func TestChildTodos_DoNotAppearInParentList(t *testing.T) {
 // a child wipes the parent's plan (the exact /new-defeating bug in the
 // TODO.md item).
 func TestChildClear_DoesNotWipeParentList(t *testing.T) {
-	ClearTodoList()
-	t.Cleanup(ClearTodoList)
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
 
 	tool := &TodoTool{}
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main plan"})
@@ -453,8 +469,8 @@ func TestChildClear_DoesNotWipeParentList(t *testing.T) {
 // sequence, so a parent's update by id can land on a child's item (or vice
 // versa) once both lists exist in the same numbering space.
 func TestIds_DoNotCollideAcrossAgents(t *testing.T) {
-	ClearTodoList()
-	t.Cleanup(ClearTodoList)
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
 
 	tool := &TodoTool{}
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "parent item"})
@@ -491,8 +507,8 @@ func TestIds_DoNotCollideAcrossAgents(t *testing.T) {
 // so a plan guard wired against a child's own list (todoAgentIDFromCtx)
 // would wrongly conclude the child already has a plan.
 func TestChild_DoesNotInheritParentPendingTodosForPlanGuard(t *testing.T) {
-	ClearTodoList()
-	t.Cleanup(ClearTodoList)
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
 
 	tool := &TodoTool{}
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main open work"})
@@ -510,8 +526,8 @@ func TestChild_DoesNotInheritParentPendingTodosForPlanGuard(t *testing.T) {
 // TUI top bar) reads whichever list was written last, instead of always
 // the main conversation's.
 func TestTodoCounts_FollowMainWhileChildWrites(t *testing.T) {
-	ClearTodoList()
-	t.Cleanup(ClearTodoList)
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
 
 	tool := &TodoTool{}
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main a"})
@@ -541,8 +557,8 @@ func TestTodoCounts_FollowMainWhileChildWrites(t *testing.T) {
 // must fall back to it — this is the mechanism that gives /btw its own
 // list without btw.go needing to know anything about todo state.
 func TestBtw_GetsOwnTodoListViaJobIDCtxKey(t *testing.T) {
-	ClearTodoList()
-	t.Cleanup(ClearTodoList)
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
 
 	tool := &TodoTool{}
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main plan"})
@@ -565,13 +581,89 @@ func TestBtw_GetsOwnTodoListViaJobIDCtxKey(t *testing.T) {
 // runSingleTask call inside it), and the subagent's own id must win so it
 // gets a list distinct from the job's.
 func TestTodoAgentCtxKey_TakesPriorityOverJobIDCtxKey(t *testing.T) {
-	ClearTodoList()
-	t.Cleanup(ClearTodoList)
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
 
 	ctx := context.WithValue(context.Background(), JobIDCtxKey{}, "job-1")
 	ctx = context.WithValue(ctx, TodoAgentCtxKey{}, "subagent-1")
 
 	if got := todoAgentIDFromCtx(ctx); got != "subagent-1" {
 		t.Fatalf("todoAgentIDFromCtx = %q, want %q", got, "subagent-1")
+	}
+}
+
+// TestChildPendingTodos_DoNotLeakIntoMainPlanGuard is the child→parent
+// direction TestChild_DoesNotInheritParentPendingTodosForPlanGuard does not
+// cover: it only checked that a fresh child starts with no plan of its
+// own. This checks the actual leak the TODO.md item was filed for — a
+// child's own todo(add) making the MAIN plan guard (HasPendingTodos, wired
+// at commands.go:173) believe the main conversation has an open plan when
+// it never touched the todo tool itself.
+func TestChildPendingTodos_DoNotLeakIntoMainPlanGuard(t *testing.T) {
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
+
+	if HasPendingTodos() {
+		t.Fatal("setup: main should start with no pending todos")
+	}
+
+	tool := &TodoTool{}
+	tool.Run(childTodoCtx("child-7"), map[string]any{"action": "add", "content": "child work"})
+
+	if HasPendingTodos() {
+		t.Error("a child's pending todo leaked into the main conversation's plan guard")
+	}
+}
+
+// TestEviction_DropsOldestTerminalChildList_KeepsNewestAndMain reverts to
+// the eviction blocker: getOrCreateLocked used to insert the new entry
+// before running eviction, with lastActivity still at its zero time, so
+// evictOldChildListsLocked's ascending sort always picked the entry that
+// had JUST been created — evicted the instant it existed, once 50 (child)
+// lists were already present. The caller then kept writing through a
+// pointer to state nothing else could reach: todo(add) reported
+// success=true, and the very next todo(list) on the same agent said "Todo
+// list is empty."
+//
+// maxRetainedChildTodoLists+1 terminal children are created (oldest
+// first, strictly increasing lastActivity), then one more, untouched
+// child is created purely to trigger the next eviction sweep —
+// evictOldChildListsLocked only runs opportunistically inside
+// getOrCreateLocked when a NEW agent id is created (mirroring
+// jobs/registry.go's pruneTerminalLocked, which is likewise only run from
+// Start), so the 51st terminal list's own creation is too early to see
+// itself as the one pushing the pool over the bound.
+func TestEviction_DropsOldestTerminalChildList_KeepsNewestAndMain(t *testing.T) {
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
+
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main plan"})
+
+	ids := make([]string, 0, maxRetainedChildTodoLists+1)
+	for i := 0; i < maxRetainedChildTodoLists+1; i++ {
+		id := fmt.Sprintf("evict-child-%d", i)
+		ids = append(ids, id)
+		if res := tool.Run(childTodoCtx(id), map[string]any{"action": "add", "content": "plan " + id}); !res.Success {
+			t.Fatalf("setup: add for %s failed: %s", id, res.Error)
+		}
+		MarkTodoAgentDone(id)
+		time.Sleep(time.Millisecond) // keep lastActivity strictly increasing
+	}
+	oldest, newest := ids[0], ids[len(ids)-1]
+
+	// Trigger the eviction sweep: creating this new, unrelated agent is
+	// the event that runs evictOldChildListsLocked with all 51 terminal
+	// lists above already in the map.
+	tool.Run(childTodoCtx("evict-trigger"), map[string]any{"action": "add", "content": "trigger"})
+
+	if res := tool.Run(childTodoCtx(oldest), map[string]any{"action": "list"}); !strings.Contains(res.Content, "Todo list is empty") {
+		t.Errorf("oldest terminal child (%s) should have been evicted, got: %q", oldest, res.Content)
+	}
+	if res := tool.Run(childTodoCtx(newest), map[string]any{"action": "list"}); !strings.Contains(res.Content, "plan "+newest) {
+		t.Errorf("newest child (%s) should survive eviction, got: %q", newest, res.Content)
+	}
+	if items := AllTodoItems(); len(items) != 1 || items[0].Content != "main plan" {
+		t.Errorf("main's list should be untouched by child eviction, got: %+v", items)
 	}
 }

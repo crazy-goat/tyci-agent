@@ -50,18 +50,26 @@ type todoAgentList struct {
 	nextID       int
 	items        []todoItem
 	lastActivity time.Time
+	// terminal is true once the agent that owns this list is known to have
+	// finished (see MarkTodoAgentDone). Only terminal lists are eligible
+	// for eviction — a still-running agent's list must never be dropped
+	// out from under it, mirroring jobs.Registry's own refusal to prune a
+	// running/waiting-answer job (see its maxRetainedTerminalJobs doc
+	// comment). A list that is never marked terminal (nothing calls
+	// MarkTodoAgentDone for it) is simply never evicted; today every real
+	// caller does call it (subagent.go's runSingleTask, btw.go's job
+	// bodies).
+	terminal bool
 }
 
-// maxRetainedChildTodoLists bounds how many non-main agents' todo lists
-// this process keeps. A finished subagent's or /btw's list is deliberately
-// NOT discarded on completion — item 1's Subagents tab wants to show what a
-// child planned — but nothing here is ever told "this agent is done", so
-// without a bound the map would grow for the life of the process, the same
-// hazard documented at jobs/registry.go's maxRetainedTerminalJobs (and the
-// still-open one at main.go's `resumable` map, TODO.md item 24's notes).
-// 50 mirrors that constant: well past the number of child lists anyone
-// still cares about, evicted oldest-lastActivity-first so an agent that is
-// actively writing is never the one dropped in practice.
+// maxRetainedChildTodoLists bounds how many non-main agents' TERMINAL todo
+// lists this process keeps. A finished subagent's or /btw's list is
+// deliberately NOT discarded the moment it finishes — item 1's Subagents
+// tab wants to show what a child planned — but without a bound the map
+// would grow for the life of the process, the same hazard documented at
+// jobs/registry.go's maxRetainedTerminalJobs. 50 mirrors that constant:
+// well past the number of finished child lists anyone still cares about,
+// evicted oldest-lastActivity-first among terminal lists only.
 const maxRetainedChildTodoLists = 50
 
 var todoStore = struct {
@@ -70,40 +78,70 @@ var todoStore = struct {
 }{agents: map[string]*todoAgentList{}}
 
 // getOrCreateLocked returns the todo list for agentID, creating it (with a
-// fresh id sequence starting at 1) on first use. Caller must hold
-// todoStore.
+// fresh id sequence starting at 1, and lastActivity set immediately — never
+// left at the zero time) on first use. Caller must hold todoStore.
+//
+// Eviction runs BEFORE the new entry is inserted (not after), and only ever
+// considers ids other than agentID: a brand-new list must be structurally
+// impossible for evictOldChildListsLocked to pick as "oldest", not merely
+// unlikely to. It used to run after insertion with lastActivity still at
+// its zero value, which made the just-created entry look like the oldest
+// thing in the map — evicted immediately, every time, once 50 children
+// existed. The caller kept writing into the detached pointer, so this was
+// silent: no error, just a list that reset to empty on the next read.
 func getOrCreateLocked(agentID string) *todoAgentList {
-	l, ok := todoStore.agents[agentID]
-	if !ok {
-		l = &todoAgentList{nextID: 1}
-		todoStore.agents[agentID] = l
-		if agentID != mainAgentTodoID {
-			evictOldChildListsLocked()
-		}
+	if l, ok := todoStore.agents[agentID]; ok {
+		l.lastActivity = time.Now()
+		return l
 	}
-	l.lastActivity = time.Now()
+	if agentID != mainAgentTodoID {
+		evictOldChildListsLocked(agentID)
+	}
+	l := &todoAgentList{nextID: 1, lastActivity: time.Now()}
+	todoStore.agents[agentID] = l
 	return l
 }
 
-// evictOldChildListsLocked drops the least-recently-active child (non-main)
-// todo lists beyond maxRetainedChildTodoLists. Caller must hold todoStore.
-func evictOldChildListsLocked() {
-	if len(todoStore.agents)-1 <= maxRetainedChildTodoLists {
+// MarkTodoAgentDone marks agentID's todo list as terminal — eligible for
+// eviction once maxRetainedChildTodoLists is exceeded (see
+// evictOldChildListsLocked). Call exactly once, when the agent that owns
+// this list has actually finished: subagent.go's runSingleTask does this
+// via defer for every subagent call (sync or async), and btw.go's job
+// bodies do the same for /btw and "resume". A no-op for the main id and for
+// an id with no list yet.
+func MarkTodoAgentDone(agentID string) {
+	if agentID == "" || agentID == mainAgentTodoID {
 		return
 	}
+	todoStore.Lock()
+	defer todoStore.Unlock()
+	if l, ok := todoStore.agents[agentID]; ok {
+		l.terminal = true
+	}
+}
+
+// evictOldChildListsLocked drops the least-recently-active TERMINAL child
+// (non-main, non-excludeID) todo lists beyond maxRetainedChildTodoLists.
+// excludeID is always the id about to be inserted by the caller — see
+// getOrCreateLocked's doc comment for why it must be excluded on top of
+// running before the insert. Caller must hold todoStore.
+func evictOldChildListsLocked(excludeID string) {
 	type entry struct {
 		id string
 		t  time.Time
 	}
-	children := make([]entry, 0, len(todoStore.agents))
+	var terminal []entry
 	for id, l := range todoStore.agents {
-		if id == mainAgentTodoID {
+		if id == mainAgentTodoID || id == excludeID || !l.terminal {
 			continue
 		}
-		children = append(children, entry{id, l.lastActivity})
+		terminal = append(terminal, entry{id, l.lastActivity})
 	}
-	sort.Slice(children, func(i, j int) bool { return children[i].t.Before(children[j].t) })
-	for _, e := range children[:len(children)-maxRetainedChildTodoLists] {
+	if len(terminal) <= maxRetainedChildTodoLists {
+		return
+	}
+	sort.Slice(terminal, func(i, j int) bool { return terminal[i].t.Before(terminal[j].t) })
+	for _, e := range terminal[:len(terminal)-maxRetainedChildTodoLists] {
 		delete(todoStore.agents, e.id)
 	}
 }
@@ -145,9 +183,15 @@ func (t *TodoTool) Name() string { return "todo" }
 
 // MaxParallel limits the dispatcher to concurrent calls of this tool from a
 // single LLM response. Return 1 to force sequential execution when the model
-// batches several todo calls into one tool-call block — todo mutates shared
-// in-process state and concurrent calls race even though Run holds the
-// per-call mutex. Other tools omit this method (treated as 0 = unbounded).
+// batches several todo calls into one tool-call block.
+//
+// Not a data-race concern any more — every agent's list lives behind one
+// mutex (todoStore) that each Run call holds for its whole body, so
+// concurrent calls cannot corrupt state. It is an ORDERING concern: a
+// single LLM response that batches todo(action="add") followed by
+// todo(action="update", id=N) for the id the add just produced must run in
+// that order, not whichever way the dispatcher happens to schedule two
+// goroutines. Keep this at 1 even if the locking story changes.
 func (t *TodoTool) MaxParallel() int { return 1 }
 
 func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
