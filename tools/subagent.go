@@ -33,7 +33,10 @@ const SubagentTimeoutSec = 600
 // need. What the handoff buys is the thing the parent cannot buy for itself:
 // the turn ends, so the person at the keyboard gets their prompt back and can
 // carry on talking instead of watching a spinner.
-const SubagentBackgroundAfterSec = 60
+//
+// A var, not a const, so tests can shrink it instead of waiting out a real
+// 60s timer to exercise the timer.C exit of runWithHandoff's select.
+var SubagentBackgroundAfterSec = 60 * time.Second
 
 // ErrSubagentTruncated is returned (wrapped via fmt.Errorf %w) by a
 // SubAgentRunner when the child hit its MaxIterations cap. Tools package
@@ -349,16 +352,35 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 	// their prompt back. Requires a job registry to hand them to; without one
 	// (a one-shot `tyci run`, where there is no next turn to deliver a notice
 	// into) the old blocking behaviour is correct and is what happens.
+	//
+	// runWithHandoff always returns a fully-formed result: either every task
+	// finished inside the window and it is the same result runTasks below
+	// would have produced, or at least one is still going and it is the
+	// handoff message. Either way it is returned directly — the second
+	// (bool) value only tells tests and callers which of those happened, it
+	// does not gate whether the result is usable. Falling through to runTasks
+	// here used to re-run every task from scratch on the common "finished in
+	// time" path, paying the model and side effects twice.
 	if jobStarter != nil && backgroundAllowed(ctx) {
-		if res, handed := t.runWithHandoff(ctx, tasks); handed {
-			return res
-		}
+		res, _ := t.runWithHandoff(ctx, tasks)
+		return res
 	}
 
-	// Run tasks concurrently, each bounded by SubagentTimeoutSec.
+	// Reached when backgrounding is disabled for this mode
+	// (!backgroundAllowed(ctx), including when ctx already carries a
+	// SubagentSinkCtxKey — i.e. this call is itself running inside another
+	// subagent) — the only case runWithHandoff does not cover, since
+	// jobStarter is wired unconditionally in the real binary (main.go).
 	results := runTasks(ctx, t.Runner, tasks, SubagentTimeoutSec)
+	return resultsToToolResult(results)
+}
 
-	// Single task → return plain text (backward compatible)
+// resultsToToolResult converts finished subagent results into the ToolResult
+// shape the model sees: a single task collapses to plain text with its
+// Truncated flag propagated (unchanged from before batching existed), a
+// batch becomes a JSON array. Shared by the plain runTasks path and by
+// runWithHandoff's all-finished-inline case, so the two cannot drift apart.
+func resultsToToolResult(results []subagentResult) ToolResult {
 	if len(results) == 1 {
 		r := results[0]
 		if !r.Success {
@@ -367,7 +389,6 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		return ToolResult{Type: "result", Success: true, Content: r.Content, Truncated: r.Truncated}
 	}
 
-	// Multiple tasks → return JSON array
 	data, err := json.Marshal(results)
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("marshal results: %v", err)}
@@ -683,11 +704,15 @@ Do not call wait before you are told: it can only say "still running", which the
 // runWithHandoff runs a blocking subagent call as background jobs and waits up
 // to SubagentBackgroundAfterSec for them.
 //
-// handed=false means every child finished inside the window and the caller
-// should present the results as it always has — the common case, and the
-// reason this returns rather than deciding for itself. handed=true means at
-// least one child is still going: its result is now the job registry's to
-// deliver, and the returned message says so.
+// The returned ToolResult is always ready to hand straight back to the
+// model — the caller does not need to fall back to re-running anything. The
+// bool distinguishes which of the two outcomes produced it: handed=false
+// means every child finished inside the window, and the result is built from
+// their collected results via resultsToToolResult — the same shape a plain,
+// non-handoff run would have produced, computed once rather than by running
+// the tasks again. handed=true means at least one child is still going: its
+// result is now the job registry's to deliver, and the returned message
+// (from handOff) says so.
 func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask) (ToolResult, bool) {
 	spawned := make([]*spawnedTask, 0, len(tasks))
 	for _, task := range tasks {
@@ -697,7 +722,7 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask)
 		spawned = append(spawned, t.spawn(ctx, task, false, true))
 	}
 
-	timer := time.NewTimer(SubagentBackgroundAfterSec * time.Second)
+	timer := time.NewTimer(SubagentBackgroundAfterSec)
 	defer timer.Stop()
 
 	waiting := make(map[*spawnedTask]struct{}, len(spawned))
@@ -736,7 +761,17 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask)
 			return t.handOff(spawned), true
 		}
 	}
-	return ToolResult{}, false
+
+	// Every child finished inside the window: collect what they produced
+	// instead of discarding it and letting the caller run them all again.
+	// st.result() is safe to read here without the lock racing finish() —
+	// <-next.done only fired above after finish() had already recorded the
+	// result (spawn's closure calls finish before its deferred close(done)).
+	results := make([]subagentResult, len(spawned))
+	for i, st := range spawned {
+		results[i] = st.result()
+	}
+	return resultsToToolResult(results), false
 }
 
 // handOff moves whatever is still running to the background and builds the
@@ -757,12 +792,12 @@ func (t *SubagentTool) handOff(spawned []*spawnedTask) ToolResult {
 	if len(stillRunning) == 0 {
 		// Everything finished between the timer firing and this loop. Rare,
 		// and there is nothing to hand over — but the caller has already
-		// committed to the handoff path, so report the results here.
-		data, err := json.Marshal(finished)
-		if err != nil {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("marshal results: %v", err)}
-		}
-		return ToolResult{Type: "result", Success: true, Content: string(data)}
+		// committed to the handoff path, so report the results here. Same
+		// shaping as every other all-finished case (resultsToToolResult), so
+		// a single task collapses to plain text instead of a one-element
+		// JSON array just because it happened to finish on this side of the
+		// handoff decision.
+		return resultsToToolResult(finished)
 	}
 	return ToolResult{Type: "result", Success: true, Content: spawnedJobsMessage(stillRunning, finished)}
 }
