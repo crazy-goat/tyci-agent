@@ -66,6 +66,7 @@ func init() {
 	rootCmd.PersistentFlags().Bool("no-session", false, "Disable session persistence")
 	rootCmd.PersistentFlags().Bool("debug", false, "Show HTTP request/response data")
 	rootCmd.PersistentFlags().Bool("no-debug", false, "Disable API request/response debug logging")
+	rootCmd.PersistentFlags().Bool("no-mcp", false, "Don't connect configured MCP servers (~/.tyci/mcp.json)")
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(consoleCmd)
@@ -88,7 +89,27 @@ func registerProviders() {
 	providers.RegisterProvidersFromConfig(connect.ModelJSONPath())
 }
 
-func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, context.Context, *session.Session, string, string, *debug.Logger, error) {
+// initCommon wires up everything a command needs to run the agent loop:
+// provider/model resolution, debug logging, session, history file, and the
+// tool schema handed to the model.
+//
+// connectMCP decides whether this invocation connects configured MCP
+// servers (tools.InitMCP) before building the schema, subject to the
+// --no-mcp flag (which always wins, whatever connectMCP says — see below).
+// console and tui pass true. run also passes true — a scheduled `tyci cron`
+// job shells out to `tyci run` (internal/cron/run.go), so leaving run's
+// default at false would silently give every cron job a different, smaller
+// tool set than an interactive session gets, which is a hard failure mode
+// to debug precisely because the same prompt behaves differently depending
+// on how it was started. The cost is bounded: connects happen concurrently
+// and mcpConnectTimeout caps the whole batch at 5s (tools/mcp.go), which is
+// judged an acceptable one-time cost even for a scripted/piped invocation.
+// --no-mcp is the opt-out for whichever of these one-shot callers wants it.
+//
+// The returned shutdown func closes any connected MCP servers and must be
+// deferred by the caller so a stdio server's child process never outlives
+// this process; it is a no-op when MCP was never connected.
+func initCommon(cmd *cobra.Command, connectMCP bool) (providers.Provider, string, agent.Config, context.Context, *session.Session, string, string, *debug.Logger, func(), error) {
 	registerProviders()
 
 	// Hook config problems, collected in wireTools. Reported here rather than
@@ -108,12 +129,12 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 		model = agent.ResolveModel("", agentName)
 	}
 	if model == "" {
-		return nil, "", agent.Config{}, nil, nil, "", "", nil, fmt.Errorf("no model specified. Use --model, --agent, or configure a default agent")
+		return nil, "", agent.Config{}, nil, nil, "", "", nil, nil, fmt.Errorf("no model specified. Use --model, --agent, or configure a default agent")
 	}
 
 	provider, modelName, ok := providers.FindModel(model)
 	if !ok {
-		return nil, "", agent.Config{}, nil, nil, "", "", nil, fmt.Errorf("model %q not found", model)
+		return nil, "", agent.Config{}, nil, nil, "", "", nil, nil, fmt.Errorf("model %q not found", model)
 	}
 	// A catalog written by an older tyci build had its prices and context
 	// limits silently stripped on every refresh (see doc comment on
@@ -150,6 +171,30 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 		ctx = context.Background()
 	}
 
+	// shutdown is what the caller defers. Connecting MCP servers ties their
+	// child processes' lifetime to ctx (see mcp.ConnectAllTimeout's stdio
+	// path, exec.CommandContext) — canceling it is the backstop that kills
+	// even a server whose handshake never completed and so was never
+	// registered for tools.ShutdownMCP to close gracefully. --no-mcp always
+	// wins over connectMCP: it exists specifically so a caller that would
+	// otherwise connect (run, for cron's sake — see this func's doc
+	// comment) can still opt out. When MCP ends up not connecting at all,
+	// ctx is never wrapped with a cancel: nothing was started, so there is
+	// nothing to cancel or close, and shutdown is a plain no-op.
+	noMCP, _ := cmd.Flags().GetBool("no-mcp")
+	shutdown := func() {}
+	if connectMCP && !noMCP {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		if err := tools.InitMCP(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: MCP: %v\n", err)
+		}
+		shutdown = func() {
+			tools.ShutdownMCP()
+			cancel()
+		}
+	}
+
 	debugFlag, _ := cmd.Flags().GetBool("debug")
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
 	// The flag wins when given, otherwise the global config, otherwise 0 —
@@ -164,7 +209,7 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 		MaxIterations: maxIterations,
 		Debug:         debugFlag,
 		Tools:         toolsAdapter{},
-		Schema:        tools.GetToolsSchemaJSON(),
+		Schema:        tools.GetAllToolsSchemaJSON(),
 		Fallbacks:     fallbacks,
 		MaxTokens:     maxTokens,
 		NoPromptCache: !agent.PromptCacheEnabled(),
@@ -216,7 +261,7 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 		}
 	}
 
-	return provider, modelName, cfg, ctx, sess, sessionPath, historyFile, dl, nil
+	return provider, modelName, cfg, ctx, sess, sessionPath, historyFile, dl, shutdown, nil
 }
 
 // resolveFallbacksQuiet resolves each "provider/model" fallback spec to a
@@ -270,13 +315,31 @@ var runCmd = &cobra.Command{
 		if prompt == "" {
 			return fmt.Errorf("--prompt is required")
 		}
-		provider, modelName, cfg, ctx, _, sessionPath, _, dl, err := initCommon(cmd)
+		// connectMCP: true. See initCommon's doc comment — cron shells out
+		// to `tyci run`, so this is what gives a scheduled job the same
+		// tool set an interactive session gets. --no-mcp opts a particular
+		// invocation out.
+		provider, modelName, cfg, ctx, _, sessionPath, _, dl, shutdown, err := initCommon(cmd, true)
 		if err != nil {
 			return err
 		}
-		if dl != nil {
-			defer dl.Close()
+		// cleanup bundles everything that must run once, however this
+		// invocation ends: the normal return below (via defer) AND the two
+		// os.Exit paths inside finishPromptRun (via the cleanup param passed
+		// to runPrompt) -- os.Exit terminates before any defer gets to run,
+		// so runPrompt/finishPromptRun call this explicitly right before
+		// each os.Exit. Without it, an errored or Ctrl-C'd `tyci run` would
+		// skip tools.ShutdownMCP() (and the debug log's Close()) entirely,
+		// leaking a connected MCP server's process on every failed or
+		// canceled run -- cron's included, since it just shells out to
+		// `tyci run`. See finishPromptRun's doc comment (prompt_finish.go).
+		cleanup := func() {
+			if dl != nil {
+				dl.Close()
+			}
+			shutdown()
 		}
+		defer cleanup()
 		// `tyci run` is a one-shot CLI invocation. Use the
 		// bracket-prefix Minimal display so output is plain, one line
 		// per event, and easy to grep / pipe. For the rich REPL or
@@ -286,7 +349,7 @@ var runCmd = &cobra.Command{
 		// No resolver: a one-shot run has nowhere to type /model, so
 		// SwitchModel is not reachable and does not need a catalog.
 		cond := newConductor(provider, modelName, disp, cfg, sessionPath, nil)
-		runPrompt(cond, disp, prompt, ctx)
+		runPrompt(cond, disp, prompt, ctx, cleanup)
 		return nil
 	},
 }
@@ -305,10 +368,11 @@ var consoleCmd = &cobra.Command{
 	Use:   "console",
 	Short: "Start an interactive console session",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		provider, modelName, cfg, ctx, _, sessionPath, historyFile, dl, err := initCommon(cmd)
+		provider, modelName, cfg, ctx, _, sessionPath, historyFile, dl, shutdown, err := initCommon(cmd, true)
 		if err != nil {
 			return err
 		}
+		defer shutdown()
 		if dl != nil {
 			defer dl.Close()
 		}
@@ -342,10 +406,11 @@ var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Start the TUI (rich terminal UI)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		provider, modelName, cfg, ctx, _, sessionPath, historyFile, dl, err := initCommon(cmd)
+		provider, modelName, cfg, ctx, _, sessionPath, historyFile, dl, shutdown, err := initCommon(cmd, true)
 		if err != nil {
 			return err
 		}
+		defer shutdown()
 		if dl != nil {
 			defer dl.Close()
 		}

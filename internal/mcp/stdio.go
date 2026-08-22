@@ -33,6 +33,16 @@ type StdioClient struct {
 	pending            map[int]chan *Response
 	samplingHandler    SamplingHandler
 	elicitationHandler ElicitationHandler
+
+	// closeOnce guards the body of Close so it runs at most once even if
+	// called concurrently -- e.g. a deferred shutdown and a signal handler
+	// racing to close the same client. Without it, two goroutines could
+	// both reach cmd.Wait() below: exec.Cmd documents that as not safe to
+	// call more than once (concurrently or otherwise), and it mutates
+	// cmd.ProcessState, which the "did it exit on its own" select also
+	// reads.
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewStdioClient creates a new stdio-based MCP client.
@@ -58,7 +68,7 @@ func (c *StdioClient) Name() string {
 // pending-request map), and sync.Mutex is not reentrant, so holding it here
 // for the whole call would deadlock on the first request. There is exactly
 // one Initialize per client today, and it never runs concurrently with any
-// other method (the only caller, ConnectAll in client.go, calls it once per
+// other method (the only caller, connectOne in client.go, calls it once per
 // client before handing the client to anyone else) -- but that invariant is
 // easy to break in future wiring, so the process/pipe fields (cmd, stdin,
 // stdout) are built in locals first and only published onto c under c.mu
@@ -200,7 +210,18 @@ func (c *StdioClient) SetElicitationHandler(handler ElicitationHandler) {
 // its process group (so an "npx"-style wrapper's real child dies too,
 // instead of being orphaned). Either way it reaps the process, and wakes
 // any in-flight sendRequest with an error rather than a nil response.
+//
+// The actual work runs inside closeOnce so a second (or concurrent) call
+// is a no-op that returns the first call's result, rather than re-running
+// cmd.Wait() -- see the closeOnce field comment for why that matters now
+// that MCPToolRunner.Close closes clients concurrently instead of
+// serially under its own lock.
 func (c *StdioClient) Close() error {
+	c.closeOnce.Do(func() { c.closeErr = c.doClose() })
+	return c.closeErr
+}
+
+func (c *StdioClient) doClose() error {
 	c.mu.Lock()
 	stdin := c.stdin
 	cmd := c.cmd

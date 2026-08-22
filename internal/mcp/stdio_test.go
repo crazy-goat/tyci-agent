@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
+	"sync"
 	"testing"
 	"time"
 )
@@ -165,5 +166,57 @@ func TestStdioClientCloseWakesInFlightRequest(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("CallTool() did not return within 5s after Close()")
+	}
+}
+
+// TestStdioClientCloseConcurrentCallsDoNotRace covers batch 2's new
+// constraint: MCPToolRunner.Close (tools/mcp.go) closes every client
+// concurrently rather than serially under its own lock, so two goroutines
+// can now legitimately both call the same StdioClient's Close() at once
+// (e.g. a deferred shutdown racing a signal handler). Before closeOnce,
+// both calls run the full body, including a second cmd.Wait() -- which
+// exec.Cmd documents as unsafe to call more than once, since it reads and
+// mutates cmd.ProcessState. This starts the hanging-process variant (so
+// both calls actually reach the force-kill/cmd.Wait path rather than one
+// finding the process already gone) from many goroutines at once and
+// requires: no panic/race, both calls return the same error, and Close
+// still returns within a bounded time.
+func TestStdioClientCloseConcurrentCallsDoNotRace(t *testing.T) {
+	requireSh(t)
+
+	script := initScript + `; sleep 30`
+	c := NewStdioClient("fake", "sh", []string{"-c", script})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Initialize(ctx); err != nil {
+		t.Fatalf("Initialize() error: %v", err)
+	}
+
+	const n = 8
+	errs := make([]error, n)
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = c.Close()
+		}(i)
+	}
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent Close() calls did not all return within 5s")
+	}
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("Close() call %d returned error: %v", i, err)
+		}
 	}
 }
