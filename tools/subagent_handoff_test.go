@@ -513,9 +513,8 @@ func TestBlockingCallStillHandsOffWhenSlow(t *testing.T) {
 // (Esc) must still detach and hand the children off rather than the item-20
 // fix accidentally making the all-finished branch swallow this case too.
 func TestBlockingCallStillHandsOffOnContextCancel(t *testing.T) {
-	handoffEnv(t, time.Minute)
+	reg, _ := handoffEnv(t, time.Minute)
 	release := make(chan struct{})
-	defer close(release)
 	tool := &SubagentTool{Runner: &mockRunner{
 		RunTaskFunc: func(context.Context, string, string, SubagentOptions) (string, error) {
 			<-release
@@ -549,6 +548,19 @@ func TestBlockingCallStillHandsOffOnContextCancel(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancelling the context did not end the wait")
+	}
+
+	// Drain the handed-off child before returning, instead of leaving it
+	// blocked on `release` for a deferred close to unblock on the way out.
+	// The notifier is package-global (SetJobNotifier), and handoffEnv's
+	// cleanup nils it only after this function returns — so a child that
+	// finishes on its way out posts its completion notice into whichever
+	// notifier the NEXT test has already installed. That is not theoretical:
+	// it makes TestBlockingCallHandsOffAtTimerExpiry see two notices for one
+	// job and fail, reproducibly, when the two run in sequence.
+	close(release)
+	if got := reg.List(); len(got) == 1 {
+		waitTerminal(t, reg, got[0].ID)
 	}
 }
 
