@@ -21,8 +21,15 @@ var jobProgressReporter JobProgressReporter
 func SetJobProgressReporter(p JobProgressReporter) { jobProgressReporter = p }
 
 // ReportProgressTool implements the "report_progress" tool: lets a running
-// background job post a short status note visible via "wait"'s still-running
-// response and the jobs panel, without ending the job.
+// job (any subagent call — blocking or async — or a /btw side-conversation)
+// post a short status note, without ending the job. Given a job id and a
+// non-empty text it always succeeds; whether anyone reads the note before
+// the job finishes depends on the id actually reaching whoever is watching —
+// via "wait"'s still-running response or the end-of-turn pending-jobs
+// reminder (PendingLines does append it, jobs/registry.go:292), but NOT the
+// jobs panel: display's job-line renderer never surfaces Progress at all. A
+// blocking call under `tyci run`/`--print` hands out no job id, so there
+// nobody reads it either way.
 type ReportProgressTool struct{}
 
 func (t *ReportProgressTool) Name() string { return "report_progress" }
@@ -38,7 +45,7 @@ func (t *ReportProgressTool) Run(ctx context.Context, input map[string]any) Tool
 		return ToolResult{
 			Type:    "result",
 			Success: false,
-			Error:   "report_progress only works inside an async background job (started via subagent(...,async:true) or a /btw side-conversation)",
+			Error:   "report_progress only works inside a job (a subagent call, or a /btw side-conversation) — this call has no job id",
 		}
 	}
 
@@ -51,5 +58,8 @@ func (t *ReportProgressTool) Run(ctx context.Context, input map[string]any) Tool
 	if !jobProgressReporter.SetProgress(jobID, text) {
 		return ToolResult{Type: "result", Success: false, Error: "failed to record progress: job_id not recognized by the registry"}
 	}
-	return ToolResult{Type: "result", Success: true, Content: "progress recorded; whoever checks this job with wait can see it now"}
+	// Deliberately mode-neutral: whether anyone actually reads this before
+	// the job finishes depends on the caller (see the doc comment above),
+	// and a fixed claim here would be wrong for at least one of them.
+	return ToolResult{Type: "result", Success: true, Content: "progress recorded"}
 }
