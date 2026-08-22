@@ -13,3 +13,6 @@ Thumbs.db
 
 # Go build/cache (in case anything is ever in-tree)
 vendor/
+
+# Claude Code working directories (its own git worktrees live in here)
+.claude/
