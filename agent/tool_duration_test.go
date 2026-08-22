@@ -156,7 +156,7 @@ func TestNormalFinishIsNotReported(t *testing.T) {
 // environment makes possible: the model ends its turn while a child sits
 // blocked on a question. The child makes no progress and everything it did is
 // discarded when its wall clock runs out, and the only thing that could have
-// saved it was one answer() call from the turn that just ended.
+// saved it was one answer_job() call from the turn that just ended.
 func TestBlockedJobStopsTheTurnEnding(t *testing.T) {
 	sink := &blockRecordingSink{}
 	mc := &connectortest.Fake{ProviderName: "p", ModelName: "m", Turns: [][]stream.Event{
@@ -192,7 +192,7 @@ func TestBlockedJobStopsTheTurnEnding(t *testing.T) {
 	if reminder == "" {
 		t.Fatal("the turn ended with a blocked child and nothing said so")
 	}
-	for _, want := range []string{"WAITING FOR ANSWER", "job-7", "which branch?", "answer(job_id="} {
+	for _, want := range []string{"WAITING FOR ANSWER", "job-7", "which branch?", "answer_job(job_id="} {
 		if !strings.Contains(reminder, want) {
 			t.Errorf("the reminder is missing %q:\n%s", want, reminder)
 		}

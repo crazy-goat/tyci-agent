@@ -148,10 +148,15 @@ func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (
 // ok is false when id is unknown, or when ctx is done before an answer
 // arrives; in both cases answer is "" and fromUser is false.
 //
-// fromUser reports who delivered the answer: true for a human reply via the
-// "/answer" command, false for another agent's reply via the "answer" tool
-// (see tools/ask.go's AskTool, which uses this to mark the answer's
-// provenance for the child that receives it).
+// fromUser reports who delivered the answer: true for a genuine human
+// reply, false for another agent's reply via the "answer_job" tool (see
+// tools/ask.go's AskTool, which uses this to mark the answer's provenance
+// for the child that receives it). There is no dedicated human-facing
+// command any more — a human's reply reaches a blocked job only by the
+// model relaying it through "answer_job", which always passes false (see
+// AnswerTool.Run) — but the flag itself stays part of the contract in case
+// a future caller ever has a genuine human-sourced answer to deliver
+// directly.
 func (r *Registry) Ask(ctx context.Context, id, question string) (answer string, fromUser bool, ok bool) {
 	r.mu.Lock()
 	job, found := r.jobs[id]
@@ -210,9 +215,10 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 }
 
 // Answer delivers text to a job currently waiting on Ask, unblocking it.
-// fromUser must be true for a human reply (the "/answer" command) and false
-// for another agent's reply (the "answer" tool) — Ask hands it back to the
-// asker so the answer's provenance survives the round trip.
+// fromUser must be true for a genuine human reply and false for another
+// agent's reply (the only caller today, the "answer_job" tool, always
+// passes false — see its doc comment) — Ask hands it back to the asker so
+// the answer's provenance survives the round trip.
 //
 // Returns false when id is unknown, the job is not currently
 // StatusWaitingAnswer, or no answerCh exists yet — including the race where

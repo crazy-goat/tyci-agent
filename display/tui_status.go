@@ -74,10 +74,9 @@ func (m TuiModel) buildStatus() string {
 
 	// Hard-cap left BEFORE computing padding. Every fragment above is
 	// attacker-free but not length-free: m.statusMessage in particular can
-	// carry a whole job's question (echoed back after "/answer" — see
-	// answer.go's handleAnswerCommand) or a refusal sentence (tui_keys.go's
-	// "/new has to wait — it changes the conversation this turn is writing
-	// to..."), either of which can run well past m.width on its own.
+	// carry a refusal sentence (tui_keys.go's "/new has to wait — it
+	// changes the conversation this turn is writing to..."), which can run
+	// well past m.width on its own.
 	//
 	// This status bar is rendered as one fixed-height row (tui_view.go), via
 	// lipgloss which WRAPS content wider than the terminal instead of

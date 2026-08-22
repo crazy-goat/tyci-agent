@@ -15,12 +15,14 @@ import (
 // breaking the TUI's fixed-height layout — observed with a single ~106-char
 // message against a 20-line frame.
 //
-// Two real-world sources of an overlong statusMessage motivated this: the
-// "/answer" confirmation, which echoes a job's Question verbatim (see
-// answer.go's handleAnswerCommand), and tui_keys.go's "/new has to wait —
-// it changes the conversation this turn is writing to. Esc stops the turn,
-// then press Enter." refusal (~110 chars) — both funnel through the exact
-// same m.statusMessage field buildStatus reads, so one fix here covers both.
+// Two real-world sources of an overlong statusMessage motivated this: a
+// confirmation echoing a job's Question verbatim (from a since-removed
+// "/answer" command — the risk of an overlong echo remains, since nothing
+// else caps m.statusMessage's length before it's set), and tui_keys.go's
+// "/new has to wait — it changes the conversation this turn is writing to.
+// Esc stops the turn, then press Enter." refusal (~110 chars) — both funnel
+// through the exact same m.statusMessage field buildStatus reads, so one
+// fix here covers both.
 func TestBuildStatus_LongStatusMessageIsTruncatedNotWrapped(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width = 106
