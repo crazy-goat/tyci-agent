@@ -21,7 +21,20 @@ func (m *TuiModel) totalRenderedLines() int {
 	total := 0
 	for i, b := range m.blocks {
 		lc := b.cachedLineCount
-		if lc == 0 {
+		// A flushed block's cachedLineCount was computed for the width it was
+		// flushed at (b.flushedWidth), not necessarily m.width. On resize,
+		// invalidateAllBlockLineCounts deliberately leaves flushed blocks'
+		// counts untouched (they're re-wrapped lazily, only when actually
+		// scrolled into view) — but that means a nonzero cachedLineCount here
+		// can be stale for the current width. getBlockLines pages the block
+		// back in via ensureBlockResident, which re-wraps for m.width and
+		// fixes up cachedLineCount, so route through it instead of trusting
+		// the cached count directly. Without this, this total silently
+		// disagrees with what buildAllFlatRenderLines/buildFlatRenderLinesInRange
+		// actually produce (they always call getBlockLines), which shows up
+		// as bogus viewport-pad rows hiding real scrollback content.
+		stale := b.flushed && b.flushedWidth != 0 && b.flushedWidth != m.width
+		if lc == 0 || stale {
 			// Try to get lines (renders if needed)
 			lines := m.getBlockLines(i, false)
 			if lines == nil {
