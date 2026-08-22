@@ -100,6 +100,17 @@ type Config struct {
 	// tool. This ensures the model thinks through its approach before
 	// acting.
 	HasTodos func() bool
+
+	// Interactive reports whether a human is present to answer a blocked
+	// job's question — true for the console REPL and the TUI, false for
+	// `tyci run` (and anything shelling out to it, e.g. cron: see
+	// initCommon's doc comment in commands.go). PendingJobs is wired in
+	// every mode (see its own doc comment), but only an interactive mode
+	// has a "/answer" command for a person to type — the wording
+	// buildJobReminder picks depends on this, since telling a non-
+	// interactive run to wait for "/answer" describes a control that does
+	// not exist there.
+	Interactive bool
 }
 
 // maxTodoReminders bounds how many times, within a single turn, the agent
@@ -308,7 +319,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			if cfg.PendingJobs != nil && jobReminders < maxJobReminders {
 				if pending := cfg.PendingJobs(); len(pending) > 0 {
 					jobReminders++
-					reminder := buildJobReminder(pending)
+					reminder := buildJobReminder(pending, cfg.Interactive)
 					*msgs = append(*msgs, connector.Message{
 						Role:    "user",
 						Content: []connector.ContentBlock{{Type: "text", Text: reminder}},
@@ -363,10 +374,19 @@ func buildTodoReminder(pending []string) string {
 //
 // It leads with the blocked ones because the two cases need opposite
 // responses: a running job is something to wait for or leave alone, while a
-// blocked job needs to be relayed to the user now (not answered on their
-// behalf) or its work is thrown away. Framed as an automated check, not as a
-// user asking — the user did not say this.
-func buildJobReminder(pending []string) string {
+// blocked job needs a decision now or its work is thrown away. Framed as an
+// automated check, not as a user asking — the user did not say this.
+//
+// interactive selects which decision is available for a WAITING FOR ANSWER
+// job: in an interactive session (console/TUI) a human can type "/answer",
+// so the model is told to relay the question and wait for them. In a
+// non-interactive run (`tyci run`, cron) no one is there to type anything —
+// telling the model to wait for "/answer" there describes a control that
+// does not exist and just stalls until the job's own timeout discards its
+// work, so the model is told instead to either answer it itself if it
+// genuinely knows the answer, or explicitly accept that it will go
+// unanswered and finish without it.
+func buildJobReminder(pending []string, interactive bool) string {
 	var b strings.Builder
 	b.WriteString("[automated check, not the user] Background jobs are still outstanding:\n")
 	for _, line := range pending {
@@ -374,7 +394,11 @@ func buildJobReminder(pending []string) string {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nFor anything marked WAITING FOR ANSWER: relay the question to the user and let them answer it (they can reply with /answer) — do not invent an answer on their behalf. Only call answer(job_id=..., text=\"...\") yourself if you already genuinely know the answer. Left unanswered it is making no progress and its work is discarded when it times out. ")
+	if interactive {
+		b.WriteString("\nFor anything marked WAITING FOR ANSWER: relay the question to the user and let them answer it (they can reply with /answer) — do not invent an answer on their behalf. Only call answer(job_id=..., text=\"...\") yourself if you already genuinely know the answer. Left unanswered it is making no progress and its work is discarded when it times out. ")
+	} else {
+		b.WriteString("\nFor anything marked WAITING FOR ANSWER: there is no user present in this run to answer it — only call answer(job_id=..., text=\"...\") yourself if you already genuinely know the answer from the context you have. Otherwise say plainly that it will go unanswered and finish without it; it will time out and its work will be discarded either way, so waiting for a reply that will never come only wastes the run. ")
+	}
 	b.WriteString("For a job still running, either read it with wait(job_id=...) if you need the result, or say plainly in your reply that you are leaving it running — do not silently end the turn on it.")
 	return b.String()
 }
