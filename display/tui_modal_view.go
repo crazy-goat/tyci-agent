@@ -8,9 +8,7 @@ import (
 )
 
 func (m TuiModel) subagentModalMaxScroll() int {
-	content := m.subagentModalText()
-	lines := strings.Split(content, "\n")
-	totalLines := len(lines)
+	totalLines := m.subagentModalLineCount()
 	popupHeight := int(float64(m.height) * 0.9)
 	// Subtract title (2) + footer (2) + borders (2) = ~6 lines
 	avail := popupHeight - 6
@@ -52,8 +50,12 @@ func (m TuiModel) renderSubagentModalView() string {
 		Padding(0, 1)
 	title := titleStyle.Render(fmt.Sprintf(" %s — %s ", m.subagentModalTitle, status))
 
-	// Build content with scroll
-	allLines := strings.Split(m.subagentModalText(), "\n")
+	// Build content with scroll. Wrapped, not truncated — a thinking
+	// block's reasoning is prose, so one paragraph can be a single logical
+	// line of hundreds of characters; hard-truncating it (as this used to)
+	// silently dropped everything past the popup's width with no way to
+	// scroll to it.
+	allLines := m.subagentModalWrappedLines()
 	totalLines := len(allLines)
 
 	var visibleStart int
@@ -76,11 +78,9 @@ func (m TuiModel) renderSubagentModalView() string {
 	*m.modalRenderBuffer = newRenderBuffer(contentHeight)
 
 	for i := visibleStart; i < visibleEnd; i++ {
+		// allLines is already wrapped to popupWidth-4 (subagentModalWrappedLines),
+		// so there is nothing left to cut here.
 		line := allLines[i]
-		// Truncate long lines (no "...", just cut)
-		if runes := []rune(line); len(runes) > popupWidth-4 {
-			line = string(runes[:popupWidth-4])
-		}
 		y := layout.contentTop + len(contentLines)
 		renderedLine := lineStyle.Render(line)
 		m.modalRenderBuffer.Add(renderedLine, "modal", -1, i, y)

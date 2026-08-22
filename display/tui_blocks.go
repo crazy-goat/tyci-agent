@@ -249,7 +249,6 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 func newContentBlock(kind, content string) block {
 	b := block{kind: kind, content: content, dirty: true}
 	if kind == "thinking" {
-		b.collapsed = true
 		b.startTime = time.Now()
 		freezeThinkingSummary(&b, false)
 	}

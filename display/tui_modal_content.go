@@ -37,9 +37,39 @@ func (m TuiModel) subagentModalText() string {
 	return b.content
 }
 
-// subagentModalLineCount counts the display lines of the current modal text.
+// subagentModalWrappedLines returns the modal's current text wrapped to the
+// popup's content width. Every place that measures or renders the modal
+// body goes through this one function — a previous scroll-accounting bug
+// (tui_scroll.go, fixed on main) came from exactly this kind of line math
+// living in two places that quietly stopped agreeing. Before this, a long
+// logical line (a thinking block's reasoning is prose: one paragraph is a
+// single logical line of hundreds of characters) was hard-truncated with no
+// way to scroll to the rest — this wraps it instead, so nothing the block
+// wrote is unreachable.
+func (m TuiModel) subagentModalWrappedLines() []string {
+	maxW := m.subagentModalLayout().popupWidth - 4
+	if maxW < 1 {
+		maxW = 1
+	}
+	content := m.subagentModalText()
+	lines := make([]string, 0, strings.Count(content, "\n")+1)
+	for _, logical := range strings.Split(content, "\n") {
+		wrapped := wrapText(logical, maxW, 0)
+		for _, wl := range strings.Split(wrapped, "\n") {
+			lines = append(lines, strings.TrimSuffix(wl, clearLine))
+		}
+	}
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	return lines
+}
+
+// subagentModalLineCount counts the display lines of the current modal
+// text, after wrapping — the count scroll math and the render path both
+// need.
 func (m TuiModel) subagentModalLineCount() int {
-	return strings.Count(m.subagentModalText(), "\n") + 1
+	return len(m.subagentModalWrappedLines())
 }
 
 // clampSubagentModalScroll keeps the scroll offset inside the current text.

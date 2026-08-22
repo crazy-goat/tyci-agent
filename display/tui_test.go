@@ -450,7 +450,7 @@ func TestTuiModel_View_BlankLineBetweenToolAndText(t *testing.T) {
 // full-render behaviour and no longer applies.
 func TestTuiModel_RenderBlock_Thinking_StaysOneLineRegardlessOfWidth(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
-	m.width = 30 // narrow terminal
+	m.width = 40 // narrow terminal
 
 	line := "this is a very long thinking line that should definitely not be wrapped because it collapses instead"
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: line})
@@ -462,6 +462,13 @@ func TestTuiModel_RenderBlock_Thinking_StaysOneLineRegardlessOfWidth(t *testing.
 	}
 	if !strings.HasPrefix(lines[0], "│") {
 		t.Errorf("thinking line should start with │, got: %q", lines[0])
+	}
+	// The half of the old assertion that is still meaningful: a collapsed
+	// row is supposed to fit the terminal it was rendered for, the same
+	// invariant every other row in the transcript holds.
+	visible := stripANSI(lines[0])
+	if lipgloss.Width(visible) > m.width {
+		t.Errorf("visible line too long: %d vis chars (max %d): %q", lipgloss.Width(visible), m.width, visible)
 	}
 }
 
