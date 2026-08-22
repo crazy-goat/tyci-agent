@@ -304,36 +304,37 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	_, err = agent.Run(ctx, mc, ledger.Watch(sink, ledger.Subagent, mc.Provider(), mc.Model()), &msgs, cfg)
 	text := strings.TrimSpace(collectedText())
 
-	// If this run is happening inside a background job (async subagent or
-	// /btw side-conversation — see tools.JobIDCtxKey's doc comment), and it
-	// actually produced a usable transcript (finished cleanly, or hit the
-	// iteration cap but still has real turns in msgs — as opposed to a hard
-	// failure where agent.Run may have barely started), stash the mutated
-	// msgs/mc/cfg so a later "resume" tool call can continue this exact
-	// conversation as a brand-new job. See resumableEntry's doc comment for
-	// why this map is never pruned.
+	// truncated is the iteration-cap cutoff; deadlineExceeded is the
+	// wall-clock one (SubagentTimeoutSec, via ctx's deadline — see
+	// tools/subagent.go's runSingleTask). Mutually exclusive in practice:
+	// agent.Run only ever returns one error. Both leave a resumable,
+	// partially-completed conversation behind, so both get the same
+	// treatment below.
 	truncated := errors.Is(err, agent.ErrMaxIterations)
-	if jobID, ok := ctx.Value(tools.JobIDCtxKey{}).(string); ok && jobID != "" && (err == nil || truncated) {
+	deadlineExceeded := !truncated && errors.Is(err, context.DeadlineExceeded)
+
+	// jobID is the id this child is running under (JobIDCtxKey — set for
+	// every real invocation, sync or async, by tools/subagent.go's spawn;
+	// only absent in tests that call run() directly). It is what makes the
+	// resume hint below actionable instead of a dead end: without it, the
+	// model would be told to resume a conversation it has no id for.
+	jobID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+
+	// If this run is happening inside a background job, and it actually
+	// produced a usable transcript (finished cleanly, hit the iteration cap,
+	// or hit the wall-clock deadline — all leave real turns in msgs, as
+	// opposed to a hard failure where agent.Run may have barely started),
+	// stash the mutated msgs/mc/cfg so a later "resume" tool call can
+	// continue this exact conversation as a brand-new job. See
+	// resumableEntry's doc comment for why this map is never pruned.
+	if jobID != "" && (err == nil || truncated || deadlineExceeded) {
 		resumableMu.Lock()
 		resumable[jobID] = resumableEntry{msgs: msgs, mc: mc, cfg: cfg}
 		resumableMu.Unlock()
 	}
 
-	if truncated {
-		if text == "" {
-			// Hit the cap and produced nothing — return a hard error so
-			// the parent sees a clear failure and can decide to retry,
-			// split, or raise the cap. We do NOT wrap ErrSubagentTruncated
-			// here, because there's no partial content to surface; the
-			// parent is expected to treat this as a normal subagent
-			// failure and react accordingly.
-			return "", fmt.Errorf("subagent hit its %d-iteration limit without producing a final answer (likely stuck in a tool-call loop); narrow the task or split it into smaller subagent calls", maxIter)
-		}
-		// Partial: keep the text, annotate it, and return ErrSubagentTruncated
-		// so the tools package can detect it via errors.Is and set
-		// subagentResult.Truncated / ToolResult.Truncated=true.
-		return text + fmt.Sprintf("\n\n[note: subagent stopped at its %d-iteration limit; the result above may be incomplete]", maxIter),
-			fmt.Errorf("%w: stopped at its %d-iteration limit; result may be incomplete", tools.ErrSubagentTruncated, maxIter)
+	if truncated || deadlineExceeded {
+		return subagentCutoffMessage(text, deadlineExceeded, jobID, maxIter, err)
 	}
 	if err != nil {
 		return "", err
@@ -342,6 +343,67 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		return "", fmt.Errorf("subagent finished without producing any text output")
 	}
 	return text, nil
+}
+
+// subagentCutoffMessage builds the (content, error) pair run() returns once
+// a child has been cut off — by the iteration cap or by the wall-clock
+// deadline — factored out of run() so this decision can be exercised
+// directly with a synthetic text/jobID, independent of whatever agent.Run
+// actually manages to produce in a given scenario (in particular, the
+// harness's own "possible infinite loop" diagnostic — see agent.Run's
+// d.Text call right before it returns ErrMaxIterations — means text is
+// essentially never really empty on the iteration-cap path in practice; the
+// text == "" branches below exist for correctness regardless).
+//
+// deadlineWasHit distinguishes the wall-clock case from the iteration-cap
+// one for wording only; deadlineErr is the original error to wrap so
+// errors.Is(err, context.DeadlineExceeded) still holds for a caller that
+// cares (tools/subagent.go's runSingleTask does, via ErrSubagentTimedOut's
+// wrapping — see its doc comment).
+func subagentCutoffMessage(text string, deadlineWasHit bool, jobID string, maxIter int, deadlineErr error) (string, error) {
+	if text == "" {
+		// Hit the cutoff and produced nothing to show — but if a resumable
+		// entry was just stashed for jobID, the conversation is NOT a dead
+		// end: agent.Run still appended whatever partial turns happened
+		// before the cutoff, and resume() can pick them up. Only when there
+		// is no job id at all (jobID == "", so nothing was stashed) is
+		// "narrow the task or split it" the honest answer.
+		if deadlineWasHit {
+			if jobID != "" {
+				return "", fmt.Errorf("subagent exceeded its wall-clock time limit without producing any output, but the conversation so far is resumable: resume(job_id=%q, task=\"...\") to continue it", jobID)
+			}
+			return "", fmt.Errorf("subagent exceeded its wall-clock time limit without producing any output; narrow the task or split it into smaller subagent calls")
+		}
+		if jobID != "" {
+			return "", fmt.Errorf("subagent hit its %d-iteration limit without producing a final answer, but the conversation so far is resumable: resume(job_id=%q, task=\"...\") to continue it", maxIter, jobID)
+		}
+		return "", fmt.Errorf("subagent hit its %d-iteration limit without producing a final answer (likely stuck in a tool-call loop); narrow the task or split it into smaller subagent calls", maxIter)
+	}
+	// Partial: keep the text, annotate it with a resume hint, and wrap a
+	// sentinel (ErrSubagentTruncated / ErrSubagentTimedOut) so the tools
+	// package can detect it via errors.Is and surface it as a partial
+	// success (Truncated=true) rather than a bare failure with the content
+	// thrown away.
+	if deadlineWasHit {
+		return text + fmt.Sprintf("\n\n[note: subagent exceeded its wall-clock time limit; the result above may be incomplete.%s]", resumeHint(jobID)),
+			fmt.Errorf("%w: result may be incomplete: %w", tools.ErrSubagentTimedOut, deadlineErr)
+	}
+	return text + fmt.Sprintf("\n\n[note: subagent stopped at its %d-iteration limit; the result above may be incomplete.%s]", maxIter, resumeHint(jobID)),
+		fmt.Errorf("%w: stopped at its %d-iteration limit; result may be incomplete", tools.ErrSubagentTruncated, maxIter)
+}
+
+// resumeHint is appended to the "[note: ...]" text a parent sees when its
+// child was cut off (iteration cap or wall-clock deadline) but still
+// produced usable text. Without the job id, "use resume" is advice the
+// model cannot act on — ResumeTool.Run (tools/resume.go) requires job_id as
+// input, and the note text is the only place that id ever reaches the
+// model in the blocking-subagent path. Empty when no job id is available
+// (e.g. no job registry wired — tests only; every real invocation has one).
+func resumeHint(jobID string) string {
+	if jobID == "" {
+		return ""
+	}
+	return fmt.Sprintf(" Continue this exact conversation (it still has its full context, nothing needs restating) with resume(job_id=%q, task=\"...\").", jobID)
 }
 
 // subagentToolRunner wraps the global tool registry so subagents can use tools.

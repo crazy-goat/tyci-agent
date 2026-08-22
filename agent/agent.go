@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/decodo/tyci/api"
 	"github.com/decodo/tyci/connector"
@@ -122,6 +123,18 @@ const maxTodoReminders = 2
 // blocked job and forgets a second.
 const maxJobReminders = 2
 
+// lastStepDeadlineThreshold is how much time must remain until ctx's
+// deadline before Run injects the last-step warning (see
+// buildLastStepWarning). It is a guess by necessity — there is no way to
+// know in advance how long the model's next round trip plus any tool call it
+// makes will take — so it is picked deliberately generous: long enough to
+// cover a slow model response and one ordinary tool call, short enough that
+// it still fires with real turns left rather than only in the final second.
+// 45s mirrors the same order of magnitude as SubagentBackgroundAfterSec
+// (tools/subagent.go), which makes the same kind of "one more round trip"
+// judgment call for a different deadline.
+const lastStepDeadlineThreshold = 45 * time.Second
+
 // ErrMaxIterations is returned by Run when the loop reaches MaxIterations
 // without the model finishing its turn. Top-level callers treat it as a
 // graceful stop (the warning is already shown via the display), but the
@@ -147,10 +160,44 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	todoReminders := 0
 	jobReminders := 0
 
+	// lastStepWarned ensures buildLastStepWarning is injected at most once
+	// per Run call: once the model has been told this is its last turn,
+	// there is nothing more useful to say even if, against instructions, it
+	// spends that turn on a tool call and a further iteration happens.
+	lastStepWarned := false
+
 	// Track fallback state across iterations
 	fs := fallbackState{idx: -1, mc: mc}
 
 	for iter := 0; cfg.MaxIterations <= 0 || iter < cfg.MaxIterations; iter++ {
+		// Warn the model, one turn ahead, that it is about to be cut off —
+		// either by the iteration cap or by ctx's wall-clock deadline (the
+		// latter is how a subagent's SubagentTimeoutSec actually terminates
+		// it in practice; see tools/subagent.go). This must run BEFORE the
+		// runOnce call below: at the true last iteration the model gets
+		// exactly one more assistant turn, and if that turn is a tool call
+		// the loop exits before the model ever sees the result — so the
+		// warning has to already be in msgs for that final call to see it.
+		if !lastStepWarned {
+			warn := cfg.MaxIterations > 0 && iter == cfg.MaxIterations-1
+			if !warn {
+				if dl, ok := ctx.Deadline(); ok && time.Until(dl) < lastStepDeadlineThreshold {
+					warn = true
+				}
+			}
+			if warn {
+				lastStepWarned = true
+				reminder := buildLastStepWarning()
+				*msgs = append(*msgs, connector.Message{
+					Role:    "user",
+					Content: []connector.ContentBlock{{Type: "text", Text: reminder}},
+				})
+				if cfg.Session != nil {
+					blocks := []session.ContentBlock{{Type: "text", Text: reminder}}
+					_ = cfg.Session.WriteMessage("user", blocks, nil)
+				}
+			}
+		}
 		// runOnce accumulates usage into totalUsage and emits d.Total
 		// only when it reaches the Summary line. totalEmitted reports
 		// whether the call already showed the Costs line; if not, the
@@ -344,6 +391,27 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 		return totalUsage, ErrMaxIterations
 	}
 	return totalUsage, nil
+}
+
+// buildLastStepWarning produces the harness-authored message injected right
+// before what the harness expects to be the model's final turn — see the
+// lastStepWarned block in Run for the two triggers (iteration cap, wall-clock
+// deadline). Framed as an automated check, not the user, same as
+// buildTodoReminder/buildJobReminder below.
+//
+// It explicitly forbids tool calls this turn. Whichever limit is about to
+// fire ends the loop the instant this turn completes, so a tool call here
+// would never have its result seen by the model — the only useful thing it
+// can do with this turn is write its summary as plain text right now.
+func buildLastStepWarning() string {
+	var b strings.Builder
+	b.WriteString("<system-reminder>\n")
+	b.WriteString("This is an automated check from the harness, not a message from the user. ")
+	b.WriteString("You are about to run out of turns on this task — this is your LAST step. ")
+	b.WriteString("Do NOT call any tools this turn: if you do, the harness stops before you would ever see the result, and that work is lost. ")
+	b.WriteString("Instead, write your final summary now, as plain text: what you found or did, what remains unfinished, and anything a caller needs to pick up where you left off.\n")
+	b.WriteString("</system-reminder>")
+	return b.String()
 }
 
 // buildTodoReminder produces the harness-authored reminder injected when the

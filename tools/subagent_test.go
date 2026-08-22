@@ -1173,6 +1173,42 @@ func TestRunSingleTask_TruncatedOnEmptyText(t *testing.T) {
 	}
 }
 
+// TestRunSingleTask_TimedOutOnDeadline is the ErrSubagentTimedOut analogue
+// of TestRunSingleTask_TruncatedOnCapHit above (item 28(C)): when the
+// runner returns ErrSubagentTimedOut — the wall-clock deadline counterpart
+// to ErrSubagentTruncated, wrapped by main.go's agentRunner.run — the
+// result must be Success=true with Truncated=true and the partial content
+// intact, exactly like an iteration-cap truncation. Before this fix,
+// runSingleTask only special-cased ErrSubagentTruncated and a bare
+// context.DeadlineExceeded, both of which discard Content on a
+// single-task call (resultsToToolResult drops it whenever Success is
+// false) — so a timed-out child with real partial text still lost it.
+func TestRunSingleTask_TimedOutOnDeadline(t *testing.T) {
+	runner := &mockRunner{
+		RunTaskFunc: func(_ context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			return "partial before timeout\n\n[note: ...]", fmt.Errorf("%w: result may be incomplete: %w", ErrSubagentTimedOut, context.DeadlineExceeded)
+		},
+	}
+	res := runSingleTask(context.Background(), runner, subagentTask{Task: "x"}, 600, true)
+	if !res.Success {
+		t.Errorf("expected Success=true on a timed-out but partial result, got false (Error=%q)", res.Error)
+	}
+	if !res.Truncated {
+		t.Errorf("expected Truncated=true, got false")
+	}
+	if res.Content != "partial before timeout\n\n[note: ...]" {
+		t.Errorf("unexpected Content: %q", res.Content)
+	}
+
+	// resultsToToolResult must carry that content through to the model —
+	// the whole point of surfacing it as a partial success rather than a
+	// bare failure.
+	tr := resultsToToolResult([]subagentResult{res})
+	if !tr.Success || !tr.Truncated || tr.Content != res.Content {
+		t.Errorf("resultsToToolResult dropped the timed-out child's content: %+v", tr)
+	}
+}
+
 // TestTruncatedMarker_Stable locks the marker string so format drift
 // between tools/subagent.go (the producer) and the main-package adapter
 // (the consumer) is caught by tests.
