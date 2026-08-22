@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -390,5 +391,187 @@ func TestTodoUpdateAcceptsInProgress(t *testing.T) {
 	}
 	if !strings.Contains(res.Content, "doing") {
 		t.Errorf("got %q", res.Content)
+	}
+}
+
+// ─── per-agent isolation (item 24) ───────────────────────────────────────
+//
+// These tests use context.Background() for the "main" conversation (no
+// TodoAgentCtxKey/JobIDCtxKey set) and a context carrying TodoAgentCtxKey
+// (for a subagent) or JobIDCtxKey (for a /btw side-conversation) to
+// simulate a child. subagent.go's runSingleTask sets TodoAgentCtxKey for
+// every real subagent call; btw.go's startBtw sets JobIDCtxKey for every
+// /btw job — this exercises the exact resolution todoAgentIDFromCtx does
+// for both.
+
+func childTodoCtx(agentID string) context.Context {
+	return context.WithValue(context.Background(), TodoAgentCtxKey{}, agentID)
+}
+
+// TestChildTodos_DoNotAppearInParentList reverts to: a child's add lands in
+// AllTodoItems() (the main/TUI-facing list) too.
+func TestChildTodos_DoNotAppearInParentList(t *testing.T) {
+	ClearTodoList()
+	t.Cleanup(ClearTodoList)
+
+	tool := &TodoTool{}
+	if res := tool.Run(context.Background(), map[string]any{"action": "add", "content": "main plan"}); !res.Success {
+		t.Fatalf("main add failed: %s", res.Error)
+	}
+	if res := tool.Run(childTodoCtx("child-1"), map[string]any{"action": "add", "content": "child scratch work"}); !res.Success {
+		t.Fatalf("child add failed: %s", res.Error)
+	}
+
+	items := AllTodoItems()
+	if len(items) != 1 || items[0].Content != "main plan" {
+		t.Fatalf("main list contaminated by child: %+v", items)
+	}
+}
+
+// TestChildClear_DoesNotWipeParentList reverts to: todo(action="clear") in
+// a child wipes the parent's plan (the exact /new-defeating bug in the
+// TODO.md item).
+func TestChildClear_DoesNotWipeParentList(t *testing.T) {
+	ClearTodoList()
+	t.Cleanup(ClearTodoList)
+
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main plan"})
+	tool.Run(childTodoCtx("child-2"), map[string]any{"action": "add", "content": "child scratch"})
+
+	if res := tool.Run(childTodoCtx("child-2"), map[string]any{"action": "clear"}); !res.Success {
+		t.Fatalf("child clear failed: %s", res.Error)
+	}
+
+	items := AllTodoItems()
+	if len(items) != 1 || items[0].Content != "main plan" {
+		t.Fatalf("child's clear wiped (or corrupted) the parent's list: %+v", items)
+	}
+}
+
+// TestIds_DoNotCollideAcrossAgents reverts to: every agent shares one id
+// sequence, so a parent's update by id can land on a child's item (or vice
+// versa) once both lists exist in the same numbering space.
+func TestIds_DoNotCollideAcrossAgents(t *testing.T) {
+	ClearTodoList()
+	t.Cleanup(ClearTodoList)
+
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "parent item"})
+	tool.Run(childTodoCtx("child-3"), map[string]any{"action": "add", "content": "child item"})
+
+	// Both lists start their own sequence at 1 — this is only possible if
+	// they are genuinely separate id spaces, not one shared counter.
+	parentList := tool.Run(context.Background(), map[string]any{"action": "list"}).Content
+	childList := tool.Run(childTodoCtx("child-3"), map[string]any{"action": "list"}).Content
+	if !strings.Contains(parentList, "1. [todo] parent item") {
+		t.Fatalf("parent item should be id 1, got: %q", parentList)
+	}
+	if !strings.Contains(childList, "1. [todo] child item") {
+		t.Fatalf("child item should be id 1 in its OWN list, got: %q", childList)
+	}
+
+	// The parent updating "its" id=1 must never touch the child's id=1.
+	if res := tool.Run(context.Background(), map[string]any{"action": "update", "id": 1, "content": "parent item RENAMED"}); !res.Success {
+		t.Fatalf("parent update failed: %s", res.Error)
+	}
+
+	parentList = tool.Run(context.Background(), map[string]any{"action": "list"}).Content
+	childList = tool.Run(childTodoCtx("child-3"), map[string]any{"action": "list"}).Content
+	if !strings.Contains(parentList, "parent item RENAMED") || strings.Contains(parentList, "child item") {
+		t.Fatalf("parent list wrong after its own update: %q", parentList)
+	}
+	if !strings.Contains(childList, "child item") || strings.Contains(childList, "RENAMED") {
+		t.Fatalf("child's item was hit by the parent's update id=1: %q", childList)
+	}
+}
+
+// TestChild_DoesNotInheritParentPendingTodosForPlanGuard reverts to: a
+// freshly-spawned child sees the parent's already-open todos as its own,
+// so a plan guard wired against a child's own list (todoAgentIDFromCtx)
+// would wrongly conclude the child already has a plan.
+func TestChild_DoesNotInheritParentPendingTodosForPlanGuard(t *testing.T) {
+	ClearTodoList()
+	t.Cleanup(ClearTodoList)
+
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main open work"})
+	if !HasPendingTodos() {
+		t.Fatal("setup: main should have pending work")
+	}
+
+	res := tool.Run(childTodoCtx("child-4"), map[string]any{"action": "list"})
+	if !strings.Contains(res.Content, "Todo list is empty") {
+		t.Fatalf("a brand-new child should start with no plan, inherited or otherwise; got: %q", res.Content)
+	}
+}
+
+// TestTodoCounts_FollowMainWhileChildWrites reverts to: TodoCounts() (the
+// TUI top bar) reads whichever list was written last, instead of always
+// the main conversation's.
+func TestTodoCounts_FollowMainWhileChildWrites(t *testing.T) {
+	ClearTodoList()
+	t.Cleanup(ClearTodoList)
+
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main a"})
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main b"})
+	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
+
+	if done, total := TodoCounts(); done != 1 || total != 2 {
+		t.Fatalf("before child writes: got done=%d total=%d, want 1/2", done, total)
+	}
+
+	// A child furiously writing its own (larger, differently-shaped) list
+	// must not move the main counts at all.
+	for i := 0; i < 5; i++ {
+		tool.Run(childTodoCtx("child-5"), map[string]any{"action": "add", "content": fmt.Sprintf("child %d", i)})
+	}
+	tool.Run(childTodoCtx("child-5"), map[string]any{"action": "done", "id": 1})
+	tool.Run(childTodoCtx("child-5"), map[string]any{"action": "done", "id": 2})
+
+	if done, total := TodoCounts(); done != 1 || total != 2 {
+		t.Fatalf("after child writes: got done=%d total=%d, want 1/2 (main counts must not follow the child)", done, total)
+	}
+}
+
+// TestBtw_GetsOwnTodoListViaJobIDCtxKey reverts to: /btw side-conversations
+// share the main list. btw.go's startBtw sets JobIDCtxKey (not
+// TodoAgentCtxKey) on the job context it runs on, so todoAgentIDFromCtx
+// must fall back to it — this is the mechanism that gives /btw its own
+// list without btw.go needing to know anything about todo state.
+func TestBtw_GetsOwnTodoListViaJobIDCtxKey(t *testing.T) {
+	ClearTodoList()
+	t.Cleanup(ClearTodoList)
+
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main plan"})
+
+	btwCtx := context.WithValue(context.Background(), JobIDCtxKey{}, "btw-job-1")
+	tool.Run(btwCtx, map[string]any{"action": "add", "content": "btw scratch"})
+	if res := tool.Run(btwCtx, map[string]any{"action": "clear"}); !res.Success {
+		t.Fatalf("btw clear failed: %s", res.Error)
+	}
+
+	items := AllTodoItems()
+	if len(items) != 1 || items[0].Content != "main plan" {
+		t.Fatalf("/btw contaminated (or its clear wiped) the main list: %+v", items)
+	}
+}
+
+// TestTodoAgentCtxKey_TakesPriorityOverJobIDCtxKey pins the resolution
+// order documented on todoAgentIDFromCtx: an async subagent job's context
+// carries both keys (JobIDCtxKey from runAsync, TodoAgentCtxKey from the
+// runSingleTask call inside it), and the subagent's own id must win so it
+// gets a list distinct from the job's.
+func TestTodoAgentCtxKey_TakesPriorityOverJobIDCtxKey(t *testing.T) {
+	ClearTodoList()
+	t.Cleanup(ClearTodoList)
+
+	ctx := context.WithValue(context.Background(), JobIDCtxKey{}, "job-1")
+	ctx = context.WithValue(ctx, TodoAgentCtxKey{}, "subagent-1")
+
+	if got := todoAgentIDFromCtx(ctx); got != "subagent-1" {
+		t.Fatalf("todoAgentIDFromCtx = %q, want %q", got, "subagent-1")
 	}
 }

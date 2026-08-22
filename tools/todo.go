@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 type TodoTool struct{}
@@ -27,20 +28,113 @@ type todoItem struct {
 	ParentID int
 }
 
-var todoState = struct {
-	sync.Mutex
-	nextID int
-	items  []todoItem
-}{nextID: 1}
+// mainAgentTodoID identifies the top-level conversation's own todo list —
+// the one the TUI (top bar, todo modal, todo-tool rendering) always shows,
+// regardless of which subagent or /btw side-conversation last wrote to
+// *its own* list. It is the empty string precisely because that value is
+// never handed out by nextTodoAgentID (see subagent.go) and never a real
+// job id (see JobIDCtxKey), so no child can ever collide into it.
+//
+// AllTodoItems, TodoCounts, PendingTodos, HasPendingTodos and
+// ClearTodoList all read/write this id explicitly — a named constant
+// rather than a magic "empty context" — because callers without a ctx
+// (the display package) or that specifically mean the main conversation
+// (the /new handlers, the top-level plan guard wired in commands.go) must
+// keep seeing the main list no matter what any child is doing.
+const mainAgentTodoID = ""
 
-// AllTodoItems returns a snapshot of every todo in current state, sorted by id.
-// Used by the TUI to enrich todo(doing/done/blocked, N) renders and read
-// backwards-compatibly from the display package.
+// todoAgentList is one agent's own todo state: its own id sequence and its
+// own items, so a child can never collide ids with its parent or any
+// sibling.
+type todoAgentList struct {
+	nextID       int
+	items        []todoItem
+	lastActivity time.Time
+}
+
+// maxRetainedChildTodoLists bounds how many non-main agents' todo lists
+// this process keeps. A finished subagent's or /btw's list is deliberately
+// NOT discarded on completion — item 1's Subagents tab wants to show what a
+// child planned — but nothing here is ever told "this agent is done", so
+// without a bound the map would grow for the life of the process, the same
+// hazard documented at jobs/registry.go's maxRetainedTerminalJobs (and the
+// still-open one at main.go's `resumable` map, TODO.md item 24's notes).
+// 50 mirrors that constant: well past the number of child lists anyone
+// still cares about, evicted oldest-lastActivity-first so an agent that is
+// actively writing is never the one dropped in practice.
+const maxRetainedChildTodoLists = 50
+
+var todoStore = struct {
+	sync.Mutex
+	agents map[string]*todoAgentList
+}{agents: map[string]*todoAgentList{}}
+
+// getOrCreateLocked returns the todo list for agentID, creating it (with a
+// fresh id sequence starting at 1) on first use. Caller must hold
+// todoStore.
+func getOrCreateLocked(agentID string) *todoAgentList {
+	l, ok := todoStore.agents[agentID]
+	if !ok {
+		l = &todoAgentList{nextID: 1}
+		todoStore.agents[agentID] = l
+		if agentID != mainAgentTodoID {
+			evictOldChildListsLocked()
+		}
+	}
+	l.lastActivity = time.Now()
+	return l
+}
+
+// evictOldChildListsLocked drops the least-recently-active child (non-main)
+// todo lists beyond maxRetainedChildTodoLists. Caller must hold todoStore.
+func evictOldChildListsLocked() {
+	if len(todoStore.agents)-1 <= maxRetainedChildTodoLists {
+		return
+	}
+	type entry struct {
+		id string
+		t  time.Time
+	}
+	children := make([]entry, 0, len(todoStore.agents))
+	for id, l := range todoStore.agents {
+		if id == mainAgentTodoID {
+			continue
+		}
+		children = append(children, entry{id, l.lastActivity})
+	}
+	sort.Slice(children, func(i, j int) bool { return children[i].t.Before(children[j].t) })
+	for _, e := range children[:len(children)-maxRetainedChildTodoLists] {
+		delete(todoStore.agents, e.id)
+	}
+}
+
+// todoAgentIDFromCtx resolves which agent's todo list a tool call should
+// read/write. TodoAgentCtxKey (set by subagent.go's runSingleTask for every
+// subagent call, sync or async) takes priority; JobIDCtxKey (set for a
+// /btw side-conversation — see btw.go's startBtw) is the fallback, so a
+// /btw turn gets its own list too, keyed by its job id, without needing its
+// own ctx key. Neither present means this is the main conversation itself.
+func todoAgentIDFromCtx(ctx context.Context) string {
+	if id, ok := ctx.Value(TodoAgentCtxKey{}).(string); ok && id != "" {
+		return id
+	}
+	if id, ok := ctx.Value(JobIDCtxKey{}).(string); ok && id != "" {
+		return id
+	}
+	return mainAgentTodoID
+}
+
+// AllTodoItems returns a snapshot of every todo in the MAIN conversation's
+// list, sorted by id. Used by the TUI to enrich todo(doing/done/blocked, N)
+// renders and read backwards-compatibly from the display package, which has
+// no ctx and must always show the main agent's list regardless of which
+// subagent or /btw side-conversation last wrote somewhere.
 func AllTodoItems() []TodoItem {
-	todoState.Lock()
-	defer todoState.Unlock()
-	out := make([]TodoItem, len(todoState.items))
-	for i, it := range todoState.items {
+	todoStore.Lock()
+	defer todoStore.Unlock()
+	l := getOrCreateLocked(mainAgentTodoID)
+	out := make([]TodoItem, len(l.items))
+	for i, it := range l.items {
 		out[i] = TodoItem{ID: it.ID, Content: it.Content, Status: it.Status, ParentID: it.ParentID}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -65,8 +159,9 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	status := canonicalStatus(stringParam(input, "status", ""))
 	parentID := intParam(input, "parentId", 0)
 
-	todoState.Lock()
-	defer todoState.Unlock()
+	todoStore.Lock()
+	defer todoStore.Unlock()
+	l := getOrCreateLocked(todoAgentIDFromCtx(ctx))
 
 	switch action {
 	case "add":
@@ -77,12 +172,12 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		if perr != "" {
 			return ToolResult{Type: "result", Success: false, Error: perr}
 		}
-		item := todoItem{ID: todoState.nextID, Content: content, Status: st, ParentID: parentID}
-		if _, hasParent := input["parentId"]; hasParent && parentID != 0 && findTodoIndex(parentID) < 0 {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid parentId=%d for todo(add content=%q) — parent doesn't exist — use 0 to add a top-level todo, or pick from existing ids [%s]", parentID, content, existingIDsLocked())}
+		item := todoItem{ID: l.nextID, Content: content, Status: st, ParentID: parentID}
+		if _, hasParent := input["parentId"]; hasParent && parentID != 0 && l.findIndex(parentID) < 0 {
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid parentId=%d for todo(add content=%q) — parent doesn't exist — use 0 to add a top-level todo, or pick from existing ids [%s]", parentID, content, l.existingIDs())}
 		}
-		todoState.nextID++
-		todoState.items = append(todoState.items, item)
+		l.nextID++
+		l.items = append(l.items, item)
 	case "add_batch":
 		rawItems, ok := input["items"]
 		if !ok || rawItems == nil {
@@ -120,46 +215,46 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			}
 			pid := intParam(m, "parentId", 0)
 			_, hasParent := m["parentId"]
-			if hasParent && pid != 0 && findTodoIndex(pid) < 0 {
-				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(add_batch): items[%d] (content=%q) — invalid parentId=%d, doesn't exist — fix: use 0 for top-level, or pick from existing ids [%s]", i, c, pid, existingIDsLocked())}
+			if hasParent && pid != 0 && l.findIndex(pid) < 0 {
+				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(add_batch): items[%d] (content=%q) — invalid parentId=%d, doesn't exist — fix: use 0 for top-level, or pick from existing ids [%s]", i, c, pid, l.existingIDs())}
 			}
 			prep = append(prep, prepared{content: c, status: st, parentID: pid, hasParent: hasParent})
 		}
 		// All entries valid — append atomically under the held lock.
 		for _, p := range prep {
-			todoState.items = append(todoState.items, todoItem{
-				ID:       todoState.nextID,
+			l.items = append(l.items, todoItem{
+				ID:       l.nextID,
 				Content:  p.content,
 				Status:   p.status,
 				ParentID: p.parentID,
 			})
-			todoState.nextID++
+			l.nextID++
 		}
 	case "update":
 		if id == 0 {
 			return ToolResult{Type: "result", Success: false, Error: "todo(update) requires an \"id\" — fix: todo(action=\"list\") to read ids, then todo(action=\"update\", id=N, ...) with at least one of content/status/parentId"}
 		}
-		idx := findTodoIndex(id)
+		idx := l.findIndex(id)
 		if idx < 0 {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid id=%d for todo(update) — not found — fix: current ids are [%s]; call todo(action=\"list\") then retry with one of those ids", id, existingIDsLocked())}
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid id=%d for todo(update) — not found — fix: current ids are [%s]; call todo(action=\"list\") then retry with one of those ids", id, l.existingIDs())}
 		}
 		changed := false
 		if content != "" {
-			todoState.items[idx].Content = content
+			l.items[idx].Content = content
 			changed = true
 		}
 		if status != "" {
 			if !validStatus(status) {
-				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid status=%q for todo(update id=%d) — allowed: todo, doing, done, blocked — current status=%q — fix: drop \"status\" to keep it, or pick one of the allowed values", status, id, todoState.items[idx].Status)}
+				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid status=%q for todo(update id=%d) — allowed: todo, doing, done, blocked — current status=%q — fix: drop \"status\" to keep it, or pick one of the allowed values", status, id, l.items[idx].Status)}
 			}
-			todoState.items[idx].Status = status
+			l.items[idx].Status = status
 			changed = true
 		}
 		if _, ok := input["parentId"]; ok {
-			if parentID != 0 && findTodoIndex(parentID) < 0 {
-				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid parentId=%d for todo(update id=%d) — parent doesn't exist — use 0 to detach, or pick from existing ids [%s]", parentID, id, existingIDsLocked())}
+			if parentID != 0 && l.findIndex(parentID) < 0 {
+				return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid parentId=%d for todo(update id=%d) — parent doesn't exist — use 0 to detach, or pick from existing ids [%s]", parentID, id, l.existingIDs())}
 			}
-			todoState.items[idx].ParentID = parentID
+			l.items[idx].ParentID = parentID
 			changed = true
 		}
 		if !changed {
@@ -169,32 +264,32 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		if id == 0 {
 			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("todo(%s) requires an \"id\" — fix: call todo(action=\"list\") to read current ids, then retry", action)}
 		}
-		idx := findTodoIndex(id)
+		idx := l.findIndex(id)
 		if idx < 0 {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid id=%d for todo(%s) — not found — fix: current ids are [%s]; call todo(action=\"list\") then retry", id, action, existingIDsLocked())}
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid id=%d for todo(%s) — not found — fix: current ids are [%s]; call todo(action=\"list\") then retry", id, action, l.existingIDs())}
 		}
-		todoState.items[idx].Status = action
+		l.items[idx].Status = action
 	case "done":
 		if id == 0 {
 			return ToolResult{Type: "result", Success: false, Error: "todo(done) requires an \"id\" — fix: call todo(action=\"list\") to read current ids, then retry"}
 		}
-		idx := findTodoIndex(id)
+		idx := l.findIndex(id)
 		if idx < 0 {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid id=%d for todo(done) — not found — fix: current ids are [%s]; call todo(action=\"list\") then retry", id, existingIDsLocked())}
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid id=%d for todo(done) — not found — fix: current ids are [%s]; call todo(action=\"list\") then retry", id, l.existingIDs())}
 		}
-		todoState.items[idx].Status = "done"
+		l.items[idx].Status = "done"
 	case "remove":
 		if id == 0 {
 			return ToolResult{Type: "result", Success: false, Error: "todo(remove) requires an \"id\" — fix: call todo(action=\"list\") to read current ids, then retry; use todo(action=\"clear\") to wipe the whole list"}
 		}
-		idx := findTodoIndex(id)
+		idx := l.findIndex(id)
 		if idx < 0 {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid id=%d for todo(remove) — not found — fix: current ids are [%s]; call todo(action=\"list\") then retry, or todo(action=\"clear\") to wipe all", id, existingIDsLocked())}
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid id=%d for todo(remove) — not found — fix: current ids are [%s]; call todo(action=\"list\") then retry, or todo(action=\"clear\") to wipe all", id, l.existingIDs())}
 		}
-		todoState.items = append(todoState.items[:idx], todoState.items[idx+1:]...)
+		l.items = append(l.items[:idx], l.items[idx+1:]...)
 	case "clear":
-		todoState.items = nil
-		todoState.nextID = 1
+		l.items = nil
+		l.nextID = 1
 	case "list":
 		// no-op
 	default:
@@ -204,24 +299,24 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid action=%q — allowed actions: add, update, doing, done, blocked, remove, list, clear — fix: pick one of the allowed actions above", action)}
 	}
 
-	return ToolResult{Type: "result", Success: true, Content: formatTodosLocked()}
+	return ToolResult{Type: "result", Success: true, Content: l.format()}
 }
 
-// existingIDsLocked returns a comma-separated list of current todo ids, or
-// "empty" when none exist. Caller must hold todoState.
-func existingIDsLocked() string {
-	if len(todoState.items) == 0 {
+// existingIDs returns a comma-separated list of this list's current todo
+// ids, or "empty" when none exist. Caller must hold todoStore.
+func (l *todoAgentList) existingIDs() string {
+	if len(l.items) == 0 {
 		return "empty"
 	}
-	ids := make([]string, 0, len(todoState.items))
-	for _, it := range todoState.items {
+	ids := make([]string, 0, len(l.items))
+	for _, it := range l.items {
 		ids = append(ids, fmt.Sprintf("%d", it.ID))
 	}
 	return strings.Join(ids, ", ")
 }
 
-func findTodoIndex(id int) int {
-	for i, item := range todoState.items {
+func (l *todoAgentList) findIndex(id int) int {
+	for i, item := range l.items {
 		if item.ID == id {
 			return i
 		}
@@ -244,19 +339,23 @@ func normalizeAddFields(_ string, status string) (string, string) {
 	return status, ""
 }
 
-// ClearTodoList resets the todo list (used on /new).
+// ClearTodoList resets the MAIN conversation's todo list (used on /new).
+// It never touches a child's list — a subagent or /btw job still running
+// after /new must not be able to write its own todos back into what the
+// user just cleared (see this list's own doc comment).
 func ClearTodoList() {
-	todoState.Lock()
-	todoState.items = nil
-	todoState.nextID = 1
-	todoState.Unlock()
+	todoStore.Lock()
+	l := getOrCreateLocked(mainAgentTodoID)
+	l.items = nil
+	l.nextID = 1
+	todoStore.Unlock()
 }
 
-func formatTodosLocked() string {
-	if len(todoState.items) == 0 {
+func (l *todoAgentList) format() string {
+	if len(l.items) == 0 {
 		return "Todo list is empty."
 	}
-	items := append([]todoItem(nil), todoState.items...)
+	items := append([]todoItem(nil), l.items...)
 	sort.SliceStable(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 	var b strings.Builder
 	for i, item := range items {
@@ -275,14 +374,16 @@ func formatTodoLine(item todoItem) string {
 	return fmt.Sprintf("%d. [%s] %s", item.ID, item.Status, item.Content)
 }
 
-// PendingTodos returns formatted lines for todo items that are still open,
-// i.e. status "todo" or "doing". Items that are "done" or "blocked" are
-// excluded ("blocked" is treated as a deliberate, resolved state). The agent
-// loop uses this to remind itself before finishing a turn that left work open.
+// PendingTodos returns formatted lines for the MAIN conversation's todo
+// items that are still open, i.e. status "todo" or "doing" ("blocked" is
+// treated as a deliberate, resolved state). The agent loop uses this to
+// remind itself before finishing a turn that left work open — always about
+// its own (main) plan, never a subagent's or /btw's.
 func PendingTodos() []string {
-	todoState.Lock()
-	defer todoState.Unlock()
-	items := append([]todoItem(nil), todoState.items...)
+	todoStore.Lock()
+	defer todoStore.Unlock()
+	l := getOrCreateLocked(mainAgentTodoID)
+	items := append([]todoItem(nil), l.items...)
 	sort.SliceStable(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 	var out []string
 	for _, item := range items {
@@ -294,16 +395,23 @@ func PendingTodos() []string {
 	return out
 }
 
-// HasPendingTodos returns true when the todo list contains at least one
-// item with status "todo" or "doing". Used by the agent loop to enforce
-// the "plan first" policy — non-todo tools are blocked unless the agent
-// has active (uncompleted) work in its plan. Once all items are "done"
-// or "blocked", the guard re-engages and the LLM must add a new plan
-// or reopen an existing item before using other tools.
+// HasPendingTodos returns true when the MAIN conversation's todo list
+// contains at least one item with status "todo" or "doing". Used by the
+// agent loop to enforce the "plan first" policy — non-todo tools are
+// blocked unless the agent has active (uncompleted) work in its plan.
+// Once all items are "done" or "blocked", the guard re-engages and the LLM
+// must add a new plan or reopen an existing item before using other tools.
+//
+// Scoped to the main list on purpose: a subagent's cfg does not wire this
+// guard at all today (see main.go's agentRunner.run), so this only ever
+// gates the top-level conversation — and even if a child's cfg wired an
+// analogous check in the future, it must resolve its own agent's list via
+// todoAgentIDFromCtx(ctx), not this one.
 func HasPendingTodos() bool {
-	todoState.Lock()
-	defer todoState.Unlock()
-	for _, it := range todoState.items {
+	todoStore.Lock()
+	defer todoStore.Unlock()
+	l := getOrCreateLocked(mainAgentTodoID)
+	for _, it := range l.items {
 		if it.Status == "todo" || it.Status == "doing" {
 			return true
 		}
@@ -312,12 +420,14 @@ func HasPendingTodos() bool {
 }
 
 // TodoCounts returns the number of done items and the total number of items
-// in the todo list. Used by the TUI top bar to display a quick summary like
-// "todos: 3/10" (3 done out of 10 total).
+// in the MAIN conversation's todo list. Used by the TUI top bar to display
+// a quick summary like "todos: 3/10" (3 done out of 10 total) — always the
+// main agent's counts, never whichever subagent or /btw job last wrote.
 func TodoCounts() (done int, total int) {
-	todoState.Lock()
-	defer todoState.Unlock()
-	for _, it := range todoState.items {
+	todoStore.Lock()
+	defer todoStore.Unlock()
+	l := getOrCreateLocked(mainAgentTodoID)
+	for _, it := range l.items {
 		total++
 		if it.Status == "done" {
 			done++
