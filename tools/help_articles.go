@@ -291,8 +291,9 @@ From inside a job. A child can report_progress(text), read back via
 wait(job_id=...) or the end-of-turn pending-jobs reminder — never the jobs
 panel, which does not show it. Every subagent call gets a job id, blocking
 or async, but the model only learns that id where one actually gets
-surfaced: at once for async or /btw, only after a blocking call's 60s
-handoff in an interactive session, and never for a blocking call under
+surfaced: at once for async or /btw, only once a blocking call hands off in
+an interactive session (at 60s, or sooner if the person types), and never
+for a blocking call under
 tyci run/--print — so there report_progress still succeeds, but nobody
 reads it before the job is done. ask(question) blocks on the parent — a
 last resort, because asking is how a child stalls — and needs the same

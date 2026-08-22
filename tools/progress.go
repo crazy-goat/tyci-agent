@@ -22,13 +22,14 @@ func SetJobProgressReporter(p JobProgressReporter) { jobProgressReporter = p }
 
 // ReportProgressTool implements the "report_progress" tool: lets a running
 // job (any subagent call — blocking or async — or a /btw side-conversation)
-// post a short status note, without ending the job. It always succeeds once
-// there is a job id; whether anyone reads the note before the job finishes
-// depends on the id actually reaching whoever is watching — via "wait"'s
-// still-running response or the end-of-turn pending-jobs reminder, NOT the
-// jobs panel (jobs/registry.go's PendingLines / display's job-line renderer
-// never surface Progress). A blocking call under `tyci run`/`--print` hands
-// out no job id at all, so there nobody reads it either way.
+// post a short status note, without ending the job. Given a job id and a
+// non-empty text it always succeeds; whether anyone reads the note before
+// the job finishes depends on the id actually reaching whoever is watching —
+// via "wait"'s still-running response or the end-of-turn pending-jobs
+// reminder (PendingLines does append it, jobs/registry.go:292), but NOT the
+// jobs panel: display's job-line renderer never surfaces Progress at all. A
+// blocking call under `tyci run`/`--print` hands out no job id, so there
+// nobody reads it either way.
 type ReportProgressTool struct{}
 
 func (t *ReportProgressTool) Name() string { return "report_progress" }

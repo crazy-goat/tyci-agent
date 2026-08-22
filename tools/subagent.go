@@ -609,11 +609,10 @@ type spawnedTask struct {
 	// second time, which is safe — context.CancelFunc is idempotent.
 	cancel context.CancelFunc
 
-	mu        sync.Mutex
-	finished  bool
-	handed    bool
-	cancelled bool
-	res       subagentResult
+	mu       sync.Mutex
+	finished bool
+	handed   bool
+	res      subagentResult
 
 	// stopStream is flipped when the task is handed over or cancelled
 	// outright, so the child stops painting into a tool block that has
@@ -643,25 +642,23 @@ func (s *spawnedTask) hand() bool {
 	return true
 }
 
-// claimForCancel marks the task as claimed for outright cancellation
-// (cancelRemaining's use, as opposed to hand()'s background handoff). Same
-// exactly-once shape as hand() — false when the task had already finished,
-// in which case there is nothing left to cancel — but it deliberately does
-// NOT set handed: finish() (running in the child's own goroutine once the
-// cancelled child actually returns) reads handed to decide whether to emit
-// a background-finished/FAILED notice, and nothing in cancelRemaining's
-// no-handoff mode ever drains one. Setting handed here would report a
-// child as "backgrounded" when it was actually just killed, and its notice
-// text invites wait(job_id=...) in the one mode where no id was ever
-// surfaced to the model to call it with.
+// claimForCancel reports whether this task is still worth cancelling, under
+// the same lock and with the same "false once finished" shape as hand().
+//
+// Unlike hand() it records nothing, and that is the whole point: finish()
+// (running in the child's own goroutine once the cancelled child actually
+// returns) reads handed to decide whether to emit a background-finished /
+// FAILED notice, and nothing in cancelRemaining's no-handoff mode ever
+// drains one. Setting handed here would report a child as "backgrounded"
+// when it was really just killed, and that notice text invites
+// wait(job_id=...) in the one mode where no id was ever surfaced to the
+// model to call it with. A dedicated "cancelled" field was tried and
+// removed: nothing read it, and unread state invites a later reader to
+// trust it.
 func (s *spawnedTask) claimForCancel() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.finished {
-		return false
-	}
-	s.cancelled = true
-	return true
+	return !s.finished
 }
 
 func (s *spawnedTask) result() subagentResult {
