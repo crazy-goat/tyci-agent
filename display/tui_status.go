@@ -24,7 +24,12 @@ func (m TuiModel) buildStatus() string {
 	}
 
 	if m.statusMessage != "" {
-		leftParts = append(leftParts, m.statusMessage)
+		// Cap here, not just at the joined-line truncation below: statusMessage
+		// is the one unbounded fragment (job echoes, refusal sentences), and if
+		// it's left full-length the tail-truncation below eats the spinner that
+		// comes after it in leftParts instead of the message that caused the
+		// overflow.
+		leftParts = append(leftParts, truncateStatusText(m.statusMessage, 60))
 	}
 
 	if !m.reading {
@@ -67,9 +72,30 @@ func (m TuiModel) buildStatus() string {
 	left := strings.Join(leftParts, " │ ")
 	right := strings.Join(rightParts, " │ ")
 
+	// Hard-cap left BEFORE computing padding. Every fragment above is
+	// attacker-free but not length-free: m.statusMessage in particular can
+	// carry a whole job's question (echoed back after "/answer" — see
+	// answer.go's handleAnswerCommand) or a refusal sentence (tui_keys.go's
+	// "/new has to wait — it changes the conversation this turn is writing
+	// to..."), either of which can run well past m.width on its own.
+	//
+	// This status bar is rendered as one fixed-height row (tui_view.go), via
+	// lipgloss which WRAPS content wider than the terminal instead of
+	// clipping it — so an unbounded left string doesn't get cut off, it
+	// grows the row into several, breaking the TUI's fixed-height layout
+	// (observed: a single ~106-char message turned a 20-line frame into
+	// 20+ lines). Truncating here, in the one function every status message
+	// funnels through, fixes every caller at once instead of each caller
+	// remembering to truncate its own message.
+	rightW := lipgloss.Width(right)
+	maxLeftW := m.width - rightW - 3 // leading space + gap + trailing space
+	if maxLeftW < 1 {
+		maxLeftW = 1
+	}
+	left = truncateStatusText(left, maxLeftW)
+
 	// Right-align the right part, with leading and trailing space.
 	leftW := lipgloss.Width(left)
-	rightW := lipgloss.Width(right)
 	padding := m.width - leftW - rightW
 	if padding >= 2 {
 		return " " + left + strings.Repeat(" ", padding-2) + right + " "
@@ -79,6 +105,37 @@ func (m TuiModel) buildStatus() string {
 		return " " + left + strings.Repeat(" ", padding-1) + right
 	}
 	return left + right
+}
+
+// truncateStatusText hard-caps s to at most maxW columns (lipgloss.Width,
+// which counts display width, not bytes or runes), replacing anything past
+// that with a trailing "…". Truncation is rune-based (not byte slicing) —
+// see the tui-utf8-truncation-bug history this codebase already fixed at
+// several other sites — so a multi-byte character on the cut boundary is
+// dropped whole rather than split into invalid UTF-8.
+//
+// Truncates from the tail, the opposite direction from buildTopBar's
+// leading-"…" path truncation: a status message's most useful content is
+// usually at its start (which job, what was asked/refused), not its end.
+func truncateStatusText(s string, maxW int) string {
+	if maxW < 1 {
+		maxW = 1
+	}
+	if lipgloss.Width(s) <= maxW {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) > maxW {
+		runes = runes[:maxW]
+	}
+	for len(runes) > 0 {
+		candidate := string(runes) + "…"
+		if lipgloss.Width(candidate) <= maxW {
+			return candidate
+		}
+		runes = runes[:len(runes)-1]
+	}
+	return "…"
 }
 
 // displayPath returns a short, human-friendly representation of the working

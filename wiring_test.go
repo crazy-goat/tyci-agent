@@ -1036,8 +1036,9 @@ func TestWiring_R2_LockSharedBetweenMainThreadAndAsyncChild(t *testing.T) {
 
 // =============================================================================
 // Q-1: ask/answer round trip through real production wiring — an async
-// subagent blocks in "ask", the test (playing "the parent") answers it via
-// the real JobRegistry, and the job's own result reflects the exact answer
+// subagent blocks in "ask", the test (playing "the parent"/human, hence
+// fromUser=true — see Registry.Answer) answers it via the real JobRegistry,
+// and the job's own result reflects the exact answer
 // text it received back.
 // =============================================================================
 
@@ -1091,7 +1092,7 @@ func TestWiring_Q1_AskAnswerRoundTrip(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	if !reg.Answer(jobID, "blue") {
+	if !reg.Answer(jobID, "blue", true) {
 		t.Fatal("expected Answer to succeed against a job currently waiting")
 	}
 

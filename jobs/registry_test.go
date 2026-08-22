@@ -300,10 +300,11 @@ func TestAskThenAnswer_UnblocksWithRightTextAndStatusFlow(t *testing.T) {
 
 	askDone := make(chan struct{})
 	var gotAnswer string
+	var gotFromUser bool
 	var gotOK bool
 
 	job := r.Start(context.Background(), "asker", func(ctx context.Context, jobID string) (string, bool, error) {
-		gotAnswer, gotOK = r.Ask(ctx, jobID, "what should I do?")
+		gotAnswer, gotFromUser, gotOK = r.Ask(ctx, jobID, "what should I do?")
 		close(askDone)
 		return "finished", false, nil
 	})
@@ -325,7 +326,7 @@ func TestAskThenAnswer_UnblocksWithRightTextAndStatusFlow(t *testing.T) {
 		t.Fatalf("expected question to be recorded, got %q", snap.Question)
 	}
 
-	if !r.Answer(job.ID, "do the thing") {
+	if !r.Answer(job.ID, "do the thing", true) {
 		t.Fatal("expected Answer to succeed")
 	}
 
@@ -340,6 +341,9 @@ func TestAskThenAnswer_UnblocksWithRightTextAndStatusFlow(t *testing.T) {
 	}
 	if gotAnswer != "do the thing" {
 		t.Fatalf("expected answer %q, got %q", "do the thing", gotAnswer)
+	}
+	if !gotFromUser {
+		t.Fatal("expected fromUser=true for an Answer call made with fromUser=true")
 	}
 
 	final, ok := r.Wait(context.Background(), job.ID, time.Second)
@@ -397,7 +401,7 @@ func TestAsk_UnblockedByContextCancellationReturnsNotOK(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	answer, ok := r.Ask(askCtx, job.ID, "anyone there?")
+	answer, _, ok := r.Ask(askCtx, job.ID, "anyone there?")
 	elapsed := time.Since(start)
 
 	if ok {
@@ -423,7 +427,7 @@ func TestAsk_UnblockedByContextCancellationReturnsNotOK(t *testing.T) {
 // never seen.
 func TestAsk_UnknownIDReturnsNotOK(t *testing.T) {
 	r := NewRegistry()
-	answer, ok := r.Ask(context.Background(), "unknown", "q")
+	answer, _, ok := r.Ask(context.Background(), "unknown", "q")
 	if ok || answer != "" {
 		t.Fatalf("expected (\"\", false), got (%q, %v)", answer, ok)
 	}
@@ -441,7 +445,7 @@ func TestAnswer_OnJobNotWaitingReturnsFalse(t *testing.T) {
 		return "done", false, nil
 	})
 
-	if r.Answer(job.ID, "nobody asked") {
+	if r.Answer(job.ID, "nobody asked", true) {
 		t.Fatal("expected Answer to return false for a job that isn't waiting")
 	}
 }
@@ -450,7 +454,7 @@ func TestAnswer_OnJobNotWaitingReturnsFalse(t *testing.T) {
 // has never seen.
 func TestAnswer_UnknownIDReturnsFalse(t *testing.T) {
 	r := NewRegistry()
-	if r.Answer("unknown", "text") {
+	if r.Answer("unknown", "text", true) {
 		t.Fatal("expected Answer to return false for an unknown id")
 	}
 }
@@ -549,5 +553,59 @@ func TestRegistryPrunesOldTerminalJobs(t *testing.T) {
 	}
 	if terminal < maxRetainedTerminalJobs {
 		t.Fatalf("pruned too eagerly: expected %d finished jobs retained, got %d", maxRetainedTerminalJobs, terminal)
+	}
+}
+
+// TestAsk_TimeoutReplacesAnswerChannelSoStaleAnswersCannotLeak guards a
+// narrow race: ctx.Done() can win Ask's select a moment before a
+// concurrent Answer call (which reads job.answerCh/job.Status under the
+// same lock Ask uses to reset them) manages to buffer a value into the
+// OLD channel. Without replacing the channel on the timeout path, that
+// stale value sits in the cap-1 buffer for the NEXT Ask on this same job
+// to receive as if it were its own answer.
+//
+// This white-box test skips reproducing the exact timing (the window is
+// too narrow to hit reliably) and instead injects the race's outcome
+// directly — same effect, deterministic — then checks a fresh Ask on the
+// same job does not receive it.
+func TestAsk_TimeoutReplacesAnswerChannelSoStaleAnswersCannotLeak(t *testing.T) {
+	r := NewRegistry()
+	release := make(chan struct{})
+	defer close(release)
+
+	job := r.Start(context.Background(), "asker", func(ctx context.Context, _ string) (string, bool, error) {
+		<-release
+		return "done", false, nil
+	})
+
+	askCtx, cancel := context.WithCancel(context.Background())
+	cancel() // already done: Ask takes the ctx.Done() branch immediately
+	if _, _, ok := r.Ask(askCtx, job.ID, "first question"); ok {
+		t.Fatal("expected the first Ask to time out (ok=false) with an already-cancelled ctx")
+	}
+
+	// Inject the race's outcome: a stale answer landing in whatever
+	// channel the job's answerCh field held right after the timeout.
+	r.mu.Lock()
+	staleCh := job.answerCh
+	r.mu.Unlock()
+	if staleCh != nil {
+		select {
+		case staleCh <- jobAnswer{text: "stale", fromUser: true}:
+		default:
+			t.Fatal("expected room to inject the stale answer into a fresh cap-1 channel")
+		}
+	}
+
+	// A fresh Ask on the same job must not receive the stale value. If the
+	// channel were reused (the pre-fix behavior), this returns instantly
+	// with answer="stale"; with the fix, answerCh was reset to nil, so
+	// this Ask lazily creates a brand-new empty channel and genuinely
+	// times out instead.
+	shortCtx, cancel2 := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel2()
+	answer, _, ok := r.Ask(shortCtx, job.ID, "second question")
+	if ok && answer == "stale" {
+		t.Fatal("the second Ask received a stale answer left over from the first, timed-out Ask")
 	}
 }

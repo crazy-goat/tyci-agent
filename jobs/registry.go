@@ -146,18 +146,23 @@ func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (
 // is expected to be that same job ctx (or a descendant of it).
 //
 // ok is false when id is unknown, or when ctx is done before an answer
-// arrives; in both cases answer is "".
-func (r *Registry) Ask(ctx context.Context, id, question string) (answer string, ok bool) {
+// arrives; in both cases answer is "" and fromUser is false.
+//
+// fromUser reports who delivered the answer: true for a human reply via the
+// "/answer" command, false for another agent's reply via the "answer" tool
+// (see tools/ask.go's AskTool, which uses this to mark the answer's
+// provenance for the child that receives it).
+func (r *Registry) Ask(ctx context.Context, id, question string) (answer string, fromUser bool, ok bool) {
 	r.mu.Lock()
 	job, found := r.jobs[id]
 	if !found {
 		r.mu.Unlock()
-		return "", false
+		return "", false, false
 	}
 	job.Status = StatusWaitingAnswer
 	job.Question = question
 	if job.answerCh == nil {
-		job.answerCh = make(chan string, 1)
+		job.answerCh = make(chan jobAnswer, 1)
 	}
 	answerCh := job.answerCh
 	onEvent := r.onEvent
@@ -168,18 +173,31 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 		onEvent(snapshot)
 	}
 
-	var result string
+	var result jobAnswer
 	var got bool
 	select {
 	case ans := <-answerCh:
 		result, got = ans, true
 	case <-ctx.Done():
-		result, got = "", false
+		result, got = jobAnswer{}, false
 	}
 
 	r.mu.Lock()
 	job.Status = StatusRunning
 	job.Question = ""
+	if !got {
+		// ctx.Done() won the select before an answer arrived. A racing
+		// Answer call reads job.answerCh under this same lock, so it can
+		// still land a value into the OLD channel in the narrow window
+		// between the select above and this Lock — Answer would report
+		// "delivered" for a reply nobody is listening for any more.
+		// Replacing the channel (instead of just draining it, which would
+		// need this same lock anyway) means that stale value, if one
+		// lands, is orphaned on a channel this job will never read from
+		// again — not left buffered for the NEXT Ask on this job to
+		// mistake for its own answer.
+		job.answerCh = nil
+	}
 	snapshot = job.Snapshot()
 	onEvent = r.onEvent
 	r.mu.Unlock()
@@ -188,15 +206,19 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 		onEvent(snapshot)
 	}
 
-	return result, got
+	return result.text, result.fromUser, got
 }
 
 // Answer delivers text to a job currently waiting on Ask, unblocking it.
+// fromUser must be true for a human reply (the "/answer" command) and false
+// for another agent's reply (the "answer" tool) — Ask hands it back to the
+// asker so the answer's provenance survives the round trip.
+//
 // Returns false when id is unknown, the job is not currently
 // StatusWaitingAnswer, or no answerCh exists yet — including the race where
 // two answers arrive for the same question or the asker already gave up
 // (ctx done), in which case the non-blocking send below simply does nothing.
-func (r *Registry) Answer(id, text string) bool {
+func (r *Registry) Answer(id, text string, fromUser bool) bool {
 	r.mu.Lock()
 	job, ok := r.jobs[id]
 	if !ok || job.Status != StatusWaitingAnswer || job.answerCh == nil {
@@ -207,7 +229,7 @@ func (r *Registry) Answer(id, text string) bool {
 	r.mu.Unlock()
 
 	select {
-	case answerCh <- text:
+	case answerCh <- jobAnswer{text: text, fromUser: fromUser}:
 		return true
 	default:
 		return false

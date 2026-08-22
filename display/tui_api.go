@@ -48,7 +48,32 @@ type TUI struct {
 	flushDone      chan struct{}
 }
 
-func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int) *TUI {
+// requireAnswerWiring panics when onAnswer is nil. Split out of NewTUI as
+// its own function (rather than an inline nil-check) so a unit test can
+// exercise the exact guard NewTUI relies on without paying for NewTUI's own
+// side effects (raw terminal mode, a real tea.Program goroutine reading
+// os.Stdin, which never returns on its own) — see this package's
+// tui_api_answer_wiring_test.go.
+//
+// A silent nil here is exactly the item-27-round-2 bug: the TUI starts
+// fine, "/answer" LOOKS like it does something (it's intercepted
+// synchronously in handleLocalSlashCommand, see tui_keys.go), but there is
+// no wiring underneath it, so a child waiting on an answer sits blocked
+// until it times out and its work is thrown away — with nothing on screen
+// to say why. That failure mode is invisible to every test that constructs
+// a TuiModel directly (bypassing NewTUI) and to any future change to the
+// composition root (commands.go's tuiCmd) that swaps this argument for nil
+// by mistake. Failing loudly at construction time, before NewTUI's other
+// side effects run, turns a silently-dead feature into an immediate,
+// diagnosable crash instead.
+func requireAnswerWiring(onAnswer func(arg string) (msg string, ok bool)) {
+	if onAnswer == nil {
+		panic("display.NewTUI: onAnswer must not be nil — answer wiring not connected (see TuiModel.answerFunc and tui_keys.go's \"/answer\" handling)")
+	}
+}
+
+func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int, onAnswer func(arg string) (msg string, ok bool)) *TUI {
+	requireAnswerWiring(onAnswer)
 	results := make(chan string, 8)
 	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
@@ -59,6 +84,9 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	m.resumeCh = resumeCh
 	commands := make(chan string, 8)
 	m.commands = commands
+	// See TuiModel.answerFunc's doc comment (tui.go): delivered synchronously
+	// from handleLocalSlashCommand, never through submit() or m.commands.
+	m.answerFunc = onAnswer
 
 	// Capture working directory and home for the top status bar.
 	if dir, err := os.Getwd(); err == nil {

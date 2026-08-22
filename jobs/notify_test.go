@@ -120,7 +120,7 @@ func TestPendingLinesPutsBlockedJobsFirst(t *testing.T) {
 	go func() {
 		r.Start(context.Background(), "the blocked one", func(ctx context.Context, id string) (string, bool, error) {
 			close(asked)
-			ans, _ := r.Ask(ctx, id, "which branch?")
+			ans, _, _ := r.Ask(ctx, id, "which branch?")
 			return ans, false, nil
 		})
 	}()
