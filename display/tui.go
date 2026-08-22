@@ -128,8 +128,15 @@ type block struct {
 	collapsed bool
 	maxLines  int
 	output    string        // full tool output (for modal), capped to tuiMaxToolOutput
-	startTime time.Time     // when the tool was started (for duration display)
-	duration  time.Duration // frozen duration when tool finished (0 = still running)
+	startTime time.Time     // when the tool (or thinking block) started, for duration display
+	duration  time.Duration // frozen duration when tool/thinking finished (0 = still running)
+
+	// thinkingSummary is the frozen one-line summary shown in a thinking
+	// block's collapsed render. Empty until freezeThinkingSummary decides it
+	// (from the block's opening words) and, once set, never changes again —
+	// that is what keeps the collapsed line from flickering as more thinking
+	// deltas stream in.
+	thinkingSummary string
 
 	// Markdown rendering cache (for "thinking" and "text" blocks)
 	dirty bool // content changed since last render

@@ -3,6 +3,7 @@ package display
 import (
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
@@ -116,24 +117,33 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 		}
 		if idx >= 0 && idx < len(m.blocks) {
 			b := m.blocks[idx]
-			if b.kind == "thinking" || b.kind == "text" {
-				// Thinking is never markdown: glamour emits its own colours,
-				// and each of its resets would drop the text back to the
-				// default foreground mid-line, so the block comes out
-				// streaked instead of uniformly grey. This is the third place
-				// that renders a thinking block (with renderBlock's streaming
-				// and settled branches) and they must agree, or the block
-				// changes appearance as it is finalised.
-				// Same collapse as renderBlock's settled branch: this is the
-				// other place a finished block is rendered, and the two must
-				// produce the same text or the block changes as it settles.
-				content := collapseRepeatedLines(b.content)
-				var rendered string
-				if b.kind == "thinking" {
-					rendered = wrapRawText(content, true, m.width)
-				} else {
-					rendered = renderMarkdownWithCache(content, false, m.width)
+			if b.kind == "thinking" {
+				// A thinking block never renders its full text inline — it
+				// is always the one-line collapsed form (renderThinkingBlock)
+				// — so there is nothing to glamour-render here. What this
+				// block finishing means for a thinking block is: its clock
+				// stops (block.duration is only set for tool-end, so a
+				// thinking block has to time itself: from newContentBlock's
+				// startTime to right here) and its summary is frozen if
+				// streaming never produced enough text to freeze it already.
+				if m.blocks[idx].duration == 0 {
+					m.blocks[idx].duration = time.Since(b.startTime)
 				}
+				freezeThinkingSummary(&m.blocks[idx], true)
+				m.blocks[idx].toolState = "done"
+				// Drop the stale cache so the next render picks up the
+				// now-final duration/summary; getBlockLines will recompute
+				// and cache the (always one) line on demand, exactly as it
+				// does for a "tool" block.
+				m.blocks[idx].cachedLines = nil
+				m.blocks[idx].cachedLineCount = 0
+				m.blocks[idx].dirty = false
+				delete(m.dirtyBlocks, idx)
+				delete(m.streamWraps, idx)
+				delete(m.mdCacheRendered, idx)
+			} else if b.kind == "text" {
+				content := collapseRepeatedLines(b.content)
+				rendered := renderMarkdownWithCache(content, false, m.width)
 				if rendered != "" {
 					m.mdCacheRendered[idx] = rendered
 					m.blocks[idx].cachedLineCount = lineCount(rendered)

@@ -111,17 +111,22 @@ func TestCollapseFastPathAgreesWithTheSlowPath(t *testing.T) {
 	}
 }
 
-// TestCollapseIsTheSameOnEveryRenderPath: two places render a settled block
-// (renderBlock's non-streaming branch and forceRenderDirtyBlocks). If they
-// disagree, the block changes appearance as it finalises — the exact bug that
-// made thinking flash green earlier.
+// TestCollapseIsTheSameOnEveryRenderPath used to compare a "thinking"
+// block's two full-render paths (renderBlock's non-streaming branch and
+// forceRenderDirtyBlocks). A thinking block no longer renders its full text
+// inline at all — it always collapses to one summary line (see
+// tui_thinking_collapsed_test.go) — so repeated-line collapsing on a
+// thinking block's *display* no longer applies; collapseRepeatedLines is
+// still exercised for "text" blocks by the tests above. This is now a
+// narrower check: a "text" block (which still goes through the same two
+// render paths) must collapse identically on both.
 func TestCollapseIsTheSameOnEveryRenderPath(t *testing.T) {
 	content := strings.Repeat("</invoke>\n", 30) + "tail"
 
 	viaRenderBlock := func() string {
 		m := newPickerTestModel(testProviders, nil, "")
 		m.width = 80
-		m.appendOrAppend("thinking", content)
+		m.appendOrAppend("text", content)
 		m.status = "idle"
 		return m.renderBlock(0, m.blocks[0])
 	}()
@@ -129,7 +134,7 @@ func TestCollapseIsTheSameOnEveryRenderPath(t *testing.T) {
 	viaForce := func() string {
 		m := newPickerTestModel(testProviders, nil, "")
 		m.width = 80
-		m.appendOrAppend("thinking", content)
+		m.appendOrAppend("text", content)
 		m.forceRenderDirtyBlocks()
 		return m.mdCacheRendered[0]
 	}()

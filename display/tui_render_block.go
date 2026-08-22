@@ -123,7 +123,7 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 
 	switch b.kind {
 	case "thinking":
-		return tryRenderMarkdown(b.content, true, true)
+		return m.renderThinkingBlock(b)
 	case "text":
 		return tryRenderMarkdown(b.content, false, false)
 	case "user":

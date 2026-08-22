@@ -92,17 +92,17 @@ func (m *TuiModel) openToolModalAt(y int) {
 		return
 	}
 	idx := m.blockAtVisibleLine(y)
-	if idx < 0 || m.blocks[idx].kind != "tool" {
+	if idx < 0 || (m.blocks[idx].kind != "tool" && m.blocks[idx].kind != "thinking") {
 		return
 	}
 	m.savedScrollLine = m.scrollLine
 	m.savedAtBottom = m.atBottom
 
-	// Any tool block, in any state. A running tool used to be ignored unless
-	// it was a subagent, so clicking a long bash command — the case where you
-	// most want to see what is happening — did nothing at all. The modal reads
-	// the block's live output, which is exactly what tool-progress is filling
-	// in while the command runs.
+	// Any tool (or thinking) block, in any state. A running tool used to be
+	// ignored unless it was a subagent, so clicking a long bash command — the
+	// case where you most want to see what is happening — did nothing at
+	// all. The modal reads the block's live output, which is exactly what
+	// tool-progress is filling in while the command runs.
 	if !m.subagentModalActive {
 		m.openToolBlockModal(idx)
 	}

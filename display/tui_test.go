@@ -440,65 +440,35 @@ func TestTuiModel_View_BlankLineBetweenToolAndText(t *testing.T) {
 
 // ─── Wrapping tests for renderBlock ──────────────────────────────────────
 
-func TestTuiModel_RenderBlock_Thinking_WrapsLongLines(t *testing.T) {
+// A thinking block no longer wraps its full text inline — it always
+// collapses to one summary line, click-to-display like a tool block. See
+// tui_thinking_collapsed_test.go for that behaviour (summary, duration,
+// stability across streaming deltas, line count, and the click-to-expand
+// modal). What used to be
+// TestTuiModel_RenderBlock_Thinking_WrapsLongLines and
+// TestTuiModel_RenderBlock_Thinking_ShortLinesStaySingle asserted the old
+// full-render behaviour and no longer applies.
+func TestTuiModel_RenderBlock_Thinking_StaysOneLineRegardlessOfWidth(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
-	m.width = 30 // narrow terminal
+	m.width = 40 // narrow terminal
 
-	line := "this is a very long thinking line that should definitely be wrapped because it exceeds thirty characters"
+	line := "this is a very long thinking line that should definitely not be wrapped because it collapses instead"
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: line})
 
 	rendered := m.renderBlock(0, m.blocks[0])
 	lines := strings.Split(rendered, "\n")
-
-	// Should produce multiple lines (each starts with │)
-	if len(lines) < 2 {
-		t.Fatalf("expected wrapped thinking (multiple lines), got %d line(s): %q", len(lines), rendered)
+	if len(lines) != 1 {
+		t.Fatalf("expected a single collapsed line, got %d: %q", len(lines), rendered)
 	}
-	for _, l := range lines {
-		if !strings.HasPrefix(l, "│") {
-			t.Errorf("each thinking line should start with │, got: %q", l)
-		}
-		// Visible width (stripping ANSI) should be ≤ m.width
-		visible := strings.TrimPrefix(l, "│ ")
-		if lipgloss.Width(visible) > m.width {
-			t.Errorf("visible line too long: %d vis chars (max %d): %q", lipgloss.Width(visible), m.width, visible)
-		}
+	if !strings.HasPrefix(lines[0], "│") {
+		t.Errorf("thinking line should start with │, got: %q", lines[0])
 	}
-	if !strings.Contains(stripANSI(rendered), "very") || !strings.Contains(stripANSI(rendered), "thinking") {
-		t.Errorf("should contain original words, got: %q", rendered)
-	}
-}
-
-func TestTuiModel_RenderBlock_Thinking_ShortLinesStaySingle(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
-	m.width = 80
-
-	line := "short thought"
-	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: line})
-
-	rendered := m.renderBlock(0, m.blocks[0])
-	lines := strings.Split(rendered, "\n")
-
-	// Glamour may add a leading blank line for paragraph spacing
-	nonEmpty := 0
-	for _, l := range lines {
-		if strings.TrimSpace(l) != "" {
-			nonEmpty++
-		}
-	}
-	if nonEmpty == 0 {
-		t.Fatalf("expected at least one non-empty line, got: %q", rendered)
-	}
-	for _, l := range lines {
-		if strings.TrimSpace(l) == "" {
-			continue
-		}
-		if !strings.HasPrefix(l, "│") {
-			t.Errorf("each thinking line should start with │, got: %q", l)
-		}
-	}
-	if !strings.Contains(rendered, "short") || !strings.Contains(rendered, "thought") {
-		t.Errorf("should contain original words, got: %q", rendered)
+	// The half of the old assertion that is still meaningful: a collapsed
+	// row is supposed to fit the terminal it was rendered for, the same
+	// invariant every other row in the transcript holds.
+	visible := stripANSI(lines[0])
+	if lipgloss.Width(visible) > m.width {
+		t.Errorf("visible line too long: %d vis chars (max %d): %q", lipgloss.Width(visible), m.width, visible)
 	}
 }
 

@@ -1,11 +1,10 @@
 package display
 
-import "strings"
-
 func (m TuiModel) visibleModalRenderBufferSnapshot() RenderBuffer {
 	layout := m.subagentModalLayout()
 	rb := newRenderBuffer(layout.contentHeight)
-	allLines := strings.Split(m.subagentModalText(), "\n")
+	// Wrapped, not truncated — see subagentModalWrappedLines.
+	allLines := m.subagentModalWrappedLines()
 	totalLines := len(allLines)
 
 	visibleStart := 0
@@ -22,11 +21,8 @@ func (m TuiModel) visibleModalRenderBufferSnapshot() RenderBuffer {
 
 	y := layout.contentTop
 	for i := visibleStart; i < visibleEnd && y <= layout.contentBottom; i++ {
-		line := allLines[i]
-		if runes := []rune(line); len(runes) > layout.popupWidth-4 {
-			line = string(runes[:layout.popupWidth-4])
-		}
-		rb.Add(line, "modal", -1, i, y)
+		// allLines is already wrapped to layout.popupWidth-4, nothing left to cut.
+		rb.Add(allLines[i], "modal", -1, i, y)
 		y++
 	}
 	for y <= layout.contentBottom {
