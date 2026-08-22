@@ -1183,6 +1183,76 @@ func TestTruncatedMarker_Stable(t *testing.T) {
 	}
 }
 
+// ─── per-agent todo isolation (item 24) ──────────────────────────────────
+
+// TestRunSingleTask_ChildGetsOwnTodoList reverts to: runSingleTask never
+// stamps TodoAgentCtxKey on the child's context, so the child's todo tool
+// calls land in the parent's list (tools/todo.go's per-agent todoStore).
+func TestRunSingleTask_ChildGetsOwnTodoList(t *testing.T) {
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
+
+	RunTool(context.Background(), "todo", map[string]any{"action": "add", "content": "parent plan"})
+
+	runner := &mockRunner{RunTaskFunc: func(ctx context.Context, task string, model string, opts SubagentOptions) (string, error) {
+		res := (&TodoTool{}).Run(ctx, map[string]any{"action": "add", "content": "child plan"})
+		if !res.Success {
+			t.Errorf("child add failed: %s", res.Error)
+		}
+		return "done", nil
+	}}
+
+	result := runSingleTask(ctxWithParentModel("test-model"), runner, subagentTask{Task: "child task"}, 0, false)
+	if !result.Success {
+		t.Fatalf("runSingleTask failed: %s", result.Error)
+	}
+
+	items := AllTodoItems()
+	if len(items) != 1 || items[0].Content != "parent plan" {
+		t.Fatalf("parent's list was contaminated by the child: %+v", items)
+	}
+}
+
+// TestRunTasks_SiblingChildrenGetDistinctTodoLists reverts to the same bug,
+// but for two children spawned from one "subagent" call (runTasks) —
+// guarding against nextTodoAgentID handing out the same id under
+// concurrency, which would silently merge two siblings' lists.
+func TestRunTasks_SiblingChildrenGetDistinctTodoLists(t *testing.T) {
+	resetTodoStoreForTest()
+	t.Cleanup(resetTodoStoreForTest)
+
+	var mu sync.Mutex
+	seen := map[string]string{}
+
+	runner := &mockRunner{RunTaskFunc: func(ctx context.Context, task string, model string, opts SubagentOptions) (string, error) {
+		(&TodoTool{}).Run(ctx, map[string]any{"action": "add", "content": "plan for " + task})
+		res := (&TodoTool{}).Run(ctx, map[string]any{"action": "list"})
+		mu.Lock()
+		seen[task] = res.Content
+		mu.Unlock()
+		return "ok", nil
+	}}
+
+	tasks := []subagentTask{{Task: "alpha"}, {Task: "beta"}}
+	runTasks(ctxWithParentModel("test-model"), runner, tasks, 0)
+
+	mu.Lock()
+	alpha, beta := seen["alpha"], seen["beta"]
+	mu.Unlock()
+
+	if !strings.Contains(alpha, "plan for alpha") || strings.Contains(alpha, "plan for beta") {
+		t.Fatalf("alpha's list is wrong or contaminated: %q", alpha)
+	}
+	if !strings.Contains(beta, "plan for beta") || strings.Contains(beta, "plan for alpha") {
+		t.Fatalf("beta's list is wrong or contaminated: %q", beta)
+	}
+
+	// And neither sibling's scratch work leaked into the parent's list.
+	if items := AllTodoItems(); len(items) != 0 {
+		t.Fatalf("parent's list should be untouched by either sibling: %+v", items)
+	}
+}
+
 // TestRunSingleTask_TruncatedFlagReachesToolResult is the end-to-end Go-level
 // contract for the propagation chain: SetSubAgentRunner(...)
 // → tools.RunTool("subagent", ...) → ToolResult with Truncated=true on the

@@ -72,6 +72,29 @@ type JobStarter interface {
 // so ask/report_progress work there too, for free.
 type JobIDCtxKey struct{}
 
+// TodoAgentCtxKey is the context key under which a subagent's own todo-list
+// identity is stashed (see runSingleTask below), mirroring JobIDCtxKey
+// above: it lets the "todo" tool (tools/todo.go) find out "which agent's
+// list am I reading/writing" without keying anything off the *TodoTool
+// receiver, which is a single stateless value shared by the whole registry
+// (tools/tool.go). Every subagent call — sync or async, top-level or
+// nested — gets a freshly minted id here, so a child's todos never land in
+// its parent's list, its parent's never land in the child's, and sibling
+// children never collide ids with each other.
+type TodoAgentCtxKey struct{}
+
+// todoAgentIDCounter backs nextTodoAgentID, mirroring jobs.Registry's own
+// timestamp+counter id scheme (see nextID in jobs/registry.go).
+var todoAgentIDCounter uint64
+
+// nextTodoAgentID returns a fresh, process-unique id for one subagent's
+// todo list. Unique within a single process is all that's required —
+// nothing here needs to survive a restart or be comparable across runs.
+func nextTodoAgentID() string {
+	n := atomic.AddUint64(&todoAgentIDCounter, 1)
+	return fmt.Sprintf("subagent-todo-%d-%d", time.Now().UnixNano(), n)
+}
+
 // streamStopCtxKey carries the flag that tells a child's streaming collector
 // to stop forwarding output to the parent's tool block.
 //
@@ -936,6 +959,24 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	// bug behind the subagent modal staying blank while running: c existed
 	// but nothing ever called its Text/Thinking.
 	runCtx = context.WithValue(runCtx, SubagentSinkCtxKey{}, c)
+
+	// Give this child its own todo-list identity (see TodoAgentCtxKey's doc
+	// comment) — a fresh one on every call, so a child never inherits or
+	// collides with its parent's or a sibling's plan. This covers both the
+	// blocking path (runTasks -> runSingleTask directly) and the async path
+	// (runAsync's job body also calls runSingleTask), since both funnel
+	// through here.
+	//
+	// MarkTodoAgentDone is deferred right here, not wrapped around the
+	// runner call below: this id is only ever known inside this function,
+	// and every return path from here on (including the early ones above
+	// this point never reach it — they return before a list could exist)
+	// must mark the list terminal so it becomes eligible for eviction once
+	// this child is done, without risking a still-running child's list
+	// ever being dropped.
+	todoAgentID := nextTodoAgentID()
+	runCtx = context.WithValue(runCtx, TodoAgentCtxKey{}, todoAgentID)
+	defer MarkTodoAgentDone(todoAgentID)
 
 	// Every tool resolves relative paths against Workdir (see workdir.go), so
 	// this one line is what makes the child's reads, writes and shell commands
