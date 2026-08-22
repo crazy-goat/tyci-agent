@@ -57,5 +57,12 @@ func (t *ResumeTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("marshal resumed job: %v", err)}
 	}
-	return ToolResult{Type: "result", Success: true, Content: string(data)}
+	return ToolResult{
+		Type:    "result",
+		Success: true,
+		// The bare id taught nothing. What matters about resume is the part
+		// that is easy to miss: the job still has its whole conversation, so
+		// a follow-up costs no re-explaining.
+		Content: string(data) + "\nIt runs in the background with its previous conversation intact, so you did not have to restate any context. You will be notified when it finishes; read the result then with wait(job_id=...).",
+	}
 }

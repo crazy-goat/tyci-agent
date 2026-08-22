@@ -65,7 +65,7 @@ func (t *LockTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			Type:    "result",
 			Success: false,
 			Error: fmt.Sprintf(
-				"path %q already locked by %q since %s (%s)",
+				"path %q already locked by %q since %s (%s). Do not edit it anyway — pick up something else and come back to it, or wait for the holder to unlock.",
 				path, existing.Holder, existing.AcquiredAt.Format(time.RFC3339), expiry,
 			),
 		}

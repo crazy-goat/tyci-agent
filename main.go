@@ -15,6 +15,7 @@ import (
 	"github.com/decodo/tyci/eventbus"
 	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/internal/debug"
+	"github.com/decodo/tyci/internal/hooks"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/tools"
@@ -28,6 +29,32 @@ import (
 // signatures; every other mode (console, --print, etc.) simply never
 // subscribes, so this costs them nothing.
 var jobEventBus = eventbus.New(32)
+
+// JobNotices is the single, process-wide queue of short completion notices
+// produced by background work — today, shell commands the bash tool moved to
+// the background. It has two consumers, wired per mode: the agent loop drains
+// it between turns (agent.Config.NextMessages), and an idle REPL selects on
+// its Signal to start a turn of its own (see runTUI). Exported so integration
+// tests in package main can assert on delivery.
+var JobNotices = jobs.NewNotifier()
+
+// mergeNextMessages composes several NextMessages-shaped drain callbacks into
+// the single one agent.Config accepts, calling them in the order given so a
+// user's own queued line is delivered ahead of a background notice that
+// arrived in the same gap. nil callbacks are skipped, so a mode can pass
+// whichever sources it actually has.
+func mergeNextMessages(drains ...func() []string) func() []string {
+	return func() []string {
+		var out []string
+		for _, drain := range drains {
+			if drain == nil {
+				continue
+			}
+			out = append(out, drain()...)
+		}
+		return out
+	}
+}
 
 // resumableEntry captures everything agent.Run needs to continue a
 // background job's conversation with a new user turn: the mutated messages
@@ -263,6 +290,8 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		Schema:        tools.GetSubagentToolsSchemaJSONFor(opts.Tools),
 		Fallbacks:     fallbacks,
 		Temperature:   opts.Temperature,
+		MaxTokens:     opts.MaxTokens,
+		NoPromptCache: !agent.PromptCacheEnabled(),
 	}
 
 	_, err = agent.Run(ctx, mc, sink, &msgs, cfg)
@@ -336,6 +365,16 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 			return "", fmt.Errorf("tool %q is not in this agent's allowed tools list", name)
 		}
 	}
+	// The checks above only cover calls the model makes directly. A tool can
+	// dispatch further tools itself — the "lua" tool exists to do exactly
+	// that — and those go straight to tools.RunTool, below this function.
+	// Carrying the restriction in the context makes it apply there too, so a
+	// script cannot reach a tool its agent was denied, or spawn a grandchild.
+	ctx = tools.WithToolGate(ctx, tools.Deny("subagent tool is not available to subagents (recursion denied)", "subagent"))
+	if len(r.allowed) > 0 {
+		ctx = tools.WithToolGate(ctx, tools.AllowOnly(r.allowed...))
+	}
+
 	res := tools.RunTool(ctx, name, args)
 	if res.Success {
 		return res.Content, nil
@@ -373,8 +412,45 @@ func wireTools() {
 	// Wire JobRegistry's status-change events onto jobEventBus so the TUI
 	// (see tuiCmd in commands.go) can show a live background-jobs panel. A
 	// no-op for every other mode, which never calls TUI.SetJobEventBus.
-	JobRegistry.SetOnEvent(func(j jobs.Job) { jobEventBus.Publish("job.updated", j) })
+	JobRegistry.SetOnEvent(func(j jobs.Job) {
+		jobEventBus.Publish("job.updated", j)
+
+		// A job that called "ask" is now blocked, and it stays blocked until
+		// someone calls "answer" or its wall-clock limit expires — at which
+		// point everything it had done is thrown away. Relying on the parent
+		// to poll for that is not good enough: it has no reason to suspect a
+		// question is pending, and a model that forgets to poll silently
+		// wastes the whole child run. So the question is pushed into the
+		// parent's next turn (and wakes an idle REPL) the same way a finished
+		// background command is.
+		if j.Status == jobs.StatusWaitingAnswer {
+			JobNotices.Notify(fmt.Sprintf(
+				"[background job] %s is BLOCKED waiting for your answer: %q\n"+
+					"Reply with answer(job_id=%q, text=\"...\"). Until you do it makes no progress, and its work is discarded when it times out.",
+				j.Description, j.Question, j.ID))
+		}
+	})
+
+	// Wire background-command completion notices to the shared queue. This is
+	// only half the story: a notice is queued from here, but whether anything
+	// consumes it depends on the mode wiring up JobNotices.Drain /
+	// JobNotices.Signal — which is exactly why backgrounding itself stays off
+	// until a mode opts in via tools.SetBackgroundBashEnabled.
+	tools.SetJobNotifier(JobNotices)
+
+	// Load user hooks (internal/hooks) from ~/.tyci/hooks.json and
+	// ./.tyci/hooks.json. Config errors are collected on purpose rather than
+	// swallowed: a hook the user believes is guarding a path, but which never
+	// loaded because of a typo, is worse than no hook at all. They are
+	// reported by whichever mode has somewhere safe to print — stderr here
+	// would corrupt --print output and the TUI, so the message is parked in
+	// hookLoadErrors and surfaced from the interactive modes.
+	hookLoadErrors = hooks.Load(hooks.DefaultPaths("")...)
 }
+
+// hookLoadErrors holds problems found while loading hook config, for a mode
+// to report once it has a display. Nil in the normal case.
+var hookLoadErrors []error
 
 func main() {
 	wireTools()

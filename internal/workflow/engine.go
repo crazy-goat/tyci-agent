@@ -9,6 +9,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/stream"
@@ -107,8 +108,11 @@ func (e *Engine) luaModels(L *lua.LState) int {
 
 // luaAgents returns configured agent names.
 func (e *Engine) luaAgents(L *lua.LState) int {
-	// TODO: implement agent listing
+	defs := agentdefs.List("")
 	arr := L.NewTable()
+	for i, def := range defs {
+		arr.RawSetInt(i+1, lua.LString(def.Name))
+	}
 	L.Push(arr)
 	return 1
 }

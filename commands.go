@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/api"
@@ -58,6 +59,7 @@ func init() {
 	rootCmd.PersistentFlags().String("agent", "", "Agent name to use for default model (from agents config)")
 	rootCmd.PersistentFlags().Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 	rootCmd.PersistentFlags().Int("max-iterations", -1, "Max tool-call iterations (-1 = unlimited)")
+	rootCmd.PersistentFlags().Int("max-tokens", 0, "Max tokens in one model reply (0 = value from ~/.tyci/config.json, else the provider default)")
 	rootCmd.PersistentFlags().String("history-file", "", "Path to history file (default: ~/.tyci/history)")
 	rootCmd.PersistentFlags().String("session", "", "Session file path (default: auto-generated in ~/.tyci/sessions/)")
 	rootCmd.PersistentFlags().Bool("no-session", false, "Disable session persistence")
@@ -87,6 +89,14 @@ func registerProviders() {
 
 func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, context.Context, *session.Session, string, string, *debug.Logger, error) {
 	registerProviders()
+
+	// Hook config problems, collected in wireTools. Reported here rather than
+	// there because a hook that failed to load is a silent loss of a
+	// protection the user thinks they have, and this runs before any display
+	// owns the screen.
+	for _, err := range hookLoadErrors {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
 
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: maxRetries, BaseBackoff: 4, MaxBackoff: 128}
@@ -131,6 +141,12 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 
 	debugFlag, _ := cmd.Flags().GetBool("debug")
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
+	// The flag wins when given, otherwise the global config, otherwise 0 —
+	// which each connector reads as "your default".
+	maxTokens, _ := cmd.Flags().GetInt("max-tokens")
+	if maxTokens <= 0 {
+		maxTokens = agent.GetMaxTokens()
+	}
 	cfg := agent.Config{
 		System:        providers.BuildSystemPrompt(),
 		MaxRetries:    maxRetries,
@@ -139,7 +155,10 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 		Tools:         toolsAdapter{},
 		Schema:        tools.GetToolsSchemaJSON(),
 		Fallbacks:     fallbacks,
+		MaxTokens:     maxTokens,
+		NoPromptCache: !agent.PromptCacheEnabled(),
 		PendingTodos:  tools.PendingTodos,
+		PendingJobs:   JobRegistry.PendingLines,
 		HasTodos:      tools.HasPendingTodos,
 	}
 	ctx = connector.WithModelClient(ctx, provider.Client(modelName))
@@ -283,6 +302,19 @@ var consoleCmd = &cobra.Command{
 			defer dl.Close()
 		}
 		disp := display.NewTerminal()
+
+		// The console can background shell commands too, but its input is a
+		// blocking readline, so it cannot wake itself: a completion notice
+		// waits in the queue and is delivered with the user's next message
+		// (or picked up mid-turn by the drain below, if a turn is running).
+		cfg.NextMessages = mergeNextMessages(cfg.NextMessages, JobNotices.Drain)
+		tools.SetBackgroundBashEnabled(true)
+		defer tools.KillAllBackgroundBash()
+		// Saved prompts only fire while something is ticking the schedule, and
+		// an interactive session is the one place where a run finishing has
+		// somewhere to be reported. See tools.StartCronTicker.
+		tools.StartCronTicker(ctx, time.Minute)
+
 		// requireConfigured: /model in the console refuses a provider
 		// without credentials and says how to add one.
 		cond := newConductor(provider, modelName, disp, cfg, sessionPath, catalogResolver{requireConfigured: true})
@@ -369,7 +401,19 @@ var tuiCmd = &cobra.Command{
 		// during the in-flight request and returns them in FIFO order;
 		// the agent loop appends each as a user message and forces one
 		// more runOnce so the model sees them as a single turn.
-		cfg.NextMessages = tuiDisp.NextMessages
+		cfg.NextMessages = mergeNextMessages(tuiDisp.NextMessages, JobNotices.Drain)
+
+		// Long-running shell commands may be moved to the background in the
+		// TUI: it is the one mode that both drains completion notices between
+		// turns (above) and can wake itself up to act on one while idle (see
+		// runTUI). Commands outlive the tool call that started them, so
+		// runTUI kills any survivors on exit.
+		tools.SetBackgroundBashEnabled(true)
+
+		// Saved prompts only fire while something is ticking the schedule, and
+		// an interactive session is the one place where a run finishing has
+		// somewhere to be reported. See tools.StartCronTicker.
+		tools.StartCronTicker(ctx, time.Minute)
 
 		// No requireConfigured: the Tab-cycle and the picker only offer
 		// providers that are already in auth.json (see authSet above), and

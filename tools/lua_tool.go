@@ -254,7 +254,14 @@ func loadLuaTool(scriptPath string) (*LuaTool, error) {
 	}, nil
 }
 
-// convertLuaTableToMap converts a Lua table to a Go map.
+// convertLuaTableToMap converts a Lua table to a Go map, dropping any
+// non-string keys.
+//
+// Prefer convertLuaTable for anything crossing into tool arguments: Lua has
+// one table type for both maps and arrays, and this function silently loses
+// every array element (their keys are numbers, not strings). That mattered
+// the moment scripts could call tools — tool("subagent", {tasks = {...}})
+// would have arrived with an empty tasks list and no error anywhere.
 func convertLuaTableToMap(t *lua.LTable) map[string]any {
 	result := make(map[string]any)
 	t.ForEach(func(key, value lua.LValue) {
@@ -263,6 +270,37 @@ func convertLuaTableToMap(t *lua.LTable) map[string]any {
 		}
 	})
 	return result
+}
+
+// convertLuaTable converts a Lua table to either a Go slice or a Go map,
+// depending on its shape. A table is treated as an array when it has at least
+// one entry and its keys are exactly 1..n — the same rule Lua's own ipairs
+// and table.insert work by, so it matches what a script author intends.
+//
+// An empty table is ambiguous (it is equally a list of nothing and a record
+// with no fields) and becomes an empty map, because that is what a JSON
+// encoder does with it and the tools on the receiving end take objects.
+func convertLuaTable(t *lua.LTable) any {
+	n := t.Len() // Lua's array length: the n of a 1..n run
+	if n > 0 {
+		// Confirm there are no string keys hiding alongside the array part;
+		// a mixed table is a record that happens to have numbered fields, and
+		// turning it into a list would drop them.
+		mixed := false
+		t.ForEach(func(key, _ lua.LValue) {
+			if _, ok := key.(lua.LString); ok {
+				mixed = true
+			}
+		})
+		if !mixed {
+			arr := make([]any, 0, n)
+			for i := 1; i <= n; i++ {
+				arr = append(arr, convertLuaValueToGo(t.RawGetInt(i)))
+			}
+			return arr
+		}
+	}
+	return convertLuaTableToMap(t)
 }
 
 // convertLuaValueToGo converts a Lua value to a Go value.
@@ -277,7 +315,7 @@ func convertLuaValueToGo(v lua.LValue) any {
 	case lua.LString:
 		return string(val)
 	case *lua.LTable:
-		return convertLuaTableToMap(val)
+		return convertLuaTable(val)
 	default:
 		return val.String()
 	}

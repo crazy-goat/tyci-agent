@@ -1,6 +1,9 @@
 package tools
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 // Bash output caps. Unlike the read tool (which caps what it *returns* but the
 // caller only asks for a bounded slice), a bash command can stream an arbitrary
@@ -25,11 +28,16 @@ const (
 // while the command is still producing output (the writer is wired directly to
 // the process pipes / the per-line accumulator).
 type cappedBuffer struct {
+	// mu guards every field. The streaming path drains stdout and stderr in
+	// two separate goroutines, and a backgrounded command reports its size
+	// while those goroutines are still writing, so this buffer is genuinely
+	// concurrent — it was not when it only ever backed one io.Copy.
+	mu         sync.Mutex
 	head       []byte
 	tail       []byte // sliding window of the most recent bytes
 	headMax    int
 	tailMax    int
-	total      int64 // total bytes ever written (for the truncation notice)
+	total_     int64 // total bytes ever written (for the truncation notice)
 	overflowed bool
 }
 
@@ -42,8 +50,11 @@ func newCappedBuffer(headMax, tailMax int) *cappedBuffer {
 }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	n := len(p)
-	b.total += int64(n)
+	b.total_ += int64(n)
 
 	// Fill the head first, up to headMax.
 	if len(b.head) < b.headMax {
@@ -73,16 +84,29 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 // exact bytes written; otherwise it joins the head and tail with a marker
 // stating how much was elided.
 func (b *cappedBuffer) result() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if !b.overflowed {
 		return string(b.head)
 	}
-	elided := b.total - int64(len(b.head)) - int64(len(b.tail))
+	elided := b.total_ - int64(len(b.head)) - int64(len(b.tail))
 	if elided < 0 {
 		elided = 0
 	}
 	notice := fmt.Sprintf(
 		"\n\n... [bash output truncated: %d bytes total, kept first %d and last %d, dropped %d in the middle] ...\n\n",
-		b.total, len(b.head), len(b.tail), elided,
+		b.total_, len(b.head), len(b.tail), elided,
 	)
 	return string(b.head) + notice + string(b.tail)
+}
+
+// total reports how many bytes have been written so far, including anything
+// already dropped from the middle. Used for the size figure in a background
+// command's completion notice, which is read while the command may still be
+// writing.
+func (b *cappedBuffer) total() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.total_
 }

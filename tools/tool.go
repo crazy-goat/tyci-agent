@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/decodo/tyci/internal/hooks"
 	"github.com/decodo/tyci/locks"
 )
 
@@ -29,6 +30,11 @@ type SubagentOptions struct {
 	// Temperature, when non-nil, is the sampling temperature for the child.
 	// Pointer because 0 is meaningful ("deterministic"), not "unset".
 	Temperature *float64
+
+	// MaxTokens caps the child's reply length. 0 means unset — the
+	// connector's default applies. Comes from the named agent definition's
+	// `max_tokens` frontmatter.
+	MaxTokens int
 
 	// Fallbacks are "provider/model" specs, NOT resolved clients: the tools
 	// package is a leaf and must not reach into the provider catalog. The
@@ -114,7 +120,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "find",
-				"description": "Find files by glob pattern or search their contents. Use method=\"glob\" for file path patterns (e.g. **/*.go) or method=\"grep\" for text/regex/word search inside files.",
+				"description": "Find files by glob (method=\"glob\", e.g. **/*.go) or search their contents (method=\"grep\": text, word or regex). Returns relative paths. Respects .gitignore, skips binaries, and says when a result cap was hit. Use output=\"files\" or \"count\" while deciding where to look, and \"lines\" only when you need to read the hits — over many matches that is the difference between a list of paths and a wall of code in your context.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -138,7 +144,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "todo",
-				"description": "Manage a per-run in-memory todo list. Use for multi-step tasks. Returns the full list. When you need to add several unrelated items at once, prefer action=\"add_batch\" with items=[...] instead of issuing N separate add calls — the result returns the full new list with assigned ids in one round-trip.",
+				"description": "The run's plan, and a gate: every other tool is refused until at least one item exists. todo(action=\"add_batch\", items=[...]) creates the whole plan in one call. Keep items at the granularity of something you can finish and verify. Mark done when done and blocked (with a reason) when it cannot proceed — the turn will not end quietly with items still open. actions: add/add_batch/update/doing/blocked/done/remove/list/clear.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -169,7 +175,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "read",
-				"description": "Read file contents. Use offset/limit for ranges. Set lineNumbers=true when you need exact line numbers for edits. Returns full contents; truncate/inspect with offset and limit.",
+				"description": "Read a file. offset/limit for a range, lineNumbers=true when you need exact line numbers. Reading three or more files means a lua script instead: what a script reads is discarded, what you read stays in this conversation for the rest of the session.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -186,7 +192,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "write",
-				"description": "Write file content or replace text. Use content (with optional range) to write; use oldString+newString to replace exact text (edit mode).",
+				"description": "Create or overwrite a file (content, optional range) or replace exact text (oldString+newString, which triggers edit mode). Modifying a file that already exists requires having read it first, unchanged since — a refused write means read it again and redo the edit against what it says now, never retry the same call. oldString must match exactly once unless occurrence says otherwise; include enough surrounding text to be unique. New files and range=\"append\" need no prior read. dryRun=true previews.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -206,13 +212,15 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "bash",
-				"description": "Execute shell command",
+				"description": "Run a shell command; use it only when no other tool fits — find, read and write are cheaper and bounded. It blocks, and after 30s the command is moved to the background and you are NOTIFIED when it finishes: do other work, and never re-run a backgrounded command, because a second copy races the first. run_in_background=true for work you already know is long; background_after=0 to stay blocked; timeout (default 120s) is the total limit, not a promise to block.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"description": map[string]any{"type": "string", "description": "Short description of what this command does"},
-						"command":     map[string]any{"type": "string", "description": "Command to execute"},
-						"timeout":     map[string]any{"type": "integer", "description": "Optional timeout in seconds for this command (default: 120)"},
+						"description":       map[string]any{"type": "string", "description": "Short description of what this command does. Also used as the label for a background job, so keep it recognisable."},
+						"command":           map[string]any{"type": "string", "description": "Command to execute"},
+						"timeout":           map[string]any{"type": "integer", "description": "How long the command may run in total, in seconds (default: 120). This is a limit, not a promise to block: the command still moves to the background after 30s and keeps running, and you can then wait(job_id=...) on it. To stay in the foreground instead, set background_after=0."},
+						"run_in_background": map[string]any{"type": "boolean", "description": "Start the command in the background immediately and return a job_id without waiting for any output. Use for long builds, test suites or watchers when you have other work to get on with."},
+						"background_after":  map[string]any{"type": "integer", "description": "Seconds to wait before moving the command to the background (default: 30). 0 disables the move, so the command runs in the foreground until it finishes or hits its timeout."},
 					},
 					"required": []string{"command"},
 				},
@@ -221,23 +229,42 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "lua",
+				"description": "Run a Lua script that calls other tools: tool(name, args) returns {success, content, error}. Use it for any loop over three or more items, or any step that depends on what the last one returned — one round trip for the whole loop, and what the script reads never enters your context. log() reports progress live; return hands back the answer (a table becomes JSON); args carries input data in. Check res.success on every call — a script that ignores a failure returns a confident wrong answer. Return the CONCLUSION, not the material. Fan out from inside a script: build the task list, then tool(\"subagent\", {tasks = ...}). Sandboxed to the pure language: no io, os or require. Aborted at its timeout and after 500 tool calls, so make loops terminate.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"description": map[string]any{"type": "string", "description": "A few words on what this script does, e.g. \"rename oldName across the Go files\". Shown to the person watching, who cannot read the script at a glance — without it every script in the transcript looks the same."},
+						"script":      map[string]any{"type": "string", "description": "Lua source. Use return to hand back the result, log() to report progress along the way."},
+						"args":        map[string]any{"type": "object", "description": "Optional values made available to the script as the global table 'args'. Use it to keep data out of the source text."},
+						"timeout":     map[string]any{"type": "integer", "description": fmt.Sprintf("Wall-clock limit in seconds (default %d, max %d). The script is aborted when it expires; work it already did is not undone.", LuaDefaultTimeoutSec, LuaMaxTimeoutSec)},
+					},
+					"required": []string{"script"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "subagent",
-				"description": "Delegate a complex or independent task to a child agent with its own context window. Use when a task is self-contained, can run in parallel with other work, or would benefit from a separate reasoning chain. Good for: research questions, file operations across many files, independent subtasks. Provide a clear, specific task description AND state exactly what the child should return — the parent sees only the child's final text, not its tool calls. The child has every tool except subagent itself (no recursive spawning) — including lock/unlock for coordinating with sibling parallel subagents over shared file paths, wait(job_id=...) to check on a sibling's async job, ask to pose a blocking question back to whoever is waiting on this job, and report_progress for long tasks. When running several tasks in parallel over related files, mention in each task's instructions that it should lock the paths it touches and unlock when done. It is bounded by an optional max_iterations cap and a 600s wall-clock timeout; keep each task narrow and completable. For a single task use 'task' (string); for parallel execution use 'tasks' (array). Set async=true (on every task in the call) to get a job_id back immediately instead of blocking — poll it later with the \"wait\" tool's job_id argument; you cannot mix async and non-async tasks in one call.",
+				"description": "Delegate to child agents, each with its own context window. Working through MANY agents is the intended mode here, not the exception: a child reads into its own window and hands you back only its conclusion. Delegate when answering means reading more than about three files, when the work is a search, survey or review (you want the finding, not the material), and ALWAYS when you have two or more independent pieces of work — ONE call with tasks=[...], run in parallel, costing about as much wall-clock as the slowest one. A call without async blocks — but only for 60s: after that the children carry on in the background, you are notified as usual, and the turn ends so the person at the keyboard gets their prompt back. Set async=true whenever you do not need the result this turn: you get job_ids back immediately and are NOTIFIED when each finishes or blocks on a question, so get on with other work; wait(job_id) reads a result, answer(job_id, text) unblocks a question and is urgent — a blocked child makes no progress and its work is discarded when it times out. Do not delegate single-file edits, work needing the exact bytes, or anything that depends on this conversation: the child sees ONLY your task text, no history and no earlier findings, so state what to do, which paths, and what to return, in that order. Children have every tool except subagent, including lock/unlock — tell parallel tasks to lock the paths they write, or better, give each one isolation=\"worktree\" so they write in separate checkouts and no locking is needed. Bound anything that might wander with max_iterations. agent=\"name\" runs it under a definition from .tyci/agents (call the agents tool for the current list).",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"task":  map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/bash tools."},
-						"agent": map[string]any{"type": "string", "description": "Named agent to use. Definitions live in ./.tyci/agents/<name>.md (project) or ~/.tyci/agents/<name>.md (global), project winning; each supplies the child's system prompt and may pin its model, max_iterations and allowed tools. The available names are listed in the system prompt; an unknown name is an error, not a fallback."},
+						"agent": map[string]any{"type": "string", "description": "Named agent to use. Definitions live in ./.tyci/agents/<name>.md (project) or ~/.tyci/agents/<name>.md (global), project winning; each supplies the child's system prompt and may pin its model, max_iterations and allowed tools. A list is injected into your system prompt at session start, but it goes stale if a definition is added or edited mid-session — call the \"agents\" tool for a fresh list or to see one definition's full details. An unknown name is an error, not a fallback."},
 						"tasks": map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
 							"task":           map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has every tool except subagent itself."},
 							"agent":          map[string]any{"type": "string", "description": "Named agent to use"},
 							"model":          map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
 							"max_iterations": map[string]any{"type": "integer", "description": "Cap this child's tool-call turns. Set a positive integer to bound a risky subtask (e.g. exploration, code review); omit to use the runner default (currently unlimited, bounded by a 600s wall-clock timeout). 0 and negative values mean unlimited."},
 							"async":          map[string]any{"type": "boolean", "description": "Run this task as a background job and return its job_id immediately instead of blocking. Must match every other task's async value in the same call."},
+							"isolation":      map[string]any{"type": "string", "enum": []string{"worktree"}, "description": "Give this child its own checkout of the repository, on its own branch, instead of the shared working directory: \"worktree\". Use it whenever two or more children WRITE at the same time — then they cannot clobber each other and nothing has to take turns on a lock. The cost is that its edits are not in your tree: the result tells you the branch and how to diff it, and you decide whether to merge. A child that only reads needs nothing here, and its checkout is removed automatically when it changed no files. Needs a git repository."},
 						}, "required": []string{"task"}}},
 						"model":          map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
 						"max_iterations": map[string]any{"type": "integer", "description": "Cap on the child's tool-call turns. Omit or 0 to use the runner's default (currently unlimited); negative = unlimited. Useful for bounding long-running subtasks like exploration or code review."},
 						"async":          map[string]any{"type": "boolean", "description": "Run as a background job and return a job_id immediately instead of blocking until it finishes. Poll with wait(job_id=...)."},
+						"isolation":      map[string]any{"type": "string", "enum": []string{"worktree"}, "description": "Give this child its own checkout of the repository, on its own branch, instead of the shared working directory: \"worktree\". Use it whenever two or more children WRITE at the same time — then they cannot clobber each other and nothing has to take turns on a lock. The cost is that its edits are not in your tree: the result tells you the branch and how to diff it, and you decide whether to merge. A child that only reads needs nothing here, and its checkout is removed automatically when it changed no files. Needs a git repository."},
 					},
 				},
 			},
@@ -246,12 +273,12 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "wait",
-				"description": "Deliberately wait for a period of time instead of polling in a busy loop. Use when you know an operation (yours or a background job's) will take roughly N seconds and you want to pause before checking again — e.g. wait(seconds=600, note=\"waiting for the deploy to finish\") instead of repeatedly re-checking. If job_id is provided, waits for that background job to finish (or until timeout) and reports its status instead of just sleeping; omit job_id for a plain timed wait.",
+				"description": "Wait for a background job (job_id) or pause deliberately (seconds alone). With a job_id it waits until that job finishes or blocks on a question and returns the result — not a status snapshot — so one call gets you the answer; seconds is optional and defaults to 10 minutes, and the wait ends early if someone types. You do not need it to find out that a job finished, because you are notified; use it when you have nothing else to do, or to read a result once you are told.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"seconds": map[string]any{"type": "integer", "description": fmt.Sprintf("How long to wait, in seconds. Clamped to [%d, %d].", MinWaitSeconds, MaxWaitSeconds)},
-						"job_id":  map[string]any{"type": "string", "description": "Optional id of a background job to wait/poll for instead of a plain sleep. Requires job tracking to be configured; omit for a plain wait."},
+						"job_id":  map[string]any{"type": "string", "description": "Id of a background job. The call waits until that job actually finishes (or blocks on a question), so it returns the result rather than a status — seconds is optional here and defaults to 10 minutes. It ends early if someone types. Omit for a plain sleep."},
 						"note":    map[string]any{"type": "string", "description": "Optional note describing what you're waiting for, echoed back for context."},
 					},
 					"required": []string{"seconds"},
@@ -261,8 +288,68 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "kill_job",
+				"description": "Kill a backgrounded shell command and everything it spawned — wrong command, no longer needed, or stuck. Its output so far stays readable with wait(job_id). Shell jobs only, not async subagents.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"job_id": map[string]any{"type": "string", "description": "Id of the background command to stop, as returned by the bash tool."},
+					},
+					"required": []string{"job_id"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "help",
+				"description": "Full documentation for a tool, with worked examples. The tool list in your prompt is one line each on purpose; this is the manual. help() lists every tool, help(tool=\"lua\") returns one. Read help(\"lua\") and help(\"subagent\") before first using them, and whenever a refusal or an error surprises you — guessing at a tool costs more than asking.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"tool": map[string]any{"type": "string", "description": "Tool name. Omit to list every available tool."},
+					},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "memory",
+				"description": "Project notes that survive the session: every note in .tyci/memory/ is loaded into the next session's system prompt, so writing one is how something you worked out stops having to be worked out again. Write when you learn something NOT obvious from the code — the command that really runs the tests, a rule the compiler does not enforce, a decision and its reason, a trap you already fell into. Never for what the code plainly says, for one-off task detail, or for this conversation: you pay for every note on every future request. Say WHY, keep it to a few sentences, rewrite under the same name to correct it, delete what stopped being true. actions: list (default), read, write, delete.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"action":  map[string]any{"type": "string", "description": "list (default), read, write or delete"},
+						"name":    map[string]any{"type": "string", "description": "Short slug identifying the note, e.g. \"test-command\". Required for read/write/delete. Writing an existing name replaces it."},
+						"content": map[string]any{"type": "string", "description": "The note itself (write only). A few sentences, including why it matters."},
+					},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "cron",
+				"description": "Prompts that run later, without you or anybody else being there. This is the only way \"check again in an hour\" or \"every morning before I start\" survives: the session ends and everything it intended ends with it. A run is a FRESH agent given only the saved prompt — no history, no findings from here — so write the prompt to stand alone: what to do, where, and what counts as done. Schedules are \"every 30m\"/\"every 6h\" or \"at 07:30\" (local, daily); a new job is due at once so you find out straight away whether it works. Output goes to a per-job log, read with action=\"logs\". Use it for what repeats or must happen later — a nightly test run, a periodic check on a queue, a morning summary. Do NOT use it as a reminder to yourself inside this conversation, and do not schedule anything the person did not ask to be repeated. You are notified when a scheduled run finishes, so never poll. The schedule only advances while an interactive session is open — say that instead of promising a job will fire. actions: list (default), add, remove, enable, disable, logs, run_now.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"action":   map[string]any{"type": "string", "enum": []string{"list", "add", "remove", "enable", "disable", "logs", "run_now"}, "description": "What to do. Defaults to list."},
+						"name":     map[string]any{"type": "string", "description": "Short slug identifying the job (letters, digits, - and _). Required for everything except list."},
+						"prompt":   map[string]any{"type": "string", "description": "What the scheduled agent is asked to do. It gets NOTHING else: no conversation history, no earlier findings. State the task, the paths, and what to report."},
+						"schedule": map[string]any{"type": "string", "description": "When to run: \"every 30m\", \"every 6h\" (shortest interval is 1m, measured from the end of the last run) or \"at 07:30\" (local time, once a day)."},
+						"dir":      map[string]any{"type": "string", "description": "Directory to run in. Defaults to the current one, recorded now — so the job keeps meaning the same project later."},
+						"model":    map[string]any{"type": "string", "description": "Optional model override (format: provider/model). Omit to use the configured default; a cheap model is usually right for a recurring check."},
+					},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "skills",
-				"description": "Manage skills. Call without parameters to list all available skills. Call with name to load a specific skill's full content. Skills are markdown files stored in ~/.tyci/skills/<name>/SKILL.md.",
+				"description": "List available skills (no arguments) or load one's full content (name). Skills are markdown in ~/.tyci/skills/<name>/SKILL.md.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -274,8 +361,21 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "agents",
+				"description": "List the named agents usable as subagent(agent=\"name\"), or load one definition in full. Call it rather than trusting the list in your system prompt, which goes stale as soon as a definition is added or edited mid-session. An unknown name is an error, not a fallback.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string", "description": "Name of the agent to load details for. If omitted, lists all available agents."},
+					},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "lock",
-				"description": "Advisory-lock a file or directory path so other parallel subagents know you are working on it and avoid touching it. This is cooperative, not physical: it does not stop anyone from actually editing the path, it only lets other agents that check the lock know to steer clear. If you omit \"seconds\", the lock lasts until you release it with \"unlock\" or until your session ends. Returns a \"holder\" id in Content — remember it, you need it to call \"unlock\" later.",
+				"description": "Advisory-lock a path so parallel agents keep off it. Cooperative only: it stops nobody physically, it tells them. Returns a holder id — keep it, unlock needs it. Omit seconds for a session-lifetime lock. Anything you write while other agents run belongs behind one of these.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -290,7 +390,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "unlock",
-				"description": "Release an advisory lock previously acquired with the \"lock\" tool. Requires the same \"holder\" id that \"lock\" returned; fails if the path isn't locked, already expired, or held by a different holder.",
+				"description": "Release a lock, using the holder id that lock returned. Unlock as soon as you are done with the path — another agent may be waiting on it.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -305,7 +405,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "ask",
-				"description": "Ask a blocking question from inside an async background job (started via subagent(...,async:true) or a /btw side-conversation) — only usable there, not from a normal foreground turn. Blocks until the parent (or another agent) calls \"answer\" on this job's id, or until the job's own wall-clock limit is reached. Use sparingly, only for genuine ambiguity you can't resolve yourself.",
+				"description": "Ask the parent one question and BLOCK until it answers. Only usable inside an async job. A last resort for genuine ambiguity: you make zero progress while waiting, and if the wall clock runs out first your whole run is discarded. Prefer stating an assumption and proceeding.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -319,7 +419,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "answer",
-				"description": "Reply to a background job currently shown as waiting_answer (via the \"wait\" tool) and unblock it. Requires the exact job_id and the text to hand back.",
+				"description": "Answer a job that is blocked on ask. Urgent the moment you are told about one: the job makes no progress meanwhile and everything it has done is discarded if it times out unanswered.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -334,7 +434,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "report_progress",
-				"description": "Post a short status note from inside an async background job (started via subagent(...,async:true) or a /btw side-conversation) — only usable there. Visible via the \"wait\" tool's still-running response and the jobs panel, without ending the job. Use for long tasks so whoever is watching isn't left guessing.",
+				"description": "Post a short status note from inside an async job, visible via wait and in the jobs panel. Use it during long work so whoever is watching is not left guessing. Only usable inside a job.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -348,7 +448,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "resume",
-				"description": "Continue an already-finished async job's full conversation with a new task, as a brand-new job (new job_id — poll it with \"wait\" same as any async spawn). Only works on jobs that actually finished normally (done/truncated) via subagent(...,async:true) or /btw, not on synchronous calls or hard failures.",
+				"description": "Continue a FINISHED async job with a new task. It keeps its entire conversation, so a follow-up (\"now also fix the tests\") costs no re-explaining — this is much cheaper than spawning a fresh child and describing the context again. Returns a new job_id, notified like any async spawn. Only works on a job that finished normally.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -363,7 +463,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "web",
-				"description": "Access the web. Use method=search for real-time web search (current events, docs, anything not in training data). Use method=lookup for fast encyclopedic facts, Wikipedia summaries, and quick references — it's enough for most knowledge questions and cheaper. Use method=get to fetch a specific URL.",
+				"description": "Reach the web. method=\"search\" for real-time results, \"lookup\" for encyclopedic facts (cheaper, and enough for most questions), \"get\" to fetch one URL as markdown or raw.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -412,13 +512,16 @@ func GetAllToolsSchemaJSON() json.RawMessage {
 	return data
 }
 
-// GetSubagentToolsSchema returns tool definitions excluding "subagent" (prevents recursion).
+// GetSubagentToolsSchema returns tool definitions excluding "subagent"
+// (prevents recursion) and "agents" (its only purpose is discovering names
+// for subagent(agent="name"); a child that cannot spawn subagents has
+// nothing to do with that list, so it isn't worth tempting it with).
 func GetSubagentToolsSchema() []map[string]any {
 	schema := GetToolsSchema()
 	filtered := make([]map[string]any, 0, len(schema))
 	for _, s := range schema {
 		if fn, ok := s["function"].(map[string]any); ok {
-			if name, ok := fn["name"].(string); ok && name == "subagent" {
+			if name, ok := fn["name"].(string); ok && (name == "subagent" || name == "agents") {
 				continue
 			}
 		}
@@ -446,11 +549,15 @@ func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
 	if len(allowed) == 0 {
 		return GetSubagentToolsSchemaJSON()
 	}
-	want := make(map[string]bool, len(allowed))
+	want := make(map[string]bool, len(allowed)+len(alwaysAllowedTools))
 	for _, name := range allowed {
 		if name == "subagent" {
 			continue
 		}
+		want[name] = true
+	}
+	// Always present, whatever the definition says. See alwaysAllowedTools.
+	for _, name := range alwaysAllowedTools {
 		want[name] = true
 	}
 	schema := GetSubagentToolsSchema()
@@ -479,11 +586,16 @@ var LockRegistry = locks.NewRegistry()
 
 var toolRegistry = map[string]Tool{
 	"bash":   &BashTool{},
+	"lua":    &LuaEvalTool{},
 	"find":   &FindTool{},
 	"todo":   &TodoTool{},
 	"read":   &ReadTool{},
 	"write":  &WriteTool{},
 	"skills": &SkillsTool{},
+	"memory": &MemoryTool{},
+	"help":   &HelpTool{},
+	"agents": &AgentsTool{},
+	"cron":   &CronTool{},
 	"web":    &WebTool{},
 	// Waiter is nil until SetJobWaiter is called; plain wait (no job_id)
 	// works without it.
@@ -497,6 +609,9 @@ var toolRegistry = map[string]Tool{
 	"answer":          &AnswerTool{},
 	"report_progress": &ReportProgressTool{},
 	"resume":          &ResumeTool{},
+	// kill_job needs no wiring of its own: it acts on the background-command
+	// registry in bgbash.go, which the bash tool populates.
+	"kill_job": &KillJobTool{},
 }
 
 // SetJobWaiter wires the "wait" tool's job_id polling path (tools/wait.go)
@@ -524,8 +639,48 @@ func SetSubAgentRunner(runner SubAgentRunner) {
 }
 
 func RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {
-	tool, ok := toolRegistry[name]
-	if ok {
+	// Permission first: a tool this caller may not use was never a call, so
+	// it should not reach a user hook either. See tools/toolgate.go for why
+	// the check lives here and not only in the layer above.
+	if err := checkToolGate(ctx, name); err != nil {
+		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
+
+	// User hooks wrap every tool call, built-in and MCP alike, and this is
+	// the single place all of them pass through. The pre hook can veto the
+	// call; the post hook annotates its result. Both are no-ops (and cost
+	// nothing beyond a map lookup) when nothing is configured — see
+	// internal/hooks.
+	if hooks.Any(hooks.EventPreTool) {
+		if blocked, msg := hooks.RunPre(ctx, name, arguments); blocked {
+			return ToolResult{Type: "result", Success: false, Error: msg}
+		}
+	}
+
+	res := runToolInner(ctx, name, arguments)
+
+	if hooks.Any(hooks.EventPostTool) {
+		note, fail := hooks.RunPost(ctx, name, arguments, res.Success, res.Content, res.Error)
+		if note != "" {
+			// The note goes wherever the model is already looking: appended
+			// to the content of a success, to the error of a failure.
+			if res.Success {
+				res.Content = appendNote(res.Content, note)
+			} else {
+				res.Error = appendNote(res.Error, note)
+			}
+		}
+		if fail && res.Success {
+			res.Success = false
+			res.Error = appendNote(res.Content, note)
+			res.Content = ""
+		}
+	}
+	return res
+}
+
+func runToolInner(ctx context.Context, name string, arguments map[string]any) ToolResult {
+	if tool, ok := toolRegistry[name]; ok {
 		return tool.Run(ctx, arguments)
 	}
 
@@ -535,6 +690,13 @@ func RunTool(ctx context.Context, name string, arguments map[string]any) ToolRes
 	}
 
 	return ToolResult{Type: "result", Success: false, Error: "unknown tool: " + name}
+}
+
+func appendNote(text, note string) string {
+	if text == "" {
+		return note
+	}
+	return text + "\n\n" + note
 }
 
 // MaxParallelFor reports the dispatcher's per-tool concurrency limit for the

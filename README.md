@@ -8,7 +8,12 @@ and a rich TUI — all configurable through a simple JSON model registry.
 
 - **Multi-provider support** — OpenAI-compatible, Anthropic, Gemini, and custom API types
 - **Agent loop** — model calls, tool execution, iteration, fallback models
-- **Tool system** — built-in tools: `bash`, `glob`, `grep`, `read`, `write`, `edit`, `todo`, `subagent`
+- **Tool system** — built-in tools: `bash`, `find`, `read`, `write`, `todo`, `subagent`, `lua`, `wait`, `lock`, `skills`, `agents`, `web`
+- **Background commands** — a shell command still running after 30s moves to the background; the agent is notified when it finishes
+- **Hooks** — run your own commands before and after any tool call, to gate it or feed its result back
+- **Project instructions & memory** — `AGENTS.md` plus notes the agent writes for its own future sessions
+- **Prompt caching** — Anthropic cache breakpoints on the schemas, system prompt and conversation
+- **`@` file completion** — type `@` in the TUI to pick a path
 - **Display modes** — `minimal`, `normal`, `interactive`, `tui` (Bubble Tea terminal UI)
 - **Session persistence** — automatic save/resume of conversations (JSONL)
 - **Streaming** — real-time thought, text, and tool output streaming
@@ -317,6 +322,209 @@ source <(tyci completion bash)
 # or add to .bashrc:
 tyci completion bash > /etc/bash_completion.d/tyci
 ```
+
+## Project instructions and memory
+
+Two things are loaded into the system prompt at the start of every session, so
+the agent does not begin each one knowing nothing but the working directory.
+
+**`AGENTS.md`** — what you want every agent working here to know: the build
+command, the test command, layering rules, what not to touch. Read from
+`~/.tyci/AGENTS.md` (yours, applies everywhere) and then from the nearest
+`AGENTS.md` at or above the working directory, searching no further up than the
+repository root — so running `tyci` from a subdirectory still finds it.
+
+**`.tyci/memory/*.md`** — notes the agent writes for its own future sessions
+with the `memory` tool:
+
+```
+memory(action="write", name="test-command",
+       content="make check runs the golden tests too; go test ./... skips them.")
+memory(action="list")      # also read, delete
+```
+
+A note is for something that is *not* obvious from the code and would otherwise
+have to be worked out again — a command, a rule the compiler does not enforce, a
+decision and its reason. Writing the same name again corrects a note. Notes are
+capped (50 files, 8 KiB each) and the whole block is capped at 32 KiB, because
+all of it is re-sent on every request.
+
+## Reply length and caching
+
+`max_tokens` caps one reply. It defaults to a conservative 4096, because
+Anthropic rejects a value above the model's own output limit and that limit
+differs per model — so raise it for the models you use, either with
+`--max-tokens` for one run or once in `~/.tyci/config.json`:
+
+```json
+{ "max_tokens": 16000 }
+```
+
+An agent definition can set its own with `max_tokens:` in the frontmatter.
+
+Anthropic **prompt caching** is on by default, with cache breakpoints after the
+tool schemas, after the system prompt, and at the end of the conversation — the
+parts that are identical on every turn. The cache read/write counts already
+appear in the usage line. Turn it off with `{"prompt_cache": false}` in
+`~/.tyci/config.json` if your endpoint rejects the `cache_control` field.
+
+## Long subagents
+
+A blocking `subagent` call waits 60s. After that its children move to the
+background — the model is notified when each finishes, exactly as with
+`async=true`, and the turn ends. The point is the person at the keyboard: a
+child that takes five minutes used to hold the turn open for five minutes, with
+no way to type anything.
+
+60s rather than bash's 30s because a child has a model round trip and a few
+tool calls to make before it could possibly be done; a shorter window would
+background almost every call. Children that finish inside the window are
+returned inline as before, and a half-finished batch returns both — results for
+the ones that are done, job ids for the rest.
+
+## Long background commands
+
+A command still running after 30s is moved to the background. At the one-minute
+mark it sends one line back — how long it has been running and nothing else —
+and repeats every five minutes after that.
+
+It asks for nothing on purpose. A typo that turns a five-second command into a
+hang looks exactly like a legitimately slow build from the outside, and only
+the model knows which one it wrote; telling it to stop and re-check would
+interrupt real work most of the time the notice fired. The age is the useful
+part, so that is all the notice carries.
+
+## Stream guards
+
+Two things are watched on every OpenAI-compatible stream, because neither the
+provider nor the agent loop notices them on its own:
+
+- **Leaked control markers.** Some models are trained with template markers
+  delimited by `｜` (DeepSeek's `<｜DSML｜parameter>` family). When a gateway
+  forgets to strip them they arrive as ordinary content. They are removed
+  before the text reaches the screen *or* the history — a model that sees its
+  own leaked markers in the transcript produces more of them.
+- **Escape sequences.** Model text and command output are arbitrary bytes drawn
+  into a terminal that reads some of them as commands: `\x1b[2J` clears the
+  screen, `\r` overwrites whatever was on the line, and `git diff --color` or
+  `npm install` emit both. They are stripped on the way into the transcript,
+  where the TUI's own colour codes are not yet mixed in.
+- **A run of identical lines.** Collapsed to two copies and a count once the
+  block settles, so a stuck model or a repetitive log cannot cost the whole
+  viewport. Long identical lines are left alone — those are usually real data.
+- **A reply cut off by `max_tokens`.** `finish_reason: "length"` is now
+  reported instead of silently swallowed; a truncated tool call otherwise
+  surfaced as "invalid arguments" and sent the model hunting a bug in JSON it
+  had written correctly and simply not finished.
+- **A model that stops making progress.** A degenerate model emits the same
+  short line without end; one real session spent 78 seconds producing several
+  hundred copies of `</invoke>`. After 24 consecutive identical lines the
+  request is cut off, so the agent falls back to another model instead of
+  paying for the loop to reach its token limit — in wall-clock, in tokens, and
+  in a transcript that would carry those lines into every later request.
+
+## Hooks
+
+Hooks run a shell command around every tool call. They live in
+`~/.tyci/hooks.json` (yours) and `./.tyci/hooks.json` (the project's); both
+are loaded, global first.
+
+```json
+{
+  "hooks": [
+    {
+      "event": "post_tool",
+      "tools": ["write"],
+      "paths": ["**/*.go"],
+      "name": "gofmt",
+      "command": "gofmt -l \"$TYCI_TOOL_PATH\""
+    },
+    {
+      "event": "post_tool",
+      "tools": ["write"],
+      "paths": ["**/*.php"],
+      "name": "php-lint",
+      "command": "php -l \"$TYCI_TOOL_PATH\""
+    },
+    {
+      "event": "pre_tool",
+      "tools": ["write"],
+      "paths": ["**/.env", "**/*.pem"],
+      "name": "protect-secrets",
+      "command": "echo 'refusing: that file is off limits'; exit 1"
+    }
+  ]
+}
+```
+
+- `pre_tool` runs before the tool. A **non-zero exit blocks the call**, and
+  whatever the hook printed becomes the error the model sees.
+- `post_tool` runs after. What it prints is appended to the tool result, so
+  the model reads it in the same turn it made the change. Add
+  `"blocking": true` to also mark the result failed on a non-zero exit — the
+  tool's own effects have already happened, and the message says so.
+
+`paths` restricts a hook to the files it is actually about, which is what lets
+one config serve a mixed repository: `gofmt` on `**/*.go` and `php -l` on
+`**/*.php` never see each other's files. Patterns are globs — `**` crosses
+directories, `*` does not, so `**/*.go` is nearly always what you want. A
+hook with `paths` never fires on a call that has no path (`bash`, `find`), and
+an invalid pattern is reported at startup instead of quietly matching nothing.
+Omit `paths` to match every call.
+
+Each hook receives the full call as JSON on stdin
+(`{event, tool, args, success, content, error}`) plus `$TYCI_TOOL`,
+`$TYCI_TOOL_PATH`, `$TYCI_TOOL_COMMAND`, `$TYCI_TOOL_SUCCESS` and
+`$TYCI_HOOK_EVENT`. Omit `tools` to match every tool. Default timeout is 10s
+(`"timeout"` overrides); output is capped at 8 KiB.
+
+Hooks wrap the dispatcher, so they see MCP tools and calls made from inside a
+Lua script too. A config error is reported on startup rather than ignored: a
+hook that silently never fires is worse than no hook.
+
+## `help`
+
+`help()` lists every available tool; `help(tool="lua")` returns the long
+article, worked examples included. Schema descriptions are re-sent with every
+request, so they stay short — the examples that actually teach a tool live here
+and cost nothing until asked for. Tools without an article fall back to their
+description and parameter list, so `help` answers for MCP and `.lua` tools too.
+
+## The `lua` tool
+
+The agent can run a Lua script that calls other tools. It exists because every
+tool call costs a request/response round trip, so anything shaped like "for
+each of these N things, do X" costs N of them. A script pays one.
+
+Inside a script:
+
+- `tool(name, args)` → `{success, content, error}` — any tyci tool, including
+  MCP tools. Goes through the same dispatcher, so hooks and the write
+  freshness guard still apply.
+- `log(...)` — progress, streamed live to the TUI and included in the result.
+- `json_encode` / `json_decode`, and the `args` table passed in.
+- `return value` hands the answer back; a table comes back as JSON.
+
+Bounded by a wall-clock timeout (default 300s), 500 tool calls, and caps on
+log and return size. `tool("lua", ...)` is refused, and a script cannot reach
+a tool its agent was denied.
+
+The script is sandboxed to the pure part of the language: `string`, `table`,
+`math`, `coroutine` and the `os` clock functions. `io`, `os.execute`,
+`require`, `load` and `loadfile` are removed, so the only way out of the VM is
+`tool()` — which means hooks, the write freshness guard and a subagent's tool
+allowlist all still apply. `print` is rebound onto `log`.
+
+Separately, `.lua` files in `~/.tyci/tools/` or `./.tyci/tools/` are loaded as
+named tools of their own.
+
+## Write freshness
+
+`write` refuses to modify a file that already exists unless it was read first
+and has not changed since. Both write mode and edit mode replace whole files,
+so writing from a stale copy silently discards someone else's work — a human
+saving in their editor, a generated file, a parallel subagent. Creating a new
+file and `range: "append"` need no prior read.
 
 ## Session Management
 

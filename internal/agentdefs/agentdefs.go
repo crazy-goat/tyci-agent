@@ -24,7 +24,12 @@ type Def struct {
 	// Temperature is nil when the frontmatter omits it. A pointer, not a
 	// plain float64, because 0 is a meaningful value ("deterministic")
 	// and must be distinguishable from "unset".
-	Temperature  *float64
+	Temperature *float64
+	// MaxTokens is frontmatter `max_tokens`; 0 = unset, meaning the
+	// connector's own default applies. Useful on an agent whose whole job is
+	// to produce something long (a report, a generated file), where the
+	// conservative default would truncate the answer mid-sentence.
+	MaxTokens    int
 	Fallback     []string // frontmatter `fallback`
 	SystemPrompt string   // markdown body, or frontmatter `system` if set (overrides body)
 	// SystemPromptMode is "append" (default) or "replace". In append mode the
@@ -46,6 +51,7 @@ type frontmatter struct {
 	Tools            string   `yaml:"tools"`
 	MaxIterations    int      `yaml:"max_iterations"`
 	Temperature      *float64 `yaml:"temperature"`
+	MaxTokens        int      `yaml:"max_tokens"`
 	System           string   `yaml:"system"`
 	Description      string   `yaml:"description"`
 	Fallback         []string `yaml:"fallback"`
@@ -122,6 +128,14 @@ func Parse(filename string, data []byte) (Def, error) {
 		return Def{}, fmt.Errorf("temperature %v out of range [%v,%v]", *fm.Temperature, minTemperature, maxTemperature)
 	}
 
+	// A negative cap is a typo, and 0 already means "unset" — so only a
+	// negative number is rejected. No upper bound is enforced: the ceiling is
+	// per-model and only the provider knows it, and a 400 naming the real
+	// limit is more useful than a guess made here.
+	if fm.MaxTokens < 0 {
+		return Def{}, fmt.Errorf("max_tokens %d must not be negative", fm.MaxTokens)
+	}
+
 	// Normalize the empty/omitted case to "append" right here so every
 	// consumer (providers, tools, main) can compare against a concrete
 	// string instead of also handling "". Anything other than the two known
@@ -155,6 +169,7 @@ func Parse(filename string, data []byte) (Def, error) {
 		Tools:            tools,
 		MaxIterations:    fm.MaxIterations,
 		Temperature:      fm.Temperature,
+		MaxTokens:        fm.MaxTokens,
 		Fallback:         fm.Fallback,
 		SystemPrompt:     systemPrompt,
 		SystemPromptMode: systemPromptMode,

@@ -51,5 +51,5 @@ func (t *ReportProgressTool) Run(ctx context.Context, input map[string]any) Tool
 	if !jobProgressReporter.SetProgress(jobID, text) {
 		return ToolResult{Type: "result", Success: false, Error: "failed to record progress: job_id not recognized by the registry"}
 	}
-	return ToolResult{Type: "result", Success: true, Content: "progress recorded"}
+	return ToolResult{Type: "result", Success: true, Content: "progress recorded; whoever checks this job with wait can see it now"}
 }

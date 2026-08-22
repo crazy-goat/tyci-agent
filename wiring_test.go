@@ -61,11 +61,15 @@ import (
 // event — not a fixed sleep, an actual drain of the real notification.
 func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
 	t.Helper()
-	origReg, origBus := JobRegistry, jobEventBus
+	origReg, origBus, origNotices := JobRegistry, jobEventBus, JobNotices
 
 	reg := jobs.NewRegistry()
 	bus := eventbus.New(64)
-	JobRegistry, jobEventBus = reg, bus
+	// A fresh notice queue too: wireTools points the tools package at
+	// whatever JobNotices currently is, so leaving the production one in
+	// place would let one test's background-command notices show up in
+	// another's.
+	JobRegistry, jobEventBus, JobNotices = reg, bus, jobs.NewNotifier()
 	wireTools()
 
 	evCh, unsub := bus.Subscribe("job.updated")
@@ -108,7 +112,7 @@ func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
 		unsub()
 		<-drainDone
 
-		JobRegistry, jobEventBus = origReg, origBus
+		JobRegistry, jobEventBus, JobNotices = origReg, origBus, origNotices
 		wireTools()
 	})
 	return reg, bus
@@ -248,6 +252,11 @@ func extractJobID(req connector.Request) (string, bool) {
 }
 
 // waitToolArgs builds the JSON arguments for a "wait" tool call.
+//
+// Callers pass tools.JobMinWaitSeconds rather than some small number: a job
+// wait below that floor is raised, and the raise appends an explanatory note
+// to the tool result. That note is correct behaviour but it is not what these
+// tests are about, and it would show up inside every asserted result string.
 func waitToolArgs(jobID string, seconds int) string {
 	data, _ := json.Marshal(map[string]any{"job_id": jobID, "seconds": seconds})
 	return string(data)
@@ -293,7 +302,7 @@ func TestWiring_R1_FullStackAsyncRoundTrip(t *testing.T) {
 				t.Fatalf("turn 1: could not find job_id in request history: %+v", req.Messages)
 			}
 			return []stream.Event{
-				stream.ToolCall{ID: "tc-wait", Name: "wait", Arguments: waitToolArgs(jobID, 5)},
+				stream.ToolCall{ID: "tc-wait", Name: "wait", Arguments: waitToolArgs(jobID, tools.JobMinWaitSeconds)},
 				stream.Finish{Reason: "tool_calls"},
 			}
 		default:
@@ -456,7 +465,7 @@ func TestWiring_L5_NoTTLLockInAsyncJobReleasedOnJobTermination(t *testing.T) {
 				t.Fatalf("could not find job_id: %+v", req.Messages)
 			}
 			return []stream.Event{
-				stream.ToolCall{ID: "tc-wait", Name: "wait", Arguments: waitToolArgs(jobID, 5)},
+				stream.ToolCall{ID: "tc-wait", Name: "wait", Arguments: waitToolArgs(jobID, tools.JobMinWaitSeconds)},
 				stream.Finish{Reason: "tool_calls"},
 			}
 		}
@@ -811,7 +820,7 @@ func TestWiring_A4_TruncatedWithTextIsJobTruncatedAndWaitSuccess(t *testing.T) {
 				t.Fatalf("no job_id found: %+v", req.Messages)
 			}
 			return []stream.Event{
-				stream.ToolCall{ID: "w", Name: "wait", Arguments: waitToolArgs(jobID, 5)},
+				stream.ToolCall{ID: "w", Name: "wait", Arguments: waitToolArgs(jobID, tools.JobMinWaitSeconds)},
 				stream.Finish{Reason: "tool_calls"},
 			}
 		}
@@ -875,7 +884,7 @@ func TestWiring_A5_HardFailureWithNoTextIsJobFailedAndWaitFailure(t *testing.T) 
 				t.Fatalf("no job_id found: %+v", req.Messages)
 			}
 			return []stream.Event{
-				stream.ToolCall{ID: "w", Name: "wait", Arguments: waitToolArgs(jobID, 5)},
+				stream.ToolCall{ID: "w", Name: "wait", Arguments: waitToolArgs(jobID, tools.JobMinWaitSeconds)},
 				stream.Finish{Reason: "tool_calls"},
 			}
 		}
@@ -1286,7 +1295,9 @@ func TestWiring_U1_ResumeContinuesWithEarlierContext(t *testing.T) {
 	var out struct {
 		JobID string `json:"job_id"`
 	}
-	if err := json.Unmarshal([]byte(resumeRes.Content), &out); err != nil {
+	// The JSON is the first line; the prose after it explains that the resumed
+	// job kept its conversation, which is the fact a model most often misses.
+	if err := json.Unmarshal([]byte(firstLineOf(resumeRes.Content)), &out); err != nil {
 		t.Fatalf("unmarshal resume result %q: %v", resumeRes.Content, err)
 	}
 	if out.JobID == "" || out.JobID == origJobID {
@@ -1334,3 +1345,13 @@ func TestWiring_U2_ResumeUnknownJobIDFailsCleanly(t *testing.T) {
 // type ever moves or is renamed, this file fails to build loudly instead of
 // silently losing coverage.
 var _ providers.Provider = (*fixedClientProvider)(nil)
+
+// firstLineOf returns everything before the first newline. Several tool
+// results are "machine-readable first line, then advice for the model", so a
+// test that wants the data takes the first line rather than the whole thing.
+func firstLineOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}

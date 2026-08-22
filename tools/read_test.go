@@ -362,9 +362,16 @@ func TestReadTool_IntParamEdgeCases(t *testing.T) {
 
 // helpers
 
+// writeFile lays down a fixture file and marks it as already seen by the
+// agent (see tools/filestamp.go). A fixture is content the test itself
+// authored, so the write tool's freshness guard has nothing to protect here;
+// without the stamp every edit-mode test would fail on "you have not read
+// it". The guard's own behaviour is covered in filestamp_test.go, which
+// deliberately does not go through this helper.
 func writeFile(t testing.TB, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
+	recordFileStamp(path)
 }
