@@ -20,6 +20,9 @@ func (t *WriteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	if !ok || path == "" {
 		return ToolResult{Type: "result", Success: false, Error: "path required"}
 	}
+	// Resolved before anything else so the freshness stamps, the hooks and the
+	// write itself all agree on which file this is. See tools/workdir.go.
+	path = resolvePath(ctx, path)
 
 	// Detect mode: if oldString is present, it's edit mode
 	if oldStr, hasOld := input["oldString"].(string); hasOld && oldStr != "" {
@@ -45,6 +48,16 @@ func (t *WriteTool) runWriteMode(ctx context.Context, input map[string]any, path
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
 
+	// Append is purely additive and addresses no line numbers, so it cannot
+	// discard anything the agent has not read. Every other mode either
+	// replaces the whole file or edits by line number, and both are only
+	// correct against the bytes the agent actually saw.
+	if r.mode != "append" {
+		if err := checkFileFresh(path); err != nil {
+			return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		}
+	}
+
 	switch r.mode {
 	case "append":
 		return appendFile(path, content)
@@ -52,6 +65,7 @@ func (t *WriteTool) runWriteMode(ctx context.Context, input map[string]any, path
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			return ToolResult{Type: "result", Success: false, Error: err.Error()}
 		}
+		recordFileStamp(path)
 		return ToolResult{Type: "result", Success: true, Content: "written " + path}
 	case "before", "after", "lines":
 		data, err := os.ReadFile(path)
@@ -91,8 +105,10 @@ func (t *WriteTool) runWriteMode(ctx context.Context, input map[string]any, path
 			out += "\n"
 		}
 		if err := os.WriteFile(path, []byte(out), 0644); err != nil {
+			forgetFileStamp(path)
 			return ToolResult{Type: "result", Success: false, Error: err.Error()}
 		}
+		recordFileStamp(path)
 		switch r.mode {
 		case "before":
 			return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("inserted before line %d in %s", r.from, path)}
@@ -116,8 +132,14 @@ func appendFile(path, content string) ToolResult {
 	}
 	defer f.Close()
 	if _, err := f.WriteString(content); err != nil {
+		forgetFileStamp(path)
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
+	// Refresh an existing stamp rather than creating one: appending after a
+	// read leaves the agent's knowledge current (it knows the old bytes and
+	// what it just added), but appending to a file it never read must not
+	// earn it permission to overwrite that file wholesale later.
+	refreshFileStampIfKnown(path)
 	return ToolResult{Type: "result", Success: true, Content: "appended to " + path}
 }
 
@@ -131,6 +153,12 @@ func (t *WriteTool) runEditMode(ctx context.Context, input map[string]any, path,
 		return ToolResult{Type: "result", Success: false, Error: "newString required when oldString is provided"}
 	}
 	dryRun := boolParam(input, "dryRun", false)
+
+	// Guarded even for a dry run: the offsets and line numbers it reports
+	// would describe a file the agent has not seen (see tools/filestamp.go).
+	if err := checkFileFresh(path); err != nil {
+		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -169,8 +197,10 @@ func (t *WriteTool) runEditMode(ctx context.Context, input map[string]any, path,
 
 	newText := replaceAtOffsets(text, selected, len(oldStr), newStr)
 	if err := os.WriteFile(path, []byte(newText), 0644); err != nil {
+		forgetFileStamp(path)
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
+	recordFileStamp(path)
 	return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("replaced %d occurrence(s) in %s at %s", len(selected), path, formatLineRanges(lineRanges))}
 }
 

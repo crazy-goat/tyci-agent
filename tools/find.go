@@ -25,9 +25,9 @@ func (t *FindTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	method := stringParam(input, "method", "glob")
 	switch method {
 	case "glob":
-		return t.runGlob(input)
+		return t.runGlob(ctx, input)
 	case "grep":
-		return t.runGrep(input)
+		return t.runGrep(ctx, input)
 	default:
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("unknown method %q; use \"glob\" or \"grep\"", method)}
 	}
@@ -37,12 +37,12 @@ func (t *FindTool) Run(ctx context.Context, input map[string]any) ToolResult {
 // Glob mode
 // ---------------------------------------------------------------------------
 
-func (t *FindTool) runGlob(input map[string]any) ToolResult {
+func (t *FindTool) runGlob(ctx context.Context, input map[string]any) ToolResult {
 	patterns := stringListParam(input, "pattern", nil)
 	if len(patterns) == 0 {
 		return ToolResult{Type: "result", Success: false, Error: "pattern required (method: \"glob\")"}
 	}
-	cwd := stringParam(input, "cwd", ".")
+	cwd := resolvePath(ctx, stringParam(input, "cwd", "."))
 	excludes := defaultExcludes(input)
 	limit := intParam(input, "limit", 500)
 	if limit <= 0 {
@@ -142,12 +142,12 @@ func (t *FindTool) runGlob(input map[string]any) ToolResult {
 // Grep mode
 // ---------------------------------------------------------------------------
 
-func (t *FindTool) runGrep(input map[string]any) ToolResult {
+func (t *FindTool) runGrep(ctx context.Context, input map[string]any) ToolResult {
 	pattern, ok := input["pattern"].(string)
 	if !ok || pattern == "" {
 		return ToolResult{Type: "result", Success: false, Error: "pattern required (method: \"grep\")"}
 	}
-	cwd := stringParam(input, "cwd", ".")
+	cwd := resolvePath(ctx, stringParam(input, "cwd", "."))
 	includes := stringListParam(input, "include", []string{"**/*"})
 	excludes := defaultExcludes(input)
 	mode := stringParam(input, "mode", "text")

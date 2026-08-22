@@ -96,6 +96,9 @@ func (t *ReadTool) Name() string {
 
 func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	path, ok := input["path"].(string)
+	// Resolved against this call's working directory, which for a child agent
+	// in its own worktree is not the process's. See tools/workdir.go.
+	path = resolvePath(ctx, path)
 	if !ok {
 		return ToolResult{Type: "result", Success: false, Error: "path required"}
 	}
@@ -135,6 +138,14 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
+
+	// Remember what we saw, so a later write to this path can tell whether
+	// the file still looks the way the agent thinks it does. See
+	// tools/filestamp.go. Recorded even for a partial (offset/limit) read:
+	// the guard's question is "did the file change under us", and that is
+	// answerable from the whole-file state we just loaded regardless of how
+	// much of it we return.
+	recordFileStamp(path)
 
 	text := string(data)
 	lines := strings.Split(text, "\n")
