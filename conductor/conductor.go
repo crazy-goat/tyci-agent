@@ -260,6 +260,16 @@ func (c *Conductor) Client() connector.ModelClient { return c.client }
 // base.
 func (c *Conductor) Config() agent.Config { return c.cfg }
 
+// SetNextMessages replaces the callback the agent loop calls between
+// iterations to pick up anything that arrived mid-turn. Exposed because the
+// frontend only learns what it wants to service there after the Conductor
+// exists — the TUI wraps its own drain around the one Options supplied.
+//
+// Whatever is installed here runs on the agent's goroutine at a point where
+// the conversation is not being appended to, which is what makes it a safe
+// place to read the history from (see the TUI's mid-turn /btw).
+func (c *Conductor) SetNextMessages(fn func() []string) { c.cfg.NextMessages = fn }
+
 // SetHistory replaces the conversation wholesale. Intended for seeding a
 // fresh Conductor with a transcript the caller has already rebuilt from a
 // session file.

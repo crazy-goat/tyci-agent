@@ -36,8 +36,19 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		replaySessionToDisplay(tuiDisp, cond.SessionPath())
 	}
 
+	// A person typing must not have to wait for whatever is running. Tools that
+	// can hand their work to the background check this and do so at once; the
+	// work itself is untouched, only the waiting ends. See tools.SetUserPending.
+	tools.SetUserPending(tuiDisp.HasPendingMessages)
+	defer tools.SetUserPending(nil)
+
 	// Close TUI on exit, write session end
 	defer func() {
+		// Background shell commands are deliberately detached from both the
+		// tool call and the session context (see tools.BashTool.handoff), so
+		// nothing else would reap them. A build still running after the
+		// session that started it has ended is a surprise, not a feature.
+		tools.KillAllBackgroundBash()
 		cond.EndSession("ok", 0)
 		tuiDisp.Close()
 	}()
@@ -122,12 +133,67 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		return nil
 	}
 
+	// startBtwQuestion forks the conversation into a background side
+	// conversation. Runs on baseCtx (not the per-iteration context the loop
+	// below cancels) so it keeps going independently of the main thread.
+	startBtwQuestion := func(question string) {
+		id := nextBtwID()
+		sink := tuiDisp.BtwSink(id)
+		tuiDisp.OpenBtw(id, question)
+		job := startBtw(baseCtx, cond, question, sink)
+		tuiDisp.SetBtwJobID(id, job.ID)
+	}
+
+	// serviceCommands runs the slash commands typed while a turn was in
+	// flight, when the main loop below was blocked in the agent run and could
+	// not read them (see display.TUI.Commands). It is installed as part of
+	// NextMessages, so it runs on the agent's goroutine between iterations —
+	// the one point where reading the conversation is safe, which /btw's fork
+	// needs. It contributes no messages: a side conversation is deliberately
+	// invisible to the main one.
+	serviceCommands := func() []string {
+		for _, cmd := range tuiDisp.DrainCommands() {
+			switch {
+			case cmd == "/btw":
+				tuiDisp.OpenBtwList()
+			case strings.HasPrefix(cmd, "/btw "):
+				question := strings.TrimSpace(strings.TrimPrefix(cmd, "/btw"))
+				if question == "" {
+					tuiDisp.Error(fmt.Errorf("/btw: question required"))
+					continue
+				}
+				startBtwQuestion(question)
+			}
+		}
+		return nil
+	}
+	cond.SetNextMessages(mergeNextMessages(serviceCommands, cond.Config().NextMessages))
+
 	for {
 		iterCtx, iterCancel := context.WithCancel(baseCtx)
 
-		// Wait for user input, model change, or /resume selection.
+		// Wait for user input, model change, /resume selection, or a
+		// background command finishing.
 		var line string
 		select {
+		case <-JobNotices.Signal():
+			// A background shell command finished while nobody was running.
+			// Nothing will drain the notice queue until the next turn starts,
+			// so start one here: this is what turns "the command finished"
+			// into the agent actually reacting to it, rather than the user
+			// having to type something first.
+			//
+			// Drain can legitimately come back empty — the same notice may
+			// have been picked up by cfg.NextMessages during a turn that was
+			// still finishing when the signal fired. Starting a turn with an
+			// empty prompt would waste an API call, so we just loop.
+			notices := JobNotices.Drain()
+			if len(notices) == 0 {
+				iterCancel()
+				continue
+			}
+			line = strings.Join(notices, "\n")
+
 		case newModel, ok := <-tuiDisp.ModelChanges():
 			iterCancel()
 			if ok {
@@ -227,11 +293,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 					tuiDisp.ResetStatus()
 					continue
 				}
-				id := nextBtwID()
-				sink := tuiDisp.BtwSink(id)
-				tuiDisp.OpenBtw(id, question)
-				job := startBtw(baseCtx, cond, question, sink)
-				tuiDisp.SetBtwJobID(id, job.ID)
+				startBtwQuestion(question)
 				continue
 			case strings.HasPrefix(trimmed, "/resume "):
 				// /resume <path|index>: forward to resolveSessionRef so the
@@ -303,12 +365,16 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 			// just asked for, and a real error has already been shown
 			// to the user by agent.Run via d.Error().
 			<-resultCh
+			// A command typed in the last moments of the turn would otherwise
+			// sit in the channel until the next turn's first gap.
+			serviceCommands()
 			tuiDisp.ResetStatus()
 			// User probably wants to retry with a new prompt
 			continue
 
 		case res := <-resultCh:
 			iterCancel()
+			serviceCommands()
 
 			tuiDisp.Done(res.usage, stream.Stats{})
 
