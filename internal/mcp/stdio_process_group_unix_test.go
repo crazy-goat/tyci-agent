@@ -65,6 +65,9 @@ wait`
 				pid, perr := strconv.Atoi(s)
 				if perr == nil {
 					childPID = pid
+					// If the assertions below fail (or the fix regresses),
+					// don't leave this sleep running for another ~60s.
+					t.Cleanup(func() { syscall.Kill(childPID, syscall.SIGKILL) })
 					break
 				}
 			}

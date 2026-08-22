@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/decodo/tyci/internal/mcp"
 )
@@ -73,5 +75,62 @@ func TestMCPToolsSchemaIsSortedByName(t *testing.T) {
 				t.Fatalf("attempt %d: schema not sorted by name: %q came before %q", attempt, prevName, curName)
 			}
 		}
+	}
+}
+
+
+// slowCloseClient is a fake mcp.Client whose Close() blocks for a fixed
+// delay, so tests can tell a serial Close() (N * delay) apart from a
+// concurrent one (~delay regardless of N).
+type slowCloseClient struct {
+	name  string
+	delay time.Duration
+}
+
+func (c *slowCloseClient) Initialize(ctx context.Context) error { return nil }
+func (c *slowCloseClient) ListTools(ctx context.Context) ([]mcp.Tool, error) {
+	return nil, nil
+}
+func (c *slowCloseClient) CallTool(ctx context.Context, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
+	return nil, nil
+}
+func (c *slowCloseClient) Close() error {
+	time.Sleep(c.delay)
+	return nil
+}
+func (c *slowCloseClient) Name() string                                        { return c.name }
+func (c *slowCloseClient) SetSamplingHandler(handler mcp.SamplingHandler)       {}
+func (c *slowCloseClient) SetElicitationHandler(handler mcp.ElicitationHandler) {}
+
+// TestMCPToolRunnerCloseIsConcurrent covers the reviewer's finding: closing
+// three MCP clients that each take a grace period to shut down (e.g. an
+// npx-wrapped server that ignores stdin EOF) must not stall the caller for
+// the sum of their delays. Close used to iterate r.clients and call
+// client.Close() one at a time while holding r.mu, so N slow servers cost
+// N * delay and blocked every other MCPToolRunner method meanwhile. It
+// must instead close them concurrently, costing roughly one delay no
+// matter how many servers there are.
+func TestMCPToolRunnerCloseIsConcurrent(t *testing.T) {
+	const (
+		n     = 4
+		delay = 150 * time.Millisecond
+	)
+
+	r := NewMCPToolRunner()
+	for i := 0; i < n; i++ {
+		name := "server"
+		r.clients[name+string(rune('0'+i))] = &slowCloseClient{name: name, delay: delay}
+	}
+
+	start := time.Now()
+	r.Close()
+	elapsed := time.Since(start)
+
+	// Serial close of n clients would take roughly n*delay (600ms here);
+	// concurrent close should take roughly one delay plus scheduling slop.
+	// Use a threshold well below n*delay but comfortably above delay alone.
+	threshold := delay * 2
+	if elapsed > threshold {
+		t.Errorf("MCPToolRunner.Close() took %v for %d clients each with a %v Close(); expected roughly %v (concurrent), not up to %v (serial) -- closes are not running concurrently", elapsed, n, delay, delay, n*delay)
 	}
 }

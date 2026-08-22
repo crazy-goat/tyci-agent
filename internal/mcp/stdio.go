@@ -56,31 +56,44 @@ func (c *StdioClient) Name() string {
 // This method does not hold c.mu across the handshake: sendRequest/
 // sendNotification take the lock themselves (only to protect nextID and the
 // pending-request map), and sync.Mutex is not reentrant, so holding it here
-// for the whole call would deadlock on the first request. The process/pipe
-// fields (cmd, stdin, stdout) are only touched here, before readLoop starts
-// and before any other exported method can plausibly be called on a fresh
-// client, so they don't need the lock during setup.
+// for the whole call would deadlock on the first request. There is exactly
+// one Initialize per client today, and it never runs concurrently with any
+// other method (the only caller, ConnectAll in client.go, calls it once per
+// client before handing the client to anyone else) -- but that invariant is
+// easy to break in future wiring, so the process/pipe fields (cmd, stdin,
+// stdout) are built in locals first and only published onto c under c.mu
+// once, right before readLoop starts. That gives Close (which reads them
+// under c.mu) a real happens-before edge instead of relying on the
+// informal single-caller invariant holding forever.
 func (c *StdioClient) Initialize(ctx context.Context) error {
 	// Start the process
-	c.cmd = exec.CommandContext(ctx, c.command, c.args...)
-	c.cmd.Stderr = nil // Discard stderr for now
-	setProcAttrs(c.cmd)
+	cmd := exec.CommandContext(ctx, c.command, c.args...)
+	cmd.Stderr = nil // Discard stderr for now
+	setProcAttrs(cmd)
 
-	var err error
-	c.stdin, err = c.cmd.StdinPipe()
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("creating stdin pipe: %w", err)
 	}
 
-	stdout, err := c.cmd.StdoutPipe()
+	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("creating stdout pipe: %w", err)
 	}
-	c.stdout = bufio.NewReader(stdout)
+	stdout := bufio.NewReader(stdoutPipe)
 
-	if err := c.cmd.Start(); err != nil {
+	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting process: %w", err)
 	}
+
+	// Publish the setup fields under the lock before anything that reads
+	// them under c.mu (Close) or in a separate goroutine (readLoop) can
+	// observe them.
+	c.mu.Lock()
+	c.cmd = cmd
+	c.stdin = stdin
+	c.stdout = stdout
+	c.mu.Unlock()
 
 	// Start response reader goroutine
 	go c.readLoop()

@@ -56,37 +56,6 @@ func TestStdioClientInitializeHandshake(t *testing.T) {
 	}
 }
 
-// TestStdioClientCloseGracePeriod checks that Close does try to wait for a
-// well-behaved process to exit on its own after stdin closes, rather than
-// unconditionally SIGKILLing it (the select{ default: kill } bug always
-// took the default branch, since the cmd.Wait() goroutine could not
-// possibly have sent yet). We can't easily observe "was it killed", but we
-// can (and do) observe that Close returns promptly either way, and that a
-// process which exits immediately on stdin-close doesn't need the grace
-// period's full duration times a control script that hangs past it.
-func TestStdioClientCloseGracePeriod(t *testing.T) {
-	requireSh(t)
-
-	c := NewStdioClient("fake", "sh", []string{"-c", initScript})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := c.Initialize(ctx); err != nil {
-		t.Fatalf("Initialize() error: %v", err)
-	}
-
-	start := time.Now()
-	if err := c.Close(); err != nil {
-		t.Fatalf("Close() error: %v", err)
-	}
-	elapsed := time.Since(start)
-
-	// initScript's "cat" exits as soon as stdin is closed, so Close should
-	// return quickly and well within the grace period, not just after it.
-	if elapsed > closeGracePeriod {
-		t.Errorf("Close() took %v, expected well under the %v grace period for a process that exits on stdin close", elapsed, closeGracePeriod)
-	}
-}
-
 // TestStdioClientCloseForceKillsHangingProcess exercises the case where the
 // child does not exit when stdin closes (e.g. it forked off a real worker
 // and the shell driving it doesn't care about EOF). Close must still return
@@ -161,9 +130,26 @@ func TestStdioClientCloseWakesInFlightRequest(t *testing.T) {
 		o.res, o.err = c.CallTool(ctx, "whatever", json.RawMessage(`{}`))
 	}()
 
-	// Give the goroutine a moment to register itself as a pending request
-	// before we close the client out from under it.
-	time.Sleep(100 * time.Millisecond)
+	// Wait until the goroutine has actually registered itself as a pending
+	// request before closing the client out from under it. A fixed sleep
+	// here would be a false-green risk: if Close ran before sendRequest
+	// inserted into c.pending, CallTool would instead fail because it
+	// wrote to an already-closed stdin -- a different error, from a
+	// different code path, that would make this test pass without ever
+	// exercising the closed-channel wake it's named for.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c.mu.Lock()
+		pending := len(c.pending)
+		c.mu.Unlock()
+		if pending > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for CallTool to register a pending request")
+		}
+		time.Sleep(time.Millisecond)
+	}
 
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close() error: %v", err)

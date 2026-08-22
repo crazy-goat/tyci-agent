@@ -156,14 +156,30 @@ func (r *MCPToolRunner) makeElicitationHandler(serverName string) mcp.Elicitatio
 	}
 }
 
-// Close shuts down all MCP clients.
+// Close shuts down all MCP clients concurrently. Each StdioClient.Close can
+// take up to its own grace period to force-kill an unresponsive server; if
+// this ran serially while holding r.mu, closing three such servers would
+// stall the caller (and every RunTool/HasTool/MCPToolsSchema call, which
+// all need r.mu) for the sum of their grace periods instead of the max. We
+// snapshot the client map under the lock, then release it before closing,
+// the same pattern StdioClient.Close itself uses for its own process wait.
 func (r *MCPToolRunner) Close() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	r.mu.RLock()
+	clients := make([]mcp.Client, 0, len(r.clients))
 	for _, client := range r.clients {
-		client.Close()
+		clients = append(clients, client)
 	}
+	r.mu.RUnlock()
+
+	var wg sync.WaitGroup
+	for _, client := range clients {
+		wg.Add(1)
+		go func(c mcp.Client) {
+			defer wg.Done()
+			c.Close()
+		}(client)
+	}
+	wg.Wait()
 }
 
 // HasTool returns true if the tool name is an MCP tool.
