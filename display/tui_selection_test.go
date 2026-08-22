@@ -461,19 +461,19 @@ func TestTuiSelection_StripsTextGutterPartialSelection(t *testing.T) {
 	}
 }
 
-// TestTuiSelection_StripsThinkingGutter verifies that the "│ " prefix on
-// thinking blocks is stripped when copying.
+// TestTuiSelection_StripsThinkingGutter verifies that a collapsed thinking
+// block's "│ thinking " prefix is stripped when copying — a thinking block
+// now always renders as one collapsed line, mirroring "┃ tool ".
 func TestTuiSelection_StripsThinkingGutter(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
 	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
-		{PlainText: "│ thinking content", SourceKind: "thinking", Y: 0},
-		{PlainText: "│ more thinking", SourceKind: "thinking", Y: 1},
+		{PlainText: "│ thinking thinking(some reasoning) 42ms - click to display", SourceKind: "thinking", Y: 0},
 	}}
-	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 1}
+	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
 	m = m.copySelection()
-	if *copied != "thinking content\nmore thinking" {
-		t.Fatalf("expected '│ ' stripped, got %q", *copied)
+	if *copied != "thinking(some reasoning) 42ms - click to display" {
+		t.Fatalf("expected '│ thinking ' stripped, got %q", *copied)
 	}
 }
 

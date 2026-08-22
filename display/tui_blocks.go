@@ -240,11 +240,27 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	m.clampScroll()
 }
 
+// newContentBlock builds a thinking/text/user block for appendOrAppend. A
+// thinking block additionally starts its own clock here — block.duration is
+// only ever set by tool-end, so a thinking block has to time itself, from
+// this moment until forceRenderDirtyBlocks freezes it — and gets a first
+// attempt at its collapsed-line summary, covering the case where the whole
+// block arrives as one chunk instead of via streaming deltas.
+func newContentBlock(kind, content string) block {
+	b := block{kind: kind, content: content, dirty: true}
+	if kind == "thinking" {
+		b.collapsed = true
+		b.startTime = time.Now()
+		freezeThinkingSummary(&b, false)
+	}
+	return b
+}
+
 func (m *TuiModel) appendOrAppend(kind, content string) {
 	if len(m.blocks) == 0 {
 		m.invalidateTotalLines()
 		idx := 0
-		m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
+		m.blocks = append(m.blocks, newContentBlock(kind, content))
 		m.dirtyBlocks[idx] = true
 		return
 	}
@@ -260,7 +276,7 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 			m.invalidateTotalLines()
 			m.forceRenderDirtyBlocks()
 			idx := len(m.blocks)
-			m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
+			m.blocks = append(m.blocks, newContentBlock(kind, content))
 			m.dirtyBlocks[idx] = true
 			m.maybeFlushOldBlocks()
 			return
@@ -285,6 +301,9 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 			last = &m.blocks[len(m.blocks)-1] // getBlockLines may have grown the slice header; refresh
 		}
 		last.content += content
+		if kind == "thinking" {
+			freezeThinkingSummary(last, false)
+		}
 		last.dirty = true
 		last.cachedLineCount = 0
 		last.cachedLines = nil
@@ -312,7 +331,7 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 	// so they show final markdown before the new block appears.
 	m.forceRenderDirtyBlocks()
 	idx := len(m.blocks)
-	m.blocks = append(m.blocks, block{kind: kind, content: content, dirty: true})
+	m.blocks = append(m.blocks, newContentBlock(kind, content))
 	m.dirtyBlocks[idx] = true
 	// Adding a block only shifts line offsets; earlier blocks render the same.
 	m.invalidateTotalLines()

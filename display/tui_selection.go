@@ -131,7 +131,18 @@ func gutterLen(sourceKind, plain string) int {
 			return 2
 		}
 		return 0
-	case "thinking", "error", "block":
+	case "thinking":
+		// "│ thinking " (bar + space + "thinking" + space) — the collapsed
+		// render's own label, same idea as "tool"'s "┃ tool " below.
+		if strings.HasPrefix(plain, "│ thinking ") {
+			return len([]rune("│ thinking "))
+		}
+		// Fallback: just the bar+space (e.g. an older cached render).
+		if strings.HasPrefix(plain, "│ ") || strings.HasPrefix(plain, "┃ ") || strings.HasPrefix(plain, "| ") {
+			return 2
+		}
+		return 0
+	case "error", "block":
 		// "│ " or "┃ " (bar + space)
 		if strings.HasPrefix(plain, "│ ") || strings.HasPrefix(plain, "┃ ") || strings.HasPrefix(plain, "| ") {
 			return 2

@@ -55,10 +55,14 @@ func (m *TuiModel) clampSubagentModalScroll() {
 	}
 }
 
-// openToolBlockModal points the modal at a tool block. It only changes what the
-// modal looks at — the block's collected output is never touched.
+// openToolBlockModal points the modal at a tool (or thinking) block. It only
+// changes what the modal looks at — the block's collected output/content is
+// never touched.
 func (m *TuiModel) openToolBlockModal(idx int) {
-	if idx < 0 || idx >= len(m.blocks) || m.blocks[idx].kind != "tool" {
+	if idx < 0 || idx >= len(m.blocks) {
+		return
+	}
+	if kind := m.blocks[idx].kind; kind != "tool" && kind != "thinking" {
 		return
 	}
 	if m.blocks[idx].flushed {
@@ -75,6 +79,9 @@ func (m *TuiModel) openToolBlockModal(idx int) {
 // always the title of what is on screen.
 func (m TuiModel) modalTitleForBlock(idx int) string {
 	b := m.blocks[idx]
+	if b.kind == "thinking" {
+		return "thinking"
+	}
 	if b.toolName == "subagent" {
 		var args map[string]any
 		if json.Unmarshal([]byte(b.content), &args) == nil {
