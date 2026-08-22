@@ -21,8 +21,9 @@ var jobProgressReporter JobProgressReporter
 func SetJobProgressReporter(p JobProgressReporter) { jobProgressReporter = p }
 
 // ReportProgressTool implements the "report_progress" tool: lets a running
-// background job post a short status note visible via "wait"'s still-running
-// response and the jobs panel, without ending the job.
+// job (any subagent call — blocking or async — or a /btw side-conversation)
+// post a short status note visible via "wait"'s still-running response and
+// the jobs panel, without ending the job.
 type ReportProgressTool struct{}
 
 func (t *ReportProgressTool) Name() string { return "report_progress" }
@@ -38,7 +39,7 @@ func (t *ReportProgressTool) Run(ctx context.Context, input map[string]any) Tool
 		return ToolResult{
 			Type:    "result",
 			Success: false,
-			Error:   "report_progress only works inside an async background job (started via subagent(...,async:true) or a /btw side-conversation)",
+			Error:   "report_progress only works inside a job (a subagent call, or a /btw side-conversation) — this call has no job id",
 		}
 	}
 

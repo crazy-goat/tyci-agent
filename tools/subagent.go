@@ -392,9 +392,60 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 	// Reached when backgrounding is disabled for this mode
 	// (!backgroundAllowed(ctx), including when ctx already carries a
 	// SubagentSinkCtxKey — i.e. this call is itself running inside another
-	// subagent) — the only case runWithHandoff does not cover, since
-	// jobStarter is wired unconditionally in the real binary (main.go).
+	// subagent) — the only case runWithHandoff does not cover.
+	//
+	// A job registry is still available here in every real invocation
+	// (jobStarter is wired unconditionally in main.go): `tyci run` /
+	// `--print` reach this branch because that mode never calls
+	// SetBackgroundBashEnabled, not because there is no registry. So the
+	// children still get a job id — the only thing this mode can't offer is
+	// somewhere to hand them off TO, since there is no next turn to deliver
+	// a background notice into. They just run to completion right here,
+	// registered the whole time, which is what makes report_progress and
+	// wait(job_id=...) work on them instead of failing with "no job id".
+	//
+	// (ask is different: giving these a job id must NOT make ask block for
+	// its full timeout with no way to ever receive an answer — see
+	// AskUnroutableCtxKey, which ask consults separately from "do I have a
+	// job id".)
+	if jobStarter != nil {
+		return t.runRegistered(ctx, tasks)
+	}
+
+	// No job registry at all — only reachable in tests; the real binary
+	// always wires one (main.go). No job ids are possible here, so this is
+	// the one remaining plain, unregistered path.
 	results := runTasks(ctx, t.Runner, tasks, SubagentTimeoutSec)
+	return resultsToToolResult(results)
+}
+
+// runRegistered runs tasks to completion through jobStarter — so each gets a
+// real job id, and report_progress/wait(job_id=...) work on it — but never
+// hands them to the background: the caller has already determined (via
+// backgroundAllowed) that there is nobody positioned to receive a handoff
+// notice in this mode. It is the same spawn machinery runWithHandoff uses,
+// minus the timer/poll/handoff loop: just wait for every child to reach
+// job.done, then report exactly what runWithHandoff's own
+// "everyone-finished" tail reports.
+//
+// AskUnroutableCtxKey is stamped onto the context every spawned child
+// inherits: this tool call cannot return to its own caller until every
+// child finishes (there is no handoff here), so a child blocked in "ask"
+// would otherwise wait out its whole timeout with nobody ever able to
+// answer it. See that key's doc comment in ask.go.
+func (t *SubagentTool) runRegistered(ctx context.Context, tasks []subagentTask) ToolResult {
+	ctx = context.WithValue(ctx, AskUnroutableCtxKey{}, true)
+	spawned := make([]*spawnedTask, 0, len(tasks))
+	for _, task := range tasks {
+		spawned = append(spawned, t.spawn(ctx, task, false, true))
+	}
+	for _, st := range spawned {
+		<-st.done
+	}
+	results := make([]subagentResult, len(spawned))
+	for i, st := range spawned {
+		results[i] = st.result()
+	}
 	return resultsToToolResult(results)
 }
 

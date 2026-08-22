@@ -22,9 +22,29 @@ var jobAsker JobAsker
 // with an adapter over the app's shared jobs.Registry.
 func SetJobAsker(a JobAsker) { jobAsker = a }
 
-// AskTool implements the "ask" tool: lets a running background job (an
-// async subagent or a /btw side-conversation) pose a blocking question to
-// whoever is watching it, and block until answered.
+// AskUnroutableCtxKey marks a job's context to make "ask" fail immediately
+// instead of blocking for its full SubagentTimeoutSec.
+//
+// Every subagent call gets a job id now (see subagent.go's runRegistered),
+// including a blocking child under `tyci run` / `--print`. But a job id
+// alone does not mean a question asked from inside it can ever be answered:
+// answering requires the tool call that spawned the job to first return
+// control to its own caller's agent loop (so a reminder about the pending
+// question — or a person at a REPL — has a turn in which to call "answer").
+// That happens for an async spawn (the call returns immediately) and for a
+// blocking spawn that CAN hand its children to the background
+// (runWithHandoff, gated on backgroundAllowed) — but not for a blocking
+// spawn with no handoff available: that tool call does not return until the
+// child itself finishes, so a child blocked in "ask" there can never be
+// unblocked no matter how long it waits. runRegistered sets this key to true
+// for exactly that case; every other job-bearing context leaves it unset
+// (the default, meaning ask behaves as it always has: it blocks for a real
+// answer).
+type AskUnroutableCtxKey struct{}
+
+// AskTool implements the "ask" tool: lets a running job (any subagent call —
+// blocking or async — or a /btw side-conversation) pose a blocking question
+// to whoever is watching it, and block until answered.
 type AskTool struct{}
 
 func (t *AskTool) Name() string { return "ask" }
@@ -40,7 +60,15 @@ func (t *AskTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{
 			Type:    "result",
 			Success: false,
-			Error:   "ask only works inside an async background job (started via subagent(...,async:true) or a /btw side-conversation)",
+			Error:   "ask only works inside a job (a subagent call, or a /btw side-conversation) — this call has no job id",
+		}
+	}
+
+	if unroutable, _ := ctx.Value(AskUnroutableCtxKey{}).(bool); unroutable {
+		return ToolResult{
+			Type:    "result",
+			Success: false,
+			Error:   "ask cannot get an answer here: the call that started this job cannot return control to anyone able to answer it (no background handoff is available). Proceed with your best judgement or state your assumption and continue",
 		}
 	}
 
