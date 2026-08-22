@@ -113,7 +113,7 @@ func TestInitCommon_ConnectMCPTrue_ConnectsAndAdvertisesServerTools(t *testing.T
 		t.Fatalf("set model flag: %v", err)
 	}
 
-	_, _, cfg, _, _, _, _, dl, shutdown, err := initCommon(cmd, true)
+	_, _, cfg, _, _, _, _, dl, shutdown, err := initCommon(cmd, true, false)
 	if err != nil {
 		t.Fatalf("initCommon: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestInitCommon_ConnectMCPTrue_ConnectsAndAdvertisesServerTools(t *testing.T
 	}
 
 	if tools.GetMCPToolRunner() == nil {
-		t.Fatalf("expected initCommon(cmd, true) to have called tools.InitMCP and left a runner connected")
+		t.Fatalf("expected initCommon(cmd, true, false) to have called tools.InitMCP and left a runner connected")
 	}
 	if !tools.GetMCPToolRunner().HasTool("mcp_weather_forecast") {
 		t.Fatalf("expected the configured weather server's forecast tool to be connected")
@@ -172,7 +172,7 @@ func TestInitCommon_ConnectMCPFalse_DoesNotConnect(t *testing.T) {
 		t.Fatalf("set model flag: %v", err)
 	}
 
-	_, _, cfg, _, _, _, _, dl, shutdown, err := initCommon(cmd, false)
+	_, _, cfg, _, _, _, _, dl, shutdown, err := initCommon(cmd, false, false)
 	if err != nil {
 		t.Fatalf("initCommon: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestInitCommon_NoMCPFlag_OverridesConnectMCPTrue(t *testing.T) {
 		t.Fatalf("set no-mcp flag: %v", err)
 	}
 
-	_, _, _, _, _, _, _, dl, shutdown, err := initCommon(cmd, true)
+	_, _, _, _, _, _, _, dl, shutdown, err := initCommon(cmd, true, false)
 	if err != nil {
 		t.Fatalf("initCommon: %v", err)
 	}
