@@ -48,13 +48,16 @@ type StreamError struct{ Err error }
 
 func (StreamError) sealed() {}
 
-type Retry struct {
-	Attempt int
-	Reason  string
-	Delay   time.Duration
-}
-
-func (Retry) sealed() {}
+// There is deliberately no Retry event. Retrying is the agent loop's job, not
+// the stream's: api.RetryableError travels up from the connector and
+// agent.Run re-runs the whole request, reporting each attempt through the
+// Sink (see agent/agent.go's backoff loop). A mid-stream retry event would
+// need semantics this pipeline does not have — the consumer accumulates text,
+// thinking and tool deltas as they arrive, so an event meaning "discard
+// everything so far and start over" would have to reset all of them, and one
+// emitted after the first token would otherwise splice two attempts into one
+// garbled reply. A Retry type existed here for a while, unemitted by anything
+// and quietly inviting exactly that bug.
 
 type Usage struct {
 	Input      int

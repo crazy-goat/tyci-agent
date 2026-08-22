@@ -290,8 +290,6 @@ func recordEvent(ev stream.Event) eventRecord {
 				CacheWrite: v.Usage.CacheWrite,
 			},
 		}
-	case stream.Retry:
-		return eventRecord{Type: "Retry", Reason: v.Reason}
 	case stream.StreamError:
 		msg := ""
 		if v.Err != nil {

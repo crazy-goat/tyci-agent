@@ -512,16 +512,18 @@ func GetAllToolsSchemaJSON() json.RawMessage {
 	return data
 }
 
-// GetSubagentToolsSchema returns tool definitions excluding "subagent"
-// (prevents recursion) and "agents" (its only purpose is discovering names
-// for subagent(agent="name"); a child that cannot spawn subagents has
-// nothing to do with that list, so it isn't worth tempting it with).
+// GetSubagentToolsSchema returns tool definitions excluding subagentDeniedTools
+// ("subagent", to prevent recursion, and "agents", whose only purpose is
+// discovering names for subagent(agent="name") — a child that cannot spawn
+// subagents has nothing to do with that list, so it isn't worth tempting it
+// with). See subagentDeniedTools in toolgate.go for the shared list this and
+// GetSubagentToolsSchemaJSONFor and main.go's runtime gate all read from.
 func GetSubagentToolsSchema() []map[string]any {
 	schema := GetToolsSchema()
 	filtered := make([]map[string]any, 0, len(schema))
 	for _, s := range schema {
 		if fn, ok := s["function"].(map[string]any); ok {
-			if name, ok := fn["name"].(string); ok && (name == "subagent" || name == "agents") {
+			if name, ok := fn["name"].(string); ok && IsSubagentDenied(name) {
 				continue
 			}
 		}
@@ -540,18 +542,21 @@ func GetSubagentToolsSchemaJSON() json.RawMessage {
 // GetSubagentToolsSchemaJSON() unchanged, so the common case (no
 // whitelist) stays a cheap map lookup instead of a fresh marshal per call.
 //
-// "subagent" is dropped even if allowed lists it explicitly: recursion into
-// child subagents is never permitted, regardless of what an agent
-// definition's frontmatter says. An allowed name that matches no known tool
-// is silently skipped, not an error — a typo in an agent's `tools:` line
-// should degrade to "that tool is unavailable", not a startup crash.
+// Every subagentDeniedTools entry ("subagent", "agents") is dropped even if
+// allowed lists it explicitly: recursion into child subagents is never
+// permitted, and "agents" exists only to discover names for
+// subagent(agent="name"), which a child that cannot call subagent has no
+// use for — regardless of what an agent definition's frontmatter says. An
+// allowed name that matches no known tool is silently skipped, not an
+// error — a typo in an agent's `tools:` line should degrade to "that tool
+// is unavailable", not a startup crash.
 func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
 	if len(allowed) == 0 {
 		return GetSubagentToolsSchemaJSON()
 	}
 	want := make(map[string]bool, len(allowed)+len(alwaysAllowedTools))
 	for _, name := range allowed {
-		if name == "subagent" {
+		if IsSubagentDenied(name) {
 			continue
 		}
 		want[name] = true

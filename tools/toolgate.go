@@ -72,6 +72,37 @@ func AllowOnly(names ...string) ToolGate {
 	if len(names) == 0 {
 		return nil
 	}
+	return newAllowGate(names)
+}
+
+// AllowOnlySubagent builds the runtime gate for a subagent's tools:
+// whitelist (a named agent definition's frontmatter list). It mirrors
+// GetSubagentToolsSchemaJSONFor tool for tool — same "empty/nil means no
+// restriction" convention, same subagentDeniedTools filtering, same
+// alwaysAllowedTools folding — so a call this gate permits is always one
+// the schema for the same allowed list actually offered the model, and a
+// call the schema never offered is always one this gate refuses.
+//
+// Filtering happens even for an allowed list that, after removing
+// subagentDeniedTools entries, has nothing left: unlike a bare
+// AllowOnly(filtered...) call, an empty result here does NOT fall through
+// to "no restriction" — that would let an agent whose entire tools: list
+// happened to be denied names (e.g. tools: [agents]) end up with a runtime
+// gate wider than the schema it was shown. It gets exactly
+// alwaysAllowedTools instead, matching what GetSubagentToolsSchemaJSONFor
+// would build for the same input.
+func AllowOnlySubagent(allowed []string) ToolGate {
+	if len(allowed) == 0 {
+		return nil
+	}
+	return newAllowGate(FilterSubagentDenied(allowed))
+}
+
+// newAllowGate builds a gate permitting names plus alwaysAllowedTools. names
+// may be empty (AllowOnlySubagent relies on this: every entry in a
+// subagent's tools: list can turn out to be a denied tool, and the gate
+// must still come out non-nil, permitting exactly alwaysAllowedTools).
+func newAllowGate(names []string) ToolGate {
 	allowed := make(map[string]struct{}, len(names)+len(alwaysAllowedTools))
 	permitted := make([]string, 0, len(names)+len(alwaysAllowedTools))
 	for _, n := range names {
@@ -114,6 +145,73 @@ func AllowOnly(names ...string) ToolGate {
 //     do twenty greps in one round trip instead of twenty — and a narrow
 //     agent like "locator" is exactly the one that needs that most.
 var alwaysAllowedTools = []string{"help", "lua"}
+
+// subagentDeniedTools names tools that are never available to a subagent,
+// whatever its own tools: whitelist says:
+//
+//   - subagent: recursion into further children is never permitted.
+//   - agents: its only purpose is discovering names for
+//     subagent(agent="name"); a child that cannot call subagent at all has
+//     nothing to do with that list.
+//
+// This is the one place the schema builder
+// (GetSubagentToolsSchema/GetSubagentToolsSchemaJSONFor in tool.go), the
+// whitelisted runtime gate (AllowOnlySubagent/FilterSubagentDenied below),
+// AND the unrestricted runtime gate (DenySubagentRecursion, used by
+// main.go's subagentToolRunner.Run when a child has no tools: whitelist at
+// all) all read this from — so a name denied in the schema cannot quietly
+// stay permitted at either runtime gate, or vice versa. Every one of these
+// three call sites must consult subagentDeniedTools rather than hard-coding
+// "subagent" or "agents" by name, or the three will drift the way
+// AllowOnlySubagent's whitelisted path and this package's own unrestricted
+// path once did.
+var subagentDeniedTools = map[string]bool{"subagent": true, "agents": true}
+
+// IsSubagentDenied reports whether name is one of subagentDeniedTools.
+func IsSubagentDenied(name string) bool {
+	return subagentDeniedTools[name]
+}
+
+// FilterSubagentDenied returns names with every subagentDeniedTools entry
+// removed, preserving order. Callers building a per-agent AllowOnly gate
+// from a frontmatter tools: list should filter through this first, so an
+// agent definition that lists "agents" (or, redundantly, "subagent") cannot
+// have the runtime gate permit a call the schema never offered.
+func FilterSubagentDenied(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if IsSubagentDenied(n) {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// SubagentDeniedNames returns the subagentDeniedTools entries as a sorted
+// slice, for callers that need to hand the list to something that takes
+// names rather than a membership test (e.g. Deny below).
+func SubagentDeniedNames() []string {
+	names := make([]string, 0, len(subagentDeniedTools))
+	for n := range subagentDeniedTools {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// DenySubagentRecursion builds a gate refusing every subagentDeniedTools
+// entry ("subagent", "agents") and allowing everything else. It is the
+// unrestricted-child counterpart to AllowOnlySubagent: a child with no
+// tools: whitelist at all (main.go's subagentToolRunner.Run when
+// r.allowed is empty) still must not reach a tool
+// GetSubagentToolsSchemaJSON never offered it — previously only "subagent"
+// was denied on that path, which let an unrestricted child reach "agents"
+// (directly, or via lua's tool("agents", {})) even though the schema never
+// listed it.
+func DenySubagentRecursion() ToolGate {
+	return Deny("tool is not available to subagents (recursion/discovery denied)", SubagentDeniedNames()...)
+}
 
 // Deny builds a gate refusing the named tools and allowing everything else.
 func Deny(reason string, names ...string) ToolGate {
