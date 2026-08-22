@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/decodo/tyci/internal/gitinfo"
 	"github.com/decodo/tyci/tools"
 )
 
@@ -50,33 +51,13 @@ func (m TuiModel) buildStatus() string {
 		}
 	}
 
-	if m.lastUsage.Input > 0 || m.lastUsage.Output > 0 {
-		inNew := m.lastUsage.Input - m.lastUsage.CacheRead
-		if inNew < 0 {
-			inNew = 0
-		}
-		u := fmt.Sprintf("in=%d", inNew)
-		if m.lastUsage.CacheRead > 0 {
-			u += fmt.Sprintf(" (+%d cache)", m.lastUsage.CacheRead)
-		}
-		u += fmt.Sprintf(" out=%d", m.lastUsage.Output)
-		if m.lastUsage.Reasoning > 0 {
-			u += fmt.Sprintf(" r=%d", m.lastUsage.Reasoning)
-		}
-		if m.lastUsage.CacheWrite > 0 {
-			u += fmt.Sprintf(" cache_w=%d", m.lastUsage.CacheWrite)
-		}
-		u += fmt.Sprintf(" ctx=%d", m.lastUsage.Input+m.lastUsage.Output)
-		genDur := m.lastStats.Duration - m.lastStats.FirstToken
-		if genDur < 0 {
-			genDur = 0
-		}
-		u += fmt.Sprintf(" t=%.1fs ttft=%.2fs tok/s=%s",
-			m.lastStats.Duration.Seconds(),
-			m.lastStats.FirstToken.Seconds(),
-			fmtRate(m.lastUsage.Output, genDur),
-		)
-		rightParts = append(rightParts, u)
+	// Two numbers, not twelve. The per-turn token breakdown, timings and
+	// throughput moved to the sidebar's Tokens tab (buildUsageDetail): a
+	// status bar is glanced at, and the only two things worth a glance while
+	// working are how full the context is and what the session has cost so
+	// far. Clicking the context figure opens the tab with the rest.
+	if right := m.buildContextCost(); right != "" {
+		rightParts = append(rightParts, right)
 	}
 
 	if len(leftParts) == 0 && len(rightParts) == 0 {
@@ -124,6 +105,20 @@ func displayPath(cwd, home string) string {
 	return c
 }
 
+// topBarPath is the left-hand side of the top bar: the working directory,
+// plus the git branch in parentheses when the directory is in a repository.
+// The branch is the tail of the string, so the leading-"…" truncation used by
+// the bar drops path segments before it drops the branch — which is the right
+// order: you usually know where you are, and less often which branch you left
+// yourself on.
+func (m TuiModel) topBarPath() string {
+	path := displayPath(m.cwd, m.home)
+	if branch := gitinfo.Branch(m.cwd); branch != "" {
+		path += " (" + branch + ")"
+	}
+	return path
+}
+
 // buildTopBar returns the single-line top status bar showing the current
 // working directory and tool/skill/MCP context counts. The bar is exactly
 // m.width wide with a dark background. The path is left-aligned; the
@@ -133,7 +128,7 @@ func displayPath(cwd, home string) string {
 // counters are dropped in order: mcp first, then tools, then skills (the
 // path is never dropped). A single leading and trailing space is included.
 func (m TuiModel) buildTopBar() string {
-	path := displayPath(m.cwd, m.home)
+	path := m.topBarPath()
 
 	// ── Counter definitions ─────────────────────────────────────────────
 	type counterDef struct {

@@ -2,6 +2,9 @@ package display
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -669,5 +672,64 @@ func TestBuildTopBar_TodosWithCountsPreserved(t *testing.T) {
 	}
 	if !strings.Contains(bar, "mcp: 2") {
 		t.Fatalf("buildTopBar should show 'mcp: 2', got %q", bar)
+	}
+}
+
+// ─── topBarPath: branch suffix ────────────────────────────────────────────
+
+// initTestRepo builds a one-commit repository on branch "main".
+func initTestRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "f")
+	git("commit", "-qm", "one")
+	return dir
+}
+
+func TestTopBarPath_AppendsBranchInRepo(t *testing.T) {
+	dir := initTestRepo(t)
+	m := TuiModel{cwd: dir, home: "/nowhere"}
+	got := m.topBarPath()
+	want := dir + " (main)"
+	if got != want {
+		t.Fatalf("topBarPath = %q, want %q", got, want)
+	}
+}
+
+func TestTopBarPath_NoBranchOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+	m := TuiModel{cwd: dir, home: "/nowhere"}
+	if got := m.topBarPath(); got != dir {
+		t.Fatalf("topBarPath = %q, want bare %q outside a repo", got, dir)
+	}
+}
+
+// The bar truncates from the left, so a narrow terminal loses path segments
+// before it loses the branch.
+func TestTopBar_TruncationKeepsBranch(t *testing.T) {
+	dir := initTestRepo(t)
+	m := TuiModel{cwd: dir, home: "/nowhere", width: 30}
+	bar := m.buildTopBar()
+	if !strings.Contains(bar, "(main)") {
+		t.Fatalf("truncated top bar dropped the branch: %q", bar)
 	}
 }

@@ -363,7 +363,7 @@ func (m TuiModel) topBarCounterHit(x int) string {
 		active[i] = activeCounter{def: c, rendered: renderCounter(c)}
 	}
 
-	path := displayPath(m.cwd, m.home)
+	path := m.topBarPath()
 	sep := " "
 	sepW := lipgloss.Width(sep)
 	const sidePad = 1
