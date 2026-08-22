@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -177,10 +178,18 @@ func (r *MCPToolRunner) HasTool(name string) bool {
 func (r *MCPToolRunner) RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {
 	r.mu.RLock()
 	t, ok := r.tools[name]
+	if !ok {
+		r.mu.RUnlock()
+		return ToolResult{
+			Type:    "result",
+			Success: false,
+			Error:   fmt.Sprintf("MCP tool %q not found", name),
+		}
+	}
 	client := r.clients[t.server]
 	r.mu.RUnlock()
 
-	if !ok || client == nil {
+	if client == nil {
 		return ToolResult{
 			Type:    "result",
 			Success: false,
@@ -231,13 +240,24 @@ func (r *MCPToolRunner) RunTool(ctx context.Context, name string, arguments map[
 	}
 }
 
-// MCPToolsSchema returns tool definitions for all MCP tools.
+// MCPToolsSchema returns tool definitions for all MCP tools, sorted by name.
+// A stable order lets repeated calls (e.g. two spawns of the same subagent)
+// produce byte-identical schemas, which is required to share a provider-side
+// prompt-cache prefix; iterating the map directly would randomize the order
+// on every call.
 func (r *MCPToolRunner) MCPToolsSchema() []map[string]any {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
 	var schema []map[string]any
-	for name, t := range r.tools {
+	for _, name := range names {
+		t := r.tools[name]
 		schema = append(schema, map[string]any{
 			"type": "function",
 			"function": map[string]any{
