@@ -95,9 +95,9 @@ func TestBlockingCallHandsOverASlowChild(t *testing.T) {
 	}
 	for _, want := range []string{
 		"running in the background",
-		"talk to them",   // the person gets their prompt back
-		"answer(job_id=", // a blocked child needs answering
-		"wait(job_id=",   // how to read the result
+		"talk to them",       // the person gets their prompt back
+		"answer_job(job_id=", // a blocked child needs answering
+		"wait(job_id=",       // how to read the result
 		"Do not call wait before you are told",
 	} {
 		if !strings.Contains(res.Content, want) {
@@ -612,7 +612,7 @@ func TestBlockingCallHandsOffAtTimerExpiry(t *testing.T) {
 // enabled, as console/tui do) — a child asking a question there can
 // genuinely be answered once the parent gets its turn back (via handoff, or
 // simply because the child finishes fast). This is that round trip: a child
-// blocks in "ask", the test plays "the parent or the person watching" and
+// blocks in "ask_parent", the test plays "the parent or the person watching" and
 // answers it directly against the real registry, and the child must
 // actually receive that answer rather than being told upfront that nothing
 // could ever answer it.

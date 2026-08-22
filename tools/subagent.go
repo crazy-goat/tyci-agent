@@ -75,11 +75,11 @@ type JobStarter interface {
 }
 
 // JobIDCtxKey is the context key under which an async job's own ID is
-// stashed (see runAsync) so tools invoked from inside that job — "ask" and
-// "report_progress" — can find out "which job am I running inside" without
-// this package importing "jobs" (same layering rule as JobWaiter/JobStarter
-// above). /btw side-conversations set the same key (see btw.go's startBtw)
-// so ask/report_progress work there too, for free.
+// stashed (see runAsync) so tools invoked from inside that job — "ask_parent"
+// and "report_progress" — can find out "which job am I running inside"
+// without this package importing "jobs" (same layering rule as
+// JobWaiter/JobStarter above). /btw side-conversations set the same key (see
+// btw.go's startBtw) so ask_parent/report_progress work there too, for free.
 type JobIDCtxKey struct{}
 
 // TodoAgentCtxKey is the context key under which a subagent's own todo-list
@@ -779,7 +779,7 @@ func spawnedJobsMessage(spawned []*spawnedTask, inline []subagentResult) string 
 %d task(s) are now running in the background. Get on with work that does not depend on them — and if there is a person waiting, talk to them: the turn is yours again.
 
 You will be told when one finishes, and when one is BLOCKED on a question. Two things are then yours to do:
-- A question: reply with answer(job_id=..., text="..."). It is blocked until you do, and everything it has done is discarded when it times out. This is the only way it can reach you.
+- A question: relay it — to the user, or genuinely-known info — unless you truly know the answer yourself; never invent one standing in for a human who hasn't replied. Call answer_job(job_id=..., text="..."). It is blocked until you do, and everything it has done is discarded when it times out. This is the only way it can reach you.
 - A finish: read the result with wait(job_id=...). Nothing else delivers it.
 
 Do not call wait before you are told: it can only say "still running", which the next notice would have told you for free.`, len(spawned))
@@ -803,7 +803,7 @@ Do not call wait before you are told: it can only say "still running", which the
 //
 // When handoff is false, AskUnroutableCtxKey is stamped on every spawned
 // child's context: this call cannot return to its own caller until every
-// child is terminal, so a child blocked in "ask" here could never have its
+// child is terminal, so a child blocked in "ask_parent" here could never have its
 // question answered no matter how long it waited. See that key's doc
 // comment in ask.go.
 //

@@ -201,7 +201,7 @@ func TestPromptListsEveryToolTheModelHas(t *testing.T) {
 
 	for _, name := range []string{
 		"find", "read", "write", "bash", "lua", "todo", "memory", "help", "skills", "web",
-		"subagent", "wait", "answer", "resume", "kill_job", "agents", "lock", "unlock",
+		"subagent", "wait", "answer_job", "resume", "kill_job", "agents", "lock", "unlock",
 	} {
 		if !strings.Contains(prompt, name+"(") {
 			t.Errorf("the tool list does not mention %s", name)
@@ -209,18 +209,19 @@ func TestPromptListsEveryToolTheModelHas(t *testing.T) {
 	}
 }
 
-// TestSubagentPromptListsTheToolsOnlyAChildCanUse: ask and report_progress
-// work only inside a job, so they belong in the child's list and nowhere else.
+// TestSubagentPromptListsTheToolsOnlyAChildCanUse: ask_parent and
+// report_progress work only inside a job, so they belong in the child's
+// list and nowhere else.
 func TestSubagentPromptListsTheToolsOnlyAChildCanUse(t *testing.T) {
 	child := BuildSubagentSystemPrompt()
-	for _, name := range []string{"ask(", "report_progress("} {
+	for _, name := range []string{"ask_parent(", "report_progress("} {
 		if !strings.Contains(child, name) {
 			t.Errorf("a child's prompt does not mention %s", name)
 		}
 	}
 
 	parent := BuildSystemPrompt()
-	for _, name := range []string{"ask(question)", "report_progress(text)"} {
+	for _, name := range []string{"ask_parent(question)", "report_progress(text)"} {
 		if strings.Contains(parent, name) {
 			t.Errorf("the top-level prompt offers %s, which only works inside a job", name)
 		}

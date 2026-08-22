@@ -94,12 +94,12 @@ func buildSystemPrompt(includeSubagent bool, roleNote string) string {
 	if includeSubagent {
 		posture = `1. Work through MANY agents. subagent(tasks=[...], async=true) spawns parallel children, each with its own context window; you are NOTIFIED when one finishes or blocks on a question — never poll. Delegate anything that means reading more than about three files, and any two independent pieces of work (ONE call, tasks=[...]). Keep for yourself: single-file edits, work needing the exact bytes, work that depends on this conversation.
 `
-		contracts = `- A child BLOCKED on a question makes no progress and is discarded when it times out: answer(job_id, text) is your NEXT action.
+		contracts = `- A child BLOCKED on a question makes no progress and is discarded when it times out: answer_job(job_id, text) is your NEXT action — relay a real answer (the user's, or something you genuinely know), never one invented for a human who hasn't replied.
 - Parallel children writing shared paths must lock/unlock them — say so in each task's text.
 `
 		toolLines = `- subagent(task|tasks, agent?, model?, async?): delegate to child agents; tasks=[...] runs them in parallel.
 - wait(seconds, job_id?): read a finished job's result, or pause deliberately.
-- answer(job_id, text): unblock a child waiting on a question.
+- answer_job(job_id, text): relay a real answer to a child blocked on ask_parent.
 - resume(job_id, task): continue a finished async job — it keeps its whole conversation.
 - kill_job(job_id): stop a backgrounded shell command.
 - agents(name?): named agents usable as subagent(agent="name").
@@ -107,7 +107,7 @@ func buildSystemPrompt(includeSubagent bool, roleNote string) string {
 	} else {
 		posture = `1. Split work you can. You cannot spawn children, but everything below still applies: read narrowly, script your loops, and report a conclusion.
 `
-		toolLines = `- ask(question): block until the parent answers. Last resort — you stall completely while waiting.
+		toolLines = `- ask_parent(question): block until your parent — whoever spawned this job, human or agent — answers, or fails immediately if nobody could ever reach it. Last resort — you stall completely while waiting.
 - report_progress(text): post a status note so whoever is watching is not guessing.
 - wait(seconds): pause deliberately.
 `

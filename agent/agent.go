@@ -91,7 +91,7 @@ type Config struct {
 	// mistake this environment makes possible. It sits there making no
 	// progress until its wall clock runs out, at which point everything it did
 	// is discarded — and the only thing that could have unblocked it was one
-	// answer() call from a turn that has already ended.
+	// answer_job() call from a turn that has already ended.
 	PendingJobs func() []string
 
 	// HasTodos, if set, is called before executing tool calls to enforce
@@ -107,10 +107,10 @@ type Config struct {
 	// `tyci run` (and anything shelling out to it, e.g. cron: see
 	// initCommon's doc comment in commands.go). PendingJobs is wired in
 	// every mode (see its own doc comment), but only an interactive mode
-	// has a "/answer" command for a person to type — the wording
+	// has a person there to reply in the conversation at all — the wording
 	// buildJobReminder picks depends on this, since telling a non-
-	// interactive run to wait for "/answer" describes a control that does
-	// not exist there.
+	// interactive run to wait on a human describes someone who is not
+	// there.
 	Interactive bool
 }
 
@@ -446,14 +446,16 @@ func buildTodoReminder(pending []string) string {
 // automated check, not as a user asking — the user did not say this.
 //
 // interactive selects which decision is available for a WAITING FOR ANSWER
-// job: in an interactive session (console/TUI) a human can type "/answer",
-// so the model is told to relay the question and wait for them. In a
-// non-interactive run (`tyci run`, cron) no one is there to type anything —
-// telling the model to wait for "/answer" there describes a control that
-// does not exist and just stalls until the job's own timeout discards its
-// work, so the model is told instead to either answer it itself if it
-// genuinely knows the answer, or explicitly accept that it will go
-// unanswered and finish without it.
+// job: in an interactive session (console/TUI) a human is present, so the
+// model is told to relay the question in its reply, wait for the human's
+// plain-text answer in the conversation, and then call answer_job itself
+// with what they said — there is no dedicated slash command for a person
+// to type; the model is the only thing that can ever call answer_job. In a
+// non-interactive run (`tyci run`, cron) no one is there to reply to at
+// all — telling the model to wait for a human there just stalls until the
+// job's own timeout discards its work, so the model is told instead to
+// either answer it itself if it genuinely knows the answer, or explicitly
+// accept that it will go unanswered and finish without it.
 func buildJobReminder(pending []string, interactive bool) string {
 	var b strings.Builder
 	b.WriteString("[automated check, not the user] Background jobs are still outstanding:\n")
@@ -463,9 +465,9 @@ func buildJobReminder(pending []string, interactive bool) string {
 		b.WriteString("\n")
 	}
 	if interactive {
-		b.WriteString("\nFor anything marked WAITING FOR ANSWER: relay the question to the user and let them answer it (they can reply with /answer) — do not invent an answer on their behalf. Only call answer(job_id=..., text=\"...\") yourself if you already genuinely know the answer. Left unanswered it is making no progress and its work is discarded when it times out. ")
+		b.WriteString("\nFor anything marked WAITING FOR ANSWER: relay the question to the user in your reply, wait for their answer in the conversation, then call answer_job(job_id=..., text=\"...\") with what they said — do not invent an answer on their behalf. Only call answer_job yourself right away if you already genuinely know the answer. Left unanswered it is making no progress and its work is discarded when it times out. ")
 	} else {
-		b.WriteString("\nFor anything marked WAITING FOR ANSWER: there is no user present in this run to answer it — only call answer(job_id=..., text=\"...\") yourself if you already genuinely know the answer from the context you have. Otherwise say plainly that it will go unanswered and finish without it; it will time out and its work will be discarded either way, so waiting for a reply that will never come only wastes the run. ")
+		b.WriteString("\nFor anything marked WAITING FOR ANSWER: there is no user present in this run to answer it — only call answer_job(job_id=..., text=\"...\") yourself if you already genuinely know the answer from the context you have. Otherwise say plainly that it will go unanswered and finish without it; it will time out and its work will be discarded either way, so waiting for a reply that will never come only wastes the run. ")
 	}
 	b.WriteString("For a job still running, either read it with wait(job_id=...) if you need the result, or say plainly in your reply that you are leaving it running — do not silently end the turn on it.")
 	return b.String()

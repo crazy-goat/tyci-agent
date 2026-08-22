@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/jobs"
+	"github.com/decodo/tyci/tools"
 )
 
 // ─── forkMessagesForBtw ─────────────────────────────────────────────────
@@ -112,6 +114,50 @@ func TestBtwConfig_StripsMainThreadCallbacksButKeepsToolBehavior(t *testing.T) {
 	if got.HasTodos != nil {
 		t.Error("HasTodos must be nil — that's the main thread's todo list")
 	}
+}
+
+// TestBtwConfig_RestoresAskParent guards item 29's role-gating: the
+// top-level agent.Config.Schema (base.Schema here, built in commands.go via
+// tools.GetTopLevelToolsSchemaJSON) excludes ask_parent because the
+// top-level conversation is not itself a job. A /btw side-conversation IS a
+// job (startBtw stamps jobCtx with tools.JobIDCtxKey before running it), so
+// btwConfig must restore ask_parent onto its forked Schema rather than
+// inheriting the top-level one verbatim — otherwise /btw would offer a tool
+// that always fails immediately for it, exactly the bug item 29 fixed for
+// the top-level agent.
+func TestBtwConfig_RestoresAskParent(t *testing.T) {
+	base := agent.Config{
+		Schema: tools.GetTopLevelToolsSchemaJSON(),
+	}
+	if schemaHasTool(t, base.Schema, "ask_parent") {
+		t.Fatal("test setup: the top-level schema should not include ask_parent")
+	}
+
+	got := btwConfig(base)
+
+	if !schemaHasTool(t, got.Schema, "ask_parent") {
+		t.Error("btwConfig must restore ask_parent onto /btw's schema — a /btw side-conversation is a job and can use it")
+	}
+}
+
+// schemaHasTool reports whether a marshaled tool schema (json.RawMessage)
+// contains a function named name.
+func schemaHasTool(t *testing.T, raw json.RawMessage, name string) bool {
+	t.Helper()
+	var entries []map[string]any
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
+	}
+	for _, e := range entries {
+		fn, ok := e["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if n, _ := fn["name"].(string); n == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── nextBtwID ──────────────────────────────────────────────────────────

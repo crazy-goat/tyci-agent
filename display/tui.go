@@ -375,17 +375,6 @@ type TuiModel struct {
 	// asked to interpret a command meant for the interface.
 	commands chan string
 
-	// answerFunc delivers a "/answer" command's argument straight to the
-	// job registry, synchronously, from inside handleLocalSlashCommand —
-	// regardless of whether a turn is in flight. Set once via NewTUI's
-	// onAnswer parameter (nil in any test that constructs a TuiModel
-	// directly via newModel, which handleLocalSlashCommand treats as
-	// "/answer unavailable" rather than a nil-call panic). It returns a
-	// one-line result and whether it succeeded, which becomes the status
-	// message — see handleLocalSlashCommand for why this must never go
-	// through submit() or the commands channel above.
-	answerFunc func(arg string) (msg string, ok bool)
-
 	// queue is the shared pending-message channel set by NewTUI after this
 	// model is constructed. bubbletea copies the model on every Update, but
 	// the channel reference is stable so all copies share the same backing

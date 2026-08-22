@@ -43,10 +43,11 @@ type Job struct {
 }
 
 // jobAnswer is what Answer sends and Ask receives over answerCh. fromUser
-// distinguishes a human reply (delivered via the TUI/REPL "/answer" command)
-// from an agent's own reply (delivered via the "answer" tool, which only the
-// model can invoke) — see AskTool's doc comment in tools/ask.go for why the
-// distinction has to survive the round trip.
+// distinguishes a genuine human reply from an agent's own reply (delivered
+// via the "answer_job" tool, which only the model can invoke, and which
+// always passes fromUser=false — there is no dedicated command a human
+// types directly any more) — see AskTool's doc comment in tools/ask.go for
+// why the distinction has to survive the round trip.
 type jobAnswer struct {
 	text     string
 	fromUser bool
@@ -54,7 +55,7 @@ type jobAnswer struct {
 
 // ShortID trims the "job-<unixnano>-<n>" ID (see nextID) down to its
 // trailing counter — the stable, human-scannable form the TUI jobs panel
-// displays and that a person types back into "/answer".
+// displays.
 func ShortID(id string) string {
 	if idx := strings.LastIndexByte(id, '-'); idx >= 0 && idx+1 < len(id) {
 		return id[idx+1:]

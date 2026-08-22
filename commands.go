@@ -18,7 +18,6 @@ import (
 	"github.com/decodo/tyci/internal/pricing"
 	"github.com/decodo/tyci/internal/readline"
 	"github.com/decodo/tyci/internal/skills"
-	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
@@ -110,12 +109,12 @@ func registerProviders() {
 // The returned shutdown func closes any connected MCP servers and must be
 // deferred by the caller so a stdio server's child process never outlives
 // this process; it is a no-op when MCP was never connected.
-// interactive tells initCommon whether a human is present who could type
-// "/answer" — true for console and tui, false for run (and cron, which
-// shells out to `tyci run`: see this func's doc comment on connectMCP).
-// Threaded onto cfg.Interactive, which buildJobReminder (agent/agent.go)
-// reads to decide whether it is honest to tell the model a user will
-// answer a blocked job.
+// interactive tells initCommon whether a human is present in the
+// conversation at all — true for console and tui, false for run (and cron,
+// which shells out to `tyci run`: see this func's doc comment on
+// connectMCP). Threaded onto cfg.Interactive, which buildJobReminder
+// (agent/agent.go) reads to decide whether it is honest to tell the model
+// a user will answer a blocked job.
 func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (providers.Provider, string, agent.Config, context.Context, *session.Session, string, string, *debug.Logger, func(), error) {
 	registerProviders()
 
@@ -216,7 +215,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		MaxIterations: maxIterations,
 		Debug:         debugFlag,
 		Tools:         toolsAdapter{},
-		Schema:        tools.GetAllToolsSchemaJSON(),
+		Schema:        tools.GetTopLevelToolsSchemaJSON(),
 		Fallbacks:     fallbacks,
 		MaxTokens:     maxTokens,
 		NoPromptCache: !agent.PromptCacheEnabled(),
@@ -327,8 +326,8 @@ var runCmd = &cobra.Command{
 		// to `tyci run`, so this is what gives a scheduled job the same
 		// tool set an interactive session gets. --no-mcp opts a particular
 		// invocation out.
-		// interactive: false — a one-shot run has no one present to type
-		// "/answer" (see agent.Config.Interactive's doc comment).
+		// interactive: false — a one-shot run has no one present to reply at
+		// all (see agent.Config.Interactive's doc comment).
 		provider, modelName, cfg, ctx, _, sessionPath, _, dl, shutdown, err := initCommon(cmd, true, false)
 		if err != nil {
 			return err
@@ -378,8 +377,8 @@ var consoleCmd = &cobra.Command{
 	Use:   "console",
 	Short: "Start an interactive console session",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// interactive: true — a human is at the readline prompt and can
-		// type "/answer" (see agent.Config.Interactive's doc comment).
+		// interactive: true — a human is at the readline prompt (see
+		// agent.Config.Interactive's doc comment).
 		provider, modelName, cfg, ctx, _, sessionPath, historyFile, dl, shutdown, err := initCommon(cmd, true, true)
 		if err != nil {
 			return err
@@ -410,27 +409,6 @@ var consoleCmd = &cobra.Command{
 	},
 }
 
-// tuiAnswerFunc builds the closure passed to display.NewTUI as its onAnswer
-// parameter, wiring the TUI's "/answer" command to reg. Delivered
-// synchronously from the TUI's key handler (see TuiModel.answerFunc,
-// tui_keys.go), straight into the shared job registry — jobs.Registry is
-// mutex-guarded, so this is safe off whatever goroutine happens to be
-// running the agent turn.
-//
-// Pulled out of the NewTUI call site as its own function so a test can pin
-// that it is non-nil and actually delivers into reg (see
-// TestTUIAnswerFunc_RoutesAnswerToJobRegistry in interactive_answer_test.go)
-// without needing to start a real bubbletea program end-to-end just to prove
-// the composition root wires "/answer" correctly. display.NewTUI itself
-// additionally panics if it is ever handed nil (see requireAnswerWiring),
-// so a future edit that drops this argument, or passes it as nil, fails
-// loudly at TUI startup instead of leaving "/answer" silently dead.
-func tuiAnswerFunc(reg *jobs.Registry) func(arg string) (msg string, ok bool) {
-	return func(arg string) (string, bool) {
-		return handleAnswerCommand(reg, arg)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // tui
 // ---------------------------------------------------------------------------
@@ -439,8 +417,8 @@ var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Start the TUI (rich terminal UI)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// interactive: true — a human is at the keyboard and can type
-		// "/answer" (see agent.Config.Interactive's doc comment).
+		// interactive: true — a human is at the keyboard (see
+		// agent.Config.Interactive's doc comment).
 		provider, modelName, cfg, ctx, _, sessionPath, historyFile, dl, shutdown, err := initCommon(cmd, true, true)
 		if err != nil {
 			return err
@@ -501,7 +479,7 @@ var tuiCmd = &cobra.Command{
 			}
 		}, agent.GetDefaultModel(), func(newDefault string) {
 			_ = agent.SetDefaultModel(newDefault)
-		}, toolsCount, skillsCount, mcpCount, tuiAnswerFunc(JobRegistry))
+		}, toolsCount, skillsCount, mcpCount)
 
 		// Show async subagent jobs (subagent(async: true), see tools/subagent.go)
 		// in the TUI's background-jobs panel/modal (Ctrl+B).

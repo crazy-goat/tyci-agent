@@ -43,9 +43,9 @@ type JobStatus struct {
 	Success bool
 	Content string
 	Error   string
-	// Waiting is true when the job is currently blocked inside an "ask"
-	// tool call, waiting for someone to call "answer" on it. Only
-	// meaningful when Done is false.
+	// Waiting is true when the job is currently blocked inside an
+	// "ask_parent" tool call, waiting for someone to call "answer_job" on
+	// it. Only meaningful when Done is false.
 	Waiting bool
 	// Question is the pending question text while Waiting is true.
 	Question string
@@ -140,7 +140,7 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			return ToolResult{
 				Type:    "result",
 				Success: true,
-				Content: fmt.Sprintf("job %s is waiting for an answer: %q. Call the \"answer\" tool with job_id=%q and your reply to unblock it.%s", jobID, status.Question, jobID, clampedNote),
+				Content: fmt.Sprintf("job %s is waiting for an answer: %q. Relay it to the user (or genuinely-known info) unless you truly know the answer — call the \"answer_job\" tool with job_id=%q and that reply to unblock it. Never invent an answer standing in for a human who hasn't replied.%s", jobID, status.Question, jobID, clampedNote),
 			}
 		}
 		progressNote := ""

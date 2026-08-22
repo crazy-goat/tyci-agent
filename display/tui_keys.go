@@ -117,49 +117,6 @@ func (m TuiModel) handleLocalSlashCommand() (bool, tea.Model) {
 		return true, m
 	}
 	lower := strings.ToLower(line)
-	if lower == "/answer" || strings.HasPrefix(lower, "/answer ") {
-		// Handled here, unconditionally, whether or not a turn is in
-		// flight (m.reading is false while one is) — and, critically, NOT
-		// by routing through submit() or m.commands the way /btw does a
-		// few lines down.
-		//
-		// submit() is wrong for this one specifically: it flips m.reading
-		// to false and waits for a "done"/"reset" block (see
-		// tui_blocks.go) to flip it back — a block this command never
-		// produces, since it never starts a turn. That wedged the TUI:
-		// answering a job left the status bar claiming a turn was still
-		// running, with everything typed next silently piling up in the
-		// pending-message queue until some other turn happened to start
-		// and drain it — which, for the job just answered, could be many
-		// minutes away.
-		//
-		// Routing through m.commands (mid-turn only, like /btw) would
-		// avoid the wedge but reintroduce the OTHER half of the bug: it is
-		// only drained from NextMessages, i.e. once the CURRENT tool call
-		// and model turn finish — not helpful when that turn is stuck on
-		// a long bash or a sync subagent, unrelated to the very job the
-		// person is trying to unblock.
-		//
-		// m.answerFunc (wired once from main via NewTUI, nil in tests that
-		// never set it) calls straight into jobs.Registry.Answer, which is
-		// mutex-guarded — calling it synchronously here, off whatever
-		// goroutine is running the agent turn, is safe.
-		m.input.Reset()
-		m.input.SetHeight(1)
-		m.closeFileComplete()
-		arg := strings.TrimSpace(line[len("/answer"):])
-		if m.answerFunc == nil {
-			m.statusMessage = "/answer: unavailable"
-			return true, m
-		}
-		msg, ok := m.answerFunc(arg)
-		if ok {
-			m.statusMessage = "✅ " + msg
-		} else {
-			m.statusMessage = "/answer: " + msg
-		}
-		return true, m
-	}
 	if m.reading || !strings.HasPrefix(line, "/") {
 		return false, m
 	}

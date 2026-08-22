@@ -503,8 +503,8 @@ func wireTools() {
 	JobRegistry.SetOnEvent(func(j jobs.Job) {
 		jobEventBus.Publish("job.updated", j)
 
-		// A job that called "ask" is now blocked, and it stays blocked until
-		// someone calls "answer" or its wall-clock limit expires — at which
+		// A job that called "ask_parent" is now blocked, and it stays blocked until
+		// someone calls "answer_job" or its wall-clock limit expires — at which
 		// point everything it had done is thrown away. Relying on the parent
 		// to poll for that is not good enough: it has no reason to suspect a
 		// question is pending, and a model that forgets to poll silently
@@ -514,8 +514,8 @@ func wireTools() {
 		if j.Status == jobs.StatusWaitingAnswer {
 			JobNotices.Notify(fmt.Sprintf(
 				"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
-					"Relay this question to the user and let them answer it (they can reply with /answer) — do not invent an answer on their behalf. "+
-					"Only call answer(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+
+					"Relay this question to the user in your reply, wait for their answer in the conversation, then deliver it — do not invent an answer on their behalf. "+
+					"Only call answer_job(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+
 					"Until it is answered it makes no progress, and its work is discarded when it times out.",
 				j.Description, j.Question, j.ID, j.ID))
 		}

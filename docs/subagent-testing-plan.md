@@ -137,25 +137,25 @@ jak przed całą tą rundą zmian.
 
 - Auto-`/compact` przy 95% kontekstu — zaplanowane, niezaimplementowane.
 
-## 6. `ask`/`answer`, `report_progress`, `resume`
+## 6. `ask_parent`/`answer_job`, `report_progress`, `resume`
 
 - [ ] **6.1** W trakcie trwania joba async (spawn przez 1.1): job wywołuje
-      `ask(question: "...")` — panel jobów w tle pokazuje status
+      `ask_parent(question: "...")` — panel jobów w tle pokazuje status
       `waiting_answer` (zamiast `running`), a `wait(job_id: "<id>")` zwraca
       komunikat zawierający dokładną treść pytania i instrukcję użycia
-      narzędzia `answer` z tym `job_id`.
-- [ ] **6.2** Zaraz po 6.1: wywołaj `answer(job_id: "<id z 6.1>", text: "...")`
+      narzędzia `answer_job` z tym `job_id`.
+- [ ] **6.2** Zaraz po 6.1: wywołaj `answer_job(job_id: "<id z 6.1>", text: "...")`
       z głównego wątku (albo z innego agenta) — job odblokowuje się
-      natychmiast, `ask` w środku joba dostaje dokładnie ten tekst z powrotem,
+      natychmiast, `ask_parent` w środku joba dostaje dokładnie ten tekst z powrotem,
       status wraca na `running`, a finalny wynik joba (widoczny przez
       `wait`) odzwierciedla otrzymaną odpowiedź.
-- [ ] **6.3** `ask` na który **nikt nie odpowiada** — job **nie wisi w
+- [ ] **6.3** `ask_parent` na który **nikt nie odpowiada** — job **nie wisi w
       nieskończoność**: odblokowuje się sam po osiągnięciu własnego limitu
       czasu joba (600s dla async subagenta), zwracając komunikat mówiący
       wprost, że nie było odpowiedzi i że agent ma kontynuować na własną rękę.
       (W teście manualnym nie czekaj pełnych 600s — testy jednostkowe/
       integracyjne już pokrywają to na krótszym, wstrzykniętym deadlinie;
-      manualnie wystarczy potwierdzić, że `ask` jest w ogóle dostępny tylko
+      manualnie wystarczy potwierdzić, że `ask_parent` jest w ogóle dostępny tylko
       wewnątrz joba w tle, nie z normalnej, pierwszoplanowej tury.)
 - [ ] **6.4** Job async wywołuje `report_progress(text: "...")` w trakcie
       działania (przed zakończeniem) — `wait(job_id: "<id>")` wywołany, gdy

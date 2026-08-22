@@ -209,7 +209,7 @@ func TestWiring_BG5_KillJobStopsABackgroundCommand(t *testing.T) {
 }
 
 // TestWiring_BG6_BlockedQuestionReachesTheParent covers the channel that used
-// to be a dead end: a child calls "ask", blocks, and nothing told the parent.
+// to be a dead end: a child calls "ask_parent", blocks, and nothing told the parent.
 // A parent that never polls left the child blocked until its wall-clock limit,
 // at which point the whole child run was thrown away.
 func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
@@ -246,17 +246,19 @@ func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
 	if !strings.Contains(notice, "should I also change the tests?") {
 		t.Errorf("the question itself must reach the parent: %q", notice)
 	}
-	if !strings.Contains(notice, "answer(job_id=") {
+	if !strings.Contains(notice, "answer_job(job_id=") {
 		t.Errorf("the notice must say how to reply: %q", notice)
 	}
-	// The notice must tell the model to relay the question to the user
-	// (via /answer) rather than instructing it to answer unconditionally —
-	// the old wording ("Reply with answer(...)") is exactly what drove the
-	// model to invent an answer on the user's behalf.
+	// The notice must tell the model to relay the question to the user and
+	// wait for their reply in the conversation, rather than instructing it
+	// to answer unconditionally — the old wording ("Reply with
+	// answer_job(...)") is exactly what drove the model to invent an answer
+	// on the user's behalf. There is no dedicated slash command any more:
+	// the model itself relays the reply via answer_job once it has one.
 	if !strings.Contains(notice, "Relay this question to the user") {
 		t.Errorf("the notice must tell the model to relay to the user, not invent an answer: %q", notice)
 	}
-	if !strings.Contains(notice, "/answer") {
-		t.Errorf("the notice must point at the /answer command: %q", notice)
+	if strings.Contains(notice, "/answer") {
+		t.Errorf("the notice must not point at a /answer command — it no longer exists: %q", notice)
 	}
 }

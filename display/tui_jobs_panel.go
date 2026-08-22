@@ -111,16 +111,16 @@ func jobDuration(j jobs.Job) time.Duration {
 }
 
 // shortJobID trims the "job-<unixnano>-<n>" ID (see jobs.nextID) down to a
-// stable, human-scannable suffix instead of showing the full timestamp — the
-// form a person types back into "/answer".
+// stable, human-scannable suffix instead of showing the full timestamp.
 func shortJobID(id string) string {
 	return jobs.ShortID(id)
 }
 
 // formatJobLine renders one job as a single line: "<icon> #<id> <status>
 // <description> (<duration>)", truncated to fit width. For a job waiting on
-// an answer, the QUESTION text is shown instead of the description — that is
-// the one thing the user needs to see to answer it (via "/answer <id> ...").
+// an answer, the QUESTION text is shown instead of the description: it makes
+// no progress until answer_job relays it a reply, so it's the one thing
+// worth seeing here.
 func formatJobLine(j jobs.Job, width int) string {
 	icon, color := jobStatusIcon(j.Status)
 	iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)

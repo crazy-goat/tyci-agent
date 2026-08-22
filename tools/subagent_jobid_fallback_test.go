@@ -5,15 +5,15 @@ package tools
 // mode cannot hand a blocking call's children to the background (no
 // SetBackgroundBashEnabled — `tyci run` / `--print`; see main.go/
 // commands.go). Before the fix, that branch fell straight to plain
-// runTasks with no job id at all, so report_progress/ask/wait all refused
-// to work on these children.
+// runTasks with no job id at all, so report_progress/ask_parent/wait all
+// refused to work on these children.
 //
-// ask is the one exception, deliberately: giving these children a job id
-// must not make ask BLOCK for its full SubagentTimeoutSec with no way for
-// an answer to ever arrive (see AskUnroutableCtxKey in ask.go) — a
-// `tyci run` invocation never drains JobNotices and the blocking "subagent"
-// tool call here never returns until every child finishes, so nobody is
-// ever free to call "answer".
+// ask_parent is the one exception, deliberately: giving these children a
+// job id must not make ask_parent BLOCK for its full SubagentTimeoutSec
+// with no way for an answer to ever arrive (see AskUnroutableCtxKey in
+// ask.go) — a `tyci run` invocation never drains JobNotices and the
+// blocking "subagent" tool call here never returns until every child
+// finishes, so nobody is ever free to call "answer_job".
 
 import (
 	"context"
@@ -109,7 +109,7 @@ func TestPrintModeChildCanReportProgress(t *testing.T) {
 }
 
 // TestAskFailsFastWhenTheSpawningCallCannotHandOff is blocker (a) from
-// review: giving these children a job id must not make "ask" pass its
+// review: giving these children a job id must not make "ask_parent" pass its
 // job-id gate and then block for its whole timeout on the one path where an
 // answer can structurally never arrive (the "subagent" tool call here does
 // not return until the child itself finishes — there is no handoff to free
@@ -174,7 +174,6 @@ func TestNoJobRegistryStillHasNoJobID(t *testing.T) {
 		t.Fatalf("expected report_progress to fail with 'no job id', got: %+v", reportRes)
 	}
 }
-
 
 // TestPrintModeChildRunsExactlyOnce guards against the exact historical bug
 // item 20 already fixed for the handoff path (TestBlockingSingleTaskRunsExactlyOnce):
