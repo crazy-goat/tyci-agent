@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,10 +37,55 @@ type Job struct {
 	// own progress before completing.
 	Progress string
 
+	// LastActivity is materialized by Snapshot from lastActivity below — it
+	// only ever holds a meaningful value on a Snapshot()-returned copy, not
+	// on the live *Job (which tracks the same information in lastActivity
+	// instead). Display code reads this field, never lastActivity directly.
+	LastActivity time.Time
+
+	// lastActivity holds unix nanoseconds of the last sign of life seen from
+	// this job: a streamed Text/Thinking/ToolCallStart/ToolCallDelta/
+	// ToolCallEnd call, or a backgrounded bash output line — see
+	// jobs.Registry.TouchActivity and its callers in tools/subagent.go and
+	// tools/bash.go. Deliberately NOT derived from Progress: report_progress
+	// is voluntary and rare, so a job that never calls it would otherwise
+	// read as permanently idle even while actively streaming output.
+	//
+	// This is a plain int64 rather than atomic.Int64 on purpose: Snapshot
+	// copies the whole Job by value, and go vet's copylocks check rejects
+	// copying a struct containing an atomic.Int64 (it carries a noCopy-style
+	// guard). A plain int64 read/written via atomic.LoadInt64/StoreInt64 on
+	// its address has no such restriction, and needs no registry-wide lock
+	// to update — see touchActivity.
+	//
+	// Set once at Start (so a job that hasn't done anything yet reads as
+	// "idle since start", not a zero time producing a nonsense duration) and
+	// never cleared on completion — like Progress, it persists past terminal
+	// state so a completed job's last known activity is still visible.
+	lastActivity int64
+
 	// answerCh is lazily created by Ask and delivered to by Answer. It stays
 	// internal to the registry: unexported and channel-typed, so Snapshot
 	// must never copy it.
 	answerCh chan jobAnswer
+}
+
+// touchActivity atomically records "now" as this job's last sign of life.
+// Safe for concurrent use from multiple goroutines (parallel tool calls
+// within the same job), and cheap enough to call on every streamed token:
+// no registry lock, no snapshot, no event. The CAS loop guards against a
+// stale call (racing with a newer one) ever moving the timestamp backward.
+func (j *Job) touchActivity() {
+	now := time.Now().UnixNano()
+	for {
+		old := atomic.LoadInt64(&j.lastActivity)
+		if now <= old {
+			return
+		}
+		if atomic.CompareAndSwapInt64(&j.lastActivity, old, now) {
+			return
+		}
+	}
 }
 
 // jobAnswer is what Answer sends and Ask receives over answerCh. fromUser
@@ -65,14 +111,15 @@ func ShortID(id string) string {
 
 func (j *Job) Snapshot() Job {
 	return Job{
-		ID:          j.ID,
-		Description: j.Description,
-		Status:      j.Status,
-		Result:      j.Result,
-		Err:         j.Err,
-		StartedAt:   j.StartedAt,
-		FinishedAt:  j.FinishedAt,
-		Question:    j.Question,
-		Progress:    j.Progress,
+		ID:           j.ID,
+		Description:  j.Description,
+		Status:       j.Status,
+		Result:       j.Result,
+		Err:          j.Err,
+		StartedAt:    j.StartedAt,
+		FinishedAt:   j.FinishedAt,
+		Question:     j.Question,
+		Progress:     j.Progress,
+		LastActivity: time.Unix(0, atomic.LoadInt64(&j.lastActivity)),
 	}
 }
