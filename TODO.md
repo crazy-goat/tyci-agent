@@ -4,6 +4,8 @@ Working agreement: one item at a time. A Sonnet subagent implements, an Opus
 subagent reviews, the Sonnet subagent fixes what the review found, and that
 loop repeats until the review comes back clean. Then the next item.
 
+The loop runs without asking which item comes next: pick one, implement, review, fix, merge, push, report. Only stop to ask when a decision is genuinely the owner's — a semantic choice, a trade-off with no obviously right answer, or something that changes what gets built. Ordering is not one of those.
+
 Status: `todo` · `wip` · `review` · `done`
 
 Work happens in a git worktree, never in the main checkout. A coder subagent
