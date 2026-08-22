@@ -385,67 +385,40 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 	// here used to re-run every task from scratch on the common "finished in
 	// time" path, paying the model and side effects twice.
 	if jobStarter != nil && backgroundAllowed(ctx) {
-		res, _ := t.runWithHandoff(ctx, tasks)
+		res, _ := t.runWithHandoff(ctx, tasks, true)
 		return res
 	}
 
-	// Reached when backgrounding is disabled for this mode
-	// (!backgroundAllowed(ctx), including when ctx already carries a
-	// SubagentSinkCtxKey — i.e. this call is itself running inside another
-	// subagent) — the only case runWithHandoff does not cover.
+	// Reached when backgrounding is disabled for this mode — in practice
+	// `tyci run` / `--print` (main.go never calls SetBackgroundBashEnabled
+	// there; see commands.go). backgroundAllowed also returns false when ctx
+	// carries SubagentSinkCtxKey, but that combination can never actually
+	// reach here: subagentDeniedTools (toolgate.go) removes the "subagent"
+	// tool itself from a child's schema and its runtime gate, so a child
+	// can never make this call in the first place.
 	//
 	// A job registry is still available here in every real invocation
-	// (jobStarter is wired unconditionally in main.go): `tyci run` /
-	// `--print` reach this branch because that mode never calls
-	// SetBackgroundBashEnabled, not because there is no registry. So the
-	// children still get a job id — the only thing this mode can't offer is
-	// somewhere to hand them off TO, since there is no next turn to deliver
-	// a background notice into. They just run to completion right here,
-	// registered the whole time, which is what makes report_progress and
-	// wait(job_id=...) work on them instead of failing with "no job id".
+	// (jobStarter is wired unconditionally in main.go). So the children
+	// still get a job id — via the same runWithHandoff machinery, with
+	// handoff=false — which is what makes report_progress work on them
+	// instead of failing with "no job id". wait(job_id=...) and resume do
+	// NOT start working here too: this call blocks until every child is
+	// terminal and resultsToToolResult never surfaces the ids, so the model
+	// is never told one to begin with.
 	//
-	// (ask is different: giving these a job id must NOT make ask block for
-	// its full timeout with no way to ever receive an answer — see
-	// AskUnroutableCtxKey, which ask consults separately from "do I have a
-	// job id".)
+	// (ask is different again: giving these a job id must NOT make ask
+	// block for its full timeout with no way to ever receive an answer —
+	// see AskUnroutableCtxKey, which ask consults separately from "do I have
+	// a job id".)
 	if jobStarter != nil {
-		return t.runRegistered(ctx, tasks)
+		res, _ := t.runWithHandoff(ctx, tasks, false)
+		return res
 	}
 
 	// No job registry at all — only reachable in tests; the real binary
 	// always wires one (main.go). No job ids are possible here, so this is
 	// the one remaining plain, unregistered path.
 	results := runTasks(ctx, t.Runner, tasks, SubagentTimeoutSec)
-	return resultsToToolResult(results)
-}
-
-// runRegistered runs tasks to completion through jobStarter — so each gets a
-// real job id, and report_progress/wait(job_id=...) work on it — but never
-// hands them to the background: the caller has already determined (via
-// backgroundAllowed) that there is nobody positioned to receive a handoff
-// notice in this mode. It is the same spawn machinery runWithHandoff uses,
-// minus the timer/poll/handoff loop: just wait for every child to reach
-// job.done, then report exactly what runWithHandoff's own
-// "everyone-finished" tail reports.
-//
-// AskUnroutableCtxKey is stamped onto the context every spawned child
-// inherits: this tool call cannot return to its own caller until every
-// child finishes (there is no handoff here), so a child blocked in "ask"
-// would otherwise wait out its whole timeout with nobody ever able to
-// answer it. See that key's doc comment in ask.go.
-func (t *SubagentTool) runRegistered(ctx context.Context, tasks []subagentTask) ToolResult {
-	ctx = context.WithValue(ctx, AskUnroutableCtxKey{}, true)
-	spawned := make([]*spawnedTask, 0, len(tasks))
-	for _, task := range tasks {
-		spawned = append(spawned, t.spawn(ctx, task, false, true))
-	}
-	for _, st := range spawned {
-		<-st.done
-	}
-	results := make([]subagentResult, len(spawned))
-	for i, st := range spawned {
-		results[i] = st.result()
-	}
 	return resultsToToolResult(results)
 }
 
@@ -629,6 +602,13 @@ type spawnedTask struct {
 	label string
 	done  chan struct{}
 
+	// cancel ends this child's own detached context (jobCtx in spawn). The
+	// job's closure already defers a call to it on normal completion; a
+	// caller that needs to stop the child early (its own parent ctx was
+	// cancelled and there is no background to hand it off to) calls it a
+	// second time, which is safe — context.CancelFunc is idempotent.
+	cancel context.CancelFunc
+
 	mu       sync.Mutex
 	finished bool
 	handed   bool
@@ -685,6 +665,7 @@ func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtSta
 	// context of a tool call dies when the call returns, which for a
 	// backgrounded child would kill the very work we are keeping alive.
 	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SubagentTimeoutSec*time.Second)
+	st.cancel = cancel
 	stopStream := &atomic.Bool{}
 	st.stopStream = stopStream
 
@@ -775,19 +756,40 @@ Do not call wait before you are told: it can only say "still running", which the
 	return b.String()
 }
 
-// runWithHandoff runs a blocking subagent call as background jobs and waits up
-// to SubagentBackgroundAfterSec for them.
+// runWithHandoff runs a blocking subagent call as background jobs and waits
+// for them — up to SubagentBackgroundAfterSec when handoff is true, or until
+// every child finishes (or the parent ctx is cancelled) when it is false.
+//
+// handoff is true exactly when backgroundAllowed(ctx) held at the call site
+// (Run): there is somewhere to hand a still-running child off TO, so a
+// person or the model gets a turn back instead of waiting on it. It is false
+// for the one other case that still has a job registry to register through
+// — in practice `tyci run` / `--print`, which never drains a background
+// notice — so there is no handoff to offer: the timer and the
+// typing-interrupts-the-wait poll both stay disabled (their channels are left
+// nil, which never fires in a select), and a child still running when ctx is
+// cancelled is stopped outright via cancelRemaining rather than left to run
+// unsupervised in the background.
+//
+// When handoff is false, AskUnroutableCtxKey is stamped on every spawned
+// child's context: this call cannot return to its own caller until every
+// child is terminal, so a child blocked in "ask" here could never have its
+// question answered no matter how long it waited. See that key's doc
+// comment in ask.go.
 //
 // The returned ToolResult is always ready to hand straight back to the
 // model — the caller does not need to fall back to re-running anything. The
-// bool distinguishes which of the two outcomes produced it: handed=false
-// means every child finished inside the window, and the result is built from
-// their collected results via resultsToToolResult — the same shape a plain,
-// non-handoff run would have produced, computed once rather than by running
-// the tasks again. handed=true means at least one child is still going: its
-// result is now the job registry's to deliver, and the returned message
-// (from handOff) says so.
-func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask) (ToolResult, bool) {
+// bool distinguishes which of the outcomes produced it: false means every
+// child finished inside the window, and the result is built from their
+// collected results via resultsToToolResult — the same shape a plain,
+// unhanded-off run would have produced, computed once rather than by running
+// the tasks again. true means the loop ended some other way — handed to the
+// background (handoff=true) or cancelled outright (handoff=false).
+func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask, handoff bool) (ToolResult, bool) {
+	if !handoff {
+		ctx = context.WithValue(ctx, AskUnroutableCtxKey{}, true)
+	}
+
 	spawned := make([]*spawnedTask, 0, len(tasks))
 	for _, task := range tasks {
 		// streamToParent stays true while the parent is still waiting: its
@@ -796,20 +798,31 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask)
 		spawned = append(spawned, t.spawn(ctx, task, false, true))
 	}
 
-	timer := time.NewTimer(SubagentBackgroundAfterSec)
-	defer timer.Stop()
-
 	waiting := make(map[*spawnedTask]struct{}, len(spawned))
 	for _, st := range spawned {
 		waiting[st] = struct{}{}
 	}
 
-	// A person typing ends the wait early. The children are not touched — they
-	// carry on in the background exactly as they would at the 60s mark — but
-	// the turn ends, so the question gets an answer instead of sitting behind
-	// work the person did not ask to wait for.
-	poll := time.NewTicker(userPendingPoll)
-	defer poll.Stop()
+	// timerC and pollC are left nil (never fire in a select) when handoff is
+	// false: there is nothing to hand still-running children off to, so
+	// neither the "background them after a while" timer nor the
+	// "typing ends the wait early" poll applies. ctx.Done() is the only exit
+	// this mode has besides every child finishing.
+	var timerC <-chan time.Time
+	var pollC <-chan time.Time
+	if handoff {
+		timer := time.NewTimer(SubagentBackgroundAfterSec)
+		defer timer.Stop()
+		timerC = timer.C
+
+		// A person typing ends the wait early. The children are not touched —
+		// they carry on in the background exactly as they would at the 60s
+		// mark — but the turn ends, so the question gets an answer instead of
+		// sitting behind work the person did not ask to wait for.
+		poll := time.NewTicker(userPendingPoll)
+		defer poll.Stop()
+		pollC = poll.C
+	}
 
 	for len(waiting) > 0 {
 		// One select per remaining task rather than a WaitGroup: the timer has
@@ -823,16 +836,24 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask)
 		select {
 		case <-next.done:
 			delete(waiting, next)
-		case <-poll.C:
+		case <-pollC:
 			if UserPending() {
 				return t.handOff(spawned), true
 			}
-		case <-timer.C:
+		case <-timerC:
 			return t.handOff(spawned), true
 		case <-ctx.Done():
-			// The parent turn was cancelled (Esc). The children are detached
-			// and keep going; say so rather than pretending they stopped.
-			return t.handOff(spawned), true
+			if handoff {
+				// The parent turn was cancelled (Esc). The children are
+				// detached and keep going; say so rather than pretending
+				// they stopped.
+				return t.handOff(spawned), true
+			}
+			// No handoff is available in this mode, so there is nobody to
+			// leave these running for — stop them outright instead of
+			// letting them run unsupervised to their SubagentTimeoutSec
+			// backstop after the caller has already stopped listening.
+			return t.cancelRemaining(spawned), true
 		}
 	}
 
@@ -874,6 +895,55 @@ func (t *SubagentTool) handOff(spawned []*spawnedTask) ToolResult {
 		return resultsToToolResult(finished)
 	}
 	return ToolResult{Type: "result", Success: true, Content: spawnedJobsMessage(stillRunning, finished)}
+}
+
+// cancelRemaining is runWithHandoff's handoff=false counterpart to handOff:
+// there is no background to move a still-running child to, so instead every
+// child not yet finished is cancelled outright via its own spawn-time
+// cancel — the same signal spawn's own deferred cancel() sends on normal
+// completion, calling it early here is safe since context.CancelFunc is
+// idempotent — and the call returns immediately with whatever finished
+// results already exist plus a clear error about the rest, rather than
+// silently discarding them or leaving them to run unsupervised.
+//
+// hand() (not a bare finished-check) is reused here purely to get its
+// exactly-once bookkeeping: it also flips handed so a child that manages to
+// finish anyway right after being cancelled does not trigger a spurious
+// background-finished notice (see finish()'s doc comment) that nothing in
+// this mode would ever read.
+func (t *SubagentTool) cancelRemaining(spawned []*spawnedTask) ToolResult {
+	var finished []subagentResult
+	var cancelled int
+	for _, st := range spawned {
+		if st.hand() {
+			cancelled++
+			if st.cancel != nil {
+				st.cancel()
+			}
+			continue
+		}
+		finished = append(finished, st.result())
+	}
+	if cancelled == 0 {
+		// Every child finished between ctx firing and this loop running.
+		return resultsToToolResult(finished)
+	}
+	if len(finished) == 0 {
+		return ToolResult{
+			Type:    "result",
+			Success: false,
+			Error:   "the call was cancelled before any child finished; the still-running children were cancelled too",
+		}
+	}
+	data, err := json.Marshal(finished)
+	if err != nil {
+		data = []byte("[]")
+	}
+	return ToolResult{
+		Type:    "result",
+		Success: false,
+		Error:   fmt.Sprintf("the call was cancelled with %d child(ren) still running (now cancelled); %d already finished: %s", cancelled, len(finished), data),
+	}
 }
 
 func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, timeoutSec int) []subagentResult {

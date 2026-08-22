@@ -434,7 +434,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "report_progress",
-				"description": "Post a short status note from inside a job (any subagent call, or a /btw side-conversation), visible via wait and in the jobs panel. Use it during long work so whoever is watching is not left guessing. Only usable inside a job.",
+				"description": "Post a short status note from inside a job (any subagent call, or a /btw side-conversation). Only usable inside a job; it always succeeds and updates the job record. Whether anyone actually reads it before the job finishes depends on how you were spawned: an async job or /btw is watchable live (wait, the jobs panel). A blocking subagent call under `tyci run`/`--print` hands out no job id to read it by and has no jobs panel either, so there the note simply never reaches anyone before the job is already done.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{

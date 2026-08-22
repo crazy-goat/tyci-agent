@@ -18,6 +18,7 @@ package tools
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -168,5 +169,82 @@ func TestNoJobRegistryStillHasNoJobID(t *testing.T) {
 	}
 	if reportRes.Success || !strings.Contains(reportRes.Error, "no job id") {
 		t.Fatalf("expected report_progress to fail with 'no job id', got: %+v", reportRes)
+	}
+}
+
+
+// TestPrintModeChildRunsExactlyOnce guards against the exact historical bug
+// item 20 already fixed for the handoff path (TestBlockingSingleTaskRunsExactlyOnce):
+// a fall-through that runs the child via the new registered path AND THEN
+// falls through to the old plain runTasks would double the model calls,
+// double any side effects, and register one job while actually running the
+// task twice. It must run exactly once.
+func TestPrintModeChildRunsExactlyOnce(t *testing.T) {
+	reg := printModeEnv(t)
+	var calls atomic.Int32
+	tool := &SubagentTool{Runner: &mockRunner{
+		RunTaskFunc: func(context.Context, string, string, SubagentOptions) (string, error) {
+			calls.Add(1)
+			return "the answer", nil
+		},
+	}}
+
+	res := tool.Run(ctxWithParentModel("test/model"), map[string]any{"task": "do it"})
+	if !res.Success || res.Content != "the answer" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("runner invoked %d times, want exactly 1", n)
+	}
+	if n := len(reg.List()); n != 1 {
+		t.Fatalf("expected exactly one registered job, got %d", n)
+	}
+}
+
+// TestPrintModeParentCancelStopsWaitingImmediately is the regression test
+// for review finding 1: cancelling the parent ctx must interrupt this
+// path's wait right away, not leave it sitting on <-st.done for as long as
+// the child runs (up to SubagentTimeoutSec). Before the fix, the wait loop
+// here had no ctx.Done() arm at all — spawn's jobCtx is detached from ctx
+// via context.WithoutCancel specifically so a legitimately backgrounded
+// child survives its tool call returning, so nothing else would have
+// stopped this child either.
+func TestPrintModeParentCancelStopsWaitingImmediately(t *testing.T) {
+	printModeEnv(t)
+	release := make(chan struct{})
+	defer close(release)
+
+	tool := &SubagentTool{Runner: &mockRunner{
+		RunTaskFunc: func(ctx context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			select {
+			case <-release:
+				return "finished before cancel", nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		},
+	}}
+
+	ctx, cancel := context.WithCancel(ctxWithParentModel("test/model"))
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	done := make(chan ToolResult, 1)
+	go func() {
+		done <- tool.Run(ctx, map[string]any{"task": "slow"})
+	}()
+
+	select {
+	case res := <-done:
+		if res.Success {
+			t.Fatalf("expected the cancelled call to report failure, got success: %+v", res)
+		}
+		if !strings.Contains(res.Error, "cancelled") {
+			t.Fatalf("expected the error to mention the cancellation, got: %q", res.Error)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return promptly after the parent ctx was cancelled — it is still waiting on the child")
 	}
 }

@@ -290,9 +290,13 @@ stop an async subagent.
 From inside a job. A child can report_progress(text) so watchers are not
 guessing, and ask(question) to block on the parent — that last one is a last
 resort, because asking is how a child stalls. Every subagent call gets a job
-id, blocking or async. ask still needs a way for an answer to reach it,
-though: if the call that spawned this job has no way to hand off and free
-itself up, ask fails immediately instead of stalling for nothing.`,
+id, blocking or async, but "watchers are not guessing" only holds where
+something is actually watching: an async job or /btw is readable live (wait,
+the jobs panel); a blocking call under tyci run/--print hands out no id
+to read it by, so there report_progress still succeeds but nobody sees the
+note before the job is already done. ask still needs a way for an answer to
+reach it, too: if the call that spawned this job has no way to hand off and
+free itself up, ask fails immediately instead of stalling for nothing.`,
 
 	"cron": `A prompt that runs later, or over and over, with nobody there.
 
