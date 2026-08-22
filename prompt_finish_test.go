@@ -49,28 +49,39 @@ func newFinishTestConductor() *conductor.Conductor {
 }
 
 // withCapturedExit overrides exitFunc for the duration of the test and
-// returns accessors for whether it was called and with what code.
-func withCapturedExit(t *testing.T) (called func() bool, code func() int) {
+// returns accessors for whether it was called, with what code, and whether
+// the cleanup flag it was handed had already been set at that moment.
+//
+// That last one is the point. A captured exitFunc *returns*, where the real
+// os.Exit does not, so a test that only checks "cleanup ran" passes even
+// when cleanup is called after the exit — the ordering that in production
+// means it never runs at all. Snapshotting the flag inside the fake is what
+// makes the before/after distinction observable.
+func withCapturedExit(t *testing.T, cleanupCalled *bool) (called func() bool, code func() int, cleanupRanBeforeExit func() bool) {
 	t.Helper()
 	orig := exitFunc
 	var wasCalled bool
 	var exitCode int
+	var ranBefore bool
 	exitFunc = func(c int) {
 		wasCalled = true
 		exitCode = c
+		if cleanupCalled != nil {
+			ranBefore = *cleanupCalled
+		}
 	}
 	t.Cleanup(func() { exitFunc = orig })
-	return func() bool { return wasCalled }, func() int { return exitCode }
+	return func() bool { return wasCalled }, func() int { return exitCode }, func() bool { return ranBefore }
 }
 
 // TestFinishPromptRun_ErrorPath_CallsCleanupBeforeExit is the test for
 // finding (2): it fails if the cleanup hook is dropped from the error
-// path, or if it runs after exitFunc instead of before (which, with the
-// real os.Exit, would mean it never runs at all).
+// path, and — via cleanupRanBeforeExit — if it runs after exitFunc instead
+// of before, which with the real os.Exit means it never runs at all.
 func TestFinishPromptRun_ErrorPath_CallsCleanupBeforeExit(t *testing.T) {
-	exited, code := withCapturedExit(t)
-
 	var cleanupCalled bool
+	exited, code, ranBefore := withCapturedExit(t, &cleanupCalled)
+
 	cond := newFinishTestConductor()
 	finishPromptRun(cond, noopDisplay{}, fmt.Errorf("boom"), func() { cleanupCalled = true })
 
@@ -83,15 +94,18 @@ func TestFinishPromptRun_ErrorPath_CallsCleanupBeforeExit(t *testing.T) {
 	if !cleanupCalled {
 		t.Fatalf("expected cleanup to run on the error path before exit -- this is exactly what os.Exit used to skip")
 	}
+	if !ranBefore() {
+		t.Fatalf("cleanup ran AFTER exitFunc on the error path; with the real os.Exit it would never run at all")
+	}
 }
 
 // TestFinishPromptRun_CanceledPath_CallsCleanupBeforeExit covers the
 // Ctrl-C path (context.Canceled), which exits 130 through a separate
 // branch in finishPromptRun than the generic error path above.
 func TestFinishPromptRun_CanceledPath_CallsCleanupBeforeExit(t *testing.T) {
-	exited, code := withCapturedExit(t)
-
 	var cleanupCalled bool
+	exited, code, ranBefore := withCapturedExit(t, &cleanupCalled)
+
 	cond := newFinishTestConductor()
 	finishPromptRun(cond, noopDisplay{}, context.Canceled, func() { cleanupCalled = true })
 
@@ -104,6 +118,9 @@ func TestFinishPromptRun_CanceledPath_CallsCleanupBeforeExit(t *testing.T) {
 	if !cleanupCalled {
 		t.Fatalf("expected cleanup to run on the canceled (Ctrl-C) path before exit")
 	}
+	if !ranBefore() {
+		t.Fatalf("cleanup ran AFTER exitFunc on the canceled path; with the real os.Exit it would never run at all")
+	}
 }
 
 // TestFinishPromptRun_NoErrorPath_ReturnsWithoutExitOrCleanup checks the
@@ -113,9 +130,9 @@ func TestFinishPromptRun_CanceledPath_CallsCleanupBeforeExit(t *testing.T) {
 // finishPromptRun called cleanup here too, a normal `tyci run` would run
 // tools.ShutdownMCP() (and close the debug log) twice.
 func TestFinishPromptRun_NoErrorPath_ReturnsWithoutExitOrCleanup(t *testing.T) {
-	exited, _ := withCapturedExit(t)
-
 	var cleanupCalled bool
+	exited, _, _ := withCapturedExit(t, &cleanupCalled)
+
 	cond := newFinishTestConductor()
 	finishPromptRun(cond, noopDisplay{}, nil, func() { cleanupCalled = true })
 
