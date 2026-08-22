@@ -187,6 +187,29 @@ func (m *TuiModel) buildViewportRows(msgHeight int) []renderRow {
 	return rows
 }
 
+// spacerAfter reports whether a blank line separates block i from the one
+// after it.
+//
+// Tools and thinking are the machine's working-out, and a run of them reads as
+// one stretch of work rather than several paragraphs — so no blank line goes
+// between two of them in any combination. Prose still gets its breathing room:
+// a spacer appears wherever either side is text, a user turn, an error and so
+// on.
+//
+// Both flat-line builders below must agree with this exactly. They compute
+// line offsets independently, and a disagreement about a single spacer shifts
+// every subsequent line's index — which shows up as mouse selection landing on
+// the wrong row, not as an obvious crash.
+func (m *TuiModel) spacerAfter(i int) bool {
+	if i+1 >= len(m.blocks) {
+		return false
+	}
+	return !(compactKind(m.blocks[i].kind) && compactKind(m.blocks[i+1].kind))
+}
+
+// compactKind names the block kinds that pack together without a spacer.
+func compactKind(kind string) bool { return kind == "tool" || kind == "thinking" }
+
 // buildAllFlatRenderLines builds the flat line array for ALL blocks.
 func (m *TuiModel) buildAllFlatRenderLines() []flatRenderLine {
 	var all []flatRenderLine
@@ -203,7 +226,7 @@ func (m *TuiModel) buildAllFlatRenderLines() []flatRenderLine {
 				SourceLine: j,
 			})
 		}
-		if i+1 < len(m.blocks) && !(m.blocks[i+1].kind == "tool" && m.blocks[i].kind == "tool") {
+		if m.spacerAfter(i) {
 			all = append(all, flatRenderLine{Text: "", SourceKind: "spacer", BlockIndex: -1, SourceLine: -1})
 		}
 	}
@@ -226,8 +249,7 @@ func (m *TuiModel) buildFlatRenderLinesInRange(startLine, endLine int) []flatRen
 			continue
 		}
 
-		// Account for the spacer after this block (except between consecutive tool blocks)
-		hasSpacer := i+1 < len(m.blocks) && !(m.blocks[i+1].kind == "tool" && m.blocks[i].kind == "tool")
+		hasSpacer := m.spacerAfter(i)
 		blockEnd := acc + blockLines
 		if hasSpacer {
 			blockEnd++ // spacer line
