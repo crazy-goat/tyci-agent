@@ -133,17 +133,29 @@ func limits(m connect.ModelsDevModel) Limits {
 	return Limits{Context: m.Limit.Context, Output: m.Limit.Output}
 }
 
-// CatalogPriced reports whether the cached catalog carries cost data at all.
-// A false here means every price will read as unknown, and the fix is
-// `tyci provider refresh` — worth saying out loud rather than showing a bar
-// full of dashes.
-func CatalogPriced() bool {
-	for _, p := range catalog() {
-		for _, m := range p.Models {
-			if m.Cost.Input > 0 || m.Cost.Output > 0 {
-				return true
-			}
+// ProviderNeedsPrices reports whether provider exists in the catalog, has at
+// least one model, but carries no cost data for any of them — the signature
+// of a provider whose pricing was stripped by an old tyci build (see doc
+// comment on connect.ModelsDevModel) or was hand-added without price data.
+//
+// This is deliberately scoped to one provider rather than the whole catalog:
+// a single priced provider (a hand-maintained gateway, say) must not
+// suppress the warning for every other provider forever, and a provider that
+// does carry some prices should not have a model with a genuine $0 cost
+// flagged as missing data — only "this provider has priced nothing at all"
+// is a reliable signal that its data was never captured.
+//
+// Returns false if provider is missing from the catalog: there is nothing
+// to warn about a provider tyci does not know.
+func ProviderNeedsPrices(provider string) bool {
+	p, ok := catalog()[provider]
+	if !ok || len(p.Models) == 0 {
+		return false
+	}
+	for _, m := range p.Models {
+		if rates(m).Known() {
+			return false
 		}
 	}
-	return false
+	return true
 }

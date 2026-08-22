@@ -1,6 +1,7 @@
 package display
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -116,16 +117,89 @@ func TestBuildUsageDetail_HasTurnAndSessionSections(t *testing.T) {
 }
 
 // A stripped catalog is the common case after an upgrade; say what fixes it.
+// The hint is about the model actually in this session, not the whole
+// catalog: it must appear when that session used a provider that prices
+// nothing at all...
 func TestBuildUsageDetail_HintsAtRefreshWhenUnpriced(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"unpriced":{"id":"unpriced","models":{"m":{"id":"m","name":"m"}}}}`)
+	t.Setenv("HOME", dir)
 	pricing.Reset()
 	ledger.Reset()
 	t.Cleanup(pricing.Reset)
 	t.Cleanup(ledger.Reset)
+
+	ledger.Record(ledger.Main, "unpriced", "m", stream.Usage{Input: 10, Output: 10})
+
 	m := TuiModel{modelName: "m"}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")
 	if !strings.Contains(lines, "provider refresh") {
 		t.Fatalf("detail should suggest a catalog refresh:\n%s", lines)
+	}
+}
+
+// ...and must not appear for a model that reads $0 while its own provider
+// prices other models — that is presumed genuinely free, not missing data.
+func TestBuildUsageDetail_NoHintForGenuinelyFreeModel(t *testing.T) {
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"mixed":{"id":"mixed","models":{
+		"priced":{"id":"priced","name":"priced","cost":{"input":3,"output":15}},
+		"free":{"id":"free","name":"free"}
+	}}}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	ledger.Record(ledger.Main, "mixed", "free", stream.Usage{Input: 10, Output: 10})
+
+	m := TuiModel{modelName: "free"}
+	lines := strings.Join(m.buildUsageDetail(40), "\n")
+	if strings.Contains(lines, "provider refresh") {
+		t.Fatalf("a genuinely free model must not trigger the refresh hint:\n%s", lines)
+	}
+}
+
+// The discriminating case this item exists to fix: provider A is priced,
+// provider B is not, and the session's usage is on B. The old global check
+// (one priced provider anywhere silences the warning forever, the nexos
+// case) would stay silent here; the per-provider check must still warn,
+// because it is B — the provider actually in use — that has no prices.
+func TestBuildUsageDetail_HintsWhenUsedProviderUnpricedEvenIfAnotherProviderIsPriced(t *testing.T) {
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{
+		"priced-provider":{"id":"priced-provider","models":{
+			"p":{"id":"p","name":"p","cost":{"input":3,"output":15}}
+		}},
+		"unpriced-provider":{"id":"unpriced-provider","models":{
+			"u":{"id":"u","name":"u"}
+		}}
+	}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	// The session's usage is on the unpriced provider, not the priced one.
+	ledger.Record(ledger.Main, "unpriced-provider", "u", stream.Usage{Input: 10, Output: 10})
+
+	m := TuiModel{modelName: "u"}
+	lines := strings.Join(m.buildUsageDetail(40), "\n")
+	if !strings.Contains(lines, "provider refresh") {
+		t.Fatalf("a priced provider elsewhere in the catalog must not silence the hint for the provider actually in use:\n%s", lines)
+	}
+}
+
+func writeTestCatalog(t *testing.T, homeDir, body string) {
+	t.Helper()
+	dir := homeDir + "/.tyci"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/providers.json", []byte(body), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 

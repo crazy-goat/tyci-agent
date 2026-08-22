@@ -94,8 +94,8 @@ func TestMissingCatalogIsSilent(t *testing.T) {
 	if r, l := Lookup("anthropic", "claude-sonnet-5"); r.Known() || l.Context != 0 {
 		t.Fatal("a missing catalog should answer unknown, not panic")
 	}
-	if CatalogPriced() {
-		t.Fatal("CatalogPriced with no catalog should be false")
+	if ProviderNeedsPrices("anthropic") {
+		t.Fatal("ProviderNeedsPrices with no catalog should be false")
 	}
 }
 
@@ -106,13 +106,17 @@ func TestCorruptCatalogIsSilent(t *testing.T) {
 	}
 }
 
-func TestCatalogPriced(t *testing.T) {
+func TestProviderNeedsPrices(t *testing.T) {
 	withCatalog(t, testCatalog)
-	if !CatalogPriced() {
-		t.Fatal("catalog with costs should report priced")
+	// anthropic carries prices; openai in the same catalog does not — the
+	// check must be scoped to the provider asked about, not the catalog.
+	if ProviderNeedsPrices("anthropic") {
+		t.Fatal("provider with costs should report false")
 	}
-	withCatalog(t, `{"openai":{"id":"openai","models":{"m":{"id":"m","name":"m"}}}}`)
-	if CatalogPriced() {
-		t.Fatal("a stripped catalog should report unpriced")
+	if !ProviderNeedsPrices("openai") {
+		t.Fatal("provider with no cost data on any model should report true")
+	}
+	if ProviderNeedsPrices("no-such-provider") {
+		t.Fatal("a provider absent from the catalog should report false")
 	}
 }
