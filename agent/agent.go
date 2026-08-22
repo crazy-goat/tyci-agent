@@ -363,8 +363,9 @@ func buildTodoReminder(pending []string) string {
 //
 // It leads with the blocked ones because the two cases need opposite
 // responses: a running job is something to wait for or leave alone, while a
-// blocked job needs an answer() now or its work is thrown away. Framed as an
-// automated check, not as a user asking — the user did not say this.
+// blocked job needs to be relayed to the user now (not answered on their
+// behalf) or its work is thrown away. Framed as an automated check, not as a
+// user asking — the user did not say this.
 func buildJobReminder(pending []string) string {
 	var b strings.Builder
 	b.WriteString("[automated check, not the user] Background jobs are still outstanding:\n")
@@ -373,7 +374,7 @@ func buildJobReminder(pending []string) string {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nAnswer anything marked WAITING FOR ANSWER now with answer(job_id=..., text=\"...\"): it is making no progress and its work is discarded when it times out. ")
+	b.WriteString("\nFor anything marked WAITING FOR ANSWER: relay the question to the user and let them answer it (they can reply with /answer) — do not invent an answer on their behalf. Only call answer(job_id=..., text=\"...\") yourself if you already genuinely know the answer. Left unanswered it is making no progress and its work is discarded when it times out. ")
 	b.WriteString("For a job still running, either read it with wait(job_id=...) if you need the result, or say plainly in your reply that you are leaving it running — do not silently end the turn on it.")
 	return b.String()
 }

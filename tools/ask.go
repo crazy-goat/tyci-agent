@@ -11,7 +11,11 @@ import (
 type JobAsker interface {
 	// Ask blocks until answer arrives (via Answer) or ctx is done, returning
 	// ok=false in the latter case. id is unknown -> ok=false immediately.
-	Ask(ctx context.Context, id, question string) (answer string, ok bool)
+	// fromUser reports whether the answer came from a human (the "/answer"
+	// command) as opposed to another agent (the "answer" tool) — see
+	// AskTool.Run, which uses it to mark the answer's provenance for the
+	// child that asked.
+	Ask(ctx context.Context, id, question string) (answer string, fromUser bool, ok bool)
 }
 
 // jobAsker is nil until SetJobAsker is called; the "ask" tool fails loudly
@@ -48,7 +52,7 @@ func (t *AskTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: "ask unavailable: job registry not configured"}
 	}
 
-	answer, ok := jobAsker.Ask(ctx, jobID, question)
+	answer, fromUser, ok := jobAsker.Ask(ctx, jobID, question)
 	if !ok {
 		return ToolResult{
 			Type:    "result",
@@ -56,15 +60,25 @@ func (t *AskTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			Error:   "no answer arrived before this job's own time limit; proceed with your best judgement or state your assumption and continue",
 		}
 	}
-	return ToolResult{Type: "result", Success: true, Content: answer}
+	content := answer
+	if !fromUser {
+		// The parent agent (or another agent) answered this directly via
+		// the "answer" tool, not the human — the child must not report
+		// this back as if the user had said it.
+		content = "[another agent answered this, NOT the user]: " + answer
+	}
+	return ToolResult{Type: "result", Success: true, Content: content}
 }
 
 // JobAnswerer is the local contract the "answer" tool needs — set once from
 // main() via SetJobAnswerer, over the app's shared jobs.Registry.
 type JobAnswerer interface {
 	// Answer delivers text to a job currently blocked in Ask, unblocking it.
+	// fromUser must be true for a human reply, false for another agent's —
+	// see JobAsker.Ask's doc comment. The "answer" tool below always passes
+	// false: it is only ever invoked by a model, never by a person directly.
 	// Returns false if id is unknown or the job isn't currently waiting.
-	Answer(id, text string) bool
+	Answer(id, text string, fromUser bool) bool
 }
 
 // jobAnswerer is nil until SetJobAnswerer is called.
@@ -96,7 +110,7 @@ func (t *AnswerTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: "answer unavailable: job registry not configured"}
 	}
 
-	if !jobAnswerer.Answer(jobID, text) {
+	if !jobAnswerer.Answer(jobID, text, false) {
 		return ToolResult{Type: "result", Success: false, Error: "job_id not found or not currently waiting for an answer"}
 	}
 	return ToolResult{Type: "result", Success: true, Content: "answer delivered; job resumed"}

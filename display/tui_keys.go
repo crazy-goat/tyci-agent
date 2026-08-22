@@ -131,6 +131,16 @@ func (m TuiModel) handleLocalSlashCommand() (bool, tea.Model) {
 			enqueueOrStatus(m.commands, line, &m.statusMessage)
 		}
 		return true, m
+	case lower == "/answer" || strings.HasPrefix(lower, "/answer "):
+		// Answering a blocked background job neither touches the running
+		// turn nor waits for it to end, same as /btw above.
+		m.input.Reset()
+		m.input.SetHeight(1)
+		m.closeFileComplete()
+		if m.commands != nil {
+			enqueueOrStatus(m.commands, line, &m.statusMessage)
+		}
+		return true, m
 	case lower == "/new", lower == "/exit", lower == "/resume", strings.HasPrefix(lower, "/resume "):
 		// These replace or end the conversation the turn is writing to. The
 		// typed line is deliberately left in the input: press Esc to stop the

@@ -65,15 +65,15 @@ func (a jobStarterAdapter) Start(ctx context.Context, description string, fn fun
 // jobAskerAdapter satisfies tools.JobAsker over JobRegistry.
 type jobAskerAdapter struct{ reg *jobs.Registry }
 
-func (a jobAskerAdapter) Ask(ctx context.Context, id, question string) (string, bool) {
+func (a jobAskerAdapter) Ask(ctx context.Context, id, question string) (string, bool, bool) {
 	return a.reg.Ask(ctx, id, question)
 }
 
 // jobAnswererAdapter satisfies tools.JobAnswerer over JobRegistry.
 type jobAnswererAdapter struct{ reg *jobs.Registry }
 
-func (a jobAnswererAdapter) Answer(id, text string) bool {
-	return a.reg.Answer(id, text)
+func (a jobAnswererAdapter) Answer(id, text string, fromUser bool) bool {
+	return a.reg.Answer(id, text, fromUser)
 }
 
 // jobProgressAdapter satisfies tools.JobProgressReporter over JobRegistry.

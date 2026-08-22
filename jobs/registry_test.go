@@ -300,10 +300,11 @@ func TestAskThenAnswer_UnblocksWithRightTextAndStatusFlow(t *testing.T) {
 
 	askDone := make(chan struct{})
 	var gotAnswer string
+	var gotFromUser bool
 	var gotOK bool
 
 	job := r.Start(context.Background(), "asker", func(ctx context.Context, jobID string) (string, bool, error) {
-		gotAnswer, gotOK = r.Ask(ctx, jobID, "what should I do?")
+		gotAnswer, gotFromUser, gotOK = r.Ask(ctx, jobID, "what should I do?")
 		close(askDone)
 		return "finished", false, nil
 	})
@@ -325,7 +326,7 @@ func TestAskThenAnswer_UnblocksWithRightTextAndStatusFlow(t *testing.T) {
 		t.Fatalf("expected question to be recorded, got %q", snap.Question)
 	}
 
-	if !r.Answer(job.ID, "do the thing") {
+	if !r.Answer(job.ID, "do the thing", true) {
 		t.Fatal("expected Answer to succeed")
 	}
 
@@ -340,6 +341,9 @@ func TestAskThenAnswer_UnblocksWithRightTextAndStatusFlow(t *testing.T) {
 	}
 	if gotAnswer != "do the thing" {
 		t.Fatalf("expected answer %q, got %q", "do the thing", gotAnswer)
+	}
+	if !gotFromUser {
+		t.Fatal("expected fromUser=true for an Answer call made with fromUser=true")
 	}
 
 	final, ok := r.Wait(context.Background(), job.ID, time.Second)
@@ -397,7 +401,7 @@ func TestAsk_UnblockedByContextCancellationReturnsNotOK(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	answer, ok := r.Ask(askCtx, job.ID, "anyone there?")
+	answer, _, ok := r.Ask(askCtx, job.ID, "anyone there?")
 	elapsed := time.Since(start)
 
 	if ok {
@@ -423,7 +427,7 @@ func TestAsk_UnblockedByContextCancellationReturnsNotOK(t *testing.T) {
 // never seen.
 func TestAsk_UnknownIDReturnsNotOK(t *testing.T) {
 	r := NewRegistry()
-	answer, ok := r.Ask(context.Background(), "unknown", "q")
+	answer, _, ok := r.Ask(context.Background(), "unknown", "q")
 	if ok || answer != "" {
 		t.Fatalf("expected (\"\", false), got (%q, %v)", answer, ok)
 	}
@@ -441,7 +445,7 @@ func TestAnswer_OnJobNotWaitingReturnsFalse(t *testing.T) {
 		return "done", false, nil
 	})
 
-	if r.Answer(job.ID, "nobody asked") {
+	if r.Answer(job.ID, "nobody asked", true) {
 		t.Fatal("expected Answer to return false for a job that isn't waiting")
 	}
 }
@@ -450,7 +454,7 @@ func TestAnswer_OnJobNotWaitingReturnsFalse(t *testing.T) {
 // has never seen.
 func TestAnswer_UnknownIDReturnsFalse(t *testing.T) {
 	r := NewRegistry()
-	if r.Answer("unknown", "text") {
+	if r.Answer("unknown", "text", true) {
 		t.Fatal("expected Answer to return false for an unknown id")
 	}
 }

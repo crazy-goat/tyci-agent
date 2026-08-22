@@ -220,7 +220,7 @@ func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
 		handle := reg.Start(context.Background(), "review the auth flow",
 			func(ctx context.Context, jobID string) (string, bool, error) {
 				close(asked)
-				ans, ok := reg.Ask(ctx, jobID, "should I also change the tests?")
+				ans, _, ok := reg.Ask(ctx, jobID, "should I also change the tests?")
 				if !ok {
 					return "", false, context.Canceled
 				}
@@ -248,5 +248,15 @@ func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
 	}
 	if !strings.Contains(notice, "answer(job_id=") {
 		t.Errorf("the notice must say how to reply: %q", notice)
+	}
+	// The notice must tell the model to relay the question to the user
+	// (via /answer) rather than instructing it to answer unconditionally —
+	// the old wording ("Reply with answer(...)") is exactly what drove the
+	// model to invent an answer on the user's behalf.
+	if !strings.Contains(notice, "Relay this question to the user") {
+		t.Errorf("the notice must tell the model to relay to the user, not invent an answer: %q", notice)
+	}
+	if !strings.Contains(notice, "/answer") {
+		t.Errorf("the notice must point at the /answer command: %q", notice)
 	}
 }

@@ -451,9 +451,11 @@ func wireTools() {
 		// background command is.
 		if j.Status == jobs.StatusWaitingAnswer {
 			JobNotices.Notify(fmt.Sprintf(
-				"[background job] %s is BLOCKED waiting for your answer: %q\n"+
-					"Reply with answer(job_id=%q, text=\"...\"). Until you do it makes no progress, and its work is discarded when it times out.",
-				j.Description, j.Question, j.ID))
+				"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
+					"Relay this question to the user and let them answer it (they can reply with /answer) — do not invent an answer on their behalf. "+
+					"Only call answer(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+
+					"Until it is answered it makes no progress, and its work is discarded when it times out.",
+				j.Description, j.Question, j.ID, j.ID))
 		}
 	})
 

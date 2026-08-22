@@ -174,6 +174,17 @@ func (s *interactiveState) handleCommand(raw string, cancel context.CancelFunc) 
 		cancel()
 		s.handleModelCommand(strings.TrimSpace(strings.TrimPrefix(line, "/model")))
 		return false, true
+	case line == "/answer" || strings.HasPrefix(line, "/answer "):
+		// Doesn't touch the conversation, so no cancel() — same reasoning
+		// as /resume above it.
+		arg := strings.TrimSpace(strings.TrimPrefix(line, "/answer"))
+		msg, ok := handleAnswerCommand(JobRegistry, arg)
+		if ok {
+			fmt.Fprintln(os.Stdout, "✅ "+msg)
+		} else {
+			fmt.Fprintln(os.Stderr, "/answer: "+msg)
+		}
+		return false, true
 	default:
 		cmd := strings.Fields(line)[0]
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
