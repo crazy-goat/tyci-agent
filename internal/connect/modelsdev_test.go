@@ -167,6 +167,59 @@ func TestRefreshModels_ReplacesProviderFetchAlsoReturns(t *testing.T) {
 	}
 }
 
+// A degraded or partial models.dev response can serve a recognised provider
+// with zero models. That must not empty a cached copy that has models (and
+// prices) — replacing "priced" with "nothing" is strictly worse than not
+// refreshing at all. Unlike the NPM-filtered case below, this fetch's npm
+// package IS recognised, so it reaches the swap decision itself rather than
+// being filtered out before it.
+func TestRefreshModels_DegradedFetchDoesNotEmptyPricedProvider(t *testing.T) {
+	dir := tempDir(t)
+	setHome(t, dir)
+	// A recognised npm package, but the fetch carries zero models for it —
+	// the shape of a partial/degraded models.dev response.
+	withFakeModelsDev(t, `{
+		"anthropic": {
+			"id": "anthropic",
+			"npm": "@ai-sdk/anthropic",
+			"name": "Anthropic",
+			"models": {}
+		}
+	}`)
+
+	existing := map[string]ModelsDevProvider{
+		"anthropic": {
+			ID:   "anthropic",
+			NPM:  "@ai-sdk/anthropic",
+			Name: "Anthropic",
+			Models: map[string]ModelsDevModel{
+				"claude-x": {ID: "claude-x", Name: "Claude X", Cost: ModelsDevCost{Input: 3, Output: 15}},
+			},
+		},
+	}
+	writeCatalog(t, existing)
+
+	imported, keptUnchanged, err := RefreshModels("", false)
+	if err != nil {
+		t.Fatalf("RefreshModels() error: %v", err)
+	}
+	if len(imported) != 0 {
+		t.Fatalf("imported = %+v, want none (degraded fetch skipped)", imported)
+	}
+	if keptUnchanged != 1 {
+		t.Fatalf("keptUnchanged = %d, want 1", keptUnchanged)
+	}
+
+	got := readCatalog(t)
+	anthropic, ok := got["anthropic"]
+	if !ok || len(anthropic.Models) == 0 {
+		t.Fatalf("degraded fetch emptied the cached anthropic provider: %+v", got["anthropic"])
+	}
+	if anthropic.Models["claude-x"].Cost.Input != 3 {
+		t.Errorf("cached prices were altered by a degraded fetch: %+v", anthropic.Models["claude-x"])
+	}
+}
+
 func TestRefreshModels_NPMFilteredProviderDoesNotWipeExisting(t *testing.T) {
 	dir := tempDir(t)
 	setHome(t, dir)
@@ -251,7 +304,34 @@ func TestRefreshModels_DryRunReportsKeptVsReplaced(t *testing.T) {
 func TestRefreshModels_SingleProviderFilterLeavesOthersUntouched(t *testing.T) {
 	dir := tempDir(t)
 	setHome(t, dir)
-	withFakeModelsDev(t, pricedPayload)
+	// The fetch carries a SECOND recognised provider (openai) besides the
+	// one named by --provider, so that dropping the filter check entirely
+	// (e.g. `_ = filter`) would import it too and this test would catch
+	// that: it must NOT show up in imported, and the on-disk openai must
+	// stay the hand-added copy, not the fetched "OpenAI Fresh" one.
+	withFakeModelsDev(t, `{
+		"anthropic": {
+			"id": "anthropic",
+			"npm": "@ai-sdk/anthropic",
+			"name": "Anthropic",
+			"models": {
+				"claude-x": {
+					"id": "claude-x",
+					"name": "Claude X",
+					"cost": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75},
+					"limit": {"context": 200000, "output": 8192}
+				}
+			}
+		},
+		"openai": {
+			"id": "openai",
+			"npm": "@ai-sdk/openai",
+			"name": "OpenAI Fresh",
+			"models": {
+				"gpt-fresh": {"id": "gpt-fresh", "name": "GPT Fresh", "cost": {"input": 99, "output": 99}}
+			}
+		}
+	}`)
 
 	existing := map[string]ModelsDevProvider{
 		"anthropic": {ID: "anthropic", NPM: "@ai-sdk/anthropic", Name: "stale"},
@@ -264,6 +344,7 @@ func TestRefreshModels_SingleProviderFilterLeavesOthersUntouched(t *testing.T) {
 		},
 		"openai": {
 			ID:   "openai",
+			NPM:  "@ai-sdk/openai",
 			Name: "OpenAI (hand-added)",
 			Models: map[string]ModelsDevModel{
 				"gpt-hand": {ID: "gpt-hand", Name: "GPT Hand", Cost: ModelsDevCost{Input: 4}},
@@ -277,7 +358,7 @@ func TestRefreshModels_SingleProviderFilterLeavesOthersUntouched(t *testing.T) {
 		t.Fatalf("RefreshModels(--provider anthropic) error: %v", err)
 	}
 	if len(imported) != 1 || imported[0].Name != "Anthropic" {
-		t.Fatalf("imported = %+v, want exactly the filtered anthropic entry", imported)
+		t.Fatalf("imported = %+v, want exactly the filtered anthropic entry (openai must be excluded by the filter)", imported)
 	}
 	if keptUnchanged != 2 {
 		t.Fatalf("keptUnchanged = %d, want 2 (nexos, openai)", keptUnchanged)
@@ -293,7 +374,7 @@ func TestRefreshModels_SingleProviderFilterLeavesOthersUntouched(t *testing.T) {
 	}
 	openai, ok := got["openai"]
 	if !ok || openai.Name != "OpenAI (hand-added)" || openai.Models["gpt-hand"].Cost.Input != 4 {
-		t.Errorf("openai provider/prices did not survive a --provider anthropic refresh: %+v", openai)
+		t.Errorf("openai provider/prices did not survive a --provider anthropic refresh (filter let the fetch through): %+v", openai)
 	}
 }
 

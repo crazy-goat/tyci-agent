@@ -161,6 +161,37 @@ func TestBuildUsageDetail_NoHintForGenuinelyFreeModel(t *testing.T) {
 	}
 }
 
+// The discriminating case this item exists to fix: provider A is priced,
+// provider B is not, and the session's usage is on B. The old global check
+// (one priced provider anywhere silences the warning forever, the nexos
+// case) would stay silent here; the per-provider check must still warn,
+// because it is B — the provider actually in use — that has no prices.
+func TestBuildUsageDetail_HintsWhenUsedProviderUnpricedEvenIfAnotherProviderIsPriced(t *testing.T) {
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{
+		"priced-provider":{"id":"priced-provider","models":{
+			"p":{"id":"p","name":"p","cost":{"input":3,"output":15}}
+		}},
+		"unpriced-provider":{"id":"unpriced-provider","models":{
+			"u":{"id":"u","name":"u"}
+		}}
+	}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	// The session's usage is on the unpriced provider, not the priced one.
+	ledger.Record(ledger.Main, "unpriced-provider", "u", stream.Usage{Input: 10, Output: 10})
+
+	m := TuiModel{modelName: "u"}
+	lines := strings.Join(m.buildUsageDetail(40), "\n")
+	if !strings.Contains(lines, "provider refresh") {
+		t.Fatalf("a priced provider elsewhere in the catalog must not silence the hint for the provider actually in use:\n%s", lines)
+	}
+}
+
 func writeTestCatalog(t *testing.T, homeDir, body string) {
 	t.Helper()
 	dir := homeDir + "/.tyci"

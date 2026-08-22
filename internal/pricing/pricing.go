@@ -153,7 +153,7 @@ func ProviderNeedsPrices(provider string) bool {
 		return false
 	}
 	for _, m := range p.Models {
-		if m.Cost.Input > 0 || m.Cost.Output > 0 {
+		if rates(m).Known() {
 			return false
 		}
 	}
