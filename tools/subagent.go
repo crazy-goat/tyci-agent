@@ -46,6 +46,16 @@ var SubagentBackgroundAfterSec = 60 * time.Second
 // layering remains: tools has no upward dependency on agent.
 var ErrSubagentTruncated = errors.New("subagent hit its max-iterations cap")
 
+// ErrSubagentTimedOut is the wall-clock counterpart to ErrSubagentTruncated:
+// returned (wrapped via fmt.Errorf %w) by a SubAgentRunner when the child
+// was stopped by the SubagentTimeoutSec deadline rather than the iteration
+// cap. Treated the same way downstream — a partial success with
+// subagentResult.Truncated / ToolResult.Truncated set, carrying whatever
+// text the child produced before it ran out of time — because from the
+// caller's side "cut off by time" and "cut off by iterations" need the same
+// response: read what's there, and resume() if more is needed.
+var ErrSubagentTimedOut = errors.New("subagent exceeded its wall-clock time limit")
+
 type SubagentTool struct {
 	Runner SubAgentRunner
 }
@@ -1151,18 +1161,23 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 
 	if err != nil {
 		res.Success = false
-		// A hit timeout surfaces as a bare "context deadline exceeded"; make it
-		// actionable so the parent understands the child was cut off, not that
-		// its task was malformed.
-		if timeoutSec > 0 && errors.Is(err, context.DeadlineExceeded) {
-			res.Error = fmt.Sprintf("subagent exceeded its %ds time limit and was stopped; narrow the task or split it", timeoutSec)
-		} else if errors.Is(err, ErrSubagentTruncated) {
-			// Hit the iteration cap but produced text: surface as a partial
-			// success, not an error. The content already carries the
-			// [note: ...] context from the runner.
+		switch {
+		case errors.Is(err, ErrSubagentTruncated), errors.Is(err, ErrSubagentTimedOut):
+			// Hit the iteration cap or the wall-clock deadline but produced
+			// text: surface as a partial success, not an error, the same
+			// way either way. The content already carries the [note: ...]
+			// resume hint appended by the runner (main.go's agentRunner.run).
 			res.Success = true
 			res.Truncated = true
-		} else {
+		case timeoutSec > 0 && errors.Is(err, context.DeadlineExceeded):
+			// A deadline hit that the runner did NOT wrap as
+			// ErrSubagentTimedOut (e.g. a runner implementation other than
+			// main.go's, or a hard failure before any text existed to
+			// carry) surfaces as a bare "context deadline exceeded";
+			// make it actionable so the parent understands the child was
+			// cut off, not that its task was malformed.
+			res.Error = fmt.Sprintf("subagent exceeded its %ds time limit and was stopped; narrow the task or split it", timeoutSec)
+		default:
 			res.Error = err.Error()
 		}
 	} else {
