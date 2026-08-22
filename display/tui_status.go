@@ -24,7 +24,12 @@ func (m TuiModel) buildStatus() string {
 	}
 
 	if m.statusMessage != "" {
-		leftParts = append(leftParts, m.statusMessage)
+		// Cap here, not just at the joined-line truncation below: statusMessage
+		// is the one unbounded fragment (job echoes, refusal sentences), and if
+		// it's left full-length the tail-truncation below eats the spinner that
+		// comes after it in leftParts instead of the message that caused the
+		// overflow.
+		leftParts = append(leftParts, truncateStatusText(m.statusMessage, 60))
 	}
 
 	if !m.reading {
@@ -120,6 +125,9 @@ func truncateStatusText(s string, maxW int) string {
 		return s
 	}
 	runes := []rune(s)
+	if len(runes) > maxW {
+		runes = runes[:maxW]
+	}
 	for len(runes) > 0 {
 		candidate := string(runes) + "…"
 		if lipgloss.Width(candidate) <= maxW {
