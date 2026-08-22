@@ -30,16 +30,20 @@ func (m *TuiModel) totalRenderedLines() int {
 			lc = len(lines)
 		}
 		total += lc
-		// Separator blank line between blocks (skip between consecutive tool blocks)
-		if i+1 < len(m.blocks) && m.blocks[i+1].kind == "tool" && b.kind == "tool" {
+		// Separator blank line between blocks — the same rule the flat-line
+		// builders use, via the same helper. These counts and those lines
+		// must agree exactly: an over-count here scrolls past the end of the
+		// transcript and every viewport row comes back as padding, i.e. a
+		// blank screen.
+		if !m.spacerAfter(i) {
 			continue
 		}
 		total++
 	}
-	if total > 0 && len(m.blocks) > 0 {
-		// Remove trailing blank line
-		total--
-	}
+	// No trailing adjustment: spacerAfter already reports false for the last
+	// block, so nothing was added past the end. Subtracting one here — as
+	// this did while it counted a spacer after every block — now undercounts
+	// by one and pins the viewport a line above the newest output.
 	m.cachedTotalLines = total
 	return total
 }
@@ -185,8 +189,8 @@ func (m *TuiModel) blockAtVisibleLine(visY int) int {
 		if targetLine < blockEnd {
 			return i
 		}
-		// Account for spacer between non-consecutive-tool blocks.
-		if i+1 < len(m.blocks) && !(m.blocks[i+1].kind == "tool" && b.kind == "tool") {
+		// Account for the spacer, by the shared rule (see spacerAfter).
+		if m.spacerAfter(i) {
 			// Spacer occupies exactly one line at blockEnd.
 			if targetLine == blockEnd {
 				return -1 // spacer line — not part of any block
