@@ -60,7 +60,9 @@ func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	action := stringParam(input, "action", "list")
 	id := intParam(input, "id", 0)
 	content := stringParam(input, "content", "")
-	status := stringParam(input, "status", "")
+	// Canonicalised as it arrives, so every path below — update, add,
+	// add_batch — sees this list's own vocabulary. See canonicalStatus.
+	status := canonicalStatus(stringParam(input, "status", ""))
 	parentID := intParam(input, "parentId", 0)
 
 	todoState.Lock()
@@ -235,6 +237,7 @@ func normalizeAddFields(_ string, status string) (string, string) {
 	if status == "" {
 		status = "todo"
 	}
+	status = canonicalStatus(status)
 	if !validStatus(status) {
 		return "", fmt.Sprintf("invalid status=%q — allowed: todo, doing, done, blocked — fix: drop \"status\" to use default \"todo\", or pick one of the allowed values", status)
 	}
@@ -329,4 +332,32 @@ func validStatus(s string) bool {
 		return true
 	}
 	return false
+}
+
+// canonicalStatus maps the names models actually reach for onto this list's
+// own.
+//
+// Not leniency for its own sake. Models arrive with "in_progress",
+// "pending" and "completed" trained into them by other harnesses, and
+// rejecting those buys nothing: the intent is unambiguous every time, and the
+// refusal costs a wasted call plus, in one observed session, an identical
+// retry. Only unambiguous synonyms are mapped — anything else still fails
+// loudly, because a status nobody can guess the meaning of is a real error.
+func canonicalStatus(s string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(s))
+	if validStatus(trimmed) {
+		// Already one of ours, possibly with stray spacing or capitals.
+		return trimmed
+	}
+	switch trimmed {
+	case "in_progress", "in-progress", "inprogress", "active", "working", "started":
+		return "doing"
+	case "pending", "open", "not_started", "not-started", "waiting":
+		return "todo"
+	case "completed", "complete", "finished", "closed":
+		return "done"
+	case "cancelled", "canceled", "skipped", "stuck":
+		return "blocked"
+	}
+	return s
 }

@@ -8,10 +8,12 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/internal/agentdefs"
+	"github.com/decodo/tyci/internal/worktree"
 	"github.com/decodo/tyci/stream"
 )
 
@@ -20,6 +22,18 @@ import (
 // could otherwise block the parent's tool call forever; this ensures the parent
 // always gets an answer.
 const SubagentTimeoutSec = 600
+
+// SubagentBackgroundAfterSec is how long a blocking subagent call waits before
+// handing its children to the background — the same handoff the bash tool does
+// at 30s.
+//
+// 60s rather than 30 because a child has a model round trip and a few tool
+// calls to make before it could possibly be finished, so a shorter window
+// would background nearly every call and cost the parent a notice it did not
+// need. What the handoff buys is the thing the parent cannot buy for itself:
+// the turn ends, so the person at the keyboard gets their prompt back and can
+// carry on talking instead of watching a spinner.
+const SubagentBackgroundAfterSec = 60
 
 // ErrSubagentTruncated is returned (wrapped via fmt.Errorf %w) by a
 // SubAgentRunner when the child hit its MaxIterations cap. Tools package
@@ -55,6 +69,16 @@ type JobStarter interface {
 // so ask/report_progress work there too, for free.
 type JobIDCtxKey struct{}
 
+// streamStopCtxKey carries the flag that tells a child's streaming collector
+// to stop forwarding output to the parent's tool block.
+//
+// It is set when a blocking call hands its children to the background: the
+// parent's tool call has returned by then and the TUI has closed that block,
+// so forwarding into it would paint over finished output — the same hazard the
+// bash tool solves with its own handed flag. It travels through the context
+// because the collector is built three call levels down.
+type streamStopCtxKey struct{}
+
 // jobStarter is nil until SetJobStarter is called; runAsync fails loudly
 // (not silently blocking or panicking) until then.
 var jobStarter JobStarter
@@ -76,6 +100,10 @@ type subagentTask struct {
 	// its id immediately instead of blocking until the task finishes. See
 	// SubagentTool.Run and runAsync.
 	Async bool `json:"async,omitempty"`
+	// Isolation, when "worktree", gives the child its own checkout of the
+	// repository on its own branch instead of sharing the parent's working
+	// directory. See runSingleTask's isolate helper.
+	Isolation string `json:"isolation,omitempty"`
 }
 
 // subagentResult holds the outcome of one subagent execution.
@@ -194,16 +222,23 @@ type streamingCollector struct {
 	// runOnce so we can forward output to the TUI even after the subagent's
 	// own runOnce overwrites the global stream.OnOutput.
 	parentOutput func(toolIdx int, line string)
+
+	// stop, once set, ends the forwarding: the parent's tool call has returned
+	// and its block is closed, so anything sent now would paint over finished
+	// output. See streamStopCtxKey.
+	stop *atomic.Bool
 }
 
 func newStreamingCollector(ctx context.Context, toolIdx int) *streamingCollector {
 	// Capture the parent's streaming callback from context before the
 	// subagent's inner runOnce installs its own.
 	parentOutput := stream.Output(ctx)
+	stop, _ := ctx.Value(streamStopCtxKey{}).(*atomic.Bool)
 	return &streamingCollector{
 		collector:    newCollector(),
 		toolIdx:      toolIdx,
 		parentOutput: parentOutput,
+		stop:         stop,
 	}
 }
 
@@ -222,6 +257,9 @@ func (s *streamingCollector) Thinking(text string) {
 // global stream.OnOutput because subagent's own runOnce overwrites the global.
 func (s *streamingCollector) pushText(text string) {
 	if s.parentOutput == nil {
+		return
+	}
+	if s.stop != nil && s.stop.Load() {
 		return
 	}
 	s.mu.Lock()
@@ -303,6 +341,18 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		return ToolResult{Type: "result", Success: false, Error: "cannot mix async and non-async tasks in the same call; issue separate subagent calls"}
 	} else if async {
 		return t.runAsync(ctx, tasks)
+	}
+
+	// A blocking call still blocks — but not forever. After
+	// SubagentBackgroundAfterSec the children carry on in the background and
+	// the turn ends, which is the only way the person at the keyboard gets
+	// their prompt back. Requires a job registry to hand them to; without one
+	// (a one-shot `tyci run`, where there is no next turn to deliver a notice
+	// into) the old blocking behaviour is correct and is what happens.
+	if jobStarter != nil && backgroundAllowed(ctx) {
+		if res, handed := t.runWithHandoff(ctx, tasks); handed {
+			return res
+		}
 	}
 
 	// Run tasks concurrently, each bounded by SubagentTimeoutSec.
@@ -455,6 +505,12 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 	if a, ok := m["async"].(bool); ok {
 		t.Async = a
 	}
+	if iso, ok := m["isolation"].(string); ok && iso != "" && iso != "none" {
+		if iso != "worktree" {
+			return subagentTask{}, fmt.Errorf("isolation: %q is not a mode; use \"worktree\" (own checkout, own branch) or leave it out (share the parent's directory)", iso)
+		}
+		t.Isolation = iso
+	}
 	return t, nil
 }
 
@@ -465,36 +521,250 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 // the job must keep running after Run returns; a fresh wall-clock backstop
 // (SubagentTimeoutSec, same as the sync path) replaces the cancellation the
 // job no longer inherits. Poll results via the "wait" tool's job_id mode.
+// spawnedTask is one child running as a background job.
+//
+// The finished/handed pair exists to settle one race with one lock: a blocking
+// call's 60s timer can fire at the same moment a child completes, and exactly
+// one of the two outcomes must happen — either the result is returned inline
+// (the child won) or the parent is notified later (the timer won). Both
+// happening means the parent is told twice; neither means the result is lost.
+type spawnedTask struct {
+	task  subagentTask
+	jobID string
+	label string
+	done  chan struct{}
+
+	mu       sync.Mutex
+	finished bool
+	handed   bool
+	res      subagentResult
+
+	// stopStream is flipped when the task is handed over, so the child stops
+	// painting into a tool block that has closed.
+	stopStream *atomic.Bool
+}
+
+// finish records the result and reports whether the parent must be notified,
+// i.e. whether this task had already been handed to the background.
+func (s *spawnedTask) finish(res subagentResult) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.res = res
+	s.finished = true
+	return s.handed
+}
+
+// hand marks the task as backgrounded. It returns false when the task had
+// already finished, in which case there is nothing to hand over.
+func (s *spawnedTask) hand() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished {
+		return false
+	}
+	s.handed = true
+	return true
+}
+
+func (s *spawnedTask) result() subagentResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.res
+}
+
+// spawn starts one child as a background job and returns immediately.
+//
+// handedAtStart is true for an async call, where the parent is told the ids
+// and nothing is returned inline; false for a blocking call, which waits and
+// only hands over if the child is still going after
+// SubagentBackgroundAfterSec.
+func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtStart, streamToParent bool) *spawnedTask {
+	st := &spawnedTask{
+		task:   task,
+		label:  truncateLine(strings.TrimSpace(firstLine(task.Task)), 60),
+		done:   make(chan struct{}),
+		handed: handedAtStart,
+	}
+
+	// Detached from the caller's context and given its own backstop: the
+	// context of a tool call dies when the call returns, which for a
+	// backgrounded child would kill the very work we are keeping alive.
+	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SubagentTimeoutSec*time.Second)
+	stopStream := &atomic.Bool{}
+	st.stopStream = stopStream
+
+	job := jobStarter.Start(jobCtx, task.Task, func(runCtx context.Context, jobID string) (string, bool, error) {
+		defer cancel()
+		defer close(st.done)
+		runCtx = context.WithValue(runCtx, JobIDCtxKey{}, jobID)
+		runCtx = context.WithValue(runCtx, streamStopCtxKey{}, stopStream)
+		res := runSingleTask(runCtx, t.Runner, task, 0, streamToParent)
+
+		// Tell the parent it finished — but only if the parent is no longer
+		// waiting for it. A blocking call that got its result inline has
+		// already read it, and a notice about it would be noise.
+		if st.finish(res) {
+			if res.Success {
+				notify(fmt.Sprintf("[subagent] %q finished — read it with wait(job_id=%q)", st.label, jobID))
+			} else {
+				notify(fmt.Sprintf("[subagent] %q FAILED — details via wait(job_id=%q)", st.label, jobID))
+			}
+		}
+
+		if !res.Success {
+			return res.Content, res.Truncated, errors.New(res.Error)
+		}
+		return res.Content, res.Truncated, nil
+	})
+	st.jobID = job.ID()
+	return st
+}
+
 func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolResult {
 	if jobStarter == nil {
 		return ToolResult{Type: "result", Success: false, Error: "async subagent spawn unavailable: job registry not configured"}
 	}
 
-	type spawned struct {
+	spawned := make([]*spawnedTask, 0, len(tasks))
+	for _, task := range tasks {
+		// streamToParent is false: by the time an async child produces output
+		// the parent's tool call has returned and its block is closed. The
+		// result lives in the job registry and is read with wait().
+		spawned = append(spawned, t.spawn(ctx, task, true, false))
+	}
+	return ToolResult{Type: "result", Success: true, Content: spawnedJobsMessage(spawned, nil)}
+}
+
+// spawnedJobsMessage is what the parent reads after children go to the
+// background: the ids as JSON on the first line, then what the notices mean.
+//
+// inline, when non-empty, is the text for children that finished before the
+// handoff — a blocking call can end up with some of each.
+//
+// The ids alone are not enough. A parent handed a bare list has no way to know
+// that a child can block on a question and needs an answer, and a blocked
+// child that nobody answers burns its whole wall-clock limit and then discards
+// everything it did.
+func spawnedJobsMessage(spawned []*spawnedTask, inline []subagentResult) string {
+	type entry struct {
 		Task  string `json:"task"`
 		JobID string `json:"job_id"`
 	}
-	out := make([]spawned, 0, len(tasks))
-	for _, task := range tasks {
-		task := task
-		jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SubagentTimeoutSec*time.Second)
-		job := jobStarter.Start(jobCtx, task.Task, func(runCtx context.Context, jobID string) (string, bool, error) {
-			defer cancel()
-			runCtx = context.WithValue(runCtx, JobIDCtxKey{}, jobID)
-			res := runSingleTask(runCtx, t.Runner, task, 0, false)
-			if !res.Success {
-				return res.Content, res.Truncated, errors.New(res.Error)
-			}
-			return res.Content, res.Truncated, nil
-		})
-		out = append(out, spawned{Task: task.Task, JobID: job.ID()})
+	out := make([]entry, 0, len(spawned))
+	for _, st := range spawned {
+		out = append(out, entry{Task: st.task.Task, JobID: st.jobID})
 	}
-
 	data, err := json.Marshal(out)
 	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("marshal spawned jobs: %v", err)}
+		data = []byte("[]")
 	}
-	return ToolResult{Type: "result", Success: true, Content: string(data)}
+
+	var b strings.Builder
+	b.Write(data)
+	if len(inline) > 0 {
+		finished, err := json.Marshal(inline)
+		if err == nil {
+			b.WriteString("\n\nThese finished before the handoff, so their results are here in full:\n")
+			b.Write(finished)
+		}
+	}
+	fmt.Fprintf(&b, `
+
+%d task(s) are now running in the background. Get on with work that does not depend on them — and if there is a person waiting, talk to them: the turn is yours again.
+
+You will be told when one finishes, and when one is BLOCKED on a question. Two things are then yours to do:
+- A question: reply with answer(job_id=..., text="..."). It is blocked until you do, and everything it has done is discarded when it times out. This is the only way it can reach you.
+- A finish: read the result with wait(job_id=...). Nothing else delivers it.
+
+Do not call wait before you are told: it can only say "still running", which the next notice would have told you for free.`, len(spawned))
+	return b.String()
+}
+
+// runWithHandoff runs a blocking subagent call as background jobs and waits up
+// to SubagentBackgroundAfterSec for them.
+//
+// handed=false means every child finished inside the window and the caller
+// should present the results as it always has — the common case, and the
+// reason this returns rather than deciding for itself. handed=true means at
+// least one child is still going: its result is now the job registry's to
+// deliver, and the returned message says so.
+func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask) (ToolResult, bool) {
+	spawned := make([]*spawnedTask, 0, len(tasks))
+	for _, task := range tasks {
+		// streamToParent stays true while the parent is still waiting: its
+		// tool block is open and the live output is the only sign of progress.
+		// spawn's stopStream flag closes that tap at the moment of handoff.
+		spawned = append(spawned, t.spawn(ctx, task, false, true))
+	}
+
+	timer := time.NewTimer(SubagentBackgroundAfterSec * time.Second)
+	defer timer.Stop()
+
+	waiting := make(map[*spawnedTask]struct{}, len(spawned))
+	for _, st := range spawned {
+		waiting[st] = struct{}{}
+	}
+
+	// A person typing ends the wait early. The children are not touched — they
+	// carry on in the background exactly as they would at the 60s mark — but
+	// the turn ends, so the question gets an answer instead of sitting behind
+	// work the person did not ask to wait for.
+	poll := time.NewTicker(userPendingPoll)
+	defer poll.Stop()
+
+	for len(waiting) > 0 {
+		// One select per remaining task rather than a WaitGroup: the timer has
+		// to be able to interrupt the wait, and a WaitGroup cannot be
+		// abandoned half way.
+		var next *spawnedTask
+		for st := range waiting {
+			next = st
+			break
+		}
+		select {
+		case <-next.done:
+			delete(waiting, next)
+		case <-poll.C:
+			if UserPending() {
+				return t.handOff(spawned), true
+			}
+		case <-timer.C:
+			return t.handOff(spawned), true
+		case <-ctx.Done():
+			// The parent turn was cancelled (Esc). The children are detached
+			// and keep going; say so rather than pretending they stopped.
+			return t.handOff(spawned), true
+		}
+	}
+	return ToolResult{}, false
+}
+
+// handOff moves whatever is still running to the background and builds the
+// message: ids for those, full results for those that already finished.
+func (t *SubagentTool) handOff(spawned []*spawnedTask) ToolResult {
+	var stillRunning []*spawnedTask
+	var finished []subagentResult
+	for _, st := range spawned {
+		if st.hand() {
+			if st.stopStream != nil {
+				st.stopStream.Store(true)
+			}
+			stillRunning = append(stillRunning, st)
+			continue
+		}
+		finished = append(finished, st.result())
+	}
+	if len(stillRunning) == 0 {
+		// Everything finished between the timer firing and this loop. Rare,
+		// and there is nothing to hand over — but the caller has already
+		// committed to the handoff path, so report the results here.
+		data, err := json.Marshal(finished)
+		if err != nil {
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("marshal results: %v", err)}
+		}
+		return ToolResult{Type: "result", Success: true, Content: string(data)}
+	}
+	return ToolResult{Type: "result", Success: true, Content: spawnedJobsMessage(stillRunning, finished)}
 }
 
 func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, timeoutSec int) []subagentResult {
@@ -538,6 +808,24 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 				Error:   fmt.Sprintf("agent %q not found (looked in ~/.tyci/agents and ./.tyci/agents)", task.Agent),
 			}
 		}
+	}
+
+	// Isolation, before the timeout: creating a checkout is a local git
+	// operation, but it should not eat into the child's own budget, and a
+	// failure here must be reported as a failed task rather than silently
+	// letting the child loose in the parent's working tree.
+	var wt *worktree.Worktree
+	if task.Isolation == "worktree" {
+		var err error
+		wt, err = worktree.Add(ctx, Workdir(ctx), task.Task)
+		if err != nil {
+			return subagentResult{
+				Task:    task.Task,
+				Success: false,
+				Error:   fmt.Sprintf("isolation: could not create a worktree, so the task was not started (running it in the shared directory would defeat the point): %v", err),
+			}
+		}
+		defer func() { finishWorktree(ctx, wt) }()
 	}
 
 	runCtx := ctx
@@ -587,6 +875,7 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		MaxIterations:    maxIter,
 		Tools:            def.Tools,
 		Temperature:      def.Temperature,
+		MaxTokens:        def.MaxTokens,
 		Fallbacks:        def.Fallback,
 		SystemPromptMode: def.SystemPromptMode,
 	}
@@ -612,6 +901,13 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	// bug behind the subagent modal staying blank while running: c existed
 	// but nothing ever called its Text/Thinking.
 	runCtx = context.WithValue(runCtx, SubagentSinkCtxKey{}, c)
+
+	// Every tool resolves relative paths against Workdir (see workdir.go), so
+	// this one line is what makes the child's reads, writes and shell commands
+	// land in its own checkout.
+	if wt != nil {
+		runCtx = WithWorkdir(runCtx, wt.Dir)
+	}
 
 	// Run the task via the runner interface. def.SystemPrompt is empty when
 	// no agent was named (def is the zero value), so this also covers the
@@ -652,5 +948,36 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		res.Success = true
 	}
 
+	if wt != nil {
+		res.Content += "\n\n" + worktreeNote(ctx, wt)
+	}
+
 	return res
+}
+
+// worktreeNote tells the parent where the child's work ended up. Without it
+// the parent has a plausible answer and no idea that the files it describes
+// are on a branch nobody has looked at.
+func worktreeNote(ctx context.Context, wt *worktree.Worktree) string {
+	changed, err := wt.Changed(ctx)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("[isolation: worked in %s on branch %s; could not tell whether anything changed (%v), so the branch was kept]", wt.Dir, wt.Branch, err)
+	case changed:
+		return fmt.Sprintf("[isolation: this ran in its own checkout, so nothing above is in your working tree yet. The changes are on branch %s (checkout at %s). Review them with: git diff %s..%s]", wt.Branch, wt.Dir, wt.BaseCommit, wt.Branch)
+	default:
+		return "[isolation: ran in its own checkout and changed no files, so the checkout and its branch were removed]"
+	}
+}
+
+// finishWorktree keeps a checkout that holds work and removes one that does
+// not. Detached from the caller's context on purpose: by the time this runs
+// the child may have been cancelled or timed out, and cleaning up with a dead
+// context would leave a directory and a branch behind for every such run.
+func finishWorktree(ctx context.Context, wt *worktree.Worktree) {
+	cleanupCtx := context.WithoutCancel(ctx)
+	changed, err := wt.Changed(cleanupCtx)
+	if err == nil && !changed {
+		_ = wt.Remove(cleanupCtx)
+	}
 }

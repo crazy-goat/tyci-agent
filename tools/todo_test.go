@@ -315,3 +315,80 @@ func TestHasPendingTodos_LastItemDone(t *testing.T) {
 		t.Error("last item done: expected false — guard should re-engage")
 	}
 }
+
+// TestTodoAcceptsTheStatusNamesModelsActuallyUse. Models arrive with
+// "in_progress", "pending" and "completed" trained into them by other
+// harnesses. Rejecting those bought nothing — the intent is unambiguous every
+// time — and cost a wasted call; one observed session answered the refusal by
+// retrying the identical call.
+func TestTodoAcceptsTheStatusNamesModelsActuallyUse(t *testing.T) {
+	cases := map[string]string{
+		"in_progress": "doing",
+		"in-progress": "doing",
+		"active":      "doing",
+		"pending":     "todo",
+		"not_started": "todo",
+		"completed":   "done",
+		"finished":    "done",
+		"cancelled":   "blocked",
+		"IN_PROGRESS": "doing",
+		"  doing  ":   "doing",
+	}
+	for in, want := range cases {
+		if got := canonicalStatus(in); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestTodoStillRejectsNonsense: a status nobody can guess the meaning of is a
+// real error, and mapping it to something would be a guess with consequences.
+func TestTodoStillRejectsNonsense(t *testing.T) {
+	for _, in := range []string{"banana", "almost", "77", "maybe-done"} {
+		if validStatus(canonicalStatus(in)) {
+			t.Errorf("%q was accepted", in)
+		}
+	}
+}
+
+// TestTodoAddBatchAcceptsInProgress is the exact call from a real session: the
+// model set status="in_progress" on a batch item and the whole batch failed.
+func TestTodoAddBatchAcceptsInProgress(t *testing.T) {
+	ClearTodoList()
+	t.Cleanup(ClearTodoList)
+
+	res := RunTool(context.Background(), "todo", map[string]any{
+		"action": "add_batch",
+		"items": []any{
+			map[string]any{"content": "Read CONTRIBUTING.md", "status": "in_progress"},
+			map[string]any{"content": "Pick an issue"},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("the batch was refused: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "doing") {
+		t.Errorf("the first item should be \"doing\": %q", res.Content)
+	}
+}
+
+// TestTodoUpdateAcceptsInProgress covers the other path a status arrives by.
+func TestTodoUpdateAcceptsInProgress(t *testing.T) {
+	ClearTodoList()
+	t.Cleanup(ClearTodoList)
+
+	if res := RunTool(context.Background(), "todo", map[string]any{
+		"action": "add", "content": "do the thing",
+	}); !res.Success {
+		t.Fatalf("setup: %s", res.Error)
+	}
+	res := RunTool(context.Background(), "todo", map[string]any{
+		"action": "update", "id": 1, "status": "in_progress",
+	})
+	if !res.Success {
+		t.Fatalf("the update was refused: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "doing") {
+		t.Errorf("got %q", res.Content)
+	}
+}

@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -79,6 +80,12 @@ func (r *Registry) Start(ctx context.Context, description string, fn func(ctx co
 		}
 		snapshot := job.Snapshot()
 		onEvent := r.onEvent
+		// This job just became terminal, so this is exactly the moment the
+		// retained-history bound can be exceeded. Prune before releasing the
+		// lock; the snapshot above is already taken, so this job's own
+		// completion event still reaches subscribers even in the (impossible
+		// with a 50-job floor, but harmless) case where it were pruned here.
+		r.pruneTerminalLocked()
 		r.mu.Unlock()
 
 		close(job.done)
@@ -228,4 +235,65 @@ func (r *Registry) SetProgress(id, text string) bool {
 		onEvent(snapshot)
 	}
 	return true
+}
+
+// maxRetainedTerminalJobs bounds how many finished (done/failed/truncated)
+// jobs the registry keeps. Running and waiting_answer jobs are never pruned.
+//
+// Without a bound the map grows for the whole session, and each entry holds
+// its full Result string — for a backgrounded shell command that is up to
+// the bash output cap (256 KiB, see tools/bash_output.go). A long session
+// that backgrounds a few hundred commands would therefore retain tens of MB
+// of output nobody can reach any more. 50 is well past the point where a
+// model would still poll an old job_id with "wait".
+const maxRetainedTerminalJobs = 50
+
+// pruneTerminalLocked drops the oldest finished jobs beyond
+// maxRetainedTerminalJobs. Caller must hold r.mu.
+func (r *Registry) pruneTerminalLocked() {
+	var terminal []*Job
+	for _, job := range r.jobs {
+		switch job.Status {
+		case StatusRunning, StatusWaitingAnswer:
+			// Still live — pruning it would break an in-flight wait/answer.
+		default:
+			terminal = append(terminal, job)
+		}
+	}
+	if len(terminal) <= maxRetainedTerminalJobs {
+		return
+	}
+	// Oldest first by completion time, so the survivors are the ones most
+	// likely to still be polled.
+	sort.Slice(terminal, func(i, j int) bool {
+		return terminal[i].FinishedAt.Before(terminal[j].FinishedAt)
+	})
+	for _, job := range terminal[:len(terminal)-maxRetainedTerminalJobs] {
+		delete(r.jobs, job.ID)
+	}
+}
+
+// PendingLines describes the jobs that are still outstanding, one line each,
+// blocked ones first.
+//
+// It exists for the agent loop's end-of-turn check (agent.Config.PendingJobs),
+// and the ordering is the point: a running job is something to wait for or
+// leave alone, while a job blocked on a question is a dead end that only the
+// current turn can open — it makes no progress and its work is discarded when
+// it times out.
+func (r *Registry) PendingLines() []string {
+	var blocked, running []string
+	for _, j := range r.List() {
+		switch j.Status {
+		case StatusWaitingAnswer:
+			blocked = append(blocked, fmt.Sprintf("WAITING FOR ANSWER: %s (job_id=%s) asks: %q", j.Description, j.ID, j.Question))
+		case StatusRunning:
+			line := fmt.Sprintf("running: %s (job_id=%s)", j.Description, j.ID)
+			if j.Progress != "" {
+				line += fmt.Sprintf(" — last reported: %s", j.Progress)
+			}
+			running = append(running, line)
+		}
+	}
+	return append(blocked, running...)
 }

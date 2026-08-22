@@ -11,6 +11,27 @@ import (
 const MaxWaitSeconds = 1800
 const MinWaitSeconds = 1
 
+// DefaultJobWaitSeconds is how long wait(job_id=...) waits when no duration is
+// given, and JobMinWaitSeconds is the shortest wait that makes sense for a job.
+//
+// A wait on a job is not a sleep: the caller wants the RESULT. Treating it as a
+// sleep is what made this tool waste turns — a model asked for one second, got
+// "still running after 1s", and had learned nothing it did not already know,
+// because a notice would have arrived for free. A short wait on a job is
+// therefore raised to something that can actually deliver an answer, and the
+// clamp note says so.
+//
+// 600s matches the longest a child agent can live, so waiting beyond it can
+// only ever return "still running".
+const DefaultJobWaitSeconds = 600
+const JobMinWaitSeconds = 30
+
+// jobPollInterval is how finely a job wait is sliced. The slices exist so the
+// wait can end early for the three things that matter: the job finished, the
+// job blocked on a question (and only the caller can unblock it), or a person
+// typed.
+const jobPollInterval = 250 * time.Millisecond
+
 // JobStatus and JobWaiter are a LOCAL contract owned by the tools package.
 // Do not import a "jobs" package here: on this branch it doesn't exist yet,
 // and even once it does, tools must not depend on it (that would risk an
@@ -56,34 +77,58 @@ type WaitTool struct {
 func (t *WaitTool) Name() string { return "wait" }
 
 func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
-	secRaw, ok := input["seconds"]
-	if !ok {
-		return ToolResult{Type: "result", Success: false, Error: "seconds is required"}
+	jobID, _ := input["job_id"].(string)
+
+	secRaw, hasSeconds := input["seconds"]
+	if !hasSeconds && jobID == "" {
+		return ToolResult{Type: "result", Success: false, Error: "seconds is required for a plain wait (or pass job_id to wait for a job)"}
 	}
-	seconds, err := toInt(secRaw)
-	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("seconds: %v", err)}
+	seconds := DefaultJobWaitSeconds
+	if hasSeconds {
+		var err error
+		seconds, err = toInt(secRaw)
+		if err != nil {
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("seconds: %v", err)}
+		}
+	}
+
+	minSeconds := MinWaitSeconds
+	if jobID != "" {
+		minSeconds = JobMinWaitSeconds
 	}
 
 	clampedNote := ""
-	if seconds < MinWaitSeconds {
-		clampedNote = fmt.Sprintf(" (requested %ds clamped to minimum %ds)", seconds, MinWaitSeconds)
-		seconds = MinWaitSeconds
+	if seconds < minSeconds {
+		if jobID != "" {
+			// Worth explaining rather than just stating: the caller asked for
+			// a sleep and is getting a wait for the result, which is what it
+			// meant.
+			clampedNote = fmt.Sprintf(" (asked for %ds; raised to %ds, because a shorter wait on a job can only report that it is still running — and a notice would have told you that for free)", seconds, minSeconds)
+		} else {
+			clampedNote = fmt.Sprintf(" (requested %ds clamped to minimum %ds)", seconds, minSeconds)
+		}
+		seconds = minSeconds
 	} else if seconds > MaxWaitSeconds {
 		clampedNote = fmt.Sprintf(" (requested %ds clamped to maximum %ds)", seconds, MaxWaitSeconds)
 		seconds = MaxWaitSeconds
 	}
 
-	jobID, _ := input["job_id"].(string)
 	note, _ := input["note"].(string)
 
 	if jobID != "" {
 		if t.Waiter == nil {
 			return ToolResult{Type: "result", Success: false, Error: "job registry unavailable; omit job_id to just wait N seconds"}
 		}
-		status, ok := t.Waiter.Wait(ctx, jobID, time.Duration(seconds)*time.Second)
+		status, ok, interrupted := t.waitForJob(ctx, jobID, time.Duration(seconds)*time.Second)
 		if !ok {
-			return ToolResult{Type: "result", Success: false, Error: "unknown job_id"}
+			return ToolResult{Type: "result", Success: false, Error: "unknown job_id — ids come from a backgrounded bash command, subagent(async=true), or resume; use the exact string that result gave you"}
+		}
+		if interrupted {
+			return ToolResult{
+				Type:    "result",
+				Success: true,
+				Content: fmt.Sprintf("stopped waiting on job %s because someone typed — read what they said and answer them. The job was not touched and is still running; you will be notified when it finishes.", jobID),
+			}
 		}
 		if status.Done {
 			if status.Success {
@@ -105,7 +150,7 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{
 			Type:    "result",
 			Success: true,
-			Content: fmt.Sprintf("still running after %ds (job_id=%s). Call wait again to keep polling.%s%s", seconds, jobID, progressNote, clampedNote),
+			Content: fmt.Sprintf("still running after %ds (job_id=%s).%s You will be notified when it finishes — get on with other work instead of polling; wait again only if you have nothing else to do.%s", seconds, jobID, progressNote, clampedNote),
 		}
 	}
 
@@ -114,7 +159,17 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		sleep = defaultSleep
 	}
 	start := time.Now()
-	completed := sleep(ctx, time.Duration(seconds)*time.Second)
+	// Sliced for the same reason a job wait is: a person typing must not have
+	// to sit out someone else's sleep. A plain wait of ten minutes would
+	// otherwise be ten minutes in which nothing they type is read.
+	completed, interrupted := sleepInterruptibly(ctx, sleep, time.Duration(seconds)*time.Second)
+	if interrupted {
+		return ToolResult{
+			Type:    "result",
+			Success: true,
+			Content: fmt.Sprintf("stopped waiting after ~%ds because someone typed — read what they said and answer them.%s", int(time.Since(start).Seconds()), clampedNote),
+		}
+	}
 	if !completed {
 		elapsed := time.Since(start)
 		return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("wait cancelled after ~%ds%s", int(elapsed.Seconds()), clampedNote)}
@@ -139,4 +194,66 @@ func defaultSleep(ctx context.Context, d time.Duration) bool {
 	case <-time.After(d):
 		return true
 	}
+}
+
+// waitForJob waits for a job, in slices, so it can end early for the three
+// things that matter more than the remaining time:
+//
+//   - the job finished, which is what the caller asked for;
+//   - the job blocked on a question, which only the caller can answer — and it
+//     cannot answer while sitting in here, so waiting on would deadlock both
+//     until the timeout;
+//   - a person typed, which outranks everything.
+//
+// interrupted reports the last of those. ok is false for an unknown id.
+func (t *WaitTool) waitForJob(ctx context.Context, jobID string, total time.Duration) (status JobStatus, ok, interrupted bool) {
+	deadline := time.Now().Add(total)
+	for {
+		slice := jobPollInterval
+		if remaining := time.Until(deadline); remaining < slice {
+			slice = remaining
+		}
+		if slice <= 0 {
+			return status, true, false
+		}
+
+		status, ok = t.Waiter.Wait(ctx, jobID, slice)
+		if !ok {
+			return status, false, false
+		}
+		if status.Done || status.Waiting {
+			return status, true, false
+		}
+		if ctx.Err() != nil {
+			return status, true, false
+		}
+		if UserPending() {
+			return status, true, true
+		}
+	}
+}
+
+// sleepInterruptibly runs a plain wait in slices so it can end the moment
+// someone types. completed reports that the full duration elapsed; interrupted
+// reports that a person is waiting for attention.
+func sleepInterruptibly(ctx context.Context, sleep func(context.Context, time.Duration) bool, total time.Duration) (completed, interrupted bool) {
+	// Progress is counted in the slices asked for, not off the wall clock: the
+	// sleep function is injectable, and a test one that returns without
+	// actually sleeping would leave a wall-clock deadline unreachable — an
+	// infinite loop rather than a fast test.
+	var slept time.Duration
+	for slept < total {
+		slice := jobPollInterval
+		if remaining := total - slept; remaining < slice {
+			slice = remaining
+		}
+		if !sleep(ctx, slice) {
+			return false, false
+		}
+		slept += slice
+		if UserPending() {
+			return false, true
+		}
+	}
+	return true, false
 }

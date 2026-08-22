@@ -964,16 +964,49 @@ func TestGetSubagentToolsSchemaJSONFor_EmptyReturnsFullSchema(t *testing.T) {
 	if names["subagent"] {
 		t.Error("full subagent schema must never include \"subagent\" itself")
 	}
-	if !names["bash"] || !names["read"] {
-		t.Errorf("expected an unrestricted schema to include bash/read, got %v", names)
+	if names["agents"] {
+		t.Error("subagent schema must never include \"agents\" — a child can't spawn subagents, so it has no use for the agent-name discovery tool")
+	}
+	if !names["bash"] || !names["read"] || !names["lock"] || !names["wait"] || !names["ask"] {
+		t.Errorf("expected an unrestricted subagent schema to include bash/read/lock/wait/ask, got %v", names)
+	}
+}
+
+// TestGetToolsSchema_IncludesAgents locks in that the top-level (non-child)
+// schema, unlike the subagent one, does offer "agents" — only the child
+// schema drops it.
+func TestGetToolsSchema_IncludesAgents(t *testing.T) {
+	names := schemaToolNames(t, GetToolsSchemaJSON())
+	if !names["agents"] {
+		t.Error("expected the top-level tool schema to include \"agents\"")
 	}
 }
 
 func TestGetSubagentToolsSchemaJSONFor_FiltersToAllowed(t *testing.T) {
 	got := GetSubagentToolsSchemaJSONFor([]string{"read", "bash"})
 	names := schemaToolNames(t, got)
-	if len(names) != 2 || !names["read"] || !names["bash"] {
-		t.Errorf("expected exactly {read, bash}, got %v", names)
+	if !names["read"] || !names["bash"] {
+		t.Errorf("the allowed tools are missing: %v", names)
+	}
+	if names["write"] || names["subagent"] {
+		t.Errorf("a tool outside the list got through: %v", names)
+	}
+	// help and lua are always present — see alwaysAllowedTools for why
+	// withholding them cannot make an agent safer, only worse at its job.
+	if len(names) != 2+len(alwaysAllowedTools) {
+		t.Errorf("expected the two allowed tools plus %v, got %v", alwaysAllowedTools, names)
+	}
+}
+
+// TestGetSubagentToolsSchemaJSONFor_AlwaysOffersHelpAndLua: a restricted agent
+// used to be told "call help()" by the gate's own refusal message while help
+// was not in its schema — advice it could not follow.
+func TestGetSubagentToolsSchemaJSONFor_AlwaysOffersHelpAndLua(t *testing.T) {
+	names := schemaToolNames(t, GetSubagentToolsSchemaJSONFor([]string{"find"}))
+	for _, name := range alwaysAllowedTools {
+		if !names[name] {
+			t.Errorf("%q must be offered to every agent, got %v", name, names)
+		}
 	}
 }
 
@@ -991,8 +1024,11 @@ func TestGetSubagentToolsSchemaJSONFor_RejectsExplicitSubagent(t *testing.T) {
 func TestGetSubagentToolsSchemaJSONFor_UnknownNameSkipped(t *testing.T) {
 	got := GetSubagentToolsSchemaJSONFor([]string{"read", "not-a-real-tool"})
 	names := schemaToolNames(t, got)
-	if len(names) != 1 || !names["read"] {
-		t.Errorf("expected only {read} (unknown name silently skipped), got %v", names)
+	if !names["read"] || names["not-a-real-tool"] {
+		t.Errorf("expected {read} plus the always-allowed tools, got %v", names)
+	}
+	if len(names) != 1+len(alwaysAllowedTools) {
+		t.Errorf("an unknown name should be skipped silently, got %v", names)
 	}
 }
 
@@ -1268,7 +1304,7 @@ func TestSubagentAsync_ReturnsJobIDImmediately(t *testing.T) {
 		Task  string `json:"task"`
 		JobID string `json:"job_id"`
 	}
-	if err := json.Unmarshal([]byte(res.Content), &spawned); err != nil {
+	if err := json.Unmarshal([]byte(spawnedJobsJSON(res.Content)), &spawned); err != nil {
 		t.Fatalf("unmarshal spawned jobs: %v (content: %q)", err, res.Content)
 	}
 	if len(spawned) != 1 || spawned[0].JobID == "" {
@@ -1375,7 +1411,7 @@ func TestSubagentAsync_DoesNotStreamToParentToolIdx(t *testing.T) {
 		Task  string `json:"task"`
 		JobID string `json:"job_id"`
 	}
-	if err := json.Unmarshal([]byte(res.Content), &spawned); err != nil {
+	if err := json.Unmarshal([]byte(spawnedJobsJSON(res.Content)), &spawned); err != nil {
 		t.Fatalf("unmarshal spawned jobs: %v (content: %q)", err, res.Content)
 	}
 
@@ -1387,5 +1423,42 @@ func TestSubagentAsync_DoesNotStreamToParentToolIdx(t *testing.T) {
 
 	if lines := mo.lines(); len(lines) != 0 {
 		t.Errorf("expected no lines forwarded to the parent's stream.Output, got %q", lines)
+	}
+}
+
+// spawnedJobsJSON extracts the machine-readable prefix of an async subagent
+// result. The rest of the content is instructions for the model: what the
+// completion and blocked-on-a-question notices mean, and that an unanswered
+// child eventually discards its work.
+func spawnedJobsJSON(content string) string {
+	return strings.SplitN(content, "\n", 2)[0]
+}
+
+// TestSubagentAsync_ResultTellsTheParentHowToRespond guards that text. A bare
+// list of ids leaves the parent with no reason to suspect a child can block on
+// a question, and an unanswered child burns its wall-clock limit and throws
+// everything away.
+func TestSubagentAsync_ResultExplainsTheChannels(t *testing.T) {
+	t.Cleanup(func() {
+		delete(toolRegistry, "subagent")
+		subagentToolInstance = nil
+		SetJobStarter(nil)
+	})
+	SetJobStarter(testJobStarter{jobs.NewRegistry()})
+	SetSubAgentRunner(&mockRunner{
+		RunTaskFunc: func(_ context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			return "done", nil
+		},
+	})
+
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
+	res := RunTool(ctx, "subagent", map[string]any{"task": "some work", "async": true})
+	if !res.Success {
+		t.Fatalf("expected success, got %q", res.Error)
+	}
+	for _, want := range []string{"answer(job_id", "wait(job_id", "discarded"} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("async result does not mention %q:\n%s", want, res.Content)
+		}
 	}
 }

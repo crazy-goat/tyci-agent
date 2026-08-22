@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -502,5 +503,51 @@ func TestSetProgress_UpdatesSnapshotAndUnknownIDReturnsFalse(t *testing.T) {
 
 	if r.SetProgress("unknown", "x") {
 		t.Fatal("expected SetProgress to return false for an unknown id")
+	}
+}
+
+// TestRegistryPrunesOldTerminalJobs guards the retained-history bound. Each
+// finished job holds its full result — up to the bash output cap for a
+// backgrounded shell command — so an unbounded map is a session-long leak.
+func TestRegistryPrunesOldTerminalJobs(t *testing.T) {
+	r := NewRegistry()
+
+	// A job that stays running must never be pruned, however much finishes
+	// around it: something is still waiting on it.
+	block := make(chan struct{})
+	defer close(block)
+	live := r.Start(context.Background(), "long runner", func(context.Context, string) (string, bool, error) {
+		<-block
+		return "", false, nil
+	})
+
+	total := maxRetainedTerminalJobs + 10
+	for i := 0; i < total; i++ {
+		job := r.Start(context.Background(), fmt.Sprintf("quick %d", i), func(context.Context, string) (string, bool, error) {
+			return "done", false, nil
+		})
+		if _, ok := r.Wait(context.Background(), job.ID, 5*time.Second); !ok {
+			t.Fatalf("job %d not found while waiting", i)
+		}
+	}
+
+	list := r.List()
+	terminal := 0
+	foundLive := false
+	for _, job := range list {
+		if job.ID == live.ID {
+			foundLive = true
+			continue
+		}
+		terminal++
+	}
+	if !foundLive {
+		t.Fatal("a still-running job was pruned")
+	}
+	if terminal > maxRetainedTerminalJobs {
+		t.Fatalf("expected at most %d finished jobs retained, got %d", maxRetainedTerminalJobs, terminal)
+	}
+	if terminal < maxRetainedTerminalJobs {
+		t.Fatalf("pruned too eagerly: expected %d finished jobs retained, got %d", maxRetainedTerminalJobs, terminal)
 	}
 }
