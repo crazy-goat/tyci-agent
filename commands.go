@@ -83,6 +83,14 @@ func registerProviders() {
 	if err := connect.EnsureProvidersJSON(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: providers.json: %v\n", err)
 	}
+	// A catalog written by an older tyci build had its prices and context
+	// limits silently stripped on every refresh (see doc comment on
+	// connect.ModelsDevModel). This is a local file read, not a network
+	// call, so it is safe on this hot startup path; the fix itself still
+	// requires the user to run the refresh command below.
+	if connect.CatalogNeedsPrices() {
+		fmt.Fprintln(os.Stderr, "Warning: providers.json has no prices — run `tyci provider refresh` to fix it.")
+	}
 	providers.RegisterProvidersFromProvidersJSON(connect.ProvidersJSONPath())
 	providers.RegisterProvidersFromConfig(connect.ModelJSONPath())
 }
@@ -462,24 +470,39 @@ var providerRefreshCmd = &cobra.Command{
 		providerFilter, _ := cmd.Flags().GetString("provider")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
-		imported, err := connect.RefreshModels(providerFilter, dryRun)
+		imported, keptUnchanged, err := connect.RefreshModels(providerFilter, dryRun)
 		if err != nil {
 			return err
 		}
 
 		if len(imported) == 0 {
 			fmt.Fprintln(os.Stdout, "No providers found to import")
+			if keptUnchanged > 0 {
+				fmt.Fprintf(os.Stdout, "%d existing provider(s) left untouched\n", keptUnchanged)
+			}
 			return nil
 		}
 
+		verb := "Imported"
 		if dryRun {
-			fmt.Fprintf(os.Stdout, "Would import %d providers:\n\n", len(imported))
-		} else {
-			fmt.Fprintf(os.Stdout, "Imported %d providers:\n\n", len(imported))
+			verb = "Would import"
 		}
+		fmt.Fprintf(os.Stdout, "%s %d providers:\n\n", verb, len(imported))
 
 		for _, p := range imported {
-			fmt.Fprintf(os.Stdout, "  %s (%s): %d models\n", p.Name, p.Type, p.Models)
+			status := "new"
+			if p.Replaced {
+				status = "replacing existing"
+			}
+			fmt.Fprintf(os.Stdout, "  %s (%s): %d models [%s]\n", p.Name, p.Type, p.Models, status)
+		}
+
+		if keptUnchanged > 0 {
+			verb = "left"
+			if dryRun {
+				verb = "would be left"
+			}
+			fmt.Fprintf(os.Stdout, "\n%d existing provider(s) %s untouched (not fetched from models.dev)\n", keptUnchanged, verb)
 		}
 
 		if !dryRun {

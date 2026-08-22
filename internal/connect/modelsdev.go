@@ -21,9 +21,30 @@ type ModelsDevProvider struct {
 }
 
 // ModelsDevModel represents a model from models.dev API.
+//
+// Cost and Limit are kept because the catalog is re-marshalled through this
+// struct when it is cached (see RefreshModels): a field that is absent here is
+// a field that is silently dropped on disk. The status bar cannot price a
+// session or show how full the context is without them.
 type ModelsDevModel struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID    string         `json:"id"`
+	Name  string         `json:"name"`
+	Cost  ModelsDevCost  `json:"cost"`
+	Limit ModelsDevLimit `json:"limit"`
+}
+
+// ModelsDevCost is USD per million tokens, as models.dev publishes it.
+type ModelsDevCost struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cache_read"`
+	CacheWrite float64 `json:"cache_write"`
+}
+
+// ModelsDevLimit is the model's context window and max output, in tokens.
+type ModelsDevLimit struct {
+	Context int `json:"context"`
+	Output  int `json:"output"`
 }
 
 // modelsDevURL is the canonical endpoint for models.dev API.
@@ -39,9 +60,10 @@ var npmToAPIType = map[string]string{
 
 // RefreshProvider holds the result of importing a provider.
 type RefreshProvider struct {
-	Name   string
-	Type   string
-	Models int
+	Name     string
+	Type     string
+	Models   int
+	Replaced bool // true if this id already existed in the cached catalog
 }
 
 // ProvidersJSONPath returns the path to the cached providers catalog.
@@ -79,65 +101,168 @@ func EnsureProvidersJSON() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-	if err := os.WriteFile(path, body, 0644); err != nil {
-		return fmt.Errorf("writing providers.json: %w", err)
-	}
-	return nil
+	return writeCatalogAtomically(path, body)
 }
 
-// RefreshModels fetches models from models.dev and overwrites the cached catalog.
-// providerFilter is an optional comma-separated list of provider IDs to keep;
-// if non-empty, providers outside the filter are dropped before writing.
+// RefreshModels fetches models from models.dev and merges them into the
+// cached catalog. providerFilter is an optional comma-separated list of
+// provider IDs to keep; if non-empty, providers outside the filter are
+// dropped before writing.
+//
+// This is a merge, not an overwrite: any provider already in the cached
+// catalog that the fetch does not mention (npm-filtered out, provider-filter
+// excluded, or simply unknown to models.dev — a hand-added gateway provider,
+// for example) survives untouched. A provider models.dev does carry replaces
+// the cached copy, which is the point of a refresh — that is how a stale or
+// price-less cache (see doc comment on ModelsDevModel) gets repaired.
+//
 // dryRun if true, only reports what would be imported without writing.
-func RefreshModels(providerFilter string, dryRun bool) ([]RefreshProvider, error) {
+// keptUnchanged is the number of existing providers the fetch left alone.
+func RefreshModels(providerFilter string, dryRun bool) (imported []RefreshProvider, keptUnchanged int, err error) {
 	body, err := fetchModelsDev(defaultHTTPClient)
 	if err != nil {
-		return nil, fmt.Errorf("fetching models.dev: %w", err)
+		return nil, 0, fmt.Errorf("fetching models.dev: %w", err)
 	}
 
-	var all map[string]ModelsDevProvider
-	if err := json.Unmarshal(body, &all); err != nil {
-		return nil, fmt.Errorf("parsing models.dev: %w", err)
+	var fetched map[string]ModelsDevProvider
+	if err := json.Unmarshal(body, &fetched); err != nil {
+		return nil, 0, fmt.Errorf("parsing models.dev: %w", err)
+	}
+
+	existing, err := readExistingCatalog()
+	if err != nil {
+		return nil, 0, fmt.Errorf("reading existing providers.json: %w", err)
 	}
 
 	filter := parseFilter(providerFilter)
 
-	kept := make(map[string]ModelsDevProvider, len(all))
-	var imported []RefreshProvider
-	for id, p := range all {
+	merged := make(map[string]ModelsDevProvider, len(existing)+len(fetched))
+	for id, p := range existing {
+		merged[id] = p
+	}
+
+	replacedIDs := make(map[string]bool)
+	for id, p := range fetched {
 		if filter != nil && !filter[id] {
 			continue
 		}
 		if _, ok := npmToAPIType[p.NPM]; !ok {
 			continue
 		}
-		kept[id] = p
+		_, existed := existing[id]
+		merged[id] = p
+		replacedIDs[id] = existed
 		imported = append(imported, RefreshProvider{
-			Name:   p.Name,
-			Type:   npmToAPIType[p.NPM],
-			Models: len(p.Models),
+			Name:     p.Name,
+			Type:     npmToAPIType[p.NPM],
+			Models:   len(p.Models),
+			Replaced: existed,
 		})
 	}
 
+	replaced := 0
+	for _, wasExisting := range replacedIDs {
+		if wasExisting {
+			replaced++
+		}
+	}
+	keptUnchanged = len(existing) - replaced
+
 	if dryRun {
-		return imported, nil
+		return imported, keptUnchanged, nil
 	}
 
-	out, err := json.MarshalIndent(kept, "", "  ")
+	// Nothing was imported — a typo'd --provider, a filter that matched
+	// nothing, an empty response. Rewriting the file with exactly what was
+	// read would be all risk and no benefit, so don't touch it at all.
+	if len(imported) == 0 {
+		return imported, keptUnchanged, nil
+	}
+
+	out, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("encoding providers.json: %w", err)
+		return nil, 0, fmt.Errorf("encoding providers.json: %w", err)
 	}
-	path := ProvidersJSONPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return nil, fmt.Errorf("creating config dir: %w", err)
+	if err := writeCatalogAtomically(ProvidersJSONPath(), out); err != nil {
+		return nil, 0, err
 	}
-	if err := os.WriteFile(path, out, 0644); err != nil {
-		return nil, fmt.Errorf("writing providers.json: %w", err)
+	return imported, keptUnchanged, nil
+}
+
+// writeCatalogAtomically replaces providers.json in one step.
+//
+// os.WriteFile opens with O_TRUNC, which destroys the old catalog the instant
+// the file is opened and only then starts writing the new bytes. A Ctrl-C, a
+// full disk or a sleeping laptop half way through leaves a truncated file —
+// and this file holds the only copy of any hand-maintained provider (gateway
+// prices models.dev does not carry). Worse, the merge path refuses to run
+// against an unparsable catalog, so a half-write would leave refresh unable
+// to repair the very thing it broke. internal/cron/store.go's Save takes the
+// same precaution for the same reason.
+func writeCatalogAtomically(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("creating config dir: %w", err)
 	}
-	return imported, nil
+	tmp, err := os.CreateTemp(dir, "providers.json.tmp*")
+	if err != nil {
+		return fmt.Errorf("writing providers.json: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing providers.json: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing providers.json: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("writing providers.json: %w", err)
+	}
+	return nil
+}
+
+// readExistingCatalog reads the cached providers.json, if any. A missing
+// file is not an error — there is simply nothing to merge into — but a file
+// that exists and fails to parse is: merging on top of "empty" in that case
+// would silently overwrite whatever unreadable content was there, which is
+// exactly the kind of data loss this function exists to avoid.
+func readExistingCatalog() (map[string]ModelsDevProvider, error) {
+	data, err := os.ReadFile(ProvidersJSONPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var existing map[string]ModelsDevProvider
+	if err := json.Unmarshal(data, &existing); err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
+// CatalogNeedsPrices reports whether the cached providers.json exists, has at
+// least one provider, but carries no cost data anywhere in it — the
+// signature of a catalog written by a tyci build old enough that
+// ModelsDevModel had no Cost/Limit fields, so every refresh before this one
+// silently stripped them on write (see doc comment on ModelsDevModel).
+//
+// Returns false if the file is missing or unparsable: EnsureProvidersJSON
+// will fetch a fresh one in that case, and there is nothing to repair yet.
+func CatalogNeedsPrices() bool {
+	existing, err := readExistingCatalog()
+	if err != nil || len(existing) == 0 {
+		return false
+	}
+	for _, p := range existing {
+		for _, m := range p.Models {
+			if m.Cost.Input > 0 || m.Cost.Output > 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func parseFilter(providerFilter string) map[string]bool {
@@ -152,6 +277,18 @@ func parseFilter(providerFilter string) map[string]bool {
 		}
 	}
 	return filter
+}
+
+// SetHTTPClientForTests overrides the HTTP client that fetchModelsDev (and
+// the rest of this package) uses, returning a func that restores the
+// previous one. It exists so tests in other packages — internal/pricing in
+// particular, which imports connect and therefore cannot be imported back
+// by a connect test without a cycle — can fake the models.dev response
+// without a network call.
+func SetHTTPClientForTests(d HTTPDoer) (restore func()) {
+	orig := defaultHTTPClient
+	defaultHTTPClient = d
+	return func() { defaultHTTPClient = orig }
 }
 
 // fetchModelsDev fetches the models.dev API.

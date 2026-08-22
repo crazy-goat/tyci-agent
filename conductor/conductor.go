@@ -32,6 +32,7 @@ import (
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/stream"
 )
@@ -195,7 +196,14 @@ func (c *Conductor) Submit(ctx context.Context, prompt string) (stream.Usage, er
 		c.mu.Unlock()
 	}()
 
-	usage, err := agent.Run(runCtx, c.client, c.sink, &c.conversation, c.cfg)
+	// The session-wide ledger, which unlike c.usage also carries what
+	// delegated work cost (see internal/ledger). Recording through a wrapped
+	// sink rather than once here is what makes the cost appear with the first
+	// response instead of only when the whole turn ends — and it keeps the
+	// figure honest when a turn is interrupted mid-way, since everything
+	// already spent has already been recorded.
+	sink := ledger.Watch(c.sink, ledger.Main, c.client.Provider(), c.client.Model())
+	usage, err := agent.Run(runCtx, c.client, sink, &c.conversation, c.cfg)
 	c.usage.Add(usage)
 	return usage, err
 }
@@ -284,7 +292,13 @@ func (c *Conductor) ClearHistory() { c.conversation = nil }
 // together with ClearHistory and EndSession; the console's /new does not,
 // because it keeps writing to the same session file and the session_end
 // event should still report everything that file recorded.
-func (c *Conductor) ResetUsage() { c.usage = stream.Usage{} }
+func (c *Conductor) ResetUsage() {
+	c.usage = stream.Usage{}
+	// The ledger tracks the same conversation, children included, so it has
+	// to be zeroed with it — otherwise /new inherits the previous
+	// conversation's bill.
+	ledger.Reset()
+}
 
 // Session is the open session log, or nil when there is none.
 func (c *Conductor) Session() *session.Session { return c.cfg.Session }

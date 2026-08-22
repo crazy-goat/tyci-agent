@@ -16,6 +16,7 @@ import (
 	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/internal/debug"
 	"github.com/decodo/tyci/internal/hooks"
+	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/tools"
@@ -294,7 +295,13 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		NoPromptCache: !agent.PromptCacheEnabled(),
 	}
 
-	_, err = agent.Run(ctx, mc, sink, &msgs, cfg)
+	// Children spend the parent's money, so they record against the same
+	// session ledger (internal/ledger) rather than only reporting usage back
+	// inside their tool result. Recorded per model call through a wrapped
+	// sink, so a child that runs for ten minutes shows up in the parent's
+	// cost figure as it works rather than only when it returns — and a child
+	// that dies on its last iteration still accounts for what it spent.
+	_, err = agent.Run(ctx, mc, ledger.Watch(sink, ledger.Subagent, mc.Provider(), mc.Model()), &msgs, cfg)
 	text := strings.TrimSpace(collectedText())
 
 	// If this run is happening inside a background job (async subagent or
@@ -353,26 +360,45 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 	if name == "subagent" {
 		return "", fmt.Errorf("subagent tool is not available to subagents (recursion denied)")
 	}
+	// tools.AllowOnlySubagent is the single source of truth for what a
+	// whitelisted child may call: it mirrors
+	// tools.GetSubagentToolsSchemaJSONFor tool for tool — same
+	// alwaysAllowedTools (help, lua) folded in, same subagentDeniedTools
+	// ("subagent", "agents") dropped even when explicitly listed — so a
+	// call permitted here is always one the schema offered the model, and a
+	// call the schema never offered is always refused here.
+	//
+	// Checking the call against a hand-rolled loop here — as this used to
+	// do — meant a whitelisted child was offered "help" in its schema but
+	// refused when it actually called it, because the loop only ever
+	// consulted r.allowed verbatim: neither alwaysAllowedTools nor
+	// subagentDeniedTools entered into it.
+	var gate tools.ToolGate
 	if len(r.allowed) > 0 {
-		permitted := false
-		for _, a := range r.allowed {
-			if a == name {
-				permitted = true
-				break
-			}
-		}
-		if !permitted {
-			return "", fmt.Errorf("tool %q is not in this agent's allowed tools list", name)
+		gate = tools.AllowOnlySubagent(r.allowed)
+		if err := gate(name); err != nil {
+			return "", err
 		}
 	}
-	// The checks above only cover calls the model makes directly. A tool can
-	// dispatch further tools itself — the "lua" tool exists to do exactly
-	// that — and those go straight to tools.RunTool, below this function.
-	// Carrying the restriction in the context makes it apply there too, so a
-	// script cannot reach a tool its agent was denied, or spawn a grandchild.
-	ctx = tools.WithToolGate(ctx, tools.Deny("subagent tool is not available to subagents (recursion denied)", "subagent"))
-	if len(r.allowed) > 0 {
-		ctx = tools.WithToolGate(ctx, tools.AllowOnly(r.allowed...))
+	// The check above only covers a whitelisted child, and only covers
+	// calls the model makes directly. A tool can dispatch further tools
+	// itself — the "lua" tool exists to do exactly that — and those go
+	// straight to tools.RunTool, below this function. Carrying the
+	// restriction in the context makes both gaps covered too:
+	//
+	//   - tools.DenySubagentRecursion denies every subagentDeniedTools
+	//     entry ("subagent", "agents") unconditionally, so even an
+	//     UNRESTRICTED child (no tools: whitelist at all, gate == nil
+	//     above) cannot reach a tool GetSubagentToolsSchemaJSON never
+	//     offered it — whether the call is direct or made from inside a
+	//     lua script. Denying only "subagent" here used to leave "agents"
+	//     reachable by exactly that path.
+	//   - the whitelisted gate, when non-nil, applies to nested
+	//     dispatches too, so a script cannot reach a tool its agent was
+	//     denied, or spawn a grandchild.
+	ctx = tools.WithToolGate(ctx, tools.DenySubagentRecursion())
+	if gate != nil {
+		ctx = tools.WithToolGate(ctx, gate)
 	}
 
 	res := tools.RunTool(ctx, name, args)

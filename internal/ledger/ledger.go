@@ -1,0 +1,162 @@
+// Package ledger keeps one running total of what a session has spent.
+//
+// It exists because usage is accumulated in the wrong shape for the question a
+// person actually asks. The Conductor totals the usage of its own turns, and a
+// subagent reports its usage into the tool result it returns to the parent —
+// so the one number nobody has is "what has this session cost me, children
+// included". A process-wide ledger is the honest answer: every agent run,
+// whether it is the conversation you are typing into or the fifth child of an
+// async fan-out, records against the same total.
+//
+// Prices come from internal/pricing, which may not know a model. Unpriced
+// tokens are counted separately rather than as zero dollars, because a bar
+// that shows "$0.00" for real spending is worse than one that admits it does
+// not know.
+package ledger
+
+import (
+	"sync"
+
+	"github.com/decodo/tyci/internal/pricing"
+	"github.com/decodo/tyci/stream"
+)
+
+// Kind separates the conversation from work it delegated. That split is the
+// interesting one: an unexpectedly large bill is nearly always children.
+type Kind int
+
+const (
+	Main Kind = iota
+	Subagent
+)
+
+func (k Kind) String() string {
+	if k == Subagent {
+		return "subagent"
+	}
+	return "main"
+}
+
+// Row is the accumulated usage of one model, for one Kind.
+type Row struct {
+	Kind     Kind
+	Provider string
+	Model    string
+	Usage    stream.Usage
+	// USD is the cost of Usage, or 0 when Priced is false.
+	USD    float64
+	Priced bool
+	// Runs is how many agent runs contributed.
+	Runs int
+}
+
+// Snapshot is a consistent view of the ledger, safe to hold and render.
+type Snapshot struct {
+	Rows []Row
+	// MainUSD and SubagentUSD sum only the rows whose model was priced.
+	MainUSD     float64
+	SubagentUSD float64
+	// Unpriced is the number of rows whose model has no price in the catalog.
+	// Non-zero means TotalUSD is a lower bound, not the bill.
+	Unpriced int
+	Main     stream.Usage
+	Sub      stream.Usage
+}
+
+// TotalUSD is main plus delegated work.
+func (s Snapshot) TotalUSD() float64 { return s.MainUSD + s.SubagentUSD }
+
+type key struct {
+	kind     Kind
+	provider string
+	model    string
+}
+
+var (
+	mu    sync.Mutex
+	rows  = map[key]*Row{}
+	order []key
+)
+
+// Record adds one agent run's usage. Calling it with an all-zero usage is a
+// no-op: a turn that failed before the first token should not create a row.
+func Record(kind Kind, provider, model string, u stream.Usage) {
+	if u == (stream.Usage{}) {
+		return
+	}
+	k := key{kind: kind, provider: provider, model: model}
+	mu.Lock()
+	defer mu.Unlock()
+	r, ok := rows[k]
+	if !ok {
+		r = &Row{Kind: kind, Provider: provider, Model: model}
+		rows[k] = r
+		order = append(order, k)
+	}
+	r.Usage.Add(u)
+	r.Runs++
+	rates, _ := pricing.Lookup(provider, model)
+	r.Priced = rates.Known()
+	r.USD = Cost(rates, r.Usage)
+}
+
+// Cost prices a usage total. Input is treated as including CacheRead (which is
+// how the status bar has always displayed it), so cached tokens are billed at
+// the cache rate and only the remainder at the input rate. A provider that
+// does not price caching separately falls back to the input rate, which is
+// what "no cache discount" means.
+func Cost(r pricing.Rates, u stream.Usage) float64 {
+	if !r.Known() {
+		return 0
+	}
+	fresh := u.Input - u.CacheRead
+	if fresh < 0 {
+		fresh = 0
+	}
+	cacheRead := r.CacheRead
+	if cacheRead == 0 {
+		cacheRead = r.Input
+	}
+	cacheWrite := r.CacheWrite
+	if cacheWrite == 0 {
+		cacheWrite = r.Input
+	}
+	const perMillion = 1_000_000.0
+	return float64(fresh)/perMillion*r.Input +
+		float64(u.CacheRead)/perMillion*cacheRead +
+		float64(u.CacheWrite)/perMillion*cacheWrite +
+		float64(u.Output)/perMillion*r.Output
+}
+
+// Get returns the current totals, in first-seen order.
+func Get() Snapshot {
+	mu.Lock()
+	defer mu.Unlock()
+	s := Snapshot{Rows: make([]Row, 0, len(order))}
+	for _, k := range order {
+		r := rows[k]
+		s.Rows = append(s.Rows, *r)
+		switch {
+		case !r.Priced:
+			s.Unpriced++
+		case r.Kind == Subagent:
+			s.SubagentUSD += r.USD
+		default:
+			s.MainUSD += r.USD
+		}
+		if r.Kind == Subagent {
+			s.Sub.Add(r.Usage)
+		} else {
+			s.Main.Add(r.Usage)
+		}
+	}
+	return s
+}
+
+// Reset clears the ledger. /new starts a new conversation, and carrying the
+// previous one's bill into it would misreport both.
+func Reset() {
+	mu.Lock()
+	rows, order = map[key]*Row{}, nil
+	mu.Unlock()
+}
