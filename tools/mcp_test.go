@@ -264,6 +264,74 @@ func TestAllowOnlySubagent_MatchesSchema_ExplicitAndWildcard(t *testing.T) {
 	}
 }
 
+// TestMCPWildcard_DoesNotMatchServerWithSharedPrefix is the regression test
+// for the reviewer's finding: mcp_weather_* used to grant any tool whose
+// FLATTENED name started with "mcp_weather_", which also matches an
+// unrelated server literally named "weather_api" ("mcp_weather_api_..."
+// starts with "mcp_weather_" too). The fix resolves a tool's OWNING server
+// via the runner (serverFor) and requires an exact match, so "weather" ==
+// "weather_api" must be false on both the schema and the gate side.
+func TestMCPWildcard_DoesNotMatchServerWithSharedPrefix(t *testing.T) {
+	r := newTestRunnerWithTool("weather", "forecast")
+	r.clients["weather_api"] = &fakeMCPClient{name: "weather_api"}
+	r.tools["mcp_weather_api_delete_all"] = &mcpTool{server: "weather_api", tool: mcp.Tool{Name: "delete_all"}}
+	withRunner(t, r)
+
+	allowed := []string{"read", "mcp_weather_*"}
+
+	var schema []map[string]any
+	if err := json.Unmarshal(GetSubagentToolsSchemaJSONFor(allowed), &schema); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if schemaHasTool(t, schema, "mcp_weather_api_delete_all") {
+		t.Fatalf("mcp_weather_* must not match server %q merely because its flattened tool names start with the same characters as %q", "weather_api", "weather")
+	}
+	if !schemaHasTool(t, schema, "mcp_weather_forecast") {
+		t.Fatalf("mcp_weather_* should still include the actual weather server's own tool")
+	}
+
+	gate := AllowOnlySubagent(allowed)
+	if err := gate("mcp_weather_api_delete_all"); err == nil {
+		t.Fatalf("gate must refuse a different server's tool even when its name shares the wildcard's prefix")
+	}
+	if err := gate("mcp_weather_forecast"); err != nil {
+		t.Fatalf("gate should still permit the actual wildcarded server's tool, got: %v", err)
+	}
+}
+
+// TestMCPWildcard_BareMCPStarIsNotAGlobalGrant covers the other half of the
+// reviewer's finding: "mcp_*" with no server name in it must not act as
+// "every tool on every server" -- that is exactly the blanket exemption
+// decision (a) removed. A bare mcp_* is rejected (ignored), not treated as
+// a wildcard over everything.
+func TestMCPWildcard_BareMCPStarIsNotAGlobalGrant(t *testing.T) {
+	r := newTestRunnerWithTool("weather", "forecast")
+	r.clients["billing"] = &fakeMCPClient{name: "billing"}
+	r.tools["mcp_billing_charge"] = &mcpTool{server: "billing", tool: mcp.Tool{Name: "charge"}}
+	withRunner(t, r)
+
+	allowed := []string{"read", "mcp_*"}
+
+	var schema []map[string]any
+	if err := json.Unmarshal(GetSubagentToolsSchemaJSONFor(allowed), &schema); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if schemaHasTool(t, schema, "mcp_billing_charge") {
+		t.Fatalf("bare mcp_* must not grant a tool on an unnamed server")
+	}
+	if schemaHasTool(t, schema, "mcp_weather_forecast") {
+		t.Fatalf("bare mcp_* must not grant a tool on any server -- it names no server at all")
+	}
+
+	gate := AllowOnlySubagent(allowed)
+	if err := gate("mcp_billing_charge"); err == nil {
+		t.Fatalf("bare mcp_* must not make the gate permit an unnamed server's tool")
+	}
+	if err := gate("mcp_weather_forecast"); err == nil {
+		t.Fatalf("bare mcp_* must not make the gate permit any MCP tool")
+	}
+}
+
 // --- clean shutdown ---
 
 // TestShutdownMCP_ClosesEveryConnectedClient is the test that fails if the

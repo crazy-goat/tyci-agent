@@ -68,7 +68,7 @@ func (c *StdioClient) Name() string {
 // pending-request map), and sync.Mutex is not reentrant, so holding it here
 // for the whole call would deadlock on the first request. There is exactly
 // one Initialize per client today, and it never runs concurrently with any
-// other method (the only caller, ConnectAll in client.go, calls it once per
+// other method (the only caller, connectOne in client.go, calls it once per
 // client before handing the client to anyone else) -- but that invariant is
 // easy to break in future wiring, so the process/pipe fields (cmd, stdin,
 // stdout) are built in locals first and only published onto c under c.mu

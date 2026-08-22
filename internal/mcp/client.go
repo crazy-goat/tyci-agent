@@ -162,22 +162,6 @@ func NewClient(name string, cfg ServerConfig) (Client, error) {
 	return nil, fmt.Errorf("invalid server config: must have command or url")
 }
 
-// ConnectAll connects to all configured MCP servers and returns them. It
-// blocks on each server in turn with no bound on how long a hung handshake
-// can take — ConnectAllTimeout is the production path (see tools.InitMCP);
-// this is kept for direct/manual use where an unbounded wait is acceptable.
-func ConnectAll(ctx context.Context) (map[string]Client, error) {
-	servers, err := ConnectAllTimeout(ctx, 0)
-	if err != nil {
-		return nil, err
-	}
-	clients := make(map[string]Client, len(servers))
-	for name, srv := range servers {
-		clients[name] = srv.Client
-	}
-	return clients, nil
-}
-
 // ConnectedServer bundles a live, initialized MCP client with the tools it
 // advertised when ConnectAllTimeout listed them.
 type ConnectedServer struct {
@@ -217,10 +201,30 @@ func ConnectAllTimeout(ctx context.Context, timeout time.Duration) (map[string]C
 		return result, nil
 	}
 
+	// Resolve every server's auth token serially, here, before any connect
+	// goroutine starts. AuthManager (auth.go) is a bare, unsynchronized map:
+	// GetTokenForServer can WRITE it (SetToken, on a freshly-resolved env
+	// or literal token) and GetToken can mutate it too (a delete on
+	// expiry) -- so N goroutines each calling GetTokenForServer against the
+	// same *AuthManager would race on that map. Concurrent map writes are
+	// not just a data race Go tolerates quietly; the runtime detects them
+	// and calls fatal error, which takes the whole process down at
+	// startup. Resolving up front, in this single-threaded loop, keeps
+	// AuthManager's map access single-threaded while still letting the
+	// slow part -- the actual network/process connect below -- run
+	// concurrently. Deliberately not "one AuthManager per goroutine"
+	// instead: that would re-read mcp_auth.json once per configured
+	// server for no benefit.
+	tokens := make(map[string]string, len(cfg.MCPServers))
+	for name, serverCfg := range cfg.MCPServers {
+		tokens[name] = resolveAuthToken(authMgr, name, serverCfg)
+	}
+
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for name, serverCfg := range cfg.MCPServers {
 		name, serverCfg := name, serverCfg
+		token := tokens[name]
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -232,7 +236,7 @@ func ConnectAllTimeout(ctx context.Context, timeout time.Duration) (map[string]C
 			}
 			ch := make(chan outcome, 1)
 			go func() {
-				client, toolList, err := connectOne(ctx, name, serverCfg, authMgr)
+				client, toolList, err := connectOne(ctx, name, serverCfg, token)
 				ch <- outcome{client: client, tools: toolList, err: err}
 			}()
 
@@ -270,10 +274,31 @@ func ConnectAllTimeout(ctx context.Context, timeout time.Duration) (map[string]C
 	return result, nil
 }
 
-// connectOne creates, initializes, authenticates, and lists tools for a
-// single configured server. It is the unbounded per-server body that
+// resolveAuthToken resolves a single server's auth token -- AuthManager's
+// stored token, then TokenEnv, then a literal token in config, then the
+// legacy connect.GetKey("mcp_"+name) fallback -- mirroring what
+// connectOne used to do inline via GetTokenForServer plus its own
+// connect-package fallback. Called serially, once per server, before any
+// connect goroutine starts; see ConnectAllTimeout's doc comment for why
+// that matters.
+func resolveAuthToken(authMgr *AuthManager, name string, serverCfg ServerConfig) string {
+	authCfg := serverCfg.GetAuthConfig()
+	if token := GetTokenForServer(authMgr, name, authCfg); token != "" {
+		return token
+	}
+	if authCfg == nil {
+		if token, ok, _ := connect.GetKey("mcp_" + name); ok && token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+// connectOne creates, initializes, and lists tools for a single configured
+// server, applying its already-resolved auth token (see resolveAuthToken)
+// once the handshake completes. It is the unbounded per-server body that
 // ConnectAllTimeout races against a timer.
-func connectOne(ctx context.Context, name string, serverCfg ServerConfig, authMgr *AuthManager) (Client, []Tool, error) {
+func connectOne(ctx context.Context, name string, serverCfg ServerConfig, token string) (Client, []Tool, error) {
 	client, err := NewClient(name, serverCfg)
 	if err != nil {
 		return nil, nil, err
@@ -284,20 +309,9 @@ func connectOne(ctx context.Context, name string, serverCfg ServerConfig, authMg
 		return nil, nil, fmt.Errorf("initialize: %w", err)
 	}
 
-	// Resolve auth token using AuthManager
-	authCfg := serverCfg.GetAuthConfig()
-	if token := GetTokenForServer(authMgr, name, authCfg); token != "" {
+	if token != "" {
 		if hc, ok := client.(*HTTPClient); ok {
 			hc.SetAuthToken(token)
-		}
-	}
-
-	// Legacy fallback: check connect package
-	if authCfg == nil {
-		if token, ok, _ := connect.GetKey("mcp_" + name); ok && token != "" {
-			if hc, ok := client.(*HTTPClient); ok {
-				hc.SetAuthToken(token)
-			}
 		}
 	}
 

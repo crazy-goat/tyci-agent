@@ -323,10 +323,23 @@ var runCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer shutdown()
-		if dl != nil {
-			defer dl.Close()
+		// cleanup bundles everything that must run once, however this
+		// invocation ends: the normal return below (via defer) AND the two
+		// os.Exit paths inside finishPromptRun (via the cleanup param passed
+		// to runPrompt) -- os.Exit terminates before any defer gets to run,
+		// so runPrompt/finishPromptRun call this explicitly right before
+		// each os.Exit. Without it, an errored or Ctrl-C'd `tyci run` would
+		// skip tools.ShutdownMCP() (and the debug log's Close()) entirely,
+		// leaking a connected MCP server's process on every failed or
+		// canceled run -- cron's included, since it just shells out to
+		// `tyci run`. See finishPromptRun's doc comment (prompt_finish.go).
+		cleanup := func() {
+			if dl != nil {
+				dl.Close()
+			}
+			shutdown()
 		}
+		defer cleanup()
 		// `tyci run` is a one-shot CLI invocation. Use the
 		// bracket-prefix Minimal display so output is plain, one line
 		// per event, and easy to grep / pipe. For the rich REPL or
@@ -336,7 +349,7 @@ var runCmd = &cobra.Command{
 		// No resolver: a one-shot run has nowhere to type /model, so
 		// SwitchModel is not reachable and does not need a catalog.
 		cond := newConductor(provider, modelName, disp, cfg, sessionPath, nil)
-		runPrompt(cond, disp, prompt, ctx)
+		runPrompt(cond, disp, prompt, ctx, cleanup)
 		return nil
 	},
 }

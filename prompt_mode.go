@@ -20,7 +20,12 @@ import (
 // in the conductor. What is left here is genuinely one-shot-CLI business:
 // which signals mean "stop", and whether a resumed transcript is replayed in
 // full or summarized (it is summarized; a huge session would bury the answer).
-func runPrompt(cond *conductor.Conductor, disp display.Display, prompt string, ctx context.Context) {
+//
+// cleanup is forwarded to finishPromptRun, which calls it right before an
+// os.Exit that would otherwise skip it (and any defer in runCmd along with
+// it) — see finishPromptRun's doc comment for why that matters now that
+// `tyci run` connects MCP servers.
+func runPrompt(cond *conductor.Conductor, disp display.Display, prompt string, ctx context.Context, cleanup func()) {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
@@ -46,7 +51,7 @@ func runPrompt(cond *conductor.Conductor, disp display.Display, prompt string, c
 	runCancel()
 	<-sigDone
 
-	finishPromptRun(cond, disp, err)
+	finishPromptRun(cond, disp, err, cleanup)
 }
 
 func watchInterrupt(ctx context.Context, cancel context.CancelFunc) (chan os.Signal, chan struct{}) {

@@ -195,6 +195,22 @@ func (r *MCPToolRunner) HasTool(name string) bool {
 	return ok
 }
 
+// serverFor returns the server that registered the tool named name, and
+// whether such a tool is currently registered at all. Used by
+// mcpAllowedByWildcard to resolve which server actually owns a tool,
+// rather than re-deriving the server name from the flattened
+// "mcp_<server>_<tool>" string by prefix arithmetic -- which is exactly
+// what let a mcp_weather_* wildcard also match mcp_weather_api_*'s tools.
+func (r *MCPToolRunner) serverFor(name string) (server string, ok bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, ok := r.tools[name]
+	if !ok {
+		return "", false
+	}
+	return t.server, true
+}
+
 // RunTool executes an MCP tool.
 func (r *MCPToolRunner) RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {
 	r.mu.RLock()
@@ -331,27 +347,56 @@ func ShutdownMCP() {
 	}
 }
 
-// mcpWildcardPrefix reports whether entry is a per-server MCP wildcard an
+// mcpWildcardServer reports whether entry is a per-server MCP wildcard an
 // agent definition can opt into (e.g. "mcp_weather_*"), and if so returns
-// the prefix it grants ("mcp_weather_"). A subagent's tools: whitelist is
-// authored before any server connects, so it can never spell out a dynamic
-// mcp_<server>_<tool> name for every tool a server happens to expose today
-// -- but the author can still know (or guess) the server's own name and
-// opt into all of its tools with one line, rather than being forced to
-// choose between "list none of them" and "list everything any server ever
-// connects".
-func mcpWildcardPrefix(entry string) (prefix string, ok bool) {
+// the exact server name it names ("weather"). A subagent's tools:
+// whitelist is authored before any server connects, so it can never spell
+// out a dynamic mcp_<server>_<tool> name for every tool a server happens
+// to expose today -- but the author can still know (or guess) the
+// server's own name and opt into all of its tools with one line, rather
+// than being forced to choose between "list none of them" and "list
+// everything any server ever connects".
+//
+// The wildcard must name a server: bare "mcp_*" is rejected (returns
+// ok=false), not treated as "every server". That is a deliberate decision,
+// not an oversight -- a one-line global exemption from every subagent
+// whitelist is exactly the blanket exemption decision (a) exists to
+// remove, and a wildcard with no server name in it can't mean anything
+// narrower than that.
+func mcpWildcardServer(entry string) (server string, ok bool) {
 	if !strings.HasPrefix(entry, "mcp_") || !strings.HasSuffix(entry, "_*") {
 		return "", false
 	}
-	return strings.TrimSuffix(entry, "*"), true
+	server = strings.TrimSuffix(strings.TrimPrefix(entry, "mcp_"), "_*")
+	if server == "" {
+		return "", false
+	}
+	return server, true
 }
 
 // mcpAllowedByWildcard reports whether name (an "mcp_<server>_<tool>" tool
-// name) is granted by any mcp_<server>_* wildcard present in allowed.
+// name currently registered by the global MCP runner) is granted by any
+// mcp_<server>_* wildcard present in allowed.
+//
+// This resolves name to its OWNING server via the runner (serverFor)
+// rather than re-deriving the server from the flattened name with string-
+// prefix arithmetic. Prefix arithmetic was the actual bug: HasPrefix(name,
+// "mcp_weather_") also matches "mcp_weather_api_delete_all" -- a
+// completely different, unrelated server ("weather_api") that merely
+// starts with the same characters as "weather" once "mcp_" and the
+// trailing underscore are glued back on. Matching the resolved server name
+// exactly is immune to that: "weather" == "weather_api" is false.
 func mcpAllowedByWildcard(name string, allowed []string) bool {
+	r := GetMCPToolRunner()
+	if r == nil {
+		return false
+	}
+	owner, ok := r.serverFor(name)
+	if !ok {
+		return false
+	}
 	for _, entry := range allowed {
-		if prefix, ok := mcpWildcardPrefix(entry); ok && strings.HasPrefix(name, prefix) {
+		if server, ok := mcpWildcardServer(entry); ok && server == owner {
 			return true
 		}
 	}

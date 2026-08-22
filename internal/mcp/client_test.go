@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -74,10 +75,10 @@ func TestConnectAllTimeout_NoConfigFile_ReturnsEmpty(t *testing.T) {
 
 // TestConnectAllTimeout_HealthyServer_ToolsAppear is the test that fails if
 // ConnectAllTimeout (and so tools.InitMCP, and so the whole batch-2 wiring)
-// is reverted to the pre-batch-2 ConnectAll-only shape without ever
-// listing tools per server: it asserts the tools that came back alongside
-// the client, which ConnectAll's old shape (map[string]Client only) had no
-// way to report at all.
+// is reverted to main's pre-batch-2 shape, a ConnectAll that returned only
+// map[string]Client with no per-server tool list at all: it asserts the
+// tools that came back alongside the client, which that older shape had no
+// way to report.
 func TestConnectAllTimeout_HealthyServer_ToolsAppear(t *testing.T) {
 	server := httptest.NewServer(mcpHTTPHandler(t, "search", nil))
 	defer server.Close()
@@ -166,5 +167,89 @@ func TestConnectAllTimeout_InvalidConfigFile_ReturnsError(t *testing.T) {
 	_, err := ConnectAllTimeout(context.Background(), time.Second)
 	if err == nil {
 		t.Fatalf("expected an error for an unparsable mcp.json")
+	}
+}
+
+// mcpAuthHTTPHandler is like mcpHTTPHandler but records the Authorization
+// header it saw on tools/list into seen (guarded by mu), so a test can
+// verify each server actually got its own token rather than none, a
+// mixed-up one, or a crash.
+func mcpAuthHTTPHandler(mu *sync.Mutex, seen map[string]string, key, toolName string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req Request
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		switch req.Method {
+		case "initialize":
+			result := InitializeResult{ProtocolVersion: "2024-11-05", ServerInfo: ServerInfo{Name: "fake", Version: "1.0"}}
+			resultJSON, _ := json.Marshal(result)
+			json.NewEncoder(w).Encode(Response{JSONRPC: "2.0", Result: resultJSON, ID: req.ID})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			mu.Lock()
+			seen[key] = r.Header.Get("Authorization")
+			mu.Unlock()
+			result := ToolListResult{Tools: []Tool{{Name: toolName, Description: "d", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
+			resultJSON, _ := json.Marshal(result)
+			json.NewEncoder(w).Encode(Response{JSONRPC: "2.0", Result: resultJSON, ID: req.ID})
+		default:
+			http.Error(w, "unexpected method "+req.Method, http.StatusBadRequest)
+		}
+	}
+}
+
+// TestConnectAllTimeout_TwoAuthServers_NoConcurrentMapRace is the blocker
+// fix's test: two servers configured with auth (type: bearer, token_env)
+// force GetTokenForServer to resolve and SetToken into the shared
+// *AuthManager from two goroutines. Before resolving tokens serially (see
+// ConnectAllTimeout's doc comment), this raced on AuthManager's
+// unsynchronized map -- caught by -race, and capable of a fatal
+// "concurrent map writes" throw even without it. Repeating the connect a
+// few times in one process raises the odds of catching a race that isn't
+// guaranteed to fire on every single run. It also checks each server
+// actually received its OWN token, not none or a mixed-up one, since a fix
+// that avoided the race by (say) resolving only one server's token would
+// pass a lesser version of this test.
+func TestConnectAllTimeout_TwoAuthServers_NoConcurrentMapRace(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]string{}
+
+	serverA := httptest.NewServer(mcpAuthHTTPHandler(&mu, seen, "a", "toolA"))
+	defer serverA.Close()
+	serverB := httptest.NewServer(mcpAuthHTTPHandler(&mu, seen, "b", "toolB"))
+	defer serverB.Close()
+
+	t.Setenv("MCP_TEST_TOKEN_A", "token-a-secret")
+	t.Setenv("MCP_TEST_TOKEN_B", "token-b-secret")
+
+	writeTestConfig(t, `{"mcpServers":{
+		"a":{"url":"`+serverA.URL+`","auth":{"type":"bearer","token_env":"MCP_TEST_TOKEN_A"}},
+		"b":{"url":"`+serverB.URL+`","auth":{"type":"bearer","token_env":"MCP_TEST_TOKEN_B"}}
+	}}`)
+
+	for i := 0; i < 5; i++ {
+		servers, err := ConnectAllTimeout(context.Background(), 3*time.Second)
+		if err != nil {
+			t.Fatalf("run %d: unexpected error: %v", i, err)
+		}
+		if len(servers) != 2 {
+			t.Fatalf("run %d: expected 2 servers connected, got %d: %v", i, len(servers), servers)
+		}
+		for _, srv := range servers {
+			srv.Client.Close()
+		}
+	}
+
+	mu.Lock()
+	gotA, gotB := seen["a"], seen["b"]
+	mu.Unlock()
+	if gotA != "Bearer token-a-secret" {
+		t.Errorf("server a: expected its own Authorization header, got %q", gotA)
+	}
+	if gotB != "Bearer token-b-secret" {
+		t.Errorf("server b: expected its own Authorization header, got %q", gotB)
 	}
 }
