@@ -8,7 +8,12 @@ import (
 	"io"
 	"os/exec"
 	"sync"
+	"time"
 )
+
+// closeGracePeriod is how long Close waits for the child process to exit on
+// its own (after closing stdin) before force-killing its process group.
+const closeGracePeriod = 500 * time.Millisecond
 
 // Ensure we use context
 var _ = context.Background
@@ -47,36 +52,57 @@ func (c *StdioClient) Name() string {
 }
 
 // Initialize performs the MCP handshake over stdio.
+//
+// This method does not hold c.mu across the handshake: sendRequest/
+// sendNotification take the lock themselves (only to protect nextID and the
+// pending-request map), and sync.Mutex is not reentrant, so holding it here
+// for the whole call would deadlock on the first request. There is exactly
+// one Initialize per client today, and it never runs concurrently with any
+// other method (the only caller, ConnectAll in client.go, calls it once per
+// client before handing the client to anyone else) -- but that invariant is
+// easy to break in future wiring, so the process/pipe fields (cmd, stdin,
+// stdout) are built in locals first and only published onto c under c.mu
+// once, right before readLoop starts. That gives Close (which reads them
+// under c.mu) a real happens-before edge instead of relying on the
+// informal single-caller invariant holding forever.
 func (c *StdioClient) Initialize(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	// Start the process
-	c.cmd = exec.CommandContext(ctx, c.command, c.args...)
-	c.cmd.Stderr = nil // Discard stderr for now
+	cmd := exec.CommandContext(ctx, c.command, c.args...)
+	cmd.Stderr = nil // Discard stderr for now
+	setProcAttrs(cmd)
 
-	var err error
-	c.stdin, err = c.cmd.StdinPipe()
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("creating stdin pipe: %w", err)
 	}
 
-	stdout, err := c.cmd.StdoutPipe()
+	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("creating stdout pipe: %w", err)
 	}
-	c.stdout = bufio.NewReader(stdout)
+	stdout := bufio.NewReader(stdoutPipe)
 
-	if err := c.cmd.Start(); err != nil {
+	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting process: %w", err)
 	}
+
+	// Publish the setup fields under the lock before anything that reads
+	// them under c.mu (Close) or in a separate goroutine (readLoop) can
+	// observe them.
+	c.mu.Lock()
+	c.cmd = cmd
+	c.stdin = stdin
+	c.stdout = stdout
+	c.mu.Unlock()
 
 	// Start response reader goroutine
 	go c.readLoop()
 
 	// Send initialize request
+	c.mu.Lock()
 	initReq := InitializeRequest(c.nextID)
 	c.nextID++
+	c.mu.Unlock()
 
 	resp, err := c.sendRequest(ctx, initReq)
 	if err != nil {
@@ -137,6 +163,11 @@ func (c *StdioClient) CallTool(ctx context.Context, name string, arguments json.
 	if err != nil {
 		return nil, fmt.Errorf("tools/call: %w", err)
 	}
+	if resp == nil {
+		// Defensive: sendRequest should never return (nil, nil), but don't
+		// let a future regression there turn back into a nil dereference.
+		return nil, fmt.Errorf("tools/call: no response from %q", c.name)
+	}
 
 	if resp.Error != nil {
 		return nil, fmt.Errorf("tools/call error: %s", resp.Error.Message)
@@ -164,37 +195,49 @@ func (c *StdioClient) SetElicitationHandler(handler ElicitationHandler) {
 	c.elicitationHandler = handler
 }
 
-// Close shuts down the client.
+// Close shuts down the client. It closes stdin to ask the process to exit,
+// waits up to closeGracePeriod for it to do so, and only then force-kills
+// its process group (so an "npx"-style wrapper's real child dies too,
+// instead of being orphaned). Either way it reaps the process, and wakes
+// any in-flight sendRequest with an error rather than a nil response.
 func (c *StdioClient) Close() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	stdin := c.stdin
+	cmd := c.cmd
+	c.mu.Unlock()
 
 	// Close stdin to signal the process to exit
-	if c.stdin != nil {
-		c.stdin.Close()
+	if stdin != nil {
+		stdin.Close()
 	}
 
-	// Wait for process to exit (with timeout)
-	if c.cmd != nil && c.cmd.Process != nil {
+	// Wait for the process to exit, with a bounded grace period before we
+	// force-kill it. This does not hold c.mu: sendRequest/readLoop only need
+	// it briefly, and cmd.Wait() can take arbitrarily long.
+	if cmd != nil && cmd.Process != nil {
 		done := make(chan error, 1)
 		go func() {
-			done <- c.cmd.Wait()
+			done <- cmd.Wait()
 		}()
 
 		select {
 		case <-done:
-			// Process exited
-		default:
-			// Process still running, force kill
-			c.cmd.Process.Kill()
+			// Process exited on its own within the grace period.
+		case <-time.After(closeGracePeriod):
+			// Still running: kill its whole process group and reap it.
+			killProcessGroup(cmd)
+			<-done
 		}
 	}
 
-	// Close all pending channels
+	// Close all pending channels so any in-flight sendRequest wakes up
+	// instead of blocking forever.
+	c.mu.Lock()
 	for id, ch := range c.pending {
 		close(ch)
 		delete(c.pending, id)
 	}
+	c.mu.Unlock()
 
 	return nil
 }
@@ -224,9 +267,15 @@ func (c *StdioClient) sendRequest(ctx context.Context, req Request) (*Response, 
 		return nil, fmt.Errorf("writing request: %w", err)
 	}
 
-	// Wait for response
+	// Wait for response. If the client is closed while we're waiting, Close
+	// closes ch: the receive then returns the zero value (nil, false)
+	// instead of blocking forever, and we must not hand a nil *Response
+	// back to a caller that dereferences it.
 	select {
-	case resp := <-ch:
+	case resp, ok := <-ch:
+		if !ok || resp == nil {
+			return nil, fmt.Errorf("mcp: connection to %q closed while waiting for response", c.name)
+		}
 		return resp, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()

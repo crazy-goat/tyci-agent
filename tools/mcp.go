@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -155,14 +156,30 @@ func (r *MCPToolRunner) makeElicitationHandler(serverName string) mcp.Elicitatio
 	}
 }
 
-// Close shuts down all MCP clients.
+// Close shuts down all MCP clients concurrently. Each StdioClient.Close can
+// take up to its own grace period to force-kill an unresponsive server; if
+// this ran serially while holding r.mu, closing three such servers would
+// stall the caller (and every RunTool/HasTool/MCPToolsSchema call, which
+// all need r.mu) for the sum of their grace periods instead of the max. We
+// snapshot the client map under the lock, then release it before closing,
+// the same pattern StdioClient.Close itself uses for its own process wait.
 func (r *MCPToolRunner) Close() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	r.mu.RLock()
+	clients := make([]mcp.Client, 0, len(r.clients))
 	for _, client := range r.clients {
-		client.Close()
+		clients = append(clients, client)
 	}
+	r.mu.RUnlock()
+
+	var wg sync.WaitGroup
+	for _, client := range clients {
+		wg.Add(1)
+		go func(c mcp.Client) {
+			defer wg.Done()
+			c.Close()
+		}(client)
+	}
+	wg.Wait()
 }
 
 // HasTool returns true if the tool name is an MCP tool.
@@ -177,10 +194,18 @@ func (r *MCPToolRunner) HasTool(name string) bool {
 func (r *MCPToolRunner) RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {
 	r.mu.RLock()
 	t, ok := r.tools[name]
+	if !ok {
+		r.mu.RUnlock()
+		return ToolResult{
+			Type:    "result",
+			Success: false,
+			Error:   fmt.Sprintf("MCP tool %q not found", name),
+		}
+	}
 	client := r.clients[t.server]
 	r.mu.RUnlock()
 
-	if !ok || client == nil {
+	if client == nil {
 		return ToolResult{
 			Type:    "result",
 			Success: false,
@@ -231,13 +256,24 @@ func (r *MCPToolRunner) RunTool(ctx context.Context, name string, arguments map[
 	}
 }
 
-// MCPToolsSchema returns tool definitions for all MCP tools.
+// MCPToolsSchema returns tool definitions for all MCP tools, sorted by name.
+// A stable order lets repeated calls (e.g. two spawns of the same subagent)
+// produce byte-identical schemas, which is required to share a provider-side
+// prompt-cache prefix; iterating the map directly would randomize the order
+// on every call.
 func (r *MCPToolRunner) MCPToolsSchema() []map[string]any {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
 	var schema []map[string]any
-	for name, t := range r.tools {
+	for _, name := range names {
+		t := r.tools[name]
 		schema = append(schema, map[string]any{
 			"type": "function",
 			"function": map[string]any{
