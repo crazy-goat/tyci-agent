@@ -1,9 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -148,55 +148,95 @@ func runSessionShow(cmd *cobra.Command, args []string) error {
 	}
 
 	// Read just enough to dump headers / counts; tolerates large files.
-	dec := json.NewDecoder(f)
-	var header map[string]any
+	// The event "type" values and field names here must match what
+	// session.Session actually writes (see session/session.go): the header
+	// line has type "session", not "header", and tool activity lives in a
+	// message event's Content blocks (type "toolCall"), not a top-level
+	// "blocks" field. Decoding into the session package's structs (instead
+	// of ad-hoc map access) keeps this in sync with that format.
+	//
+	// json.Decoder does not resynchronize after a syntax error — it keeps
+	// returning the same error on every subsequent Decode, so a "skip one
+	// bad line and keep going" loop built on it never advances and hangs
+	// forever. A truncated last line (tyci killed mid-write) hits the same
+	// trap via io.ErrUnexpectedEOF, which isn't io.EOF. Read line-by-line
+	// with bufio.Scanner instead, exactly like session.parseSessionFile
+	// (session/session.go) already does, so a bad line is skipped and the
+	// scan moves on to the next one.
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	var header *session.Header
 	var messages, compactions, toolCalls int
-	for {
-		var raw map[string]any
-		if err := dec.Decode(&raw); err != nil {
-			if err == io.EOF {
-				break
-			}
-			// Try to keep going on a single corrupt line.
+	for scanner.Scan() {
+		raw := scanner.Bytes()
+		if len(raw) == 0 {
 			continue
 		}
-		t, _ := raw["type"].(string)
-		switch t {
-		case "header":
+		var typed struct {
+			Type session.EventType `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &typed); err != nil {
+			continue
+		}
+		switch typed.Type {
+		case session.TypeSession:
 			if header == nil {
-				header = raw
-			}
-		case "message":
-			messages++
-			if blocks, ok := raw["blocks"].([]any); ok {
-				for _, b := range blocks {
-					if bm, ok := b.(map[string]any); ok {
-						if bm["type"] == "tool_use" || bm["type"] == "tool_result" {
-							toolCalls++
-						}
-					}
+				var h session.Header
+				if err := json.Unmarshal(raw, &h); err == nil {
+					header = &h
 				}
 			}
-		case "compaction":
+		case session.TypeMessage:
+			messages++
+			var msg session.MessageEvent
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				continue
+			}
+			for _, b := range msg.Message.Content {
+				// Only "toolCall" blocks exist in practice: a tool result is
+				// a message event whose ROLE is "toolResult" but whose block
+				// Type is "text" (see agent/session_log.go's
+				// writeToolResultSessionEvent and run_once.go's own block
+				// construction, which never writes Type "toolResult").
+				// Counting a "toolResult" block type here would double-count
+				// every tool call the day someone "fixes" that block type to
+				// match its role.
+				if b.Type == "toolCall" {
+					toolCalls++
+				}
+			}
+		case session.TypeCompaction:
 			compactions++
 		}
 	}
 	if header != nil {
-		if id, ok := header["id"].(string); ok {
-			fmt.Fprintf(os.Stdout, "ID:      %s\n", id)
+		fmt.Fprintf(os.Stdout, "ID:      %s\n", header.ID)
+		if header.CWD != "" {
+			fmt.Fprintf(os.Stdout, "CWD:     %s\n", header.CWD)
 		}
-		if cwd, ok := header["cwd"].(string); ok {
-			fmt.Fprintf(os.Stdout, "CWD:     %s\n", cwd)
+		if header.Model != "" {
+			fmt.Fprintf(os.Stdout, "Model:   %s\n", header.Model)
 		}
-		if m, ok := header["model"].(string); ok {
-			fmt.Fprintf(os.Stdout, "Model:   %s\n", m)
+		if header.Provider != "" {
+			fmt.Fprintf(os.Stdout, "Provider: %s\n", header.Provider)
 		}
-		if p, ok := header["provider"].(string); ok {
-			fmt.Fprintf(os.Stdout, "Provider:%s\n", p)
+		if header.Timestamp != "" {
+			fmt.Fprintf(os.Stdout, "Started: %s\n", header.Timestamp)
 		}
-		if ts, ok := header["timestamp"].(string); ok {
-			fmt.Fprintf(os.Stdout, "Started: %s\n", ts)
-		}
+	}
+	// scanner.Err() is nil on a clean io.EOF but non-nil on anything that
+	// stopped the scan early — most notably bufio.ErrTooLong when a line
+	// exceeds the 8 MB buffer above, which does NOT resynchronize: Scan()
+	// just returns false and every remaining line in the file is silently
+	// unread. Without this check, a session with one huge line (or any
+	// mid-read I/O error) would print undercounted Counts and exit 0 with
+	// nothing to say the report is incomplete. session.parseSessionFile
+	// (session/session.go) returns this same error rather than swallowing
+	// it; here there is already a partial report worth keeping, so the
+	// scan error is surfaced as a warning line instead of aborting before
+	// any output at all.
+	if scanErr := scanner.Err(); scanErr != nil {
+		fmt.Fprintf(os.Stdout, "Warning: stopped reading early (%v); counts below are incomplete\n", scanErr)
 	}
 	fmt.Fprintf(os.Stdout, "Counts:  %d messages, %d tool calls, %d compactions\n",
 		messages, toolCalls, compactions)
