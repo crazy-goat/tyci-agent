@@ -15,6 +15,18 @@ import (
 // takes the place of the rest.
 const jobsPanelMaxLines = 4
 
+// quietActivityThreshold is how long a RUNNING job must have shown no sign
+// of life (no streamed text/thinking/tool-call event, no backgrounded bash
+// output line — see jobs.Registry.TouchActivity) before formatJobLine
+// starts rendering a "quiet Xs" note next to it. Below this a busy child
+// streaming tokens every 100ms would have its jobs-panel line's rendered
+// text change on essentially every frame, thrashing the width-keyed render
+// cache (see tui_render_buffer.go/tui_scroll.go) for no benefit — nobody
+// needs to be told a job active a second ago is "quiet". Not exposed as a
+// config option: nothing nearby in this file treats a small numeric
+// display constant like this as user-configurable.
+const quietActivityThreshold = 5 * time.Second
+
 // applyJobUpdate upserts j into backgroundJobs. Called from Update() for
 // every tuiMsgJobUpdate, regardless of which overlay (if any) is active.
 func (m *TuiModel) applyJobUpdate(j jobs.Job) {
@@ -116,11 +128,29 @@ func shortJobID(id string) string {
 	return jobs.ShortID(id)
 }
 
+// quietSince returns how long j has shown no sign of life, for a RUNNING
+// job only — see jobs.Registry.TouchActivity and quietActivityThreshold.
+// ok is false for any other status, or when j.LastActivity is zero (should
+// not happen for a job that went through Registry.Start, but a zero value
+// must never render as a bogus multi-decade duration).
+func quietSince(j jobs.Job) (d time.Duration, ok bool) {
+	if j.Status != jobs.StatusRunning || j.LastActivity.IsZero() {
+		return 0, false
+	}
+	return time.Since(j.LastActivity).Round(time.Second), true
+}
+
 // formatJobLine renders one job as a single line: "<icon> #<id> <status>
 // <description> (<duration>)", truncated to fit width. For a job waiting on
 // an answer, the QUESTION text is shown instead of the description: it makes
 // no progress until answer_job relays it a reply, so it's the one thing
 // worth seeing here.
+//
+// For a RUNNING job that has shown no sign of life for at least
+// quietActivityThreshold, the suffix also carries "quiet Xs" — worded as a
+// neutral observation ("last sign of life was Xs ago"), never as "hung" or
+// "stuck": a legitimate multi-minute test run that produces no output is
+// silent and entirely fine, not a malfunction to flag alarmingly.
 func formatJobLine(j jobs.Job, width int) string {
 	icon, color := jobStatusIcon(j.Status)
 	iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
@@ -129,6 +159,9 @@ func formatJobLine(j jobs.Job, width int) string {
 	// jobs panel most needs to read cleanly at a glance.
 	prefix := fmt.Sprintf("%s #%s %-14s ", iconStyled, shortJobID(j.ID), j.Status)
 	suffix := fmt.Sprintf(" (%s)", jobDuration(j))
+	if quiet, ok := quietSince(j); ok && quiet >= quietActivityThreshold {
+		suffix = fmt.Sprintf(" (%s · quiet %s)", jobDuration(j), quiet)
+	}
 	text := j.Description
 	if j.Status == jobs.StatusWaitingAnswer && j.Question != "" {
 		text = fmt.Sprintf("asks: %q", j.Question)
