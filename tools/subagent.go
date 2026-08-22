@@ -33,7 +33,10 @@ const SubagentTimeoutSec = 600
 // need. What the handoff buys is the thing the parent cannot buy for itself:
 // the turn ends, so the person at the keyboard gets their prompt back and can
 // carry on talking instead of watching a spinner.
-const SubagentBackgroundAfterSec = 60
+//
+// A var, not a const, so tests can shrink it instead of waiting out a real
+// 60s timer to exercise the timer.C exit of runWithHandoff's select.
+var SubagentBackgroundAfterSec = 60 * time.Second
 
 // ErrSubagentTruncated is returned (wrapped via fmt.Errorf %w) by a
 // SubAgentRunner when the child hit its MaxIterations cap. Tools package
@@ -363,11 +366,11 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 		return res
 	}
 
-	// Reached only when there is no job registry (a one-shot `tyci run`) or
-	// backgrounding is disallowed for this context (a child-of-child call,
-	// see backgroundAllowed) — the only cases runWithHandoff does not cover.
-	// Every other call goes through runWithHandoff above; no task run here
-	// gets a job id.
+	// Reached when backgrounding is disabled for this mode
+	// (!backgroundAllowed(ctx), including when ctx already carries a
+	// SubagentSinkCtxKey — i.e. this call is itself running inside another
+	// subagent) — the only case runWithHandoff does not cover, since
+	// jobStarter is wired unconditionally in the real binary (main.go).
 	results := runTasks(ctx, t.Runner, tasks, SubagentTimeoutSec)
 	return resultsToToolResult(results)
 }
@@ -719,7 +722,7 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask)
 		spawned = append(spawned, t.spawn(ctx, task, false, true))
 	}
 
-	timer := time.NewTimer(SubagentBackgroundAfterSec * time.Second)
+	timer := time.NewTimer(SubagentBackgroundAfterSec)
 	defer timer.Stop()
 
 	waiting := make(map[*spawnedTask]struct{}, len(spawned))
@@ -789,12 +792,12 @@ func (t *SubagentTool) handOff(spawned []*spawnedTask) ToolResult {
 	if len(stillRunning) == 0 {
 		// Everything finished between the timer firing and this loop. Rare,
 		// and there is nothing to hand over — but the caller has already
-		// committed to the handoff path, so report the results here.
-		data, err := json.Marshal(finished)
-		if err != nil {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("marshal results: %v", err)}
-		}
-		return ToolResult{Type: "result", Success: true, Content: string(data)}
+		// committed to the handoff path, so report the results here. Same
+		// shaping as every other all-finished case (resultsToToolResult), so
+		// a single task collapses to plain text instead of a one-element
+		// JSON array just because it happened to finish on this side of the
+		// handoff decision.
+		return resultsToToolResult(finished)
 	}
 	return ToolResult{Type: "result", Success: true, Content: spawnedJobsMessage(stillRunning, finished)}
 }
