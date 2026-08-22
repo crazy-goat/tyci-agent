@@ -405,7 +405,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "ask",
-				"description": "Ask the parent one question and BLOCK until it answers. Only usable inside an async job. A last resort for genuine ambiguity: you make zero progress while waiting, and if the wall clock runs out first your whole run is discarded. Prefer stating an assumption and proceeding.",
+				"description": "Ask the parent one question and BLOCK until it answers. Only usable inside a job (any subagent call, or a /btw side-conversation). If there is no way for an answer to ever reach this call, it fails immediately instead of waiting out its timeout for nothing. A last resort for genuine ambiguity: you make zero progress while waiting, and if the wall clock runs out first your whole run is discarded. Prefer stating an assumption and proceeding.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -434,7 +434,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "report_progress",
-				"description": "Post a short status note from inside an async job, visible via wait and in the jobs panel. Use it during long work so whoever is watching is not left guessing. Only usable inside a job.",
+				"description": "Post a short status note from inside a job (any subagent call, or a /btw side-conversation). Only usable inside a job; always succeeds. Read via wait(job_id=...) once that id is known, or the end-of-turn pending-jobs reminder while it is running. A blocking call under `tyci run`/`--print` never hands out a job id, so there nobody reads it before the job is done.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{

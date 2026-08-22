@@ -58,7 +58,7 @@ func TestBlockingCallReturnsInlineWhenTheChildIsQuick(t *testing.T) {
 	_, notifier := handoffEnv(t, time.Minute)
 	tool := handoffTool(t, func() (string, error) { return "the answer", nil })
 
-	res, handed := tool.runWithHandoff(context.Background(), []subagentTask{{Task: "quick"}})
+	res, handed := tool.runWithHandoff(context.Background(), []subagentTask{{Task: "quick"}}, true)
 	if handed {
 		t.Fatalf("a quick child should not be handed over: %+v", res)
 	}
@@ -279,7 +279,7 @@ func TestTypingEndsTheWaitImmediately(t *testing.T) {
 	// Nobody typing: the wait is still on after well past the poll interval.
 	done := make(chan ToolResult, 1)
 	go func() {
-		res, handed := tool.runWithHandoff(context.Background(), []subagentTask{{Task: "slow"}})
+		res, handed := tool.runWithHandoff(context.Background(), []subagentTask{{Task: "slow"}}, true)
 		if handed {
 			done <- res
 		}
@@ -528,7 +528,7 @@ func TestBlockingCallStillHandsOffOnContextCancel(t *testing.T) {
 		handed bool
 	}, 1)
 	go func() {
-		res, handed := tool.runWithHandoff(ctx, []subagentTask{{Task: "slow"}})
+		res, handed := tool.runWithHandoff(ctx, []subagentTask{{Task: "slow"}}, true)
 		done <- struct {
 			res    ToolResult
 			handed bool
@@ -582,7 +582,7 @@ func TestBlockingCallHandsOffAtTimerExpiry(t *testing.T) {
 		},
 	}}
 
-	res, handed := tool.runWithHandoff(context.Background(), []subagentTask{{Task: "slow"}})
+	res, handed := tool.runWithHandoff(context.Background(), []subagentTask{{Task: "slow"}}, true)
 	if !handed {
 		t.Fatalf("expected the timer to hand the child off: %+v", res)
 	}
@@ -603,5 +603,77 @@ func TestBlockingCallHandsOffAtTimerExpiry(t *testing.T) {
 	}
 	if n := len(notifier.all()); n != 1 {
 		t.Fatalf("expected exactly one completion notice, got %d: %v", n, notifier.all())
+	}
+}
+
+// TestAskAnswerRoundTripWhenHandoffIsAvailable is review finding 2: nothing
+// pinned AskUnroutableCtxKey to ONLY the no-handoff path. It must NOT be set
+// for a blocking call in a mode where handoff is available (background bash
+// enabled, as console/tui do) — a child asking a question there can
+// genuinely be answered once the parent gets its turn back (via handoff, or
+// simply because the child finishes fast). This is that round trip: a child
+// blocks in "ask", the test plays "the parent or the person watching" and
+// answers it directly against the real registry, and the child must
+// actually receive that answer rather than being told upfront that nothing
+// could ever answer it.
+func TestAskAnswerRoundTripWhenHandoffIsAvailable(t *testing.T) {
+	reg, _ := handoffEnv(t, time.Minute)
+	SetJobAsker(reg)
+	SetJobAnswerer(reg)
+	t.Cleanup(func() {
+		SetJobAsker(nil)
+		SetJobAnswerer(nil)
+	})
+
+	var askRes ToolResult
+	askDone := make(chan struct{})
+	tool := &SubagentTool{Runner: &mockRunner{
+		RunTaskFunc: func(ctx context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			askRes = (&AskTool{}).Run(ctx, map[string]any{"question": "what color?"})
+			close(askDone)
+			return "done", nil
+		},
+	}}
+
+	resultCh := make(chan ToolResult, 1)
+	go func() {
+		resultCh <- tool.Run(ctxWithParentModel("test/model"), map[string]any{"task": "ask something"})
+	}()
+
+	// Find the child's job id once it is blocked waiting for an answer.
+	var jobID string
+	deadline := time.Now().Add(2 * time.Second)
+	for jobID == "" {
+		if time.Now().After(deadline) {
+			t.Fatal("child never reached waiting_answer")
+		}
+		for _, j := range reg.List() {
+			if j.Status == jobs.StatusWaitingAnswer {
+				jobID = j.ID
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !reg.Answer(jobID, "blue") {
+		t.Fatal("Answer failed against a job that should have been waiting")
+	}
+
+	select {
+	case <-askDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ask never returned after being answered — AskUnroutableCtxKey must have leaked into a handoff-eligible call")
+	}
+	if !askRes.Success || askRes.Content != "blue" {
+		t.Fatalf("expected ask to receive the real answer, got: %+v", askRes)
+	}
+
+	select {
+	case res := <-resultCh:
+		if !res.Success {
+			t.Fatalf("subagent call failed: %s", res.Error)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("subagent call did not finish after the child was answered")
 	}
 }
