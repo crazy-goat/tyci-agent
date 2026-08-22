@@ -495,6 +495,7 @@ func wireTools() {
 	tools.SetJobAsker(jobAskerAdapter{reg: JobRegistry})
 	tools.SetJobAnswerer(jobAnswererAdapter{reg: JobRegistry})
 	tools.SetJobProgressReporter(jobProgressAdapter{reg: JobRegistry})
+	tools.SetJobActivityToucher(jobActivityToucherAdapter{reg: JobRegistry})
 	tools.SetJobResumer(jobResumerAdapter{reg: JobRegistry})
 
 	// Wire JobRegistry's status-change events onto jobEventBus so the TUI

@@ -83,6 +83,14 @@ func (a jobProgressAdapter) SetProgress(id, text string) bool {
 	return a.reg.SetProgress(id, text)
 }
 
+// jobActivityToucherAdapter satisfies tools.JobActivityToucher over
+// JobRegistry.
+type jobActivityToucherAdapter struct{ reg *jobs.Registry }
+
+func (a jobActivityToucherAdapter) TouchActivity(id string) {
+	a.reg.TouchActivity(id)
+}
+
 // jobResumerAdapter satisfies tools.JobResumer over JobRegistry and the
 // package-level resumable map (main.go): it forks a previously-recorded
 // conversation, appends task as a new user turn, and runs the fork as a
