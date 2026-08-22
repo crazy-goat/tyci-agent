@@ -92,9 +92,13 @@ func writeWiringTestHome(t *testing.T) {
 // TestInitCommon_ConnectMCPTrue_ConnectsAndAdvertisesServerTools is the
 // test for finding (d): it fails if initCommon stops calling tools.InitMCP
 // (the connected server, and its tool, would never appear) or if commands.go
-// reverts to tools.GetToolsSchemaJSON() instead of GetAllToolsSchemaJSON()
-// (the schema handed to the model would then omit the connected tool even
-// though InitMCP ran).
+// reverts to tools.GetToolsSchemaJSON() instead of tools.
+// GetTopLevelToolsSchemaJSON() (the schema handed to the model would then
+// omit the connected tool even though InitMCP ran). GetTopLevelToolsSchemaJSON,
+// not GetAllToolsSchemaJSON, is what the top-level agent.Config actually gets
+// now (item 29): it is GetAllToolsSchemaJSON with ask_parent removed, since
+// the top-level conversation is not itself a job and ask_parent always fails
+// immediately there.
 func TestInitCommon_ConnectMCPTrue_ConnectsAndAdvertisesServerTools(t *testing.T) {
 	requireShForWiring(t)
 	writeWiringTestHome(t)
@@ -137,16 +141,19 @@ func TestInitCommon_ConnectMCPTrue_ConnectsAndAdvertisesServerTools(t *testing.T
 		t.Fatalf("expected cfg.Schema (from initCommon) to include mcp_weather_forecast; got %d tools", len(schema))
 	}
 
-	// cfg.Schema must be exactly what GetAllToolsSchemaJSON reports right
-	// now, not the builtin-only GetToolsSchemaJSON — this is the specific
-	// switch finding (d) calls out.
-	want := tools.GetAllToolsSchemaJSON()
+	// cfg.Schema must be exactly what GetTopLevelToolsSchemaJSON reports
+	// right now, not the builtin-only GetToolsSchemaJSON — this is the
+	// specific switch finding (d) calls out.
+	want := tools.GetTopLevelToolsSchemaJSON()
 	if !bytes.Equal(cfg.Schema, want) {
-		t.Fatalf("cfg.Schema does not match tools.GetAllToolsSchemaJSON(): initCommon is not using it")
+		t.Fatalf("cfg.Schema does not match tools.GetTopLevelToolsSchemaJSON(): initCommon is not using it")
 	}
 	builtinOnly := tools.GetToolsSchemaJSON()
 	if bytes.Equal(cfg.Schema, builtinOnly) {
 		t.Fatalf("cfg.Schema equals the builtin-only GetToolsSchemaJSON() — MCP tools were not included")
+	}
+	if schemaHasFunctionNamed(schema, "ask_parent") {
+		t.Fatalf("expected the top-level agent's schema to exclude ask_parent — the top-level conversation has no job id, so it always fails immediately")
 	}
 }
 

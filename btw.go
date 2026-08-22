@@ -178,6 +178,12 @@ func btwConfig(base agent.Config) agent.Config {
 	cfg.NextMessages = nil
 	cfg.PendingTodos = nil
 	cfg.HasTodos = nil
+	// base.Schema is the top-level, non-job schema (tools.
+	// GetTopLevelToolsSchemaJSON, set in commands.go), which excludes
+	// ask_parent because the top-level conversation has no job id. A /btw
+	// side-conversation IS a job (see startBtw, which stamps jobCtx with
+	// tools.JobIDCtxKey before running it) and must get ask_parent back.
+	cfg.Schema = tools.GetAllToolsSchemaJSON()
 	return cfg
 }
 

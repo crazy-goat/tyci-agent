@@ -164,6 +164,19 @@ var alwaysAllowedTools = []string{"help", "lua"}
 //   - agents: its only purpose is discovering names for
 //     subagent(agent="name"); a child that cannot call subagent at all has
 //     nothing to do with that list.
+//   - answer_job: relays an answer to a job blocked in ask_parent. A plain
+//     subagent child is always denied "subagent" above, so it can never
+//     spawn a grandchild — and with no descendant able to ever call
+//     ask_parent, a blocked-on-ask_parent job is never something this
+//     child could be asked to unblock. Grouped here for the same
+//     mechanical reason as "agents" (dead weight, not a safety concern),
+//     even though the underlying reasoning differs from "subagent"/
+//     "agents" (recursion/discovery vs. "cannot possibly have a use for
+//     this"). NOTE: this stops being true once item 21 (nested subagents /
+//     "scout") lands — a depth-2+ agent that CAN spawn further children
+//     would need answer_job back even though it's still, at that point, "a
+//     subagent". When that lands, this entry likely needs to move to a
+//     depth-aware check rather than a flat denial.
 //
 // This is the one place the schema builder
 // (GetSubagentToolsSchema/GetSubagentToolsSchemaJSONFor in tool.go), the
@@ -176,7 +189,7 @@ var alwaysAllowedTools = []string{"help", "lua"}
 // "subagent" or "agents" by name, or the three will drift the way
 // AllowOnlySubagent's whitelisted path and this package's own unrestricted
 // path once did.
-var subagentDeniedTools = map[string]bool{"subagent": true, "agents": true}
+var subagentDeniedTools = map[string]bool{"subagent": true, "agents": true, "answer_job": true}
 
 // IsSubagentDenied reports whether name is one of subagentDeniedTools.
 func IsSubagentDenied(name string) bool {

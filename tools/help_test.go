@@ -148,7 +148,7 @@ func TestHelpJobsExplainsTheWholeLifecycle(t *testing.T) {
 		"tasks = [",
 		"notified",
 		"do NOT poll",
-		"answer(job_id",
+		"answer_job(job_id",
 		"discarded",
 		"resume(job_id",
 		"lock(path",
@@ -163,6 +163,43 @@ func TestHelpJobsExplainsTheWholeLifecycle(t *testing.T) {
 	// model trying jobs(...).
 	if !strings.Contains(res.Content, "not a tool") {
 		t.Error("the article should say there is nothing to call by this name")
+	}
+}
+
+// TestHelpRelaysRatherThanAnswersUnconditionally guards item 29's reword of
+// two of the five model-facing strings that used to tell the model to
+// answer(...) as if it were the only channel — one in help_articles.go's
+// "subagent" article (what was line 104 before the rename), one in its
+// "jobs" article (what was line 255). Both must now tell the model to
+// relay to the user (or genuinely-known info) unless it truly knows the
+// answer, using the renamed answer_job tool, and never invent one.
+func TestHelpRelaysRatherThanAnswersUnconditionally(t *testing.T) {
+	subagent := runHelp(t, "subagent")
+	if !subagent.Success {
+		t.Fatalf("%s", subagent.Error)
+	}
+	if !strings.Contains(subagent.Content, "relay it") {
+		t.Errorf("help(\"subagent\") should tell the model to relay the answer, not invent one:\n%s", subagent.Content)
+	}
+	if !strings.Contains(subagent.Content, "unless you truly know the answer") {
+		t.Errorf("help(\"subagent\") should reserve answering directly for when the model genuinely knows:\n%s", subagent.Content)
+	}
+	if !strings.Contains(subagent.Content, "invent one standing in for a human who hasn't replied") {
+		t.Errorf("help(\"subagent\") should say never to invent an answer standing in for the user:\n%s", subagent.Content)
+	}
+
+	jobsArticle := runHelp(t, "jobs")
+	if !jobsArticle.Success {
+		t.Fatalf("%s", jobsArticle.Error)
+	}
+	if !strings.Contains(jobsArticle.Content, "relay it") {
+		t.Errorf("help(\"jobs\") should tell the model to relay the answer, not invent one:\n%s", jobsArticle.Content)
+	}
+	if !strings.Contains(jobsArticle.Content, "you truly know the answer") {
+		t.Errorf("help(\"jobs\") should reserve answering directly for when the model genuinely knows:\n%s", jobsArticle.Content)
+	}
+	if !strings.Contains(jobsArticle.Content, "never one") || !strings.Contains(jobsArticle.Content, "stand in for a human who hasn't replied") {
+		t.Errorf("help(\"jobs\") should say never to invent an answer standing in for the user:\n%s", jobsArticle.Content)
 	}
 }
 

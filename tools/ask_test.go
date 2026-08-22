@@ -20,8 +20,8 @@ func (f fakeJobAsker) Ask(ctx context.Context, id, question string) (string, boo
 }
 
 // TestAskTool_AgentAnswerIsMarkedNotTheUser guards the fix for the bug
-// where a parent agent could answer a child's "ask" (via the "answer"
-// tool) and the child had no way to tell that from a real human reply — it
+// where a parent agent could answer a child's "ask_parent" (via the
+// "answer_job" tool) and the child had no way to tell that from a real human reply — it
 // would report back "the user said X" when no user had said anything.
 // Revert AskTool.Run's fromUser handling and this fails because the
 // content comes back as the bare answer, with no marker at all.
@@ -47,9 +47,8 @@ func TestAskTool_AgentAnswerIsMarkedNotTheUser(t *testing.T) {
 }
 
 // TestAskTool_UserAnswerIsPlain guards the other half: a genuine human
-// answer (fromUser=true, delivered via the "/answer" command) must reach
-// the child as the bare answer text, with no "not the user" marker
-// attached to it.
+// answer (fromUser=true) must reach the child as the bare answer text,
+// with no "not the user" marker attached to it.
 func TestAskTool_UserAnswerIsPlain(t *testing.T) {
 	old := jobAsker
 	defer func() { jobAsker = old }()
@@ -83,7 +82,7 @@ func (f *fakeJobAnswerer) Answer(id, text string, fromUser bool) bool {
 	return f.ret
 }
 
-// TestAnswerTool_AlwaysMarksFromUserFalse guards against the "answer" tool
+// TestAnswerTool_AlwaysMarksFromUserFalse guards against the "answer_job" tool
 // — reachable only by a model, never directly by a person — ever being
 // wired to claim its answer came from the user. Revert AnswerTool.Run's
 // hardcoded false and this fails once JobAnswerer's signature is restored

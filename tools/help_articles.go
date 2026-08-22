@@ -100,9 +100,11 @@ Parallel work, stated as rules:
     Two separate calls are strictly worse.
   - async=true whenever you do not need the result this turn. You get job_ids
     back at once and a notice when each finishes; read one with wait(job_id=...).
-  - If you are told a job is waiting for an answer, answering it is your NEXT
-    action. answer(job_id=..., text="...") is the only channel it has, it makes
-    no progress meanwhile, and its work is discarded when it times out.
+  - If you are told a job is waiting for an answer, relay it — to the user, or
+    genuinely-known info — unless you truly know the answer yourself; never
+    invent one standing in for a human who hasn't replied. This is your NEXT
+    action: answer_job(job_id=..., text="...") is the only channel it has, it
+    makes no progress meanwhile, and its work is discarded when it times out.
   - Tasks touching the same files must be told to lock/unlock the paths they
     write. The write freshness guard will otherwise fail one of them, loudly.
 
@@ -252,12 +254,16 @@ wait(job_id) is a wait for the RESULT, not a sleep: it stays there until the job
 finishes or blocks on a question, and ends early if someone types. So one call
 gets you the answer. It is still not a substitute for the notice — calling it
 before you are told just means standing in a queue you were never in.
-  notice: waiting   -> answer(job_id = "...", text = "...") NOW.
+  notice: waiting   -> relay it (to the user, or genuinely-known info) unless
+                       you truly know the answer, via
+                       answer_job(job_id = "...", text = "...") NOW.
 
 The second one is urgent and the reason this page exists. A blocked child makes
 zero progress while it waits, and when its wall clock runs out everything it
-did is discarded. One answer() call is the difference between a finished task
-and nothing at all. If you try to end your turn with one outstanding, the
+did is discarded. One answer_job() call — with a real answer, never one
+invented to stand in for a human who hasn't replied — is the difference
+between a finished task and nothing at all. If you try to end your turn with
+one outstanding, the
 harness will remind you — but by then you have already wasted a round trip.
 
 While they run, you work. That is the whole point of async: read something,
@@ -295,7 +301,7 @@ surfaced: at once for async or /btw, only once a blocking call hands off in
 an interactive session (at 60s, or sooner if the person types), and never
 for a blocking call under
 tyci run/--print — so there report_progress still succeeds, but nobody
-reads it before the job is done. ask(question) blocks on the parent — a
+reads it before the job is done. ask_parent(question) blocks on the parent — a
 last resort, because asking is how a child stalls — and needs the same
 thing: a call that can eventually hand off. Without one, it fails
 immediately instead of stalling for nothing.`,

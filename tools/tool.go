@@ -247,7 +247,7 @@ func GetToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "subagent",
-				"description": "Delegate to child agents, each with its own context window. Working through MANY agents is the intended mode here, not the exception: a child reads into its own window and hands you back only its conclusion. Delegate when answering means reading more than about three files, when the work is a search, survey or review (you want the finding, not the material), and ALWAYS when you have two or more independent pieces of work — ONE call with tasks=[...], run in parallel, costing about as much wall-clock as the slowest one. A call without async blocks — but only for 60s: after that the children carry on in the background, you are notified as usual, and the turn ends so the person at the keyboard gets their prompt back. Set async=true whenever you do not need the result this turn: you get job_ids back immediately and are NOTIFIED when each finishes or blocks on a question, so get on with other work; wait(job_id) reads a result, answer(job_id, text) unblocks a question and is urgent — a blocked child makes no progress and its work is discarded when it times out. Do not delegate single-file edits, work needing the exact bytes, or anything that depends on this conversation: the child sees ONLY your task text, no history and no earlier findings, so state what to do, which paths, and what to return, in that order. Children have every tool except subagent, including lock/unlock — tell parallel tasks to lock the paths they write, or better, give each one isolation=\"worktree\" so they write in separate checkouts and no locking is needed. Bound anything that might wander with max_iterations. agent=\"name\" runs it under a definition from .tyci/agents (call the agents tool for the current list).",
+				"description": "Delegate to child agents, each with its own context window. Working through MANY agents is the intended mode here, not the exception: a child reads into its own window and hands you back only its conclusion. Delegate when answering means reading more than about three files, when the work is a search, survey or review (you want the finding, not the material), and ALWAYS when you have two or more independent pieces of work — ONE call with tasks=[...], run in parallel, costing about as much wall-clock as the slowest one. A call without async blocks — but only for 60s: after that the children carry on in the background, you are notified as usual, and the turn ends so the person at the keyboard gets their prompt back. Set async=true whenever you do not need the result this turn: you get job_ids back immediately and are NOTIFIED when each finishes or blocks on a question, so get on with other work; wait(job_id) reads a result, answer_job(job_id, text) relays a real answer to a blocked question — either something you genuinely know or something the human actually said, never an invented stand-in — and is urgent: a blocked child makes no progress and its work is discarded when it times out. Do not delegate single-file edits, work needing the exact bytes, or anything that depends on this conversation: the child sees ONLY your task text, no history and no earlier findings, so state what to do, which paths, and what to return, in that order. Children have every tool except subagent, including lock/unlock — tell parallel tasks to lock the paths they write, or better, give each one isolation=\"worktree\" so they write in separate checkouts and no locking is needed. Bound anything that might wander with max_iterations. agent=\"name\" runs it under a definition from .tyci/agents (call the agents tool for the current list).",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -404,8 +404,8 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
-				"name":        "ask",
-				"description": "Ask the parent one question and BLOCK until it answers. Only usable inside a job (any subagent call, or a /btw side-conversation). If there is no way for an answer to ever reach this call, it fails immediately instead of waiting out its timeout for nothing. A last resort for genuine ambiguity: you make zero progress while waiting, and if the wall clock runs out first your whole run is discarded. Prefer stating an assumption and proceeding.",
+				"name":        "ask_parent",
+				"description": "Ask your parent — whoever spawned this job: a human at the keyboard, another agent, or (if no handoff back to either is available) nobody reachable at all, in which case this fails immediately instead of blocking uselessly — one question, and BLOCK until it answers. Only usable inside a job (any subagent call, or a /btw side-conversation). While waiting you make zero progress, and if the wall clock runs out first your whole run is discarded. A last resort for genuine ambiguity: prefer stating an assumption and proceeding.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -418,13 +418,13 @@ func GetToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
-				"name":        "answer",
-				"description": "Answer a job that is blocked on ask. Urgent the moment you are told about one: the job makes no progress meanwhile and everything it has done is discarded if it times out unanswered.",
+				"name":        "answer_job",
+				"description": "Relay a REAL answer to a specific job that is blocked on ask_parent, by its job_id — either something you genuinely already know, or something the human actually said. Never invent an answer standing in for a human who has not actually replied. Urgent the moment you are told a job is waiting: it makes no progress meanwhile and everything it has done is discarded if it times out unanswered.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"job_id": map[string]any{"type": "string", "description": "The id of the job currently waiting for an answer."},
-						"text":   map[string]any{"type": "string", "description": "The answer text to deliver back to that job's pending \"ask\" call."},
+						"text":   map[string]any{"type": "string", "description": "The answer text to deliver back to that job's pending \"ask_parent\" call."},
 					},
 					"required": []string{"job_id", "text"},
 				},
@@ -506,6 +506,46 @@ func GetAllToolsSchema() []map[string]any {
 // GetAllToolsSchemaJSON returns all tools schema as JSON including MCP tools.
 func GetAllToolsSchemaJSON() json.RawMessage {
 	data, _ := json.Marshal(GetAllToolsSchema())
+	return data
+}
+
+// topLevelDeniedTools names tools withheld from the top-level, non-job main
+// agent conversation because they structurally cannot work there:
+//
+//   - ask_parent: AskTool.Run requires a job id (JobIDCtxKey) to route the
+//     question anywhere, and always fails immediately ("ask_parent only
+//     works inside a job") without one. The top-level conversation is not
+//     itself a job — a subagent child is (GetSubagentToolsSchema keeps
+//     ask_parent for exactly that reason), and so is a /btw
+//     side-conversation, which is why btwConfig (btw.go) restores the full,
+//     unfiltered schema onto its forked Config rather than inheriting this
+//     one.
+var topLevelDeniedTools = map[string]bool{"ask_parent": true}
+
+// GetTopLevelToolsSchema returns GetAllToolsSchema with topLevelDeniedTools
+// removed — the tool set offered to the main, non-job conversation. Used
+// only when building the top-level agent.Config's Schema (commands.go); a
+// /btw side-conversation forks that Config and must restore ask_parent
+// (see btwConfig, btw.go), since it does get a job id.
+func GetTopLevelToolsSchema() []map[string]any {
+	schema := GetAllToolsSchema()
+	filtered := make([]map[string]any, 0, len(schema))
+	for _, s := range schema {
+		if fn, ok := s["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok && topLevelDeniedTools[name] {
+				continue
+			}
+		}
+		filtered = append(filtered, s)
+	}
+	return filtered
+}
+
+// GetTopLevelToolsSchemaJSON marshals GetTopLevelToolsSchema. Like
+// GetSubagentToolsSchemaJSON, computed fresh (not cached at init) so which
+// MCP servers are connected can change over the session's lifetime.
+func GetTopLevelToolsSchemaJSON() json.RawMessage {
+	data, _ := json.Marshal(GetTopLevelToolsSchema())
 	return data
 }
 
@@ -637,8 +677,8 @@ var toolRegistry = map[string]Tool{
 	// jobAsker/jobAnswerer/jobProgressReporter/jobResumer are nil until
 	// SetJobAsker/SetJobAnswerer/SetJobProgressReporter/SetJobResumer are
 	// called; each tool fails loudly (not silently) until then.
-	"ask":             &AskTool{},
-	"answer":          &AnswerTool{},
+	"ask_parent":      &AskTool{},
+	"answer_job":      &AnswerTool{},
 	"report_progress": &ReportProgressTool{},
 	"resume":          &ResumeTool{},
 	// kill_job needs no wiring of its own: it acts on the background-command

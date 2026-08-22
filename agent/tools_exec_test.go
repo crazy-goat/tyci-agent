@@ -197,12 +197,12 @@ func (r *deadlineCapturingRunner) Run(ctx context.Context, name string, args map
 // to live until released or the session ends (locks.Registry.Acquire ties
 // that to ctx.Done()), but the 60s default silently rebound that lifetime
 // to this per-call ctx instead, so every no-TTL lock auto-expired 60s after
-// being acquired regardless of caller intent. "ask" is covered alongside
-// lock/unlock here (not a regression, just grouped with its timeout-exempt
-// siblings) since it too must not be cut off by the generic default — see
-// the "ask" case's comment in tools_exec.go.
+// being acquired regardless of caller intent. "ask_parent" is covered
+// alongside lock/unlock here (not a regression, just grouped with its
+// timeout-exempt siblings) since it too must not be cut off by the generic
+// default — see the "ask_parent" case's comment in tools_exec.go.
 func TestRunToolCall_LockAndUnlockGetNoExternalTimeout(t *testing.T) {
-	for _, name := range []string{"lock", "unlock", "ask"} {
+	for _, name := range []string{"lock", "unlock", "ask_parent"} {
 		r := &deadlineCapturingRunner{}
 		runToolCall(context.Background(), r, stream.ToolCall{Name: name, Arguments: "{}"}, 0)
 		if r.gotDeadline {

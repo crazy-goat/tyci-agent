@@ -1035,8 +1035,8 @@ func TestWiring_R2_LockSharedBetweenMainThreadAndAsyncChild(t *testing.T) {
 }
 
 // =============================================================================
-// Q-1: ask/answer round trip through real production wiring — an async
-// subagent blocks in "ask", the test (playing "the parent"/human, hence
+// Q-1: ask_parent/answer_job round trip through real production wiring — an async
+// subagent blocks in "ask_parent", the test (playing "the parent"/human, hence
 // fromUser=true — see Registry.Answer) answers it via the real JobRegistry,
 // and the job's own result reflects the exact answer
 // text it received back.
@@ -1050,7 +1050,7 @@ func TestWiring_Q1_AskAnswerRoundTrip(t *testing.T) {
 	childFake.Script = func(turn int, req connector.Request) []stream.Event {
 		if turn == 0 {
 			return []stream.Event{
-				stream.ToolCall{ID: "ask0", Name: "ask", Arguments: `{"question":"what color?"}`},
+				stream.ToolCall{ID: "ask0", Name: "ask_parent", Arguments: `{"question":"what color?"}`},
 				stream.Finish{Reason: "tool_calls"},
 			}
 		}
@@ -1111,7 +1111,7 @@ func TestWiring_Q1_AskAnswerRoundTrip(t *testing.T) {
 }
 
 // =============================================================================
-// Q-2: an "ask" that's never answered must not hang forever — it unblocks
+// Q-2: an "ask_parent" that's never answered must not hang forever — it unblocks
 // via the job's own wall-clock limit (modeled here with a short-deadline ctx
 // instead of waiting out the real 600s subagent timeout).
 // =============================================================================
@@ -1127,7 +1127,7 @@ func TestWiring_Q2_AskNeverAnsweredUnblocksViaOwnTimeout(t *testing.T) {
 	})
 
 	// A short-deadline ctx carrying the job's id, exactly the shape the real
-	// "ask" tool builds (ctx = the job's own ctx, which the caller controls
+	// "ask_parent" tool builds (ctx = the job's own ctx, which the caller controls
 	// the deadline of) — exercises AskTool -> jobAsker -> JobRegistry.Ask
 	// without waiting out subagent.SubagentTimeoutSec (600s).
 	askCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -1135,11 +1135,11 @@ func TestWiring_Q2_AskNeverAnsweredUnblocksViaOwnTimeout(t *testing.T) {
 	askCtx = context.WithValue(askCtx, tools.JobIDCtxKey{}, job.ID)
 
 	start := time.Now()
-	res := tools.RunTool(askCtx, "ask", map[string]any{"question": "anyone there?"})
+	res := tools.RunTool(askCtx, "ask_parent", map[string]any{"question": "anyone there?"})
 	elapsed := time.Since(start)
 
 	if res.Success {
-		t.Fatalf("expected ask to fail when never answered, got success: %+v", res)
+		t.Fatalf("expected ask_parent to fail when never answered, got success: %+v", res)
 	}
 	if res.Error == "" {
 		t.Fatal("expected a non-empty, actionable error message")

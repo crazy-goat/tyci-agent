@@ -954,6 +954,37 @@ func schemaToolNames(t *testing.T, data []byte) map[string]bool {
 	return names
 }
 
+// TestSubagentSchemaDescription_RelaysRatherThanAnswers guards the last of
+// item 29's five reworded strings: the "subagent" tool's own schema
+// description (tools/tool.go, near what was line 250) used to mention
+// "answer(job_id, text) unblocks a question" as if answering it were
+// unconditionally correct. It must now name the renamed answer_job tool
+// and carry the same relay-unless-you-know nuance as the other four sites.
+func TestSubagentSchemaDescription_RelaysRatherThanAnswers(t *testing.T) {
+	var desc string
+	for _, entry := range GetToolsSchema() {
+		fn, ok := entry["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := fn["name"].(string); name == "subagent" {
+			desc, _ = fn["description"].(string)
+		}
+	}
+	if desc == "" {
+		t.Fatal("could not find the \"subagent\" tool's schema description")
+	}
+	if !strings.Contains(desc, "answer_job(job_id, text)") {
+		t.Errorf("expected the subagent description to name the renamed answer_job tool, got %q", desc)
+	}
+	if strings.Contains(desc, "answer(job_id, text) unblocks") {
+		t.Errorf("expected the old unqualified \"answer(...) unblocks\" wording to be gone, got %q", desc)
+	}
+	if !strings.Contains(desc, "never an invented stand-in") {
+		t.Errorf("expected the subagent description to say never to invent a stand-in answer, got %q", desc)
+	}
+}
+
 func TestGetSubagentToolsSchemaJSONFor_EmptyReturnsFullSchema(t *testing.T) {
 	got := GetSubagentToolsSchemaJSONFor(nil)
 	want := GetSubagentToolsSchemaJSON()
@@ -967,8 +998,11 @@ func TestGetSubagentToolsSchemaJSONFor_EmptyReturnsFullSchema(t *testing.T) {
 	if names["agents"] {
 		t.Error("subagent schema must never include \"agents\" — a child can't spawn subagents, so it has no use for the agent-name discovery tool")
 	}
-	if !names["bash"] || !names["read"] || !names["lock"] || !names["wait"] || !names["ask"] {
-		t.Errorf("expected an unrestricted subagent schema to include bash/read/lock/wait/ask, got %v", names)
+	if !names["bash"] || !names["read"] || !names["lock"] || !names["wait"] || !names["ask_parent"] {
+		t.Errorf("expected an unrestricted subagent schema to include bash/read/lock/wait/ask_parent, got %v", names)
+	}
+	if names["answer_job"] {
+		t.Error("subagent schema must never include \"answer_job\" — a plain child cannot spawn further children, so it can never have a descendant blocked on ask_parent to unblock")
 	}
 }
 
@@ -979,6 +1013,36 @@ func TestGetToolsSchema_IncludesAgents(t *testing.T) {
 	names := schemaToolNames(t, GetToolsSchemaJSON())
 	if !names["agents"] {
 		t.Error("expected the top-level tool schema to include \"agents\"")
+	}
+}
+
+// TestGetTopLevelToolsSchema_ExcludesAskParent guards item 29's role-gating:
+// the top-level, non-job main-agent conversation has no job id, so
+// AskTool.Run always fails ask_parent immediately ("ask_parent only works
+// inside a job"). GetTopLevelToolsSchema is what commands.go actually hands
+// the top-level agent.Config as its Schema — it must not offer a tool that
+// structurally cannot work there, unlike the full GetToolsSchema/
+// GetAllToolsSchema (which subagent children and /btw still need it from).
+func TestGetTopLevelToolsSchema_ExcludesAskParent(t *testing.T) {
+	names := schemaToolNames(t, GetTopLevelToolsSchemaJSON())
+	if names["ask_parent"] {
+		t.Error("expected the top-level tool schema to exclude ask_parent — the top-level conversation has no job id")
+	}
+	// Everything else GetAllToolsSchema offers should still be there —
+	// this is a narrow exclusion, not a different, smaller tool set.
+	if !names["agents"] || !names["subagent"] || !names["answer_job"] {
+		t.Errorf("expected the top-level schema to still include agents/subagent/answer_job, got %v", names)
+	}
+}
+
+// TestGetToolsSchema_StillIncludesAskParent guards the other half: the full
+// schema (what GetSubagentToolsSchema and GetAllToolsSchema build from)
+// must still list ask_parent — a subagent child and a /btw
+// side-conversation both need it, since both do get a job id.
+func TestGetToolsSchema_StillIncludesAskParent(t *testing.T) {
+	names := schemaToolNames(t, GetToolsSchemaJSON())
+	if !names["ask_parent"] {
+		t.Error("expected the full tool schema to still include ask_parent")
 	}
 }
 
@@ -1562,9 +1626,18 @@ func TestSubagentAsync_ResultExplainsTheChannels(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected success, got %q", res.Error)
 	}
-	for _, want := range []string{"answer(job_id", "wait(job_id", "discarded"} {
+	for _, want := range []string{"answer_job(job_id", "wait(job_id", "discarded"} {
 		if !strings.Contains(res.Content, want) {
 			t.Errorf("async result does not mention %q:\n%s", want, res.Content)
 		}
+	}
+	// Item 29: subagent.go's handoff/async result text used to tell the
+	// parent to answer a blocked question unconditionally. It must now say
+	// to relay it unless the parent already knows.
+	if !strings.Contains(res.Content, "relay it") {
+		t.Errorf("async result should tell the parent to relay a blocked question, not answer it unconditionally:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "never invent one standing in for a human who hasn't replied") {
+		t.Errorf("async result should say never to invent an answer for a human who hasn't replied:\n%s", res.Content)
 	}
 }
