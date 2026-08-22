@@ -263,6 +263,14 @@ type streamingCollector struct {
 	// and its block is closed, so anything sent now would paint over finished
 	// output. See streamStopCtxKey.
 	stop *atomic.Bool
+
+	// jobID, when non-empty, is this job's own id (from JobIDCtxKey) —
+	// captured at creation so Text/Thinking/ToolCallStart/ToolCallDelta/
+	// ToolCallEnd can touch the job's "last activity" timestamp via
+	// touchJobActivity without a context lookup on every call. Empty for a
+	// subagent call that was never handed a job id (e.g. a blocking call
+	// under a mode with backgrounding disabled).
+	jobID string
 }
 
 func newStreamingCollector(ctx context.Context, toolIdx int) *streamingCollector {
@@ -270,22 +278,48 @@ func newStreamingCollector(ctx context.Context, toolIdx int) *streamingCollector
 	// subagent's inner runOnce installs its own.
 	parentOutput := stream.Output(ctx)
 	stop, _ := ctx.Value(streamStopCtxKey{}).(*atomic.Bool)
+	jobID, _ := ctx.Value(JobIDCtxKey{}).(string)
 	return &streamingCollector{
 		collector:    newCollector(),
 		toolIdx:      toolIdx,
 		parentOutput: parentOutput,
 		stop:         stop,
+		jobID:        jobID,
 	}
+}
+
+// touchActivity is the single point where this collector reports "I'm still
+// alive" for its own job — see touchJobActivity's doc comment for why this
+// is a separate, cheaper path than report_progress.
+func (s *streamingCollector) touchActivity() {
+	touchJobActivity(s.jobID)
 }
 
 func (s *streamingCollector) Text(text string) {
 	s.collector.Text(text)
 	s.pushText(text)
+	s.touchActivity()
 }
 
 func (s *streamingCollector) Thinking(text string) {
 	s.collector.Thinking(text)
 	s.pushText(text)
+	s.touchActivity()
+}
+
+func (s *streamingCollector) ToolCallStart(name string) {
+	s.collector.ToolCallStart(name)
+	s.touchActivity()
+}
+
+func (s *streamingCollector) ToolCallDelta(delta string) {
+	s.collector.ToolCallDelta(delta)
+	s.touchActivity()
+}
+
+func (s *streamingCollector) ToolCallEnd(name, result string) {
+	s.collector.ToolCallEnd(name, result)
+	s.touchActivity()
 }
 
 // pushText buffers text and pushes complete lines to the parent's streaming

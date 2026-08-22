@@ -46,13 +46,19 @@ func nextID() string {
 // passing it as a plain argument is simplest and race-free since the ID is
 // already assigned before the goroutine is launched.
 func (r *Registry) Start(ctx context.Context, description string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) *Job {
+	now := time.Now()
 	job := &Job{
 		ID:          nextID(),
 		Description: description,
 		Status:      StatusRunning,
-		StartedAt:   time.Now(),
+		StartedAt:   now,
 		done:        make(chan struct{}),
 	}
+	// Seed lastActivity to the same instant as StartedAt, so a job that
+	// hasn't done anything yet reads as "idle since start" (a small, correct
+	// duration) rather than a zero time.Time producing a nonsense one. See
+	// Job.lastActivity's doc comment.
+	job.lastActivity = now.UnixNano()
 
 	r.mu.Lock()
 	r.jobs[job.ID] = job
@@ -263,6 +269,27 @@ func (r *Registry) SetProgress(id, text string) bool {
 		onEvent(snapshot)
 	}
 	return true
+}
+
+// TouchActivity records that the job identified by id showed a fresh sign of
+// life (streamed text/thinking/tool-call event, or a backgrounded bash
+// output line) right now. It is the hot path this whole mechanism exists
+// for — called on every streamed token from every running job — so unlike
+// SetProgress it deliberately does NOT snapshot the job or fire onEvent: it
+// only takes r.mu briefly for the map lookup (unavoidable, since the jobs
+// map can be mutated concurrently by pruning), then releases it before
+// writing the timestamp via the job's own atomic field. Nothing else the
+// registry mutex guards is touched here, so this never contends with
+// Start/List/Ask/Answer/SetProgress. A call for an unknown id is silently a
+// no-op.
+func (r *Registry) TouchActivity(id string) {
+	r.mu.Lock()
+	job, ok := r.jobs[id]
+	r.mu.Unlock()
+	if !ok {
+		return
+	}
+	job.touchActivity()
 }
 
 // maxRetainedTerminalJobs bounds how many finished (done/failed/truncated)

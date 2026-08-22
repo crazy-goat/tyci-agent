@@ -401,6 +401,11 @@ func (r *bashRun) setProgress(line string) {
 	r.mu.Unlock()
 
 	reporter.SetProgress(id, truncateLine(line, 120))
+	// Backgrounded bash output is as much a sign of life as a streamed
+	// token — route it through the same touch-point streamingCollector uses
+	// (see activity.go) so the jobs panel doesn't read a busy shell command
+	// as quiet just because it never calls report_progress.
+	touchJobActivity(id)
 }
 
 // kill terminates the whole process group. Setpgid at start time is what
