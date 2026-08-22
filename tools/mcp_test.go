@@ -78,7 +78,6 @@ func TestMCPToolsSchemaIsSortedByName(t *testing.T) {
 	}
 }
 
-
 // slowCloseClient is a fake mcp.Client whose Close() blocks for a fixed
 // delay, so tests can tell a serial Close() (N * delay) apart from a
 // concurrent one (~delay regardless of N).
@@ -98,7 +97,7 @@ func (c *slowCloseClient) Close() error {
 	time.Sleep(c.delay)
 	return nil
 }
-func (c *slowCloseClient) Name() string                                        { return c.name }
+func (c *slowCloseClient) Name() string                                         { return c.name }
 func (c *slowCloseClient) SetSamplingHandler(handler mcp.SamplingHandler)       {}
 func (c *slowCloseClient) SetElicitationHandler(handler mcp.ElicitationHandler) {}
 

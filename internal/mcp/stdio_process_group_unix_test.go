@@ -53,6 +53,11 @@ wait`
 	if err := c.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize() error: %v", err)
 	}
+	// Registered before the pid file is read, so a failure in that wait loop
+	// still tears the server down. The per-pid cleanup below cannot cover
+	// that path: it does not exist until childPID has been parsed. Closing
+	// twice is harmless — the second Close takes the <-done branch at once.
+	t.Cleanup(func() { c.Close() })
 
 	// Wait for the child to record its background sleep's pid.
 	var childPID int
