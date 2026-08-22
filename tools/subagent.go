@@ -609,13 +609,15 @@ type spawnedTask struct {
 	// second time, which is safe — context.CancelFunc is idempotent.
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	finished bool
-	handed   bool
-	res      subagentResult
+	mu        sync.Mutex
+	finished  bool
+	handed    bool
+	cancelled bool
+	res       subagentResult
 
-	// stopStream is flipped when the task is handed over, so the child stops
-	// painting into a tool block that has closed.
+	// stopStream is flipped when the task is handed over or cancelled
+	// outright, so the child stops painting into a tool block that has
+	// closed.
 	stopStream *atomic.Bool
 }
 
@@ -638,6 +640,27 @@ func (s *spawnedTask) hand() bool {
 		return false
 	}
 	s.handed = true
+	return true
+}
+
+// claimForCancel marks the task as claimed for outright cancellation
+// (cancelRemaining's use, as opposed to hand()'s background handoff). Same
+// exactly-once shape as hand() — false when the task had already finished,
+// in which case there is nothing left to cancel — but it deliberately does
+// NOT set handed: finish() (running in the child's own goroutine once the
+// cancelled child actually returns) reads handed to decide whether to emit
+// a background-finished/FAILED notice, and nothing in cancelRemaining's
+// no-handoff mode ever drains one. Setting handed here would report a
+// child as "backgrounded" when it was actually just killed, and its notice
+// text invites wait(job_id=...) in the one mode where no id was ever
+// surfaced to the model to call it with.
+func (s *spawnedTask) claimForCancel() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finished {
+		return false
+	}
+	s.cancelled = true
 	return true
 }
 
@@ -906,17 +929,21 @@ func (t *SubagentTool) handOff(spawned []*spawnedTask) ToolResult {
 // results already exist plus a clear error about the rest, rather than
 // silently discarding them or leaving them to run unsupervised.
 //
-// hand() (not a bare finished-check) is reused here purely to get its
-// exactly-once bookkeeping: it also flips handed so a child that manages to
-// finish anyway right after being cancelled does not trigger a spurious
-// background-finished notice (see finish()'s doc comment) that nothing in
-// this mode would ever read.
+// claimForCancel (not hand()) gives the same exactly-once bookkeeping
+// against a concurrent finish() without flipping handed — flipping handed
+// is what makes finish() emit a background-finished/FAILED notice, and
+// nothing in this no-handoff mode drains one; see claimForCancel's doc
+// comment. stopStream is flipped here too, same as handOff, so a cancelled
+// child stops painting into a tool block this call is about to return from.
 func (t *SubagentTool) cancelRemaining(spawned []*spawnedTask) ToolResult {
 	var finished []subagentResult
 	var cancelled int
 	for _, st := range spawned {
-		if st.hand() {
+		if st.claimForCancel() {
 			cancelled++
+			if st.stopStream != nil {
+				st.stopStream.Store(true)
+			}
 			if st.cancel != nil {
 				st.cancel()
 			}

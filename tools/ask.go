@@ -25,7 +25,7 @@ func SetJobAsker(a JobAsker) { jobAsker = a }
 // AskUnroutableCtxKey marks a job's context to make "ask" fail immediately
 // instead of blocking for its full SubagentTimeoutSec.
 //
-// Every subagent call gets a job id now (see subagent.go's runRegistered),
+// Every subagent call gets a job id now (see subagent.go's runWithHandoff),
 // including a blocking child under `tyci run` / `--print`. But a job id
 // alone does not mean a question asked from inside it can ever be answered:
 // answering requires the tool call that spawned the job to first return
@@ -33,13 +33,13 @@ func SetJobAsker(a JobAsker) { jobAsker = a }
 // question — or a person at a REPL — has a turn in which to call "answer").
 // That happens for an async spawn (the call returns immediately) and for a
 // blocking spawn that CAN hand its children to the background
-// (runWithHandoff, gated on backgroundAllowed) — but not for a blocking
-// spawn with no handoff available: that tool call does not return until the
-// child itself finishes, so a child blocked in "ask" there can never be
-// unblocked no matter how long it waits. runRegistered sets this key to true
-// for exactly that case; every other job-bearing context leaves it unset
-// (the default, meaning ask behaves as it always has: it blocks for a real
-// answer).
+// (runWithHandoff with handoff=true, gated on backgroundAllowed) — but not
+// for a blocking spawn with no handoff available: that tool call does not
+// return until the child itself finishes, so a child blocked in "ask" there
+// can never be unblocked no matter how long it waits. runWithHandoff sets
+// this key to true for exactly that case (handoff=false); every other
+// job-bearing context leaves it unset (the default, meaning ask behaves as
+// it always has: it blocks for a real answer).
 type AskUnroutableCtxKey struct{}
 
 // AskTool implements the "ask" tool: lets a running job (any subagent call —
