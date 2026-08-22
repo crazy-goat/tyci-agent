@@ -8,6 +8,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,8 +18,11 @@ import (
 	"github.com/decodo/tyci/jobs"
 )
 
-// handoffEnv wires a job registry and notifier, and shrinks the handoff window
-// so a test does not have to wait a minute for it.
+// handoffEnv wires a job registry and notifier, and overrides
+// SubagentBackgroundAfterSec to after — a real 60s wait would otherwise make
+// every test either wait it out or exercise the wait's early-exit paths
+// (UserPending, ctx.Done()) exclusively, leaving the timer.C arm of
+// runWithHandoff's select with no coverage at all.
 func handoffEnv(t *testing.T, after time.Duration) (*jobs.Registry, *recordingNotifier) {
 	t.Helper()
 	reg := jobs.NewRegistry()
@@ -25,10 +30,14 @@ func handoffEnv(t *testing.T, after time.Duration) (*jobs.Registry, *recordingNo
 	SetJobStarter(testJobStarter{reg})
 	SetJobNotifier(notifier)
 	SetBackgroundBashEnabled(true) // the per-mode flag both handoffs share
+
+	prevAfter := SubagentBackgroundAfterSec
+	SubagentBackgroundAfterSec = after
 	t.Cleanup(func() {
 		SetJobStarter(nil)
 		SetJobNotifier(nil)
 		SetBackgroundBashEnabled(false)
+		SubagentBackgroundAfterSec = prevAfter
 	})
 	return reg, notifier
 }
@@ -52,6 +61,12 @@ func TestBlockingCallReturnsInlineWhenTheChildIsQuick(t *testing.T) {
 	res, handed := tool.runWithHandoff(context.Background(), []subagentTask{{Task: "quick"}})
 	if handed {
 		t.Fatalf("a quick child should not be handed over: %+v", res)
+	}
+	// The result must be usable directly — before the item-20 fix this branch
+	// returned a bare ToolResult{} and relied on the caller re-running the
+	// task via runTasks to get real content.
+	if !res.Success || res.Content != "the answer" {
+		t.Fatalf("expected the collected result inline, got %+v", res)
 	}
 	// And nothing is notified: the parent is about to read the result inline,
 	// so a notice would be pure noise.
@@ -157,6 +172,24 @@ func TestHandoffReportsChildrenThatAlreadyFinished(t *testing.T) {
 	}
 }
 
+// TestHandoffOfASingleAlreadyFinishedTaskIsPlainText covers the rare race
+// where every child finishes between the timer firing and handOff's loop
+// running: with nothing left to hand over, handOff must shape its result the
+// same way every other all-finished case does (resultsToToolResult) — a
+// single task as plain text, not a one-element JSON array.
+func TestHandoffOfASingleAlreadyFinishedTaskIsPlainText(t *testing.T) {
+	handoffEnv(t, 0)
+	tool := handoffTool(t, func() (string, error) { return "the answer", nil })
+
+	st := tool.spawn(context.Background(), subagentTask{Task: "quick"}, false, true)
+	<-st.done
+
+	res := tool.handOff([]*spawnedTask{st})
+	if !res.Success || res.Content != "the answer" {
+		t.Fatalf("expected plain text for a single already-finished task, got %+v", res)
+	}
+}
+
 // TestFinishAndHandRaceHasOneWinner. The timer can fire at the same instant a
 // child completes, and exactly one outcome is allowed: either the result is
 // returned inline, or the parent is notified later. Both means the parent is
@@ -230,7 +263,7 @@ func TestNoHandoffWithoutAJobRegistry(t *testing.T) {
 // of a 60-second window for work they did not ask to wait for is the whole
 // complaint. The children are untouched; only the waiting ends.
 func TestTypingEndsTheWaitImmediately(t *testing.T) {
-	handoffEnv(t, 0)
+	handoffEnv(t, time.Minute)
 	release := make(chan struct{})
 	defer close(release)
 	tool := handoffTool(t, func() (string, error) {
@@ -273,5 +306,290 @@ func TestUserPendingIsOffByDefault(t *testing.T) {
 	SetUserPending(nil)
 	if UserPending() {
 		t.Fatal("with no frontend wired, nobody can be waiting")
+	}
+}
+
+// --- Item 20: a blocking child that finishes inside the handoff window must
+// run exactly once, through Run's full path (jobStarter configured, the
+// handoff branch taken), not just runWithHandoff in isolation. Before the
+// fix, Run fell through to runTasks after runWithHandoff had already run
+// (and thrown away) the same tasks, so the runner was invoked twice, side
+// effects happened twice, and two jobs were registered.
+
+// waitTerminal blocks until the registry's one job reaches a terminal
+// status, so the assertions below are not racing the goroutine that sets it
+// (Start's wrapper closes job.done only after status is set — see
+// jobs/registry.go).
+// waitTerminal blocks until the given job is done, failed, or truncated.
+// Registry.Wait's bool return is not that signal — it is false only for an
+// unknown id, and true even on its own 5s timeout — so the terminal check
+// has to be done here, against the returned snapshot's Status.
+func waitTerminal(t *testing.T, reg *jobs.Registry, id string) *jobs.Job {
+	t.Helper()
+	job, ok := reg.Wait(context.Background(), id, 5*time.Second)
+	if !ok {
+		t.Fatalf("job %s is not registered", id)
+	}
+	if job.Status == jobs.StatusRunning || job.Status == jobs.StatusWaitingAnswer {
+		t.Fatalf("job %s did not reach a terminal status within 5s: %+v", id, job)
+	}
+	return job
+}
+
+func TestBlockingSingleTaskRunsExactlyOnce(t *testing.T) {
+	reg, _ := handoffEnv(t, time.Minute)
+	var calls atomic.Int32
+	tool := &SubagentTool{Runner: &mockRunner{
+		RunTaskFunc: func(context.Context, string, string, SubagentOptions) (string, error) {
+			calls.Add(1)
+			return "the answer", nil
+		},
+	}}
+
+	res := tool.Run(ctxWithParentModel("test/model"), map[string]any{"task": "do it"})
+
+	if !res.Success || res.Content != "the answer" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("runner invoked %d times, want exactly 1", n)
+	}
+	regJobs := reg.List()
+	if len(regJobs) != 1 {
+		t.Fatalf("expected exactly one registered job, got %d: %+v", len(regJobs), regJobs)
+	}
+	job := waitTerminal(t, reg, regJobs[0].ID)
+	if job.Status != jobs.StatusDone {
+		t.Fatalf("expected the job to finish done, got %q", job.Status)
+	}
+}
+
+func TestBlockingBatchRunsEachTaskExactlyOnce(t *testing.T) {
+	reg, _ := handoffEnv(t, time.Minute)
+	var calls atomic.Int32
+	tool := &SubagentTool{Runner: &mockRunner{
+		RunTaskFunc: func(_ context.Context, task string, _ string, _ SubagentOptions) (string, error) {
+			calls.Add(1)
+			return "answer for " + task, nil
+		},
+	}}
+
+	res := tool.Run(ctxWithParentModel("test/model"), map[string]any{
+		"tasks": []any{
+			map[string]any{"task": "one"},
+			map[string]any{"task": "two"},
+		},
+	})
+
+	if !res.Success {
+		t.Fatalf("unexpected failure: %s", res.Error)
+	}
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("runner invoked %d times, want exactly 2 (one per task)", n)
+	}
+	var results []subagentResult
+	if err := json.Unmarshal([]byte(res.Content), &results); err != nil {
+		t.Fatalf("expected a JSON array of results: %v\ncontent: %s", err, res.Content)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if got := reg.List(); len(got) != 2 {
+		t.Fatalf("expected exactly 2 registered jobs, got %d: %+v", len(got), got)
+	}
+}
+
+func TestBlockingSingleTaskFailureRunsExactlyOnce(t *testing.T) {
+	reg, _ := handoffEnv(t, time.Minute)
+	var calls atomic.Int32
+	tool := &SubagentTool{Runner: &mockRunner{
+		RunTaskFunc: func(context.Context, string, string, SubagentOptions) (string, error) {
+			calls.Add(1)
+			return "", errors.New("agent failed")
+		},
+	}}
+
+	res := tool.Run(ctxWithParentModel("test/model"), map[string]any{"task": "do it"})
+
+	if res.Success {
+		t.Fatalf("expected failure, got success: %+v", res)
+	}
+	if !strings.Contains(res.Error, "agent failed") {
+		t.Fatalf("unexpected error: %q", res.Error)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("runner invoked %d times, want exactly 1", n)
+	}
+	if got := reg.List(); len(got) != 1 {
+		t.Fatalf("expected exactly one registered job, got %d: %+v", len(got), got)
+	}
+}
+
+func TestBlockingSingleTaskTruncatedRunsExactlyOnce(t *testing.T) {
+	reg, _ := handoffEnv(t, time.Minute)
+	var calls atomic.Int32
+	tool := &SubagentTool{Runner: &mockRunner{
+		RunTaskFunc: func(context.Context, string, string, SubagentOptions) (string, error) {
+			calls.Add(1)
+			return "partial answer", fmt.Errorf("hit cap: %w", ErrSubagentTruncated)
+		},
+	}}
+
+	res := tool.Run(ctxWithParentModel("test/model"), map[string]any{"task": "do it"})
+
+	if !res.Success {
+		t.Fatalf("expected success (truncated is still a completion), got error: %s", res.Error)
+	}
+	if !res.Truncated {
+		t.Fatal("expected Truncated=true to reach the ToolResult")
+	}
+	if res.Content != "partial answer" {
+		t.Fatalf("unexpected content: %q", res.Content)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("runner invoked %d times, want exactly 1", n)
+	}
+	if got := reg.List(); len(got) != 1 {
+		t.Fatalf("expected exactly one registered job, got %d: %+v", len(got), got)
+	}
+}
+
+// TestBlockingCallStillHandsOffWhenSlow guards the other side of the fix:
+// making the all-finished path return inline must not stop a genuinely slow
+// child from being handed to the background through Run's real entry point.
+func TestBlockingCallStillHandsOffWhenSlow(t *testing.T) {
+	// A long window: this test exercises the UserPending arm specifically,
+	// so the timer must not be the one that fires first.
+	reg, notifier := handoffEnv(t, time.Minute)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	tool := &SubagentTool{Runner: &mockRunner{
+		RunTaskFunc: func(context.Context, string, string, SubagentOptions) (string, error) {
+			calls.Add(1)
+			<-release
+			return "eventually", nil
+		},
+	}}
+
+	// A person typing ends the wait immediately, through Run's real path.
+	var typed atomic.Bool
+	SetUserPending(typed.Load)
+	defer SetUserPending(nil)
+
+	done := make(chan ToolResult, 1)
+	go func() {
+		done <- tool.Run(ctxWithParentModel("test/model"), map[string]any{"task": "slow"})
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	typed.Store(true)
+
+	var res ToolResult
+	select {
+	case res = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("typing did not end the wait")
+	}
+	if !strings.Contains(res.Content, "running in the background") {
+		t.Fatalf("expected a handoff message, got: %s", res.Content)
+	}
+	if got := reg.List(); len(got) != 1 {
+		t.Fatalf("expected exactly one registered job, got %d: %+v", len(got), got)
+	}
+	close(release)
+	job := waitTerminal(t, reg, reg.List()[0].ID)
+	if job.Result != "eventually" || job.Status != jobs.StatusDone {
+		t.Fatalf("handed-over job did not finish properly: %+v", job)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("runner invoked %d times, want exactly 1", n)
+	}
+	if n := len(notifier.all()); n != 1 {
+		t.Fatalf("expected exactly one completion notice, got %d: %v", n, notifier.all())
+	}
+}
+
+// TestBlockingCallStillHandsOffOnContextCancel: an interrupted parent turn
+// (Esc) must still detach and hand the children off rather than the item-20
+// fix accidentally making the all-finished branch swallow this case too.
+func TestBlockingCallStillHandsOffOnContextCancel(t *testing.T) {
+	handoffEnv(t, time.Minute)
+	release := make(chan struct{})
+	defer close(release)
+	tool := &SubagentTool{Runner: &mockRunner{
+		RunTaskFunc: func(context.Context, string, string, SubagentOptions) (string, error) {
+			<-release
+			return "eventually", nil
+		},
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct {
+		res    ToolResult
+		handed bool
+	}, 1)
+	go func() {
+		res, handed := tool.runWithHandoff(ctx, []subagentTask{{Task: "slow"}})
+		done <- struct {
+			res    ToolResult
+			handed bool
+		}{res, handed}
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case out := <-done:
+		if !out.handed {
+			t.Fatalf("a cancelled parent context must still hand off: %+v", out.res)
+		}
+		if !strings.Contains(out.res.Content, "running in the background") {
+			t.Fatalf("expected a handoff message, got: %s", out.res.Content)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelling the context did not end the wait")
+	}
+}
+
+// TestBlockingCallHandsOffAtTimerExpiry exercises runWithHandoff's
+// `case <-timer.C` arm directly, with nobody typing and no ctx cancellation
+// to trigger the other two exits — the arm every other test in this file
+// carefully avoids (they all set a window long enough that the timer never
+// fires). Made possible by SubagentBackgroundAfterSec being a var: without
+// that, this either waits out a real 60s or cannot be tested at all.
+func TestBlockingCallHandsOffAtTimerExpiry(t *testing.T) {
+	reg, notifier := handoffEnv(t, 20*time.Millisecond)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	tool := &SubagentTool{Runner: &mockRunner{
+		RunTaskFunc: func(context.Context, string, string, SubagentOptions) (string, error) {
+			calls.Add(1)
+			<-release
+			return "eventually", nil
+		},
+	}}
+
+	res, handed := tool.runWithHandoff(context.Background(), []subagentTask{{Task: "slow"}})
+	if !handed {
+		t.Fatalf("expected the timer to hand the child off: %+v", res)
+	}
+	if !strings.Contains(res.Content, "running in the background") {
+		t.Fatalf("expected a handoff message, got: %s", res.Content)
+	}
+	if got := reg.List(); len(got) != 1 {
+		t.Fatalf("expected exactly one registered job, got %d: %+v", len(got), got)
+	}
+
+	close(release)
+	job := waitTerminal(t, reg, reg.List()[0].ID)
+	if job.Result != "eventually" || job.Status != jobs.StatusDone {
+		t.Fatalf("handed-over job did not finish properly: %+v", job)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("runner invoked %d times, want exactly 1", n)
+	}
+	if n := len(notifier.all()); n != 1 {
+		t.Fatalf("expected exactly one completion notice, got %d: %v", n, notifier.all())
 	}
 }
