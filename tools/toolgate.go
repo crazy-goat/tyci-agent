@@ -98,13 +98,21 @@ func AllowOnlySubagent(allowed []string) ToolGate {
 	return newAllowGate(FilterSubagentDenied(allowed))
 }
 
-// newAllowGate builds a gate permitting names plus alwaysAllowedTools. names
-// may be empty (AllowOnlySubagent relies on this: every entry in a
-// subagent's tools: list can turn out to be a denied tool, and the gate
-// must still come out non-nil, permitting exactly alwaysAllowedTools).
+// newAllowGate builds a gate permitting names plus alwaysAllowedTools, plus
+// any MCP tool covered by an mcp_<server>_* wildcard present in names (see
+// mcpAllowedByWildcard in tools/mcp.go) — the runtime-gate half of the same
+// opt-in GetSubagentToolsSchemaJSONFor implements on the schema side. A
+// literal mcp_<server>_<tool> entry in names is already granted by the
+// plain map lookup below; the wildcard is the one case that needs an extra
+// check, since the exact dynamic tool name can't have been in names when
+// the agent definition was written. names may be empty (AllowOnlySubagent
+// relies on this: every entry in a subagent's tools: list can turn out to
+// be a denied tool, and the gate must still come out non-nil, permitting
+// exactly alwaysAllowedTools).
 func newAllowGate(names []string) ToolGate {
 	allowed := make(map[string]struct{}, len(names)+len(alwaysAllowedTools))
 	permitted := make([]string, 0, len(names)+len(alwaysAllowedTools))
+	wildcards := append([]string(nil), names...)
 	for _, n := range names {
 		if _, dup := allowed[n]; dup {
 			continue
@@ -124,6 +132,9 @@ func newAllowGate(names []string) ToolGate {
 
 	return func(name string) error {
 		if _, ok := allowed[name]; ok {
+			return nil
+		}
+		if mcpAllowedByWildcard(name, wildcards) {
 			return nil
 		}
 		// The refusal names the alternatives. Telling an agent only what it

@@ -481,7 +481,6 @@ func GetToolsSchema() []map[string]any {
 }
 
 var toolsSchema json.RawMessage
-var subagentToolsSchema json.RawMessage
 
 func init() {
 	// Load Lua tools from user directories
@@ -489,8 +488,6 @@ func init() {
 
 	data, _ := json.Marshal(GetToolsSchema())
 	toolsSchema = data
-	data, _ = json.Marshal(GetSubagentToolsSchema())
-	subagentToolsSchema = data
 }
 
 func GetToolsSchemaJSON() json.RawMessage {
@@ -518,6 +515,14 @@ func GetAllToolsSchemaJSON() json.RawMessage {
 // subagents has nothing to do with that list, so it isn't worth tempting it
 // with). See subagentDeniedTools in toolgate.go for the shared list this and
 // GetSubagentToolsSchemaJSONFor and main.go's runtime gate all read from.
+//
+// A connected MCP server's tools ride along unconditionally, appended after
+// the filter rather than run through it: subagentDeniedTools is about
+// "subagent" and "agents" specifically, and none of a server's own tools
+// carry that recursion/discovery risk. This is the unrestricted case only
+// (no tools: whitelist) — GetSubagentToolsSchemaJSONFor applies its own,
+// narrower rule once a whitelist is present. See mcpAllowedByWildcard's doc
+// comment (tools/mcp.go) for why the two cases differ.
 func GetSubagentToolsSchema() []map[string]any {
 	schema := GetToolsSchema()
 	filtered := make([]map[string]any, 0, len(schema))
@@ -529,18 +534,27 @@ func GetSubagentToolsSchema() []map[string]any {
 		}
 		filtered = append(filtered, s)
 	}
+	if mcpRunner := GetMCPToolRunner(); mcpRunner != nil {
+		filtered = append(filtered, mcpRunner.MCPToolsSchema()...)
+	}
 	return filtered
 }
 
+// GetSubagentToolsSchemaJSON marshals GetSubagentToolsSchema fresh on every
+// call rather than from a package-init snapshot: which MCP servers are
+// connected can change over a session's lifetime (see tools.InitMCP), so a
+// cached snapshot taken before any server had a chance to connect would
+// permanently omit MCP tools from every unrestricted subagent.
 func GetSubagentToolsSchemaJSON() json.RawMessage {
-	return subagentToolsSchema
+	data, _ := json.Marshal(GetSubagentToolsSchema())
+	return data
 }
 
 // GetSubagentToolsSchemaJSONFor returns the subagent-visible tool schema
 // restricted to allowed (a named agent's frontmatter `tools:` list).
-// Empty/nil allowed means no restriction — returns the cached
-// GetSubagentToolsSchemaJSON() unchanged, so the common case (no
-// whitelist) stays a cheap map lookup instead of a fresh marshal per call.
+// Empty/nil allowed means no restriction — returns
+// GetSubagentToolsSchemaJSON() unchanged (every MCP tool included, same as
+// today).
 //
 // Every subagentDeniedTools entry ("subagent", "agents") is dropped even if
 // allowed lists it explicitly: recursion into child subagents is never
@@ -550,6 +564,16 @@ func GetSubagentToolsSchemaJSON() json.RawMessage {
 // allowed name that matches no known tool is silently skipped, not an
 // error — a typo in an agent's `tools:` line should degrade to "that tool
 // is unavailable", not a startup crash.
+//
+// An MCP tool (mcp_<server>_<tool>) is included only if allowed names it
+// explicitly, or names a mcp_<server>_* wildcard for its server — it is
+// NOT auto-granted the way alwaysAllowedTools are. A whitelist is a
+// deliberate narrowing; every write-capable tool a connected server
+// happens to expose should not ride along with it silently just because
+// the whitelist couldn't have named a tool it had never seen. See
+// mcpAllowedByWildcard (tools/mcp.go) for the matching runtime-gate side —
+// AllowOnlySubagent must honour exactly the same two cases so a tool
+// offered here is always one the gate will actually let through.
 func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
 	if len(allowed) == 0 {
 		return GetSubagentToolsSchemaJSON()
@@ -573,7 +597,10 @@ func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
 			continue
 		}
 		name, ok := fn["name"].(string)
-		if !ok || !want[name] {
+		if !ok {
+			continue
+		}
+		if !want[name] && !mcpAllowedByWildcard(name, allowed) {
 			continue
 		}
 		filtered = append(filtered, s)

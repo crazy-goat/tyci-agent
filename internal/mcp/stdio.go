@@ -33,6 +33,16 @@ type StdioClient struct {
 	pending            map[int]chan *Response
 	samplingHandler    SamplingHandler
 	elicitationHandler ElicitationHandler
+
+	// closeOnce guards the body of Close so it runs at most once even if
+	// called concurrently -- e.g. a deferred shutdown and a signal handler
+	// racing to close the same client. Without it, two goroutines could
+	// both reach cmd.Wait() below: exec.Cmd documents that as not safe to
+	// call more than once (concurrently or otherwise), and it mutates
+	// cmd.ProcessState, which the "did it exit on its own" select also
+	// reads.
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewStdioClient creates a new stdio-based MCP client.
@@ -200,7 +210,18 @@ func (c *StdioClient) SetElicitationHandler(handler ElicitationHandler) {
 // its process group (so an "npx"-style wrapper's real child dies too,
 // instead of being orphaned). Either way it reaps the process, and wakes
 // any in-flight sendRequest with an error rather than a nil response.
+//
+// The actual work runs inside closeOnce so a second (or concurrent) call
+// is a no-op that returns the first call's result, rather than re-running
+// cmd.Wait() -- see the closeOnce field comment for why that matters now
+// that MCPToolRunner.Close closes clients concurrently instead of
+// serially under its own lock.
 func (c *StdioClient) Close() error {
+	c.closeOnce.Do(func() { c.closeErr = c.doClose() })
+	return c.closeErr
+}
+
+func (c *StdioClient) doClose() error {
 	c.mu.Lock()
 	stdin := c.stdin
 	cmd := c.cmd

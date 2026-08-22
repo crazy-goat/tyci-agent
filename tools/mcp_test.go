@@ -101,6 +101,194 @@ func (c *slowCloseClient) Name() string                                         
 func (c *slowCloseClient) SetSamplingHandler(handler mcp.SamplingHandler)       {}
 func (c *slowCloseClient) SetElicitationHandler(handler mcp.ElicitationHandler) {}
 
+// fakeMCPClient is a minimal mcp.Client double: no network, no process,
+// just enough behavior to install directly into an MCPToolRunner's private
+// fields (legal from within package tools) for schema/gate tests below.
+type fakeMCPClient struct {
+	name   string
+	closed bool
+}
+
+func (f *fakeMCPClient) Initialize(ctx context.Context) error              { return nil }
+func (f *fakeMCPClient) ListTools(ctx context.Context) ([]mcp.Tool, error) { return nil, nil }
+func (f *fakeMCPClient) CallTool(ctx context.Context, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
+	return nil, nil
+}
+func (f *fakeMCPClient) Close() error                                   { f.closed = true; return nil }
+func (f *fakeMCPClient) Name() string                                   { return f.name }
+func (f *fakeMCPClient) SetSamplingHandler(h mcp.SamplingHandler)       {}
+func (f *fakeMCPClient) SetElicitationHandler(h mcp.ElicitationHandler) {}
+
+// withRunner installs runner as the global MCP runner for the duration of
+// the test and restores whatever was there before on cleanup, since
+// GetMCPToolRunner/RunTool/GetSubagentToolsSchemaJSONFor all read the
+// package-level global rather than taking a runner as a parameter.
+func withRunner(t *testing.T, runner *MCPToolRunner) {
+	t.Helper()
+	prev := globalMCPRunner
+	globalMCPRunner = runner
+	t.Cleanup(func() { globalMCPRunner = prev })
+}
+
+// newTestRunnerWithTool builds a runner with one connected fake server and
+// one registered tool "mcp_<server>_<toolName>".
+func newTestRunnerWithTool(server, toolName string) *MCPToolRunner {
+	r := NewMCPToolRunner()
+	r.clients[server] = &fakeMCPClient{name: server}
+	prefixed := "mcp_" + server + "_" + toolName
+	r.tools[prefixed] = &mcpTool{
+		server: server,
+		tool:   mcp.Tool{Name: toolName, Description: "does " + toolName, InputSchema: json.RawMessage(`{"type":"object"}`)},
+	}
+	return r
+}
+
+// schemaHasTool reports whether schema (as produced by GetToolsSchema-style
+// functions) contains a function tool named name.
+func schemaHasTool(t *testing.T, schema []map[string]any, name string) bool {
+	t.Helper()
+	for _, s := range schema {
+		fn, ok := s["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if n, _ := fn["name"].(string); n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// --- decision (a): an MCP tool is not auto-granted to a whitelisted subagent ---
+
+// TestGetSubagentToolsSchemaJSONFor_Unrestricted_IncludesMCPTools covers the
+// "no whitelist keeps everything, as today" half of decision (a): with no
+// tools: list at all, a connected server's tool must still be offered.
+func TestGetSubagentToolsSchemaJSONFor_Unrestricted_IncludesMCPTools(t *testing.T) {
+	withRunner(t, newTestRunnerWithTool("weather", "forecast"))
+
+	var schema []map[string]any
+	if err := json.Unmarshal(GetSubagentToolsSchemaJSONFor(nil), &schema); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !schemaHasTool(t, schema, "mcp_weather_forecast") {
+		t.Fatalf("expected an unrestricted subagent to be offered mcp_weather_forecast")
+	}
+}
+
+// TestGetSubagentToolsSchemaJSONFor_Restricted_OmitsUnlistedMCPTool is the
+// test that fails if the wrong-as-a-default blanket MCP exemption (every
+// agent gets every tool on every server, reviewed away in batch 2) is
+// reintroduced: a subagent whose tools: list names neither the tool nor a
+// wildcard for its server must NOT be offered a connected server's tool,
+// write-capable or not.
+func TestGetSubagentToolsSchemaJSONFor_Restricted_OmitsUnlistedMCPTool(t *testing.T) {
+	withRunner(t, newTestRunnerWithTool("weather", "forecast"))
+
+	var schema []map[string]any
+	if err := json.Unmarshal(GetSubagentToolsSchemaJSONFor([]string{"read"}), &schema); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if schemaHasTool(t, schema, "mcp_weather_forecast") {
+		t.Fatalf("a plain tools: whitelist that never named mcp_weather_forecast (or a wildcard for it) must not be offered it")
+	}
+}
+
+// TestGetSubagentToolsSchemaJSONFor_Restricted_ExplicitEntryIncluded covers
+// the "honour explicit entries" half of decision (a): an agent definition
+// authored after a server is known to exist can name one of its tools
+// literally.
+func TestGetSubagentToolsSchemaJSONFor_Restricted_ExplicitEntryIncluded(t *testing.T) {
+	withRunner(t, newTestRunnerWithTool("weather", "forecast"))
+
+	var schema []map[string]any
+	if err := json.Unmarshal(GetSubagentToolsSchemaJSONFor([]string{"read", "mcp_weather_forecast"}), &schema); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !schemaHasTool(t, schema, "mcp_weather_forecast") {
+		t.Fatalf("an explicitly whitelisted mcp_weather_forecast must be offered")
+	}
+}
+
+// TestGetSubagentToolsSchemaJSONFor_Restricted_WildcardIncludesOnlyItsServer
+// covers the "per-server wildcard the definition opts into" half of
+// decision (a), and that it is scoped to the named server only — a
+// wildcard for "weather" must not leak tools from an unrelated "other"
+// server that happens to also be connected.
+func TestGetSubagentToolsSchemaJSONFor_Restricted_WildcardIncludesOnlyItsServer(t *testing.T) {
+	r := newTestRunnerWithTool("weather", "forecast")
+	r.clients["other"] = &fakeMCPClient{name: "other"}
+	r.tools["mcp_other_secret"] = &mcpTool{server: "other", tool: mcp.Tool{Name: "secret"}}
+	withRunner(t, r)
+
+	var schema []map[string]any
+	if err := json.Unmarshal(GetSubagentToolsSchemaJSONFor([]string{"read", "mcp_weather_*"}), &schema); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !schemaHasTool(t, schema, "mcp_weather_forecast") {
+		t.Fatalf("mcp_weather_* wildcard should include mcp_weather_forecast")
+	}
+	if schemaHasTool(t, schema, "mcp_other_secret") {
+		t.Fatalf("mcp_weather_* wildcard must not include a different server's tool")
+	}
+}
+
+// TestAllowOnlySubagent_MatchesSchema_ExplicitAndWildcard is the runtime-
+// gate mirror of the schema tests above: whatever GetSubagentToolsSchemaJSONFor
+// offers, AllowOnlySubagent must actually let through, and whatever it
+// omits, the gate must actually refuse -- an "advertised but refused" (or
+// worse, "not advertised but callable") tool is exactly the class of bug
+// item 8's schema/gate split is meant to prevent.
+func TestAllowOnlySubagent_MatchesSchema_ExplicitAndWildcard(t *testing.T) {
+	withRunner(t, newTestRunnerWithTool("weather", "forecast"))
+
+	// No MCP entry at all: the tool must be refused.
+	plain := AllowOnlySubagent([]string{"read"})
+	if err := plain("mcp_weather_forecast"); err == nil {
+		t.Fatalf("expected a plain whitelist to refuse an unlisted MCP tool")
+	}
+
+	// Explicit entry: permitted.
+	explicit := AllowOnlySubagent([]string{"read", "mcp_weather_forecast"})
+	if err := explicit("mcp_weather_forecast"); err != nil {
+		t.Fatalf("expected an explicitly whitelisted MCP tool to be permitted, got: %v", err)
+	}
+
+	// Wildcard: permitted for the named server, refused for another.
+	wildcard := AllowOnlySubagent([]string{"read", "mcp_weather_*"})
+	if err := wildcard("mcp_weather_forecast"); err != nil {
+		t.Fatalf("expected mcp_weather_* to permit mcp_weather_forecast, got: %v", err)
+	}
+	if err := wildcard("mcp_other_secret"); err == nil {
+		t.Fatalf("expected mcp_weather_* to still refuse a different server's tool")
+	}
+}
+
+// --- clean shutdown ---
+
+// TestShutdownMCP_ClosesEveryConnectedClient is the test that fails if the
+// InitMCP/ShutdownMCP wiring is reverted: ShutdownMCP must exist and must
+// close every client the runner knows about, not just be a doc comment.
+func TestShutdownMCP_ClosesEveryConnectedClient(t *testing.T) {
+	a := &fakeMCPClient{name: "a"}
+	b := &fakeMCPClient{name: "b"}
+	r := NewMCPToolRunner()
+	r.clients["a"] = a
+	r.clients["b"] = b
+	withRunner(t, r)
+
+	ShutdownMCP()
+
+	if !a.closed || !b.closed {
+		t.Fatalf("expected both clients closed, got a.closed=%v b.closed=%v", a.closed, b.closed)
+	}
+}
+
+func TestShutdownMCP_NilRunner_NoPanic(t *testing.T) {
+	withRunner(t, nil)
+	ShutdownMCP() // must not panic
+}
+
 // TestMCPToolRunnerCloseIsConcurrent covers the reviewer's finding: closing
 // three MCP clients that each take a grace period to shut down (e.g. an
 // npx-wrapped server that ignores stdin EOF) must not stall the caller for
