@@ -142,8 +142,15 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 		}
 	}
 
-	if !pricing.CatalogPriced() {
-		out = append(out, "", "no prices in the catalog —", "run `tyci provider refresh`")
+	// Warn only about a model actually in this session (snap.Rows), and only
+	// when its provider has priced nothing at all — a model that reads $0
+	// while its provider prices other models is presumed genuinely free, not
+	// missing data, and must not trigger this.
+	for _, r := range snap.Rows {
+		if !r.Priced && pricing.ProviderNeedsPrices(r.Provider) {
+			out = append(out, "", "no prices for "+r.Provider+" —", "run `tyci provider refresh`")
+			break
+		}
 	}
 	return out
 }

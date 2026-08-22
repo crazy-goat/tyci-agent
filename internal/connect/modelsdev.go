@@ -149,7 +149,15 @@ func RefreshModels(providerFilter string, dryRun bool) (imported []RefreshProvid
 		if _, ok := npmToAPIType[p.NPM]; !ok {
 			continue
 		}
-		_, existed := existing[id]
+		cachedP, existed := existing[id]
+		// A degraded or partial fetch can serve a provider with zero models.
+		// Swapping it in would silently empty a cached entry that had models
+		// (and prices) — the exact data loss this whole function exists to
+		// prevent. Skip the swap in that one case; every other case,
+		// including "incoming has models, cached had none", still replaces.
+		if len(p.Models) == 0 && len(cachedP.Models) > 0 {
+			continue
+		}
 		merged[id] = p
 		replacedIDs[id] = existed
 		imported = append(imported, RefreshProvider{
@@ -240,29 +248,6 @@ func readExistingCatalog() (map[string]ModelsDevProvider, error) {
 		return nil, err
 	}
 	return existing, nil
-}
-
-// CatalogNeedsPrices reports whether the cached providers.json exists, has at
-// least one provider, but carries no cost data anywhere in it — the
-// signature of a catalog written by a tyci build old enough that
-// ModelsDevModel had no Cost/Limit fields, so every refresh before this one
-// silently stripped them on write (see doc comment on ModelsDevModel).
-//
-// Returns false if the file is missing or unparsable: EnsureProvidersJSON
-// will fetch a fresh one in that case, and there is nothing to repair yet.
-func CatalogNeedsPrices() bool {
-	existing, err := readExistingCatalog()
-	if err != nil || len(existing) == 0 {
-		return false
-	}
-	for _, p := range existing {
-		for _, m := range p.Models {
-			if m.Cost.Input > 0 || m.Cost.Output > 0 {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func parseFilter(providerFilter string) map[string]bool {

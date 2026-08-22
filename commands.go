@@ -15,6 +15,7 @@ import (
 	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/internal/debug"
+	"github.com/decodo/tyci/internal/pricing"
 	"github.com/decodo/tyci/internal/readline"
 	"github.com/decodo/tyci/internal/skills"
 	"github.com/decodo/tyci/providers"
@@ -83,14 +84,6 @@ func registerProviders() {
 	if err := connect.EnsureProvidersJSON(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: providers.json: %v\n", err)
 	}
-	// A catalog written by an older tyci build had its prices and context
-	// limits silently stripped on every refresh (see doc comment on
-	// connect.ModelsDevModel). This is a local file read, not a network
-	// call, so it is safe on this hot startup path; the fix itself still
-	// requires the user to run the refresh command below.
-	if connect.CatalogNeedsPrices() {
-		fmt.Fprintln(os.Stderr, "Warning: providers.json has no prices — run `tyci provider refresh` to fix it.")
-	}
 	providers.RegisterProvidersFromProvidersJSON(connect.ProvidersJSONPath())
 	providers.RegisterProvidersFromConfig(connect.ModelJSONPath())
 }
@@ -121,6 +114,16 @@ func initCommon(cmd *cobra.Command) (providers.Provider, string, agent.Config, c
 	provider, modelName, ok := providers.FindModel(model)
 	if !ok {
 		return nil, "", agent.Config{}, nil, nil, "", "", nil, fmt.Errorf("model %q not found", model)
+	}
+	// A catalog written by an older tyci build had its prices and context
+	// limits silently stripped on every refresh (see doc comment on
+	// connect.ModelsDevModel), and a hand-added provider can lack pricing
+	// from the start. Warn about the provider actually in use — the only
+	// moment the message is true and actionable — rather than the whole
+	// catalog, which one priced provider among many unpriced ones would
+	// otherwise silence forever.
+	if pricing.ProviderNeedsPrices(provider.Name()) {
+		fmt.Fprintln(os.Stderr, "Warning: no prices for provider "+provider.Name()+" in providers.json — run `tyci provider refresh` to fix it.")
 	}
 
 	if agentName == "" {
