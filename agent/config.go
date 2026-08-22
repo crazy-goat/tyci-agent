@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 const globalConfigName = "config.json"
@@ -14,6 +15,18 @@ const globalConfigName = "config.json"
 type TyciConfig struct {
 	DefaultModel   string   `json:"default_model,omitempty"`
 	FavoriteModels []string `json:"favorite_models,omitempty"`
+	// MaxTokens caps the model's reply length. 0 (or absent) leaves it to the
+	// connector, which for Anthropic means a conservative default that is
+	// safe on every model but short for the current ones. Set it once here to
+	// the ceiling of the models you actually use; the --max-tokens flag
+	// overrides it for a single run.
+	MaxTokens int `json:"max_tokens,omitempty"`
+	// PromptCache turns provider-side prompt caching on or off. A pointer so
+	// that an absent key means "on" — caching is what keeps an agent from
+	// paying for the whole conversation on every turn, so it has to be the
+	// default rather than something to opt into. Set it to false only for an
+	// endpoint that rejects the cache_control field.
+	PromptCache *bool `json:"prompt_cache,omitempty"`
 }
 
 // globalConfigDir returns the path to ~/.tyci.
@@ -104,4 +117,27 @@ func RemoveFavoriteModel(model string) error {
 	}
 	cfg.FavoriteModels = out
 	return SaveTyciConfig(cfg)
+}
+
+// GetMaxTokens returns the configured reply cap, or 0 when unset.
+func GetMaxTokens() int {
+	return LoadTyciConfig().MaxTokens
+}
+
+// promptCacheOnce memoises the config read behind PromptCacheEnabled. Every
+// subagent builds its own agent.Config, and re-reading a small JSON file per
+// child would be pointless work for a value that cannot change mid-process.
+var (
+	promptCacheOnce sync.Once
+	promptCacheOn   bool
+)
+
+// PromptCacheEnabled reports whether requests may carry cache_control.
+// Absent config means yes.
+func PromptCacheEnabled() bool {
+	promptCacheOnce.Do(func() {
+		cfg := LoadTyciConfig()
+		promptCacheOn = cfg.PromptCache == nil || *cfg.PromptCache
+	})
+	return promptCacheOn
 }

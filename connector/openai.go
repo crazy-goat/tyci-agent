@@ -37,6 +37,7 @@ func (c *openAI) Stream(ctx context.Context, req Request, emit func(stream.Event
 		Messages:    messagesToChat(req.Messages, req.System),
 		Tools:       req.Tools,
 		Temperature: req.Temperature,
+		MaxTokens:   req.MaxTokens,
 	}
 	// Only send the reasoning field when ?reasoning=true was in the URI.
 	if c.reasoning {

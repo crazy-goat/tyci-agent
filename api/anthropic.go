@@ -411,3 +411,41 @@ func ConvertToolsToAnthropic(tools json.RawMessage) json.RawMessage {
 	}
 	return result
 }
+
+// MarkLastToolCached appends cache_control to the last entry of an
+// already-converted Anthropic tools array, so the whole schema block becomes a
+// cacheable prefix.
+//
+// It works on the marshalled JSON rather than on the tool structs because the
+// schemas arrive here as an opaque json.RawMessage built elsewhere; parsing
+// into []map[string]any and back is the same round trip ConvertToolsToAnthropic
+// already does, and it keeps the tool type free of transport concerns.
+//
+// A tools array that cannot be parsed is returned untouched: losing the cache
+// is a cost, losing the tools is a broken request.
+func MarkLastToolCached(tools json.RawMessage) json.RawMessage {
+	if len(tools) == 0 || string(tools) == "null" || string(tools) == "[]" {
+		return tools
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(tools, &list); err != nil || len(list) == 0 {
+		return tools
+	}
+	list[len(list)-1]["cache_control"] = CacheEphemeral()
+	out, err := json.Marshal(list)
+	if err != nil {
+		return tools
+	}
+	return out
+}
+
+// MarkLastSystemBlockCached marks the end of the system prompt as a cacheable
+// prefix. A nil or empty system prompt is left alone — there is nothing to
+// cache, and an empty block would be rejected.
+func MarkLastSystemBlockCached(system []AnthropicSystemBlock) []AnthropicSystemBlock {
+	if len(system) == 0 {
+		return system
+	}
+	system[len(system)-1].CacheControl = CacheEphemeral()
+	return system
+}

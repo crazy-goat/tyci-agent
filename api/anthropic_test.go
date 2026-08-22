@@ -323,3 +323,55 @@ func TestStreamAnthropic_ErrorStatusCode(t *testing.T) {
 		t.Errorf("expected code 429, got %d", re.Code)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Prompt-cache markers
+// ---------------------------------------------------------------------------
+
+func TestMarkLastToolCachedMarksOnlyTheLast(t *testing.T) {
+	in := json.RawMessage(`[{"name":"read"},{"name":"write"},{"name":"bash"}]`)
+
+	var got []map[string]any
+	if err := json.Unmarshal(MarkLastToolCached(in), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 tools, got %d", len(got))
+	}
+	if got[0]["cache_control"] != nil || got[1]["cache_control"] != nil {
+		t.Error("only the last tool should carry the breakpoint")
+	}
+	if got[2]["cache_control"] == nil {
+		t.Error("the last tool should close the cacheable schema block")
+	}
+	// The tools themselves must survive the round trip untouched.
+	if got[0]["name"] != "read" || got[2]["name"] != "bash" {
+		t.Errorf("tool definitions were altered: %v", got)
+	}
+}
+
+// TestMarkLastToolCachedLeavesUnparseableToolsAlone: losing the cache costs
+// money, losing the tools breaks the request. The safe failure is obvious.
+func TestMarkLastToolCachedLeavesUnparseableToolsAlone(t *testing.T) {
+	for _, in := range []string{``, `null`, `[]`, `{"not":"an array"}`, `not json at all`} {
+		got := string(MarkLastToolCached(json.RawMessage(in)))
+		if got != in {
+			t.Errorf("input %q was rewritten to %q", in, got)
+		}
+	}
+}
+
+func TestMarkLastSystemBlockCached(t *testing.T) {
+	if got := MarkLastSystemBlockCached(nil); got != nil {
+		t.Errorf("nothing to mark, got %v", got)
+	}
+
+	blocks := []AnthropicSystemBlock{{Type: "text", Text: "a"}, {Type: "text", Text: "b"}}
+	got := MarkLastSystemBlockCached(blocks)
+	if got[0].CacheControl != nil {
+		t.Error("only the last block should carry the breakpoint")
+	}
+	if got[1].CacheControl == nil || got[1].CacheControl.Type != "ephemeral" {
+		t.Errorf("last block marker = %+v", got[1].CacheControl)
+	}
+}

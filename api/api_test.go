@@ -812,3 +812,53 @@ func TestChatStreamer_NilHTTPFallsBackToDefaultClient(t *testing.T) {
 		t.Fatalf("default client got %d requests, want 1", hits)
 	}
 }
+
+// TestChatStreamStripsLeakedControlMarkers is the end-to-end version of the
+// reported bug: a gateway that forgets to strip its model's template markers
+// streams them as reasoning_content, split across deltas exactly as below, and
+// they used to reach the screen and the conversation history verbatim.
+func TestChatStreamStripsLeakedControlMarkers(t *testing.T) {
+	sseEvents := `data: {"choices":[{"delta":{"reasoning_content":"checking the names "}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"</"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"｜DSML｜"}}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"reasoning>"}}]}
+
+data: {"choices":[{"delta":{"content":"the names match"}}]}
+
+data: {"choices":[{"finish_reason":"stop"}]}
+
+data: [DONE]
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var thinking, text strings.Builder
+	emit := func(e stream.Event) error {
+		switch ev := e.(type) {
+		case stream.ThinkingDelta:
+			thinking.WriteString(ev.Text)
+		case stream.TextDelta:
+			text.WriteString(ev.Text)
+		}
+		return nil
+	}
+
+	body := ChatRequest{Model: "deepseek", Stream: true, Messages: []ChatMessage{{Role: "user", Content: "hi"}}}
+	if err := (ChatStreamer{}).Stream(testCtx(), "test-key", server.URL, body, emit); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	if got := thinking.String(); got != "checking the names " {
+		t.Errorf("thinking = %q, want the marker gone and nothing else", got)
+	}
+	if got := text.String(); got != "the names match" {
+		t.Errorf("text = %q", got)
+	}
+}

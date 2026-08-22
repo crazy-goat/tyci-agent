@@ -68,4 +68,7 @@ type GeminiRequest struct {
 // a meaningful, explicit value distinct from "unset".
 type GeminiGenerationConfig struct {
 	Temperature *float64 `json:"temperature,omitempty"`
+	// MaxOutputTokens is Gemini's name for max_tokens. Omitted when zero,
+	// leaving the provider's default in charge.
+	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
 }

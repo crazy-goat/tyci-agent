@@ -44,6 +44,17 @@ type Config struct {
 	// wire request entirely, not sent as 0.
 	Temperature *float64
 
+	// MaxTokens caps the model's reply length on every connector.Request this
+	// run issues, primary and fallbacks alike (same single-place plumbing as
+	// Temperature above). Zero means unset, and what that means is the
+	// provider's business: Anthropic requires the field so its connector
+	// substitutes a default, while OpenAI and Gemini simply omit it.
+	MaxTokens int
+
+	// NoPromptCache disables provider-side prompt caching for this run. See
+	// connector.Request.NoPromptCache for why it is phrased as a negative.
+	NoPromptCache bool
+
 	// Fallbacks are already-resolved fallback models, tried in order when
 	// the primary (or the previously-active fallback) fails. The agent does
 	// not resolve "provider/model" strings itself — the caller does, before
@@ -69,6 +80,19 @@ type Config struct {
 	// maxTodoReminders times per turn to avoid nagging in a loop.
 	PendingTodos func() []string
 
+	// PendingJobs, if set, is called when the agent would otherwise finish the
+	// turn and returns one line per background job that is still running or —
+	// worse — blocked waiting for an answer. When non-empty the agent injects
+	// a harness-authored reminder and runs one more iteration, the same shape
+	// as PendingTodos above.
+	//
+	// This exists because a forgotten blocked child is the most expensive
+	// mistake this environment makes possible. It sits there making no
+	// progress until its wall clock runs out, at which point everything it did
+	// is discarded — and the only thing that could have unblocked it was one
+	// answer() call from a turn that has already ended.
+	PendingJobs func() []string
+
 	// HasTodos, if set, is called before executing tool calls to enforce
 	// the "plan first" policy. It returns true when at least one todo
 	// item exists (regardless of status). Non-todo tools are blocked with
@@ -81,6 +105,11 @@ type Config struct {
 // maxTodoReminders bounds how many times, within a single turn, the agent
 // will nudge itself about unfinished todos before giving up and returning.
 const maxTodoReminders = 2
+
+// maxJobReminders bounds the background-job nudge the same way. One reminder
+// is usually enough; a second covers the case where the model answers one
+// blocked job and forgets a second.
+const maxJobReminders = 2
 
 // ErrMaxIterations is returned by Run when the loop reaches MaxIterations
 // without the model finishing its turn. Top-level callers treat it as a
@@ -105,6 +134,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 
 	// Tracks how many todo reminders we've injected this turn (see maxTodoReminders).
 	todoReminders := 0
+	jobReminders := 0
 
 	// Track fallback state across iterations
 	fs := fallbackState{idx: -1, mc: mc}
@@ -222,12 +252,35 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 					}
 				}
 				drained = true
+
+				// A person can type at any moment, including while work is
+				// running, and a tool that could hand its work to the
+				// background does so as soon as that happens. So the model
+				// arrives here mid-task and needs to be told two things it
+				// cannot see: that nothing was cancelled, and that answering
+				// now is the right move. Without this it reads an
+				// out-of-nowhere question as a change of instructions and
+				// abandons what it was doing.
+				if cfg.PendingJobs != nil {
+					if jobs := cfg.PendingJobs(); len(jobs) > 0 {
+						note := buildInterruptNote(jobs)
+						*msgs = append(*msgs, connector.Message{
+							Role:    "user",
+							Content: []connector.ContentBlock{{Type: "text", Text: note}},
+						})
+						if cfg.Session != nil {
+							blocks := []session.ContentBlock{{Type: "text", Text: note}}
+							_ = cfg.Session.WriteMessage("user", blocks, nil)
+						}
+					}
+				}
 			}
 		}
 		// A real user follow-up starts a fresh sub-task; reset the reminder
 		// budget so we're willing to nag again about whatever it leaves open.
 		if drained {
 			todoReminders = 0
+			jobReminders = 0
 		}
 		if !more && !drained {
 			// The model thinks it's done. Before returning, check whether it
@@ -238,6 +291,24 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				if pending := cfg.PendingTodos(); len(pending) > 0 {
 					todoReminders++
 					reminder := buildTodoReminder(pending)
+					*msgs = append(*msgs, connector.Message{
+						Role:    "user",
+						Content: []connector.ContentBlock{{Type: "text", Text: reminder}},
+					})
+					if cfg.Session != nil {
+						blocks := []session.ContentBlock{{Type: "text", Text: reminder}}
+						_ = cfg.Session.WriteMessage("user", blocks, nil)
+					}
+					continue
+				}
+			}
+			// Same idea one level out: a background job left running is
+			// usually fine, but a job blocked on a question is a dead end
+			// only this turn can open.
+			if cfg.PendingJobs != nil && jobReminders < maxJobReminders {
+				if pending := cfg.PendingJobs(); len(pending) > 0 {
+					jobReminders++
+					reminder := buildJobReminder(pending)
 					*msgs = append(*msgs, connector.Message{
 						Role:    "user",
 						Content: []connector.ContentBlock{{Type: "text", Text: reminder}},
@@ -284,5 +355,50 @@ func buildTodoReminder(pending []string) string {
 	b.WriteString("(done, or blocked with a brief reason) via the todo tool. Do not leave items in ")
 	b.WriteString("todo/doing without explanation, and do not mark anything done that you did not actually complete.\n")
 	b.WriteString("</system-reminder>")
+	return b.String()
+}
+
+// buildJobReminder produces the harness-authored reminder injected when the
+// agent tries to finish with background jobs outstanding.
+//
+// It leads with the blocked ones because the two cases need opposite
+// responses: a running job is something to wait for or leave alone, while a
+// blocked job needs an answer() now or its work is thrown away. Framed as an
+// automated check, not as a user asking — the user did not say this.
+func buildJobReminder(pending []string) string {
+	var b strings.Builder
+	b.WriteString("[automated check, not the user] Background jobs are still outstanding:\n")
+	for _, line := range pending {
+		b.WriteString("- ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nAnswer anything marked WAITING FOR ANSWER now with answer(job_id=..., text=\"...\"): it is making no progress and its work is discarded when it times out. ")
+	b.WriteString("For a job still running, either read it with wait(job_id=...) if you need the result, or say plainly in your reply that you are leaving it running — do not silently end the turn on it.")
+	return b.String()
+}
+
+// buildInterruptNote explains the situation the model finds itself in when a
+// person types while work is still running.
+//
+// The three things it has to say, in order of how badly they are missed:
+// nothing was interrupted (or the model apologises and restarts work that is
+// fine); answer the person first (they are waiting, the jobs are not); and
+// there is no need to sit and wait, because a notice will arrive.
+//
+// Framed as the harness, not the user, for the same reason as the other
+// injected reminders: the user did not write this.
+func buildInterruptNote(jobs []string) string {
+	var b strings.Builder
+	b.WriteString("[automated note, not the user] They typed that while work was still running. ")
+	b.WriteString("Nothing was cancelled — this is still going:\n")
+	for _, line := range jobs {
+		b.WriteString("- ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nAnswer them first; they are waiting and the work is not. ")
+	b.WriteString("You do not need to wait for any of it: you will be notified as each finishes, and wait(job_id=...) reads a result once you are told. ")
+	b.WriteString("If they asked about the work itself, check it with wait(job_id=...) and tell them what you find.")
 	return b.String()
 }

@@ -43,6 +43,9 @@ type ChatRequest struct {
 	// a nil pointer, never a pointer to 0. See connector.Request.Temperature
 	// for why this layer never validates or clamps the value.
 	Temperature *float64 `json:"temperature,omitempty"`
+	// MaxTokens is omitted when zero, so an unset Request.MaxTokens leaves
+	// the provider's own default in charge.
+	MaxTokens int `json:"max_tokens,omitempty"`
 }
 
 type chatStreamChunk struct {
@@ -177,6 +180,14 @@ func (s ChatStreamer) Stream(ctx context.Context, apiKey, endpoint string, body 
 		Arguments strings.Builder
 	}
 	var inputTokens, outputTokens, reasoningTokens, cacheRead, cacheWrite int
+	// One filter per delta sequence: text and reasoning arrive interleaved but
+	// are separate streams, and a marker split across deltas must be tracked
+	// within its own.
+	var textFilter, reasoningFilter controlTokenFilter
+	// A stuck model repeats one line without end. Watched per stream, since
+	// the loop lands in whichever one the model is stuck in — in practice the
+	// reasoning stream.
+	var textRepeats, reasoningRepeats repeatGuard
 	var finishReason string
 	var readErr error
 
@@ -222,14 +233,31 @@ func (s ChatStreamer) Stream(ctx context.Context, apiKey, endpoint string, body 
 			if reasoningText == "" {
 				reasoningText = delta.ReasoningAlt
 			}
+			// Control markers are stripped here rather than in the display,
+			// so they stay out of the conversation history too — a model that
+			// sees its own leaked markers in the transcript produces more of
+			// them.
 			if reasoningText != "" {
-				if err := emit(stream.ThinkingDelta{Text: reasoningText}); err != nil {
-					return err
+				if clean := reasoningFilter.Feed(reasoningText); clean != "" {
+					if err := emit(stream.ThinkingDelta{Text: clean}); err != nil {
+						return err
+					}
+					// Checked on what was actually emitted, so the marker
+					// filter above cannot turn a stream of markers into a
+					// stream of empty strings and hide the loop.
+					if err := reasoningRepeats.Feed(clean); err != nil {
+						return err
+					}
 				}
 			}
 			if delta.Content != "" {
-				if err := emit(stream.TextDelta{Text: delta.Content}); err != nil {
-					return err
+				if clean := textFilter.Feed(delta.Content); clean != "" {
+					if err := emit(stream.TextDelta{Text: clean}); err != nil {
+						return err
+					}
+					if err := textRepeats.Feed(clean); err != nil {
+						return err
+					}
 				}
 			}
 			for _, tc := range delta.ToolCalls {
@@ -280,6 +308,19 @@ func (s ChatStreamer) Stream(ctx context.Context, apiKey, endpoint string, body 
 
 		if readErr != nil {
 			break
+		}
+	}
+
+	// Anything the filters were still holding when the stream ended was not a
+	// marker after all, so it is released rather than dropped.
+	if tail := reasoningFilter.Flush(); tail != "" {
+		if err := emit(stream.ThinkingDelta{Text: tail}); err != nil {
+			return err
+		}
+	}
+	if tail := textFilter.Flush(); tail != "" {
+		if err := emit(stream.TextDelta{Text: tail}); err != nil {
+			return err
 		}
 	}
 

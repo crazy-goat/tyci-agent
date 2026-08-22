@@ -19,12 +19,14 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 	d.Request(roundInputLabel(*msgs))
 
 	events, streamErr := mc.Stream(streamCtx, connector.Request{
-		Model:       mc.Model(),
-		System:      cfg.System,
-		Messages:    *msgs,
-		Tools:       cfg.Schema,
-		Debug:       cfg.Debug,
-		Temperature: cfg.Temperature,
+		Model:         mc.Model(),
+		System:        cfg.System,
+		Messages:      *msgs,
+		Tools:         cfg.Schema,
+		Debug:         cfg.Debug,
+		Temperature:   cfg.Temperature,
+		MaxTokens:     cfg.MaxTokens,
+		NoPromptCache: cfg.NoPromptCache,
 	})
 	if streamErr != nil {
 		// Provider failed before streaming started. runOnce does not emit
@@ -40,6 +42,7 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 	startTime := time.Now()
 	var firstToken time.Duration
 	var hasFirstToken bool
+	var finishReason string
 
 	var toolBlockShown bool
 
@@ -88,6 +91,7 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 			toolCalls = append(toolCalls, e)
 		case stream.Finish:
 			lastUsage = e.Usage
+			finishReason = e.Reason
 		case stream.StreamError:
 			return false, nil, false, e.Err
 		}
@@ -95,6 +99,23 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 
 	hasText := textBuf.Len() > 0
 	hasTools := len(toolCalls) > 0
+
+	// "length" means the reply hit max_tokens and stopped mid-sentence. The
+	// reason was already being parsed and then thrown away, so nothing said
+	// so: a truncated answer looked like a terse one, and a truncated tool
+	// call surfaced as "invalid arguments", sending the model looking for a
+	// bug in JSON it had written correctly and simply not finished.
+	if finishReason == "length" {
+		msg := "reply cut off: it reached the max_tokens limit"
+		if cfg.MaxTokens > 0 {
+			msg = fmt.Sprintf("reply cut off: it reached the max_tokens limit of %d", cfg.MaxTokens)
+		}
+		if hasTools {
+			msg += " — a tool call may be incomplete"
+		}
+		msg += ". Raise it with --max-tokens, or \"max_tokens\" in ~/.tyci/config.json."
+		d.ToolBlock(msg)
+	}
 
 	if hasText || hasTools {
 		var content []connector.ContentBlock

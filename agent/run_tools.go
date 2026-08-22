@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
@@ -20,22 +21,24 @@ func executeAndAppendToolResults(ctx context.Context, d Sink, msgs *[]connector.
 	toExecute, origIdx, guardResults := enforcePlanGuard(cfg, toolCalls)
 
 	var results []string
+	durations := make([]time.Duration, len(toolCalls))
 	if guardResults != nil {
 		// Guard is active — execute only the allowed (todo) calls and
 		// merge their results back into the pre-filled results array.
 		if len(toExecute) > 0 {
-			execResults := executeTools(ctx, cfg.Tools, toExecute)
+			execResults, execDurations := executeTools(ctx, cfg.Tools, toExecute)
 			for i, res := range execResults {
 				guardResults[origIdx[i]] = res
+				durations[origIdx[i]] = execDurations[i]
 			}
 		}
 		results = guardResults
 	} else {
 		// Guard not active — execute all calls normally.
-		results = executeTools(ctx, cfg.Tools, toolCalls)
+		results, durations = executeTools(ctx, cfg.Tools, toolCalls)
 	}
 
-	appendToolResults(d, msgs, cfg, toolCalls, results)
+	appendToolResults(d, msgs, cfg, toolCalls, results, durations)
 }
 
 func showToolCalls(d Sink, toolCalls []stream.ToolCall, toolDeltas map[string]*strings.Builder) {
@@ -58,8 +61,25 @@ func installToolStreaming(ctx context.Context, d Sink) context.Context {
 	return ctx
 }
 
-func appendToolResults(d Sink, msgs *[]connector.Message, cfg Config, toolCalls []stream.ToolCall, results []string) {
+// toolDurationSink is an optional Sink capability: a display that shows how
+// long each tool took can be told the real figure for the call whose
+// ToolCallEnd comes next.
+//
+// An optional interface rather than a wider ToolCallEnd signature, matching
+// streamProgressDisplay above: only the TUI shows per-tool timings, and the
+// other four displays would gain a parameter they ignore.
+type toolDurationSink interface {
+	ToolCallDuration(d time.Duration)
+}
+
+func appendToolResults(d Sink, msgs *[]connector.Message, cfg Config, toolCalls []stream.ToolCall, results []string, durations []time.Duration) {
+	ds, _ := d.(toolDurationSink)
 	for i, tc := range toolCalls {
+		// Before ToolCallEnd, which is what consumes the queue entry this
+		// duration belongs to.
+		if ds != nil && i < len(durations) {
+			ds.ToolCallDuration(durations[i])
+		}
 		d.ToolCallEnd(tc.Name, results[i])
 		*msgs = append(*msgs, connector.Message{
 			Role: "toolResult",

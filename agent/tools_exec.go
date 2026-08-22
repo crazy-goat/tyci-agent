@@ -14,7 +14,7 @@ import (
 // planRequiredError is the message returned to the LLM when it attempts
 // to use non-todo tools without first creating a plan. The message is
 // deliberately actionable: it tells the model exactly what to do next.
-const planRequiredError = "Error: You must create a plan using the todo tool before using other tools. Call todo(action=\"add\", content=\"...\") or todo(action=\"add_batch\", items=[...]) to outline your approach, then proceed with the actual work."
+const planRequiredError = "Error: create a plan first. Call todo(action=\"add_batch\", items=[{\"content\": \"...\"}, ...]) — one call for the whole plan — then get on with the work."
 
 // enforcePlanGuard checks whether a plan (todo items) exists before
 // allowing non-todo tool calls. When cfg.HasTodos is set and returns
@@ -49,8 +49,17 @@ func enforcePlanGuard(cfg Config, toolCalls []stream.ToolCall) ([]stream.ToolCal
 	return toExecute, origIdx, results
 }
 
-func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.ToolCall) []string {
+// executeTools runs a batch and returns each call's result together with how
+// long that individual call took.
+//
+// The durations have to be measured here, around each call, because the
+// display cannot work them out for itself: every ToolCallStart for a batch is
+// emitted before the batch runs and every ToolCallEnd after it finishes, so a
+// display timing from start to end would show the whole batch's wall-clock on
+// every row — four tools taking 1ms, 1ms, 1ms and 4.3s all reported as 4.3s.
+func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.ToolCall) ([]string, []time.Duration) {
 	results := make([]string, len(toolCalls))
+	durations := make([]time.Duration, len(toolCalls))
 
 	// Group indices by tool name. Calls within the same group share a
 	// MaxParallel cap; groups run independently of each other so two
@@ -85,7 +94,7 @@ func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.Too
 				wg.Add(1)
 				go func(i int, tc stream.ToolCall) {
 					defer wg.Done()
-					results[i] = runToolCall(ctx, runner, tc, i)
+					results[i], durations[i] = timeToolCall(ctx, runner, tc, i)
 				}(idx, toolCalls[idx])
 			}
 		case g.limit == 1:
@@ -97,7 +106,7 @@ func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.Too
 			go func(idxs []int) {
 				defer wg.Done()
 				for _, i := range idxs {
-					results[i] = runToolCall(ctx, runner, toolCalls[i], i)
+					results[i], durations[i] = timeToolCall(ctx, runner, toolCalls[i], i)
 				}
 			}(g.idxs)
 		default:
@@ -109,13 +118,22 @@ func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.Too
 					defer wg.Done()
 					sem <- struct{}{}
 					defer func() { <-sem }()
-					results[i] = runToolCall(ctx, runner, tc, i)
+					results[i], durations[i] = timeToolCall(ctx, runner, tc, i)
 				}(idx, toolCalls[idx])
 			}
 		}
 	}
 	wg.Wait()
-	return results
+	return results, durations
+}
+
+// timeToolCall is runToolCall plus a stopwatch. Each goroutine writes only its
+// own slot, so no synchronisation is needed beyond the WaitGroup that already
+// orders these writes against the read after wg.Wait().
+func timeToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, idx int) (string, time.Duration) {
+	start := time.Now()
+	out := runToolCall(ctx, runner, call, idx)
+	return out, time.Since(start)
 }
 
 // runToolCall decodes args, applies the per-tool timeout, and writes the
@@ -137,15 +155,14 @@ func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, i
 	case "read", "write":
 		toolTimeout = 30 * time.Second
 	case "bash":
-		toolTimeout = 120 * time.Second
-		if to, ok := args["timeout"]; ok {
-			switch v := to.(type) {
-			case float64:
-				toolTimeout = time.Duration(v) * time.Second
-			case int:
-				toolTimeout = time.Duration(v) * time.Second
-			}
-		}
+		// The bash tool owns its own deadline (tools.BashDefaultTimeoutSec,
+		// overridable per call with "timeout"). It has to: a bash command
+		// that runs long can be moved to the background and outlive this
+		// tool call, and an external deadline here would cancel toolCtx on
+		// return and kill the process we just detached. The tool enforces
+		// the same 120s default and honours the same "timeout" argument, so
+		// a foreground command behaves exactly as it did before.
+		toolTimeout = 0
 	case "subagent":
 		toolTimeout = 0
 	case "wait":

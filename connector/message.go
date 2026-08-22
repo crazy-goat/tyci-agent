@@ -49,4 +49,27 @@ type Request struct {
 	// returns a readable 400 — silently clamping here would mask a config
 	// typo instead of surfacing it.
 	Temperature *float64
+
+	// MaxTokens caps the length of the model's reply. Zero means "not set":
+	// Anthropic requires the field, so its connector substitutes a default;
+	// the OpenAI and Gemini protocols treat it as optional, so their
+	// connectors omit it entirely and the provider's own default applies.
+	//
+	// A plain int, not a pointer: unlike Temperature, 0 is not a meaningful
+	// value here — a reply capped at zero tokens is not something anyone
+	// asks for — so it can stand in for "unset" without ambiguity.
+	MaxTokens int
+
+	// NoPromptCache turns off provider-side prompt caching for this request.
+	//
+	// Negated on purpose: caching is the right default — it is the difference
+	// between paying for the whole conversation every turn and paying for the
+	// new part — so it must not depend on every call site remembering to ask
+	// for it. The flag exists for an endpoint that rejects the cache_control
+	// field, which some Anthropic-compatible gateways do.
+	//
+	// Only the Anthropic connector reads it. OpenAI-compatible providers cache
+	// automatically with no field to set, and the Gemini connector does not
+	// implement explicit caching.
+	NoPromptCache bool
 }

@@ -41,8 +41,11 @@ func (c *gemini) Stream(ctx context.Context, req Request, emit func(stream.Event
 	// accepting them top-level. Only allocate it when Temperature is set,
 	// so a nil Request.Temperature produces no "generationConfig" key at
 	// all (see GeminiRequest.GenerationConfig doc comment).
-	if req.Temperature != nil {
-		body.GenerationConfig = &api.GeminiGenerationConfig{Temperature: req.Temperature}
+	if req.Temperature != nil || req.MaxTokens > 0 {
+		body.GenerationConfig = &api.GeminiGenerationConfig{
+			Temperature:     req.Temperature,
+			MaxOutputTokens: req.MaxTokens,
+		}
 	}
 	if system != "" {
 		body.SystemInstruction = &struct {

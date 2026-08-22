@@ -62,7 +62,7 @@ func TestExecuteTools_SerializesBatchedTodoCalls(t *testing.T) {
 	}
 
 	runner := newSerializingRunner()
-	results := executeTools(context.Background(), runner, calls)
+	results, _ := executeTools(context.Background(), runner, calls)
 
 	if len(results) != 3 {
 		t.Fatalf("results len = %d, want 3", len(results))
@@ -92,7 +92,7 @@ func TestExecuteTools_DifferentToolsRunInParallel(t *testing.T) {
 		{Name: "todo", Arguments: jsonString(map[string]any{"action": "add", "content": "y"})},
 	}
 	runner := newParallelProbeRunner()
-	results := executeTools(context.Background(), runner, calls)
+	results, _ := executeTools(context.Background(), runner, calls)
 
 	if len(results) != 4 {
 		t.Fatalf("results len = %d, want 4", len(results))

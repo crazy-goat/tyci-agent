@@ -60,8 +60,8 @@ func TestEnforcePlanGuard_BlocksNonTodoTools(t *testing.T) {
 		t.Fatalf("expected 0 calls to execute, got %d", len(toExec))
 	}
 	for i, r := range results {
-		if !strings.Contains(r, "todo tool") {
-			t.Errorf("results[%d] = %q, want it to mention the todo tool", i, r)
+		if !strings.Contains(r, "todo(") {
+			t.Errorf("results[%d] = %q, want it to name the todo call to make", i, r)
 		}
 	}
 }
@@ -105,13 +105,13 @@ func TestEnforcePlanGuard_MixedBatch(t *testing.T) {
 		t.Errorf("expected origIdx=[1], got %v", idx)
 	}
 	// results[0] and results[2] should have errors
-	if !strings.Contains(results[0], "todo tool") {
+	if !strings.Contains(results[0], "todo(") {
 		t.Errorf("results[0] should be blocked: %q", results[0])
 	}
 	if results[1] != "" {
 		t.Errorf("results[1] should be empty (todo call): %q", results[1])
 	}
-	if !strings.Contains(results[2], "todo tool") {
+	if !strings.Contains(results[2], "todo(") {
 		t.Errorf("results[2] should be blocked: %q", results[2])
 	}
 }
@@ -166,7 +166,7 @@ func TestRun_PlanGuard_BlocksBashWithoutPlan(t *testing.T) {
 	// shown to the model contains the plan-required error.
 	found := false
 	for _, end := range d.toolCallEnds {
-		if end.Name == "bash" && strings.Contains(end.Result, "todo tool") {
+		if end.Name == "bash" && strings.Contains(end.Result, "todo(") {
 			found = true
 			break
 		}
@@ -235,7 +235,7 @@ func TestRun_PlanGuard_AllowsBashAfterTodoPlan(t *testing.T) {
 
 	// bash tool call should NOT have the plan-required error.
 	for _, end := range d.toolCallEnds {
-		if end.Name == "bash" && strings.Contains(end.Result, "todo tool") {
+		if end.Name == "bash" && strings.Contains(end.Result, "todo(") {
 			t.Error("bash tool call should NOT be blocked after plan was created")
 		}
 	}
@@ -275,7 +275,7 @@ func TestEnforcePlanGuard_AllDone_BlocksNonTodo(t *testing.T) {
 	if len(toExec) != 0 {
 		t.Fatalf("expected 0 calls to execute, got %d", len(toExec))
 	}
-	if !strings.Contains(results[0], "todo tool") {
+	if !strings.Contains(results[0], "todo(") {
 		t.Errorf("expected plan-required error, got: %s", results[0])
 	}
 }
@@ -328,13 +328,13 @@ func TestEnforcePlanGuard_AllDone_MixedBatch(t *testing.T) {
 		t.Errorf("expected origIdx=[1,3], got %v", idx)
 	}
 	// Non-todo results blocked, todo results empty (pending execution).
-	if !strings.Contains(results[0], "todo tool") {
+	if !strings.Contains(results[0], "todo(") {
 		t.Errorf("results[0] (read) should be blocked: %q", results[0])
 	}
 	if results[1] != "" {
 		t.Errorf("results[1] (todo) should be empty: %q", results[1])
 	}
-	if !strings.Contains(results[2], "todo tool") {
+	if !strings.Contains(results[2], "todo(") {
 		t.Errorf("results[2] (bash) should be blocked: %q", results[2])
 	}
 	if results[3] != "" {
@@ -361,7 +361,7 @@ func TestRun_PlanGuard_AllDone_BlocksBash(t *testing.T) {
 
 	found := false
 	for _, end := range d.toolCallEnds {
-		if end.Name == "bash" && strings.Contains(end.Result, "todo tool") {
+		if end.Name == "bash" && strings.Contains(end.Result, "todo(") {
 			found = true
 			break
 		}
