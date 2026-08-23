@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/decodo/tyci/internal/hooks"
 	"github.com/decodo/tyci/locks"
@@ -114,7 +115,16 @@ type Tool interface {
 	Run(ctx context.Context, input map[string]any) ToolResult
 }
 
+// GetToolsSchema returns the built-in tool schema plus every user-defined
+// Lua tool currently registered (see luaToolsSchema). MCP tools are not
+// included here — GetAllToolsSchema adds those.
 func GetToolsSchema() []map[string]any {
+	schema := builtinToolsSchema()
+	schema = append(schema, luaToolsSchema()...)
+	return schema
+}
+
+func builtinToolsSchema() []map[string]any {
 	return []map[string]any{
 		{
 			"type": "function",
@@ -478,6 +488,46 @@ func GetToolsSchema() []map[string]any {
 			},
 		},
 	}
+}
+
+// luaToolsSchema returns the function-call schema for every *LuaTool
+// currently in toolRegistry — the user-defined scripts loaded from
+// ~/.tyci/tools and ./.tyci/tools by LoadAndRegisterLuaTools. Without this,
+// a Lua tool is only reachable by a caller that already knows its name and
+// argument shape by other means (e.g. a hand-written prompt); the model
+// itself never sees it in the tool list it's offered.
+//
+// A Lua schema's "parameters" table (see loadLuaTool) is a flat map of
+// param name -> {type, description}, not a full JSON-schema object, so it's
+// wrapped here the same way every built-in tool above is: an object schema
+// whose properties are that map. There's no per-parameter "required"
+// convention in the Lua schema format, so every parameter is advertised as
+// optional.
+func luaToolsSchema() []map[string]any {
+	names := make([]string, 0, len(toolRegistry))
+	for name, tool := range toolRegistry {
+		if _, ok := tool.(*LuaTool); ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	var schema []map[string]any
+	for _, name := range names {
+		lt := toolRegistry[name].(*LuaTool)
+		schema = append(schema, map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        lt.name,
+				"description": lt.description,
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": lt.parameters,
+				},
+			},
+		})
+	}
+	return schema
 }
 
 var toolsSchema json.RawMessage
