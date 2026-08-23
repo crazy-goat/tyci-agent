@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -287,36 +286,12 @@ func backgroundSlotsInUse() int {
 	return bgRegistry.slots
 }
 
-// KillJobTool implements the "kill_job" tool: stops a command previously
-// moved to the background (by timeout handoff or run_in_background) by
-// killing its whole process group.
+// KillJobTool implements the "kill_job" tool: stops a backgrounded shell
+// command (killing its whole process group) or a running subagent job
+// (plus, via the registry's subtree cascade, every background command that
+// subagent itself started). Which path runs is decided by what the id
+// resolves to — bgRegistry first for live commands, then the job registry's
+// kind dispatch — not by guessing from the id's shape. See killjob.go.
 type KillJobTool struct{}
 
 func (t *KillJobTool) Name() string { return "kill_job" }
-
-func (t *KillJobTool) Run(ctx context.Context, input map[string]any) ToolResult {
-	jobID, _ := input["job_id"].(string)
-	if jobID == "" {
-		return ToolResult{Type: "result", Success: false, Error: "job_id is required"}
-	}
-	if !killBackgroundBash(jobID) {
-		running := runningBackgroundBash()
-		if len(running) == 0 {
-			return ToolResult{
-				Type:    "result",
-				Success: false,
-				Error:   fmt.Sprintf("job %q is not a running background command (it may have already finished — check it with wait); no background commands are running", jobID),
-			}
-		}
-		return ToolResult{
-			Type:    "result",
-			Success: false,
-			Error:   fmt.Sprintf("job %q is not a running background command (it may have already finished — check it with wait); currently running: %v", jobID, running),
-		}
-	}
-	return ToolResult{
-		Type:    "result",
-		Success: true,
-		Content: fmt.Sprintf("sent SIGKILL to the process group of job %s; its recorded result will show it as killed", jobID),
-	}
-}
