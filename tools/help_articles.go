@@ -289,9 +289,12 @@ refused by the freshness guard — loudly, which is better than silently, but it
 still wastes a child. Put the locking instruction in the task text: the child
 does the locking, not you.
 
-Stopping things. kill_job(job_id) kills a backgrounded SHELL command and
-everything it spawned; its output so far stays readable with wait. It does not
-stop an async subagent.
+Stopping things. kill_job(job_id) stops a running job: a backgrounded
+SHELL command dies with its whole process group, and a subagent is stopped
+mid-task along with any background commands it started (its partial output
+so far stays readable with wait). Accepts the short "#N" form the jobs panel
+shows. From inside a child you may kill only what you started; the main
+agent can stop anything.
 
 From inside a job. A child can report_progress(text), read back via
 wait(job_id=...) or the end-of-turn pending-jobs reminder — never the jobs

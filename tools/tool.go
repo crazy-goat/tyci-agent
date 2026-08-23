@@ -312,7 +312,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "kill_job",
-				"description": "Kill a backgrounded shell command and everything it spawned — wrong command, no longer needed, or stuck. Its output so far stays readable with wait(job_id). Shell jobs only, not async subagents.",
+				"description": "Kill a running job and everything under it: a backgrounded shell command dies with its whole process group; a subagent is stopped mid-task, its in-flight foreground commands die with it, and any background commands it started are cancelled too. Wrong command, no longer needed, or stuck. Its output so far stays readable with wait(job_id). Accepts the full id or the short \"#N\" form the jobs panel shows.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -763,8 +763,10 @@ var toolRegistry = map[string]Tool{
 	"message":         &MessageTool{},
 	"report_progress": &ReportProgressTool{},
 	"resume":          &ResumeTool{},
-	// kill_job needs no wiring of its own: it acts on the background-command
-	// registry in bgbash.go, which the bash tool populates.
+	// kill_job needs no wiring of its own beyond the registry hooks in
+	// killjob.go (SetJobCanceler/SetJobLister, optional — without them it
+	// stays bash-only): the bash path acts on the bgbash.go registry the
+	// bash tool populates.
 	"kill_job": &KillJobTool{},
 }
 
