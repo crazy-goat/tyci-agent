@@ -362,7 +362,13 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	if text == "" {
 		return "", fmt.Errorf("subagent finished without producing any text output")
 	}
-	return text, nil
+	// Normal completion (no cutoff): still worth a resume hint, on the same
+	// terms as subagentCutoffMessage's — the follow-up question ("and what
+	// about X?") is common enough that the parent should know it can hand
+	// the work back to this exact child instead of starting a fresh one from
+	// scratch. resumeHint itself already no-ops when jobID is empty (no job
+	// registry — tests only), so nothing here needs to duplicate that check.
+	return text + resumeHint(jobID), nil
 }
 
 // subagentCutoffMessage builds the (content, error) pair run() returns once
@@ -412,13 +418,17 @@ func subagentCutoffMessage(text string, deadlineWasHit bool, jobID string, maxIt
 		fmt.Errorf("%w: stopped at its %d-iteration limit; result may be incomplete", tools.ErrSubagentTruncated, maxIter)
 }
 
-// resumeHint is appended to the "[note: ...]" text a parent sees when its
-// child was cut off (iteration cap or wall-clock deadline) but still
-// produced usable text. Without the job id, "use resume" is advice the
-// model cannot act on — ResumeTool.Run (tools/resume.go) requires job_id as
-// input, and the note text is the only place that id ever reaches the
-// model in the blocking-subagent path. Empty when no job id is available
-// (e.g. no job registry wired — tests only; every real invocation has one).
+// resumeHint is appended to a child's result text — either inside the
+// "[note: ...]" subagentCutoffMessage builds when a child was cut off
+// (iteration cap or wall-clock deadline), or directly onto the plain text of
+// a child that finished normally (see run()'s success return above) — so
+// both cases advertise the same "resume(job_id=...)" escape hatch in the
+// same words. Without the job id, "use resume" is advice the model cannot
+// act on — ResumeTool.Run (tools/resume.go) requires job_id as input, and
+// this text is the only place that id ever reaches the model in the
+// blocking-subagent path. Empty when no job id is available (e.g. no job
+// registry wired — tests only; every real invocation has one, per
+// tools/subagent.go's spawn/jobStarter wiring).
 func resumeHint(jobID string) string {
 	if jobID == "" {
 		return ""

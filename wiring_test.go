@@ -330,11 +330,6 @@ func TestWiring_R1_FullStackAsyncRoundTrip(t *testing.T) {
 		t.Fatalf("parent agent.Run: %v", err)
 	}
 
-	wantText := "parent saw: job finished: child answer"
-	if got := sink.CollectedText(); got != wantText {
-		t.Fatalf("parent final text = %q, want %q", got, wantText)
-	}
-
 	// The job itself must be visible, real, and Done in the shared registry.
 	list := reg.List()
 	if len(list) != 1 {
@@ -344,8 +339,16 @@ func TestWiring_R1_FullStackAsyncRoundTrip(t *testing.T) {
 	if job.Status != jobs.StatusDone {
 		t.Fatalf("job status = %s, want done", job.Status)
 	}
-	if job.Result != "child answer" {
-		t.Fatalf("job result = %q, want %q", job.Result, "child answer")
+	// Normal completion now carries the resume hint (item 16), appended by
+	// agentRunner.run — see resumeHint in main.go.
+	wantResult := "child answer" + resumeHint(job.ID)
+	if job.Result != wantResult {
+		t.Fatalf("job result = %q, want %q", job.Result, wantResult)
+	}
+
+	wantText := "parent saw: job finished: " + wantResult
+	if got := sink.CollectedText(); got != wantText {
+		t.Fatalf("parent final text = %q, want %q", got, wantText)
 	}
 
 	// Drain the subscribed events (published asynchronously; give them a
@@ -717,8 +720,11 @@ func TestWiring_A8_JobOutlivesParentContextCancellation(t *testing.T) {
 	if final.Status != jobs.StatusDone {
 		t.Fatalf("job status = %s (err=%q), want done — the parent's context cancellation must not have propagated to the job", final.Status, final.Err)
 	}
-	if final.Result != "survived parent cancellation" {
-		t.Fatalf("job result = %q, want the child's real answer", final.Result)
+	// Normal completion carries the resume hint (item 16), appended by
+	// agentRunner.run.
+	wantResult := "survived parent cancellation" + resumeHint(jobID)
+	if final.Result != wantResult {
+		t.Fatalf("job result = %q, want the child's real answer with its resume hint (%q)", final.Result, wantResult)
 	}
 }
 
@@ -1103,8 +1109,11 @@ func TestWiring_Q1_AskAnswerRoundTrip(t *testing.T) {
 	if final.Status != jobs.StatusDone {
 		t.Fatalf("job status = %s (err=%q), want done", final.Status, final.Err)
 	}
-	if final.Result != "answer was: blue" {
-		t.Fatalf("job result = %q, want it to reflect the exact answer text", final.Result)
+	// Normal completion carries the resume hint (item 16), appended by
+	// agentRunner.run.
+	wantResult := "answer was: blue" + resumeHint(jobID)
+	if final.Result != wantResult {
+		t.Fatalf("job result = %q, want it to reflect the exact answer text plus its resume hint (%q)", final.Result, wantResult)
 	}
 
 	waitForGoroutineSettle(t, before)
