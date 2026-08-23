@@ -20,6 +20,21 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Status bar click: the context figure (buildContextCost's right-hand
+	// side) opens the sidebar on the Tokens tab. The status bar is always
+	// exactly one row, directly below the topbar + fixed-height message
+	// region — see messageRegionHeight's doc comment — so its Y is
+	// deterministic even though nothing above it has a fixed height of its
+	// own once jobs/queue panels are involved (those come AFTER the status
+	// bar, not before).
+	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && msg.Y == m.statusBarY() {
+		if m.statusRightHit(msg.X) {
+			m.openSidebar(sidebarTabTokens)
+			return m, nil
+		}
+		return m, nil
+	}
+
 	if msg.Button == tea.MouseButtonWheelUp {
 		m = m.clearSelection()
 		m.atBottom = false

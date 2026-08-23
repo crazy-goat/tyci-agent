@@ -31,6 +31,16 @@ func (t *TUI) OpenResumePicker(entries []TuiResumeEntry) {
 	t.prog.Send(tuiResumeRequestMsg{entries: entries})
 }
 
+// SetSessionLister wires the Sidebar's Sessions tab (TODO item 1) to fn,
+// which should enumerate this project's resumable sessions on demand — the
+// same call bare "/resume" makes (session.ResumeEntries, wrapped by main()).
+// Called once from main(), outside the bubbletea event-loop goroutine, so it
+// goes through the same message-send pattern as every other cross-goroutine
+// mutation here rather than writing the model directly.
+func (t *TUI) SetSessionLister(fn func() []TuiResumeEntry) {
+	t.prog.Send(tuiSetSessionListerMsg{fn: fn})
+}
+
 // SetModel updates the model name displayed in the status bar.
 func (t *TUI) SetModel(name string) {
 	t.prog.Send(tuiMsgBlock{kind: "set-model", content: name})

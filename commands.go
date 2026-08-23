@@ -529,6 +529,19 @@ var tuiCmd = &cobra.Command{
 		// in the TUI's background-jobs panel/modal (Ctrl+B).
 		tuiDisp.SetJobEventBus(jobEventBus)
 
+		// Wire the sidebar's Sessions tab (TODO item 1) to the same
+		// cwd-scoped session listing bare "/resume" already uses (tui_mode.go)
+		// — reusing session.ResumeEntries rather than the display package
+		// importing "session" itself (same layering rule as jobs/tools).
+		tuiDisp.SetSessionLister(func() []display.TuiResumeEntry {
+			wd, _ := os.Getwd()
+			entries, err := session.ResumeEntries(wd)
+			if err != nil {
+				return nil
+			}
+			return resumeEntriesToTUI(entries)
+		})
+
 		// Issue #88: wire the pending-message queue drain callback. The
 		// TUI's NextMessages drains the channel of user lines typed
 		// during the in-flight request and returns them in FIFO order;

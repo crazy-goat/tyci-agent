@@ -41,6 +41,12 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFileIndex(idx)
 		return m, nil
 	}
+	// The Sidebar's Sessions tab callback (see TUI.SetSessionLister) can
+	// arrive at any point in startup, regardless of what's on screen.
+	if sl, ok := msg.(tuiSetSessionListerMsg); ok {
+		m.sessionLister = sl.fn
+		return m, nil
+	}
 	// /btw entries must never lose streamed output just because some other
 	// popup happens to be open when it arrives — a background /btw job runs
 	// independently of whatever modal state the main thread is in. Dispatch
@@ -69,6 +75,9 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if m.jobsModalActive {
 		return m.updateJobsModal(msg)
+	}
+	if m.sidebarActive {
+		return m.updateSidebar(msg)
 	}
 	if m.subagentModalActive {
 		return m.updateSubagentModal(msg)

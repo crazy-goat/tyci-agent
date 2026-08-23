@@ -92,6 +92,16 @@ type tuiMsgJobUpdate struct {
 	Job jobs.Job
 }
 
+// tuiSetSessionListerMsg carries the callback the Sidebar's Sessions tab
+// (TODO item 1) uses to fetch this project's resumable sessions on demand.
+// Delivered as a message (same pattern as every other cross-goroutine
+// mutation here — see tuiMsgBlock's "set-model" kind) rather than written
+// directly onto the model, since TUI.SetSessionLister is called from main(),
+// outside the bubbletea event-loop goroutine.
+type tuiSetSessionListerMsg struct {
+	fn func() []TuiResumeEntry
+}
+
 // ProviderModels groups model names under a provider name.
 type ProviderModels struct {
 	Name   string
@@ -420,6 +430,25 @@ type TuiModel struct {
 	toolCount  int // total tools available (built-in + Lua + MCP)
 	skillCount int // skills loaded from skills directory
 	mcpCount   int // MCP tools available
+
+	// Right-side sidebar (TODO item 1): Tokens/Sessions/Bash/Lua/Subagents
+	// tabs, toggled by Ctrl+T or by clicking the status bar's context
+	// figure. Rendered as a full-screen overlay (same family as the jobs
+	// modal / todo modal / resume picker above) rather than a live
+	// side-by-side column — see tui_sidebar.go's package doc comment for
+	// why.
+	sidebarActive bool
+	sidebarTab    int // one of the sidebarTab* constants (tui_sidebar.go)
+	sidebarCursor int // selected row within the current tab's list, if any
+
+	// sessionLister, when set (via TUI.SetSessionLister, called once from
+	// main()), fetches this project's resumable sessions on demand for the
+	// Sidebar's Sessions tab — the same session.ResumeEntries call bare
+	// "/resume" already makes (tui_mode.go), just reachable from inside the
+	// display package without it importing "session" directly. nil means
+	// "never wired" (e.g. a test model), rendered as an explicit hint
+	// rather than a crash or an empty list that looks like "no sessions".
+	sessionLister func() []TuiResumeEntry
 }
 
 func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int) TuiModel {
