@@ -19,12 +19,16 @@ var sessionCmd = &cobra.Command{
 	Short: "Manage recorded sessions",
 	Long: `Manage recorded session files.
 
-Sessions are append-only JSONL files stored under ~/.tyci/sessions/<encoded-cwd>/
-(encoded cwd = cwd with "/" replaced by "--", empty becomes "root").
+Sessions are append-only JSONL files stored under ~/.tyci/sessions/<encoded-project-key>/
+(the project key is the git toplevel for --cwd, worktrees resolved to their
+main repo, or --cwd itself outside a git repo; "/" is replaced by "--", empty
+becomes "root"). --cwd defaults to ".", so all worktrees and subdirectories
+of one project share the same listing.
 
 Examples:
   tyci session list
   tyci session list --cwd .
+  tyci session list --all
   tyci session show <index>
   tyci session show <path>
   tyci session delete <index|path>
@@ -53,6 +57,7 @@ var sessionDeleteCmd = &cobra.Command{
 
 func init() {
 	sessionListCmd.Flags().StringP("cwd", "C", ".", "Directory whose sessions to list")
+	sessionListCmd.Flags().Bool("all", false, "List sessions for every project, not just the current one")
 	sessionShowCmd.Flags().StringP("cwd", "C", ".", "Directory whose sessions to search")
 	sessionDeleteCmd.Flags().StringP("cwd", "C", ".", "Directory whose sessions to search")
 
@@ -104,8 +109,50 @@ func listSessionEntries(cwdFlag string) ([]session.SessionEntry, error) {
 	return session.ListEntries(dir)
 }
 
+// listAllSessionEntries is the --all escape hatch: every project's
+// sessions, not just the one containing cwdFlag.
+func listAllSessionEntries() ([]session.SessionEntry, error) {
+	dirs, err := session.AllProjectDirs()
+	if err != nil {
+		return nil, err
+	}
+	var out []session.SessionEntry
+	for _, dir := range dirs {
+		entries, err := session.ListEntries(dir)
+		if err != nil {
+			continue
+		}
+		out = append(out, entries...)
+	}
+	return out, nil
+}
+
 func runSessionList(cmd *cobra.Command, args []string) error {
 	cwdFlag, _ := cmd.Flags().GetString("cwd")
+	all, _ := cmd.Flags().GetBool("all")
+
+	if all {
+		entries, err := listAllSessionEntries()
+		if err != nil {
+			return err
+		}
+		if len(entries) == 0 {
+			fmt.Fprintln(os.Stdout, "No sessions recorded.")
+			return nil
+		}
+		fmt.Fprintf(os.Stdout, "Sessions (all projects)\n\n")
+		fmt.Fprintf(os.Stdout, "  %4s  %-20s  %10s  %s\n", "#", "modified (UTC)", "size", "path")
+		for i, e := range entries {
+			fmt.Fprintf(os.Stdout, "  %4d  %-20s  %10s  %s\n",
+				i+1,
+				e.ModTime.UTC().Format("2006-01-02 15:04:05"),
+				humanBytes(e.Size),
+				e.Path,
+			)
+		}
+		return nil
+	}
+
 	entries, err := listSessionEntries(cwdFlag)
 	if err != nil {
 		return err

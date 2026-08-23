@@ -550,14 +550,20 @@ func TestDefaultPath_RootCWD(t *testing.T) {
 	}
 }
 
+// An empty cwd string isn't a real call site (every caller passes
+// os.Getwd()'s result), but it must not error: filepath.Abs("") resolves it
+// to the process's actual working directory, same as any other relative
+// path, and ProjectKey/DefaultPath key off of that like normal.
 func TestDefaultPath_EmptyCWD(t *testing.T) {
 	path, err := DefaultPath("")
 	if err != nil {
 		t.Fatalf("DefaultPath() error: %v", err)
 	}
-
-	if !strings.Contains(path, "root") {
-		t.Errorf("empty CWD should default to 'root', got %q", path)
+	if !strings.Contains(path, ".tyci/sessions/") {
+		t.Errorf("expected .tyci/sessions/ in path, got %q", path)
+	}
+	if !strings.HasSuffix(path, ".jsonl") {
+		t.Errorf("expected .jsonl suffix, got %q", path)
 	}
 }
 

@@ -89,24 +89,84 @@ func readBranch(dir string) string {
 // findGitDir walks up from dir looking for .git, and resolves the linked-
 // worktree indirection when it finds a file instead of a directory.
 func findGitDir(dir string) string {
+	_, gitDir := locateGitDir(dir)
+	return gitDir
+}
+
+// locateGitDir walks up from dir looking for .git and returns both the
+// directory that contains it (the working-tree root git considers dir to be
+// part of) and the resolved git dir itself (following the linked-worktree
+// indirection when .git is a file, not a directory). Both are "" when dir is
+// not inside a git repository.
+func locateGitDir(dir string) (workRoot, gitDir string) {
 	d, err := filepath.Abs(dir)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	for {
 		candidate := filepath.Join(d, ".git")
 		if fi, err := os.Stat(candidate); err == nil {
 			if fi.IsDir() {
-				return candidate
+				return d, candidate
 			}
-			return resolveGitFile(d, candidate)
+			return d, resolveGitFile(d, candidate)
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
-			return ""
+			return "", ""
 		}
 		d = parent
 	}
+}
+
+// ProjectRoot returns the top-level working directory of the git repository
+// containing dir, resolving a linked worktree (created via `git worktree
+// add`) to the main repository it belongs to — so every worktree of one
+// project shares the same root. Returns "" when dir is not inside a git
+// repository (or the repository is unreadable), leaving the caller to fall
+// back to its own default (e.g. the absolute cwd).
+//
+// A linked worktree's resolved git dir looks like
+// "<main>/.git/worktrees/<name>"; detecting that shape is what lets this
+// answer "which project" rather than "which worktree checkout".
+func ProjectRoot(dir string) string {
+	workRoot, gitDir := locateGitDir(dir)
+	if gitDir == "" {
+		return ""
+	}
+	root := workRoot
+	if mainGitDir := mainGitDirFromWorktree(gitDir); mainGitDir != "" {
+		root = filepath.Dir(mainGitDir)
+	}
+	// Linked-worktree gitdir pointer files are written by git with fully
+	// resolved (symlink-free) absolute paths, while workRoot above comes
+	// straight from filepath.Abs(dir) — no symlink resolution. On a system
+	// where the path to a repo runs through a symlink (macOS's /tmp ->
+	// /private/tmp is the everyday example), those two would otherwise
+	// disagree about "the same project"'s root and split one project into
+	// two session pools. Normalize away that mismatch; if the path can't be
+	// resolved (already gone, permissions), fall back to the unresolved
+	// value rather than losing the answer entirely.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	return root
+}
+
+// mainGitDirFromWorktree returns the main repository's ".git" directory when
+// gitDir points into "<main>/.git/worktrees/<name>", or "" when gitDir is
+// not shaped like a linked worktree's git dir (e.g. it already is a main
+// repo's ".git").
+func mainGitDirFromWorktree(gitDir string) string {
+	worktrees := filepath.Dir(gitDir)
+	if filepath.Base(worktrees) != "worktrees" {
+		return ""
+	}
+	dotGit := filepath.Dir(worktrees)
+	if filepath.Base(dotGit) != ".git" {
+		return ""
+	}
+	return dotGit
 }
 
 // resolveGitFile reads a "gitdir: <path>" pointer file. The path may be

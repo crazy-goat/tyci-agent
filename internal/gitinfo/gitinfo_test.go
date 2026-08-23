@@ -96,6 +96,48 @@ func TestBranchInLinkedWorktree(t *testing.T) {
 	}
 }
 
+// ProjectRoot must resolve a linked worktree back to the main repository so
+// that a project keyed by ProjectRoot shares one identity across all of its
+// worktrees (the whole point of the function — see session.ProjectKey).
+func TestProjectRootResolvesWorktreeToMainRepo(t *testing.T) {
+	dir := initRepo(t)
+	wt := filepath.Join(t.TempDir(), "wt")
+	run(t, dir, "worktree", "add", "-q", "-b", "tyci/child", wt)
+	t.Cleanup(func() { run(t, dir, "worktree", "remove", "--force", wt) })
+
+	mainRoot := ProjectRoot(dir)
+	wtRoot := ProjectRoot(wt)
+	if mainRoot == "" {
+		t.Fatalf("ProjectRoot(main) = %q, want non-empty", mainRoot)
+	}
+	if wtRoot != mainRoot {
+		t.Fatalf("ProjectRoot(worktree) = %q, want %q (same as main repo)", wtRoot, mainRoot)
+	}
+}
+
+func TestProjectRootFromSubdirectory(t *testing.T) {
+	dir := initRepo(t)
+	sub := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := ProjectRoot(sub)
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != want {
+		t.Fatalf("ProjectRoot(subdir) = %q, want %q", root, want)
+	}
+}
+
+func TestProjectRootOutsideRepository(t *testing.T) {
+	dir := t.TempDir() // not a git repo
+	if got := ProjectRoot(dir); got != "" {
+		t.Fatalf("ProjectRoot(non-repo) = %q, want \"\"", got)
+	}
+}
+
 func TestBranchDetachedHead(t *testing.T) {
 	fresh(t)
 	dir := initRepo(t)

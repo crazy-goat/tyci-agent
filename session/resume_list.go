@@ -30,6 +30,33 @@ func ResumeEntries(cwd string) ([]ResumeEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+	return resumeEntriesInDir(dir)
+}
+
+// ResumeEntriesAll lists sessions across every project (the "--all" escape
+// hatch), not just the one containing the current cwd. Used by `tyci
+// session list --all` and the TUI's `/resume --all`.
+func ResumeEntriesAll() ([]ResumeEntry, error) {
+	dirs, err := AllProjectDirs()
+	if err != nil {
+		return nil, err
+	}
+	var out []ResumeEntry
+	for _, dir := range dirs {
+		entries, err := resumeEntriesInDir(dir)
+		if err != nil {
+			continue
+		}
+		out = append(out, entries...)
+	}
+	sortResumeEntriesDesc(out)
+	return out, nil
+}
+
+// resumeEntriesInDir lists the sessions in one project directory, newest
+// first. Shared by ResumeEntries (one project) and ResumeEntriesAll (every
+// project).
+func resumeEntriesInDir(dir string) ([]ResumeEntry, error) {
 	if dir == "" {
 		return nil, nil
 	}

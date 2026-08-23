@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/internal/gitinfo"
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -50,6 +51,14 @@ type Header struct {
 	CWD       string    `json:"cwd"`
 	Model     string    `json:"model"`
 	Provider  string    `json:"provider"`
+
+	// ProjectRoot is the key this session is actually filed under: the git
+	// toplevel for CWD (worktrees resolved to their main repo — see
+	// gitinfo.ProjectRoot), or CWD itself outside a git repo. Recorded so
+	// the derivation is inspectable/debuggable without recomputing it, and
+	// empty on sessions written before this field existed (see ProjectKey
+	// and migrateLegacyDirs for how those are still found).
+	ProjectRoot string `json:"projectRoot,omitempty"`
 }
 
 // ContentBlock is a typed content block (text, thinking, toolCall, toolResult).
@@ -180,14 +189,16 @@ func Open(path, cwd, model, provider string) (*Session, error) {
 		s.encoder = json.NewEncoder(f)
 
 		// Write header
+		projectRoot, _ := ProjectKey(cwd)
 		h := Header{
-			Type:      TypeSession,
-			Version:   1,
-			ID:        id,
-			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-			CWD:       cwd,
-			Model:     model,
-			Provider:  provider,
+			Type:        TypeSession,
+			Version:     1,
+			ID:          id,
+			Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+			CWD:         cwd,
+			Model:       model,
+			Provider:    provider,
+			ProjectRoot: projectRoot,
 		}
 		if err := s.encoder.Encode(h); err != nil {
 			f.Close()
@@ -435,21 +446,59 @@ func parseSessionFile(path string) ([]ParsedLine, error) {
 	return lines, scanner.Err()
 }
 
-// ─── Default path ─────────────────────────────────────────────────────────
-
-// DefaultPath returns the default session file path:
+// ─── Project keying ───────────────────────────────────────────────────────
 //
-//	~/.tyci/sessions/<encoded-cwd>/<ts>_<uuid>.jsonl
-func DefaultPath(cwd string) (string, error) {
+// Sessions used to be keyed by the exact cwd they were started from, so
+// "repo/", "repo/sub/", and each of repo's linked git worktrees each landed
+// in a separate session pool — /resume in a subdirectory or a worktree could
+// never find a session recorded from another one, even though all of those
+// are "the same project" to a human. ProjectKey fixes that by keying on the
+// git toplevel instead (worktrees resolved to their main repo, via
+// gitinfo.ProjectRoot), falling back to the absolute cwd outside a git repo
+// where the old per-directory behavior is still exactly what you'd want.
+
+// ProjectKey returns the session-pool key for cwd: the git toplevel
+// (worktrees resolved to their main repo) if cwd is inside a git repository,
+// otherwise the absolute form of cwd itself.
+func ProjectKey(cwd string) (string, error) {
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", err
+	}
+	if root := gitinfo.ProjectRoot(abs); root != "" {
+		return root, nil
+	}
+	return abs, nil
+}
+
+// encodeKey turns a project key into the directory-name-safe form used
+// under ~/.tyci/sessions/. Mirrors the encoding sessions have always used
+// for cwd, just applied to the (possibly different) project key now.
+func encodeKey(key string) string {
+	encoded := strings.ReplaceAll(key, "/", "--")
+	if encoded == "" {
+		encoded = "root"
+	}
+	return encoded
+}
+
+func sessionsRootDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
+	return filepath.Join(home, ".tyci", "sessions"), nil
+}
 
-	// Encode CWD by replacing / with --
-	encoded := strings.ReplaceAll(cwd, "/", "--")
-	if encoded == "" {
-		encoded = "root"
+// ─── Default path ─────────────────────────────────────────────────────────
+
+// DefaultPath returns the default session file path:
+//
+//	~/.tyci/sessions/<encoded-project-key>/<ts>_<uuid>.jsonl
+func DefaultPath(cwd string) (string, error) {
+	dir, err := SessionDir(cwd)
+	if err != nil {
+		return "", err
 	}
 
 	ts := time.Now().UTC().Format("20060102T150405Z")
@@ -459,7 +508,6 @@ func DefaultPath(cwd string) (string, error) {
 	}
 
 	filename := fmt.Sprintf("%s_%s.jsonl", ts, id)
-	dir := filepath.Join(home, ".tyci", "sessions", encoded)
 	return filepath.Join(dir, filename), nil
 }
 
@@ -615,22 +663,144 @@ func ReadAllMessages(r io.Reader) ([]map[string]any, error) {
 	return msgs, scanner.Err()
 }
 
-// SessionDir returns the directory where session files for the given cwd
-// are stored: ~/.tyci/sessions/<encoded-cwd>/.
-//
-// The cwd encoding mirrors DefaultPath (slashes are turned into "--", empty
-// becomes "root") so callers can map a session file path back to either a
-// logical cwd or just iterate by directory.
+// SessionDir returns the directory where session files for the project
+// containing cwd are stored: ~/.tyci/sessions/<encoded-project-key>/ (see
+// ProjectKey). Before returning, it runs a best-effort migration that pulls
+// in any pre-existing sessions filed under the old exact-cwd keying that
+// belong to this same project (see migrateLegacyDirs) — so `/resume` and
+// `tyci session list` keep finding sessions recorded before this change.
 func SessionDir(cwd string) (string, error) {
-	home, err := os.UserHomeDir()
+	root, err := sessionsRootDir()
 	if err != nil {
 		return "", err
 	}
-	encoded := strings.ReplaceAll(cwd, "/", "--")
-	if encoded == "" {
-		encoded = "root"
+	key, err := ProjectKey(cwd)
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(home, ".tyci", "sessions", encoded), nil
+	dir := filepath.Join(root, encodeKey(key))
+	migrateLegacyDirs(root, dir, key)
+	return dir, nil
+}
+
+// AllProjectDirs returns every per-project session directory under
+// ~/.tyci/sessions, for the "--all" escape hatch that lists sessions across
+// every project rather than scoping to the current one.
+func AllProjectDirs() ([]string, error) {
+	root, err := sessionsRootDir()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, filepath.Join(root, e.Name()))
+		}
+	}
+	return dirs, nil
+}
+
+// migrateLegacyDirs is the backward-compat path for the cwd->project-key
+// rewrite above: a session recorded before this change is filed under
+// ~/.tyci/sessions/<encoded exact cwd it was started from>, which no longer
+// matches any project's directory unless that project happens to always be
+// run from its own git toplevel. Those old sessions still carry the cwd
+// they were started from in Header.CWD (ProjectRoot is empty — the field
+// didn't exist yet), so recomputing ProjectKey(header.CWD) recovers which
+// project they actually belong to.
+//
+// All files within one legacy directory share the same recorded cwd by
+// construction (that directory *is* the encoding of that cwd), so peeking
+// at just the first session's header is enough to decide the whole
+// directory's fate — this keeps the cost to one small read per legacy
+// directory, not per session file, regardless of how much history a project
+// has. Matching directories are merged into targetDir file-by-file (a
+// timestamp+uuid filename can't collide) and removed once empty. Every step
+// is best-effort: a permissions error or a directory that isn't ours to
+// touch just leaves that directory in place for next time rather than
+// failing the caller's session lookup.
+func migrateLegacyDirs(sessionsRoot, targetDir, targetKey string) {
+	entries, err := os.ReadDir(sessionsRoot)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(sessionsRoot, e.Name())
+		if dir == targetDir {
+			continue
+		}
+		files, err := os.ReadDir(dir)
+		if err != nil || len(files) == 0 {
+			continue
+		}
+		var jsonlNames []string
+		for _, f := range files {
+			if !f.IsDir() && strings.HasSuffix(f.Name(), ".jsonl") {
+				jsonlNames = append(jsonlNames, f.Name())
+			}
+		}
+		if len(jsonlNames) == 0 {
+			continue
+		}
+		h, ok := peekHeader(filepath.Join(dir, jsonlNames[0]))
+		if !ok || h.ProjectRoot != "" {
+			// Already new-format (or unreadable): nothing to migrate here.
+			continue
+		}
+		key, err := ProjectKey(h.CWD)
+		if err != nil || key != targetKey {
+			continue
+		}
+		if err := os.MkdirAll(targetDir, 0755); err != nil {
+			continue
+		}
+		moved := 0
+		for _, name := range jsonlNames {
+			src := filepath.Join(dir, name)
+			dst := filepath.Join(targetDir, name)
+			if err := os.Rename(src, dst); err == nil {
+				moved++
+			}
+		}
+		if moved == len(jsonlNames) {
+			_ = os.Remove(dir) // best-effort; fails silently if not empty
+		}
+	}
+}
+
+// peekHeader reads just the first non-empty line of path and parses it as a
+// Header. Used by migrateLegacyDirs to classify a whole directory without
+// reading every session file in it.
+func peekHeader(path string) (Header, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Header{}, false
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var h Header
+		if err := json.Unmarshal([]byte(line), &h); err != nil {
+			return Header{}, false
+		}
+		return h, true
+	}
+	return Header{}, false
 }
 
 // SessionDirFromPath returns the directory segment of a session file path,
