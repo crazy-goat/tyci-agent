@@ -186,3 +186,98 @@ func TestAgentRunnerRun_DeadlineExceeded_ResumableWithPartialText(t *testing.T) 
 		t.Errorf("resumable[%q] was not stashed on deadline exceeded — a timed-out child must be resumable, not a dead end", jobID)
 	}
 }
+
+// ─── item 16: normal-completion resume hint ────────────────────────────────
+
+// TestAgentRunnerRun_NormalCompletion_CarriesResumeHint is the core of item
+// 16: a child that finishes cleanly (no cutoff at all — the case item 28
+// already covers via subagentCutoffMessage) must still tell the parent it
+// can continue this exact conversation later, with a real, usable job id.
+func TestAgentRunnerRun_NormalCompletion_CarriesResumeHint(t *testing.T) {
+	fake := connectortest.Text("the final answer")
+	ctx := connector.WithModelClient(context.Background(), fake)
+	jobID := "job-normal-1"
+	ctx = context.WithValue(ctx, tools.JobIDCtxKey{}, jobID)
+
+	r := &agentRunner{}
+	text, err := r.run(ctx, "do the thing", "", "", tools.SubagentOptions{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.HasPrefix(text, "the final answer") {
+		t.Fatalf("returned text lost the child's own answer: %q", text)
+	}
+	if !strings.Contains(text, "resume(job_id=\""+jobID+"\"") {
+		t.Errorf("normal-completion text does not carry a usable resume hint with this job's id (%q): %q", jobID, text)
+	}
+
+	// Keep it short and on one line — every child's output carries it and
+	// the parent pays for it in tokens (the item's explicit constraint).
+	hint := text[len("the final answer"):]
+	if strings.Contains(hint, "\n") {
+		t.Errorf("resume hint is not a single line: %q", hint)
+	}
+	if len(hint) > 200 {
+		t.Errorf("resume hint is longer than expected for a short, token-conscious note (%d bytes): %q", len(hint), hint)
+	}
+}
+
+// TestAgentRunnerRun_NormalCompletion_NoJobID_NoHint is the "must not lie"
+// half: with no job id at all (the only remaining gap — no job registry
+// wired, real invocations always have one per tools/subagent.go's
+// spawn/jobStarter wiring), the model must not be told to call
+// resume(job_id="") — that would be actionable-looking advice pointing
+// nowhere.
+func TestAgentRunnerRun_NormalCompletion_NoJobID_NoHint(t *testing.T) {
+	fake := connectortest.Text("the final answer")
+	ctx := connector.WithModelClient(context.Background(), fake)
+
+	r := &agentRunner{}
+	text, err := r.run(ctx, "do the thing", "", "", tools.SubagentOptions{})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if text != "the final answer" {
+		t.Fatalf("expected no hint appended when no job id is available, got %q", text)
+	}
+	if strings.Contains(text, "resume(") {
+		t.Errorf("text mentions resume() without a job id to back it: %q", text)
+	}
+}
+
+// TestAgentRunnerRun_CutoffAndNormalHints_AreMutuallyExclusive pins that the
+// two resume-hint sites (subagentCutoffMessage for the cutoff case, run()'s
+// own success return for the normal-completion case) never both fire for the
+// same completion — they are gated on disjoint conditions (truncated ||
+// deadlineExceeded vs. plain err == nil), so exercising each directly must
+// show exactly one hint, never a duplicate.
+func TestAgentRunnerRun_CutoffAndNormalHints_AreMutuallyExclusive(t *testing.T) {
+	jobID := "job-exclusive-1"
+
+	// Normal completion: exactly one hint.
+	normalFake := connectortest.Text("done")
+	normalCtx := context.WithValue(connector.WithModelClient(context.Background(), normalFake), tools.JobIDCtxKey{}, jobID)
+	r := &agentRunner{}
+	normalText, err := r.run(normalCtx, "task", "", "", tools.SubagentOptions{})
+	if err != nil {
+		t.Fatalf("normal run: %v", err)
+	}
+	if n := strings.Count(normalText, "resume(job_id="); n != 1 {
+		t.Fatalf("normal completion: expected exactly 1 resume hint, got %d: %q", n, normalText)
+	}
+
+	// Cutoff (iteration cap): exactly one hint, and it must be the cutoff
+	// wording (subagentCutoffMessage's "[note: ...]"), not the plain
+	// success one — the two call sites are gated on disjoint conditions so
+	// only one of them ever runs per completion.
+	cutoffText, cutoffErr := subagentCutoffMessage("partial", false, jobID, 5, nil)
+	if cutoffErr == nil {
+		t.Fatalf("expected the cutoff path to return an error (Truncated sentinel)")
+	}
+	if n := strings.Count(cutoffText, "resume(job_id="); n != 1 {
+		t.Fatalf("cutoff completion: expected exactly 1 resume hint, got %d: %q", n, cutoffText)
+	}
+	if !strings.Contains(cutoffText, "[note:") {
+		t.Errorf("cutoff completion lost its cutoff-specific note wrapper: %q", cutoffText)
+	}
+}
