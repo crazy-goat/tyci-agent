@@ -170,6 +170,67 @@ func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
 	}
 }
 
+// TestSidebarResize_ReclampsStaleScrollAndClickMapping covers the review
+// finding that a resize could leave sidebarScroll stale: scrolled to the
+// bottom of a long list at a small height, then the terminal grows enough
+// that the whole list fits without scrolling — sidebarScroll must be
+// re-clamped immediately (on the WindowSizeMsg itself), and a subsequent
+// row click must map against that corrected value, not the pre-resize one.
+func TestSidebarResize_ReclampsStaleScrollAndClickMapping(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 100
+	m.height = 15
+	for i := 0; i < 10; i++ {
+		m.applyJobUpdate(jobs.Job{
+			ID:          fmt.Sprintf("job-%d", i),
+			Kind:        jobs.KindBash,
+			Status:      jobs.StatusDone,
+			Description: fmt.Sprintf("job-%d desc", i),
+			StartedAt:   time.Now().Add(-time.Duration(10-i) * time.Minute),
+		})
+	}
+	m.openSidebar(sidebarTabBash)
+	smallLayout := m.sidebarLayout()
+	if smallLayout.contentHeight >= 10 {
+		t.Skip("terminal too tall for this test to exercise overflow at the small size")
+	}
+	for i := 0; i < 9; i++ {
+		m.sidebarMoveCursor(1)
+	}
+	if m.sidebarScroll == 0 {
+		t.Fatalf("expected a non-zero scroll before resizing (the list should have overflowed)")
+	}
+
+	model, _ := m.updateSidebar(tea.WindowSizeMsg{Width: 100, Height: 60})
+	m2 := model.(TuiModel)
+	bigLayout := m2.sidebarLayout()
+	if bigLayout.contentHeight < 10 {
+		t.Skip("expected the larger height to comfortably fit all 10 rows")
+	}
+	if m2.sidebarScroll != 0 {
+		t.Fatalf("expected sidebarScroll to be re-clamped to 0 once everything fits, got %d", m2.sidebarScroll)
+	}
+
+	// A click on the first content row must open row 0's job (the newest —
+	// sortedBackgroundJobs is newest-first — "job-9"), not some row offset
+	// by the stale, pre-resize scroll (9), which would either open the
+	// wrong job or hit nothing at all. sidebarActivateRow closes the
+	// sidebar and resets sidebarCursor to 0 unconditionally on success, so
+	// the modal's own title (not the cursor field) is what proves which row
+	// was actually picked.
+	model, _ = m2.updateSidebar(tea.MouseMsg{
+		X: bigLayout.contentLeft, Y: bigLayout.contentTop,
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	m3 := model.(TuiModel)
+	if !m3.subagentModalActive {
+		t.Fatalf("expected the click to open a job result modal")
+	}
+	if want := "job-9 desc"; m3.subagentModalTitle != want {
+		t.Fatalf("expected the click to open %q (row 0 post-resize), got %q", want, m3.subagentModalTitle)
+	}
+}
+
 // TestSidebarScroll_NonSelectableTabScrollsWithoutACursor covers the Tokens/
 // Lua tabs: sidebarRowCount is 0 for them (no selectable rows — see
 // sidebarSelectable), so Up/Down/wheel must scroll the view directly
@@ -456,6 +517,92 @@ func TestBuildSubagentTree_OrphanUnderNonSubagentParentStillRenders(t *testing.T
 	}
 }
 
+// TestBuildSubagentTree_ChainedOrphansDoNotDuplicate covers the review
+// finding that orphan emission could list the same job twice: group "P"
+// (an unreached, non-subagent parent) contains subagent "A"; "A" is ITSELF
+// a byParent key because subagent "B" has ParentID="A". Both "A" and "P"
+// end up in orphanParents (collected once, before either is walked).
+// Walking "A" first (alphabetically before "P") already reaches "B"; the
+// unfixed code then walked "P" too, re-adding "B" a second time as if "A"
+// had no children of its own yet. B must appear exactly once.
+func TestBuildSubagentTree_ChainedOrphansDoNotDuplicate(t *testing.T) {
+	ledger.Reset()
+	t.Cleanup(ledger.Reset)
+
+	m := newTestModelForSidebar()
+	// "P" is never actually created as a job — same as the "parent evicted"
+	// case above, an orphan chain doesn't require its root to exist.
+	a := jobs.Job{ID: "A", Kind: jobs.KindSubagent, ParentID: "P", Status: jobs.StatusDone, Description: "a"}
+	b := jobs.Job{ID: "B", Kind: jobs.KindSubagent, ParentID: "A", Status: jobs.StatusDone, Description: "b"}
+	m.applyJobUpdate(a)
+	m.applyJobUpdate(b)
+
+	rows := m.buildSubagentTree()
+	counts := map[string]int{}
+	for _, r := range rows {
+		if !r.isRoot {
+			counts[r.job.ID]++
+		}
+	}
+	if counts["A"] != 1 {
+		t.Fatalf("expected job A to appear exactly once, got %d (rows: %+v)", counts["A"], rows)
+	}
+	if counts["B"] != 1 {
+		t.Fatalf("expected job B to appear exactly once, got %d (rows: %+v)", counts["B"], rows)
+	}
+}
+
+// TestBuildSubagentTree_ParentIDCycleDoesNotHang covers the defensive cycle
+// guard: a ParentID loop (A's parent is B, B's parent is A) must not hang
+// or crash the tree build, even though this cannot occur through the normal
+// spawn path today.
+func TestBuildSubagentTree_ParentIDCycleDoesNotHang(t *testing.T) {
+	ledger.Reset()
+	t.Cleanup(ledger.Reset)
+
+	m := newTestModelForSidebar()
+	a := jobs.Job{ID: "A", Kind: jobs.KindSubagent, ParentID: "B", Status: jobs.StatusDone, Description: "a"}
+	b := jobs.Job{ID: "B", Kind: jobs.KindSubagent, ParentID: "A", Status: jobs.StatusDone, Description: "b"}
+	m.applyJobUpdate(a)
+	m.applyJobUpdate(b)
+
+	done := make(chan []subagentTreeRow, 1)
+	go func() { done <- m.buildSubagentTree() }()
+	select {
+	case rows := <-done:
+		counts := map[string]int{}
+		for _, r := range rows {
+			if !r.isRoot {
+				counts[r.job.ID]++
+			}
+		}
+		if counts["A"] != 1 || counts["B"] != 1 {
+			t.Fatalf("expected each of A and B exactly once, got A=%d B=%d (rows: %+v)", counts["A"], counts["B"], rows)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("buildSubagentTree did not return — likely an infinite recursion on the ParentID cycle")
+	}
+}
+
+// TestRollupJobCost_CycleDoesNotHang mirrors the same guard directly on
+// rollupJobCost's own independent recursion over byParent.
+func TestRollupJobCost_CycleDoesNotHang(t *testing.T) {
+	byParent := map[string][]jobs.Job{
+		"A": {{ID: "B"}},
+		"B": {{ID: "A"}},
+	}
+	done := make(chan struct{})
+	go func() {
+		rollupJobCost("A", byParent, map[string]ledger.JobUsage{})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("rollupJobCost did not return — likely an infinite recursion on the cycle")
+	}
+}
+
 func TestSidebarBashJobs_FiltersKind(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindBash, Description: "bash job"})
@@ -472,6 +619,45 @@ func TestSidebarBashJobs_FiltersKind(t *testing.T) {
 // submitting "/resume" while the agent is mid-turn (m.reading == false)
 // would either queue the literal string "/resume" as a real user message or
 // otherwise misfire — it must refuse instead, leaving the input untouched.
+// TestSidebarRefusalMessages_FitStatusBarTruncation covers the review
+// finding that the refusal status messages were long enough that
+// buildStatus's 60-column hard truncation (tui_status.go) cut off the
+// actionable half mid-sentence. Every message these two actions can set
+// must fit comfortably within that cap.
+func TestSidebarRefusalMessages_FitStatusBarTruncation(t *testing.T) {
+	const statusBarCap = 60
+
+	m := newTestModelForSidebar()
+	m.reading = false
+	m.openSidebar(sidebarTabSessions)
+	model, _ := m.sidebarSubmitResume()
+	msg1 := model.(TuiModel).statusMessage
+
+	m2 := newTestModelForSidebar()
+	m2.reading = true
+	m2.input.SetValue("x")
+	m2.openSidebar(sidebarTabSessions)
+	model, _ = m2.sidebarSubmitResume()
+	msg2 := model.(TuiModel).statusMessage
+
+	m3 := newTestModelForSidebar()
+	m3.input.SetValue("x")
+	m3.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone})
+	m3.openSidebar(sidebarTabSubagents)
+	m3.sidebarCursor = 1
+	model, _ = m3.sidebarResumeSubagentRow()
+	msg3 := model.(TuiModel).statusMessage
+
+	for _, msg := range []string{msg1, msg2, msg3} {
+		if msg == "" {
+			t.Fatalf("expected a non-empty refusal message")
+		}
+		if lipgloss.Width(msg) > statusBarCap {
+			t.Errorf("refusal message %q is %d columns wide, want <= %d", msg, lipgloss.Width(msg), statusBarCap)
+		}
+	}
+}
+
 func TestSidebarSubmitResume_RefusesMidTurn(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.reading = false // a turn is in flight

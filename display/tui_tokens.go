@@ -148,8 +148,21 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 	if len(byModel) > 0 {
 		out = append(out, "", "session")
 		for _, r := range byModel {
-			cost := "$" + fmtUSD(r.USD)
-			if !r.Priced {
+			// r.USD is already the known-priced sum only (Record/Cost give
+			// an unpriced call $0, so it never inflates this) — !r.Priced
+			// means at least one constituent row (e.g. before vs. after a
+			// `provider refresh` mid-session) had no catalog price, not
+			// that r.USD itself is worthless. Showing a flat "$?" here
+			// used to throw away a real, known dollar figure; this mirrors
+			// formatCost's own "$1.23+?" convention (tui_status.go) for a
+			// partially-priced total instead.
+			var cost string
+			switch {
+			case r.Priced:
+				cost = "$" + fmtUSD(r.USD)
+			case r.USD > 0:
+				cost = "$" + fmtUSD(r.USD) + "+?"
+			default:
 				cost = "$?"
 			}
 			label := r.Model

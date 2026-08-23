@@ -148,6 +148,27 @@ func (m TuiModel) sidebarLineCount(contentWidth int) int {
 	return len(m.sidebarTabLines(contentWidth))
 }
 
+// sidebarVisibleScroll is the ONE place sidebarScroll gets clamped to what
+// the current layout can actually show — [0, max(0, lineCount-
+// contentHeight)]. Both the renderer and the mouse row-click handler must
+// call this rather than reading m.sidebarScroll raw: a resize (or a tab's
+// content shrinking) can leave the stored value stale — e.g. scrolled to
+// the bottom of a long list, then the terminal grows so the same list now
+// fits without scrolling — and a renderer clamping only its own copy while
+// the click handler used the raw, stale value is exactly how a click ended
+// up opening the wrong row's job (an earlier review round's finding).
+func (m TuiModel) sidebarVisibleScroll(layout sidebarLayoutT) int {
+	lineCount := m.sidebarLineCount(layout.contentWidth)
+	scroll := m.sidebarScroll
+	if maxScroll := lineCount - layout.contentHeight; scroll > maxScroll {
+		scroll = maxScroll
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+	return scroll
+}
+
 // sidebarSwitchTab changes the active tab and resets both cursor and scroll
 // — a tab's row indices and line count have nothing to do with another
 // tab's, so carrying either over would either select a nonsense row or open
@@ -222,6 +243,12 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Re-clamp against the new layout immediately — otherwise a stale
+		// sidebarScroll (e.g. scrolled to the bottom of a long list, then
+		// the terminal grows) survives until the next cursor move, and the
+		// mouse row-click handler below would use that stale value in the
+		// meantime (see sidebarVisibleScroll's doc comment).
+		m.sidebarScroll = m.sidebarVisibleScroll(m.sidebarLayout())
 		return m, nil
 
 	case tea.KeyMsg:
@@ -297,10 +324,12 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// Row click within content area — offset by the current scroll,
-			// since row 0 on screen is sidebarScroll in the underlying list
-			// once it's scrolled.
+			// since row 0 on screen is sidebarVisibleScroll in the
+			// underlying list once it's scrolled. Uses the clamped value,
+			// not m.sidebarScroll raw, so a resize that hasn't triggered a
+			// cursor move yet still maps clicks to the row actually drawn.
 			if m.sidebarSelectable() && msg.Y >= layout.contentTop && msg.Y < layout.contentTop+layout.contentHeight {
-				row := msg.Y - layout.contentTop + m.sidebarScroll
+				row := msg.Y - layout.contentTop + m.sidebarVisibleScroll(layout)
 				if row < m.sidebarRowCount() {
 					m.sidebarCursor = row
 					return m.sidebarActivateRow()
@@ -390,13 +419,16 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 // a half-written message would silently discard it).
 func (m TuiModel) sidebarSubmitResume() (tea.Model, tea.Cmd) {
 	if !m.reading {
+		// Short and front-loaded on purpose: buildStatus (tui_status.go)
+		// hard-truncates status text to 60 columns, so anything longer lost
+		// its actionable half mid-sentence.
 		m.closeSidebar()
-		m.statusMessage = "Can't resume mid-turn — press Esc to cancel it first, or wait for it to finish."
+		m.statusMessage = "Press Esc first (cancels this turn), or wait, then retry."
 		return m, sidebarStatusCmd(m.statusMessage)
 	}
 	if strings.TrimSpace(m.input.Value()) != "" {
 		m.closeSidebar()
-		m.statusMessage = "Input box isn't empty — clear it first, then reopen Sessions to resume."
+		m.statusMessage = "Clear the input first, then reopen Sessions to resume."
 		return m, sidebarStatusCmd(m.statusMessage)
 	}
 	m.closeSidebar()
@@ -428,8 +460,9 @@ func (m TuiModel) sidebarResumeSubagentRow() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if strings.TrimSpace(m.input.Value()) != "" {
+		// See sidebarSubmitResume's identical comment on the 60-column cap.
 		m.closeSidebar()
-		m.statusMessage = "Input box isn't empty — clear it first, then press r again to draft a resume prompt."
+		m.statusMessage = "Clear the input first, then press r again to draft it."
 		return m, sidebarStatusCmd(m.statusMessage)
 	}
 	m.closeSidebar()
@@ -524,9 +557,25 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 		rollupUnpriced: snap.Unpriced > 0,
 	}}
 
-	visited := map[string]bool{"": true}
+	// "" (the synthetic root's own key) gets marked visited by the very
+	// first walk("", 1) call below, same as every other key — nothing here
+	// pre-seeds it, or the cycle guard inside walk (visited[parentID] ==
+	// true means "already done, return") would make that first call a
+	// no-op before it ever ran.
+	visited := map[string]bool{}
 	var walk func(parentID string, depth int)
 	walk = func(parentID string, depth int) {
+		// Guards two things with the same check: (1) a ParentID cycle
+		// (A's parent is B, B's parent is A) would otherwise recurse
+		// forever — practically unreachable today since a job's ParentID
+		// is only ever set to an already-existing job at spawn time, but
+		// cheap to close off; (2) makes this function itself idempotent, so
+		// the orphan-emission loop below can call it without separately
+		// re-deriving whether a given key was already covered by an
+		// earlier orphan's walk.
+		if visited[parentID] {
+			return
+		}
 		visited[parentID] = true
 		for _, j := range byParent[parentID] {
 			own := usage[j.ID]
@@ -553,6 +602,16 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 	}
 	sort.Strings(orphanParents)
 	for _, parent := range orphanParents {
+		// orphanParents was collected once, before any orphan walk ran, so
+		// it can list two keys from the SAME parent chain (e.g. group "P"
+		// contains job A, and "A" is itself a byParent key because some job
+		// B has ParentID=A). Walking "P" first already reaches "A" via the
+		// normal recursive walk(j.ID, depth+1) call and marks it visited —
+		// walking "A" again here would then re-add B a second time, once as
+		// a child of A (correct) and once more as if A were its own root.
+		if visited[parent] {
+			continue
+		}
 		walk(parent, 1)
 	}
 
@@ -579,12 +638,31 @@ func sortSubagentSiblings(kids []jobs.Job) []jobs.Job {
 // an unpriced model. A job with no ledger usage at all (e.g. it failed
 // before its first model call) is not treated as "unpriced" — only a job
 // that actually spent tokens on a model the catalog cannot price counts.
+//
+// Public signature unchanged (existing tests call it directly with 3 args);
+// the cycle guard lives in the unexported helper below, given a fresh
+// visited set per top-level call.
 func rollupJobCost(id string, byParent map[string][]jobs.Job, usage map[string]ledger.JobUsage) (float64, bool) {
+	return rollupJobCostVisited(id, byParent, usage, map[string]bool{})
+}
+
+// rollupJobCostVisited is rollupJobCost's actual recursion, with a cycle
+// guard: a ParentID loop (A's parent is B, B's parent is A) would otherwise
+// recurse forever, the same hazard buildSubagentTree's walk closure guards
+// against for the same reason — practically unreachable today (ParentID is
+// only ever set to an already-existing job at spawn time), but cheap to
+// close off here too since this recurses over the same byParent structure
+// independently of walk.
+func rollupJobCostVisited(id string, byParent map[string][]jobs.Job, usage map[string]ledger.JobUsage, visited map[string]bool) (float64, bool) {
+	if visited[id] {
+		return 0, false
+	}
+	visited[id] = true
 	u := usage[id]
 	total := u.USD
 	unpriced := u.Usage != (stream.Usage{}) && !u.Priced
 	for _, child := range byParent[id] {
-		childUSD, childUnpriced := rollupJobCost(child.ID, byParent, usage)
+		childUSD, childUnpriced := rollupJobCostVisited(child.ID, byParent, usage, visited)
 		total += childUSD
 		if childUnpriced {
 			unpriced = true

@@ -257,6 +257,57 @@ func TestBuildUsageDetail_NarrowWidthKeepsRowsIntact(t *testing.T) {
 	}
 }
 
+// TestBuildUsageDetail_PartiallyPricedRowKeepsKnownDollars covers the
+// review finding that ByModel's aggregate lost real, known dollars: when
+// the same model is recorded once before a catalog refresh (unpriced) and
+// once after (priced) — two different jobs, same model — the aggregated
+// row's Priced flag is correctly false (not FULLY priced), but its USD
+// still holds the known-priced job's real cost. Rendering that as a flat
+// "$?" discarded it; it must render as "$<amount>+?" instead, mirroring
+// formatCost's own convention for a partially-priced total.
+func TestBuildUsageDetail_PartiallyPricedRowKeepsKnownDollars(t *testing.T) {
+	unprocedDir := t.TempDir()
+	t.Setenv("HOME", unprocedDir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	// job-1 recorded while the catalog has no price for "m" at all.
+	ledger.Record(ledger.Subagent, "p", "m", "job-1", stream.Usage{Input: 1_000_000, Output: 100_000})
+
+	// Simulate a `tyci provider refresh`: the catalog now prices "m".
+	pricedDir := t.TempDir()
+	writeTestCatalog(t, pricedDir, `{"p":{"id":"p","models":{"m":{"id":"m","name":"m","cost":{"input":3,"output":15}}}}}`)
+	t.Setenv("HOME", pricedDir)
+	pricing.Reset()
+
+	// job-2, same model, recorded after the refresh — this one prices
+	// cleanly.
+	ledger.Record(ledger.Subagent, "p", "m", "job-2", stream.Usage{Input: 1_000_000, Output: 100_000})
+
+	byModel := ledger.ByModel()
+	if len(byModel) != 1 {
+		t.Fatalf("expected 1 aggregated row, got %d: %+v", len(byModel), byModel)
+	}
+	row := byModel[0]
+	if row.Priced {
+		t.Fatalf("expected the aggregate to be marked not-fully-priced, got Priced=true")
+	}
+	if row.USD <= 0 {
+		t.Fatalf("expected the aggregate to still carry job-2's known cost, got USD=%v", row.USD)
+	}
+
+	m := TuiModel{modelName: "m"}
+	lines := strings.Join(m.buildUsageDetail(40), "\n")
+	if strings.Contains(lines, "$?") {
+		t.Fatalf("expected the known dollar amount to survive, not a flat \"$?\":\n%s", lines)
+	}
+	if !strings.Contains(lines, "+?") {
+		t.Fatalf("expected the partially-priced marker \"+?\" on the aggregated row:\n%s", lines)
+	}
+}
+
 func TestTruncateRunes_KeepsRunesIntact(t *testing.T) {
 	if got := truncateRunes("ąćęłńóśźż", 4); got != "ąćę…" {
 		t.Fatalf("truncateRunes = %q, want ąćę…", got)

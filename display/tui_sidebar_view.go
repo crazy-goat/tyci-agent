@@ -119,18 +119,12 @@ func (m TuiModel) renderSidebarView() string {
 	b.WriteString(sepStyle.Render(strings.Repeat("─", contentWidth)))
 	b.WriteString("\n")
 
-	// Scroll window: sidebarScroll is kept in [0, max(0, len(lines)-
-	// contentHeight)] by sidebarClampScroll/sidebarScrollBy (tui_sidebar.go)
-	// on every cursor move, tab switch, and wheel event — clamped again
-	// here defensively in case of a resize since the last one of those.
+	// Scroll window: sidebarVisibleScroll (tui_sidebar.go) is the one shared
+	// clamp — the mouse row-click handler calls the exact same function, so
+	// the two can never compute a different offset for the same frame (see
+	// its doc comment for the bug that fixed).
 	lines := m.sidebarTabLines(contentWidth)
-	scroll := m.sidebarScroll
-	if maxScroll := len(lines) - layout.contentHeight; scroll > maxScroll {
-		scroll = maxScroll
-	}
-	if scroll < 0 {
-		scroll = 0
-	}
+	scroll := m.sidebarVisibleScroll(layout)
 	shown := 0
 	for i := scroll; i < len(lines) && shown < layout.contentHeight; i++ {
 		b.WriteString(lipgloss.NewStyle().Width(contentWidth).MaxWidth(contentWidth).Render(lines[i]))
