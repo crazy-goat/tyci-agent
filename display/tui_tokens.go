@@ -128,15 +128,13 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 	// available width. The row's literal overhead is 9 columns ("  " + the
 	// space before the numeric field + the numeric field's own width + "$"),
 	// plus up to ~8 more for the cost figure itself (e.g. "1234.56"); the
-	// rest goes to the label, clamped so a very wide sidebar doesn't stretch
-	// it absurdly and a very narrow one still gets a usable label instead of
-	// collapsing to nothing.
+	// rest goes to the label. No upper clamp: a wide sidebar should spend
+	// its extra width on the model name (which is what actually gets
+	// truncated in practice) rather than sitting unused, so this only
+	// floors at a usable minimum for a narrow sidebar.
 	labelWidth := width - 17
 	if labelWidth < 4 {
 		labelWidth = 4
-	}
-	if labelWidth > 22 {
-		labelWidth = 22
 	}
 
 	// ByModel, not Get().Rows: Row's key now includes a job id (so the
@@ -172,16 +170,30 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 			out = append(out, fmt.Sprintf("  %-*s %5s %s", labelWidth,
 				truncateRunes(label, labelWidth), fmtTokens(r.Usage.Input+r.Usage.Output), cost))
 		}
+		// Token totals, unlike cost, are a plain sum across models here —
+		// this "total" row is the one place tokens are allowed to add up
+		// across models, since it is a raw count of everything the session
+		// spent, not a quantity meant to compare one model's tokens against
+		// another's (see item 1's Subagents-tab tokens-don't-roll-up note,
+		// which is about comparing rows, not this whole-session sum).
+		var totalTokens, delegatedTokens int
+		for _, r := range byModel {
+			n := r.Usage.Input + r.Usage.Output
+			totalTokens += n
+			if r.Kind == ledger.Subagent {
+				delegatedTokens += n
+			}
+		}
 		snap := ledger.Get()
 		unpriced := ""
 		if snap.Unpriced > 0 {
 			unpriced = "+?"
 		}
-		out = append(out, fmt.Sprintf("  %-*s %5s $%s%s", labelWidth, "total", "",
-			fmtUSD(snap.TotalUSD()), unpriced))
+		out = append(out, fmt.Sprintf("  %-*s %5s $%s%s", labelWidth, "total",
+			fmtTokens(totalTokens), fmtUSD(snap.TotalUSD()), unpriced))
 		if snap.SubagentUSD > 0 {
-			out = append(out, fmt.Sprintf("  %-*s %5s $%s%s", labelWidth, "of that delegated", "",
-				fmtUSD(snap.SubagentUSD), unpriced))
+			out = append(out, fmt.Sprintf("  %-*s %5s $%s%s", labelWidth, "of that delegated",
+				fmtTokens(delegatedTokens), fmtUSD(snap.SubagentUSD), unpriced))
 		}
 	}
 

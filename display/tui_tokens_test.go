@@ -118,6 +118,62 @@ func TestBuildUsageDetail_HasTurnAndSessionSections(t *testing.T) {
 	}
 }
 
+// The total row sums tokens across models too, not just cost — the one
+// place tokens are allowed to add up across models, since it's a whole-
+// session count rather than a per-row comparison.
+func TestBuildUsageDetail_TotalRowSumsTokensAcrossModels(t *testing.T) {
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"p":{"id":"p","models":{
+		"m1":{"id":"m1","name":"m1","cost":{"input":1,"output":1}},
+		"m2":{"id":"m2","name":"m2","cost":{"input":1,"output":1}}
+	}}}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+	ledger.Record(ledger.Main, "p", "m1", "", stream.Usage{Input: 1000, Output: 100})
+	ledger.Record(ledger.Subagent, "p", "m2", "", stream.Usage{Input: 5000, Output: 200})
+
+	m := TuiModel{modelName: "m1"}
+	lines := m.buildUsageDetail(40)
+
+	var total, delegated string
+	for _, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "total") {
+			total = l
+		}
+		if strings.HasPrefix(strings.TrimSpace(l), "of that delegated") {
+			delegated = l
+		}
+	}
+	if !strings.Contains(total, "6.3k") {
+		t.Fatalf("total row should show the combined token count (6300): %q", total)
+	}
+	if !strings.Contains(delegated, "5.2k") {
+		t.Fatalf("delegated row should show only the subagent's token count (5200): %q", delegated)
+	}
+}
+
+// A wide sidebar should spend its extra width on the label instead of
+// clamping it at an arbitrary cap — a long model name is what actually
+// gets truncated in practice, so more room should mean less truncation.
+func TestBuildUsageDetail_WideWidthGrowsLabelInsteadOfClamping(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+	longName := "a-very-long-model-name-that-would-be-truncated-at-22-columns"
+	ledger.Record(ledger.Main, "p", longName, "", stream.Usage{Input: 10, Output: 10})
+
+	m := TuiModel{modelName: longName}
+	lines := strings.Join(m.buildUsageDetail(80), "\n")
+	if !strings.Contains(lines, longName) {
+		t.Fatalf("a wide sidebar should render the full model name untruncated:\n%s", lines)
+	}
+}
+
 // A stripped catalog is the common case after an upgrade; say what fixes it.
 // The hint is about the model actually in this session, not the whole
 // catalog: it must appear when that session used a provider that prices
