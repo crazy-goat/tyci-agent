@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -31,6 +32,16 @@ const (
 	KindCron     Kind = "cron"
 )
 
+// ErrStoppedByUser is what a job's recorded error reads when jobs.Registry's
+// Cancel stopped it, instead of the bare "context canceled" a cancelled
+// context would otherwise produce. A sentinel rather than a formatted string
+// so callers (tests, display) can match it without pinning exact wording.
+var ErrStoppedByUser = contextStoppedByUser("stopped by user (kill_job)")
+
+type contextStoppedByUser string
+
+func (e contextStoppedByUser) Error() string { return string(e) }
+
 type Job struct {
 	ID          string
 	Description string
@@ -42,7 +53,9 @@ type Job struct {
 	// Set once at Start from the spawn context's own job id (see
 	// tools.JobIDCtxKey) and never mutated afterward — it is what lets the
 	// Subagents tab reconstruct a tree via a parent-link walk instead of
-	// the registry ever holding a live child list.
+	// the registry ever holding a live child list, and what lets Cancel
+	// stop a whole subtree (a subagent plus every background command it
+	// started) in one call.
 	ParentID string
 
 	Status     Status
@@ -93,6 +106,20 @@ type Job struct {
 	// internal to the registry: unexported and channel-typed, so Snapshot
 	// must never copy it.
 	answerCh chan jobAnswer
+
+	// cancel ends this job's own context (see Registry.Start, which derives
+	// it). Unexported and func-typed so Snapshot keeps copying the struct by
+	// value; guarded by Registry.mu like everything else written after
+	// construction. Set once at Start, never replaced.
+	cancel context.CancelFunc
+
+	// cancelled records that Cancel — not the job's own timeout backstop,
+	// not its caller's context — stopped this job, so Start's completion
+	// path can rewrite a bare context.Canceled into ErrStoppedByUser ("who
+	// stopped this?" is the question the panel has to answer). Plain bool
+	// under Registry.mu for the same copylocks reason as lastActivity
+	// above; set only before the matching cancel fires.
+	cancelled bool
 
 	// mailbox queues messages posted via Registry.Post (the "message" tool,
 	// or the "/msg" slash command), awaiting delivery to this job's own

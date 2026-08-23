@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -46,8 +47,15 @@ func nextID() string {
 // must be available with zero race window right as the goroutine starts;
 // passing it as a plain argument is simplest and race-free since the ID is
 // already assigned before the goroutine is launched.
+//
+// The job's ctx is derived here (WithCancel) rather than passed through:
+// the registry keeps the cancel, which is what makes an outside caller able
+// to stop a running job at all — see Cancel. Callers that already hand in a
+// cancelable ctx keep working unchanged; this only adds one more link on top
+// of whatever they supplied.
 func (r *Registry) Start(ctx context.Context, description string, kind Kind, parentID string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) *Job {
 	now := time.Now()
+	jobCtx, cancel := context.WithCancel(ctx)
 	job := &Job{
 		ID:          nextID(),
 		Description: description,
@@ -56,6 +64,7 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 		Status:      StatusRunning,
 		StartedAt:   now,
 		done:        make(chan struct{}),
+		cancel:      cancel,
 	}
 	// Seed lastActivity to the same instant as StartedAt, so a job that
 	// hasn't done anything yet reads as "idle since start" (a small, correct
@@ -73,7 +82,7 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 	}
 
 	go func() {
-		result, truncated, err := fn(ctx, job.ID)
+		result, truncated, err := fn(jobCtx, job.ID)
 
 		r.mu.Lock()
 		job.FinishedAt = time.Now()
@@ -82,6 +91,13 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 		case err != nil:
 			job.Status = StatusFailed
 			job.Err = err.Error()
+			// A bare "context canceled" tells whoever reads the jobs panel
+			// nothing about who cancelled. When Cancel was the cause, say so
+			// instead — same failed status, an unmistakable message (see
+			// Cancel's doc comment for why there is no sixth status).
+			if errors.Is(err, context.Canceled) && job.cancelled {
+				job.Err = ErrStoppedByUser.Error()
+			}
 		case truncated:
 			job.Status = StatusTruncated
 		default:
@@ -105,6 +121,88 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 	}()
 
 	return job
+}
+
+// Cancel stops the running job identified by id — resolving short forms
+// ("#3"/"3") through Resolve first — by cancelling its context and, because
+// a subagent's backgrounded commands are registered with that job as their
+// parent, every still-running descendant's too. Descendants are cancelled
+// BEFORE the target: the deepest work dies first, so a child's completion
+// path never races its parent already being torn down above it.
+//
+// Returns false when id resolves to nothing or to a job that has already
+// finished (done/failed/truncated/waiting_answer counts as finished enough
+// not to need stopping); the caller should report "not a running job"
+// rather than claim success. A waiting_answer job is refused on purpose: it
+// is not making progress, but killing someone's blocked question out from
+// under them is not kill_job's call — answering or ignoring it is.
+//
+// The cancel funcs run OUTSIDE r.mu on purpose: a job's parting code path
+// (its fn returning into Start's completion bookkeeping) takes r.mu itself,
+// and calling cancel while holding the lock would deadlock against exactly
+// those jobs.
+//
+// A job stopped by Cancel still ends as StatusFailed (no sixth status was
+// added), but its recorded error says it was stopped deliberately rather
+// than showing a bare "context canceled" — see Job.cancelled.
+func (r *Registry) Cancel(id string) bool {
+	full, ok := r.Resolve(id)
+	if !ok {
+		return false
+	}
+
+	// Collect everything under r.mu, call nothing under it.
+	r.mu.Lock()
+
+	target, ok := r.jobs[full]
+	if !ok || !r.cancelableLocked(target) {
+		r.mu.Unlock()
+		return false
+	}
+
+	// Subtree walk over ParentID links. List() would snapshot; reading the
+	// live map under the lock we already hold is equivalent and cheaper.
+	// The visited set makes the walk terminate on malformed links — a cycle
+	// (only possible if a test or future feature fabricates ParentIDs) or
+	// two jobs claiming the same child — instead of looping forever.
+	order := make([]*Job, 0, 8)
+	visited := make(map[*Job]bool, 8)
+	var walk func(job *Job)
+	walk = func(job *Job) {
+		if visited[job] {
+			return
+		}
+		visited[job] = true
+		for _, candidate := range r.jobs {
+			if candidate.ParentID == job.ID && !visited[candidate] {
+				walk(candidate)
+			}
+		}
+		order = append(order, job)
+	}
+	walk(target)
+
+	for _, job := range order {
+		job.cancelled = true
+	}
+	kills := make([]context.CancelFunc, 0, len(order))
+	for _, job := range order {
+		if job.cancel != nil {
+			kills = append(kills, job.cancel)
+		}
+	}
+	r.mu.Unlock()
+
+	for _, kill := range kills {
+		kill()
+	}
+	return true
+}
+
+// cancelableLocked reports whether a stop request on this job can act at
+// all. Caller must hold r.mu.
+func (r *Registry) cancelableLocked(job *Job) bool {
+	return job.Status == StatusRunning
 }
 
 func (r *Registry) Get(id string) (*Job, bool) {
@@ -320,7 +418,7 @@ func (r *Registry) Post(id, text string) bool {
 
 // DrainMessages pops and returns everything queued for job id via Post,
 // FIFO, clearing the mailbox. Mirrors how the main agent's pending-input
-// queue is drained (agent.Config.NextMessages) — this is the per-job
+// queue is drained (agent.Config.NextMessages) — the per-job
 // equivalent, meant to be called from that same job's own agent loop
 // between iterations. An unknown id and an empty mailbox both return nil,
 // indistinguishably — the caller (a NextMessages-shaped callback) treats
