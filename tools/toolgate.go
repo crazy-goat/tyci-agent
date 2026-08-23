@@ -177,6 +177,10 @@ var alwaysAllowedTools = []string{"help", "lua"}
 //     would need answer_job back even though it's still, at that point, "a
 //     subagent". When that lands, this entry likely needs to move to a
 //     depth-aware check rather than a flat denial.
+//   - message: posts to a running job's mailbox, steering it mid-flight.
+//     Same reasoning as answer_job — a plain subagent child can never have
+//     a job of its own to message, since it is always denied "subagent"
+//     above. Revisit alongside answer_job once item 21 lands.
 //
 // This is the one place the schema builder
 // (GetSubagentToolsSchema/GetSubagentToolsSchemaJSONFor in tool.go), the
@@ -189,7 +193,7 @@ var alwaysAllowedTools = []string{"help", "lua"}
 // "subagent" or "agents" by name, or the three will drift the way
 // AllowOnlySubagent's whitelisted path and this package's own unrestricted
 // path once did.
-var subagentDeniedTools = map[string]bool{"subagent": true, "agents": true, "answer_job": true}
+var subagentDeniedTools = map[string]bool{"subagent": true, "agents": true, "answer_job": true, "message": true}
 
 // IsSubagentDenied reports whether name is one of subagentDeniedTools.
 func IsSubagentDenied(name string) bool {

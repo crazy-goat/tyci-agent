@@ -443,6 +443,21 @@ func builtinToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "message",
+				"description": "Post a message to one of your own running background jobs (a subagent(async=true) child, or a /btw side-conversation), delivered at its next iteration — not mid-tool-call, so it may take a moment if the job is deep in a tool call. Use this to steer it (\"stop, do X instead\", \"also check Y\") without waiting for it to finish. Not the same as answer_job: this injects a new instruction, it does not unblock an ask_parent.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"job_id": map[string]any{"type": "string", "description": "The id of the running job to message (full id, or its short #N form from the jobs panel)."},
+						"text":   map[string]any{"type": "string", "description": "The message to deliver to that job at its next iteration."},
+					},
+					"required": []string{"job_id", "text"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "report_progress",
 				"description": "Post a short status note from inside a job (any subagent call, or a /btw side-conversation). Only usable inside a job; always succeeds. Read via wait(job_id=...) once that id is known, or the end-of-turn pending-jobs reminder while it is running. A blocking call under `tyci run`/`--print` never hands out a job id, so there nobody reads it before the job is done.",
 				"parameters": map[string]any{
@@ -729,6 +744,7 @@ var toolRegistry = map[string]Tool{
 	// called; each tool fails loudly (not silently) until then.
 	"ask_parent":      &AskTool{},
 	"answer_job":      &AnswerTool{},
+	"message":         &MessageTool{},
 	"report_progress": &ReportProgressTool{},
 	"resume":          &ResumeTool{},
 	// kill_job needs no wiring of its own: it acts on the background-command

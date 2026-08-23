@@ -91,6 +91,16 @@ func (a jobActivityToucherAdapter) TouchActivity(id string) {
 	a.reg.TouchActivity(id)
 }
 
+// jobMailboxAdapter satisfies tools.JobMailbox over JobRegistry: backs the
+// "message" tool and the "/msg" slash command (Resolve/Post), and the
+// per-job NextMessages drain wired into a background subagent's own
+// agent.Config (Drain, via tools.JobMailboxNextMessages).
+type jobMailboxAdapter struct{ reg *jobs.Registry }
+
+func (a jobMailboxAdapter) Resolve(id string) (string, bool) { return a.reg.Resolve(id) }
+func (a jobMailboxAdapter) Post(id, text string) bool        { return a.reg.Post(id, text) }
+func (a jobMailboxAdapter) Drain(id string) []string         { return a.reg.DrainMessages(id) }
+
 // jobResumerAdapter satisfies tools.JobResumer over JobRegistry and the
 // package-level resumable map (main.go): it forks a previously-recorded
 // conversation, appends task as a new user turn, and runs the fork as a
@@ -224,6 +234,14 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		// mark it done so its list becomes eligible for eviction once this
 		// job finishes.
 		defer tools.MarkTodoAgentDone(jobID)
+		// A /btw side-conversation is a job like any other (see the comment
+		// on cfg.Schema above), so it gets the same mailbox drain a
+		// background subagent gets: /msg or the "message" tool can steer it
+		// mid-flight, delivered at its next iteration boundary. cfg here is
+		// the local copy this closure captured from startBtw's argument, not
+		// shared with any other job, so mutating it right before the one
+		// agent.Run call that uses it is safe.
+		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
 		_, err := agent.Run(jobCtx, client, sink, &forked, cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {

@@ -282,6 +282,16 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		},
 	}
 
+	// jobID is the id this child is running under (JobIDCtxKey — set for
+	// every real invocation, sync or async, by tools/subagent.go's spawn;
+	// only absent in tests that call run() directly). Read here, before
+	// agent.Run, so cfg.NextMessages can be wired to drain this exact job's
+	// own mailbox — the "message" tool / "/msg" mechanism's delivery point,
+	// mirroring how the main agent's NextMessages drains its pending-input
+	// queue (see agent.Config.NextMessages's doc comment). It is also what
+	// makes the resume hint further down actionable instead of a dead end.
+	jobID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+
 	cfg := agent.Config{
 		System:        system,
 		MaxRetries:    1,
@@ -293,6 +303,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		Temperature:   opts.Temperature,
 		MaxTokens:     opts.MaxTokens,
 		NoPromptCache: !agent.PromptCacheEnabled(),
+		NextMessages:  tools.JobMailboxNextMessages(jobID),
 	}
 
 	// Children spend the parent's money, so they record against the same
@@ -312,13 +323,6 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// treatment below.
 	truncated := errors.Is(err, agent.ErrMaxIterations)
 	deadlineExceeded := !truncated && errors.Is(err, context.DeadlineExceeded)
-
-	// jobID is the id this child is running under (JobIDCtxKey — set for
-	// every real invocation, sync or async, by tools/subagent.go's spawn;
-	// only absent in tests that call run() directly). It is what makes the
-	// resume hint below actionable instead of a dead end: without it, the
-	// model would be told to resume a conversation it has no id for.
-	jobID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
 
 	// If this run is happening inside a background job, and it actually
 	// produced a usable transcript (finished cleanly, hit the iteration cap,
@@ -496,6 +500,7 @@ func wireTools() {
 	tools.SetJobAnswerer(jobAnswererAdapter{reg: JobRegistry})
 	tools.SetJobProgressReporter(jobProgressAdapter{reg: JobRegistry})
 	tools.SetJobActivityToucher(jobActivityToucherAdapter{reg: JobRegistry})
+	tools.SetJobMailbox(jobMailboxAdapter{reg: JobRegistry})
 	tools.SetJobResumer(jobResumerAdapter{reg: JobRegistry})
 
 	// Wire JobRegistry's status-change events onto jobEventBus so the TUI
