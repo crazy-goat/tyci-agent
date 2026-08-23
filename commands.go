@@ -84,12 +84,28 @@ func init() {
 // Shared setup
 // ---------------------------------------------------------------------------
 
+// registerProviders reads the global provider catalogs and, for model.json
+// (TODO.md item 22), a project-local <wd>/.tyci/model.json too — unioned
+// with the global one, local winning on a (group, model name) collision
+// (see providers.RegisterProvidersFromConfigMerged). Self-contained on
+// os.Getwd() rather than threaded a wd, the same posture as
+// agent.LoadTyciConfig and agent.LoadAgents.
 func registerProviders() {
 	if err := connect.EnsureProvidersJSON(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: providers.json: %v\n", err)
 	}
 	providers.RegisterProvidersFromProvidersJSON(connect.ProvidersJSONPath())
-	providers.RegisterProvidersFromConfig(connect.ModelJSONPath())
+	providers.RegisterProvidersFromConfigMerged(connect.ModelJSONPath(), localModelJSONPath())
+}
+
+// localModelJSONPath returns <cwd>/.tyci/model.json, or "" when cwd cannot
+// be determined.
+func localModelJSONPath() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(wd, ".tyci", "model.json")
 }
 
 // initCommon wires up everything a command needs to run the agent loop:
@@ -947,6 +963,13 @@ func listProviderNames() []string {
 	if entries, err := providers.LoadConfig(connect.ModelJSONPath()); err == nil {
 		for name := range entries {
 			names[name] = struct{}{}
+		}
+	}
+	if local := localModelJSONPath(); local != "" {
+		if entries, err := providers.LoadConfig(local); err == nil {
+			for name := range entries {
+				names[name] = struct{}{}
+			}
 		}
 	}
 	if keys, err := connect.ListKeys(); err == nil {

@@ -430,3 +430,87 @@ func TestPackageLevelHelpersUseDefault(t *testing.T) {
 		t.Error("ListProviders() did not read from Default")
 	}
 }
+
+// =============================================================================
+// model.json project-local merge (TODO.md item 22)
+// =============================================================================
+
+func TestMergeModelEntries_UnionsBothSides(t *testing.T) {
+	global := map[string][]ModelEntry{
+		"openai": {{Name: "gpt-4", URI: "openai://gpt-4@global-key@api.openai.com"}},
+	}
+	local := map[string][]ModelEntry{
+		"anthropic": {{Name: "claude", URI: "anthropic://claude@local-key@api.anthropic.com"}},
+	}
+
+	got := MergeModelEntries(global, local)
+	if len(got["openai"]) != 1 || got["openai"][0].Name != "gpt-4" {
+		t.Errorf("openai group missing/altered: %v", got["openai"])
+	}
+	if len(got["anthropic"]) != 1 || got["anthropic"][0].Name != "claude" {
+		t.Errorf("anthropic group missing: %v", got["anthropic"])
+	}
+}
+
+// TestMergeModelEntries_LocalWinsOnCollision: same (group, model name) pair
+// defined on both sides — the local URI must be the one that ends up
+// registered, mirroring mcp.json's "local wins on same server name".
+func TestMergeModelEntries_LocalWinsOnCollision(t *testing.T) {
+	global := map[string][]ModelEntry{
+		"openai": {{Name: "gpt-4", URI: "openai://gpt-4@global-key@api.openai.com"}},
+	}
+	local := map[string][]ModelEntry{
+		"openai": {{Name: "gpt-4", URI: "openai://gpt-4@local-key@api.openai.com"}},
+	}
+
+	got := MergeModelEntries(global, local)
+	if len(got["openai"]) != 1 {
+		t.Fatalf("expected exactly one gpt-4 entry, got %v", got["openai"])
+	}
+	if got["openai"][0].URI != "openai://gpt-4@local-key@api.openai.com" {
+		t.Errorf("URI = %q, want the local override to win", got["openai"][0].URI)
+	}
+}
+
+func TestMergeModelEntries_NilLocalKeepsGlobal(t *testing.T) {
+	global := map[string][]ModelEntry{
+		"openai": {{Name: "gpt-4", URI: "openai://gpt-4@k@api.openai.com"}},
+	}
+	got := MergeModelEntries(global, nil)
+	if len(got["openai"]) != 1 || got["openai"][0].Name != "gpt-4" {
+		t.Errorf("global entries lost when local is nil: %v", got)
+	}
+}
+
+// TestRegisterProvidersFromConfigMerged_LocalOverridesGlobal exercises the
+// real registration path, not just the pure merge helper: a project-local
+// model.json must be able to add a model under an existing group name that
+// only the global file's registered provider otherwise serves.
+func TestRegisterProvidersFromConfigMerged_LocalOverridesGlobal(t *testing.T) {
+	const group = "test-item22-model-json-merge"
+	t.Cleanup(func() { delete(Default.providers, group) })
+
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global-model.json")
+	localPath := filepath.Join(dir, "local-model.json")
+
+	if err := os.WriteFile(globalPath, []byte(`{"`+group+`": {"model-a": {"uri": "openai://model-a@global-key@api.example.com"}}}`), 0644); err != nil {
+		t.Fatalf("write global: %v", err)
+	}
+	if err := os.WriteFile(localPath, []byte(`{"`+group+`": {"model-b": {"uri": "openai://model-b@local-key@api.example.com"}}}`), 0644); err != nil {
+		t.Fatalf("write local: %v", err)
+	}
+
+	RegisterProvidersFromConfigMerged(globalPath, localPath)
+
+	p, ok := GetProvider(group)
+	if !ok {
+		t.Fatal("group not registered")
+	}
+	models := p.Models()
+	sort.Strings(models)
+	want := []string{"model-a", "model-b"}
+	if len(models) != len(want) || models[0] != want[0] || models[1] != want[1] {
+		t.Errorf("Models() = %v, want both global and local models present", models)
+	}
+}

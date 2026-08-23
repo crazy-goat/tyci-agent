@@ -89,11 +89,69 @@ func MustLoadConfig(path string) map[string][]ModelEntry {
 	return cfg
 }
 
+// MergeModelEntries unions two model.json-shaped maps, keyed by
+// "provider group name" -> "model name": every (group, name) pair from
+// either side ends up available, and where both sides define the same pair,
+// local wins. This is model.json's project-local semantics (TODO.md item
+// 22): a custom provider/model catalog is a set of independent named
+// entries, the same shape as mcp.json's server map, so it gets the same
+// union-with-local-precedence treatment rather than config.json's per-field
+// merge (there is no single "the" model.json field to override).
+func MergeModelEntries(global, local map[string][]ModelEntry) map[string][]ModelEntry {
+	type key struct{ group, name string }
+	order := []key{}
+	byKey := map[key]ModelEntry{}
+	groupOf := map[key]string{}
+
+	add := func(src map[string][]ModelEntry) {
+		for group, list := range src {
+			for _, e := range list {
+				k := key{group, e.Name}
+				if _, seen := byKey[k]; !seen {
+					order = append(order, k)
+				}
+				byKey[k] = e
+				groupOf[k] = group
+			}
+		}
+	}
+	add(global)
+	add(local) // added second, so it overwrites on a (group, name) collision
+
+	result := make(map[string][]ModelEntry)
+	for _, k := range order {
+		result[groupOf[k]] = append(result[groupOf[k]], byKey[k])
+	}
+	return result
+}
+
 // RegisterProvidersFromConfig reads model.json and registers a dynamic provider
 // for each group found.
 func RegisterProvidersFromConfig(path string) {
 	entries := MustLoadConfig(path)
 	for groupName, list := range entries {
+		if len(list) == 0 {
+			continue
+		}
+		Register(NewProvider(groupName, list, Deps{}))
+	}
+}
+
+// RegisterProvidersFromConfigMerged reads the global model.json at
+// globalPath and, when localPath is non-empty, a project-local override
+// too, unions them (MergeModelEntries: local wins on a (group, model name)
+// collision), and registers a dynamic provider per merged group. Not
+// trust-gated: model.json only names custom model URIs, the same
+// data-only posture as config.json, not something a project directory
+// makes tyci execute.
+func RegisterProvidersFromConfigMerged(globalPath, localPath string) {
+	global := MustLoadConfig(globalPath)
+	merged := global
+	if localPath != "" {
+		local := MustLoadConfig(localPath)
+		merged = MergeModelEntries(global, local)
+	}
+	for groupName, list := range merged {
 		if len(list) == 0 {
 			continue
 		}
