@@ -68,6 +68,17 @@ type Job struct {
 	// internal to the registry: unexported and channel-typed, so Snapshot
 	// must never copy it.
 	answerCh chan jobAnswer
+
+	// mailbox queues messages posted via Registry.Post (the "message" tool,
+	// or the "/msg" slash command), awaiting delivery to this job's own
+	// agent loop at its next iteration boundary — see Registry.DrainMessages
+	// and tools.JobMailboxNextMessages, which wires it into a background
+	// subagent's agent.Config.NextMessages the same way the main agent's
+	// NextMessages queue works today. Guarded by Registry.mu, like Progress:
+	// unlike lastActivity there is no hot-path pressure here (a message is a
+	// rare, deliberate act, not something fired on every streamed token), so
+	// a plain slice under the registry lock is simplest.
+	mailbox []string
 }
 
 // touchActivity atomically records "now" as this job's last sign of life.

@@ -131,6 +131,19 @@ func (m TuiModel) handleLocalSlashCommand() (bool, tea.Model) {
 			enqueueOrStatus(m.commands, line, &m.statusMessage)
 		}
 		return true, m
+	case strings.HasPrefix(lower, "/msg "):
+		// Posting to a job's mailbox doesn't touch the conversation the
+		// running turn is writing to, but resolving/posting needs
+		// JobRegistry, which this package cannot import (main imports
+		// display, not the other way around) — so it's routed the same way
+		// as /btw, to whichever loop actually reads m.commands.
+		m.input.Reset()
+		m.input.SetHeight(1)
+		m.closeFileComplete()
+		if m.commands != nil {
+			enqueueOrStatus(m.commands, line, &m.statusMessage)
+		}
+		return true, m
 	case lower == "/new", lower == "/exit", lower == "/resume", strings.HasPrefix(lower, "/resume "):
 		// These replace or end the conversation the turn is writing to. The
 		// typed line is deliberately left in the input: press Esc to stop the

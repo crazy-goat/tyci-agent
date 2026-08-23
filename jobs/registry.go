@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -290,6 +291,74 @@ func (r *Registry) TouchActivity(id string) {
 		return
 	}
 	job.touchActivity()
+}
+
+// Post enqueues text for delivery to the job identified by id at its own
+// agent loop's next iteration boundary (see DrainMessages). This is how a
+// running background subagent gets steered mid-flight, either by a person
+// via the "/msg" slash command or by the parent model via the "message"
+// tool — the mechanism that already exists for the main agent
+// (agent.Config.NextMessages) applied per-job instead of process-wide.
+//
+// Returns false when id is unknown; the caller should tell whoever posted
+// that the job doesn't exist rather than silently dropping the message. No
+// restriction on the job's current status — posting to a job that is about
+// to finish (or has just finished) is harmless, same as SetProgress: the
+// message simply never gets drained.
+func (r *Registry) Post(id, text string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok {
+		return false
+	}
+	job.mailbox = append(job.mailbox, text)
+	return true
+}
+
+// DrainMessages pops and returns everything queued for job id via Post,
+// FIFO, clearing the mailbox. Mirrors how the main agent's pending-input
+// queue is drained (agent.Config.NextMessages) — this is the per-job
+// equivalent, meant to be called from that same job's own agent loop
+// between iterations. An unknown id and an empty mailbox both return nil,
+// indistinguishably — the caller (a NextMessages-shaped callback) treats
+// both the same way: nothing to inject this iteration.
+func (r *Registry) DrainMessages(id string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok {
+		return nil
+	}
+	msgs := job.mailbox
+	job.mailbox = nil
+	return msgs
+}
+
+// Resolve maps id — a job's full ID, or the short form the jobs panel shows
+// ("#N", with or without the leading "#") — to that job's full ID. Short
+// ids never collide: ShortID trims to the trailing counter of the
+// "job-<unixnano>-<n>" scheme, and n is a single atomic counter shared by
+// every job in the process, so at most one job can ever have a given short
+// form. ok is false when neither form matches anything currently in the
+// registry (including an id that has since been pruned — see
+// pruneTerminalLocked).
+func (r *Registry) Resolve(id string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.jobs[id]; ok {
+		return id, true
+	}
+	short := strings.TrimPrefix(id, "#")
+	if short == "" {
+		return "", false
+	}
+	for full, job := range r.jobs {
+		if ShortID(job.ID) == short {
+			return full, true
+		}
+	}
+	return "", false
 }
 
 // maxRetainedTerminalJobs bounds how many finished (done/failed/truncated)

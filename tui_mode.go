@@ -133,6 +133,22 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		return nil
 	}
 
+	// handleMsgCommand implements "/msg <job> <text>": posts text to job's
+	// mailbox, delivered at that job's next iteration boundary (see
+	// tools.JobMailboxNextMessages) — the human-facing equivalent of the
+	// "message" tool. Parsing/resolution lives in parseMsgCommand/
+	// postMsgCommand (package-level, unit-testable without a TUI); this
+	// closure only adapts the result to tuiDisp.Error/ToolBlock, since both
+	// call sites below (busy-turn drain and the idle loop) just
+	// fire-and-forget it.
+	handleMsgCommand := func(arg string) {
+		if jobID, err := postMsgCommand(JobRegistry, arg); err != nil {
+			tuiDisp.Error(err)
+		} else {
+			tuiDisp.ToolBlock(fmt.Sprintf("ℹ️  message queued for job %s", jobID))
+		}
+	}
+
 	// startBtwQuestion forks the conversation into a background side
 	// conversation. Runs on baseCtx (not the per-iteration context the loop
 	// below cancels) so it keeps going independently of the main thread.
@@ -163,6 +179,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 					continue
 				}
 				startBtwQuestion(question)
+			case strings.HasPrefix(cmd, "/msg "):
+				handleMsgCommand(strings.TrimSpace(strings.TrimPrefix(cmd, "/msg")))
 			}
 		}
 		return nil
@@ -310,6 +328,15 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 					continue
 				}
 				startBtwQuestion(question)
+				continue
+			case strings.HasPrefix(trimmed, "/msg "):
+				// /msg <job> <text>: posts to a job's mailbox. Doesn't touch
+				// the conversation this iteration's turn would write to, but
+				// this iteration never starts one either, so iterCtx is
+				// cancelled like every other command below that doesn't run
+				// the agent.
+				iterCancel()
+				handleMsgCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "/msg")))
 				continue
 			case strings.HasPrefix(trimmed, "/resume "):
 				// /resume <path|index>: forward to resolveSessionRef so the
