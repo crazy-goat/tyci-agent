@@ -405,6 +405,42 @@ func TestCatalog_FindModelBareName(t *testing.T) {
 	}
 }
 
+// FindModel: a spec whose model ID itself contains a slash (e.g. openrouter's
+// "stealth/ox-alpha") must resolve as a FULL model ID first — the whole string
+// is tried against every configured provider's Models() before any
+// provider/model split. This is the regression test for the subagent bug:
+// "openrouter/stealth/ox-alpha" used to be split on the FIRST slash into a
+// nonexistent "stealth" provider and failed with "no provider available".
+func TestCatalog_FindModelSlashedModelID(t *testing.T) {
+	c := NewCatalog()
+	c.Register(&catalogStub{name: "openrouter", configured: true, models: []string{"stealth/ox-alpha", "other/m2"}})
+	c.Register(&catalogStub{name: "nexos", configured: true, models: []string{"GLM 5.2"}})
+
+	// Qualified form: provider prefix + slashed model ID.
+	p, m, ok := c.FindModel("openrouter/stealth/ox-alpha")
+	if !ok || p.Name() != "openrouter" || m != "stealth/ox-alpha" {
+		t.Errorf("FindModel(openrouter/stealth/ox-alpha) = %v, %q, %v; want openrouter / stealth/ox-alpha", p, m, ok)
+	}
+
+	// Bare (inherited) form: the full ID alone must find its provider.
+	if p, m, ok := c.FindModel("stealth/ox-alpha"); !ok || p.Name() != "openrouter" || m != "stealth/ox-alpha" {
+		t.Errorf("FindModel(stealth/ox-alpha) = %v, %q, %v; want openrouter / stealth/ox-alpha", p, m, ok)
+	}
+
+	// A full ID listed by multiple providers still resolves (map order picks
+	// one) instead of falling through to failure.
+	c.Register(&catalogStub{name: "mirror", configured: true, models: []string{"stealth/ox-alpha"}})
+	if _, _, ok := c.FindModel("stealth/ox-alpha"); !ok {
+		t.Error("FindModel failed for a full ID listed by multiple providers")
+	}
+
+	// Unlisted full IDs keep falling back to the provider/model split — an
+	// unknown provider prefix still fails.
+	if _, _, ok := c.FindModel("stealth/unlisted-model"); ok {
+		t.Error("FindModel resolved a spec with an unknown provider prefix")
+	}
+}
+
 // The package-level helpers must be wrappers over Default, not a second map.
 func TestPackageLevelHelpersUseDefault(t *testing.T) {
 	const name = "package-level-wrapper-probe"

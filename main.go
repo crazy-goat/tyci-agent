@@ -91,13 +91,6 @@ type agentRunner struct{}
 // and can land on a different (unconfigured) provider that happens to list
 // the same model.
 func resolveModelClient(ctx context.Context, model string) (connector.ModelClient, error) {
-	if strings.Contains(model, "/") {
-		if prov, mName, ok := providers.FindModel(model); ok {
-			return prov.Client(mName), nil
-		}
-		return nil, fmt.Errorf("no provider available for model %q", model)
-	}
-
 	mc := connector.ModelClientFromContext(ctx)
 	if mc == nil {
 		// No parent model client in context (e.g. tests) — fall back to lookup.
@@ -106,6 +99,7 @@ func resolveModelClient(ctx context.Context, model string) (connector.ModelClien
 		}
 		return nil, fmt.Errorf("no provider available for model %q", model)
 	}
+
 	mName := model
 	if mName == "" {
 		mName = mc.Model()
@@ -113,14 +107,31 @@ func resolveModelClient(ctx context.Context, model string) (connector.ModelClien
 	if mName == "" {
 		return nil, fmt.Errorf("no model specified")
 	}
+	// Inherit BEFORE interpreting a "/" as a provider separator: model IDs can
+	// contain slashes themselves (e.g. openrouter's "stealth/ox-alpha"), so
+	// the inherited name must stay whole instead of splitting into a
+	// nonexistent "stealth" provider.
 	if mName == mc.Model() {
 		return mc, nil
 	}
-	// Explicit bare-name override that differs from the parent's default:
+	// Any remaining slashed name is treated as an explicit provider/model
+	// override. FindModel itself first tries the whole string as a full model
+	// ID across providers, so an override naming another provider's slashed
+	// model ID resolves to that provider instead of being misread as a prefix;
+	// only when nothing lists the full string does the first-slash split apply.
+	if strings.Contains(mName, "/") {
+		if p, m, ok := providers.FindModel(mName); ok {
+			return p.Client(m), nil
+		}
+		return nil, fmt.Errorf("no provider available for model %q", mName)
+	}
+	// Bare-name override that differs from the parent's current model:
 	// keep the parent's provider (its already-resolved credential), bound to
-	// the new model. The provider must be registered under its own name in
-	// the catalog for this lookup to succeed — true for every real provider,
-	// each registered exactly once at startup.
+	// the new model. Never re-guess via FindModel here — its map-order bare
+	// lookup could land on a different unconfigured provider listing the same
+	// name. The provider must be registered under its own name in the catalog
+	// for this lookup to succeed — true for every real provider, each
+	// registered exactly once at startup.
 	prov, ok := providers.GetProvider(mc.Provider())
 	if !ok {
 		return nil, fmt.Errorf("provider %q not found", mc.Provider())

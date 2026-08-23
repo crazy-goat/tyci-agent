@@ -51,8 +51,27 @@ func (c *Catalog) GetProvider(name string) (Provider, bool) {
 // name is searched for among CONFIGURED providers only, in map iteration
 // order, which is deliberately unspecified. A bare name listed solely by
 // providers without a credential does not resolve.
+//
+// Model IDs may themselves contain slashes (e.g. openrouter's
+// "stealth/ox-alpha"), so a spec containing "/" is ambiguous: it is first
+// tried verbatim as a full model ID, and only when no provider lists it is it
+// split on the FIRST slash as provider/model. This keeps
+// "openrouter/stealth/ox-alpha" resolving to provider "openrouter", model
+// "stealth/ox-alpha", while never shadowing an explicit provider prefix with
+// a same-named model.
 func (c *Catalog) FindModel(model string) (Provider, string, bool) {
 	if strings.Contains(model, "/") {
+		// Full model IDs can contain slashes: try the whole string first.
+		for _, p := range c.providers {
+			if p.IsConfigured() {
+				for _, m := range p.Models() {
+					if m == model {
+						return p, model, true
+					}
+				}
+			}
+		}
+
 		parts := strings.SplitN(model, "/", 2)
 		if p, ok := c.providers[parts[0]]; ok {
 			return p, parts[1], true

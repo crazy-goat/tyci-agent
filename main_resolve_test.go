@@ -147,6 +147,41 @@ func TestResolveModelClient_NoContextNoMatch(t *testing.T) {
 	}
 }
 
+// TestResolveModelClient_InheritsSlashedModelID is the regression test for the
+// "stealth/ox-alpha" bug: a parent running on a model whose ID contains a
+// slash (openrouter's stealth/ox-alpha behind provider "openrouter") used to
+// break EVERY subagent — the child inherited the parent's model name, and
+// resolveModelClient interpreted the slash as a provider separator, looked up
+// a nonexistent provider "stealth", and failed with `no provider available for
+// model "stealth/ox-alpha"` before the child ever started.
+func TestResolveModelClient_InheritsSlashedModelID(t *testing.T) {
+	parent := &fakeProvider{name: "openrouter", configured: true, models: []string{"stealth/ox-alpha"}}
+	providers.Register(parent)
+
+	ctx := connector.WithModelClient(context.Background(), parent.Client("stealth/ox-alpha"))
+
+	got, err := resolveModelClient(ctx, "")
+	if err != nil {
+		t.Fatalf("resolveModelClient: %v", err)
+	}
+	if got.Provider() != "openrouter" {
+		t.Errorf("expected the parent's provider, got %q", got.Provider())
+	}
+	if got.Model() != "stealth/ox-alpha" {
+		t.Errorf("expected the full slashed model ID to stay whole, got %q", got.Model())
+	}
+
+	// Same story with an EXPLICIT override naming the same slashed ID: it must
+	// not be split into provider "stealth".
+	got, err = resolveModelClient(ctx, "stealth/ox-alpha")
+	if err != nil {
+		t.Fatalf("resolveModelClient(explicit slashed ID): %v", err)
+	}
+	if got.Provider() != "openrouter" || got.Model() != "stealth/ox-alpha" {
+		t.Errorf("got %q/%q, want openrouter/stealth/ox-alpha", got.Provider(), got.Model())
+	}
+}
+
 // =============================================================================
 // withIsolatedPool — the subagent's own connection pool
 // =============================================================================
