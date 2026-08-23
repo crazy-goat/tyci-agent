@@ -71,8 +71,24 @@ type JobHandle interface{ ID() string }
 // (same import-cycle rationale as JobWaiter's doc comment). main() supplies
 // an adapter over the app's shared jobs.Registry via SetJobStarter.
 type JobStarter interface {
-	Start(ctx context.Context, description string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) JobHandle
+	// kind and parentID are threaded straight onto the created jobs.Job (see
+	// jobs.Kind / jobs.Job.ParentID) — this package cannot set them itself
+	// since it never imports "jobs" (same layering rule as the rest of this
+	// file). kind is one of the JobKind* string constants below; parentID is
+	// normally read from ctx.Value(JobIDCtxKey{}) at the call site, i.e. "the
+	// job this call is running inside, if any".
+	Start(ctx context.Context, description, kind, parentID string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) JobHandle
 }
+
+// JobKindSubagent and JobKindBash mirror jobs.KindSubagent/jobs.KindBash as
+// plain strings, so this package can pass a kind through JobStarter.Start
+// without importing "jobs". jobStarterAdapter (main.go) converts them back
+// to jobs.Kind on the other side.
+const (
+	JobKindSubagent = "subagent"
+	JobKindBash     = "bash"
+	JobKindCron     = "cron"
+)
 
 // JobIDCtxKey is the context key under which an async job's own ID is
 // stashed (see runAsync) so tools invoked from inside that job — "ask_parent"
@@ -747,7 +763,8 @@ func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtSta
 	stopStream := &atomic.Bool{}
 	st.stopStream = stopStream
 
-	job := jobStarter.Start(jobCtx, task.Task, func(runCtx context.Context, jobID string) (string, bool, error) {
+	parentID, _ := ctx.Value(JobIDCtxKey{}).(string)
+	job := jobStarter.Start(jobCtx, task.Task, JobKindSubagent, parentID, func(runCtx context.Context, jobID string) (string, bool, error) {
 		defer cancel()
 		defer close(st.done)
 		runCtx = context.WithValue(runCtx, JobIDCtxKey{}, jobID)

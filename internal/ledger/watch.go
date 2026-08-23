@@ -32,11 +32,16 @@ type Sink interface {
 // the bar wants: a figure that appears with the first response and grows.
 //
 // Every other method is forwarded untouched by the embedded interface.
-func Watch(inner Sink, kind Kind, provider, model string) Sink {
+//
+// jobID attributes the recorded usage to a specific job — pass "" for the
+// main conversation (which is not a job); a subagent call passes its own
+// job id so its tokens are trackable per-child instead of collapsing into a
+// shared "subagent" bucket for the model (see Row's doc comment).
+func Watch(inner Sink, kind Kind, provider, model, jobID string) Sink {
 	if inner == nil {
 		return nil
 	}
-	return &watcher{Sink: inner, kind: kind, provider: provider, model: model}
+	return &watcher{Sink: inner, kind: kind, provider: provider, model: model, jobID: jobID}
 }
 
 type watcher struct {
@@ -44,9 +49,10 @@ type watcher struct {
 	kind     Kind
 	provider string
 	model    string
+	jobID    string
 }
 
 func (w *watcher) Summary(usage stream.Usage, stats stream.Stats) {
-	Record(w.kind, w.provider, w.model, usage)
+	Record(w.kind, w.provider, w.model, w.jobID, usage)
 	w.Sink.Summary(usage, stats)
 }

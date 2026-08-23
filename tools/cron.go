@@ -253,7 +253,8 @@ func (t *CronTool) runNow(ctx context.Context, name string) ToolResult {
 	// like any other: you are notified when it finishes and can get on with
 	// something else meanwhile.
 	bgCtx := context.WithoutCancel(ctx)
-	handle := jobStarter.Start(bgCtx, "cron "+name, func(jobCtx context.Context, jobID string) (string, bool, error) {
+	parentID, _ := ctx.Value(JobIDCtxKey{}).(string)
+	handle := jobStarter.Start(bgCtx, "cron "+name, JobKindCron, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		err := runner.RunJob(jobCtx, job)
 		out := fmt.Sprintf("scheduled job %q finished; output in %s", name, cron.LogPath(cronConfigDir(), name))
 		if err != nil {

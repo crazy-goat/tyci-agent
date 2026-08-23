@@ -16,9 +16,34 @@ const (
 	StatusWaitingAnswer Status = "waiting_answer"
 )
 
+// Kind distinguishes what kind of work a job represents. The registry is
+// otherwise flat and holds every background job — a subagent, a backgrounded
+// shell command, a /btw side-conversation, a scheduled cron run — so this is
+// the one field the Subagents and Bash sidebar tabs (TODO item 1) filter on.
+// KindOther (the zero value) covers a job created before this field existed
+// in any test fixture, and anything not worth a dedicated tab.
+type Kind string
+
+const (
+	KindOther    Kind = ""
+	KindSubagent Kind = "subagent"
+	KindBash     Kind = "bash"
+	KindCron     Kind = "cron"
+)
+
 type Job struct {
 	ID          string
 	Description string
+
+	// Kind says what spawned this job — see Kind's doc comment.
+	Kind Kind
+	// ParentID is the ID of the job that spawned this one, empty when the
+	// spawning context was the top-level conversation (not itself a job).
+	// Set once at Start from the spawn context's own job id (see
+	// tools.JobIDCtxKey) and never mutated afterward — it is what lets the
+	// Subagents tab reconstruct a tree via a parent-link walk instead of
+	// the registry ever holding a live child list.
+	ParentID string
 
 	Status     Status
 	Result     string
@@ -124,6 +149,8 @@ func (j *Job) Snapshot() Job {
 	return Job{
 		ID:           j.ID,
 		Description:  j.Description,
+		Kind:         j.Kind,
+		ParentID:     j.ParentID,
 		Status:       j.Status,
 		Result:       j.Result,
 		Err:          j.Err,

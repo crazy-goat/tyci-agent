@@ -188,7 +188,7 @@ func TestStartBtw_RegistersOnSharedJobRegistry(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{})
 
-	job := JobRegistry.Start(context.Background(), "test job", func(ctx context.Context, _ string) (string, bool, error) {
+	job := JobRegistry.Start(context.Background(), "test job", jobs.KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		close(started)
 		<-release
 		return "done", false, nil
@@ -219,7 +219,7 @@ func TestJobWaiterAdapter_TranslatesStatus(t *testing.T) {
 	reg := jobs.NewRegistry()
 	adapter := jobWaiterAdapter{reg: reg}
 
-	job := reg.Start(context.Background(), "adapter test", func(ctx context.Context, _ string) (string, bool, error) {
+	job := reg.Start(context.Background(), "adapter test", jobs.KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "the answer", false, nil
 	})
 

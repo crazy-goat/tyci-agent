@@ -252,7 +252,8 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 	// it.
 	registered := make(chan struct{})
 
-	handle := jobStarter.Start(jobCtx, "bash: "+label, func(jobCtx context.Context, jobID string) (string, bool, error) {
+	parentID, _ := ctx.Value(JobIDCtxKey{}).(string)
+	handle := jobStarter.Start(jobCtx, "bash: "+label, JobKindBash, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		<-registered
 		defer cancel()
 		defer releaseBackgroundSlot()

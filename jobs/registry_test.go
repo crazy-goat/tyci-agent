@@ -13,7 +13,7 @@ func TestStartAndGet(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
 
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "hello", false, nil
 	})
@@ -48,9 +48,59 @@ func TestStartAndGet(t *testing.T) {
 	}
 }
 
+// TestStart_RecordsKindAndParentID covers item 1's plumbing: a child job
+// created while another job is "in flight" must record which job spawned it
+// and what kind of job it is, so a consumer (the Subagents/Bash sidebar
+// tabs) can filter and reconstruct a tree via a parent-link walk.
+func TestStart_RecordsKindAndParentID(t *testing.T) {
+	r := NewRegistry()
+
+	parent := r.Start(context.Background(), "parent", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
+		return "done", false, nil
+	})
+	r.Wait(context.Background(), parent.ID, time.Second)
+
+	child := r.Start(context.Background(), "child", KindBash, parent.ID, func(ctx context.Context, _ string) (string, bool, error) {
+		return "done", false, nil
+	})
+
+	got, ok := r.Get(child.ID)
+	if !ok {
+		t.Fatalf("expected child job to be found")
+	}
+	if got.Kind != KindBash {
+		t.Fatalf("expected Kind=%q, got %q", KindBash, got.Kind)
+	}
+	if got.ParentID != parent.ID {
+		t.Fatalf("expected ParentID=%q, got %q", parent.ID, got.ParentID)
+	}
+
+	// Snapshot (what List/Get/Wait return) must carry both fields too, not
+	// just the live *Job — display code only ever sees snapshots.
+	snap := got.Snapshot()
+	if snap.Kind != KindBash || snap.ParentID != parent.ID {
+		t.Fatalf("Snapshot dropped Kind/ParentID: got %+v", snap)
+	}
+}
+
+// TestStart_TopLevelJobHasEmptyParentID covers the root case: a job spawned
+// directly from the main conversation (not from inside another job) records
+// no parent — that is how the Subagents tree tells a root row from a nested
+// one, per item 1's spec.
+func TestStart_TopLevelJobHasEmptyParentID(t *testing.T) {
+	r := NewRegistry()
+	job := r.Start(context.Background(), "root", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
+		return "done", false, nil
+	})
+	got, _ := r.Get(job.ID)
+	if got.ParentID != "" {
+		t.Fatalf("expected empty ParentID for a top-level job, got %q", got.ParentID)
+	}
+}
+
 func TestWaitBlocksUntilDone(t *testing.T) {
 	r := NewRegistry()
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		time.Sleep(50 * time.Millisecond)
 		return "done-result", false, nil
 	})
@@ -78,7 +128,7 @@ func TestWaitTimeoutReturnsRunning(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 
-	job := r.Start(context.Background(), "long", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "long", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "eventually", false, nil
 	})
@@ -106,7 +156,7 @@ func TestUnknownID(t *testing.T) {
 
 func TestJobFails(t *testing.T) {
 	r := NewRegistry()
-	job := r.Start(context.Background(), "failing", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "failing", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "", false, errors.New("boom")
 	})
 
@@ -124,7 +174,7 @@ func TestJobFails(t *testing.T) {
 
 func TestJobTruncated(t *testing.T) {
 	r := NewRegistry()
-	job := r.Start(context.Background(), "truncated", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "truncated", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "partial output", true, nil
 	})
 
@@ -145,7 +195,7 @@ func TestListReturnsSnapshots(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 
-	job := r.Start(context.Background(), "listed", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "listed", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "", false, nil
 	})
@@ -174,7 +224,7 @@ func TestSetOnEvent_CalledOnStartAndCompletion(t *testing.T) {
 		mu.Unlock()
 	})
 
-	r.Start(context.Background(), "hooked", func(ctx context.Context, _ string) (string, bool, error) {
+	r.Start(context.Background(), "hooked", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "ok", false, nil
 	})
 
@@ -202,7 +252,7 @@ func TestSetOnEvent_NilIsNoop(t *testing.T) {
 	// nil is the default; explicitly setting it back to nil must not panic.
 	r.SetOnEvent(nil)
 
-	job := r.Start(context.Background(), "no-hook", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "no-hook", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "ok", false, nil
 	})
 
@@ -228,7 +278,7 @@ func TestSetOnEvent_CanCallBackIntoRegistry(t *testing.T) {
 		close(done)
 	})
 
-	r.Start(context.Background(), "callback", func(ctx context.Context, _ string) (string, bool, error) {
+	r.Start(context.Background(), "callback", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "ok", false, nil
 	})
 
@@ -244,7 +294,7 @@ func TestWaitRespectsContextCancellation(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 
-	job := r.Start(context.Background(), "long", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "long", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "eventually", false, nil
 	})
@@ -303,7 +353,7 @@ func TestAskThenAnswer_UnblocksWithRightTextAndStatusFlow(t *testing.T) {
 	var gotFromUser bool
 	var gotOK bool
 
-	job := r.Start(context.Background(), "asker", func(ctx context.Context, jobID string) (string, bool, error) {
+	job := r.Start(context.Background(), "asker", KindOther, "", func(ctx context.Context, jobID string) (string, bool, error) {
 		gotAnswer, gotFromUser, gotOK = r.Ask(ctx, jobID, "what should I do?")
 		close(askDone)
 		return "finished", false, nil
@@ -392,7 +442,7 @@ func TestAsk_UnblockedByContextCancellationReturnsNotOK(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 
-	job := r.Start(context.Background(), "asker", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "asker", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "done", false, nil
 	})
@@ -440,7 +490,7 @@ func TestAnswer_OnJobNotWaitingReturnsFalse(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 
-	job := r.Start(context.Background(), "not-waiting", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "not-waiting", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "done", false, nil
 	})
@@ -467,7 +517,7 @@ func TestSetProgress_UpdatesSnapshotAndUnknownIDReturnsFalse(t *testing.T) {
 	release := make(chan struct{})
 	setOK := make(chan bool, 1)
 
-	job := r.Start(context.Background(), "progressive", func(ctx context.Context, jobID string) (string, bool, error) {
+	job := r.Start(context.Background(), "progressive", KindOther, "", func(ctx context.Context, jobID string) (string, bool, error) {
 		setOK <- r.SetProgress(jobID, "halfway there")
 		<-release
 		return "done", false, nil
@@ -520,14 +570,14 @@ func TestRegistryPrunesOldTerminalJobs(t *testing.T) {
 	// around it: something is still waiting on it.
 	block := make(chan struct{})
 	defer close(block)
-	live := r.Start(context.Background(), "long runner", func(context.Context, string) (string, bool, error) {
+	live := r.Start(context.Background(), "long runner", KindOther, "", func(context.Context, string) (string, bool, error) {
 		<-block
 		return "", false, nil
 	})
 
 	total := maxRetainedTerminalJobs + 10
 	for i := 0; i < total; i++ {
-		job := r.Start(context.Background(), fmt.Sprintf("quick %d", i), func(context.Context, string) (string, bool, error) {
+		job := r.Start(context.Background(), fmt.Sprintf("quick %d", i), KindOther, "", func(context.Context, string) (string, bool, error) {
 			return "done", false, nil
 		})
 		if _, ok := r.Wait(context.Background(), job.ID, 5*time.Second); !ok {
@@ -573,7 +623,7 @@ func TestAsk_TimeoutReplacesAnswerChannelSoStaleAnswersCannotLeak(t *testing.T) 
 	release := make(chan struct{})
 	defer close(release)
 
-	job := r.Start(context.Background(), "asker", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "asker", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "done", false, nil
 	})

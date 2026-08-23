@@ -395,7 +395,7 @@ func TestWiring_R6_WireToolsIdempotent(t *testing.T) {
 	defer unsub()
 
 	release := make(chan struct{})
-	job := JobRegistry.Start(context.Background(), "idempotent", func(ctx context.Context, _ string) (string, bool, error) {
+	job := JobRegistry.Start(context.Background(), "idempotent", jobs.KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "ok", false, nil
 	})
@@ -757,7 +757,7 @@ func TestWiring_C6_SlowSubscriberDoesNotBlockOtherJobs(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			job := reg.Start(context.Background(), fmt.Sprintf("job-%d", i), func(ctx context.Context, _ string) (string, bool, error) {
+			job := reg.Start(context.Background(), fmt.Sprintf("job-%d", i), jobs.KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 				return "ok", false, nil
 			})
 			final, ok := reg.Wait(context.Background(), job.ID, 2*time.Second)
@@ -1130,7 +1130,7 @@ func TestWiring_Q2_AskNeverAnsweredUnblocksViaOwnTimeout(t *testing.T) {
 
 	release := make(chan struct{})
 
-	job := reg.Start(context.Background(), "never answered", func(ctx context.Context, jobID string) (string, bool, error) {
+	job := reg.Start(context.Background(), "never answered", jobs.KindOther, "", func(ctx context.Context, jobID string) (string, bool, error) {
 		<-release
 		return "done", false, nil
 	})

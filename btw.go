@@ -59,8 +59,8 @@ func (j jobHandleAdapter) ID() string { return j.Job.ID }
 // pollable via the wait tool and shows up wherever JobRegistry is inspected.
 type jobStarterAdapter struct{ reg *jobs.Registry }
 
-func (a jobStarterAdapter) Start(ctx context.Context, description string, fn func(context.Context, string) (string, bool, error)) tools.JobHandle {
-	return jobHandleAdapter{a.reg.Start(ctx, description, fn)}
+func (a jobStarterAdapter) Start(ctx context.Context, description, kind, parentID string, fn func(context.Context, string) (string, bool, error)) tools.JobHandle {
+	return jobHandleAdapter{a.reg.Start(ctx, description, jobs.Kind(kind), parentID, fn)}
 }
 
 // jobAskerAdapter satisfies tools.JobAsker over JobRegistry.
@@ -127,7 +127,8 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 	// running after Resume returns.
 	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tools.SubagentTimeoutSec*time.Second)
 
-	job := a.reg.Start(jobCtx, task, func(runCtx context.Context, newJobID string) (string, bool, error) {
+	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+	job := a.reg.Start(jobCtx, task, jobs.KindSubagent, parentID, func(runCtx context.Context, newJobID string) (string, bool, error) {
 		defer cancel()
 		// newJobID is also this resumed conversation's todo-agent id (see
 		// todoAgentIDFromCtx's JobIDCtxKey fallback in tools/todo.go) —
@@ -228,7 +229,8 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 	client, fallbacks := withIsolatedPool(cond.Client(), cfg.Fallbacks)
 	cfg.Fallbacks = fallbacks
 
-	return JobRegistry.Start(ctx, question, func(jobCtx context.Context, jobID string) (string, bool, error) {
+	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+	return JobRegistry.Start(ctx, question, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
 		// jobID is also this /btw side-conversation's todo-agent id (see
 		// todoAgentIDFromCtx's JobIDCtxKey fallback in tools/todo.go) —

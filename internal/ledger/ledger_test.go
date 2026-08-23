@@ -38,9 +38,9 @@ func TestRecord_SplitsMainFromSubagentAndAccumulates(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
 	u := stream.Usage{Input: 1000, Output: 100}
-	Record(Main, "p", "m", u)
-	Record(Main, "p", "m", u)
-	Record(Subagent, "p", "m", u)
+	Record(Main, "p", "m", "", u)
+	Record(Main, "p", "m", "", u)
+	Record(Subagent, "p", "m", "", u)
 
 	s := Get()
 	if len(s.Rows) != 2 {
@@ -59,7 +59,7 @@ func TestRecord_SplitsMainFromSubagentAndAccumulates(t *testing.T) {
 func TestGet_UnpricedRowsCounted(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
-	Record(Main, "nope", "no-such-model", stream.Usage{Input: 500})
+	Record(Main, "nope", "no-such-model", "", stream.Usage{Input: 500})
 	s := Get()
 	if s.Unpriced != 1 {
 		t.Fatalf("Unpriced = %d, want 1", s.Unpriced)
@@ -72,7 +72,7 @@ func TestGet_UnpricedRowsCounted(t *testing.T) {
 func TestRecord_IgnoresEmptyUsage(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
-	Record(Main, "p", "m", stream.Usage{})
+	Record(Main, "p", "m", "", stream.Usage{})
 	if len(Get().Rows) != 0 {
 		t.Fatal("an all-zero usage should not create a row")
 	}
@@ -80,7 +80,7 @@ func TestRecord_IgnoresEmptyUsage(t *testing.T) {
 
 func TestReset_ClearsEverything(t *testing.T) {
 	Reset()
-	Record(Main, "p", "m", stream.Usage{Input: 10})
+	Record(Main, "p", "m", "", stream.Usage{Input: 10})
 	Reset()
 	if s := Get(); len(s.Rows) != 0 || s.TotalUSD() != 0 {
 		t.Fatalf("after Reset: %+v, want empty", s)

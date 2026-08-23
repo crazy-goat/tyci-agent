@@ -176,7 +176,7 @@ func TestRealRegistry_SatisfiesJobActivityToucher(t *testing.T) {
 	withActivityToucher(t, reg)
 
 	release := make(chan struct{})
-	job := reg.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := reg.Start(context.Background(), "demo", jobs.KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "", false, nil
 	})

@@ -327,7 +327,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// sink, so a child that runs for ten minutes shows up in the parent's
 	// cost figure as it works rather than only when it returns — and a child
 	// that dies on its last iteration still accounts for what it spent.
-	_, err = agent.Run(ctx, mc, ledger.Watch(sink, ledger.Subagent, mc.Provider(), mc.Model()), &msgs, cfg)
+	_, err = agent.Run(ctx, mc, ledger.Watch(sink, ledger.Subagent, mc.Provider(), mc.Model(), jobID), &msgs, cfg)
 	text := strings.TrimSpace(collectedText())
 
 	// truncated is the iteration-cap cutoff; deadlineExceeded is the

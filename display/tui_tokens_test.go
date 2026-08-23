@@ -103,8 +103,8 @@ func TestBuildUsageDetail_HasTurnAndSessionSections(t *testing.T) {
 	ledger.Reset()
 	t.Cleanup(pricing.Reset)
 	t.Cleanup(ledger.Reset)
-	ledger.Record(ledger.Main, "p", "m", stream.Usage{Input: 1000, Output: 100})
-	ledger.Record(ledger.Subagent, "p", "m", stream.Usage{Input: 5000, Output: 200})
+	ledger.Record(ledger.Main, "p", "m", "", stream.Usage{Input: 1000, Output: 100})
+	ledger.Record(ledger.Subagent, "p", "m", "", stream.Usage{Input: 5000, Output: 200})
 
 	m := TuiModel{modelName: "m", lastUsage: stream.Usage{Input: 1000, Output: 100, CacheRead: 400}}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")
@@ -129,7 +129,7 @@ func TestBuildUsageDetail_HintsAtRefreshWhenUnpriced(t *testing.T) {
 	t.Cleanup(pricing.Reset)
 	t.Cleanup(ledger.Reset)
 
-	ledger.Record(ledger.Main, "unpriced", "m", stream.Usage{Input: 10, Output: 10})
+	ledger.Record(ledger.Main, "unpriced", "m", "", stream.Usage{Input: 10, Output: 10})
 
 	m := TuiModel{modelName: "m"}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")
@@ -152,7 +152,7 @@ func TestBuildUsageDetail_NoHintForGenuinelyFreeModel(t *testing.T) {
 	t.Cleanup(pricing.Reset)
 	t.Cleanup(ledger.Reset)
 
-	ledger.Record(ledger.Main, "mixed", "free", stream.Usage{Input: 10, Output: 10})
+	ledger.Record(ledger.Main, "mixed", "free", "", stream.Usage{Input: 10, Output: 10})
 
 	m := TuiModel{modelName: "free"}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")
@@ -183,7 +183,7 @@ func TestBuildUsageDetail_HintsWhenUsedProviderUnpricedEvenIfAnotherProviderIsPr
 	t.Cleanup(ledger.Reset)
 
 	// The session's usage is on the unpriced provider, not the priced one.
-	ledger.Record(ledger.Main, "unpriced-provider", "u", stream.Usage{Input: 10, Output: 10})
+	ledger.Record(ledger.Main, "unpriced-provider", "u", "", stream.Usage{Input: 10, Output: 10})
 
 	m := TuiModel{modelName: "u"}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")

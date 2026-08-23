@@ -59,7 +59,8 @@ func ForkChildJob(ctx context.Context, cond *conductor.Conductor, base []connect
 	client, fallbacks := withIsolatedPool(cond.Client(), cfg.Fallbacks)
 	cfg.Fallbacks = fallbacks
 
-	return JobRegistry.Start(ctx, task, func(jobCtx context.Context, jobID string) (string, bool, error) {
+	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+	return JobRegistry.Start(ctx, task, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
 		defer tools.MarkTodoAgentDone(jobID)
 		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)

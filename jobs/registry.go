@@ -46,11 +46,13 @@ func nextID() string {
 // must be available with zero race window right as the goroutine starts;
 // passing it as a plain argument is simplest and race-free since the ID is
 // already assigned before the goroutine is launched.
-func (r *Registry) Start(ctx context.Context, description string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) *Job {
+func (r *Registry) Start(ctx context.Context, description string, kind Kind, parentID string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) *Job {
 	now := time.Now()
 	job := &Job{
 		ID:          nextID(),
 		Description: description,
+		Kind:        kind,
+		ParentID:    parentID,
 		Status:      StatusRunning,
 		StartedAt:   now,
 		done:        make(chan struct{}),
