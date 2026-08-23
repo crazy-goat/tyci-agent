@@ -37,11 +37,20 @@ func (k Kind) String() string {
 	return "main"
 }
 
-// Row is the accumulated usage of one model, for one Kind.
+// Row is the accumulated usage of one model, for one Kind, for one job.
+//
+// JobID joins a subagent's own job id into the row's identity so that a
+// child's tokens are separately trackable instead of every child on the same
+// model collapsing into one shared "subagent" bucket (TODO item 1's
+// Subagents tab needs per-child counts to build its tree). It is empty for
+// the main conversation (which is not a job) and for any call made outside a
+// tracked job — Get/Snapshot's rollups (MainUSD, SubagentUSD, Main, Sub) do
+// not key off JobID at all, so they stay correct regardless.
 type Row struct {
 	Kind     Kind
 	Provider string
 	Model    string
+	JobID    string
 	Usage    stream.Usage
 	// USD is the cost of Usage, or 0 when Priced is false.
 	USD    float64
@@ -70,6 +79,7 @@ type key struct {
 	kind     Kind
 	provider string
 	model    string
+	jobID    string
 }
 
 var (
@@ -78,18 +88,20 @@ var (
 	order []key
 )
 
-// Record adds one agent run's usage. Calling it with an all-zero usage is a
-// no-op: a turn that failed before the first token should not create a row.
-func Record(kind Kind, provider, model string, u stream.Usage) {
+// Record adds one agent run's usage, attributing it to jobID (empty for the
+// main conversation, or for a call made outside a tracked job — see Row's
+// doc comment). Calling it with an all-zero usage is a no-op: a turn that
+// failed before the first token should not create a row.
+func Record(kind Kind, provider, model, jobID string, u stream.Usage) {
 	if u == (stream.Usage{}) {
 		return
 	}
-	k := key{kind: kind, provider: provider, model: model}
+	k := key{kind: kind, provider: provider, model: model, jobID: jobID}
 	mu.Lock()
 	defer mu.Unlock()
 	r, ok := rows[k]
 	if !ok {
-		r = &Row{Kind: kind, Provider: provider, Model: model}
+		r = &Row{Kind: kind, Provider: provider, Model: model, JobID: jobID}
 		rows[k] = r
 		order = append(order, k)
 	}
@@ -151,6 +163,99 @@ func Get() Snapshot {
 		}
 	}
 	return s
+}
+
+// ByModel aggregates Get()'s rows back down to one row per {Kind, Provider,
+// Model} — the shape a per-model breakdown (the Tokens tab's session list)
+// wants, regardless of how many separate jobs (the main conversation, or any
+// number of subagents) contributed to it. Without this, joining a job id
+// into Row's key (so the Subagents tab can track a child's tokens
+// separately — see Row's doc comment) would otherwise leak into every OTHER
+// consumer of Get().Rows too: twelve subagents on the same model would show
+// as twelve identical-looking lines instead of one aggregated one. Returned
+// rows carry no JobID (it no longer identifies a single job) and are
+// ordered by first-seen model, mirroring Get()'s own ordering.
+func ByModel() []Row {
+	mu.Lock()
+	defer mu.Unlock()
+	type mkey struct {
+		kind     Kind
+		provider string
+		model    string
+	}
+	idx := map[mkey]int{}
+	var out []Row
+	for _, k := range order {
+		r := rows[k]
+		mk := mkey{kind: k.kind, provider: k.provider, model: k.model}
+		if i, ok := idx[mk]; ok {
+			agg := &out[i]
+			agg.Usage.Add(r.Usage)
+			agg.USD += r.USD
+			agg.Runs += r.Runs
+			if !r.Priced {
+				agg.Priced = false
+			}
+			continue
+		}
+		idx[mk] = len(out)
+		out = append(out, Row{
+			Kind: r.Kind, Provider: r.Provider, Model: r.Model,
+			Usage: r.Usage, USD: r.USD, Priced: r.Priced, Runs: r.Runs,
+		})
+	}
+	return out
+}
+
+// JobUsage is one job's own usage and cost, aggregated across every model it
+// called — a job can fall back across models mid-run, and the Subagents tab
+// wants one figure per row, not one per model.
+type JobUsage struct {
+	Usage stream.Usage
+	// USD is priced usage only; see Priced.
+	USD float64
+	// Priced is false when any model this job used has no catalog price, so
+	// USD understates the true cost — the caller is expected to mark that
+	// the same way the status bar does (see display.formatCost's "+?").
+	Priced bool
+}
+
+// UsageByJob returns each tracked job's own usage and cost, keyed by job id.
+// Rows with an empty JobID (the main conversation, or a call made outside a
+// tracked job) are excluded — this exists for the Subagents tab, which has
+// no use for either.
+//
+// Deliberately per-job, not rolled up across a parent-child tree: tokens are
+// not additive across models in any useful sense (see TODO.md item 1), so
+// only the caller — walking jobs.Job.ParentID — decides whether and how to
+// sum cost across a subtree.
+func UsageByJob() map[string]JobUsage {
+	mu.Lock()
+	defer mu.Unlock()
+	out := map[string]JobUsage{}
+	priced := map[string]bool{}
+	for _, k := range order {
+		if k.jobID == "" {
+			continue
+		}
+		r := rows[k]
+		agg := out[k.jobID]
+		agg.Usage.Add(r.Usage)
+		agg.USD += r.USD
+		out[k.jobID] = agg
+		if _, seen := priced[k.jobID]; !seen {
+			priced[k.jobID] = true
+		}
+		if !r.Priced {
+			priced[k.jobID] = false
+		}
+	}
+	for id, p := range priced {
+		agg := out[id]
+		agg.Priced = p
+		out[id] = agg
+	}
+	return out
 }
 
 // Reset clears the ledger. /new starts a new conversation, and carrying the

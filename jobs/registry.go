@@ -46,11 +46,13 @@ func nextID() string {
 // must be available with zero race window right as the goroutine starts;
 // passing it as a plain argument is simplest and race-free since the ID is
 // already assigned before the goroutine is launched.
-func (r *Registry) Start(ctx context.Context, description string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) *Job {
+func (r *Registry) Start(ctx context.Context, description string, kind Kind, parentID string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) *Job {
 	now := time.Now()
 	job := &Job{
 		ID:          nextID(),
 		Description: description,
+		Kind:        kind,
+		ParentID:    parentID,
 		Status:      StatusRunning,
 		StartedAt:   now,
 		done:        make(chan struct{}),
@@ -370,7 +372,17 @@ func (r *Registry) Resolve(id string) (string, bool) {
 // that backgrounds a few hundred commands would therefore retain tens of MB
 // of output nobody can reach any more. 50 is well past the point where a
 // model would still poll an old job_id with "wait".
-const maxRetainedTerminalJobs = 50
+//
+// Exported as MaxRetainedTerminalJobs so any other mirror of this registry's
+// contents (e.g. display.TuiModel.backgroundJobs, fed by SetJobEventBus) can
+// prune itself to the same bound instead of drifting from — and having its
+// footer text lie about — the registry's actual retention.
+const maxRetainedTerminalJobs = MaxRetainedTerminalJobs
+
+// MaxRetainedTerminalJobs is maxRetainedTerminalJobs's exported mirror — see
+// its doc comment for the rationale. A plain const alias (not a duplicated
+// literal) so the two can never drift apart.
+const MaxRetainedTerminalJobs = 50
 
 // pruneTerminalLocked drops the oldest finished jobs beyond
 // maxRetainedTerminalJobs. Caller must hold r.mu.

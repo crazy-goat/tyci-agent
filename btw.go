@@ -12,6 +12,7 @@ import (
 	"github.com/decodo/tyci/conductor"
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/display"
+	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
@@ -59,8 +60,8 @@ func (j jobHandleAdapter) ID() string { return j.Job.ID }
 // pollable via the wait tool and shows up wherever JobRegistry is inspected.
 type jobStarterAdapter struct{ reg *jobs.Registry }
 
-func (a jobStarterAdapter) Start(ctx context.Context, description string, fn func(context.Context, string) (string, bool, error)) tools.JobHandle {
-	return jobHandleAdapter{a.reg.Start(ctx, description, fn)}
+func (a jobStarterAdapter) Start(ctx context.Context, description, kind, parentID string, fn func(context.Context, string) (string, bool, error)) tools.JobHandle {
+	return jobHandleAdapter{a.reg.Start(ctx, description, jobs.Kind(kind), parentID, fn)}
 }
 
 // jobAskerAdapter satisfies tools.JobAsker over JobRegistry.
@@ -127,7 +128,8 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 	// running after Resume returns.
 	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tools.SubagentTimeoutSec*time.Second)
 
-	job := a.reg.Start(jobCtx, task, func(runCtx context.Context, newJobID string) (string, bool, error) {
+	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+	job := a.reg.Start(jobCtx, task, jobs.KindSubagent, parentID, func(runCtx context.Context, newJobID string) (string, bool, error) {
 		defer cancel()
 		// newJobID is also this resumed conversation's todo-agent id (see
 		// todoAgentIDFromCtx's JobIDCtxKey fallback in tools/todo.go) —
@@ -137,7 +139,10 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, newJobID)
 
 		c := &collector{}
-		_, err := agent.Run(runCtx, entry.mc, c, &forked, entry.cfg)
+		// See ForkChildJob's identical comment (fork.go): without this the
+		// resumed conversation's real spend never reaches internal/ledger,
+		// and the Subagents tree would render it as free.
+		_, err := agent.Run(runCtx, entry.mc, ledger.Watch(c, ledger.Subagent, entry.mc.Provider(), entry.mc.Model(), newJobID), &forked, entry.cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {
 			err = nil
@@ -228,7 +233,8 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 	client, fallbacks := withIsolatedPool(cond.Client(), cfg.Fallbacks)
 	cfg.Fallbacks = fallbacks
 
-	return JobRegistry.Start(ctx, question, func(jobCtx context.Context, jobID string) (string, bool, error) {
+	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+	return JobRegistry.Start(ctx, question, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
 		// jobID is also this /btw side-conversation's todo-agent id (see
 		// todoAgentIDFromCtx's JobIDCtxKey fallback in tools/todo.go) —
@@ -243,7 +249,11 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		// shared with any other job, so mutating it right before the one
 		// agent.Run call that uses it is safe.
 		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
-		_, err := agent.Run(jobCtx, client, sink, &forked, cfg)
+		// See ForkChildJob's identical comment (fork.go): a /btw
+		// side-conversation spends the parent's money like any other child
+		// and must record against the same ledger, or it renders as free in
+		// the Subagents tree.
+		_, err := agent.Run(jobCtx, client, ledger.Watch(sink, ledger.Subagent, client.Provider(), client.Model(), jobID), &forked, cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {
 			err = nil

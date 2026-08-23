@@ -12,7 +12,7 @@ import (
 func TestPostDrainMessages_Basic(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "done", false, nil
 	})
@@ -33,7 +33,7 @@ func TestPostDrainMessages_Basic(t *testing.T) {
 func TestDrainMessages_Empty(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "done", false, nil
 	})
@@ -71,7 +71,7 @@ func TestDrainMessages_UnknownID(t *testing.T) {
 func TestPostDrainMessages_MultiplePostsBeforeDrain(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "done", false, nil
 	})
@@ -98,7 +98,7 @@ func TestPostDrainMessages_MultiplePostsBeforeDrain(t *testing.T) {
 func TestRegistry_Resolve(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "done", false, nil
 	})
@@ -138,7 +138,7 @@ func TestRegistry_Resolve(t *testing.T) {
 func TestRegistry_PostThenDrain_ConcurrentSafe(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "done", false, nil
 	})

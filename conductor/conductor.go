@@ -216,7 +216,7 @@ func (c *Conductor) Submit(ctx context.Context, prompt string) (stream.Usage, er
 	// response instead of only when the whole turn ends — and it keeps the
 	// figure honest when a turn is interrupted mid-way, since everything
 	// already spent has already been recorded.
-	sink := ledger.Watch(c.sink, ledger.Main, c.client.Provider(), c.client.Model())
+	sink := ledger.Watch(c.sink, ledger.Main, c.client.Provider(), c.client.Model(), "")
 	usage, err := agent.Run(runCtx, c.client, sink, &c.conversation, c.cfg)
 	c.usage.Add(usage)
 	return usage, err

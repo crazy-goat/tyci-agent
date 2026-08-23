@@ -34,12 +34,45 @@ func (m *TuiModel) applyJobUpdate(j jobs.Job) {
 		m.backgroundJobs = make(map[string]jobs.Job)
 	}
 	m.backgroundJobs[j.ID] = j
+	m.pruneBackgroundJobsLocked()
 	// The panel's height depends on len(backgroundJobs), which changes the
 	// message viewport height (see renderFrame's jobsH). invalidateTotalLines
 	// also marks the cached message region dirty so a job starting/finishing
 	// while the region is otherwise unchanged (same scroll/width/selection)
 	// doesn't render with a stale height — see buildMessageRegionCached.
 	m.invalidateTotalLines()
+}
+
+// pruneBackgroundJobsLocked drops the oldest finished jobs from
+// backgroundJobs beyond jobs.MaxRetainedTerminalJobs, mirroring
+// jobs.Registry's own eviction (pruneTerminalLocked) exactly. Without this,
+// backgroundJobs — this mirror, fed by SetJobEventBus — grows unboundedly
+// for the whole session even though the registry itself does not, which
+// left the sidebar's Bash/Subagents tabs (1) claiming a "last 50" bound they
+// did not actually have, and (2) able to list a job the registry had
+// already evicted, whose resume/kill would then fail against a registry
+// that no longer has it. "Locked" in the name only by convention with the
+// registry's method of the same shape — TuiModel has no mutex of its own;
+// bubbletea's single event-loop goroutine is what makes this safe.
+func (m *TuiModel) pruneBackgroundJobsLocked() {
+	var terminal []jobs.Job
+	for _, j := range m.backgroundJobs {
+		switch j.Status {
+		case jobs.StatusRunning, jobs.StatusWaitingAnswer:
+			// Still live — never pruned, same as the registry.
+		default:
+			terminal = append(terminal, j)
+		}
+	}
+	if len(terminal) <= jobs.MaxRetainedTerminalJobs {
+		return
+	}
+	sort.Slice(terminal, func(i, k int) bool {
+		return terminal[i].FinishedAt.Before(terminal[k].FinishedAt)
+	})
+	for _, j := range terminal[:len(terminal)-jobs.MaxRetainedTerminalJobs] {
+		delete(m.backgroundJobs, j.ID)
+	}
 }
 
 // sortedBackgroundJobs returns backgroundJobs as a slice, newest-first

@@ -66,6 +66,59 @@ func TestLuaToolLoading(t *testing.T) {
 	}
 }
 
+// TestLuaToolRun_RecordsHistory covers item 1's Lua sidebar tab data source:
+// every Run call — success or failure — must land in LuaRunHistory with a
+// name, timing, and outcome, since the tab has nothing else real to show.
+func TestLuaToolRun_RecordsHistory(t *testing.T) {
+	tmpDir := t.TempDir()
+	ok := `return {schema = {name = "history-ok"}, run = function(ctx, args) return {success = true, content = "fine"} end}`
+	bad := `return {schema = {name = "history-bad"}, run = function(ctx, args) error("boom") end}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "ok.lua"), []byte(ok), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "bad.lua"), []byte(bad), 0644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadLuaTools(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadLuaTools: %v", err)
+	}
+
+	before := len(LuaRunHistory())
+	for _, tl := range loaded {
+		tl.Run(context.Background(), map[string]any{})
+	}
+
+	hist := LuaRunHistory()
+	if len(hist) != before+2 {
+		t.Fatalf("expected %d history entries, got %d", before+2, len(hist))
+	}
+	var sawOK, sawBad bool
+	for _, r := range hist[before:] {
+		if r.StartedAt.IsZero() {
+			t.Errorf("run %q has zero StartedAt", r.Name)
+		}
+		switch r.Name {
+		case "history-ok":
+			sawOK = true
+			if !r.Success {
+				t.Errorf("expected history-ok to succeed, got Error=%q", r.Error)
+			}
+		case "history-bad":
+			sawBad = true
+			if r.Success {
+				t.Errorf("expected history-bad to fail")
+			}
+			if r.Error == "" {
+				t.Errorf("expected history-bad to carry an error message")
+			}
+		}
+	}
+	if !sawOK || !sawBad {
+		t.Fatalf("missing expected history entries: sawOK=%v sawBad=%v", sawOK, sawBad)
+	}
+}
+
 // TestLuaToolSchemaVisibleToModel guards against the item-9 regression: a
 // loaded Lua tool's name/description/parameters must show up in the schema
 // the model is actually offered (GetToolsSchema and, transitively,

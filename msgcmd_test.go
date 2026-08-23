@@ -42,7 +42,7 @@ func TestParseMsgCommand(t *testing.T) {
 // newRunningTestJob starts a job on reg that blocks until release is
 // closed, for tests that need a real, resolvable, running job id.
 func newRunningTestJob(reg *jobs.Registry, release <-chan struct{}) *jobs.Job {
-	return reg.Start(context.Background(), "test job", func(ctx context.Context, _ string) (string, bool, error) {
+	return reg.Start(context.Background(), "test job", jobs.KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "done", false, nil
 	})

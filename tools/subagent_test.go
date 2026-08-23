@@ -1423,8 +1423,8 @@ func (h testJobHandle) ID() string { return h.id }
 
 type testJobStarter struct{ reg *jobs.Registry }
 
-func (s testJobStarter) Start(ctx context.Context, description string, fn func(context.Context, string) (string, bool, error)) JobHandle {
-	return testJobHandle{s.reg.Start(ctx, description, fn).ID}
+func (s testJobStarter) Start(ctx context.Context, description, kind, parentID string, fn func(context.Context, string) (string, bool, error)) JobHandle {
+	return testJobHandle{s.reg.Start(ctx, description, jobs.Kind(kind), parentID, fn).ID}
 }
 
 type testJobWaiter struct{ reg *jobs.Registry }

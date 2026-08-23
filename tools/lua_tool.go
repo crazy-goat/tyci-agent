@@ -7,10 +7,57 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 	"github.com/yuin/gopher-lua/parse"
 )
+
+// LuaRun records one execution of a Lua tool script: when it started, how
+// long it took, and whether it succeeded. Lua tools (unlike bash) always run
+// synchronously to completion inside one Run call — there is no
+// backgrounded, still-running state to show — so this is a thin, real
+// history rather than a live registry, for the sidebar's Lua tab (TODO
+// item 1).
+type LuaRun struct {
+	Name      string
+	StartedAt time.Time
+	Duration  time.Duration
+	Success   bool
+	Error     string
+}
+
+// maxRetainedLuaRuns bounds the in-memory run history, mirroring
+// jobs.maxRetainedTerminalJobs: process-local, unbounded growth is not
+// acceptable for a long session.
+const maxRetainedLuaRuns = 50
+
+var (
+	luaRunsMu sync.Mutex
+	luaRuns   []LuaRun
+)
+
+// recordLuaRun appends r to the bounded history, dropping the oldest run
+// once the cap is exceeded.
+func recordLuaRun(r LuaRun) {
+	luaRunsMu.Lock()
+	defer luaRunsMu.Unlock()
+	luaRuns = append(luaRuns, r)
+	if len(luaRuns) > maxRetainedLuaRuns {
+		luaRuns = luaRuns[len(luaRuns)-maxRetainedLuaRuns:]
+	}
+}
+
+// LuaRunHistory returns the most recent Lua tool runs (oldest first, capped
+// at maxRetainedLuaRuns) — the Lua sidebar tab's data source. A copy, so the
+// caller can't mutate the shared history.
+func LuaRunHistory() []LuaRun {
+	luaRunsMu.Lock()
+	defer luaRunsMu.Unlock()
+	out := make([]LuaRun, len(luaRuns))
+	copy(out, luaRuns)
+	return out
+}
 
 // LuaTool implements the Tool interface for user-defined Lua scripts.
 type LuaTool struct {
@@ -80,8 +127,23 @@ func newTopLevelFunction(L *lua.LState, proto *lua.FunctionProto) *lua.LFunction
 	}
 }
 
-// Run executes the Lua tool with the given input.
+// Run executes the Lua tool with the given input, recording it into the
+// process-local run history (see LuaRunHistory) regardless of outcome.
 func (t *LuaTool) Run(ctx context.Context, input map[string]any) ToolResult {
+	started := time.Now()
+	res := t.run(ctx, input)
+	recordLuaRun(LuaRun{
+		Name:      t.name,
+		StartedAt: started,
+		Duration:  time.Since(started),
+		Success:   res.Success,
+		Error:     res.Error,
+	})
+	return res
+}
+
+// run is Run's actual body, unwrapped so Run can time and record it above.
+func (t *LuaTool) run(ctx context.Context, input map[string]any) ToolResult {
 	proto, err := t.loadProto()
 	if err != nil {
 		return ToolResult{

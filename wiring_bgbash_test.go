@@ -217,7 +217,7 @@ func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
 
 	asked := make(chan struct{})
 	go func() {
-		handle := reg.Start(context.Background(), "review the auth flow",
+		handle := reg.Start(context.Background(), "review the auth flow", jobs.KindOther, "",
 			func(ctx context.Context, jobID string) (string, bool, error) {
 				close(asked)
 				ans, _, ok := reg.Ask(ctx, jobID, "should I also change the tests?")

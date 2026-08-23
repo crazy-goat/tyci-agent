@@ -106,6 +106,33 @@ func (m TuiModel) buildStatus() string {
 	return left + right
 }
 
+// statusBarY returns the terminal row the status bar renders on: row 0 is
+// the topbar, rows [1, messageRegionHeight()] are the fixed-height message
+// region (padded to exactly that many rows — see buildMessageRegion), so the
+// status bar always lands right after it regardless of what renders below
+// (jobs panel, queue panel, file-complete popup, input).
+func (m TuiModel) statusBarY() int {
+	return 1 + m.messageRegionHeight()
+}
+
+// statusRightHit reports whether screen column x falls within the status
+// bar's right-hand side (buildContextCost's rendered text plus its
+// surrounding padding) — the "context figure" that opens the sidebar's
+// Tokens tab on click. Deliberately generous (the whole trailing run of
+// columns, not just the exact glyphs) rather than replicating buildStatus's
+// padding arithmetic pixel-for-pixel: a slightly wider click target is a
+// better trade than silently missing a click because of an off-by-one.
+func (m TuiModel) statusRightHit(x int) bool {
+	right := m.buildContextCost()
+	if right == "" {
+		return false
+	}
+	rightW := lipgloss.Width(right)
+	// +2 for the padding buildStatus reserves before/after the right part.
+	start := m.width - rightW - 2
+	return x >= start
+}
+
 // truncateStatusText hard-caps s to at most maxW columns (lipgloss.Width,
 // which counts display width, not bytes or runes), replacing anything past
 // that with a trailing "…". Truncation is rune-based (not byte slicing) —

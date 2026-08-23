@@ -1,10 +1,12 @@
 package display
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/internal/pricing"
 	"github.com/decodo/tyci/stream"
@@ -103,8 +105,8 @@ func TestBuildUsageDetail_HasTurnAndSessionSections(t *testing.T) {
 	ledger.Reset()
 	t.Cleanup(pricing.Reset)
 	t.Cleanup(ledger.Reset)
-	ledger.Record(ledger.Main, "p", "m", stream.Usage{Input: 1000, Output: 100})
-	ledger.Record(ledger.Subagent, "p", "m", stream.Usage{Input: 5000, Output: 200})
+	ledger.Record(ledger.Main, "p", "m", "", stream.Usage{Input: 1000, Output: 100})
+	ledger.Record(ledger.Subagent, "p", "m", "", stream.Usage{Input: 5000, Output: 200})
 
 	m := TuiModel{modelName: "m", lastUsage: stream.Usage{Input: 1000, Output: 100, CacheRead: 400}}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")
@@ -129,7 +131,7 @@ func TestBuildUsageDetail_HintsAtRefreshWhenUnpriced(t *testing.T) {
 	t.Cleanup(pricing.Reset)
 	t.Cleanup(ledger.Reset)
 
-	ledger.Record(ledger.Main, "unpriced", "m", stream.Usage{Input: 10, Output: 10})
+	ledger.Record(ledger.Main, "unpriced", "m", "", stream.Usage{Input: 10, Output: 10})
 
 	m := TuiModel{modelName: "m"}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")
@@ -152,7 +154,7 @@ func TestBuildUsageDetail_NoHintForGenuinelyFreeModel(t *testing.T) {
 	t.Cleanup(pricing.Reset)
 	t.Cleanup(ledger.Reset)
 
-	ledger.Record(ledger.Main, "mixed", "free", stream.Usage{Input: 10, Output: 10})
+	ledger.Record(ledger.Main, "mixed", "free", "", stream.Usage{Input: 10, Output: 10})
 
 	m := TuiModel{modelName: "free"}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")
@@ -183,7 +185,7 @@ func TestBuildUsageDetail_HintsWhenUsedProviderUnpricedEvenIfAnotherProviderIsPr
 	t.Cleanup(ledger.Reset)
 
 	// The session's usage is on the unpriced provider, not the priced one.
-	ledger.Record(ledger.Main, "unpriced-provider", "u", stream.Usage{Input: 10, Output: 10})
+	ledger.Record(ledger.Main, "unpriced-provider", "u", "", stream.Usage{Input: 10, Output: 10})
 
 	m := TuiModel{modelName: "u"}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")
@@ -200,6 +202,109 @@ func writeTestCatalog(t *testing.T, homeDir, body string) {
 	}
 	if err := os.WriteFile(dir+"/providers.json", []byte(body), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestBuildUsageDetail_AggregatesSameModelAcrossManySubagents guards the
+// regression a per-job ledger key introduced: many subagents sharing a
+// model must render as one aggregated session line, not one per job id.
+func TestBuildUsageDetail_AggregatesSameModelAcrossManySubagents(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	for i := 0; i < 12; i++ {
+		ledger.Record(ledger.Subagent, "p", "m", fmt.Sprintf("job-%d", i), stream.Usage{Input: 100, Output: 10})
+	}
+
+	m := TuiModel{modelName: "m"}
+	lines := m.buildUsageDetail(40)
+	count := 0
+	for _, l := range lines {
+		if strings.Contains(l, "↳ m") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 aggregated line for 12 same-model subagents, got %d:\n%s", count, strings.Join(lines, "\n"))
+	}
+}
+
+// TestBuildUsageDetail_NarrowWidthKeepsRowsIntact covers the sidebar's
+// actual inner width (as low as ~34 columns): the per-model row must adapt
+// its label column instead of the fixed 22-column format truncating badly
+// or overflowing the line.
+func TestBuildUsageDetail_NarrowWidthKeepsRowsIntact(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	ledger.Record(ledger.Main, "p", "a-fairly-long-model-name-here", "", stream.Usage{Input: 100, Output: 10})
+
+	// 30 is comfortably below the sidebar's real floor (contentWidth is
+	// never under ~34 — see sidebarLayout), but still narrow enough to prove
+	// the row adapts rather than assuming the old fixed 22-column label.
+	const width = 30
+	m := TuiModel{modelName: "m"}
+	for _, l := range m.buildUsageDetail(width) {
+		if lipgloss.Width(l) > width {
+			t.Errorf("line %q is %d columns wide, want <= %d", l, lipgloss.Width(l), width)
+		}
+	}
+}
+
+// TestBuildUsageDetail_PartiallyPricedRowKeepsKnownDollars covers the
+// review finding that ByModel's aggregate lost real, known dollars: when
+// the same model is recorded once before a catalog refresh (unpriced) and
+// once after (priced) — two different jobs, same model — the aggregated
+// row's Priced flag is correctly false (not FULLY priced), but its USD
+// still holds the known-priced job's real cost. Rendering that as a flat
+// "$?" discarded it; it must render as "$<amount>+?" instead, mirroring
+// formatCost's own convention for a partially-priced total.
+func TestBuildUsageDetail_PartiallyPricedRowKeepsKnownDollars(t *testing.T) {
+	unprocedDir := t.TempDir()
+	t.Setenv("HOME", unprocedDir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	// job-1 recorded while the catalog has no price for "m" at all.
+	ledger.Record(ledger.Subagent, "p", "m", "job-1", stream.Usage{Input: 1_000_000, Output: 100_000})
+
+	// Simulate a `tyci provider refresh`: the catalog now prices "m".
+	pricedDir := t.TempDir()
+	writeTestCatalog(t, pricedDir, `{"p":{"id":"p","models":{"m":{"id":"m","name":"m","cost":{"input":3,"output":15}}}}}`)
+	t.Setenv("HOME", pricedDir)
+	pricing.Reset()
+
+	// job-2, same model, recorded after the refresh — this one prices
+	// cleanly.
+	ledger.Record(ledger.Subagent, "p", "m", "job-2", stream.Usage{Input: 1_000_000, Output: 100_000})
+
+	byModel := ledger.ByModel()
+	if len(byModel) != 1 {
+		t.Fatalf("expected 1 aggregated row, got %d: %+v", len(byModel), byModel)
+	}
+	row := byModel[0]
+	if row.Priced {
+		t.Fatalf("expected the aggregate to be marked not-fully-priced, got Priced=true")
+	}
+	if row.USD <= 0 {
+		t.Fatalf("expected the aggregate to still carry job-2's known cost, got USD=%v", row.USD)
+	}
+
+	m := TuiModel{modelName: "m"}
+	lines := strings.Join(m.buildUsageDetail(40), "\n")
+	if strings.Contains(lines, "$?") {
+		t.Fatalf("expected the known dollar amount to survive, not a flat \"$?\":\n%s", lines)
+	}
+	if !strings.Contains(lines, "+?") {
+		t.Fatalf("expected the partially-priced marker \"+?\" on the aggregated row:\n%s", lines)
 	}
 }
 

@@ -17,7 +17,7 @@ import (
 func TestSnapshot_FreshJobIdleSinceStart(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "", false, nil
 	})
@@ -40,7 +40,7 @@ func TestSnapshot_FreshJobIdleSinceStart(t *testing.T) {
 func TestTouchActivity_UpdatesSnapshot(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "", false, nil
 	})
@@ -93,7 +93,7 @@ func TestTouchActivity_NeverGoesBackward(t *testing.T) {
 func TestTouchActivity_AdvancesMonotonicallyInThePlainCase(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
 		return "", false, nil
 	})
@@ -119,7 +119,7 @@ func TestTouchActivity_AdvancesMonotonicallyInThePlainCase(t *testing.T) {
 // LastActivity comes back zero after Wait.
 func TestSnapshot_LastActivityPersistsPastCompletion(t *testing.T) {
 	r := NewRegistry()
-	job := r.Start(context.Background(), "demo", func(ctx context.Context, jobID string) (string, bool, error) {
+	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, jobID string) (string, bool, error) {
 		r.TouchActivity(jobID)
 		return "done", false, nil
 	})

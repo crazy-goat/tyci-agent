@@ -9,6 +9,7 @@ import (
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/conductor"
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
@@ -59,13 +60,20 @@ func ForkChildJob(ctx context.Context, cond *conductor.Conductor, base []connect
 	client, fallbacks := withIsolatedPool(cond.Client(), cfg.Fallbacks)
 	cfg.Fallbacks = fallbacks
 
-	return JobRegistry.Start(ctx, task, func(jobCtx context.Context, jobID string) (string, bool, error) {
+	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+	return JobRegistry.Start(ctx, task, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
 		defer tools.MarkTodoAgentDone(jobID)
 		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
 
 		c := &collector{}
-		_, err := agent.Run(jobCtx, client, c, &forked, cfg)
+		// Same accounting as any other child conversation (main.go's
+		// agentRunner.run, conductor.go's own turn): without this the fork
+		// spends real tokens that never reach internal/ledger, so the
+		// Subagents tree would render it as "0 tok $0.00" — looking free
+		// when it isn't, exactly the silent-omission failure the ledger
+		// exists to avoid.
+		_, err := agent.Run(jobCtx, client, ledger.Watch(c, ledger.Subagent, client.Provider(), client.Model(), jobID), &forked, cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {
 			err = nil

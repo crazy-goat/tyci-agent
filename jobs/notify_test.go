@@ -111,14 +111,14 @@ func TestPendingLinesPutsBlockedJobsFirst(t *testing.T) {
 	r := NewRegistry()
 
 	running := make(chan struct{})
-	r.Start(context.Background(), "the long one", func(ctx context.Context, id string) (string, bool, error) {
+	r.Start(context.Background(), "the long one", KindOther, "", func(ctx context.Context, id string) (string, bool, error) {
 		<-running
 		return "done", false, nil
 	})
 
 	asked := make(chan struct{})
 	go func() {
-		r.Start(context.Background(), "the blocked one", func(ctx context.Context, id string) (string, bool, error) {
+		r.Start(context.Background(), "the blocked one", KindOther, "", func(ctx context.Context, id string) (string, bool, error) {
 			close(asked)
 			ans, _, _ := r.Ask(ctx, id, "which branch?")
 			return ans, false, nil
@@ -157,7 +157,7 @@ func TestPendingLinesPutsBlockedJobsFirst(t *testing.T) {
 
 func TestPendingLinesIsEmptyWhenNothingIsOutstanding(t *testing.T) {
 	r := NewRegistry()
-	job := r.Start(context.Background(), "quick", func(ctx context.Context, id string) (string, bool, error) {
+	job := r.Start(context.Background(), "quick", KindOther, "", func(ctx context.Context, id string) (string, bool, error) {
 		return "ok", false, nil
 	})
 	if _, ok := r.Wait(context.Background(), job.ID, 2*time.Second); !ok {

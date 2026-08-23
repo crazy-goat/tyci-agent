@@ -1,6 +1,7 @@
 package display
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,50 @@ func TestApplyJobUpdate_InsertsAndUpdatesByID(t *testing.T) {
 	}
 	if got := m.backgroundJobs["job-1"].Status; got != jobs.StatusDone {
 		t.Errorf("status after update = %s, want done", got)
+	}
+}
+
+// TestApplyJobUpdate_PrunesTerminalJobsBeyondTheRegistryBound mirrors
+// jobs.Registry's own eviction (pruneTerminalLocked): backgroundJobs is a
+// mirror fed by SetJobEventBus, not the registry itself, so without its own
+// pruning it would grow unboundedly and could keep listing a job the real
+// registry already dropped — see pruneBackgroundJobsLocked's doc comment.
+func TestApplyJobUpdate_PrunesTerminalJobsBeyondTheRegistryBound(t *testing.T) {
+	m := newTestModelForJobs()
+
+	// One job still running — must survive pruning regardless of age.
+	m.applyJobUpdate(jobs.Job{ID: "still-running", Status: jobs.StatusRunning, StartedAt: time.Now().Add(-time.Hour)})
+
+	base := time.Now()
+	for i := 0; i < jobs.MaxRetainedTerminalJobs+10; i++ {
+		m.applyJobUpdate(jobs.Job{
+			ID:         fmt.Sprintf("terminal-%d", i),
+			Status:     jobs.StatusDone,
+			StartedAt:  base.Add(time.Duration(i) * time.Second),
+			FinishedAt: base.Add(time.Duration(i) * time.Second),
+		})
+	}
+
+	terminalCount := 0
+	for _, j := range m.backgroundJobs {
+		if j.Status != jobs.StatusRunning {
+			terminalCount++
+		}
+	}
+	if terminalCount != jobs.MaxRetainedTerminalJobs {
+		t.Fatalf("expected exactly %d retained terminal jobs, got %d (total backgroundJobs=%d)",
+			jobs.MaxRetainedTerminalJobs, terminalCount, len(m.backgroundJobs))
+	}
+	if _, ok := m.backgroundJobs["still-running"]; !ok {
+		t.Fatalf("expected the still-running job to survive pruning")
+	}
+	// The oldest terminal jobs (lowest i, earliest FinishedAt) must be the
+	// ones evicted, not an arbitrary subset.
+	if _, ok := m.backgroundJobs["terminal-0"]; ok {
+		t.Fatalf("expected the oldest terminal job to have been pruned")
+	}
+	if _, ok := m.backgroundJobs[fmt.Sprintf("terminal-%d", jobs.MaxRetainedTerminalJobs+9)]; !ok {
+		t.Fatalf("expected the newest terminal job to have survived")
 	}
 }
 
