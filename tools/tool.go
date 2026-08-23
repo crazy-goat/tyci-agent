@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/decodo/tyci/internal/hooks"
 	"github.com/decodo/tyci/locks"
@@ -503,12 +504,17 @@ func builtinToolsSchema() []map[string]any {
 // convention in the Lua schema format, so every parameter is advertised as
 // optional.
 func luaToolsSchema() []map[string]any {
-	var schema []map[string]any
-	for _, tool := range toolRegistry {
-		lt, ok := tool.(*LuaTool)
-		if !ok {
-			continue
+	names := make([]string, 0, len(toolRegistry))
+	for name, tool := range toolRegistry {
+		if _, ok := tool.(*LuaTool); ok {
+			names = append(names, name)
 		}
+	}
+	sort.Strings(names)
+
+	var schema []map[string]any
+	for _, name := range names {
+		lt := toolRegistry[name].(*LuaTool)
 		schema = append(schema, map[string]any{
 			"type": "function",
 			"function": map[string]any{
