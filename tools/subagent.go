@@ -140,6 +140,14 @@ type subagentTask struct {
 	// repository on its own branch instead of sharing the parent's working
 	// directory. See runSingleTask's isolate helper.
 	Isolation string `json:"isolation,omitempty"`
+	// InheritHistory, when true, seeds the child with the parent
+	// conversation's history up to this call (see
+	// connector.ConversationFromContext) instead of starting it from just
+	// Task — a model-initiated version of session forking (see
+	// session.ForkAtIndex/ForkAtEventID for the human-triggered paths).
+	// Ignored (no history to inherit) when the context carries none, e.g. a
+	// call made outside a running agent.Run round.
+	InheritHistory bool `json:"inherit_history,omitempty"`
 }
 
 // subagentResult holds the outcome of one subagent execution.
@@ -541,6 +549,9 @@ func parseTasks(input map[string]any, defaultModel string) ([]subagentTask, erro
 	if a, ok := input["async"].(bool); ok {
 		t.Async = a
 	}
+	if ih, ok := input["inherit_history"].(bool); ok {
+		t.InheritHistory = ih
+	}
 	return []subagentTask{t}, nil
 }
 
@@ -622,6 +633,9 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 			return subagentTask{}, fmt.Errorf("isolation: %q is not a mode; use \"worktree\" (own checkout, own branch) or leave it out (share the parent's directory)", iso)
 		}
 		t.Isolation = iso
+	}
+	if ih, ok := m["inherit_history"].(bool); ok {
+		t.InheritHistory = ih
 	}
 	return t, nil
 }
@@ -1125,6 +1139,9 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		MaxTokens:        def.MaxTokens,
 		Fallbacks:        def.Fallback,
 		SystemPromptMode: def.SystemPromptMode,
+	}
+	if task.InheritHistory {
+		opts.History = connector.ConversationFromContext(ctx)
 	}
 
 	// Get tool index for streaming (passed by agent.executeTools). Only

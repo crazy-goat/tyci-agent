@@ -19,6 +19,7 @@ import (
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
 )
 
@@ -275,11 +276,26 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		sink = c
 		collectedText = func() string { return c.text.String() }
 	}
-	msgs := []connector.Message{
-		{
-			Role:    "user",
-			Content: []connector.ContentBlock{{Type: "text", Text: task}},
-		},
+	// opts.History, present when the task set inherit_history: true (see
+	// tools/subagent.go's runSingleTask), is the parent's transcript up to
+	// this call. session.ForkMessagesWithTurn is the same copy-then-append
+	// helper /btw's side-conversation fork uses: a new backing array so
+	// nothing this child appends can ever alias the parent's own history,
+	// with task appended as the child's own new user turn on top of it.
+	// Falls back to the plain single-message seed when there is no history
+	// to inherit (the common case, and the only option when the call was
+	// made outside a running agent.Run round — see
+	// connector.ConversationFromContext's doc comment).
+	var msgs []connector.Message
+	if len(opts.History) > 0 {
+		msgs = session.ForkMessagesWithTurn(opts.History, task)
+	} else {
+		msgs = []connector.Message{
+			{
+				Role:    "user",
+				Content: []connector.ContentBlock{{Type: "text", Text: task}},
+			},
+		}
 	}
 
 	// jobID is the id this child is running under (JobIDCtxKey — set for

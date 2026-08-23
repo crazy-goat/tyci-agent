@@ -13,6 +13,14 @@ import (
 
 func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connector.Message, cfg Config, totalUsage *stream.Usage) (more bool, usage *stream.Usage, totalEmitted bool, err error) {
 	ctx = connector.WithModelClient(ctx, mc)
+	// Stamped once per round, alongside the model client, so a tool call made
+	// during this round's executeAndAppendToolResults (in practice: the
+	// "subagent" tool's inherit_history option) can read back the
+	// conversation as it stands right now. Safe to hand out the live slice
+	// as-is: nothing mutates *msgs until after tool execution finishes below,
+	// and a reader that wants to keep it past that point must copy it (see
+	// connector.WithConversation's doc comment and session.ForkMessages).
+	ctx = connector.WithConversation(ctx, *msgs)
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

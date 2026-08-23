@@ -545,7 +545,7 @@ func RebuildMessages(lines []ParsedLine) ([]connector.Message, error) {
 		msgs = append(msgs, msg)
 	}
 
-	return sanitizeMessageSequence(msgs), nil
+	return SanitizeMessageSequence(msgs), nil
 }
 
 func rebuildCompactionLine(raw string) ([]connector.Message, bool) {
@@ -610,7 +610,26 @@ func contentBlocksToRichMessage(role string, blocks []ContentBlock) *connector.M
 	return &connector.Message{Role: role, Content: content}
 }
 
-func sanitizeMessageSequence(msgs []connector.Message) []connector.Message {
+// SanitizeMessageSequence drops an orphan tool RESULT — one whose
+// toolCallId was never seen among the toolCall blocks kept so far. This is
+// the shape that shows up after compaction: the tail window can start
+// mid-way through a multi-tool-call turn, keeping a later result whose call
+// got summarized away (see TestRebuildMessages_DropsOrphanToolResults).
+//
+// Deliberately does NOT touch the opposite case — a trailing, unanswered
+// tool CALL (the last message is an assistant turn whose tool calls have no
+// recorded result yet) — because RebuildMessages/LoadForReplay use this for
+// ordinary /resume, where that shape is a legitimate "the process died
+// mid-tool-call" state the caller may still want to see and act on, not
+// something to silently discard. Forking a transcript at an arbitrary cut
+// point (ForkAtIndex/ForkAtEventID below) can land in that same spot for a
+// different reason — there is no completing "the same call" in a forked
+// context — and repairs it there instead, via dropTrailingUnansweredToolCalls.
+//
+// Exported so /btw's side-conversation fork, session forking, and any other
+// caller that cuts a transcript share this repair instead of each growing
+// its own.
+func SanitizeMessageSequence(msgs []connector.Message) []connector.Message {
 	if len(msgs) == 0 {
 		return msgs
 	}
@@ -637,6 +656,169 @@ func sanitizeMessageSequence(msgs []connector.Message) []connector.Message {
 			if block.Type == "toolCall" && block.ID != "" {
 				seenToolCalls[block.ID] = struct{}{}
 			}
+		}
+	}
+	return out
+}
+
+// dropTrailingUnansweredToolCalls is ForkAtIndex/ForkAtEventID's extra half
+// of SanitizeMessageSequence's repair, applied only to a FORKED prefix (see
+// SanitizeMessageSequence's doc comment for why it is not folded into that
+// shared function): a prefix cut can leave the LAST message as an assistant
+// turn whose toolCall blocks were never answered (their toolResult events,
+// if any, come after the cut point and are not part of this slice). Left in
+// place it makes the transcript invalid for replay — every provider requires
+// a tool result for every tool_use in the immediately preceding assistant
+// turn, and a fork has no way to ever produce the missing one. Only the last
+// message can ever have this problem — every earlier assistant tool call is
+// followed, in a well-formed transcript, by its result before the next
+// assistant turn — so this only ever needs to look at the tail.
+func dropTrailingUnansweredToolCalls(msgs []connector.Message) []connector.Message {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	last := msgs[len(msgs)-1]
+	if last.Role != "assistant" {
+		return msgs
+	}
+	hasToolCall := false
+	kept := make([]connector.ContentBlock, 0, len(last.Content))
+	for _, b := range last.Content {
+		if b.Type == "toolCall" {
+			hasToolCall = true
+			continue
+		}
+		kept = append(kept, b)
+	}
+	if !hasToolCall {
+		return msgs
+	}
+	if len(kept) == 0 {
+		// The whole message was tool calls with no accompanying text or
+		// thinking — drop it entirely rather than leave an empty assistant
+		// turn dangling at the end of the transcript.
+		return msgs[:len(msgs)-1]
+	}
+	out := make([]connector.Message, len(msgs))
+	copy(out, msgs)
+	out[len(out)-1] = connector.Message{Role: last.Role, Content: kept}
+	return out
+}
+
+// ForkMessages returns an independent copy of msgs: a new backing array, so
+// nothing appended to the fork afterwards can ever alias or mutate the
+// original slice. The per-message Content slices are still shared (a fork
+// never mutates a message in place, only appends whole new ones — the same
+// assumption /btw's side-conversation fork has always relied on).
+func ForkMessages(msgs []connector.Message) []connector.Message {
+	forked := make([]connector.Message, len(msgs))
+	copy(forked, msgs)
+	return forked
+}
+
+// ForkMessagesWithTurn is ForkMessages plus a new user turn appended — the
+// shape /btw's side-conversation fork needs (and, now, session forking and
+// the "subagent" tool's inherit_history option): an independent copy of msgs
+// with userText appended as a new user message, so nothing the fork appends
+// next can ever alias or mutate the original.
+func ForkMessagesWithTurn(msgs []connector.Message, userText string) []connector.Message {
+	forked := make([]connector.Message, len(msgs), len(msgs)+1)
+	copy(forked, msgs)
+	return append(forked, connector.Message{
+		Role:    "user",
+		Content: []connector.ContentBlock{{Type: "text", Text: userText}},
+	})
+}
+
+// ForkAtIndex returns an independent, sanitized copy of the first n messages
+// of msgs — the "transcript index" addressing for forking a LIVE, in-memory
+// conversation (the counterpart to ForkAtEventID for a persisted session).
+// n is the count of messages to keep (0 <= n <= len(msgs)), not a zero-based
+// element index. Repairs a cut landing inside a tool-call/result pair in
+// both directions: SanitizeMessageSequence for an orphan result, then
+// dropTrailingUnansweredToolCalls for a trailing unanswered call — the
+// latter applied here (and in ForkAtEventID), not folded into
+// SanitizeMessageSequence itself, because that function also backs ordinary
+// /resume, where an unanswered trailing call is a legitimate state to
+// preserve rather than discard (see its doc comment).
+func ForkAtIndex(msgs []connector.Message, n int) ([]connector.Message, error) {
+	if n < 0 || n > len(msgs) {
+		return nil, fmt.Errorf("fork index %d out of range (0..%d)", n, len(msgs))
+	}
+	cut := make([]connector.Message, n)
+	copy(cut, msgs[:n])
+	return dropTrailingUnansweredToolCalls(SanitizeMessageSequence(cut)), nil
+}
+
+// ForkAtEventID returns an independent, sanitized copy of the message
+// history in the persisted session file at path, up to and including the
+// event whose id is eventID — the "session event id" addressing for forking
+// a PERSISTED session (the counterpart to ForkAtIndex for a live, in-memory
+// conversation). Reuses the exact same id scheme session.WriteCompaction
+// already records as tail_start_id, and the same RebuildMessages/
+// SanitizeMessageSequence /resume already runs, plus the extra
+// dropTrailingUnansweredToolCalls repair ForkAtIndex also applies — see its
+// doc comment for why that extra step is fork-only rather than folded into
+// SanitizeMessageSequence.
+func ForkAtEventID(path, eventID string) ([]connector.Message, error) {
+	if eventID == "" {
+		return nil, fmt.Errorf("empty event id")
+	}
+	lines, err := parseSessionFile(path)
+	if err != nil {
+		return nil, err
+	}
+	cut := -1
+	for i, l := range lines {
+		if l.MsgType == "header" || l.MsgType == "session_end" {
+			continue
+		}
+		if id, ok := eventLineID(l.Raw); ok && id == eventID {
+			cut = i
+			break
+		}
+	}
+	if cut == -1 {
+		return nil, fmt.Errorf("event id %q not found in session %s", eventID, path)
+	}
+	msgs, err := RebuildMessages(lines[:cut+1])
+	if err != nil {
+		return nil, err
+	}
+	return dropTrailingUnansweredToolCalls(msgs), nil
+}
+
+// eventLineID extracts the "id" field common to every event type (message,
+// compaction, session_end) without decoding the rest of the line.
+func eventLineID(raw string) (string, bool) {
+	var h struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(raw), &h); err != nil {
+		return "", false
+	}
+	return h.ID, h.ID != ""
+}
+
+// ContentBlocksFromConnector converts connector.ContentBlock to the
+// session package's own ContentBlock — the two have identical structure
+// (see agent/session_log.go's writeAssistantSessionEvent, which carries the
+// same conversion inline) — for callers outside package agent that need to
+// write a connector.Message's content into a session file, such as
+// ForkNewSession-style session forking.
+func ContentBlocksFromConnector(blocks []connector.ContentBlock) []ContentBlock {
+	out := make([]ContentBlock, len(blocks))
+	for i, cb := range blocks {
+		out[i] = ContentBlock{
+			Type:       cb.Type,
+			Text:       cb.Text,
+			Thinking:   cb.Thinking,
+			ID:         cb.ID,
+			Name:       cb.Name,
+			Arguments:  cb.Arguments,
+			IsError:    cb.IsError,
+			ToolCallID: cb.ToolCallID,
+			ToolName:   cb.ToolName,
 		}
 	}
 	return out

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/internal/hooks"
 	"github.com/decodo/tyci/locks"
 )
@@ -47,6 +48,16 @@ type SubagentOptions struct {
 	// "replace"). The tools package does not build prompts — it only carries
 	// the mode to the composition root, which owns providers.
 	SystemPromptMode string
+
+	// History, when non-nil, seeds the child's conversation with the
+	// parent's transcript up to the point of this call (see
+	// connector.ConversationFromContext) instead of starting the child from
+	// just the task string — set by subagent.go's runSingleTask when the
+	// task requested "inherit_history": true. The composition root (main.go)
+	// is the one that actually builds the child's initial message slice from
+	// it (via session.ForkMessagesWithTurn), same as it always has for the
+	// plain task-only case.
+	History []connector.Message
 }
 
 // DefaultSubagentMaxIterations is the cap applied when SubagentOptions has
@@ -264,17 +275,19 @@ func builtinToolsSchema() []map[string]any {
 						"task":  map[string]any{"type": "string", "description": "Clear, detailed task description for the child agent. Write it like a prompt: explain what to do, what files to read/write, what to return. The child has read/write/bash tools."},
 						"agent": map[string]any{"type": "string", "description": "Named agent to use. Definitions live in ./.tyci/agents/<name>.md (project) or ~/.tyci/agents/<name>.md (global), project winning; each supplies the child's system prompt and may pin its model, max_iterations and allowed tools. A list is injected into your system prompt at session start, but it goes stale if a definition is added or edited mid-session — call the \"agents\" tool for a fresh list or to see one definition's full details. An unknown name is an error, not a fallback."},
 						"tasks": map[string]any{"type": "array", "description": "Array of parallel tasks to run concurrently", "items": map[string]any{"type": "object", "properties": map[string]any{
-							"task":           map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has every tool except subagent itself."},
-							"agent":          map[string]any{"type": "string", "description": "Named agent to use"},
-							"model":          map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
-							"max_iterations": map[string]any{"type": "integer", "description": "Cap this child's tool-call turns. Set a positive integer to bound a risky subtask (e.g. exploration, code review); omit to use the runner default (currently unlimited, bounded by a 600s wall-clock timeout). 0 and negative values mean unlimited."},
-							"async":          map[string]any{"type": "boolean", "description": "Run this task as a background job and return its job_id immediately instead of blocking. Must match every other task's async value in the same call."},
-							"isolation":      map[string]any{"type": "string", "enum": []string{"worktree"}, "description": "Give this child its own checkout of the repository, on its own branch, instead of the shared working directory: \"worktree\". Use it whenever two or more children WRITE at the same time — then they cannot clobber each other and nothing has to take turns on a lock. The cost is that its edits are not in your tree: the result tells you the branch and how to diff it, and you decide whether to merge. A child that only reads needs nothing here, and its checkout is removed automatically when it changed no files. Needs a git repository."},
+							"task":            map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has every tool except subagent itself."},
+							"agent":           map[string]any{"type": "string", "description": "Named agent to use"},
+							"model":           map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
+							"max_iterations":  map[string]any{"type": "integer", "description": "Cap this child's tool-call turns. Set a positive integer to bound a risky subtask (e.g. exploration, code review); omit to use the runner default (currently unlimited, bounded by a 600s wall-clock timeout). 0 and negative values mean unlimited."},
+							"async":           map[string]any{"type": "boolean", "description": "Run this task as a background job and return its job_id immediately instead of blocking. Must match every other task's async value in the same call."},
+							"isolation":       map[string]any{"type": "string", "enum": []string{"worktree"}, "description": "Give this child its own checkout of the repository, on its own branch, instead of the shared working directory: \"worktree\". Use it whenever two or more children WRITE at the same time — then they cannot clobber each other and nothing has to take turns on a lock. The cost is that its edits are not in your tree: the result tells you the branch and how to diff it, and you decide whether to merge. A child that only reads needs nothing here, and its checkout is removed automatically when it changed no files. Needs a git repository."},
+							"inherit_history": map[string]any{"type": "boolean", "description": "Seed this child with YOUR conversation so far — every message up to this call — instead of starting it from just task alone. Use this when the child needs context it would otherwise have no way to see (earlier findings, decisions, file contents already read). The child still only gets task appended as its own new turn on top of that history; it does not see anything that happens in your conversation afterward."},
 						}, "required": []string{"task"}}},
-						"model":          map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
-						"max_iterations": map[string]any{"type": "integer", "description": "Cap on the child's tool-call turns. Omit or 0 to use the runner's default (currently unlimited); negative = unlimited. Useful for bounding long-running subtasks like exploration or code review."},
-						"async":          map[string]any{"type": "boolean", "description": "Run as a background job and return a job_id immediately instead of blocking until it finishes. Poll with wait(job_id=...)."},
-						"isolation":      map[string]any{"type": "string", "enum": []string{"worktree"}, "description": "Give this child its own checkout of the repository, on its own branch, instead of the shared working directory: \"worktree\". Use it whenever two or more children WRITE at the same time — then they cannot clobber each other and nothing has to take turns on a lock. The cost is that its edits are not in your tree: the result tells you the branch and how to diff it, and you decide whether to merge. A child that only reads needs nothing here, and its checkout is removed automatically when it changed no files. Needs a git repository."},
+						"model":           map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
+						"max_iterations":  map[string]any{"type": "integer", "description": "Cap on the child's tool-call turns. Omit or 0 to use the runner's default (currently unlimited); negative = unlimited. Useful for bounding long-running subtasks like exploration or code review."},
+						"async":           map[string]any{"type": "boolean", "description": "Run as a background job and return a job_id immediately instead of blocking until it finishes. Poll with wait(job_id=...)."},
+						"isolation":       map[string]any{"type": "string", "enum": []string{"worktree"}, "description": "Give this child its own checkout of the repository, on its own branch, instead of the shared working directory: \"worktree\". Use it whenever two or more children WRITE at the same time — then they cannot clobber each other and nothing has to take turns on a lock. The cost is that its edits are not in your tree: the result tells you the branch and how to diff it, and you decide whether to merge. A child that only reads needs nothing here, and its checkout is removed automatically when it changed no files. Needs a git repository."},
+						"inherit_history": map[string]any{"type": "boolean", "description": "Seed this child with YOUR conversation so far — every message up to this call — instead of starting it from just task alone. Use this when the child needs context it would otherwise have no way to see (earlier findings, decisions, file contents already read). The child still only gets task appended as its own new turn on top of that history; it does not see anything that happens in your conversation afterward."},
 					},
 				},
 			},
