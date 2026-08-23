@@ -172,16 +172,30 @@ func (c *Conductor) Submit(ctx context.Context, prompt string) (stream.Usage, er
 		c.mu.Unlock()
 	}()
 
+	content := []connector.ContentBlock{{Type: "text", Text: prompt}}
+	blocks := []session.ContentBlock{{Type: "text", Text: prompt}}
+	// A message naming an agent via "@agent:<name>" (inserted by the TUI's
+	// "@" popup, or typed by hand the same way) gets a second content block
+	// telling the model to continue that part of the request in a subagent
+	// call with that named agent — the engine-side machinery (subagent's
+	// `agent` field, agentdefs discovery) already exists; this is the note
+	// that tells the model to use it for this specific message. See
+	// extractAgentMentions/buildAgentMentionNote in agent_mention.go.
+	if names := extractAgentMentions(prompt); len(names) > 0 {
+		note := buildAgentMentionNote(names)
+		content = append(content, connector.ContentBlock{Type: "text", Text: note})
+		blocks = append(blocks, session.ContentBlock{Type: "text", Text: note})
+	}
+
 	c.conversation = append(c.conversation, connector.Message{
 		Role:    "user",
-		Content: []connector.ContentBlock{{Type: "text", Text: prompt}},
+		Content: content,
 	})
 
 	// Materialize the session file now — on the first prompt the user
 	// actually submits, never at startup.
 	c.EnsureSession()
 	if c.cfg.Session != nil {
-		blocks := []session.ContentBlock{{Type: "text", Text: prompt}}
 		_ = c.cfg.Session.WriteMessage("user", blocks, nil)
 	}
 

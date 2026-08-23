@@ -11,20 +11,30 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/decodo/tyci/internal/agentdefs"
 )
 
-// @-completion for file paths in the input line.
+// @-completion for file paths and named agents in the input line.
 //
-// Typing "@" opens a list of files under the working directory, filtered as
-// you keep typing, and Tab or Enter inserts the selected path. It saves
-// nothing but keystrokes — which is the point: naming a file precisely is the
-// single most common thing a person types here, and getting it wrong costs
-// the agent a failed tool call and a round trip.
+// Typing "@" opens one list mixing files under the working directory with
+// named agents discovered from .tyci/agents/*.md (global then project-local,
+// same precedence agentdefs.List already establishes for the subagent tool),
+// filtered as you keep typing. Tab or Enter inserts the selection: a file
+// becomes "@file:<path>", an agent becomes "@agent:<name>". It saves nothing
+// but keystrokes — which is the point: naming a file precisely is the single
+// most common thing a person types here, and getting it wrong costs the
+// agent a failed tool call and a round trip; naming an agent is the same idea
+// one level up, since agentdefs already knows every name that can go there.
 //
 // The file list is built once, off the UI thread, because walking a large
 // repository takes long enough to be felt as a stutter if done inline. Until
 // it arrives the popup says so rather than showing an empty list, which would
-// read as "no matches".
+// read as "no matches". The agent list has no such cost — a handful of small
+// markdown files — so it is read fresh on every refresh, the same way
+// agentdefs.List already behaves for the subagent tool ("stale is a bug, not
+// a feature": an agent definition added mid-session should show up here
+// immediately, same as `agents`/`subagent`).
 
 const (
 	// fileIndexMaxEntries bounds the index. A repository with more paths than
@@ -228,31 +238,70 @@ func (m *TuiModel) setInputValueWithCursor(value string, cursor int) {
 // Ranking
 // ---------------------------------------------------------------------------
 
-// rankFileMatches filters and orders candidates for a query.
+// completeCandidate is one entry offered by the combined "@" popup, before
+// ranking. kind is "file" or "agent"; desc is the agent's frontmatter
+// description (empty for a file). key is what the query is matched against —
+// the file's path, or the agent's bare name.
+type completeCandidate struct {
+	key  string
+	kind string
+	desc string
+}
+
+const (
+	completeKindFile  = "file"
+	completeKindAgent = "agent"
+)
+
+// rankFileMatches filters and orders file candidates for a query. Kept as its
+// own entry point (rather than folded into rankCandidates below) because it
+// is the direct, hermetic thing to unit-test on its own, and because
+// refreshFileComplete needs file-only ranking on the (common) turn where no
+// agents exist to blend in.
 //
 // The ordering is what makes this usable with a short query: a match on the
 // file's own name beats a match somewhere in its directory path, and a
 // prefix beats a match in the middle. Typing "tui" should offer tui.go
 // before display/tui_internal/helpers/other.go.
 func rankFileMatches(files []string, query string) []string {
+	cands := make([]completeCandidate, len(files))
+	for i, f := range files {
+		cands[i] = completeCandidate{key: f, kind: completeKindFile}
+	}
+	ranked := rankCandidates(cands, query)
+	out := make([]string, len(ranked))
+	for i, c := range ranked {
+		out[i] = c.key
+	}
+	return out
+}
+
+// rankCandidates is the shared scoring engine behind rankFileMatches and the
+// combined file+agent popup: matching a candidate's own name outranks
+// matching somewhere earlier in a "/"-separated key (a file's directory; an
+// agent's key never contains "/", so it always matches on its own name), and
+// a prefix outranks a match in the middle.
+func rankCandidates(cands []completeCandidate, query string) []completeCandidate {
 	if query == "" {
-		out := make([]string, 0, fileCompleteMaxVisible)
-		for i := 0; i < len(files) && i < fileCompleteMaxVisible; i++ {
-			out = append(out, files[i])
+		n := fileCompleteMaxVisible
+		if n > len(cands) {
+			n = len(cands)
 		}
+		out := make([]completeCandidate, n)
+		copy(out, cands[:n])
 		return out
 	}
 
 	q := strings.ToLower(query)
 
 	type scored struct {
-		path  string
+		cand  completeCandidate
 		score int
 	}
 	var matches []scored
 
-	for _, f := range files {
-		lower := strings.ToLower(f)
+	for _, c := range cands {
+		lower := strings.ToLower(c.key)
 		base := lower
 		if i := strings.LastIndexByte(lower, '/'); i >= 0 {
 			base = lower[i+1:]
@@ -260,36 +309,66 @@ func rankFileMatches(files []string, query string) []string {
 
 		switch {
 		case base == q:
-			matches = append(matches, scored{f, 0})
+			matches = append(matches, scored{c, 0})
 		case strings.HasPrefix(base, q):
-			matches = append(matches, scored{f, 1})
+			matches = append(matches, scored{c, 1})
 		case strings.Contains(base, q):
-			matches = append(matches, scored{f, 2})
+			matches = append(matches, scored{c, 2})
 		case strings.HasPrefix(lower, q):
-			matches = append(matches, scored{f, 3})
+			matches = append(matches, scored{c, 3})
 		case strings.Contains(lower, q):
-			matches = append(matches, scored{f, 4})
+			matches = append(matches, scored{c, 4})
 		}
 	}
 
-	// Ties broken by path length then alphabetically: the shorter path is
+	// Ties broken by key length then alphabetically: the shorter key is
 	// nearly always the one meant, and a stable order keeps the highlighted
 	// entry from jumping around between keystrokes.
 	sort.SliceStable(matches, func(i, j int) bool {
 		if matches[i].score != matches[j].score {
 			return matches[i].score < matches[j].score
 		}
-		if len(matches[i].path) != len(matches[j].path) {
-			return len(matches[i].path) < len(matches[j].path)
+		if len(matches[i].cand.key) != len(matches[j].cand.key) {
+			return len(matches[i].cand.key) < len(matches[j].cand.key)
 		}
-		return matches[i].path < matches[j].path
+		return matches[i].cand.key < matches[j].cand.key
 	})
 
-	out := make([]string, 0, fileCompleteMaxVisible)
+	out := make([]completeCandidate, 0, fileCompleteMaxVisible)
 	for i := 0; i < len(matches) && i < fileCompleteMaxVisible; i++ {
-		out = append(out, matches[i].path)
+		out = append(out, matches[i].cand)
 	}
 	return out
+}
+
+// rankCompleteCandidates ranks files and agents together for the combined
+// popup. Agents are listed first so that on a bare "@" — before anything is
+// typed — the (usually short and worth advertising) list of named agents
+// shows above the file list rather than being crowded out of the
+// fileCompleteMaxVisible cap by it.
+func rankCompleteCandidates(files []string, agents []agentdefs.Def, query string) []completeCandidate {
+	cands := make([]completeCandidate, 0, len(agents)+len(files))
+	for _, a := range agents {
+		cands = append(cands, completeCandidate{key: a.Name, kind: completeKindAgent, desc: a.Description})
+	}
+	for _, f := range files {
+		cands = append(cands, completeCandidate{key: f, kind: completeKindFile})
+	}
+	return rankCandidates(cands, query)
+}
+
+// splitCandidates unzips ranked candidates into the three parallel slices
+// TuiModel stores them as.
+func splitCandidates(cands []completeCandidate) (items, kinds, descs []string) {
+	items = make([]string, len(cands))
+	kinds = make([]string, len(cands))
+	descs = make([]string, len(cands))
+	for i, c := range cands {
+		items[i] = c.key
+		kinds[i] = c.kind
+		descs[i] = c.desc
+	}
+	return items, kinds, descs
 }
 
 // ---------------------------------------------------------------------------
@@ -322,7 +401,9 @@ func (m *TuiModel) refreshFileComplete() tea.Cmd {
 		prev = m.fileCompleteItems[m.fileCompleteCursor]
 	}
 
-	m.fileCompleteItems = rankFileMatches(m.fileIndex, query)
+	agents := agentdefs.List(m.cwd)
+	ranked := rankCompleteCandidates(m.fileIndex, agents, query)
+	m.fileCompleteItems, m.fileCompleteKinds, m.fileCompleteDescs = splitCandidates(ranked)
 	m.fileCompleteCursor = 0
 	for i, item := range m.fileCompleteItems {
 		if item == prev {
@@ -351,7 +432,9 @@ func (m *TuiModel) applyFileIndex(msg tuiFileIndexMsg) {
 
 	if m.fileCompleteActive {
 		if _, query, ok := fileCompleteToken(m.input.Value(), m.inputCursorOffset()); ok {
-			m.fileCompleteItems = rankFileMatches(m.fileIndex, query)
+			agents := agentdefs.List(m.cwd)
+			ranked := rankCompleteCandidates(m.fileIndex, agents, query)
+			m.fileCompleteItems, m.fileCompleteKinds, m.fileCompleteDescs = splitCandidates(ranked)
 			if m.fileCompleteCursor >= len(m.fileCompleteItems) {
 				m.fileCompleteCursor = 0
 			}
@@ -359,18 +442,47 @@ func (m *TuiModel) applyFileIndex(msg tuiFileIndexMsg) {
 	}
 }
 
-// acceptFileComplete replaces the "@query" token with the highlighted path.
-// The "@" goes with it: it was a way to ask for the list, not part of what
-// the person meant to send.
+// itemKind returns the kind ("file" or "agent") of the i-th candidate.
+// Missing/short kinds (as in a test that sets fileCompleteItems directly, or
+// any candidate ranked before this field existed) default to "file", the
+// prior universal behavior.
+func (m TuiModel) itemKind(i int) string {
+	if i >= 0 && i < len(m.fileCompleteKinds) {
+		return m.fileCompleteKinds[i]
+	}
+	return completeKindFile
+}
+
+// itemDesc returns the agent description of the i-th candidate, or "" for a
+// file or an out-of-range index.
+func (m TuiModel) itemDesc(i int) string {
+	if i >= 0 && i < len(m.fileCompleteDescs) {
+		return m.fileCompleteDescs[i]
+	}
+	return ""
+}
+
+// acceptFileComplete replaces the "@query" token with the highlighted
+// candidate, tagged with which kind of thing it is: "@file:<path>" for a
+// file, "@agent:<name>" for a named agent. The "@" goes with it: it was a way
+// to ask for the list, not part of what the person meant to send.
+//
+// The tag exists so the two are told apart downstream without guessing: an
+// "@file:" mention is just a precise path for the model to read on its own,
+// but an "@agent:" mention is an instruction — conductor.Submit (see
+// extractAgentMentions) reads it back out of the submitted line and tells
+// the model to continue that part of the request in a subagent using that
+// named agent.
 //
 // Only the token itself is replaced — whatever was typed after it stays put,
-// and the cursor lands right after the inserted path, so completing a file
-// name in the middle of a sentence leaves the rest of that sentence alone.
+// and the cursor lands right after the inserted text, so completing a name
+// in the middle of a sentence leaves the rest of that sentence alone.
 func (m *TuiModel) acceptFileComplete() {
 	if !m.fileCompleteActive || len(m.fileCompleteItems) == 0 {
 		return
 	}
 	pick := m.fileCompleteItems[m.fileCompleteCursor]
+	kind := m.itemKind(m.fileCompleteCursor)
 	value := m.input.Value()
 	if m.fileCompleteAt > len(value) || m.fileCompleteEnd > len(value) || m.fileCompleteEnd < m.fileCompleteAt {
 		m.closeFileComplete()
@@ -380,10 +492,15 @@ func (m *TuiModel) acceptFileComplete() {
 	head := value[:m.fileCompleteAt]
 	tail := value[m.fileCompleteEnd:]
 
-	// A trailing space separates the path from what comes next, but only when
-	// there is nothing there already: inserting one before existing text
-	// would leave a double space every time.
-	insert := pick
+	tag := "@file:"
+	if kind == completeKindAgent {
+		tag = "@agent:"
+	}
+
+	// A trailing space separates the tagged token from what comes next, but
+	// only when there is nothing there already: inserting one before
+	// existing text would leave a double space every time.
+	insert := tag + pick
 	if tail == "" || !strings.ContainsRune(" \t\n", rune(tail[0])) {
 		insert += " "
 	}
@@ -408,6 +525,8 @@ func (m *TuiModel) moveFileCompleteCursor(delta int) {
 func (m *TuiModel) closeFileComplete() {
 	m.fileCompleteActive = false
 	m.fileCompleteItems = nil
+	m.fileCompleteKinds = nil
+	m.fileCompleteDescs = nil
 	m.fileCompleteCursor = 0
 }
 
@@ -458,14 +577,34 @@ func (m TuiModel) renderFileComplete(width int) string {
 		if m.fileIndexPending {
 			b.WriteString(fileCompleteHintStyle.Render("  scanning files…"))
 		} else {
-			b.WriteString(fileCompleteHintStyle.Render("  no matching file"))
+			b.WriteString(fileCompleteHintStyle.Render("  no matching file or agent"))
 		}
 		b.WriteString("\n")
 		return b.String()
 	}
 
 	for i, item := range m.fileCompleteItems {
-		line := truncateForWidth("  "+item, width)
+		isAgent := m.itemKind(i) == completeKindAgent
+
+		var raw string
+		if isAgent {
+			raw = "  @agent:" + item
+			if desc := m.itemDesc(i); desc != "" {
+				raw += "  " + desc
+			}
+		} else {
+			raw = "  " + item
+		}
+
+		// Agent lines are truncated from the right: the name at the start is
+		// what is being matched and must stay visible, unlike a file path,
+		// where the matched filename sits at the end.
+		var line string
+		if isAgent {
+			line = truncateForWidthRight(raw, width)
+		} else {
+			line = truncateForWidth(raw, width)
+		}
 		if i == m.fileCompleteCursor {
 			b.WriteString(fileCompleteSelectedStyle.Render(line))
 		} else {
@@ -494,6 +633,24 @@ func truncateForWidth(s string, width int) string {
 		return string(r[len(r)-width:])
 	}
 	return "…" + string(r[len(r)-(width-1):])
+}
+
+// truncateForWidthRight keeps a candidate line inside the terminal, trimming
+// from the RIGHT so the agent name at the start — the part being matched —
+// stays visible; whatever trailing description does not fit is what gets
+// dropped, not the name.
+func truncateForWidthRight(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= width {
+		return s
+	}
+	if width <= 1 {
+		return string(r[:width])
+	}
+	return string(r[:width-1]) + "…"
 }
 
 // fileCompleteHeight is how many terminal rows the popup occupies. The frame

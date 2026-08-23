@@ -353,8 +353,19 @@ type TuiModel struct {
 	// "@" file-path completion (see tui_filecomplete.go). The index is built
 	// off the UI thread on first use and refreshed on a TTL, so a file the
 	// agent just created becomes completable without a restart.
+	//
+	// The same popup also offers named agents (discovered fresh from
+	// .tyci/agents/*.md on every refresh — a handful of small markdown files,
+	// cheap enough to read on every keystroke, unlike the file walk). Two
+	// parallel slices carry what fileCompleteItems alone cannot: which of
+	// those candidates are files versus agents, and an agent's description
+	// for the popup line. Index i in fileCompleteKinds/fileCompleteDescs
+	// describes fileCompleteItems[i]; a shorter kinds slice (as in tests that
+	// set fileCompleteItems directly) means "file" for every entry.
 	fileCompleteActive bool
 	fileCompleteItems  []string
+	fileCompleteKinds  []string // "file" or "agent", parallel to fileCompleteItems
+	fileCompleteDescs  []string // agent description; "" for files, parallel to fileCompleteItems
 	fileCompleteCursor int
 	fileCompleteAt     int // byte offset of the "@" being completed
 	fileCompleteEnd    int // byte offset just past the query (the cursor)

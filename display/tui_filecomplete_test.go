@@ -290,7 +290,7 @@ func TestAcceptFileCompleteReplacesTheToken(t *testing.T) {
 
 	m.acceptFileComplete()
 
-	if got := m.input.Value(); got != "please read display/tui.go " {
+	if got := m.input.Value(); got != "please read @file:display/tui.go " {
 		t.Fatalf("got %q", got)
 	}
 	if m.fileCompleteActive {
@@ -564,7 +564,7 @@ func TestAcceptFileCompleteKeepsTheRestOfTheLine(t *testing.T) {
 
 	m.acceptFileComplete()
 
-	const want = "compare display/tui.go with the old one"
+	const want = "compare @file:display/tui.go with the old one"
 	if got := m.input.Value(); got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
@@ -574,7 +574,167 @@ func TestAcceptFileCompleteKeepsTheRestOfTheLine(t *testing.T) {
 	}
 	// The cursor belongs right after what was just inserted, so typing
 	// continues where the person was, not at the end of the line.
-	if got, wantAt := m.inputCursorOffset(), len("compare display/tui.go"); got != wantAt {
+	if got, wantAt := m.inputCursorOffset(), len("compare @file:display/tui.go"); got != wantAt {
 		t.Fatalf("cursor at %d want %d", got, wantAt)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Named agents in the combined popup
+// ---------------------------------------------------------------------------
+
+// withHermeticAgentDefs points both the global (~/.tyci/agents) and a fresh
+// project-local (<returned wd>/.tyci/agents) directory at temp dirs, then
+// writes defs (name -> frontmatter+body) into the project-local one. Mirrors
+// the same os.Chdir/t.Setenv("HOME", ...) pattern used by
+// tools/agents_test.go's withHermeticAgentsDir and
+// internal/agentdefs/agentdefs_test.go's TestGetAndList_Hermetic — needed
+// because agentdefs.List resolves an empty/unset wd against the real
+// os.Getwd() and the real HOME, and this machine has actual global agents
+// defined (~/.tyci/agents) that must not leak into these tests.
+func withHermeticAgentDefs(t *testing.T, defs map[string]string) (wd string) {
+	t.Helper()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	wd = t.TempDir()
+	agentsDir := filepath.Join(wd, ".tyci", "agents")
+	if len(defs) > 0 {
+		if err := os.MkdirAll(agentsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range defs {
+			path := filepath.Join(agentsDir, name+".md")
+			if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return wd
+}
+
+const testAgentBody = "---\ndescription: reviews code for correctness\n---\n\nYou review code."
+
+// TestRefreshFileCompleteIncludesDiscoveredAgents: with a project-local
+// .tyci/agents/reviewer.md present, a bare "@" (or a query matching it)
+// offers "reviewer" as an agent candidate alongside the file list — the one
+// popup item 2 asks for, rather than a second one.
+func TestRefreshFileCompleteIncludesDiscoveredAgents(t *testing.T) {
+	wd := withHermeticAgentDefs(t, map[string]string{"reviewer": testAgentBody})
+
+	m := newFileCompleteModel([]string{"main.go"})
+	m.cwd = wd
+	m.input.SetValue("@")
+	m.refreshFileComplete()
+
+	if !m.fileCompleteActive {
+		t.Fatal("popup should be open")
+	}
+	var sawAgent, sawFile bool
+	for i, item := range m.fileCompleteItems {
+		switch {
+		case m.itemKind(i) == completeKindAgent && item == "reviewer":
+			sawAgent = true
+			if m.itemDesc(i) != "reviews code for correctness" {
+				t.Errorf("agent description = %q", m.itemDesc(i))
+			}
+		case m.itemKind(i) == completeKindFile && item == "main.go":
+			sawFile = true
+		}
+	}
+	if !sawAgent {
+		t.Fatalf("expected the discovered agent in the list, got %v (kinds %v)", m.fileCompleteItems, m.fileCompleteKinds)
+	}
+	if !sawFile {
+		t.Fatalf("expected the file still offered alongside it, got %v", m.fileCompleteItems)
+	}
+}
+
+// TestRefreshFileCompleteFiltersDownToTheNamedAgent: typing enough of the
+// agent's name narrows the combined list down to just it, the same way
+// typing a filename narrows to just that file.
+func TestRefreshFileCompleteFiltersDownToTheNamedAgent(t *testing.T) {
+	wd := withHermeticAgentDefs(t, map[string]string{"reviewer": testAgentBody})
+
+	m := newFileCompleteModel([]string{"main.go", "review.go"})
+	m.cwd = wd
+	m.input.SetValue("@review")
+	m.refreshFileComplete()
+
+	if len(m.fileCompleteItems) == 0 {
+		t.Fatal("expected at least one match")
+	}
+	found := false
+	for i, item := range m.fileCompleteItems {
+		if item == "reviewer" && m.itemKind(i) == completeKindAgent {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the agent to match a prefix of its own name, got %v", m.fileCompleteItems)
+	}
+}
+
+// TestAcceptFileCompleteAgentInsertsTheAgentTag is the symmetric counterpart
+// to TestAcceptFileCompleteReplacesTheToken: picking an agent inserts
+// "@agent:<name>", not the bare name and not the file tag.
+func TestAcceptFileCompleteAgentInsertsTheAgentTag(t *testing.T) {
+	wd := withHermeticAgentDefs(t, map[string]string{"reviewer": testAgentBody})
+
+	m := newFileCompleteModel(nil)
+	m.cwd = wd
+	m.input.SetValue("please continue with @revie")
+	m.refreshFileComplete()
+
+	if len(m.fileCompleteItems) != 1 || m.itemKind(0) != completeKindAgent {
+		t.Fatalf("setup: expected exactly the agent candidate, got %v (kinds %v)", m.fileCompleteItems, m.fileCompleteKinds)
+	}
+
+	m.acceptFileComplete()
+
+	if got, want := m.input.Value(), "please continue with @agent:reviewer "; got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if m.fileCompleteActive {
+		t.Fatal("popup should close after accepting")
+	}
+}
+
+// TestFileCompleteNoAgentsDirFallsBackToFilesOnly covers the "nothing to
+// offer" case explicitly: no .tyci/agents anywhere visible from cwd must not
+// crash and must still show the ordinary file list.
+func TestFileCompleteNoAgentsDirFallsBackToFilesOnly(t *testing.T) {
+	wd := withHermeticAgentDefs(t, nil) // no defs written; dir may not even exist
+
+	m := newFileCompleteModel([]string{"main.go"})
+	m.cwd = wd
+	m.input.SetValue("@main")
+	m.refreshFileComplete()
+
+	if !m.fileCompleteActive {
+		t.Fatal("popup should be open")
+	}
+	if len(m.fileCompleteItems) != 1 || m.fileCompleteItems[0] != "main.go" || m.itemKind(0) != completeKindFile {
+		t.Fatalf("got %v (kinds %v)", m.fileCompleteItems, m.fileCompleteKinds)
+	}
+
+	m.acceptFileComplete()
+	if got, want := m.input.Value(), "@file:main.go "; got != want {
+		t.Fatalf("file completion must still work with no agents dir: got %q want %q", got, want)
+	}
+}
+
+// TestItemKindDefaultsToFileWhenKindsUnset covers direct manipulation of
+// fileCompleteItems (as several older tests in this file do, and as any
+// caller predating the agent/kind split would): with no parallel kinds
+// slice, every item reads as a file, the prior universal behavior.
+func TestItemKindDefaultsToFileWhenKindsUnset(t *testing.T) {
+	m := newFileCompleteTestModel()
+	m.fileCompleteItems = []string{"a.go", "b.go"}
+	for i := range m.fileCompleteItems {
+		if got := m.itemKind(i); got != completeKindFile {
+			t.Fatalf("itemKind(%d) = %q, want %q", i, got, completeKindFile)
+		}
 	}
 }
