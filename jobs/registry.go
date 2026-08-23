@@ -160,27 +160,10 @@ func (r *Registry) Cancel(id string) bool {
 		return false
 	}
 
-	// Subtree walk over ParentID links. List() would snapshot; reading the
-	// live map under the lock we already hold is equivalent and cheaper.
-	// The visited set makes the walk terminate on malformed links — a cycle
-	// (only possible if a test or future feature fabricates ParentIDs) or
-	// two jobs claiming the same child — instead of looping forever.
-	order := make([]*Job, 0, 8)
-	visited := make(map[*Job]bool, 8)
-	var walk func(job *Job)
-	walk = func(job *Job) {
-		if visited[job] {
-			return
-		}
-		visited[job] = true
-		for _, candidate := range r.jobs {
-			if candidate.ParentID == job.ID && !visited[candidate] {
-				walk(candidate)
-			}
-		}
-		order = append(order, job)
-	}
-	walk(target)
+	// Deepest-first subtree walk over ParentID links (see
+	// subtreeOrderLocked). List() would snapshot; reading the live map
+	// under the lock we already hold is equivalent and cheaper.
+	order := r.subtreeOrderLocked(target)
 
 	for _, job := range order {
 		job.cancelled = true
@@ -197,6 +180,31 @@ func (r *Registry) Cancel(id string) bool {
 		kill()
 	}
 	return true
+}
+
+// subtreeOrderLocked returns the target's subtree in kill order: deepest
+// descendants first, target last. The visited set makes the walk terminate
+// on malformed links — a cycle (only possible if a test or future feature
+// fabricates ParentIDs) or two jobs claiming the same child — instead of
+// looping forever. Caller must hold r.mu.
+func (r *Registry) subtreeOrderLocked(target *Job) []*Job {
+	order := make([]*Job, 0, 8)
+	visited := make(map[*Job]bool, 8)
+	var walk func(job *Job)
+	walk = func(job *Job) {
+		if visited[job] {
+			return
+		}
+		visited[job] = true
+		for _, candidate := range r.jobs {
+			if candidate.ParentID == job.ID && !visited[candidate] {
+				walk(candidate)
+			}
+		}
+		order = append(order, job)
+	}
+	walk(target)
+	return order
 }
 
 // cancelableLocked reports whether a stop request on this job can act at
