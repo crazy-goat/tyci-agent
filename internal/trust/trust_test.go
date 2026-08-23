@@ -136,6 +136,40 @@ func TestSetTrustedRecoversFromCorruptFile(t *testing.T) {
 	_ = home
 }
 
+// Decide must fail closed (untrusted) when trust.json exists but is corrupt,
+// never fail open — a project must never be treated as trusted because its
+// trust record couldn't be read.
+func TestDecideFailsClosedOnCorruptFile(t *testing.T) {
+	isolatedHome(t)
+	path, err := Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("write corrupt trust.json: %v", err)
+	}
+
+	prompted := false
+	prompt := func(root string) (bool, error) {
+		prompted = true
+		return true, nil
+	}
+
+	trusted, _, err := Decide("/proj", true, prompt)
+	if err == nil {
+		t.Fatalf("expected Decide to surface the corrupt-file error, got nil")
+	}
+	if trusted {
+		t.Fatalf("Decide must fail closed on a corrupt trust.json, got trusted=true")
+	}
+	if prompted {
+		t.Fatalf("Decide must not prompt when the trust record itself couldn't be read")
+	}
+}
+
 // ─── Decide: interactive first run ──────────────────────────────────────────
 
 func TestDecideFirstRunInteractive_PromptsAndRecords(t *testing.T) {
