@@ -56,6 +56,17 @@ var ErrSubagentTruncated = errors.New("subagent hit its max-iterations cap")
 // response: read what's there, and resume() if more is needed.
 var ErrSubagentTimedOut = errors.New("subagent exceeded its wall-clock time limit")
 
+// ErrSubagentStoppedByUser is the kill-switch counterpart to the two
+// sentinels above: returned (wrapped via fmt.Errorf %w) by a SubAgentRunner
+// when the child was stopped through jobs.Registry.Cancel — today only
+// kill_job reaches it. Treated like them downstream (partial success with
+// Truncated=true, carrying whatever text the child produced first, plus a
+// resumable entry in main.go) because from the caller's side "cut off by
+// time" and "stopped by user" need the same response: read what's there,
+// and resume() if more is needed. Sentinel lives in tools/ so the layering
+// stays: tools has no upward dependency on agent or jobs.
+var ErrSubagentStoppedByUser = errors.New("subagent was stopped by user (kill_job)")
+
 type SubagentTool struct {
 	Runner SubAgentRunner
 }
@@ -1230,11 +1241,14 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	if err != nil {
 		res.Success = false
 		switch {
-		case errors.Is(err, ErrSubagentTruncated), errors.Is(err, ErrSubagentTimedOut):
+		case errors.Is(err, ErrSubagentTruncated), errors.Is(err, ErrSubagentTimedOut), errors.Is(err, ErrSubagentStoppedByUser):
 			// Hit the iteration cap or the wall-clock deadline but produced
 			// text: surface as a partial success, not an error, the same
-			// way either way. The content already carries the [note: ...]
-			// resume hint appended by the runner (main.go's agentRunner.run).
+			// way either way. Stopped-by-user (kill_job) joins them: what
+			// the child produced before being stopped is real partial work,
+			// and main.go already stashed a resumable entry for it. The
+			// content already carries the [note: ...] resume hint appended
+			// by the runner (main.go's agentRunner.run).
 			res.Success = true
 			res.Truncated = true
 		case timeoutSec > 0 && errors.Is(err, context.DeadlineExceeded):

@@ -343,26 +343,36 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 
 	// truncated is the iteration-cap cutoff; deadlineExceeded is the
 	// wall-clock one (SubagentTimeoutSec, via ctx's deadline — see
-	// tools/subagent.go's runSingleTask). Mutually exclusive in practice:
-	// agent.Run only ever returns one error. Both leave a resumable,
-	// partially-completed conversation behind, so both get the same
-	// treatment below.
+	// tools/subagent.go's runSingleTask); stoppedByUser is the kill switch
+	// (jobs.Registry.Cancel, reached today only via kill_job). Mutually
+	// exclusive in practice: agent.Run only ever returns one error. All
+	// leave a resumable, partially-completed conversation behind, so all
+	// get the same treatment below.
 	truncated := errors.Is(err, agent.ErrMaxIterations)
 	deadlineExceeded := !truncated && errors.Is(err, context.DeadlineExceeded)
+	stoppedByUser := !truncated && !deadlineExceeded && errors.Is(err, context.Canceled)
 
 	// If this run is happening inside a background job, and it actually
 	// produced a usable transcript (finished cleanly, hit the iteration cap,
-	// or hit the wall-clock deadline — all leave real turns in msgs, as
-	// opposed to a hard failure where agent.Run may have barely started),
-	// stash the mutated msgs/mc/cfg so a later "resume" tool call can
-	// continue this exact conversation as a brand-new job. See
+	// hit the wall-clock deadline, or was stopped by kill_job — all leave
+	// real turns in msgs, as opposed to a hard failure where agent.Run may
+	// have barely started), stash the mutated msgs/mc/cfg so a later "resume"
+	// tool call can continue this exact conversation as a brand-new job. See
 	// resumableEntry's doc comment for why this map is never pruned.
-	if jobID != "" && (err == nil || truncated || deadlineExceeded) {
+	if jobID != "" && (err == nil || truncated || deadlineExceeded || stoppedByUser) {
 		resumableMu.Lock()
 		resumable[jobID] = resumableEntry{msgs: msgs, mc: mc, cfg: cfg}
 		resumableMu.Unlock()
 	}
 
+	if stoppedByUser {
+		// Killed mid-flight: whatever text exists is real partial work. Wrap
+		// the sentinel so runSingleTask (errors.Is) can surface it as a
+		// partial success with Truncated=true instead of a bare failure,
+		// exactly like the deadline path below. The stash above already
+		// happened, so a resume(job_id=...) hint here is actionable.
+		return subagentStoppedMessage(text, jobID)
+	}
 	if truncated || deadlineExceeded {
 		return subagentCutoffMessage(text, deadlineExceeded, jobID, maxIter, err)
 	}
@@ -379,6 +389,24 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// scratch. resumeHint itself already no-ops when jobID is empty (no job
 	// registry — tests only), so nothing here needs to duplicate that check.
 	return text + resumeHint(jobID), nil
+}
+
+// subagentStoppedMessage builds the (content, error) pair run() returns when
+// a child was stopped by kill_job (context.Canceled unwrapped from the
+// registry's Cancel) — factored out like subagentCutoffMessage so it can be
+// exercised directly with synthetic input. The partial text is kept and
+// annotated; ErrSubagentStoppedByUser is wrapped so tools/subagent.go's
+// runSingleTask detects it via errors.Is and surfaces a partial success
+// (Truncated=true) rather than discarding everything.
+func subagentStoppedMessage(text string, jobID string) (string, error) {
+	if text == "" {
+		if jobID != "" {
+			return "", fmt.Errorf("%w before producing any output, but the conversation so far is resumable: resume(job_id=%q, task=\"...\") to continue it", tools.ErrSubagentStoppedByUser, jobID)
+		}
+		return "", fmt.Errorf("%w without producing any output", tools.ErrSubagentStoppedByUser)
+	}
+	return text + fmt.Sprintf("\n\n[note: subagent was stopped by user (kill_job); the result above may be incomplete.%s]", resumeHint(jobID)),
+		fmt.Errorf("%w: result may be incomplete", tools.ErrSubagentStoppedByUser)
 }
 
 // subagentCutoffMessage builds the (content, error) pair run() returns once
