@@ -104,6 +104,11 @@ func fmtTokens(n int) string {
 
 // buildUsageDetail is the Tokens tab: everything the status bar used to show,
 // plus the per-model breakdown the status bar never could.
+//
+// width sizes the per-model breakdown's label column so it reads cleanly at
+// the sidebar's actual inner width (as narrow as ~34 columns) instead of a
+// fixed 22-column label truncating badly (or, at a wider width, leaving the
+// row needlessly cramped).
 func (m TuiModel) buildUsageDetail(width int) []string {
 	var out []string
 
@@ -119,10 +124,30 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 		out = append(out, "", "last turn", "  "+usageTokens(m.lastUsage), "  "+timingTokens(m.lastUsage, m.lastStats))
 	}
 
-	snap := ledger.Get()
-	if len(snap.Rows) > 0 {
+	// labelWidth adapts the per-model breakdown's first column to the
+	// available width. The row's literal overhead is 9 columns ("  " + the
+	// space before the numeric field + the numeric field's own width + "$"),
+	// plus up to ~8 more for the cost figure itself (e.g. "1234.56"); the
+	// rest goes to the label, clamped so a very wide sidebar doesn't stretch
+	// it absurdly and a very narrow one still gets a usable label instead of
+	// collapsing to nothing.
+	labelWidth := width - 17
+	if labelWidth < 4 {
+		labelWidth = 4
+	}
+	if labelWidth > 22 {
+		labelWidth = 22
+	}
+
+	// ByModel, not Get().Rows: Row's key now includes a job id (so the
+	// Subagents tab can track a child's tokens separately), which would
+	// otherwise show N identical-looking lines for N subagents that happen
+	// to share a model instead of one aggregated line — see ByModel's doc
+	// comment.
+	byModel := ledger.ByModel()
+	if len(byModel) > 0 {
 		out = append(out, "", "session")
-		for _, r := range snap.Rows {
+		for _, r := range byModel {
 			cost := "$" + fmtUSD(r.USD)
 			if !r.Priced {
 				cost = "$?"
@@ -131,22 +156,23 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 			if r.Kind == ledger.Subagent {
 				label = "↳ " + label
 			}
-			out = append(out, fmt.Sprintf("  %-22s %5s %s",
-				truncateRunes(label, 22), fmtTokens(r.Usage.Input+r.Usage.Output), cost))
+			out = append(out, fmt.Sprintf("  %-*s %5s %s", labelWidth,
+				truncateRunes(label, labelWidth), fmtTokens(r.Usage.Input+r.Usage.Output), cost))
 		}
-		out = append(out, fmt.Sprintf("  %-22s %5s $%s", "total", "",
+		snap := ledger.Get()
+		out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "total", "",
 			fmtUSD(snap.TotalUSD())))
 		if snap.SubagentUSD > 0 {
-			out = append(out, fmt.Sprintf("  %-22s %5s $%s", "of that delegated", "",
+			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "of that delegated", "",
 				fmtUSD(snap.SubagentUSD)))
 		}
 	}
 
-	// Warn only about a model actually in this session (snap.Rows), and only
-	// when its provider has priced nothing at all — a model that reads $0
-	// while its provider prices other models is presumed genuinely free, not
-	// missing data, and must not trigger this.
-	for _, r := range snap.Rows {
+	// Warn only about a model actually in this session, and only when its
+	// provider has priced nothing at all — a model that reads $0 while its
+	// provider prices other models is presumed genuinely free, not missing
+	// data, and must not trigger this.
+	for _, r := range byModel {
 		if !r.Priced && pricing.ProviderNeedsPrices(r.Provider) {
 			out = append(out, "", "no prices for "+r.Provider+" —", "run `tyci provider refresh`")
 			break

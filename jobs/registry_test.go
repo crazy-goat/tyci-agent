@@ -64,7 +64,13 @@ func TestStart_RecordsKindAndParentID(t *testing.T) {
 		return "done", false, nil
 	})
 
-	got, ok := r.Get(child.ID)
+	// Wait's returned *Job is a Snapshot()-produced copy, safe to read
+	// without the registry lock — unlike r.Get, which hands back the live
+	// *Job that the goroutine above may still be concurrently writing
+	// (Status/Result/Err/FinishedAt) until it finishes. Reading that live
+	// pointer raced under `go test -race` even though Kind/ParentID
+	// themselves are set once at Start and never mutated again.
+	got, ok := r.Wait(context.Background(), child.ID, time.Second)
 	if !ok {
 		t.Fatalf("expected child job to be found")
 	}
@@ -73,13 +79,6 @@ func TestStart_RecordsKindAndParentID(t *testing.T) {
 	}
 	if got.ParentID != parent.ID {
 		t.Fatalf("expected ParentID=%q, got %q", parent.ID, got.ParentID)
-	}
-
-	// Snapshot (what List/Get/Wait return) must carry both fields too, not
-	// just the live *Job — display code only ever sees snapshots.
-	snap := got.Snapshot()
-	if snap.Kind != KindBash || snap.ParentID != parent.ID {
-		t.Fatalf("Snapshot dropped Kind/ParentID: got %+v", snap)
 	}
 }
 

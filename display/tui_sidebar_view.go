@@ -12,29 +12,63 @@ import (
 
 // sidebarLayoutT is the sidebar's own layout shape — right-anchored and
 // full-height, unlike modalLayout's centered popups.
+//
+// The box is built as lipgloss.NewStyle().Width(panelWidth).Padding(0,
+// 1).BorderLeft(true)…: lipgloss's box model treats Width as the
+// content-plus-padding size and adds the border ON TOP of it, so the box's
+// actual on-screen footprint is panelWidth+1 column wide, and the text
+// content inside starts 2 columns past the box's own left edge (1 border +
+// 1 left padding) with contentWidth = panelWidth-2 (minus left+right
+// padding). All of width/left/contentLeft/contentWidth below are derived
+// from that single panelWidth so the renderer and the mouse hit-testing in
+// tui_sidebar.go can never compute two different geometries again — the
+// bug an earlier review round caught (sidebarTabAtX assumed the tab row
+// started at layout.left with no border/padding offset at all).
 type sidebarLayoutT struct {
+	// width/height are the box's actual on-screen footprint (border
+	// included) — what "is this click inside the panel at all" tests
+	// against.
 	width, height int
-	left, top     int
-	contentTop    int // first content row, in screen coordinates
-	contentHeight int // rows available for the tab's own list/text
+	// left/top are the box's on-screen top-left corner.
+	left, top int
+	// contentLeft/contentWidth are the on-screen column range of the actual
+	// rendered text (tab labels, list rows) — i.e. left/width shifted past
+	// the border and left padding lipgloss adds. Both the renderer
+	// (renderSidebarTabs, the content loop) and the hit-tester
+	// (sidebarTabAtX, the row-click math) read these same two fields.
+	contentLeft, contentWidth int
+	contentTop                int // first content row, in screen coordinates
+	contentHeight             int // rows available for the tab's own list/text
 }
 
 func (m TuiModel) sidebarLayout() sidebarLayoutT {
-	width := m.width * 2 / 5
-	if width < 36 {
-		width = 36
+	// panelWidth is the Width() style parameter passed to the box below —
+	// content plus padding, NOT including the border column.
+	panelWidth := m.width * 2 / 5
+	if panelWidth < 36 {
+		panelWidth = 36
 	}
-	if width > m.width-1 {
-		width = m.width - 1
+	// Leave room for the +1 border column the box adds on top of panelWidth.
+	if panelWidth > m.width-2 {
+		panelWidth = m.width - 2
 	}
-	if width < 10 {
-		width = 10
+	if panelWidth < 10 {
+		panelWidth = 10
 	}
-	height := m.height
-	left := m.width - width
+
+	totalWidth := panelWidth + 1 // + the left border column
+	left := m.width - totalWidth
 	if left < 0 {
 		left = 0
 	}
+	height := m.height
+
+	contentLeft := left + 2        // border(1) + left padding(1)
+	contentWidth := panelWidth - 2 // minus left+right padding
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
 	// Rows: title(1) + tabs(1) + separator(1) = 3 before content;
 	// separator(1) + footer(1) + hint(1) = 3 after it.
 	contentHeight := height - 6
@@ -42,10 +76,12 @@ func (m TuiModel) sidebarLayout() sidebarLayoutT {
 		contentHeight = 1
 	}
 	return sidebarLayoutT{
-		width:         width,
+		width:         totalWidth,
 		height:        height,
 		left:          left,
 		top:           0,
+		contentLeft:   contentLeft,
+		contentWidth:  contentWidth,
 		contentTop:    3,
 		contentHeight: contentHeight,
 	}
@@ -57,7 +93,13 @@ func (m TuiModel) sidebarLayout() sidebarLayoutT {
 // column.
 func (m TuiModel) renderSidebarView() string {
 	layout := m.sidebarLayout()
-	innerWidth := layout.width - 2 // minus the panel's own left/right margin
+	// panelWidth is the Width() style parameter the box below is built
+	// with — see sidebarLayoutT's doc comment: layout.width is the box's
+	// total on-screen footprint (border included), one column MORE than
+	// this. contentWidth is what actually goes inside (content+padding
+	// minus the padding itself).
+	panelWidth := layout.width - 1
+	contentWidth := layout.contentWidth
 
 	var b strings.Builder
 
@@ -65,44 +107,52 @@ func (m TuiModel) renderSidebarView() string {
 		Bold(true).
 		Foreground(lipgloss.Color("252")).
 		Background(lipgloss.Color("60")).
-		Width(innerWidth).
+		Width(contentWidth).
 		Padding(0, 1)
 	b.WriteString(titleStyle.Render("Sidebar"))
 	b.WriteString("\n")
 
-	b.WriteString(m.renderSidebarTabs(innerWidth))
+	b.WriteString(m.renderSidebarTabs(contentWidth))
 	b.WriteString("\n")
 
-	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Width(innerWidth)
-	b.WriteString(sepStyle.Render(strings.Repeat("─", innerWidth)))
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Width(contentWidth)
+	b.WriteString(sepStyle.Render(strings.Repeat("─", contentWidth)))
 	b.WriteString("\n")
 
-	lines := m.sidebarTabLines(innerWidth)
+	// Scroll window: sidebarScroll is kept in [0, max(0, len(lines)-
+	// contentHeight)] by sidebarClampScroll/sidebarScrollBy (tui_sidebar.go)
+	// on every cursor move, tab switch, and wheel event — clamped again
+	// here defensively in case of a resize since the last one of those.
+	lines := m.sidebarTabLines(contentWidth)
+	scroll := m.sidebarScroll
+	if maxScroll := len(lines) - layout.contentHeight; scroll > maxScroll {
+		scroll = maxScroll
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
 	shown := 0
-	for _, l := range lines {
-		if shown >= layout.contentHeight {
-			break
-		}
-		b.WriteString(lipgloss.NewStyle().Width(innerWidth).MaxWidth(innerWidth).Render(l))
+	for i := scroll; i < len(lines) && shown < layout.contentHeight; i++ {
+		b.WriteString(lipgloss.NewStyle().Width(contentWidth).MaxWidth(contentWidth).Render(lines[i]))
 		b.WriteString("\n")
 		shown++
 	}
 	for shown < layout.contentHeight {
-		b.WriteString(strings.Repeat(" ", innerWidth))
+		b.WriteString(strings.Repeat(" ", contentWidth))
 		b.WriteString("\n")
 		shown++
 	}
 
-	b.WriteString(sepStyle.Render(strings.Repeat("─", innerWidth)))
+	b.WriteString(sepStyle.Render(strings.Repeat("─", contentWidth)))
 	b.WriteString("\n")
 
-	footerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Width(innerWidth)
-	b.WriteString(footerStyle.Render(truncateToWidth(m.sidebarFooter(), innerWidth)))
+	footerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Width(contentWidth)
+	b.WriteString(footerStyle.Render(truncateToWidth(m.sidebarFooter(), contentWidth)))
 	b.WriteString("\n")
-	b.WriteString(footerStyle.Render(truncateToWidth(m.sidebarHint(), innerWidth)))
+	b.WriteString(footerStyle.Render(truncateToWidth(m.sidebarHint(), contentWidth)))
 
 	box := lipgloss.NewStyle().
-		Width(layout.width).
+		Width(panelWidth).
 		Height(layout.height).
 		Padding(0, 1).
 		Background(lipgloss.Color("235")).
@@ -147,7 +197,7 @@ func (m TuiModel) renderSidebarTabs(width int) string {
 func (m TuiModel) sidebarFooter() string {
 	switch m.sidebarTab {
 	case sidebarTabSessions:
-		return "↑↓ select  Enter resume  Tab/←→ switch tab  Esc close"
+		return "↑↓ browse  Enter: open resume picker  Tab/←→ switch tab  Esc close"
 	case sidebarTabBash, sidebarTabSubagents:
 		hint := "↑↓ select  Enter view"
 		if m.sidebarTab == sidebarTabSubagents {

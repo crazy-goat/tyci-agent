@@ -1,10 +1,14 @@
 package display
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/stream"
@@ -17,6 +21,185 @@ func newTestModelForSidebar() TuiModel {
 	m.height = 30
 	m.reading = true
 	return m
+}
+
+// TestSidebarTabAtX_MatchesRenderedTabPositions is the regression test for
+// the hit-test/renderer offset mismatch a review round caught: sidebarTabAtX
+// used to divide by layout.width and assume the tab row started at
+// layout.left, while renderSidebarTabs actually laid tabs out over
+// layout.contentWidth starting at layout.contentLeft (border + padding
+// past layout.left) — so a click on "Bash" selected "Sessions", and so on.
+// This renders the real sidebar, finds each tab label's actual on-screen
+// column, and checks sidebarTabAtX maps a click there back to that same
+// tab — for every tab, not just the first (which happened to still work by
+// coincidence under the old, wrong formula).
+func TestSidebarTabAtX_MatchesRenderedTabPositions(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabTokens)
+	layout := m.sidebarLayout()
+
+	rendered := m.renderSidebarView()
+	rows := strings.Split(rendered, "\n")
+	tabRow := ansi.Strip(rows[layout.top+1])
+
+	// Cells can be narrower than a tab's full name (renderSidebarTabs
+	// truncates with an ellipsis — e.g. "Sessions" -> "Sessio…" at this
+	// test's width), so search for whatever it actually rendered, exactly
+	// as it computes it, rather than the untruncated name.
+	cell := layout.contentWidth / sidebarTabCount
+	for tab, name := range sidebarTabNames {
+		label := truncateToWidth(name, cell)
+		byteIdx := strings.Index(tabRow, label)
+		if byteIdx < 0 {
+			t.Fatalf("tab %d's rendered label %q not found in tab row: %q", tab, label, tabRow)
+		}
+		// tabRow contains multi-byte runes (the border character), so a
+		// byte offset from strings.Index is not a screen column — convert
+		// via display width of everything before the match, same unit
+		// sidebarTabAtX's x parameter (a mouse event's column) is in.
+		col := lipgloss.Width(tabRow[:byteIdx])
+		if got := sidebarTabAtX(layout, col); got != tab {
+			t.Errorf("sidebarTabAtX(%d) [start of %q's rendered label] = %d, want %d", col, label, got, tab)
+		}
+		// A click anywhere else within the same label's text must also
+		// resolve to this tab, not just its very first column.
+		lastCol := col + lipgloss.Width(label) - 1
+		if got := sidebarTabAtX(layout, lastCol); got != tab {
+			t.Errorf("sidebarTabAtX(%d) [end of %q's rendered label] = %d, want %d", lastCol, label, got, tab)
+		}
+	}
+}
+
+// TestSidebarMouse_TabClickAndBorderMargin exercises the same fix through
+// the actual mouse handler (not just the raw sidebarTabAtX function): a
+// click squarely inside a tab's cell selects it, a click on the panel's own
+// border/left-padding column (part of the panel, just not a tab or content
+// cell) does neither — it must not misfire as a tab click, and per the
+// review finding it must NOT close the sidebar either, since it is still
+// inside the panel's own bounding box. Only a click truly outside that box
+// closes it (covered by TestUpdateSidebar's mouse-outside-closes case,
+// unchanged by this fix).
+func TestSidebarMouse_TabClickAndBorderMargin(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabTokens)
+	layout := m.sidebarLayout()
+
+	// Click squarely inside the Subagents cell of the tab row.
+	cell := layout.contentWidth / sidebarTabCount
+	x := layout.contentLeft + sidebarTabSubagents*cell + cell/2
+	model, _ := m.updateSidebar(tea.MouseMsg{
+		X: x, Y: layout.top + 1,
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	m2 := model.(TuiModel)
+	if m2.sidebarTab != sidebarTabSubagents {
+		t.Fatalf("expected clicking the Subagents cell to select it, got tab %d", m2.sidebarTab)
+	}
+	if !m2.sidebarActive {
+		t.Fatalf("expected the sidebar to stay open after a tab click")
+	}
+
+	// Click on the border column: inside the panel's bounding box
+	// (layout.left), but left of layout.contentLeft — must not close the
+	// panel and must not change the tab.
+	model, _ = m2.updateSidebar(tea.MouseMsg{
+		X: layout.left, Y: layout.top + 1,
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	m3 := model.(TuiModel)
+	if !m3.sidebarActive {
+		t.Fatalf("expected a click on the panel's own border column to leave the sidebar open")
+	}
+	if m3.sidebarTab != sidebarTabSubagents {
+		t.Fatalf("expected the border-column click to leave the tab selection unchanged, got %d", m3.sidebarTab)
+	}
+
+	// A click truly outside the panel's footprint must close it.
+	model, _ = m3.updateSidebar(tea.MouseMsg{
+		X: layout.left - 1, Y: layout.top + 1,
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	m4 := model.(TuiModel)
+	if m4.sidebarActive {
+		t.Fatalf("expected a click outside the panel's footprint to close it")
+	}
+}
+
+// TestSidebarScroll_SelectableTabKeepsCursorVisible covers the missing-
+// scroll-offset bug: on a long list (more bash jobs than fit), moving the
+// cursor past the visible window must move sidebarScroll to keep it in
+// view, and the rendered content must actually reflect that offset (not
+// just the first contentHeight lines every time).
+func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.height = 15 // small height -> small contentHeight, so the list overflows easily
+	for i := 0; i < 30; i++ {
+		m.applyJobUpdate(jobs.Job{
+			ID:        jobs.ShortID(fmt.Sprintf("job-%d", i)),
+			Kind:      jobs.KindBash,
+			Status:    jobs.StatusDone,
+			StartedAt: time.Now().Add(-time.Duration(30-i) * time.Minute),
+		})
+	}
+	m.openSidebar(sidebarTabBash)
+	layout := m.sidebarLayout()
+	if layout.contentHeight >= 30 {
+		t.Skip("terminal too tall for this test to exercise overflow")
+	}
+
+	for i := 0; i < 29; i++ {
+		m.sidebarMoveCursor(1)
+	}
+	if m.sidebarCursor != 29 {
+		t.Fatalf("expected cursor at the last row (29), got %d", m.sidebarCursor)
+	}
+	if m.sidebarScroll+layout.contentHeight <= m.sidebarCursor {
+		t.Fatalf("expected sidebarScroll to keep the cursor in view: scroll=%d contentHeight=%d cursor=%d",
+			m.sidebarScroll, layout.contentHeight, m.sidebarCursor)
+	}
+
+	// The rendered content must actually start at sidebarScroll, not 0.
+	lines := m.sidebarBashJobs()
+	rendered := m.renderSidebarView()
+	rows := strings.Split(rendered, "\n")
+	firstContentRow := ansi.Strip(rows[layout.contentTop])
+	lastJobShortID := jobs.ShortID(lines[m.sidebarScroll].ID)
+	if !strings.Contains(firstContentRow, "#"+lastJobShortID) {
+		t.Fatalf("expected the first visible content row to show job at scroll offset %d (id %s), got %q",
+			m.sidebarScroll, lastJobShortID, firstContentRow)
+	}
+}
+
+// TestSidebarScroll_NonSelectableTabScrollsWithoutACursor covers the Tokens/
+// Lua tabs: sidebarRowCount is 0 for them (no selectable rows — see
+// sidebarSelectable), so Up/Down/wheel must scroll the view directly
+// instead of being no-ops just because there's no cursor to move.
+func TestSidebarScroll_NonSelectableTabScrollsWithoutACursor(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.height = 15
+	m.openSidebar(sidebarTabTokens)
+	layout := m.sidebarLayout()
+
+	lineCount := m.sidebarLineCount(layout.contentWidth)
+	if lineCount <= layout.contentHeight {
+		// Pad the ledger with enough rows that Tokens overflows the panel.
+		for i := 0; i < 20; i++ {
+			ledger.Record(ledger.Subagent, "p", fmt.Sprintf("model-%d", i), fmt.Sprintf("job-%d", i), stream.Usage{Input: 100, Output: 10})
+		}
+		t.Cleanup(ledger.Reset)
+		lineCount = m.sidebarLineCount(layout.contentWidth)
+		if lineCount <= layout.contentHeight {
+			t.Skip("could not produce enough Tokens content to overflow the panel in this configuration")
+		}
+	}
+
+	m.sidebarMoveCursor(1)
+	if m.sidebarScroll == 0 {
+		t.Fatalf("expected Down to scroll a non-selectable tab with overflowing content")
+	}
+	if m.sidebarCursor != 0 {
+		t.Fatalf("expected sidebarCursor to stay 0 on a non-selectable tab, got %d", m.sidebarCursor)
+	}
 }
 
 func TestOpenCloseToggleSidebar(t *testing.T) {
@@ -228,6 +411,51 @@ func TestBuildSubagentTree_WaitingAnswerSortsFirst(t *testing.T) {
 	}
 }
 
+// TestBuildSubagentTree_OrphanUnderNonSubagentParentStillRenders covers the
+// review finding that a subagent whose ParentID points at a job that isn't
+// itself a tracked subagent — a cron run, or a parent since evicted from
+// backgroundJobs — used to be silently unreachable from the root: byParent
+// only got walked starting from root's own subagent children, so a group
+// keyed by a non-subagent (or missing) parent id was never visited. It
+// must now show up as a depth-1 orphan instead of vanishing.
+func TestBuildSubagentTree_OrphanUnderNonSubagentParentStillRenders(t *testing.T) {
+	ledger.Reset()
+	t.Cleanup(ledger.Reset)
+
+	m := newTestModelForSidebar()
+	cronParent := jobs.Job{ID: "cron-1", Kind: jobs.KindCron, Status: jobs.StatusDone, Description: "scheduled run"}
+	child := jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, ParentID: "cron-1", Status: jobs.StatusDone, Description: "spawned by cron"}
+	m.applyJobUpdate(cronParent)
+	m.applyJobUpdate(child)
+
+	rows := m.buildSubagentTree()
+	var found *subagentTreeRow
+	for i := range rows {
+		if !rows[i].isRoot && rows[i].job.ID == "job-1" {
+			found = &rows[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected the orphaned subagent to still appear in the tree, got rows: %+v", rows)
+	}
+	if found.depth != 1 {
+		t.Fatalf("expected the orphan to render at depth 1, got %d", found.depth)
+	}
+
+	// Also cover a parent id with no job at all (e.g. evicted from
+	// backgroundJobs) — same expectation, no crash, still a depth-1 row.
+	m2 := newTestModelForSidebar()
+	orphan := jobs.Job{ID: "job-2", Kind: jobs.KindSubagent, ParentID: "long-gone", Status: jobs.StatusDone, Description: "parent evicted"}
+	m2.applyJobUpdate(orphan)
+	rows2 := m2.buildSubagentTree()
+	if len(rows2) != 2 {
+		t.Fatalf("expected root + 1 orphan row, got %d: %+v", len(rows2), rows2)
+	}
+	if rows2[1].job.ID != "job-2" || rows2[1].depth != 1 {
+		t.Fatalf("expected job-2 at depth 1, got %+v", rows2[1])
+	}
+}
+
 func TestSidebarBashJobs_FiltersKind(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindBash, Description: "bash job"})
@@ -237,6 +465,65 @@ func TestSidebarBashJobs_FiltersKind(t *testing.T) {
 	list := m.sidebarBashJobs()
 	if len(list) != 1 || list[0].ID != "job-1" {
 		t.Fatalf("expected only the bash job, got %+v", list)
+	}
+}
+
+// TestSidebarSubmitResume_RefusesMidTurn covers the review finding that
+// submitting "/resume" while the agent is mid-turn (m.reading == false)
+// would either queue the literal string "/resume" as a real user message or
+// otherwise misfire — it must refuse instead, leaving the input untouched.
+func TestSidebarSubmitResume_RefusesMidTurn(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.reading = false // a turn is in flight
+	m.openSidebar(sidebarTabSessions)
+
+	model, _ := m.sidebarSubmitResume()
+	m2 := model.(TuiModel)
+	if m2.sidebarActive {
+		t.Fatalf("expected the sidebar to close even when refusing")
+	}
+	if m2.input.Value() != "" {
+		t.Fatalf("expected the input box to stay untouched, got %q", m2.input.Value())
+	}
+	if m2.statusMessage == "" {
+		t.Fatalf("expected a status message explaining the refusal")
+	}
+}
+
+// TestSidebarSubmitResume_RefusesWhenInputNotEmpty covers the review
+// finding that Enter on the Sessions tab used to clobber whatever the user
+// had half-typed with the literal "/resume" — it must refuse and leave the
+// draft alone instead.
+func TestSidebarSubmitResume_RefusesWhenInputNotEmpty(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.reading = true
+	m.input.SetValue("a half-written message")
+	m.openSidebar(sidebarTabSessions)
+
+	model, _ := m.sidebarSubmitResume()
+	m2 := model.(TuiModel)
+	if m2.input.Value() != "a half-written message" {
+		t.Fatalf("expected the half-written input to survive, got %q", m2.input.Value())
+	}
+}
+
+// TestSidebarResumeSubagentRow_RefusesWhenInputNotEmpty mirrors the same
+// guard for the 'r' key on a Subagents row: it only drafts text, so
+// clobbering a half-written message would be a pure loss.
+func TestSidebarResumeSubagentRow_RefusesWhenInputNotEmpty(t *testing.T) {
+	ledger.Reset()
+	t.Cleanup(ledger.Reset)
+
+	m := newTestModelForSidebar()
+	m.input.SetValue("don't overwrite me")
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "child"})
+	m.openSidebar(sidebarTabSubagents)
+	m.sidebarCursor = 1 // the one real row past the synthetic root
+
+	model, _ := m.sidebarResumeSubagentRow()
+	m2 := model.(TuiModel)
+	if m2.input.Value() != "don't overwrite me" {
+		t.Fatalf("expected the existing input to survive, got %q", m2.input.Value())
 	}
 }
 

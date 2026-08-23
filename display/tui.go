@@ -440,6 +440,14 @@ type TuiModel struct {
 	sidebarActive bool
 	sidebarTab    int // one of the sidebarTab* constants (tui_sidebar.go)
 	sidebarCursor int // selected row within the current tab's list, if any
+	// sidebarScroll is the first visible line's index into the active tab's
+	// rendered lines (tui_sidebar_view.go's sidebarTabLines) — a plain
+	// vertical offset, distinct from sidebarCursor: a non-selectable tab
+	// (Tokens, Lua — see sidebarSelectable) has no cursor at all but can
+	// still have more lines than fit, and a selectable tab keeps this in
+	// sync with the cursor via sidebarClampScrollToCursor so the selected
+	// row is always on screen.
+	sidebarScroll int
 
 	// sessionLister, when set (via TUI.SetSessionLister, called once from
 	// main()), fetches this project's resumable sessions on demand for the

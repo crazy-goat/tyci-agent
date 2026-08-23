@@ -165,6 +165,48 @@ func Get() Snapshot {
 	return s
 }
 
+// ByModel aggregates Get()'s rows back down to one row per {Kind, Provider,
+// Model} — the shape a per-model breakdown (the Tokens tab's session list)
+// wants, regardless of how many separate jobs (the main conversation, or any
+// number of subagents) contributed to it. Without this, joining a job id
+// into Row's key (so the Subagents tab can track a child's tokens
+// separately — see Row's doc comment) would otherwise leak into every OTHER
+// consumer of Get().Rows too: twelve subagents on the same model would show
+// as twelve identical-looking lines instead of one aggregated one. Returned
+// rows carry no JobID (it no longer identifies a single job) and are
+// ordered by first-seen model, mirroring Get()'s own ordering.
+func ByModel() []Row {
+	mu.Lock()
+	defer mu.Unlock()
+	type mkey struct {
+		kind     Kind
+		provider string
+		model    string
+	}
+	idx := map[mkey]int{}
+	var out []Row
+	for _, k := range order {
+		r := rows[k]
+		mk := mkey{kind: k.kind, provider: k.provider, model: k.model}
+		if i, ok := idx[mk]; ok {
+			agg := &out[i]
+			agg.Usage.Add(r.Usage)
+			agg.USD += r.USD
+			agg.Runs += r.Runs
+			if !r.Priced {
+				agg.Priced = false
+			}
+			continue
+		}
+		idx[mk] = len(out)
+		out = append(out, Row{
+			Kind: r.Kind, Provider: r.Provider, Model: r.Model,
+			Usage: r.Usage, USD: r.USD, Priced: r.Priced, Runs: r.Runs,
+		})
+	}
+	return out
+}
+
 // JobUsage is one job's own usage and cost, aggregated across every model it
 // called — a job can fall back across models mid-run, and the Subagents tab
 // wants one figure per row, not one per model.

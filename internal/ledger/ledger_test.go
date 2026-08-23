@@ -54,6 +54,65 @@ func TestRecord_SplitsMainFromSubagentAndAccumulates(t *testing.T) {
 	}
 }
 
+// TestByModel_AggregatesAcrossJobIDs covers the regression a per-job Row key
+// introduced: Get().Rows now has one row per {Kind,Provider,Model,JobID}, so
+// twelve subagents on the same model would otherwise render as twelve
+// identical-looking lines in the Tokens tab instead of one. ByModel must
+// collapse them back down to one row per {Kind,Provider,Model}, summing
+// usage/cost/runs across every job that used it.
+func TestByModel_AggregatesAcrossJobIDs(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+	u := stream.Usage{Input: 1000, Output: 100}
+	Record(Main, "p", "m", "", u)
+	Record(Subagent, "p", "m", "job-1", u)
+	Record(Subagent, "p", "m", "job-2", u)
+	Record(Subagent, "p", "m", "job-3", u)
+
+	// Sanity check: the per-job view really did split into 4 rows.
+	if got := len(Get().Rows); got != 4 {
+		t.Fatalf("Get().Rows = %d, want 4 (1 main + 3 per-job subagent rows)", got)
+	}
+
+	byModel := ByModel()
+	if len(byModel) != 2 {
+		t.Fatalf("ByModel() = %d rows, want 2 (one main, one subagent, collapsed across job ids): %+v", len(byModel), byModel)
+	}
+	var main, sub Row
+	for _, r := range byModel {
+		if r.Kind == Main {
+			main = r
+		} else {
+			sub = r
+		}
+	}
+	if main.Runs != 1 || main.Usage.Input != 1000 {
+		t.Fatalf("main row = %+v, want 1 run / 1000 input", main)
+	}
+	if sub.Runs != 3 || sub.Usage.Input != 3000 {
+		t.Fatalf("subagent row = %+v, want 3 runs / 3000 input summed across job ids", sub)
+	}
+}
+
+// TestByModel_UnpricedPropagatesAcrossJobIDs: if any one of several jobs on
+// the same model is unpriced, the aggregated row must report unpriced too —
+// silently averaging a known price with an unknown one would understate the
+// bill, the one thing this package exists not to do.
+func TestByModel_UnpricedPropagatesAcrossJobIDs(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+	Record(Subagent, "nope", "no-such-model", "job-1", stream.Usage{Input: 10})
+	Record(Subagent, "nope", "no-such-model", "job-2", stream.Usage{Input: 20})
+
+	byModel := ByModel()
+	if len(byModel) != 1 {
+		t.Fatalf("expected 1 aggregated row, got %d", len(byModel))
+	}
+	if byModel[0].Priced {
+		t.Fatalf("expected the aggregated row to stay unpriced, got Priced=true")
+	}
+}
+
 // An unpriced model must not contribute $0 to the total silently — it has to
 // be visible as "we don't know".
 func TestGet_UnpricedRowsCounted(t *testing.T) {

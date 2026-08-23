@@ -372,7 +372,17 @@ func (r *Registry) Resolve(id string) (string, bool) {
 // that backgrounds a few hundred commands would therefore retain tens of MB
 // of output nobody can reach any more. 50 is well past the point where a
 // model would still poll an old job_id with "wait".
-const maxRetainedTerminalJobs = 50
+//
+// Exported as MaxRetainedTerminalJobs so any other mirror of this registry's
+// contents (e.g. display.TuiModel.backgroundJobs, fed by SetJobEventBus) can
+// prune itself to the same bound instead of drifting from — and having its
+// footer text lie about — the registry's actual retention.
+const maxRetainedTerminalJobs = MaxRetainedTerminalJobs
+
+// MaxRetainedTerminalJobs is maxRetainedTerminalJobs's exported mirror — see
+// its doc comment for the rationale. A plain const alias (not a duplicated
+// literal) so the two can never drift apart.
+const MaxRetainedTerminalJobs = 50
 
 // pruneTerminalLocked drops the oldest finished jobs beyond
 // maxRetainedTerminalJobs. Caller must hold r.mu.

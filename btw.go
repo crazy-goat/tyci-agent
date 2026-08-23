@@ -12,6 +12,7 @@ import (
 	"github.com/decodo/tyci/conductor"
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/display"
+	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
@@ -138,7 +139,10 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, newJobID)
 
 		c := &collector{}
-		_, err := agent.Run(runCtx, entry.mc, c, &forked, entry.cfg)
+		// See ForkChildJob's identical comment (fork.go): without this the
+		// resumed conversation's real spend never reaches internal/ledger,
+		// and the Subagents tree would render it as free.
+		_, err := agent.Run(runCtx, entry.mc, ledger.Watch(c, ledger.Subagent, entry.mc.Provider(), entry.mc.Model(), newJobID), &forked, entry.cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {
 			err = nil
@@ -245,7 +249,11 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		// shared with any other job, so mutating it right before the one
 		// agent.Run call that uses it is safe.
 		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
-		_, err := agent.Run(jobCtx, client, sink, &forked, cfg)
+		// See ForkChildJob's identical comment (fork.go): a /btw
+		// side-conversation spends the parent's money like any other child
+		// and must record against the same ledger, or it renders as free in
+		// the Subagents tree.
+		_, err := agent.Run(jobCtx, client, ledger.Watch(sink, ledger.Subagent, client.Provider(), client.Model(), jobID), &forked, cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {
 			err = nil

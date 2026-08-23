@@ -1,10 +1,12 @@
 package display
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/internal/pricing"
 	"github.com/decodo/tyci/stream"
@@ -200,6 +202,58 @@ func writeTestCatalog(t *testing.T, homeDir, body string) {
 	}
 	if err := os.WriteFile(dir+"/providers.json", []byte(body), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestBuildUsageDetail_AggregatesSameModelAcrossManySubagents guards the
+// regression a per-job ledger key introduced: many subagents sharing a
+// model must render as one aggregated session line, not one per job id.
+func TestBuildUsageDetail_AggregatesSameModelAcrossManySubagents(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	for i := 0; i < 12; i++ {
+		ledger.Record(ledger.Subagent, "p", "m", fmt.Sprintf("job-%d", i), stream.Usage{Input: 100, Output: 10})
+	}
+
+	m := TuiModel{modelName: "m"}
+	lines := m.buildUsageDetail(40)
+	count := 0
+	for _, l := range lines {
+		if strings.Contains(l, "↳ m") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 aggregated line for 12 same-model subagents, got %d:\n%s", count, strings.Join(lines, "\n"))
+	}
+}
+
+// TestBuildUsageDetail_NarrowWidthKeepsRowsIntact covers the sidebar's
+// actual inner width (as low as ~34 columns): the per-model row must adapt
+// its label column instead of the fixed 22-column format truncating badly
+// or overflowing the line.
+func TestBuildUsageDetail_NarrowWidthKeepsRowsIntact(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	ledger.Record(ledger.Main, "p", "a-fairly-long-model-name-here", "", stream.Usage{Input: 100, Output: 10})
+
+	// 30 is comfortably below the sidebar's real floor (contentWidth is
+	// never under ~34 — see sidebarLayout), but still narrow enough to prove
+	// the row adapts rather than assuming the old fixed 22-column label.
+	const width = 30
+	m := TuiModel{modelName: "m"}
+	for _, l := range m.buildUsageDetail(width) {
+		if lipgloss.Width(l) > width {
+			t.Errorf("line %q is %d columns wide, want <= %d", l, lipgloss.Width(l), width)
+		}
 	}
 }
 

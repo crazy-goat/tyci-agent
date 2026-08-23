@@ -37,13 +37,24 @@ package display
 import (
 	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/stream"
-	"github.com/decodo/tyci/tools"
 )
+
+// sidebarStatusCmd shows msg in the status bar for 2 seconds, mirroring
+// copyFeedbackCmd's auto-clear (tui_feedback.go) — used when a sidebar
+// action refuses to do something (busy, input not empty) rather than
+// silently no-op'ing.
+func sidebarStatusCmd(msg string) tea.Cmd {
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg {
+		return statusMessageClearMsg{message: msg}
+	})
+}
 
 const (
 	sidebarTabTokens = iota
@@ -75,12 +86,14 @@ func (m *TuiModel) openSidebar(tab int) {
 	m.sidebarActive = true
 	m.sidebarTab = tab
 	m.sidebarCursor = 0
+	m.sidebarScroll = 0
 }
 
 // closeSidebar closes the sidebar and restores scroll state.
 func (m *TuiModel) closeSidebar() {
 	m.sidebarActive = false
 	m.sidebarCursor = 0
+	m.sidebarScroll = 0
 	m.atBottom = m.savedAtBottom
 	m.scrollLine = m.savedScrollLine
 	m.selectionVersion++
@@ -98,21 +111,108 @@ func (m *TuiModel) toggleSidebar() {
 	m.openSidebar(m.sidebarTab)
 }
 
+// sidebarSelectable reports whether the active tab has actionable rows
+// (Enter/click does something row-specific) as opposed to a plain
+// scrollable listing. Tokens and Lua are the latter today — Lua's rows have
+// no action (no live view, no resume), so a moving cursor over them would
+// just be a highlight with nothing behind it (see sidebarRowCount).
+func (m TuiModel) sidebarSelectable() bool {
+	switch m.sidebarTab {
+	case sidebarTabSessions, sidebarTabBash, sidebarTabSubagents:
+		return true
+	default:
+		return false
+	}
+}
+
 // sidebarRowCount returns how many selectable rows the current tab has, for
-// clamping sidebarCursor on Up/Down/wheel.
+// clamping sidebarCursor on Up/Down/wheel. 0 for a non-selectable tab
+// (sidebarSelectable) — its content still scrolls, just without a cursor.
 func (m TuiModel) sidebarRowCount() int {
 	switch m.sidebarTab {
 	case sidebarTabSessions:
 		return len(m.sidebarSessionEntries())
 	case sidebarTabBash:
 		return len(m.sidebarBashJobs())
-	case sidebarTabLua:
-		return len(tools.LuaRunHistory())
 	case sidebarTabSubagents:
 		return len(m.buildSubagentTree())
 	default:
 		return 0
 	}
+}
+
+// sidebarLineCount returns how many rendered lines the active tab has right
+// now, at contentWidth — the bound sidebarScroll must never exceed (past
+// "the last line is at the top of the viewport").
+func (m TuiModel) sidebarLineCount(contentWidth int) int {
+	return len(m.sidebarTabLines(contentWidth))
+}
+
+// sidebarSwitchTab changes the active tab and resets both cursor and scroll
+// — a tab's row indices and line count have nothing to do with another
+// tab's, so carrying either over would either select a nonsense row or open
+// on a scrolled-past-the-end view.
+func (m *TuiModel) sidebarSwitchTab(tab int) {
+	m.sidebarTab = ((tab % sidebarTabCount) + sidebarTabCount) % sidebarTabCount
+	m.sidebarCursor = 0
+	m.sidebarScroll = 0
+}
+
+// sidebarClampScrollToCursor keeps sidebarCursor within the visible window
+// [sidebarScroll, sidebarScroll+contentHeight), adjusting sidebarScroll by
+// the minimum needed — the same "scroll just enough to reveal the cursor"
+// behavior list-style pickers elsewhere in this package use.
+func (m *TuiModel) sidebarClampScrollToCursor(contentHeight int) {
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+	if m.sidebarCursor < m.sidebarScroll {
+		m.sidebarScroll = m.sidebarCursor
+	} else if m.sidebarCursor >= m.sidebarScroll+contentHeight {
+		m.sidebarScroll = m.sidebarCursor - contentHeight + 1
+	}
+	if m.sidebarScroll < 0 {
+		m.sidebarScroll = 0
+	}
+}
+
+// sidebarScrollBy moves sidebarScroll by delta, bounded to
+// [0, max(0, lineCount-contentHeight)] — the plain scroll used on a
+// non-selectable tab (sidebarSelectable), which has no cursor to keep in
+// view but can still have more lines than fit.
+func (m *TuiModel) sidebarScrollBy(delta, lineCount, contentHeight int) {
+	maxScroll := lineCount - contentHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	m.sidebarScroll += delta
+	if m.sidebarScroll < 0 {
+		m.sidebarScroll = 0
+	}
+	if m.sidebarScroll > maxScroll {
+		m.sidebarScroll = maxScroll
+	}
+}
+
+// sidebarMoveCursor is the shared Up/Down/wheel handler: on a selectable tab
+// it moves the row cursor (clamped to the row count) and scrolls just
+// enough to keep it visible; on a plain scrollable tab (Tokens, Lua) there
+// is no cursor, so it scrolls the view directly instead.
+func (m *TuiModel) sidebarMoveCursor(delta int) {
+	layout := m.sidebarLayout()
+	if m.sidebarSelectable() {
+		last := m.sidebarRowCount() - 1
+		m.sidebarCursor += delta
+		if m.sidebarCursor < 0 {
+			m.sidebarCursor = 0
+		}
+		if m.sidebarCursor > last {
+			m.sidebarCursor = max(0, last)
+		}
+		m.sidebarClampScrollToCursor(layout.contentHeight)
+		return
+	}
+	m.sidebarScrollBy(delta, m.sidebarLineCount(layout.contentWidth), layout.contentHeight)
 }
 
 // ─── Update handler ─────────────────────────────────────────────────────────
@@ -139,35 +239,27 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyTab:
-			m.sidebarTab = (m.sidebarTab + 1) % sidebarTabCount
-			m.sidebarCursor = 0
+			m.sidebarSwitchTab(m.sidebarTab + 1)
 			return m, nil
 
 		case tea.KeyShiftTab:
-			m.sidebarTab = (m.sidebarTab - 1 + sidebarTabCount) % sidebarTabCount
-			m.sidebarCursor = 0
+			m.sidebarSwitchTab(m.sidebarTab - 1)
 			return m, nil
 
 		case tea.KeyLeft:
-			m.sidebarTab = (m.sidebarTab - 1 + sidebarTabCount) % sidebarTabCount
-			m.sidebarCursor = 0
+			m.sidebarSwitchTab(m.sidebarTab - 1)
 			return m, nil
 
 		case tea.KeyRight:
-			m.sidebarTab = (m.sidebarTab + 1) % sidebarTabCount
-			m.sidebarCursor = 0
+			m.sidebarSwitchTab(m.sidebarTab + 1)
 			return m, nil
 
 		case tea.KeyUp, tea.KeyCtrlUp:
-			if m.sidebarCursor > 0 {
-				m.sidebarCursor--
-			}
+			m.sidebarMoveCursor(-1)
 			return m, nil
 
 		case tea.KeyDown, tea.KeyCtrlDown:
-			if last := m.sidebarRowCount() - 1; m.sidebarCursor < last {
-				m.sidebarCursor++
-			}
+			m.sidebarMoveCursor(1)
 			return m, nil
 
 		case tea.KeyEnter:
@@ -183,15 +275,11 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		layout := m.sidebarLayout()
 		if msg.Button == tea.MouseButtonWheelUp {
-			if m.sidebarCursor > 0 {
-				m.sidebarCursor--
-			}
+			m.sidebarMoveCursor(-1)
 			return m, nil
 		}
 		if msg.Button == tea.MouseButtonWheelDown {
-			if last := m.sidebarRowCount() - 1; m.sidebarCursor < last {
-				m.sidebarCursor++
-			}
+			m.sidebarMoveCursor(1)
 			return m, nil
 		}
 		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
@@ -203,15 +291,16 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Tab row click.
 			if msg.Y == layout.top+1 {
-				if tab := sidebarTabAtX(msg.X-layout.left, layout.width); tab >= 0 {
-					m.sidebarTab = tab
-					m.sidebarCursor = 0
+				if tab := sidebarTabAtX(layout, msg.X); tab >= 0 {
+					m.sidebarSwitchTab(tab)
 				}
 				return m, nil
 			}
-			// Row click within content area.
-			if msg.Y >= layout.contentTop && msg.Y < layout.contentTop+layout.contentHeight {
-				row := msg.Y - layout.contentTop
+			// Row click within content area — offset by the current scroll,
+			// since row 0 on screen is sidebarScroll in the underlying list
+			// once it's scrolled.
+			if m.sidebarSelectable() && msg.Y >= layout.contentTop && msg.Y < layout.contentTop+layout.contentHeight {
+				row := msg.Y - layout.contentTop + m.sidebarScroll
 				if row < m.sidebarRowCount() {
 					m.sidebarCursor = row
 					return m.sidebarActivateRow()
@@ -234,19 +323,22 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// sidebarTabAtX maps a click's X (relative to the panel's left edge) to a
-// tab index, given the tab row was rendered by joining sidebarTabNames with
-// even spacing across width. Returns -1 when x falls outside every tab
-// (padding between/around them).
-func sidebarTabAtX(x, width int) int {
-	if width <= 0 {
+// sidebarTabAtX maps a click's absolute screen X to a tab index, using the
+// SAME geometry (layout.contentLeft/contentWidth) renderSidebarTabs used to
+// lay the tab row out — see sidebarLayoutT's doc comment for why both read
+// these two fields instead of each re-deriving its own offset. Returns -1
+// when x falls outside every tab (inside the border/padding margin, or past
+// the last tab's cell).
+func sidebarTabAtX(layout sidebarLayoutT, x int) int {
+	rel := x - layout.contentLeft
+	if rel < 0 || rel >= layout.contentWidth {
 		return -1
 	}
-	cell := width / sidebarTabCount
+	cell := layout.contentWidth / sidebarTabCount
 	if cell <= 0 {
 		return -1
 	}
-	idx := x / cell
+	idx := rel / cell
 	if idx < 0 || idx >= sidebarTabCount {
 		return -1
 	}
@@ -282,13 +374,31 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 	}
 }
 
-// sidebarSubmitResume re-enters the Sessions tab's selected session exactly
-// the way a person typing bare "/resume" and picking an entry would: it
-// submits the literal "/resume" command through the normal input pipeline
-// (tui_mode.go's read loop already special-cases it) rather than opening a
-// second, sidebar-local resume mechanism. The actual picker — with the same
-// entries this tab listed — takes over from there.
+// sidebarSubmitResume re-enters a session exactly the way a person typing
+// bare "/resume" would: it submits the literal "/resume" command through
+// the normal input pipeline (tui_mode.go's read loop already special-cases
+// it) rather than opening a second, sidebar-local resume mechanism. The
+// actual picker — sorted the same way this tab's own listing is — takes
+// over from there; the picker's own cursor, not sidebarCursor, is what
+// picks the session (see sidebarFooter's Sessions text, which does not
+// claim otherwise).
+//
+// Refuses — leaving the input untouched — rather than submitting when:
+// mid-turn (m.reading is false: submitting "/resume" then would either
+// queue the literal string as a real user message, or land nothing useful),
+// or when the input box already has something in it (typing "/resume" over
+// a half-written message would silently discard it).
 func (m TuiModel) sidebarSubmitResume() (tea.Model, tea.Cmd) {
+	if !m.reading {
+		m.closeSidebar()
+		m.statusMessage = "Can't resume mid-turn — press Esc to cancel it first, or wait for it to finish."
+		return m, sidebarStatusCmd(m.statusMessage)
+	}
+	if strings.TrimSpace(m.input.Value()) != "" {
+		m.closeSidebar()
+		m.statusMessage = "Input box isn't empty — clear it first, then reopen Sessions to resume."
+		return m, sidebarStatusCmd(m.statusMessage)
+	}
 	m.closeSidebar()
 	m.input.SetValue("/resume")
 	return m.submit(), nil
@@ -304,6 +414,10 @@ func (m TuiModel) sidebarSubmitResume() (tea.Model, tea.Cmd) {
 // (see tools.JobResumer's doc comment); the resume tool call itself will
 // report a real reason back to the model if the job turns out not to be
 // resumable (e.g. it never produced a usable transcript).
+//
+// Refuses, without touching the input, when it already has something in it
+// — this only drafts text, so silently overwriting a half-written message
+// would be a pure loss with nothing gained.
 func (m TuiModel) sidebarResumeSubagentRow() (tea.Model, tea.Cmd) {
 	rows := m.buildSubagentTree()
 	if m.sidebarCursor < 0 || m.sidebarCursor >= len(rows) {
@@ -312,6 +426,11 @@ func (m TuiModel) sidebarResumeSubagentRow() (tea.Model, tea.Cmd) {
 	row := rows[m.sidebarCursor]
 	if row.isRoot {
 		return m, nil
+	}
+	if strings.TrimSpace(m.input.Value()) != "" {
+		m.closeSidebar()
+		m.statusMessage = "Input box isn't empty — clear it first, then press r again to draft a resume prompt."
+		return m, sidebarStatusCmd(m.statusMessage)
 	}
 	m.closeSidebar()
 	m.input.SetValue(fmt.Sprintf("Use the resume tool to continue job %s (%s): ",
@@ -374,6 +493,15 @@ type subagentTreeRow struct {
 // subagentDeniedTools — but nothing here assumes that depth). Waiting-answer
 // children sort to the top of their sibling group, undimmed at render time;
 // everything else keeps sortedBackgroundJobs' newest-first order.
+//
+// A subagent whose ParentID does not point at another tracked subagent — its
+// parent was a non-subagent job (e.g. a cron run), or its parent has since
+// been evicted from backgroundJobs (see pruneBackgroundJobsLocked) — is not
+// reachable from the synthetic root by the normal walk. Rather than let such
+// a job silently vanish from the tree, every byParent group whose key the
+// walk never visited is emitted afterward as its own depth-1 root (still
+// walked recursively, so its own children render at the correct relative
+// depth).
 func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 	byParent := map[string][]jobs.Job{}
 	for _, j := range m.sortedBackgroundJobs() {
@@ -396,8 +524,10 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 		rollupUnpriced: snap.Unpriced > 0,
 	}}
 
+	visited := map[string]bool{"": true}
 	var walk func(parentID string, depth int)
 	walk = func(parentID string, depth int) {
+		visited[parentID] = true
 		for _, j := range byParent[parentID] {
 			own := usage[j.ID]
 			cost, unpriced := rollupJobCost(j.ID, byParent, usage)
@@ -412,6 +542,20 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 		}
 	}
 	walk("", 1)
+
+	// Orphan groups: parent keys the walk above never reached. Sorted so
+	// output is deterministic across calls (map iteration order is not).
+	var orphanParents []string
+	for parent := range byParent {
+		if !visited[parent] {
+			orphanParents = append(orphanParents, parent)
+		}
+	}
+	sort.Strings(orphanParents)
+	for _, parent := range orphanParents {
+		walk(parent, 1)
+	}
+
 	return rows
 }
 
