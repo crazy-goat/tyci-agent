@@ -26,15 +26,10 @@ first; that is the point, not a failure.
 
 ## Where things stand
 
-Everything reviewed and clean is on `main` and pushed. Two pieces of finished
-code are parked on branches because their reviews found blockers, and both
-branches are pushed:
-
-- `wip/17-child-job-ids` — item 17. Blocked by the `ask` regression, the
-  `close(done)` race, and a justification that turned out to be fiction. Item
-  20 is now on `main`, which was its prerequisite.
-- `wip/8-mcp-wiring` — item 8. Blocked by the stdio deadlock (P0 in the item
-  row). Branch from `main` when resuming; `main` has moved since it was cut.
+Everything reviewed and clean is on `main` and pushed. (Historic note,
+2026-08-23: the two parked branches below are gone — items 17 and 8 both
+finished their review loops and were merged to `main`; this section had said
+they were blocked long after that stopped being true.)
 
 Operational notes that are easy to lose:
 
