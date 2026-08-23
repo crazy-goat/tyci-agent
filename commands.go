@@ -524,8 +524,8 @@ var tuiCmd = &cobra.Command{
 
 		// Compute context counts for the top status bar.
 		toolsCount := len(tools.GetAllToolsSchema())
-		skillNames, _ := skills.ListSkills(skills.SkillsDir())
-		skillsCount := len(skillNames)
+		skillsFound, _ := skills.ListSkillsMerged("")
+		skillsCount := len(skillsFound)
 		mcpCount := 0
 		if mcpRunner := tools.GetMCPToolRunner(); mcpRunner != nil {
 			mcpCount = len(mcpRunner.MCPToolsSchema())
