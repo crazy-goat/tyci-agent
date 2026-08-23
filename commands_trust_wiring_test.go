@@ -202,3 +202,94 @@ func TestInitCommon_TrustedProject_LoadsLocalHooksAndLuaToo(t *testing.T) {
 		t.Fatal("expected the project-local Lua tool to be registered for a trusted project")
 	}
 }
+
+// TestInitCommon_UntrustedProject_CronLocalDirUnset and
+// TestInitCommon_TrustedProject_CronLocalDirSet cover the same trust gate
+// for project-local cron.json (TODO.md item 22): initCommon must call
+// tools.SetLocalCronDir("") for an untrusted project (so a job that only a
+// project-local cron.json defines never runs unattended) and
+// SetLocalCronDir(<wd>/.tyci) for a trusted one.
+func TestInitCommon_UntrustedProject_CronLocalDirUnset(t *testing.T) {
+	writeTrustWiringHome(t)
+	writeTrustWiringProject(t)
+	t.Cleanup(func() { tools.SetLocalCronDir("") })
+
+	prov := &fakeProvider{name: "trust-wiring-cron-prov-1", configured: true, models: []string{"m1"}}
+	providers.Register(prov)
+
+	cmd := newInitCommonTestCmd()
+	if err := cmd.Flags().Set("model", "trust-wiring-cron-prov-1/m1"); err != nil {
+		t.Fatalf("set model flag: %v", err)
+	}
+	if err := cmd.Flags().Set("no-mcp", "true"); err != nil {
+		t.Fatalf("set no-mcp flag: %v", err)
+	}
+
+	_, _, _, _, _, _, _, dl, shutdown, err := initCommon(cmd, false, false)
+	if err != nil {
+		t.Fatalf("initCommon: %v", err)
+	}
+	defer shutdown()
+	if dl != nil {
+		defer dl.Close()
+	}
+
+	if got := tools.GetLocalCronDirForTests(); got != "" {
+		t.Fatalf("SetLocalCronDir left %q for an untrusted project, want empty", got)
+	}
+}
+
+func TestInitCommon_TrustedProject_CronLocalDirSet(t *testing.T) {
+	writeTrustWiringHome(t)
+	writeTrustWiringProject(t)
+	t.Cleanup(func() { tools.SetLocalCronDir("") })
+
+	// Resolved via os.Getwd() post-chdir, not writeTrustWiringProject's
+	// return value directly — see the sibling hooks/Lua test's comment: on
+	// macOS the temp dir is reached through a symlink, and initCommon
+	// computes its project key from os.Getwd() inside the process.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	root, err := session.ProjectKey(wd)
+	if err != nil {
+		t.Fatalf("ProjectKey: %v", err)
+	}
+	if err := trust.SetTrusted(root, true); err != nil {
+		t.Fatalf("SetTrusted: %v", err)
+	}
+
+	prov := &fakeProvider{name: "trust-wiring-cron-prov-2", configured: true, models: []string{"m1"}}
+	providers.Register(prov)
+
+	cmd := newInitCommonTestCmd()
+	if err := cmd.Flags().Set("model", "trust-wiring-cron-prov-2/m1"); err != nil {
+		t.Fatalf("set model flag: %v", err)
+	}
+	if err := cmd.Flags().Set("no-mcp", "true"); err != nil {
+		t.Fatalf("set no-mcp flag: %v", err)
+	}
+
+	_, _, _, _, _, _, _, dl, shutdown, err := initCommon(cmd, false, false)
+	if err != nil {
+		t.Fatalf("initCommon: %v", err)
+	}
+	defer shutdown()
+	if dl != nil {
+		defer dl.Close()
+	}
+
+	got := tools.GetLocalCronDirForTests()
+	// Compare via os.Getwd() the same way the sibling hooks/Lua test does:
+	// on macOS the temp dir is reached through a symlink, and initCommon
+	// computes wd from os.Getwd() inside the process.
+	realWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	want := filepath.Join(realWD, ".tyci")
+	if got != want {
+		t.Fatalf("SetLocalCronDir = %q, want %q for a trusted project", got, want)
+	}
+}

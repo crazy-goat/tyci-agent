@@ -182,6 +182,19 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		tools.LoadAndRegisterLocalLuaTools(filepath.Join(wd, ".tyci", "tools"))
 	}
 
+	// Project-local cron.json (TODO.md item 22) — same trust gate: a
+	// scheduled job is a whole unattended agent turn, the same shape of
+	// risk as hooks.json and .tyci/tools. Recorded here (always, not just
+	// when trusted — an untrusted decision must overwrite whatever a
+	// previous call in this process set, the same reset-on-every-call shape
+	// SetBackgroundBashEnabled/SetJobStarter use) rather than decided again
+	// inside tools/cron.go.
+	if trusted {
+		tools.SetLocalCronDir(filepath.Join(wd, ".tyci"))
+	} else {
+		tools.SetLocalCronDir("")
+	}
+
 	// Project-local mcp.json (TODO.md item 22) is gated the same way, down
 	// at the tools.InitMCP call below: a server definition there can launch
 	// an arbitrary binary, exactly the shape of trust hooks.json and

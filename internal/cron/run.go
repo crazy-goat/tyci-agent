@@ -18,6 +18,15 @@ import (
 type Runner struct {
 	// ConfigDir is the ~/.tyci directory holding the jobs file and the logs.
 	ConfigDir string
+	// LocalDir is the project-local <wd>/.tyci directory whose cron.json is
+	// unioned with ConfigDir's (TODO.md item 22), or "" when there is none —
+	// either because the project was never decided trusted (a scheduled job
+	// is a full unattended agent turn, so this is trust-gated exactly like
+	// hooks.json — see commands.go's initCommon) or because there is no
+	// project directory at all. Logs always stay under ConfigDir regardless
+	// of which dir defines a job: they are a runtime artifact of this
+	// machine, not project content that belongs checked into a repository.
+	LocalDir string
 	// Exe is the tyci binary to invoke. Injected so a test can point it at a
 	// script instead.
 	Exe string
@@ -37,6 +46,17 @@ type Runner struct {
 	// 40 minutes on an "every 30m" schedule must not accumulate copies.
 	mu      sync.Mutex
 	running map[string]bool
+}
+
+// dirs returns the jobs-file directories to consult, global first: just
+// ConfigDir when there is no trusted project-local override, else
+// [ConfigDir, LocalDir] — the order LoadMerged/FindJobDir expect, local
+// last so it wins on a name collision.
+func (r *Runner) dirs() []string {
+	if r.LocalDir == "" {
+		return []string{r.ConfigDir}
+	}
+	return []string{r.ConfigDir, r.LocalDir}
 }
 
 func (r *Runner) now() time.Time {
@@ -118,8 +138,16 @@ func (r *Runner) RunJob(ctx context.Context, j Job) error {
 
 	// The finish time, not the start: an "every 30m" job means half an hour
 	// between runs, not half an hour between the starts of runs that take
-	// longer than that.
-	if err := MarkRun(r.ConfigDir, j.Name, end, status); err != nil {
+	// longer than that. MarkRun writes into whichever dir currently defines
+	// the job — ConfigDir for an ordinary job, LocalDir for one that only a
+	// project-local cron.json defines — falling back to ConfigDir if the
+	// job was removed from every dir while it ran (MarkRun then no-ops, same
+	// as it always has).
+	markDir := r.ConfigDir
+	if dir, ok := FindJobDir(r.dirs(), j.Name); ok {
+		markDir = dir
+	}
+	if err := MarkRun(markDir, j.Name, end, status); err != nil {
 		return err
 	}
 	return runErr
@@ -127,7 +155,7 @@ func (r *Runner) RunJob(ctx context.Context, j Job) error {
 
 // Tick runs everything due once and returns how many jobs it started.
 func (r *Runner) Tick(ctx context.Context) (int, error) {
-	f, err := Load(r.ConfigDir)
+	f, err := LoadMerged(r.dirs()...)
 	if err != nil {
 		return 0, err
 	}

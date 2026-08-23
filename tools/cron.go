@@ -24,6 +24,13 @@ import (
 // so a job outlives the session that created it. Each run is a fresh one-shot
 // agent with only the saved prompt — no history, which is why the prompt has
 // to stand on its own.
+//
+// A project-local <wd>/.tyci/cron.json (TODO.md item 22) unions with the
+// global list — SetLocalCronDir below — so a repository can ship its own
+// scheduled jobs alongside the machine-wide ones, local winning on a
+// same-name collision (internal/cron.LoadMerged/FindJobDir). A scheduled
+// job is a whole unattended agent turn, so this is trust-gated exactly like
+// hooks.json and .tyci/tools (see commands.go's initCommon).
 type CronTool struct{}
 
 func (t *CronTool) Name() string { return "cron" }
@@ -42,6 +49,51 @@ func cronConfigDir() string {
 		return cronConfigDirName
 	}
 	return filepath.Join(home, cronConfigDirName)
+}
+
+// localCronDirMu/localCronDir hold the project-local cron directory once
+// commands.go's initCommon has decided the project trusted, mirroring
+// backgroundBashEnabled and jobStarter's "set once at startup" shape. Empty
+// means no project-local override — either untrusted, or no project
+// directory was resolved at all.
+var (
+	localCronDirMu sync.RWMutex
+	localCronDir   string
+)
+
+// SetLocalCronDir records the project-local .tyci directory (holding
+// cron.json) to union with the global schedule. Callers must only pass a
+// non-empty dir once the project has been decided trusted — see this
+// package's doc comment and commands.go's initCommon, which gates
+// hooks.json and .tyci/tools the same way.
+func SetLocalCronDir(dir string) {
+	localCronDirMu.Lock()
+	localCronDir = dir
+	localCronDirMu.Unlock()
+}
+
+// getLocalCronDir reads the value SetLocalCronDir last recorded.
+func getLocalCronDir() string {
+	localCronDirMu.RLock()
+	defer localCronDirMu.RUnlock()
+	return localCronDir
+}
+
+// GetLocalCronDirForTests exposes the current value for callers outside
+// this package (commands.go's trust-wiring tests) that need to assert what
+// initCommon recorded, without a second exported setter's worth of API
+// surface for production code to accidentally call.
+func GetLocalCronDirForTests() string { return getLocalCronDir() }
+
+// cronDirs returns the ordered list of jobs-file directories to consult:
+// just the global one, or [global, project-local] once a trusted project
+// directory has been recorded — the order internal/cron.LoadMerged and
+// FindJobDir expect (local last, so it wins on a name collision).
+func cronDirs() []string {
+	if local := getLocalCronDir(); local != "" {
+		return []string{cronConfigDir(), local}
+	}
+	return []string{cronConfigDir()}
 }
 
 func (t *CronTool) Run(ctx context.Context, input map[string]any) ToolResult {
@@ -69,7 +121,7 @@ func (t *CronTool) Run(ctx context.Context, input map[string]any) ToolResult {
 }
 
 func (t *CronTool) list() ToolResult {
-	f, err := cron.Load(cronConfigDir())
+	f, err := cron.LoadMerged(cronDirs()...)
 	if err != nil {
 		return failf("%v", err)
 	}
@@ -132,6 +184,19 @@ func (t *CronTool) add(ctx context.Context, input map[string]any, name string) T
 		return failf("dir %s is not a directory; the job needs a project to run in", abs)
 	}
 
+	// Checked against the MERGED view (global + project-local, if any) so
+	// this cannot add a job whose name collides with one only a
+	// project-local cron.json defines — f.Add below only sees the global
+	// file, and would otherwise happily create a same-named duplicate that
+	// FindJobDir/LoadMerged would then have to arbitrate between.
+	if merged, err := cron.LoadMerged(cronDirs()...); err == nil && merged.Find(name) >= 0 {
+		return failf("cron: a job named %q already exists (remove it first, or pick another name)", name)
+	}
+
+	// New jobs always go into the global ~/.tyci/cron.json — the tool has
+	// no notion of "add this to the project's committed file" (a
+	// project-local cron.json is meant to be hand-edited and checked into
+	// the repo, the same way hooks.json is; nothing writes that one either).
 	f, err := cron.Load(cronConfigDir())
 	if err != nil {
 		return failf("%v", err)
@@ -165,14 +230,22 @@ func (t *CronTool) remove(name string) ToolResult {
 	if name == "" {
 		return failf("name is required for action=\"remove\"")
 	}
-	f, err := cron.Load(cronConfigDir())
+	// Operate on whichever dir currently defines the job — the global file
+	// for an ordinary job, the project-local cron.json for one that only it
+	// defines (FindJobDir prefers the local one on a collision, matching
+	// what list/Tick would have used).
+	dir, ok := cron.FindJobDir(cronDirs(), name)
+	if !ok {
+		return failf("no job named %q; call cron(action=\"list\") for the names that exist", name)
+	}
+	f, err := cron.Load(dir)
 	if err != nil {
 		return failf("%v", err)
 	}
 	if !f.Remove(name) {
 		return failf("no job named %q; call cron(action=\"list\") for the names that exist", name)
 	}
-	if err := cron.Save(cronConfigDir(), f); err != nil {
+	if err := cron.Save(dir, f); err != nil {
 		return failf("%v", err)
 	}
 	return okf("removed %q. Its log is kept at %s.", name, cron.LogPath(cronConfigDir(), name))
@@ -182,7 +255,11 @@ func (t *CronTool) setDisabled(name string, disabled bool) ToolResult {
 	if name == "" {
 		return failf("name is required")
 	}
-	f, err := cron.Load(cronConfigDir())
+	dir, ok := cron.FindJobDir(cronDirs(), name)
+	if !ok {
+		return failf("no job named %q; call cron(action=\"list\") for the names that exist", name)
+	}
+	f, err := cron.Load(dir)
 	if err != nil {
 		return failf("%v", err)
 	}
@@ -191,7 +268,7 @@ func (t *CronTool) setDisabled(name string, disabled bool) ToolResult {
 		return failf("no job named %q; call cron(action=\"list\") for the names that exist", name)
 	}
 	f.Jobs[i].Disabled = disabled
-	if err := cron.Save(cronConfigDir(), f); err != nil {
+	if err := cron.Save(dir, f); err != nil {
 		return failf("%v", err)
 	}
 	if disabled {
@@ -226,7 +303,7 @@ func (t *CronTool) runNow(ctx context.Context, name string) ToolResult {
 	if name == "" {
 		return failf("name is required for action=\"run_now\"")
 	}
-	f, err := cron.Load(cronConfigDir())
+	f, err := cron.LoadMerged(cronDirs()...)
 	if err != nil {
 		return failf("%v", err)
 	}
@@ -273,7 +350,7 @@ func cronRunner() (*cron.Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot find the tyci binary to run jobs with: %w", err)
 	}
-	return &cron.Runner{ConfigDir: cronConfigDir(), Exe: exe}, nil
+	return &cron.Runner{ConfigDir: cronConfigDir(), LocalDir: getLocalCronDir(), Exe: exe}, nil
 }
 
 // ---------------------------------------------------------------------------

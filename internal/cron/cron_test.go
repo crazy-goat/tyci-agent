@@ -335,3 +335,157 @@ func TestTrimLogKeepsTheNewestPart(t *testing.T) {
 		t.Error("a trimmed log should say so, or it reads as the whole history")
 	}
 }
+
+// =============================================================================
+// project-local cron.json merge (TODO.md item 22)
+// =============================================================================
+
+func TestLoadMerged_UnionsGlobalAndLocal(t *testing.T) {
+	global, local := t.TempDir(), t.TempDir()
+
+	gf, _ := Load(global)
+	_ = gf.Add(Job{Name: "global-job", Prompt: "a", Dir: global, Schedule: "every 1h"})
+	_ = Save(global, gf)
+
+	lf, _ := Load(local)
+	_ = lf.Add(Job{Name: "local-job", Prompt: "b", Dir: local, Schedule: "every 1h"})
+	_ = Save(local, lf)
+
+	merged, err := LoadMerged(global, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged.Jobs) != 2 {
+		t.Fatalf("got %d jobs, want 2: %+v", len(merged.Jobs), merged.Jobs)
+	}
+	if merged.Find("global-job") < 0 || merged.Find("local-job") < 0 {
+		t.Errorf("expected both jobs present, got %+v", merged.Jobs)
+	}
+}
+
+// TestLoadMerged_LocalWinsOnNameCollision: a same-named job on both sides —
+// the local definition (and its schedule/prompt) must be the one that ends
+// up in the merged list, mirroring mcp.json's and skills/'s "local wins".
+func TestLoadMerged_LocalWinsOnNameCollision(t *testing.T) {
+	global, local := t.TempDir(), t.TempDir()
+
+	gf, _ := Load(global)
+	_ = gf.Add(Job{Name: "shared", Prompt: "global prompt", Dir: global, Schedule: "every 1h"})
+	_ = Save(global, gf)
+
+	lf, _ := Load(local)
+	_ = lf.Add(Job{Name: "shared", Prompt: "local prompt", Dir: local, Schedule: "every 2h"})
+	_ = Save(local, lf)
+
+	merged, err := LoadMerged(global, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged.Jobs) != 1 {
+		t.Fatalf("got %d jobs, want exactly 1 (local wins): %+v", len(merged.Jobs), merged.Jobs)
+	}
+	if merged.Jobs[0].Prompt != "local prompt" {
+		t.Errorf("Prompt = %q, want the local definition to win", merged.Jobs[0].Prompt)
+	}
+}
+
+func TestFindJobDir_PrefersLocalOnCollisionElseGlobal(t *testing.T) {
+	global, local := t.TempDir(), t.TempDir()
+
+	gf, _ := Load(global)
+	_ = gf.Add(Job{Name: "shared", Prompt: "g", Dir: global, Schedule: "every 1h"})
+	_ = gf.Add(Job{Name: "global-only", Prompt: "g", Dir: global, Schedule: "every 1h"})
+	_ = Save(global, gf)
+
+	lf, _ := Load(local)
+	_ = lf.Add(Job{Name: "shared", Prompt: "l", Dir: local, Schedule: "every 1h"})
+	_ = Save(local, lf)
+
+	if dir, ok := FindJobDir([]string{global, local}, "shared"); !ok || dir != local {
+		t.Errorf("FindJobDir(shared) = %q, %v, want %q, true", dir, ok, local)
+	}
+	if dir, ok := FindJobDir([]string{global, local}, "global-only"); !ok || dir != global {
+		t.Errorf("FindJobDir(global-only) = %q, %v, want %q, true", dir, ok, global)
+	}
+	if _, ok := FindJobDir([]string{global, local}, "nowhere"); ok {
+		t.Error("FindJobDir found a dir for a job that exists in neither")
+	}
+}
+
+// TestRunnerTick_RunsAProjectLocalJobAndMarksItInTheLocalFile is the
+// end-to-end guarantee: with LocalDir set, Tick must pick up a job that only
+// the project-local cron.json defines, run it, and write LastRun/LastStatus
+// back into the SAME (local) file rather than silently dropping it or
+// writing a stray entry into the global one.
+func TestRunnerTick_RunsAProjectLocalJobAndMarksItInTheLocalFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stand-in")
+	}
+	global, local := t.TempDir(), t.TempDir()
+	exe := filepath.Join(global, "fake-tyci")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.Local)
+
+	lf, _ := Load(local)
+	_ = lf.Add(Job{Name: "local-only", Prompt: "x", Dir: local, Schedule: "every 1h"})
+	if err := Save(local, lf); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Runner{ConfigDir: global, LocalDir: local, Exe: exe, Now: func() time.Time { return now }}
+	n, err := r.Tick(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("ran %d jobs, want 1", n)
+	}
+
+	// The run-state write-back landed in the local file...
+	backLocal, _ := Load(local)
+	got := backLocal.Jobs[backLocal.Find("local-only")]
+	if !got.LastRun.Equal(now) {
+		t.Errorf("local file's LastRun = %v, want %v", got.LastRun, now)
+	}
+	if got.LastStatus != "ok" {
+		t.Errorf("local file's LastStatus = %q, want ok", got.LastStatus)
+	}
+	// ...and did NOT spawn a stray entry in the global file.
+	backGlobal, _ := Load(global)
+	if len(backGlobal.Jobs) != 0 {
+		t.Errorf("expected no jobs written into the global file, got %+v", backGlobal.Jobs)
+	}
+}
+
+// TestRunnerTick_WithoutLocalDir_IgnoresLocalFile is the trust-gate
+// guarantee at the Runner level: LocalDir=="" (the untrusted-project
+// default) must behave exactly like Load(ConfigDir) always has, never
+// looking at a project-local cron.json even if one exists on disk.
+func TestRunnerTick_WithoutLocalDir_IgnoresLocalFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stand-in")
+	}
+	global, local := t.TempDir(), t.TempDir()
+	exe := filepath.Join(global, "fake-tyci")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.Local)
+
+	lf, _ := Load(local)
+	_ = lf.Add(Job{Name: "local-only", Prompt: "x", Dir: local, Schedule: "every 1h"})
+	if err := Save(local, lf); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Runner{ConfigDir: global, Exe: exe, Now: func() time.Time { return now }} // LocalDir unset
+	n, err := r.Tick(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("ran %d jobs, want 0 — LocalDir is unset, so the local file must not be consulted", n)
+	}
+}
