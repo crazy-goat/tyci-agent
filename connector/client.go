@@ -60,6 +60,13 @@ type conversationCtxKey struct{}
 // are fully appended to msgs before the next round (and its tool calls)
 // begin — so a reader does not need to sanitize it the way a truncated
 // prefix cut (ForkAtIndex/ForkAtEventID in package session) does.
+//
+// This snapshot is a slice header, not a deep copy: it is safe to read from
+// an async subagent goroutine after the parent keeps running only because
+// nothing in this codebase mutates an already-appended Message in place —
+// the parent only ever appends past this snapshot's captured length. Do not
+// add in-place mutation of an existing slice element (e.g. rewriting a
+// message during compaction) without revisiting this.
 func WithConversation(ctx context.Context, msgs []Message) context.Context {
 	return context.WithValue(ctx, conversationCtxKey{}, msgs)
 }
