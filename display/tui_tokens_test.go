@@ -37,12 +37,12 @@ func TestFmtUSD_PrecisionByMagnitude(t *testing.T) {
 	}
 }
 
-// Unpriced tokens must never render as a dollar amount — "$0.00" would read
-// as almost free.
-func TestFormatCost_UnpricedShowsQuestionMark(t *testing.T) {
+// Unpriced tokens render as a plain $0.00 — the owner's explicit choice
+// (2026-08-23), replacing the old "?$" marker.
+func TestFormatCost_UnpricedShowsZeroDollars(t *testing.T) {
 	got := formatCost(ledger.Snapshot{Unpriced: 1})
-	if got != "?$" {
-		t.Fatalf("formatCost = %q, want ?$", got)
+	if got != "$0.00" {
+		t.Fatalf("formatCost = %q, want $0.00", got)
 	}
 }
 
@@ -59,11 +59,12 @@ func TestFormatCost_CallsOutDelegatedSpend(t *testing.T) {
 	}
 }
 
-// A partially-priced session reports a lower bound, and marks it as such.
+// A partially-priced session renders the known total as a plain dollar
+// figure, with no "+?" suffix (dropped by decision 2026-08-23).
 func TestFormatCost_MarksLowerBound(t *testing.T) {
 	got := formatCost(ledger.Snapshot{MainUSD: 1.5, Unpriced: 2})
-	if !strings.HasSuffix(got, "+?") {
-		t.Fatalf("formatCost = %q, want a +? suffix", got)
+	if !strings.HasPrefix(got, "1.5") || strings.Contains(got, "?") {
+		t.Fatalf("formatCost = %q, want a plain dollar amount without any \"?\" marker", got)
 	}
 }
 
@@ -318,9 +319,8 @@ func TestBuildUsageDetail_NarrowWidthKeepsRowsIntact(t *testing.T) {
 // the same model is recorded once before a catalog refresh (unpriced) and
 // once after (priced) — two different jobs, same model — the aggregated
 // row's Priced flag is correctly false (not FULLY priced), but its USD
-// still holds the known-priced job's real cost. Rendering that as a flat
-// "$?" discarded it; it must render as "$<amount>+?" instead, mirroring
-// formatCost's own convention for a partially-priced total.
+// still holds the known-priced job's real cost. It renders as a plain
+// dollar figure (the old "$?"/"+?" markers were dropped 2026-08-23).
 func TestBuildUsageDetail_PartiallyPricedRowKeepsKnownDollars(t *testing.T) {
 	unprocedDir := t.TempDir()
 	t.Setenv("HOME", unprocedDir)
@@ -356,11 +356,11 @@ func TestBuildUsageDetail_PartiallyPricedRowKeepsKnownDollars(t *testing.T) {
 
 	m := TuiModel{modelName: "m"}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")
-	if strings.Contains(lines, "$?") {
-		t.Fatalf("expected the known dollar amount to survive, not a flat \"$?\":\n%s", lines)
+	if !strings.Contains(lines, "$"+fmtUSD(row.USD)) {
+		t.Fatalf("expected the known dollar amount to survive as a plain figure:\n%s", lines)
 	}
-	if !strings.Contains(lines, "+?") {
-		t.Fatalf("expected the partially-priced marker \"+?\" on the aggregated row:\n%s", lines)
+	if strings.Contains(lines, "?") {
+		t.Fatalf("expected no \"?\" cost markers anywhere (dropped 2026-08-23):\n%s", lines)
 	}
 }
 

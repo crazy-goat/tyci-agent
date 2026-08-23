@@ -395,9 +395,6 @@ func (m TuiModel) formatSubagentRow(row subagentTreeRow, width int) string {
 	indent := strings.Repeat("  ", row.depth)
 	tokens := fmtTokens(row.ownTokens)
 	cost := "$" + fmtUSD(row.rollupUSD)
-	if row.rollupUnpriced {
-		cost += "+?"
-	}
 
 	if row.isRoot {
 		return fmt.Sprintf("%smain  %s tok  %s", indent, tokens, cost)

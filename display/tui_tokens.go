@@ -52,24 +52,21 @@ func (m TuiModel) buildContextCost() string {
 
 // formatCost renders the session bill. Delegated work is called out
 // separately when there is any, because a surprising total is nearly always
-// children. An unpriced model makes the total a lower bound, and says so with
-// a "+?" rather than quietly under-reporting.
+// children. Unpriced models contribute $0.00 — the owner's explicit choice
+// (2026-08-23), reversing the old "+?" lower-bound marker: the ledger still
+// tracks unpriced rows, so the figure stays available to anything that wants
+// it, but the UI no longer decorates the cost with it.
 func formatCost(snap ledger.Snapshot) string {
 	total := snap.TotalUSD()
 	if total == 0 {
 		if snap.Unpriced == 0 {
 			return ""
 		}
-		// Tokens were spent on a model the catalog does not price. "0.00$"
-		// would read as "almost free"; the truth is that we do not know.
-		return "?$"
+		return "$0.00"
 	}
 	s := fmtUSD(total) + "$"
 	if snap.SubagentUSD > 0 {
 		s += " (sub " + fmtUSD(snap.SubagentUSD) + "$)"
-	}
-	if snap.Unpriced > 0 {
-		s += "+?"
 	}
 	return s
 }
@@ -149,20 +146,10 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 			// r.USD is already the known-priced sum only (Record/Cost give
 			// an unpriced call $0, so it never inflates this) — !r.Priced
 			// means at least one constituent row (e.g. before vs. after a
-			// `provider refresh` mid-session) had no catalog price, not
-			// that r.USD itself is worthless. Showing a flat "$?" here
-			// used to throw away a real, known dollar figure; this mirrors
-			// formatCost's own "$1.23+?" convention (tui_status.go) for a
-			// partially-priced total instead.
-			var cost string
-			switch {
-			case r.Priced:
-				cost = "$" + fmtUSD(r.USD)
-			case r.USD > 0:
-				cost = "$" + fmtUSD(r.USD) + "+?"
-			default:
-				cost = "$?"
-			}
+			// `provider refresh` mid-session) had no catalog price. The
+			// old "$?"/"+?" markers were dropped by decision (2026-08-23):
+			// every row renders a plain dollar figure.
+			cost := "$" + fmtUSD(r.USD)
 			label := r.Model
 			if r.Kind == ledger.Subagent {
 				label = "↳ " + label
@@ -185,15 +172,11 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 			}
 		}
 		snap := ledger.Get()
-		unpriced := ""
-		if snap.Unpriced > 0 {
-			unpriced = "+?"
-		}
-		out = append(out, fmt.Sprintf("  %-*s %5s $%s%s", labelWidth, "total",
-			fmtTokens(totalTokens), fmtUSD(snap.TotalUSD()), unpriced))
+		out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "total",
+			fmtTokens(totalTokens), fmtUSD(snap.TotalUSD())))
 		if snap.SubagentUSD > 0 {
-			out = append(out, fmt.Sprintf("  %-*s %5s $%s%s", labelWidth, "of that delegated",
-				fmtTokens(delegatedTokens), fmtUSD(snap.SubagentUSD), unpriced))
+			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "of that delegated",
+				fmtTokens(delegatedTokens), fmtUSD(snap.SubagentUSD)))
 		}
 	}
 

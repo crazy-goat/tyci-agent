@@ -653,8 +653,9 @@ type subagentTreeRow struct {
 	// figure agrees with the status bar's total.
 	rollupUSD float64
 	// rollupUnpriced is true when this row or any descendant used a model
-	// with no catalog price — rendered with the status bar's "+?" convention
-	// (formatCost) rather than silently understating the bill.
+	// with no catalog price. Kept as data (tests pin the propagation);
+	// since 2026-08-23 the UI renders a plain dollar figure instead of
+	// decorating it with the old "+?" convention.
 	rollupUnpriced bool
 }
 

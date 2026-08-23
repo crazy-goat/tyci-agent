@@ -643,10 +643,11 @@ func TestRollupJobCost_SumsDescendants(t *testing.T) {
 	}
 }
 
-// TestBuildSubagentTree_UnpricedDescendantPropagates covers the "+?"
-// convention (formatCost's status-bar rule, reused here): a parent whose
-// child ran on an unpriced model must itself be flagged unpriced, so its
-// rolled-up cost is never shown as a clean, complete figure.
+// TestBuildSubagentTree_UnpricedDescendantPropagates covers the unpriced
+// propagation rule: a parent whose child ran on an unpriced model must
+// itself be flagged unpriced. (The UI no longer decorates the cost with a
+// "+?" marker — plain dollar figure since 2026-08-23 — but the flag stays
+// as data.)
 func TestBuildSubagentTree_UnpricedDescendantPropagates(t *testing.T) {
 	ledger.Reset()
 	t.Cleanup(ledger.Reset)

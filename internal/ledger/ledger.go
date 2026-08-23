@@ -215,8 +215,8 @@ type JobUsage struct {
 	// USD is priced usage only; see Priced.
 	USD float64
 	// Priced is false when any model this job used has no catalog price, so
-	// USD understates the true cost — the caller is expected to mark that
-	// the same way the status bar does (see display.formatCost's "+?").
+	// USD understates the true cost — callers may surface that how they
+	// like; the TUI currently renders the plain USD figure either way.
 	Priced bool
 }
 
