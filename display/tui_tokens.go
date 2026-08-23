@@ -173,11 +173,15 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 				truncateRunes(label, labelWidth), fmtTokens(r.Usage.Input+r.Usage.Output), cost))
 		}
 		snap := ledger.Get()
-		out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "total", "",
-			fmtUSD(snap.TotalUSD())))
+		unpriced := ""
+		if snap.Unpriced > 0 {
+			unpriced = "+?"
+		}
+		out = append(out, fmt.Sprintf("  %-*s %5s $%s%s", labelWidth, "total", "",
+			fmtUSD(snap.TotalUSD()), unpriced))
 		if snap.SubagentUSD > 0 {
-			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "of that delegated", "",
-				fmtUSD(snap.SubagentUSD)))
+			out = append(out, fmt.Sprintf("  %-*s %5s $%s%s", labelWidth, "of that delegated", "",
+				fmtUSD(snap.SubagentUSD), unpriced))
 		}
 	}
 
