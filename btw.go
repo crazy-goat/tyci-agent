@@ -13,6 +13,7 @@ import (
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/jobs"
+	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
 )
 
@@ -174,13 +175,13 @@ func nextBtwID() string {
 // copy of msgs — a new backing array, so nothing the fork appends
 // afterwards (its own tool calls, its own turns) can ever alias or mutate
 // the main thread's history — with question appended as a new user turn.
+//
+// A thin wrapper over session.ForkMessagesWithTurn, which generalizes this
+// exact shape for session forking (fork.go) and the "subagent" tool's
+// inherit_history option (tools/subagent.go) to share instead of each
+// reimplementing it.
 func forkMessagesForBtw(msgs []connector.Message, question string) []connector.Message {
-	forked := make([]connector.Message, len(msgs), len(msgs)+1)
-	copy(forked, msgs)
-	return append(forked, connector.Message{
-		Role:    "user",
-		Content: []connector.ContentBlock{{Type: "text", Text: question}},
-	})
+	return session.ForkMessagesWithTurn(msgs, question)
 }
 
 // btwConfig derives the agent.Config for a /btw fork from the main

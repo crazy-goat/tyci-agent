@@ -44,6 +44,35 @@ func FullModel(mc ModelClient) string {
 	return mc.Provider() + "/" + mc.Model()
 }
 
+// conversationCtxKey is the context key for WithConversation/
+// ConversationFromContext.
+type conversationCtxKey struct{}
+
+// WithConversation returns a child context carrying msgs — the conversation
+// history as it stands at the point a tool call is made. agent/run_once.go
+// stamps this once per round, alongside WithModelClient, so a tool (in
+// practice: the "subagent" tool's inherit_history option, tools/subagent.go)
+// can read back "the transcript up to here" without the tools package
+// importing agent or session to get at it.
+//
+// The round boundary this is stamped at is always a clean one — it never
+// lands mid tool-call/result pair, because the previous round's tool results
+// are fully appended to msgs before the next round (and its tool calls)
+// begin — so a reader does not need to sanitize it the way a truncated
+// prefix cut (ForkAtIndex/ForkAtEventID in package session) does.
+func WithConversation(ctx context.Context, msgs []Message) context.Context {
+	return context.WithValue(ctx, conversationCtxKey{}, msgs)
+}
+
+// ConversationFromContext extracts the conversation history carried by ctx
+// (see WithConversation), or nil if none was stamped.
+func ConversationFromContext(ctx context.Context) []Message {
+	if msgs, ok := ctx.Value(conversationCtxKey{}).([]Message); ok {
+		return msgs
+	}
+	return nil
+}
+
 // HTTPInjector is the optional half of ModelClient: an implementation that
 // can return a copy of itself bound to a specific HTTP client.
 //
