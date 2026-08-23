@@ -93,7 +93,7 @@ type Config struct {
 	MCPServers map[string]ServerConfig `json:"mcpServers"`
 }
 
-// ConfigPath returns the path to mcp.json.
+// ConfigPath returns the path to the global mcp.json.
 func ConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -105,9 +105,22 @@ func ConfigPath() string {
 	return filepath.Join(home, ".tyci", "mcp.json")
 }
 
-// LoadConfig reads the MCP configuration file.
+// LocalConfigPath returns the project-local mcp.json path: <wd>/.tyci/mcp.json.
+// A server defined there can launch an arbitrary binary (Command) just like
+// hooks.json can, so — unlike model.json and config.json — callers must only
+// read this once the project has been decided trusted (see internal/trust
+// and commands.go's initCommon, which gates it the same way it already gates
+// hooks.json and .tyci/tools).
+func LocalConfigPath(wd string) string {
+	return filepath.Join(wd, ".tyci", "mcp.json")
+}
+
+// LoadConfig reads the global MCP configuration file.
 func LoadConfig() (*Config, error) {
-	path := ConfigPath()
+	return loadConfigFile(ConfigPath())
+}
+
+func loadConfigFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -126,6 +139,45 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// MergeConfigs unions the global and local server maps: every server name
+// from either side ends up available (the same "both load" shape as
+// hooks.json), and where both sides define the same name, local wins —
+// mirroring how a project-local agent definition already overrides a
+// global one of the same name.
+func MergeConfigs(global, local *Config) *Config {
+	merged := &Config{MCPServers: make(map[string]ServerConfig)}
+	if global != nil {
+		for name, cfg := range global.MCPServers {
+			merged.MCPServers[name] = cfg
+		}
+	}
+	if local != nil {
+		for name, cfg := range local.MCPServers {
+			merged.MCPServers[name] = cfg
+		}
+	}
+	return merged
+}
+
+// LoadConfigMerged reads the global mcp.json and, when includeLocal is true,
+// unions it with <wd>/.tyci/mcp.json (MergeConfigs: local wins on a server
+// name collision). includeLocal must only be true once the caller has
+// decided the project trusted — see LocalConfigPath's doc comment.
+func LoadConfigMerged(wd string, includeLocal bool) (*Config, error) {
+	global, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if !includeLocal || wd == "" {
+		return global, nil
+	}
+	local, err := loadConfigFile(LocalConfigPath(wd))
+	if err != nil {
+		return nil, err
+	}
+	return MergeConfigs(global, local), nil
 }
 
 // SaveConfig writes the MCP configuration file.
@@ -186,7 +238,16 @@ type ConnectedServer struct {
 // closes every server that DID make it into the returned map; ctx
 // cancellation is what reaches the stragglers that didn't).
 func ConnectAllTimeout(ctx context.Context, timeout time.Duration) (map[string]ConnectedServer, error) {
-	cfg, err := LoadConfig()
+	return ConnectAllTimeoutForProject(ctx, timeout, "", false)
+}
+
+// ConnectAllTimeoutForProject is ConnectAllTimeout plus the project-local
+// mcp.json override (TODO.md item 22): when includeLocal is true, servers
+// from <wd>/.tyci/mcp.json are unioned in (LoadConfigMerged), local winning
+// on a name collision. includeLocal must only be true once the caller has
+// decided the project trusted, same as hooks.json and .tyci/tools.
+func ConnectAllTimeoutForProject(ctx context.Context, timeout time.Duration, wd string, includeLocal bool) (map[string]ConnectedServer, error) {
+	cfg, err := LoadConfigMerged(wd, includeLocal)
 	if err != nil {
 		return nil, err
 	}

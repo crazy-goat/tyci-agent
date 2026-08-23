@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/decodo/tyci/internal/trust"
 	"github.com/decodo/tyci/providers"
+	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
 	"github.com/spf13/cobra"
 )
@@ -235,6 +237,145 @@ func TestInitCommon_NoMCPFlag_OverridesConnectMCPTrue(t *testing.T) {
 
 	if tools.GetMCPToolRunner() != nil {
 		t.Fatalf("--no-mcp must override connectMCP=true")
+	}
+}
+
+// chdirTemp changes the process cwd to a fresh temp directory (not inside
+// any git repository, so session.ProjectKey/gitinfo.ProjectRoot resolves it
+// to its own absolute path rather than walking up into this repo's root)
+// and restores the original cwd on cleanup. Returns the temp dir.
+func chdirTemp(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		real = dir
+	}
+	return real
+}
+
+// writeLocalMCPConfig writes <wd>/.tyci/mcp.json configuring one stdio
+// server (a distinct name from writeWiringTestHome's "weather", so a test
+// can tell which file a connected tool actually came from).
+func writeLocalMCPConfig(t *testing.T, wd string) {
+	t.Helper()
+	scriptJSON, _ := json.Marshal(mcpFakeServerScript)
+	mcpConfig := `{"mcpServers":{"localonly":{"command":"sh","args":["-c",` + string(scriptJSON) + `]}}}`
+	dir := filepath.Join(wd, ".tyci")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(mcpConfig), 0600); err != nil {
+		t.Fatalf("write local mcp.json: %v", err)
+	}
+}
+
+// TestInitCommon_LocalMCPJSON_UntrustedProject_NotConnected is item 22's
+// trust-gate guarantee for mcp.json, mirroring how hooks.json and
+// .tyci/tools are already gated in initCommon (item 23): a project that has
+// never been decided trusted (interactive=false here, same as `run`/cron,
+// defaults it to untrusted without prompting) must not have its local
+// mcp.json read at all, even though the global one still connects.
+func TestInitCommon_LocalMCPJSON_UntrustedProject_NotConnected(t *testing.T) {
+	requireShForWiring(t)
+	writeWiringTestHome(t)
+	wd := chdirTemp(t)
+	writeLocalMCPConfig(t, wd)
+
+	prov := &fakeProvider{name: "wiretest-prov-untrusted", configured: true, models: []string{"m1"}}
+	providers.Register(prov)
+
+	restore := tools.SetMCPToolRunnerForTests(nil)
+	t.Cleanup(func() {
+		tools.ShutdownMCP()
+		restore()
+	})
+
+	cmd := newInitCommonTestCmd()
+	if err := cmd.Flags().Set("model", "wiretest-prov-untrusted/m1"); err != nil {
+		t.Fatalf("set model flag: %v", err)
+	}
+
+	_, _, _, _, _, _, _, dl, shutdown, err := initCommon(cmd, true, false)
+	if err != nil {
+		t.Fatalf("initCommon: %v", err)
+	}
+	t.Cleanup(shutdown)
+	if dl != nil {
+		t.Cleanup(func() { dl.Close() })
+	}
+
+	runner := tools.GetMCPToolRunner()
+	if runner == nil {
+		t.Fatalf("expected the global mcp.json server to still connect")
+	}
+	if !runner.HasTool("mcp_weather_forecast") {
+		t.Fatalf("expected the global weather server's tool despite the untrusted project")
+	}
+	if runner.HasTool("mcp_localonly_forecast") {
+		t.Fatalf("did not expect the project-local mcp.json server to connect for an untrusted project")
+	}
+}
+
+// TestInitCommon_LocalMCPJSON_TrustedProject_UnionsWithGlobal is the
+// positive case: once trust.SetTrusted has recorded this project as
+// trusted (exactly what an interactive session's prompt, or a manual
+// ~/.tyci/trust.json edit, would do), the project-local mcp.json's server
+// is unioned in alongside the global one.
+func TestInitCommon_LocalMCPJSON_TrustedProject_UnionsWithGlobal(t *testing.T) {
+	requireShForWiring(t)
+	writeWiringTestHome(t)
+	wd := chdirTemp(t)
+	writeLocalMCPConfig(t, wd)
+
+	key, err := session.ProjectKey(wd)
+	if err != nil {
+		t.Fatalf("session.ProjectKey: %v", err)
+	}
+	if err := trust.SetTrusted(key, true); err != nil {
+		t.Fatalf("trust.SetTrusted: %v", err)
+	}
+
+	prov := &fakeProvider{name: "wiretest-prov-trusted", configured: true, models: []string{"m1"}}
+	providers.Register(prov)
+
+	restore := tools.SetMCPToolRunnerForTests(nil)
+	t.Cleanup(func() {
+		tools.ShutdownMCP()
+		restore()
+	})
+
+	cmd := newInitCommonTestCmd()
+	if err := cmd.Flags().Set("model", "wiretest-prov-trusted/m1"); err != nil {
+		t.Fatalf("set model flag: %v", err)
+	}
+
+	_, _, _, _, _, _, _, dl, shutdown, err := initCommon(cmd, true, false)
+	if err != nil {
+		t.Fatalf("initCommon: %v", err)
+	}
+	t.Cleanup(shutdown)
+	if dl != nil {
+		t.Cleanup(func() { dl.Close() })
+	}
+
+	runner := tools.GetMCPToolRunner()
+	if runner == nil {
+		t.Fatalf("expected MCP to connect")
+	}
+	if !runner.HasTool("mcp_weather_forecast") {
+		t.Fatalf("expected the global server's tool")
+	}
+	if !runner.HasTool("mcp_localonly_forecast") {
+		t.Fatalf("expected the project-local server's tool once the project is trusted")
 	}
 }
 

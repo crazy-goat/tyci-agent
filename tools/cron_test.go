@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -219,5 +220,110 @@ func TestCronUnknownActionListsTheRealOnes(t *testing.T) {
 		if !strings.Contains(res.Error, want) {
 			t.Errorf("error should list %q as an option: %q", want, res.Error)
 		}
+	}
+}
+
+// =============================================================================
+// project-local cron.json (TODO.md item 22)
+// =============================================================================
+
+// withLocalCronDir sets and restores SetLocalCronDir for one test, so a
+// test that needs a trusted project's cron dir cannot leak it into the
+// next one — mirrors withCronHome's own isolation for HOME.
+func withLocalCronDir(t *testing.T, dir string) {
+	t.Helper()
+	SetLocalCronDir(dir)
+	t.Cleanup(func() { SetLocalCronDir("") })
+}
+
+// writeLocalCronJob writes <wd>/.tyci/cron.json with one job, mirroring
+// what a hand-edited, checked-in project cron.json would look like.
+func writeLocalCronJob(t *testing.T, wd string, job cron.Job) {
+	t.Helper()
+	dir := filepath.Join(wd, ".tyci")
+	f := &cron.File{}
+	if err := f.Add(job); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := cron.Save(dir, f); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+}
+
+func TestCronList_WithoutLocalDir_OnlyShowsGlobalJobs(t *testing.T) {
+	withCronHome(t)
+	wd := t.TempDir()
+	writeLocalCronJob(t, wd, cron.Job{Name: "local-only", Prompt: "p", Dir: wd, Schedule: "every 1h"})
+	// SetLocalCronDir deliberately not called: an untrusted (or non-git)
+	// project must not have its .tyci/cron.json read at all.
+
+	res := runCron(t, map[string]any{"action": "list"})
+	if !res.Success {
+		t.Fatal(res.Error)
+	}
+	if strings.Contains(res.Content, "local-only") {
+		t.Error("a project-local job appeared without SetLocalCronDir ever being called — the untrusted default must not read it")
+	}
+}
+
+func TestCronList_WithLocalDir_UnionsGlobalAndLocalJobs(t *testing.T) {
+	home := withCronHome(t)
+	wd := t.TempDir()
+	writeLocalCronJob(t, wd, cron.Job{Name: "local-only", Prompt: "p", Dir: wd, Schedule: "every 1h"})
+	withLocalCronDir(t, filepath.Join(wd, ".tyci"))
+
+	if res := runCron(t, map[string]any{"action": "add", "name": "global-only", "prompt": "p", "schedule": "every 1h", "dir": home}); !res.Success {
+		t.Fatal(res.Error)
+	}
+
+	res := runCron(t, map[string]any{"action": "list"})
+	if !res.Success {
+		t.Fatal(res.Error)
+	}
+	for _, want := range []string{"local-only", "global-only"} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("list is missing %q: %q", want, res.Content)
+		}
+	}
+}
+
+// TestCronAdd_RefusesNameCollisionWithLocalOnlyJob: `add` must check the
+// merged view before writing to the global file, or a same-named
+// project-local job would be silently shadowed (or shadow the new one) the
+// next time list/Tick reads them.
+func TestCronAdd_RefusesNameCollisionWithLocalOnlyJob(t *testing.T) {
+	withCronHome(t)
+	wd := t.TempDir()
+	writeLocalCronJob(t, wd, cron.Job{Name: "shared-name", Prompt: "local", Dir: wd, Schedule: "every 1h"})
+	withLocalCronDir(t, filepath.Join(wd, ".tyci"))
+
+	res := runCron(t, map[string]any{"action": "add", "name": "shared-name", "prompt": "global", "schedule": "every 1h", "dir": wd})
+	if res.Success {
+		t.Fatal("expected add to refuse a name that collides with a project-local job")
+	}
+}
+
+// TestCronDisable_ActsOnTheProjectLocalJob checks that an action naming a
+// job which only the project-local file defines writes into THAT file, not
+// into (or instead of) the global one.
+func TestCronDisable_ActsOnTheProjectLocalJob(t *testing.T) {
+	withCronHome(t)
+	wd := t.TempDir()
+	localDir := filepath.Join(wd, ".tyci")
+	writeLocalCronJob(t, wd, cron.Job{Name: "local-only", Prompt: "p", Dir: wd, Schedule: "every 1h"})
+	withLocalCronDir(t, localDir)
+
+	res := runCron(t, map[string]any{"action": "disable", "name": "local-only"})
+	if !res.Success {
+		t.Fatal(res.Error)
+	}
+
+	f, err := cron.Load(localDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := f.Find("local-only")
+	if i < 0 || !f.Jobs[i].Disabled {
+		t.Errorf("expected local-only to be disabled in the project-local file, got %+v", f.Jobs)
 	}
 }

@@ -84,12 +84,28 @@ func init() {
 // Shared setup
 // ---------------------------------------------------------------------------
 
+// registerProviders reads the global provider catalogs and, for model.json
+// (TODO.md item 22), a project-local <wd>/.tyci/model.json too — unioned
+// with the global one, local winning on a (group, model name) collision
+// (see providers.RegisterProvidersFromConfigMerged). Self-contained on
+// os.Getwd() rather than threaded a wd, the same posture as
+// agent.LoadTyciConfig and agent.LoadAgents.
 func registerProviders() {
 	if err := connect.EnsureProvidersJSON(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: providers.json: %v\n", err)
 	}
 	providers.RegisterProvidersFromProvidersJSON(connect.ProvidersJSONPath())
-	providers.RegisterProvidersFromConfig(connect.ModelJSONPath())
+	providers.RegisterProvidersFromConfigMerged(connect.ModelJSONPath(), localModelJSONPath())
+}
+
+// localModelJSONPath returns <cwd>/.tyci/model.json, or "" when cwd cannot
+// be determined.
+func localModelJSONPath() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(wd, ".tyci", "model.json")
 }
 
 // initCommon wires up everything a command needs to run the agent loop:
@@ -166,10 +182,24 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		tools.LoadAndRegisterLocalLuaTools(filepath.Join(wd, ".tyci", "tools"))
 	}
 
-	// Project-local mcp.json does not exist yet (TODO.md item 22 is still
-	// open — internal/mcp.LoadConfig only ever reads ~/.tyci/mcp.json). When
-	// it lands, it must be gated behind `trusted` here the same way, and
-	// documented in this comment.
+	// Project-local cron.json (TODO.md item 22) — same trust gate: a
+	// scheduled job is a whole unattended agent turn, the same shape of
+	// risk as hooks.json and .tyci/tools. Recorded here (always, not just
+	// when trusted — an untrusted decision must overwrite whatever a
+	// previous call in this process set, the same reset-on-every-call shape
+	// SetBackgroundBashEnabled/SetJobStarter use) rather than decided again
+	// inside tools/cron.go.
+	if trusted {
+		tools.SetLocalCronDir(filepath.Join(wd, ".tyci"))
+	} else {
+		tools.SetLocalCronDir("")
+	}
+
+	// Project-local mcp.json (TODO.md item 22) is gated the same way, down
+	// at the tools.InitMCP call below: a server definition there can launch
+	// an arbitrary binary, exactly the shape of trust hooks.json and
+	// .tyci/tools already require. `trusted` is threaded through rather
+	// than decided again there.
 
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: maxRetries, BaseBackoff: 4, MaxBackoff: 128}
@@ -237,7 +267,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	if connectMCP && !noMCP {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
-		if err := tools.InitMCP(ctx); err != nil {
+		if err := tools.InitMCP(ctx, wd, trusted); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: MCP: %v\n", err)
 		}
 		shutdown = func() {
@@ -508,8 +538,8 @@ var tuiCmd = &cobra.Command{
 
 		// Compute context counts for the top status bar.
 		toolsCount := len(tools.GetAllToolsSchema())
-		skillNames, _ := skills.ListSkills(skills.SkillsDir())
-		skillsCount := len(skillNames)
+		skillsFound, _ := skills.ListSkillsMerged("")
+		skillsCount := len(skillsFound)
 		mcpCount := 0
 		if mcpRunner := tools.GetMCPToolRunner(); mcpRunner != nil {
 			mcpCount = len(mcpRunner.MCPToolsSchema())
@@ -947,6 +977,13 @@ func listProviderNames() []string {
 	if entries, err := providers.LoadConfig(connect.ModelJSONPath()); err == nil {
 		for name := range entries {
 			names[name] = struct{}{}
+		}
+	}
+	if local := localModelJSONPath(); local != "" {
+		if entries, err := providers.LoadConfig(local); err == nil {
+			for name := range entries {
+				names[name] = struct{}{}
+			}
 		}
 	}
 	if keys, err := connect.ListKeys(); err == nil {

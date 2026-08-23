@@ -98,6 +98,62 @@ func Load(configDir string) (*File, error) {
 	return &f, nil
 }
 
+// LoadMerged reads the jobs file from each dir in order and unions the
+// result, later dirs winning on a same-name collision (case-insensitive,
+// matching Find) — the same union-with-later-wins shape mcp.json and
+// skills/ already use for their project-local override (TODO.md item 22).
+// A trusted caller passes [globalDir, projectLocalDir]; an untrusted one, or
+// one that never resolved a project dir, passes just [globalDir] and gets
+// exactly Load's result. The merged list is sorted by name, same as Save
+// leaves it.
+//
+// This is a read-side merge only: Save, MarkRun and LogPath still operate
+// on one dir at a time. Callers that mutate a specific job (enable, disable,
+// remove, and MarkRun after a run) must first find which dir currently
+// defines it — see FindJobDir — since a job may live in the project-local
+// file instead of the global one.
+func LoadMerged(dirs ...string) (*File, error) {
+	byKey := map[string]Job{}
+	var order []string
+	for _, dir := range dirs {
+		f, err := Load(dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, j := range f.Jobs {
+			key := strings.ToLower(j.Name)
+			if _, seen := byKey[key]; !seen {
+				order = append(order, key)
+			}
+			byKey[key] = j
+		}
+	}
+	merged := &File{}
+	for _, key := range order {
+		merged.Jobs = append(merged.Jobs, byKey[key])
+	}
+	sort.SliceStable(merged.Jobs, func(i, j int) bool { return merged.Jobs[i].Name < merged.Jobs[j].Name })
+	return merged, nil
+}
+
+// FindJobDir reports which of dirs currently defines a job named name,
+// preferring the LAST dir that does (so with dirs ordered
+// [globalDir, projectLocalDir] a job present in both is reported as living
+// in the project-local one — the same file LoadMerged would have taken its
+// definition from). Returns ok=false when no dir in the list defines it.
+func FindJobDir(dirs []string, name string) (dir string, ok bool) {
+	for i := len(dirs) - 1; i >= 0; i-- {
+		f, err := Load(dirs[i])
+		if err != nil {
+			continue
+		}
+		if f.Find(name) >= 0 {
+			return dirs[i], true
+		}
+	}
+	return "", false
+}
+
 // Save writes the jobs file, replacing it atomically so a crash mid-write
 // cannot leave a half-file that loses every job.
 func Save(configDir string, f *File) error {

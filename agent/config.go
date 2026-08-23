@@ -1,5 +1,6 @@
 // Package agent provides named agent configurations.
-// This file manages the global tyci config (~/.tyci/config.json).
+// This file manages tyci's config.json: global (~/.tyci/config.json) merged
+// with an optional project-local override (<wd>/.tyci/config.json).
 package agent
 
 import (
@@ -10,6 +11,13 @@ import (
 )
 
 const globalConfigName = "config.json"
+
+// localConfigName is the project-local override of config.json, read from
+// <wd>/.tyci/config.json — same directory (and the same trust posture: this
+// file carries no command and no code, only data, so unlike hooks.json and
+// .tyci/tools it is not trust-gated) that already holds hooks.json and
+// agents/.
+const localConfigName = "config.json"
 
 // TyciConfig holds global tyci settings stored in ~/.tyci/config.json.
 type TyciConfig struct {
@@ -43,15 +51,64 @@ func globalConfigFilePath() string {
 	return filepath.Join(globalConfigDir(), globalConfigName)
 }
 
-// LoadTyciConfig loads ~/.tyci/config.json. Returns empty config on missing file.
-func LoadTyciConfig() TyciConfig {
+// localConfigFilePath returns <wd>/.tyci/config.json.
+func localConfigFilePath(wd string) string {
+	return filepath.Join(wd, GlobalConfigDir, localConfigName)
+}
+
+// readTyciConfigFile reads one config.json file. A missing file (or one that
+// fails to parse) yields the zero value rather than an error: both hold the
+// meaning "nothing configured here" to the merge below.
+func readTyciConfigFile(path string) TyciConfig {
 	var cfg TyciConfig
-	data, err := os.ReadFile(globalConfigFilePath())
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return cfg
 	}
 	_ = json.Unmarshal(data, &cfg)
 	return cfg
+}
+
+// mergeTyciConfig combines a global and a local config field by field: a
+// local value wins for the fields it sets, and every field the local file
+// leaves unset falls back to the global value. This is deliberately NOT a
+// whole-file replace — a local config.json naming only default_model must
+// not wipe the global file's favorite_models, max_tokens or prompt_cache.
+func mergeTyciConfig(global, local TyciConfig) TyciConfig {
+	merged := global
+	if local.DefaultModel != "" {
+		merged.DefaultModel = local.DefaultModel
+	}
+	if local.FavoriteModels != nil {
+		merged.FavoriteModels = local.FavoriteModels
+	}
+	if local.MaxTokens != 0 {
+		merged.MaxTokens = local.MaxTokens
+	}
+	if local.PromptCache != nil {
+		merged.PromptCache = local.PromptCache
+	}
+	return merged
+}
+
+// LoadTyciConfigFrom loads ~/.tyci/config.json merged with <wd>/.tyci/config.json
+// (see mergeTyciConfig for the per-field precedence). Exported mainly for
+// testing with an explicit wd; production callers use LoadTyciConfig.
+func LoadTyciConfigFrom(wd string) TyciConfig {
+	global := readTyciConfigFile(globalConfigFilePath())
+	if wd == "" {
+		return global
+	}
+	local := readTyciConfigFile(localConfigFilePath(wd))
+	return mergeTyciConfig(global, local)
+}
+
+// LoadTyciConfig loads ~/.tyci/config.json merged with the current working
+// directory's project-local <wd>/.tyci/config.json, if any. Returns the
+// global-only config when cwd cannot be determined or carries no override.
+func LoadTyciConfig() TyciConfig {
+	wd, _ := os.Getwd()
+	return LoadTyciConfigFrom(wd)
 }
 
 // SaveTyciConfig writes the config to ~/.tyci/config.json.
