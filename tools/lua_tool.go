@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	lua "github.com/yuin/gopher-lua"
+	"github.com/yuin/gopher-lua/parse"
 )
 
 // LuaTool implements the Tool interface for user-defined Lua scripts.
@@ -15,8 +17,22 @@ type LuaTool struct {
 	name        string
 	description string
 	parameters  map[string]any
-	runFunc     *lua.LFunction
 	scriptPath  string
+
+	// protoOnce/proto/protoErr cache the compiled bytecode for scriptPath so
+	// Run doesn't re-read and re-parse the file from disk on every call —
+	// only the first call (or loadLuaTool, which primes it) pays that cost.
+	//
+	// A *lua.FunctionProto is immutable (bytecode + constants) once compiled,
+	// so it's safe to share across goroutines. What is NOT safe to share is
+	// a *lua.LState or an *lua.LFunction bound to one — gopher-lua states are
+	// not concurrency-safe, and an LFunction's Env is a specific state's
+	// global table. So each Run call still builds its own fresh LState and
+	// its own LFunction (via newTopLevelFunction) from the shared proto,
+	// rather than reusing one LFunction/LState across calls.
+	protoOnce sync.Once
+	proto     *lua.FunctionProto
+	protoErr  error
 }
 
 // Name returns the tool name.
@@ -24,8 +40,57 @@ func (t *LuaTool) Name() string {
 	return t.name
 }
 
+// loadProto compiles t.scriptPath into bytecode on first use and caches the
+// result for every later call, so the script's source is read and parsed
+// from disk exactly once per process regardless of how many times the tool
+// is run.
+func (t *LuaTool) loadProto() (*lua.FunctionProto, error) {
+	t.protoOnce.Do(func() {
+		f, err := os.Open(t.scriptPath)
+		if err != nil {
+			t.protoErr = fmt.Errorf("failed to open lua script: %w", err)
+			return
+		}
+		defer f.Close()
+
+		chunk, err := parse.Parse(f, t.scriptPath)
+		if err != nil {
+			t.protoErr = fmt.Errorf("failed to parse lua script: %w", err)
+			return
+		}
+		proto, err := lua.Compile(chunk, t.scriptPath)
+		if err != nil {
+			t.protoErr = fmt.Errorf("failed to compile lua script: %w", err)
+			return
+		}
+		t.proto = proto
+	})
+	return t.proto, t.protoErr
+}
+
+// newTopLevelFunction builds a fresh top-level chunk LFunction from a cached
+// proto, bound to L's own global table — the same shape lua.LState.Load
+// produces (see gopher-lua's state.go), just without re-parsing the source.
+func newTopLevelFunction(L *lua.LState, proto *lua.FunctionProto) *lua.LFunction {
+	return &lua.LFunction{
+		IsG:      false,
+		Env:      L.Env,
+		Proto:    proto,
+		Upvalues: make([]*lua.Upvalue, 0),
+	}
+}
+
 // Run executes the Lua tool with the given input.
 func (t *LuaTool) Run(ctx context.Context, input map[string]any) ToolResult {
+	proto, err := t.loadProto()
+	if err != nil {
+		return ToolResult{
+			Type:    "result",
+			Success: false,
+			Error:   fmt.Sprintf("failed to load lua script: %v", err),
+		}
+	}
+
 	L := lua.NewState()
 	defer L.Close()
 
@@ -33,8 +98,9 @@ func (t *LuaTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	sandbox := newLuaContext(ctx, L)
 	L.SetGlobal("ctx", sandbox)
 
-	// Load and execute the script
-	if err := L.DoFile(t.scriptPath); err != nil {
+	// Execute the cached bytecode (no disk read/parse on this path).
+	L.Push(newTopLevelFunction(L, proto))
+	if err := L.PCall(0, lua.MultRet, nil); err != nil {
 		return ToolResult{
 			Type:    "result",
 			Success: false,
@@ -192,12 +258,23 @@ func LoadLuaTools(dir string) ([]*LuaTool, error) {
 	return tools, nil
 }
 
-// loadLuaTool loads a single Lua tool from a script file.
+// loadLuaTool loads a single Lua tool from a script file. It compiles the
+// script (priming the LuaTool's proto cache, see loadProto) and runs it once
+// to pull out the schema table and validate that a run function is present;
+// later calls to LuaTool.Run reuse the cached bytecode instead of
+// re-reading and re-parsing the file.
 func loadLuaTool(scriptPath string) (*LuaTool, error) {
+	t := &LuaTool{scriptPath: scriptPath}
+	proto, err := t.loadProto()
+	if err != nil {
+		return nil, err
+	}
+
 	L := lua.NewState()
 	defer L.Close()
 
-	if err := L.DoFile(scriptPath); err != nil {
+	L.Push(newTopLevelFunction(L, proto))
+	if err := L.PCall(0, lua.MultRet, nil); err != nil {
 		return nil, fmt.Errorf("failed to execute lua script: %w", err)
 	}
 
@@ -239,19 +316,19 @@ func loadLuaTool(scriptPath string) (*LuaTool, error) {
 		params = convertLuaTableToMap(paramsVal.(*lua.LTable))
 	}
 
-	// Get run function
+	// Get run function — validated here (once, at load time) rather than
+	// kept: the closure itself is bound to this throwaway L's env, so it
+	// can't be reused by a later Run call. Run re-derives it by re-executing
+	// the (now cached, no longer re-parsed) script against its own LState.
 	runVal := table.RawGetString("run")
 	if runVal.Type() != lua.LTFunction {
 		return nil, fmt.Errorf("lua script table must have a 'run' function")
 	}
 
-	return &LuaTool{
-		name:        name,
-		description: description,
-		parameters:  params,
-		runFunc:     runVal.(*lua.LFunction),
-		scriptPath:  scriptPath,
-	}, nil
+	t.name = name
+	t.description = description
+	t.parameters = params
+	return t, nil
 }
 
 // convertLuaTableToMap converts a Lua table to a Go map, dropping any
