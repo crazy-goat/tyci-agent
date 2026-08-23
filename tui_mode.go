@@ -275,6 +275,22 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				tuiEntries := resumeEntriesToTUI(entries)
 				tuiDisp.OpenResumePicker(tuiEntries)
 				continue
+			case trimmed == "/resume --all":
+				// Escape hatch: list sessions across every project, not
+				// just the one containing cwd.
+				iterCancel()
+				entries, err := session.ResumeEntriesAll()
+				if err != nil {
+					tuiDisp.Error(fmt.Errorf("/resume --all: %v", err))
+					tuiDisp.ResetStatus()
+					continue
+				}
+				if len(entries) == 0 {
+					tuiDisp.ToolBlock("ℹ️  No sessions recorded")
+					continue
+				}
+				tuiDisp.OpenResumePicker(resumeEntriesToTUI(entries))
+				continue
 			case trimmed == "/btw":
 				// Bare /btw: browse previous side-conversations from this session.
 				iterCancel()
