@@ -84,7 +84,13 @@ func (m TuiModel) renderThinkingBlock(b block) string {
 	// the row, the summary should shrink to nothing rather than force one
 	// more column of overflow on top of it (truncateToWidth already
 	// returns "" for width <= 0).
-	avail := m.width - fixed
+	//
+	// renderWidth, not m.width: this renders through getBlockLines even on
+	// the real model while the sidebar is open (totalRenderedLines touches
+	// every block), and the only thing on screen is the narrowed main
+	// column — budgeting against the full terminal width would let the
+	// collapsed line overflow into the sidebar.
+	avail := m.renderWidth() - fixed
 	if avail < 0 {
 		avail = 0
 	}

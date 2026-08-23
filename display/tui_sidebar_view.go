@@ -98,6 +98,35 @@ func (m TuiModel) mainColumnWidth() int {
 	return main
 }
 
+// renderWidth is the width the transcript's block lines are wrapped,
+// glamour-rendered and cached at: the full terminal width normally, the
+// narrowed main column while the sidebar is open.
+//
+// Every cache writer (renderBlock, forceRenderDirtyBlocks, the scrollback
+// flush/page-in paths) must use THIS, never raw m.width. The reason: with
+// the sidebar open, the only thing ever on screen is the narrowed main
+// column (renderFrame's sidebar branch renders through a shadow model whose
+// width IS mainColumnWidth), so a block glamoured at the full width comes
+// back too wide — and buildViewportRows' overlong-line safety net then
+// re-wraps an already-rendered markdown table as plain text, shredding its
+// box-drawing borders. That is exactly the "tables render broken while the
+// sidebar is open, resizing or re-toggling fixes it" report: the re-toggle
+// worked because invalidateAllBlockLineCounts forced a re-render, which now
+// happened under the shadow and thus at the narrow width. Rendering at
+// renderWidth from the start keeps the caches at whatever width is actually
+// displayed; openSidebar/closeSidebar already invalidate on the transition,
+// so the caches re-flow both ways.
+//
+// Callers run on either the real model or the shadow copy — both carry
+// sidebarActive, and mainColumnWidth reads only width/sidebarActive, so the
+// answer is identical from either.
+func (m TuiModel) renderWidth() int {
+	if m.sidebarActive {
+		return m.mainColumnWidth()
+	}
+	return m.width
+}
+
 func (m TuiModel) sidebarLayout() sidebarLayoutT {
 	totalWidth := m.width - m.mainColumnWidth()
 	if totalWidth < 1 {

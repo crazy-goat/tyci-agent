@@ -88,7 +88,12 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 				sw = &streamWrap{}
 				m.streamWraps[idx] = sw
 			}
-			wrapped, lines := sw.render(content, useBar, m.width)
+		// renderWidth, not m.width: with the sidebar open the only thing on
+	// screen is the narrowed main column, so this cache must hold lines
+	// wrapped at mainColumnWidth (see renderWidth). Caching full-width lines
+	// here is what shredded markdown tables under the sidebar's safety
+	// re-wrap.
+	wrapped, lines := sw.render(content, useBar, m.renderWidth())
 			m.blocks[idx].cachedLineCount = len(lines)
 			m.blocks[idx].cachedLines = lines
 			return wrapped
@@ -100,9 +105,10 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 		content = collapseRepeatedLines(content)
 		var rendered string
 		if dim {
-			rendered = wrapRawText(content, useBar, m.width)
+			// renderWidth, not m.width — see the streaming branch above.
+			rendered = wrapRawText(content, useBar, m.renderWidth())
 		} else {
-			rendered = renderMarkdownWithCache(content, useBar, m.width)
+			rendered = renderMarkdownWithCache(content, useBar, m.renderWidth())
 		}
 		// Update cache
 		delete(m.dirtyBlocks, idx)
@@ -127,7 +133,7 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 	case "text":
 		return tryRenderMarkdown(b.content, false, false)
 	case "user":
-		return wrapRawText(b.content, false, m.width)
+		return wrapRawText(b.content, false, m.renderWidth())
 	case "tool":
 		return m.renderToolBlock(idx, b)
 	case "usage":
@@ -136,12 +142,12 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 		if cached, ok := m.mdCacheRendered[idx]; ok && cached != "" && !m.dirtyBlocks[idx] {
 			return cached
 		}
-		return renderErrorOrBlock(b, m.width)
+		return renderErrorOrBlock(b, m.renderWidth())
 	case "block":
 		if cached, ok := m.mdCacheRendered[idx]; ok && cached != "" && !m.dirtyBlocks[idx] {
 			return cached
 		}
-		return renderErrorOrBlock(b, m.width)
+		return renderErrorOrBlock(b, m.renderWidth())
 	default:
 		return b.content
 	}

@@ -143,7 +143,12 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				delete(m.mdCacheRendered, idx)
 			} else if b.kind == "text" {
 				content := collapseRepeatedLines(b.content)
-				rendered := renderMarkdownWithCache(content, false, m.width)
+				// renderWidth, not m.width: with the sidebar open the only
+				// thing on screen is the narrowed main column (see
+				// renderWidth). Glamouring at the full width here cached
+				// too-wide table lines, which buildViewportRows' safety
+				// re-wrap then shredded.
+				rendered := renderMarkdownWithCache(content, false, m.renderWidth())
 				if rendered != "" {
 					m.mdCacheRendered[idx] = rendered
 					m.blocks[idx].cachedLineCount = lineCount(rendered)
@@ -158,7 +163,7 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamWraps, idx)
 			} else if b.kind == "error" || b.kind == "block" {
-				rendered := renderErrorOrBlock(b, m.width)
+				rendered := renderErrorOrBlock(b, m.renderWidth())
 				if rendered != "" {
 					m.mdCacheRendered[idx] = rendered
 					m.blocks[idx].cachedLineCount = lineCount(rendered)

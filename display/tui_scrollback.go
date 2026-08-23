@@ -322,7 +322,7 @@ func (m *TuiModel) maybeFlushOldBlocks() {
 			// Nothing resident to flush (e.g. never rendered); skip.
 			continue
 		}
-		m.scrollback.flushBlock(b, m.width)
+		m.scrollback.flushBlock(b, m.renderWidth())
 		m.dropResidentCaches(i)
 	}
 }
@@ -355,12 +355,15 @@ func (m *TuiModel) ensureBlockResident(idx int) []string {
 		b.cachedLineCount = 0
 		return nil
 	}
-	// If the terminal width changed since the block was flushed, the paged-in
-	// lines are wrapped for the old width — re-wrap them for the current width
-	// before returning. This keeps old scrollback readable after a resize
-	// without re-running the (discarded) markdown renderer.
-	if b.flushedWidth != 0 && b.flushedWidth != m.width {
-		lines = rewrapLines(lines, b.kind, m.width)
+	// If the wrap width changed since the block was flushed, the paged-in
+	// lines are wrapped for the old width — re-wrap them for the width the
+	// transcript renders at now (renderWidth, which is mainColumnWidth while
+	// the sidebar is open — see renderWidth) before returning. This keeps old
+	// scrollback readable after a resize (or a sidebar open/close, whose
+	// invalidateAllBlockLineCounts leaves flushed blocks' counts untouched)
+	// without re-running the markdown renderer.
+	if b.flushedWidth != 0 && b.flushedWidth != m.renderWidth() {
+		lines = rewrapLines(lines, b.kind, m.renderWidth())
 		b.cachedLines = lines
 		b.cachedLineCount = len(lines)
 		m.scrollback.residentBytes = m.residentBlockBytes()
@@ -380,7 +383,7 @@ func (m *TuiModel) ensureBlockResident(idx int) []string {
 			if bj.flushed || bj.dirty || queued[j] || bj.cachedLines == nil {
 				continue
 			}
-			m.scrollback.flushBlock(bj, m.width)
+		m.scrollback.flushBlock(bj, m.renderWidth())
 			m.dropResidentCaches(j)
 		}
 	}
