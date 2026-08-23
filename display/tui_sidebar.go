@@ -285,9 +285,21 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 //     through to the normal keymap. Tab/ShiftTab are deliberately never
 //     claimed here at all — handleKeyMsg's normal case for them
 //     (switchModel) applies whether or not the sidebar is open.
-//   - Everything else (ticks, streamed blocks, …) is claimed only while
-//     focused; unfocused, it falls through so the conversation keeps
-//     updating live even with the sidebar open.
+//   - tuiMsgBlock (streamed text/tool-progress/tool-end/error/done blocks)
+//     must keep reaching handleBlockMsg whether or not the sidebar has
+//     focus: unfocused, it's handled=false here and falls through to
+//     Update()'s normal tuiMsgBlock case; focused, it's forwarded to
+//     updateSidebar below, whose own switch has a tuiMsgBlock case for
+//     exactly this (mirroring tui_modal.go's identical carve-out for the
+//     subagent modal). Without that case, focusing the sidebar (Right, to
+//     browse Bash/Subagents while the agent keeps working — the whole
+//     point of a side-by-side layout) would silently drop every block that
+//     arrives in that window — worse than cosmetic, since "done" is what
+//     flips m.reading back to true (tui_blocks.go), so a dropped done
+//     could leave the input stuck non-reading indefinitely.
+//   - Everything else (ticks, …) is claimed only while focused; unfocused,
+//     it falls through so the conversation keeps updating live even with
+//     the sidebar open.
 func (m TuiModel) routeSidebarMsg(msg tea.Msg) (handled bool, model tea.Model, cmd tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -459,6 +471,19 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case selectionFlashDoneMsg:
 		m.selectionFlash = false
+		return m, nil
+
+	case tuiMsgBlock:
+		// Forward streamed blocks to the normal handler so streaming
+		// (text, tool-progress, tool-end, error, done, reset) keeps updating
+		// the transcript while the sidebar has focus — mirroring
+		// tui_modal.go's identical case for the subagent modal. Without
+		// this, a block arriving while sidebarFocused is true (routed here
+		// by routeSidebarMsg's default branch) was silently dropped, and
+		// since "done" is what sets m.reading = true (tui_blocks.go), the
+		// input box could stay stuck non-reading even after the user
+		// exited sidebar focus.
+		m.handleBlockMsg(msg)
 		return m, nil
 	}
 

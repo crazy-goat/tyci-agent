@@ -1060,3 +1060,47 @@ func TestSidebarToggle_InvalidatesTranscriptWrapCache(t *testing.T) {
 			m.mainColumnWidth(), m.width, wideLineCount, narrowLineCount)
 	}
 }
+
+// ─── Streamed blocks must keep landing while the sidebar has focus ────────
+
+// TestSidebarFocused_StreamedBlocksStillLandInTranscript is the regression
+// test for a review finding: routeSidebarMsg's default branch forwarded
+// every non-Window/Mouse/Key message to updateSidebar while sidebarFocused,
+// and updateSidebar's switch had no case for tuiMsgBlock, so it fell
+// through to its own "return m, nil" — silently dropping streamed model
+// output (text/tool/done blocks) any time the user had focus in the
+// sidebar, which is exactly the state a side-by-side layout is meant to
+// make normal (browsing Bash/Subagents while the agent keeps working).
+// Worse than a cosmetic gap: "done" is what flips m.reading back to true
+// (tui_blocks.go), so a dropped done could leave the input stuck
+// non-reading indefinitely. tuiMsgBlock must now reach handleBlockMsg
+// unconditionally, focus or not — mirroring tui_modal.go's identical
+// carve-out for the older subagent modal.
+func TestSidebarFocused_StreamedBlocksStillLandInTranscript(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.reading = false // as if a turn were still in flight
+	m.openSidebar(sidebarTabBash)
+	m.sidebarFocused = true // browsing the sidebar while the agent works
+
+	model, _ := m.Update(tuiMsgBlock{kind: "text", content: "unique-marker-streamed-while-focused"})
+	m2 := model.(TuiModel)
+
+	model, _ = m2.Update(tuiMsgBlock{kind: "done"})
+	m3 := model.(TuiModel)
+
+	found := false
+	for _, b := range m3.blocks {
+		if strings.Contains(b.content, "unique-marker-streamed-while-focused") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the streamed text block to land in the transcript even while sidebar-focused, got blocks: %+v", m3.blocks)
+	}
+	if !m3.reading {
+		t.Fatalf("expected the \"done\" block to flip m.reading back to true even while sidebar-focused")
+	}
+	if !m3.sidebarActive || !m3.sidebarFocused {
+		t.Fatalf("expected the sidebar to stay open and focused throughout — streamed blocks must not disturb it")
+	}
+}
