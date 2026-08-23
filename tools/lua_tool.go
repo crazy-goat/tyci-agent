@@ -398,27 +398,39 @@ func convertLuaValueToGo(v lua.LValue) any {
 	}
 }
 
-// LoadAndRegisterLuaTools loads Lua tools from directories and registers them.
+// LoadAndRegisterLuaTools loads Lua tools from the user's global directory
+// (~/.tyci/tools) and registers them. It runs from this package's init(),
+// which fires before main() gets a chance to decide anything — so it must
+// never touch project-local ./.tyci/tools. That directory is loaded
+// separately, by LoadAndRegisterLocalLuaTools, only once the caller has
+// decided (internal/trust) that the current project is trusted: a Lua tool
+// can shell out via ctx.run, exactly the kind of project-supplied code item
+// 23's trust prompt exists to gate.
 func LoadAndRegisterLuaTools() {
-	dirs := []string{
-		filepath.Join(os.Getenv("HOME"), ".tyci", "tools"),
-		".tyci/tools",
+	registerLuaToolsFromDir(filepath.Join(os.Getenv("HOME"), ".tyci", "tools"))
+}
+
+// LoadAndRegisterLocalLuaTools loads and registers Lua tools from a
+// project-local directory (normally "<project>/.tyci/tools"). Callers must
+// only invoke this once the project has been decided trusted — see
+// LoadAndRegisterLuaTools's doc comment.
+func LoadAndRegisterLocalLuaTools(dir string) {
+	registerLuaToolsFromDir(dir)
+}
+
+func registerLuaToolsFromDir(dir string) {
+	tools, err := LoadLuaTools(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load lua tools from %s: %v\n", dir, err)
+		return
 	}
 
-	for _, dir := range dirs {
-		tools, err := LoadLuaTools(dir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to load lua tools from %s: %v\n", dir, err)
+	for _, tool := range tools {
+		// Check for name collision
+		if _, exists := toolRegistry[tool.name]; exists {
+			fmt.Fprintf(os.Stderr, "Warning: lua tool %s conflicts with built-in tool, skipping\n", tool.name)
 			continue
 		}
-
-		for _, tool := range tools {
-			// Check for name collision
-			if _, exists := toolRegistry[tool.name]; exists {
-				fmt.Fprintf(os.Stderr, "Warning: lua tool %s conflicts with built-in tool, skipping\n", tool.name)
-				continue
-			}
-			toolRegistry[tool.name] = tool
-		}
+		toolRegistry[tool.name] = tool
 	}
 }
