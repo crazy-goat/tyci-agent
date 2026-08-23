@@ -10,8 +10,9 @@ import (
 	"github.com/decodo/tyci/tools"
 )
 
-// sidebarLayoutT is the sidebar's own layout shape — right-anchored and
-// full-height, unlike modalLayout's centered popups.
+// sidebarLayoutT is the sidebar's own layout shape — a full-height column
+// docked to the right of the (narrower) main conversation column, unlike
+// modalLayout's centered popups.
 //
 // The box is built as lipgloss.NewStyle().Width(panelWidth).Padding(0,
 // 1).BorderLeft(true)…: lipgloss's box model treats Width as the
@@ -41,7 +42,12 @@ type sidebarLayoutT struct {
 	contentHeight             int // rows available for the tab's own list/text
 }
 
-func (m TuiModel) sidebarLayout() sidebarLayoutT {
+// sidebarColumnWidth is the sidebar's "normal" on-screen footprint (border
+// included) — the same panelWidth+1 formula sidebarLayout used to compute
+// inline before the sidebar became a side-by-side column. Factored out so
+// both sidebarLayout and mainColumnWidth derive from this one formula
+// instead of two copies that could drift apart.
+func (m TuiModel) sidebarColumnWidth() int {
 	// panelWidth is the Width() style parameter passed to the box below —
 	// content plus padding, NOT including the border column.
 	panelWidth := m.width * 2 / 5
@@ -55,14 +61,55 @@ func (m TuiModel) sidebarLayout() sidebarLayoutT {
 	if panelWidth < 10 {
 		panelWidth = 10
 	}
+	return panelWidth + 1 // + the left border column
+}
 
-	totalWidth := panelWidth + 1 // + the left border column
-	left := m.width - totalWidth
-	if left < 0 {
-		left = 0
+// mainColumnWidth is the width the main conversation column renders at:
+// the full terminal width when the sidebar is closed, or the terminal width
+// minus the sidebar's footprint when it's open. This is the single source
+// of truth for the main/sidebar split — sidebarLayout derives its own width
+// as m.width - mainColumnWidth() rather than recomputing sidebarColumnWidth
+// independently, so the two columns can never disagree about where the
+// split falls.
+//
+// minMain/sidebarFloor handle a terminal too narrow to give both columns
+// their normal size: first try shrinking the sidebar down to sidebarFloor
+// to free up room for main's minimum; if the terminal is too narrow even
+// for that (roughly sub-40 columns total), there's no split that keeps both
+// sides usable, so main just gets whatever's left above zero rather than
+// letting either column go negative. Both sides render squeezed in that
+// case, which is an acceptable degraded state — nothing crashes.
+func (m TuiModel) mainColumnWidth() int {
+	if !m.sidebarActive {
+		return m.width
 	}
+	const minMain = 20
+	const sidebarFloor = 20
+	if main := m.width - m.sidebarColumnWidth(); main >= minMain {
+		return main
+	}
+	main := m.width - sidebarFloor
+	if main >= minMain {
+		return main
+	}
+	if main < 0 {
+		main = 0
+	}
+	return main
+}
+
+func (m TuiModel) sidebarLayout() sidebarLayoutT {
+	totalWidth := m.width - m.mainColumnWidth()
+	if totalWidth < 1 {
+		totalWidth = 1
+	}
+	left := m.mainColumnWidth()
 	height := m.height
 
+	panelWidth := totalWidth - 1 // content+padding, excluding the border column
+	if panelWidth < 1 {
+		panelWidth = 1
+	}
 	contentLeft := left + 2        // border(1) + left padding(1)
 	contentWidth := panelWidth - 2 // minus left+right padding
 	if contentWidth < 1 {
@@ -87,11 +134,18 @@ func (m TuiModel) sidebarLayout() sidebarLayoutT {
 	}
 }
 
-// renderSidebarView renders the sidebar as a right-anchored, full-height
-// panel over a dimmed background — see tui_sidebar.go's package doc comment
-// for why this is a full-screen overlay rather than a live side-by-side
-// column.
-func (m TuiModel) renderSidebarView() string {
+// renderSidebarColumn renders the sidebar's own self-contained block —
+// layout.width columns by layout.height rows, meant to sit at the right
+// edge of a lipgloss.JoinHorizontal with the (separately, narrower-)
+// rendered main column (see tui_view.go's renderFrame). Unlike the old
+// full-screen overlay this no longer wraps itself in lipgloss.Place; the
+// caller is responsible for the join.
+//
+// The title bar and border are styled differently depending on
+// m.sidebarFocused, so it's visually obvious which side of the
+// conversation<->sidebar focus split (tui_sidebar.go) currently owns the
+// keyboard.
+func (m TuiModel) renderSidebarColumn() string {
 	layout := m.sidebarLayout()
 	// panelWidth is the Width() style parameter the box below is built
 	// with — see sidebarLayoutT's doc comment: layout.width is the box's
@@ -103,13 +157,24 @@ func (m TuiModel) renderSidebarView() string {
 
 	var b strings.Builder
 
+	titleBg := lipgloss.Color("60")
+	titleFg := lipgloss.Color("252")
+	title := "Sidebar"
+	if !m.sidebarFocused {
+		// Dimmed title reads as "open, but the conversation still has the
+		// keyboard" — the same visual language buildSubagentTree's dimmed
+		// finished-job rows use for "not what currently has your attention".
+		titleBg = lipgloss.Color("238")
+		titleFg = lipgloss.Color("245")
+		title = "Sidebar (Right to focus)"
+	}
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("252")).
-		Background(lipgloss.Color("60")).
+		Foreground(titleFg).
+		Background(titleBg).
 		Width(contentWidth).
 		Padding(0, 1)
-	b.WriteString(titleStyle.Render("Sidebar"))
+	b.WriteString(titleStyle.Render(title))
 	b.WriteString("\n")
 
 	b.WriteString(m.renderSidebarTabs(contentWidth))
@@ -145,6 +210,13 @@ func (m TuiModel) renderSidebarView() string {
 	b.WriteString("\n")
 	b.WriteString(footerStyle.Render(truncateToWidth(m.sidebarHint(), contentWidth)))
 
+	borderColor := lipgloss.Color("63")
+	if m.sidebarFocused {
+		// Brighter border when the sidebar owns the keyboard — matches the
+		// active-tab highlight color (renderSidebarTabs' "45") so the two
+		// "you are here" cues agree.
+		borderColor = lipgloss.Color("45")
+	}
 	box := lipgloss.NewStyle().
 		Width(panelWidth).
 		Height(layout.height).
@@ -152,16 +224,10 @@ func (m TuiModel) renderSidebarView() string {
 		Background(lipgloss.Color("235")).
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderLeft(true).BorderRight(false).BorderTop(false).BorderBottom(false).
-		BorderForeground(lipgloss.Color("63")).
+		BorderForeground(borderColor).
 		Render(b.String())
 
-	return lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Right, lipgloss.Top,
-		box,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("235")),
-		lipgloss.WithWhitespaceChars(" "),
-	)
+	return box
 }
 
 // renderSidebarTabs renders the tab row, highlighting the active one.
@@ -187,19 +253,25 @@ func (m TuiModel) renderSidebarTabs(width int) string {
 }
 
 // sidebarFooter is the keybinding hint line, tab-specific where an action
-// beyond navigation exists.
+// beyond navigation exists, and focus-specific since Left/Right mean
+// different things depending on whether the sidebar currently has the
+// keyboard (m.sidebarFocused — see tui_sidebar.go's updateSidebar).
 func (m TuiModel) sidebarFooter() string {
+	if !m.sidebarFocused {
+		return "Right: focus sidebar  Tab/Shift+Tab switch model  Esc close"
+	}
+	nav := "←→ switch tab (← at first/→ at last exits to conversation)"
 	switch m.sidebarTab {
 	case sidebarTabSessions:
-		return "↑↓ browse  Enter: open resume picker  Tab/←→ switch tab  Esc close"
+		return "↑↓ browse  Enter: open resume picker  " + nav + "  Esc close"
 	case sidebarTabBash, sidebarTabSubagents:
 		hint := "↑↓ select  Enter view"
 		if m.sidebarTab == sidebarTabSubagents {
 			hint += "  r resume"
 		}
-		return hint + "  Tab/←→ switch tab  Esc close"
+		return hint + "  " + nav + "  Esc close"
 	default:
-		return "Tab/←→ switch tab  Esc close"
+		return nav + "  Esc close"
 	}
 }
 

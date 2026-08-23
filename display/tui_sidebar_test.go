@@ -38,7 +38,7 @@ func TestSidebarTabAtX_MatchesRenderedTabPositions(t *testing.T) {
 	m.openSidebar(sidebarTabTokens)
 	layout := m.sidebarLayout()
 
-	rendered := m.renderSidebarView()
+	rendered := m.renderSidebarColumn()
 	rows := strings.Split(rendered, "\n")
 	tabRow := ansi.Strip(rows[layout.top+1])
 
@@ -55,9 +55,13 @@ func TestSidebarTabAtX_MatchesRenderedTabPositions(t *testing.T) {
 		}
 		// tabRow contains multi-byte runes (the border character), so a
 		// byte offset from strings.Index is not a screen column — convert
-		// via display width of everything before the match, same unit
-		// sidebarTabAtX's x parameter (a mouse event's column) is in.
-		col := lipgloss.Width(tabRow[:byteIdx])
+		// via display width of everything before the match. renderSidebarColumn
+		// now returns just the sidebar's own self-contained box (local
+		// columns starting at 0), not the old full-screen-width frame, so
+		// this local column has to be shifted by layout.left to become the
+		// same absolute-screen-X unit sidebarTabAtX's x parameter (a real
+		// mouse event's column) is in.
+		col := layout.left + lipgloss.Width(tabRow[:byteIdx])
 		if got := sidebarTabAtX(layout, col); got != tab {
 			t.Errorf("sidebarTabAtX(%d) [start of %q's rendered label] = %d, want %d", col, label, got, tab)
 		}
@@ -160,7 +164,7 @@ func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
 
 	// The rendered content must actually start at sidebarScroll, not 0.
 	lines := m.sidebarBashJobs()
-	rendered := m.renderSidebarView()
+	rendered := m.renderSidebarColumn()
 	rows := strings.Split(rendered, "\n")
 	firstContentRow := ansi.Strip(rows[layout.contentTop])
 	lastJobShortID := jobs.ShortID(lines[m.sidebarScroll].ID)
@@ -299,14 +303,21 @@ func TestOpenSidebar_InvalidTabFallsBackToTokens(t *testing.T) {
 	}
 }
 
-func TestUpdateSidebar_TabNavigation(t *testing.T) {
+// TestUpdateSidebar_LeftRightCycleTabsWhileFocused covers the surviving
+// navigation once the sidebar has keyboard focus: Left/Right still move
+// between tabs exactly as before.
+func TestUpdateSidebar_LeftRightCycleTabsWhileFocused(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.openSidebar(sidebarTabTokens)
+	m.sidebarFocused = true
 
 	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyRight})
 	m2 := model.(TuiModel)
 	if m2.sidebarTab != sidebarTabSessions {
 		t.Fatalf("expected Right to advance to Sessions, got %d", m2.sidebarTab)
+	}
+	if !m2.sidebarFocused {
+		t.Fatalf("expected focus to remain on the sidebar after a plain tab move")
 	}
 
 	model, _ = m2.updateSidebar(tea.KeyMsg{Type: tea.KeyLeft})
@@ -314,11 +325,225 @@ func TestUpdateSidebar_TabNavigation(t *testing.T) {
 	if m3.sidebarTab != sidebarTabTokens {
 		t.Fatalf("expected Left to go back to Tokens, got %d", m3.sidebarTab)
 	}
+}
 
-	model, _ = m3.updateSidebar(tea.KeyMsg{Type: tea.KeyShiftTab})
-	m4 := model.(TuiModel)
-	if m4.sidebarTab != sidebarTabSubagents {
-		t.Fatalf("expected Shift+Tab to wrap back to Subagents, got %d", m4.sidebarTab)
+// TestUpdateSidebar_TabAndShiftTabSwitchModelNotTab covers the reversed
+// decision (TODO item 1): Tab/ShiftTab must never switch sidebar tabs —
+// they fall through to the same model-switching behavior
+// (TuiModel.switchModel) the normal keymap's Tab/Shift+Tab has
+// (tui_keys.go), regardless of sidebar focus or which tab is selected. This
+// mirrors the assertion style tui_picker_test.go's switchModel tests use
+// (read modelName/favIdx directly) rather than asserting on sidebarTab,
+// since sidebarTab is exactly what must NOT change.
+func TestUpdateSidebar_TabAndShiftTabSwitchModelNotTab(t *testing.T) {
+	m := newPickerTestModel(testProviders, []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"}, "")
+	m.reading = true
+	m.modelName = "openai/gpt-4o"
+	m.favIdx = 0
+	m.openSidebar(sidebarTabSessions)
+	m.sidebarFocused = true
+
+	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyTab})
+	m2 := model.(TuiModel)
+	if m2.sidebarTab != sidebarTabSessions {
+		t.Fatalf("expected Tab to leave the sidebar tab unchanged, got %d", m2.sidebarTab)
+	}
+	if !m2.sidebarActive || !m2.sidebarFocused {
+		t.Fatalf("expected Tab to leave the sidebar open and focused")
+	}
+	if m2.modelName != "anthropic/claude-sonnet-4-20250514" {
+		t.Fatalf("expected Tab to switch the model like the normal keymap, got %q", m2.modelName)
+	}
+
+	model, _ = m2.updateSidebar(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m3 := model.(TuiModel)
+	if m3.sidebarTab != sidebarTabSessions {
+		t.Fatalf("expected Shift+Tab to leave the sidebar tab unchanged, got %d", m3.sidebarTab)
+	}
+	if m3.modelName != "openai/gpt-4o" {
+		t.Fatalf("expected Shift+Tab to switch the model back, got %q", m3.modelName)
+	}
+}
+
+// TestUpdateSidebar_LeftAtFirstTabExitsFocus and
+// TestUpdateSidebar_RightAtLastTabExitsFocus cover the focus-boundary exit
+// (the user-confirmed correction to the original arrows-only design): at
+// the leftmost/rightmost tab, Left/Right walk focus back OUT to the
+// conversation instead of wrapping around to the other end.
+func TestUpdateSidebar_LeftAtFirstTabExitsFocus(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabTokens) // Tokens is tab 0
+	m.sidebarFocused = true
+
+	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyLeft})
+	m2 := model.(TuiModel)
+	if m2.sidebarFocused {
+		t.Fatalf("expected Left at the first tab to exit focus back to the conversation")
+	}
+	if !m2.sidebarActive {
+		t.Fatalf("expected the sidebar to stay open, just unfocused")
+	}
+	if m2.sidebarTab != sidebarTabTokens {
+		t.Fatalf("expected the tab selection to stay put on exit, got %d", m2.sidebarTab)
+	}
+}
+
+func TestUpdateSidebar_RightAtLastTabExitsFocus(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabSubagents) // the last tab
+	m.sidebarFocused = true
+
+	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyRight})
+	m2 := model.(TuiModel)
+	if m2.sidebarFocused {
+		t.Fatalf("expected Right at the last tab to exit focus back to the conversation")
+	}
+	if m2.sidebarTab != sidebarTabSubagents {
+		t.Fatalf("expected the tab selection to stay put on exit, got %d", m2.sidebarTab)
+	}
+}
+
+// ─── Conversation<->sidebar focus routing (Update()) ───────────────────────
+//
+// These exercise the actual production entry point, m.Update(), rather than
+// updateSidebar directly, since the focus gate itself lives in
+// routeSidebarMsg (tui_sidebar.go), called from Update() (tui_update.go).
+
+// TestSidebarFocus_DefaultsToConversation covers the default on open: focus
+// starts on the conversation, so a typed character reaches the input box
+// exactly as if the sidebar were closed.
+func TestSidebarFocus_DefaultsToConversation(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabTokens)
+	if m.sidebarFocused {
+		t.Fatalf("expected focus to default to the conversation on open")
+	}
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m2 := model.(TuiModel)
+	if m2.input.Value() != "x" {
+		t.Fatalf("expected the typed character to land in the input box, got %q", m2.input.Value())
+	}
+	if !m2.sidebarActive {
+		t.Fatalf("expected the sidebar to stay open")
+	}
+	if m2.sidebarFocused {
+		t.Fatalf("expected focus to remain on the conversation after an ordinary keystroke")
+	}
+}
+
+// TestSidebarFocus_RightEntersSidebarFromConversation covers Right "walking
+// into" the sidebar from the conversation side, landing on whichever tab
+// was already selected rather than resetting to the first tab.
+func TestSidebarFocus_RightEntersSidebarFromConversation(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabBash)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m2 := model.(TuiModel)
+	if !m2.sidebarFocused {
+		t.Fatalf("expected Right from the conversation to move focus onto the sidebar")
+	}
+	if m2.sidebarTab != sidebarTabBash {
+		t.Fatalf("expected entering focus to keep the already-selected tab, got %d", m2.sidebarTab)
+	}
+}
+
+// TestSidebarFocus_TypingWhileFocusedDoesNotReachInput is the mirror of
+// TestSidebarFocus_DefaultsToConversation: once focus has moved to the
+// sidebar, typing (including the Subagents tab's 'r' resume key) must not
+// land in the input box.
+func TestSidebarFocus_TypingWhileFocusedDoesNotReachInput(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabTokens)
+	m.sidebarFocused = true
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m2 := model.(TuiModel)
+	if m2.input.Value() != "" {
+		t.Fatalf("expected typing while sidebar-focused to leave the input untouched, got %q", m2.input.Value())
+	}
+	if !m2.sidebarFocused {
+		t.Fatalf("expected focus to remain on the sidebar")
+	}
+}
+
+// TestSidebarFocus_TabStillSwitchesModelWhenUnfocused covers the other half
+// of the reversed decision: Tab/ShiftTab fall through to switchModel
+// whether or not the sidebar currently has focus, since routeSidebarMsg
+// deliberately never claims them.
+func TestSidebarFocus_TabStillSwitchesModelWhenUnfocused(t *testing.T) {
+	m := newPickerTestModel(testProviders, []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"}, "")
+	m.reading = true
+	m.modelName = "openai/gpt-4o"
+	m.favIdx = 0
+	m.openSidebar(sidebarTabTokens) // sidebarFocused defaults to false
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m2 := model.(TuiModel)
+	if m2.modelName != "anthropic/claude-sonnet-4-20250514" {
+		t.Fatalf("expected Tab to switch the model even while unfocused, got %q", m2.modelName)
+	}
+	if m2.sidebarTab != sidebarTabTokens {
+		t.Fatalf("expected the sidebar tab to stay put, got %d", m2.sidebarTab)
+	}
+}
+
+// ─── Mouse column dispatch (Update()) ──────────────────────────────────────
+
+// TestSidebarMouse_MainColumnClickRoutesToMainAndUnfocuses covers Update()'s
+// physical-column mouse routing: a click at the status bar's context figure
+// — physically inside the main column — must reach the main conversation's
+// own mouse handling using a shadow model narrowed to mainColumnWidth()
+// (not the real, wider m.width), and must return focus to the conversation
+// since a click is itself an unambiguous signal of where the user's
+// attention just went.
+func TestSidebarMouse_MainColumnClickRoutesToMainAndUnfocuses(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.lastUsage.Input = 100
+	if m.buildContextCost() == "" {
+		t.Skip("no context cost to click in this configuration")
+	}
+	m.openSidebar(sidebarTabBash)
+	m.sidebarFocused = true
+
+	mainWidth := m.mainColumnWidth()
+	model, _ := m.Update(tea.MouseMsg{
+		X: mainWidth - 1, Y: m.statusBarY(),
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	m2 := model.(TuiModel)
+	if m2.width != m.width {
+		t.Fatalf("expected the real width to survive the shadow-model dispatch, got %d want %d", m2.width, m.width)
+	}
+	if m2.sidebarFocused {
+		t.Fatalf("expected the main-column click to return focus to the conversation")
+	}
+	if m2.sidebarTab != sidebarTabTokens {
+		t.Fatalf("expected clicking the context figure to switch to the Tokens tab, got %d", m2.sidebarTab)
+	}
+}
+
+// TestSidebarMouse_SidebarColumnClickFocusesSidebar is the mirror case: a
+// click physically inside the sidebar column (a tab label) must reach
+// updateSidebar and set focus onto the sidebar.
+func TestSidebarMouse_SidebarColumnClickFocusesSidebar(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabTokens)
+	layout := m.sidebarLayout()
+
+	cell := layout.contentWidth / sidebarTabCount
+	x := layout.contentLeft + sidebarTabSubagents*cell + cell/2
+	model, _ := m.Update(tea.MouseMsg{
+		X: x, Y: layout.top + 1,
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	m2 := model.(TuiModel)
+	if !m2.sidebarFocused {
+		t.Fatalf("expected a click inside the sidebar column to focus it")
+	}
+	if m2.sidebarTab != sidebarTabSubagents {
+		t.Fatalf("expected clicking the Subagents cell to select it, got %d", m2.sidebarTab)
 	}
 }
 
@@ -724,5 +949,158 @@ func TestStatusRightHit_MatchesRenderedFigure(t *testing.T) {
 	}
 	if m.statusRightHit(0) {
 		t.Errorf("expected the leftmost column to be a miss")
+	}
+}
+
+// ─── mainColumnWidth / sidebarColumnWidth split arithmetic ────────────────
+
+// TestMainColumnWidth_ClosedReturnsFullWidth covers the trivial case: with
+// no sidebar, the main column is the whole terminal.
+func TestMainColumnWidth_ClosedReturnsFullWidth(t *testing.T) {
+	m := newTestModelForSidebar()
+	if got := m.mainColumnWidth(); got != m.width {
+		t.Fatalf("mainColumnWidth() = %d, want m.width (%d) when the sidebar is closed", got, m.width)
+	}
+}
+
+// TestMainColumnWidth_SplitArithmetic pins down the exact split at a few
+// terminal widths, including one (45) that exercises the "shrink the
+// sidebar to its floor" fallback and one (30) that exercises the
+// no-good-split-exists edge case — see mainColumnWidth's doc comment.
+// sidebarLayout's own width/left must always agree with mainColumnWidth(),
+// since sidebarLayout derives from it rather than recomputing the split.
+func TestMainColumnWidth_SplitArithmetic(t *testing.T) {
+	cases := []struct {
+		width            int
+		wantMain         int
+		wantSidebarWidth int
+	}{
+		{width: 100, wantMain: 59, wantSidebarWidth: 41},
+		{width: 45, wantMain: 25, wantSidebarWidth: 20}, // sidebar shrunk to its floor
+		{width: 30, wantMain: 10, wantSidebarWidth: 20}, // no split keeps both at their minimum
+	}
+	for _, c := range cases {
+		m := newTestModelForSidebar()
+		m.width = c.width
+		m.openSidebar(sidebarTabTokens)
+
+		if got := m.mainColumnWidth(); got != c.wantMain {
+			t.Errorf("width=%d: mainColumnWidth() = %d, want %d", c.width, got, c.wantMain)
+		}
+		layout := m.sidebarLayout()
+		if layout.width != c.wantSidebarWidth {
+			t.Errorf("width=%d: sidebarLayout().width = %d, want %d", c.width, layout.width, c.wantSidebarWidth)
+		}
+		if layout.left != m.mainColumnWidth() {
+			t.Errorf("width=%d: sidebarLayout().left = %d disagrees with mainColumnWidth() = %d",
+				c.width, layout.left, m.mainColumnWidth())
+		}
+		if m.mainColumnWidth()+layout.width != c.width {
+			t.Errorf("width=%d: main(%d)+sidebar(%d) != total(%d)", c.width, m.mainColumnWidth(), layout.width, c.width)
+		}
+	}
+}
+
+// ─── renderFrame side-by-side column ───────────────────────────────────────
+
+// TestRenderFrame_SidebarActiveShowsBothColumns covers Change 1's whole
+// point: with the sidebar open, the rendered frame must contain recognizable
+// content from BOTH the main conversation and the sidebar at once — this
+// used to be impossible (the old full-screen overlay replaced the
+// transcript entirely).
+func TestRenderFrame_SidebarActiveShowsBothColumns(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "unique-marker-xyzzy-in-the-transcript"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	m.openSidebar(sidebarTabTokens)
+
+	frame := m.renderFrame()
+	if !strings.Contains(frame, "xyzzy") {
+		t.Fatalf("expected the main column's transcript content to appear in the joined frame")
+	}
+	if !strings.Contains(frame, "Sidebar") {
+		t.Fatalf("expected the sidebar column's title to appear in the joined frame")
+	}
+}
+
+// ─── Toggle invalidates the width-keyed transcript wrap cache ─────────────
+
+// TestSidebarToggle_InvalidatesTranscriptWrapCache is the toggle-open analog
+// of TestMessageRegionCache_DirtyAfterResize (tui_message_cache_test.go):
+// getBlockLines' per-block wrap cache (tui_render_block.go) does not itself
+// compare against the current width — it is only invalidated by an
+// explicit call, normally invalidateAllBlockLineCounts on a real terminal
+// resize. Opening the sidebar narrows the main column exactly the same way
+// a real resize narrows the whole screen, so openSidebar must make that
+// same call (see its doc comment) or the transcript would keep rendering
+// wrapped for the old, wider column.
+func TestSidebarToggle_InvalidatesTranscriptWrapCache(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 100
+	m.height = 30
+	longLine := strings.Repeat("word ", 40)
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: longLine})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	m.renderFrame() // populate the per-block wrap cache at the full width
+
+	wideLineCount := m.blocks[0].cachedLineCount
+	if wideLineCount == 0 {
+		t.Fatal("expected the block to have a cached line count after rendering")
+	}
+
+	m.openSidebar(sidebarTabTokens)
+	if m.mainColumnWidth() >= m.width {
+		t.Fatal("expected the sidebar to actually narrow the main column in this configuration")
+	}
+	m.renderFrame() // rebuild the main column at the narrower mainColumnWidth()
+
+	narrowLineCount := m.blocks[0].cachedLineCount
+	if narrowLineCount <= wideLineCount {
+		t.Fatalf("expected re-wrapping at the narrower main column (%d cols, vs %d full) to need MORE wrapped lines: wide=%d narrow=%d",
+			m.mainColumnWidth(), m.width, wideLineCount, narrowLineCount)
+	}
+}
+
+// ─── Streamed blocks must keep landing while the sidebar has focus ────────
+
+// TestSidebarFocused_StreamedBlocksStillLandInTranscript is the regression
+// test for a review finding: routeSidebarMsg's default branch forwarded
+// every non-Window/Mouse/Key message to updateSidebar while sidebarFocused,
+// and updateSidebar's switch had no case for tuiMsgBlock, so it fell
+// through to its own "return m, nil" — silently dropping streamed model
+// output (text/tool/done blocks) any time the user had focus in the
+// sidebar, which is exactly the state a side-by-side layout is meant to
+// make normal (browsing Bash/Subagents while the agent keeps working).
+// Worse than a cosmetic gap: "done" is what flips m.reading back to true
+// (tui_blocks.go), so a dropped done could leave the input stuck
+// non-reading indefinitely. tuiMsgBlock must now reach handleBlockMsg
+// unconditionally, focus or not — mirroring tui_modal.go's identical
+// carve-out for the older subagent modal.
+func TestSidebarFocused_StreamedBlocksStillLandInTranscript(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.reading = false // as if a turn were still in flight
+	m.openSidebar(sidebarTabBash)
+	m.sidebarFocused = true // browsing the sidebar while the agent works
+
+	model, _ := m.Update(tuiMsgBlock{kind: "text", content: "unique-marker-streamed-while-focused"})
+	m2 := model.(TuiModel)
+
+	model, _ = m2.Update(tuiMsgBlock{kind: "done"})
+	m3 := model.(TuiModel)
+
+	found := false
+	for _, b := range m3.blocks {
+		if strings.Contains(b.content, "unique-marker-streamed-while-focused") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the streamed text block to land in the transcript even while sidebar-focused, got blocks: %+v", m3.blocks)
+	}
+	if !m3.reading {
+		t.Fatalf("expected the \"done\" block to flip m.reading back to true even while sidebar-focused")
+	}
+	if !m3.sidebarActive || !m3.sidebarFocused {
+		t.Fatalf("expected the sidebar to stay open and focused throughout — streamed blocks must not disturb it")
 	}
 }

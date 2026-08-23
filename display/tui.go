@@ -433,13 +433,23 @@ type TuiModel struct {
 
 	// Right-side sidebar (TODO item 1): Tokens/Sessions/Bash/Lua/Subagents
 	// tabs, toggled by Ctrl+T or by clicking the status bar's context
-	// figure. Rendered as a full-screen overlay (same family as the jobs
-	// modal / todo modal / resume picker above) rather than a live
-	// side-by-side column — see tui_sidebar.go's package doc comment for
-	// why.
+	// figure. Rendered as a live side-by-side column next to the main
+	// conversation (see tui_sidebar_view.go's sidebarLayout/mainColumnWidth)
+	// — both stay visible and interactive at once.
 	sidebarActive bool
-	sidebarTab    int // one of the sidebarTab* constants (tui_sidebar.go)
-	sidebarCursor int // selected row within the current tab's list, if any
+	// sidebarFocused is the conversation<->sidebar focus state machine while
+	// the sidebar column is open: false means keyboard input still goes to
+	// the prompt/input box as normal (Left/Right do whatever they do in the
+	// main keymap); true means the sidebar has captured the keyboard
+	// (Left/Right move between tabs, Up/Down/Enter navigate its list). It
+	// only matters while sidebarActive is true; opening the sidebar always
+	// resets it to false (focus starts on the conversation), and closing it
+	// resets it too so the next open starts the same way. See
+	// tui_update.go's Update() for the routing this gates and
+	// tui_sidebar.go's updateSidebar for the Left/Right boundary-exit logic.
+	sidebarFocused bool
+	sidebarTab     int // one of the sidebarTab* constants (tui_sidebar.go)
+	sidebarCursor  int // selected row within the current tab's list, if any
 	// sidebarScroll is the first visible line's index into the active tab's
 	// rendered lines (tui_sidebar_view.go's sidebarTabLines) — a plain
 	// vertical offset, distinct from sidebarCursor: a non-selectable tab

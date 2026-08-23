@@ -77,7 +77,17 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateJobsModal(msg)
 	}
 	if m.sidebarActive {
-		return m.updateSidebar(msg)
+		if handled, model, cmd := m.routeSidebarMsg(msg); handled {
+			return model, cmd
+		}
+		// Falls through to the normal (non-sidebar) handling below: the
+		// sidebar is open but unfocused (m.sidebarFocused == false), and
+		// this message type isn't one routeSidebarMsg claims outright
+		// (WindowSizeMsg, MouseMsg, or a focused KeyMsg) — so the
+		// conversation keeps behaving exactly like the sidebar wasn't open
+		// (typing lands in the input, ticks/streamed blocks still land,
+		// etc.). See tui_sidebar.go's package doc comment for the focus
+		// state machine this implements.
 	}
 	if m.subagentModalActive {
 		return m.updateSubagentModal(msg)
