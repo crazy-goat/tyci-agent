@@ -4,19 +4,18 @@ package display
 // Subagents tabs, toggled with Ctrl+T or by clicking the status bar's
 // context figure (see tui_status.go's statusRightHit).
 //
-// It is rendered as a full-screen overlay — the same family as the jobs
-// modal, todo modal, /btw modal and resume picker already in this file set
-// — rather than a live side-by-side column that narrows the transcript.
-// TODO.md's own writeup flags exactly why a live column is the riskier
-// choice: tui_view.go builds full-width rows, the render caches are
-// width-keyed (item 30 documents a cache bug from exactly this kind of
-// mismatch), and mouse hit-testing would need to clamp to a narrower main
-// column throughout tui_mouse.go. An overlay reuses all of that
-// infrastructure completely unchanged and carries none of that risk, at the
-// cost of not being visible at the same time as the transcript — the same
-// trade-off every other popup in this file already makes. It renders
-// right-anchored (lipgloss.Right) so it still reads visually as a sidebar,
-// not a centered dialog.
+// Unlike the jobs modal / todo modal / /btw modal / resume picker in this
+// file set, this is NOT a full-screen overlay: it renders as a live column
+// alongside a narrowed main conversation (see tui_sidebar_view.go's
+// mainColumnWidth/sidebarLayout and tui_view.go's renderFrame), so both stay
+// visible and interactive at once. That makes keyboard focus ambiguous —
+// there are now two things on screen that could reasonably want the
+// keyboard — so the sidebar tracks its own focus state (m.sidebarFocused,
+// tui.go): opening it defaults focus to the conversation (typing lands in
+// the input box as normal), and Right from the conversation "walks into"
+// the sidebar's tabs, with Left/Right at the tab-row boundary walking back
+// out. See Update() in tui_update.go for the routing this drives and
+// updateSidebar below for the boundary-exit logic.
 //
 // Data sources, deliberately reused rather than duplicated:
 //   - Tokens: buildUsageDetail (tui_tokens.go), previously dead code (Inbox
@@ -74,24 +73,53 @@ var sidebarTabNames = [sidebarTabCount]string{
 }
 
 // openSidebar opens the sidebar on the given tab, saving scroll state the
-// same way every other full-screen overlay in this package does.
+// same way every other full-screen overlay in this package does. Focus
+// always starts on the conversation (sidebarFocused = false), never
+// reopening with the keyboard already captured by the tab list.
+//
+// Opening (or closing, in closeSidebar below) changes the effective width
+// the transcript wraps at — the main column narrows to make room for this
+// column. getBlockLines (tui_render_block.go) caches each block's wrapped
+// lines and only re-wraps when something explicitly invalidates that cache
+// (normally a real terminal resize, via handleResizeFlush); it does not
+// itself compare against the current width. Without the
+// invalidateAllBlockLineCounts call below, toggling the sidebar would leave
+// every already-rendered block wrapped at the old (wrong) width — the outer
+// message-region cache (buildMessageRegionCached) WOULD notice its width
+// changed and rebuild, but it would rebuild from these stale per-block
+// lines, so the transcript would keep showing yesterday's wrap. This is the
+// one piece of "reuse the existing width-keyed caches for free" that does
+// not hold automatically and needed an explicit fix.
 func (m *TuiModel) openSidebar(tab int) {
 	if tab < 0 || tab >= sidebarTabCount {
 		tab = sidebarTabTokens
 	}
-	if !m.sidebarActive {
+	wasActive := m.sidebarActive
+	if !wasActive {
 		m.savedScrollLine = m.scrollLine
 		m.savedAtBottom = m.atBottom
 	}
 	m.sidebarActive = true
+	m.sidebarFocused = false
 	m.sidebarTab = tab
 	m.sidebarCursor = 0
 	m.sidebarScroll = 0
+	if !wasActive {
+		// Only an actual closed->open transition changes the effective
+		// width the transcript wraps at (mainColumnWidth narrows). Calling
+		// this again while already active (e.g. clicking the status bar's
+		// context figure to jump to the Tokens tab while some other tab is
+		// already open) would just re-wrap everything for no reason.
+		m.invalidateAllBlockLineCounts()
+	}
 }
 
-// closeSidebar closes the sidebar and restores scroll state.
+// closeSidebar closes the sidebar and restores scroll state. See
+// openSidebar's doc comment for why the effective transcript width changing
+// back to full-screen needs the same explicit block-line-cache invalidation.
 func (m *TuiModel) closeSidebar() {
 	m.sidebarActive = false
+	m.sidebarFocused = false
 	m.sidebarCursor = 0
 	m.sidebarScroll = 0
 	m.atBottom = m.savedAtBottom
@@ -99,6 +127,7 @@ func (m *TuiModel) closeSidebar() {
 	m.selectionVersion++
 	m.selection = SelectionState{}
 	m.selectionFlash = false
+	m.invalidateAllBlockLineCounts()
 }
 
 // toggleSidebar is Ctrl+T's handler: close if open, otherwise reopen on
@@ -238,6 +267,72 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 
 // ─── Update handler ─────────────────────────────────────────────────────────
 
+// routeSidebarMsg is Update()'s entry point while m.sidebarActive: it
+// decides, per message, whether the sidebar or the (still-visible, still-
+// interactive) main conversation owns it. handled=false means "not for me,
+// fall through to the normal main-conversation handling" — Update() does
+// that itself, so this never needs to know how to run that path.
+//
+//   - WindowSizeMsg always comes here first regardless of focus: both the
+//     main model's resize bookkeeping (handleResize's debounce, input width)
+//     and the sidebar's own scroll re-clamp need to happen on every resize.
+//   - MouseMsg is routed by physical column (msg.X vs mainColumnWidth()),
+//     regardless of focus — a click is itself where the user's attention
+//     just went, so it also updates sidebarFocused to match which side was
+//     clicked.
+//   - KeyMsg goes to the sidebar only while sidebarFocused; otherwise only
+//     Right is claimed here (entering focus) and everything else falls
+//     through to the normal keymap. Tab/ShiftTab are deliberately never
+//     claimed here at all — handleKeyMsg's normal case for them
+//     (switchModel) applies whether or not the sidebar is open.
+//   - Everything else (ticks, streamed blocks, …) is claimed only while
+//     focused; unfocused, it falls through so the conversation keeps
+//     updating live even with the sidebar open.
+func (m TuiModel) routeSidebarMsg(msg tea.Msg) (handled bool, model tea.Model, cmd tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		newModel, cmd := m.handleResize(msg)
+		nm := newModel.(TuiModel)
+		nm.sidebarScroll = nm.sidebarVisibleScroll(nm.sidebarLayout())
+		return true, nm, cmd
+
+	case tea.MouseMsg:
+		if msg.X < m.mainColumnWidth() {
+			mainM := m
+			mainM.width = m.mainColumnWidth()
+			mainM.sidebarFocused = false
+			newModel, cmd := mainM.handleMouseMsg(msg)
+			result := newModel.(TuiModel)
+			result.width = m.width // restore the real (unnarrowed) width
+			return true, result, cmd
+		}
+		m.sidebarFocused = true
+		model, cmd := m.updateSidebar(msg)
+		return true, model, cmd
+
+	case tea.KeyMsg:
+		if m.sidebarFocused {
+			model, cmd := m.updateSidebar(msg)
+			return true, model, cmd
+		}
+		if msg.Type == tea.KeyRight {
+			// Walk focus "into" the sidebar from the conversation side,
+			// landing on whichever tab was already selected (not reset to
+			// 0) — see tui_sidebar.go's package doc comment.
+			m.sidebarFocused = true
+			return true, m, nil
+		}
+		return false, m, nil
+
+	default:
+		if m.sidebarFocused {
+			model, cmd := m.updateSidebar(msg)
+			return true, model, cmd
+		}
+		return false, m, nil
+	}
+}
+
 func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -266,18 +361,36 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyTab:
-			m.sidebarSwitchTab(m.sidebarTab + 1)
+			// Tab/ShiftTab are never sidebar tab-switchers: the terminal
+			// itself treats Tab as a focus-cycle key, which is the root of
+			// the problem this arrows-only design avoids. They keep doing
+			// exactly what they do in the normal (non-sidebar) keymap —
+			// switch model — regardless of sidebar focus.
+			m.switchModel(1)
 			return m, nil
 
 		case tea.KeyShiftTab:
-			m.sidebarSwitchTab(m.sidebarTab - 1)
+			m.switchModel(-1)
 			return m, nil
 
 		case tea.KeyLeft:
+			// At the leftmost tab, Left walks focus back OUT to the
+			// conversation instead of wrapping to the last tab — this case
+			// is only reached while sidebarFocused (Update() gates it), so
+			// it's always a focused-navigation key, never a boundary no-op.
+			if m.sidebarTab == 0 {
+				m.sidebarFocused = false
+				return m, nil
+			}
 			m.sidebarSwitchTab(m.sidebarTab - 1)
 			return m, nil
 
 		case tea.KeyRight:
+			// Symmetric exit at the rightmost tab.
+			if m.sidebarTab == sidebarTabCount-1 {
+				m.sidebarFocused = false
+				return m, nil
+			}
 			m.sidebarSwitchTab(m.sidebarTab + 1)
 			return m, nil
 

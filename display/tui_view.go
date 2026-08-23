@@ -57,12 +57,6 @@ func (m TuiModel) renderFrame() string {
 		return m.renderJobsModalView()
 	}
 
-	// ── Sidebar overlay mode (Ctrl+T, or clicking the status bar's context
-	// figure) ──
-	if m.sidebarActive {
-		return m.renderSidebarView()
-	}
-
 	// ── Subagent modal overlay mode ──
 	if m.subagentModalActive {
 		return m.renderSubagentModalView()
@@ -83,6 +77,51 @@ func (m TuiModel) renderFrame() string {
 		return m.renderModelPickerView()
 	}
 
+	// ── Sidebar side-by-side column mode (Ctrl+T, or clicking the status
+	// bar's context figure) ──
+	//
+	// Unlike every overlay above, the sidebar does not replace the main
+	// conversation view — it renders alongside a narrowed copy of it. mainM
+	// is a shadow model with only .width overridden (mainColumnWidth() is
+	// narrower than the real m.width whenever the sidebar is open); every
+	// render helper below reads width off its own receiver, so feeding them
+	// mainM instead of m is the entire narrowing mechanism — no separate
+	// "narrow mode" rendering path to keep in sync.
+	//
+	// This also reuses the EXISTING width-keyed render caches for free:
+	// buildMessageRegionCached's cache key includes c.width == m.width, and
+	// getBlockLines' per-block wrap cache is invalidated by
+	// openSidebar/closeSidebar (see tui_sidebar.go) exactly like a real
+	// terminal resize invalidates it. So opening/closing/resizing the
+	// sidebar naturally invalidates/recomputes the right caches with no
+	// extra per-frame bookkeeping here.
+	if m.sidebarActive {
+		mainM := m
+		mainM.width = m.mainColumnWidth()
+		// The textarea tracks its own wrap width separately from
+		// TuiModel.width; without this it would render m.input.View() still
+		// wrapped for the old, wider column. SetWidth only mutates plain int
+		// fields on textarea.Model (viewport.Width / width) — no pointer or
+		// slice state — so this is confined to mainM's copy and never
+		// touches the real m.input.
+		mainM.input.SetWidth(max(10, mainM.width-2))
+		mainBlock := mainM.renderMainColumn()
+		// The sidebar's own layout must be based on the REAL m (its width,
+		// its mainColumnWidth()) — not mainM's already-narrowed width, or
+		// sidebarLayout would compute its split against the wrong base.
+		sidebarBlock := m.renderSidebarColumn()
+		return lipgloss.JoinHorizontal(lipgloss.Top, mainBlock, sidebarBlock)
+	}
+
+	return m.renderMainColumn()
+}
+
+// renderMainColumn renders the normal conversation view — topbar, message
+// region, status bar, jobs/queue panels, file-complete popup, input — at
+// the receiver's own m.width and m.height. Used directly for the full-width
+// frame, and via a narrowed shadow-model copy (see renderFrame's sidebar
+// branch above) to render the main column alongside the sidebar.
+func (m TuiModel) renderMainColumn() string {
 	var b strings.Builder
 	msgHeight := m.messageRegionHeight()
 
