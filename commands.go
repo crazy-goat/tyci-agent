@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -15,9 +16,11 @@ import (
 	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/internal/connect"
 	"github.com/decodo/tyci/internal/debug"
+	"github.com/decodo/tyci/internal/hooks"
 	"github.com/decodo/tyci/internal/pricing"
 	"github.com/decodo/tyci/internal/readline"
 	"github.com/decodo/tyci/internal/skills"
+	"github.com/decodo/tyci/internal/trust"
 	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
@@ -118,13 +121,55 @@ func registerProviders() {
 func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (providers.Provider, string, agent.Config, context.Context, *session.Session, string, string, *debug.Logger, func(), error) {
 	registerProviders()
 
-	// Hook config problems, collected in wireTools. Reported here rather than
-	// there because a hook that failed to load is a silent loss of a
-	// protection the user thinks they have, and this runs before any display
-	// owns the screen.
-	for _, err := range hookLoadErrors {
+	// Trust decision (item 23, internal/trust): does this project get to run
+	// its own project-local hooks/Lua tools/mcp.json? Resolved before any of
+	// that project-local content is loaded below, and before the TUI (if
+	// this is a `tui` invocation) takes the terminal — interactive is only
+	// ever true for console/tui, both of which call initCommon before
+	// touching the screen (see tuiCmd/consoleCmd), so trust.Decide's blocking
+	// stdio prompt is safe to run here. `run` (and therefore cron, which
+	// shells out to `tyci run`) passes interactive=false, so an unknown
+	// project there defaults to untrusted without ever blocking.
+	wd, _ := os.Getwd()
+	projectRoot, _ := session.ProjectKey(wd)
+	trusted, _, err := trust.Decide(projectRoot, interactive, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: trust: %v\n", err)
+	}
+	if !trusted {
+		fmt.Fprintln(os.Stderr,
+			"tyci: this project is not trusted — project-local hooks (.tyci/hooks.json) "+
+				"and Lua tools (.tyci/tools/) are skipped this session. Global ~/.tyci/ "+
+				"content still loads as usual. Run tyci in an interactive mode (console/tui) "+
+				"in this directory to be asked, or edit ~/.tyci/trust.json directly.")
+	}
+
+	// Hook config: global always, project-local only once this project is
+	// trusted (see trust.Decide above). hooks.DefaultPaths puts the global
+	// path first and the project path second, so slicing to [:1] keeps only
+	// the global one for an untrusted project.
+	hookPaths := hooks.DefaultPaths(wd)
+	if !trusted {
+		hookPaths = hookPaths[:1]
+	}
+	// Hook config problems are reported here, before any display owns the
+	// screen, because a hook that failed to load is a silent loss of a
+	// protection the user thinks they have.
+	for _, err := range hooks.Load(hookPaths...) {
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 	}
+
+	// Project-local Lua tools (./.tyci/tools) — same trust gate. The global
+	// ones (~/.tyci/tools) are already loaded unconditionally by the tools
+	// package's own init() (see tools.LoadAndRegisterLuaTools).
+	if trusted {
+		tools.LoadAndRegisterLocalLuaTools(filepath.Join(wd, ".tyci", "tools"))
+	}
+
+	// Project-local mcp.json does not exist yet (TODO.md item 22 is still
+	// open — internal/mcp.LoadConfig only ever reads ~/.tyci/mcp.json). When
+	// it lands, it must be gated behind `trusted` here the same way, and
+	// documented in this comment.
 
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: maxRetries, BaseBackoff: 4, MaxBackoff: 128}
@@ -226,7 +271,6 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	}
 	ctx = connector.WithModelClient(ctx, provider.Client(modelName))
 
-	wd, _ := os.Getwd()
 	var sess *session.Session
 	var sessionPath string
 	noSession, _ := cmd.Flags().GetBool("no-session")

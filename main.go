@@ -15,7 +15,6 @@ import (
 	"github.com/decodo/tyci/eventbus"
 	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/internal/debug"
-	"github.com/decodo/tyci/internal/hooks"
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/providers"
@@ -559,20 +558,7 @@ func wireTools() {
 	// JobNotices.Signal — which is exactly why backgrounding itself stays off
 	// until a mode opts in via tools.SetBackgroundBashEnabled.
 	tools.SetJobNotifier(JobNotices)
-
-	// Load user hooks (internal/hooks) from ~/.tyci/hooks.json and
-	// ./.tyci/hooks.json. Config errors are collected on purpose rather than
-	// swallowed: a hook the user believes is guarding a path, but which never
-	// loaded because of a typo, is worse than no hook at all. They are
-	// reported by whichever mode has somewhere safe to print — stderr here
-	// would corrupt --print output and the TUI, so the message is parked in
-	// hookLoadErrors and surfaced from the interactive modes.
-	hookLoadErrors = hooks.Load(hooks.DefaultPaths("")...)
 }
-
-// hookLoadErrors holds problems found while loading hook config, for a mode
-// to report once it has a display. Nil in the normal case.
-var hookLoadErrors []error
 
 func main() {
 	wireTools()

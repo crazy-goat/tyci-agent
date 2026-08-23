@@ -520,7 +520,10 @@ func builtinToolsSchema() []map[string]any {
 
 // luaToolsSchema returns the function-call schema for every *LuaTool
 // currently in toolRegistry — the user-defined scripts loaded from
-// ~/.tyci/tools and ./.tyci/tools by LoadAndRegisterLuaTools. Without this,
+// ~/.tyci/tools (LoadAndRegisterLuaTools, unconditionally) and, once a
+// project is trusted (internal/trust — see item 23), from a project-local
+// ./.tyci/tools (LoadAndRegisterLocalLuaTools, called from commands.go's
+// initCommon). Without this,
 // a Lua tool is only reachable by a caller that already knows its name and
 // argument shape by other means (e.g. a hand-written prompt); the model
 // itself never sees it in the tool list it's offered.
