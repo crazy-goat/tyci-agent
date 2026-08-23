@@ -30,6 +30,7 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && msg.Y == m.statusBarY() {
 		if m.statusRightHit(msg.X) {
 			m.openSidebar(sidebarTabTokens)
+			m.persistSidebarVisible(true)
 			return m, nil
 		}
 		return m, nil

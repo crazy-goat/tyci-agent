@@ -47,6 +47,12 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionLister = sl.fn
 		return m, nil
 	}
+	// Same delivery pattern, same "can arrive at any point in startup"
+	// guarantee: the sidebar persistence callback (TUI.SetSidebarPersister).
+	if sp, ok := msg.(tuiSetSidebarPersisterMsg); ok {
+		sidebarSaveVisible = sp.fn
+		return m, nil
+	}
 	// /btw entries must never lose streamed output just because some other
 	// popup happens to be open when it arrives — a background /btw job runs
 	// independently of whatever modal state the main thread is in. Dispatch

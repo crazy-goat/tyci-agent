@@ -366,10 +366,11 @@ func TestUpdateSidebar_TabAndShiftTabSwitchModelNotTab(t *testing.T) {
 }
 
 // TestUpdateSidebar_LeftAtFirstTabExitsFocus and
-// TestUpdateSidebar_RightAtLastTabExitsFocus cover the focus-boundary exit
-// (the user-confirmed correction to the original arrows-only design): at
-// the leftmost/rightmost tab, Left/Right walk focus back OUT to the
-// conversation instead of wrapping around to the other end.
+// TestUpdateSidebar_RightAtLastTabExitsFocus cover the legacy focus-boundary
+// exit: at the leftmost/rightmost tab, Left/Right walk focus back OUT to the
+// conversation instead of wrapping around to the other end. This remains for
+// backwards compatibility; the primary focus-exit key is now Ctrl+Left / Ctrl+Right
+// from any tab (TestUpdateSidebar_CtrlArrowsExitFocusFromAnyTab below).
 func TestUpdateSidebar_LeftAtFirstTabExitsFocus(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.openSidebar(sidebarTabTokens) // Tokens is tab 0
@@ -403,6 +404,31 @@ func TestUpdateSidebar_RightAtLastTabExitsFocus(t *testing.T) {
 	}
 }
 
+// TestUpdateSidebar_CtrlArrowsExitFocusFromAnyTab covers the primary
+// focus-exit path: Ctrl+Left or Ctrl+Right walk focus back out to the
+// conversation from any tab (not just the tab-row boundaries), leaving the
+// sidebar open and the tab selection where it was. This is the symmetric
+// inverse of the Ctrl+Right entry in routeSidebarMsg.
+func TestUpdateSidebar_CtrlArrowsExitFocusFromAnyTab(t *testing.T) {
+	for _, keyType := range []tea.KeyType{tea.KeyCtrlLeft, tea.KeyCtrlRight} {
+		m := newTestModelForSidebar()
+		m.openSidebar(sidebarTabBash) // middle tab
+		m.sidebarFocused = true
+
+		model, _ := m.updateSidebar(tea.KeyMsg{Type: keyType})
+		m2 := model.(TuiModel)
+		if m2.sidebarFocused {
+			t.Fatalf("expected %v to exit focus back to the conversation", keyType)
+		}
+		if !m2.sidebarActive {
+			t.Fatalf("expected %v to leave the sidebar open, just unfocused", keyType)
+		}
+		if m2.sidebarTab != sidebarTabBash {
+			t.Fatalf("expected %v to keep the tab selection, got %d", keyType, m2.sidebarTab)
+		}
+	}
+}
+
 // ─── Conversation<->sidebar focus routing (Update()) ───────────────────────
 //
 // These exercise the actual production entry point, m.Update(), rather than
@@ -432,20 +458,42 @@ func TestSidebarFocus_DefaultsToConversation(t *testing.T) {
 	}
 }
 
-// TestSidebarFocus_RightEntersSidebarFromConversation covers Right "walking
-// into" the sidebar from the conversation side, landing on whichever tab
-// was already selected rather than resetting to the first tab.
+// TestSidebarFocus_RightEntersSidebarFromConversation covers Ctrl+Right
+// "walking into" the sidebar from the conversation side, landing on whichever
+// tab was already selected rather than resetting to the first tab.
 func TestSidebarFocus_RightEntersSidebarFromConversation(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.openSidebar(sidebarTabBash)
 
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
 	m2 := model.(TuiModel)
 	if !m2.sidebarFocused {
-		t.Fatalf("expected Right from the conversation to move focus onto the sidebar")
+		t.Fatalf("expected Ctrl+Right from the conversation to move focus onto the sidebar")
 	}
 	if m2.sidebarTab != sidebarTabBash {
 		t.Fatalf("expected entering focus to keep the already-selected tab, got %d", m2.sidebarTab)
+	}
+}
+
+// TestSidebarFocus_PlainRightNotHijackedFromConversation covers the reason
+// for the Ctrl+Right change: a plain Right typed in the prompt must keep
+// reaching the input box (to move the prompt cursor rightward) instead of
+// being stolen to enter the sidebar — which is what made it impossible to
+// move the prompt cursor right while the sidebar was open.
+func TestSidebarFocus_PlainRightNotHijackedFromConversation(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabBash)
+	// Put some text in the input and the cursor at the start.
+	m.input.SetValue("abc")
+	m.input.SetCursor(0)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m2 := model.(TuiModel)
+	if m2.sidebarFocused {
+		t.Fatalf("expected plain Right to NOT enter the sidebar from the conversation")
+	}
+	if got := m2.inputCursorOffset(); got != 1 {
+		t.Fatalf("expected plain Right to move the prompt cursor to col 1, got %d", got)
 	}
 }
 

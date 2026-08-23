@@ -12,10 +12,12 @@ package display
 // there are now two things on screen that could reasonably want the
 // keyboard — so the sidebar tracks its own focus state (m.sidebarFocused,
 // tui.go): opening it defaults focus to the conversation (typing lands in
-// the input box as normal), and Right from the conversation "walks into"
-// the sidebar's tabs, with Left/Right at the tab-row boundary walking back
-// out. See Update() in tui_update.go for the routing this drives and
-// updateSidebar below for the boundary-exit logic.
+// the input box as normal). Ctrl+Right from the conversation "walks into"
+// the sidebar's tabs; Ctrl+Left/Ctrl+Right walk back out to the conversation
+// from any tab. Plain Left/Right are untouched and keep switching sidebar
+// tabs (and moving the prompt cursor, since they are never hijacked). See
+// Update() in tui_update.go for the routing this drives and updateSidebar
+// below for the focus-exit logic.
 //
 // Data sources, deliberately reused rather than duplicated:
 //   - Tokens: buildUsageDetail (tui_tokens.go), previously dead code (Inbox
@@ -134,10 +136,22 @@ func (m *TuiModel) closeSidebar() {
 // whichever tab was last selected (Tokens, the zero value, the first time).
 func (m *TuiModel) toggleSidebar() {
 	if m.sidebarActive {
-		m.closeSidebar()
+		m.closeSidebarPersisted()
 		return
 	}
 	m.openSidebar(m.sidebarTab)
+	m.persistSidebarVisible(true)
+}
+
+// closeSidebarPersisted closes the sidebar AND persists the closed state —
+// for the user-driven exits (Ctrl+T, Esc, click-away): the user chose to hide
+// it, so a restart must not resurrect it.
+func (m *TuiModel) closeSidebarPersisted() {
+	wasActive := m.sidebarActive
+	m.closeSidebar()
+	if wasActive {
+		m.persistSidebarVisible(false)
+	}
 }
 
 // sidebarSelectable reports whether the active tab has actionable rows
@@ -281,7 +295,7 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 //     just went, so it also updates sidebarFocused to match which side was
 //     clicked.
 //   - KeyMsg goes to the sidebar only while sidebarFocused; otherwise only
-//     Right is claimed here (entering focus) and everything else falls
+//     Ctrl+Right is claimed here (entering focus) and everything else falls
 //     through to the normal keymap. Tab/ShiftTab are deliberately never
 //     claimed here at all — handleKeyMsg's normal case for them
 //     (switchModel) applies whether or not the sidebar is open.
@@ -291,8 +305,8 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 //     Update()'s normal tuiMsgBlock case; focused, it's forwarded to
 //     updateSidebar below, whose own switch has a tuiMsgBlock case for
 //     exactly this (mirroring tui_modal.go's identical carve-out for the
-//     subagent modal). Without that case, focusing the sidebar (Right, to
-//     browse Bash/Subagents while the agent keeps working — the whole
+//     subagent modal). Without that case, focusing the sidebar (Ctrl+Right,
+//     to browse Bash/Subagents while the agent keeps working — the whole
 //     point of a side-by-side layout) would silently drop every block that
 //     arrives in that window — worse than cosmetic, since "done" is what
 //     flips m.reading back to true (tui_blocks.go), so a dropped done
@@ -327,10 +341,13 @@ func (m TuiModel) routeSidebarMsg(msg tea.Msg) (handled bool, model tea.Model, c
 			model, cmd := m.updateSidebar(msg)
 			return true, model, cmd
 		}
-		if msg.Type == tea.KeyRight {
-			// Walk focus "into" the sidebar from the conversation side,
-			// landing on whichever tab was already selected (not reset to
-			// 0) — see tui_sidebar.go's package doc comment.
+		// Ctrl+Right walks focus "into" the sidebar from the conversation
+		// side, landing on whichever tab was already selected (not reset to
+		// 0) — see tui_sidebar.go's package doc comment. Plain Right is left
+		// alone so it keeps moving the cursor through the prompt text (it
+		// was previously hijacked for this, which made it impossible to move
+		// the prompt cursor right while the sidebar was open).
+		if msg.Type == tea.KeyCtrlRight {
 			m.sidebarFocused = true
 			return true, m, nil
 		}
@@ -361,7 +378,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyEscape:
-			m.closeSidebar()
+			m.closeSidebarPersisted()
 			return m, nil
 
 		case tea.KeyCtrlC:
@@ -369,7 +386,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyCtrlT:
-			m.closeSidebar()
+			m.closeSidebarPersisted()
 			return m, nil
 
 		case tea.KeyTab:
@@ -383,6 +400,13 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyShiftTab:
 			m.switchModel(-1)
+			return m, nil
+
+		case tea.KeyCtrlLeft, tea.KeyCtrlRight:
+			// Ctrl+Left/Ctrl+Right always walk focus back OUT to the
+			// conversation, from any tab, regardless of position. Symmetric
+			// with Ctrl+Right entering the sidebar (routeSidebarMsg).
+			m.sidebarFocused = false
 			return m, nil
 
 		case tea.KeyLeft:
@@ -438,7 +462,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			inPanel := msg.X >= layout.left && msg.X < layout.left+layout.width &&
 				msg.Y >= layout.top && msg.Y < layout.top+layout.height
 			if !inPanel {
-				m.closeSidebar()
+				m.closeSidebarPersisted()
 				return m, nil
 			}
 			// Tab row click.

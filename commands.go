@@ -553,7 +553,12 @@ var tuiCmd = &cobra.Command{
 			}
 		}, agent.GetDefaultModel(), func(newDefault string) {
 			_ = agent.SetDefaultModel(newDefault)
-		}, toolsCount, skillsCount, mcpCount)
+		}, toolsCount, skillsCount, mcpCount, agent.GetSidebarVisible())
+
+		// Persist the sidebar's visibility across restarts: NewTUI above read
+		// the startup state (agent.GetSidebarVisible), this persister is
+		// invoked by the TUI whenever the user opens or closes the sidebar.
+		tuiDisp.SetSidebarPersister(func(visible bool) { _ = agent.SetSidebarVisible(visible) })
 
 		// Show async subagent jobs (subagent(async: true), see tools/subagent.go)
 		// in the TUI's background-jobs panel/modal (Ctrl+B).

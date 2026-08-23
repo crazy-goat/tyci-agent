@@ -35,6 +35,11 @@ type TyciConfig struct {
 	// default rather than something to opt into. Set it to false only for an
 	// endpoint that rejects the cache_control field.
 	PromptCache *bool `json:"prompt_cache,omitempty"`
+	// SidebarVisible persists the TUI's right-side sidebar (Ctrl+T) across
+	// restarts. Absent key means false (closed): the sidebar only appears on
+	// startup once the user has opened and kept it, which is when the TUI
+	// saves true.
+	SidebarVisible bool `json:"sidebar_visible,omitempty"`
 }
 
 // globalConfigDir returns the path to ~/.tyci.
@@ -87,6 +92,9 @@ func mergeTyciConfig(global, local TyciConfig) TyciConfig {
 	}
 	if local.PromptCache != nil {
 		merged.PromptCache = local.PromptCache
+	}
+	if local.SidebarVisible {
+		merged.SidebarVisible = true
 	}
 	return merged
 }

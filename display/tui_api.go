@@ -48,13 +48,23 @@ type TUI struct {
 	flushDone      chan struct{}
 }
 
-func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int) *TUI {
+// NewTUI creates the TUI. sidebarVisible restores the persisted sidebar
+// state: pass true to start with the right-side sidebar already open
+// (production main() passes agent.GetSidebarVisible; tests pass false).
+func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int, sidebarVisible bool) *TUI {
 	results := make(chan string, 8)
 	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
 	queue := make(chan string, 16)
 	resumeCh := make(chan string) // unbuffered: closes in lock-step with the picker commit
 	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel, favoriteModels, onFavoriteToggled, defaultModel, onDefaultChanged, toolCount, skillCount, mcpCount)
+	// Restore the persisted sidebar visibility (sidebar_visible in
+	// ~/.tyci/config.json): the sidebar starts open when the previous session
+	// closed with it open. Set directly on the fresh model — no goroutines
+	// have started yet.
+	if sidebarVisible {
+		m.sidebarActive = true
+	}
 	m.queue = queue
 	m.resumeCh = resumeCh
 	commands := make(chan string, 8)
