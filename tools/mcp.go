@@ -48,8 +48,15 @@ func NewMCPToolRunner() *MCPToolRunner {
 // internal/mcp.ConnectAllTimeout). A server that errors or doesn't answer
 // in time is skipped — reported once, on stderr, by ConnectAllTimeout
 // itself — rather than failing this call or blocking the others.
-func (r *MCPToolRunner) Connect(ctx context.Context) error {
-	servers, err := mcp.ConnectAllTimeout(ctx, mcpConnectTimeout)
+//
+// When includeLocal is true, servers configured in <wd>/.tyci/mcp.json are
+// unioned with the global ones (local wins on a same-name server) — see
+// internal/mcp.ConnectAllTimeoutForProject. includeLocal must only be true
+// once the caller (commands.go's initCommon) has decided the project
+// trusted: a project-local server definition can launch an arbitrary binary,
+// the same trust-gated shape as hooks.json and .tyci/tools.
+func (r *MCPToolRunner) Connect(ctx context.Context, wd string, includeLocal bool) error {
+	servers, err := mcp.ConnectAllTimeoutForProject(ctx, mcpConnectTimeout, wd, includeLocal)
 	if err != nil {
 		return err
 	}
@@ -310,10 +317,12 @@ func (r *MCPToolRunner) MCPToolsSchema() []map[string]any {
 // globalMCPRunner is the global MCP tool runner.
 var globalMCPRunner *MCPToolRunner
 
-// InitMCP initializes the global MCP tool runner.
-func InitMCP(ctx context.Context) error {
+// InitMCP initializes the global MCP tool runner. wd and includeLocal are
+// forwarded to MCPToolRunner.Connect — see its doc comment for the
+// project-local mcp.json trust gate.
+func InitMCP(ctx context.Context, wd string, includeLocal bool) error {
 	runner := NewMCPToolRunner()
-	if err := runner.Connect(ctx); err != nil {
+	if err := runner.Connect(ctx, wd, includeLocal); err != nil {
 		return err
 	}
 	globalMCPRunner = runner

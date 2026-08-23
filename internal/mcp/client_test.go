@@ -161,6 +161,89 @@ func TestConnectAllTimeout_HangingServer_BoundedByTimeout(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// project-local mcp.json merge (TODO.md item 22)
+// =============================================================================
+
+func TestMergeConfigs_UnionsBothSides(t *testing.T) {
+	global := &Config{MCPServers: map[string]ServerConfig{"a": {Command: "global-a"}}}
+	local := &Config{MCPServers: map[string]ServerConfig{"b": {Command: "local-b"}}}
+
+	merged := MergeConfigs(global, local)
+	if merged.MCPServers["a"].Command != "global-a" {
+		t.Errorf("server a missing/altered: %+v", merged.MCPServers["a"])
+	}
+	if merged.MCPServers["b"].Command != "local-b" {
+		t.Errorf("server b missing: %+v", merged.MCPServers["b"])
+	}
+	if len(merged.MCPServers) != 2 {
+		t.Errorf("got %d servers, want 2", len(merged.MCPServers))
+	}
+}
+
+// TestMergeConfigs_LocalWinsOnSameName: a server with the same name on both
+// sides — the local definition must be the one that ends up connected,
+// mirroring how a project-local agent already overrides a global one of the
+// same name.
+func TestMergeConfigs_LocalWinsOnSameName(t *testing.T) {
+	global := &Config{MCPServers: map[string]ServerConfig{"shared": {Command: "global-cmd"}}}
+	local := &Config{MCPServers: map[string]ServerConfig{"shared": {Command: "local-cmd"}}}
+
+	merged := MergeConfigs(global, local)
+	if len(merged.MCPServers) != 1 {
+		t.Fatalf("got %d servers, want exactly 1 (local wins)", len(merged.MCPServers))
+	}
+	if merged.MCPServers["shared"].Command != "local-cmd" {
+		t.Errorf("Command = %q, want the local override to win", merged.MCPServers["shared"].Command)
+	}
+}
+
+// writeLocalTestConfig writes <wd>/.tyci/mcp.json.
+func writeLocalTestConfig(t *testing.T, wd, body string) {
+	t.Helper()
+	dir := filepath.Join(wd, ".tyci")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mcp.json"), []byte(body), 0600); err != nil {
+		t.Fatalf("write local mcp.json: %v", err)
+	}
+}
+
+func TestLoadConfigMerged_IncludeLocalFalse_IgnoresLocalFile(t *testing.T) {
+	writeTestConfig(t, `{"mcpServers":{"a":{"command":"global-a"}}}`)
+	wd := t.TempDir()
+	writeLocalTestConfig(t, wd, `{"mcpServers":{"b":{"command":"local-b"}}}`)
+
+	cfg, err := LoadConfigMerged(wd, false)
+	if err != nil {
+		t.Fatalf("LoadConfigMerged: %v", err)
+	}
+	if _, ok := cfg.MCPServers["b"]; ok {
+		t.Error("local server appeared even though includeLocal was false — an untrusted project must not read .tyci/mcp.json")
+	}
+	if _, ok := cfg.MCPServers["a"]; !ok {
+		t.Error("global server missing")
+	}
+}
+
+func TestLoadConfigMerged_IncludeLocalTrue_UnionsBothFiles(t *testing.T) {
+	writeTestConfig(t, `{"mcpServers":{"a":{"command":"global-a"}}}`)
+	wd := t.TempDir()
+	writeLocalTestConfig(t, wd, `{"mcpServers":{"b":{"command":"local-b"}}}`)
+
+	cfg, err := LoadConfigMerged(wd, true)
+	if err != nil {
+		t.Fatalf("LoadConfigMerged: %v", err)
+	}
+	if _, ok := cfg.MCPServers["a"]; !ok {
+		t.Error("global server missing")
+	}
+	if _, ok := cfg.MCPServers["b"]; !ok {
+		t.Error("local server missing despite includeLocal=true")
+	}
+}
+
 func TestConnectAllTimeout_InvalidConfigFile_ReturnsError(t *testing.T) {
 	writeTestConfig(t, `{ not valid json`)
 

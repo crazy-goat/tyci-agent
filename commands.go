@@ -182,10 +182,11 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		tools.LoadAndRegisterLocalLuaTools(filepath.Join(wd, ".tyci", "tools"))
 	}
 
-	// Project-local mcp.json does not exist yet (TODO.md item 22 is still
-	// open — internal/mcp.LoadConfig only ever reads ~/.tyci/mcp.json). When
-	// it lands, it must be gated behind `trusted` here the same way, and
-	// documented in this comment.
+	// Project-local mcp.json (TODO.md item 22) is gated the same way, down
+	// at the tools.InitMCP call below: a server definition there can launch
+	// an arbitrary binary, exactly the shape of trust hooks.json and
+	// .tyci/tools already require. `trusted` is threaded through rather
+	// than decided again there.
 
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: maxRetries, BaseBackoff: 4, MaxBackoff: 128}
@@ -253,7 +254,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	if connectMCP && !noMCP {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
-		if err := tools.InitMCP(ctx); err != nil {
+		if err := tools.InitMCP(ctx, wd, trusted); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: MCP: %v\n", err)
 		}
 		shutdown = func() {
