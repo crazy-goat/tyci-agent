@@ -263,3 +263,30 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		return text, truncated, err
 	})
 }
+
+// jobCancelerAdapter satisfies tools.JobCanceler over JobRegistry: kill_job's
+// subagent path. Registry.Cancel refuses already-terminal jobs, so a stale
+// id surfaces as "not running" instead of a fake success.
+type jobCancelerAdapter struct{ reg *jobs.Registry }
+
+func (a jobCancelerAdapter) Cancel(id string) bool { return a.reg.Cancel(id) }
+
+// jobKindSource adapts one jobs.Job snapshot to tools.JobKindSource (value
+// receiver, plain field reads — Job has no methods of its own).
+type jobKindSource struct{ j jobs.Job }
+
+func (s jobKindSource) ID() string       { return s.j.ID }
+func (s jobKindSource) ParentID() string { return s.j.ParentID }
+
+// listJobsAdapter satisfies tools.JobLister over JobRegistry: kill_job's
+// inside-a-child subtree check walks this parentage.
+type listJobsAdapter struct{ reg *jobs.Registry }
+
+func (a listJobsAdapter) ListJobs() []tools.JobKindSource {
+	list := a.reg.List()
+	out := make([]tools.JobKindSource, len(list))
+	for i, j := range list {
+		out[i] = jobKindSource{j}
+	}
+	return out
+}

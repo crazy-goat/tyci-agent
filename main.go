@@ -538,6 +538,10 @@ func wireTools() {
 	tools.SetJobActivityToucher(jobActivityToucherAdapter{reg: JobRegistry})
 	tools.SetJobMailbox(jobMailboxAdapter{reg: JobRegistry})
 	tools.SetJobResumer(jobResumerAdapter{reg: JobRegistry})
+	// kill_job's subagent path + its inside-a-child subtree check (see
+	// tools/killjob.go).
+	tools.SetJobCanceler(jobCancelerAdapter{reg: JobRegistry})
+	tools.SetJobLister(listJobsAdapter{reg: JobRegistry})
 
 	// Wire JobRegistry's status-change events onto jobEventBus so the TUI
 	// (see tuiCmd in commands.go) can show a live background-jobs panel. A
