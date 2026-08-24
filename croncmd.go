@@ -100,7 +100,10 @@ func cronDirs() ([]string, error) {
 	if !trusted {
 		return []string{global}, nil
 	}
-	return []string{global, filepath.Join(wd, ".tyci")}, nil
+	// Project-local configuration is rooted at the repository/project root,
+	// not the caller's current subdirectory. This keeps `tyci cron` aligned
+	// with trust and session project semantics when invoked from repo/subdir.
+	return []string{global, filepath.Join(root, ".tyci")}, nil
 }
 
 func loadCronFile() (*cron.File, []string, error) {
