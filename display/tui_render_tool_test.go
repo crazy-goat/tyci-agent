@@ -474,23 +474,28 @@ func TestTuiModel_RenderToolBlock_FailedIsRed(t *testing.T) {
 	}
 }
 
-func TestToolCallResultFailed_AllErrorConventions(t *testing.T) {
-	cases := []struct {
-		name, tool, result string
+func TestTuiModel_ToolEndUsesExplicitFailureStatus(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	for _, tc := range []struct {
+		name, result string
+		failed       bool
 	}{
-		{name: "general error", tool: "read", result: "Error: path required"},
-		{name: "bash exit", tool: "bash", result: "❌ exit code 2:\nusage"},
-		{name: "lua error", tool: "lua", result: "lua error: script failed"},
-		{name: "subagent error", tool: "subagent", result: "Error: no tasks provided"},
-	}
-	for _, tc := range cases {
+		{name: "general error", result: "Error: path required", failed: true},
+		{name: "bash exit", result: "❌ exit code 2:\nusage", failed: true},
+		{name: "lua error", result: "lua error: script failed", failed: true},
+		{name: "subagent error", result: "Error: no tasks provided", failed: true},
+		{name: "successful Error prefix", result: "Error: stdout text", failed: false},
+		{name: "successful exit prefix", result: "❌ exit code 1 is stdout", failed: false},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if !toolCallResultFailed(tc.tool, tc.result) {
-				t.Fatalf("toolCallResultFailed(%q, %q) = false", tc.tool, tc.result)
+			m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+			idx := m.toolQueue[0]
+			m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: tc.result, failed: tc.failed})
+			if got := m.blocks[idx].failed; got != tc.failed {
+				t.Fatalf("failed=%v, want %v for result %q", got, tc.failed, tc.result)
 			}
+			m.blocks = nil
+			m.toolQueue = nil
 		})
-	}
-	if toolCallResultFailed("bash", "finished successfully") {
-		t.Fatal("successful bash result must not be marked failed")
 	}
 }

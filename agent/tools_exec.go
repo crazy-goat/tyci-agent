@@ -49,17 +49,20 @@ func enforcePlanGuard(cfg Config, toolCalls []stream.ToolCall) ([]stream.ToolCal
 	return toExecute, origIdx, results
 }
 
-// executeTools runs a batch and returns each call's result together with how
-// long that individual call took.
+// executeTools runs a batch and returns each call's result, duration and
+// structured failure status. The status is kept separately from result text:
+// successful tools are allowed to print arbitrary text, including text that
+// starts with "Error:" or "❌ exit code".
 //
 // The durations have to be measured here, around each call, because the
 // display cannot work them out for itself: every ToolCallStart for a batch is
 // emitted before the batch runs and every ToolCallEnd after it finishes, so a
 // display timing from start to end would show the whole batch's wall-clock on
 // every row — four tools taking 1ms, 1ms, 1ms and 4.3s all reported as 4.3s.
-func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.ToolCall) ([]string, []time.Duration) {
+func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.ToolCall) ([]string, []time.Duration, []bool) {
 	results := make([]string, len(toolCalls))
 	durations := make([]time.Duration, len(toolCalls))
+	failed := make([]bool, len(toolCalls))
 
 	// Group indices by tool name. Calls within the same group share a
 	// MaxParallel cap; groups run independently of each other so two
@@ -94,7 +97,7 @@ func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.Too
 				wg.Add(1)
 				go func(i int, tc stream.ToolCall) {
 					defer wg.Done()
-					results[i], durations[i] = timeToolCall(ctx, runner, tc, i)
+					results[i], durations[i], failed[i] = timeToolCall(ctx, runner, tc, i)
 				}(idx, toolCalls[idx])
 			}
 		case g.limit == 1:
@@ -106,7 +109,7 @@ func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.Too
 			go func(idxs []int) {
 				defer wg.Done()
 				for _, i := range idxs {
-					results[i], durations[i] = timeToolCall(ctx, runner, toolCalls[i], i)
+					results[i], durations[i], failed[i] = timeToolCall(ctx, runner, toolCalls[i], i)
 				}
 			}(g.idxs)
 		default:
@@ -118,32 +121,32 @@ func executeTools(ctx context.Context, runner ToolRunner, toolCalls []stream.Too
 					defer wg.Done()
 					sem <- struct{}{}
 					defer func() { <-sem }()
-					results[i], durations[i] = timeToolCall(ctx, runner, tc, i)
+					results[i], durations[i], failed[i] = timeToolCall(ctx, runner, tc, i)
 				}(idx, toolCalls[idx])
 			}
 		}
 	}
 	wg.Wait()
-	return results, durations
+	return results, durations, failed
 }
 
 // timeToolCall is runToolCall plus a stopwatch. Each goroutine writes only its
 // own slot, so no synchronisation is needed beyond the WaitGroup that already
 // orders these writes against the read after wg.Wait().
-func timeToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, idx int) (string, time.Duration) {
+func timeToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, idx int) (string, time.Duration, bool) {
 	start := time.Now()
-	out := runToolCall(ctx, runner, call, idx)
-	return out, time.Since(start)
+	out, failed := runToolCall(ctx, runner, call, idx)
+	return out, time.Since(start), failed
 }
 
 // runToolCall decodes args, applies the per-tool timeout, and writes the
 // result (or an error string) back to results[idx]. Extracted from
 // executeTools so the serial and parallel branches share one code path.
-func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, idx int) string {
+func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, idx int) (string, bool) {
 	var args map[string]any
 	if call.Arguments != "" {
 		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-			return "Error: invalid arguments: " + err.Error()
+			return "Error: invalid arguments: " + err.Error(), true
 		}
 	}
 	if args == nil {
@@ -207,9 +210,9 @@ func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, i
 	body, err := runner.Run(toolCtx, call.Name, args)
 	if err != nil {
 		if toolCtx.Err() == context.DeadlineExceeded {
-			return fmt.Sprintf("Error: %s tool timed out after %v", call.Name, toolTimeout)
+			return fmt.Sprintf("Error: %s tool timed out after %v", call.Name, toolTimeout), true
 		}
-		return "Error: " + err.Error()
+		return "Error: " + err.Error(), true
 	}
-	return body
+	return body, false
 }

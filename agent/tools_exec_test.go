@@ -62,7 +62,7 @@ func TestExecuteTools_SerializesBatchedTodoCalls(t *testing.T) {
 	}
 
 	runner := newSerializingRunner()
-	results, _ := executeTools(context.Background(), runner, calls)
+	results, _, _ := executeTools(context.Background(), runner, calls)
 
 	if len(results) != 3 {
 		t.Fatalf("results len = %d, want 3", len(results))
@@ -92,7 +92,7 @@ func TestExecuteTools_DifferentToolsRunInParallel(t *testing.T) {
 		{Name: "todo", Arguments: jsonString(map[string]any{"action": "add", "content": "y"})},
 	}
 	runner := newParallelProbeRunner()
-	results, _ := executeTools(context.Background(), runner, calls)
+	results, _, _ := executeTools(context.Background(), runner, calls)
 
 	if len(results) != 4 {
 		t.Fatalf("results len = %d, want 4", len(results))
@@ -189,6 +189,23 @@ type deadlineCapturingRunner struct {
 func (r *deadlineCapturingRunner) Run(ctx context.Context, name string, args map[string]any) (string, error) {
 	_, r.gotDeadline = ctx.Deadline()
 	return "", nil
+}
+
+func TestRunToolCall_PreservesSuccessfulErrorLikeOutput(t *testing.T) {
+	for _, output := range []string{"Error: this is stdout", "❌ exit code 1 is just text"} {
+		got, failed := runToolCall(context.Background(), staticRunner{output: output}, stream.ToolCall{Name: "bash", Arguments: `{}`}, 0)
+		if got != output || failed {
+			t.Fatalf("runToolCall output=%q failed=%v, want successful output %q", got, failed, output)
+		}
+	}
+}
+
+type staticRunner struct {
+	output string
+}
+
+func (r staticRunner) Run(context.Context, string, map[string]any) (string, error) {
+	return r.output, nil
 }
 
 // TestRunToolCall_LockAndUnlockGetNoExternalTimeout is the regression test

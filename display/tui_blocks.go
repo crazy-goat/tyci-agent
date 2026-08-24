@@ -100,11 +100,6 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 			frontIdx = m.toolQueue[0]
 		}
 		failed := msg.failed
-		if !failed && frontIdx >= 0 && frontIdx < len(m.blocks) && m.blocks[frontIdx].kind == "tool" {
-			// Keep direct/internal tuiMsgBlock producers safe too; the public
-			// ToolCallEnd path normally fills this flag before posting the msg.
-			failed = toolCallResultFailed(m.blocks[frontIdx].toolName, msg.content)
-		}
 		isSubagentEnd := frontIdx >= 0 && frontIdx < len(m.blocks) &&
 			m.blocks[frontIdx].kind == "tool" && m.blocks[frontIdx].toolName == "subagent"
 

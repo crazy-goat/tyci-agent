@@ -33,8 +33,8 @@ func TestExecuteToolsTimesEachCallSeparately(t *testing.T) {
 		{ID: "3", Name: "read", Arguments: "{}"},
 	}
 
-	results, durations := executeTools(context.Background(), durationRunner{}, calls)
-	if len(results) != 3 || len(durations) != 3 {
+	results, durations, failed := executeTools(context.Background(), durationRunner{}, calls)
+	if len(results) != 3 || len(durations) != 3 || len(failed) != 3 {
 		t.Fatalf("got %d results and %d durations", len(results), len(durations))
 	}
 	if durations[1] < 100*time.Millisecond {
@@ -52,6 +52,7 @@ func TestExecuteToolsTimesEachCallSeparately(t *testing.T) {
 type recordingSink struct {
 	ends      []string
 	durations []time.Duration
+	failed    []bool
 }
 
 func (s *recordingSink) Request(string)                          {}
@@ -66,6 +67,7 @@ func (s *recordingSink) Total(stream.Usage)                      {}
 func (s *recordingSink) Error(error)                             {}
 func (s *recordingSink) End()                                    {}
 func (s *recordingSink) ToolCallDuration(d time.Duration)        { s.durations = append(s.durations, d) }
+func (s *recordingSink) ToolCallFailed(failed bool)              { s.failed = append(s.failed, failed) }
 func (s *recordingSink) ToolCallEnd(name, result string)         { s.ends = append(s.ends, name) }
 
 // TestDurationsReachTheDisplayPairedWithTheirTool: measuring is only half of
@@ -80,7 +82,7 @@ func TestDurationsReachTheDisplayPairedWithTheirTool(t *testing.T) {
 
 	sink := &recordingSink{}
 	var msgs []connector.Message
-	appendToolResults(sink, &msgs, Config{}, calls, []string{"a", "b"}, durations)
+	appendToolResults(sink, &msgs, Config{}, calls, []string{"a", "b"}, durations, []bool{false, false})
 
 	if len(sink.durations) != 2 {
 		t.Fatalf("reported %d durations, want 2", len(sink.durations))
@@ -90,6 +92,9 @@ func TestDurationsReachTheDisplayPairedWithTheirTool(t *testing.T) {
 	}
 	if len(sink.ends) != 2 || sink.ends[0] != "read" || sink.ends[1] != "bash" {
 		t.Fatalf("tool ends arrived as %v", sink.ends)
+	}
+	if len(sink.failed) != 2 || sink.failed[0] || sink.failed[1] {
+		t.Fatalf("tool failure statuses arrived as %v", sink.failed)
 	}
 	if len(msgs) != 2 {
 		t.Fatalf("expected two tool-result messages, got %d", len(msgs))

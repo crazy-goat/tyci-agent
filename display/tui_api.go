@@ -15,10 +15,11 @@ type TUI struct {
 	prog         *tea.Program
 	results      chan string
 	modelChanges chan string
-	// pendingToolDuration carries the figure from ToolCallDuration to the
-	// ToolCallEnd that immediately follows it. Only ever touched from the
-	// dispatcher's goroutine.
+	// pendingToolDuration and pendingToolFailed carry per-call status from the
+	// optional agent sinks to the ToolCallEnd that immediately follows them.
+	// Only ever touched from the dispatcher's goroutine.
 	pendingToolDuration time.Duration
+	pendingToolFailed   bool
 	cancel              chan struct{} // sent on when ESC pressed during agent run
 	done                chan struct{}
 
