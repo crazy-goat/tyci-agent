@@ -579,6 +579,7 @@ func wireTools() {
 	tools.SetJobActivityToucher(jobActivityToucherAdapter{reg: JobRegistry})
 	tools.SetJobMailbox(jobMailboxAdapter{reg: JobRegistry})
 	tools.SetJobResumer(jobResumerAdapter{reg: JobRegistry})
+	tools.SetJobPromoter(btwPromotionAdapter{})
 	// kill_job's subagent path + its inside-a-child subtree check (see
 	// tools/killjob.go).
 	tools.SetJobCanceler(jobCancelerAdapter{reg: JobRegistry})

@@ -295,6 +295,20 @@ func builtinToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "promote_btw",
+				"description": "Promote a completed read-only /btw evaluation into exactly one real subagent. Pass its job_id only when the side-conversation concluded that doing the work is worthwhile; the full side transcript is carried over and the parent should wait for the new job.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"job_id": map[string]any{"type": "string", "description": "The completed /btw evaluation job id."},
+					},
+					"required": []string{"job_id"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "wait",
 				"description": "Wait for a background job (job_id) or pause deliberately (seconds alone). With a job_id it waits until that job finishes or blocks on a question and returns the result — not a status snapshot — so one call gets you the answer; seconds is optional and defaults to 10 minutes, and the wait ends early if someone types. You do not need it to find out that a job finished, because you are notified; use it when you have nothing else to do, or to read a result once you are told.",
 				"parameters": map[string]any{
@@ -763,6 +777,7 @@ var toolRegistry = map[string]Tool{
 	"message":         &MessageTool{},
 	"report_progress": &ReportProgressTool{},
 	"resume":          &ResumeTool{},
+	"promote_btw":     &PromoteBtwTool{},
 	// kill_job needs no wiring of its own beyond the registry hooks in
 	// killjob.go (SetJobCanceler/SetJobLister, optional — without them it
 	// stays bash-only): the bash path acts on the bgbash.go registry the
