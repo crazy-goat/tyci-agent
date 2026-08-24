@@ -241,11 +241,16 @@ func TestHandoffStopsStreamingIntoAClosedBlock(t *testing.T) {
 	close(release)
 }
 
-// TestNoHandoffWithoutAJobRegistry: in a one-shot run there is no next turn to
-// deliver a notice into, so blocking is the only correct behaviour.
+// TestNoHandoffWithoutAJobRegistry: jobStarter == nil is a test-only state
+// after item 17, not the normal one-shot path. With no registry to hand work
+// to, blocking is the only correct behaviour.
 func TestNoHandoffWithoutAJobRegistry(t *testing.T) {
 	SetJobStarter(nil)
 	SetBackgroundBashEnabled(false)
+	t.Cleanup(func() {
+		SetJobStarter(nil)
+		SetBackgroundBashEnabled(false)
+	})
 
 	tool := handoffTool(t, func() (string, error) { return "inline", nil })
 	res := tool.Run(ctxWithParentModel("test/model"), map[string]any{"task": "do it"})
