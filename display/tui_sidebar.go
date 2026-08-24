@@ -201,7 +201,13 @@ func (m TuiModel) sidebarLineCount(contentWidth int) int {
 // the click handler used the raw, stale value is exactly how a click ended
 // up opening the wrong row's job (an earlier review round's finding).
 func (m TuiModel) sidebarVisibleScroll(layout sidebarLayoutT) int {
-	lineCount := m.sidebarLineCount(layout.contentWidth)
+	return m.sidebarVisibleScrollForLineCount(layout, m.sidebarLineCount(layout.contentWidth))
+}
+
+// sidebarVisibleScrollForLineCount clamps sidebarScroll using content that has
+// already been rendered by the caller. Keeping the line count as an argument
+// avoids rebuilding a tab's full content just to calculate its scroll bound.
+func (m TuiModel) sidebarVisibleScrollForLineCount(layout sidebarLayoutT, lineCount int) int {
 	scroll := m.sidebarScroll
 	if maxScroll := lineCount - layout.contentHeight; scroll > maxScroll {
 		scroll = maxScroll
