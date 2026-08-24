@@ -307,8 +307,8 @@ func TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread(t *testin
 	}
 
 	notices := JobNotices.Drain()
-	if len(notices) != 1 || !strings.Contains(notices[0], handle.ID()) || !strings.Contains(notices[0], "Wait") {
-		t.Fatalf("expected exactly one actionable parent notice, got %v", notices)
+	if len(notices) != 0 {
+		t.Fatalf("promotion must not enqueue a duplicate notice; tool result is the parent handoff, got %v", notices)
 	}
 	btwEvaluationsMu.Lock()
 	_, retained := btwEvaluations[evaluationID]

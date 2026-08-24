@@ -15,7 +15,6 @@ import (
 	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
-	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
 )
@@ -204,17 +203,50 @@ func forkMessagesForBtw(msgs []connector.Message, question string) []connector.M
 // in the jobs registry so promotion can consume it exactly once and create a
 // separate real subagent job without re-running the evaluation.
 type btwEvaluation struct {
-	msgs     []connector.Message
-	mc       connector.ModelClient
-	cfg      agent.Config
-	question string
-	promoted bool
+	msgs      []connector.Message
+	mc        connector.ModelClient
+	cfg       agent.Config
+	question  string
+	createdAt time.Time
 }
+
+const (
+	btwEvaluationTTL  = time.Hour
+	maxBtwEvaluations = 32
+)
 
 var (
 	btwEvaluationsMu sync.Mutex
 	btwEvaluations   = make(map[string]*btwEvaluation)
 )
+
+func evictBtwEvaluationsLocked(now time.Time) {
+	for id, eval := range btwEvaluations {
+		if !eval.createdAt.IsZero() && now.Sub(eval.createdAt) >= btwEvaluationTTL {
+			delete(btwEvaluations, id)
+		}
+	}
+	for len(btwEvaluations) > maxBtwEvaluations {
+		var oldestID string
+		var oldest time.Time
+		for id, eval := range btwEvaluations {
+			if oldestID == "" || eval.createdAt.Before(oldest) {
+				oldestID, oldest = id, eval.createdAt
+			}
+		}
+		delete(btwEvaluations, oldestID)
+	}
+}
+
+func retainBtwEvaluation(id string, eval *btwEvaluation) {
+	btwEvaluationsMu.Lock()
+	if eval.createdAt.IsZero() {
+		eval.createdAt = time.Now()
+	}
+	btwEvaluations[id] = eval
+	evictBtwEvaluationsLocked(time.Now())
+	btwEvaluationsMu.Unlock()
+}
 
 const btwPromotionTask = "The read-only /btw evaluation concluded this is worth doing. Proceed with the work described in the original request now; use the full conversation above as context, make the requested changes, and report the result."
 
@@ -225,6 +257,7 @@ type btwPromotionAdapter struct{}
 
 func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (tools.JobHandle, error) {
 	btwEvaluationsMu.Lock()
+	evictBtwEvaluationsLocked(time.Now())
 	eval, ok := btwEvaluations[evaluationID]
 	if !ok {
 		btwEvaluationsMu.Unlock()
@@ -237,6 +270,9 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 	delete(btwEvaluations, evaluationID)
 	msgs := session.ForkMessages(eval.msgs)
 	client := eval.mc
+	cfg := btwConfig(eval.cfg)
+	cfg.Tools = &subagentToolRunner{}
+	cfg.Schema = tools.GetSubagentToolsSchemaJSON()
 	question := eval.question
 	btwEvaluationsMu.Unlock()
 
@@ -247,26 +283,23 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		defer tools.MarkTodoAgentDone(jobID)
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, jobID)
 		runCtx = connector.WithModelClient(runCtx, client)
+		runCtx = context.WithValue(runCtx, tools.SubagentSinkCtxKey{}, &collector{})
 		runCtx = tools.WithToolGate(runCtx, tools.DenySubagentRecursion())
-		// Use the same composition-root runner as every ordinary child. It
-		// supplies the child schema, runtime gate, sink, ledger accounting and
-		// resumable transcript; promotion must not create a second, privileged
-		// agent.Run path.
-		text, err := (&agentRunner{}).run(
-			runCtx, btwPromotionTask, "", providers.BuildSubagentSystemPrompt(),
-			tools.SubagentOptions{History: msgs},
-		)
-		truncated := errors.Is(err, tools.ErrSubagentTruncated) || errors.Is(err, tools.ErrSubagentTimedOut) || errors.Is(err, tools.ErrSubagentStoppedByUser)
+		msgs = session.ForkMessagesWithTurn(msgs, btwPromotionTask)
+		c := &collector{}
+		_, err := agent.Run(runCtx, client, ledger.Watch(c, ledger.Subagent, client.Provider(), client.Model(), jobID), &msgs, cfg)
+		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {
 			err = nil
 		}
-		return strings.TrimSpace(text), truncated, err
+		text := strings.TrimSpace(c.text.String())
+		if err == nil || truncated {
+			resumableMu.Lock()
+			resumable[jobID] = resumableEntry{msgs: msgs, mc: client, cfg: cfg}
+			resumableMu.Unlock()
+		}
+		return text, truncated, err
 	})
-
-	// The parent gets one immediate, actionable notice. The tool result also
-	// contains the id for callers that are currently inside a model turn; this
-	// notice is what wakes an idle interactive parent.
-	JobNotices.Notify(fmt.Sprintf("[btw] %q was promoted to subthread job_id=%q. Wait for its result with wait(job_id=%q); do not redo its work here.", question, job.ID, job.ID))
 	return jobHandleAdapter{job}, nil
 }
 
@@ -336,9 +369,7 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		}
 		text := sink.CollectedText()
 		if err == nil || truncated {
-			btwEvaluationsMu.Lock()
-			btwEvaluations[jobID] = &btwEvaluation{msgs: session.ForkMessages(forked), mc: client, cfg: cfg, question: question}
-			btwEvaluationsMu.Unlock()
+			retainBtwEvaluation(jobID, &btwEvaluation{msgs: session.ForkMessages(forked), mc: client, cfg: cfg, question: question})
 			JobNotices.Notify(fmt.Sprintf("[btw] evaluation %q finished (job_id=%q): %s\nIf it is worth doing, call promote_btw(job_id=%q). Promotion creates one real subthread; wait for that job instead of doing the work in this thread.", question, jobID, strings.TrimSpace(text), jobID))
 		}
 		sink.MarkDone(err)
