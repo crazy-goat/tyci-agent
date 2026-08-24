@@ -245,12 +245,14 @@ func TestHandoffStopsStreamingIntoAClosedBlock(t *testing.T) {
 // after item 17, not the normal one-shot path. With no registry to hand work
 // to, blocking is the only correct behaviour.
 func TestNoHandoffWithoutAJobRegistry(t *testing.T) {
-	SetJobStarter(nil)
-	SetBackgroundBashEnabled(false)
+	// Reset both globals even when an assertion below fails, so this test's
+	// deliberately unconfigured environment cannot leak into the next test.
 	t.Cleanup(func() {
 		SetJobStarter(nil)
 		SetBackgroundBashEnabled(false)
 	})
+	SetJobStarter(nil)
+	SetBackgroundBashEnabled(false)
 
 	tool := handoffTool(t, func() (string, error) { return "inline", nil })
 	res := tool.Run(ctxWithParentModel("test/model"), map[string]any{"task": "do it"})
