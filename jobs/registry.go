@@ -182,6 +182,49 @@ func (r *Registry) Cancel(id string) bool {
 	return true
 }
 
+// CancelAll cancels every job that exists at the conversation boundary and
+// waits for live jobs to finish. It returns every known ID, including terminal
+// jobs, so consumers that mirror registry events can reject late events from
+// the old conversation after the reset. A second pass closes the small race in
+// which a cancelled job registers one last child before observing cancellation.
+func (r *Registry) CancelAll() []string {
+	known := make(map[string]bool)
+	for {
+		r.mu.Lock()
+		var selected []*Job
+		var kills []context.CancelFunc
+		for id, job := range r.jobs {
+			known[id] = true
+			if job.Status != StatusRunning && job.Status != StatusWaitingAnswer {
+				continue
+			}
+			job.cancelled = true
+			selected = append(selected, job)
+			if job.cancel != nil {
+				kills = append(kills, job.cancel)
+			}
+		}
+		r.mu.Unlock()
+
+		for _, kill := range kills {
+			kill()
+		}
+		for _, job := range selected {
+			<-job.done
+		}
+		if len(selected) == 0 {
+			break
+		}
+	}
+
+	ids := make([]string, 0, len(known))
+	for id := range known {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // subtreeOrderLocked returns the target's subtree in kill order: deepest
 // descendants first, target last. The visited set makes the walk terminate
 // on malformed links — a cycle (only possible if a test or future feature

@@ -92,6 +92,28 @@ func TestCancelStopsRunningJob(t *testing.T) {
 	}
 }
 
+func TestCancelAllStopsLiveJobsAndReturnsKnownIDs(t *testing.T) {
+	r := NewRegistry()
+	started := make(chan struct{})
+	job := r.Start(context.Background(), "old", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
+		close(started)
+		<-ctx.Done()
+		return "", false, ctx.Err()
+	})
+	<-started
+	ids := r.CancelAll()
+	if len(ids) != 1 || ids[0] != job.ID {
+		t.Fatalf("CancelAll IDs = %v, want [%s]", ids, job.ID)
+	}
+	snap, ok := r.Wait(context.Background(), job.ID, time.Second)
+	if !ok || snap.Status != StatusFailed {
+		t.Fatalf("job not terminal after CancelAll: ok=%v snap=%+v", ok, snap)
+	}
+	if got := r.CancelAll(); len(got) != 1 || got[0] != job.ID {
+		t.Fatalf("second CancelAll IDs = %v, want the known old job", got)
+	}
+}
+
 // TestCancelRefusesTerminalAndUnknown: false means "not running", never a
 // fake success. Revert check: remove the status guard from Cancel and the
 // already-terminal case flips this test's second half to true.

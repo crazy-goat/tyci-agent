@@ -81,6 +81,19 @@ func (n *Notifier) Drain() []string {
 	return out
 }
 
+// Clear drops all queued notices and any already-armed wakeup. /new uses this
+// at the conversation boundary so completions from cancelled old work cannot
+// become prompts in the fresh conversation.
+func (n *Notifier) Clear() {
+	n.mu.Lock()
+	n.pending = nil
+	n.mu.Unlock()
+	select {
+	case <-n.signal:
+	default:
+	}
+}
+
 // Signal fires when a notice is queued. Receiving from it is only a hint
 // that the queue *was* non-empty: always follow up with Drain and tolerate
 // an empty result, since another consumer (NextMessages during an in-flight

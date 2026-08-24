@@ -64,6 +64,20 @@ func TestNotifierDrainClearsStaleSignal(t *testing.T) {
 	}
 }
 
+func TestNotifierClearDropsQueuedNoticeAndSignal(t *testing.T) {
+	n := NewNotifier()
+	n.Notify("old completion")
+	n.Clear()
+	if got := n.Drain(); got != nil {
+		t.Fatalf("Clear left queued notices: %v", got)
+	}
+	select {
+	case <-n.Signal():
+		t.Fatal("Clear left a stale signal armed")
+	default:
+	}
+}
+
 func TestNotifierNotifyNeverBlocks(t *testing.T) {
 	n := NewNotifier()
 
