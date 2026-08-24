@@ -81,6 +81,13 @@ type Config struct {
 	// maxTodoReminders times per turn to avoid nagging in a loop.
 	PendingTodos func() []string
 
+	// ActiveSubagents, if set, reports whether a subagent is genuinely still
+	// running. While true, pending-todo reminders are suppressed: the model is
+	// intentionally waiting for delegated work rather than forgetting its plan.
+	// Waiting-for-answer and terminal children must return false, so reminders
+	// remain actionable once a child reports or finishes.
+	ActiveSubagents func() bool
+
 	// PendingJobs, if set, is called when the agent would otherwise finish the
 	// turn and returns one line per background job that is still running or —
 	// worse — blocked waiting for an answer. When non-empty the agent injects
@@ -345,7 +352,8 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			// left todos open and, if so, nudge it once more (up to
 			// maxTodoReminders) with a harness-authored reminder — not a user
 			// message — asking it to finish or explicitly resolve them.
-			if cfg.PendingTodos != nil && todoReminders < maxTodoReminders {
+			if cfg.PendingTodos != nil && todoReminders < maxTodoReminders &&
+				(cfg.ActiveSubagents == nil || !cfg.ActiveSubagents()) {
 				if pending := cfg.PendingTodos(); len(pending) > 0 {
 					todoReminders++
 					reminder := buildTodoReminder(pending)

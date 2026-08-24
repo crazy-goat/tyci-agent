@@ -285,19 +285,20 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		maxTokens = agent.GetMaxTokens()
 	}
 	cfg := agent.Config{
-		System:        providers.BuildSystemPrompt(),
-		MaxRetries:    maxRetries,
-		MaxIterations: maxIterations,
-		Debug:         debugFlag,
-		Tools:         toolsAdapter{},
-		Schema:        tools.GetTopLevelToolsSchemaJSON(),
-		Fallbacks:     fallbacks,
-		MaxTokens:     maxTokens,
-		NoPromptCache: !agent.PromptCacheEnabled(),
-		PendingTodos:  tools.PendingTodos,
-		PendingJobs:   JobRegistry.PendingLines,
-		HasTodos:      tools.HasPendingTodos,
-		Interactive:   interactive,
+		System:          providers.BuildSystemPrompt(),
+		MaxRetries:      maxRetries,
+		MaxIterations:   maxIterations,
+		Debug:           debugFlag,
+		Tools:           toolsAdapter{},
+		Schema:          tools.GetTopLevelToolsSchemaJSON(),
+		Fallbacks:       fallbacks,
+		MaxTokens:       maxTokens,
+		NoPromptCache:   !agent.PromptCacheEnabled(),
+		PendingTodos:    tools.PendingTodos,
+		ActiveSubagents: JobRegistry.HasActiveSubagents,
+		PendingJobs:     JobRegistry.PendingLines,
+		HasTodos:        tools.HasPendingTodos,
+		Interactive:     interactive,
 	}
 	ctx = connector.WithModelClient(ctx, provider.Client(modelName))
 

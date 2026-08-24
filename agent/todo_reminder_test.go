@@ -119,3 +119,54 @@ func TestRun_TodoReminder_StopsWhenResolved(t *testing.T) {
 		t.Errorf("Stream calls = %d, want 2", got)
 	}
 }
+
+// An open todo is intentional while a live delegated child is doing the work;
+// do not spend a reminder budget nagging the parent at that boundary.
+func TestRun_TodoReminder_SuppressedWhileSubagentRunning(t *testing.T) {
+	p := countingText()
+	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "delegate it"}}}}
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries:      1,
+		PendingTodos:    func() []string { return []string{"1. [doing] delegated work"} },
+		ActiveSubagents: func() bool { return true },
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := p.Calls(); got != 1 {
+		t.Fatalf("Stream calls = %d, want 1 while child is active", got)
+	}
+	for _, m := range msgs {
+		if len(m.Content) > 0 && strings.Contains(m.Content[0].Text, "<system-reminder>") {
+			t.Fatalf("unexpected reminder while child is active: %q", m.Content[0].Text)
+		}
+	}
+}
+
+// Once the delegated child has completed, the ordinary todo reminder budget
+// is available again on the next turn.
+func TestRun_TodoReminder_ResumesAfterSubagentCompletion(t *testing.T) {
+	p := countingText()
+	active := true
+	pending := true
+	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "delegate it"}}}}
+	cfg := Config{
+		MaxRetries: 1,
+		PendingTodos: func() []string {
+			if pending {
+				return []string{"1. [doing] delegated work"}
+			}
+			return nil
+		},
+		ActiveSubagents: func() bool { return active },
+	}
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, cfg); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	active = false
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, cfg); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if got := p.Calls(); got != 1+(1+maxTodoReminders) {
+		t.Fatalf("Stream calls = %d, want %d after completion", got, 1+(1+maxTodoReminders))
+	}
+}
