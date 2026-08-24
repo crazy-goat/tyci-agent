@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // Item 26's kill_job plumbing: the contracts satisfied structurally by
@@ -112,15 +113,26 @@ func (t *KillJobTool) Run(ctx context.Context, input map[string]any) ToolResult 
 		return ToolResult{Type: "result", Success: false, Error: "job_id is required"}
 	}
 
-	// Resolve short forms ("#N"/"N", as the jobs panel prints them) through
-	// the same registry the message tool uses. Without that hook (no
-	// registry: tests, --print mode) the raw id passes through unchanged —
-	// matching how every tool in this package degrades when its adapter is
-	// unset.
+	// Resolve short forms ("#N"/"N", as the jobs panel prints them) AND a
+	// full id to its canonical registry entry. The jobs registry is the one
+	// source of truth for "is this a known job", so resolve against
+	// jobLister (when wired) rather than jobMailbox: kill_job's domain is
+	// the registry, not the message mailbox, and the two may not even be
+	// wired. If the lister is nil (no registry: tests, --print mode) the raw
+	// id passes through as an unknown target — matching how every tool here
+	// degrades when its adapter is unset.
 	fullID, known := jobID, false
-	if jobMailbox != nil {
-		if resolved, ok := jobMailbox.Resolve(jobID); ok {
-			fullID, known = resolved, true
+	if jobLister != nil {
+		for _, j := range jobLister.ListJobs() {
+			if j.ID() == jobID {
+				fullID, known = j.ID(), true
+				break
+			}
+			short := strings.TrimPrefix(jobID, "#")
+			if shortID(j.ID()) == short {
+				fullID, known = j.ID(), true
+				break
+			}
 		}
 	}
 
@@ -167,4 +179,16 @@ func killJobNotRunningError(jobID string) ToolResult {
 		msg = fmt.Sprintf("is not a running job (it may have already finished — check it with wait); currently running background commands: %v", running)
 	}
 	return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("job %q %s", jobID, msg)}
+}
+
+// shortID mirrors jobs.ShortID without importing the jobs package (this
+// package stays storage-agnostic; see the package comment). It trims a
+// "job-<unixnano>-<n>" id down to its trailing counter — the stable,
+// human-scannable form the TUI jobs panel displays.
+func shortID(id string) string {
+	idx := strings.LastIndexByte(id, '-')
+	if idx >= 0 && idx+1 < len(id) {
+		return id[idx+1:]
+	}
+	return id
 }

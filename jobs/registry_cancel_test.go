@@ -225,7 +225,7 @@ func TestCancelAcceptsShortIDs(t *testing.T) {
 	blockers.waitStarted(t, 2)
 
 	short2 := ShortID(j2.ID)
-	if !r.Cancel("#"+short2) {
+	if !r.Cancel("#" + short2) {
 		t.Fatalf("Cancel refused short form #%s", short2)
 	}
 	if !r.Cancel(ShortID(j1.ID)) {
