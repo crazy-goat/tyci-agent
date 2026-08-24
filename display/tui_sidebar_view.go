@@ -218,7 +218,7 @@ func (m TuiModel) renderSidebarColumn() string {
 	// the two can never compute a different offset for the same frame (see
 	// its doc comment for the bug that fixed).
 	lines := m.sidebarTabLines(contentWidth)
-	scroll := m.sidebarVisibleScroll(layout)
+	scroll := m.sidebarVisibleScrollForLineCount(layout, len(lines))
 	shown := 0
 	for i := scroll; i < len(lines) && shown < layout.contentHeight; i++ {
 		b.WriteString(lipgloss.NewStyle().Width(contentWidth).MaxWidth(contentWidth).Render(lines[i]))

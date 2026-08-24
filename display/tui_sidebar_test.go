@@ -129,6 +129,28 @@ func TestSidebarMouse_TabClickAndBorderMargin(t *testing.T) {
 	}
 }
 
+// TestSidebarVisibleScrollForRenderedLineCount matches the rendered-content
+// scroll clamp while reusing the line count already obtained for the frame.
+// Keeping this path equivalent to sidebarVisibleScroll preserves click/resize
+// scroll semantics while renderSidebarColumn avoids rebuilding tab content.
+func TestSidebarVisibleScrollForRenderedLineCount(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabBash)
+	layout := m.sidebarLayout()
+	m.sidebarScroll = 99
+	lineCount := len(m.sidebarTabLines(layout.contentWidth))
+	got := m.sidebarVisibleScrollForLineCount(layout, lineCount)
+	want := m.sidebarVisibleScroll(layout)
+	if got != want {
+		t.Fatalf("rendered line-count clamp = %d, regular clamp = %d", got, want)
+	}
+
+	m.sidebarScroll = -1
+	if got, want := m.sidebarVisibleScrollForLineCount(layout, lineCount), 0; got != want {
+		t.Fatalf("negative scroll clamp = %d, want %d", got, want)
+	}
+}
+
 // TestSidebarScroll_SelectableTabKeepsCursorVisible covers the missing-
 // scroll-offset bug: on a long list (more bash jobs than fit), moving the
 // cursor past the visible window must move sidebarScroll to keep it in
