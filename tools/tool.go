@@ -457,7 +457,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "message",
-				"description": "Send a message only to one of your own live jobs (running or waiting for an answer), delivered at its next iteration — not mid-tool-call. This steers a live job; it does not resume a finished job or unblock ask_parent. If the job is finished, use resume(job_id, task) to continue its transcript.",
+				"description": "Send text only to one of your own live jobs (running or waiting for an answer); it is delivered at the next iteration boundary, not mid-tool-call. This steers a live agent but never resumes a finished/failed/truncated job or answers ask_parent. For a terminal job, use resume(job_id, task) when its transcript is resumable.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -486,7 +486,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "resume",
-				"description": "Continue a finished async job's transcript with a new task. Use this instead of message for done, failed, or truncated jobs; message only targets live jobs. The new job keeps the entire conversation, so a follow-up costs no re-explaining. Returns a new job_id.",
+				"description": "Continue a finished async job's transcript with a new task when that transcript is resumable. Use this for done, failed, or truncated jobs instead of message: message targets live jobs only. The new job keeps the entire conversation, so a follow-up costs no re-explaining. Returns a new job_id.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{

@@ -19,7 +19,8 @@ type JobMailbox interface {
 	// full id. ok is false when nothing matches.
 	Resolve(id string) (full string, ok bool)
 	// Post enqueues text for delivery to job id's next iteration boundary.
-	// Returns false when id is unknown.
+	// Returns false when id is unknown or terminal; callers should Resolve
+	// first when they need to distinguish those cases.
 	Post(id, text string) bool
 	// IsLive reports whether id identifies a running or waiting job. Terminal
 	// jobs remain resolvable for resume, but cannot receive new messages.
@@ -90,14 +91,18 @@ func (t *MessageTool) Run(ctx context.Context, input map[string]any) ToolResult 
 
 	jobID, ok := jobMailbox.Resolve(rawID)
 	if !ok {
-		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("unknown job_id %q — use the exact id a subagent/wait/resume call gave you, or its short #N form from the jobs panel", rawID)}
+		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("unknown job_id %q; message only targets live jobs, and an unknown job cannot be resumed. Use a job_id from subagent/wait or its short #N form from the jobs panel", rawID)}
 	}
 
 	if !jobMailbox.IsLive(jobID) {
-		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("job %q is no longer running; only live jobs can receive messages. Use resume(job_id, task) to continue a finished transcript", jobID)}
+		return ToolResult{Type: "result", Success: false, Error: terminalMessageError(jobID)}
 	}
 	if !jobMailbox.Post(jobID, text) {
-		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("job %q is no longer running; only live jobs can receive messages. Use resume(job_id, task) to continue a finished transcript", jobID)}
+		return ToolResult{Type: "result", Success: false, Error: terminalMessageError(jobID)}
 	}
 	return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("message queued for job %s; it will see it at its next iteration", jobID)}
+}
+
+func terminalMessageError(jobID string) string {
+	return fmt.Sprintf("agent/job %q is no longer running; message only targets live jobs. Use resume(job_id, task) — for example resume(job_id=%q, task=\"...\") — to continue its finished transcript", jobID, jobID)
 }
