@@ -53,10 +53,15 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sidebarSaveVisible = sp.fn
 		return m, nil
 	}
-	// /btw entries must never lose streamed output just because some other
-	// popup happens to be open when it arrives — a background /btw job runs
-	// independently of whatever modal state the main thread is in. Dispatch
-	// these unconditionally, ahead of every other exclusivity check below.
+	// Background stream blocks must never be lost just because some other
+	// popup happens to be open when they arrive. Dispatch them unconditionally,
+	// ahead of every exclusivity check below, just like /btw messages.
+	if block, ok := msg.(tuiMsgBlock); ok {
+		m.handleBlockMsg(block)
+		return m, nil
+	}
+	// /btw entries run independently of the main view and likewise must land
+	// regardless of which overlay is active.
 	switch msg.(type) {
 	case tuiBtwOpenMsg, tuiBtwJobIDMsg, tuiBtwStreamMsg:
 		return m.updateBtwMsg(msg)
