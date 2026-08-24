@@ -146,6 +146,8 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		// and the Subagents tree would render it as free.
 		_, err := agent.Run(runCtx, entry.mc, ledger.Watch(c, ledger.Subagent, entry.mc.Provider(), entry.mc.Model(), newJobID), &forked, entry.cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
+		deadlineExceeded := errors.Is(err, context.DeadlineExceeded)
+		stopped := errors.Is(err, context.Canceled)
 		if truncated {
 			err = nil
 		}
@@ -154,7 +156,7 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		// Re-register so a resumed job can itself be resumed again
 		// (chaining), same condition as the original run in
 		// agentRunner.run: a usable transcript, not a hard failure.
-		if err == nil || truncated {
+		if err == nil || truncated || deadlineExceeded || stopped {
 			resumableMu.Lock()
 			resumable[newJobID] = resumableEntry{msgs: forked, mc: entry.mc, cfg: entry.cfg}
 			resumableMu.Unlock()
@@ -211,13 +213,15 @@ type btwEvaluation struct {
 }
 
 const (
-	btwEvaluationTTL  = time.Hour
-	maxBtwEvaluations = 32
+	btwEvaluationTTL     = time.Hour
+	maxBtwEvaluations    = 32
+	btwEvaluationTimeout = 10 * time.Minute
 )
 
 var (
 	btwEvaluationsMu sync.Mutex
 	btwEvaluations   = make(map[string]*btwEvaluation)
+	btwActive        int
 )
 
 func evictBtwEvaluationsLocked(now time.Time) {
@@ -273,6 +277,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 	cfg := btwConfig(eval.cfg)
 	cfg.Tools = &subagentToolRunner{}
 	cfg.Schema = tools.GetSubagentToolsSchemaJSON()
+	cfg.PendingJobs = nil
 	question := eval.question
 	btwEvaluationsMu.Unlock()
 
@@ -284,6 +289,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, jobID)
 		runCtx = connector.WithModelClient(runCtx, client)
 		runCtx = context.WithValue(runCtx, tools.SubagentSinkCtxKey{}, &collector{})
+		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
 		runCtx = tools.WithToolGate(runCtx, tools.DenySubagentRecursion())
 		msgs = session.ForkMessagesWithTurn(msgs, btwPromotionTask)
 		c := &collector{}
@@ -335,6 +341,14 @@ func btwConfig(base agent.Config) agent.Config {
 // agent run and must share nothing transport-level with the parent, same
 // as a subagent.
 func startBtw(ctx context.Context, cond *conductor.Conductor, question string, sink *display.BtwSink) *jobs.Job {
+	btwEvaluationsMu.Lock()
+	if btwActive >= maxBtwEvaluations {
+		btwEvaluationsMu.Unlock()
+		return nil
+	}
+	btwActive++
+	btwEvaluationsMu.Unlock()
+	ctx, cancelEvaluation := context.WithTimeout(ctx, btwEvaluationTimeout)
 	forked := forkMessagesForBtw(cond.Messages(), question)
 	cfg := btwConfig(cond.Config())
 	cfg.Schema = tools.BtwEvaluationSchemaJSON()
@@ -343,6 +357,8 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 
 	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
 	return JobRegistry.Start(ctx, question, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
+		defer cancelEvaluation()
+		defer func() { btwEvaluationsMu.Lock(); btwActive--; btwEvaluationsMu.Unlock() }()
 		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
 		jobCtx = tools.WithToolGate(jobCtx, tools.BtwReadOnlyGate())
 		// jobID is also this /btw side-conversation's todo-agent id (see
