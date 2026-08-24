@@ -1,7 +1,6 @@
 ---
 description: Reviews a diff and reports defects that change behavior
 tools: find, read, bash
-temperature: 0
 max_iterations: 40
 ---
 

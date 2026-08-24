@@ -1,7 +1,6 @@
 ---
 description: Finds where things live in the codebase; returns path:line references, not prose
 tools: find, read
-temperature: 0
 max_iterations: 30
 ---
 
