@@ -19,8 +19,8 @@ type JobMailbox interface {
 	// full id. ok is false when nothing matches.
 	Resolve(id string) (full string, ok bool)
 	// Post enqueues text for delivery to job id's next iteration boundary.
-	// Returns false when id is unknown.
-	Post(id, text string) bool
+	// Returns false when id is unknown or terminal; callers should Resolve
+	// first when they need to distinguish those cases.
 	// IsLive reports whether id identifies a running or waiting job. Terminal
 	// jobs remain resolvable for resume, but cannot receive new messages.
 	IsLive(id string) bool
