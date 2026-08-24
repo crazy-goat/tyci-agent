@@ -206,6 +206,8 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 
 	model, _ := cmd.Flags().GetString("model")
 	agentName, _ := cmd.Flags().GetString("agent")
+	explicitModel := model != ""
+	explicitAgent := agentName != ""
 	if model == "" {
 		model = agent.ResolveModel("", agentName)
 	}
@@ -232,8 +234,15 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		agentName = "default"
 	}
 	var fallbacks []connector.ModelClient
-	if fb := agent.GetFallbackModels(agentName); len(fb) > 0 {
-		fallbacks = resolveFallbacks(fb)
+	// An explicit --model must not silently inherit the default agent's
+	// fallback list. Otherwise selecting an expensive model still allows a
+	// stale/default fallback (for example another paid model) to run after a
+	// transient setup error. An explicitly supplied --agent opts into that
+	// agent's fallback policy even when --model also overrides its primary.
+	if !explicitModel || explicitAgent {
+		if fb := agent.GetFallbackModels(agentName); len(fb) > 0 {
+			fallbacks = resolveFallbacks(fb)
+		}
 	}
 
 	var ctx context.Context

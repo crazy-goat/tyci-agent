@@ -219,8 +219,11 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				return totalUsage, err
 			}
 
-			// Try fallback models if available
-			if len(cfg.Fallbacks) > 0 {
+			// Fallbacks are for terminal/non-retryable failures. A transient
+			// 429/5xx/network error must go through the primary retry policy
+			// first; switching models immediately can create an unexpected,
+			// expensive second request while the primary was recoverable.
+			if len(cfg.Fallbacks) > 0 && !api.IsRetryable(err) {
 				fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage, err)
 				if fbErr == nil {
 					// Fallback succeeded — runOnce inside tryFallback
@@ -238,7 +241,9 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				return totalUsage, fbErr
 			}
 
-			// No fallbacks — use retry logic for retryable errors
+			// Use retry logic for retryable errors. With no fallbacks this is
+			// also the only path available; with fallbacks, the retry path is
+			// intentionally still preferred for transient failures.
 			if !api.IsRetryable(err) {
 				d.Error(err)
 				if !totalEmitted {

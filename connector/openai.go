@@ -13,6 +13,10 @@ import (
 // ?reasoning=true in the provider URI.
 const OptReasoning = "reasoning"
 
+// OptReasoningEffort is the Responses API reasoning effort selected with
+// ?reasoning=xhigh (or another provider-supported value) in the URI.
+const OptReasoningEffort = "reasoning_effort"
+
 // openAI speaks the OpenAI chat-completions protocol, which most third-party
 // providers (DeepSeek, GLM, Xiaomi, OpenRouter, ...) also expose. It is the
 // fallback protocol for any api_type we do not recognize.

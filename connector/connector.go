@@ -1,5 +1,5 @@
 // Package connector holds one implementation per model-provider wire protocol
-// (OpenAI chat-completions, Anthropic messages, Gemini generateContent).
+// (OpenAI chat-completions and Responses, Anthropic messages, Gemini generateContent).
 //
 // A connector owns exactly one concern: turning a canonical Request into the
 // protocol's request body and turning the response back into stream.Event.
@@ -23,6 +23,7 @@ import (
 // (see internal/tyciconfig.ProviderURI).
 const (
 	KindOpenAI    = "openai"
+	KindResponses = "responses"
 	KindAnthropic = "anthropic"
 	KindGemini    = "gemini"
 )
@@ -34,6 +35,7 @@ const (
 // -tags noanthropic/nogemini the registry loses entries; this list does not.
 var knownKinds = map[string]bool{
 	KindOpenAI:    true,
+	KindResponses: true,
 	KindAnthropic: true,
 	KindGemini:    true,
 }

@@ -913,6 +913,51 @@ func TestRun_RetryRecoversAfterMidStreamRateLimit(t *testing.T) {
 	}
 }
 
+func TestRunRetryableErrorPrefersPrimaryBeforeFallback(t *testing.T) {
+	primary := &connectortest.Flaky{
+		Client: &connectortest.Fake{ProviderName: "primary", ModelName: "luna", Turns: [][]stream.Event{
+			{
+				stream.TextDelta{Text: "primary recovered"},
+				stream.Finish{Usage: stream.Usage{Input: 2, Output: 1}},
+			},
+			{
+				stream.TextDelta{Text: "primary recovered"},
+				stream.Finish{Usage: stream.Usage{Input: 2, Output: 1}},
+			},
+		}},
+		Failures: []connectortest.Failure{{
+			MidStream:   true,
+			AfterEvents: 0,
+			Err:         connectortest.RateLimited("0"),
+		}},
+	}
+	fallback := &connectortest.Fake{ProviderName: "fallback", ModelName: "gpt-5.4", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "expensive fallback"},
+		stream.Finish{Usage: stream.Usage{Input: 100, Output: 100}},
+	}}}
+	d := newCaptureDisplay()
+	msgs := []connector.Message{{
+		Role:    "user",
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	if _, err := Run(context.Background(), primary, d, &msgs, Config{
+		MaxRetries: 1,
+		Fallbacks:  []connector.ModelClient{fallback},
+	}); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if got := primary.Calls(); got != 2 {
+		t.Fatalf("primary calls = %d, want 2 (initial failure plus retry)", got)
+	}
+	if got := fallback.Calls(); got != 0 {
+		t.Fatalf("fallback calls = %d, want 0 for a retryable primary error", got)
+	}
+	if got := strings.Join(d.text, ""); got != "primary recovered" {
+		t.Fatalf("text = %q, want primary recovered", got)
+	}
+}
+
 func TestRunFallbackUsedForRestOfSession(t *testing.T) {
 	// After fallback, subsequent iterations use the fallback provider/model.
 	// We simulate two iterations: first fails, fallback succeeds,

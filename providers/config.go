@@ -508,10 +508,17 @@ func (p *dynamicProvider) kindFor(apiType string) (string, error) {
 // Returns nil when there is nothing to pass.
 func uriOptions(uri string) map[string]string {
 	parsed, err := tyciconfig.Parse(uri)
-	if err != nil || !parsed.Reasoning {
+	if err != nil || (!parsed.Reasoning && parsed.ReasoningEffort == "") {
 		return nil
 	}
-	return map[string]string{connector.OptReasoning: "true"}
+	options := make(map[string]string)
+	if parsed.Reasoning {
+		options[connector.OptReasoning] = "true"
+	}
+	if parsed.ReasoningEffort != "" {
+		options[connector.OptReasoningEffort] = parsed.ReasoningEffort
+	}
+	return options
 }
 
 // resolveAPIKey resolves the credential for this provider: the token from the
@@ -551,17 +558,24 @@ func parseURI(uri string) (apiType, authToken, baseURL, endpointPath string, err
 		return "", "", "", "", err
 	}
 
+	apiType = u.APIType
+	if u.Protocol != "" {
+		apiType = u.Protocol
+	}
+
 	endpointPath = u.Path
-	switch u.APIType {
+	switch apiType {
 	case "anthropic":
 		endpointPath = appendChatPath(endpointPath, "/v1/messages")
 	case "gemini":
 		// Gemini uses different path structure
+	case "responses":
+		endpointPath = appendChatPath(endpointPath, "/v1/responses")
 	default:
 		endpointPath = appendChatPath(endpointPath, "/v1/chat/completions")
 	}
 
-	return u.APIType, u.AuthToken, "https://" + u.Host, endpointPath, nil
+	return apiType, u.AuthToken, "https://" + u.Host, endpointPath, nil
 }
 
 // appendChatPath appends the API-specific chat endpoint path to the base path.

@@ -214,6 +214,22 @@ func TestParseURI_table(t *testing.T) {
 			wantPath:    "",
 		},
 		{
+			name:        "responses scheme",
+			uri:         "responses://gpt-5.6-luna@api.openai.com",
+			wantAPIType: "responses",
+			wantToken:   "",
+			wantHost:    "https://api.openai.com",
+			wantPath:    "/v1/responses",
+		},
+		{
+			name:        "responses selected by openai URI option",
+			uri:         "openai://gpt-5.6-luna@api.openai.com/v1?api=responses",
+			wantAPIType: "responses",
+			wantToken:   "",
+			wantHost:    "https://api.openai.com",
+			wantPath:    "/v1/responses",
+		},
+		{
 			name:        "unknown api type defaults to openai",
 			uri:         "custom://model@api.custom.com",
 			wantAPIType: "openai",

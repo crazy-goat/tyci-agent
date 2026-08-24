@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -39,6 +40,36 @@ func captureStderr(t *testing.T, fn func()) string {
 // =============================================================================
 // resolveFallbacksQuiet — resolves without reporting
 // =============================================================================
+
+func TestInitCommon_ExplicitModelDoesNotInheritDefaultAgentFallback(t *testing.T) {
+	writeWiringTestHome(t)
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".tyci", "agents.json"), []byte(`{"default":{"fallback":["explicit-fallback-prov/fallback-model"]}}`), 0600); err != nil {
+		t.Fatalf("write agents.json: %v", err)
+	}
+
+	providers.Register(&fakeProvider{name: "explicit-primary-prov", configured: true, models: []string{"primary-model"}})
+	providers.Register(&fakeProvider{name: "explicit-fallback-prov", configured: true, models: []string{"fallback-model"}})
+
+	cmd := newInitCommonTestCmd()
+	if err := cmd.Flags().Set("model", "explicit-primary-prov/primary-model"); err != nil {
+		t.Fatalf("set model: %v", err)
+	}
+	if err := cmd.Flags().Set("no-mcp", "true"); err != nil {
+		t.Fatalf("set no-mcp: %v", err)
+	}
+
+	_, _, cfg, _, _, _, _, dl, shutdown, err := initCommon(cmd, false, false)
+	if err != nil {
+		t.Fatalf("initCommon: %v", err)
+	}
+	defer shutdown()
+	if dl != nil {
+		defer dl.Close()
+	}
+	if len(cfg.Fallbacks) != 0 {
+		t.Fatalf("explicit --model inherited %d fallback(s): %v", len(cfg.Fallbacks), cfg.Fallbacks)
+	}
+}
 
 func TestResolveFallbacksQuiet_AllResolve(t *testing.T) {
 	prov := &fakeProvider{name: "quiet-ok-prov", configured: true, models: []string{"m1", "m2"}}

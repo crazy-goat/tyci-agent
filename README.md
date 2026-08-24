@@ -88,7 +88,16 @@ Or edit `~/.tyci/model.json` directly:
 
 URI format: `<api-type>://<model>@<token-or-env-var>@<base-url>`
 
-Supported API types: `openai`, `anthropic`, `gemini`, `responses`.
+Supported wire protocols are `openai` (Chat Completions), `anthropic`,
+`gemini`, and `responses`. For a per-model Responses API override, keep the
+provider scheme as `openai` and add `?api=responses`; for example:
+
+```text
+openai://GPT 5.6 Luna@@api.nexos.ai/v1?api=responses&reasoning=xhigh
+```
+
+`reasoning=xhigh` is forwarded as `reasoning: {"effort":"xhigh"}` by the
+Responses connector. The bare `responses://...` scheme is accepted as an alias.
 
 ### 2. Run the agent
 
@@ -192,6 +201,9 @@ tyci provider add my-provider \
 - `--token` — API key or `$ENV_VAR` reference
 - `--test` — Test connectivity after adding
 - `--test-model` — Model to test with (default: first model)
+
+For a model that requires Responses API, add `?api=responses` (and optionally
+`&reasoning=xhigh`) to its URI in `~/.tyci/model.json`.
 
 #### `tyci provider refresh`
 
