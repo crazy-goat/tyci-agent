@@ -17,19 +17,16 @@ import (
 	"github.com/decodo/tyci/stream"
 )
 
-// SubagentTimeoutSec is the shared per-subagent wall-clock backstop, in seconds,
-// for synchronous and asynchronous subagents, /btw jobs, and resumed jobs. The
-// iteration cap bounds model turns, but a single wedged tool call (e.g. a hung
-// shell command) could otherwise block the parent's tool call forever; this
-// ensures the parent always gets an answer.
+// Subagents do not get an implicit wall-clock or iteration backstop. Their
+// contexts remain cancelable through the jobs registry (kill_job), and a
+// blocking foreground call may still hand work to the background after
+// SubagentBackgroundAfterSec.
+//
+// These constants remain as deprecated compatibility names for callers that
+// used them when constructing schemas or wait durations. They are not used to
+// cancel subagent execution.
 const (
-	// SubagentTimeoutSec is also the maximum explicit timeout. Explicit
-	// timeouts are intentionally a way to shorten a child run, not to extend
-	// the shared backstop.
-	SubagentTimeoutSec = 1800
-	// SubagentMinTimeoutSec leaves enough time for item 28's last-step warning
-	// to reach a child before its deadline, while still allowing callers to
-	// bound work substantially below the default.
+	SubagentTimeoutSec    = 1800
 	SubagentMinTimeoutSec = 120
 	SubagentMaxTimeoutSec = SubagentTimeoutSec
 )
@@ -170,8 +167,8 @@ type subagentTask struct {
 	Agent         string `json:"agent,omitempty"`
 	Model         string `json:"model,omitempty"`
 	MaxIterations *int   `json:"max_iterations,omitempty"`
-	// Timeout is the optional per-child wall-clock limit in seconds. Zero means
-	// use the shared SubagentTimeoutSec default.
+	// Timeout is accepted for compatibility with older callers, but subagent
+	// execution no longer applies a wall-clock limit from this field.
 	Timeout *int `json:"timeout,omitempty"`
 	// Async, when true, makes the tool register a background job and return
 	// its id immediately instead of blocking until the task finishes. See
@@ -511,7 +508,7 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 	// No job registry at all — only reachable in tests; the real binary
 	// always wires one (main.go). No job ids are possible here, so this is
 	// the one remaining plain, unregistered path.
-	results := runTasks(ctx, t.Runner, tasks, SubagentTimeoutSec)
+	results := runTasks(ctx, t.Runner, tasks)
 	return resultsToToolResult(results)
 }
 
@@ -654,37 +651,10 @@ func toInt(v any) (int, error) {
 	}
 }
 
-// parseSubagentTimeout validates an explicit per-child timeout. A missing
-// timeout uses the shared default; once supplied it must leave enough room for
-// the deadline warning and cannot extend the default backstop.
+// parseSubagentTimeout validates the legacy timeout input while keeping it
+// accepted by the tool API. The value is intentionally ignored at runtime.
 func parseSubagentTimeout(v any) (int, error) {
-	switch x := v.(type) {
-	case float64:
-		if math.IsNaN(x) || math.IsInf(x, 0) || x != math.Trunc(x) {
-			return 0, fmt.Errorf("expected integer, got %v", x)
-		}
-	case float32:
-		f := float64(x)
-		if math.IsNaN(f) || math.IsInf(f, 0) || f != math.Trunc(f) {
-			return 0, fmt.Errorf("expected integer, got %v", x)
-		}
-	}
-
-	seconds, err := toInt(v)
-	if err != nil {
-		return 0, err
-	}
-	if seconds < SubagentMinTimeoutSec || seconds > SubagentMaxTimeoutSec {
-		return 0, fmt.Errorf("must be between %d and %d seconds", SubagentMinTimeoutSec, SubagentMaxTimeoutSec)
-	}
-	return seconds, nil
-}
-
-func subagentTimeoutSeconds(task subagentTask) int {
-	if task.Timeout != nil {
-		return *task.Timeout
-	}
-	return SubagentTimeoutSec
+	return toInt(v)
 }
 
 func taskFromMap(m map[string]any) (subagentTask, error) {
@@ -733,9 +703,8 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 // returns immediately with the assigned job ids, instead of blocking until
 // the tasks finish (runTasks' path). The job's context is detached from ctx
 // (context.WithoutCancel) because ctx dies with this tool call's turn, but
-// the job must keep running after Run returns; a fresh wall-clock backstop
-// (SubagentTimeoutSec, same as the sync path) replaces the cancellation the
-// job no longer inherits. Poll results via the "wait" tool's job_id mode.
+// the job must keep running after Run returns. It remains cancelable through
+// the jobs registry (kill_job). Poll results via the "wait" tool's job_id mode.
 // spawnedTask is one child running as a background job.
 //
 // The finished/handed pair exists to settle one race with one lock: a blocking
@@ -828,10 +797,11 @@ func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtSta
 		handed: handedAtStart,
 	}
 
-	// Detached from the caller's context and given its own backstop: the
-	// context of a tool call dies when the call returns, which for a
-	// backgrounded child would kill the very work we are keeping alive.
-	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(subagentTimeoutSeconds(task))*time.Second)
+	// Detached from the caller's context: the context of a tool call dies when
+	// the call returns, which for a backgrounded child would kill the very work
+	// we are keeping alive. The jobs registry supplies cancellation for
+	// kill_job; there is deliberately no child-specific deadline here.
+	jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	st.cancel = cancel
 	stopStream := &atomic.Bool{}
 	st.stopStream = stopStream
@@ -1118,7 +1088,7 @@ func (t *SubagentTool) cancelRemaining(spawned []*spawnedTask) ToolResult {
 	}
 }
 
-func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, timeoutSec int) []subagentResult {
+func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask) []subagentResult {
 	results := make([]subagentResult, len(tasks))
 	var wg sync.WaitGroup
 
@@ -1126,11 +1096,7 @@ func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, 
 		wg.Add(1)
 		go func(idx int, t subagentTask) {
 			defer wg.Done()
-			childTimeout := timeoutSec
-			if t.Timeout != nil {
-				childTimeout = *t.Timeout
-			}
-			results[idx] = runSingleTask(ctx, runner, t, childTimeout, true)
+			results[idx] = runSingleTask(ctx, runner, t, 0, true)
 		}(i, task)
 	}
 
@@ -1183,12 +1149,10 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		defer func() { finishWorktree(ctx, wt) }()
 	}
 
+	// timeoutSec is retained in this private signature for source compatibility
+	// with existing tests/callers, but subagent runs no longer create a
+	// child-specific deadline. Parent cancellation and kill_job remain intact.
 	runCtx := ctx
-	if timeoutSec > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
-		defer cancel()
-	}
 
 	// The child's isolated HTTP connection pool is created by the runner (see
 	// agentRunner.run in main.go), which binds it to the provider it resolves.
@@ -1210,15 +1174,9 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		}
 	}
 
-	// max_iterations precedence: explicit per-task override wins, then the
-	// named agent's frontmatter `max_iterations` (only when positive — 0/unset
-	// means "the definition didn't say"), then nil so ResolveMaxIter applies
-	// its own default downstream.
-	maxIter := task.MaxIterations
-	if maxIter == nil && def.MaxIterations > 0 {
-		v := def.MaxIterations
-		maxIter = &v
-	}
+	// max_iterations remains parsed and carried by subagentTask for API
+	// compatibility, but subagent execution is always unlimited. In particular,
+	// named-agent frontmatter cannot reintroduce a child iteration cap.
 
 	// Temperature and Fallback are read straight off the named agent's
 	// definition — unlike Model/MaxIterations there is no per-task override
@@ -1227,7 +1185,7 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	// source. When task.Agent is empty, def is the zero value: Temperature
 	// is nil and Fallback is nil, i.e. nothing changes for a plain subagent.
 	opts := SubagentOptions{
-		MaxIterations:    maxIter,
+		// MaxIterations is deliberately not populated: the runner is unlimited.
 		Tools:            def.Tools,
 		Temperature:      def.Temperature,
 		MaxTokens:        def.MaxTokens,

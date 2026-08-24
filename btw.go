@@ -142,10 +142,10 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 	// new job appends can ever alias or mutate the stored transcript.
 	forked := forkMessagesForBtw(entry.msgs, task)
 
-	// Same detach-and-backstop pattern as runAsync (tools/subagent.go): the
-	// tool call's own ctx dies with this turn, but the resumed job must keep
-	// running after Resume returns.
-	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tools.SubagentTimeoutSec*time.Second)
+	// Detach from the tool call's context so the resumed job keeps running after
+	// Resume returns. The registry still owns cancellation for kill_job; there
+	// is deliberately no subagent-specific deadline.
+	jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 
 	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
 	job := a.reg.Start(jobCtx, task, jobs.KindSubagent, parentID, func(runCtx context.Context, newJobID string) (string, bool, error) {
@@ -297,7 +297,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 	question := eval.question
 	btwEvaluationsMu.Unlock()
 
-	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tools.SubagentTimeoutSec*time.Second)
+	jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
 	job := JobRegistry.Start(jobCtx, question, jobs.KindSubagent, parentID, func(runCtx context.Context, jobID string) (string, bool, error) {
 		defer cancel()
@@ -333,6 +333,9 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 
 func btwConfig(base agent.Config) agent.Config {
 	cfg := base
+	// A /btw/fork/resume child is unlimited just like an ordinary subagent;
+	// preserve the parent's other model settings and cancellation behavior.
+	cfg.MaxIterations = 0
 	cfg.Session = nil
 	cfg.NextMessages = nil
 	cfg.PendingTodos = nil
@@ -370,9 +373,10 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 	}
 	btwActive++
 	btwEvaluationsMu.Unlock()
-	// The evaluation is a /btw subagent job too, so it uses the same
-	// shared wall-clock backstop as promoted and resumed jobs.
-	ctx, cancelEvaluation := context.WithTimeout(ctx, time.Duration(tools.SubagentTimeoutSec)*time.Second)
+	// The evaluation is a /btw subagent job too. Keep the caller's cancellation
+	// signal, but do not create a special subagent deadline; kill_job and the
+	// registry still cancel the job when requested.
+	ctx, cancelEvaluation := context.WithCancel(ctx)
 	forked := forkMessagesForBtw(cond.Messages(), question)
 	cfg := btwConfig(cond.Config())
 	cfg.Schema = tools.BtwEvaluationSchemaJSON()

@@ -102,8 +102,11 @@ func TestBtwConfig_StripsMainThreadCallbacksButKeepsToolBehavior(t *testing.T) {
 	if got.System != base.System {
 		t.Errorf("System should be preserved, got %q", got.System)
 	}
-	if got.MaxRetries != base.MaxRetries || got.MaxIterations != base.MaxIterations {
-		t.Errorf("MaxRetries/MaxIterations should be preserved")
+	if got.MaxRetries != base.MaxRetries {
+		t.Errorf("MaxRetries should be preserved")
+	}
+	if got.MaxIterations != 0 {
+		t.Errorf("MaxIterations should be unlimited for a /btw child, got %d", got.MaxIterations)
 	}
 	if got.Session != nil {
 		t.Error("Session must be nil — a /btw fork writes no session log")

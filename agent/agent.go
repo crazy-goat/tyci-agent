@@ -177,14 +177,10 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	fs := fallbackState{idx: -1, mc: mc}
 
 	for iter := 0; cfg.MaxIterations <= 0 || iter < cfg.MaxIterations; iter++ {
-		// Warn the model, one turn ahead, that it is about to be cut off —
-		// either by the iteration cap or by ctx's wall-clock deadline (the
-		// latter is how a subagent's SubagentTimeoutSec actually terminates
-		// it in practice; see tools/subagent.go). This must run BEFORE the
-		// runOnce call below: at the true last iteration the model gets
-		// exactly one more assistant turn, and if that turn is a tool call
-		// the loop exits before the model ever sees the result — so the
-		// warning has to already be in msgs for that final call to see it.
+		// Warn the model, one turn ahead, when an explicit iteration cap or
+		// caller deadline is about to stop this run. Ordinary subagent runs
+		// configure neither, so they do not receive a synthetic last-step
+		// warning. This must run before runOnce so a capped final turn sees it.
 		if !lastStepWarned {
 			warn := cfg.MaxIterations > 0 && iter == cfg.MaxIterations-1
 			if !warn {

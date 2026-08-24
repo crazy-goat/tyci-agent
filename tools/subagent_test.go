@@ -653,45 +653,19 @@ func TestRunSingleTask_ModelPrecedence_ParentWins(t *testing.T) {
 	}
 }
 
-// --- max_iterations precedence: task > def (if >0) > default (nil) --------
+// --- max_iterations compatibility: accepted and ignored ---------------------
 
-func TestRunSingleTask_MaxIterPrecedence_TaskWinsOverDef(t *testing.T) {
+func TestRunSingleTask_MaxIterationsAreIgnored(t *testing.T) {
 	dir := setupHermeticAgentDirs(t)
 	writeTestAgent(t, dir, "myagent", "---\nmax_iterations: 7\n---\nbody")
 
 	r := &recordingRunner{}
-	task := subagentTask{Task: "x", Agent: "myagent", MaxIterations: ptr(3)}
-	runSingleTask(context.Background(), r, task, 0, true)
-
-	if r.gotOpts.MaxIterations == nil || *r.gotOpts.MaxIterations != 3 {
-		t.Errorf("expected task.MaxIterations=3 to win, got %v", r.gotOpts.MaxIterations)
-	}
-}
-
-func TestRunSingleTask_MaxIterPrecedence_DefWinsOverDefault(t *testing.T) {
-	dir := setupHermeticAgentDirs(t)
-	writeTestAgent(t, dir, "myagent", "---\nmax_iterations: 7\n---\nbody")
-
-	r := &recordingRunner{}
-	task := subagentTask{Task: "x", Agent: "myagent"} // no per-task override
-	runSingleTask(context.Background(), r, task, 0, true)
-
-	if r.gotOpts.MaxIterations == nil || *r.gotOpts.MaxIterations != 7 {
-		t.Errorf("expected def.MaxIterations=7 to flow through, got %v", r.gotOpts.MaxIterations)
-	}
-}
-
-func TestRunSingleTask_MaxIterPrecedence_NeitherSetIsNil(t *testing.T) {
-	dir := setupHermeticAgentDirs(t)
-	// No max_iterations in the frontmatter at all.
-	writeTestAgent(t, dir, "myagent", "---\ndescription: no cap here\n---\nbody")
-
-	r := &recordingRunner{}
-	task := subagentTask{Task: "x", Agent: "myagent"}
+	v := 3
+	task := subagentTask{Task: "x", Agent: "myagent", MaxIterations: &v}
 	runSingleTask(context.Background(), r, task, 0, true)
 
 	if r.gotOpts.MaxIterations != nil {
-		t.Errorf("expected nil MaxIterations so ResolveMaxIter applies its default, got %v", *r.gotOpts.MaxIterations)
+		t.Errorf("expected MaxIterations to be ignored for subagents, got %v", *r.gotOpts.MaxIterations)
 	}
 }
 
@@ -1126,41 +1100,33 @@ func TestParseTasks_MaxIterations_Float64(t *testing.T) {
 	}
 }
 
-func TestParseTasks_TimeoutValidation(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		in   any
-		want int
-	}{
-		{"minimum", SubagentMinTimeoutSec, SubagentMinTimeoutSec},
-		{"maximum", SubagentMaxTimeoutSec, SubagentMaxTimeoutSec},
-		{"float64", float64(SubagentMinTimeoutSec + 1), SubagentMinTimeoutSec + 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			tasks, err := parseTasks(map[string]any{"task": "x", "timeout": tc.in}, "model")
-			if err != nil {
-				t.Fatalf("parseTasks: %v", err)
-			}
-			if tasks[0].Timeout == nil || *tasks[0].Timeout != tc.want {
-				t.Fatalf("got timeout %v, want %d", tasks[0].Timeout, tc.want)
-			}
-		})
-	}
+func TestParseTasks_TimeoutCompatibility(t *testing.T) {
 	for _, in := range []any{
-		SubagentMinTimeoutSec - 1,
+		SubagentMinTimeoutSec,
+		SubagentMaxTimeoutSec,
+		0,
 		SubagentMaxTimeoutSec + 1,
-		float64(SubagentMinTimeoutSec) - 0.1,
+		-1,
 		float64(SubagentMinTimeoutSec) + 0.9,
-		float64(SubagentMaxTimeoutSec) + 0.9,
 		math.NaN(),
 		math.Inf(1),
 	} {
-		if _, err := parseTasks(map[string]any{"task": "x", "timeout": in}, "model"); err == nil {
-			t.Errorf("timeout %v: expected validation error", in)
+		tasks, err := parseTasks(map[string]any{"task": "x", "timeout": in}, "model")
+		if f, invalidFloat := in.(float64); invalidFloat && (math.IsNaN(f) || math.IsInf(f, 0)) {
+			if err == nil {
+				t.Errorf("timeout %v: expected malformed-number error", in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("timeout %v should remain accepted for compatibility: %v", in, err)
+		}
+		if tasks[0].Timeout == nil {
+			t.Fatalf("timeout %v was not retained for compatibility", in)
 		}
 	}
 	if tasks, err := parseTasks(map[string]any{"task": "x"}, "model"); err != nil || tasks[0].Timeout != nil {
-		t.Fatalf("omitted timeout should use the runtime default, got tasks=%+v err=%v", tasks, err)
+		t.Fatalf("omitted timeout should remain nil, got tasks=%+v err=%v", tasks, err)
 	}
 }
 
@@ -1178,66 +1144,64 @@ func TestSubagentSchema_TimeoutField(t *testing.T) {
 	if timeout == nil || timeout["type"] != "integer" {
 		t.Fatalf("subagent schema missing integer timeout field: %+v", timeout)
 	}
-	if !strings.Contains(timeout["description"].(string), fmt.Sprintf("%d", SubagentMinTimeoutSec)) {
-		t.Errorf("timeout schema does not describe its lower bound: %v", timeout)
+	if !strings.Contains(timeout["description"].(string), "ignored") {
+		t.Errorf("timeout schema does not explain compatibility behavior: %v", timeout)
 	}
 }
 
-func TestSubagentTimeout_PropagatesExplicitAndDefaultDeadline(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		input   map[string]any
-		wantDur time.Duration
-	}{
-		{"explicit", map[string]any{"task": "x", "timeout": SubagentMinTimeoutSec}, time.Duration(SubagentMinTimeoutSec) * time.Second},
-		{"default", map[string]any{"task": "x"}, time.Duration(SubagentTimeoutSec) * time.Second},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			SetJobStarter(nil)
-			t.Cleanup(func() { SetJobStarter(nil) })
-			var got time.Duration
-			runner := &mockRunner{RunTaskFunc: func(ctx context.Context, _, _ string, _ SubagentOptions) (string, error) {
-				deadline, ok := ctx.Deadline()
-				if !ok {
-					t.Fatal("child context has no wall-clock deadline")
-				}
-				got = time.Until(deadline)
-				return "done", nil
-			}}
-			ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
-			res := (&SubagentTool{Runner: runner}).Run(ctx, tc.input)
-			if !res.Success {
-				t.Fatalf("subagent failed: %s", res.Error)
-			}
-			if got <= tc.wantDur-time.Second || got > tc.wantDur {
-				t.Fatalf("child deadline was %s from now, want approximately %s", got, tc.wantDur)
-			}
-		})
-	}
-}
-
-func TestSubagentSpawn_UsesExplicitDeadline(t *testing.T) {
+func TestSubagentRunnerGetsUnlimitedContext(t *testing.T) {
 	reg := jobs.NewRegistry()
 	SetJobStarter(testJobStarter{reg})
 	t.Cleanup(func() { SetJobStarter(nil) })
 
-	var got time.Duration
+	var gotCtx context.Context
+	var gotOpts SubagentOptions
+	runner := &mockRunner{RunTaskFunc: func(ctx context.Context, _, _ string, opts SubagentOptions) (string, error) {
+		gotCtx = ctx
+		gotOpts = opts
+		return "done", nil
+	}}
+	// Both legacy limit fields are accepted, but neither may constrain the
+	// context or runner options used for a real child.
+	maxIterations := 1
+	res := (&SubagentTool{Runner: runner}).Run(connector.WithModelClient(context.Background(), fakeModelClient("test/model")), map[string]any{
+		"task":           "x",
+		"max_iterations": maxIterations,
+		"timeout":        1,
+	})
+	if !res.Success {
+		t.Fatalf("subagent failed: %s", res.Error)
+	}
+	if gotCtx == nil {
+		t.Fatal("runner was not called")
+	}
+	if _, ok := gotCtx.Deadline(); ok {
+		t.Fatal("subagent runner received an unintended deadline")
+	}
+	if gotOpts.MaxIterations != nil {
+		t.Fatalf("legacy MaxIterations reached runner: %v", gotOpts.MaxIterations)
+	}
+}
+
+func TestSubagentSpawnGetsUnlimitedContext(t *testing.T) {
+	reg := jobs.NewRegistry()
+	SetJobStarter(testJobStarter{reg})
+	t.Cleanup(func() { SetJobStarter(nil) })
+
+	var gotCtx context.Context
 	runner := &mockRunner{RunTaskFunc: func(ctx context.Context, _, _ string, _ SubagentOptions) (string, error) {
-		deadline, ok := ctx.Deadline()
-		if !ok {
-			t.Fatal("child context has no wall-clock deadline")
-		}
-		got = time.Until(deadline)
+		gotCtx = ctx
 		return "done", nil
 	}}
 	tool := &SubagentTool{Runner: runner}
-	timeout := SubagentMinTimeoutSec
+	timeout := 1
 	st := tool.spawn(context.Background(), subagentTask{Task: "x", Timeout: &timeout}, true, false)
 	<-st.done
-
-	want := time.Duration(timeout) * time.Second
-	if got <= want-time.Second || got > want {
-		t.Fatalf("child deadline was %s from now, want approximately %s", got, want)
+	if gotCtx == nil {
+		t.Fatal("runner was not called")
+	}
+	if _, ok := gotCtx.Deadline(); ok {
+		t.Fatal("async subagent runner received an unintended deadline")
 	}
 }
 
@@ -1264,10 +1228,9 @@ func TestToInt_RejectsBadFloats(t *testing.T) {
 	}
 }
 
-// TestRunSingleTask_PropagatesMaxIter ensures the parsed MaxIterations
-// actually flows through to the runner interface — not lost in the build of
-// SubagentOptions inside runSingleTask.
-func TestRunSingleTask_PropagatesMaxIter(t *testing.T) {
+// TestRunSingleTask_IgnoresMaxIter ensures the compatibility input does not
+// become an execution cap in the runner options.
+func TestRunSingleTask_IgnoresMaxIter(t *testing.T) {
 	var captured *int
 	runner := &mockRunner{
 		RunTaskFunc: func(_ context.Context, _ string, _ string, opts SubagentOptions) (string, error) {
@@ -1281,25 +1244,8 @@ func TestRunSingleTask_PropagatesMaxIter(t *testing.T) {
 	if !res.Success || res.Content != "ok" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
-	if captured == nil || *captured != v {
-		t.Errorf("runner received MaxIterations=%v, want %d", captured, v)
-	}
-}
-
-// TestRunSingleTask_NilMaxIter passes nil through (parent omitted the
-// field); the runner should see nil and resolve via the default.
-func TestRunSingleTask_NilMaxIter(t *testing.T) {
-	var captured *int
-	runner := &mockRunner{
-		RunTaskFunc: func(_ context.Context, _ string, _ string, opts SubagentOptions) (string, error) {
-			captured = opts.MaxIterations
-			return "ok", nil
-		},
-	}
-	task := subagentTask{Task: "do"} // MaxIterations nil
-	runSingleTask(context.Background(), runner, task, 0, true)
 	if captured != nil {
-		t.Errorf("runner received MaxIterations=%v, want nil", captured)
+		t.Errorf("runner received legacy MaxIterations=%v, want nil", captured)
 	}
 }
 
@@ -1449,7 +1395,7 @@ func TestRunTasks_SiblingChildrenGetDistinctTodoLists(t *testing.T) {
 	}}
 
 	tasks := []subagentTask{{Task: "alpha"}, {Task: "beta"}}
-	runTasks(ctxWithParentModel("test-model"), runner, tasks, 0)
+	runTasks(ctxWithParentModel("test-model"), runner, tasks)
 
 	mu.Lock()
 	alpha, beta := seen["alpha"], seen["beta"]

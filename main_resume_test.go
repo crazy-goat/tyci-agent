@@ -14,10 +14,8 @@ import (
 )
 
 // alwaysHelpTool is a Fake that calls the always-registered "help" tool on
-// every turn, so the child agent never finishes on its own and is forced to
-// stop at its MaxIterations cap. "help" is chosen because it needs no
-// wiring (tools.RunTool has it registered unconditionally — see
-// tools/tool.go) and always succeeds with empty args.
+// every turn, so the child agent never finishes on its own. It is retained for
+// legacy cutoff-message tests; ordinary subagent runs are now unlimited.
 func alwaysHelpTool() *connectortest.Fake {
 	return &connectortest.Fake{
 		ProviderName: "always-help",
@@ -74,26 +72,16 @@ func TestSubagentCutoffMessage_ZeroOutput_StaysResumable(t *testing.T) {
 // jobID is present, run() must actually have stashed resumable[jobID] by
 // the time it returns its cutoff error — otherwise the message
 // subagentCutoffMessage produces above would itself be a dead end.
-func TestAgentRunnerRun_ZeroOutputTruncated_ResumableEntryExists(t *testing.T) {
-	fake := alwaysHelpTool()
+func TestAgentRunnerRun_UnlimitedIgnoresLegacyMaxIterations(t *testing.T) {
+	fake := connectortest.Text("child answer")
 	ctx := connector.WithModelClient(context.Background(), fake)
-	jobID := "job-zero-output-2"
-	ctx = context.WithValue(ctx, tools.JobIDCtxKey{}, jobID)
-
-	one := 2
-	opts := tools.SubagentOptions{MaxIterations: &one}
-
-	r := &agentRunner{}
-	_, err := r.run(ctx, "do the thing", "", "", opts)
-	if err == nil {
-		t.Fatalf("expected an error (hit the iteration cap), got nil")
+	one := 1
+	text, err := (&agentRunner{}).run(ctx, "do the thing", "", "", tools.SubagentOptions{MaxIterations: &one})
+	if err != nil {
+		t.Fatalf("legacy MaxIterations should be ignored, got %v", err)
 	}
-
-	resumableMu.Lock()
-	_, ok := resumable[jobID]
-	resumableMu.Unlock()
-	if !ok {
-		t.Errorf("resumable[%q] was not stashed for a truncated child", jobID)
+	if !strings.HasPrefix(text, "child answer") {
+		t.Fatalf("unexpected child result: %q", text)
 	}
 }
 
@@ -103,46 +91,17 @@ func TestAgentRunnerRun_ZeroOutputTruncated_ResumableEntryExists(t *testing.T) {
 // call resume(job_id=...) with — not just a generic "use resume" hint. This
 // also protects tools/resume.go's contract: ResumeTool.Run requires job_id
 // as input, so a note without one is unactionable.
-func TestAgentRunnerRun_TruncatedWithText_NoteCarriesUsableJobID(t *testing.T) {
-	fake := &connectortest.Fake{
-		ProviderName: "partial",
-		ModelName:    "partial-1",
-		Turns: [][]stream.Event{
-			{
-				stream.TextDelta{Text: "partial progress"},
-				stream.ToolCall{ID: "tc", Name: "help", Arguments: "{}"},
-				stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
-			},
-		},
-		OnExhausted: []stream.Event{
-			stream.ToolCall{ID: "tc", Name: "help", Arguments: "{}"},
-			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
-		},
-	}
-	ctx := connector.WithModelClient(context.Background(), fake)
+func TestSubagentCutoffMessage_TruncatedWithTextCarriesUsableJobID(t *testing.T) {
 	jobID := "job-partial-1"
-	ctx = context.WithValue(ctx, tools.JobIDCtxKey{}, jobID)
-
-	two := 2
-	opts := tools.SubagentOptions{MaxIterations: &two}
-
-	r := &agentRunner{}
-	text, err := r.run(ctx, "do the thing", "", "", opts)
+	text, err := subagentCutoffMessage("partial progress", false, jobID, 2, nil)
 	if !errors.Is(err, tools.ErrSubagentTruncated) {
 		t.Fatalf("expected ErrSubagentTruncated, got %v", err)
 	}
 	if !strings.Contains(text, "partial progress") {
-		t.Fatalf("returned text lost the child's partial output: %q", text)
+		t.Fatalf("returned text lost the partial output: %q", text)
 	}
-	if !strings.Contains(text, "resume(job_id=\""+jobID+"\"") && !strings.Contains(text, jobID) {
+	if !strings.Contains(text, "resume(job_id=\""+jobID+"\"") {
 		t.Errorf("note text does not carry a usable job id (%q): %q", jobID, text)
-	}
-
-	resumableMu.Lock()
-	_, ok := resumable[jobID]
-	resumableMu.Unlock()
-	if !ok {
-		t.Errorf("resumable[%q] was not stashed for the truncated-with-text case", jobID)
 	}
 }
 

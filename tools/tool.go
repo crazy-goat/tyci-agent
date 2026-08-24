@@ -15,14 +15,10 @@ import (
 // subagent invocation. Built per-call in main.go and tools/subagent.go;
 // not serialized, so future fields are added as Go struct additions.
 type SubagentOptions struct {
-	// MaxIterations caps the child agent's tool-call turns. Semantics
-	// (mirrors agent.Options.MaxIterations):
-	//   - nil       → use ResolveMaxIter's default (currently unlimited)
-	//   - 0 or <0   → unlimited
-	//   - >0        → cap the child at that many turns
-	// Note: 0 is *not* "no turns allowed" — it's "use the unlimited
-	// default". A parent that wants to forbid tool calls entirely must
-	// avoid invoking the subagent at all (or use a child without tools).
+	// MaxIterations is retained for API compatibility with older callers and
+	// agent definitions. Subagent runners intentionally ignore it: child runs
+	// are unlimited unless canceled through their context (for example by
+	// kill_job).
 	MaxIterations *int
 
 	// Tools, when non-empty, restricts the child to these tool names.
@@ -60,14 +56,9 @@ type SubagentOptions struct {
 	History []connector.Message
 }
 
-// DefaultSubagentMaxIterations is the cap applied when SubagentOptions has
-// no explicit MaxIterations. -1 means unlimited. Defined as a constant (not
-// a function) so both main.go and tests see the same value.
-//
-// This is a deliberate behavior change from the hard-coded 10 that preceded
-// it: a caller that omits MaxIterations now runs unbounded, held only by
-// SubagentOptions' semantics and the wall-clock backstop in subagent.go. A
-// caller that wants a finite cap has to pass an explicit positive integer.
+// DefaultSubagentMaxIterations is retained for source compatibility with
+// callers that resolve the legacy option themselves. Subagent runners no
+// longer use it because child execution is always unlimited.
 const DefaultSubagentMaxIterations = -1
 
 // TruncatedMarker is the literal suffix appended to a single-task subagent
@@ -278,15 +269,15 @@ func builtinToolsSchema() []map[string]any {
 							"task":            map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has every tool except subagent itself."},
 							"agent":           map[string]any{"type": "string", "description": "Named agent to use"},
 							"model":           map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
-							"max_iterations":  map[string]any{"type": "integer", "description": "Cap this child's tool-call turns. Set a positive integer to bound a risky subtask (e.g. exploration, code review); omit to use the runner default (currently unlimited, bounded by a 1800s wall-clock timeout). 0 and negative values mean unlimited."},
-							"timeout":         map[string]any{"type": "integer", "description": fmt.Sprintf("Optional wall-clock limit for this child, in seconds. Explicit values must be between %d and %d; omit to use the %d-second default.", SubagentMinTimeoutSec, SubagentMaxTimeoutSec, SubagentTimeoutSec)},
+							"max_iterations":  map[string]any{"type": "integer", "description": "Accepted for compatibility but ignored: subagent tool-call turns are unlimited; cancel the child with kill_job if needed."},
+							"timeout":         map[string]any{"type": "integer", "description": "Accepted for compatibility but ignored: subagent wall-clock execution is unlimited; cancel the child with kill_job if needed."},
 							"async":           map[string]any{"type": "boolean", "description": "Run this task as a background job and return its job_id immediately instead of blocking. Must match every other task's async value in the same call."},
 							"isolation":       map[string]any{"type": "string", "enum": []string{"worktree"}, "description": "Give this child its own checkout of the repository, on its own branch, instead of the shared working directory: \"worktree\". Use it whenever two or more children WRITE at the same time — then they cannot clobber each other and nothing has to take turns on a lock. The cost is that its edits are not in your tree: the result tells you the branch and how to diff it, and you decide whether to merge. A child that only reads needs nothing here, and its checkout is removed automatically when it changed no files. Needs a git repository."},
 							"inherit_history": map[string]any{"type": "boolean", "description": "Seed this child with YOUR conversation so far — every message up to this call — instead of starting it from just task alone. Use this when the child needs context it would otherwise have no way to see (earlier findings, decisions, file contents already read). The child still only gets task appended as its own new turn on top of that history; it does not see anything that happens in your conversation afterward."},
 						}, "required": []string{"task"}}},
 						"model":           map[string]any{"type": "string", "description": "Optional model override for single task (format: provider/model, e.g. opencode-zen/big-pickle)"},
-						"max_iterations":  map[string]any{"type": "integer", "description": "Cap on the child's tool-call turns. Omit or 0 to use the runner's default (currently unlimited); negative = unlimited. Useful for bounding long-running subtasks like exploration or code review."},
-						"timeout":         map[string]any{"type": "integer", "description": fmt.Sprintf("Optional wall-clock limit for this child, in seconds. Explicit values must be between %d and %d; omit to use the %d-second default.", SubagentMinTimeoutSec, SubagentMaxTimeoutSec, SubagentTimeoutSec)},
+						"max_iterations":  map[string]any{"type": "integer", "description": "Accepted for compatibility but ignored: subagent tool-call turns are unlimited; cancel the child with kill_job if needed."},
+						"timeout":         map[string]any{"type": "integer", "description": "Accepted for compatibility but ignored: subagent wall-clock execution is unlimited; cancel the child with kill_job if needed."},
 						"async":           map[string]any{"type": "boolean", "description": "Run as a background job and return a job_id immediately instead of blocking until it finishes. Poll with wait(job_id=...)."},
 						"isolation":       map[string]any{"type": "string", "enum": []string{"worktree"}, "description": "Give this child its own checkout of the repository, on its own branch, instead of the shared working directory: \"worktree\". Use it whenever two or more children WRITE at the same time — then they cannot clobber each other and nothing has to take turns on a lock. The cost is that its edits are not in your tree: the result tells you the branch and how to diff it, and you decide whether to merge. A child that only reads needs nothing here, and its checkout is removed automatically when it changed no files. Needs a git repository."},
 						"inherit_history": map[string]any{"type": "boolean", "description": "Seed this child with YOUR conversation so far — every message up to this call — instead of starting it from just task alone. Use this when the child needs context it would otherwise have no way to see (earlier findings, decisions, file contents already read). The child still only gets task appended as its own new turn on top of that history; it does not see anything that happens in your conversation afterward."},

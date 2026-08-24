@@ -266,10 +266,9 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// TestWithIsolatedPool_WrapsFallbacksWithPrimary).
 	mc, fallbacks := withIsolatedPool(mc, clients)
 
-	// Resolve the iteration cap: explicit parent override wins; otherwise the
-	// (unlimited) default. Tools.ResolveMaxIter centralizes nil/0/negative
-	// semantics so this logic is unit-tested in tools/.
-	maxIter := tools.ResolveMaxIter(opts)
+	// Subagent iteration limits are accepted in SubagentOptions for API
+	// compatibility, but child runs are intentionally unlimited. The only
+	// ordinary stop signals remain context cancellation (including kill_job).
 
 	// Drive agent.Run with the streaming Sink tools/subagent.go stashed in
 	// ctx (see tools.SubagentSink) so the child's Text/Thinking calls reach
@@ -321,7 +320,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	cfg := agent.Config{
 		System:        system,
 		MaxRetries:    1,
-		MaxIterations: maxIter,
+		MaxIterations: 0,
 		Debug:         false,
 		Tools:         &subagentToolRunner{allowed: opts.Tools},
 		Schema:        tools.GetSubagentToolsSchemaJSONFor(opts.Tools),
@@ -371,7 +370,10 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		return subagentStoppedMessage(text, jobID)
 	}
 	if truncated || deadlineExceeded {
-		return subagentCutoffMessage(text, deadlineExceeded, jobID, maxIter, err)
+		// agentRunner configures child runs without a MaxIterations or
+		// subagent-specific deadline. Keep the legacy cutoff normalization for
+		// externally supplied contexts and compatibility with older runners.
+		return subagentCutoffMessage(text, deadlineExceeded, jobID, tools.DefaultSubagentMaxIterations, err)
 	}
 	if err != nil {
 		return "", err
