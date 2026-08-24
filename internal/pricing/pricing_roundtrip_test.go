@@ -55,7 +55,7 @@ func TestRefreshModels_RoundTripPreservesPrices(t *testing.T) {
 	restore := connect.SetHTTPClientForTests(fakeModelsDevDoer{body: payload})
 	t.Cleanup(restore)
 
-	if _, _, err := connect.RefreshModels("", false); err != nil {
+	if _, _, _, err := connect.RefreshModels("", false); err != nil {
 		t.Fatalf("RefreshModels() error: %v", err)
 	}
 

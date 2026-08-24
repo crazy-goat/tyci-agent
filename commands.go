@@ -644,7 +644,7 @@ var providerRefreshCmd = &cobra.Command{
 		providerFilter, _ := cmd.Flags().GetString("provider")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
-		imported, keptUnchanged, err := connect.RefreshModels(providerFilter, dryRun)
+		imported, keptUnchanged, skippedZeroModels, err := connect.RefreshModels(providerFilter, dryRun)
 		if err != nil {
 			return err
 		}
@@ -653,6 +653,9 @@ var providerRefreshCmd = &cobra.Command{
 			fmt.Fprintln(os.Stdout, "No providers found to import")
 			if keptUnchanged > 0 {
 				fmt.Fprintf(os.Stdout, "%d existing provider(s) left untouched\n", keptUnchanged)
+			}
+			if skippedZeroModels > 0 {
+				fmt.Fprintf(os.Stdout, "%d provider(s) were fetched but returned no models; their cached prices may be stale\n", skippedZeroModels)
 			}
 			return nil
 		}
@@ -677,6 +680,10 @@ var providerRefreshCmd = &cobra.Command{
 				verb = "would be left"
 			}
 			fmt.Fprintf(os.Stdout, "\n%d existing provider(s) %s untouched (not fetched from models.dev)\n", keptUnchanged, verb)
+		}
+
+		if skippedZeroModels > 0 {
+			fmt.Fprintf(os.Stdout, "%d provider(s) were fetched but returned no models; their cached prices may be stale\n", skippedZeroModels)
 		}
 
 		if !dryRun {
