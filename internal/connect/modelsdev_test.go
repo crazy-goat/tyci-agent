@@ -66,7 +66,7 @@ func TestRefreshModels_FetchCarriesCostAndLimitOnDisk(t *testing.T) {
 	setHome(t, dir)
 	withFakeModelsDev(t, pricedPayload)
 
-	if _, _, err := RefreshModels("", false); err != nil {
+	if _, _, _, err := RefreshModels("", false); err != nil {
 		t.Fatalf("RefreshModels() error: %v", err)
 	}
 
@@ -107,7 +107,7 @@ func TestRefreshModels_PreservesHandAddedProvider(t *testing.T) {
 	}
 	writeCatalog(t, existing)
 
-	if _, _, err := RefreshModels("", false); err != nil {
+	if _, _, _, err := RefreshModels("", false); err != nil {
 		t.Fatalf("RefreshModels() error: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestRefreshModels_ReplacesProviderFetchAlsoReturns(t *testing.T) {
 	}
 	writeCatalog(t, existing)
 
-	imported, keptUnchanged, err := RefreshModels("", false)
+	imported, keptUnchanged, _, err := RefreshModels("", false)
 	if err != nil {
 		t.Fatalf("RefreshModels() error: %v", err)
 	}
@@ -199,15 +199,21 @@ func TestRefreshModels_DegradedFetchDoesNotEmptyPricedProvider(t *testing.T) {
 	}
 	writeCatalog(t, existing)
 
-	imported, keptUnchanged, err := RefreshModels("", false)
+	imported, keptUnchanged, skippedZeroModels, err := RefreshModels("", false)
 	if err != nil {
 		t.Fatalf("RefreshModels() error: %v", err)
 	}
 	if len(imported) != 0 {
 		t.Fatalf("imported = %+v, want none (degraded fetch skipped)", imported)
 	}
-	if keptUnchanged != 1 {
-		t.Fatalf("keptUnchanged = %d, want 1", keptUnchanged)
+	// The provider WAS fetched (models.dev recognises its npm package), so it
+	// is not a "not fetched, left untouched" case: it must be reported as a
+	// skipped-zero-models fetch, and keptUnchanged must not count it.
+	if keptUnchanged != 0 {
+		t.Fatalf("keptUnchanged = %d, want 0", keptUnchanged)
+	}
+	if skippedZeroModels != 1 {
+		t.Fatalf("skippedZeroModels = %d, want 1", skippedZeroModels)
 	}
 
 	got := readCatalog(t)
@@ -245,7 +251,7 @@ func TestRefreshModels_NPMFilteredProviderDoesNotWipeExisting(t *testing.T) {
 	}
 	writeCatalog(t, existing)
 
-	imported, keptUnchanged, err := RefreshModels("", false)
+	imported, keptUnchanged, _, err := RefreshModels("", false)
 	if err != nil {
 		t.Fatalf("RefreshModels() error: %v", err)
 	}
@@ -280,7 +286,7 @@ func TestRefreshModels_DryRunReportsKeptVsReplaced(t *testing.T) {
 	}
 	writeCatalog(t, existing)
 
-	imported, keptUnchanged, err := RefreshModels("", true)
+	imported, keptUnchanged, _, err := RefreshModels("", true)
 	if err != nil {
 		t.Fatalf("RefreshModels(dryRun) error: %v", err)
 	}
@@ -353,7 +359,7 @@ func TestRefreshModels_SingleProviderFilterLeavesOthersUntouched(t *testing.T) {
 	}
 	writeCatalog(t, existing)
 
-	imported, keptUnchanged, err := RefreshModels("anthropic", false)
+	imported, keptUnchanged, _, err := RefreshModels("anthropic", false)
 	if err != nil {
 		t.Fatalf("RefreshModels(--provider anthropic) error: %v", err)
 	}
@@ -396,7 +402,7 @@ func TestRefreshModels_RefusesUnparsableExistingCatalog(t *testing.T) {
 		t.Fatalf("write corrupt catalog: %v", err)
 	}
 
-	_, _, err := RefreshModels("", false)
+	_, _, _, err := RefreshModels("", false)
 	if err == nil {
 		t.Fatal("RefreshModels() with an unparsable existing catalog: want error, got nil")
 	}

@@ -73,7 +73,7 @@ func TestRefreshModels_ImportsNothingLeavesFileUntouched(t *testing.T) {
 	restore := SetHTTPClientForTests(fakeModelsDevDoer{body: `{"weird":{"id":"weird","npm":"@nope/none","models":{}}}`})
 	t.Cleanup(restore)
 
-	imported, kept, err := RefreshModels("", false)
+	imported, kept, _, err := RefreshModels("", false)
 	if err != nil {
 		t.Fatal(err)
 	}

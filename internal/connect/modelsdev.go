@@ -118,20 +118,26 @@ func EnsureProvidersJSON() error {
 //
 // dryRun if true, only reports what would be imported without writing.
 // keptUnchanged is the number of existing providers the fetch left alone.
-func RefreshModels(providerFilter string, dryRun bool) (imported []RefreshProvider, keptUnchanged int, err error) {
+// skippedZeroModels is the number of existing providers that were fetched but
+// arrived with zero models, and were therefore kept as-is rather than emptied
+// (see the loop below). These are distinct from keptUnchanged: those were not
+// carried by models.dev at all, while skipped ones were fetched and indicate
+// a degraded fetch — the caller should say so, because the cached prices may
+// be stale.
+func RefreshModels(providerFilter string, dryRun bool) (imported []RefreshProvider, keptUnchanged int, skippedZeroModels int, err error) {
 	body, err := fetchModelsDev(defaultHTTPClient)
 	if err != nil {
-		return nil, 0, fmt.Errorf("fetching models.dev: %w", err)
+		return nil, 0, 0, fmt.Errorf("fetching models.dev: %w", err)
 	}
 
 	var fetched map[string]ModelsDevProvider
 	if err := json.Unmarshal(body, &fetched); err != nil {
-		return nil, 0, fmt.Errorf("parsing models.dev: %w", err)
+		return nil, 0, 0, fmt.Errorf("parsing models.dev: %w", err)
 	}
 
 	existing, err := readExistingCatalog()
 	if err != nil {
-		return nil, 0, fmt.Errorf("reading existing providers.json: %w", err)
+		return nil, 0, 0, fmt.Errorf("reading existing providers.json: %w", err)
 	}
 
 	filter := parseFilter(providerFilter)
@@ -156,6 +162,7 @@ func RefreshModels(providerFilter string, dryRun bool) (imported []RefreshProvid
 		// prevent. Skip the swap in that one case; every other case,
 		// including "incoming has models, cached had none", still replaces.
 		if len(p.Models) == 0 && len(cachedP.Models) > 0 {
+			skippedZeroModels++
 			continue
 		}
 		merged[id] = p
@@ -174,27 +181,27 @@ func RefreshModels(providerFilter string, dryRun bool) (imported []RefreshProvid
 			replaced++
 		}
 	}
-	keptUnchanged = len(existing) - replaced
+	keptUnchanged = len(existing) - replaced - skippedZeroModels
 
 	if dryRun {
-		return imported, keptUnchanged, nil
+		return imported, keptUnchanged, skippedZeroModels, nil
 	}
 
 	// Nothing was imported — a typo'd --provider, a filter that matched
 	// nothing, an empty response. Rewriting the file with exactly what was
 	// read would be all risk and no benefit, so don't touch it at all.
 	if len(imported) == 0 {
-		return imported, keptUnchanged, nil
+		return imported, keptUnchanged, skippedZeroModels, nil
 	}
 
 	out, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
-		return nil, 0, fmt.Errorf("encoding providers.json: %w", err)
+		return nil, 0, 0, fmt.Errorf("encoding providers.json: %w", err)
 	}
 	if err := writeCatalogAtomically(ProvidersJSONPath(), out); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	return imported, keptUnchanged, nil
+	return imported, keptUnchanged, skippedZeroModels, nil
 }
 
 // writeCatalogAtomically replaces providers.json in one step.
