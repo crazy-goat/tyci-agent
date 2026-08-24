@@ -199,6 +199,15 @@ func formatJobLine(j jobs.Job, width int) string {
 	if j.Status == jobs.StatusWaitingAnswer && j.Question != "" {
 		text = fmt.Sprintf("asks: %q", j.Question)
 	}
+	// A waiting question is actionable and must remain the sole body text:
+	// appending a long progress note would make normal-width lines truncate the
+	// question before the person can read what needs answering.
+	if j.Progress != "" && j.Status != jobs.StatusWaitingAnswer {
+		if text != "" {
+			text += " — "
+		}
+		text += "progress: " + j.Progress
+	}
 	// Reserve room for prefix/suffix (measured without ANSI codes via
 	// lipgloss.Width, which strips styling) before truncating the
 	// description into what's left.
