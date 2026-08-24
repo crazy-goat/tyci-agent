@@ -309,7 +309,12 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 		// next call — including in the middle of a tool-call loop —
 		// rather than waiting for the entire turn to finish.
 		drained := false
-		if cfg.NextMessages != nil {
+		// Do not drain after the final allowed iteration: there is no next
+		// runOnce to deliver those messages to. A completion notice must remain
+		// queued for the next turn (or an idle wakeup), rather than being
+		// consumed and silently lost here.
+		canDrain := cfg.MaxIterations <= 0 || iter+1 < cfg.MaxIterations
+		if canDrain && cfg.NextMessages != nil {
 			if pending := cfg.NextMessages(); len(pending) > 0 {
 				for _, line := range pending {
 					*msgs = append(*msgs, connector.Message{

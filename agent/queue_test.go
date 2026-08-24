@@ -399,6 +399,54 @@ func TestRun_NextMessages_RespectsMaxIterations(t *testing.T) {
 	}
 }
 
+// TestRun_NextMessages_PreservesNoticeOnFinalIteration: a queued message
+// arriving before the last allowed iteration must not be drained when there
+// is no further runOnce available to deliver it. The callback still owns the
+// notice for the next turn (or an idle wakeup).
+func TestRun_NextMessages_PreservesNoticeOnFinalIteration(t *testing.T) {
+	p := &connectortest.Fake{ProviderName: "mock", ModelName: "mock-1", Turns: [][]stream.Event{{
+		stream.TextDelta{Text: "done"},
+		stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+	}}}
+	d := &silentDisplay{}
+	queue := &queueCallback{}
+	queue.set([]string{"subagent finished — read it with wait(job_id=job-1)"})
+	msgs := []connector.Message{{
+		Role:    "user",
+		Content: []connector.ContentBlock{{Type: "text", Text: "hi"}},
+	}}
+
+	_, err := Run(context.Background(), p, d, &msgs, Config{
+		MaxRetries:    1,
+		MaxIterations: 1,
+		NextMessages:  queue.callback(),
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if p.Calls() != 1 {
+		t.Fatalf("Fake.Calls() = %d, want 1", p.Calls())
+	}
+	// The final-step warning is expected in addition to the original user and
+	// assistant messages; the queued notice itself must not be appended.
+	if len(msgs) != 3 {
+		t.Fatalf("unexpected final-iteration transcript: %#v", msgs)
+	}
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			if block.Text == "subagent finished — read it with wait(job_id=job-1)" {
+				t.Fatalf("final-iteration notice was appended despite no next turn: %#v", msgs)
+			}
+		}
+	}
+
+	// A later turn/idle wakeup must still be able to retrieve the notice.
+	pending := queue.callback()()
+	if len(pending) != 1 || pending[0] != "subagent finished — read it with wait(job_id=job-1)" {
+		t.Fatalf("queued notice = %v, want the original notice preserved", pending)
+	}
+}
+
 // ─── helpers ────────────────────────────────────────────────────────────
 
 func splitLines(s string) []string {
