@@ -92,6 +92,12 @@ type tuiMsgJobUpdate struct {
 	Job jobs.Job
 }
 
+// tuiMsgJobsReset clears the mirror at a conversation boundary and remembers
+// IDs whose queued terminal events belong to the old conversation.
+type tuiMsgJobsReset struct {
+	jobIDs []string
+}
+
 // tuiSetSessionListerMsg carries the callback the Sidebar's Sessions tab
 // (TODO item 1) uses to fetch this project's resumable sessions on demand.
 // Delivered as a message (same pattern as every other cross-goroutine
@@ -422,7 +428,12 @@ type TuiModel struct {
 	// TUI.SetJobEventBus (see tui_jobs_api.go). nil-safe map; empty (or
 	// never wired) means the inline panel and Ctrl+B modal render nothing,
 	// so users who never touch subagent(async: true) see no UI change.
-	backgroundJobs  map[string]jobs.Job
+	backgroundJobs map[string]jobs.Job
+	// ignoredJobIDs is populated by ResetJobs at a conversation boundary.
+	// Terminal events for those IDs may still be queued in the event bus, but
+	// must not resurrect old rows; IDs not in this set remain eligible, so jobs
+	// started after /new are shown normally.
+	ignoredJobIDs   map[string]bool
 	jobsModalActive bool
 	jobsModalCursor int // index into the sorted (newest-first) job list
 
@@ -542,6 +553,7 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		renderBuffer:          &RenderBuffer{},
 		modalRenderBuffer:     &RenderBuffer{},
 		backgroundJobs:        make(map[string]jobs.Job),
+		ignoredJobIDs:         make(map[string]bool),
 		toolCount:             toolCount,
 		skillCount:            skillCount,
 		mcpCount:              mcpCount,

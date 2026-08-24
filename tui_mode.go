@@ -266,6 +266,12 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				return
 			case trimmed == "/new":
 				iterCancel()
+				// Stop all async work from the old conversation before clearing
+				// its UI. Waiting for completion prevents terminal events and
+				// notices from being delivered into the new conversation.
+				oldJobIDs := JobRegistry.CancelAll()
+				JobNotices.Clear()
+				tuiDisp.ResetJobs(oldJobIDs)
 				// Cleanly terminate the live session so /new doesn't leave
 				// the file open with no closing event. /resume rebuilds
 				// later, so we need a proper boundary here. Unlike the

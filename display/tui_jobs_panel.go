@@ -30,6 +30,9 @@ const quietActivityThreshold = 5 * time.Second
 // applyJobUpdate upserts j into backgroundJobs. Called from Update() for
 // every tuiMsgJobUpdate, regardless of which overlay (if any) is active.
 func (m *TuiModel) applyJobUpdate(j jobs.Job) {
+	if m.ignoredJobIDs[j.ID] {
+		return
+	}
 	if m.backgroundJobs == nil {
 		m.backgroundJobs = make(map[string]jobs.Job)
 	}

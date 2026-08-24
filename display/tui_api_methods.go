@@ -274,6 +274,12 @@ func (t *TUI) Reset() {
 	t.post(tuiMsgBlock{kind: "reset"})
 }
 
+// ResetJobs clears the visible background-job history and ignores late events
+// for old IDs. New IDs remain accepted after the reset.
+func (t *TUI) ResetJobs(jobIDs []string) {
+	t.prog.Send(tuiMsgJobsReset{jobIDs: append([]string(nil), jobIDs...)})
+}
+
 // ShowTotalUsage displays accumulated total usage after a reset (/new).
 // Timing stats (t=, ttft=, tok/s) are per-request and not meaningful for
 // session totals, so we build the line manually without them.

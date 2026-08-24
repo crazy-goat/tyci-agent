@@ -45,6 +45,42 @@ func TestApplyJobUpdate_InsertsAndUpdatesByID(t *testing.T) {
 	}
 }
 
+func TestApplyJobUpdate_IgnoresResetOldJobAndAcceptsNewJob(t *testing.T) {
+	m := newTestModelForJobs()
+	old := jobs.Job{ID: "old", Description: "old task", Status: jobs.StatusRunning, StartedAt: time.Now()}
+	m.applyJobUpdate(old)
+	m.ignoredJobIDs = map[string]bool{"old": true}
+	m.backgroundJobs = make(map[string]jobs.Job)
+	m.applyJobUpdate(jobs.Job{ID: "old", Description: "late completion", Status: jobs.StatusFailed, FinishedAt: time.Now()})
+	if len(m.backgroundJobs) != 0 {
+		t.Fatalf("late old event resurrected a job: %+v", m.backgroundJobs)
+	}
+	m.applyJobUpdate(jobs.Job{ID: "new", Description: "new task", Status: jobs.StatusRunning, StartedAt: time.Now()})
+	if _, ok := m.backgroundJobs["new"]; !ok {
+		t.Fatal("new job was not accepted after reset")
+	}
+}
+
+func TestUpdateJobsResetClearsVisibleJobsAndIgnoresOldEvents(t *testing.T) {
+	m := newTestModelForJobs()
+	m.applyJobUpdate(jobs.Job{ID: "old", Status: jobs.StatusRunning, StartedAt: time.Now()})
+	model, _ := m.Update(tuiMsgJobsReset{jobIDs: []string{"old"}})
+	m = model.(TuiModel)
+	if len(m.backgroundJobs) != 0 {
+		t.Fatalf("reset retained old jobs: %+v", m.backgroundJobs)
+	}
+	model, _ = m.Update(tuiMsgJobUpdate{Job: jobs.Job{ID: "old", Status: jobs.StatusFailed}})
+	m = model.(TuiModel)
+	if len(m.backgroundJobs) != 0 {
+		t.Fatalf("late old event was accepted after reset: %+v", m.backgroundJobs)
+	}
+	model, _ = m.Update(tuiMsgJobUpdate{Job: jobs.Job{ID: "new", Status: jobs.StatusRunning, StartedAt: time.Now()}})
+	m = model.(TuiModel)
+	if len(m.backgroundJobs) != 1 || m.backgroundJobs["new"].Status != jobs.StatusRunning {
+		t.Fatalf("new event not accepted after reset: %+v", m.backgroundJobs)
+	}
+}
+
 // TestApplyJobUpdate_PrunesTerminalJobsBeyondTheRegistryBound mirrors
 // jobs.Registry's own eviction (pruneTerminalLocked): backgroundJobs is a
 // mirror fed by SetJobEventBus, not the registry itself, so without its own

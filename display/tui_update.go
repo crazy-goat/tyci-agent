@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/decodo/tyci/jobs"
 )
 
 // statusTickInterval is the interval between status-bar repaints while a
@@ -30,6 +31,17 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handled first and unconditionally: a background job can finish while
 	// any overlay (subagent modal, picker, …) is active, and backgroundJobs
 	// must stay current regardless of what's on screen.
+	if reset, ok := msg.(tuiMsgJobsReset); ok {
+		m.backgroundJobs = make(map[string]jobs.Job)
+		if m.ignoredJobIDs == nil {
+			m.ignoredJobIDs = make(map[string]bool)
+		}
+		for _, id := range reset.jobIDs {
+			m.ignoredJobIDs[id] = true
+		}
+		m.invalidateTotalLines()
+		return m, nil
+	}
 	if upd, ok := msg.(tuiMsgJobUpdate); ok {
 		m.applyJobUpdate(upd.Job)
 		return m, nil
