@@ -216,7 +216,7 @@ func TestMessageTool_TerminalStatusesRequireResume(t *testing.T) {
 			if res.Success {
 				t.Fatalf("%s job unexpectedly accepted a message", status)
 			}
-			if !strings.Contains(res.Error, "only live jobs") || !strings.Contains(res.Error, "resume(job_id, task)") {
+			if !strings.Contains(res.Error, "only targets live jobs") || !strings.Contains(res.Error, "resume(job_id, task)") || !strings.Contains(res.Error, "resume(job_id=\"job-12345-7\"") {
 				t.Fatalf("error = %q, want live-job/resume guidance for %s", res.Error, status)
 			}
 			if len(f.posts) != 0 {
@@ -237,7 +237,7 @@ func TestMessageTool_UnknownShortIDFailsWithoutPost(t *testing.T) {
 	if res.Success {
 		t.Fatal("expected failure for an unknown short job id")
 	}
-	if !strings.Contains(res.Error, "unknown job_id") {
+	if !strings.Contains(res.Error, "unknown job_id") || !strings.Contains(res.Error, "cannot be resumed") {
 		t.Fatalf("error = %q, want unknown-job guidance", res.Error)
 	}
 	if len(f.posts) != 0 {
