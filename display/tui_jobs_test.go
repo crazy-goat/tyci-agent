@@ -113,8 +113,8 @@ func TestUpdate_TuiMsgBlock_AppliesRegardlessOfActiveModal(t *testing.T) {
 	model, _ := m.Update(tuiMsgBlock{kind: "text", content: "background output"})
 	m2 := model.(TuiModel)
 
-	if len(m2.blocks) != 1 || !strings.Contains(m2.blocks[0].output, "background output") {
-		t.Fatalf("expected block output to survive active modal, got %+v", m2.blocks)
+	if len(m2.blocks) != 1 || !strings.Contains(m2.blocks[0].content, "background output") {
+		t.Fatalf("expected block content to survive active modal, got %+v", m2.blocks)
 	}
 	if !m2.todoModalActive {
 		t.Fatal("active modal should remain open while background output is dispatched")
