@@ -113,7 +113,7 @@ func TestMessageTool_TerminalJobFailsWithResumeGuidance(t *testing.T) {
 	f := &fakeJobMailbox{resolved: map[string]string{"done": "done"}, live: map[string]bool{"done": false}}
 	withFakeMailbox(t, f)
 	res := (&MessageTool{}).Run(context.Background(), map[string]any{"job_id": "done", "text": "hi"})
-	if res.Success || !strings.Contains(res.Error, "resume(job_id, task)") || !strings.Contains(res.Error, "only live jobs") {
+	if res.Success || !strings.Contains(res.Error, "resume(job_id, task)") || !strings.Contains(res.Error, "only targets live jobs") {
 		t.Fatalf("error = %q, want live-job/resume guidance", res.Error)
 	}
 	if len(f.posts) != 0 {
