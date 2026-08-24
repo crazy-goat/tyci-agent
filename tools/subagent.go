@@ -46,22 +46,11 @@ const (
 // 60s timer to exercise the timer.C exit of runWithHandoff's select.
 var SubagentBackgroundAfterSec = 60 * time.Second
 
-// ErrSubagentTruncated is returned (wrapped via fmt.Errorf %w) by a
-// SubAgentRunner when the child hit its MaxIterations cap. Tools package
-// callers use errors.Is to detect this — distinct from "child failed" or
-// "child returned empty result" — and surface it via subagentResult.Truncated
-// and ToolResult.Truncated. Sentinel lives in tools/ (not agent/) so the
-// layering remains: tools has no upward dependency on agent.
+// ErrSubagentTruncated and ErrSubagentTimedOut remain compatibility sentinels
+// for custom runners and previously persisted results. The built-in subagent
+// runner no longer creates either condition: children stop only when their
+// context is cancelled or when they finish normally.
 var ErrSubagentTruncated = errors.New("subagent hit its max-iterations cap")
-
-// ErrSubagentTimedOut is the wall-clock counterpart to ErrSubagentTruncated:
-// returned (wrapped via fmt.Errorf %w) by a SubAgentRunner when the child
-// was stopped by the SubagentTimeoutSec deadline rather than the iteration
-// cap. Treated the same way downstream — a partial success with
-// subagentResult.Truncated / ToolResult.Truncated set, carrying whatever
-// text the child produced before it ran out of time — because from the
-// caller's side "cut off by time" and "cut off by iterations" need the same
-// response: read what's there, and resume() if more is needed.
 var ErrSubagentTimedOut = errors.New("subagent exceeded its wall-clock time limit")
 
 // ErrSubagentStoppedByUser is the kill-switch counterpart to the two

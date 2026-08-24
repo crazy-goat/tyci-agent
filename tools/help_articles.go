@@ -118,12 +118,12 @@ paths to look at, and what to return, in that order:
 
 agent="name" runs it under a named definition from ./.tyci/agents/ or
 ~/.tyci/agents/, which supplies its system prompt and may pin its model,
-max_iterations, max_tokens and allowed tools. Call the "agents" tool for the
-current list — the one in your system prompt goes stale if a definition is
-added mid-session.
+max_tokens and allowed tools. The legacy max_iterations field is accepted for
+configuration compatibility but ignored: subagent execution is unlimited.
+Call the "agents" tool for the current list — the one in your system prompt
+goes stale if a definition is added or edited mid-session.
 
-Bound anything that might wander with max_iterations. A child that hits the cap
-returns what it had, marked truncated.`,
+A child runs until it finishes or is cancelled (for example with kill_job).`,
 
 	"write": `Write a file, or replace exact text in one.
 

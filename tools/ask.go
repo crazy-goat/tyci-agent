@@ -27,7 +27,7 @@ var jobAsker JobAsker
 func SetJobAsker(a JobAsker) { jobAsker = a }
 
 // AskUnroutableCtxKey marks a job's context to make "ask_parent" fail
-// immediately instead of blocking for its full SubagentTimeoutSec.
+// immediately when the caller cannot return control to anyone able to answer.
 //
 // Every subagent call gets a job id now (see subagent.go's runWithHandoff),
 // including a blocking child under `tyci run` / `--print`. But a job id
@@ -87,7 +87,7 @@ func (t *AskTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{
 			Type:    "result",
 			Success: false,
-			Error:   "no answer arrived before this job's own time limit; proceed with your best judgement or state your assumption and continue",
+			Error:   "no answer arrived before this job was cancelled; proceed with your best judgement or state your assumption and continue",
 		}
 	}
 	content := answer

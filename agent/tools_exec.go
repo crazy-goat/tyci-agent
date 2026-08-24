@@ -185,12 +185,11 @@ func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, i
 		// own session/run scope is. unlock doesn't need this (Release
 		// returns immediately, never outliving any timeout), grouped here
 		// only for the pair's symmetry. "ask_parent" also must not be cut
-		// off by the generic default: it's meant to block for up to the
-		// job's own internal 1800s wall-clock limit (the ctx the job was
-		// started with, see jobs.Registry.Ask), not this function's 60s
-		// default — a 60s external timeout here would silently truncate
-		// every ask_parent call to 60s regardless of how long the job
-		// itself is allowed to wait.
+		// off by the generic default: it is meant to block until the job's
+		// own context is cancelled (see jobs.Registry.Ask), not this
+		// function's 60s default — a 60s external timeout here would
+		// silently truncate every ask_parent call regardless of how long
+		// the job is allowed to wait.
 		toolTimeout = 0
 	default:
 		toolTimeout = 60 * time.Second

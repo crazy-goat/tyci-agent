@@ -267,16 +267,12 @@ The resident set is bounded by a **scrollback disk cache** plus per-field caps:
   accumulator (`subagentModalContent`). A runaway child agent streaming forever
   would otherwise keep the builder growing until the modal is closed.
 
-A child also has a **per-call turn cap** set by the parent via the `subagent`
-tool's `max_iterations` field (`tools.SubagentOptions.MaxIterations`). When
-omitted, the default is _unlimited_ (bounded only by the 1800s wall-clock
-timeout above); the previous hard-coded cap of 10 turns was removed because
-some legitimate subtasks — multi-file exploration, code review — need many
-turns and an implicit 10 felt arbitrary. Callers that previously relied on the
-implicit cap should pass an explicit positive integer (e.g.
-`max_iterations: 50`). When the cap is hit with partial output, the result is
-flagged `ToolResult.Truncated=true` so the parent can distinguish "clean
-completion" from "incomplete answer".
+Subagent execution has no implicit wall-clock or turn limit. The legacy
+`max_iterations` field (`tools.SubagentOptions.MaxIterations`) remains accepted
+for configuration compatibility, but is ignored; children run until they
+complete or their context is cancelled (for example by `kill_job`). The same
+unlimited semantics apply to synchronous, asynchronous, `/btw`, and resumed
+subagent jobs.
 
 The eviction trigger is `maybeFlushOldBlocks`, called after a new block is
 appended. It never flushes blocks still on the tool queue (they may receive

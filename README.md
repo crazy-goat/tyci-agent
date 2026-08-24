@@ -255,6 +255,7 @@ the same precedence `.tyci.json` has over `~/.tyci/agents.json`:
 description: Reviews Go diffs for correctness
 model: anthropic/claude-sonnet-5
 tools: read, find, bash
+# max_iterations is accepted for compatibility but ignored; subagents are unlimited
 max_iterations: 20
 ---
 
@@ -266,7 +267,7 @@ You review Go diffs. Report only defects that change behavior.
 | `description` | Listed in the parent's system prompt so the model knows the agent exists |
 | `model` | Model the child runs on (`provider/model`); overridden by a per-call `model` |
 | `tools` | Comma-separated whitelist; enforced in the child's schema *and* at call time |
-| `max_iterations` | Caps the child's tool-call turns; overridden by a per-call `max_iterations` |
+| `max_iterations` | Legacy compatibility field; ignored for subagents, which run until completion or cancellation |
 | `temperature` | Sampling temperature, `0`–`2`. `0` is a real value ("deterministic"), not "unset" |
 | `fallback` | Models tried in order when the primary fails; an unresolvable spec is skipped, never fatal |
 | `system` | Optional — overrides the markdown body as the *source text* used for the system prompt (still subject to `system_prompt_mode` below) |

@@ -125,11 +125,11 @@ func extensionSchemaToolNames(schema []map[string]any) map[string]bool {
 
 func TestRequestTimeoutExtension_SchemaRoleGating(t *testing.T) {
 	child := extensionSchemaToolNames(GetSubagentToolsSchema())
-	if !child["request_timeout_extension"] {
-		t.Fatal("child schema should include request_timeout_extension")
+	if child["request_timeout_extension"] {
+		t.Fatal("child schema must omit request_timeout_extension: subagents have no deadline to extend")
 	}
-	if IsSubagentDenied("request_timeout_extension") {
-		t.Fatal("request_timeout_extension must not be denied to child agents")
+	if !IsSubagentDenied("request_timeout_extension") {
+		t.Fatal("request_timeout_extension must be denied to child agents")
 	}
 
 	top := extensionSchemaToolNames(GetTopLevelToolsSchema())
@@ -137,8 +137,8 @@ func TestRequestTimeoutExtension_SchemaRoleGating(t *testing.T) {
 		t.Fatal("top-level schema should omit request_timeout_extension")
 	}
 	all := extensionSchemaToolNames(GetAllToolsSchema())
-	if !all["request_timeout_extension"] {
-		t.Fatal("full schema should retain request_timeout_extension for /btw restoration")
+	if all["request_timeout_extension"] {
+		t.Fatal("full schema must omit request_timeout_extension: no subagent deadline exists")
 	}
 }
 

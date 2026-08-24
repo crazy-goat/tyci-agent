@@ -427,18 +427,9 @@ func isStoppedByUser(err error, ctx context.Context) bool {
 // subagentCutoffMessage builds the (content, error) pair run() returns once
 // a child has been cut off — by the iteration cap or by the wall-clock
 // deadline — factored out of run() so this decision can be exercised
-// directly with a synthetic text/jobID, independent of whatever agent.Run
-// actually manages to produce in a given scenario (in particular, the
-// harness's own "possible infinite loop" diagnostic — see agent.Run's
-// d.Text call right before it returns ErrMaxIterations — means text is
-// essentially never really empty on the iteration-cap path in practice; the
-// text == "" branches below exist for correctness regardless).
-//
-// deadlineWasHit distinguishes the wall-clock case from the iteration-cap
-// one for wording only; deadlineErr is the original error to wrap so
-// errors.Is(err, context.DeadlineExceeded) still holds for a caller that
-// cares (tools/subagent.go's runSingleTask does, via ErrSubagentTimedOut's
-// wrapping — see its doc comment).
+// directly with a synthetic text/jobID. The legacy cutoff arguments remain
+// for compatibility with callers that may still report an externally imposed
+// deadline or iteration cap; built-in subagent runs no longer create either.
 func subagentCutoffMessage(text string, deadlineWasHit bool, jobID string, maxIter int, deadlineErr error) (string, error) {
 	if text == "" {
 		// Hit the cutoff and produced nothing to show — but if a resumable

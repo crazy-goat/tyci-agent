@@ -67,7 +67,7 @@ func TestAgentsTool_LoadsOneAgentsFullDefinition(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected success, got error: %s", res.Error)
 	}
-	for _, want := range []string{"reviewer-model", "read, find", "You are a careful reviewer.", "Max iterations: 5"} {
+	for _, want := range []string{"reviewer-model", "read, find", "You are a careful reviewer.", "Max iterations: 5 (legacy field; ignored for subagents; execution is unlimited)"} {
 		if !strings.Contains(res.Content, want) {
 			t.Errorf("expected loaded definition to contain %q, got: %s", want, res.Content)
 		}

@@ -45,7 +45,7 @@ func (t *AgentsTool) Run(_ context.Context, input map[string]any) ToolResult {
 			fmt.Fprintf(&b, "Tools: %s\n", strings.Join(def.Tools, ", "))
 		}
 		if def.MaxIterations > 0 {
-			fmt.Fprintf(&b, "Max iterations: %d\n", def.MaxIterations)
+			fmt.Fprintf(&b, "Max iterations: %d (legacy field; ignored for subagents; execution is unlimited)\n", def.MaxIterations)
 		}
 		if def.Temperature != nil {
 			fmt.Fprintf(&b, "Temperature: %g\n", *def.Temperature)

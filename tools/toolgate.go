@@ -181,6 +181,8 @@ var alwaysAllowedTools = []string{"help", "lua"}
 //     Same reasoning as answer_job — a plain subagent child can never have
 //     a job of its own to message, since it is always denied "subagent"
 //     above. Revisit alongside answer_job once item 21 lands.
+//   - request_timeout_extension: subagents have no execution deadline, so a
+//     request to extend one would always be rejected as inapplicable.
 //
 // This is the one place the schema builder
 // (GetSubagentToolsSchema/GetSubagentToolsSchemaJSONFor in tool.go), the
@@ -193,7 +195,7 @@ var alwaysAllowedTools = []string{"help", "lua"}
 // "subagent" or "agents" by name, or the three will drift the way
 // AllowOnlySubagent's whitelisted path and this package's own unrestricted
 // path once did.
-var subagentDeniedTools = map[string]bool{"subagent": true, "agents": true, "answer_job": true, "message": true, "promote_btw": true, "resume": true}
+var subagentDeniedTools = map[string]bool{"subagent": true, "agents": true, "answer_job": true, "message": true, "promote_btw": true, "resume": true, "request_timeout_extension": true}
 
 // IsSubagentDenied reports whether name is one of subagentDeniedTools.
 func IsSubagentDenied(name string) bool {

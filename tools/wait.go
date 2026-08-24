@@ -21,9 +21,9 @@ const MinWaitSeconds = 1
 // therefore raised to something that can actually deliver an answer, and the
 // clamp note says so.
 //
-// 1800s matches the longest a child agent can live, so waiting beyond it can
-// only ever return "still running".
-const DefaultJobWaitSeconds = SubagentTimeoutSec
+// Keep the default finite so a parent regains a turn to inspect progress or
+// cancel a job; this is an observation timeout, not a subagent execution cap.
+const DefaultJobWaitSeconds = MaxWaitSeconds
 const JobMinWaitSeconds = 30
 
 // jobPollInterval is how finely a job wait is sliced. The slices exist so the

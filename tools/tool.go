@@ -466,21 +466,6 @@ func builtinToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
-				"name":        "request_timeout_extension",
-				"description": "Ask the parent to extend this child job's timeout. Requires a positive number of seconds (at most 600) and a nonempty reason. The request waits for the parent to approve or reject it; if no answer arrives, continue without the extension.",
-				"parameters": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"seconds": map[string]any{"type": "integer", "description": "Number of additional seconds requested (1–600)."},
-						"reason":  map[string]any{"type": "string", "description": "Why this job needs more time."},
-					},
-					"required": []string{"seconds", "reason"},
-				},
-			},
-		},
-		{
-			"type": "function",
-			"function": map[string]any{
 				"name":        "message",
 				"description": "Send text only to one of your own live jobs (running or waiting for an answer); it is delivered at the next iteration boundary, not mid-tool-call. This steers a live agent but never resumes a finished/failed/truncated job or answers ask_parent. For a terminal job, use resume(job_id, task) when its transcript is resumable.",
 				"parameters": map[string]any{
@@ -626,9 +611,7 @@ func GetAllToolsSchemaJSON() json.RawMessage {
 //     side-conversation, which is why btwConfig (btw.go) restores the full,
 //     unfiltered schema onto its forked Config rather than inheriting this
 //     one.
-//   - request_timeout_extension: only a child job can request an extension;
-//     /btw gets it back because it restores the full schema.
-var topLevelDeniedTools = map[string]bool{"ask_parent": true, "request_timeout_extension": true}
+var topLevelDeniedTools = map[string]bool{"ask_parent": true}
 
 // GetTopLevelToolsSchema returns GetAllToolsSchema with topLevelDeniedTools
 // removed — the tool set offered to the main, non-job conversation. Used
@@ -658,10 +641,9 @@ func GetTopLevelToolsSchemaJSON() json.RawMessage {
 }
 
 // GetSubagentToolsSchema returns tool definitions excluding subagentDeniedTools
-// ("subagent", to prevent recursion, and "agents", whose only purpose is
-// discovering names for subagent(agent="name") — a child that cannot spawn
-// subagents has nothing to do with that list, so it isn't worth tempting it
-// with). See subagentDeniedTools in toolgate.go for the shared list this and
+// (including "subagent"/"agents" recursion and discovery tools, and
+// "request_timeout_extension", which has no purpose for unlimited children).
+// See subagentDeniedTools in toolgate.go for the shared list this and
 // GetSubagentToolsSchemaJSONFor and main.go's runtime gate all read from.
 //
 // A connected MCP server's tools ride along unconditionally, appended after
@@ -785,13 +767,12 @@ var toolRegistry = map[string]Tool{
 	// jobAsker/jobAnswerer/jobProgressReporter/jobResumer are nil until
 	// SetJobAsker/SetJobAnswerer/SetJobProgressReporter/SetJobResumer are
 	// called; each tool fails loudly (not silently) until then.
-	"ask_parent":                &AskTool{},
-	"answer_job":                &AnswerTool{},
-	"request_timeout_extension": &RequestTimeoutExtensionTool{},
-	"message":                   &MessageTool{},
-	"report_progress":           &ReportProgressTool{},
-	"resume":                    &ResumeTool{},
-	"promote_btw":               &PromoteBtwTool{},
+	"ask_parent":      &AskTool{},
+	"answer_job":      &AnswerTool{},
+	"message":         &MessageTool{},
+	"report_progress": &ReportProgressTool{},
+	"resume":          &ResumeTool{},
+	"promote_btw":     &PromoteBtwTool{},
 	// kill_job needs no wiring of its own beyond the registry hooks in
 	// killjob.go (SetJobCanceler/SetJobLister, optional — without them it
 	// stays bash-only): the bash path acts on the bgbash.go registry the
