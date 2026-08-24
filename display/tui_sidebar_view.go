@@ -399,8 +399,8 @@ func (m TuiModel) renderSidebarLua(width int) []string {
 	return out
 }
 
-// formatDurationShort renders a duration the way the jobs panel's "quiet
-// Xs" note does: seconds while recent, otherwise minutes.
+// formatDurationShort renders a duration as whole seconds while recent,
+// otherwise as whole minutes.
 func formatDurationShort(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
