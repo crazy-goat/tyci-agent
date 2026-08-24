@@ -286,20 +286,26 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 	job := JobRegistry.Start(jobCtx, question, jobs.KindSubagent, parentID, func(runCtx context.Context, jobID string) (string, bool, error) {
 		defer cancel()
 		defer tools.MarkTodoAgentDone(jobID)
+		c := &collector{}
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, jobID)
 		runCtx = connector.WithModelClient(runCtx, client)
-		runCtx = context.WithValue(runCtx, tools.SubagentSinkCtxKey{}, &collector{})
+		// Match an ordinary child: background bash and kill_job must see the
+		// child sink, while this same collector receives streamed output.
+		runCtx = context.WithValue(runCtx, tools.SubagentSinkCtxKey{}, c)
 		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
 		runCtx = tools.WithToolGate(runCtx, tools.DenySubagentRecursion())
 		msgs = session.ForkMessagesWithTurn(msgs, btwPromotionTask)
-		c := &collector{}
 		_, err := agent.Run(runCtx, client, ledger.Watch(c, ledger.Subagent, client.Provider(), client.Model(), jobID), &msgs, cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
+		deadlineExceeded := errors.Is(err, context.DeadlineExceeded)
+		stopped := errors.Is(err, context.Canceled)
 		if truncated {
 			err = nil
 		}
 		text := strings.TrimSpace(c.text.String())
-		if err == nil || truncated {
+		// Timeout and kill_job still leave useful partial work. Preserve it so
+		// the parent can resume the promoted conversation instead of losing it.
+		if err == nil || truncated || deadlineExceeded || stopped {
 			resumableMu.Lock()
 			resumable[jobID] = resumableEntry{msgs: msgs, mc: client, cfg: cfg}
 			resumableMu.Unlock()

@@ -157,6 +157,10 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		sink := tuiDisp.BtwSink(id)
 		tuiDisp.OpenBtw(id, question)
 		job := startBtw(baseCtx, cond, question, sink)
+		if job == nil {
+			tuiDisp.Error(fmt.Errorf("/btw: too many active evaluations (limit %d)", maxBtwEvaluations))
+			return
+		}
 		tuiDisp.SetBtwJobID(id, job.ID)
 	}
 
