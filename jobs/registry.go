@@ -523,6 +523,18 @@ func (r *Registry) pruneTerminalLocked() {
 // leave alone, while a job blocked on a question is a dead end that only the
 // current turn can open — it makes no progress and its work is discarded when
 // it times out.
+// HasActiveSubagents reports whether at least one subagent is genuinely
+// running. A waiting-for-answer child is intentionally excluded: it needs the
+// normal job reminder so the model can relay or answer its question.
+func (r *Registry) HasActiveSubagents() bool {
+	for _, j := range r.List() {
+		if j.Kind == KindSubagent && j.Status == StatusRunning {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Registry) PendingLines() []string {
 	var blocked, running []string
 	for _, j := range r.List() {
