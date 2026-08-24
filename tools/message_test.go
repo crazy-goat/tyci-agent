@@ -199,3 +199,48 @@ func TestMessageTool_IsSubagentDenied(t *testing.T) {
 		t.Error(`expected IsSubagentDenied("message") to be true`)
 	}
 }
+
+func TestMessageTool_TerminalStatusesRequireResume(t *testing.T) {
+	for _, status := range []string{"done", "failed", "truncated"} {
+		t.Run(status, func(t *testing.T) {
+			f := &fakeJobMailbox{
+				resolved: map[string]string{"#7": "job-12345-7"},
+				live:     map[string]bool{"job-12345-7": false},
+			}
+			withFakeMailbox(t, f)
+
+			res := (&MessageTool{}).Run(context.Background(), map[string]any{
+				"job_id": "#7",
+				"text":   "continue this",
+			})
+			if res.Success {
+				t.Fatalf("%s job unexpectedly accepted a message", status)
+			}
+			if !strings.Contains(res.Error, "only live jobs") || !strings.Contains(res.Error, "resume(job_id, task)") {
+				t.Fatalf("error = %q, want live-job/resume guidance for %s", res.Error, status)
+			}
+			if len(f.posts) != 0 {
+				t.Fatalf("%s job received post: %v", status, f.posts)
+			}
+		})
+	}
+}
+
+func TestMessageTool_UnknownShortIDFailsWithoutPost(t *testing.T) {
+	f := &fakeJobMailbox{resolved: map[string]string{"#7": "job-12345-7"}}
+	withFakeMailbox(t, f)
+
+	res := (&MessageTool{}).Run(context.Background(), map[string]any{
+		"job_id": "#99",
+		"text":   "hi",
+	})
+	if res.Success {
+		t.Fatal("expected failure for an unknown short job id")
+	}
+	if !strings.Contains(res.Error, "unknown job_id") {
+		t.Fatalf("error = %q, want unknown-job guidance", res.Error)
+	}
+	if len(f.posts) != 0 {
+		t.Fatalf("unknown job received post: %v", f.posts)
+	}
+}
