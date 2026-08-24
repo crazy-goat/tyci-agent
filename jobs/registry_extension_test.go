@@ -133,3 +133,62 @@ func TestExtensionCancelUnblocksWait(t *testing.T) {
 	}
 	r.Wait(context.Background(), job.ID, time.Second)
 }
+
+func TestExtensionRejectThenAllowsNewRequest(t *testing.T) {
+	r := NewRegistry()
+	release := make(chan struct{})
+	job, _ := startDeadlineJob(r, time.Second, release)
+	first, ok := r.RequestExtension(job.ID, time.Second, "first")
+	if !ok || !r.ResolveExtension(job.ID, first, false) {
+		t.Fatal("initial request was not rejected")
+	}
+	second, ok := r.RequestExtension(job.ID, time.Second, "second")
+	if !ok || second == first {
+		t.Fatalf("request after rejection was not accepted: id=%q ok=%v", second, ok)
+	}
+	if !r.ResolveExtension(job.ID, second, true) {
+		t.Fatal("second request approval was refused")
+	}
+	close(release)
+	r.Wait(context.Background(), job.ID, time.Second)
+}
+
+func TestExtensionWaitCancellationClearsRequest(t *testing.T) {
+	r := NewRegistry()
+	release := make(chan struct{})
+	job, _ := startDeadlineJob(r, time.Second, release)
+	requestID, ok := r.RequestExtension(job.ID, time.Second, "cancel")
+	if !ok {
+		t.Fatal("request was refused")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	approved, answered := r.WaitExtension(ctx, job.ID, requestID)
+	if approved || answered {
+		t.Fatalf("cancelled wait returned approved=%v answered=%v", approved, answered)
+	}
+	if r.ResolveExtension(job.ID, requestID, true) {
+		t.Fatal("late resolution succeeded after wait cancellation")
+	}
+	if _, ok := r.RequestExtension(job.ID, time.Second, "replacement"); !ok {
+		t.Fatal("replacement request was refused after cancellation")
+	}
+	close(release)
+	r.Wait(context.Background(), job.ID, time.Second)
+}
+
+func TestExtensionRejectAfterDeadlineDoesNotResolve(t *testing.T) {
+	r := NewRegistry()
+	release := make(chan struct{})
+	job, _ := startDeadlineJob(r, 20*time.Millisecond, release)
+	requestID, ok := r.RequestExtension(job.ID, time.Second, "late")
+	if !ok {
+		t.Fatal("request was refused")
+	}
+	time.Sleep(40 * time.Millisecond)
+	if r.ResolveExtension(job.ID, requestID, false) {
+		t.Fatal("rejection succeeded after deadline")
+	}
+	close(release)
+	r.Wait(context.Background(), job.ID, time.Second)
+}

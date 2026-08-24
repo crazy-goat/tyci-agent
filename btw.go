@@ -72,6 +72,23 @@ func (a jobAskerAdapter) Ask(ctx context.Context, id, question string) (string, 
 	return a.reg.Ask(ctx, id, question)
 }
 
+// jobExtensionRequesterAdapter satisfies tools.JobExtensionRequester over
+// JobRegistry. The tools package owns only the interface so it can expose the
+// child-only request/answer tools without importing the jobs package.
+type jobExtensionRequesterAdapter struct{ reg *jobs.Registry }
+
+func (a jobExtensionRequesterAdapter) RequestExtension(id string, seconds time.Duration, reason string) (string, bool) {
+	return a.reg.RequestExtension(id, seconds, reason)
+}
+
+func (a jobExtensionRequesterAdapter) WaitExtension(ctx context.Context, id, requestID string) (bool, bool) {
+	return a.reg.WaitExtension(ctx, id, requestID)
+}
+
+func (a jobExtensionRequesterAdapter) ResolveExtension(id, requestID string, approve bool) bool {
+	return a.reg.ResolveExtension(id, requestID, approve)
+}
+
 // jobAnswererAdapter satisfies tools.JobAnswerer over JobRegistry.
 type jobAnswererAdapter struct{ reg *jobs.Registry }
 

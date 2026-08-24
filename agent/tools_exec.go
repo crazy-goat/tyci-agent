@@ -173,7 +173,7 @@ func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, i
 		// context-aware internally; an external timeout here would cut it
 		// off before it reports back, defeating the point of the tool.
 		toolTimeout = 0
-	case "lock", "unlock", "ask_parent":
+	case "lock", "unlock", "ask_parent", "request_timeout_extension":
 		// A lock acquired without an explicit "seconds" is documented to
 		// live "until you release it or your session ends" (see the "lock"
 		// tool schema, tools/tool.go) — locks.Registry.Acquire implements

@@ -121,6 +121,7 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 		r.mu.Lock()
 		job.FinishedAt = time.Now()
 		job.Result = result
+		r.clearPendingExtensionLocked(job)
 		switch {
 		case err != nil:
 			job.Status = StatusFailed
@@ -432,8 +433,28 @@ func (r *Registry) RequestExtension(id string, seconds time.Duration, reason str
 	job.ExtensionSeconds = seconds
 	job.ExtensionReason = reason
 	job.ExtensionPending = true
+	job.ExtensionAccepted = false
+	job.extensionResolved = false
+	job.extensionApproved = false
 	job.extensionDecision = make(chan bool, 1)
 	return requestID, true
+}
+
+// clearPendingExtensionLocked invalidates an in-flight request without
+// delivering a decision. It is used when the job itself becomes terminal or
+// when WaitExtension's caller abandons the request, so a later answer cannot
+// be mistaken for a live request. Caller must hold r.mu.
+func (r *Registry) clearPendingExtensionLocked(job *Job) {
+	if !job.ExtensionPending {
+		return
+	}
+	job.ExtensionPending = false
+	job.extensionDecision = nil
+	job.extensionResolved = true
+	job.extensionApproved = false
+	job.ExtensionRequestID = ""
+	job.ExtensionSeconds = 0
+	job.ExtensionReason = ""
 }
 
 // WaitExtension waits for a decision or the job's own context to end.
@@ -465,8 +486,18 @@ func (r *Registry) WaitExtension(ctx context.Context, id, requestID string) (boo
 	case approved := <-decision:
 		return approved, true
 	case <-ctx.Done():
+		r.mu.Lock()
+		if job.ExtensionRequestID == requestID && job.ExtensionPending && job.extensionDecision == decision {
+			r.clearPendingExtensionLocked(job)
+		}
+		r.mu.Unlock()
 		return false, false
 	case <-jobCtx.Done():
+		r.mu.Lock()
+		if job.ExtensionRequestID == requestID && job.ExtensionPending && job.extensionDecision == decision {
+			r.clearPendingExtensionLocked(job)
+		}
+		r.mu.Unlock()
 		return false, false
 	}
 }
@@ -485,11 +516,15 @@ func (r *Registry) ResolveExtension(id, requestID string, approve bool) bool {
 		r.mu.Unlock()
 		return false
 	}
+	deadline, _ := job.extensionCtx.Deadline()
+	if job.extensionCtx.Err() != nil || !time.Now().Before(deadline) {
+		r.clearPendingExtensionLocked(job)
+		r.mu.Unlock()
+		return false
+	}
 	if approve {
 		if !job.extensionCtx.extend(job.ExtensionSeconds) {
-			job.ExtensionPending = false
-			job.extensionResolved = true
-			job.extensionApproved = false
+			r.clearPendingExtensionLocked(job)
 			r.mu.Unlock()
 			return false
 		}
@@ -499,6 +534,7 @@ func (r *Registry) ResolveExtension(id, requestID string, approve bool) bool {
 	job.extensionResolved = true
 	job.extensionApproved = approve
 	decision := job.extensionDecision
+	job.extensionDecision = nil
 	r.mu.Unlock()
 	select {
 	case decision <- approve:

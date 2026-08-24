@@ -219,7 +219,7 @@ func (r staticRunner) Run(context.Context, string, map[string]any) (string, erro
 // timeout-exempt siblings) since it too must not be cut off by the generic
 // default — see the "ask_parent" case's comment in tools_exec.go.
 func TestRunToolCall_LockAndUnlockGetNoExternalTimeout(t *testing.T) {
-	for _, name := range []string{"lock", "unlock", "ask_parent"} {
+	for _, name := range []string{"lock", "unlock", "ask_parent", "request_timeout_extension"} {
 		r := &deadlineCapturingRunner{}
 		runToolCall(context.Background(), r, stream.ToolCall{Name: name, Arguments: "{}"}, 0)
 		if r.gotDeadline {

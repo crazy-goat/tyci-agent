@@ -1365,3 +1365,44 @@ func firstLineOf(s string) string {
 	}
 	return s
 }
+
+func TestWiring_ExtensionAnswerUsesRealRegistry(t *testing.T) {
+	reg, _ := withTestWiring(t)
+	release := make(chan struct{})
+	ctxs := make(chan context.Context, 1)
+	jobCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	job := reg.Start(jobCtx, "extension wiring", jobs.KindSubagent, "", func(runCtx context.Context, _ string) (string, bool, error) {
+		ctxs <- runCtx
+		<-release
+		return "", false, runCtx.Err()
+	})
+	childCtx := <-ctxs
+	before, ok := childCtx.Deadline()
+	if !ok {
+		t.Fatal("job context has no deadline")
+	}
+	requestID, ok := reg.RequestExtension(job.ID, 200*time.Millisecond, "finish the current operation")
+	if !ok {
+		t.Fatal("real registry refused extension request")
+	}
+	result := tools.RunTool(context.Background(), "answer_job", map[string]any{
+		"action":     "extension",
+		"job_id":     job.ID,
+		"request_id": requestID,
+		"approve":    true,
+	})
+	if !result.Success {
+		t.Fatalf("answer_job extension failed: %q", result.Error)
+	}
+	approved, answered := reg.WaitExtension(context.Background(), job.ID, requestID)
+	if !approved || !answered {
+		t.Fatalf("real registry did not observe approval: approved=%v answered=%v", approved, answered)
+	}
+	after, ok := childCtx.Deadline()
+	if !ok || !after.After(before) {
+		t.Fatalf("approved extension did not move child deadline: before=%v after=%v", before, after)
+	}
+	close(release)
+	reg.Wait(context.Background(), job.ID, time.Second)
+}

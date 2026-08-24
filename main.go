@@ -574,6 +574,7 @@ func wireTools() {
 	tools.SetJobWaiter(jobWaiterAdapter{reg: JobRegistry})
 	tools.SetJobStarter(jobStarterAdapter{reg: JobRegistry})
 	tools.SetJobAsker(jobAskerAdapter{reg: JobRegistry})
+	tools.SetJobExtensionRequester(jobExtensionRequesterAdapter{reg: JobRegistry})
 	tools.SetJobAnswerer(jobAnswererAdapter{reg: JobRegistry})
 	tools.SetJobProgressReporter(jobProgressAdapter{reg: JobRegistry})
 	tools.SetJobActivityToucher(jobActivityToucherAdapter{reg: JobRegistry})
