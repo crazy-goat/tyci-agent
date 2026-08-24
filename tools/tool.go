@@ -278,7 +278,7 @@ func builtinToolsSchema() []map[string]any {
 							"task":            map[string]any{"type": "string", "description": "Clear task description for this parallel subtask, including what to return. The child has every tool except subagent itself."},
 							"agent":           map[string]any{"type": "string", "description": "Named agent to use"},
 							"model":           map[string]any{"type": "string", "description": "Optional model override (format: provider/model)"},
-							"max_iterations":  map[string]any{"type": "integer", "description": "Cap this child's tool-call turns. Set a positive integer to bound a risky subtask (e.g. exploration, code review); omit to use the runner default (currently unlimited, bounded by a 600s wall-clock timeout). 0 and negative values mean unlimited."},
+							"max_iterations":  map[string]any{"type": "integer", "description": "Cap this child's tool-call turns. Set a positive integer to bound a risky subtask (e.g. exploration, code review); omit to use the runner default (currently unlimited, bounded by a 1800s wall-clock timeout). 0 and negative values mean unlimited."},
 							"async":           map[string]any{"type": "boolean", "description": "Run this task as a background job and return its job_id immediately instead of blocking. Must match every other task's async value in the same call."},
 							"isolation":       map[string]any{"type": "string", "enum": []string{"worktree"}, "description": "Give this child its own checkout of the repository, on its own branch, instead of the shared working directory: \"worktree\". Use it whenever two or more children WRITE at the same time — then they cannot clobber each other and nothing has to take turns on a lock. The cost is that its edits are not in your tree: the result tells you the branch and how to diff it, and you decide whether to merge. A child that only reads needs nothing here, and its checkout is removed automatically when it changed no files. Needs a git repository."},
 							"inherit_history": map[string]any{"type": "boolean", "description": "Seed this child with YOUR conversation so far — every message up to this call — instead of starting it from just task alone. Use this when the child needs context it would otherwise have no way to see (earlier findings, decisions, file contents already read). The child still only gets task appended as its own new turn on top of that history; it does not see anything that happens in your conversation afterward."},
@@ -310,12 +310,12 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "wait",
-				"description": "Wait for a background job (job_id) or pause deliberately (seconds alone). With a job_id it waits until that job finishes or blocks on a question and returns the result — not a status snapshot — so one call gets you the answer; seconds is optional and defaults to 10 minutes, and the wait ends early if someone types. You do not need it to find out that a job finished, because you are notified; use it when you have nothing else to do, or to read a result once you are told.",
+				"description": "Wait for a background job (job_id) or pause deliberately (seconds alone). With a job_id it waits until that job finishes or blocks on a question and returns the result — not a status snapshot — so one call gets you the answer; seconds is optional and defaults to 30 minutes, and the wait ends early if someone types. You do not need it to find out that a job finished, because you are notified; use it when you have nothing else to do, or to read a result once you are told.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"seconds": map[string]any{"type": "integer", "description": fmt.Sprintf("How long to wait, in seconds. Clamped to [%d, %d].", MinWaitSeconds, MaxWaitSeconds)},
-						"job_id":  map[string]any{"type": "string", "description": "Id of a background job. The call waits until that job actually finishes (or blocks on a question), so it returns the result rather than a status — seconds is optional here and defaults to 10 minutes. It ends early if someone types. Omit for a plain sleep."},
+						"job_id":  map[string]any{"type": "string", "description": "Id of a background job. The call waits until that job actually finishes (or blocks on a question), so it returns the result rather than a status — seconds is optional here and defaults to 30 minutes. It ends early if someone types. Omit for a plain sleep."},
 						"note":    map[string]any{"type": "string", "description": "Optional note describing what you're waiting for, echoed back for context."},
 					},
 					"required": []string{"seconds"},

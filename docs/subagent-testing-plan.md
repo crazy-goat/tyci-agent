@@ -151,9 +151,9 @@ jak przed całą tą rundą zmian.
       `wait`) odzwierciedla otrzymaną odpowiedź.
 - [ ] **6.3** `ask_parent` na który **nikt nie odpowiada** — job **nie wisi w
       nieskończoność**: odblokowuje się sam po osiągnięciu własnego limitu
-      czasu joba (600s dla async subagenta), zwracając komunikat mówiący
+      czasu joba (1800s dla async subagenta), zwracając komunikat mówiący
       wprost, że nie było odpowiedzi i że agent ma kontynuować na własną rękę.
-      (W teście manualnym nie czekaj pełnych 600s — testy jednostkowe/
+      (W teście manualnym nie czekaj pełnych 1800s — testy jednostkowe/
       integracyjne już pokrywają to na krótszym, wstrzykniętym deadlinie;
       manualnie wystarczy potwierdzić, że `ask_parent` jest w ogóle dostępny tylko
       wewnątrz joba w tle, nie z normalnej, pierwszoplanowej tury.)

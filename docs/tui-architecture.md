@@ -269,7 +269,7 @@ The resident set is bounded by a **scrollback disk cache** plus per-field caps:
 
 A child also has a **per-call turn cap** set by the parent via the `subagent`
 tool's `max_iterations` field (`tools.SubagentOptions.MaxIterations`). When
-omitted, the default is _unlimited_ (bounded only by the 600s wall-clock
+omitted, the default is _unlimited_ (bounded only by the 1800s wall-clock
 timeout above); the previous hard-coded cap of 10 turns was removed because
 some legitimate subtasks — multi-file exploration, code review — need many
 turns and an implicit 10 felt arbitrary. Callers that previously relied on the

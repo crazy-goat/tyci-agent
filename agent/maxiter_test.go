@@ -113,7 +113,7 @@ func TestRun_InjectsLastStepWarning_BeforeFinalIteration(t *testing.T) {
 
 // TestRun_InjectsLastStepWarning_OnDeadline pins item 28(C): the SAME
 // warning mechanism must fire when ctx's wall-clock deadline is close, not
-// only when MaxIterations is set — because in practice the 600s
+// only when MaxIterations is set — because in practice the 1800s
 // SubagentTimeoutSec deadline (not the iteration cap, which defaults to
 // unlimited) is what actually cuts a child off. Revert the ctx.Deadline()
 // check in Run's lastStepWarned block and this test fails: with no

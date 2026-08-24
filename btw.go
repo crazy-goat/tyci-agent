@@ -213,9 +213,8 @@ type btwEvaluation struct {
 }
 
 const (
-	btwEvaluationTTL     = time.Hour
-	maxBtwEvaluations    = 32
-	btwEvaluationTimeout = 10 * time.Minute
+	btwEvaluationTTL  = time.Hour
+	maxBtwEvaluations = 32
 )
 
 var (
@@ -354,7 +353,9 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 	}
 	btwActive++
 	btwEvaluationsMu.Unlock()
-	ctx, cancelEvaluation := context.WithTimeout(ctx, btwEvaluationTimeout)
+	// The evaluation is a /btw subagent job too, so it uses the same
+	// shared wall-clock backstop as promoted and resumed jobs.
+	ctx, cancelEvaluation := context.WithTimeout(ctx, time.Duration(tools.SubagentTimeoutSec)*time.Second)
 	forked := forkMessagesForBtw(cond.Messages(), question)
 	cfg := btwConfig(cond.Config())
 	cfg.Schema = tools.BtwEvaluationSchemaJSON()

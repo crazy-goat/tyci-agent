@@ -1122,7 +1122,7 @@ func TestWiring_Q1_AskAnswerRoundTrip(t *testing.T) {
 // =============================================================================
 // Q-2: an "ask_parent" that's never answered must not hang forever — it unblocks
 // via the job's own wall-clock limit (modeled here with a short-deadline ctx
-// instead of waiting out the real 600s subagent timeout).
+// instead of waiting out the real 1800s subagent timeout).
 // =============================================================================
 
 func TestWiring_Q2_AskNeverAnsweredUnblocksViaOwnTimeout(t *testing.T) {
@@ -1138,7 +1138,7 @@ func TestWiring_Q2_AskNeverAnsweredUnblocksViaOwnTimeout(t *testing.T) {
 	// A short-deadline ctx carrying the job's id, exactly the shape the real
 	// "ask_parent" tool builds (ctx = the job's own ctx, which the caller controls
 	// the deadline of) — exercises AskTool -> jobAsker -> JobRegistry.Ask
-	// without waiting out subagent.SubagentTimeoutSec (600s).
+	// without waiting out subagent.SubagentTimeoutSec (1800s).
 	askCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	askCtx = context.WithValue(askCtx, tools.JobIDCtxKey{}, job.ID)

@@ -186,7 +186,7 @@ func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, i
 		// returns immediately, never outliving any timeout), grouped here
 		// only for the pair's symmetry. "ask_parent" also must not be cut
 		// off by the generic default: it's meant to block for up to the
-		// job's own internal 600s wall-clock limit (the ctx the job was
+		// job's own internal 1800s wall-clock limit (the ctx the job was
 		// started with, see jobs.Registry.Ask), not this function's 60s
 		// default — a 60s external timeout here would silently truncate
 		// every ask_parent call to 60s regardless of how long the job

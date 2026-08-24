@@ -17,11 +17,12 @@ import (
 	"github.com/decodo/tyci/stream"
 )
 
-// SubagentTimeoutSec is a per-subagent wall-clock backstop. The iteration cap
-// bounds model turns, but a single wedged tool call (e.g. a hung shell command)
-// could otherwise block the parent's tool call forever; this ensures the parent
-// always gets an answer.
-const SubagentTimeoutSec = 600
+// SubagentTimeoutSec is the shared per-subagent wall-clock backstop, in seconds,
+// for synchronous and asynchronous subagents, /btw jobs, and resumed jobs. The
+// iteration cap bounds model turns, but a single wedged tool call (e.g. a hung
+// shell command) could otherwise block the parent's tool call forever; this
+// ensures the parent always gets an answer.
+const SubagentTimeoutSec = 1800
 
 // SubagentBackgroundAfterSec is how long a blocking subagent call waits before
 // handing its children to the background — the same handoff the bash tool does
