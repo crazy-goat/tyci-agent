@@ -209,3 +209,22 @@ func TestQuietSince_ZeroLastActivityIsNotOk(t *testing.T) {
 		t.Fatalf("expected quietSince to report not-ok for a zero LastActivity")
 	}
 }
+
+// TestFormatJobLine_WaitingQuestionWinsOverLongProgress ensures a long
+// progress note cannot displace the actionable question on normal-width lines.
+func TestFormatJobLine_WaitingQuestionWinsOverLongProgress(t *testing.T) {
+	j := jobs.Job{
+		ID:        "job-1-42",
+		Status:    jobs.StatusWaitingAnswer,
+		Question:  "should I deploy the migration now?",
+		Progress:  strings.Repeat("still compiling ", 20),
+		StartedAt: time.Now(),
+	}
+	line := formatJobLine(j, 80)
+	if !strings.Contains(line, "asks: \"should I deploy") {
+		t.Fatalf("expected waiting question to remain visible, got %q", line)
+	}
+	if strings.Contains(line, "progress:") {
+		t.Fatalf("waiting line must not append progress over the question, got %q", line)
+	}
+}
