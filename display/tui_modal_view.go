@@ -9,26 +9,16 @@ import (
 
 func (m TuiModel) subagentModalMaxScroll() int {
 	totalLines := m.subagentModalLineCount()
-	popupHeight := int(float64(m.height) * 0.9)
-	// Subtract title (2) + footer (2) + borders (2) = ~6 lines
-	avail := popupHeight - 6
-	if avail < 1 {
-		avail = 1
-	}
-	if totalLines <= avail {
+	contentHeight := m.subagentModalLayout().contentHeight
+	if totalLines <= contentHeight {
 		return 0
 	}
-	return totalLines - avail
+	return totalLines - contentHeight
 }
 
 // subagentModalPageSize returns the number of lines per page scroll.
 func (m TuiModel) subagentModalPageSize() int {
-	popupHeight := int(float64(m.height) * 0.9)
-	avail := popupHeight - 6
-	if avail < 1 {
-		avail = 1
-	}
-	return avail
+	return m.subagentModalLayout().contentHeight
 }
 
 // renderSubagentModalView renders the subagent live output as a centered modal (90% w/h).

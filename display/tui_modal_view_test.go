@@ -40,3 +40,20 @@ func TestSubagentModalView_RightBorderVisible(t *testing.T) {
 		}
 	}
 }
+
+func TestSubagentModal_SmallTerminalUsesLayoutContentHeight(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.width, m.height = 80, 10
+	seedModalBlock(&m, "bash", "one\ntwo\nthree\nfour")
+
+	layout := m.subagentModalLayout()
+	if layout.contentHeight != 2 {
+		t.Fatalf("small terminal content height = %d, want 2", layout.contentHeight)
+	}
+	if got := m.subagentModalPageSize(); got != layout.contentHeight {
+		t.Fatalf("page size = %d, want layout content height %d", got, layout.contentHeight)
+	}
+	if got := m.subagentModalMaxScroll(); got != 2 {
+		t.Fatalf("max scroll = %d, want 2 for four lines and two visible rows", got)
+	}
+}

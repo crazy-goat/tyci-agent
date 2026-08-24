@@ -16,24 +16,15 @@ func (m TuiModel) btwModalMaxScroll() int {
 		return 0
 	}
 	lines := strings.Split(m.btwModalEntry.content.String(), "\n")
-	popupHeight := int(float64(m.height) * 0.9)
-	avail := popupHeight - 6
-	if avail < 1 {
-		avail = 1
-	}
-	if len(lines) <= avail {
+	contentHeight := m.subagentModalLayout().contentHeight
+	if len(lines) <= contentHeight {
 		return 0
 	}
-	return len(lines) - avail
+	return len(lines) - contentHeight
 }
 
 func (m TuiModel) btwModalPageSize() int {
-	popupHeight := int(float64(m.height) * 0.9)
-	avail := popupHeight - 6
-	if avail < 1 {
-		avail = 1
-	}
-	return avail
+	return m.subagentModalLayout().contentHeight
 }
 
 // renderBtwModalView renders the /btw live/preview modal — same centered

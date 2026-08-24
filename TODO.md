@@ -75,7 +75,7 @@ Operational notes that are easy to lose:
 | 45 | Make MCP stdio response delivery non-blocking or cancellation-aware (`internal/mcp/stdio.go:327-331`); a duplicate response after its waiter exits must not hold `c.mu` forever and wedge `Close`. | S | todo |
 | 46 | Decide and document whether Windows is a supported target. If yes, fix the unix-only build failures (`internal/readline/read.go:62`, `tools/bash.go:411,427`); if no, add an explicit support/build note rather than leaving the target accidentally broken. | S | todo |
 | 47 | Make the missing-price warning actionable for providers absent from models.dev (`commands.go:229-230`, `internal/pricing/pricing.go:150-156`); do not prescribe a refresh that cannot fetch a hand-maintained/local provider. | XS | todo |
-| 48 | Reuse `subagentModalLayout().contentHeight` in all modal scroll/page calculations (`display/tui_modal_view.go:10-18`) instead of duplicating popup-height arithmetic, and add a small-terminal regression test. | XS | todo |
+| 48 | Reuse `subagentModalLayout().contentHeight` in all modal scroll/page calculations (`display/tui_modal_view.go:10-18`) instead of duplicating popup-height arithmetic, and add a small-terminal regression test. | XS | done |
 
 ## Features
 

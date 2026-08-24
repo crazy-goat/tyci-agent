@@ -40,16 +40,11 @@ func (m TuiModel) todoModalMaxScroll() int {
 	if totalLines == 0 {
 		totalLines = 1 // "No todo items." placeholder
 	}
-	popupHeight := int(float64(m.height) * 0.9)
-	// Subtract title (1) + borders (2) + footer (1) + padding (2) = 6 lines
-	avail := popupHeight - 6
-	if avail < 1 {
-		avail = 1
-	}
-	if totalLines <= avail {
+	contentHeight := m.subagentModalLayout().contentHeight
+	if totalLines <= contentHeight {
 		return 0
 	}
-	return totalLines - avail
+	return totalLines - contentHeight
 }
 
 // todoModalLayout returns the layout geometry for the todo modal.
