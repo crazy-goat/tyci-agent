@@ -22,7 +22,17 @@ import (
 // iteration cap bounds model turns, but a single wedged tool call (e.g. a hung
 // shell command) could otherwise block the parent's tool call forever; this
 // ensures the parent always gets an answer.
-const SubagentTimeoutSec = 1800
+const (
+	// SubagentTimeoutSec is also the maximum explicit timeout. Explicit
+	// timeouts are intentionally a way to shorten a child run, not to extend
+	// the shared backstop.
+	SubagentTimeoutSec = 1800
+	// SubagentMinTimeoutSec leaves enough time for item 28's last-step warning
+	// to reach a child before its deadline, while still allowing callers to
+	// bound work substantially below the default.
+	SubagentMinTimeoutSec = 120
+	SubagentMaxTimeoutSec = SubagentTimeoutSec
+)
 
 // SubagentBackgroundAfterSec is how long a blocking subagent call waits before
 // handing its children to the background — the same handoff the bash tool does
@@ -160,6 +170,9 @@ type subagentTask struct {
 	Agent         string `json:"agent,omitempty"`
 	Model         string `json:"model,omitempty"`
 	MaxIterations *int   `json:"max_iterations,omitempty"`
+	// Timeout is the optional per-child wall-clock limit in seconds. Zero means
+	// use the shared SubagentTimeoutSec default.
+	Timeout *int `json:"timeout,omitempty"`
 	// Async, when true, makes the tool register a background job and return
 	// its id immediately instead of blocking until the task finishes. See
 	// SubagentTool.Run and runAsync.
@@ -574,6 +587,13 @@ func parseTasks(input map[string]any, defaultModel string) ([]subagentTask, erro
 		}
 		t.MaxIterations = &v
 	}
+	if timeout, ok := input["timeout"]; ok {
+		v, err := parseSubagentTimeout(timeout)
+		if err != nil {
+			return nil, fmt.Errorf("timeout: %w", err)
+		}
+		t.Timeout = &v
+	}
 	if a, ok := input["async"].(bool); ok {
 		t.Async = a
 	}
@@ -634,6 +654,27 @@ func toInt(v any) (int, error) {
 	}
 }
 
+// parseSubagentTimeout validates an explicit per-child timeout. A missing
+// timeout uses the shared default; once supplied it must leave enough room for
+// the deadline warning and cannot extend the default backstop.
+func parseSubagentTimeout(v any) (int, error) {
+	seconds, err := toInt(v)
+	if err != nil {
+		return 0, err
+	}
+	if seconds < SubagentMinTimeoutSec || seconds > SubagentMaxTimeoutSec {
+		return 0, fmt.Errorf("must be between %d and %d seconds", SubagentMinTimeoutSec, SubagentMaxTimeoutSec)
+	}
+	return seconds, nil
+}
+
+func subagentTimeoutSeconds(task subagentTask) int {
+	if task.Timeout != nil {
+		return *task.Timeout
+	}
+	return SubagentTimeoutSec
+}
+
 func taskFromMap(m map[string]any) (subagentTask, error) {
 	taskStr, _ := m["task"].(string)
 	if taskStr == "" {
@@ -652,6 +693,14 @@ func taskFromMap(m map[string]any) (subagentTask, error) {
 			return subagentTask{}, fmt.Errorf("max_iterations: %w", err)
 		}
 		t.MaxIterations = &v
+	}
+
+	if timeout, ok := m["timeout"]; ok {
+		v, err := parseSubagentTimeout(timeout)
+		if err != nil {
+			return subagentTask{}, fmt.Errorf("timeout: %w", err)
+		}
+		t.Timeout = &v
 	}
 	if a, ok := m["async"].(bool); ok {
 		t.Async = a
@@ -770,7 +819,7 @@ func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtSta
 	// Detached from the caller's context and given its own backstop: the
 	// context of a tool call dies when the call returns, which for a
 	// backgrounded child would kill the very work we are keeping alive.
-	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SubagentTimeoutSec*time.Second)
+	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(subagentTimeoutSeconds(task))*time.Second)
 	st.cancel = cancel
 	stopStream := &atomic.Bool{}
 	st.stopStream = stopStream
@@ -1065,7 +1114,11 @@ func runTasks(ctx context.Context, runner SubAgentRunner, tasks []subagentTask, 
 		wg.Add(1)
 		go func(idx int, t subagentTask) {
 			defer wg.Done()
-			results[idx] = runSingleTask(ctx, runner, t, timeoutSec, true)
+			childTimeout := timeoutSec
+			if t.Timeout != nil {
+				childTimeout = *t.Timeout
+			}
+			results[idx] = runSingleTask(ctx, runner, t, childTimeout, true)
 		}(i, task)
 	}
 
