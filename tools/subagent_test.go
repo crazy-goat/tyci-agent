@@ -1126,6 +1126,113 @@ func TestParseTasks_MaxIterations_Float64(t *testing.T) {
 	}
 }
 
+func TestParseTasks_TimeoutValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   any
+		want int
+	}{
+		{"minimum", SubagentMinTimeoutSec, SubagentMinTimeoutSec},
+		{"maximum", SubagentMaxTimeoutSec, SubagentMaxTimeoutSec},
+		{"float64", float64(SubagentMinTimeoutSec + 1), SubagentMinTimeoutSec + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tasks, err := parseTasks(map[string]any{"task": "x", "timeout": tc.in}, "model")
+			if err != nil {
+				t.Fatalf("parseTasks: %v", err)
+			}
+			if tasks[0].Timeout == nil || *tasks[0].Timeout != tc.want {
+				t.Fatalf("got timeout %v, want %d", tasks[0].Timeout, tc.want)
+			}
+		})
+	}
+	for _, in := range []any{SubagentMinTimeoutSec - 1, SubagentMaxTimeoutSec + 1, math.NaN()} {
+		if _, err := parseTasks(map[string]any{"task": "x", "timeout": in}, "model"); err == nil {
+			t.Errorf("timeout %v: expected validation error", in)
+		}
+	}
+	if tasks, err := parseTasks(map[string]any{"task": "x"}, "model"); err != nil || tasks[0].Timeout != nil {
+		t.Fatalf("omitted timeout should use the runtime default, got tasks=%+v err=%v", tasks, err)
+	}
+}
+
+func TestSubagentSchema_TimeoutField(t *testing.T) {
+	var timeout map[string]any
+	for _, entry := range GetToolsSchema() {
+		fn, _ := entry["function"].(map[string]any)
+		if fn["name"] != "subagent" {
+			continue
+		}
+		params, _ := fn["parameters"].(map[string]any)
+		props, _ := params["properties"].(map[string]any)
+		timeout, _ = props["timeout"].(map[string]any)
+	}
+	if timeout == nil || timeout["type"] != "integer" {
+		t.Fatalf("subagent schema missing integer timeout field: %+v", timeout)
+	}
+	if !strings.Contains(timeout["description"].(string), fmt.Sprintf("%d", SubagentMinTimeoutSec)) {
+		t.Errorf("timeout schema does not describe its lower bound: %v", timeout)
+	}
+}
+
+func TestSubagentTimeout_PropagatesExplicitAndDefaultDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		input   map[string]any
+		wantDur time.Duration
+	}{
+		{"explicit", map[string]any{"task": "x", "timeout": SubagentMinTimeoutSec}, time.Duration(SubagentMinTimeoutSec) * time.Second},
+		{"default", map[string]any{"task": "x"}, time.Duration(SubagentTimeoutSec) * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			SetJobStarter(nil)
+			t.Cleanup(func() { SetJobStarter(nil) })
+			var got time.Duration
+			runner := &mockRunner{RunTaskFunc: func(ctx context.Context, _, _ string, _ SubagentOptions) (string, error) {
+				deadline, ok := ctx.Deadline()
+				if !ok {
+					t.Fatal("child context has no wall-clock deadline")
+				}
+				got = time.Until(deadline)
+				return "done", nil
+			}}
+			ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
+			res := (&SubagentTool{Runner: runner}).Run(ctx, tc.input)
+			if !res.Success {
+				t.Fatalf("subagent failed: %s", res.Error)
+			}
+			if got <= tc.wantDur-time.Second || got > tc.wantDur {
+				t.Fatalf("child deadline was %s from now, want approximately %s", got, tc.wantDur)
+			}
+		})
+	}
+}
+
+func TestSubagentSpawn_UsesExplicitDeadline(t *testing.T) {
+	reg := jobs.NewRegistry()
+	SetJobStarter(testJobStarter{reg})
+	t.Cleanup(func() { SetJobStarter(nil) })
+
+	var got time.Duration
+	runner := &mockRunner{RunTaskFunc: func(ctx context.Context, _, _ string, _ SubagentOptions) (string, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("child context has no wall-clock deadline")
+		}
+		got = time.Until(deadline)
+		return "done", nil
+	}}
+	tool := &SubagentTool{Runner: runner}
+	timeout := SubagentMinTimeoutSec
+	st := tool.spawn(context.Background(), subagentTask{Task: "x", Timeout: &timeout}, true, false)
+	<-st.done
+
+	want := time.Duration(timeout) * time.Second
+	if got <= want-time.Second || got > want {
+		t.Fatalf("child deadline was %s from now, want approximately %s", got, want)
+	}
+}
+
 // TestToInt_RejectsBadFloats ensures a runaway model value can't silently
 // let a child agent run to math.MaxInt64 iterations.
 func TestToInt_RejectsBadFloats(t *testing.T) {
