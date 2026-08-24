@@ -341,16 +341,13 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	_, err = agent.Run(ctx, mc, ledger.Watch(sink, ledger.Subagent, mc.Provider(), mc.Model(), jobID), &msgs, cfg)
 	text := strings.TrimSpace(collectedText())
 
-	// truncated is the iteration-cap cutoff; deadlineExceeded is the
-	// wall-clock one (SubagentTimeoutSec, via ctx's deadline — see
-	// tools/subagent.go's runSingleTask); stoppedByUser is the kill switch
-	// (jobs.Registry.Cancel, reached today only via kill_job). Mutually
-	// exclusive in practice: agent.Run only ever returns one error. All
-	// leave a resumable, partially-completed conversation behind, so all
-	// get the same treatment below.
+	// stoppedByUser is the kill switch (jobs.Registry.Cancel, reached today
+	// only via kill_job). Mutually exclusive in practice: agent.Run only ever
+	// returns one error. All leave a resumable, partially-completed
+	// conversation behind, so all get the same treatment below.
 	truncated := errors.Is(err, agent.ErrMaxIterations)
 	deadlineExceeded := !truncated && errors.Is(err, context.DeadlineExceeded)
-	stoppedByUser := !truncated && !deadlineExceeded && errors.Is(err, context.Canceled)
+	stoppedByUser := isStoppedByUser(err, ctx)
 
 	// If this run is happening inside a background job, and it actually
 	// produced a usable transcript (finished cleanly, hit the iteration cap,
@@ -407,6 +404,22 @@ func subagentStoppedMessage(text string, jobID string) (string, error) {
 	}
 	return text + fmt.Sprintf("\n\n[note: subagent was stopped by user (kill_job); the result above may be incomplete.%s]", resumeHint(jobID)),
 		fmt.Errorf("%w: result may be incomplete", tools.ErrSubagentStoppedByUser)
+}
+
+// isStoppedByUser reports whether an agent.Run error is a kill_job stop (the
+// switch item 26 ships). A bare context.Canceled is NOT sufficient: in the
+// no-handoff mode (tyci run / --print) runWithHandoff cancels still-running
+// children itself via cancelRemaining, and that path stamps AskUnroutableCtxKey
+// on the child's context (see its doc in tools/ask.go). Those children stop
+// because the parent's tool call was cut off, not because anyone stopped
+// them — labelling them "stopped by user (kill_job)" would be a lie. In every
+// other mode the child's context is detached at spawn (WithoutCancel), so the
+// only context.Canceled a child can return is the registry Cancel — a genuine
+// kill_job stop. Factored out so the attribution decision is testable on its
+// own, independent of a full agent harness.
+func isStoppedByUser(err error, ctx context.Context) bool {
+	noHandoff, _ := ctx.Value(tools.AskUnroutableCtxKey{}).(bool)
+	return errors.Is(err, context.Canceled) && !noHandoff
 }
 
 // subagentCutoffMessage builds the (content, error) pair run() returns once

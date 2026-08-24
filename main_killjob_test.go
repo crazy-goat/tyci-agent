@@ -1,12 +1,43 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/decodo/tyci/tools"
 )
+
+// TestIsStoppedByUser_AttributionRequiresNonHandoffCtx: a genuine
+// context.Canceled in a normal (handoff-eligible) child is a kill_job stop;
+// the SAME error in the no-handoff mode (AskUnroutableCtxKey stamped) is a
+// run-mode cutoff, NOT "stopped by user". Revert check: drop the `&& !noHandoff`
+// clause from isStoppedByUser and the second assertion flips to true.
+func TestIsStoppedByUser_AttributionRequiresNonHandoffCtx(t *testing.T) {
+	ctx := context.Background()
+	if !isStoppedByUser(context.Canceled, ctx) {
+		t.Error("context.Canceled in a normal child must be a kill_job stop")
+	}
+
+	noHandoff := context.WithValue(context.Background(), tools.AskUnroutableCtxKey{}, true)
+	if isStoppedByUser(context.Canceled, noHandoff) {
+		t.Error("context.Canceled in the no-handoff mode is a run-mode cutoff, not a kill_job stop — over-attribution")
+	}
+}
+
+// TestIsStoppedByUser_FalseForNonCancel: only context.Canceled (not nil, not
+// deadline) counts as a kill_job stop. Revert check: remove the errors.Is
+// guard and a nil error would be misreported as stopped.
+func TestIsStoppedByUser_FalseForNonCancel(t *testing.T) {
+	ctx := context.Background()
+	if isStoppedByUser(nil, ctx) {
+		t.Error("a clean finish is not a kill_job stop")
+	}
+	if isStoppedByUser(context.DeadlineExceeded, ctx) {
+		t.Error("the wall-clock deadline is not a kill_job stop")
+	}
+}
 
 // TestSubagentStoppedMessage_CarriesPartialWork: a child stopped by
 // kill_job keeps its partial output, annotated with the resume hint, and the
