@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -11,6 +12,7 @@ type fakeJobMailbox struct {
 	resolved  map[string]string // idOrShort -> full id
 	posts     []postCall
 	postFails map[string]bool // full id -> Post returns false
+	live      map[string]bool
 	drainOut  map[string][]string
 }
 
@@ -21,6 +23,10 @@ type postCall struct {
 func (f *fakeJobMailbox) Resolve(id string) (string, bool) {
 	full, ok := f.resolved[id]
 	return full, ok
+}
+
+func (f *fakeJobMailbox) IsLive(id string) bool {
+	return f.live == nil || f.live[id]
 }
 
 func (f *fakeJobMailbox) Post(id, text string) bool {
@@ -100,6 +106,18 @@ func TestMessageTool_UnknownJobIDFails(t *testing.T) {
 	}
 	if len(f.posts) != 0 {
 		t.Errorf("expected no Post call for an unresolved job id, got %v", f.posts)
+	}
+}
+
+func TestMessageTool_TerminalJobFailsWithResumeGuidance(t *testing.T) {
+	f := &fakeJobMailbox{resolved: map[string]string{"done": "done"}, live: map[string]bool{"done": false}}
+	withFakeMailbox(t, f)
+	res := (&MessageTool{}).Run(context.Background(), map[string]any{"job_id": "done", "text": "hi"})
+	if res.Success || !strings.Contains(res.Error, "resume(job_id, task)") || !strings.Contains(res.Error, "only live jobs") {
+		t.Fatalf("error = %q, want live-job/resume guidance", res.Error)
+	}
+	if len(f.posts) != 0 {
+		t.Fatalf("terminal job received post: %v", f.posts)
 	}
 }
 

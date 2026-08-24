@@ -457,7 +457,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "message",
-				"description": "Post a message to one of your own running background jobs (a subagent(async=true) child, or a /btw side-conversation), delivered at its next iteration — not mid-tool-call, so it may take a moment if the job is deep in a tool call. Use this to steer it (\"stop, do X instead\", \"also check Y\") without waiting for it to finish. Not the same as answer_job: this injects a new instruction, it does not unblock an ask_parent.",
+				"description": "Send a message only to one of your own live jobs (running or waiting for an answer), delivered at its next iteration — not mid-tool-call. This steers a live job; it does not resume a finished job or unblock ask_parent. If the job is finished, use resume(job_id, task) to continue its transcript.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -486,7 +486,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "resume",
-				"description": "Continue a FINISHED async job with a new task. It keeps its entire conversation, so a follow-up (\"now also fix the tests\") costs no re-explaining — this is much cheaper than spawning a fresh child and describing the context again. Returns a new job_id, notified like any async spawn. Only works on a job that finished normally.",
+				"description": "Continue a finished async job's transcript with a new task. Use this instead of message for done, failed, or truncated jobs; message only targets live jobs. The new job keeps the entire conversation, so a follow-up costs no re-explaining. Returns a new job_id.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{

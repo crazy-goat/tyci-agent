@@ -21,6 +21,9 @@ type JobMailbox interface {
 	// Post enqueues text for delivery to job id's next iteration boundary.
 	// Returns false when id is unknown.
 	Post(id, text string) bool
+	// IsLive reports whether id identifies a running or waiting job. Terminal
+	// jobs remain resolvable for resume, but cannot receive new messages.
+	IsLive(id string) bool
 	// Drain pops and returns everything queued for job id via Post, FIFO,
 	// clearing the mailbox. nil for an unknown id or an empty mailbox.
 	Drain(id string) []string
@@ -90,8 +93,11 @@ func (t *MessageTool) Run(ctx context.Context, input map[string]any) ToolResult 
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("unknown job_id %q — use the exact id a subagent/wait/resume call gave you, or its short #N form from the jobs panel", rawID)}
 	}
 
+	if !jobMailbox.IsLive(jobID) {
+		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("job %q is no longer running; only live jobs can receive messages. Use resume(job_id, task) to continue a finished transcript", jobID)}
+	}
 	if !jobMailbox.Post(jobID, text) {
-		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("job %q not found", jobID)}
+		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("job %q is no longer running; only live jobs can receive messages. Use resume(job_id, task) to continue a finished transcript", jobID)}
 	}
 	return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("message queued for job %s; it will see it at its next iteration", jobID)}
 }

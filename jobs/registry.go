@@ -401,27 +401,35 @@ func (r *Registry) TouchActivity(id string) {
 	job.touchActivity()
 }
 
-// Post enqueues text for delivery to the job identified by id at its own
-// agent loop's next iteration boundary (see DrainMessages). This is how a
-// running background subagent gets steered mid-flight, either by a person
-// via the "/msg" slash command or by the parent model via the "message"
-// tool — the mechanism that already exists for the main agent
-// (agent.Config.NextMessages) applied per-job instead of process-wide.
+// Post enqueues text for delivery to a live job at its own agent loop's next
+// iteration boundary (see DrainMessages). Running and waiting-for-answer jobs
+// are live; terminal jobs are not and cannot receive messages.
 //
-// Returns false when id is unknown; the caller should tell whoever posted
-// that the job doesn't exist rather than silently dropping the message. No
-// restriction on the job's current status — posting to a job that is about
-// to finish (or has just finished) is harmless, same as SetProgress: the
-// message simply never gets drained.
+// Returns false when id is unknown or terminal. Callers that need to explain
+// the distinction should resolve the id first and use IsLive.
 func (r *Registry) Post(id, text string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	job, ok := r.jobs[id]
-	if !ok {
+	if !ok || !jobLive(job.Status) {
 		return false
 	}
 	job.mailbox = append(job.mailbox, text)
 	return true
+}
+
+// IsLive reports whether id identifies a job that can still receive a
+// message. Waiting-for-answer is live: it can resume its loop after the
+// answer arrives, and message delivery remains valid at that boundary.
+func (r *Registry) IsLive(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	return ok && jobLive(job.Status)
+}
+
+func jobLive(status Status) bool {
+	return status == StatusRunning || status == StatusWaitingAnswer
 }
 
 // DrainMessages pops and returns everything queued for job id via Post,
