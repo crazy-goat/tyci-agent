@@ -293,12 +293,8 @@ func (m TuiModel) sidebarFooter() string {
 	switch m.sidebarTab {
 	case sidebarTabSessions:
 		return "↑↓ browse  Enter: open resume picker  " + nav + "  Esc close"
-	case sidebarTabBash, sidebarTabSubagents:
-		hint := "↑↓ select  Enter view"
-		if m.sidebarTab == sidebarTabSubagents {
-			hint += "  r resume"
-		}
-		return hint + "  " + nav + "  Esc close"
+	case sidebarTabTasks:
+		return "↑↓ select  Enter view  r resume  " + nav + "  Esc close"
 	default:
 		return nav + "  Esc close"
 	}
@@ -309,8 +305,8 @@ func (m TuiModel) sidebarFooter() string {
 // on the two tabs where it applies.
 func (m TuiModel) sidebarHint() string {
 	switch m.sidebarTab {
-	case sidebarTabBash, sidebarTabSubagents:
-		return "History: this session only, last 50 finished jobs (oldest evicted)"
+	case sidebarTabTasks:
+		return "History: this session only, last 50 entries per source"
 	case sidebarTabSessions:
 		if m.sessionLister == nil {
 			return "Session list unavailable in this build"
@@ -328,12 +324,8 @@ func (m TuiModel) sidebarTabLines(width int) []string {
 		return m.buildUsageDetail(width)
 	case sidebarTabSessions:
 		return m.renderSidebarSessions(width)
-	case sidebarTabBash:
-		return m.renderSidebarBash(width)
-	case sidebarTabLua:
-		return m.renderSidebarLua(width)
-	case sidebarTabSubagents:
-		return m.renderSidebarSubagents(width)
+	case sidebarTabTasks:
+		return m.renderSidebarTasks(width)
 	default:
 		return nil
 	}
@@ -346,6 +338,29 @@ func rowStyle(width int, selected bool) lipgloss.Style {
 		return lipgloss.NewStyle().Width(width).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("45"))
 	}
 	return lipgloss.NewStyle().Width(width)
+}
+
+func (m TuiModel) renderSidebarTasks(width int) []string {
+	rows := m.sidebarTaskRows()
+	out := make([]string, 0, len(rows))
+	cursorLine := -1
+	if m.sidebarCursor >= 0 {
+		jobRows := m.sidebarTaskJobRows()
+		if m.sidebarCursor < len(jobRows) {
+			cursorLine = jobRows[m.sidebarCursor]
+		}
+	}
+	for i, row := range rows {
+		if row.isHeading {
+			out = append(out, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245")).Width(width).Render(row.line))
+			continue
+		}
+		out = append(out, rowStyle(width, i == cursorLine).Render(truncateToWidth(row.line, width)))
+	}
+	if len(out) == 0 {
+		return []string{"", "  No tasks recorded this session."}
+	}
+	return out
 }
 
 func (m TuiModel) renderSidebarSessions(width int) []string {

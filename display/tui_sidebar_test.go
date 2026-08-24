@@ -90,13 +90,13 @@ func TestSidebarMouse_TabClickAndBorderMargin(t *testing.T) {
 
 	// Click squarely inside the Subagents cell of the tab row.
 	cell := layout.contentWidth / sidebarTabCount
-	x := layout.contentLeft + sidebarTabSubagents*cell + cell/2
+	x := layout.contentLeft + sidebarTabTasks*cell + cell/2
 	model, _ := m.updateSidebar(tea.MouseMsg{
 		X: x, Y: layout.top + 1,
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
 	})
 	m2 := model.(TuiModel)
-	if m2.sidebarTab != sidebarTabSubagents {
+	if m2.sidebarTab != sidebarTabTasks {
 		t.Fatalf("expected clicking the Subagents cell to select it, got tab %d", m2.sidebarTab)
 	}
 	if !m2.sidebarActive {
@@ -114,7 +114,7 @@ func TestSidebarMouse_TabClickAndBorderMargin(t *testing.T) {
 	if !m3.sidebarActive {
 		t.Fatalf("expected a click on the panel's own border column to leave the sidebar open")
 	}
-	if m3.sidebarTab != sidebarTabSubagents {
+	if m3.sidebarTab != sidebarTabTasks {
 		t.Fatalf("expected the border-column click to leave the tab selection unchanged, got %d", m3.sidebarTab)
 	}
 
@@ -135,7 +135,7 @@ func TestSidebarMouse_TabClickAndBorderMargin(t *testing.T) {
 // scroll semantics while renderSidebarColumn avoids rebuilding tab content.
 func TestSidebarVisibleScrollForRenderedLineCount(t *testing.T) {
 	m := newTestModelForSidebar()
-	m.openSidebar(sidebarTabBash)
+	m.openSidebar(sidebarTabTasks)
 	layout := m.sidebarLayout()
 	m.sidebarScroll = 99
 	lineCount := len(m.sidebarTabLines(layout.contentWidth))
@@ -167,7 +167,7 @@ func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
 			StartedAt: time.Now().Add(-time.Duration(30-i) * time.Minute),
 		})
 	}
-	m.openSidebar(sidebarTabBash)
+	m.openSidebar(sidebarTabTasks)
 	layout := m.sidebarLayout()
 	if layout.contentHeight >= 30 {
 		t.Skip("terminal too tall for this test to exercise overflow")
@@ -177,7 +177,7 @@ func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
 		m.sidebarMoveCursor(1)
 	}
 	if m.sidebarCursor != 29 {
-		t.Fatalf("expected cursor at the last row (29), got %d", m.sidebarCursor)
+		t.Fatalf("expected cursor at the last Bash row (29), got %d", m.sidebarCursor)
 	}
 	if m.sidebarScroll+layout.contentHeight <= m.sidebarCursor {
 		t.Fatalf("expected sidebarScroll to keep the cursor in view: scroll=%d contentHeight=%d cursor=%d",
@@ -189,7 +189,26 @@ func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
 	rendered := m.renderSidebarColumn()
 	rows := strings.Split(rendered, "\n")
 	firstContentRow := ansi.Strip(rows[layout.contentTop])
-	lastJobShortID := jobs.ShortID(lines[m.sidebarScroll].ID)
+	jobRows := m.sidebarTaskJobRows()
+	lineAtScroll := m.sidebarScroll
+	jobAtScroll := 0
+	for _, row := range jobRows {
+		if row >= lineAtScroll {
+			jobAtScroll = row
+			break
+		}
+	}
+	if jobAtScroll == 0 {
+		t.Fatal("expected a task job row at the scroll offset")
+	}
+	jobIndex := 0
+	for _, row := range jobRows {
+		if row == jobAtScroll {
+			break
+		}
+		jobIndex++
+	}
+	lastJobShortID := jobs.ShortID(lines[jobIndex].ID)
 	if !strings.Contains(firstContentRow, "#"+lastJobShortID) {
 		t.Fatalf("expected the first visible content row to show job at scroll offset %d (id %s), got %q",
 			m.sidebarScroll, lastJobShortID, firstContentRow)
@@ -215,7 +234,7 @@ func TestSidebarResize_ReclampsStaleScrollAndClickMapping(t *testing.T) {
 			StartedAt:   time.Now().Add(-time.Duration(10-i) * time.Minute),
 		})
 	}
-	m.openSidebar(sidebarTabBash)
+	m.openSidebar(sidebarTabTasks)
 	smallLayout := m.sidebarLayout()
 	if smallLayout.contentHeight >= 10 {
 		t.Skip("terminal too tall for this test to exercise overflow at the small size")
@@ -294,8 +313,8 @@ func TestOpenCloseToggleSidebar(t *testing.T) {
 	m.scrollLine = 5
 	m.atBottom = false
 
-	m.openSidebar(sidebarTabSubagents)
-	if !m.sidebarActive || m.sidebarTab != sidebarTabSubagents {
+	m.openSidebar(sidebarTabTasks)
+	if !m.sidebarActive || m.sidebarTab != sidebarTabTasks {
 		t.Fatalf("expected sidebar active on Subagents tab, got active=%v tab=%d", m.sidebarActive, m.sidebarTab)
 	}
 
@@ -413,7 +432,7 @@ func TestUpdateSidebar_LeftAtFirstTabExitsFocus(t *testing.T) {
 
 func TestUpdateSidebar_RightAtLastTabExitsFocus(t *testing.T) {
 	m := newTestModelForSidebar()
-	m.openSidebar(sidebarTabSubagents) // the last tab
+	m.openSidebar(sidebarTabTasks) // the last tab
 	m.sidebarFocused = true
 
 	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyRight})
@@ -421,7 +440,7 @@ func TestUpdateSidebar_RightAtLastTabExitsFocus(t *testing.T) {
 	if m2.sidebarFocused {
 		t.Fatalf("expected Right at the last tab to exit focus back to the conversation")
 	}
-	if m2.sidebarTab != sidebarTabSubagents {
+	if m2.sidebarTab != sidebarTabTasks {
 		t.Fatalf("expected the tab selection to stay put on exit, got %d", m2.sidebarTab)
 	}
 }
@@ -434,7 +453,7 @@ func TestUpdateSidebar_RightAtLastTabExitsFocus(t *testing.T) {
 func TestUpdateSidebar_CtrlArrowsExitFocusFromAnyTab(t *testing.T) {
 	for _, keyType := range []tea.KeyType{tea.KeyCtrlLeft, tea.KeyCtrlRight} {
 		m := newTestModelForSidebar()
-		m.openSidebar(sidebarTabBash) // middle tab
+		m.openSidebar(sidebarTabTasks) // middle tab
 		m.sidebarFocused = true
 
 		model, _ := m.updateSidebar(tea.KeyMsg{Type: keyType})
@@ -445,7 +464,7 @@ func TestUpdateSidebar_CtrlArrowsExitFocusFromAnyTab(t *testing.T) {
 		if !m2.sidebarActive {
 			t.Fatalf("expected %v to leave the sidebar open, just unfocused", keyType)
 		}
-		if m2.sidebarTab != sidebarTabBash {
+		if m2.sidebarTab != sidebarTabTasks {
 			t.Fatalf("expected %v to keep the tab selection, got %d", keyType, m2.sidebarTab)
 		}
 	}
@@ -485,14 +504,14 @@ func TestSidebarFocus_DefaultsToConversation(t *testing.T) {
 // tab was already selected rather than resetting to the first tab.
 func TestSidebarFocus_RightEntersSidebarFromConversation(t *testing.T) {
 	m := newTestModelForSidebar()
-	m.openSidebar(sidebarTabBash)
+	m.openSidebar(sidebarTabTasks)
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
 	m2 := model.(TuiModel)
 	if !m2.sidebarFocused {
 		t.Fatalf("expected Ctrl+Right from the conversation to move focus onto the sidebar")
 	}
-	if m2.sidebarTab != sidebarTabBash {
+	if m2.sidebarTab != sidebarTabTasks {
 		t.Fatalf("expected entering focus to keep the already-selected tab, got %d", m2.sidebarTab)
 	}
 }
@@ -504,7 +523,7 @@ func TestSidebarFocus_RightEntersSidebarFromConversation(t *testing.T) {
 // move the prompt cursor right while the sidebar was open.
 func TestSidebarFocus_PlainRightNotHijackedFromConversation(t *testing.T) {
 	m := newTestModelForSidebar()
-	m.openSidebar(sidebarTabBash)
+	m.openSidebar(sidebarTabTasks)
 	// Put some text in the input and the cursor at the start.
 	m.input.SetValue("abc")
 	m.input.SetCursor(0)
@@ -574,7 +593,7 @@ func TestSidebarMouse_MainColumnClickRoutesToMainAndUnfocuses(t *testing.T) {
 	if m.buildContextCost() == "" {
 		t.Skip("no context cost to click in this configuration")
 	}
-	m.openSidebar(sidebarTabBash)
+	m.openSidebar(sidebarTabTasks)
 	m.sidebarFocused = true
 
 	mainWidth := m.mainColumnWidth()
@@ -603,7 +622,7 @@ func TestSidebarMouse_SidebarColumnClickFocusesSidebar(t *testing.T) {
 	layout := m.sidebarLayout()
 
 	cell := layout.contentWidth / sidebarTabCount
-	x := layout.contentLeft + sidebarTabSubagents*cell + cell/2
+	x := layout.contentLeft + sidebarTabTasks*cell + cell/2
 	model, _ := m.Update(tea.MouseMsg{
 		X: x, Y: layout.top + 1,
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
@@ -612,7 +631,7 @@ func TestSidebarMouse_SidebarColumnClickFocusesSidebar(t *testing.T) {
 	if !m2.sidebarFocused {
 		t.Fatalf("expected a click inside the sidebar column to focus it")
 	}
-	if m2.sidebarTab != sidebarTabSubagents {
+	if m2.sidebarTab != sidebarTabTasks {
 		t.Fatalf("expected clicking the Subagents cell to select it, got %d", m2.sidebarTab)
 	}
 }
@@ -939,8 +958,8 @@ func TestSidebarRefusalMessages_FitStatusBarTruncation(t *testing.T) {
 	m3 := newTestModelForSidebar()
 	m3.input.SetValue("x")
 	m3.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone})
-	m3.openSidebar(sidebarTabSubagents)
-	m3.sidebarCursor = 1
+	m3.openSidebar(sidebarTabTasks)
+	m3.sidebarCursor = 0
 	model, _ = m3.sidebarResumeSubagentRow()
 	msg3 := model.(TuiModel).statusMessage
 
@@ -999,8 +1018,8 @@ func TestSidebarResumeSubagentRow_RefusesWhenInputNotEmpty(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.input.SetValue("don't overwrite me")
 	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "child"})
-	m.openSidebar(sidebarTabSubagents)
-	m.sidebarCursor = 1 // the one real row past the synthetic root
+	m.openSidebar(sidebarTabTasks)
+	m.sidebarCursor = 2 // Tasks heading + synthetic root + one real row
 
 	model, _ := m.sidebarResumeSubagentRow()
 	m2 := model.(TuiModel)
@@ -1150,7 +1169,7 @@ func TestSidebarToggle_InvalidatesTranscriptWrapCache(t *testing.T) {
 func TestSidebarFocused_StreamedBlocksStillLandInTranscript(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.reading = false // as if a turn were still in flight
-	m.openSidebar(sidebarTabBash)
+	m.openSidebar(sidebarTabTasks)
 	m.sidebarFocused = true // browsing the sidebar while the agent works
 
 	model, _ := m.Update(tuiMsgBlock{kind: "text", content: "unique-marker-streamed-while-focused"})

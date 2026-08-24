@@ -1,7 +1,7 @@
 package display
 
-// The right-side sidebar (TODO.md item 1): Tokens / Sessions / Bash / Lua /
-// Subagents tabs, toggled with Ctrl+T or by clicking the status bar's
+// The right-side sidebar (TODO.md item 1): Tokens / Sessions / Tasks tabs,
+// toggled with Ctrl+T or by clicking the status bar's
 // context figure (see tui_status.go's statusRightHit).
 //
 // Unlike the jobs modal / todo modal / /btw modal / resume picker in this
@@ -45,6 +45,7 @@ import (
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/stream"
+	"github.com/decodo/tyci/tools"
 )
 
 // sidebarStatusCmd shows msg in the status bar for 2 seconds, mirroring
@@ -60,19 +61,23 @@ func sidebarStatusCmd(msg string) tea.Cmd {
 const (
 	sidebarTabTokens = iota
 	sidebarTabSessions
-	sidebarTabBash
-	sidebarTabLua
-	sidebarTabSubagents
+	sidebarTabTasks
 	sidebarTabCount
 )
 
 var sidebarTabNames = [sidebarTabCount]string{
-	sidebarTabTokens:    "Tokens",
-	sidebarTabSessions:  "Sessions",
-	sidebarTabBash:      "Bash",
-	sidebarTabLua:       "Lua",
-	sidebarTabSubagents: "Subagents",
+	sidebarTabTokens:   "Tokens",
+	sidebarTabSessions: "Sessions",
+	sidebarTabTasks:    "Tasks",
 }
+
+// Compatibility aliases for older package-local tests. They are not rendered
+// as separate tabs and all map to the unified Tasks view.
+const (
+	sidebarTabBash      = sidebarTabTasks
+	sidebarTabLua       = sidebarTabTasks
+	sidebarTabSubagents = sidebarTabTasks
+)
 
 // openSidebar opens the sidebar on the given tab, saving scroll state the
 // same way every other full-screen overlay in this package does. Focus
@@ -161,7 +166,7 @@ func (m *TuiModel) closeSidebarPersisted() {
 // just be a highlight with nothing behind it (see sidebarRowCount).
 func (m TuiModel) sidebarSelectable() bool {
 	switch m.sidebarTab {
-	case sidebarTabSessions, sidebarTabBash, sidebarTabSubagents:
+	case sidebarTabSessions, sidebarTabTasks:
 		return true
 	default:
 		return false
@@ -175,10 +180,8 @@ func (m TuiModel) sidebarRowCount() int {
 	switch m.sidebarTab {
 	case sidebarTabSessions:
 		return len(m.sidebarSessionEntries())
-	case sidebarTabBash:
-		return len(m.sidebarBashJobs())
-	case sidebarTabSubagents:
-		return len(m.buildSubagentTree())
+	case sidebarTabTasks:
+		return len(m.sidebarTaskJobRows())
 	default:
 		return 0
 	}
@@ -236,10 +239,18 @@ func (m *TuiModel) sidebarClampScrollToCursor(contentHeight int) {
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
-	if m.sidebarCursor < m.sidebarScroll {
-		m.sidebarScroll = m.sidebarCursor
-	} else if m.sidebarCursor >= m.sidebarScroll+contentHeight {
-		m.sidebarScroll = m.sidebarCursor - contentHeight + 1
+	cursorLine := m.sidebarCursor
+	if m.sidebarTab == sidebarTabTasks {
+		jobRows := m.sidebarTaskJobRows()
+		if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) {
+			return
+		}
+		cursorLine = jobRows[m.sidebarCursor]
+	}
+	if cursorLine < m.sidebarScroll {
+		m.sidebarScroll = cursorLine
+	} else if cursorLine >= m.sidebarScroll+contentHeight {
+		m.sidebarScroll = cursorLine - contentHeight + 1
 	}
 	if m.sidebarScroll < 0 {
 		m.sidebarScroll = 0
@@ -271,13 +282,27 @@ func (m *TuiModel) sidebarScrollBy(delta, lineCount, contentHeight int) {
 func (m *TuiModel) sidebarMoveCursor(delta int) {
 	layout := m.sidebarLayout()
 	if m.sidebarSelectable() {
-		last := m.sidebarRowCount() - 1
-		m.sidebarCursor += delta
-		if m.sidebarCursor < 0 {
-			m.sidebarCursor = 0
-		}
-		if m.sidebarCursor > last {
-			m.sidebarCursor = max(0, last)
+		if m.sidebarTab == sidebarTabTasks {
+			jobCount := m.sidebarRowCount()
+			if jobCount == 0 {
+				return
+			}
+			m.sidebarCursor += delta
+			if m.sidebarCursor < 0 {
+				m.sidebarCursor = 0
+			}
+			if m.sidebarCursor >= jobCount {
+				m.sidebarCursor = jobCount - 1
+			}
+		} else {
+			last := m.sidebarRowCount() - 1
+			m.sidebarCursor += delta
+			if m.sidebarCursor < 0 {
+				m.sidebarCursor = 0
+			}
+			if m.sidebarCursor > last {
+				m.sidebarCursor = max(0, last)
+			}
 		}
 		m.sidebarClampScrollToCursor(layout.contentHeight)
 		return
@@ -448,7 +473,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.sidebarActivateRow()
 
 		case tea.KeyRunes:
-			if m.sidebarTab == sidebarTabSubagents && string(msg.Runes) == "r" {
+			if m.sidebarTab == sidebarTabTasks && string(msg.Runes) == "r" {
 				return m.sidebarResumeSubagentRow()
 			}
 			return m, nil
@@ -486,8 +511,24 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.sidebarSelectable() && msg.Y >= layout.contentTop && msg.Y < layout.contentTop+layout.contentHeight {
 				row := msg.Y - layout.contentTop + m.sidebarVisibleScroll(layout)
 				if row < m.sidebarRowCount() {
-					m.sidebarCursor = row
-					return m.sidebarActivateRow()
+					if m.sidebarTab == sidebarTabTasks {
+						jobRows := m.sidebarTaskJobRows()
+						line := row + m.sidebarVisibleScroll(layout)
+						selected := -1
+						for i, jobRow := range jobRows {
+							if jobRow >= line {
+								selected = i
+								break
+							}
+						}
+						if selected >= 0 {
+							m.sidebarCursor = selected
+							return m.sidebarActivateRow()
+						}
+					} else {
+						m.sidebarCursor = row
+						return m.sidebarActivateRow()
+					}
 				}
 			}
 		}
@@ -548,21 +589,13 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 	switch m.sidebarTab {
 	case sidebarTabSessions:
 		return m.sidebarSubmitResume()
-	case sidebarTabBash:
-		jobsList := m.sidebarBashJobs()
-		if m.sidebarCursor >= 0 && m.sidebarCursor < len(jobsList) {
-			j := jobsList[m.sidebarCursor]
-			m.closeSidebar()
-			m.openJobResultModal(j)
-		}
-		return m, nil
-	case sidebarTabSubagents:
-		rows := m.buildSubagentTree()
-		if m.sidebarCursor >= 0 && m.sidebarCursor < len(rows) {
-			row := rows[m.sidebarCursor]
-			if !row.isRoot {
+	case sidebarTabTasks:
+		rows := m.sidebarTaskRows()
+		jobRows := m.sidebarTaskJobRows()
+		if m.sidebarCursor >= 0 && m.sidebarCursor < len(jobRows) {
+			if job := rows[jobRows[m.sidebarCursor]].job; job != nil {
 				m.closeSidebar()
-				m.openJobResultModal(row.job)
+				m.openJobResultModal(*job)
 			}
 		}
 		return m, nil
@@ -619,14 +652,12 @@ func (m TuiModel) sidebarSubmitResume() (tea.Model, tea.Cmd) {
 // — this only drafts text, so silently overwriting a half-written message
 // would be a pure loss with nothing gained.
 func (m TuiModel) sidebarResumeSubagentRow() (tea.Model, tea.Cmd) {
-	rows := m.buildSubagentTree()
-	if m.sidebarCursor < 0 || m.sidebarCursor >= len(rows) {
+	rows := m.sidebarTaskRows()
+	jobRows := m.sidebarTaskJobRows()
+	if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) || rows[jobRows[m.sidebarCursor]].job == nil || !rows[jobRows[m.sidebarCursor]].subagent {
 		return m, nil
 	}
-	row := rows[m.sidebarCursor]
-	if row.isRoot {
-		return m, nil
-	}
+	row := *rows[jobRows[m.sidebarCursor]].job
 	if strings.TrimSpace(m.input.Value()) != "" {
 		// See sidebarSubmitResume's identical comment on the 60-column cap.
 		m.closeSidebar()
@@ -635,7 +666,7 @@ func (m TuiModel) sidebarResumeSubagentRow() (tea.Model, tea.Cmd) {
 	}
 	m.closeSidebar()
 	m.input.SetValue(fmt.Sprintf("Use the resume tool to continue job %s (%s): ",
-		jobs.ShortID(row.job.ID), truncateString(row.job.Description, 40)))
+		jobs.ShortID(row.ID), truncateString(row.Description, 40)))
 	return m, nil
 }
 
@@ -667,6 +698,61 @@ func (m TuiModel) sidebarBashJobs() []jobs.Job {
 		}
 	}
 	return out
+}
+
+// sidebarTaskRow is one rendered line in Tasks. Group headings are not
+// selectable; job rows retain pointers to the existing job records.
+type sidebarTaskRow struct {
+	group     string
+	line      string
+	job       *jobs.Job
+	isHeading bool
+	subagent  bool
+}
+
+// sidebarTaskRows keeps the three source groups separate and stable. Jobs and
+// Lua history are each already sorted newest-first at the point they are read.
+func (m TuiModel) sidebarTaskRows() []sidebarTaskRow {
+	rows := []sidebarTaskRow{{group: "Subagents", line: "Subagents", isHeading: true}}
+	for _, treeRow := range m.buildSubagentTree() {
+		row := sidebarTaskRow{group: "Subagents", line: m.formatSubagentRow(treeRow, 80)}
+		if !treeRow.isRoot {
+			job := treeRow.job
+			row.job = &job
+			row.subagent = true
+		}
+		rows = append(rows, row)
+	}
+
+	rows = append(rows, sidebarTaskRow{group: "Bash", line: "Bash", isHeading: true})
+	for _, job := range m.sidebarBashJobs() {
+		job := job
+		rows = append(rows, sidebarTaskRow{group: "Bash", line: " " + formatJobLine(job, 80), job: &job})
+	}
+
+	history := tools.LuaRunHistory()
+	rows = append(rows, sidebarTaskRow{group: "Lua", line: "Lua", isHeading: true})
+	for i := len(history) - 1; i >= 0; i-- {
+		r := history[i]
+		icon := "✓"
+		if !r.Success {
+			icon = "✗"
+		}
+		rows = append(rows, sidebarTaskRow{group: "Lua", line: fmt.Sprintf(" %s %-20s %6s ago  %s", icon,
+			truncateString(r.Name, 20), formatDurationShort(time.Since(r.StartedAt)), r.Duration.Round(time.Millisecond))})
+	}
+	return rows
+}
+
+func (m TuiModel) sidebarTaskJobRows() []int {
+	rows := m.sidebarTaskRows()
+	indices := make([]int, 0)
+	for i, row := range rows {
+		if row.job != nil {
+			indices = append(indices, i)
+		}
+	}
+	return indices
 }
 
 // subagentTreeRow is one line of the Subagents tab's tree — either the
