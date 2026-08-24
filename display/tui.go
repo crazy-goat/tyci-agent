@@ -17,7 +17,8 @@ type tuiMsgBlock struct {
 	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block","set-model","reset","queue-drained"
 	content  string
 	toolName string
-	toolIdx  int // for tool-progress: index in toolQueue
+	failed   bool // for tool-end: the result represents a failed tool call
+	toolIdx  int  // for tool-progress: index in toolQueue
 	usage    stream.Usage
 	stats    stream.Stats
 	// queuedLines: for "queue-drained", the messages that were drained
@@ -141,6 +142,7 @@ type block struct {
 	content   string
 	toolName  string
 	toolState string // "running","done"
+	failed    bool   // completed tool returned an error
 	collapsed bool
 	maxLines  int
 	output    string        // full tool output (for modal), capped to tuiMaxToolOutput

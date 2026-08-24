@@ -99,6 +99,12 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		if len(m.toolQueue) > 0 {
 			frontIdx = m.toolQueue[0]
 		}
+		failed := msg.failed
+		if !failed && frontIdx >= 0 && frontIdx < len(m.blocks) && m.blocks[frontIdx].kind == "tool" {
+			// Keep direct/internal tuiMsgBlock producers safe too; the public
+			// ToolCallEnd path normally fills this flag before posting the msg.
+			failed = toolCallResultFailed(m.blocks[frontIdx].toolName, msg.content)
+		}
 		isSubagentEnd := frontIdx >= 0 && frontIdx < len(m.blocks) &&
 			m.blocks[frontIdx].kind == "tool" && m.blocks[frontIdx].toolName == "subagent"
 
@@ -106,6 +112,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 			// For subagent: pop queue entry without appending result to block content
 			m.toolQueue = m.toolQueue[1:]
 			m.blocks[frontIdx].toolState = "done"
+			m.blocks[frontIdx].failed = failed
 			m.blocks[frontIdx].duration = toolDuration(msg.duration, m.blocks[frontIdx].startTime)
 			m.blocks[frontIdx].cachedLines = nil
 			delete(m.toolDisplayCache, frontIdx)
@@ -116,7 +123,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 				m.subagentToolIdx--
 			}
 		} else {
-			m.finishToolAt(msg.content, msg.duration)
+			m.finishToolAt(msg.content, msg.duration, failed)
 			// If subagent is deeper in queue, decrement its index
 			if m.subagentToolIdx > 0 {
 				m.subagentToolIdx--

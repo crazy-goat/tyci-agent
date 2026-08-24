@@ -52,7 +52,7 @@ func toolDuration(reported time.Duration, start time.Time) time.Duration {
 	return time.Since(start)
 }
 
-func (m *TuiModel) finishToolAt(result string, reported time.Duration) {
+func (m *TuiModel) finishToolAt(result string, reported time.Duration, failed bool) {
 	if len(m.toolQueue) == 0 {
 		return
 	}
@@ -70,6 +70,7 @@ func (m *TuiModel) finishToolAt(result string, reported time.Duration) {
 			m.blocks[idx].output = capToolOutput(m.blocks[idx].output, tuiMaxToolOutput)
 		}
 		m.blocks[idx].toolState = "done"
+		m.blocks[idx].failed = failed
 		m.blocks[idx].duration = toolDuration(reported, m.blocks[idx].startTime)
 		m.blocks[idx].cachedLines = nil
 		m.blocks[idx].cachedLineCount = 0

@@ -11,10 +11,17 @@ import (
 )
 
 func (m TuiModel) renderToolBlock(idx int, b block) string {
-	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("┃") // orange bar
-	toolLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("tool")
+	barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // orange bar
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	if b.failed {
+		barStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+		labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+		textStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	}
+	bar := barStyle.Render("┃")
+	toolLabel := labelStyle.Render("tool")
 
 	line, ok := m.toolDisplayCache[idx]
 	if !ok {

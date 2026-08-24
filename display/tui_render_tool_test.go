@@ -3,9 +3,13 @@ package display
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/decodo/tyci/tools"
+	"github.com/muesli/termenv"
 )
 
 func TestFormatToolCall_Web(t *testing.T) {
@@ -448,5 +452,45 @@ func TestFormatToolCall_UnknownToolFallsBack(t *testing.T) {
 	want := "unknown(...)"
 	if got != want {
 		t.Errorf("formatToolCall(\"unknown\", ...) = %q, want %q", got, want)
+	}
+}
+
+func TestTuiModel_RenderToolBlock_FailedIsRed(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	b := block{
+		kind:      "tool",
+		toolName:  "bash",
+		content:   `{"command":"false"}`,
+		toolState: "done",
+		failed:    true,
+		duration:  time.Second,
+	}
+
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	rendered := m.renderToolBlock(0, b)
+	if !strings.Contains(rendered, "\x1b[38;5;196m") {
+		t.Fatalf("failed tool should use red foreground, got %q", rendered)
+	}
+}
+
+func TestToolCallResultFailed_AllErrorConventions(t *testing.T) {
+	cases := []struct {
+		name, tool, result string
+	}{
+		{name: "general error", tool: "read", result: "Error: path required"},
+		{name: "bash exit", tool: "bash", result: "❌ exit code 2:\nusage"},
+		{name: "lua error", tool: "lua", result: "lua error: script failed"},
+		{name: "subagent error", tool: "subagent", result: "Error: no tasks provided"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !toolCallResultFailed(tc.tool, tc.result) {
+				t.Fatalf("toolCallResultFailed(%q, %q) = false", tc.tool, tc.result)
+			}
+		})
+	}
+	if toolCallResultFailed("bash", "finished successfully") {
+		t.Fatal("successful bash result must not be marked failed")
 	}
 }

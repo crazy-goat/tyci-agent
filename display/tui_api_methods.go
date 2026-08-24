@@ -228,7 +228,38 @@ func (t *TUI) ToolCallEnd(name, result string) {
 	t.flushNow()
 	d := t.pendingToolDuration
 	t.pendingToolDuration = 0
-	t.post(tuiMsgBlock{kind: "tool-end", content: result, duration: d})
+	t.post(tuiMsgBlock{
+		kind:     "tool-end",
+		content:  result,
+		duration: d,
+		failed:   toolCallResultFailed(name, result),
+	})
+}
+
+// toolCallResultFailed recognises the result conventions shared by the tool
+// dispatcher and the built-in tools. ToolCallEnd deliberately keeps its public
+// two-argument signature; the private flag on tuiMsgBlock carries this extra
+// display-only state without widening every Display implementation.
+func toolCallResultFailed(name, result string) bool {
+	result = strings.TrimSpace(result)
+	if strings.HasPrefix(result, "Error:") {
+		return true
+	}
+	// BashTool formats a non-zero process exit as this marker. Normally the
+	// dispatcher prefixes it with "Error:", but recognising the native form
+	// keeps direct display users and tests correct too.
+	if name == "bash" && strings.HasPrefix(result, "❌ exit code ") {
+		return true
+	}
+	// Lua's ToolResult.Error is normally wrapped by the dispatcher as
+	// "Error: ...". Keep the native failure forms recognisable for callers that
+	// feed a tool result directly to the display.
+	if name == "lua" && (strings.HasPrefix(result, "lua error:") ||
+		strings.HasPrefix(result, "lua script timed out") ||
+		strings.HasPrefix(result, "lua script was cancelled")) {
+		return true
+	}
+	return false
 }
 
 func (t *TUI) ToolBlock(msg string) {
