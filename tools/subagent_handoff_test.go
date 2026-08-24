@@ -241,9 +241,9 @@ func TestHandoffStopsStreamingIntoAClosedBlock(t *testing.T) {
 	close(release)
 }
 
-// TestNoHandoffWithoutAJobRegistry: jobStarter == nil is a test-only state
-// after item 17, not the normal one-shot path. With no registry to hand work
-// to, blocking is the only correct behaviour.
+// TestNoHandoffWithoutAJobRegistry: production always wires a job starter, so
+// nil is only a deliberately unconfigured test state. With no registry to hand
+// work to, blocking is the only correct behaviour.
 func TestNoHandoffWithoutAJobRegistry(t *testing.T) {
 	// Reset both globals even when an assertion below fails, so this test's
 	// deliberately unconfigured environment cannot leak into the next test.
