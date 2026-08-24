@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/decodo/tyci/agent"
 	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/jobs"
 	"github.com/decodo/tyci/tools"
 )
@@ -236,5 +238,78 @@ func TestJobWaiterAdapter_TranslatesStatus(t *testing.T) {
 
 	if _, ok := adapter.Wait(context.Background(), "no-such-job", time.Millisecond); ok {
 		t.Error("expected unknown job id to report ok=false")
+	}
+}
+
+// TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread pins the
+// handoff contract: promotion consumes a completed evaluation once, starts one
+// real subagent job, and gives it every message from the side conversation
+// before the continuation instruction.
+func TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread(t *testing.T) {
+	reg := jobs.NewRegistry()
+	prevRegistry, prevNotices := JobRegistry, JobNotices
+	JobRegistry, JobNotices = reg, jobs.NewNotifier()
+	defer func() { JobRegistry, JobNotices = prevRegistry, prevNotices }()
+
+	fake := connectortest.Text("promoted result")
+	evaluationID := "btw-evaluation-test"
+	transcript := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "main context"}}},
+		{Role: "assistant", Content: []connector.ContentBlock{{Type: "text", Text: "side analysis"}}},
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "yes, do it"}}},
+	}
+	btwEvaluationsMu.Lock()
+	btwEvaluations[evaluationID] = &btwEvaluation{
+		msgs: transcript, mc: fake, cfg: agent.Config{MaxRetries: 1}, question: "implement the idea",
+	}
+	btwEvaluationsMu.Unlock()
+	defer func() {
+		btwEvaluationsMu.Lock()
+		delete(btwEvaluations, evaluationID)
+		btwEvaluationsMu.Unlock()
+	}()
+
+	before := len(reg.List())
+	handle, err := (btwPromotionAdapter{}).Promote(context.Background(), evaluationID)
+	if err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	if handle == nil || handle.ID() == "" {
+		t.Fatal("Promote returned no real job handle")
+	}
+	if got := len(reg.List()); got != before+1 {
+		t.Fatalf("promotion created %d jobs, want exactly one", got-before)
+	}
+
+	job, ok := reg.Wait(context.Background(), handle.ID(), 5*time.Second)
+	if !ok || job.Status != jobs.StatusDone {
+		t.Fatalf("promoted job did not finish successfully: ok=%v job=%+v", ok, job)
+	}
+	if job.Result != "promoted result" {
+		t.Fatalf("unexpected promoted result %q", job.Result)
+	}
+	requests := fake.Requests()
+	if len(requests) != 1 {
+		t.Fatalf("expected one model request, got %d", len(requests))
+	}
+	got := requests[0].Messages
+	if len(got) != len(transcript)+1 {
+		t.Fatalf("expected full transcript plus continuation, got %d messages: %+v", len(got), got)
+	}
+	for i := range transcript {
+		if got[i].Role != transcript[i].Role || got[i].Content[0].Text != transcript[i].Content[0].Text {
+			t.Fatalf("transcript message %d was not preserved: got %+v want %+v", i, got[i], transcript[i])
+		}
+	}
+	if got[len(got)-1].Role != "user" || !strings.Contains(got[len(got)-1].Content[0].Text, "worth doing") {
+		t.Fatalf("missing promotion continuation instruction: %+v", got[len(got)-1])
+	}
+
+	notices := JobNotices.Drain()
+	if len(notices) != 1 || !strings.Contains(notices[0], handle.ID()) || !strings.Contains(notices[0], "Wait") {
+		t.Fatalf("expected exactly one actionable parent notice, got %v", notices)
+	}
+	if _, err := (btwPromotionAdapter{}).Promote(context.Background(), evaluationID); err == nil {
+		t.Fatal("a completed evaluation must not be promoted twice")
 	}
 }

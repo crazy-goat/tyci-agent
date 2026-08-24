@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -197,6 +198,78 @@ func forkMessagesForBtw(msgs []connector.Message, question string) []connector.M
 // log), NextMessages (the main TUI's pending-input queue), and
 // PendingTodos/HasTodos (the main thread's todo list). None of those belong
 // to an independent fork that must never touch the main conversation.
+// btwEvaluation is the completed, read-only side conversation waiting for a
+// positive decision from the parent. The transcript is kept here rather than
+// in the jobs registry so promotion can consume it exactly once and create a
+// separate real subagent job without re-running the evaluation.
+type btwEvaluation struct {
+	msgs     []connector.Message
+	mc       connector.ModelClient
+	cfg      agent.Config
+	question string
+	promoted bool
+}
+
+var (
+	btwEvaluationsMu sync.Mutex
+	btwEvaluations   = make(map[string]*btwEvaluation)
+)
+
+const btwPromotionTask = "The read-only /btw evaluation concluded this is worth doing. Proceed with the work described in the original request now; use the full conversation above as context, make the requested changes, and report the result."
+
+// btwPromotionAdapter is the composition-root implementation of
+// tools.JobPromoter. It is wired over the same registry as /btw and async
+// subagents, so promotion creates one ordinary, pollable subagent job.
+type btwPromotionAdapter struct{}
+
+func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (tools.JobHandle, error) {
+	btwEvaluationsMu.Lock()
+	eval, ok := btwEvaluations[evaluationID]
+	if !ok {
+		btwEvaluationsMu.Unlock()
+		return nil, fmt.Errorf("/btw evaluation %q is not ready to promote", evaluationID)
+	}
+	if eval.promoted {
+		btwEvaluationsMu.Unlock()
+		return nil, fmt.Errorf("/btw evaluation %q was already promoted", evaluationID)
+	}
+	eval.promoted = true
+	msgs := session.ForkMessages(eval.msgs)
+	client := eval.mc
+	cfg := btwConfig(eval.cfg)
+	question := eval.question
+	btwEvaluationsMu.Unlock()
+
+	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tools.SubagentTimeoutSec*time.Second)
+	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
+	job := JobRegistry.Start(jobCtx, question, jobs.KindSubagent, parentID, func(runCtx context.Context, jobID string) (string, bool, error) {
+		defer cancel()
+		defer tools.MarkTodoAgentDone(jobID)
+		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, jobID)
+		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
+		msgs = session.ForkMessagesWithTurn(msgs, btwPromotionTask)
+		c := &collector{}
+		_, err := agent.Run(runCtx, client, ledger.Watch(c, ledger.Subagent, client.Provider(), client.Model(), jobID), &msgs, cfg)
+		truncated := errors.Is(err, agent.ErrMaxIterations)
+		if truncated {
+			err = nil
+		}
+		text := strings.TrimSpace(c.text.String())
+		if err == nil || truncated {
+			resumableMu.Lock()
+			resumable[jobID] = resumableEntry{msgs: msgs, mc: client, cfg: cfg}
+			resumableMu.Unlock()
+		}
+		return text, truncated, err
+	})
+
+	// The parent gets one immediate, actionable notice. The tool result also
+	// contains the id for callers that are currently inside a model turn; this
+	// notice is what wakes an idle interactive parent.
+	JobNotices.Notify(fmt.Sprintf("[btw] %q was promoted to subthread job_id=%q. Wait for its result with wait(job_id=%q); do not redo its work here.", question, job.ID, job.ID))
+	return jobHandleAdapter{job}, nil
+}
+
 func btwConfig(base agent.Config) agent.Config {
 	cfg := base
 	cfg.Session = nil
@@ -231,12 +304,14 @@ func btwConfig(base agent.Config) agent.Config {
 func startBtw(ctx context.Context, cond *conductor.Conductor, question string, sink *display.BtwSink) *jobs.Job {
 	forked := forkMessagesForBtw(cond.Messages(), question)
 	cfg := btwConfig(cond.Config())
+	cfg.Schema = tools.BtwEvaluationSchemaJSON()
 	client, fallbacks := withIsolatedPool(cond.Client(), cfg.Fallbacks)
 	cfg.Fallbacks = fallbacks
 
 	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
 	return JobRegistry.Start(ctx, question, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
+		jobCtx = tools.WithToolGate(jobCtx, tools.BtwReadOnlyGate())
 		// jobID is also this /btw side-conversation's todo-agent id (see
 		// todoAgentIDFromCtx's JobIDCtxKey fallback in tools/todo.go) —
 		// mark it done so its list becomes eligible for eviction once this
@@ -260,6 +335,12 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 			err = nil
 		}
 		text := sink.CollectedText()
+		if err == nil || truncated {
+			btwEvaluationsMu.Lock()
+			btwEvaluations[jobID] = &btwEvaluation{msgs: session.ForkMessages(forked), mc: client, cfg: cfg, question: question}
+			btwEvaluationsMu.Unlock()
+			JobNotices.Notify(fmt.Sprintf("[btw] evaluation %q finished (job_id=%q): %s\nIf it is worth doing, call promote_btw(job_id=%q). Promotion creates one real subthread; wait for that job instead of doing the work in this thread.", question, jobID, strings.TrimSpace(text), jobID))
+		}
 		sink.MarkDone(err)
 		return text, truncated, err
 	})
