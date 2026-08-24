@@ -658,6 +658,18 @@ func toInt(v any) (int, error) {
 // timeout uses the shared default; once supplied it must leave enough room for
 // the deadline warning and cannot extend the default backstop.
 func parseSubagentTimeout(v any) (int, error) {
+	switch x := v.(type) {
+	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) || x != math.Trunc(x) {
+			return 0, fmt.Errorf("expected integer, got %v", x)
+		}
+	case float32:
+		f := float64(x)
+		if math.IsNaN(f) || math.IsInf(f, 0) || f != math.Trunc(f) {
+			return 0, fmt.Errorf("expected integer, got %v", x)
+		}
+	}
+
 	seconds, err := toInt(v)
 	if err != nil {
 		return 0, err

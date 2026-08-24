@@ -1146,7 +1146,15 @@ func TestParseTasks_TimeoutValidation(t *testing.T) {
 			}
 		})
 	}
-	for _, in := range []any{SubagentMinTimeoutSec - 1, SubagentMaxTimeoutSec + 1, math.NaN()} {
+	for _, in := range []any{
+		SubagentMinTimeoutSec - 1,
+		SubagentMaxTimeoutSec + 1,
+		float64(SubagentMinTimeoutSec) - 0.1,
+		float64(SubagentMinTimeoutSec) + 0.9,
+		float64(SubagentMaxTimeoutSec) + 0.9,
+		math.NaN(),
+		math.Inf(1),
+	} {
 		if _, err := parseTasks(map[string]any{"task": "x", "timeout": in}, "model"); err == nil {
 			t.Errorf("timeout %v: expected validation error", in)
 		}
