@@ -32,6 +32,12 @@ func (r *Registry) SetOnEvent(fn func(Job)) {
 }
 
 var idCounter uint64
+var extensionIDCounter uint64
+
+const (
+	maxExtensionDuration = 10 * time.Minute
+	maxExtensionReason   = 1024
+)
 
 // nextID uses a timestamp prefix plus an atomic counter: unique within a
 // single process is all that's required here, so pulling in a uuid
@@ -39,6 +45,10 @@ var idCounter uint64
 func nextID() string {
 	n := atomic.AddUint64(&idCounter, 1)
 	return fmt.Sprintf("job-%d-%d", time.Now().UnixNano(), n)
+}
+
+func nextExtensionID() string {
+	return fmt.Sprintf("extension-%d", atomic.AddUint64(&extensionIDCounter, 1))
 }
 
 // Start creates a job, registers it, and runs fn in its own goroutine. fn
@@ -55,16 +65,39 @@ func nextID() string {
 // of whatever they supplied.
 func (r *Registry) Start(ctx context.Context, description string, kind Kind, parentID string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) *Job {
 	now := time.Now()
-	jobCtx, cancel := context.WithCancel(ctx)
+	jobCtx := ctx
+	var cancel context.CancelFunc
+	var extensionCtx *resettableDeadlineContext
+	if deadline, ok := ctx.Deadline(); ok {
+		// Keep values and the explicit parent cancellation signal, but detach
+		// the source deadline itself. The resettable timer owns the deadline.
+		values := context.WithoutCancel(ctx)
+		signal, parentCancel := context.WithCancel(context.Background())
+		stopParent := context.AfterFunc(ctx, func() {
+			if ctx.Err() == context.Canceled {
+				parentCancel()
+			}
+		})
+		extensionCtx = newResettableDeadlineContext(values, signal, deadline)
+		cancel = func() {
+			parentCancel()
+			stopParent()
+			extensionCtx.cancel(context.Canceled)
+		}
+		jobCtx = extensionCtx
+	} else {
+		jobCtx, cancel = context.WithCancel(ctx)
+	}
 	job := &Job{
-		ID:          nextID(),
-		Description: description,
-		Kind:        kind,
-		ParentID:    parentID,
-		Status:      StatusRunning,
-		StartedAt:   now,
-		done:        make(chan struct{}),
-		cancel:      cancel,
+		ID:           nextID(),
+		Description:  description,
+		Kind:         kind,
+		ParentID:     parentID,
+		Status:       StatusRunning,
+		StartedAt:    now,
+		done:         make(chan struct{}),
+		cancel:       cancel,
+		extensionCtx: extensionCtx,
 	}
 	// Seed lastActivity to the same instant as StartedAt, so a job that
 	// hasn't done anything yet reads as "idle since start" (a small, correct
@@ -83,6 +116,7 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 
 	go func() {
 		result, truncated, err := fn(jobCtx, job.ID)
+		cancel()
 
 		r.mu.Lock()
 		job.FinishedAt = time.Now()
@@ -370,6 +404,107 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 	}
 
 	return result.text, result.fromUser, got
+}
+
+// RequestExtension registers one bounded timeout-extension request for a
+// running job. It returns immediately; the caller can notify the parent
+// before waiting for ResolveExtension.
+func (r *Registry) RequestExtension(id string, seconds time.Duration, reason string) (string, bool) {
+	if seconds <= 0 || seconds > maxExtensionDuration || len(reason) == 0 || len(reason) > maxExtensionReason {
+		return "", false
+	}
+	full, ok := r.Resolve(id)
+	if !ok {
+		return "", false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[full]
+	if !ok || job.Status != StatusRunning || job.extensionCtx == nil || job.ExtensionAccepted || job.ExtensionPending {
+		return "", false
+	}
+	deadline, _ := job.extensionCtx.Deadline()
+	if !time.Now().Before(deadline) || job.extensionCtx.Err() != nil {
+		return "", false
+	}
+	requestID := nextExtensionID()
+	job.ExtensionRequestID = requestID
+	job.ExtensionSeconds = seconds
+	job.ExtensionReason = reason
+	job.ExtensionPending = true
+	job.extensionDecision = make(chan bool, 1)
+	return requestID, true
+}
+
+// WaitExtension waits for a decision or the job's own context to end.
+func (r *Registry) WaitExtension(ctx context.Context, id, requestID string) (bool, bool) {
+	full, found := r.Resolve(id)
+	if !found {
+		return false, false
+	}
+	r.mu.Lock()
+	job, found := r.jobs[full]
+	if !found || job.ExtensionRequestID != requestID {
+		r.mu.Unlock()
+		return false, false
+	}
+	if !job.ExtensionPending {
+		approved := job.extensionApproved
+		resolved := job.extensionResolved
+		r.mu.Unlock()
+		return approved, resolved
+	}
+	if job.extensionDecision == nil || job.extensionCtx == nil {
+		r.mu.Unlock()
+		return false, false
+	}
+	decision := job.extensionDecision
+	jobCtx := job.extensionCtx
+	r.mu.Unlock()
+	select {
+	case approved := <-decision:
+		return approved, true
+	case <-ctx.Done():
+		return false, false
+	case <-jobCtx.Done():
+		return false, false
+	}
+}
+
+// ResolveExtension consumes a pending request. Approval extends the current
+// deadline by the requested duration. Late, stale, duplicate, and cancelled
+// requests return false.
+func (r *Registry) ResolveExtension(id, requestID string, approve bool) bool {
+	full, found := r.Resolve(id)
+	if !found {
+		return false
+	}
+	r.mu.Lock()
+	job, found := r.jobs[full]
+	if !found || !job.ExtensionPending || job.ExtensionRequestID != requestID || job.extensionDecision == nil || job.Status != StatusRunning || job.extensionResolved {
+		r.mu.Unlock()
+		return false
+	}
+	if approve {
+		if !job.extensionCtx.extend(job.ExtensionSeconds) {
+			job.ExtensionPending = false
+			job.extensionResolved = true
+			job.extensionApproved = false
+			r.mu.Unlock()
+			return false
+		}
+		job.ExtensionAccepted = true
+	}
+	job.ExtensionPending = false
+	job.extensionResolved = true
+	job.extensionApproved = approve
+	decision := job.extensionDecision
+	r.mu.Unlock()
+	select {
+	case decision <- approve:
+	default:
+	}
+	return true
 }
 
 // Answer delivers text to a job currently waiting on Ask, unblocking it.

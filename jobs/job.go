@@ -121,6 +121,16 @@ type Job struct {
 	// above; set only before the matching cancel fires.
 	cancelled bool
 
+	// Extension fields describe the one pending or accepted timeout extension.
+	// They are ordinary snapshot data; the decision channel and resettable
+	// context below remain private so Snapshot never copies synchronization
+	// primitives.
+	ExtensionRequestID string
+	ExtensionSeconds   time.Duration
+	ExtensionReason    string
+	ExtensionPending   bool
+	ExtensionAccepted  bool
+
 	// mailbox queues messages posted via Registry.Post (the "message" tool,
 	// or the "/msg" slash command), awaiting delivery to this job's own
 	// agent loop at its next iteration boundary — see Registry.DrainMessages
@@ -131,6 +141,11 @@ type Job struct {
 	// rare, deliberate act, not something fired on every streamed token), so
 	// a plain slice under the registry lock is simplest.
 	mailbox []string
+
+	extensionCtx      *resettableDeadlineContext
+	extensionDecision chan bool
+	extensionResolved bool
+	extensionApproved bool
 }
 
 // touchActivity atomically records "now" as this job's last sign of life.
@@ -174,17 +189,22 @@ func ShortID(id string) string {
 
 func (j *Job) Snapshot() Job {
 	return Job{
-		ID:           j.ID,
-		Description:  j.Description,
-		Kind:         j.Kind,
-		ParentID:     j.ParentID,
-		Status:       j.Status,
-		Result:       j.Result,
-		Err:          j.Err,
-		StartedAt:    j.StartedAt,
-		FinishedAt:   j.FinishedAt,
-		Question:     j.Question,
-		Progress:     j.Progress,
-		LastActivity: time.Unix(0, atomic.LoadInt64(&j.lastActivity)),
+		ID:                 j.ID,
+		Description:        j.Description,
+		Kind:               j.Kind,
+		ParentID:           j.ParentID,
+		Status:             j.Status,
+		Result:             j.Result,
+		Err:                j.Err,
+		StartedAt:          j.StartedAt,
+		FinishedAt:         j.FinishedAt,
+		Question:           j.Question,
+		Progress:           j.Progress,
+		ExtensionRequestID: j.ExtensionRequestID,
+		ExtensionSeconds:   j.ExtensionSeconds,
+		ExtensionReason:    j.ExtensionReason,
+		ExtensionPending:   j.ExtensionPending,
+		ExtensionAccepted:  j.ExtensionAccepted,
+		LastActivity:       time.Unix(0, atomic.LoadInt64(&j.lastActivity)),
 	}
 }
