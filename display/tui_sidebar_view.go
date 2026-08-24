@@ -341,11 +341,11 @@ func rowStyle(width int, selected bool) lipgloss.Style {
 }
 
 func (m TuiModel) renderSidebarTasks(width int) []string {
-	rows := m.sidebarTaskRows()
+	rows := m.sidebarTaskRows(width)
 	out := make([]string, 0, len(rows))
 	cursorLine := -1
 	if m.sidebarCursor >= 0 {
-		jobRows := m.sidebarTaskJobRows()
+		jobRows := m.sidebarTaskJobRows(width)
 		if m.sidebarCursor < len(jobRows) {
 			cursorLine = jobRows[m.sidebarCursor]
 		}

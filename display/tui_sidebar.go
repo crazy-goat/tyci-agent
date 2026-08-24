@@ -181,7 +181,7 @@ func (m TuiModel) sidebarRowCount() int {
 	case sidebarTabSessions:
 		return len(m.sidebarSessionEntries())
 	case sidebarTabTasks:
-		return len(m.sidebarTaskJobRows())
+		return len(m.sidebarTaskJobRows(m.sidebarLayout().contentWidth))
 	default:
 		return 0
 	}
@@ -241,7 +241,7 @@ func (m *TuiModel) sidebarClampScrollToCursor(contentHeight int) {
 	}
 	cursorLine := m.sidebarCursor
 	if m.sidebarTab == sidebarTabTasks {
-		jobRows := m.sidebarTaskJobRows()
+		jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
 		if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) {
 			return
 		}
@@ -512,7 +512,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 				row := msg.Y - layout.contentTop + m.sidebarVisibleScroll(layout)
 				if row < m.sidebarRowCount() {
 					if m.sidebarTab == sidebarTabTasks {
-						jobRows := m.sidebarTaskJobRows()
+						jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
 						line := row + m.sidebarVisibleScroll(layout)
 						selected := -1
 						for i, jobRow := range jobRows {
@@ -590,8 +590,8 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 	case sidebarTabSessions:
 		return m.sidebarSubmitResume()
 	case sidebarTabTasks:
-		rows := m.sidebarTaskRows()
-		jobRows := m.sidebarTaskJobRows()
+		rows := m.sidebarTaskRows(m.sidebarLayout().contentWidth)
+		jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
 		if m.sidebarCursor >= 0 && m.sidebarCursor < len(jobRows) {
 			if job := rows[jobRows[m.sidebarCursor]].job; job != nil {
 				m.closeSidebar()
@@ -652,8 +652,8 @@ func (m TuiModel) sidebarSubmitResume() (tea.Model, tea.Cmd) {
 // — this only drafts text, so silently overwriting a half-written message
 // would be a pure loss with nothing gained.
 func (m TuiModel) sidebarResumeSubagentRow() (tea.Model, tea.Cmd) {
-	rows := m.sidebarTaskRows()
-	jobRows := m.sidebarTaskJobRows()
+	rows := m.sidebarTaskRows(m.sidebarLayout().contentWidth)
+	jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
 	if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) || rows[jobRows[m.sidebarCursor]].job == nil || !rows[jobRows[m.sidebarCursor]].subagent {
 		return m, nil
 	}
@@ -712,10 +712,10 @@ type sidebarTaskRow struct {
 
 // sidebarTaskRows keeps the three source groups separate and stable. Jobs and
 // Lua history are each already sorted newest-first at the point they are read.
-func (m TuiModel) sidebarTaskRows() []sidebarTaskRow {
+func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 	rows := []sidebarTaskRow{{group: "Subagents", line: "Subagents", isHeading: true}}
 	for _, treeRow := range m.buildSubagentTree() {
-		row := sidebarTaskRow{group: "Subagents", line: m.formatSubagentRow(treeRow, 80)}
+		row := sidebarTaskRow{group: "Subagents", line: m.formatSubagentRow(treeRow, width)}
 		if !treeRow.isRoot {
 			job := treeRow.job
 			row.job = &job
@@ -727,7 +727,7 @@ func (m TuiModel) sidebarTaskRows() []sidebarTaskRow {
 	rows = append(rows, sidebarTaskRow{group: "Bash", line: "Bash", isHeading: true})
 	for _, job := range m.sidebarBashJobs() {
 		job := job
-		rows = append(rows, sidebarTaskRow{group: "Bash", line: " " + formatJobLine(job, 80), job: &job})
+		rows = append(rows, sidebarTaskRow{group: "Bash", line: " " + formatJobLine(job, max(1, width-1)), job: &job})
 	}
 
 	history := tools.LuaRunHistory()
@@ -744,8 +744,8 @@ func (m TuiModel) sidebarTaskRows() []sidebarTaskRow {
 	return rows
 }
 
-func (m TuiModel) sidebarTaskJobRows() []int {
-	rows := m.sidebarTaskRows()
+func (m TuiModel) sidebarTaskJobRows(width int) []int {
+	rows := m.sidebarTaskRows(width)
 	indices := make([]int, 0)
 	for i, row := range rows {
 		if row.job != nil {
@@ -877,15 +877,14 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 // read as inert history — see TODO item 1) and otherwise preserves the
 // newest-first order sortedBackgroundJobs already produced.
 func sortSubagentSiblings(kids []jobs.Job) []jobs.Job {
-	var waiting, rest []jobs.Job
-	for _, j := range kids {
-		if j.Status == jobs.StatusWaitingAnswer {
-			waiting = append(waiting, j)
-		} else {
-			rest = append(rest, j)
+	sorted := append([]jobs.Job(nil), kids...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].StartedAt.Equal(sorted[j].StartedAt) {
+			return sorted[i].ID > sorted[j].ID
 		}
-	}
-	return append(waiting, rest...)
+		return sorted[i].StartedAt.After(sorted[j].StartedAt)
+	})
+	return sorted
 }
 
 // rollupJobCost sums id's own priced cost with every descendant's

@@ -189,7 +189,7 @@ func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
 	rendered := m.renderSidebarColumn()
 	rows := strings.Split(rendered, "\n")
 	firstContentRow := ansi.Strip(rows[layout.contentTop])
-	jobRows := m.sidebarTaskJobRows()
+	jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
 	lineAtScroll := m.sidebarScroll
 	jobAtScroll := 0
 	for _, row := range jobRows {
@@ -765,25 +765,24 @@ func TestBuildSubagentTree_UnpricedDescendantPropagates(t *testing.T) {
 	}
 }
 
-// TestBuildSubagentTree_WaitingAnswerSortsFirst covers the one ordering
-// item 1 explicitly requires: a job blocked on the user must never be
-// buried below finished siblings.
-func TestBuildSubagentTree_WaitingAnswerSortsFirst(t *testing.T) {
+// TestBuildSubagentTree_NewestFirst ignores status and keeps the newest job
+// first within each sibling group.
+func TestBuildSubagentTree_NewestFirst(t *testing.T) {
 	ledger.Reset()
 	t.Cleanup(ledger.Reset)
 
 	m := newTestModelForSidebar()
-	done := jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "finished", StartedAt: time.Now().Add(-time.Minute)}
-	waiting := jobs.Job{ID: "job-2", Kind: jobs.KindSubagent, Status: jobs.StatusWaitingAnswer, Description: "blocked", Question: "ok?", StartedAt: time.Now()}
-	m.applyJobUpdate(done)
-	m.applyJobUpdate(waiting)
+	olderWaiting := jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusWaitingAnswer, Description: "older", StartedAt: time.Now().Add(-time.Minute)}
+	newerDone := jobs.Job{ID: "job-2", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "newer", StartedAt: time.Now()}
+	m.applyJobUpdate(olderWaiting)
+	m.applyJobUpdate(newerDone)
 
 	rows := m.buildSubagentTree()
 	if len(rows) != 3 {
 		t.Fatalf("expected root + 2 children, got %d", len(rows))
 	}
-	if rows[1].job.ID != "job-2" {
-		t.Fatalf("expected the waiting_answer job first among siblings, got %+v", rows[1])
+	if rows[1].job.ID != "job-2" || rows[2].job.ID != "job-1" {
+		t.Fatalf("expected newest-first regardless of status, got %+v", rows[1:])
 	}
 }
 
@@ -1192,5 +1191,30 @@ func TestSidebarFocused_StreamedBlocksStillLandInTranscript(t *testing.T) {
 	}
 	if !m3.sidebarActive || !m3.sidebarFocused {
 		t.Fatalf("expected the sidebar to stay open and focused throughout — streamed blocks must not disturb it")
+	}
+}
+
+func TestSidebarTaskRows_UsesRenderWidth(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusRunning, Description: strings.Repeat("long description ", 10), StartedAt: time.Now()})
+	rows := m.sidebarTaskRows(24)
+	if len(rows) < 3 {
+		t.Fatalf("expected Tasks heading, root, and job rows, got %d", len(rows))
+	}
+	if got := lipgloss.Width(rows[2].line); got > 24 {
+		t.Fatalf("task row width = %d, want <= 24: %q", got, rows[2].line)
+	}
+}
+
+func TestSidebarTasks_SubagentRUsesJobCursor(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.input.SetValue("")
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "resume me", StartedAt: time.Now()})
+	m.openSidebar(sidebarTabTasks)
+	m.sidebarCursor = 0
+	model, _ := m.sidebarResumeSubagentRow()
+	got := model.(TuiModel)
+	if got.input.Value() == "" || !strings.Contains(got.input.Value(), "job 1") {
+		t.Fatalf("expected r to draft the selected subagent prompt, got %q", got.input.Value())
 	}
 }
