@@ -21,6 +21,7 @@ type JobMailbox interface {
 	// Post enqueues text for delivery to job id's next iteration boundary.
 	// Returns false when id is unknown or terminal; callers should Resolve
 	// first when they need to distinguish those cases.
+	Post(id, text string) bool
 	// IsLive reports whether id identifies a running or waiting job. Terminal
 	// jobs remain resolvable for resume, but cannot receive new messages.
 	IsLive(id string) bool
