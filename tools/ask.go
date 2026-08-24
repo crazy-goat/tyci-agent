@@ -135,6 +135,28 @@ func (t *AnswerTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	if jobID == "" {
 		return ToolResult{Type: "result", Success: false, Error: "job_id is required"}
 	}
+
+	if action, _ := input["action"].(string); action == "extension" {
+		requestID, _ := input["request_id"].(string)
+		if requestID == "" {
+			return ToolResult{Type: "result", Success: false, Error: "request_id is required for extension answers"}
+		}
+		approve, ok := input["approve"].(bool)
+		if !ok {
+			return ToolResult{Type: "result", Success: false, Error: "approve is required for extension answers and must be a boolean"}
+		}
+		if jobExtensionRequester == nil {
+			return ToolResult{Type: "result", Success: false, Error: "answer_job unavailable: job extension requester not configured"}
+		}
+		if !jobExtensionRequester.ResolveExtension(jobID, requestID, approve) {
+			return ToolResult{Type: "result", Success: false, Error: "job_id/request_id not found or extension request already resolved"}
+		}
+		if approve {
+			return ToolResult{Type: "result", Success: true, Content: "timeout extension approved; job may continue"}
+		}
+		return ToolResult{Type: "result", Success: true, Content: "timeout extension rejected; job will stop at its current deadline"}
+	}
+
 	text, _ := input["text"].(string)
 	if text == "" {
 		return ToolResult{Type: "result", Success: false, Error: "text is required"}

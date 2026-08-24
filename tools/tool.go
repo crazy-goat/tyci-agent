@@ -456,14 +456,32 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "answer_job",
-				"description": "Relay a REAL answer to a specific job that is blocked on ask_parent, by its job_id — either something you genuinely already know, or something the human actually said. Never invent an answer standing in for a human who has not actually replied. Urgent the moment you are told a job is waiting: it makes no progress meanwhile and everything it has done is discarded if it times out unanswered.",
+				"description": "Relay a REAL answer to a specific job that is blocked on ask_parent, by its job_id — either something you genuinely already know, or something the human actually said. For a timeout extension request, use action=\"extension\" with request_id and approve instead. Never invent an answer standing in for a human who has not actually replied. Urgent the moment you are told a job is waiting: it makes no progress meanwhile and everything it has done is discarded if it times out unanswered.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"job_id": map[string]any{"type": "string", "description": "The id of the job currently waiting for an answer."},
-						"text":   map[string]any{"type": "string", "description": "The answer text to deliver back to that job's pending \"ask_parent\" call."},
+						"action":     map[string]any{"type": "string", "enum": []string{"extension"}, "description": "Set to extension to approve or reject a timeout extension request; omit for an ordinary ask_parent answer."},
+						"job_id":     map[string]any{"type": "string", "description": "The id of the job currently waiting for an answer or requesting an extension."},
+						"text":       map[string]any{"type": "string", "description": "The answer text to deliver back to that job's pending \"ask_parent\" call."},
+						"request_id": map[string]any{"type": "string", "description": "The request id from the timeout extension notice."},
+						"approve":    map[string]any{"type": "boolean", "description": "Whether to approve the requested timeout extension."},
 					},
-					"required": []string{"job_id", "text"},
+					"required": []string{"job_id"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "request_timeout_extension",
+				"description": "Ask the parent to extend this child job's timeout. Requires a positive number of seconds (at most 600) and a nonempty reason. The request waits for the parent to approve or reject it; if no answer arrives, continue without the extension.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"seconds": map[string]any{"type": "integer", "description": "Number of additional seconds requested (1–600)."},
+						"reason":  map[string]any{"type": "string", "description": "Why this job needs more time."},
+					},
+					"required": []string{"seconds", "reason"},
 				},
 			},
 		},
@@ -615,7 +633,9 @@ func GetAllToolsSchemaJSON() json.RawMessage {
 //     side-conversation, which is why btwConfig (btw.go) restores the full,
 //     unfiltered schema onto its forked Config rather than inheriting this
 //     one.
-var topLevelDeniedTools = map[string]bool{"ask_parent": true}
+//   - request_timeout_extension: only a child job can request an extension;
+//     /btw gets it back because it restores the full schema.
+var topLevelDeniedTools = map[string]bool{"ask_parent": true, "request_timeout_extension": true}
 
 // GetTopLevelToolsSchema returns GetAllToolsSchema with topLevelDeniedTools
 // removed — the tool set offered to the main, non-job conversation. Used
@@ -772,12 +792,13 @@ var toolRegistry = map[string]Tool{
 	// jobAsker/jobAnswerer/jobProgressReporter/jobResumer are nil until
 	// SetJobAsker/SetJobAnswerer/SetJobProgressReporter/SetJobResumer are
 	// called; each tool fails loudly (not silently) until then.
-	"ask_parent":      &AskTool{},
-	"answer_job":      &AnswerTool{},
-	"message":         &MessageTool{},
-	"report_progress": &ReportProgressTool{},
-	"resume":          &ResumeTool{},
-	"promote_btw":     &PromoteBtwTool{},
+	"ask_parent":                &AskTool{},
+	"answer_job":                &AnswerTool{},
+	"request_timeout_extension": &RequestTimeoutExtensionTool{},
+	"message":                   &MessageTool{},
+	"report_progress":           &ReportProgressTool{},
+	"resume":                    &ResumeTool{},
+	"promote_btw":               &PromoteBtwTool{},
 	// kill_job needs no wiring of its own beyond the registry hooks in
 	// killjob.go (SetJobCanceler/SetJobLister, optional — without them it
 	// stays bash-only): the bash path acts on the bgbash.go registry the
