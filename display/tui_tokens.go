@@ -50,7 +50,7 @@ func (m TuiModel) buildContextCost() string {
 	return strings.Join(parts, ", ")
 }
 
-// formatCost renders the session bill. Delegated work is called out
+// formatCost renders the session bill in the Tokens tab. Delegated work is called out
 // separately when there is any, because a surprising total is nearly always
 // children. Unpriced models contribute $0.00 — the owner's explicit choice
 // (2026-08-23), reversing the old "+?" lower-bound marker: the ledger still
