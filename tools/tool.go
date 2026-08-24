@@ -472,7 +472,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "report_progress",
-				"description": "Post a short status note from inside a job (any subagent call, or a /btw side-conversation). Only usable inside a job; always succeeds. Read via wait(job_id=...) once that id is known, or the end-of-turn pending-jobs reminder while it is running. A blocking call under `tyci run`/`--print` never hands out a job id, so there nobody reads it before the job is done.",
+				"description": "Post a short status note reporting your current progress on this job. Use it to tell whoever is watching what you are doing. Only usable inside a job; always succeeds when it is.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
