@@ -11,6 +11,7 @@ import (
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/jobs"
+	"github.com/decodo/tyci/stream"
 	"github.com/decodo/tyci/tools"
 )
 
@@ -285,7 +286,7 @@ func TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread(t *testin
 	if !ok || job.Status != jobs.StatusDone {
 		t.Fatalf("promoted job did not finish successfully: ok=%v job=%+v", ok, job)
 	}
-	if job.Result != "promoted result" {
+	if !strings.Contains(job.Result, "promoted result") {
 		t.Fatalf("unexpected promoted result %q", job.Result)
 	}
 	requests := fake.Requests()
@@ -309,7 +310,63 @@ func TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread(t *testin
 	if len(notices) != 1 || !strings.Contains(notices[0], handle.ID()) || !strings.Contains(notices[0], "Wait") {
 		t.Fatalf("expected exactly one actionable parent notice, got %v", notices)
 	}
+	btwEvaluationsMu.Lock()
+	_, retained := btwEvaluations[evaluationID]
+	btwEvaluationsMu.Unlock()
+	if retained {
+		t.Fatal("promoted evaluation retained its full transcript")
+	}
 	if _, err := (btwPromotionAdapter{}).Promote(context.Background(), evaluationID); err == nil {
-		t.Fatal("a completed evaluation must not be promoted twice")
+		t.Fatal("a consumed evaluation must not be promoted twice")
+	}
+}
+
+// TestBtwPromotionAdapter_UsesChildRuntimeGate prevents the promoted path from
+// accidentally becoming a privileged agent.Run: a hallucinated secondary
+// subagent call must be refused, and the registry must still contain only the
+// one promoted job.
+func TestBtwPromotionAdapter_UsesChildRuntimeGate(t *testing.T) {
+	reg := jobs.NewRegistry()
+	prevRegistry, prevNotices := JobRegistry, JobNotices
+	JobRegistry, JobNotices = reg, jobs.NewNotifier()
+	defer func() { JobRegistry, JobNotices = prevRegistry, prevNotices }()
+
+	fake := &connectortest.Fake{
+		ProviderName: "test-provider",
+		ModelName:    "test-model",
+		Script: func(turn int, _ connector.Request) []stream.Event {
+			if turn == 0 {
+				return []stream.Event{
+					stream.ToolCall{ID: "call-secondary", Name: "subagent", Arguments: `{"task":"should not run"}`},
+					stream.Finish{Reason: "tool_calls"},
+				}
+			}
+			return []stream.Event{stream.TextDelta{Text: "gate worked"}, stream.Finish{Reason: "stop"}}
+		},
+	}
+	evaluationID := "btw-evaluation-gate-test"
+	btwEvaluationsMu.Lock()
+	btwEvaluations[evaluationID] = &btwEvaluation{
+		msgs: []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "context"}}}},
+		mc:   fake, question: "gate test",
+	}
+	btwEvaluationsMu.Unlock()
+
+	handle, err := (btwPromotionAdapter{}).Promote(context.Background(), evaluationID)
+	if err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	job, ok := reg.Wait(context.Background(), handle.ID(), 5*time.Second)
+	if !ok || job.Status != jobs.StatusDone {
+		t.Fatalf("promoted job did not finish: ok=%v job=%+v", ok, job)
+	}
+	if !strings.Contains(job.Result, "gate worked") {
+		t.Fatalf("unexpected result after refused secondary subagent: %q", job.Result)
+	}
+	if got := len(reg.List()); got != 1 {
+		t.Fatalf("secondary subagent escaped the child gate: registry has %d jobs, want 1", got)
+	}
+	if got := fake.Calls(); got != 2 {
+		t.Fatalf("expected one refused tool turn plus final answer, got %d model calls", got)
 	}
 }

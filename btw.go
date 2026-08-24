@@ -15,6 +15,7 @@ import (
 	"github.com/decodo/tyci/display"
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/jobs"
+	"github.com/decodo/tyci/providers"
 	"github.com/decodo/tyci/session"
 	"github.com/decodo/tyci/tools"
 )
@@ -229,14 +230,13 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		btwEvaluationsMu.Unlock()
 		return nil, fmt.Errorf("/btw evaluation %q is not ready to promote", evaluationID)
 	}
-	if eval.promoted {
-		btwEvaluationsMu.Unlock()
-		return nil, fmt.Errorf("/btw evaluation %q was already promoted", evaluationID)
-	}
-	eval.promoted = true
+	// Consume the evaluation while holding the mutex. The map is deliberately
+	// bounded by one-shot consumption: the full transcript/client/config are
+	// not retained after promotion, and a second promotion cannot create a
+	// duplicate child job.
+	delete(btwEvaluations, evaluationID)
 	msgs := session.ForkMessages(eval.msgs)
 	client := eval.mc
-	cfg := btwConfig(eval.cfg)
 	question := eval.question
 	btwEvaluationsMu.Unlock()
 
@@ -246,21 +246,21 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		defer cancel()
 		defer tools.MarkTodoAgentDone(jobID)
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, jobID)
-		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
-		msgs = session.ForkMessagesWithTurn(msgs, btwPromotionTask)
-		c := &collector{}
-		_, err := agent.Run(runCtx, client, ledger.Watch(c, ledger.Subagent, client.Provider(), client.Model(), jobID), &msgs, cfg)
-		truncated := errors.Is(err, agent.ErrMaxIterations)
+		runCtx = connector.WithModelClient(runCtx, client)
+		runCtx = tools.WithToolGate(runCtx, tools.DenySubagentRecursion())
+		// Use the same composition-root runner as every ordinary child. It
+		// supplies the child schema, runtime gate, sink, ledger accounting and
+		// resumable transcript; promotion must not create a second, privileged
+		// agent.Run path.
+		text, err := (&agentRunner{}).run(
+			runCtx, btwPromotionTask, "", providers.BuildSubagentSystemPrompt(),
+			tools.SubagentOptions{History: msgs},
+		)
+		truncated := errors.Is(err, tools.ErrSubagentTruncated) || errors.Is(err, tools.ErrSubagentTimedOut) || errors.Is(err, tools.ErrSubagentStoppedByUser)
 		if truncated {
 			err = nil
 		}
-		text := strings.TrimSpace(c.text.String())
-		if err == nil || truncated {
-			resumableMu.Lock()
-			resumable[jobID] = resumableEntry{msgs: msgs, mc: client, cfg: cfg}
-			resumableMu.Unlock()
-		}
-		return text, truncated, err
+		return strings.TrimSpace(text), truncated, err
 	})
 
 	// The parent gets one immediate, actionable notice. The tool result also
