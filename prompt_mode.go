@@ -29,7 +29,11 @@ func runPrompt(cond *conductor.Conductor, disp display.Display, prompt string, c
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
-	sigCh, sigDone := watchInterrupt(runCtx, runCancel)
+	// Keep the signal watcher alive independently of runCtx: the first SIGINT
+	// cancels the operation, but a second one must still be consumed until the
+	// watcher is explicitly stopped below.
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	sigCh, sigDone := watchInterrupt(watchCtx, runCancel)
 	stopESC := watchESC(runCancel)
 
 	// For one-shot `tyci run --prompt ...` we always have a user prompt,
@@ -48,6 +52,7 @@ func runPrompt(cond *conductor.Conductor, disp display.Display, prompt string, c
 
 	stopESC()
 	signal.Stop(sigCh)
+	stopWatch()
 	runCancel()
 	<-sigDone
 
@@ -60,10 +65,13 @@ func watchInterrupt(ctx context.Context, cancel context.CancelFunc) (chan os.Sig
 	sigDone := make(chan struct{})
 	go func() {
 		defer close(sigDone)
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
+		for {
+			select {
+			case <-sigCh:
+				cancel()
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 	return sigCh, sigDone

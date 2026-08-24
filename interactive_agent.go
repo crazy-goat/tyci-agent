@@ -15,11 +15,12 @@ import (
 // — while what "interrupted" and "failed" look like on screen is a rendering
 // decision that deliberately stayed here too.
 func (s *interactiveState) runAgentIteration(iterCtx context.Context, iterCancel context.CancelFunc, line string) bool {
-	sigCh, sigDone := s.startInterruptWatcher(iterCtx, iterCancel)
+	watchCtx, stopWatch := context.WithCancel(context.Background())
+	sigCh, sigDone := s.startInterruptWatcher(watchCtx, iterCancel)
 	stopESC := watchESC(iterCancel)
 	_, err := s.cond.Submit(iterCtx, line)
 	stopESC()
-	s.stopInterruptWatcher(sigCh, sigDone, iterCancel)
+	s.stopInterruptWatcher(sigCh, sigDone, iterCancel, stopWatch)
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -46,17 +47,21 @@ func (s *interactiveState) startInterruptWatcher(ctx context.Context, cancel con
 	sigDone := make(chan struct{})
 	go func() {
 		defer close(sigDone)
-		select {
-		case <-sigCh:
-			cancel()
-		case <-ctx.Done():
+		for {
+			select {
+			case <-sigCh:
+				cancel()
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 	return sigCh, sigDone
 }
 
-func (s *interactiveState) stopInterruptWatcher(sigCh chan os.Signal, sigDone chan struct{}, cancel context.CancelFunc) {
+func (s *interactiveState) stopInterruptWatcher(sigCh chan os.Signal, sigDone chan struct{}, cancel context.CancelFunc, stopWatch context.CancelFunc) {
 	signal.Stop(sigCh)
+	stopWatch()
 	cancel()
 	<-sigDone
 }
