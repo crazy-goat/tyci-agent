@@ -92,14 +92,46 @@ func (s *interactiveState) replaySession() {
 
 func (s *interactiveState) loop() {
 	for {
-		iterCtx, iterCancel := context.WithCancel(s.baseCtx)
-		line, err := s.readLine(iterCtx)
-		if s.handleReadError(err, iterCancel) {
-			return
+		readCtx, readCancel := context.WithCancel(s.baseCtx)
+		notice := make(chan struct{}, 1)
+		watchDone := make(chan struct{})
+		// readline blocks while idle, so unlike the TUI it cannot select on
+		// JobNotices itself. Wake it when a background subagent finishes; the
+		// notice then becomes the next model turn instead of waiting for the
+		// person to type something.
+		go func() {
+			select {
+			case <-JobNotices.Signal():
+				select {
+				case notice <- struct{}{}:
+				default:
+				}
+				readCancel()
+			case <-watchDone:
+			}
+		}()
+		line, err := s.readLine(readCtx)
+		close(watchDone)
+		readCancel()
+		select {
+		case <-notice:
+			notices := JobNotices.Drain()
+			if len(notices) == 0 {
+				continue
+			}
+			line = strings.Join(notices, "\n")
+			err = nil
+		default:
 		}
 		if err != nil {
+			cancel := func() {}
+			if s.handleReadError(err, cancel) {
+				return
+			}
 			continue
 		}
+
+		iterCtx, iterCancel := context.WithCancel(s.baseCtx)
 		if exit, handled := s.handleCommand(line, iterCancel); exit {
 			return
 		} else if handled {
