@@ -2,6 +2,7 @@ package agentdefs
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -389,5 +390,55 @@ func TestProjectDir(t *testing.T) {
 	want := filepath.Join("/some/wd", ".tyci", "agents")
 	if got := ProjectDir("/some/wd"); got != want {
 		t.Errorf("ProjectDir() = %q, want %q", got, want)
+	}
+}
+
+func TestProjectDirFromRepositorySubdirectory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GIT_AUTHOR_NAME", "t")
+	t.Setenv("GIT_AUTHOR_EMAIL", "t@t")
+	t.Setenv("GIT_COMMITTER_NAME", "t")
+	t.Setenv("GIT_COMMITTER_EMAIL", "t@t")
+	repo := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	runGit("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, "file"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "file")
+	runGit("commit", "-qm", "one")
+
+	subdir := filepath.Join(repo, "nested", "dir")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agentsDir := filepath.Join(repo, ".tyci", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeAgent(t, agentsDir, "from-root.md", validAgentContent)
+
+	got := ProjectDir(subdir)
+	root, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, ".tyci", "agents")
+	if got != want {
+		t.Fatalf("ProjectDir(subdir) = %q, want %q", got, want)
+	}
+	defs := List(subdir)
+	if len(defs) != 1 || defs[0].Name != "from-root" {
+		t.Fatalf("List(subdir) = %v, want [from-root]", defs)
 	}
 }

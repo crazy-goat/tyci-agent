@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -621,6 +622,72 @@ func TestLoadAgents_PicksUpProjectLocalMarkdownAgent(t *testing.T) {
 	}
 	if entry.Model != "anthropic/claude-opus" {
 		t.Errorf("entry.Model = %q, want %q", entry.Model, "anthropic/claude-opus")
+	}
+}
+
+func TestProjectLocalDiscoveryFromRepositorySubdirectory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	runGit("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, "file"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "file")
+	runGit("commit", "-qm", "one")
+
+	subdir := filepath.Join(repo, "nested")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeMarkdownAgent(t, filepath.Join(repo, ".tyci", "agents"), "root-agent", "model: provider/root", "Root agent.")
+	if err := os.WriteFile(filepath.Join(repo, LocalConfigFile), []byte(`{"legacy":"provider/legacy"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(subdir)
+
+	got, err := GetMarkdownAgent("root-agent")
+	if err != nil {
+		t.Fatalf("GetMarkdownAgent from subdirectory: %v", err)
+	}
+	if got.Frontmatter.Model != "provider/root" {
+		t.Errorf("markdown model = %q, want provider/root", got.Frontmatter.Model)
+	}
+
+	agents, err := LoadAgents()
+	if err != nil {
+		t.Fatalf("LoadAgents from subdirectory: %v", err)
+	}
+	if got := agents["legacy"].Model; got != "provider/legacy" {
+		t.Errorf("legacy config model = %q, want provider/legacy", got)
+	}
+	wantConfig := filepath.Join(repo, LocalConfigFile)
+	gotConfig := ConfigPath()
+	gotResolved, err := filepath.EvalSymlinks(gotConfig)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(ConfigPath()): %v", err)
+	}
+	wantResolved, err := filepath.EvalSymlinks(wantConfig)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(want config): %v", err)
+	}
+	if gotResolved != wantResolved {
+		t.Errorf("ConfigPath() = %q (resolved %q), want %q (resolved %q)", gotConfig, gotResolved, wantConfig, wantResolved)
 	}
 }
 

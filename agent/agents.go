@@ -11,9 +11,10 @@ import (
 	"strings"
 
 	"github.com/decodo/tyci/internal/agentdefs"
+	"github.com/decodo/tyci/session"
 )
 
-// AgentsFile is the name of the local config file (in current working directory).
+// AgentsFile is the name of the local config file (in the project root).
 const LocalConfigFile = ".tyci.json"
 
 // MarkdownAgentsDir is the directory for markdown agent definitions.
@@ -91,8 +92,13 @@ func (e *AgentEntry) UnmarshalJSON(data []byte) error {
 // Agents maps agent name -> agent entry (model + optional fallback).
 type Agents map[string]AgentEntry
 
-// localConfigPath returns the local config path in the given working directory.
+// localConfigPath returns the local config path in the project containing wd.
+// Outside a git repository, it falls back to the absolute form of wd.
 func localConfigPath(wd string) string {
+	key, err := session.ProjectKey(wd)
+	if err == nil {
+		wd = key
+	}
 	return filepath.Join(wd, LocalConfigFile)
 }
 
@@ -106,7 +112,9 @@ func globalConfigPath() string {
 }
 
 // LoadAgents loads agents from local config first (if exists), then merges with global config.
-// Local values override global ones. Also loads markdown agents from ~/.tyci/agents/.
+// Local values override global ones. The local config and markdown definitions
+// are resolved from the containing project's root, with the absolute cwd as
+// the fallback outside a repository.
 func LoadAgents() (Agents, error) {
 	result := make(Agents)
 
@@ -121,7 +129,8 @@ func LoadAgents() (Agents, error) {
 		}
 	}
 
-	// Load local (overrides global)
+	// Load local (overrides global), keyed to the project root rather than a
+	// subdirectory cwd. This mirrors markdown discovery below.
 	wd, _ := os.Getwd()
 	lPath := localConfigPath(wd)
 	if data, err := os.ReadFile(lPath); err == nil {
@@ -134,7 +143,7 @@ func LoadAgents() (Agents, error) {
 	}
 
 	// Load markdown agents from both the global (~/.tyci/agents) and
-	// project-local (<cwd>/.tyci/agents) directories; the project-local
+	// project-local (<project-root>/.tyci/agents) directories; the project-local
 	// definition wins on name collisions. They become entries with just the
 	// model set, and never override an agent already defined in JSON config.
 	for _, def := range agentdefs.List("") {
@@ -194,7 +203,7 @@ func LoadMarkdownAgents(dir string) ([]MarkdownAgent, error) {
 }
 
 // GetMarkdownAgent returns a markdown agent by name, looking in both the
-// global (~/.tyci/agents) and project-local (<cwd>/.tyci/agents)
+// global (~/.tyci/agents) and project-local (<project-root>/.tyci/agents)
 // directories. The project-local definition wins on name collisions.
 func GetMarkdownAgent(name string) (*MarkdownAgent, error) {
 	def, ok := agentdefs.Get("", name)
@@ -207,7 +216,7 @@ func GetMarkdownAgent(name string) (*MarkdownAgent, error) {
 
 // ListMarkdownAgents returns names of all markdown agents visible from the
 // current working directory: global (~/.tyci/agents) plus project-local
-// (<cwd>/.tyci/agents), merged with project-local taking precedence.
+// (<project-root>/.tyci/agents), merged with project-local taking precedence.
 func ListMarkdownAgents() ([]string, error) {
 	defs := agentdefs.List("")
 	names := make([]string, 0, len(defs))

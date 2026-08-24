@@ -1,7 +1,7 @@
 // Package agentdefs is the single place in the repo that parses and
-// discovers agent definitions from markdown files. It has no dependency on
-// any other tyci package (stdlib + gopkg.in/yaml.v3 only) so it can be
-// imported freely without pulling in unrelated code.
+// discovers agent definitions from markdown files. It only depends on the
+// small internal/gitinfo helper (plus stdlib and gopkg.in/yaml.v3), so it can
+// be imported freely without pulling in unrelated code.
 package agentdefs
 
 import (
@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/decodo/tyci/internal/gitinfo"
 	"gopkg.in/yaml.v3"
 )
 
@@ -90,17 +91,25 @@ func GlobalDir() string {
 }
 
 // ProjectDir returns the project-local agent definitions directory:
-// <wd>/.tyci/agents. If wd is empty, the current working directory is used.
+// <project-root>/.tyci/agents. If wd is empty, the current working directory
+// is used. Inside a git repository the root is resolved through ProjectRoot,
+// including linked worktrees; outside one, wd is retained as-is.
 func ProjectDir(wd string) string {
 	if wd == "" {
 		wd, _ = os.Getwd()
+	}
+	if root := gitinfo.ProjectRoot(wd); root != "" {
+		wd = root
+	} else if abs, err := filepath.Abs(wd); err == nil {
+		wd = abs
 	}
 	return filepath.Join(wd, ".tyci", "agents")
 }
 
 // Dirs returns the ordered list of directories to load agent definitions
-// from: global first, then project-local. Later directories win when merged
-// by Load.
+// from: global first, then project-local. The project-local directory is rooted
+// at the containing repository's root. Later directories win when merged by
+// Load.
 func Dirs(wd string) []string {
 	return []string{GlobalDir(), ProjectDir(wd)}
 }
