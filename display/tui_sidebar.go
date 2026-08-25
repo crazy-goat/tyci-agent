@@ -119,6 +119,11 @@ func (m *TuiModel) openSidebar(tab int) {
 		// already open) would just re-wrap everything for no reason.
 		m.invalidateAllBlockLineCounts()
 	}
+	// The narrowed main column changes the input's wrap width: the widget
+	// must be re-sized AND its height recomputed so the field matches what
+	// it will render at (and the message region gains/loses the right rows).
+	m.setInputWidth()
+	m.capInputHeight()
 }
 
 // closeSidebar closes the sidebar and restores scroll state. See
@@ -135,6 +140,10 @@ func (m *TuiModel) closeSidebar() {
 	m.selection = SelectionState{}
 	m.selectionFlash = false
 	m.invalidateAllBlockLineCounts()
+	// Full width restored -> re-size the input and recompute its height (see
+	// openSidebar).
+	m.setInputWidth()
+	m.capInputHeight()
 }
 
 // toggleSidebar is Ctrl+T's handler: close if open, otherwise reopen on

@@ -3,9 +3,11 @@ package display
 import (
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
+	"github.com/rivo/uniseg"
 )
 
 func (m TuiModel) submit() tea.Model {
@@ -86,150 +88,154 @@ func enqueueOrStatus(ch chan string, line string, status *string) bool {
 	}
 }
 
+// inputMaxHeight is the tallest the prompt input grows to before the widget's
+// own internal viewport starts scrolling vertically.
+const inputMaxHeight = 10
+
+func (m TuiModel) inputEffectiveColumn() int {
+	if m.sidebarActive {
+		return m.mainColumnWidth()
+	}
+	return m.width
+}
+
+// setInputWidth is the single place that converts the current layout (full
+// width, or the narrower main column with the sidebar open) into the widget's
+// wrap width. Every path that changes geometry — terminal resize, sidebar
+// open/close — must call it so the widget and the height computation agree.
+// The widget reserves its prompt/gutter before the text-wrap width, so after
+// this the wrap width is available as m.input.Width().
+func (m *TuiModel) setInputWidth() {
+	m.input.SetWidth(max(10, m.inputEffectiveColumn()-2))
+}
+
 func (m *TuiModel) capInputHeight() {
 	// Height must match the number of DISPLAY rows the textarea renders, which
 	// includes soft word-wrap: a long logical line breaks into several rows at
 	// the widget's wrap width, and the input has to grow to fit them all or
 	// wrapped lines clip. The bubbles textarea's LineCount() only counts hard
-	// newlines (len(m.value)), so we re-count wrapped rows at the actual wrap
-	// width (see inputWrapWidth / inputWrappedLineCount). Beyond the 10-row
-	// cap the textarea's internal viewport scrolls.
-	lines := inputWrappedLineCount(m.input.Value(), m.inputWrapWidth())
+	// newlines (len(m.value)), so we re-count wrapped rows with inputWrapped,
+	// a verbatim mirror of the widget's own word-wrap. The wrap width comes
+	// from the widget itself (m.input.Width()), which after setInputWidth
+	// already subtracts the prompt reservation; sizing from m.width would
+	// miss that and over/under-count. Beyond inputMaxHeight the widget's
+	// internal viewport scrolls.
+	//
+	// Crucially we do NOT inject a synthetic scroll key (e.g. KeyPgUp) after
+	// SetHeight: the widget's View() clamps an over-long YOffset back to the
+	// bottom (SetContent→GotoBottom when past the last line) and repositionView
+	// on the next Update keeps the cursor in view, both against the widget's
+	// own geometry. A forced top/bottom scroll from here would yank the
+	// viewport away from the cursor and hide the very lines the user is
+	// typing.
+	width := m.input.Width()
+	if width < 1 {
+		width = 1
+	}
+	lines := inputWrapped(m.input.Value(), width)
 	if lines < 1 {
 		lines = 1
 	}
-	if lines > 10 {
-		lines = 10
+	if lines > inputMaxHeight {
+		lines = inputMaxHeight
 	}
 	m.input.SetHeight(lines)
-	// SetHeight changes viewport.Height but does not call the textarea's
-	// unexported repositionView(). If a previous Update scrolled the viewport
-	// down (because the old height was too small to show the cursor), those
-	// lines are now hidden above the viewport. Sending PageUp scrolls the
-	// viewport back to the top; the trailing repositionView in Update then
-	// brings the cursor back into view if content exceeds the new height.
-	m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	// Render now (the message region height uses m.input.Height()), which also
+	// lets the widget clamp the viewport to valid bounds for the new height.
+	_ = m.input.View()
 }
 
 // insertNewline inserts a hard newline at the cursor. Common to Alt+Enter and
 // Ctrl+N/Ctrl+J so the idle and busy handlers can't drift (they both used to
-// copy the same height/scroll dance inline). The height is pre-set BEFORE the
-// textarea's Update so its internal repositionView already targets the new
-// viewport: without it, repositionView runs at the old (smaller) height,
-// decides the new cursor line is out of view, scrolls down, and then
-// capInputHeight can't undo that scroll — the first line disappears.
+// copy the same height/scroll dance inline).
+//
+// The newline is inserted FIRST (the widget's Update splits the line at the
+// cursor, which changes how subsequent text wraps), then height is computed
+// from the post-insertion content. Pre-sizing "wrapped rows + 1" was wrong
+// whenever the cursor sat in the middle of a long line: the split rearranges
+// the wrap boundaries, so the pre-computed height didn't match what the widget
+// now renders and the field was one row short or one row too tall.
 func (m TuiModel) insertNewline() TuiModel {
-	newH := inputWrappedLineCount(m.input.Value(), m.inputWrapWidth()) + 1
-	if newH < 1 {
-		newH = 1
-	} else if newH > 10 {
-		newH = 10
-	}
-	m.input.SetHeight(newH)
 	m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m.capInputHeight()
 	return m
 }
 
-// inputWrapWidth is the column width the textarea soft-wraps its input at.
-// renderFrame / handleResize SetWidth the widget to max(10, colWidth-2), and
-// textarea.SetWidth then reserves horizontal space for the prompt before the
-// text-wrap width (m.width on the widget). The sidebar narrows the main
-// column: an open sidebar means the input is actually drawn at
-// mainColumnWidth()-2, so sizing the height from the full width would
-// under-count wrap rows and the field would be too short.
-func (m TuiModel) inputWrapWidth() int {
-	col := m.width
-	if m.sidebarActive {
-		col = m.mainColumnWidth()
-	}
-	outer := max(10, col-2) // the value passed to textarea.SetWidth
-	// The input uses the default prompt "▍ " (2 cols) and has ShowLineNumbers
-	// disabled, so SetWidth reserves 2 inner columns. Ensure at least one text
-	// column remains.
-	const reserved = 2
-	minInner := reserved + 1
-	inner := max(outer, minInner) - reserved
-	if inner < 1 {
-		inner = 1
-	}
-	return inner
-}
-
-// inputWrappedLineCount returns how many display rows the textarea will render
-// for value at the given soft-wrap width. It mirrors the bubbles textarea's
-// word-wrap (bubbles/textarea.wrap): break at space boundaries, and if a
-// single word is wider than the wrap width, hard-break it character by
-// character. Keeping this in sync with the widget means capInputHeight's
-// height always matches what View() paints.
-func inputWrappedLineCount(value string, width int) int {
+// inputWrapped returns how many display rows the textarea renders for value at
+// the given soft-wrap width. It is a verbatim mirror of bubbles' textarea.wrap
+// (github.com/charmbracelet/bubbles textarea): unicode.IsSpace is the word
+// separator (not just ASCII space/tab), and widths come from rivo/uniseg plus
+// mattn/go-runewidth for the last-rune hard-break. Because it is byte-for-byte
+// the same algorithm the widget uses, capInputHeight's height always matches
+// what View() paints, including for tabs, U+3000, emoji and other wide runes.
+func inputWrapped(value string, width int) int {
 	if width < 1 {
 		width = 1
 	}
 	total := 0
 	for _, logical := range strings.Split(value, "\n") {
-		total += wrappedRows([]rune(logical), width)
+		total += len(wrapInput([]rune(logical), width))
 	}
-	return max(1, total)
+	if total < 1 {
+		total = 1
+	}
+	return total
 }
 
-func wrappedRows(r []rune, width int) int {
-	if len(r) == 0 {
-		return 1
-	}
+func wrapInput(runes []rune, width int) [][]rune {
 	var (
 		lines  = [][]rune{{}}
 		word   = []rune{}
 		row    int
 		spaces int
 	)
-	for _, cp := range r {
-		if cp == ' ' || cp == '\t' {
+	for _, r := range runes {
+		if unicode.IsSpace(r) {
 			spaces++
 		} else {
-			word = append(word, cp)
+			word = append(word, r)
 		}
 		if spaces > 0 {
-			if runewidth.StringWidth(string(lines[row]))+
-				runewidth.StringWidth(string(word))+spaces > width {
+			if uniseg.StringWidth(string(lines[row]))+
+				uniseg.StringWidth(string(word))+spaces > width {
 				row++
 				lines = append(lines, []rune{})
 				lines[row] = append(lines[row], word...)
-				lines[row] = append(lines[row], repeatSpaces(spaces)...)
-				spaces, word = 0, nil
+				lines[row] = append(lines[row], repeatInputSpaces(spaces)...)
+				spaces = 0
+				word = nil
 			} else {
 				lines[row] = append(lines[row], word...)
-				lines[row] = append(lines[row], repeatSpaces(spaces)...)
-				spaces, word = 0, nil
+				lines[row] = append(lines[row], repeatInputSpaces(spaces)...)
+				spaces = 0
+				word = nil
 			}
-			continue
-		}
-		// Accumulating an unbroken word: break it if it outgrows the width.
-		lastCharW := runewidth.RuneWidth(word[len(word)-1])
-		if runewidth.StringWidth(string(word))+lastCharW > width {
-			if len(lines[row]) > 0 {
-				row++
-				lines = append(lines, []rune{})
+		} else {
+			lastCharLen := runewidth.RuneWidth(word[len(word)-1])
+			if uniseg.StringWidth(string(word))+lastCharLen > width {
+				if len(lines[row]) > 0 {
+					row++
+					lines = append(lines, []rune{})
+				}
+				lines[row] = append(lines[row], word...)
+				word = nil
 			}
-			lines[row] = append(lines[row], word...)
-			word = nil
 		}
 	}
-	if runewidth.StringWidth(string(lines[row]))+
-		runewidth.StringWidth(string(word))+spaces >= width {
+	if uniseg.StringWidth(string(lines[row]))+uniseg.StringWidth(string(word))+spaces >= width {
 		lines = append(lines, []rune{})
 		lines[row+1] = append(lines[row+1], word...)
 		spaces++
-		lines[row+1] = append(lines[row+1], repeatSpaces(spaces)...)
+		lines[row+1] = append(lines[row+1], repeatInputSpaces(spaces)...)
 	} else {
 		lines[row] = append(lines[row], word...)
 		spaces++
-		lines[row] = append(lines[row], repeatSpaces(spaces)...)
+		lines[row] = append(lines[row], repeatInputSpaces(spaces)...)
 	}
-	return len(lines)
+	return lines
 }
 
-func repeatSpaces(n int) []rune {
+func repeatInputSpaces(n int) []rune {
 	return []rune(strings.Repeat(" ", n))
 }
 

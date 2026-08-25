@@ -164,7 +164,8 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m TuiModel) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.width = msg.Width
 	m.height = msg.Height
-	m.input.SetWidth(max(10, msg.Width-2))
+	m.setInputWidth()
+	m.capInputHeight()
 	m.resizeWidth = msg.Width
 	m.resizeHeight = msg.Height
 	if !m.resizePending {
@@ -182,7 +183,8 @@ func (m TuiModel) handleResizeFlush() (tea.Model, tea.Cmd) {
 		if m.width != m.resizeWidth || m.height != m.resizeHeight {
 			m.width = m.resizeWidth
 			m.height = m.resizeHeight
-			m.input.SetWidth(max(10, m.resizeWidth-2))
+			m.setInputWidth()
+			m.capInputHeight()
 		}
 		m.invalidateAllBlockLineCounts()
 		m.clampScroll()
