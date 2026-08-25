@@ -42,9 +42,9 @@ func (f *fakeJobMailbox) Drain(id string) []string {
 }
 
 func withFakeMailbox(t *testing.T, f *fakeJobMailbox) {
-	old := jobMailbox
-	t.Cleanup(func() { jobMailbox = old })
-	jobMailbox = f
+	old := getJobMailbox()
+	t.Cleanup(func() { SetJobMailbox(old) })
+	SetJobMailbox(f)
 }
 
 func TestMessageTool_RequiresJobID(t *testing.T) {
@@ -64,9 +64,9 @@ func TestMessageTool_RequiresText(t *testing.T) {
 }
 
 func TestMessageTool_UnavailableWithoutMailbox(t *testing.T) {
-	old := jobMailbox
-	jobMailbox = nil
-	defer func() { jobMailbox = old }()
+	old := getJobMailbox()
+	SetJobMailbox(nil)
+	defer func() { SetJobMailbox(old) }()
 
 	tool := &MessageTool{}
 	res := tool.Run(context.Background(), map[string]any{"job_id": "job-1-1", "text": "hi"})
@@ -158,9 +158,9 @@ func TestJobMailboxNextMessages_DrainsBoundJob(t *testing.T) {
 }
 
 func TestJobMailboxNextMessages_NilWithoutMailboxOrJobID(t *testing.T) {
-	old := jobMailbox
-	jobMailbox = nil
-	defer func() { jobMailbox = old }()
+	old := getJobMailbox()
+	SetJobMailbox(nil)
+	defer func() { SetJobMailbox(old) }()
 
 	if next := JobMailboxNextMessages("job-1-1"); next != nil {
 		t.Error("expected nil callback when no mailbox is wired")

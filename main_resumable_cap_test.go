@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -258,5 +259,74 @@ func TestStashResumable_ConcurrentStashes_RaceFree(t *testing.T) {
 	resumableMu.Unlock()
 	if size > resumableCap {
 		t.Fatalf("resumable grew past its cap under concurrent stashes: %d, want at most %d", size, resumableCap)
+	}
+}
+
+// TestStashResumable_ConcurrentPruneAgainstFinishingJob_RaceFree pins F1: a
+// prior version of pruneResumableLocked read JobRegistry.Get(id)'s returned
+// *Job's Status field with no lock held — a real data race against
+// Registry.Start's completion goroutine, which writes Status under r.mu
+// (jobs/registry.go). This drives a job through Start→finish while
+// concurrently forcing pruneResumableLocked to run (via repeated
+// stashResumable calls past the cap), so `-race` would catch the old
+// Get-then-read-Status shape.
+func TestStashResumable_ConcurrentPruneAgainstFinishingJob_RaceFree(t *testing.T) {
+	resetResumableForTest(t)
+
+	for round := 0; round < 100; round++ {
+		release := make(chan struct{})
+		job := JobRegistry.Start(context.Background(), "finishing soon", jobs.KindSubagent, "", func(context.Context, string) (string, bool, error) {
+			<-release
+			return "done", false, nil
+		})
+
+		// Pre-fill the map to exactly resumableCap, with job.ID as the
+		// OLDEST entry, so every subsequent stash below immediately hits
+		// pruneResumableLocked's excess path and inspects job.ID's
+		// liveness right away — no ~200-call warm-up needed before the
+		// window that matters opens.
+		resumableMu.Lock()
+		resumable = map[string]resumableEntry{job.ID: fakeResumableEntry()}
+		resumableOrder = []string{job.ID}
+		for i := 0; i < resumableCap-1; i++ {
+			id := fmt.Sprintf("prefill-%d-%d", round, i)
+			resumable[id] = fakeResumableEntry()
+			resumableOrder = append(resumableOrder, id)
+		}
+		resumableMu.Unlock()
+
+		stop := make(chan struct{})
+		var wg sync.WaitGroup
+		const spinners = 8
+		for s := 0; s < spinners; s++ {
+			wg.Add(1)
+			go func(s int) {
+				defer wg.Done()
+				i := 0
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					// Every call past the cap runs pruneResumableLocked,
+					// which checks job.ID's liveness — spinning this
+					// continuously from several goroutines, for as long as
+					// the job takes to actually finish below, is what makes
+					// the check's read of Job.Status overlap the registry's
+					// own write of it (jobs/registry.go's completion path)
+					// instead of racing to finish first by luck.
+					stashResumable(fmt.Sprintf("job-prune-race-%d-%d-%d", round, s, i), fakeResumableEntry())
+					i++
+				}
+			}(s)
+		}
+
+		close(release) // let the job transition to done while the spin runs
+		if _, ok := JobRegistry.Wait(context.Background(), job.ID, 2*time.Second); !ok {
+			t.Fatalf("round %d: job vanished from registry", round)
+		}
+		close(stop)
+		wg.Wait()
 	}
 }

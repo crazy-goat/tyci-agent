@@ -26,9 +26,9 @@ func (f fakeJobAsker) Ask(ctx context.Context, id, question string) (string, boo
 // Revert AskTool.Run's fromUser handling and this fails because the
 // content comes back as the bare answer, with no marker at all.
 func TestAskTool_AgentAnswerIsMarkedNotTheUser(t *testing.T) {
-	old := jobAsker
-	defer func() { jobAsker = old }()
-	jobAsker = fakeJobAsker{answer: "yes, go ahead", fromUser: false, ok: true}
+	old := getJobAsker()
+	defer func() { SetJobAsker(old) }()
+	SetJobAsker(fakeJobAsker{answer: "yes, go ahead", fromUser: false, ok: true})
 
 	tool := &AskTool{}
 	ctx := context.WithValue(context.Background(), JobIDCtxKey{}, "job-1-1")
@@ -50,9 +50,9 @@ func TestAskTool_AgentAnswerIsMarkedNotTheUser(t *testing.T) {
 // answer (fromUser=true) must reach the child as the bare answer text,
 // with no "not the user" marker attached to it.
 func TestAskTool_UserAnswerIsPlain(t *testing.T) {
-	old := jobAsker
-	defer func() { jobAsker = old }()
-	jobAsker = fakeJobAsker{answer: "yes, go ahead", fromUser: true, ok: true}
+	old := getJobAsker()
+	defer func() { SetJobAsker(old) }()
+	SetJobAsker(fakeJobAsker{answer: "yes, go ahead", fromUser: true, ok: true})
 
 	tool := &AskTool{}
 	ctx := context.WithValue(context.Background(), JobIDCtxKey{}, "job-1-1")
@@ -88,10 +88,10 @@ func (f *fakeJobAnswerer) Answer(id, text string, fromUser bool) bool {
 // hardcoded false and this fails once JobAnswerer's signature is restored
 // to accept it as a variable (or once it's flipped to true).
 func TestAnswerTool_AlwaysMarksFromUserFalse(t *testing.T) {
-	old := jobAnswerer
-	defer func() { jobAnswerer = old }()
+	old := getJobAnswerer()
+	defer func() { SetJobAnswerer(old) }()
 	fake := &fakeJobAnswerer{ret: true}
-	jobAnswerer = fake
+	SetJobAnswerer(fake)
 
 	tool := &AnswerTool{}
 	res := tool.Run(context.Background(), map[string]any{"job_id": "job-1-1", "text": "blue"})

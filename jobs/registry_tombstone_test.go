@@ -11,8 +11,10 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // runAndWaitDone starts a job of the given kind that immediately returns
@@ -200,5 +202,52 @@ func TestPruneTerminalLocked_LiveSubagentJobNeverPrunedOrTombstoned(t *testing.T
 	r.mu.Unlock()
 	if tombstoned {
 		t.Fatalf("a still-running job must never be tombstoned")
+	}
+}
+
+// TestPruneTerminalLocked_TombstoneTruncatesLongResultAndIsUTF8Safe pins
+// F2: a tombstone's string fields (Result above all — the whole point of
+// tombstoning a subagent job) are NOT retained in full without limit — that
+// would make tombstoneCap's "200 entries" comment a lie the moment a single
+// subagent returns a large result. truncateTombstoneField caps each field
+// at tombstoneFieldRuneCap runes, and must never split a multi-byte rune
+// (this repo has had byte-slicing truncation bugs before).
+func TestPruneTerminalLocked_TombstoneTruncatesLongResultAndIsUTF8Safe(t *testing.T) {
+	r := NewRegistry()
+
+	// Build a result whose rune count is well past the cap, ending on a
+	// multi-byte rune sequence (emoji, 4 bytes each in UTF-8) right at the
+	// truncation boundary — a byte-offset slice here would produce invalid
+	// UTF-8; a rune-offset slice must not.
+	var b strings.Builder
+	for i := 0; i < tombstoneFieldRuneCap+500; i++ {
+		b.WriteRune('🎉')
+	}
+	longResult := b.String()
+
+	total := maxRetainedTerminalJobs + 1
+	var ids []string
+	for i := 0; i < total; i++ {
+		result := "short"
+		if i == 0 {
+			result = longResult
+		}
+		ids = append(ids, runAndWaitDone(t, r, KindSubagent, fmt.Sprintf("sub %d", i), result))
+	}
+
+	got, ok := r.Wait(context.Background(), ids[0], time.Second)
+	if !ok {
+		t.Fatalf("expected the tombstoned job to still be retrievable")
+	}
+	if !utf8.ValidString(got.Result) {
+		t.Fatalf("tombstoned Result is not valid UTF-8 — truncation split a multi-byte rune: %q", got.Result)
+	}
+	runeCount := utf8.RuneCountInString(got.Result)
+	// +1 for the trailing ellipsis rune truncateTombstoneField appends.
+	if runeCount > tombstoneFieldRuneCap+1 {
+		t.Fatalf("tombstoned Result has %d runes, want at most %d (+ellipsis)", runeCount, tombstoneFieldRuneCap+1)
+	}
+	if !strings.HasSuffix(got.Result, "…") {
+		t.Errorf("expected a truncated tombstoned Result to end with an ellipsis marker, got suffix %q", got.Result[len(got.Result)-10:])
 	}
 }

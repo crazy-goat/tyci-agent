@@ -81,6 +81,19 @@ type resumableEntry struct {
 
 // resumableMu guards resumable and resumableOrder.
 //
+// Lock ordering (load-bearing, keep it this way): pruneResumableLocked calls
+// JobRegistry.IsLive while already holding resumableMu, i.e. resumableMu is
+// always acquired BEFORE JobRegistry's own r.mu, never the other way round.
+// This is safe today because nothing inside package jobs ever calls back
+// into main while holding r.mu: onEvent always fires after r.mu is released
+// (see registry.go's Start completion path and Cancel/CancelAll), so there
+// is no path back into this package's resumableMu while jobs' lock is held.
+// If that ever changes — an onEvent callback taking r.mu while it runs, or a
+// callback invoked WITH r.mu held — this ordering would deadlock against any
+// code that takes the locks in the other order. Do not acquire JobRegistry's
+// lock (directly or via a Registry method) while already holding it in the
+// other order anywhere else in this package.
+//
 // resumable USED to be never pruned at all: every finished async job/btw
 // conversation that ever ran stayed in memory for the lifetime of the
 // process, on the theory that something might later call "resume" on it.
@@ -124,12 +137,19 @@ func stashResumable(jobID string, entry resumableEntry) {
 }
 
 // pruneResumableLocked drops the oldest entries past resumableCap, in
-// insertion order, skipping (and keeping) any whose job is still reported
-// running by JobRegistry. Every resumableEntry is stashed for an already
-// terminal job (see resumableEntry's doc comment), so in practice that guard
-// should never trigger — it exists so a fix elsewhere that stashes early
-// cannot silently turn into "prune a job's only resumable copy while it is
-// still in flight". Caller must hold resumableMu.
+// insertion order, skipping (and keeping) any whose job is still live —
+// running OR waiting_answer; a job blocked on a question is still live and
+// must never have its resumable transcript evicted out from under it.
+// JobRegistry.IsLive reads Job.Status under the registry's own lock, unlike
+// JobRegistry.Get (which hands back the live *Job pointer with no lock held
+// on return — reading its Status field afterwards races against Start's
+// completion path writing it). Every resumableEntry is stashed for an
+// already terminal job (see resumableEntry's doc comment), so in practice
+// this guard should never trigger — it exists so a fix elsewhere that
+// stashes early cannot silently turn into "prune a job's only resumable
+// copy while it is still in flight". Caller must hold resumableMu; see this
+// var block's doc comment above for why calling into JobRegistry while
+// holding resumableMu is safe.
 func pruneResumableLocked() {
 	excess := len(resumable) - resumableCap
 	if excess <= 0 {
@@ -139,7 +159,7 @@ func pruneResumableLocked() {
 	removed := 0
 	for _, id := range resumableOrder {
 		if removed < excess {
-			if job, ok := JobRegistry.Get(id); ok && job.Status == jobs.StatusRunning {
+			if JobRegistry.IsLive(id) {
 				kept = append(kept, id)
 				continue
 			}

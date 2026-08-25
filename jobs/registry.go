@@ -789,10 +789,32 @@ const MaxRetainedTerminalJobs = 50
 // safety net for the case maxRetainedTerminalJobs already treats as "well
 // past the point where a model would still poll": a long session that runs
 // many subagents in the background and only gets back to polling one much
-// later. Each entry is a single Job snapshot (a string result plus a few
-// scalar fields, not the 256 KiB bash cap above), so 200 of them is a small,
-// fixed cost for a meaningfully longer safety margin.
+// later.
+//
+// A count alone is NOT actually a bound on memory: a subagent's Result is
+// its child's entire final answer, with nothing capping its length
+// anywhere upstream (unlike bash's 256 KiB output cap), and Description/
+// Err/Progress are also caller/model-supplied strings with no size limit of
+// their own. 200 x unbounded is not a small, fixed cost — it is a 4x
+// retention increase (50 live + 200 tombstoned) dressed up as one. So
+// tombstoneLocked below truncates each of those four string fields (via
+// truncateTombstoneField, UTF-8-safe — never slice a string by byte offset
+// mid-rune) to tombstoneFieldRuneCap runes before storing the snapshot. That
+// makes the actual worst case honest and computable: at most
+// tombstoneCap * 4 * tombstoneFieldRuneCap runes, i.e. at most
+// 200 * 4 * 4000 = 3,200,000 runes, or ~12.8 MB assuming every rune costs
+// the UTF-8 max of 4 bytes (ASCII text, the common case, costs a quarter of
+// that). Truncating Result specifically means "the full result", the
+// premise the tombstone exists to satisfy, is honored only up to
+// tombstoneFieldRuneCap runes — far beyond the 800-rune completion-notice
+// preview it replaces, but not literally unbounded, which an in-memory
+// process-lifetime cache cannot honestly promise anyway.
 const tombstoneCap = 200
+
+// tombstoneFieldRuneCap bounds each of a tombstoned Job's string fields
+// (Result, Err, Progress, Description) in runes — see tombstoneCap's doc
+// comment for the reasoning and the resulting worst-case memory bound.
+const tombstoneFieldRuneCap = 4000
 
 // pruneTerminalLocked drops the oldest finished jobs beyond
 // maxRetainedTerminalJobs. Caller must hold r.mu.
@@ -823,8 +845,15 @@ func (r *Registry) pruneTerminalLocked() {
 }
 
 // tombstoneLocked records snap under its own id, evicting the oldest
-// tombstone (FIFO) once tombstoneCap is exceeded. Caller must hold r.mu.
+// tombstone (FIFO) once tombstoneCap is exceeded. Truncates snap's string
+// fields first (see tombstoneCap's doc comment) so what is actually
+// retained matches what the doc comment promises. Caller must hold r.mu.
 func (r *Registry) tombstoneLocked(snap Job) {
+	snap.Result = truncateTombstoneField(snap.Result)
+	snap.Err = truncateTombstoneField(snap.Err)
+	snap.Progress = truncateTombstoneField(snap.Progress)
+	snap.Description = truncateTombstoneField(snap.Description)
+
 	if _, exists := r.tombstones[snap.ID]; !exists {
 		r.tombstoneOrder = append(r.tombstoneOrder, snap.ID)
 	}
@@ -834,6 +863,19 @@ func (r *Registry) tombstoneLocked(snap Job) {
 		r.tombstoneOrder = r.tombstoneOrder[1:]
 		delete(r.tombstones, oldest)
 	}
+}
+
+// truncateTombstoneField truncates s to at most tombstoneFieldRuneCap
+// runes, appending an ellipsis when it actually cut something. Rune-based,
+// never byte-based — this repo has had byte-slicing truncation bugs before
+// (backspace/search, the TUI, other tools), and slicing a string by byte
+// offset mid-rune corrupts UTF-8 multi-byte sequences.
+func truncateTombstoneField(s string) string {
+	runes := []rune(s)
+	if len(runes) <= tombstoneFieldRuneCap {
+		return s
+	}
+	return string(runes[:tombstoneFieldRuneCap]) + "…"
 }
 
 // PendingLines describes the jobs that are still outstanding, one line each,
