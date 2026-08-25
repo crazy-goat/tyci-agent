@@ -20,11 +20,23 @@ import (
 // ~/.tyci content (global hooks, global Lua tools) keeps loading exactly as
 // before. A pre-recorded "trusted" decision must load both.
 //
-// The two tests below share one process (as every test in this package
-// does) and therefore one Lua tool registry: TestInitCommon_UntrustedProject
-// runs first (Go preserves source order within a file) and never registers
-// "local-trust-wiring-tool" at all, and TestInitCommon_TrustedProject is the
-// only test that ever does, so neither leaks state the other depends on.
+// The tests below share one process (as every test in this package does)
+// and therefore one Lua tool registry. An earlier version of this comment
+// claimed that was harmless — that TestInitCommon_TrustedProject was "the
+// only test that ever registers local-trust-wiring-tool, so neither leaks
+// state the other depends on". That was false twice over, and the false
+// comment is what kept the resulting failure looking like a flake: ANY test
+// that runs initCommon against a trusted fixture registers that project's
+// Lua tools (initCommon calls tools.LoadAndRegisterLocalLuaTools for a
+// trusted project), TestInitCommon_TrustedProject_CronLocalDirSet included,
+// and source order only decides the order WITHIN one -count iteration — on
+// the next iteration the untrusted test runs after all of them. The result
+// was a package that failed roughly four runs in five under -count>1.
+//
+// The registry is now restored by newInitCommonTestCmd, which every
+// initCommon test goes through, so this is fixed at the choke point rather
+// than reasoned about per test. Do not re-derive a "no leak here" argument
+// from which tests happen to exist today.
 
 const trustWiringGlobalLuaScript = `return {
   schema = { name = "global-trust-wiring-tool", description = "d", parameters = {} },
@@ -111,7 +123,7 @@ func TestInitCommon_UntrustedProject_SkipsLocalHooksAndLua_KeepsGlobal(t *testin
 	prov := &fakeProvider{name: "trust-wiring-prov-1", configured: true, models: []string{"m1"}}
 	providers.Register(prov)
 
-	cmd := newInitCommonTestCmd()
+	cmd := newInitCommonTestCmd(t)
 	if err := cmd.Flags().Set("model", "trust-wiring-prov-1/m1"); err != nil {
 		t.Fatalf("set model flag: %v", err)
 	}
@@ -173,7 +185,7 @@ func TestInitCommon_TrustedProject_LoadsLocalHooksAndLuaToo(t *testing.T) {
 	prov := &fakeProvider{name: "trust-wiring-prov-2", configured: true, models: []string{"m1"}}
 	providers.Register(prov)
 
-	cmd := newInitCommonTestCmd()
+	cmd := newInitCommonTestCmd(t)
 	if err := cmd.Flags().Set("model", "trust-wiring-prov-2/m1"); err != nil {
 		t.Fatalf("set model flag: %v", err)
 	}
@@ -217,7 +229,7 @@ func TestInitCommon_UntrustedProject_CronLocalDirUnset(t *testing.T) {
 	prov := &fakeProvider{name: "trust-wiring-cron-prov-1", configured: true, models: []string{"m1"}}
 	providers.Register(prov)
 
-	cmd := newInitCommonTestCmd()
+	cmd := newInitCommonTestCmd(t)
 	if err := cmd.Flags().Set("model", "trust-wiring-cron-prov-1/m1"); err != nil {
 		t.Fatalf("set model flag: %v", err)
 	}
@@ -263,7 +275,7 @@ func TestInitCommon_TrustedProject_CronLocalDirSet(t *testing.T) {
 	prov := &fakeProvider{name: "trust-wiring-cron-prov-2", configured: true, models: []string{"m1"}}
 	providers.Register(prov)
 
-	cmd := newInitCommonTestCmd()
+	cmd := newInitCommonTestCmd(t)
 	if err := cmd.Flags().Set("model", "trust-wiring-cron-prov-2/m1"); err != nil {
 		t.Fatalf("set model flag: %v", err)
 	}

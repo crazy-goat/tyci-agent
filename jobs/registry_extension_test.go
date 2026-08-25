@@ -7,9 +7,10 @@ import (
 	"time"
 )
 
-func startDeadlineJob(r *Registry, duration time.Duration, release <-chan struct{}) (*Job, <-chan context.Context) {
+func startDeadlineJob(t *testing.T, r *Registry, duration time.Duration, release <-chan struct{}) (*Job, <-chan context.Context) {
+	t.Helper()
 	ctxs := make(chan context.Context, 1)
-	job := r.Start(deadlineContext(duration), "extension", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
+	job := r.Start(deadlineContext(t, duration), "extension", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
 		ctxs <- ctx
 		<-release
 		return "", false, ctx.Err()
@@ -17,15 +18,23 @@ func startDeadlineJob(r *Registry, duration time.Duration, release <-chan struct
 	return job, ctxs
 }
 
-func deadlineContext(duration time.Duration) context.Context {
-	ctx, _ := context.WithTimeout(context.Background(), duration)
+// deadlineContext returns a context carrying a deadline, with its cancel
+// registered on t rather than discarded — discarding it leaks the timer
+// until the deadline fires, which is what `go vet` flagged here. The cancel
+// cannot be called before returning (that would cancel the context this
+// test hands to a job) so it has to outlive the call, and t.Cleanup is the
+// only place that can hold it.
+func deadlineContext(t *testing.T, duration time.Duration) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
+	t.Cleanup(cancel)
 	return ctx
 }
 
 func TestExtensionApprovalMovesDeadlineAndContext(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job, ctxs := startDeadlineJob(r, 100*time.Millisecond, release)
+	job, ctxs := startDeadlineJob(t, r, 100*time.Millisecond, release)
 	ctx := <-ctxs
 	before, ok := ctx.Deadline()
 	if !ok {
@@ -70,7 +79,7 @@ func TestExtensionRejectsAndNoAnswerExpires(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			r := NewRegistry()
 			release := make(chan struct{})
-			job, _ := startDeadlineJob(r, 60*time.Millisecond, release)
+			job, _ := startDeadlineJob(t, r, 60*time.Millisecond, release)
 			requestID, ok := r.RequestExtension(job.ID, 200*time.Millisecond, "reason")
 			if !ok {
 				t.Fatal("request was refused")
@@ -94,7 +103,7 @@ func TestExtensionRejectsAndNoAnswerExpires(t *testing.T) {
 func TestExtensionValidationAndDuplicateResolution(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job, _ := startDeadlineJob(r, time.Second, release)
+	job, _ := startDeadlineJob(t, r, time.Second, release)
 	for _, seconds := range []time.Duration{0, -time.Second, 11 * time.Minute} {
 		if id, ok := r.RequestExtension(job.ID, seconds, "reason"); ok || id != "" {
 			t.Fatalf("invalid duration accepted: %v %v", id, ok)
@@ -137,7 +146,7 @@ func TestExtensionCancelUnblocksWait(t *testing.T) {
 func TestExtensionRejectThenAllowsNewRequest(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job, _ := startDeadlineJob(r, time.Second, release)
+	job, _ := startDeadlineJob(t, r, time.Second, release)
 	first, ok := r.RequestExtension(job.ID, time.Second, "first")
 	if !ok || !r.ResolveExtension(job.ID, first, false) {
 		t.Fatal("initial request was not rejected")
@@ -156,7 +165,7 @@ func TestExtensionRejectThenAllowsNewRequest(t *testing.T) {
 func TestExtensionWaitCancellationClearsRequest(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job, _ := startDeadlineJob(r, time.Second, release)
+	job, _ := startDeadlineJob(t, r, time.Second, release)
 	requestID, ok := r.RequestExtension(job.ID, time.Second, "cancel")
 	if !ok {
 		t.Fatal("request was refused")
@@ -180,7 +189,7 @@ func TestExtensionWaitCancellationClearsRequest(t *testing.T) {
 func TestExtensionRejectAfterDeadlineDoesNotResolve(t *testing.T) {
 	r := NewRegistry()
 	release := make(chan struct{})
-	job, _ := startDeadlineJob(r, 20*time.Millisecond, release)
+	job, _ := startDeadlineJob(t, r, 20*time.Millisecond, release)
 	requestID, ok := r.RequestExtension(job.ID, time.Second, "late")
 	if !ok {
 		t.Fatal("request was refused")

@@ -50,7 +50,7 @@ func TestInitCommon_ExplicitModelDoesNotInheritDefaultAgentFallback(t *testing.T
 	providers.Register(&fakeProvider{name: "explicit-primary-prov", configured: true, models: []string{"primary-model"}})
 	providers.Register(&fakeProvider{name: "explicit-fallback-prov", configured: true, models: []string{"fallback-model"}})
 
-	cmd := newInitCommonTestCmd()
+	cmd := newInitCommonTestCmd(t)
 	if err := cmd.Flags().Set("model", "explicit-primary-prov/primary-model"); err != nil {
 		t.Fatalf("set model: %v", err)
 	}

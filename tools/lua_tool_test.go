@@ -70,6 +70,12 @@ func TestLuaToolLoading(t *testing.T) {
 // every Run call — success or failure — must land in LuaRunHistory with a
 // name, timing, and outcome, since the tab has nothing else real to show.
 func TestLuaToolRun_RecordsHistory(t *testing.T) {
+	// Start from an empty history. Without this the test reads a baseline
+	// and asserts baseline+2, which silently stops being true once earlier
+	// tests in this package have saturated the bounded buffer — see
+	// SnapshotLuaRunHistoryForTesting.
+	defer SnapshotLuaRunHistoryForTesting()()
+
 	tmpDir := t.TempDir()
 	ok := `return {schema = {name = "history-ok"}, run = function(ctx, args) return {success = true, content = "fine"} end}`
 	bad := `return {schema = {name = "history-bad"}, run = function(ctx, args) error("boom") end}`

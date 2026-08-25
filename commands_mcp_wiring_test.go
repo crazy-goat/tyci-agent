@@ -36,7 +36,24 @@ func requireShForWiring(t *testing.T) {
 // init(). A fresh command (rather than reusing the real runCmd/rootCmd) so
 // this test can't leak flag state into any other test that shares the
 // same global command objects.
-func newInitCommonTestCmd() *cobra.Command {
+// newInitCommonTestCmd builds the flag set initCommon expects.
+//
+// It also takes t so it can restore the process-global Lua tool registry
+// afterwards, and it is the right place for that because it is the single
+// choke point every initCommon test goes through. initCommon itself calls
+// tools.LoadAndRegisterLocalLuaTools for a TRUSTED project (commands.go),
+// registering that project's Lua tools into a map nothing ever cleans up —
+// so any test that runs initCommon against a trusted fixture leaves those
+// tools registered for every test that runs after it. That is what made
+// TestInitCommon_UntrustedProject_SkipsLocalHooksAndLua_KeepsGlobal fail
+// under -count>1: on the second iteration it found "local-trust-wiring-tool"
+// still registered by an EARLIER trusted-project test (not, as first
+// assumed, by its own immediate sibling) and concluded that an untrusted
+// project's Lua had been loaded. Hanging the restore here rather than on
+// individual tests means a new initCommon test cannot forget it.
+func newInitCommonTestCmd(t *testing.T) *cobra.Command {
+	t.Helper()
+	t.Cleanup(tools.SnapshotLuaToolsForTesting())
 	cmd := &cobra.Command{Use: "test"}
 	cmd.Flags().String("model", "", "")
 	cmd.Flags().String("agent", "", "")
@@ -114,7 +131,7 @@ func TestInitCommon_ConnectMCPTrue_ConnectsAndAdvertisesServerTools(t *testing.T
 		restore()
 	})
 
-	cmd := newInitCommonTestCmd()
+	cmd := newInitCommonTestCmd(t)
 	if err := cmd.Flags().Set("model", "wiretest-prov/m1"); err != nil {
 		t.Fatalf("set model flag: %v", err)
 	}
@@ -176,7 +193,7 @@ func TestInitCommon_ConnectMCPFalse_DoesNotConnect(t *testing.T) {
 		restore()
 	})
 
-	cmd := newInitCommonTestCmd()
+	cmd := newInitCommonTestCmd(t)
 	if err := cmd.Flags().Set("model", "wiretest-prov-2/m1"); err != nil {
 		t.Fatalf("set model flag: %v", err)
 	}
@@ -218,7 +235,7 @@ func TestInitCommon_NoMCPFlag_OverridesConnectMCPTrue(t *testing.T) {
 		restore()
 	})
 
-	cmd := newInitCommonTestCmd()
+	cmd := newInitCommonTestCmd(t)
 	if err := cmd.Flags().Set("model", "wiretest-prov-3/m1"); err != nil {
 		t.Fatalf("set model flag: %v", err)
 	}
@@ -299,7 +316,7 @@ func TestInitCommon_LocalMCPJSON_UntrustedProject_NotConnected(t *testing.T) {
 		restore()
 	})
 
-	cmd := newInitCommonTestCmd()
+	cmd := newInitCommonTestCmd(t)
 	if err := cmd.Flags().Set("model", "wiretest-prov-untrusted/m1"); err != nil {
 		t.Fatalf("set model flag: %v", err)
 	}
@@ -353,7 +370,7 @@ func TestInitCommon_LocalMCPJSON_TrustedProject_UnionsWithGlobal(t *testing.T) {
 		restore()
 	})
 
-	cmd := newInitCommonTestCmd()
+	cmd := newInitCommonTestCmd(t)
 	if err := cmd.Flags().Set("model", "wiretest-prov-trusted/m1"); err != nil {
 		t.Fatalf("set model flag: %v", err)
 	}

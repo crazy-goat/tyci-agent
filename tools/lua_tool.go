@@ -59,6 +59,32 @@ func LuaRunHistory() []LuaRun {
 	return out
 }
 
+// SnapshotLuaRunHistoryForTesting clears the process-global Lua run history
+// and returns a func that restores it — `defer
+// tools.SnapshotLuaRunHistoryForTesting()()` at the top of a test that
+// asserts on LuaRunHistory.
+//
+// It exists because luaRuns is a bounded buffer (maxRetainedLuaRuns) shared
+// by every test in this package and never reset. A test that reads a
+// baseline count and then asserts "baseline + 2" is only correct while the
+// buffer has room: once enough earlier Lua tests have saturated it at 50,
+// two more runs evict two old entries instead of growing it, the count
+// stays 50, and the assertion fails — which is what made
+// TestLuaToolRun_RecordsHistory fail intermittently under -count>1 while
+// passing every time in isolation. Clearing rather than merely snapshotting
+// is the point: the test needs the room, not just the restore.
+func SnapshotLuaRunHistoryForTesting() func() {
+	luaRunsMu.Lock()
+	saved := luaRuns
+	luaRuns = nil
+	luaRunsMu.Unlock()
+	return func() {
+		luaRunsMu.Lock()
+		luaRuns = saved
+		luaRunsMu.Unlock()
+	}
+}
+
 // LuaTool implements the Tool interface for user-defined Lua scripts.
 type LuaTool struct {
 	name        string
@@ -478,6 +504,43 @@ func LoadAndRegisterLuaTools() {
 // LoadAndRegisterLuaTools's doc comment.
 func LoadAndRegisterLocalLuaTools(dir string) {
 	registerLuaToolsFromDir(dir)
+}
+
+// SnapshotLuaToolsForTesting captures the current contents of toolRegistry
+// and returns a func that restores exactly that set — same shape as
+// internal/hooks.SetForTesting, meant to be used as
+// `defer tools.SnapshotLuaToolsForTesting()()` BEFORE a test loads Lua
+// tools of its own.
+//
+// It exists because registerLuaToolsFromDir mutates a process-global map
+// that nothing ever cleans up. In production that is correct: Lua tools are
+// registered once at startup (this package's init, plus one trusted
+// project-local load) and live for the process. In a test binary the same
+// map is shared by every test in the package, so a test that loads a
+// project-local tool leaves it registered for everything that runs after —
+// which is precisely how TestInitCommon_UntrustedProject_... came to fail
+// under -count>1: its sibling trusted-project test registered
+// "local-trust-wiring-tool", and on the next iteration the untrusted test
+// found that tool already present and concluded, wrongly, that an
+// untrusted project's Lua had been loaded.
+//
+// Deliberately not mutex-guarded, matching toolRegistry itself: the map is
+// written at init and by these test helpers, never concurrently.
+func SnapshotLuaToolsForTesting() func() {
+	saved := make(map[string]Tool, len(toolRegistry))
+	for name, tool := range toolRegistry {
+		saved[name] = tool
+	}
+	return func() {
+		for name := range toolRegistry {
+			if _, kept := saved[name]; !kept {
+				delete(toolRegistry, name)
+			}
+		}
+		for name, tool := range saved {
+			toolRegistry[name] = tool
+		}
+	}
 }
 
 func registerLuaToolsFromDir(dir string) {
