@@ -536,7 +536,7 @@ func parseTasks(input map[string]any, defaultModel string) ([]subagentTask, erro
 			return nil, fmt.Errorf("tasks must be an array")
 		}
 		if len(arr) == 0 {
-			return nil, fmt.Errorf("tasks array is empty")
+			return nil, fmt.Errorf(`tasks array is empty; provide a single task, e.g. {"task":"..."}, or a non-empty tasks array, e.g. {"tasks":[{"task":"..."}]}`)
 		}
 		var tasks []subagentTask
 		for i, item := range arr {

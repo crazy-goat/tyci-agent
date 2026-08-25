@@ -360,8 +360,16 @@ func TestParseTasks_TasksArrayEmpty(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty tasks array")
 	}
-	if !strings.Contains(err.Error(), "empty") {
-		t.Errorf("expected error mentioning 'empty', got %v", err)
+	for _, want := range []string{
+		"tasks array is empty",
+		`single task`,
+		`{"task":"..."}`,
+		`non-empty tasks array`,
+		`{"tasks":[{"task":"..."}]}`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q, got %v", want, err)
+		}
 	}
 }
 
