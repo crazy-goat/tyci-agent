@@ -1,6 +1,9 @@
 package tools
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 // JobProgressReporter is the local contract the "report_progress" tool
 // needs — set once from main() via SetJobProgressReporter, over the app's
@@ -13,12 +16,32 @@ type JobProgressReporter interface {
 }
 
 // jobProgressReporter is nil until SetJobProgressReporter is called; the
-// "report_progress" tool fails loudly until then.
-var jobProgressReporter JobProgressReporter
+// "report_progress" tool fails loudly until then. Guarded by
+// jobProgressReporterMu for the same reason jobNotifier is (see bgbash.go's
+// jobNotifierMu doc comment): it is read from job goroutines that outlive
+// the tool call that started them, while SetJobProgressReporter is called
+// from the setup path.
+var (
+	jobProgressReporterMu sync.RWMutex
+	jobProgressReporter   JobProgressReporter
+)
 
 // SetJobProgressReporter wires the "report_progress" tool to a
 // JobProgressReporter.
-func SetJobProgressReporter(p JobProgressReporter) { jobProgressReporter = p }
+func SetJobProgressReporter(p JobProgressReporter) {
+	jobProgressReporterMu.Lock()
+	jobProgressReporter = p
+	jobProgressReporterMu.Unlock()
+}
+
+// getJobProgressReporter copies the current JobProgressReporter out under
+// RLock — see getJobAsker's doc comment (ask.go) for why callers never hold
+// the lock while calling into the interface.
+func getJobProgressReporter() JobProgressReporter {
+	jobProgressReporterMu.RLock()
+	defer jobProgressReporterMu.RUnlock()
+	return jobProgressReporter
+}
 
 // ReportProgressTool implements the "report_progress" tool: lets a running
 // job (any subagent call — blocking or async — or a /btw side-conversation)
@@ -49,13 +72,14 @@ func (t *ReportProgressTool) Run(ctx context.Context, input map[string]any) Tool
 		}
 	}
 
-	if jobProgressReporter == nil {
+	reporter := getJobProgressReporter()
+	if reporter == nil {
 		return ToolResult{Type: "result", Success: false, Error: "report_progress unavailable: job registry not configured"}
 	}
 
 	// Defensive: the caller's own jobID came from ctx, so this shouldn't
 	// normally fail, but don't assume it silently.
-	if !jobProgressReporter.SetProgress(jobID, text) {
+	if !reporter.SetProgress(jobID, text) {
 		return ToolResult{Type: "result", Success: false, Error: "failed to record progress: job_id not recognized by the registry"}
 	}
 	// Deliberately mode-neutral: whether anyone actually reads this before

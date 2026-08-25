@@ -15,10 +15,19 @@ type Registry struct {
 	mu      sync.Mutex
 	jobs    map[string]*Job
 	onEvent func(Job)
+
+	// tombstones and tombstoneOrder hold pruned SUBAGENT jobs' final
+	// snapshots (see tombstoneCap's doc comment) — a separate, independently
+	// bounded pool from jobs itself, so a burst of pruned BASH jobs (which
+	// are never tombstoned) can never evict a subagent's tombstoned result,
+	// and vice versa. tombstoneOrder is the FIFO insertion order used to
+	// evict the oldest tombstone once tombstoneCap is exceeded.
+	tombstones     map[string]Job
+	tombstoneOrder []string
 }
 
 func NewRegistry() *Registry {
-	return &Registry{jobs: make(map[string]*Job)}
+	return &Registry{jobs: make(map[string]*Job), tombstones: make(map[string]Job)}
 }
 
 // SetOnEvent registers fn to be called (outside any internal lock, so fn
@@ -351,6 +360,17 @@ func (r *Registry) List() []Job {
 func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (*Job, bool) {
 	r.mu.Lock()
 	job, ok := r.jobs[id]
+	if !ok {
+		// id may have been pruned from r.jobs (pruneTerminalLocked) after
+		// finishing — if it was a subagent job, its final snapshot survives
+		// in tombstones (see tombstoneCap's doc comment), so degrade
+		// gracefully to the real, already-terminal result instead of
+		// reporting "unknown job_id" for something that actually finished.
+		if snap, tombstoned := r.tombstones[id]; tombstoned {
+			r.mu.Unlock()
+			return &snap, true
+		}
+	}
 	r.mu.Unlock()
 	if !ok {
 		return nil, false
@@ -752,6 +772,62 @@ const maxRetainedTerminalJobs = MaxRetainedTerminalJobs
 // literal) so the two can never drift apart.
 const MaxRetainedTerminalJobs = 50
 
+// tombstoneCap bounds how many pruned SUBAGENT jobs' final snapshots stay
+// retrievable through Wait after eviction from the main jobs map (see
+// pruneTerminalLocked). Only KindSubagent jobs are tombstoned — never
+// KindBash — for two reasons: a bash job's completion notice already
+// includes its output inline (unlike a subagent's, which is truncated to
+// an 800-rune preview — see tools/subagent.go's subagentCompletionNotice),
+// so there is nothing extra worth keeping around for it; and a bash job's
+// Result can be up to the 256 KiB bash output cap, so tombstoning it too
+// would let a handful of huge shell outputs crowd out every subagent
+// result. Keeping this pool subagent-only, and separate from
+// maxRetainedTerminalJobs's own jobs map, means a burst of pruned bash jobs
+// can never evict a tombstoned subagent result (or the reverse).
+//
+// 200 — 4x maxRetainedTerminalJobs — because a tombstone is exactly the
+// safety net for the case maxRetainedTerminalJobs already treats as "well
+// past the point where a model would still poll": a long session that runs
+// many subagents in the background and only gets back to polling one much
+// later.
+//
+// A count alone is NOT actually a bound on memory: a subagent's Result is
+// its child's entire final answer, with nothing capping its length
+// anywhere upstream (unlike bash's 256 KiB output cap), and Description/
+// Err/Progress/ExtensionReason are also caller/model-supplied strings with
+// no size limit enforced here (ExtensionReason happens to be capped at
+// maxExtensionReason — 1024 bytes — by RequestExtension today, but that is
+// a decision the extension feature owns, not one this tombstone should
+// depend on staying true). 200 x unbounded is not a small, fixed cost — it
+// is a 4x retention increase (50 live + 200 tombstoned) dressed up as one.
+// So tombstoneLocked below truncates each of those five string fields (via
+// truncateTombstoneField/truncateTombstoneResult, UTF-8-safe — never slice
+// a string by byte offset mid-rune) to tombstoneFieldRuneCap runes before
+// storing the snapshot. That makes the actual worst case honest and
+// computable: at most tombstoneCap * 5 * tombstoneFieldRuneCap runes, i.e.
+// at most 200 * 5 * 4000 = 4,000,000 runes, or ~16 MB assuming every rune
+// costs the UTF-8 max of 4 bytes (ASCII text, the common case, costs a
+// quarter of that). Truncating Result specifically means "the full
+// result", the premise the tombstone exists to satisfy, is honored only up
+// to tombstoneFieldRuneCap runes — far beyond the 800-rune completion-notice
+// preview it replaces, but not literally unbounded, which an in-memory
+// process-lifetime cache cannot honestly promise anyway. Result's
+// truncation is marked with an explicit "[note: ...]" (see
+// truncateTombstoneResult) rather than a bare ellipsis, because Result is
+// the one field wait()/resume() hand back as the child's actual answer — a
+// silent trailing "…" there reads as the child's own punctuation, not as
+// "the harness cut this", and a parent polling late could report a cut
+// intermediate paragraph as the final finding with no way to know a
+// conclusion existed. The other four fields are secondary metadata a
+// bare ellipsis is a fine enough signal for.
+const tombstoneCap = 200
+
+// tombstoneFieldRuneCap bounds each of a tombstoned Job's string fields
+// (Result, Err, Progress, Description, ExtensionReason) in runes — see
+// tombstoneCap's doc comment for the reasoning and the resulting
+// worst-case memory bound.
+const tombstoneFieldRuneCap = 4000
+
 // pruneTerminalLocked drops the oldest finished jobs beyond
 // maxRetainedTerminalJobs. Caller must hold r.mu.
 func (r *Registry) pruneTerminalLocked() {
@@ -773,8 +849,60 @@ func (r *Registry) pruneTerminalLocked() {
 		return terminal[i].FinishedAt.Before(terminal[j].FinishedAt)
 	})
 	for _, job := range terminal[:len(terminal)-maxRetainedTerminalJobs] {
+		if job.Kind == KindSubagent {
+			r.tombstoneLocked(job.Snapshot())
+		}
 		delete(r.jobs, job.ID)
 	}
+}
+
+// tombstoneLocked records snap under its own id, evicting the oldest
+// tombstone (FIFO) once tombstoneCap is exceeded. Truncates snap's string
+// fields first (see tombstoneCap's doc comment) so what is actually
+// retained matches what the doc comment promises. Caller must hold r.mu.
+func (r *Registry) tombstoneLocked(snap Job) {
+	snap.Result = truncateTombstoneResult(snap.Result)
+	snap.Err = truncateTombstoneField(snap.Err)
+	snap.Progress = truncateTombstoneField(snap.Progress)
+	snap.Description = truncateTombstoneField(snap.Description)
+	snap.ExtensionReason = truncateTombstoneField(snap.ExtensionReason)
+
+	if _, exists := r.tombstones[snap.ID]; !exists {
+		r.tombstoneOrder = append(r.tombstoneOrder, snap.ID)
+	}
+	r.tombstones[snap.ID] = snap
+	for len(r.tombstoneOrder) > tombstoneCap {
+		oldest := r.tombstoneOrder[0]
+		r.tombstoneOrder = r.tombstoneOrder[1:]
+		delete(r.tombstones, oldest)
+	}
+}
+
+// truncateTombstoneField truncates s to at most tombstoneFieldRuneCap
+// runes, appending an ellipsis when it actually cut something. Rune-based,
+// never byte-based — this repo has had byte-slicing truncation bugs before
+// (backspace/search, the TUI, other tools), and slicing a string by byte
+// offset mid-rune corrupts UTF-8 multi-byte sequences.
+func truncateTombstoneField(s string) string {
+	runes := []rune(s)
+	if len(runes) <= tombstoneFieldRuneCap {
+		return s
+	}
+	return string(runes[:tombstoneFieldRuneCap]) + "…"
+}
+
+// truncateTombstoneResult is truncateTombstoneField's Result-specific
+// sibling — see tombstoneCap's doc comment for why Result alone gets an
+// explicit, unmistakable "[note: ...]" marker (the same idiom
+// tools/subagent.go's subagentCutoffMessage and subagentCompletionNotice
+// already use for a truncated/cut-off child result) instead of a bare
+// trailing ellipsis.
+func truncateTombstoneResult(s string) string {
+	runes := []rune(s)
+	if len(runes) <= tombstoneFieldRuneCap {
+		return s
+	}
+	return string(runes[:tombstoneFieldRuneCap]) + fmt.Sprintf("\n\n[note: result truncated to %d runes for long-term retention]", tombstoneFieldRuneCap)
 }
 
 // PendingLines describes the jobs that are still outstanding, one line each,

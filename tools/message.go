@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 // JobMailbox is the local contract behind the "message" tool and the
@@ -32,13 +33,33 @@ type JobMailbox interface {
 
 // jobMailbox is nil until SetJobMailbox is called; the "message" tool fails
 // loudly (not silently) until then, and JobMailboxNextMessages returns nil
-// so wiring it into a child's agent.Config is a harmless no-op.
-var jobMailbox JobMailbox
+// so wiring it into a child's agent.Config is a harmless no-op. Guarded by
+// jobMailboxMu for the same reason jobNotifier is (see bgbash.go's
+// jobNotifierMu doc comment): the NextMessages closure it backs runs from a
+// job's own agent loop goroutine, which outlives the tool call that started
+// it, while SetJobMailbox is called from the setup path.
+var (
+	jobMailboxMu sync.RWMutex
+	jobMailbox   JobMailbox
+)
 
 // SetJobMailbox wires the "message" tool and the per-job NextMessages drain
 // to a JobMailbox. Called once from main() with an adapter over the app's
 // shared jobs.Registry.
-func SetJobMailbox(m JobMailbox) { jobMailbox = m }
+func SetJobMailbox(m JobMailbox) {
+	jobMailboxMu.Lock()
+	jobMailbox = m
+	jobMailboxMu.Unlock()
+}
+
+// getJobMailbox copies the current JobMailbox out under RLock — see
+// getJobAsker's doc comment (ask.go) for why callers never hold the lock
+// while calling into the interface.
+func getJobMailbox() JobMailbox {
+	jobMailboxMu.RLock()
+	defer jobMailboxMu.RUnlock()
+	return jobMailbox
+}
 
 // JobMailboxNextMessages returns a NextMessages-shaped callback bound to
 // jobID: calling it drains exactly the messages posted to jobID's mailbox
@@ -53,10 +74,20 @@ func SetJobMailbox(m JobMailbox) { jobMailbox = m }
 // assign the result to cfg.NextMessages unconditionally without a nil
 // check: agent.Run already treats a nil NextMessages as "nothing to drain".
 func JobMailboxNextMessages(jobID string) func() []string {
-	if jobMailbox == nil || jobID == "" {
+	if getJobMailbox() == nil || jobID == "" {
 		return nil
 	}
-	return func() []string { return jobMailbox.Drain(jobID) }
+	// The returned closure re-reads the mailbox via getJobMailbox on every
+	// call rather than capturing the pointer above — it runs from a job's
+	// own long-lived agent loop, so it must never hold a stale copy across
+	// however many drains happen over that job's lifetime.
+	return func() []string {
+		mailbox := getJobMailbox()
+		if mailbox == nil {
+			return nil
+		}
+		return mailbox.Drain(jobID)
+	}
 }
 
 // MessageTool implements the "message" tool: lets the parent model post a
@@ -85,19 +116,20 @@ func (t *MessageTool) Run(ctx context.Context, input map[string]any) ToolResult 
 		return validationResult("text is required")
 	}
 
-	if jobMailbox == nil {
+	mailbox := getJobMailbox()
+	if mailbox == nil {
 		return ToolResult{Type: "result", Success: false, Error: "message unavailable: job registry not configured"}
 	}
 
-	jobID, ok := jobMailbox.Resolve(rawID)
+	jobID, ok := mailbox.Resolve(rawID)
 	if !ok {
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("unknown job_id %q; message only targets live jobs, and an unknown job cannot be resumed. Use a job_id from subagent/wait or its short #N form from the jobs panel", rawID)}
 	}
 
-	if !jobMailbox.IsLive(jobID) {
+	if !mailbox.IsLive(jobID) {
 		return ToolResult{Type: "result", Success: false, Error: terminalMessageError(jobID)}
 	}
-	if !jobMailbox.Post(jobID, text) {
+	if !mailbox.Post(jobID, text) {
 		return ToolResult{Type: "result", Success: false, Error: terminalMessageError(jobID)}
 	}
 	return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("message queued for job %s; it will see it at its next iteration", jobID)}

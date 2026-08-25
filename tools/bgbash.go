@@ -75,7 +75,7 @@ func SetBackgroundBashEnabled(v bool) { backgroundBashEnabled.Store(v) }
 // BackgroundBashEnabled reports whether background bash is available. The
 // bash tool also requires a wired JobStarter (SetJobStarter) — without a job
 // registry there would be nowhere to record the result.
-func BackgroundBashEnabled() bool { return backgroundBashEnabled.Load() && jobStarter != nil }
+func BackgroundBashEnabled() bool { return backgroundBashEnabled.Load() && getJobStarter() != nil }
 
 // backgroundAllowed reports whether the call site behind ctx may move a
 // command to the background. Two conditions, both necessary:

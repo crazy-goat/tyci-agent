@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
 // JobResumer is the local contract the "resume" tool needs — set once from
@@ -19,11 +20,28 @@ type JobResumer interface {
 }
 
 // jobResumer is nil until SetJobResumer is called; the "resume" tool fails
-// loudly until then.
-var jobResumer JobResumer
+// loudly until then. Guarded by jobResumerMu for the same reason jobNotifier
+// is (see bgbash.go's jobNotifierMu doc comment).
+var (
+	jobResumerMu sync.RWMutex
+	jobResumer   JobResumer
+)
 
 // SetJobResumer wires the "resume" tool to a JobResumer.
-func SetJobResumer(r JobResumer) { jobResumer = r }
+func SetJobResumer(r JobResumer) {
+	jobResumerMu.Lock()
+	jobResumer = r
+	jobResumerMu.Unlock()
+}
+
+// getJobResumer copies the current JobResumer out under RLock — see
+// getJobAsker's doc comment (ask.go) for why callers never hold the lock
+// while calling into the interface.
+func getJobResumer() JobResumer {
+	jobResumerMu.RLock()
+	defer jobResumerMu.RUnlock()
+	return jobResumer
+}
 
 // ResumeTool implements the "resume" tool: continues an already-finished
 // async job's conversation with a new message, as a brand-new job. Poll the
@@ -42,11 +60,12 @@ func (t *ResumeTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return validationResult("task is required")
 	}
 
-	if jobResumer == nil {
+	resumer := getJobResumer()
+	if resumer == nil {
 		return ToolResult{Type: "result", Success: false, Error: "resume unavailable: job registry not configured"}
 	}
 
-	handle, err := jobResumer.Resume(ctx, jobID, task)
+	handle, err := resumer.Resume(ctx, jobID, task)
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}

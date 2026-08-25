@@ -157,11 +157,27 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		defer tools.MarkTodoAgentDone(newJobID)
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, newJobID)
 
+		// entry.cfg was stashed bound to whatever job id was actually
+		// running when it was recorded (agentRunner.run's own stash, or a
+		// PREVIOUS Resume call's re-stash below) — in particular its
+		// NextMessages closure drains that OLD job's mailbox, via
+		// tools.JobMailboxNextMessages(oldJobID). Reusing entry.cfg verbatim
+		// here would make this new job forever drain a dead mailbox: the
+		// "message" tool would report "queued" against newJobID while the
+		// agent loop actually reading its own NextMessages listens on
+		// oldJobID's slot, which nothing ever posts to again. Rebinding a
+		// fresh local copy (never entry.cfg itself, which stays untouched in
+		// case entry is resumed again concurrently — see resumableEntry's
+		// doc comment) fixes both a direct resume and a chained one, because
+		// the re-stash below always stores THIS rebound copy, not entry.cfg.
+		runCfg := entry.cfg
+		runCfg.NextMessages = tools.JobMailboxNextMessages(newJobID)
+
 		c := &collector{}
 		// See ForkChildJob's identical comment (fork.go): without this the
 		// resumed conversation's real spend never reaches internal/ledger,
 		// and the Subagents tree would render it as free.
-		_, err := agent.Run(runCtx, entry.mc, ledger.Watch(c, ledger.Subagent, entry.mc.Provider(), entry.mc.Model(), newJobID), &forked, entry.cfg)
+		_, err := agent.Run(runCtx, entry.mc, ledger.Watch(c, ledger.Subagent, entry.mc.Provider(), entry.mc.Model(), newJobID), &forked, runCfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		deadlineExceeded := errors.Is(err, context.DeadlineExceeded)
 		stopped := errors.Is(err, context.Canceled)
@@ -172,11 +188,12 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 
 		// Re-register so a resumed job can itself be resumed again
 		// (chaining), same condition as the original run in
-		// agentRunner.run: a usable transcript, not a hard failure.
+		// agentRunner.run: a usable transcript, not a hard failure. Store
+		// runCfg (bound to newJobID), not entry.cfg (bound to the id this
+		// call started from) — otherwise a second resume off of newJobID
+		// would inherit the same stale-mailbox bug one level down.
 		if err == nil || truncated || deadlineExceeded || stopped {
-			resumableMu.Lock()
-			resumable[newJobID] = resumableEntry{msgs: forked, mc: entry.mc, cfg: entry.cfg}
-			resumableMu.Unlock()
+			stashResumable(newJobID, resumableEntry{msgs: forked, mc: entry.mc, cfg: runCfg})
 		}
 
 		return text, truncated, err
@@ -322,9 +339,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		// Timeout and kill_job still leave useful partial work. Preserve it so
 		// the parent can resume the promoted conversation instead of losing it.
 		if err == nil || truncated || deadlineExceeded || stopped {
-			resumableMu.Lock()
-			resumable[jobID] = resumableEntry{msgs: msgs, mc: client, cfg: cfg}
-			resumableMu.Unlock()
+			stashResumable(jobID, resumableEntry{msgs: msgs, mc: client, cfg: cfg})
 		}
 		return text, truncated, err
 	})

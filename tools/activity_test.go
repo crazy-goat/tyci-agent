@@ -120,8 +120,8 @@ func TestBashSetProgress_TouchesActivity(t *testing.T) {
 	withActivityToucher(t, rec)
 
 	reporter := &recordingProgressReporter{}
-	jobProgressReporter = reporter
-	t.Cleanup(func() { jobProgressReporter = nil })
+	SetJobProgressReporter(reporter)
+	t.Cleanup(func() { SetJobProgressReporter(nil) })
 
 	run := &bashRun{}
 	run.setJobID("job-1-3")
@@ -142,8 +142,8 @@ func TestBashSetProgress_NoJobIDNoTouch(t *testing.T) {
 	withActivityToucher(t, rec)
 
 	reporter := &recordingProgressReporter{}
-	jobProgressReporter = reporter
-	t.Cleanup(func() { jobProgressReporter = nil })
+	SetJobProgressReporter(reporter)
+	t.Cleanup(func() { SetJobProgressReporter(nil) })
 
 	run := &bashRun{} // no setJobID call
 	run.setProgress("some output line")

@@ -1,0 +1,450 @@
+package tools
+
+// B2: seven package-level "job hook" globals (jobStarter, jobAsker,
+// jobAnswerer, jobProgressReporter, jobMailbox, jobResumer,
+// jobActivityToucher) used to be plain vars written once by SetXxx from the
+// setup path and read from job goroutines that outlive the tool call that
+// started them — a data race whether or not it was ever actually observed,
+// exactly the shape jobNotifier/jobNotifierMu (bgbash.go) already existed to
+// avoid. Each was given the same sync.RWMutex-guarded pattern jobNotifier
+// already used: a private getXxx() (or, for jobActivityToucher, its single
+// caller touchJobActivity) copies the interface value out under RLock and
+// returns/uses the local copy, never holding the lock across the call into
+// the interface itself.
+//
+// These tests hammer every one of the seven with concurrent Set.../get...
+// goroutines under `go test -race`. Verified manually that reverting any one
+// of the seven vars back to a plain (unguarded) var and re-running
+// `-race` makes its subtest fail with a DATA RACE report — see the fix
+// commit's summary for which files/lines were reverted to check this.
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/jobs"
+)
+
+// The fakes below are minimal, behavior-free implementations of each of the
+// seven interfaces — this file only exercises the concurrent Set/read path,
+// not what a real adapter does with a call (that is covered by each tool's
+// own tests: ask_test.go, message_test.go, wait_test.go, etc).
+
+type raceJobStarter struct{}
+
+func (raceJobStarter) Start(ctx context.Context, description, kind, parentID string, fn func(context.Context, string) (string, bool, error)) JobHandle {
+	return raceJobHandle{}
+}
+
+type raceJobHandle struct{}
+
+func (raceJobHandle) ID() string { return "race-job" }
+
+type raceJobAsker struct{}
+
+func (raceJobAsker) Ask(ctx context.Context, id, question string) (string, bool, bool) {
+	return "", false, false
+}
+
+type raceJobAnswerer struct{}
+
+func (raceJobAnswerer) Answer(id, text string, fromUser bool) bool { return false }
+
+type raceJobProgressReporter struct{}
+
+func (raceJobProgressReporter) SetProgress(id, text string) bool { return false }
+
+type raceJobMailbox struct{}
+
+func (raceJobMailbox) Resolve(id string) (string, bool) { return "", false }
+func (raceJobMailbox) Post(id, text string) bool        { return false }
+func (raceJobMailbox) IsLive(id string) bool            { return false }
+func (raceJobMailbox) Drain(id string) []string         { return nil }
+
+type raceJobResumer struct{}
+
+func (raceJobResumer) Resume(ctx context.Context, jobID, task string) (JobHandle, error) {
+	return raceJobHandle{}, nil
+}
+
+type raceJobActivityToucher struct{}
+
+func (raceJobActivityToucher) TouchActivity(id string) {}
+
+// runConcurrentSetGet spawns goroutines that call set and get in a tight
+// loop for a bounded number of iterations, and fails the test if they do
+// not both finish within the timeout (a hang, not a race, would show up as
+// that). The actual race detection is `go test -race`'s job — it aborts the
+// whole binary the instant it observes a race, which is what makes this
+// test fail on the pre-fix plain-var code and pass on the fixed,
+// mutex-guarded code.
+func runConcurrentSetGet(t *testing.T, set func(), get func()) {
+	t.Helper()
+	const goroutines = 8
+	const iterations = 5000
+
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				set()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				get()
+			}
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent set/get did not finish within 10s")
+	}
+}
+
+// TestJobGlobals_ConcurrentSetGet_RaceFree is table-driven over the seven
+// globals B2 covers, one subtest per global, each hammering its SetXxx
+// against its read path (the accessor every real call site now goes
+// through — see e.g. tools/subagent.go's getJobStarter, tools/ask.go's
+// getJobAsker/getJobAnswerer).
+func TestJobGlobals_ConcurrentSetGet_RaceFree(t *testing.T) {
+	t.Cleanup(func() {
+		SetJobStarter(nil)
+		SetJobAsker(nil)
+		SetJobAnswerer(nil)
+		SetJobProgressReporter(nil)
+		SetJobMailbox(nil)
+		SetJobResumer(nil)
+		SetJobActivityToucher(nil)
+	})
+
+	cases := []struct {
+		name string
+		set  func()
+		get  func()
+	}{
+		{
+			name: "jobStarter",
+			set:  func() { SetJobStarter(raceJobStarter{}) },
+			get:  func() { _ = getJobStarter() },
+		},
+		{
+			name: "jobAsker",
+			set:  func() { SetJobAsker(raceJobAsker{}) },
+			get:  func() { _ = getJobAsker() },
+		},
+		{
+			name: "jobAnswerer",
+			set:  func() { SetJobAnswerer(raceJobAnswerer{}) },
+			get:  func() { _ = getJobAnswerer() },
+		},
+		{
+			name: "jobProgressReporter",
+			set:  func() { SetJobProgressReporter(raceJobProgressReporter{}) },
+			get:  func() { _ = getJobProgressReporter() },
+		},
+		{
+			name: "jobMailbox",
+			set:  func() { SetJobMailbox(raceJobMailbox{}) },
+			get:  func() { _ = getJobMailbox() },
+		},
+		{
+			name: "jobResumer",
+			set:  func() { SetJobResumer(raceJobResumer{}) },
+			get:  func() { _ = getJobResumer() },
+		},
+		{
+			// touchJobActivity is jobActivityToucher's only reader — there is
+			// no exported getter for it (see activity.go), so exercise the
+			// real call site directly.
+			name: "jobActivityToucher",
+			set:  func() { SetJobActivityToucher(raceJobActivityToucher{}) },
+			get:  func() { touchJobActivity("race-job") },
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			runConcurrentSetGet(t, c.set, c.get)
+		})
+	}
+}
+
+// TestJobMailboxNextMessages_ConcurrentSetAndDrain_RaceFree pins the
+// mailbox's other read path: the NextMessages closure JobMailboxNextMessages
+// returns is handed to a background subagent's own agent.Config and called
+// repeatedly from that job's long-lived goroutine, entirely independent of
+// whatever SetJobMailbox calls happen concurrently from the setup path (or,
+// in a test like this one, a scenario that keeps re-wiring it).
+func TestJobMailboxNextMessages_ConcurrentSetAndDrain_RaceFree(t *testing.T) {
+	t.Cleanup(func() { SetJobMailbox(nil) })
+	SetJobMailbox(raceJobMailbox{})
+
+	drain := JobMailboxNextMessages("race-job")
+	if drain == nil {
+		t.Fatal("expected a non-nil drain closure once a mailbox is wired")
+	}
+
+	runConcurrentSetGet(t, func() { SetJobMailbox(raceJobMailbox{}) }, func() { _ = drain() })
+}
+
+// ─── F5 (review round 2): race a setter against a REAL call site ──────────
+//
+// The subtests above race SetXxx against getXxx directly — the accessor
+// pair the B2 fix itself introduced. That is necessary but not sufficient:
+// it cannot catch a regression where a PRODUCTION call site reads the bare
+// package var instead of going through the accessor, which is exactly what
+// tools/bash.go, tools/cron.go and tools/bgbash.go were doing before this
+// fix (an unlisted-by-the-original-audit gap). The tests below race
+// SetJobStarter against the real entry points instead: SubagentTool.Run's
+// async spawn, BashTool.Run's background handoff, and CronTool.Run's
+// "run_now" spawn — the three places tools/subagent.go, tools/bash.go and
+// tools/cron.go actually call getJobStarter().Start.
+
+// flipJobStarter spins, alternating SetJobStarter between two real
+// jobs.Registry-backed starters, until stop is closed. This is the
+// "setter" side of every test below; the caller-side loop below runs on
+// the test's own goroutine so at least one production call site genuinely
+// overlaps a concurrent SetJobStarter, the same shape
+// TestJobMailboxNextMessages_ConcurrentSetAndDrain_RaceFree already used
+// for jobMailbox's real NextMessages call path.
+func flipJobStarter(stop <-chan struct{}, regA, regB *jobs.Registry) {
+	toggle := false
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		if toggle {
+			SetJobStarter(testJobStarter{regA})
+		} else {
+			SetJobStarter(testJobStarter{regB})
+		}
+		toggle = !toggle
+	}
+}
+
+// waitRegistriesIdle polls every given registry until none of its jobs are
+// still Running, or the deadline passes — used so a test does not return
+// (and let its t.TempDir() get removed) while a background job spawned
+// during the race is still executing.
+func waitRegistriesIdle(t *testing.T, regs ...*jobs.Registry) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		anyRunning := false
+		for _, reg := range regs {
+			for _, j := range reg.List() {
+				if j.Status == jobs.StatusRunning {
+					anyRunning = true
+				}
+			}
+		}
+		if !anyRunning {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("registries still had a running job after 5s")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree
+// drives tools/subagent.go's real async-spawn path (SubagentTool.Run with
+// async=true -> runAsync -> spawn -> getJobStarter().Start) concurrently
+// with SetJobStarter swaps.
+func TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree(t *testing.T) {
+	t.Cleanup(func() {
+		delete(toolRegistry, "subagent")
+		subagentToolInstance = nil
+		SetJobStarter(nil)
+		SetJobNotifier(nil)
+	})
+
+	regA := jobs.NewRegistry()
+	regB := jobs.NewRegistry()
+	SetJobNotifier(jobs.NewNotifier())
+	SetSubAgentRunner(&mockRunner{
+		RunTaskFunc: func(ctx context.Context, task, model string, opts SubagentOptions) (string, error) {
+			return "ok", nil
+		},
+	})
+
+	// Set a starter synchronously BEFORE the flipper goroutine and the
+	// caller loop below both start touching it: without this, jobStarter is
+	// still nil from the previous test's cleanup (SetJobStarter(nil)), and
+	// nothing synchronizes the flipper's first SetJobStarter against the
+	// first RunTool call below — so on an unlucky (or single-core, where
+	// the flipper simply never gets scheduled first) run, runAsync sees a
+	// nil starter and the async spawn fails outright, not flakily.
+	SetJobStarter(testJobStarter{regA})
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		flipJobStarter(stop, regA, regB)
+	}()
+
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
+	const n = 200
+	for i := 0; i < n; i++ {
+		res := RunTool(ctx, "subagent", map[string]any{"task": "hi", "async": true})
+		if !res.Success {
+			t.Fatalf("async spawn %d failed: %s", i, res.Error)
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	waitRegistriesIdle(t, regA, regB)
+}
+
+// TestBashToolRun_ConcurrentSetJobStarterAndRealHandoff_RaceFree drives
+// tools/bash.go's real handoff path (BashTool.Run with
+// run_in_background=true -> handoff -> getJobStarter().Start) concurrently
+// with SetJobStarter swaps.
+func TestBashToolRun_ConcurrentSetJobStarterAndRealHandoff_RaceFree(t *testing.T) {
+	regA := jobs.NewRegistry()
+	regB := jobs.NewRegistry()
+	SetJobProgressReporter(regA)
+	SetJobActivityToucher(regA)
+	SetJobNotifier(jobs.NewNotifier())
+	SetBackgroundBashEnabled(true)
+	t.Cleanup(func() {
+		KillAllBackgroundBash()
+		deadline := time.Now().Add(5 * time.Second)
+		for backgroundSlotsInUse() > 0 && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		SetBackgroundBashEnabled(false)
+		SetJobStarter(nil)
+		SetJobProgressReporter(nil)
+		SetJobActivityToucher(nil)
+		SetJobNotifier(nil)
+	})
+
+	// See the identical comment in
+	// TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree
+	// above: set a starter synchronously before racing it, so this test
+	// does not depend on the flipper goroutine winning a scheduling race
+	// against the first BashTool.Run call below. This path happens to
+	// degrade to a foreground run (not a hard failure) when jobStarter is
+	// nil, which is exactly why this particular test never surfaced the bug
+	// even though it had it too.
+	SetJobStarter(testJobStarter{regA})
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		flipJobStarter(stop, regA, regB)
+	}()
+
+	const n = 40
+	for i := 0; i < n; i++ {
+		res := (&BashTool{}).Run(context.Background(), map[string]any{
+			"command":           "echo hi",
+			"run_in_background": true,
+		})
+		if !res.Success {
+			t.Fatalf("handoff %d failed: %s", i, res.Error)
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	waitRegistriesIdle(t, regA, regB)
+}
+
+// TestCronRunNow_ConcurrentSetJobStarterAndRealSpawn_RaceFree drives
+// tools/cron.go's real "run_now" spawn path (CronTool.Run ->
+// t.runNow -> getJobStarter().Start) concurrently with SetJobStarter
+// swaps — the one call site the original B2 audit did not list.
+//
+// cronRunner() normally points at os.Executable(), which under `go test`
+// IS the compiled test binary — exec'ing that recursively with "run
+// --prompt ..." args is not something to risk in a test. cronRunnerExeOverride
+// (tools/cron.go, test-only seam added for this test) points it at
+// "/bin/echo" instead: fast, harmless, and still exercises the exact
+// getJobStarter().Start call this test is about.
+func TestCronRunNow_ConcurrentSetJobStarterAndRealSpawn_RaceFree(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	prevOverride := cronRunnerExeOverride
+	cronRunnerExeOverride = "/bin/echo"
+	t.Cleanup(func() { cronRunnerExeOverride = prevOverride })
+
+	wd := t.TempDir()
+	addRes := (&CronTool{}).Run(WithWorkdir(context.Background(), wd), map[string]any{
+		"action": "add", "name": "race-job", "prompt": "hello", "schedule": "at 02:00",
+	})
+	if !addRes.Success {
+		t.Fatalf("add: %s", addRes.Error)
+	}
+
+	regA := jobs.NewRegistry()
+	regB := jobs.NewRegistry()
+	SetJobNotifier(jobs.NewNotifier())
+	t.Cleanup(func() {
+		SetJobStarter(nil)
+		SetJobNotifier(nil)
+	})
+
+	// See the identical comment in
+	// TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree
+	// above: without this, jobStarter is nil from the previous test's
+	// cleanup and runNow's "no registry: run it inline" fallback would mask
+	// whether the flipper actually won the race to be scheduled first —
+	// this path happens not to fail outright either way (it degrades to a
+	// synchronous inline run), but it would silently skip exercising
+	// getJobStarter().Start on that call.
+	SetJobStarter(testJobStarter{regA})
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		flipJobStarter(stop, regA, regB)
+	}()
+
+	const n = 30
+	for i := 0; i < n; i++ {
+		res := (&CronTool{}).Run(context.Background(), map[string]any{"action": "run_now", "name": "race-job"})
+		if !res.Success {
+			t.Fatalf("run_now %d failed: %s", i, res.Error)
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	waitRegistriesIdle(t, regA, regB)
+}
+
+// Not driven here: cron's in-session ticker (StartCronTicker, tools/cron.go)
+// also calls cronRunner and can spawn jobs via getJobStarter, but only on a
+// real wall-clock schedule, guarded by a package-level "already running"
+// latch (cronTickerRunning) that is not designed to be started twice in one
+// test binary. TestCronRunNow_ConcurrentSetJobStarterAndRealSpawn_RaceFree
+// above already exercises the exact same getJobStarter().Start call site the
+// ticker would reach through cronRunner/runNow's shared code — driving the
+// ticker itself would only add flakiness for no new coverage.

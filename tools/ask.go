@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"sync"
 )
 
 // JobAsker is the local contract the "ask_parent" tool needs — set once
@@ -19,12 +20,32 @@ type JobAsker interface {
 }
 
 // jobAsker is nil until SetJobAsker is called; the "ask_parent" tool fails
-// loudly (not silently blocking or panicking) until then.
-var jobAsker JobAsker
+// loudly (not silently blocking or panicking) until then. Guarded by
+// jobAskerMu for the same reason jobNotifier is (see bgbash.go's
+// jobNotifierMu doc comment): it is read from job goroutines that outlive
+// the tool call that started them, while SetJobAsker is called from the
+// setup path.
+var (
+	jobAskerMu sync.RWMutex
+	jobAsker   JobAsker
+)
 
 // SetJobAsker wires the "ask_parent" tool to a JobAsker. Called once from
 // main() with an adapter over the app's shared jobs.Registry.
-func SetJobAsker(a JobAsker) { jobAsker = a }
+func SetJobAsker(a JobAsker) {
+	jobAskerMu.Lock()
+	jobAsker = a
+	jobAskerMu.Unlock()
+}
+
+// getJobAsker copies the current JobAsker out under RLock, so a caller never
+// holds the lock while calling into the interface (see bgbash.go's
+// jobNotifierMu doc comment for why that matters).
+func getJobAsker() JobAsker {
+	jobAskerMu.RLock()
+	defer jobAskerMu.RUnlock()
+	return jobAsker
+}
 
 // AskUnroutableCtxKey marks a job's context to make "ask_parent" fail
 // immediately when the caller cannot return control to anyone able to answer.
@@ -78,11 +99,12 @@ func (t *AskTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		}
 	}
 
-	if jobAsker == nil {
+	asker := getJobAsker()
+	if asker == nil {
 		return ToolResult{Type: "result", Success: false, Error: "ask_parent unavailable: job registry not configured"}
 	}
 
-	answer, fromUser, ok := jobAsker.Ask(ctx, jobID, question)
+	answer, fromUser, ok := asker.Ask(ctx, jobID, question)
 	if !ok {
 		return ToolResult{
 			Type:    "result",
@@ -112,11 +134,27 @@ type JobAnswerer interface {
 	Answer(id, text string, fromUser bool) bool
 }
 
-// jobAnswerer is nil until SetJobAnswerer is called.
-var jobAnswerer JobAnswerer
+// jobAnswerer is nil until SetJobAnswerer is called. Guarded the same way
+// jobAsker is above.
+var (
+	jobAnswererMu sync.RWMutex
+	jobAnswerer   JobAnswerer
+)
 
 // SetJobAnswerer wires the "answer_job" tool to a JobAnswerer.
-func SetJobAnswerer(a JobAnswerer) { jobAnswerer = a }
+func SetJobAnswerer(a JobAnswerer) {
+	jobAnswererMu.Lock()
+	jobAnswerer = a
+	jobAnswererMu.Unlock()
+}
+
+// getJobAnswerer copies the current JobAnswerer out under RLock — see
+// getJobAsker's doc comment above for why.
+func getJobAnswerer() JobAnswerer {
+	jobAnswererMu.RLock()
+	defer jobAnswererMu.RUnlock()
+	return jobAnswerer
+}
 
 // AnswerTool implements the "answer_job" tool: relays a real answer to a
 // job currently shown as waiting_answer (via "wait") and unblocks it —
@@ -162,11 +200,12 @@ func (t *AnswerTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return validationResult("text is required")
 	}
 
-	if jobAnswerer == nil {
+	answerer := getJobAnswerer()
+	if answerer == nil {
 		return ToolResult{Type: "result", Success: false, Error: "answer_job unavailable: job registry not configured"}
 	}
 
-	if !jobAnswerer.Answer(jobID, text, false) {
+	if !answerer.Answer(jobID, text, false) {
 		return ToolResult{Type: "result", Success: false, Error: "job_id not found or not currently waiting for an answer"}
 	}
 	return ToolResult{Type: "result", Success: true, Content: "answer delivered; job resumed"}
