@@ -61,7 +61,7 @@ Operational notes that are easy to lose:
 | 11 | Cron only fires while an interactive session is open, and the `tyci cron` command that `internal/cron/run.go:77` refers to does not exist. | M | todo |
 | 32 | Project-local discovery uses raw cwd instead of the repository root (`internal/agentdefs/agentdefs.go:94-99`, `agent/agents.go:124-125`). Use the same `gitinfo.ProjectRoot`/`session.ProjectKey` rule as sessions and project config, so running from a subdirectory or linked worktree finds the local agents and legacy config. | S | done |
 | 33 | Sidebar orphan chains can be emitted child-before-parent when orphan keys sort unfavourably (`display/tui_sidebar.go:850-871`). Build the orphan tree parent-first and add a regression test. | XS | done |
-| 34 | Add coverage for a sidebar job list shrinking without a resize while the cursor/scroll is stale (`display/tui_sidebar.go:197-221`). Verify row hit-testing clamps the scroll before selecting a job. | XS | todo |
+| 34 | Sidebar job selection has stale/incorrect row mapping: add coverage for a job list shrinking without resize while cursor/scroll is stale (`display/tui_sidebar.go:197-221`), and for Tasks headers/root plus nonzero scroll (`display/tui_sidebar.go:511-521`). Verify rendered-line hit-testing maps to the correct job and clamps scroll before selecting it. | XS | todo |
 | 35 | Avoid rebuilding the complete sidebar tab content twice per frame (`display/tui_sidebar_view.go:208-229`, `display/tui_sidebar.go:193-221`); pass the computed line count through the scroll clamp. | XS | todo |
 | 36 | The non-TUI console has no visible jobs/waiting-question view. Add a compact jobs/status path so a person can notice a child waiting for input without relying on model relay (`display/tui_jobs_panel.go:59-106`). | S | todo |
 | 37 | Bare `/btw` and `/resume` at an idle TUI prompt can leave the model in an active-reading state (`display/tui_mode.go`). Ensure every successful command path restores the idle/read state and add regression tests. | XS | todo |
@@ -119,7 +119,10 @@ Format: `F<n> | what, file:line | why it matters | found by`.
 
 | F | What | Why it matters | Found by |
 |---|------|----------------|----------|
-| — | No untriaged Inbox entries. Active findings from the former Inbox were promoted to the TODO table above; obsolete or already-fixed entries were removed. | — | triage, 2026-08-24 |
+| F1 | `resume` zachowuje stary callback mailboxa (`btw.go:132-164`, `main.go:310-332`) | Wiadomość wysłana do nowego job ID po resume zostaje zakolejkowana, ale wznowiony child drenuje mailbox poprzedniego joba i jej nie zobaczy. | review diagnostyczny message |
+| F2 | `kill_job` nie anuluje joba w `StatusWaitingAnswer` (`jobs/registry.go:288-292`, `:374-381`) | Child zablokowany na `ask_parent` może pozostać waiting bez końca; `message` nie odblokowuje ask. | review diagnostyczny message |
+| F3 | Tasks/sidebar hit-test używa indeksu renderowanej linii jak indeksu joba (`display/tui_sidebar.go:511-521`, `:713-755`) | Nagłówki, syntetyczny root i scroll mogą spowodować brak reakcji albo otwarcie niewłaściwego joba. | analiza sidebara |
+| F4 | `runtime.Goexit()` w funkcji joba omija terminalizację (`jobs/registry.go:123-140`) | Job pozostaje running, `Wait` może wisieć i nie ma completion notice; osobny problem poza zakresem #38. | review #38 |
 
 ## Rejected — do not propose again
 
