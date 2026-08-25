@@ -62,6 +62,22 @@ func waitUntilRegistered(t *testing.T, r *Registry, id string) {
 	}
 }
 
+// waitUntilObserverRegistered is waitUntilRegistered's WaitObserve
+// counterpart (see Registry.ObserverCount).
+func waitUntilObserverRegistered(t *testing.T, r *Registry, id string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if r.ObserverCount(id) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("WaitObserve call never registered as an observer on the job")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // TestWait_WakesPromptlyWhenJobEntersWaitingAnswer is B6's core case: a
 // Wait call already blocked (with a generous timeout) must return as soon
 // as the job asks a question, not after the timeout elapses and not only
@@ -304,13 +320,12 @@ func TestAsk_QuestionHasWaiter_FalseWhenOnlyAnObserverIsWatching(t *testing.T) {
 	go func() {
 		r.WaitObserve(context.Background(), job.ID, 5*time.Second)
 	}()
-	// WaitObserve does not touch job.waiters, so waitUntilRegistered
-	// (which polls WaiterCount) cannot be used to detect it has started —
-	// that absence is exactly the property under test. A short settle
-	// delay before asking is the best available substitute; it only risks
-	// a false pass (the goroutine hasn't started yet), never a false
-	// failure, so it cannot mask a regression.
-	time.Sleep(20 * time.Millisecond)
+	// Deterministic handshake via ObserverCount (batch-2 review round 2's
+	// "optional if cheap" suggestion) — WaitObserve does not touch
+	// job.waiters, so waitUntilRegistered (which polls WaiterCount) cannot
+	// be used here, but ObserverCount tracks exactly this call instead of
+	// needing a settle sleep.
+	waitUntilObserverRegistered(t, r, job.ID)
 	close(release)
 
 	select {
@@ -348,6 +363,17 @@ func TestAsk_QuestionHasWaiter_FalseWhenOnlyAnObserverIsWatching(t *testing.T) {
 // shows Status==StatusRunning (it did not itself see the question), the
 // onEvent snapshot for the question that job asked around the same time
 // must not have QuestionHasWaiter set because of THIS call.
+//
+// Honest framing (batch-2 review round 2, D8): this invariant cannot
+// false-fail — nothing here can make it fail on correct code — so it is
+// harmless to keep. But 200 trials is not a guarantee the race window is
+// actually hit even once; this is a probabilistic net across many
+// interleavings, not a deterministic reproduction, and it should not be
+// read as proof the original C2 bug would have been caught by this test
+// before it existed. No cheap way to force the exact interleaving
+// deterministically was found (it would need a hook inside waitInternal
+// itself to pause between the timer firing and the lock re-acquisition,
+// which is not worth adding to production code for a test).
 func TestWait_TimeoutAndAskRace_NoDroppedQuestion(t *testing.T) {
 	const trials = 200
 	for i := 0; i < trials; i++ {

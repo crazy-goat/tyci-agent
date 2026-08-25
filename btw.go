@@ -51,15 +51,18 @@ func (a jobWaiterAdapter) Wait(ctx context.Context, id string, timeout time.Dura
 
 // jobObserverAdapter satisfies tools.JobObserver over JobRegistry — same
 // translation as jobWaiterAdapter above, but calling WaitObserve instead of
-// Wait. This is the one that matters for batch-2 review finding C1:
-// runWithHandoff's watcher (and its handoff-message peek) must not count
-// as a "waiter" for jobs.Job.QuestionHasWaiter's purposes, or Ask
-// suppresses the onEvent notice for a caller that was never going to
-// report the question to anyone. See jobs.Registry.WaitObserve's doc
-// comment.
+// Wait, and via a distinctly-named Observe method (batch-2 review round 2
+// finding D1) so this adapter can never be handed to SetJobObserver by
+// mistake in place of jobWaiterAdapter — the two used to share the exact
+// same method signature, which is what let the original C1 mistake compile
+// silently. This is the one that matters for C1: runWithHandoff's watcher
+// (and its handoff-message peek) must not count as a "waiter" for
+// jobs.Job.QuestionHasWaiter's purposes, or Ask suppresses the onEvent
+// notice for a caller that was never going to report the question to
+// anyone. See jobs.Registry.WaitObserve's doc comment.
 type jobObserverAdapter struct{ reg *jobs.Registry }
 
-func (a jobObserverAdapter) Wait(ctx context.Context, id string, timeout time.Duration) (tools.JobStatus, bool) {
+func (a jobObserverAdapter) Observe(ctx context.Context, id string, timeout time.Duration) (tools.JobStatus, bool) {
 	job, ok := a.reg.WaitObserve(ctx, id, timeout)
 	if !ok {
 		return tools.JobStatus{}, false

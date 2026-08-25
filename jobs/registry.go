@@ -449,10 +449,27 @@ func (r *Registry) waitInternal(ctx context.Context, id string, timeout time.Dur
 	// See jobs.Job's waiters doc comment and Ask's QuestionHasWaiter use.
 	if countAsWaiter {
 		job.waiters++
+	} else {
+		job.observers++
 	}
 	statusCh := job.statusChanged
 	r.mu.Unlock()
 
+	// FRAGILE (batch-2 review round 2 finding D6): everything between here
+	// and the matching job.waiters--/job.observers-- below runs with NO
+	// defer to guarantee the decrement happens — that is deliberate (see
+	// the decrement's own doc comment for why: it must share a single
+	// critical section with the snapshot, which a defer running after a
+	// second Lock cannot do), but it means a future early return added
+	// anywhere in this stretch would leak the increment permanently. A
+	// permanently-leaked waiters count permanently sets QuestionHasWaiter
+	// for that job, which permanently suppresses its ask notices —
+	// silently reintroducing the exact bug (C1) this counter exists to
+	// avoid. Do not add a return between this point and the decrement; if
+	// a new exit path is ever needed here, thread it through so the
+	// decrement still runs on every path, in the same critical section as
+	// whatever snapshot it takes.
+	//
 	// statusCh is closed the moment Ask flips this job INTO
 	// StatusWaitingAnswer (see signalStatusChangeLocked) — never on the way
 	// back out, which would wake an unrelated, non-looping call the
@@ -493,10 +510,28 @@ func (r *Registry) waitInternal(ctx context.Context, id string, timeout time.Dur
 	r.mu.Lock()
 	if countAsWaiter {
 		job.waiters--
+	} else {
+		job.observers--
 	}
 	snapshot := job.Snapshot()
 	r.mu.Unlock()
 	return &snapshot, true
+}
+
+// ObserverCount reports how many callers are currently blocked inside
+// WaitObserve (not Wait — see WaiterCount) for id, 0 for an unknown id.
+// Production code has no use for this; it exists so a test can synchronize
+// on "a WaitObserve call has actually registered" instead of a settle
+// sleep before triggering the transition it wants to catch (batch-2 review
+// round 2's "optional if cheap" suggestion).
+func (r *Registry) ObserverCount(id string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok {
+		return 0
+	}
+	return job.observers
 }
 
 // Ask lets the running job identified by id pose a blocking question to

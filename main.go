@@ -39,6 +39,15 @@ var jobEventBus = eventbus.New(32)
 // tests in package main can assert on delivery.
 var JobNotices = jobs.NewNotifier()
 
+// residualMailboxSweepCap bounds how many of a finished job's leftover
+// mailbox entries (see jobs.Job.ResidualMailbox) get forwarded to the main
+// queue individually — batch-2 review round 2 finding D5. A handful is a
+// genuinely useful, readable heads-up; dozens (an orphaned fork with
+// several background bash jobs each posting periodic progress notices
+// into it) would just flood the queue. Past this many, the remainder is
+// summarized as a count instead of shown one by one.
+const residualMailboxSweepCap = 5
+
 // mergeNextMessages composes several NextMessages-shaped drain callbacks into
 // the single one agent.Config accepts, calling them in the order given so a
 // user's own queued line is delivered ahead of a background notice that
@@ -758,9 +767,23 @@ func wireTools() {
 		// it to main, tagged, it simply vanished — silently dropping a
 		// notice is exactly the failure this whole notify-routing design
 		// exists to avoid.
-		if len(j.ResidualMailbox) > 0 {
-			for _, m := range j.ResidualMailbox {
+		//
+		// Capped (batch-2 review round 2 finding D5): an orphaned fork
+		// that had several background bash jobs each posting periodic
+		// progress notices into its mailbox would otherwise dump every one
+		// of them into main at once. Still far better than vanishing, but
+		// past residualMailboxSweepCap this says how many were left out
+		// instead of flooding the queue with all of them individually.
+		if n := len(j.ResidualMailbox); n > 0 {
+			shown := j.ResidualMailbox
+			if n > residualMailboxSweepCap {
+				shown = j.ResidualMailbox[:residualMailboxSweepCap]
+			}
+			for _, m := range shown {
 				notices.Notify(fmt.Sprintf("[for job %s, which finished before this could be delivered to it — forwarded here instead] %s", j.ID, m))
+			}
+			if remaining := n - len(shown); remaining > 0 {
+				notices.Notify(fmt.Sprintf("[for job %s] and %d more queued message(s) that finished before delivery — not shown, not delivered", j.ID, remaining))
 			}
 		}
 	})

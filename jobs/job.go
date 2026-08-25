@@ -141,6 +141,16 @@ type Job struct {
 	// suppress the only delivery a question had. Guarded by Registry.mu.
 	waiters int
 
+	// observers counts callers currently blocked inside Registry.WaitObserve
+	// for this job — the mirror of waiters above, kept as a separate
+	// counter rather than folded into it so the two can never be confused
+	// (that confusion is exactly what C1 was). Ask does not read this: an
+	// observer never suppresses a notice. It exists purely so a test can
+	// synchronize on "a WaitObserve call has actually registered" instead
+	// of a settle sleep (see Registry.ObserverCount). Guarded by
+	// Registry.mu.
+	observers int
+
 	// cancel ends this job's own context (see Registry.Start, which derives
 	// it). Unexported and func-typed so Snapshot keeps copying the struct by
 	// value; guarded by Registry.mu like everything else written after
@@ -240,19 +250,26 @@ func ShortID(id string) string {
 
 func (j *Job) Snapshot() Job {
 	return Job{
-		ID:                 j.ID,
-		Description:        j.Description,
-		Kind:               j.Kind,
-		ParentID:           j.ParentID,
-		Status:             j.Status,
-		Result:             j.Result,
-		Err:                j.Err,
-		StartedAt:          j.StartedAt,
-		FinishedAt:         j.FinishedAt,
-		Question:           j.Question,
-		QuestionHasWaiter:  j.QuestionHasWaiter,
-		Progress:           j.Progress,
-		ResidualMailbox:    j.ResidualMailbox,
+		ID:                j.ID,
+		Description:       j.Description,
+		Kind:              j.Kind,
+		ParentID:          j.ParentID,
+		Status:            j.Status,
+		Result:            j.Result,
+		Err:               j.Err,
+		StartedAt:         j.StartedAt,
+		FinishedAt:        j.FinishedAt,
+		Question:          j.Question,
+		QuestionHasWaiter: j.QuestionHasWaiter,
+		Progress:          j.Progress,
+		// append([]string(nil), ...) copies the backing array — a plain
+		// slice-header copy would leave every snapshot (including every
+		// element List() returns) aliasing the SAME array the live Job
+		// still points at, breaking the copy-by-value contract every
+		// unexported/func-typed field's doc comment in this file justifies
+		// leaving out of Snapshot (batch-2 review round 2 finding D4). Read-only
+		// everywhere today, so no live bug yet — but nothing enforces that.
+		ResidualMailbox:    append([]string(nil), j.ResidualMailbox...),
 		ExtensionRequestID: j.ExtensionRequestID,
 		ExtensionSeconds:   j.ExtensionSeconds,
 		ExtensionReason:    j.ExtensionReason,

@@ -169,29 +169,39 @@ func getJobStarter() JobStarter {
 	return jobStarter
 }
 
-// JobObserver is shaped exactly like JobWaiter (wait.go) but must be wired
-// to jobs.Registry.WaitObserve, NOT Wait: a caller that watches a job for
-// StatusWaitingAnswer purely to wake something else up — never itself
-// reporting the question to anyone — must not count as a "waiter" for
-// Job.QuestionHasWaiter's purposes. runWithHandoff's watcher
-// (watchForWaiting) and handOff's own pendingQuestions peek are exactly
-// that kind of caller.
+// JobObserver watches a job for StatusWaitingAnswer purely to wake
+// something else up — never itself reporting the question to anyone — so
+// it must not count as a "waiter" for Job.QuestionHasWaiter's purposes.
+// runWithHandoff's watcher (watchForWaiting) and handOff's own
+// pendingQuestions peek are exactly that kind of caller. Must be wired to
+// jobs.Registry.WaitObserve, NOT Wait.
 //
-// Before this existed, runWithHandoff's watcher used the same JobWaiter the
-// "wait" tool uses, which made jobs.Registry.Ask see waiters>0 for
-// essentially every blocking subagent call and suppress its onEvent
-// notice — the ONLY delivery a question had, since the watcher itself
-// delivers nothing on its own. That was batch-2 review finding C1: two
-// different meanings ("I will report this" vs "I am just watching") were
-// coupled through one counter. See jobs.Registry.WaitObserve's doc comment.
+// Observe is a distinct method name from JobWaiter's Wait ON PURPOSE
+// (batch-2 review round 2 finding D1): JobWaiter and JobObserver used to
+// share the exact same method signature (Wait(ctx, id, timeout)
+// (JobStatus, bool)), which meant SetJobObserver(jobWaiterAdapter{...}) —
+// wiring the counting Wait in by mistake — compiled silently and would
+// have reinstated finding C1 in full. A different method name makes that
+// specific mistake a compile error instead of a silent regression.
+//
+// Before this type existed, runWithHandoff's watcher used the same
+// JobWaiter the "wait" tool uses, which made jobs.Registry.Ask see
+// waiters>0 for essentially every blocking subagent call and suppress its
+// onEvent notice — the ONLY delivery a question had, since the watcher
+// itself delivers nothing on its own. That was batch-2 review finding C1:
+// two different meanings ("I will report this" vs "I am just watching")
+// were coupled through one counter. See jobs.Registry.WaitObserve's doc
+// comment.
 type JobObserver interface {
-	Wait(ctx context.Context, id string, timeout time.Duration) (JobStatus, bool)
+	Observe(ctx context.Context, id string, timeout time.Duration) (JobStatus, bool)
 }
 
 // jobObserverGlobal is nil until SetJobObserver is called; runWithHandoff's
-// watcher and handOff's pendingQuestions peek simply do nothing without it
-// (same fail-soft convention as jobWaiterGlobal below). Guarded the same
-// way for the same reason.
+// watcher and handOff's pendingQuestions peek simply do nothing without it.
+// Guarded by jobObserverMu for the same reason jobStarterMu guards
+// jobStarter (see its doc comment): read from job goroutines that outlive
+// the tool call that started them, while SetJobObserver is called from the
+// setup path.
 var (
 	jobObserverMu     sync.RWMutex
 	jobObserverGlobal JobObserver
@@ -211,25 +221,6 @@ func getJobObserver() JobObserver {
 	jobObserverMu.RLock()
 	defer jobObserverMu.RUnlock()
 	return jobObserverGlobal
-}
-
-// jobWaiterGlobal mirrors the same JobWaiter SetJobWaiter (tool.go) installs
-// on the "wait" tool. Nothing in this package reads it any more —
-// runWithHandoff's watcher was moved onto JobObserver above (batch-2 review
-// finding C1) — but SetJobWaiter still populates it in case a future
-// caller in this package needs the reporting-Wait shape specifically. Same
-// guarding rationale as jobStarterMu above.
-var (
-	jobWaiterMu     sync.RWMutex
-	jobWaiterGlobal JobWaiter
-)
-
-// setJobWaiterGlobal is called from SetJobWaiter (tool.go). See
-// jobWaiterGlobal's doc comment for why nothing here reads it back today.
-func setJobWaiterGlobal(w JobWaiter) {
-	jobWaiterMu.Lock()
-	jobWaiterGlobal = w
-	jobWaiterMu.Unlock()
 }
 
 // subagentTask represents a single task for a subagent.
@@ -985,8 +976,10 @@ func spawnedJobsMessage(spawned []*spawnedTask, inline []subagentResult, questio
 
 %d task(s) are now running in the background. Get on with work that does not depend on them — and if there is a person waiting, talk to them: the turn is yours again.
 
-You will be told when one finishes, and when one is BLOCKED on a question. Two things are then yours to do:
-- A question: relay it — to the user, or genuinely-known info — unless you truly know the answer yourself; never invent one standing in for a human who hasn't replied. Call answer_job(job_id=..., text="..."). It is blocked until you do, and everything it has done is discarded when it times out. This is the only way it can reach you.
+If any of the ids above carries a "question" field, that child is BLOCKED ON IT RIGHT NOW — do not wait for a separate notice to act on it. Relay it — to the user, or genuinely-known info — unless you truly know the answer yourself; never invent one standing in for a human who hasn't replied. Call answer_job(job_id=..., text="...") for that id. It is blocked until you do, and everything it has done is discarded when it times out. A later notice naming the same job_id and question is the SAME question restated, not a second one — do not answer it twice.
+
+You will also be told when one finishes, and when a DIFFERENT child (one with no "question" field above) becomes BLOCKED on a question later on. Two things are then yours to do:
+- A question: relay it the same way as above. This is the only way it can reach you.
 - A finish: read the result with wait(job_id=...). Nothing else delivers it.
 
 Do not call wait before you are told: it can only say "still running", which the next notice would have told you for free.`, len(spawned))
@@ -1020,7 +1013,7 @@ Do not call wait before you are told: it can only say "still running", which the
 func watchForWaiting(ctx context.Context, observer JobObserver, jobID string, wake chan<- struct{}) {
 	timeout := time.Duration(0)
 	for {
-		status, ok := observer.Wait(ctx, jobID, timeout)
+		status, ok := observer.Observe(ctx, jobID, timeout)
 		if !ok || status.Done || ctx.Err() != nil {
 			return
 		}
@@ -1230,7 +1223,7 @@ func pendingQuestions(ctx context.Context, stillRunning []*spawnedTask) map[stri
 	}
 	out := make(map[string]string, len(stillRunning))
 	for _, st := range stillRunning {
-		if status, ok := observer.Wait(ctx, st.jobID, 0); ok && status.Waiting && status.Question != "" {
+		if status, ok := observer.Observe(ctx, st.jobID, 0); ok && status.Waiting && status.Question != "" {
 			out[st.jobID] = status.Question
 		}
 	}

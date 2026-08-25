@@ -37,7 +37,7 @@ import (
 // for the distinction.
 type realJobObserver struct{ reg *jobs.Registry }
 
-func (w realJobObserver) Wait(ctx context.Context, id string, timeout time.Duration) (JobStatus, bool) {
+func (w realJobObserver) Observe(ctx context.Context, id string, timeout time.Duration) (JobStatus, bool) {
 	job, ok := w.reg.WaitObserve(ctx, id, timeout)
 	if !ok {
 		return JobStatus{}, false
@@ -191,9 +191,16 @@ func TestRunWithHandoff_WakesWhenChildAsksMidCall(t *testing.T) {
 			t.Fatalf("runWithHandoff took %s to return after the child asked; expected a prompt wake well under the %s handoff timer", elapsed, SubagentBackgroundAfterSec)
 		}
 		// C1: the wake alone is not enough — the handoff message must
-		// actually carry the question, or nothing durable delivers it (the
-		// onEvent notice is suppressed here: nobody is in a REPORTING
-		// Wait, but that is exactly why the message itself must say so).
+		// actually carry the question, or the ONLY thing delivered here
+		// would be the fact that a child exists and is running, not what
+		// it is blocked on. (Separately, the async onEvent notice for this
+		// same question is NOT suppressed in this scenario — nobody here
+		// is in a REPORTING Wait, only the observer-backed watcher, which
+		// does not count — so it still gets queued too; see review round
+		// 1's note on that harmless, deliberate redundancy. This
+		// assertion is about the handoff message specifically, which is
+		// the delivery path that must not depend on that notice arriving
+		// or being read.)
 		if !strings.Contains(r.res.Content, question) {
 			t.Fatalf("handoff message does not mention the pending question %q — it only promises one will come, without delivering it: %s", question, r.res.Content)
 		}

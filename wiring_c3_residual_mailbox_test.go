@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -105,5 +106,55 @@ func TestWiring_C3_DrainedMailboxIsNotSweptTwice(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if pending := JobNotices.Drain(); len(pending) != 0 {
 		t.Fatalf("expected nothing swept to main for a message the job already drained itself, got %v", pending)
+	}
+}
+
+// TestWiring_D5_ResidualMailboxSweepIsCapped: an orphaned job with more
+// residual mailbox entries than residualMailboxSweepCap must not dump all
+// of them into main individually — past the cap, the remainder is
+// summarized as a count instead of shown one by one.
+func TestWiring_D5_ResidualMailboxSweepIsCapped(t *testing.T) {
+	reg, _ := withTestWiring(t)
+
+	release := make(chan struct{})
+	fork := reg.Start(context.Background(), "fork", jobs.KindSubagent, "", func(ctx context.Context, jobID string) (string, bool, error) {
+		<-release
+		return "fork done", false, nil
+	})
+
+	total := residualMailboxSweepCap + 3
+	for i := 0; i < total; i++ {
+		if !reg.Post(fork.ID, fmt.Sprintf("message %d", i)) {
+			t.Fatalf("expected Post %d to succeed against a live job", i)
+		}
+	}
+
+	close(release)
+	final, ok := reg.Wait(context.Background(), fork.ID, 2*time.Second)
+	if !ok || final.Status != jobs.StatusDone {
+		t.Fatalf("expected fork to finish as done, got ok=%v status=%v", ok, final)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var pending []string
+	for time.Now().Before(deadline) {
+		pending = JobNotices.Drain()
+		if len(pending) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// residualMailboxSweepCap shown individually, plus exactly one summary
+	// line for the rest.
+	if len(pending) != residualMailboxSweepCap+1 {
+		t.Fatalf("expected %d notices (cap + one summary), got %d: %v", residualMailboxSweepCap+1, len(pending), pending)
+	}
+	summary := pending[len(pending)-1]
+	remaining := total - residualMailboxSweepCap
+	if !strings.Contains(summary, fmt.Sprintf("%d more", remaining)) {
+		t.Fatalf("expected the summary line to mention %d more, got %q", remaining, summary)
+	}
+	if !strings.Contains(summary, "not delivered") {
+		t.Fatalf("expected the summary line to say the rest were not delivered, got %q", summary)
 	}
 }

@@ -51,6 +51,24 @@ func waitUntilRegistered(t *testing.T, reg *jobs.Registry, id string) {
 	}
 }
 
+// waitUntilObserverRegistered is waitUntilRegistered's WaitObserve
+// counterpart (see jobs.Registry.ObserverCount) — batch-2 review round 2's
+// "optional if cheap" suggestion, turning what was a settle sleep into a
+// real synchronization point.
+func waitUntilObserverRegistered(t *testing.T, reg *jobs.Registry, id string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if reg.ObserverCount(id) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("WaitObserve call never registered as an observer on the job")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // TestWiring_B7_ReportingWaiter_NoticeSuppressed is the "parent is in
 // wait" case, specifically for a REPORTING waiter (jobs.Registry.Wait,
 // what the "wait" tool uses): a caller already blocked in Wait for this
@@ -125,11 +143,7 @@ func TestWiring_B7_ObserverOnly_NoticeNotSuppressed(t *testing.T) {
 	go func() {
 		reg.WaitObserve(context.Background(), job.ID, 5*time.Second)
 	}()
-	// WaitObserve does not touch WaiterCount, so there is nothing to poll
-	// for here — that absence is exactly the property under test. A short
-	// settle delay only risks a false pass (the goroutine has not started
-	// yet), never a false failure, so it cannot mask a regression.
-	time.Sleep(20 * time.Millisecond)
+	waitUntilObserverRegistered(t, reg, job.ID)
 	close(release)
 
 	deadline := time.Now().Add(3 * time.Second)
