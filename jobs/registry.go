@@ -15,10 +15,19 @@ type Registry struct {
 	mu      sync.Mutex
 	jobs    map[string]*Job
 	onEvent func(Job)
+
+	// tombstones and tombstoneOrder hold pruned SUBAGENT jobs' final
+	// snapshots (see tombstoneCap's doc comment) — a separate, independently
+	// bounded pool from jobs itself, so a burst of pruned BASH jobs (which
+	// are never tombstoned) can never evict a subagent's tombstoned result,
+	// and vice versa. tombstoneOrder is the FIFO insertion order used to
+	// evict the oldest tombstone once tombstoneCap is exceeded.
+	tombstones     map[string]Job
+	tombstoneOrder []string
 }
 
 func NewRegistry() *Registry {
-	return &Registry{jobs: make(map[string]*Job)}
+	return &Registry{jobs: make(map[string]*Job), tombstones: make(map[string]Job)}
 }
 
 // SetOnEvent registers fn to be called (outside any internal lock, so fn
@@ -351,6 +360,17 @@ func (r *Registry) List() []Job {
 func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (*Job, bool) {
 	r.mu.Lock()
 	job, ok := r.jobs[id]
+	if !ok {
+		// id may have been pruned from r.jobs (pruneTerminalLocked) after
+		// finishing — if it was a subagent job, its final snapshot survives
+		// in tombstones (see tombstoneCap's doc comment), so degrade
+		// gracefully to the real, already-terminal result instead of
+		// reporting "unknown job_id" for something that actually finished.
+		if snap, tombstoned := r.tombstones[id]; tombstoned {
+			r.mu.Unlock()
+			return &snap, true
+		}
+	}
 	r.mu.Unlock()
 	if !ok {
 		return nil, false
@@ -752,6 +772,28 @@ const maxRetainedTerminalJobs = MaxRetainedTerminalJobs
 // literal) so the two can never drift apart.
 const MaxRetainedTerminalJobs = 50
 
+// tombstoneCap bounds how many pruned SUBAGENT jobs' final snapshots stay
+// retrievable through Wait after eviction from the main jobs map (see
+// pruneTerminalLocked). Only KindSubagent jobs are tombstoned — never
+// KindBash — for two reasons: a bash job's completion notice already
+// includes its output inline (unlike a subagent's, which is truncated to
+// an 800-rune preview — see tools/subagent.go's subagentCompletionNotice),
+// so there is nothing extra worth keeping around for it; and a bash job's
+// Result can be up to the 256 KiB bash output cap, so tombstoning it too
+// would let a handful of huge shell outputs crowd out every subagent
+// result. Keeping this pool subagent-only, and separate from
+// maxRetainedTerminalJobs's own jobs map, means a burst of pruned bash jobs
+// can never evict a tombstoned subagent result (or the reverse).
+//
+// 200 — 4x maxRetainedTerminalJobs — because a tombstone is exactly the
+// safety net for the case maxRetainedTerminalJobs already treats as "well
+// past the point where a model would still poll": a long session that runs
+// many subagents in the background and only gets back to polling one much
+// later. Each entry is a single Job snapshot (a string result plus a few
+// scalar fields, not the 256 KiB bash cap above), so 200 of them is a small,
+// fixed cost for a meaningfully longer safety margin.
+const tombstoneCap = 200
+
 // pruneTerminalLocked drops the oldest finished jobs beyond
 // maxRetainedTerminalJobs. Caller must hold r.mu.
 func (r *Registry) pruneTerminalLocked() {
@@ -773,7 +815,24 @@ func (r *Registry) pruneTerminalLocked() {
 		return terminal[i].FinishedAt.Before(terminal[j].FinishedAt)
 	})
 	for _, job := range terminal[:len(terminal)-maxRetainedTerminalJobs] {
+		if job.Kind == KindSubagent {
+			r.tombstoneLocked(job.Snapshot())
+		}
 		delete(r.jobs, job.ID)
+	}
+}
+
+// tombstoneLocked records snap under its own id, evicting the oldest
+// tombstone (FIFO) once tombstoneCap is exceeded. Caller must hold r.mu.
+func (r *Registry) tombstoneLocked(snap Job) {
+	if _, exists := r.tombstones[snap.ID]; !exists {
+		r.tombstoneOrder = append(r.tombstoneOrder, snap.ID)
+	}
+	r.tombstones[snap.ID] = snap
+	for len(r.tombstoneOrder) > tombstoneCap {
+		oldest := r.tombstoneOrder[0]
+		r.tombstoneOrder = r.tombstoneOrder[1:]
+		delete(r.tombstones, oldest)
 	}
 }
 

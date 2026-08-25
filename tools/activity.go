@@ -1,5 +1,7 @@
 package tools
 
+import "sync"
+
 // JobActivityToucher is the local contract that lets a running job record a
 // fresh "sign of life" without this package importing "jobs" — same
 // layering rule as JobProgressReporter/JobStarter/etc above. Wired once from
@@ -22,19 +24,40 @@ type JobActivityToucher interface {
 // jobActivityToucher is nil until SetJobActivityToucher is called; touching
 // activity before then (e.g. in a mode that never wires job support) is
 // simply a no-op rather than an error, since it is best-effort telemetry for
-// the jobs panel, not something a caller needs to check.
-var jobActivityToucher JobActivityToucher
+// the jobs panel, not something a caller needs to check. Guarded by
+// jobActivityToucherMu for the same reason jobNotifier is (see bgbash.go's
+// jobNotifierMu doc comment): touchJobActivity is called from every running
+// job's own goroutine, which outlives the tool call that started it, while
+// SetJobActivityToucher is called from the setup path.
+var (
+	jobActivityToucherMu sync.RWMutex
+	jobActivityToucher   JobActivityToucher
+)
 
 // SetJobActivityToucher wires the streaming/bash "last activity" touch
 // points to a JobActivityToucher.
-func SetJobActivityToucher(t JobActivityToucher) { jobActivityToucher = t }
+func SetJobActivityToucher(t JobActivityToucher) {
+	jobActivityToucherMu.Lock()
+	jobActivityToucher = t
+	jobActivityToucherMu.Unlock()
+}
 
 // touchJobActivity is the single shared touch-point both streamingCollector
 // (subagent.go) and backgrounded bash (bash.go) call through, so "what
-// counts as a sign of life" is decided in exactly one place.
+// counts as a sign of life" is decided in exactly one place. Copies the
+// current JobActivityToucher out under RLock and calls into the local copy
+// unlocked, same as every other job hook in this package (see getJobAsker's
+// doc comment in ask.go for why holding the lock across the call would be
+// wrong).
 func touchJobActivity(jobID string) {
-	if jobActivityToucher == nil || jobID == "" {
+	if jobID == "" {
 		return
 	}
-	jobActivityToucher.TouchActivity(jobID)
+	jobActivityToucherMu.RLock()
+	toucher := jobActivityToucher
+	jobActivityToucherMu.RUnlock()
+	if toucher == nil {
+		return
+	}
+	toucher.TouchActivity(jobID)
 }

@@ -228,7 +228,8 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 // that link and WithTimeout puts back a backstop the job itself owns; the
 // same detach-and-backstop pattern the async subagent spawn path uses.
 func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, waited int) (ToolResult, bool) {
-	if jobStarter == nil {
+	starter := getJobStarter()
+	if starter == nil {
 		return ToolResult{}, false
 	}
 	if !acquireBackgroundSlot() {
@@ -253,7 +254,7 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 	registered := make(chan struct{})
 
 	parentID, _ := ctx.Value(JobIDCtxKey{}).(string)
-	handle := jobStarter.Start(jobCtx, "bash: "+label, JobKindBash, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
+	handle := starter.Start(jobCtx, "bash: "+label, JobKindBash, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		<-registered
 		defer cancel()
 		defer releaseBackgroundSlot()
@@ -388,7 +389,7 @@ func (r *bashRun) setJobID(id string) {
 // setProgress posts a throttled progress note for a backgrounded command, so
 // the jobs panel shows what it is doing rather than just "running".
 func (r *bashRun) setProgress(line string) {
-	reporter := jobProgressReporter
+	reporter := getJobProgressReporter()
 	if reporter == nil {
 		return
 	}

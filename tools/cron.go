@@ -317,7 +317,8 @@ func (t *CronTool) runNow(ctx context.Context, name string) ToolResult {
 	if err != nil {
 		return failf("%v", err)
 	}
-	if jobStarter == nil {
+	starter := getJobStarter()
+	if starter == nil {
 		// No registry: run it inline. Slower for the caller, but a missing
 		// registry must not mean a missing feature.
 		if err := runner.RunJob(ctx, job); err != nil {
@@ -331,7 +332,7 @@ func (t *CronTool) runNow(ctx context.Context, name string) ToolResult {
 	// something else meanwhile.
 	bgCtx := context.WithoutCancel(ctx)
 	parentID, _ := ctx.Value(JobIDCtxKey{}).(string)
-	handle := jobStarter.Start(bgCtx, "cron "+name, JobKindCron, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
+	handle := starter.Start(bgCtx, "cron "+name, JobKindCron, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		err := runner.RunJob(jobCtx, job)
 		out := fmt.Sprintf("scheduled job %q finished; output in %s", name, cron.LogPath(cronConfigDir(), name))
 		if err != nil {

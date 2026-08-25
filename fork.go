@@ -85,9 +85,7 @@ func ForkChildJob(ctx context.Context, cond *conductor.Conductor, base []connect
 		// this job resumable/forkable again, chaining exactly like any
 		// other async subagent or /btw job.
 		if err == nil || truncated {
-			resumableMu.Lock()
-			resumable[jobID] = resumableEntry{msgs: forked, mc: client, cfg: cfg}
-			resumableMu.Unlock()
+			stashResumable(jobID, resumableEntry{msgs: forked, mc: client, cfg: cfg})
 		}
 
 		return text, truncated, err

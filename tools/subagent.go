@@ -140,15 +140,34 @@ func nextTodoAgentID() string {
 type streamStopCtxKey struct{}
 
 // jobStarter is nil until SetJobStarter is called; runAsync fails loudly
-// (not silently blocking or panicking) until then.
-var jobStarter JobStarter
+// (not silently blocking or panicking) until then. Guarded by jobStarterMu
+// for the same reason jobNotifier is (see bgbash.go's jobNotifierMu doc
+// comment): it is read from job goroutines that outlive the tool call that
+// started them, while SetJobStarter is called from the setup path.
+var (
+	jobStarterMu sync.RWMutex
+	jobStarter   JobStarter
+)
 
 // SetJobStarter wires the "subagent" tool's async=true spawn path to a
 // JobStarter. Called once from main() with an adapter over the app's shared
 // jobs.Registry — the same registry /btw side-conversations and the "wait"
 // tool's job_id polling (SetJobWaiter) run on, so a job started here is
 // pollable from anywhere.
-func SetJobStarter(s JobStarter) { jobStarter = s }
+func SetJobStarter(s JobStarter) {
+	jobStarterMu.Lock()
+	jobStarter = s
+	jobStarterMu.Unlock()
+}
+
+// getJobStarter copies the current JobStarter out under RLock and returns
+// it, so callers never hold the lock while calling into the interface (see
+// bgbash.go's jobNotifierMu doc comment for why that matters).
+func getJobStarter() JobStarter {
+	jobStarterMu.RLock()
+	defer jobStarterMu.RUnlock()
+	return jobStarter
+}
 
 // subagentTask represents a single task for a subagent.
 type subagentTask struct {
@@ -463,7 +482,7 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 	// does not gate whether the result is usable. Falling through to runTasks
 	// here used to re-run every task from scratch on the common "finished in
 	// time" path, paying the model and side effects twice.
-	if jobStarter != nil && backgroundAllowed(ctx) {
+	if getJobStarter() != nil && backgroundAllowed(ctx) {
 		res, _ := t.runWithHandoff(ctx, tasks, true)
 		return res
 	}
@@ -489,7 +508,7 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 	// block for its full timeout with no way to ever receive an answer —
 	// see AskUnroutableCtxKey, which ask consults separately from "do I have
 	// a job id".)
-	if jobStarter != nil {
+	if getJobStarter() != nil {
 		res, _ := t.runWithHandoff(ctx, tasks, false)
 		return res
 	}
@@ -817,7 +836,12 @@ func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtSta
 	st.stopStream = stopStream
 
 	parentID, _ := ctx.Value(JobIDCtxKey{}).(string)
-	job := jobStarter.Start(jobCtx, task.Task, JobKindSubagent, parentID, func(runCtx context.Context, jobID string) (string, bool, error) {
+	// Copy the interface value out under RLock once, then call into it
+	// unlocked (see getJobStarter's doc comment) — spawn is only ever
+	// reached after runTasks/runWithHandoff has already confirmed a
+	// starter is wired, so this is never nil in practice.
+	starter := getJobStarter()
+	job := starter.Start(jobCtx, task.Task, JobKindSubagent, parentID, func(runCtx context.Context, jobID string) (string, bool, error) {
 		defer cancel()
 		defer close(st.done)
 		runCtx = context.WithValue(runCtx, JobIDCtxKey{}, jobID)
@@ -841,7 +865,7 @@ func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtSta
 }
 
 func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolResult {
-	if jobStarter == nil {
+	if getJobStarter() == nil {
 		return ToolResult{Type: "result", Success: false, Error: "async subagent spawn unavailable: job registry not configured"}
 	}
 

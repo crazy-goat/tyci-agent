@@ -64,20 +64,93 @@ func mergeNextMessages(drains ...func() []string) func() []string {
 // resolved model client (already wrapped via withIsolatedPool/fallback
 // resolution — reused as-is, never re-resolved), and the agent.Config used
 // for the run.
+//
+// cfg.NextMessages is a closure bound to the specific job id that was
+// running when this entry was stashed (see tools.JobMailboxNextMessages) —
+// it is NOT safe to reuse verbatim for a different job id (see
+// jobResumerAdapter.Resume in btw.go, which rebinds a fresh local copy of
+// cfg rather than mutating the entry stored here). An entry is looked up
+// once and then may be resumed more than once — Resume never deletes it —
+// so nothing in this map or its cfg must ever be mutated in place; every
+// consumer must copy before changing anything.
 type resumableEntry struct {
 	msgs []connector.Message
 	mc   connector.ModelClient
 	cfg  agent.Config
 }
 
-// resumableMu guards resumable. resumable is never pruned — same known,
-// already-documented characteristic as JobRegistry itself (see JobRegistry's
-// doc comment): every finished async job/btw conversation that ever ran
-// stays in memory for the lifetime of the process, in case something later
-// calls "resume" on it. Not treated as a new problem to solve here, just not
-// hidden either.
+// resumableMu guards resumable and resumableOrder.
+//
+// resumable USED to be never pruned at all: every finished async job/btw
+// conversation that ever ran stayed in memory for the lifetime of the
+// process, on the theory that something might later call "resume" on it.
+// Each entry holds a full transcript ([]connector.Message, unbounded) plus a
+// live ModelClient — heavier than a jobs.Registry entry's plain Result
+// string — so an unbounded map here is worse than the same problem
+// JobRegistry already solved for itself (see MaxRetainedTerminalJobs).
+// resumableCap gives this map the same discipline, via stashResumable/
+// pruneResumableLocked below.
 var resumableMu sync.Mutex
 var resumable = map[string]resumableEntry{}
+
+// resumableOrder is the FIFO insertion order backing pruneResumableLocked's
+// eviction — resumable itself is a map and remembers no ordering. Guarded
+// by resumableMu, same as resumable.
+var resumableOrder []string
+
+// resumableCap bounds how many resumable entries stay in memory at once.
+// 200 — 4x jobs.MaxRetainedTerminalJobs (50) — because a resumable entry is
+// looked up by an explicit resume(job_id=...) call, which by nature happens
+// well after the fact (unlike wait(job_id=...), which every async spawn's
+// own turn is nudged toward calling promptly). A resumed job stashes its OWN
+// new entry as terminal id, so a chain of resumes naturally produces one
+// entry per hop; 200 gives a long-running session room for many such chains
+// before the oldest, least-likely-to-be-revisited entries start being
+// dropped.
+const resumableCap = 200
+
+// stashResumable records entry under jobID, the single place every
+// (re-)stash of a resumable conversation goes through — agentRunner.run's
+// initial stash and every resume/fork/promotion re-stash alike — so the cap
+// below applies uniformly instead of only to some call sites.
+func stashResumable(jobID string, entry resumableEntry) {
+	resumableMu.Lock()
+	defer resumableMu.Unlock()
+	if _, exists := resumable[jobID]; !exists {
+		resumableOrder = append(resumableOrder, jobID)
+	}
+	resumable[jobID] = entry
+	pruneResumableLocked()
+}
+
+// pruneResumableLocked drops the oldest entries past resumableCap, in
+// insertion order, skipping (and keeping) any whose job is still reported
+// running by JobRegistry. Every resumableEntry is stashed for an already
+// terminal job (see resumableEntry's doc comment), so in practice that guard
+// should never trigger — it exists so a fix elsewhere that stashes early
+// cannot silently turn into "prune a job's only resumable copy while it is
+// still in flight". Caller must hold resumableMu.
+func pruneResumableLocked() {
+	excess := len(resumable) - resumableCap
+	if excess <= 0 {
+		return
+	}
+	kept := make([]string, 0, len(resumableOrder))
+	removed := 0
+	for _, id := range resumableOrder {
+		if removed < excess {
+			if job, ok := JobRegistry.Get(id); ok && job.Status == jobs.StatusRunning {
+				kept = append(kept, id)
+				continue
+			}
+			delete(resumable, id)
+			removed++
+			continue
+		}
+		kept = append(kept, id)
+	}
+	resumableOrder = kept
+}
 
 // agentRunner implements tools.SubAgentRunner by wrapping agent.Run.
 type agentRunner struct{}
@@ -354,11 +427,9 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// real turns in msgs, as opposed to a hard failure where agent.Run may
 	// have barely started), stash the mutated msgs/mc/cfg so a later "resume"
 	// tool call can continue this exact conversation as a brand-new job. See
-	// resumableEntry's doc comment for why this map is never pruned.
+	// stashResumable's doc comment for the (bounded) retention policy.
 	if jobID != "" && (err == nil || truncated || deadlineExceeded || stoppedByUser) {
-		resumableMu.Lock()
-		resumable[jobID] = resumableEntry{msgs: msgs, mc: mc, cfg: cfg}
-		resumableMu.Unlock()
+		stashResumable(jobID, resumableEntry{msgs: msgs, mc: mc, cfg: cfg})
 	}
 
 	if stoppedByUser {
