@@ -856,18 +856,43 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 		}
 	}
 	sort.Strings(orphanParents)
+	// A sorted key list is not enough to preserve parent-first ordering: a
+	// descendant key can sort before the missing ancestor that contains it
+	// (for example, "A" can be a child of the orphan group "P"). Build the
+	// reverse lookup so each orphan walk can first follow its chain to the
+	// highest reachable group.
+	parentByID := map[string]string{}
+	for _, kids := range byParent {
+		for _, j := range kids {
+			parentByID[j.ID] = j.ParentID
+		}
+	}
+	var walkOrphan func(parentID string, depth int, chain map[string]bool)
+	walkOrphan = func(parentID string, depth int, chain map[string]bool) {
+		if visited[parentID] {
+			return
+		}
+		// A malformed ParentID cycle has no parent-first ordering. Break it
+		// deterministically by letting the first key reached through the
+		// sorted orphan list be the cycle's root.
+		if chain[parentID] {
+			walk(parentID, depth)
+			return
+		}
+		chain[parentID] = true
+		if ancestor, ok := parentByID[parentID]; ok {
+			if _, hasGroup := byParent[ancestor]; hasGroup && !visited[ancestor] {
+				walkOrphan(ancestor, depth, chain)
+			}
+		}
+		delete(chain, parentID)
+		walk(parentID, depth)
+	}
 	for _, parent := range orphanParents {
-		// orphanParents was collected once, before any orphan walk ran, so
-		// it can list two keys from the SAME parent chain (e.g. group "P"
-		// contains job A, and "A" is itself a byParent key because some job
-		// B has ParentID=A). Walking "P" first already reaches "A" via the
-		// normal recursive walk(j.ID, depth+1) call and marks it visited —
-		// walking "A" again here would then re-add B a second time, once as
-		// a child of A (correct) and once more as if A were its own root.
 		if visited[parent] {
 			continue
 		}
-		walk(parent, 1)
+		walkOrphan(parent, 1, map[string]bool{})
 	}
 
 	return rows
