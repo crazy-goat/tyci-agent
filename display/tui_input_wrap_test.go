@@ -230,12 +230,18 @@ func TestNewlineKeys_BusyPathPreSetHeightUsesWrappedRows(t *testing.T) {
 			model, _ := m.Update(c.msg)
 			m2 := model.(TuiModel)
 
-			wrapped := newWrapOracle(t, 80, m2.input.Value())
-			if h := m2.input.Height(); h < min(2, wrapped) || h > 10 {
-				t.Fatalf("busy path: after newline height=%d, expected within wrapped/clamp range (wrapped=%d)", h, wrapped)
+			wrapped := 0
+			for _, l := range strings.Split(m2.input.Value(), "\n") {
+				wrapped += newWrapOracle(t, 80, l)
 			}
-			if h := m2.input.Height(); h <= 1 {
-				t.Fatalf("busy path: height=%d collapsed to a single row; pre-set ignored wrapped rows", h)
+			if wrapped < 3 {
+				t.Fatalf("precondition: value must span several wrapped rows, got %d", wrapped)
+			}
+			// LineCount()+1 would give 2 here regardless of wrapping; the
+			// wrapped-row pre-set must land on minMaxClamp(wrapped, 1, 10)
+			// after capInputHeight's re-cap.
+			if h := m2.input.Height(); h != minMaxClamp(wrapped, 1, 10) {
+				t.Fatalf("busy path: after newline height=%d, want %d (wrapped rows clamped; LineCount()+1 would be 2)", h, minMaxClamp(wrapped, 1, 10))
 			}
 		})
 	}
