@@ -86,10 +86,11 @@ func enqueueOrStatus(ch chan string, line string, status *string) bool {
 }
 
 func (m *TuiModel) capInputHeight() {
-	// Use the textarea's own line count, which accounts for both hard newlines
-	// and soft-wraps. Manual newline+width math was off whenever a logical
-	// line was long enough to wrap on its own, causing lines to disappear.
-	lines := m.input.LineCount()
+	// Size by the wrapped visual row count (soft-wraps included), not
+	// LineCount(), which only counts hard newlines in bubbles v1.0.0 — a long
+	// single-line prompt would otherwise stay one row tall and scroll out of
+	// view instead of wrapping downward.
+	lines := m.inputWrappedRows()
 	if lines < 1 {
 		lines = 1
 	}
