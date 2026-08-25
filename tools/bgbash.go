@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -130,7 +131,48 @@ func SetJobNotifier(n JobNotifier) {
 	jobNotifierMu.Unlock()
 }
 
+// notify sends text to the main queue. Equivalent to notifyToParent("",
+// text) — use that instead wherever the notice belongs to a job with a
+// known spawner (see notifyToParent's doc comment); this remains for the
+// genuinely top-level cases (a scheduled cron tick nobody asked for, a
+// command backgrounded straight from the main conversation).
 func notify(text string) {
+	notifyToParent("", text)
+}
+
+// notifyToParent routes text to the queue belonging to parentID — the job
+// that spawned whatever produced this notice (see jobs.Job.ParentID) —
+// instead of unconditionally to the main, process-wide queue.
+//
+// This exists because a notice with no addressee always used to land on the
+// main queue, even when it was produced by a job spawned from an
+// independent fork (a /btw side-conversation, or a subagent nested inside
+// one) that must never touch the main conversation — see btwConfig's doc
+// comment in btw.go for why that separation matters. Routing through the
+// spawning job's own mailbox (the same delivery path "message"/"/msg"
+// already uses — see JobMailbox and JobMailboxNextMessages) means the
+// notice reaches that job's own agent loop at its next iteration boundary
+// instead.
+//
+// Design choice for when the intended recipient is gone (parentID names a
+// job that has already finished — its fork ended before this notice was
+// ready): forward the notice to the main queue rather than dropping it.
+// Silently discarding a notice would hide it forever, with nothing in the
+// transcript to explain what happened to it; forwarding tags it so whoever
+// reads it on the main queue knows it was not meant for them originally.
+// parentID == "" (spawned directly from the top-level conversation, not
+// from within another job) goes straight to main with no tag, since main
+// IS the intended recipient in that case.
+func notifyToParent(parentID, text string) {
+	if text == "" {
+		return
+	}
+	if parentID != "" {
+		if mb := getJobMailbox(); mb != nil && mb.Post(parentID, text) {
+			return
+		}
+		text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", parentID, text)
+	}
 	jobNotifierMu.RLock()
 	n := jobNotifier
 	jobNotifierMu.RUnlock()

@@ -265,10 +265,10 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 		// the notices below report the age a person would recognise.
 		started := time.Now().Add(-time.Duration(waited) * time.Second)
 		waitErr, killed := watchBackgroundRun(jobCtx, run, jobID, label, started,
-			BashFirstProgressNoticeSec*time.Second, BashProgressNoticeEverySec*time.Second)
+			BashFirstProgressNoticeSec*time.Second, BashProgressNoticeEverySec*time.Second, parentID)
 
 		output := strings.TrimRight(run.out.result(), "\n")
-		notify(bashNotice(jobID, label, waitErr, killed, run.out.total()))
+		notifyToParent(parentID, bashNotice(jobID, label, waitErr, killed, run.out.total()))
 
 		switch {
 		case killed:
@@ -508,7 +508,7 @@ func startBash(ctx context.Context, cmdVal string) (*bashRun, error) {
 // The durations are parameters rather than the constants directly so a test
 // can drive the whole schedule in milliseconds. Returns the command's exit
 // error and whether it was killed, exactly as the plain select it replaced.
-func watchBackgroundRun(jobCtx context.Context, run *bashRun, jobID, label string, started time.Time, first, every time.Duration) (error, bool) {
+func watchBackgroundRun(jobCtx context.Context, run *bashRun, jobID, label string, started time.Time, first, every time.Duration, parentID string) (error, bool) {
 	// A command that was already older than the first interval when it got
 	// here (a long background_after, say) is due for its notice immediately
 	// rather than skipping it.
@@ -529,7 +529,7 @@ func watchBackgroundRun(jobCtx context.Context, run *bashRun, jobID, label strin
 			return <-run.exit, true
 		case <-timer.C:
 			sent++
-			notify(bashRunningNotice(jobID, label, time.Since(started), sent == 1))
+			notifyToParent(parentID, bashRunningNotice(jobID, label, time.Since(started), sent == 1))
 			timer.Reset(every)
 		}
 	}

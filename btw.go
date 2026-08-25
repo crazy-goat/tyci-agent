@@ -399,7 +399,13 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 	cfg.Fallbacks = fallbacks
 
 	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
-	return JobRegistry.Start(ctx, question, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
+	// Captured as locals, not read from the package globals inside the
+	// closure below — same reasoning as wireTools's bus/notices capture
+	// (main.go): this closure can still be running long after JobRegistry/
+	// JobNotices get reassigned elsewhere (test isolation swaps them), and
+	// it must always report to the registry/queue it actually started on.
+	reg, notices := JobRegistry, JobNotices
+	return reg.Start(ctx, question, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		defer cancelEvaluation()
 		defer func() { btwEvaluationsMu.Lock(); btwActive--; btwEvaluationsMu.Unlock() }()
 		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
@@ -429,7 +435,18 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		text := sink.CollectedText()
 		if err == nil || truncated {
 			retainBtwEvaluation(jobID, &btwEvaluation{msgs: session.ForkMessages(forked), mc: client, cfg: cfg, question: question})
-			JobNotices.Notify(fmt.Sprintf("[btw] evaluation %q finished (job_id=%q): %s\nIf it is worth doing, call promote_btw(job_id=%q). Promotion creates one real subthread; wait for that job instead of doing the work in this thread.", question, jobID, strings.TrimSpace(text), jobID))
+			noticeText := fmt.Sprintf("[btw] evaluation %q finished (job_id=%q): %s\nIf it is worth doing, call promote_btw(job_id=%q). Promotion creates one real subthread; wait for that job instead of doing the work in this thread.", question, jobID, strings.TrimSpace(text), jobID)
+			// B4: address this to whoever spawned this /btw job (parentID),
+			// not unconditionally to the main queue — see the identical
+			// routing/fallback choice in wireTools's onEvent hook (main.go).
+			if parentID != "" && reg.Post(parentID, noticeText) {
+				// delivered into the spawning job's own mailbox instead.
+			} else {
+				if parentID != "" {
+					noticeText = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", parentID, noticeText)
+				}
+				notices.Notify(noticeText)
+			}
 		}
 		sink.MarkDone(err)
 		return text, truncated, err

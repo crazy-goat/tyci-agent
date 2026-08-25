@@ -169,6 +169,30 @@ func getJobStarter() JobStarter {
 	return jobStarter
 }
 
+// jobWaiterGlobal mirrors the same JobWaiter SetJobWaiter (tool.go) installs
+// on the "wait" tool, so runWithHandoff can watch a child THIS CALL spawned
+// for StatusWaitingAnswer without going through the "wait" tool itself. Same
+// guarding rationale as jobStarterMu above.
+var (
+	jobWaiterMu     sync.RWMutex
+	jobWaiterGlobal JobWaiter
+)
+
+// setJobWaiterGlobal is called from SetJobWaiter (tool.go) so both the
+// "wait" tool and runWithHandoff's watcher stay pointed at the same
+// registry, wired exactly once from main().
+func setJobWaiterGlobal(w JobWaiter) {
+	jobWaiterMu.Lock()
+	jobWaiterGlobal = w
+	jobWaiterMu.Unlock()
+}
+
+func getJobWaiter() JobWaiter {
+	jobWaiterMu.RLock()
+	defer jobWaiterMu.RUnlock()
+	return jobWaiterGlobal
+}
+
 // subagentTask represents a single task for a subagent.
 type subagentTask struct {
 	Task          string `json:"task"`
@@ -852,7 +876,7 @@ func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtSta
 		// waiting for it. A blocking call that got its result inline has
 		// already read it, and a notice about it would be noise.
 		if st.finish(res) {
-			notify(subagentCompletionNotice(st.label, jobID, res))
+			notifyToParent(parentID, subagentCompletionNotice(st.label, jobID, res))
 		}
 
 		if !res.Success {
@@ -924,6 +948,42 @@ Do not call wait before you are told: it can only say "still running", which the
 	return b.String()
 }
 
+// watchForWaiting blocks on waiter.Wait for jobID, in a loop, until it
+// reports the job waiting on a question, the job is done, or ctx ends the
+// watch — then returns. On "waiting" it sends (non-blocking, into a
+// capacity-1 channel — see runWithHandoff) on wake so runWithHandoff's
+// select notices without polling.
+//
+// The first call asks for timeout 0 rather than the long timeout every
+// later call uses. jobs.Registry.Wait wakes immediately on a TRANSITION
+// into StatusWaitingAnswer (via its internal statusChanged channel), but
+// deliberately does not fast-return just because the job already happens to
+// be waiting when Wait is called (see its doc comment — a plain "waiting
+// right now" is not itself a wake-worthy event for every caller). This
+// watcher's very first call can lose exactly that race: the child may have
+// already asked its question before this goroutine got scheduled at all,
+// in which case there will be no future transition to wake it. Asking with
+// timeout 0 fires the select's timer branch almost at once, so this call
+// reports the CURRENT state instead of settling in for however long the
+// long-timeout wait would otherwise run.
+func watchForWaiting(ctx context.Context, waiter JobWaiter, jobID string, wake chan<- struct{}) {
+	timeout := time.Duration(0)
+	for {
+		status, ok := waiter.Wait(ctx, jobID, timeout)
+		if !ok || status.Done || ctx.Err() != nil {
+			return
+		}
+		if status.Waiting {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+			return
+		}
+		timeout = time.Hour
+	}
+}
+
 // runWithHandoff runs a blocking subagent call as background jobs and waits
 // for them — up to SubagentBackgroundAfterSec when handoff is true, or until
 // every child finishes (or the parent ctx is cancelled) when it is false.
@@ -978,6 +1038,16 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 	// this mode has besides every child finishing.
 	var timerC <-chan time.Time
 	var pollC <-chan time.Time
+	// waitingWakeC fires the moment any child THIS CALL spawned enters
+	// StatusWaitingAnswer — see watchForWaiting. Without it, this select was
+	// blind to a child blocked on a question: it could only notice one
+	// indirectly, by sitting out the rest of timerC/pollC/ctx.Done() first,
+	// which is the most expensive way to lose a turn there is (see
+	// agent/agent.go:97-101's doc comment on why). Also nil when handoff is
+	// false: a child cannot reach StatusWaitingAnswer at all in that mode
+	// (AskUnroutableCtxKey above makes ask_parent fail before ever calling
+	// Ask), so there is nothing to watch for.
+	var waitingWakeC <-chan struct{}
 	if handoff {
 		timer := time.NewTimer(SubagentBackgroundAfterSec)
 		defer timer.Stop()
@@ -990,6 +1060,24 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 		poll := time.NewTicker(userPendingPoll)
 		defer poll.Stop()
 		pollC = poll.C
+
+		if waiter := getJobWaiter(); waiter != nil {
+			// Derived from ctx (not detached): once this call returns —
+			// handed off, cancelled, or every child finished — nothing
+			// reads wake any more, and this stops the watcher goroutines
+			// from blocking on Wait forever.
+			watchCtx, cancelWatch := context.WithCancel(ctx)
+			defer cancelWatch()
+			// Buffered: a child that asks its question before this select
+			// is even entered (e.g. between spawn and here) must not lose
+			// its wake waiting for a receiver that has not started
+			// selecting yet.
+			wake := make(chan struct{}, 1)
+			for _, st := range spawned {
+				go watchForWaiting(watchCtx, waiter, st.jobID, wake)
+			}
+			waitingWakeC = wake
+		}
 	}
 
 	for len(waiting) > 0 {
@@ -1008,6 +1096,12 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 			if UserPending() {
 				return t.handOff(spawned), true
 			}
+		case <-waitingWakeC:
+			// A spawned child is now blocked on ask_parent. Hand off
+			// immediately so the parent's turn ends now — the queued
+			// ask-notice (jobs.Registry.Ask's onEvent hook) can then reach
+			// it right away instead of after the rest of this window.
+			return t.handOff(spawned), true
 		case <-timerC:
 			return t.handOff(spawned), true
 		case <-ctx.Done():

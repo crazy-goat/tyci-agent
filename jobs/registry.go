@@ -121,11 +121,12 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 		Description:  description,
 		Kind:         kind,
 		ParentID:     parentID,
-		Status:       StatusRunning,
-		StartedAt:    now,
-		done:         make(chan struct{}),
-		cancel:       cancel,
-		extensionCtx: extensionCtx,
+		Status:        StatusRunning,
+		StartedAt:     now,
+		done:          make(chan struct{}),
+		cancel:        cancel,
+		extensionCtx:  extensionCtx,
+		statusChanged: make(chan struct{}),
 	}
 	// Seed lastActivity to the same instant as StartedAt, so a job that
 	// hasn't done anything yet reads as "idle since start" (a small, correct
@@ -357,6 +358,18 @@ func (r *Registry) List() []Job {
 	return list
 }
 
+// signalStatusChangeLocked wakes every Wait call currently blocked on this
+// job's statusChanged (a select reading from a channel that is closed right
+// under it fires immediately, with no ordering requirement against when the
+// select was entered) and arms a fresh channel for the next transition. Ask
+// is the only caller today, and only for the transition INTO
+// StatusWaitingAnswer — see Wait's doc comment on why the reverse
+// transition must not also signal. Caller must hold r.mu.
+func (r *Registry) signalStatusChangeLocked(job *Job) {
+	close(job.statusChanged)
+	job.statusChanged = make(chan struct{})
+}
+
 func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (*Job, bool) {
 	r.mu.Lock()
 	job, ok := r.jobs[id]
@@ -370,17 +383,45 @@ func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (
 			r.mu.Unlock()
 			return &snap, true
 		}
-	}
-	r.mu.Unlock()
-	if !ok {
+		r.mu.Unlock()
 		return nil, false
 	}
+	// Registered while still holding r.mu so Ask (which also takes r.mu to
+	// flip Status) can never see a stale count — either this Wait call is
+	// counted before Ask reads waiters, or Ask's whole status flip (and
+	// QuestionHasWaiter decision) happens before this one is registered.
+	// See jobs.Job's waiters doc comment and Ask's QuestionHasWaiter use.
+	job.waiters++
+	statusCh := job.statusChanged
+	r.mu.Unlock()
 
+	defer func() {
+		r.mu.Lock()
+		job.waiters--
+		r.mu.Unlock()
+	}()
+
+	// statusCh is closed the moment Ask flips this job INTO
+	// StatusWaitingAnswer (see signalStatusChangeLocked) — never on the way
+	// back out, which would wake an unrelated, non-looping Wait call the
+	// instant some other question got answered and hand it a mid-flight
+	// "running" snapshot instead of the terminal one it actually wants. A
+	// caller that does need to notice the return-to-running transition too
+	// (there isn't one today) would have to poll for it, same as before.
+	//
+	// This gives the one transition that matters the same real-time wake
+	// job.done already gives a normal completion, instead of waiting out
+	// the rest of timeout and finding out on the next poll. Deliberately
+	// NOT special-cased for "already waiting when Wait was called": a
+	// caller in that state still wants an ordinary bounded wait for
+	// whatever happens NEXT (an answer arriving, the job being cancelled,
+	// ...), not an instant return of a status it may already know about.
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
 	select {
 	case <-job.done:
+	case <-statusCh:
 	case <-timer.C:
 	case <-ctx.Done():
 	}
@@ -419,6 +460,12 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 	}
 	job.Status = StatusWaitingAnswer
 	job.Question = question
+	// See jobs.Job's QuestionHasWaiter doc comment: recorded now, while
+	// still holding r.mu, so it reflects exactly the set of Wait calls that
+	// were registered before this question existed — not a count that
+	// could still change underneath it.
+	job.QuestionHasWaiter = job.waiters > 0
+	r.signalStatusChangeLocked(job)
 	if job.answerCh == nil {
 		job.answerCh = make(chan jobAnswer, 1)
 	}
@@ -443,6 +490,14 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 	r.mu.Lock()
 	job.Status = StatusRunning
 	job.Question = ""
+	job.QuestionHasWaiter = false
+	// Deliberately NOT signalStatusChangeLocked here — see its call above
+	// this select and its doc comment: only the transition INTO
+	// StatusWaitingAnswer wakes a blocked Wait early. Signaling this one
+	// too would wake an ordinary, non-looping Wait call (e.g. a plain
+	// "wait until this job finishes") the instant a completely unrelated
+	// question got answered, handing back a mid-flight "running" snapshot
+	// instead of the terminal one that call actually wants.
 	if !got {
 		// ctx.Done() won the select before an answer arrived. A racing
 		// Answer call reads job.answerCh under this same lock, so it can

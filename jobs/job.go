@@ -69,6 +69,17 @@ type Job struct {
 	// StatusWaitingAnswer (set by Ask, cleared once answered or unblocked).
 	Question string
 
+	// QuestionHasWaiter is true when, at the moment Ask set Status to
+	// StatusWaitingAnswer, at least one caller was already blocked inside
+	// Registry.Wait for this specific job (see waiters below). It exists so
+	// a single question is delivered exactly once: whoever wires the
+	// onEvent hook into a notice queue (see main.go's wireTools) can skip
+	// queuing that notice when this is true, because the waiting Wait call
+	// is about to report the very same question back to its own caller
+	// synchronously — the two paths would otherwise both deliver it. Reset
+	// to false when the job leaves StatusWaitingAnswer.
+	QuestionHasWaiter bool
+
 	// Progress holds the last status note reported via SetProgress
 	// (report_progress tool). Unlike Question, it is NOT cleared when the
 	// job finishes — it persists as the last thing the job said about its
@@ -106,6 +117,22 @@ type Job struct {
 	// internal to the registry: unexported and channel-typed, so Snapshot
 	// must never copy it.
 	answerCh chan jobAnswer
+
+	// statusChanged is closed and replaced every time Ask flips Status
+	// between StatusRunning and StatusWaitingAnswer (see
+	// Registry.signalStatusChangeLocked). Wait selects on whatever value it
+	// held at the moment Wait was called, so a transition that happens
+	// either while Wait is blocked OR in the narrow window just before —
+	// closing a channel a select is about to read from still wakes it —
+	// is never missed. It is not used for the terminal transition; job.done
+	// already covers that. Unexported and channel-typed, so Snapshot never
+	// copies it; guarded by Registry.mu like everything else here.
+	statusChanged chan struct{}
+
+	// waiters counts callers currently blocked inside Registry.Wait for
+	// this job. Ask reads it (while already holding Registry.mu) to decide
+	// QuestionHasWaiter above. Guarded by Registry.mu.
+	waiters int
 
 	// cancel ends this job's own context (see Registry.Start, which derives
 	// it). Unexported and func-typed so Snapshot keeps copying the struct by
@@ -199,6 +226,7 @@ func (j *Job) Snapshot() Job {
 		StartedAt:          j.StartedAt,
 		FinishedAt:         j.FinishedAt,
 		Question:           j.Question,
+		QuestionHasWaiter:  j.QuestionHasWaiter,
 		Progress:           j.Progress,
 		ExtensionRequestID: j.ExtensionRequestID,
 		ExtensionSeconds:   j.ExtensionSeconds,

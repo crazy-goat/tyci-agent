@@ -23,7 +23,7 @@ func startWatched(t *testing.T, notifier *recordingNotifier, command string, fir
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitErr, killed := watchBackgroundRun(context.Background(), run, "job-test", "the slow one", time.Now(), first, every)
+	waitErr, killed := watchBackgroundRun(context.Background(), run, "job-test", "the slow one", time.Now(), first, every, "")
 	if killed {
 		t.Fatal("the command was killed, not finished")
 	}
@@ -95,7 +95,7 @@ func TestNoticeIsDueImmediatelyForAnAlreadyOldCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now().Add(-90 * time.Second) // as if it had run 90s already
-	watchBackgroundRun(context.Background(), run, "job-old", "the old one", started, 60*time.Second, time.Hour)
+	watchBackgroundRun(context.Background(), run, "job-old", "the old one", started, 60*time.Second, time.Hour, "")
 
 	notices := notifier.all()
 	if len(notices) != 1 {

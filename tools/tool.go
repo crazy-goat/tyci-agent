@@ -836,6 +836,11 @@ func SetJobWaiter(w JobWaiter) {
 	if wt, ok := toolRegistry["wait"].(*WaitTool); ok {
 		wt.Waiter = w
 	}
+	// Also mirrored into a package-level accessor (subagent.go) so
+	// runWithHandoff's blocking-call handoff can watch a spawned child for
+	// StatusWaitingAnswer directly, without routing through the "wait"
+	// tool's own Run method.
+	setJobWaiterGlobal(w)
 }
 
 // subagentToolInstance is the singleton SubagentTool used by the registry.

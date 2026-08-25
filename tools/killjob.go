@@ -54,6 +54,24 @@ var jobLister JobLister
 // SetJobLister wires kill_job's parent walk to the app's shared registry.
 func SetJobLister(l JobLister) { jobLister = l }
 
+// parentIDOf resolves jobID's own ParentID via the wired JobLister — for a
+// call site that only has a job's own id in hand, not its spawner's (see
+// request_timeout_extension's notice in extension.go, which is about the
+// child asking, but must reach that child's PARENT). Returns "" when no
+// lister is wired or jobID is unknown; notifyToParent's fallback to main
+// handles both the same as a job with no parent at all.
+func parentIDOf(jobID string) string {
+	if jobLister == nil {
+		return ""
+	}
+	for _, j := range jobLister.ListJobs() {
+		if j.ID() == jobID {
+			return j.ParentID()
+		}
+	}
+	return ""
+}
+
 // subtreeRoot walks parent links up from id and returns the chain's root's
 // job id. parents maps child id → parent id ("" when the spawning context
 // was not itself a job). A cycle terminates at its first repeat — the entry

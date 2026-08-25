@@ -687,7 +687,7 @@ func wireTools() {
 	// then calls onEvent — see jobs/registry.go — so a test that only
 	// waits on job.done can already have moved on and rewired the globals
 	// by the time onEvent actually runs).
-	bus, notices := jobEventBus, JobNotices
+	bus, notices, reg := jobEventBus, JobNotices, JobRegistry
 	JobRegistry.SetOnEvent(func(j jobs.Job) {
 		bus.Publish("job.updated", j)
 
@@ -699,13 +699,44 @@ func wireTools() {
 		// wastes the whole child run. So the question is pushed into the
 		// parent's next turn (and wakes an idle REPL) the same way a finished
 		// background command is.
-		if j.Status == jobs.StatusWaitingAnswer {
-			notices.Notify(fmt.Sprintf(
+		//
+		// j.QuestionHasWaiter (B7) is true when some caller was already
+		// blocked inside jobs.Registry.Wait for this exact job the moment
+		// this question was posed — the "wait" tool, or a blocking subagent
+		// call's own handoff watch (tools/subagent.go's watchForWaiting).
+		// That caller is about to receive the same question back as its
+		// own, synchronous Wait/wait() result (see JobStatus.Waiting), so
+		// queuing this notice too would deliver the same question twice in
+		// one turn. Skip it in that case; the notice path stays the
+		// authoritative (and only) one when nobody was already waiting.
+		if j.Status == jobs.StatusWaitingAnswer && !j.QuestionHasWaiter {
+			text := fmt.Sprintf(
 				"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
 					"Relay this question to the user in your reply, wait for their answer in the conversation, then deliver it — do not invent an answer on their behalf. "+
 					"Only call answer_job(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+
 					"Until it is answered it makes no progress, and its work is discarded when it times out.",
-				j.Description, j.Question, j.ID, j.ID))
+				j.Description, j.Question, j.ID, j.ID)
+
+			// B4: address this to whoever spawned j (j.ParentID), not
+			// unconditionally to the main queue — a job spawned from an
+			// independent fork (a /btw side-conversation, or a subagent
+			// nested inside one) must notify that fork, never the main
+			// conversation it must never touch (see btwConfig's doc
+			// comment in btw.go). reg.Post delivers into the parent job's
+			// own mailbox, drained at its next agent-loop iteration the
+			// same way "message"/"/msg" already work; it returns false
+			// when parentID is unknown or that job has already finished.
+			// Design choice for that case: forward to main rather than
+			// drop the notice silently — a dropped notice leaves no trace
+			// that a child ever asked anything, while a forwarded one at
+			// least reaches someone, tagged as not its original addressee.
+			if j.ParentID != "" && reg.Post(j.ParentID, text) {
+				return
+			}
+			if j.ParentID != "" {
+				text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", j.ParentID, text)
+			}
+			notices.Notify(text)
 		}
 	})
 
