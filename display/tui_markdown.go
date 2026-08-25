@@ -140,6 +140,7 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				m.blocks[idx].dirty = false
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamWraps, idx)
+				delete(m.mdStreamState, idx)
 				delete(m.mdCacheRendered, idx)
 			} else if b.kind == "text" {
 				content := collapseRepeatedLines(b.content)
@@ -162,6 +163,7 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				m.blocks[idx].dirty = false
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamWraps, idx)
+				delete(m.mdStreamState, idx)
 			} else if b.kind == "error" || b.kind == "block" {
 				rendered := renderErrorOrBlock(b, m.renderWidth())
 				if rendered != "" {
@@ -175,9 +177,11 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				m.blocks[idx].dirty = false
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamWraps, idx)
+				delete(m.mdStreamState, idx)
 			} else {
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamWraps, idx)
+				delete(m.mdStreamState, idx)
 			}
 		}
 	}

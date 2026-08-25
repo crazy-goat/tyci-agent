@@ -292,10 +292,11 @@ type TuiModel struct {
 	resizeHeight  int  // most recent resize height
 
 	// Markdown render cache maps (keyed by block index)
-	dirtyBlocks      map[int]bool        // block indices with content changed
-	mdCacheRendered  map[int]string      // cached rendered ANSI output per block
-	streamWraps      map[int]*streamWrap // incremental raw-wrap state during streaming
-	toolDisplayCache map[int]string      // cached formatToolCall result per tool block index
+	dirtyBlocks      map[int]bool           // block indices with content changed
+	mdCacheRendered  map[int]string         // cached rendered ANSI output per block
+	streamWraps      map[int]*streamWrap    // incremental raw-wrap state during streaming
+	mdStreamState    map[int]*mdStreamState // progressive-markdown fence/boundary scan state during streaming
+	toolDisplayCache map[int]string         // cached formatToolCall result per tool block index
 
 	// Total line count cache (invalidated on block add/change/resize)
 	cachedTotalLines int
@@ -548,6 +549,7 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		dirtyBlocks:           make(map[int]bool),
 		mdCacheRendered:       make(map[int]string),
 		streamWraps:           make(map[int]*streamWrap),
+		mdStreamState:         make(map[int]*mdStreamState),
 		toolDisplayCache:      make(map[int]string),
 		cachedTotalLines:      -1,
 		scrollback:            &scrollbackCache{},

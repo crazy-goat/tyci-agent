@@ -292,3 +292,59 @@ func BenchmarkStreamingWrapIncremental(b *testing.B) {
 		}
 	}
 }
+
+// markdownHeavyMessage builds a ~targetBytes-long message of headings,
+// paragraphs, bullet lists and fenced code blocks — repeating a fixed
+// "unit" of markdown until the target size is reached — for the progressive
+// markdown streaming benchmarks below.
+func markdownHeavyMessage(targetBytes int) string {
+	unit := "## Section heading\n\n" +
+		"Some prose that explains the section in a paragraph long enough to " +
+		"wrap across several lines at a typical terminal width, giving the " +
+		"raw-wrap and glamour-wrap paths a realistic amount of text to chew on.\n\n" +
+		"- first bullet point with a bit of detail\n" +
+		"- second bullet point, also with some detail\n" +
+		"- third bullet point rounding out the list\n\n" +
+		"```go\n" +
+		"func handle(ctx context.Context, req *Request) (*Response, error) {\n" +
+		"\tif req == nil {\n" +
+		"\t\treturn nil, errors.New(\"nil request\")\n" +
+		"\t}\n" +
+		"\treturn &Response{OK: true}, nil\n" +
+		"}\n" +
+		"```\n\n"
+	var b strings.Builder
+	for b.Len() < targetBytes {
+		b.WriteString(unit)
+	}
+	return b.String()
+}
+
+// benchmarkStreamProgressiveMarkdown streams content into a single text
+// block in 6-byte chunks via appendOrAppend (two renders per token, per
+// appendOrAppend's own accounting) — the same harness shape the item-51
+// review's F1 finding used to measure the streaming hot path's cost.
+func benchmarkStreamProgressiveMarkdown(b *testing.B, content string) {
+	b.ReportAllocs()
+	for b.Loop() {
+		m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+		m.width = 100
+		m.height = 24
+		m.status = "responding"
+		for i := 0; i < len(content); i += 6 {
+			end := i + 6
+			if end > len(content) {
+				end = len(content)
+			}
+			m.appendOrAppend("text", content[i:end])
+		}
+	}
+}
+
+func BenchmarkStreamProgressiveMarkdown10KB(b *testing.B) {
+	benchmarkStreamProgressiveMarkdown(b, markdownHeavyMessage(10*1024))
+}
+
+func BenchmarkStreamProgressiveMarkdown20KB(b *testing.B) {
+	benchmarkStreamProgressiveMarkdown(b, markdownHeavyMessage(20*1024))
+}

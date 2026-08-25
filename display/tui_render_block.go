@@ -78,25 +78,23 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 			return cached
 		}
 
-		// During streaming: show raw wrapped text (no glamour re-render).
-		// Markdown rendering only happens when block finishes (idle or
-		// forceRenderDirtyBlocks called at block boundary). Wrapping is
-		// incremental: only the last logical line is re-wrapped per chunk.
+		// During streaming: progressively glamour-render whatever prefix of
+		// the content is behind a safe "\n\n" boundary (no fence open), and
+		// show the remaining tail as raw wrapped text. Wrapping of the tail
+		// is incremental: only its last logical line is re-wrapped per
+		// chunk.
+		//
+		// tryRenderMarkdown has exactly one caller today (the "text" case
+		// below, always useBar=false, dim=false), so this branch always
+		// takes the progressive path. useBar/dim are not threaded through
+		// here — thinking blocks never reach tryRenderMarkdown at all
+		// (renderThinkingBlock handles them, always as one frozen summary
+		// line, per issue 19); they only matter to the "not streaming"
+		// finalize branch below, which a future bar/dim caller could still
+		// use while streaming raw via streamWrap directly if one ever shows
+		// up.
 		if dirty && isStreaming {
-			sw := m.streamWraps[idx]
-			if sw == nil {
-				sw = &streamWrap{}
-				m.streamWraps[idx] = sw
-			}
-		// renderWidth, not m.width: with the sidebar open the only thing on
-	// screen is the narrowed main column, so this cache must hold lines
-	// wrapped at mainColumnWidth (see renderWidth). Caching full-width lines
-	// here is what shredded markdown tables under the sidebar's safety
-	// re-wrap.
-	wrapped, lines := sw.render(content, useBar, m.renderWidth())
-			m.blocks[idx].cachedLineCount = len(lines)
-			m.blocks[idx].cachedLines = lines
-			return wrapped
+			return m.renderStreamingMarkdown(idx, content)
 		}
 
 		// Not streaming → final rendering. The block has settled, so a run
@@ -113,6 +111,7 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 		// Update cache
 		delete(m.dirtyBlocks, idx)
 		delete(m.streamWraps, idx)
+		delete(m.mdStreamState, idx)
 		if rendered == "" {
 			// Empty render → keep the empty-block invariant: cachedLines is
 			// non-nil but empty, cachedLineCount == 0. Never cache [""] which
