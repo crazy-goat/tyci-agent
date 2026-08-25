@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -52,6 +53,11 @@ type JobStatus struct {
 	// Progress is the last status note the job reported via
 	// "report_progress", if any. Persists after the job finishes too.
 	Progress string
+	// ProgressHistory is every status note the job has reported via
+	// "report_progress", oldest first — the sequence Progress alone loses
+	// once a second note overwrites the first. May be shorter than the
+	// job's true call count: the registry bounds how many it retains.
+	ProgressHistory []string
 }
 
 type JobWaiter interface {
@@ -143,8 +149,17 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 				Content: fmt.Sprintf("job %s is waiting for an answer: %q. Relay it to the user (or genuinely-known info) unless you truly know the answer — call the \"answer_job\" tool with job_id=%q and that reply to unblock it. Never invent an answer standing in for a human who hasn't replied.%s", jobID, status.Question, jobID, clampedNote),
 			}
 		}
+		// Show the whole retained sequence, not just the latest note: a
+		// child that reported three times has told the parent three
+		// different things, and collapsing that down to "the last one"
+		// here would silently discard the same information SetProgress's
+		// history exists to keep (item 53). Fall back to Progress alone
+		// only for a JobWaiter implementation that never populates
+		// ProgressHistory.
 		progressNote := ""
-		if status.Progress != "" {
+		if len(status.ProgressHistory) > 0 {
+			progressNote = fmt.Sprintf(" Progress so far: %s.", strings.Join(status.ProgressHistory, " -> "))
+		} else if status.Progress != "" {
 			progressNote = fmt.Sprintf(" Latest progress: %s.", status.Progress)
 		}
 		return ToolResult{

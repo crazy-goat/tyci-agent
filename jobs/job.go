@@ -83,8 +83,27 @@ type Job struct {
 	// Progress holds the last status note reported via SetProgress
 	// (report_progress tool). Unlike Question, it is NOT cleared when the
 	// job finishes — it persists as the last thing the job said about its
-	// own progress before completing.
+	// own progress before completing. Kept as its own field (rather than
+	// derived from ProgressHistory below) because it predates the history
+	// and several existing call sites read Job.Progress directly for "the
+	// latest note" without wanting to index into a slice for it.
 	Progress string
+
+	// ProgressHistory holds every status note SetProgress has recorded for
+	// this job, oldest first, capped at progressHistoryCap entries with the
+	// oldest evicted once full — see SetProgress and
+	// ProgressHistoryTruncated. Before this field existed, a child that
+	// reported three times left only the third note behind: SetProgress
+	// overwrote Progress in place, so the parent lost the sequence, which
+	// is the entire point of progress reporting for a long-running child.
+	ProgressHistory []string
+
+	// ProgressHistoryTruncated is true once at least one entry has been
+	// evicted from ProgressHistory to keep it within progressHistoryCap. A
+	// bounded history that silently drops its oldest entries is
+	// indistinguishable from a complete one unless something says so — this
+	// is that something.
+	ProgressHistoryTruncated bool
 
 	// LastActivity is materialized by Snapshot from lastActivity below — it
 	// only ever holds a meaningful value on a Snapshot()-returned copy, not
@@ -262,6 +281,14 @@ func (j *Job) Snapshot() Job {
 		Question:          j.Question,
 		QuestionHasWaiter: j.QuestionHasWaiter,
 		Progress:          j.Progress,
+		// Deep-copied for the exact reason ResidualMailbox is below: a
+		// plain slice-header copy would leave every snapshot aliasing the
+		// SAME backing array the live Job keeps appending/evicting from
+		// in SetProgress, which is a data race the moment a caller reads a
+		// snapshot's ProgressHistory while another goroutine calls
+		// SetProgress on the live job.
+		ProgressHistory:          append([]string(nil), j.ProgressHistory...),
+		ProgressHistoryTruncated: j.ProgressHistoryTruncated,
 		// append([]string(nil), ...) copies the backing array — a plain
 		// slice-header copy would leave every snapshot (including every
 		// element List() returns) aliasing the SAME array the live Job

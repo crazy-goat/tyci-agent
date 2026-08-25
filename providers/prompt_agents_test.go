@@ -228,6 +228,30 @@ func TestSubagentPromptListsTheToolsOnlyAChildCanUse(t *testing.T) {
 	}
 }
 
+// TestSubagentPromptDoesNotContradictItsOwnAskParentTool guards against item
+// 41 regressing: the child prompt hands out a real ask_parent tool, so it
+// must never simultaneously claim in absolute terms that it cannot ask. That
+// contradiction shipped for a while ("You cannot ask questions — there is no
+// user to reply" right above a working ask_parent tool) and made children's
+// use of ask_parent unpredictable, since they had to disbelieve their own
+// system prompt to use the tool they were given.
+func TestSubagentPromptDoesNotContradictItsOwnAskParentTool(t *testing.T) {
+	prompt := BuildSubagentSystemPrompt()
+
+	if !strings.Contains(prompt, "ask_parent(") {
+		t.Fatalf("expected the child prompt to expose ask_parent(), it did not:\n%s", prompt)
+	}
+	for _, claim := range []string{
+		"cannot ask questions",
+		"There is nobody to ask",
+		"no user to reply",
+	} {
+		if strings.Contains(prompt, claim) {
+			t.Errorf("child prompt contains absolute claim %q alongside a working ask_parent tool:\n%s", claim, prompt)
+		}
+	}
+}
+
 // TestPromptStaysShort. The prompt is re-sent with every request, and an
 // earlier version had grown to two essays restating the same argument three
 // times plus a fifteen-line code example that already lives in help("lua").

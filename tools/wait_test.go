@@ -174,6 +174,50 @@ func TestWaitTool_JobIDStillRunning(t *testing.T) {
 	}
 }
 
+// TestWaitTool_JobIDStillRunning_ShowsProgressSequence guards item 53's
+// "wait" side: a child that called report_progress three times told the
+// parent three different things, and a still-running response that shows
+// only the latest one throws two of them away. Before ProgressHistory
+// existed, JobStatus carried just Progress (the last note), so this
+// content would collapse to one entry no matter how many times the child
+// reported.
+func TestWaitTool_JobIDStillRunning_ShowsProgressSequence(t *testing.T) {
+	tool := &WaitTool{Waiter: &mockJobWaiter{ok: true, status: JobStatus{
+		ID:              "abc",
+		Done:            false,
+		Progress:        "step three",
+		ProgressHistory: []string{"step one", "step two", "step three"},
+	}}}
+	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+	if !res.Success {
+		t.Fatalf("still-running should not be an error, got: %s", res.Error)
+	}
+	for _, want := range []string{"step one", "step two", "step three"} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("expected still-running content to include %q from the progress sequence, got: %q", want, res.Content)
+		}
+	}
+}
+
+// TestWaitTool_JobIDStillRunning_FallsBackToProgressWithoutHistory covers a
+// JobWaiter implementation that only ever populates the older Progress
+// field: the still-running response must still surface something rather
+// than going silent just because ProgressHistory is nil.
+func TestWaitTool_JobIDStillRunning_FallsBackToProgressWithoutHistory(t *testing.T) {
+	tool := &WaitTool{Waiter: &mockJobWaiter{ok: true, status: JobStatus{
+		ID:       "abc",
+		Done:     false,
+		Progress: "only the latest",
+	}}}
+	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+	if !res.Success {
+		t.Fatalf("still-running should not be an error, got: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "only the latest") {
+		t.Fatalf("expected still-running content to fall back to Progress, got: %q", res.Content)
+	}
+}
+
 func TestWaitTool_Name(t *testing.T) {
 	tool := &WaitTool{}
 	if tool.Name() != "wait" {
