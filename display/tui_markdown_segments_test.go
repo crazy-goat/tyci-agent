@@ -23,8 +23,16 @@ func TestFenceLineInfo(t *testing.T) {
 		{"~~~", true, '~', 3, 0},
 		{" ```", true, '`', 3, 1},
 		{"   ```", true, '`', 3, 3},
-		{"    ```", false, 0, 0, 0}, // 4-space indent: indented code, not a fence
-		{"``", false, 0, 0, 0},      // run too short
+		// F3 (item-51 review): indentation is no longer capped at 3 — a
+		// fence nested inside a list item is indented well past column 3 in
+		// the raw text, and capping it made such fences invisible to the
+		// scanner. The tradeoff (a 4-space indented plain-text code block
+		// that happens to contain a marker run gets misdetected) is an
+		// accepted, self-healing edge case.
+		{"    ```", true, '`', 3, 4},
+		{"     ```", true, '`', 3, 5},
+		{"\t```", true, '`', 3, 1},
+		{"``", false, 0, 0, 0}, // run too short
 		{"~~", false, 0, 0, 0},
 		{"plain text", false, 0, 0, 0},
 		{"", false, 0, 0, 0},
@@ -369,6 +377,15 @@ func TestFinalRenderMatchesUnstreamed(t *testing.T) {
 		"ordered list flush":     "1. one\n2. two\n\n3. three\n\nDone",
 		"cjk emoji":              "第一段文字 🎉🎉🎉\n\n第二段 你好世界 🚀\n",
 		"no boundary":            strings.Repeat("word ", 100),
+		// The three constructs the owner explicitly accepted mid-stream
+		// degradation for — pinned here per the item-51 review, rather than
+		// left only in a reviewer's scratch probe.
+		"nested lists": "- outer one\n  - inner a\n  - inner b\n- outer two\n\n" +
+			"1. step one\n   1. sub step\n2. step two\n\nDone.\n",
+		"links plus inline code": "See [the docs](https://example.com/docs) for `Config.Load()` details.\n\n" +
+			"Also check `pkg.Init` and [this issue](https://example.com/issues/1).\n",
+		"blockquotes": "> First quoted line.\n> Second quoted line.\n\n" +
+			"Normal paragraph after the quote.\n\n> Another quote\n>\n> with a blank line inside it\n\nDone.\n",
 	}
 
 	newStreamedModel := func() *TuiModel {
@@ -411,5 +428,170 @@ func TestFinalRenderMatchesUnstreamed(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ─── F2: blank-line separator between flushed paragraphs ────────────────
+
+// TestFlushKeepsBlankSeparatorBetweenParagraphs streams four paragraphs and
+// checks, mid-stream (before finalization), that flushed paragraphs stay
+// visually separated by a blank line instead of jamming together — the F2
+// fix from the item-51 review.
+func TestFlushKeepsBlankSeparatorBetweenParagraphs(t *testing.T) {
+	paragraphs := []string{"Paragraph one.", "Paragraph two.", "Paragraph three.", "Paragraph four."}
+	content := strings.Join(paragraphs, "\n\n") + "\n\n"
+
+	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.width = 60
+	m.height = 24
+	m.status = "responding"
+	idx := 0
+	m.blocks = append(m.blocks, block{kind: "text", dirty: true})
+	m.dirtyBlocks[idx] = true
+
+	for i := 0; i < len(content); i += 5 {
+		end := i + 5
+		if end > len(content) {
+			end = len(content)
+		}
+		m.blocks[idx].content += content[i:end]
+		m.blocks[idx].dirty = true
+		m.dirtyBlocks[idx] = true
+		m.blocks[idx].cachedLines = nil
+		_ = m.renderBlock(idx, m.blocks[idx])
+	}
+
+	plain := stripAnsi(strings.Join(m.blocks[idx].cachedLines, "\n"))
+	blankRuns := strings.Count(plain, "\n\n")
+	if blankRuns < len(paragraphs)-1 {
+		t.Errorf("expected at least %d blank-line separators mid-stream, found %d in:\n%s",
+			len(paragraphs)-1, blankRuns, plain)
+	}
+}
+
+// TestFlushSeparatorTableStillHasOwnPadding checks that F2's added separator
+// doesn't stack with glamour's own leading pad line for a table, which would
+// otherwise make tables get double spacing while other constructs get one —
+// the review's "worse than uniform" observation about the pre-fix state.
+func TestFlushSeparatorTableStillHasOwnPadding(t *testing.T) {
+	content := "| a | b |\n| - | - |\n| 1 | 2 |\n\nAfter the table.\n"
+	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.width = 60
+	m.height = 24
+	m.status = "responding"
+	idx := 0
+	m.blocks = append(m.blocks, block{kind: "text", content: content, dirty: true})
+	m.dirtyBlocks[idx] = true
+	_ = m.renderBlock(idx, m.blocks[idx])
+
+	plain := stripAnsi(strings.Join(m.blocks[idx].cachedLines, "\n"))
+	if strings.Contains(plain, "\n\n\n") {
+		t.Errorf("table segment produced 2+ blank lines instead of a uniform single separator:\n%q", plain)
+	}
+}
+
+// ─── F3: fence nested inside a list item ─────────────────────────────────
+
+// TestNestedFenceInsideListItemDoesNotFlushMidCode is the exact probe from
+// the item-51 review: a numbered step whose sub-bullet holds a fenced code
+// block indented well past column 3. Before F3, the indented opening marker
+// was invisible to the scanner, so the blank line inside the "code" was
+// wrongly treated as a safe flush point and the closing marker was never
+// recognized (inFence stuck false forever).
+func TestNestedFenceInsideListItemDoesNotFlushMidCode(t *testing.T) {
+	content := "1. a\n   - b\n     ```\n     code\n\n     more\n     ```\n\nX\n"
+	// "X\n" at the end has no following blank line, so it's the unflushed
+	// tail — the last safe boundary is right after the fence closes and its
+	// blank line, i.e. everything except "X\n".
+	wantSafeUpto := len(content) - len("X\n")
+
+	st := &mdStreamState{}
+	st.scan(content)
+
+	if st.inFence {
+		t.Fatal("fence should be closed by end of content")
+	}
+	if st.safeUpto != wantSafeUpto {
+		t.Fatalf("safeUpto=%d, want %d (everything up to and including the fence-close blank line)",
+			st.safeUpto, wantSafeUpto)
+	}
+
+	// The blank line strictly inside the fence (between "code" and "more")
+	// must not have set safeUpto on its own.
+	midFence := strings.Index(content, "more") // position is after the interior blank line
+	st2 := &mdStreamState{}
+	st2.scan(content[:midFence])
+	if st2.safeUpto != 0 {
+		t.Fatalf("interior blank line inside the nested fence set safeUpto=%d, want 0 (fence still open)",
+			st2.safeUpto)
+	}
+	if !st2.inFence {
+		t.Fatal("fence should still be open right after its interior blank line")
+	}
+}
+
+// ─── F4: whitespace-only and CRLF blank lines ────────────────────────────
+
+// TestWhitespaceOnlyAndCRLFLinesAreBlank checks that a line of only spaces,
+// and a CRLF-terminated blank line (whose "line" content is a bare "\r"),
+// both count as safe flush points — before F4 both failed safe, and with
+// CRLF input progressive rendering never engaged at all.
+func TestWhitespaceOnlyAndCRLFLinesAreBlank(t *testing.T) {
+	t.Run("whitespace-only line", func(t *testing.T) {
+		content := "a\n   \nb\n"
+		st := &mdStreamState{}
+		st.scan(content)
+		if st.safeUpto == 0 {
+			t.Errorf("a whitespace-only line should count as a blank line, safeUpto=%d", st.safeUpto)
+		}
+	})
+	t.Run("CRLF blank line", func(t *testing.T) {
+		content := "a\r\n\r\nb\r\n\r\n"
+		st := &mdStreamState{}
+		st.scan(content)
+		if st.safeUpto == 0 {
+			t.Errorf("a CRLF blank line should count as a blank line, safeUpto=%d", st.safeUpto)
+		}
+	})
+}
+
+// ─── F6: shrink guard, symmetric with streamWrap.render's ────────────────
+
+// TestRenderStreamingMarkdownRecoversFromContentShrink mirrors
+// TestStreamWrapRecoversFromContentShrink: if content ever shrinks
+// (renderedUpto or scanPos would otherwise exceed len(content)), the state
+// must restart from scratch instead of panicking on a bad slice.
+func TestRenderStreamingMarkdownRecoversFromContentShrink(t *testing.T) {
+	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.width = 60
+	m.height = 24
+	m.status = "responding"
+	idx := 0
+	long := "first paragraph\n\nsecond paragraph that is long enough to flush\n\nthird one\n"
+	m.blocks = append(m.blocks, block{kind: "text", content: long, dirty: true})
+	m.dirtyBlocks[idx] = true
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("content shrink panicked: %v", r)
+		}
+	}()
+
+	_ = m.renderBlock(idx, m.blocks[idx])
+	if st := m.mdStreamState[idx]; st == nil || st.renderedUpto == 0 {
+		t.Fatal("setup: expected at least one flush before shrinking content")
+	}
+
+	// Content shrinks — must not panic, and must recover cleanly.
+	m.blocks[idx].content = "short"
+	m.blocks[idx].dirty = true
+	m.dirtyBlocks[idx] = true
+	m.blocks[idx].cachedLines = nil
+	_ = m.renderBlock(idx, m.blocks[idx])
+
+	got := strings.Join(m.blocks[idx].cachedLines, "\n")
+	want := wrapRawText("short", false, m.renderWidth())
+	if got != want {
+		t.Errorf("after shrink got %q, want %q", got, want)
 	}
 }
