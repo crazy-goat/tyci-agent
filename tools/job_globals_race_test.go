@@ -285,6 +285,15 @@ func TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree(t *te
 		},
 	})
 
+	// Set a starter synchronously BEFORE the flipper goroutine and the
+	// caller loop below both start touching it: without this, jobStarter is
+	// still nil from the previous test's cleanup (SetJobStarter(nil)), and
+	// nothing synchronizes the flipper's first SetJobStarter against the
+	// first RunTool call below — so on an unlucky (or single-core, where
+	// the flipper simply never gets scheduled first) run, runAsync sees a
+	// nil starter and the async spawn fails outright, not flakily.
+	SetJobStarter(testJobStarter{regA})
+
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -330,6 +339,16 @@ func TestBashToolRun_ConcurrentSetJobStarterAndRealHandoff_RaceFree(t *testing.T
 		SetJobActivityToucher(nil)
 		SetJobNotifier(nil)
 	})
+
+	// See the identical comment in
+	// TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree
+	// above: set a starter synchronously before racing it, so this test
+	// does not depend on the flipper goroutine winning a scheduling race
+	// against the first BashTool.Run call below. This path happens to
+	// degrade to a foreground run (not a hard failure) when jobStarter is
+	// nil, which is exactly why this particular test never surfaced the bug
+	// even though it had it too.
+	SetJobStarter(testJobStarter{regA})
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -389,6 +408,16 @@ func TestCronRunNow_ConcurrentSetJobStarterAndRealSpawn_RaceFree(t *testing.T) {
 		SetJobStarter(nil)
 		SetJobNotifier(nil)
 	})
+
+	// See the identical comment in
+	// TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree
+	// above: without this, jobStarter is nil from the previous test's
+	// cleanup and runNow's "no registry: run it inline" fallback would mask
+	// whether the flipper actually won the race to be scheduled first —
+	// this path happens not to fail outright either way (it degrades to a
+	// synchronous inline run), but it would silently skip exercising
+	// getJobStarter().Start on that call.
+	SetJobStarter(testJobStarter{regA})
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup

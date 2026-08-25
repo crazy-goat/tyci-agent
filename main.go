@@ -673,8 +673,23 @@ func wireTools() {
 	// Wire JobRegistry's status-change events onto jobEventBus so the TUI
 	// (see tuiCmd in commands.go) can show a live background-jobs panel. A
 	// no-op for every other mode, which never calls TUI.SetJobEventBus.
+	// Captured as locals, not read from the package globals inside the
+	// closure below: wireTools can be called again later (tests swap
+	// jobEventBus/JobNotices for isolation — see withTestWiring) to point a
+	// FUTURE registry's events at a FUTURE bus/notifier, but a job started
+	// on THIS JobRegistry, right now, must always report to THIS bus and
+	// THIS notifier — the ones actually wired in below — no matter what
+	// the globals get reassigned to later while that job is still running.
+	// Reading the globals at event-fire time instead of at wiring time let
+	// a job finished on one test's registry deliver its completion event
+	// into whatever jobEventBus/JobNotices the NEXT test had already
+	// swapped in by then (Start's completion goroutine closes job.done,
+	// then calls onEvent — see jobs/registry.go — so a test that only
+	// waits on job.done can already have moved on and rewired the globals
+	// by the time onEvent actually runs).
+	bus, notices := jobEventBus, JobNotices
 	JobRegistry.SetOnEvent(func(j jobs.Job) {
-		jobEventBus.Publish("job.updated", j)
+		bus.Publish("job.updated", j)
 
 		// A job that called "ask_parent" is now blocked, and it stays blocked until
 		// someone calls "answer_job" or its wall-clock limit expires — at which
@@ -685,7 +700,7 @@ func wireTools() {
 		// parent's next turn (and wakes an idle REPL) the same way a finished
 		// background command is.
 		if j.Status == jobs.StatusWaitingAnswer {
-			JobNotices.Notify(fmt.Sprintf(
+			notices.Notify(fmt.Sprintf(
 				"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
 					"Relay this question to the user in your reply, wait for their answer in the conversation, then deliver it — do not invent an answer on their behalf. "+
 					"Only call answer_job(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+

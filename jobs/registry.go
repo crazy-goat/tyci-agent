@@ -794,26 +794,38 @@ const MaxRetainedTerminalJobs = 50
 // A count alone is NOT actually a bound on memory: a subagent's Result is
 // its child's entire final answer, with nothing capping its length
 // anywhere upstream (unlike bash's 256 KiB output cap), and Description/
-// Err/Progress are also caller/model-supplied strings with no size limit of
-// their own. 200 x unbounded is not a small, fixed cost — it is a 4x
-// retention increase (50 live + 200 tombstoned) dressed up as one. So
-// tombstoneLocked below truncates each of those four string fields (via
-// truncateTombstoneField, UTF-8-safe — never slice a string by byte offset
-// mid-rune) to tombstoneFieldRuneCap runes before storing the snapshot. That
-// makes the actual worst case honest and computable: at most
-// tombstoneCap * 4 * tombstoneFieldRuneCap runes, i.e. at most
-// 200 * 4 * 4000 = 3,200,000 runes, or ~12.8 MB assuming every rune costs
-// the UTF-8 max of 4 bytes (ASCII text, the common case, costs a quarter of
-// that). Truncating Result specifically means "the full result", the
-// premise the tombstone exists to satisfy, is honored only up to
-// tombstoneFieldRuneCap runes — far beyond the 800-rune completion-notice
+// Err/Progress/ExtensionReason are also caller/model-supplied strings with
+// no size limit enforced here (ExtensionReason happens to be capped at
+// maxExtensionReason — 1024 bytes — by RequestExtension today, but that is
+// a decision the extension feature owns, not one this tombstone should
+// depend on staying true). 200 x unbounded is not a small, fixed cost — it
+// is a 4x retention increase (50 live + 200 tombstoned) dressed up as one.
+// So tombstoneLocked below truncates each of those five string fields (via
+// truncateTombstoneField/truncateTombstoneResult, UTF-8-safe — never slice
+// a string by byte offset mid-rune) to tombstoneFieldRuneCap runes before
+// storing the snapshot. That makes the actual worst case honest and
+// computable: at most tombstoneCap * 5 * tombstoneFieldRuneCap runes, i.e.
+// at most 200 * 5 * 4000 = 4,000,000 runes, or ~16 MB assuming every rune
+// costs the UTF-8 max of 4 bytes (ASCII text, the common case, costs a
+// quarter of that). Truncating Result specifically means "the full
+// result", the premise the tombstone exists to satisfy, is honored only up
+// to tombstoneFieldRuneCap runes — far beyond the 800-rune completion-notice
 // preview it replaces, but not literally unbounded, which an in-memory
-// process-lifetime cache cannot honestly promise anyway.
+// process-lifetime cache cannot honestly promise anyway. Result's
+// truncation is marked with an explicit "[note: ...]" (see
+// truncateTombstoneResult) rather than a bare ellipsis, because Result is
+// the one field wait()/resume() hand back as the child's actual answer — a
+// silent trailing "…" there reads as the child's own punctuation, not as
+// "the harness cut this", and a parent polling late could report a cut
+// intermediate paragraph as the final finding with no way to know a
+// conclusion existed. The other four fields are secondary metadata a
+// bare ellipsis is a fine enough signal for.
 const tombstoneCap = 200
 
 // tombstoneFieldRuneCap bounds each of a tombstoned Job's string fields
-// (Result, Err, Progress, Description) in runes — see tombstoneCap's doc
-// comment for the reasoning and the resulting worst-case memory bound.
+// (Result, Err, Progress, Description, ExtensionReason) in runes — see
+// tombstoneCap's doc comment for the reasoning and the resulting
+// worst-case memory bound.
 const tombstoneFieldRuneCap = 4000
 
 // pruneTerminalLocked drops the oldest finished jobs beyond
@@ -849,10 +861,11 @@ func (r *Registry) pruneTerminalLocked() {
 // fields first (see tombstoneCap's doc comment) so what is actually
 // retained matches what the doc comment promises. Caller must hold r.mu.
 func (r *Registry) tombstoneLocked(snap Job) {
-	snap.Result = truncateTombstoneField(snap.Result)
+	snap.Result = truncateTombstoneResult(snap.Result)
 	snap.Err = truncateTombstoneField(snap.Err)
 	snap.Progress = truncateTombstoneField(snap.Progress)
 	snap.Description = truncateTombstoneField(snap.Description)
+	snap.ExtensionReason = truncateTombstoneField(snap.ExtensionReason)
 
 	if _, exists := r.tombstones[snap.ID]; !exists {
 		r.tombstoneOrder = append(r.tombstoneOrder, snap.ID)
@@ -876,6 +889,20 @@ func truncateTombstoneField(s string) string {
 		return s
 	}
 	return string(runes[:tombstoneFieldRuneCap]) + "…"
+}
+
+// truncateTombstoneResult is truncateTombstoneField's Result-specific
+// sibling — see tombstoneCap's doc comment for why Result alone gets an
+// explicit, unmistakable "[note: ...]" marker (the same idiom
+// tools/subagent.go's subagentCutoffMessage and subagentCompletionNotice
+// already use for a truncated/cut-off child result) instead of a bare
+// trailing ellipsis.
+func truncateTombstoneResult(s string) string {
+	runes := []rune(s)
+	if len(runes) <= tombstoneFieldRuneCap {
+		return s
+	}
+	return string(runes[:tombstoneFieldRuneCap]) + fmt.Sprintf("\n\n[note: result truncated to %d runes for long-term retention]", tombstoneFieldRuneCap)
 }
 
 // PendingLines describes the jobs that are still outstanding, one line each,

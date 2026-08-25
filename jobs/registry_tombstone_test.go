@@ -209,9 +209,13 @@ func TestPruneTerminalLocked_LiveSubagentJobNeverPrunedOrTombstoned(t *testing.T
 // F2: a tombstone's string fields (Result above all — the whole point of
 // tombstoning a subagent job) are NOT retained in full without limit — that
 // would make tombstoneCap's "200 entries" comment a lie the moment a single
-// subagent returns a large result. truncateTombstoneField caps each field
-// at tombstoneFieldRuneCap runes, and must never split a multi-byte rune
-// (this repo has had byte-slicing truncation bugs before).
+// subagent returns a large result. truncateTombstoneResult (Result's own
+// truncator — see its doc comment for why it differs from the other four
+// fields' truncateTombstoneField) caps Result at tombstoneFieldRuneCap
+// runes, must never split a multi-byte rune (this repo has had
+// byte-slicing truncation bugs before), and must mark the cut with an
+// explicit "[note: ...]" (R4) rather than a bare ellipsis that could read
+// as the child's own punctuation.
 func TestPruneTerminalLocked_TombstoneTruncatesLongResultAndIsUTF8Safe(t *testing.T) {
 	r := NewRegistry()
 
@@ -242,12 +246,93 @@ func TestPruneTerminalLocked_TombstoneTruncatesLongResultAndIsUTF8Safe(t *testin
 	if !utf8.ValidString(got.Result) {
 		t.Fatalf("tombstoned Result is not valid UTF-8 — truncation split a multi-byte rune: %q", got.Result)
 	}
+
+	wantNote := fmt.Sprintf("\n\n[note: result truncated to %d runes for long-term retention]", tombstoneFieldRuneCap)
 	runeCount := utf8.RuneCountInString(got.Result)
-	// +1 for the trailing ellipsis rune truncateTombstoneField appends.
-	if runeCount > tombstoneFieldRuneCap+1 {
-		t.Fatalf("tombstoned Result has %d runes, want at most %d (+ellipsis)", runeCount, tombstoneFieldRuneCap+1)
+	maxRunes := tombstoneFieldRuneCap + utf8.RuneCountInString(wantNote)
+	if runeCount > maxRunes {
+		t.Fatalf("tombstoned Result has %d runes, want at most %d (content + note)", runeCount, maxRunes)
 	}
-	if !strings.HasSuffix(got.Result, "…") {
-		t.Errorf("expected a truncated tombstoned Result to end with an ellipsis marker, got suffix %q", got.Result[len(got.Result)-10:])
+	if !strings.HasSuffix(got.Result, wantNote) {
+		// Rune-safe tail for the failure message itself — this test's whole
+		// point is "never slice a string by byte offset", so its own
+		// diagnostic must not do exactly that (a byte slice here would
+		// panic if got.Result were ever shorter than the slice width).
+		t.Errorf("expected a truncated tombstoned Result to end with %q, got suffix %q", wantNote, lastRunes(got.Result, 40))
+	}
+}
+
+// lastRunes returns the last n runes of s (or all of s if it has fewer),
+// for building failure messages without ever slicing a string by byte
+// offset.
+func lastRunes(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[len(runes)-n:])
+}
+
+// TestPruneTerminalLocked_TombstoneTruncatesExtensionReason pins R3:
+// ExtensionReason is a fifth caller/model-supplied string field that
+// survives into a tombstoned snapshot (clearPendingExtensionLocked only
+// clears it while ExtensionPending is true — which is exactly false again
+// once an extension request has been APPROVED, see ResolveExtension), and
+// must be truncated the same way Result/Err/Progress/Description are.
+//
+// This sets ExtensionReason directly on the live *Job rather than through
+// RequestExtension: RequestExtension itself already rejects a reason over
+// maxExtensionReason (1024 bytes) before ever storing it (registry.go's
+// own length check), which is a decision the extension feature owns and
+// could change independently — tombstoneLocked's own truncation must hold
+// regardless of whatever that cap happens to be, so this test drives a
+// reason far longer than RequestExtension would ever accept in the first
+// place.
+func TestPruneTerminalLocked_TombstoneTruncatesExtensionReason(t *testing.T) {
+	r := NewRegistry()
+
+	var b strings.Builder
+	for i := 0; i < tombstoneFieldRuneCap+500; i++ {
+		b.WriteRune('🎉')
+	}
+	longReason := b.String()
+
+	release := make(chan struct{})
+	job := r.Start(context.Background(), "sub-ext", KindSubagent, "", func(context.Context, string) (string, bool, error) {
+		<-release
+		return "ok", false, nil
+	})
+
+	live, ok := r.Get(job.ID)
+	if !ok {
+		t.Fatalf("job vanished immediately after Start")
+	}
+	// Set it, THEN close release: the channel close/receive gives a
+	// happens-before edge to the job's own completion (and its later
+	// Snapshot() read under r.mu), so this direct field write is race-free
+	// even though it bypasses r.mu itself.
+	live.ExtensionReason = longReason
+	close(release)
+
+	if _, ok := r.Wait(context.Background(), job.ID, 2*time.Second); !ok {
+		t.Fatalf("job did not finish")
+	}
+
+	for i := 0; i < maxRetainedTerminalJobs+5; i++ {
+		runAndWaitDone(t, r, KindSubagent, fmt.Sprintf("filler %d", i), "ok")
+	}
+
+	got, ok := r.Wait(context.Background(), job.ID, time.Second)
+	if !ok {
+		t.Fatalf("expected the tombstoned job to still be retrievable")
+	}
+	if !utf8.ValidString(got.ExtensionReason) {
+		t.Fatalf("tombstoned ExtensionReason is not valid UTF-8 — truncation split a multi-byte rune")
+	}
+	if n := utf8.RuneCountInString(got.ExtensionReason); n > tombstoneFieldRuneCap+1 {
+		t.Fatalf("tombstoned ExtensionReason has %d runes, want at most %d (+ellipsis)", n, tombstoneFieldRuneCap+1)
+	}
+	if !strings.HasSuffix(got.ExtensionReason, "…") {
+		t.Errorf("expected a truncated ExtensionReason to end with an ellipsis marker, got suffix %q", lastRunes(got.ExtensionReason, 20))
 	}
 }
