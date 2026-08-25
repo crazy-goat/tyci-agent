@@ -49,6 +49,36 @@ func (a jobWaiterAdapter) Wait(ctx context.Context, id string, timeout time.Dura
 	}, true
 }
 
+// jobObserverAdapter satisfies tools.JobObserver over JobRegistry — same
+// translation as jobWaiterAdapter above, but calling WaitObserve instead of
+// Wait, and via a distinctly-named Observe method (batch-2 review round 2
+// finding D1) so this adapter can never be handed to SetJobObserver by
+// mistake in place of jobWaiterAdapter — the two used to share the exact
+// same method signature, which is what let the original C1 mistake compile
+// silently. This is the one that matters for C1: runWithHandoff's watcher
+// (and its handoff-message peek) must not count as a "waiter" for
+// jobs.Job.QuestionHasWaiter's purposes, or Ask suppresses the onEvent
+// notice for a caller that was never going to report the question to
+// anyone. See jobs.Registry.WaitObserve's doc comment.
+type jobObserverAdapter struct{ reg *jobs.Registry }
+
+func (a jobObserverAdapter) Observe(ctx context.Context, id string, timeout time.Duration) (tools.JobStatus, bool) {
+	job, ok := a.reg.WaitObserve(ctx, id, timeout)
+	if !ok {
+		return tools.JobStatus{}, false
+	}
+	return tools.JobStatus{
+		ID:       job.ID,
+		Done:     job.Status != jobs.StatusRunning && job.Status != jobs.StatusWaitingAnswer,
+		Success:  job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
+		Content:  job.Result,
+		Error:    job.Err,
+		Waiting:  job.Status == jobs.StatusWaitingAnswer,
+		Question: job.Question,
+		Progress: job.Progress,
+	}, true
+}
+
 // jobHandleAdapter satisfies tools.JobHandle by exposing *jobs.Job's ID
 // field as a method — the tools package's contract is method-shaped so it
 // never needs to know jobs.Job's concrete field layout.
@@ -399,7 +429,13 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 	cfg.Fallbacks = fallbacks
 
 	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
-	return JobRegistry.Start(ctx, question, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
+	// Captured as locals, not read from the package globals inside the
+	// closure below — same reasoning as wireTools's bus/notices capture
+	// (main.go): this closure can still be running long after JobRegistry/
+	// JobNotices get reassigned elsewhere (test isolation swaps them), and
+	// it must always report to the registry/queue it actually started on.
+	reg, notices := JobRegistry, JobNotices
+	return reg.Start(ctx, question, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		defer cancelEvaluation()
 		defer func() { btwEvaluationsMu.Lock(); btwActive--; btwEvaluationsMu.Unlock() }()
 		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
@@ -429,7 +465,16 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		text := sink.CollectedText()
 		if err == nil || truncated {
 			retainBtwEvaluation(jobID, &btwEvaluation{msgs: session.ForkMessages(forked), mc: client, cfg: cfg, question: question})
-			JobNotices.Notify(fmt.Sprintf("[btw] evaluation %q finished (job_id=%q): %s\nIf it is worth doing, call promote_btw(job_id=%q). Promotion creates one real subthread; wait for that job instead of doing the work in this thread.", question, jobID, strings.TrimSpace(text), jobID))
+			noticeText := fmt.Sprintf("[btw] evaluation %q finished (job_id=%q): %s\nIf it is worth doing, call promote_btw(job_id=%q). Promotion creates one real subthread; wait for that job instead of doing the work in this thread.", question, jobID, strings.TrimSpace(text), jobID)
+			// B4: address this to whoever spawned this /btw job (parentID),
+			// not unconditionally to the main queue — see the identical
+			// routing/fallback choice in wireTools's onEvent hook (main.go).
+			if parentID == "" || !reg.Post(parentID, noticeText) {
+				if parentID != "" {
+					noticeText = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", parentID, noticeText)
+				}
+				notices.Notify(noticeText)
+			}
 		}
 		sink.MarkDone(err)
 		return text, truncated, err

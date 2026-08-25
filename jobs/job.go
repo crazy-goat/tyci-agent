@@ -69,6 +69,17 @@ type Job struct {
 	// StatusWaitingAnswer (set by Ask, cleared once answered or unblocked).
 	Question string
 
+	// QuestionHasWaiter is true when, at the moment Ask set Status to
+	// StatusWaitingAnswer, at least one caller was already blocked inside
+	// Registry.Wait for this specific job (see waiters below). It exists so
+	// a single question is delivered exactly once: whoever wires the
+	// onEvent hook into a notice queue (see main.go's wireTools) can skip
+	// queuing that notice when this is true, because the waiting Wait call
+	// is about to report the very same question back to its own caller
+	// synchronously — the two paths would otherwise both deliver it. Reset
+	// to false when the job leaves StatusWaitingAnswer.
+	QuestionHasWaiter bool
+
 	// Progress holds the last status note reported via SetProgress
 	// (report_progress tool). Unlike Question, it is NOT cleared when the
 	// job finishes — it persists as the last thing the job said about its
@@ -107,6 +118,39 @@ type Job struct {
 	// must never copy it.
 	answerCh chan jobAnswer
 
+	// statusChanged is closed and replaced every time Ask flips Status
+	// between StatusRunning and StatusWaitingAnswer (see
+	// Registry.signalStatusChangeLocked). Wait selects on whatever value it
+	// held at the moment Wait was called, so a transition that happens
+	// either while Wait is blocked OR in the narrow window just before —
+	// closing a channel a select is about to read from still wakes it —
+	// is never missed. It is not used for the terminal transition; job.done
+	// already covers that. Unexported and channel-typed, so Snapshot never
+	// copies it; guarded by Registry.mu like everything else here.
+	statusChanged chan struct{}
+
+	// waiters counts callers currently blocked inside Registry.Wait (NOT
+	// WaitObserve — see its doc comment) for this job. Ask reads it (while
+	// already holding Registry.mu) to decide QuestionHasWaiter above. Only
+	// a Wait call counts: it is the shape that hands its result back to
+	// whoever called it, which is what makes it a genuine second delivery
+	// path for the question. WaitObserve exists precisely for a caller
+	// that blocks on the same signal for its own purposes (waking an
+	// unrelated select) without itself reporting the question to anyone —
+	// counting that too was batch-2 review finding C1: it made Ask
+	// suppress the only delivery a question had. Guarded by Registry.mu.
+	waiters int
+
+	// observers counts callers currently blocked inside Registry.WaitObserve
+	// for this job — the mirror of waiters above, kept as a separate
+	// counter rather than folded into it so the two can never be confused
+	// (that confusion is exactly what C1 was). Ask does not read this: an
+	// observer never suppresses a notice. It exists purely so a test can
+	// synchronize on "a WaitObserve call has actually registered" instead
+	// of a settle sleep (see Registry.ObserverCount). Guarded by
+	// Registry.mu.
+	observers int
+
 	// cancel ends this job's own context (see Registry.Start, which derives
 	// it). Unexported and func-typed so Snapshot keeps copying the struct by
 	// value; guarded by Registry.mu like everything else written after
@@ -141,6 +185,23 @@ type Job struct {
 	// rare, deliberate act, not something fired on every streamed token), so
 	// a plain slice under the registry lock is simplest.
 	mailbox []string
+
+	// ResidualMailbox is set ONCE, at the moment this job goes terminal (see
+	// Registry.Start's completion path), to whatever was still sitting in
+	// mailbox and never got drained by this job's own (now-stopped) agent
+	// loop. Batch-2 review finding C3: Registry.Post reports success for
+	// any live job, but "live" only means the loop MIGHT still drain it at
+	// its next iteration boundary — a job whose final iteration has
+	// already happened (agent.Run does not drain after its last turn) will
+	// never read another posted message again, and the mailbox is gone the
+	// moment this job is pruned. Before this field existed, that content —
+	// notices routed here by notifyToParent among them — simply vanished
+	// with no trace once the job finished. Whoever consumes onEvent's
+	// terminal snapshot is expected to forward this to somewhere still
+	// reachable (main.go's onEvent hook forwards it to the main notice
+	// queue, tagged) instead of letting it disappear. Copied by Snapshot
+	// like any other exported field; nil on every NON-terminal snapshot.
+	ResidualMailbox []string
 
 	extensionCtx      *resettableDeadlineContext
 	extensionDecision chan bool
@@ -189,17 +250,26 @@ func ShortID(id string) string {
 
 func (j *Job) Snapshot() Job {
 	return Job{
-		ID:                 j.ID,
-		Description:        j.Description,
-		Kind:               j.Kind,
-		ParentID:           j.ParentID,
-		Status:             j.Status,
-		Result:             j.Result,
-		Err:                j.Err,
-		StartedAt:          j.StartedAt,
-		FinishedAt:         j.FinishedAt,
-		Question:           j.Question,
-		Progress:           j.Progress,
+		ID:                j.ID,
+		Description:       j.Description,
+		Kind:              j.Kind,
+		ParentID:          j.ParentID,
+		Status:            j.Status,
+		Result:            j.Result,
+		Err:               j.Err,
+		StartedAt:         j.StartedAt,
+		FinishedAt:        j.FinishedAt,
+		Question:          j.Question,
+		QuestionHasWaiter: j.QuestionHasWaiter,
+		Progress:          j.Progress,
+		// append([]string(nil), ...) copies the backing array — a plain
+		// slice-header copy would leave every snapshot (including every
+		// element List() returns) aliasing the SAME array the live Job
+		// still points at, breaking the copy-by-value contract every
+		// unexported/func-typed field's doc comment in this file justifies
+		// leaving out of Snapshot (batch-2 review round 2 finding D4). Read-only
+		// everywhere today, so no live bug yet — but nothing enforces that.
+		ResidualMailbox:    append([]string(nil), j.ResidualMailbox...),
 		ExtensionRequestID: j.ExtensionRequestID,
 		ExtensionSeconds:   j.ExtensionSeconds,
 		ExtensionReason:    j.ExtensionReason,

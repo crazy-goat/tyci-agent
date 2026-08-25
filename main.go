@@ -39,6 +39,15 @@ var jobEventBus = eventbus.New(32)
 // tests in package main can assert on delivery.
 var JobNotices = jobs.NewNotifier()
 
+// residualMailboxSweepCap bounds how many of a finished job's leftover
+// mailbox entries (see jobs.Job.ResidualMailbox) get forwarded to the main
+// queue individually — batch-2 review round 2 finding D5. A handful is a
+// genuinely useful, readable heads-up; dozens (an orphaned fork with
+// several background bash jobs each posting periodic progress notices
+// into it) would just flood the queue. Past this many, the remainder is
+// summarized as a count instead of shown one by one.
+const residualMailboxSweepCap = 5
+
 // mergeNextMessages composes several NextMessages-shaped drain callbacks into
 // the single one agent.Config accepts, calling them in the order given so a
 // user's own queued line is delivered ahead of a background notice that
@@ -656,6 +665,11 @@ func wireTools() {
 	// against real background jobs — /btw side-conversations and async
 	// subagents alike — instead of each running on its own registry.
 	tools.SetJobWaiter(jobWaiterAdapter{reg: JobRegistry})
+	// runWithHandoff's watcher and handoff-message peek go through
+	// WaitObserve, not Wait — see JobObserver's doc comment (batch-2 review
+	// finding C1) for why counting them as ordinary "wait" callers would
+	// suppress the only delivery a question had.
+	tools.SetJobObserver(jobObserverAdapter{reg: JobRegistry})
 	tools.SetJobStarter(jobStarterAdapter{reg: JobRegistry})
 	tools.SetJobAsker(jobAskerAdapter{reg: JobRegistry})
 	tools.SetJobExtensionRequester(jobExtensionRequesterAdapter{reg: JobRegistry})
@@ -687,7 +701,7 @@ func wireTools() {
 	// then calls onEvent — see jobs/registry.go — so a test that only
 	// waits on job.done can already have moved on and rewired the globals
 	// by the time onEvent actually runs).
-	bus, notices := jobEventBus, JobNotices
+	bus, notices, reg := jobEventBus, JobNotices, JobRegistry
 	JobRegistry.SetOnEvent(func(j jobs.Job) {
 		bus.Publish("job.updated", j)
 
@@ -699,13 +713,78 @@ func wireTools() {
 		// wastes the whole child run. So the question is pushed into the
 		// parent's next turn (and wakes an idle REPL) the same way a finished
 		// background command is.
-		if j.Status == jobs.StatusWaitingAnswer {
-			notices.Notify(fmt.Sprintf(
+		//
+		// j.QuestionHasWaiter (B7) is true when some caller was already
+		// blocked inside jobs.Registry.Wait — specifically Wait, never
+		// WaitObserve — for this exact job the moment this question was
+		// posed. Only the "wait" tool goes through Wait: a blocking
+		// subagent call's own handoff watch (tools/subagent.go's
+		// watchForWaiting) deliberately goes through WaitObserve instead,
+		// since it only wakes an unrelated select and never itself
+		// reports the question to anyone (batch-2 review finding C1 — see
+		// jobs.Registry.WaitObserve's doc comment). A genuine Wait caller
+		// is about to receive the same question back as its own,
+		// synchronous Wait/wait() result (see JobStatus.Waiting), so
+		// queuing this notice too would deliver the same question twice in
+		// one turn. Skip it in that case; the notice path stays the
+		// authoritative (and only) one otherwise.
+		if j.Status == jobs.StatusWaitingAnswer && !j.QuestionHasWaiter {
+			text := fmt.Sprintf(
 				"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
 					"Relay this question to the user in your reply, wait for their answer in the conversation, then deliver it — do not invent an answer on their behalf. "+
 					"Only call answer_job(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+
 					"Until it is answered it makes no progress, and its work is discarded when it times out.",
-				j.Description, j.Question, j.ID, j.ID))
+				j.Description, j.Question, j.ID, j.ID)
+
+			// B4: address this to whoever spawned j (j.ParentID), not
+			// unconditionally to the main queue — a job spawned from an
+			// independent fork (a /btw side-conversation, or a subagent
+			// nested inside one) must notify that fork, never the main
+			// conversation it must never touch (see btwConfig's doc
+			// comment in btw.go). reg.Post delivers into the parent job's
+			// own mailbox, drained at its next agent-loop iteration the
+			// same way "message"/"/msg" already work; it returns false
+			// when parentID is unknown or that job has already finished.
+			// Design choice for that case: forward to main rather than
+			// drop the notice silently — a dropped notice leaves no trace
+			// that a child ever asked anything, while a forwarded one at
+			// least reaches someone, tagged as not its original addressee.
+			if j.ParentID == "" || !reg.Post(j.ParentID, text) {
+				if j.ParentID != "" {
+					text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", j.ParentID, text)
+				}
+				notices.Notify(text)
+			}
+		}
+
+		// C3 (batch-2 review): a message sitting in a job's mailbox when
+		// that job goes terminal will never be drained by anyone — its own
+		// agent loop has stopped for good, and nothing else ever reads
+		// that mailbox (see jobs.Job.ResidualMailbox's doc comment). That
+		// includes a notice this very hook routed there via reg.Post above,
+		// on some earlier event, for a fork that then finished before its
+		// own next iteration got around to draining it. Before this swept
+		// it to main, tagged, it simply vanished — silently dropping a
+		// notice is exactly the failure this whole notify-routing design
+		// exists to avoid.
+		//
+		// Capped (batch-2 review round 2 finding D5): an orphaned fork
+		// that had several background bash jobs each posting periodic
+		// progress notices into its mailbox would otherwise dump every one
+		// of them into main at once. Still far better than vanishing, but
+		// past residualMailboxSweepCap this says how many were left out
+		// instead of flooding the queue with all of them individually.
+		if n := len(j.ResidualMailbox); n > 0 {
+			shown := j.ResidualMailbox
+			if n > residualMailboxSweepCap {
+				shown = j.ResidualMailbox[:residualMailboxSweepCap]
+			}
+			for _, m := range shown {
+				notices.Notify(fmt.Sprintf("[for job %s, which finished before this could be delivered to it — forwarded here instead] %s", j.ID, m))
+			}
+			if remaining := n - len(shown); remaining > 0 {
+				notices.Notify(fmt.Sprintf("[for job %s] and %d more queued message(s) that finished before delivery — not shown, not delivered", j.ID, remaining))
+			}
 		}
 	})
 

@@ -74,7 +74,10 @@ func (t *RequestTimeoutExtensionTool) Run(ctx context.Context, input map[string]
 		return ToolResult{Type: "result", Success: false, Error: "could not register a timeout extension request for this job"}
 	}
 
-	notify(fmt.Sprintf("[timeout extension] request pending: job_id=%q request_id=%q seconds=%d reason=%q", jobID, requestID, seconds, reason))
+	// The request is FOR jobID's own parent — the one who can call
+	// answer_job/resolve_extension on it — not for jobID's own mailbox
+	// (which nothing but jobID's own agent loop ever reads).
+	notifyToParent(parentIDOf(jobID), fmt.Sprintf("[timeout extension] request pending: job_id=%q request_id=%q seconds=%d reason=%q", jobID, requestID, seconds, reason))
 
 	approved, answered := jobExtensionRequester.WaitExtension(ctx, jobID, requestID)
 	if !answered {

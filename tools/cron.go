@@ -338,7 +338,7 @@ func (t *CronTool) runNow(ctx context.Context, name string) ToolResult {
 		if err != nil {
 			return out, false, err
 		}
-		notify(fmt.Sprintf("[scheduled job] %q finished. Read it with cron(action=\"logs\", name=%q).", name, name))
+		notifyToParent(parentID, fmt.Sprintf("[scheduled job] %q finished. Read it with cron(action=\"logs\", name=%q).", name, name))
 		return out, false, nil
 	})
 	return okf("running %q now as job %s, out of turn with its schedule. You will be notified when it finishes; read the output with cron(action=\"logs\", name=%q). Do not wait for it unless you have nothing else to do.", name, handle.ID(), name)
