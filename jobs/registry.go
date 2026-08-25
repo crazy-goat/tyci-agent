@@ -115,7 +115,29 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 	}
 
 	go func() {
-		result, truncated, err := fn(jobCtx, job.ID)
+		var result string
+		var truncated bool
+		var err error
+		returned := false
+		func() {
+			defer func() {
+				if recovered := recover(); !returned {
+					// A panic in a job must follow the same terminal path as an
+					// ordinary function error. In particular, keep the completion
+					// event and done signal intact so Wait and the interactive
+					// process do not get stranded by a bad job function.
+					if recovered == nil {
+						err = errors.New("job function panicked: <nil>")
+					} else {
+						err = fmt.Errorf("job function panicked: %v", recovered)
+					}
+					result = ""
+					truncated = false
+				}
+			}()
+			result, truncated, err = fn(jobCtx, job.ID)
+			returned = true
+		}()
 		cancel()
 
 		r.mu.Lock()
