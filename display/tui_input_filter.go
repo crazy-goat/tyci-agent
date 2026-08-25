@@ -29,103 +29,137 @@ func sanitizeInput(r io.Reader) io.Reader {
 
 type sanitizeReader struct {
 	inner io.Reader
-	// pending is a small buffer of bytes that look like the prefix of a
-	// stray mouse pattern but didn't terminate in the previous Read. We
-	// prepend it to the next chunk before running the filter. On EOF we
-	// flush it verbatim (best effort).
+	// pending is a trailing mouse prefix that may continue in the next chunk.
+	// It is kept separate from ready so an already-filtered real SGR escape is
+	// never inspected again after a small caller buffer splits its output.
 	pending []byte
+	ready   []byte
+	done    bool
+	err     error
 }
 
 const sgrMouseMaxLen = 24
 
 func (s *sanitizeReader) Read(p []byte) (int, error) {
-	// Pull a fresh chunk from the inner stream and prepend any pending.
-	maxSrc := len(p) + sgrMouseMaxLen
-	src := make([]byte, maxSrc)
+	if len(p) == 0 {
+		return 0, nil
+	}
 
-	// If we already have pending bytes stashed, joining them is sufficient;
-	// skip the inner Read until pending is drained.
-	if len(s.pending) > 0 {
+	for {
+		if len(s.ready) > 0 {
+			n := copy(p, s.ready)
+			s.ready = s.ready[n:]
+			return n, nil
+		}
+		if s.done {
+			if len(s.pending) > 0 {
+				n := copy(p, s.pending)
+				s.pending = s.pending[n:]
+				return n, nil
+			}
+			return 0, s.err
+		}
+
+		maxSrc := len(p) + sgrMouseMaxLen
 		joined := append([]byte(nil), s.pending...)
 		s.pending = s.pending[:0]
-		// Read whatever's available; non-blocking semantics aren't needed
-		// because bubbletea reads synchronously.
+		if len(joined) > maxSrc {
+			// This should not happen with the bounded source reads below, but
+			// avoid passing a negative slice bound to an unusual caller.
+			maxSrc = len(joined)
+		}
+		src := make([]byte, maxSrc)
 		n, err := s.inner.Read(src[:maxSrc-len(joined)])
 		joined = append(joined, src[:n]...)
+		if err != nil {
+			s.done = true
+			s.err = err
+		}
+
 		out, deferTail := filterStrayMouseWithDefer(joined, sgrMouseMaxLen)
-		s.pending = append(s.pending, deferTail...)
 		copied := copy(p, out)
-		if copied < len(out) {
-			s.pending = append(s.pending, out[copied:]...)
+		// Output that did not fit must precede a deferred raw prefix. The
+		// latter is only safe to inspect after the next source chunk arrives.
+		s.ready = append(s.ready, out[copied:]...)
+		s.pending = append(s.pending, deferTail...)
+		if copied > 0 {
+			// Do not return EOF alongside bytes that are still queued: callers
+			// are allowed to stop at n>0, err==EOF and would lose those bytes.
+			return copied, nil
 		}
-		if err != nil && copied == 0 {
-			return 0, err
-		}
-		// Even on EOF we don't worry about flushing pending that was already
-		// joined: anything stashed in s.pending above is bytes that we
-		// couldn't safely emit yet because they MIGHT continue into a stray
-		// pattern in the (now empty) input. We let the next call to Read
-		// surface them as text when EOF has already been delivered.
-		if err == io.EOF && len(s.pending) > 0 {
-			// Drain pending now since no more inner data is coming.
-			n2 := copy(p[copied:], s.pending)
-			s.pending = s.pending[n2:]
-			copied += n2
-		}
-		return copied, err
-	}
-
-	n, err := s.inner.Read(src)
-	src = src[:n]
-	out, deferTail := filterStrayMouseWithDefer(src, sgrMouseMaxLen)
-	s.pending = append(s.pending, deferTail...)
-	copied := copy(p, out)
-	if copied < len(out) {
-		s.pending = append(s.pending, out[copied:]...)
-	}
-	if err != nil && copied == 0 {
-		return 0, err
-	}
-	return copied, err
-}
-
-// filterStrayMouseWithDefer runs filterStrayMouse over src and then examines
-// the trailing bytes for a possible spill across reads. Returns (kept,
-// deferTail). deferTail is empty when nothing needs to be deferred.
-func filterStrayMouseWithDefer(src []byte, maxSpill int) (kept []byte, deferTail []byte) {
-	cleaned := filterStrayMouse(src)
-	if len(cleaned) == 0 {
-		return cleaned, nil
-	}
-	// Walk back through cleaned looking for the rightmost `[` whose stray
-	// pattern would still match (i.e. could continue past the chunk end).
-	// Only consider the last maxSpill bytes — anything further left is
-	// safe to emit because the longest possible SGR mouse pattern fits in
-	// that window.
-	startLookback := len(cleaned) - maxSpill
-	if startLookback < 0 {
-		startLookback = 0
-	}
-	for i := len(cleaned) - 1; i >= startLookback; i-- {
-		if cleaned[i] != '[' {
+		if len(s.pending) > 0 {
+			if s.done {
+				// There is no future chunk that could complete this prefix, so
+				// flush it verbatim as a best-effort EOF behavior.
+				continue
+			}
+			// The input chunk was entirely held back; read the next chunk.
 			continue
 		}
-		if i+1 >= len(cleaned) || cleaned[i+1] != '<' {
-			return cleaned, nil
+		if s.done {
+			return 0, s.err
 		}
-		_, status := strayMatchAt(cleaned, i)
-		switch status {
-		case strayMatchNone:
-			return cleaned, nil
-		case strayMatchComplete:
-			// The pattern is fully visible in this chunk and was already
-			// stripped by filterStrayMouse. There's no risk of spill.
-			return cleaned, nil
-		case strayMatchSpills:
-			return append([]byte(nil), cleaned[:i]...), append([]byte(nil), cleaned[i:]...)
+		// A complete stray escape may consume the whole chunk without
+		// producing output. Return control to the caller rather than blocking
+		// for another source chunk in the same Read call.
+		if n > 0 {
+			return 0, nil
 		}
+		// Preserve an unusual inner Reader's (0, nil) result rather than
+		// spinning forever.
+		return 0, nil
 	}
-	return cleaned, nil
+}
+
+// filterStrayMouseWithDefer filters complete stray mouse escapes and holds
+// back a trailing prefix that may continue in the next Read. A real SGR
+// prefix is deferred from its ESC; a stray prefix is deferred from its `[`.
+// Keeping the ESC with the real prefix is essential: otherwise the next Read
+// receives only `[<...` and bubbletea sees it as ordinary text.
+func filterStrayMouseWithDefer(src []byte, maxSpill int) (kept []byte, deferTail []byte) {
+	if len(src) == 0 {
+		return nil, nil
+	}
+	if maxSpill <= 0 {
+		maxSpill = len(src)
+	}
+	lookback := len(src) - maxSpill
+	if lookback < 0 {
+		lookback = 0
+	}
+
+	out := make([]byte, 0, len(src))
+	for i := 0; i < len(src); {
+		if src[i] == 0x1b {
+			end, status := sgrMouseMatchAt(src, i)
+			switch status {
+			case strayMatchComplete:
+				out = append(out, src[i:end]...)
+				i = end
+				continue
+			case strayMatchSpills:
+				if i >= lookback {
+					return out, append([]byte(nil), src[i:]...)
+				}
+			}
+		}
+		if src[i] == '[' && (i == 0 || src[i-1] != 0x1b) {
+			end, status := strayMatchAt(src, i)
+			switch status {
+			case strayMatchComplete:
+				// A no-ESC mouse payload is the one sequence this filter drops.
+				i = end
+				continue
+			case strayMatchSpills:
+				if i >= lookback {
+					return out, append([]byte(nil), src[i:]...)
+				}
+			}
+		}
+		out = append(out, src[i])
+		i++
+	}
+	return out, nil
 }
 
 type strayMatchStatus int
@@ -140,43 +174,67 @@ const (
 // at offset `idx` in src. Returns (end, status). status describes whether
 // and how the pattern matched.
 func strayMatchAt(src []byte, idx int) (int, strayMatchStatus) {
-	if idx+1 >= len(src) || src[idx+1] != '<' {
+	return mouseMatchAt(src, idx, false)
+}
+
+// sgrMouseMatchAt is the corresponding matcher for a real SGR mouse escape,
+// whose prefix starts with ESC. Incomplete prefixes are reported as spills so
+// the caller can retain the ESC across Read boundaries.
+func sgrMouseMatchAt(src []byte, idx int) (int, strayMatchStatus) {
+	return mouseMatchAt(src, idx, true)
+}
+
+func mouseMatchAt(src []byte, idx int, withESC bool) (int, strayMatchStatus) {
+	if withESC {
+		if idx >= len(src) || src[idx] != 0x1b {
+			return 0, strayMatchNone
+		}
+		idx++
+		if idx >= len(src) {
+			return 0, strayMatchSpills
+		}
+	}
+	if idx >= len(src) || src[idx] != '[' {
 		return 0, strayMatchNone
 	}
-	j := idx + 2
-	for j < len(src) && isDigit(src[j]) {
-		j++
-	}
-	if j == idx+2 {
-		return 0, strayMatchNone
-	}
-	if j >= len(src) {
+	idx++
+	if idx >= len(src) {
 		return 0, strayMatchSpills
 	}
-	if src[j] != ';' {
+	if src[idx] != '<' {
 		return 0, strayMatchNone
 	}
-	j++
-	for j < len(src) && isDigit(src[j]) {
-		j++
+	idx++
+
+	for field := 0; field < 3; field++ {
+		fieldStart := idx
+		for idx < len(src) && isDigit(src[idx]) {
+			idx++
+		}
+		if idx == fieldStart {
+			if idx == len(src) {
+				return 0, strayMatchSpills
+			}
+			return 0, strayMatchNone
+		}
+		if field == 2 {
+			break
+		}
+		if idx == len(src) {
+			return 0, strayMatchSpills
+		}
+		if src[idx] != ';' {
+			return 0, strayMatchNone
+		}
+		idx++
 	}
-	if j >= len(src) {
+	if idx == len(src) {
 		return 0, strayMatchSpills
 	}
-	if src[j] != ';' {
+	if src[idx] != 'M' && src[idx] != 'm' {
 		return 0, strayMatchNone
 	}
-	j++
-	for j < len(src) && isDigit(src[j]) {
-		j++
-	}
-	if j >= len(src) {
-		return 0, strayMatchSpills
-	}
-	if src[j] != 'M' && src[j] != 'm' {
-		return 0, strayMatchNone
-	}
-	return j + 1, strayMatchComplete
+	return idx + 1, strayMatchComplete
 }
 
 // filterStrayMouse returns a copy of buf with stray SGR mouse escapes

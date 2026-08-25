@@ -168,6 +168,57 @@ func TestSanitizeReader_BackToBackStrayMice(t *testing.T) {
 	}
 }
 
+func TestSanitizeReader_RealMouseSplitAcrossReads(t *testing.T) {
+	const mouse = "\x1b[<64;72;56M"
+	cases := []struct {
+		name  string
+		parts []string
+	}{
+		{name: "after ESC", parts: []string{"\x1b", "[<64;72;56M"}},
+		{name: "after ESC bracket", parts: []string{"\x1b[", "<64;72;56M"}},
+		{name: "after ESC bracket less-than", parts: []string{"\x1b[<", "64;72;56M"}},
+		{name: "in parameters", parts: []string{"\x1b[<64;72;", "56M"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := sanitizeInput(newConcatReader(strings.NewReader(tc.parts[0]), strings.NewReader(tc.parts[1])))
+			got := readSanitized(t, r, 2)
+			if got != mouse {
+				t.Errorf("split real SGR mouse was changed: got %q, want %q", got, mouse)
+			}
+		})
+	}
+}
+
+func TestSanitizeReader_BackToBackRealMouseAndText(t *testing.T) {
+	const want = "\x1b[<64;72;56M\x1b[<65;72;56mhello"
+	r := sanitizeInput(newConcatReader(
+		strings.NewReader("\x1b"),
+		strings.NewReader("[<64;72;56M\x1b[<65;72;56m"),
+		strings.NewReader("hello"),
+	))
+	if got := readSanitized(t, r, 2); got != want {
+		t.Errorf("back-to-back real SGR and text changed: got %q, want %q", got, want)
+	}
+}
+
+func readSanitized(t *testing.T, r io.Reader, bufferSize int) string {
+	t.Helper()
+	var out bytes.Buffer
+	buf := make([]byte, bufferSize)
+	for {
+		n, err := r.Read(buf)
+		out.Write(buf[:n])
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read error: %v", err)
+		}
+	}
+	return out.String()
+}
+
 // concatReader concatenates multiple io.Readers end-to-end.
 type concatReader struct {
 	rds []io.Reader
