@@ -551,3 +551,66 @@ func TestPlainWaitCountsTheSlicesItAskedFor(t *testing.T) {
 		t.Fatal("the wait never finished — a fake sleep against a wall-clock deadline never will")
 	}
 }
+
+// TestWaitTool_JobIDStillRunning_FlattensSingleNoteNewlines closes the gap
+// the multi-entry block rendering left behind. renderProgressHistory
+// flattens each entry, but the one-note and Progress-fallback shapes
+// interpolated the text raw, so a single report_progress("a\nb") dropped a
+// real line break into the middle of the sentence — the same defect the
+// block rendering exists to avoid, surviving in the shape that is arguably
+// the most common one (one note per phase). tools/progress.go's Run rejects
+// only the empty string, so nothing upstream prevents the newline.
+func TestWaitTool_JobIDStillRunning_FlattensSingleNoteNewlines(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status JobStatus
+	}{
+		{"one-entry history", JobStatus{ID: "abc", ProgressHistory: []string{"step one done\nstep two next"}}},
+		{"Progress fallback", JobStatus{ID: "abc", Progress: "step one done\nstep two next"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := &WaitTool{Waiter: &mockJobWaiter{ok: true, status: tc.status}}
+			res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+			if !res.Success {
+				t.Fatalf("still-running should not be an error, got: %s", res.Error)
+			}
+			// The note's own text must not carry a raw newline. The
+			// multi-entry shape legitimately contains newlines (they
+			// separate bullets), which is why this only asserts on the
+			// single-note shapes.
+			if strings.Contains(res.Content, "step one done\nstep two next") {
+				t.Fatalf("single progress note kept its raw newline: %q", res.Content)
+			}
+			if !strings.Contains(res.Content, "step one done step two next") {
+				t.Fatalf("expected the note flattened to one line, got: %q", res.Content)
+			}
+		})
+	}
+}
+
+// TestRenderProgressHistory_SkipsBlankEntries covers a real producer, not a
+// hypothetical one: tools/bash.go's pump posts EVERY output line of a
+// backgrounded command through SetProgress, blank separator lines included,
+// and report_progress's empty-string rejection does not apply to that path.
+// Rendered without this, a build that prints blank lines came out as a run
+// of empty "- " bullets. Blank entries must also not inflate the omitted
+// count — they are not notes anybody wanted to read.
+func TestRenderProgressHistory_SkipsBlankEntries(t *testing.T) {
+	rendered, dropped := renderProgressHistory([]string{"", "   ", "\n\n", "real line", "\t"}, 800)
+	if dropped != 0 {
+		t.Fatalf("blank entries must not count as omitted for length, got dropped=%d", dropped)
+	}
+	if rendered != "- real line" {
+		t.Fatalf("expected only the one real note rendered, got: %q", rendered)
+	}
+}
+
+// TestRenderProgressHistory_AllBlankRendersNothing is the degenerate case of
+// the above: a job whose only notes are blank lines must render as nothing
+// at all, not as a "Progress so far:" header followed by empty bullets.
+func TestRenderProgressHistory_AllBlankRendersNothing(t *testing.T) {
+	rendered, dropped := renderProgressHistory([]string{"", "  ", "\n"}, 800)
+	if rendered != "" || dropped != 0 {
+		t.Fatalf("expected nothing rendered and nothing reported dropped, got %q / %d", rendered, dropped)
+	}
+}

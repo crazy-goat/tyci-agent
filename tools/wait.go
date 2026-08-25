@@ -197,9 +197,21 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			progressNote = fmt.Sprintf(" Progress so far%s:\n%s", omittedNote, block)
 			progressSep = "\n"
 		} else if len(status.ProgressHistory) == 1 {
-			progressNote = fmt.Sprintf(" Latest progress: %s.", status.ProgressHistory[0])
+			// flattenProgressLine here too, not just in the multi-entry
+			// block: a single note can contain "\n" exactly as easily as
+			// one of several can (tools/progress.go's Run rejects only the
+			// empty string), and a raw line break dropped mid-sentence into
+			// this result is the same defect the block rendering exists to
+			// avoid. No truncation note is possible in this shape — the
+			// registry only sets ProgressHistoryTruncated once it has
+			// evicted, which pins the length at progressHistoryCap (20), so
+			// a one-entry history cannot also be truncated. That is the only
+			// reason it is safe to render inline without one.
+			progressNote = fmt.Sprintf(" Latest progress: %s.", flattenProgressLine(status.ProgressHistory[0]))
 		} else if status.Progress != "" {
-			progressNote = fmt.Sprintf(" Latest progress: %s.", status.Progress)
+			// Same flattening for the same reason. This branch only runs for
+			// a JobWaiter that never populates ProgressHistory at all.
+			progressNote = fmt.Sprintf(" Latest progress: %s.", flattenProgressLine(status.Progress))
 		}
 		return ToolResult{
 			Type:    "result",
@@ -266,10 +278,12 @@ func flattenProgressLine(s string) string {
 // flattenProgressLine first — fit within budget runes in total. When the
 // budget cannot hold every entry, the OLDEST are dropped first: whoever
 // calls wait() on a running job wants to know what it is doing NOW, not
-// how it started, and dropped reports exactly how many of the entries
-// passed in were left out so the caller can fold that into one honest
-// line together with any registry-side eviction (which carries no count
-// of its own).
+// how it started, and dropped reports how many entries the BUDGET left
+// out, so the caller can fold that into one honest line together with any
+// registry-side eviction (which carries no count of its own). Entries that
+// are empty once flattened are not counted in dropped — they are not notes
+// anybody wanted to read, so reporting them as omitted would overstate
+// what was lost.
 //
 // At least one entry (the newest) is always kept, even if it alone
 // exceeds budget, so a single long note still reads as something rather
@@ -278,9 +292,20 @@ func renderProgressHistory(history []string, budget int) (rendered string, dropp
 	if len(history) == 0 {
 		return "", 0
 	}
-	flattened := make([]string, len(history))
-	for i, entry := range history {
-		flattened[i] = flattenProgressLine(entry)
+	// Drop entries that are empty once flattened. This is not hypothetical
+	// tidying: tools/bash.go's pump posts EVERY output line of a
+	// backgrounded command, blank separator lines included, and
+	// report_progress's own empty-string rejection does not apply to that
+	// path — so without this a build that prints blank lines renders as a
+	// run of empty bullets.
+	flattened := make([]string, 0, len(history))
+	for _, entry := range history {
+		if line := flattenProgressLine(entry); line != "" {
+			flattened = append(flattened, line)
+		}
+	}
+	if len(flattened) == 0 {
+		return "", 0
 	}
 
 	// Walk newest-to-oldest, accumulating rune cost (entry plus its
