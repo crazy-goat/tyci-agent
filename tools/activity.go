@@ -8,12 +8,17 @@ import "sync"
 // main() over the app's shared jobs.Registry via SetJobActivityToucher.
 //
 // This is intentionally a separate, narrower interface from
-// JobProgressReporter: SetProgress (report_progress) is a voluntary, rare
-// status note and also snapshots+fires an event; TouchActivity is meant to
-// be called on every streamed token from every running job (see
-// streamingCollector in subagent.go and bashRun.setProgress in bash.go), so
-// it must stay as cheap as a single atomic write with no event/snapshot
-// overhead.
+// JobProgressReporter: registry.SetProgress always snapshots+fires an
+// event, which is fine for an explicit "report_progress" tool call
+// (voluntary and genuinely rare) but would be far too much overhead for
+// its OTHER caller — bashRun.setProgress in bash.go posts one of these on
+// every line of a backgrounded command's output, throttled to roughly
+// once a second, which is the dominant real-world source of these calls,
+// not a rare one. TouchActivity exists for exactly that hot path: it is
+// called on every streamed token from every running job (see
+// streamingCollector in subagent.go, and bashRun.setProgress's own call
+// into it right after SetProgress), so it must stay as cheap as a single
+// atomic write with no event/snapshot overhead.
 type JobActivityToucher interface {
 	// TouchActivity records that job id showed a fresh sign of life at
 	// time.Now(). Must be cheap enough to call unconditionally on every

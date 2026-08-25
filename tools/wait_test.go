@@ -2,11 +2,13 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // noSleep makes plain-wait tests instant: it "elapses" the requested
@@ -215,6 +217,94 @@ func TestWaitTool_JobIDStillRunning_FallsBackToProgressWithoutHistory(t *testing
 	}
 	if !strings.Contains(res.Content, "only the latest") {
 		t.Fatalf("expected still-running content to fall back to Progress, got: %q", res.Content)
+	}
+}
+
+// TestRenderProgressHistory_FlattensInternalNewlines covers review E1 #3:
+// report_progress's text is model-supplied and tools/progress.go's Run only
+// rejects an empty string, so nothing stops a note from containing its own
+// newline. Joined naively, a note-internal newline would be
+// indistinguishable from a boundary between two separate entries.
+func TestRenderProgressHistory_FlattensInternalNewlines(t *testing.T) {
+	history := []string{"first note", "second note\nwith an embedded newline", "third note"}
+	block, dropped := renderProgressHistory(history, progressHistoryPreviewRuneBudget)
+	if dropped != 0 {
+		t.Fatalf("expected nothing dropped for 3 short entries, got %d", dropped)
+	}
+	if strings.Contains(block, "second note\nwith") {
+		t.Fatalf("expected the embedded newline to be flattened, got:\n%s", block)
+	}
+	if !strings.Contains(block, "second note with an embedded newline") {
+		t.Fatalf("expected the flattened entry to still carry its whole text, got:\n%s", block)
+	}
+	// Exactly 3 bullet lines — a stray internal newline must not have been
+	// mistaken for a 4th entry boundary.
+	if got := strings.Count(block, "\n- ") + 1; got != 3 {
+		t.Fatalf("expected exactly 3 rendered entries, got %d in:\n%s", got, block)
+	}
+}
+
+// TestRenderProgressHistory_AggregateBudgetKeepsNewestAndReportsDropped
+// covers review E1 #2: the rendered block must stay bounded in AGGREGATE
+// (not per entry — SetProgress already bounds each entry individually via
+// progressEntryRuneCap), because wait() is a tool the model calls
+// repeatedly on a still-running job and every poll re-pays whatever this
+// renders into that model's own permanent conversation history.
+func TestRenderProgressHistory_AggregateBudgetKeepsNewestAndReportsDropped(t *testing.T) {
+	var history []string
+	for i := 0; i < 50; i++ {
+		history = append(history, fmt.Sprintf("note number %02d, padded so each entry has a real cost", i))
+	}
+	const budget = 200 // far smaller than 50 entries' worth, on purpose
+	block, dropped := renderProgressHistory(history, budget)
+
+	if dropped == 0 {
+		t.Fatal("expected some entries to be dropped for a budget this small")
+	}
+	if strings.Contains(block, "note number 00,") {
+		t.Fatalf("expected the OLDEST entries to be dropped, but the oldest survived:\n%s", block)
+	}
+	if !strings.Contains(block, "note number 49,") {
+		t.Fatalf("expected the NEWEST entry to survive, got:\n%s", block)
+	}
+	if got := utf8.RuneCountInString(block); got > budget+len("- ")+len("…") {
+		// A little slack: the newest entry alone is always kept even if it
+		// overflows the budget on its own (see renderProgressHistory's doc
+		// comment), so the true worst case is "one entry over budget", not
+		// "always under budget".
+		longestEntry := 0
+		for _, e := range history {
+			if n := utf8.RuneCountInString(e) + len("- "); n > longestEntry {
+				longestEntry = n
+			}
+		}
+		if got > longestEntry {
+			t.Fatalf("rendered block (%d runes) exceeds any reasonable bound for budget %d:\n%s", got, budget, block)
+		}
+	}
+}
+
+// TestRenderProgressHistory_AlwaysKeepsAtLeastTheNewestEntry covers the
+// edge case renderProgressHistory's doc comment claims: even a single note
+// far larger than the whole budget must still render as something, not an
+// empty block a caller could mistake for "no progress at all".
+func TestRenderProgressHistory_AlwaysKeepsAtLeastTheNewestEntry(t *testing.T) {
+	huge := strings.Repeat("x", 2000)
+	block, dropped := renderProgressHistory([]string{huge}, 10)
+	if dropped != 0 {
+		t.Fatalf("the only entry must never be reported as dropped, got dropped=%d", dropped)
+	}
+	if !strings.Contains(block, huge) {
+		t.Fatalf("expected the sole entry to survive despite exceeding the budget, got:\n%s", block)
+	}
+}
+
+// TestRenderProgressHistory_Empty covers the trivial base case: no entries,
+// nothing rendered, nothing dropped.
+func TestRenderProgressHistory_Empty(t *testing.T) {
+	block, dropped := renderProgressHistory(nil, progressHistoryPreviewRuneBudget)
+	if block != "" || dropped != 0 {
+		t.Fatalf("expected empty render for no history, got block=%q dropped=%d", block, dropped)
 	}
 }
 

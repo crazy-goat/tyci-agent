@@ -788,21 +788,31 @@ func (r *Registry) Answer(id, text string, fromUser bool) bool {
 	}
 }
 
-// progressHistoryCap bounds the number of report_progress notes kept per
-// job (Job.ProgressHistory), oldest evicted first once full — see
-// SetProgress. report_progress is documented as voluntary and rare
-// (tools/progress.go's ReportProgressTool doc comment), so a job that
-// reports more than this many times in its own lifetime is already the
-// unusual case; the cap only has to stop that unusual case from growing a
-// single job's memory without bound, not serve it comfortably.
+// progressHistoryCap bounds the number of notes kept per job
+// (Job.ProgressHistory), oldest evicted first once full — see
+// SetProgress. This is NOT an overflow guard for a rare event: an explicit
+// "report_progress" call is voluntary and rare (tools/progress.go's
+// ReportProgressTool doc comment), but that tool is not this cap's
+// dominant caller. A backgrounded shell command posts one of these on
+// every output line it produces, throttled to at most one per second (see
+// tools/bash.go's bashRun.setProgress and bgProgressInterval) — for any
+// build or test run that keeps printing for more than ~20 seconds, which
+// is the ordinary case, not the unusual one. So this cap is a SLIDING
+// TAIL over a steady, roughly 1/s stream, not a rare-overflow backstop:
+// its job is to say which ~20 seconds of that stream a caller still sees,
+// not to catch something that almost never happens.
 const progressHistoryCap = 20
 
-// progressEntryRuneCap bounds a single report_progress note in RUNES —
-// never bytes, per this repo's documented history of byte-slicing
-// truncation bugs (see truncateTombstoneField's doc comment). The text is
-// model-supplied with no length limit enforced anywhere upstream of here,
-// so without this a single report_progress call could make one job's
-// history dominate memory on its own, independent of progressHistoryCap.
+// progressEntryRuneCap bounds a single note passed to SetProgress in
+// RUNES — never bytes, per this repo's documented history of byte-slicing
+// truncation bugs (see truncateTombstoneField's doc comment). An explicit
+// "report_progress" call is model-supplied text with no length limit
+// enforced anywhere upstream of here; a backgrounded shell command's own
+// output line is already cut to 120 runes by tools/bash.go's truncateLine
+// before it ever reaches here, well inside this cap, so this backstop
+// exists for the caller that has no cap of its own — without it, a single
+// report_progress call could make one job's history dominate memory on
+// its own, independent of progressHistoryCap.
 const progressEntryRuneCap = 2000
 
 // SetProgress records a short status note for the job identified by id,

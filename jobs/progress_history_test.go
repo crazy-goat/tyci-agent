@@ -115,13 +115,18 @@ func TestSetProgress_CapEvictsOldestAndMarksTruncated(t *testing.T) {
 	}
 }
 
-// TestSetProgress_TruncatesEntryRuneSafely builds a note out of multi-byte
-// runes (Polish and CJK) well past progressEntryRuneCap and ending right on
-// a multi-byte boundary. Pre-fix code had no per-entry cap at all, so this
-// would have passed the raw string through unbounded; a byte-offset
-// truncation (this repo's documented history of that exact bug class) would
-// instead have produced invalid UTF-8 or a corrupted trailing rune, which
-// the assertions below catch.
+// TestSetProgress_TruncatesEntryRuneSafely builds a note out of a single
+// multi-byte rune repeated well past progressEntryRuneCap. Deliberately a
+// single 3-byte-per-rune script (CJK 日), not an alternating pattern: an
+// earlier version of this test alternated a 2-byte and a 3-byte rune, a
+// 5-byte period that divides evenly into 2000 (progressEntryRuneCap), so a
+// buggy byte-offset slice at that exact byte count would have happened to
+// land on a rune boundary anyway and this test would have passed for the
+// wrong reason. 2000 is not a multiple of 3, so a byte-offset cut at byte
+// 2000 is GUARANTEED to land mid-rune here — this is what actually forces
+// utf8.ValidString to be the assertion doing the work, not len([]rune(...)).
+// Pre-fix code had no per-entry cap at all, so this would have passed the
+// raw string through unbounded.
 func TestSetProgress_TruncatesEntryRuneSafely(t *testing.T) {
 	r := NewRegistry()
 	job := r.Start(context.Background(), "multibyte", KindOther, "", func(context.Context, string) (string, bool, error) {
@@ -129,15 +134,8 @@ func TestSetProgress_TruncatesEntryRuneSafely(t *testing.T) {
 	})
 
 	var b strings.Builder
-	// Alternate two multi-byte scripts so a byte-offset slice landing
-	// mid-rune has every chance to show up as either mangled Polish or a
-	// broken CJK sequence.
 	for i := 0; i < progressEntryRuneCap+300; i++ {
-		if i%2 == 0 {
-			b.WriteRune('ą')
-		} else {
-			b.WriteRune('日')
-		}
+		b.WriteRune('日')
 	}
 	longNote := b.String()
 
@@ -160,10 +158,10 @@ func TestSetProgress_TruncatesEntryRuneSafely(t *testing.T) {
 	if runeCount != progressEntryRuneCap+1 { // +1 for the appended ellipsis rune
 		t.Fatalf("expected %d runes (cap + ellipsis), got %d", progressEntryRuneCap+1, runeCount)
 	}
-	// The rune immediately before the ellipsis must be one of the two
-	// whole runes written above, never a stray continuation byte.
+	// The rune immediately before the ellipsis must be the whole rune
+	// written above, never a stray continuation byte.
 	beforeEllipsis := []rune(entry)[progressEntryRuneCap-1]
-	if beforeEllipsis != 'ą' && beforeEllipsis != '日' {
+	if beforeEllipsis != '日' {
 		t.Fatalf("rune at the truncation boundary is corrupted: %q (%U)", beforeEllipsis, beforeEllipsis)
 	}
 	if snap.Progress != entry {

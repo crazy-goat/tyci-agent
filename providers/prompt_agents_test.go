@@ -3,6 +3,7 @@ package providers
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -228,6 +229,14 @@ func TestSubagentPromptListsTheToolsOnlyAChildCanUse(t *testing.T) {
 	}
 }
 
+// noAskContradictionPattern matches the FAMILY of absolute "you cannot
+// ask" claims, not just three exact phrases — "Never ask questions", "You
+// have no way to ask", "do not ask anyone" and "don't ask" would all have
+// sailed straight through a check pinned to literal strings. Case-
+// insensitive: a system prompt is not guaranteed to keep any particular
+// capitalization as it evolves.
+var noAskContradictionPattern = regexp.MustCompile(`(?i)(cannot|never|do not|don't|no way to)\s+ask`)
+
 // TestSubagentPromptDoesNotContradictItsOwnAskParentTool guards against item
 // 41 regressing: the child prompt hands out a real ask_parent tool, so it
 // must never simultaneously claim in absolute terms that it cannot ask. That
@@ -236,19 +245,19 @@ func TestSubagentPromptListsTheToolsOnlyAChildCanUse(t *testing.T) {
 // use of ask_parent unpredictable, since they had to disbelieve their own
 // system prompt to use the tool they were given.
 func TestSubagentPromptDoesNotContradictItsOwnAskParentTool(t *testing.T) {
+	// Isolate from the developer's real ~/.tyci/AGENTS.md (see
+	// writeAgentDef's callers above for the same pattern) — otherwise
+	// whatever that file happens to say becomes part of the string this
+	// test asserts against, which has nothing to do with item 41.
+	t.Setenv("HOME", t.TempDir())
+
 	prompt := BuildSubagentSystemPrompt()
 
 	if !strings.Contains(prompt, "ask_parent(") {
 		t.Fatalf("expected the child prompt to expose ask_parent(), it did not:\n%s", prompt)
 	}
-	for _, claim := range []string{
-		"cannot ask questions",
-		"There is nobody to ask",
-		"no user to reply",
-	} {
-		if strings.Contains(prompt, claim) {
-			t.Errorf("child prompt contains absolute claim %q alongside a working ask_parent tool:\n%s", claim, prompt)
-		}
+	if m := noAskContradictionPattern.FindString(prompt); m != "" {
+		t.Errorf("child prompt contains an absolute claim (%q) that it cannot ask, alongside a working ask_parent tool:\n%s", m, prompt)
 	}
 }
 
