@@ -191,7 +191,18 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		}
 		return nil
 	}
-	cond.SetNextMessages(mergeNextMessages(serviceCommands, cond.Config().NextMessages))
+	// Keep completion notices visible in the TUI as well as delivering them
+	// to the model. Previously JobNotices.Drain was wired only as a silent
+	// NextMessages source, so a child could finish successfully while the
+	// person saw no indication until they inferred it from model output.
+	drainJobNotices := func() []string {
+		notices := JobNotices.Drain()
+		for _, notice := range notices {
+			tuiDisp.ToolBlock(notice)
+		}
+		return notices
+	}
+	cond.SetNextMessages(mergeNextMessages(serviceCommands, cond.Config().NextMessages, drainJobNotices))
 
 	for {
 		iterCtx, iterCancel := context.WithCancel(baseCtx)

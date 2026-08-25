@@ -1723,3 +1723,20 @@ func TestSubagentAsync_ResultExplainsTheChannels(t *testing.T) {
 		t.Errorf("async result should say never to invent an answer for a human who hasn't replied:\n%s", res.Content)
 	}
 }
+
+func TestSubagentCompletionNoticeIncludesPreviewAndWaitInstruction(t *testing.T) {
+	got := subagentCompletionNotice("worker", "job-1", subagentResult{Success: true, Content: "implemented the fix"})
+	for _, want := range []string{"worker", "job-1", "implemented the fix", "finished", "Tell the user", "wait(job_id=\"job-1\")"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("notice %q missing %q", got, want)
+		}
+	}
+	long := strings.Repeat("x", subagentNoticePreviewLimit+100)
+	got = subagentCompletionNotice("worker", "job-1", subagentResult{Success: true, Content: long})
+	if len([]rune(got)) > 1400 {
+		t.Fatalf("notice unexpectedly long: %d runes", len([]rune(got)))
+	}
+	if !strings.Contains(got, "…") {
+		t.Fatal("long preview was not truncated")
+	}
+}

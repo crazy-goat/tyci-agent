@@ -598,8 +598,9 @@ var tuiCmd = &cobra.Command{
 		// TUI's NextMessages drains the channel of user lines typed
 		// during the in-flight request and returns them in FIFO order;
 		// the agent loop appends each as a user message and forces one
-		// more runOnce so the model sees them as a single turn.
-		cfg.NextMessages = mergeNextMessages(tuiDisp.NextMessages, JobNotices.Drain)
+		// more runOnce so the model sees them as a single turn. Completion
+		// notices are wrapped by runTUI, where they are also rendered visibly.
+		cfg.NextMessages = tuiDisp.NextMessages
 
 		// Long-running shell commands may be moved to the background in the
 		// TUI: it is the one mode that both drains completion notices between

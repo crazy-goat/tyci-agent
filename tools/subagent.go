@@ -772,6 +772,27 @@ func (s *spawnedTask) result() subagentResult {
 	return s.res
 }
 
+const subagentNoticePreviewLimit = 800
+
+func subagentCompletionNotice(label, jobID string, res subagentResult) string {
+	status := "finished"
+	if !res.Success {
+		status = "FAILED"
+	}
+	preview := strings.TrimSpace(res.Content)
+	if preview == "" {
+		preview = strings.TrimSpace(res.Error)
+	}
+	if len([]rune(preview)) > subagentNoticePreviewLimit {
+		runes := []rune(preview)
+		preview = string(runes[:subagentNoticePreviewLimit]) + "…"
+	}
+	if preview == "" {
+		preview = "(no summary returned)"
+	}
+	return fmt.Sprintf("[subagent] %q %s (job_id=%q). Short result: %s. Tell the user the subagent has finished, then use wait(job_id=%q) for the full result if needed.", label, status, jobID, preview, jobID)
+}
+
 // spawn starts one child as a background job and returns immediately.
 //
 // handedAtStart is true for an async call, where the parent is told the ids
@@ -807,11 +828,7 @@ func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtSta
 		// waiting for it. A blocking call that got its result inline has
 		// already read it, and a notice about it would be noise.
 		if st.finish(res) {
-			if res.Success {
-				notify(fmt.Sprintf("[subagent] %q finished — read it with wait(job_id=%q)", st.label, jobID))
-			} else {
-				notify(fmt.Sprintf("[subagent] %q FAILED — details via wait(job_id=%q)", st.label, jobID))
-			}
+			notify(subagentCompletionNotice(st.label, jobID, res))
 		}
 
 		if !res.Success {

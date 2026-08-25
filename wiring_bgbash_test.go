@@ -16,9 +16,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/decodo/tyci/agent"
+	"github.com/decodo/tyci/connector"
+	"github.com/decodo/tyci/connector/connectortest"
 	"github.com/decodo/tyci/jobs"
+	"github.com/decodo/tyci/stream"
 	"github.com/decodo/tyci/tools"
 )
+
+// testSilentDisplay is the minimal sink needed by the integration test.
+type testSilentDisplay struct{}
+
+func (*testSilentDisplay) Request(string)                     {}
+func (*testSilentDisplay) Thinking(string)                    {}
+func (*testSilentDisplay) Text(string)                        {}
+func (*testSilentDisplay) ToolCallStart(string)               {}
+func (*testSilentDisplay) ToolCallDelta(string)               {}
+func (*testSilentDisplay) ToolCallEnd(string, string)         {}
+func (*testSilentDisplay) ToolFinish()                        {}
+func (*testSilentDisplay) ToolBlock(string)                   {}
+func (*testSilentDisplay) Summary(stream.Usage, stream.Stats) {}
+func (*testSilentDisplay) Total(stream.Usage)                 {}
+func (*testSilentDisplay) Error(error)                        {}
+func (*testSilentDisplay) End()                               {}
 
 // enableBackgroundBash turns the feature on for one test the way an
 // interactive mode does, and cleans up any survivors afterwards.
@@ -260,5 +280,109 @@ func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
 	}
 	if strings.Contains(notice, "/answer") {
 		t.Errorf("the notice must not point at a /answer command — it no longer exists: %q", notice)
+	}
+}
+
+// TestWiring_BG7_CompletionNoticeTriggersNextLLMRequest pins the complete
+// handoff: a completion notice is queued, the TUI-style NextMessages callback
+// drains it, and agent.Run performs another model request rather than merely
+// storing the notice for a future turn.
+func TestWiring_BG7_CompletionNoticeTriggersNextLLMRequest(t *testing.T) {
+	withTestWiring(t)
+
+	JobNotices.Notify("[subagent] child finished (job_id=job-test)")
+	client := &connectortest.Fake{
+		ProviderName: "test-provider",
+		ModelName:    "test-model",
+		Turns: [][]stream.Event{
+			{stream.TextDelta{Text: "initial"}, stream.Finish{Reason: "stop"}},
+			{stream.TextDelta{Text: "acknowledged"}, stream.Finish{Reason: "stop"}},
+		},
+	}
+	messages := []connector.Message{{
+		Role:    "user",
+		Content: []connector.ContentBlock{{Type: "text", Text: "initial prompt"}},
+	}}
+	_, err := agent.Run(context.Background(), client, &testSilentDisplay{}, &messages, agent.Config{
+		MaxRetries:   1,
+		NextMessages: JobNotices.Drain,
+	})
+	if err != nil {
+		t.Fatalf("agent.Run failed: %v", err)
+	}
+	if got := client.Calls(); got != 2 {
+		t.Fatalf("completion notice should trigger a second LLM request, got %d calls", got)
+	}
+	requests := client.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("expected two recorded requests, got %d", len(requests))
+	}
+	found := false
+	for _, msg := range requests[1].Messages {
+		for _, block := range msg.Content {
+			if strings.Contains(block.Text, "child finished") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("second LLM request did not contain completion notice: %+v", requests[1].Messages)
+	}
+}
+
+// TestWiring_BG8_MultipleCompletionNoticesReachOneNextLLMRequest verifies
+// that notices from several independent background producers are drained as
+// one FIFO batch and all reach the next model request. The notifier is shared
+// by subagents and background bash, so this is the mixed-work case rather than
+// three isolated queue tests.
+func TestWiring_BG8_MultipleCompletionNoticesReachOneNextLLMRequest(t *testing.T) {
+	withTestWiring(t)
+
+	for _, notice := range []string{
+		"[subagent] worker-a finished (job_id=job-a)",
+		"[background command] build finished (job_id=job-bash)",
+		"[subagent] worker-b finished (job_id=job-b)",
+	} {
+		JobNotices.Notify(notice)
+	}
+
+	client := &connectortest.Fake{
+		ProviderName: "test-provider",
+		ModelName:    "test-model",
+		Turns: [][]stream.Event{
+			{stream.TextDelta{Text: "initial"}, stream.Finish{Reason: "stop"}},
+			{stream.TextDelta{Text: "acknowledged"}, stream.Finish{Reason: "stop"}},
+		},
+	}
+	messages := []connector.Message{{
+		Role:    "user",
+		Content: []connector.ContentBlock{{Type: "text", Text: "initial prompt"}},
+	}}
+	_, err := agent.Run(context.Background(), client, &testSilentDisplay{}, &messages, agent.Config{
+		MaxRetries:   1,
+		NextMessages: JobNotices.Drain,
+	})
+	if err != nil {
+		t.Fatalf("agent.Run failed: %v", err)
+	}
+	if got := client.Calls(); got != 2 {
+		t.Fatalf("three notices should trigger one additional LLM request, got %d calls", got)
+	}
+	requests := client.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("expected two recorded requests, got %d", len(requests))
+	}
+	var combined strings.Builder
+	for _, msg := range requests[1].Messages {
+		for _, block := range msg.Content {
+			combined.WriteString(block.Text)
+			combined.WriteByte('\n')
+		}
+	}
+	got := combined.String()
+	for _, want := range []string{"job-a", "job-bash", "job-b"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("second LLM request is missing notice %q: %s", want, got)
+		}
 	}
 }
