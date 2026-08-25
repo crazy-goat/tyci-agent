@@ -866,6 +866,31 @@ func TestBuildSubagentTree_ChainedOrphansDoNotDuplicate(t *testing.T) {
 	}
 }
 
+// TestBuildSubagentTree_ChainedOrphansParentFirst guards the orphan-chain
+// ordering: the orphan key for child B sorts before the missing parent key P,
+// but A (the child of P and parent of B) must still render before B.
+func TestBuildSubagentTree_ChainedOrphansParentFirst(t *testing.T) {
+	ledger.Reset()
+	t.Cleanup(ledger.Reset)
+
+	m := newTestModelForSidebar()
+	a := jobs.Job{ID: "A", Kind: jobs.KindSubagent, ParentID: "P", Status: jobs.StatusDone, Description: "parent"}
+	b := jobs.Job{ID: "B", Kind: jobs.KindSubagent, ParentID: "A", Status: jobs.StatusDone, Description: "child"}
+	m.applyJobUpdate(a)
+	m.applyJobUpdate(b)
+
+	rows := m.buildSubagentTree()
+	if len(rows) != 3 {
+		t.Fatalf("expected main plus the orphan chain, got %d rows: %+v", len(rows), rows)
+	}
+	if rows[1].job.ID != "A" || rows[1].depth != 1 {
+		t.Fatalf("expected orphan-chain parent A at depth 1, got %+v", rows[1])
+	}
+	if rows[2].job.ID != "B" || rows[2].depth != 2 {
+		t.Fatalf("expected orphan-chain child B at depth 2, got %+v", rows[2])
+	}
+}
+
 // TestBuildSubagentTree_ParentIDCycleDoesNotHang covers the defensive cycle
 // guard: a ParentID loop (A's parent is B, B's parent is A) must not hang
 // or crash the tree build, even though this cannot occur through the normal
