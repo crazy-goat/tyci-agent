@@ -188,8 +188,15 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 
 	if !hasTools {
 		// No tools – show usage, accumulate into session total, and emit
-		// the Costs line in one consistent block. Return usage=nil so the
-		// caller doesn't double-count.
+		// the Costs line in one consistent block. usage carries this round's
+		// raw Input/Output back to the caller for context-budget accounting
+		// (see agent.Run's contextReminded logic); it is never re-added to
+		// totalUsage by the caller, so returning it here does not double-count.
+		// Only returned when hasUsage is true: a usage-less round (e.g. a
+		// provider that omits Finish.Usage) must leave the caller's tracked
+		// "last round" usage untouched rather than zeroing it out, or the
+		// budget reminder would go permanently blind for the rest of the turn.
+		var usageOut *stream.Usage
 		if hasUsage(lastUsage) {
 			d.Summary(lastUsage, stream.Stats{
 				Duration:   time.Since(startTime),
@@ -199,18 +206,21 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 				totalUsage.Add(lastUsage)
 				d.Total(*totalUsage)
 			}
+			usageOut = &lastUsage
 		}
-		return false, nil, true, nil
+		return false, usageOut, true, nil
 	}
 
 	executeAndAppendToolResults(ctx, d, msgs, cfg, toolCalls, toolDeltas)
 
 	// Show usage AFTER tools execution, then accumulate into the session
 	// total and emit the Costs line — all in one place, so the Costs
-	// line is always in sync with the just-displayed Summary.
-	// We return usage=nil so the caller (agent.Run) doesn't add the same
-	// usage to totalUsage a second time.
+	// line is always in sync with the just-displayed Summary. usage carries
+	// this round's raw Input/Output back to the caller (see the !hasTools
+	// branch above); it is never re-added to totalUsage by the caller, and
+	// is nil when hasUsage is false for the same reason as above.
 	emitted := false
+	var usageOut *stream.Usage
 	if hasUsage(lastUsage) {
 		d.Summary(lastUsage, stream.Stats{
 			Duration:   time.Since(startTime),
@@ -221,8 +231,9 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 			d.Total(*totalUsage)
 			emitted = true
 		}
+		usageOut = &lastUsage
 	}
-	return true, nil, emitted, nil
+	return true, usageOut, emitted, nil
 }
 
 // hasUsage reports whether a Usage value contains any token data.

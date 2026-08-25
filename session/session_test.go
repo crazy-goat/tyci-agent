@@ -1028,3 +1028,225 @@ func TestCompactionLiveBoundaryDoesNotInventEventID(t *testing.T) {
 		t.Fatalf("synthetic live boundary id persisted: %s", data)
 	}
 }
+
+// ─── Markdown dump (item 10) ────────────────────────────────────────────
+
+func TestWriteMarkdownDump_HeaderCarriesMetadata(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "meta.jsonl")
+	s, err := Open(path, dir, "gpt-5", "openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	dumpPath, err := WriteMarkdownDump(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+	for _, want := range []string{"session id:", "openai/gpt-5", "project:", "date:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dump header missing %q: %s", want, out)
+		}
+	}
+}
+
+// Every content-bearing line must be self-identifying with a stable
+// "[N] [role-or-tool]" prefix and must never wrap: a wrapped line splits a
+// path or identifier in half and grep stops finding it.
+func TestWriteMarkdownDump_LinesAreSelfIdentifyingAndUnwrapped(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lines.jsonl")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "please read /etc/passwd\nand summarize"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("assistant", []ContentBlock{
+		{Type: "toolCall", ID: "call-1", Name: "bash", Arguments: json.RawMessage(`{"command":"cat /etc/passwd"}`)},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("toolResult", []ContentBlock{
+		{Type: "text", Text: "Error: no such file", ToolCallID: "call-1", ToolName: "bash", IsError: true},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dumpPath := strings.TrimSuffix(path, ".jsonl") + ".md"
+	data, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+
+	var toolCallLine, toolResultLine, userLine string
+	for _, l := range lines {
+		switch {
+		case strings.Contains(l, "call id=call-1"):
+			toolCallLine = l
+		case strings.Contains(l, "result id=call-1"):
+			toolResultLine = l
+		case strings.Contains(l, "[user]"):
+			userLine = l
+		}
+	}
+	if toolCallLine == "" {
+		t.Fatalf("no tool call line found: %s", data)
+	}
+	if !strings.HasPrefix(toolCallLine, "[") || !strings.Contains(toolCallLine, "[bash]") {
+		t.Errorf("tool call line must be prefixed with its tool name: %q", toolCallLine)
+	}
+	if !strings.Contains(toolCallLine, "cat /etc/passwd") {
+		t.Errorf("tool call args not written verbatim: %q", toolCallLine)
+	}
+	if toolResultLine == "" {
+		t.Fatalf("no tool result line found: %s", data)
+	}
+	if !strings.Contains(toolResultLine, "[bash]") || !strings.Contains(toolResultLine, "error=true") {
+		t.Errorf("tool result line must name its tool and flag the error: %q", toolResultLine)
+	}
+	if !strings.Contains(toolResultLine, "Error: no such file") {
+		t.Errorf("tool result text not written verbatim: %q", toolResultLine)
+	}
+	if userLine == "" {
+		t.Fatalf("no user line found: %s", data)
+	}
+	if strings.Contains(userLine, "\n") {
+		t.Errorf("user line contains a literal newline, breaking grep: %q", userLine)
+	}
+	if !strings.Contains(userLine, "please read /etc/passwd and summarize") {
+		t.Errorf("embedded newline should collapse to a space, not disappear: %q", userLine)
+	}
+}
+
+func TestWriteMarkdownDump_StripsANSIEscapes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ansi.jsonl")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coloredError := "\x1b[31mError: boom\x1b[0m"
+	if err := s.WriteMessage("toolResult", []ContentBlock{
+		{Type: "text", Text: coloredError, ToolCallID: "c1", ToolName: "bash", IsError: true},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+	if strings.Contains(out, "\x1b[") {
+		t.Fatalf("ANSI escape survived into the dump: %q", out)
+	}
+	if !strings.Contains(out, "Error: boom") {
+		t.Fatalf("error text lost along with its color codes: %q", out)
+	}
+}
+
+func TestWriteMarkdownDump_CapsOversizedFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cap.jsonl")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	huge := strings.Repeat("x", dumpFieldCap+500)
+	if err := s.WriteMessage("toolResult", []ContentBlock{
+		{Type: "text", Text: huge, ToolCallID: "c1", ToolName: "read", IsError: false},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+	if strings.Contains(out, strings.Repeat("x", dumpFieldCap+1)) {
+		t.Fatalf("field was not capped: dump contains %d consecutive x's or more", dumpFieldCap+1)
+	}
+	if !strings.Contains(out, "truncated") {
+		t.Fatalf("truncation must be marked, not silent: %q", out)
+	}
+	// The raw JSONL must still hold the full, untruncated text — the dump
+	// truncates, the source of truth never does.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), huge) {
+		t.Fatalf("raw JSONL must retain the full field even though the dump caps it")
+	}
+}
+
+// TestDumpPathFor_NeverCollidesWithSessionPath is the regression test for a
+// session opened at a path that already ends in ".md" (e.g. --session
+// notes.md): trimming the extension and re-appending ".md" would otherwise
+// reproduce the session path itself, and os.Create on the dump would
+// truncate the live JSONL out from under the running session.
+func TestDumpPathFor_NeverCollidesWithSessionPath(t *testing.T) {
+	got := DumpPathFor("/tmp/notes.md")
+	if got == "/tmp/notes.md" {
+		t.Fatalf("DumpPathFor collided with the session path: %q", got)
+	}
+	if got != "/tmp/notes.md.md" {
+		t.Fatalf("DumpPathFor(.md session) = %q, want /tmp/notes.md.md", got)
+	}
+
+	// The ordinary .jsonl case is unaffected.
+	if got := DumpPathFor("/tmp/session.jsonl"); got != "/tmp/session.md" {
+		t.Fatalf("DumpPathFor(.jsonl session) = %q, want /tmp/session.md", got)
+	}
+}
+
+// TestWriteMarkdownDump_MdSessionPathDoesNotTruncateItself exercises the
+// guard end-to-end: opening a session at a path ending in .md must not have
+// its own JSONL content clobbered when the derived dump is written.
+func TestWriteMarkdownDump_MdSessionPathDoesNotTruncateItself(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "hello"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "hello") {
+		t.Fatalf("session JSONL at a .md path was truncated by its own dump: %s", raw)
+	}
+
+	dumpPath := DumpPathFor(path)
+	if dumpPath == path {
+		t.Fatalf("dump path collided with session path: %q", dumpPath)
+	}
+	if _, err := os.Stat(dumpPath); err != nil {
+		t.Fatalf("dump not written to its distinct path: %v", err)
+	}
+}

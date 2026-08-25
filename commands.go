@@ -362,6 +362,24 @@ func pricingContextLimit(provider, model string) int {
 	return limits.Context
 }
 
+// manualCompactSummary builds the summary used when a human types /compact
+// directly, rather than the model calling the compact tool with its own
+// summary. There is no model-authored summary to fall back on here, but
+// compaction never deletes anything (see agent.CompactSession /
+// session.WriteCompaction): the raw JSONL and the derived markdown dump both
+// survive, so a generic marker costs nothing — as long as it actually names
+// where the dump lives. dumpPath must be the real path (session.DumpPathFor
+// is deterministic, so the caller can compute it before Compact writes
+// anything): this text becomes the compacted history's lead message, so a
+// placeholder or omitted path here would leave the model with no way to ever
+// find the record again, unlike the compact tool's result message which
+// already carries the real path returned by the compactor. Any text the
+// person typed after /compact is the optional focus instruction, passed
+// separately, not folded into this summary.
+func manualCompactSummary(dumpPath string) string {
+	return fmt.Sprintf("Manual /compact requested by the user. Earlier turns are not repeated here — the raw session file and its markdown dump at %s hold the full record.", dumpPath)
+}
+
 // resolveFallbacksQuiet resolves each "provider/model" fallback spec to a
 // connector.ModelClient and reports nothing itself: it returns the resolved
 // clients alongside the specs that could not be resolved, leaving it to the

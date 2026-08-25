@@ -175,6 +175,18 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 
 	var totalUsage stream.Usage
 
+	// lastRoundUsage is the most recent single model call's raw usage — not
+	// totalUsage, which sums every iteration's full resent context and so
+	// would overcount the current window many times over across a multi-tool
+	// turn. Input+CacheRead+CacheWrite+Output is what actually occupies the
+	// window next: a cached prompt prefix (Anthropic reports it separately
+	// from Input, and prompt caching is on by default) still counts against
+	// the limit even though it is not re-billed at full price. Note:
+	// display.TuiModel.contextUsed sums only Input+Output for the status
+	// bar's context figure and has the same undercount on a cache hit — a
+	// pre-existing, separate bug outside this item's scope.
+	var lastRoundUsage stream.Usage
+
 	// Tracks how many todo reminders we've injected this turn (see maxTodoReminders).
 	todoReminders := 0
 	jobReminders := 0
@@ -218,7 +230,10 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 		// only when it reaches the Summary line. totalEmitted reports
 		// whether the call already showed the Costs line; if not, the
 		// caller must emit it (typically on error/early-return paths).
-		more, _, totalEmitted, err := runOnce(ctx, fs.mc, d, msgs, cfg, &totalUsage)
+		more, roundUsage, totalEmitted, err := runOnce(ctx, fs.mc, d, msgs, cfg, &totalUsage)
+		if roundUsage != nil {
+			lastRoundUsage = *roundUsage
+		}
 		if err != nil {
 			// Check for context cancellation first
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -233,7 +248,10 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			// first; switching models immediately can create an unexpected,
 			// expensive second request while the primary was recoverable.
 			if len(cfg.Fallbacks) > 0 && !api.IsRetryable(err) {
-				fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage, err)
+				fbMore, fbUsage, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage, err)
+				if fbUsage != nil {
+					lastRoundUsage = *fbUsage
+				}
 				if fbErr == nil {
 					// Fallback succeeded — runOnce inside tryFallback
 					// already emitted d.Total.
@@ -272,7 +290,11 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 					}
 					return totalUsage, err
 				}
-				more, _, totalEmitted, err = runOnce(ctx, fs.mc, d, msgs, cfg, &totalUsage)
+				var roundUsage *stream.Usage
+				more, roundUsage, totalEmitted, err = runOnce(ctx, fs.mc, d, msgs, cfg, &totalUsage)
+				if roundUsage != nil {
+					lastRoundUsage = *roundUsage
+				}
 				if err == nil {
 					recovered = true
 					break
@@ -281,7 +303,10 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				if !api.IsRetryable(err) {
 					// Non-retryable during retry — try fallback if available
 					if len(cfg.Fallbacks) > 0 {
-						fbMore, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage, err)
+						fbMore, fbUsage, fbErr := tryFallback(ctx, d, msgs, cfg, &fs, &totalUsage, err)
+						if fbUsage != nil {
+							lastRoundUsage = *fbUsage
+						}
 						if fbErr == nil {
 							if !fbMore {
 								return totalUsage, nil
@@ -372,8 +397,14 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				limit = cfg.ContextLimitFor(fs.mc.Provider(), fs.mc.Model())
 			}
 			if limit > 0 && !contextReminded {
-				used := contextTokens(*msgs)
-				if used*100 >= limit*50 {
+				// Input+Output alone undercounts on providers that report a
+				// cached prompt prefix separately (Anthropic: CacheRead/
+				// CacheWrite, see api/anthropic.go — prompt caching is on by
+				// default, connector/anthropic.go). Cached tokens still
+				// occupy the context window even though they were not
+				// re-billed at full price, so they must count here.
+				used := lastRoundUsage.Input + lastRoundUsage.CacheRead + lastRoundUsage.CacheWrite + lastRoundUsage.Output
+				if used > 0 && used*100 >= limit*contextBudgetReminderPercent {
 					contextReminded = true
 					reminder := buildContextBudgetReminder(used, limit)
 					*msgs = append(*msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: reminder}}})
@@ -446,18 +477,14 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 // fire ends the loop the instant this turn completes, so a tool call here
 // would never have its result seen by the model — the only useful thing it
 // can do with this turn is write its summary as plain text right now.
-func contextTokens(msgs []connector.Message) int {
-	total := 0
-	for _, msg := range msgs {
-		for _, block := range msg.Content {
-			total += len([]rune(block.Text)) + len([]rune(block.Thinking)) + len(block.Arguments)
-		}
-	}
-	return total
-}
+// contextBudgetReminderPercent is the fraction of the model's published
+// context window (as a percentage) that triggers one budget reminder per
+// turn. Half the window still leaves comfortable room to persist state and
+// call compact before the next request grows further.
+const contextBudgetReminderPercent = 50
 
 func buildContextBudgetReminder(used, limit int) string {
-	return fmt.Sprintf("[automated context budget reminder, not the user] You are at an approximate estimate of %d of %d context tokens for the current model. Persist anything important, then use compact(summary=\"...\", focus=\"...\") if continuing would crowd out useful history.", used, limit)
+	return fmt.Sprintf("[automated context budget reminder, not the user] You are at %d of %d context tokens for the current model (last request's measured usage). Persist anything important, then use compact(summary=\"...\", focus=\"...\") if continuing would crowd out useful history.", used, limit)
 }
 
 func buildLastStepWarning() string {

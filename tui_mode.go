@@ -281,8 +281,26 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// Deliberately cancel the current iteration before changing its live
 				// history; compaction is a conversation boundary, not a queued prompt.
 				iterCancel()
-				summary := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
-				path, err := cond.Compact(summary, "")
+				if len(cond.Messages()) == 0 {
+					// Nothing to compact yet: manualCompactSummary is never
+					// empty, so without this check a bare /compact on a
+					// fresh session would still create a session file and a
+					// dump for no reason.
+					tuiDisp.Error(fmt.Errorf("/compact: nothing to compact yet"))
+					continue
+				}
+				focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
+				sess := cond.EnsureSession()
+				if sess == nil {
+					tuiDisp.Error(fmt.Errorf("/compact: no writable session"))
+					continue
+				}
+				// DumpPathFor is deterministic, so the real path can be
+				// folded into the summary that becomes the compacted
+				// history's lead message — not just printed here — before
+				// Compact ever writes it.
+				dumpPath := session.DumpPathFor(cond.SessionPath())
+				path, err := cond.Compact(manualCompactSummary(dumpPath), focus)
 				if err != nil {
 					tuiDisp.Error(fmt.Errorf("/compact: %v", err))
 				} else {

@@ -23,14 +23,18 @@ type fallbackState struct {
 // resolved them (and reported any that failed to resolve) before calling
 // Run, so there is no "not found" case here: only "the stream failed".
 // It updates fs with the new client on success.
-// Returns (more, nil) on success, (false, err) if all fallbacks exhausted.
-// origErr is the error that triggered the fallback.
+// Returns (more, roundUsage, nil) on success, (false, nil, err) if all
+// fallbacks exhausted. origErr is the error that triggered the fallback.
+// roundUsage is runOnce's own return (see its doc comment): nil when the
+// round produced no usage, non-nil otherwise, so a caller tracking "usage of
+// the last round" (agent.Run's context-budget accounting) doesn't lose track
+// of it just because this turn happened to be served by a fallback model.
 //
 // Note: runOnce below is called with the SAME cfg the primary used, so
 // cfg.Temperature (and every other request-shaping field) automatically
 // carries over to the fallback model — there is no separate "fallback
 // config" to keep in sync.
-func tryFallback(ctx context.Context, d Sink, msgs *[]connector.Message, cfg Config, fs *fallbackState, totalUsage *stream.Usage, origErr error) (bool, error) {
+func tryFallback(ctx context.Context, d Sink, msgs *[]connector.Message, cfg Config, fs *fallbackState, totalUsage *stream.Usage, origErr error) (bool, *stream.Usage, error) {
 	var lastErr error
 
 	// Format the reason from the original error
@@ -44,7 +48,7 @@ func tryFallback(ctx context.Context, d Sink, msgs *[]connector.Message, cfg Con
 		d.ToolBlock(fmt.Sprintf("Switching to fallback model: %s\nReason: %s", fbFull, reason))
 
 		// Try the fallback
-		more, _, _, err := runOnce(ctx, fb, d, msgs, cfg, totalUsage)
+		more, roundUsage, _, err := runOnce(ctx, fb, d, msgs, cfg, totalUsage)
 		if err != nil {
 			lastErr = err
 			d.ToolBlock(fmt.Sprintf("fallback %s also failed: %v", fbFull, err))
@@ -54,13 +58,13 @@ func tryFallback(ctx context.Context, d Sink, msgs *[]connector.Message, cfg Con
 		// Fallback succeeded — update state
 		fs.mc = fb
 
-		return more, nil
+		return more, roundUsage, nil
 	}
 
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no fallback models available")
 	}
-	return false, lastErr
+	return false, nil, lastErr
 }
 
 // formatFallbackReason extracts a human-readable reason from an error.
