@@ -330,3 +330,67 @@ func TestStashResumable_ConcurrentPruneAgainstFinishingJob_RaceFree(t *testing.T
 		wg.Wait()
 	}
 }
+
+// TestStashResumable_LiveJobEntrySurvivesConcurrentStashPressure is F6(b):
+// TestStashResumable_NeverPrunesEntryOfLiveJob above exercises the
+// live-job guard PURELY SEQUENTIALLY (close(block) is deferred, so the job
+// never finishes during that test's loop) — no goroutine ever races
+// pruneResumableLocked's liveness check against anything. And
+// TestStashResumable_ConcurrentStashes_RaceFree uses ids that are not in
+// JobRegistry at all, so `JobRegistry.IsLive(id)` (previously `ok &&
+// job.Status == ...`) short-circuits false without ever really exercising
+// the "keep it" branch. Between them, the guard's "a live job's entry
+// survives eviction pressure" BEHAVIOR was never actually driven by
+// concurrent stashing — only the absence of a data race was (by
+// TestStashResumable_ConcurrentPruneAgainstFinishingJob_RaceFree, whose job
+// finishes almost immediately and is never checked for survival). That gap
+// is exactly the shape that let F1's race slip past a green `-race` run in
+// round 1: covering "no race" is not the same as covering "the guard does
+// what it claims". This test keeps a job genuinely live for the ENTIRE
+// duration of sustained concurrent stashing from multiple goroutines, and
+// asserts its resumable entry is still there afterward — and stays there —
+// while the map around it churns at exactly resumableCap.
+func TestStashResumable_LiveJobEntrySurvivesConcurrentStashPressure(t *testing.T) {
+	resetResumableForTest(t)
+
+	block := make(chan struct{})
+	defer close(block)
+	live := JobRegistry.Start(context.Background(), "stays live throughout", jobs.KindSubagent, "", func(context.Context, string) (string, bool, error) {
+		<-block
+		return "", false, nil
+	})
+	t.Cleanup(func() { JobRegistry.Cancel(live.ID) })
+
+	// Stash the live job's entry FIRST, so plain FIFO order would otherwise
+	// make it the very first candidate for eviction — the guard has to
+	// actively keep it, not just get lucky with ordering.
+	stashResumable(live.ID, fakeResumableEntry())
+
+	const goroutines = 8
+	const perGoroutine = 500
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < perGoroutine; i++ {
+				stashResumable(fmt.Sprintf("job-pressure-%d-%d", g, i), fakeResumableEntry())
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	// The job is STILL live here (block has not been closed) — this is the
+	// behavior under test, not merely "no crash happened while it raced".
+	resumableMu.Lock()
+	_, stillPresent := resumable[live.ID]
+	size := len(resumable)
+	resumableMu.Unlock()
+
+	if !stillPresent {
+		t.Fatalf("live job's resumable entry was evicted under concurrent stashing pressure")
+	}
+	if size != resumableCap {
+		t.Fatalf("resumable size = %d after sustained concurrent stashing, want exactly %d (cap maintained, live entry excluded from eviction)", size, resumableCap)
+	}
+}

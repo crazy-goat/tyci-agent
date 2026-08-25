@@ -344,12 +344,26 @@ func (t *CronTool) runNow(ctx context.Context, name string) ToolResult {
 	return okf("running %q now as job %s, out of turn with its schedule. You will be notified when it finishes; read the output with cron(action=\"logs\", name=%q). Do not wait for it unless you have nothing else to do.", name, handle.ID(), name)
 }
 
+// cronRunnerExeOverride lets a test point cronRunner() at a fast, harmless
+// binary (e.g. "/bin/echo") instead of os.Executable(). Production code
+// never sets this (it stays ""); the reason it exists at all is that
+// os.Executable() under `go test` IS the compiled test binary, and exec'ing
+// that recursively with arbitrary "run"/"--prompt" args is not something a
+// test should risk (unpredictable flag parsing, possible recursive test
+// execution). Test-only seam, exported to no one outside this package.
+var cronRunnerExeOverride string
+
 // cronRunner points at this binary: a scheduled job is the same `tyci run` a
-// person would type, so it has to be the same build.
+// person would type, so it has to be the same build — unless
+// cronRunnerExeOverride says otherwise (tests only, see its doc comment).
 func cronRunner() (*cron.Runner, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("cannot find the tyci binary to run jobs with: %w", err)
+	exe := cronRunnerExeOverride
+	if exe == "" {
+		var err error
+		exe, err = os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("cannot find the tyci binary to run jobs with: %w", err)
+		}
 	}
 	return &cron.Runner{ConfigDir: cronConfigDir(), LocalDir: getLocalCronDir(), Exe: exe}, nil
 }
