@@ -19,12 +19,22 @@ func (m TuiModel) subagentModalLayout() modalLayout {
 	if popupWidth > m.width-2 {
 		popupWidth = m.width - 2
 	}
+	// A zero/near-zero width (no WindowSizeMsg yet, or a terminal resized to
+	// a couple of columns) would leave popupWidth <= 2 after the clamp above
+	// and lipgloss panics on the negative inner widths derived from it. The
+	// popup will overflow such a screen no matter what; keep the math sane.
+	if popupWidth < 6 {
+		popupWidth = 6
+	}
 	popupHeight := int(float64(m.height) * 0.9)
 	if popupHeight < 15 {
 		popupHeight = 15
 	}
 	if popupHeight > m.height-2 {
 		popupHeight = m.height - 2
+	}
+	if popupHeight < 7 {
+		popupHeight = 7
 	}
 	contentHeight := popupHeight - 6
 	if contentHeight < 1 {
