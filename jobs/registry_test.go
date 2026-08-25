@@ -171,6 +171,56 @@ func TestJobFails(t *testing.T) {
 	}
 }
 
+func TestJobPanicIsRecoveredAndRegistryStaysUsable(t *testing.T) {
+	r := NewRegistry()
+	notices := make(chan Job, 4)
+	r.SetOnEvent(func(job Job) { notices <- job })
+
+	panicked := r.Start(context.Background(), "panicking", KindOther, "", func(context.Context, string) (string, bool, error) {
+		panic("boom")
+	})
+
+	failed, ok := r.Wait(context.Background(), panicked.ID, time.Second)
+	if !ok {
+		t.Fatal("expected wait to find panicking job")
+	}
+	if failed.Status != StatusFailed {
+		t.Fatalf("expected failed status after panic, got %s", failed.Status)
+	}
+	if failed.Err != "job function panicked: boom" {
+		t.Fatalf("expected panic error, got %q", failed.Err)
+	}
+	if failed.FinishedAt.IsZero() {
+		t.Fatal("expected panic job to have a completion time")
+	}
+	select {
+	case notice := <-notices:
+		if notice.Status != StatusRunning || notice.ID != panicked.ID {
+			t.Fatalf("unexpected start notice: %+v", notice)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for start notice")
+	}
+	select {
+	case notice := <-notices:
+		if notice.Status != StatusFailed || notice.ID != panicked.ID || notice.Err != failed.Err {
+			t.Fatalf("unexpected panic completion notice: %+v", notice)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for panic completion notice")
+	}
+
+	// A recovered panic must not take down the registry's worker machinery or
+	// the process: a later job still starts and completes normally.
+	after := r.Start(context.Background(), "after panic", KindOther, "", func(context.Context, string) (string, bool, error) {
+		return "alive", false, nil
+	})
+	finished, ok := r.Wait(context.Background(), after.ID, time.Second)
+	if !ok || finished.Status != StatusDone || finished.Result != "alive" {
+		t.Fatalf("registry unusable after panic: ok=%v job=%+v", ok, finished)
+	}
+}
+
 func TestJobTruncated(t *testing.T) {
 	r := NewRegistry()
 	job := r.Start(context.Background(), "truncated", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
