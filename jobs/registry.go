@@ -51,6 +51,25 @@ func nextExtensionID() string {
 	return fmt.Sprintf("extension-%d", atomic.AddUint64(&extensionIDCounter, 1))
 }
 
+// panicError turns a recovered panic value into a normal job error. Formatting
+// arbitrary panic values can call user-defined Formatter, String, or Error
+// methods, so keep the formatting itself behind a recovery boundary too.
+func panicError(value any) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errors.New("job function panicked: <unprintable panic value>")
+		}
+	}()
+	description := fmt.Sprintf("%v", value)
+	// The fmt package normally catches formatter panics and puts a diagnostic
+	// marker in its output. Do not expose that implementation detail as the
+	// job's error; it is the same unreadable case as a panic escaping here.
+	if strings.Contains(description, "%!") {
+		description = "<unprintable panic value>"
+	}
+	return fmt.Errorf("job function panicked: %s", description)
+}
+
 // Start creates a job, registers it, and runs fn in its own goroutine. fn
 // receives the job's own ctx plus its assigned job.ID — several tools (ask,
 // report_progress) need to know "which job am I running inside", and the ID
@@ -129,7 +148,7 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 					if recovered == nil {
 						err = errors.New("job function panicked: <nil>")
 					} else {
-						err = fmt.Errorf("job function panicked: %v", recovered)
+						err = panicError(recovered)
 					}
 					result = ""
 					truncated = false

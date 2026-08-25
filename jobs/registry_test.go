@@ -221,6 +221,72 @@ func TestJobPanicIsRecoveredAndRegistryStaysUsable(t *testing.T) {
 	}
 }
 
+type panicFormattingValue struct{}
+
+func (panicFormattingValue) Error() string          { panic("error formatter panic") }
+func (panicFormattingValue) String() string         { panic("string formatter panic") }
+func (panicFormattingValue) Format(fmt.State, rune) { panic("format formatter panic") }
+
+func TestJobPanicWithUnprintableValueIsRecovered(t *testing.T) {
+	r := NewRegistry()
+	notices := make(chan Job, 2)
+	r.SetOnEvent(func(job Job) { notices <- job })
+	jobContext := make(chan context.Context, 1)
+
+	job := r.Start(context.Background(), "unprintable panic", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
+		jobContext <- ctx
+		panic(panicFormattingValue{})
+	})
+
+	failed, ok := r.Wait(context.Background(), job.ID, time.Second)
+	if !ok || failed.Status != StatusFailed {
+		t.Fatalf("expected panic job to fail, got ok=%v job=%+v", ok, failed)
+	}
+	if failed.Err != "job function panicked: <unprintable panic value>" {
+		t.Fatalf("unexpected panic error: %q", failed.Err)
+	}
+	select {
+	case ctx := <-jobContext:
+		select {
+		case <-ctx.Done():
+		default:
+			t.Fatal("job context was not cancelled after panic completion")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for job context")
+	}
+
+	select {
+	case start := <-notices:
+		if start.ID != job.ID || start.Status != StatusRunning {
+			t.Fatalf("unexpected start notice: %+v", start)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for start notice")
+	}
+	select {
+	case done := <-notices:
+		if done.ID != job.ID || done.Status != StatusFailed || done.Err != failed.Err {
+			t.Fatalf("unexpected completion notice: %+v", done)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for completion notice")
+	}
+
+	// The worker completed and its done signal was closed, so cancellation is
+	// no longer accepted; a subsequent job proves the process remains alive.
+	if r.Cancel(job.ID) {
+		t.Fatal("Cancel should reject the terminal panic job")
+	}
+	after := r.Start(context.Background(), "after unprintable panic", KindOther, "", func(context.Context, string) (string, bool, error) {
+		return "alive", false, nil
+	})
+	alive, ok := r.Wait(context.Background(), after.ID, time.Second)
+	if !ok || alive.Status != StatusDone || alive.Result != "alive" {
+		t.Fatalf("registry unusable after unprintable panic: ok=%v job=%+v", ok, alive)
+	}
+}
+
 func TestJobTruncated(t *testing.T) {
 	r := NewRegistry()
 	job := r.Start(context.Background(), "truncated", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
