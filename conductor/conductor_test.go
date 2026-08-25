@@ -803,3 +803,88 @@ func TestSwitchModelRefreshesContextLimit(t *testing.T) {
 		t.Fatalf("ContextLimit = %d, want 20", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Compaction (item 10)
+// ---------------------------------------------------------------------------
+
+// TestConductor_CompactRejectsEmptySummary is the guard on the one input
+// agent.CompactSession itself validates: Compact must fail before ever
+// opening/touching the session, so a blank /compact does not silently wipe
+// history behind an empty marker.
+func TestConductor_CompactRejectsEmptySummary(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	client := &connectortest.Fake{ProviderName: "prov", ModelName: "mod"}
+	// SessionPath is configured (unlike the "no writable session" test below)
+	// so this actually exercises the early-return: without it, c.Session()
+	// would stay nil regardless of whether the empty-summary guard ran at all.
+	c := New(Options{Client: client, Sink: &recorder{}, SessionPath: path, WorkDir: dir})
+	if _, err := c.Compact("   ", ""); err == nil {
+		t.Fatal("expected an error for a blank summary")
+	}
+	if c.Session() != nil {
+		t.Fatal("a rejected Compact must not open a session")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("a rejected Compact must not create the session file: stat err = %v", err)
+	}
+}
+
+// TestConductor_CompactWithoutSessionPathErrors covers the conversation that
+// never had persistence configured at all (SessionPath empty, Config.Session
+// nil): compact has nothing to write into and must say so rather than
+// pretending to succeed.
+func TestConductor_CompactWithoutSessionPathErrors(t *testing.T) {
+	client := &connectortest.Fake{ProviderName: "prov", ModelName: "mod"}
+	c := New(Options{Client: client, Sink: &recorder{}})
+	if _, err := c.Compact("keep this", ""); err == nil {
+		t.Fatal("expected an error with no writable session")
+	}
+}
+
+// TestConductor_CompactWritesEventAndUpdatesLiveHistory is the end-to-end
+// path a real /compact or the model's compact tool goes through: it must
+// write a compaction event to the JSONL (the raw log is never deleted — see
+// design point (a)), hand back the path to a regenerated markdown dump, and
+// replace the live conversation with the compacted view so the next request
+// actually sends less.
+func TestConductor_CompactWritesEventAndUpdatesLiveHistory(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	client := &connectortest.Fake{ProviderName: "prov", ModelName: "mod",
+		Turns: [][]stream.Event{{stream.TextDelta{Text: "ok"}, stream.Finish{}}}}
+	c := New(Options{Client: client, Sink: &recorder{}, SessionPath: path, WorkDir: dir})
+
+	for i := 0; i < 12; i++ {
+		if _, err := c.Submit(context.Background(), fmt.Sprintf("message %d", i)); err != nil {
+			t.Fatalf("Submit %d: %v", i, err)
+		}
+	}
+	before := len(c.Messages())
+
+	dumpPath, err := c.Compact("what happened so far", "keep the deploy details")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if dumpPath == "" {
+		t.Fatal("expected a non-empty markdown dump path")
+	}
+	if _, err := os.Stat(dumpPath); err != nil {
+		t.Fatalf("dump not written: %v", err)
+	}
+
+	if got := len(c.Messages()); got >= before {
+		t.Fatalf("history not compacted: before=%d after=%d", before, got)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"type":"compaction"`) {
+		t.Fatalf("no compaction event written: %s", data)
+	}
+	if !strings.Contains(string(data), "message 0") {
+		t.Fatalf("raw JSONL must retain everything, compaction is a view not a deletion: %s", data)
+	}
+}

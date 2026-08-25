@@ -193,8 +193,24 @@ func (s *interactiveState) handleCommand(raw string, cancel context.CancelFunc) 
 		// Deliberately cancel the current iteration before changing its live
 		// history; compaction is a conversation boundary, not a queued prompt.
 		cancel()
-		arg := strings.TrimSpace(strings.TrimPrefix(line, "/compact"))
-		path, err := s.cond.Compact(arg, "")
+		if len(s.cond.Messages()) == 0 {
+			// Nothing to compact yet: manualCompactSummary is never empty,
+			// so without this check a bare /compact on a fresh session would
+			// still create a session file and a dump for no reason.
+			fmt.Fprintln(os.Stderr, "/compact: nothing to compact yet")
+			return false, true
+		}
+		focus := strings.TrimSpace(strings.TrimPrefix(line, "/compact"))
+		sess := s.cond.EnsureSession()
+		if sess == nil {
+			fmt.Fprintln(os.Stderr, "/compact: no writable session")
+			return false, true
+		}
+		// DumpPathFor is deterministic, so the real path can be folded into
+		// the summary that becomes the compacted history's lead message —
+		// not just printed here — before Compact ever writes it.
+		dumpPath := session.DumpPathFor(s.cond.SessionPath())
+		path, err := s.cond.Compact(manualCompactSummary(dumpPath), focus)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "/compact: %v\n", err)
 		} else {
