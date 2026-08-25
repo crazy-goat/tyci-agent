@@ -88,7 +88,7 @@ func TestBlockingCallHandsOverASlowChild(t *testing.T) {
 	// Drive the private path with a short window rather than waiting 60s.
 	spawned := []*spawnedTask{tool.spawn(context.Background(), subagentTask{Task: "the slow one"}, false, true)}
 	time.Sleep(20 * time.Millisecond)
-	res := tool.handOff(spawned)
+	res := tool.handOff(context.Background(), spawned)
 
 	if !res.Success {
 		t.Fatalf("handoff failed: %s", res.Error)
@@ -151,7 +151,7 @@ func TestHandoffReportsChildrenThatAlreadyFinished(t *testing.T) {
 	quick := tool.spawn(context.Background(), subagentTask{Task: "quick one"}, false, true)
 	slow := tool.spawn(context.Background(), subagentTask{Task: "slow one"}, false, true)
 	<-quick.done
-	res := tool.handOff([]*spawnedTask{quick, slow})
+	res := tool.handOff(context.Background(), []*spawnedTask{quick, slow})
 	// Let the handed-over child finish and wait for it: a job goroutine that
 	// outlives the test would still be notifying after cleanup tore the
 	// notifier down.
@@ -184,7 +184,7 @@ func TestHandoffOfASingleAlreadyFinishedTaskIsPlainText(t *testing.T) {
 	st := tool.spawn(context.Background(), subagentTask{Task: "quick"}, false, true)
 	<-st.done
 
-	res := tool.handOff([]*spawnedTask{st})
+	res := tool.handOff(context.Background(), []*spawnedTask{st})
 	if !res.Success || res.Content != "the answer" {
 		t.Fatalf("expected plain text for a single already-finished task, got %+v", res)
 	}
@@ -234,7 +234,7 @@ func TestHandoffStopsStreamingIntoAClosedBlock(t *testing.T) {
 		t.Fatal("streaming should be on while the parent is still waiting")
 	}
 
-	tool.handOff([]*spawnedTask{st})
+	tool.handOff(context.Background(), []*spawnedTask{st})
 	if !st.stopStream.Load() {
 		t.Fatal("streaming was not stopped at the handoff")
 	}

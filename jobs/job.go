@@ -129,9 +129,16 @@ type Job struct {
 	// copies it; guarded by Registry.mu like everything else here.
 	statusChanged chan struct{}
 
-	// waiters counts callers currently blocked inside Registry.Wait for
-	// this job. Ask reads it (while already holding Registry.mu) to decide
-	// QuestionHasWaiter above. Guarded by Registry.mu.
+	// waiters counts callers currently blocked inside Registry.Wait (NOT
+	// WaitObserve — see its doc comment) for this job. Ask reads it (while
+	// already holding Registry.mu) to decide QuestionHasWaiter above. Only
+	// a Wait call counts: it is the shape that hands its result back to
+	// whoever called it, which is what makes it a genuine second delivery
+	// path for the question. WaitObserve exists precisely for a caller
+	// that blocks on the same signal for its own purposes (waking an
+	// unrelated select) without itself reporting the question to anyone —
+	// counting that too was batch-2 review finding C1: it made Ask
+	// suppress the only delivery a question had. Guarded by Registry.mu.
 	waiters int
 
 	// cancel ends this job's own context (see Registry.Start, which derives
@@ -168,6 +175,23 @@ type Job struct {
 	// rare, deliberate act, not something fired on every streamed token), so
 	// a plain slice under the registry lock is simplest.
 	mailbox []string
+
+	// ResidualMailbox is set ONCE, at the moment this job goes terminal (see
+	// Registry.Start's completion path), to whatever was still sitting in
+	// mailbox and never got drained by this job's own (now-stopped) agent
+	// loop. Batch-2 review finding C3: Registry.Post reports success for
+	// any live job, but "live" only means the loop MIGHT still drain it at
+	// its next iteration boundary — a job whose final iteration has
+	// already happened (agent.Run does not drain after its last turn) will
+	// never read another posted message again, and the mailbox is gone the
+	// moment this job is pruned. Before this field existed, that content —
+	// notices routed here by notifyToParent among them — simply vanished
+	// with no trace once the job finished. Whoever consumes onEvent's
+	// terminal snapshot is expected to forward this to somewhere still
+	// reachable (main.go's onEvent hook forwards it to the main notice
+	// queue, tagged) instead of letting it disappear. Copied by Snapshot
+	// like any other exported field; nil on every NON-terminal snapshot.
+	ResidualMailbox []string
 
 	extensionCtx      *resettableDeadlineContext
 	extensionDecision chan bool
@@ -228,6 +252,7 @@ func (j *Job) Snapshot() Job {
 		Question:           j.Question,
 		QuestionHasWaiter:  j.QuestionHasWaiter,
 		Progress:           j.Progress,
+		ResidualMailbox:    j.ResidualMailbox,
 		ExtensionRequestID: j.ExtensionRequestID,
 		ExtensionSeconds:   j.ExtensionSeconds,
 		ExtensionReason:    j.ExtensionReason,

@@ -656,6 +656,11 @@ func wireTools() {
 	// against real background jobs — /btw side-conversations and async
 	// subagents alike — instead of each running on its own registry.
 	tools.SetJobWaiter(jobWaiterAdapter{reg: JobRegistry})
+	// runWithHandoff's watcher and handoff-message peek go through
+	// WaitObserve, not Wait — see JobObserver's doc comment (batch-2 review
+	// finding C1) for why counting them as ordinary "wait" callers would
+	// suppress the only delivery a question had.
+	tools.SetJobObserver(jobObserverAdapter{reg: JobRegistry})
 	tools.SetJobStarter(jobStarterAdapter{reg: JobRegistry})
 	tools.SetJobAsker(jobAskerAdapter{reg: JobRegistry})
 	tools.SetJobExtensionRequester(jobExtensionRequesterAdapter{reg: JobRegistry})
@@ -701,14 +706,19 @@ func wireTools() {
 		// background command is.
 		//
 		// j.QuestionHasWaiter (B7) is true when some caller was already
-		// blocked inside jobs.Registry.Wait for this exact job the moment
-		// this question was posed — the "wait" tool, or a blocking subagent
-		// call's own handoff watch (tools/subagent.go's watchForWaiting).
-		// That caller is about to receive the same question back as its
-		// own, synchronous Wait/wait() result (see JobStatus.Waiting), so
+		// blocked inside jobs.Registry.Wait — specifically Wait, never
+		// WaitObserve — for this exact job the moment this question was
+		// posed. Only the "wait" tool goes through Wait: a blocking
+		// subagent call's own handoff watch (tools/subagent.go's
+		// watchForWaiting) deliberately goes through WaitObserve instead,
+		// since it only wakes an unrelated select and never itself
+		// reports the question to anyone (batch-2 review finding C1 — see
+		// jobs.Registry.WaitObserve's doc comment). A genuine Wait caller
+		// is about to receive the same question back as its own,
+		// synchronous Wait/wait() result (see JobStatus.Waiting), so
 		// queuing this notice too would deliver the same question twice in
 		// one turn. Skip it in that case; the notice path stays the
-		// authoritative (and only) one when nobody was already waiting.
+		// authoritative (and only) one otherwise.
 		if j.Status == jobs.StatusWaitingAnswer && !j.QuestionHasWaiter {
 			text := fmt.Sprintf(
 				"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
@@ -730,13 +740,28 @@ func wireTools() {
 			// drop the notice silently — a dropped notice leaves no trace
 			// that a child ever asked anything, while a forwarded one at
 			// least reaches someone, tagged as not its original addressee.
-			if j.ParentID != "" && reg.Post(j.ParentID, text) {
-				return
+			if j.ParentID == "" || !reg.Post(j.ParentID, text) {
+				if j.ParentID != "" {
+					text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", j.ParentID, text)
+				}
+				notices.Notify(text)
 			}
-			if j.ParentID != "" {
-				text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", j.ParentID, text)
+		}
+
+		// C3 (batch-2 review): a message sitting in a job's mailbox when
+		// that job goes terminal will never be drained by anyone — its own
+		// agent loop has stopped for good, and nothing else ever reads
+		// that mailbox (see jobs.Job.ResidualMailbox's doc comment). That
+		// includes a notice this very hook routed there via reg.Post above,
+		// on some earlier event, for a fork that then finished before its
+		// own next iteration got around to draining it. Before this swept
+		// it to main, tagged, it simply vanished — silently dropping a
+		// notice is exactly the failure this whole notify-routing design
+		// exists to avoid.
+		if len(j.ResidualMailbox) > 0 {
+			for _, m := range j.ResidualMailbox {
+				notices.Notify(fmt.Sprintf("[for job %s, which finished before this could be delivered to it — forwarded here instead] %s", j.ID, m))
 			}
-			notices.Notify(text)
 		}
 	})
 

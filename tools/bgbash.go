@@ -163,15 +163,27 @@ func notify(text string) {
 // parentID == "" (spawned directly from the top-level conversation, not
 // from within another job) goes straight to main with no tag, since main
 // IS the intended recipient in that case.
+//
+// The two ways parentID != "" can still end up on the main queue are
+// tagged differently (batch-2 review finding C4): "recipient gone" means
+// mb.Post itself said so (the job is known and terminal), while "no
+// mailbox wired at all" (mb == nil — a test, or a mode that never calls
+// SetJobMailbox; production always wires one) says nothing about whether
+// parentID is even still running. Claiming it had "already finished" in
+// that second case would be a flat guess dressed up as a fact.
 func notifyToParent(parentID, text string) {
 	if text == "" {
 		return
 	}
 	if parentID != "" {
-		if mb := getJobMailbox(); mb != nil && mb.Post(parentID, text) {
+		switch mb := getJobMailbox(); {
+		case mb == nil:
+			text = fmt.Sprintf("[for job %s, but no mailbox is wired to route it there — delivered here instead] %s", parentID, text)
+		case mb.Post(parentID, text):
 			return
+		default:
+			text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", parentID, text)
 		}
-		text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", parentID, text)
 	}
 	jobNotifierMu.RLock()
 	n := jobNotifier

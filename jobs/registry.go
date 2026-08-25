@@ -189,6 +189,15 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 		default:
 			job.Status = StatusDone
 		}
+		// C3 (batch-2 review): sweep whatever is still sitting in mailbox
+		// into the snapshot BEFORE anything else can happen to it — this
+		// job's own agent loop just stopped for good, so nothing will ever
+		// drain it through the normal path again, and once pruneTerminalLocked
+		// below (or a later prune) removes this job from r.jobs, even
+		// DrainMessages could no longer reach it. See ResidualMailbox's doc
+		// comment for why leaving this silently in place instead was a bug.
+		job.ResidualMailbox = job.mailbox
+		job.mailbox = nil
 		snapshot := job.Snapshot()
 		onEvent := r.onEvent
 		// This job just became terminal, so this is exactly the moment the
@@ -358,6 +367,21 @@ func (r *Registry) List() []Job {
 	return list
 }
 
+// WaiterCount reports how many callers are currently blocked inside Wait
+// (not WaitObserve — see its doc comment) for id, 0 for an unknown id.
+// Production code has no use for this; it exists so a test can synchronize
+// on "a Wait call has actually registered" instead of guessing with a
+// sleep before triggering the transition it wants Wait to catch.
+func (r *Registry) WaiterCount(id string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok {
+		return 0
+	}
+	return job.waiters
+}
+
 // signalStatusChangeLocked wakes every Wait call currently blocked on this
 // job's statusChanged (a select reading from a channel that is closed right
 // under it fires immediately, with no ordering requirement against when the
@@ -370,7 +394,39 @@ func (r *Registry) signalStatusChangeLocked(job *Job) {
 	job.statusChanged = make(chan struct{})
 }
 
+// Wait blocks until id finishes, enters StatusWaitingAnswer, timeout
+// elapses, or ctx is done — see waitInternal. It counts as a waiter for
+// Job.QuestionHasWaiter's purposes: this is the shape that hands its
+// result back to whoever called it (the "wait" tool, in production), which
+// is what makes it a genuine second delivery path for a pending question.
+// A caller that blocks on the same signal WITHOUT reporting the question
+// to anyone must use WaitObserve instead (see its doc comment for why —
+// batch-2 review finding C1).
 func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (*Job, bool) {
+	return r.waitInternal(ctx, id, timeout, true)
+}
+
+// WaitObserve behaves exactly like Wait — blocking until id finishes,
+// enters StatusWaitingAnswer, timeout elapses, or ctx is done — but does
+// NOT count toward Job.waiters, so it has no effect on QuestionHasWaiter.
+//
+// It exists for a caller that watches a job for its OWN purposes without
+// itself becoming a delivery path for the question it might see — see
+// tools/subagent.go's runWithHandoff, whose watcher only wakes an
+// unrelated select; it never hands the question back to anyone. Before
+// this method existed, that watcher used Wait, so Ask saw waiters>0 for
+// essentially every blocking subagent call and suppressed the onEvent
+// notice — the ONLY delivery the question had, since the watcher itself
+// delivers nothing. That was batch-2 review finding C1: coupling "is
+// blocked in Wait" with "will report the question" through one counter is
+// wrong whenever a caller does the former without the latter.
+func (r *Registry) WaitObserve(ctx context.Context, id string, timeout time.Duration) (*Job, bool) {
+	return r.waitInternal(ctx, id, timeout, false)
+}
+
+// waitInternal is Wait and WaitObserve's shared implementation. countAsWaiter
+// distinguishes them — see Wait's and WaitObserve's doc comments.
+func (r *Registry) waitInternal(ctx context.Context, id string, timeout time.Duration, countAsWaiter bool) (*Job, bool) {
 	r.mu.Lock()
 	job, ok := r.jobs[id]
 	if !ok {
@@ -387,23 +443,19 @@ func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (
 		return nil, false
 	}
 	// Registered while still holding r.mu so Ask (which also takes r.mu to
-	// flip Status) can never see a stale count — either this Wait call is
+	// flip Status) can never see a stale count — either this call is
 	// counted before Ask reads waiters, or Ask's whole status flip (and
 	// QuestionHasWaiter decision) happens before this one is registered.
 	// See jobs.Job's waiters doc comment and Ask's QuestionHasWaiter use.
-	job.waiters++
+	if countAsWaiter {
+		job.waiters++
+	}
 	statusCh := job.statusChanged
 	r.mu.Unlock()
 
-	defer func() {
-		r.mu.Lock()
-		job.waiters--
-		r.mu.Unlock()
-	}()
-
 	// statusCh is closed the moment Ask flips this job INTO
 	// StatusWaitingAnswer (see signalStatusChangeLocked) — never on the way
-	// back out, which would wake an unrelated, non-looping Wait call the
+	// back out, which would wake an unrelated, non-looping call the
 	// instant some other question got answered and hand it a mid-flight
 	// "running" snapshot instead of the terminal one it actually wants. A
 	// caller that does need to notice the return-to-running transition too
@@ -412,10 +464,10 @@ func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (
 	// This gives the one transition that matters the same real-time wake
 	// job.done already gives a normal completion, instead of waiting out
 	// the rest of timeout and finding out on the next poll. Deliberately
-	// NOT special-cased for "already waiting when Wait was called": a
-	// caller in that state still wants an ordinary bounded wait for
-	// whatever happens NEXT (an answer arriving, the job being cancelled,
-	// ...), not an instant return of a status it may already know about.
+	// NOT special-cased for "already waiting when called": a caller in
+	// that state still wants an ordinary bounded wait for whatever happens
+	// NEXT (an answer arriving, the job being cancelled, ...), not an
+	// instant return of a status it may already know about.
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
@@ -426,7 +478,22 @@ func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (
 	case <-ctx.Done():
 	}
 
+	// The decrement happens in the SAME critical section as the snapshot
+	// below — not deferred to run after a second, separate Lock/Unlock.
+	// Deferring it (as an earlier version of this code did) left a window
+	// where this call had already taken its snapshot — possibly "running",
+	// with an empty Question, because its own timeout or ctx was what
+	// ended the select — while still counted as a waiter a fraction longer.
+	// Ask could observe waiters>0 in exactly that window and suppress the
+	// notice for a caller that had, in fact, already returned without ever
+	// seeing the question (batch-2 review finding C2). Folding the
+	// decrement into this lock hold means Ask can only ever see this
+	// call either fully registered (strictly before its snapshot) or
+	// fully gone (strictly after) — never a state the two disagree about.
 	r.mu.Lock()
+	if countAsWaiter {
+		job.waiters--
+	}
 	snapshot := job.Snapshot()
 	r.mu.Unlock()
 	return &snapshot, true

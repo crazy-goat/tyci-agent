@@ -10,6 +10,16 @@ package main
 // the other case, since that caller is about to receive the very same
 // question back synchronously.
 //
+// Review round 1 (C1) found that this only holds for a REPORTING waiter —
+// something that hands the question back to whoever called it, like the
+// "wait" tool going through jobs.Registry.Wait. A caller that merely
+// watches a job (jobs.Registry.WaitObserve — tools/subagent.go's
+// runWithHandoff watcher) must NOT suppress the notice, because it does
+// not itself deliver the question to anyone; before WaitObserve existed
+// and the watcher used Wait, this was reachable on essentially every
+// blocking subagent call. TestWiring_B7_ObserverOnly_NoticeNotSuppressed
+// below is that regression's coverage.
+//
 // These tests drive the exact production wiring (wireTools, via
 // withTestWiring) rather than reimplementing the dedup decision.
 
@@ -21,11 +31,33 @@ import (
 	"github.com/decodo/tyci/jobs"
 )
 
-// TestWiring_B7_ParentInWait_NoticeSuppressed is the "parent is in wait"
-// case: a caller already blocked in JobRegistry.Wait for this exact job
-// when it asks a question must get exactly one delivery — its own Wait
-// call's Waiting result — and the main notice queue must stay empty.
-func TestWiring_B7_ParentInWait_NoticeSuppressed(t *testing.T) {
+// waitUntilRegistered polls jobs.Registry.WaiterCount (a real, synchronized
+// count) until a Wait call has registered on id, instead of guessing with
+// a fixed sleep — see review round 1: a goroutine that has not yet reached
+// Wait's internal statusCh capture would otherwise catch the NEW,
+// post-transition channel and block for the full timeout instead of
+// waking, if the question were asked before it actually got there.
+func waitUntilRegistered(t *testing.T, reg *jobs.Registry, id string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if reg.WaiterCount(id) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Wait call never registered as a waiter on the job")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestWiring_B7_ReportingWaiter_NoticeSuppressed is the "parent is in
+// wait" case, specifically for a REPORTING waiter (jobs.Registry.Wait,
+// what the "wait" tool uses): a caller already blocked in Wait for this
+// exact job when it asks a question must get exactly one delivery — its
+// own Wait call's Waiting result — and the main notice queue must stay
+// empty.
+func TestWiring_B7_ReportingWaiter_NoticeSuppressed(t *testing.T) {
 	reg, _ := withTestWiring(t)
 
 	release := make(chan struct{})
@@ -45,11 +77,11 @@ func TestWiring_B7_ParentInWait_NoticeSuppressed(t *testing.T) {
 		waitResult <- snap
 	}()
 
-	// Give the goroutine above time to actually register as a waiter
-	// (jobs.Job.waiters, incremented under Registry.mu at the top of Wait)
-	// before the question is asked — this is what makes "parent is in
-	// wait" true at the moment Ask runs, not a race against it.
-	time.Sleep(30 * time.Millisecond)
+	// Deterministic handshake (see waitUntilRegistered), not a sleep: only
+	// ask once the Wait call has genuinely registered as a waiter — this
+	// is what makes "parent is in wait" true at the moment Ask runs, not a
+	// race against it.
+	waitUntilRegistered(t, reg, job.ID)
 	close(release)
 
 	select {
@@ -74,9 +106,51 @@ func TestWiring_B7_ParentInWait_NoticeSuppressed(t *testing.T) {
 	reg.Answer(job.ID, "blue", true)
 }
 
+// TestWiring_B7_ObserverOnly_NoticeNotSuppressed is C1's wiring-level
+// regression coverage: a WaitObserve call blocked on the job — standing in
+// for runWithHandoff's watcher, which never itself reports a question to
+// anyone — must NOT suppress the onEvent notice. Contrast with
+// TestWiring_B7_ReportingWaiter_NoticeSuppressed above: same shape, only
+// the call (WaitObserve vs Wait) differs, and the outcome flips.
+func TestWiring_B7_ObserverOnly_NoticeNotSuppressed(t *testing.T) {
+	reg, _ := withTestWiring(t)
+
+	release := make(chan struct{})
+	job := reg.Start(context.Background(), "asker", jobs.KindSubagent, "", func(ctx context.Context, jobID string) (string, bool, error) {
+		<-release
+		_, _, _ = reg.Ask(ctx, jobID, "which color?")
+		return "done", false, nil
+	})
+
+	go func() {
+		reg.WaitObserve(context.Background(), job.ID, 5*time.Second)
+	}()
+	// WaitObserve does not touch WaiterCount, so there is nothing to poll
+	// for here — that absence is exactly the property under test. A short
+	// settle delay only risks a false pass (the goroutine has not started
+	// yet), never a false failure, so it cannot mask a regression.
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+
+	deadline := time.Now().Add(3 * time.Second)
+	var pending []string
+	for time.Now().Before(deadline) {
+		pending = JobNotices.Drain()
+		if len(pending) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected exactly one notice on the main queue (a WaitObserve call must not suppress it), got %v", pending)
+	}
+
+	reg.Answer(job.ID, "blue", true)
+}
+
 // TestWiring_B7_ParentNotInWait_NoticeDelivered is the other half: with
-// nobody blocked in Wait for the job, the onEvent-driven notice is the
-// only delivery, and it must actually arrive exactly once.
+// nobody watching the job at all, the onEvent-driven notice is the only
+// delivery, and it must actually arrive exactly once.
 func TestWiring_B7_ParentNotInWait_NoticeDelivered(t *testing.T) {
 	reg, _ := withTestWiring(t)
 

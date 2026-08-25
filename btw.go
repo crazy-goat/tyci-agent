@@ -49,6 +49,33 @@ func (a jobWaiterAdapter) Wait(ctx context.Context, id string, timeout time.Dura
 	}, true
 }
 
+// jobObserverAdapter satisfies tools.JobObserver over JobRegistry — same
+// translation as jobWaiterAdapter above, but calling WaitObserve instead of
+// Wait. This is the one that matters for batch-2 review finding C1:
+// runWithHandoff's watcher (and its handoff-message peek) must not count
+// as a "waiter" for jobs.Job.QuestionHasWaiter's purposes, or Ask
+// suppresses the onEvent notice for a caller that was never going to
+// report the question to anyone. See jobs.Registry.WaitObserve's doc
+// comment.
+type jobObserverAdapter struct{ reg *jobs.Registry }
+
+func (a jobObserverAdapter) Wait(ctx context.Context, id string, timeout time.Duration) (tools.JobStatus, bool) {
+	job, ok := a.reg.WaitObserve(ctx, id, timeout)
+	if !ok {
+		return tools.JobStatus{}, false
+	}
+	return tools.JobStatus{
+		ID:       job.ID,
+		Done:     job.Status != jobs.StatusRunning && job.Status != jobs.StatusWaitingAnswer,
+		Success:  job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
+		Content:  job.Result,
+		Error:    job.Err,
+		Waiting:  job.Status == jobs.StatusWaitingAnswer,
+		Question: job.Question,
+		Progress: job.Progress,
+	}, true
+}
+
 // jobHandleAdapter satisfies tools.JobHandle by exposing *jobs.Job's ID
 // field as a method — the tools package's contract is method-shaped so it
 // never needs to know jobs.Job's concrete field layout.
@@ -439,9 +466,7 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 			// B4: address this to whoever spawned this /btw job (parentID),
 			// not unconditionally to the main queue — see the identical
 			// routing/fallback choice in wireTools's onEvent hook (main.go).
-			if parentID != "" && reg.Post(parentID, noticeText) {
-				// delivered into the spawning job's own mailbox instead.
-			} else {
+			if parentID == "" || !reg.Post(parentID, noticeText) {
 				if parentID != "" {
 					noticeText = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", parentID, noticeText)
 				}
