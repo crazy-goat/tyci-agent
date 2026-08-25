@@ -175,6 +175,14 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 
 	var totalUsage stream.Usage
 
+	// lastRoundUsage is the most recent single model call's raw Input/Output —
+	// not totalUsage, which sums every iteration's full resent context and so
+	// would overcount the current window many times over across a multi-tool
+	// turn. This is the same quantity the status bar's context figure uses
+	// (display.TuiModel.contextUsed): the last request's Input is what will
+	// actually overflow next.
+	var lastRoundUsage stream.Usage
+
 	// Tracks how many todo reminders we've injected this turn (see maxTodoReminders).
 	todoReminders := 0
 	jobReminders := 0
@@ -218,7 +226,10 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 		// only when it reaches the Summary line. totalEmitted reports
 		// whether the call already showed the Costs line; if not, the
 		// caller must emit it (typically on error/early-return paths).
-		more, _, totalEmitted, err := runOnce(ctx, fs.mc, d, msgs, cfg, &totalUsage)
+		more, roundUsage, totalEmitted, err := runOnce(ctx, fs.mc, d, msgs, cfg, &totalUsage)
+		if roundUsage != nil {
+			lastRoundUsage = *roundUsage
+		}
 		if err != nil {
 			// Check for context cancellation first
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -272,7 +283,11 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 					}
 					return totalUsage, err
 				}
-				more, _, totalEmitted, err = runOnce(ctx, fs.mc, d, msgs, cfg, &totalUsage)
+				var roundUsage *stream.Usage
+				more, roundUsage, totalEmitted, err = runOnce(ctx, fs.mc, d, msgs, cfg, &totalUsage)
+				if roundUsage != nil {
+					lastRoundUsage = *roundUsage
+				}
 				if err == nil {
 					recovered = true
 					break
@@ -372,8 +387,8 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				limit = cfg.ContextLimitFor(fs.mc.Provider(), fs.mc.Model())
 			}
 			if limit > 0 && !contextReminded {
-				used := contextTokens(*msgs)
-				if used*100 >= limit*50 {
+				used := lastRoundUsage.Input + lastRoundUsage.Output
+				if used > 0 && used*100 >= limit*contextBudgetReminderPercent {
 					contextReminded = true
 					reminder := buildContextBudgetReminder(used, limit)
 					*msgs = append(*msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: reminder}}})
@@ -446,18 +461,14 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 // fire ends the loop the instant this turn completes, so a tool call here
 // would never have its result seen by the model — the only useful thing it
 // can do with this turn is write its summary as plain text right now.
-func contextTokens(msgs []connector.Message) int {
-	total := 0
-	for _, msg := range msgs {
-		for _, block := range msg.Content {
-			total += len([]rune(block.Text)) + len([]rune(block.Thinking)) + len(block.Arguments)
-		}
-	}
-	return total
-}
+// contextBudgetReminderPercent is the fraction of the model's published
+// context window (as a percentage) that triggers one budget reminder per
+// turn. Half the window still leaves comfortable room to persist state and
+// call compact before the next request grows further.
+const contextBudgetReminderPercent = 50
 
 func buildContextBudgetReminder(used, limit int) string {
-	return fmt.Sprintf("[automated context budget reminder, not the user] You are at an approximate estimate of %d of %d context tokens for the current model. Persist anything important, then use compact(summary=\"...\", focus=\"...\") if continuing would crowd out useful history.", used, limit)
+	return fmt.Sprintf("[automated context budget reminder, not the user] You are at %d of %d context tokens for the current model (last request's measured usage). Persist anything important, then use compact(summary=\"...\", focus=\"...\") if continuing would crowd out useful history.", used, limit)
 }
 
 func buildLastStepWarning() string {

@@ -337,7 +337,25 @@ func (s *Session) Compact(summary, tailStartID string, tail []connector.Message,
 	return WriteMarkdownDump(s.path)
 }
 
+// dumpFieldCap bounds how much of any one field (message text, thinking, tool
+// arguments, tool result) the markdown dump keeps inline. The dump exists to
+// be grepped, and "what was that error" or "which file did I edit" almost
+// always lives in the first few hundred characters — the raw JSONL (never
+// deleted, see WriteCompaction's doc comment) still has the rest for the rare
+// case that matters.
+const dumpFieldCap = 4000
+
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
+
 // WriteMarkdownDump writes a grep-friendly, derived view beside the JSONL.
+//
+// Format constraints (item 10): the dump is searched with grep/rg, not read
+// top-to-bottom, so every line stays on one line (never soft-wrapped — a
+// wrapped line splits a path or identifier and grep stops finding it),
+// carries a short stable self-identifying prefix (event index plus role or
+// tool name, e.g. "[12] [bash]"), and writes paths/tool names/error text
+// verbatim rather than paraphrased. ANSI escapes are stripped so a
+// colour-coded error line still matches `grep error`.
 func WriteMarkdownDump(path string) (string, error) {
 	lines, err := parseSessionFile(path)
 	if err != nil {
@@ -349,45 +367,142 @@ func WriteMarkdownDump(path string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	ansi := regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
+
+	writeDumpHeader(f, path, lines)
+
 	for i, line := range lines {
 		var ev struct {
-			Type    EventType      `json:"type"`
-			Message MessagePayload `json:"message"`
-			Summary MessagePayload `json:"summary"`
+			Type      EventType      `json:"type"`
+			Timestamp string         `json:"timestamp"`
+			Message   MessagePayload `json:"message"`
+			Provider  string         `json:"provider,omitempty"`
+			Model     string         `json:"model,omitempty"`
+			Summary   MessagePayload `json:"summary"`
+			Status    string         `json:"status,omitempty"`
+			ExitCode  int            `json:"exit_code,omitempty"`
+			TailStart string         `json:"tail_start_id,omitempty"`
+			Dropped   int            `json:"dropped_events,omitempty"`
 		}
 		if json.Unmarshal([]byte(line.Raw), &ev) != nil {
 			continue
 		}
-		prefix := fmt.Sprintf("[%d] [%s]", i+1, ev.Type)
-		var text string
+		n := i + 1
 		switch ev.Type {
+		case TypeSession:
+			// The header is rendered separately at the top of the file; skip
+			// it here so it is not duplicated line-for-line.
+			continue
 		case TypeMessage:
-			text = ev.Message.Role
-			for _, b := range ev.Message.Content {
-				value := b.Text
-				if value == "" {
-					value = b.Thinking
-				}
-				if value != "" {
-					text += " " + value
-				}
-				if b.Name != "" {
-					text += " tool=" + b.Name
-				}
-				if len(b.Arguments) > 0 {
-					text += " args=" + string(b.Arguments)
-				}
-			}
+			writeMessageDumpLines(f, n, ev.Timestamp, ev.Provider, ev.Model, ev.Message)
 		case TypeCompaction:
-			text = "summary " + messageText(ev.Summary)
+			text := dumpCap(cleanDumpText(messageText(ev.Summary)))
+			fmt.Fprintf(f, "[%d] [compaction] %s dropped=%d tail_start=%s summary=%s\n",
+				n, ev.Timestamp, ev.Dropped, orDash(ev.TailStart), text)
+		case TypeSessionEnd:
+			fmt.Fprintf(f, "[%d] [session_end] %s status=%s exit=%d\n", n, ev.Timestamp, ev.Status, ev.ExitCode)
 		default:
-			text = string(ev.Type)
+			fmt.Fprintf(f, "[%d] [%s] %s\n", n, ev.Type, ev.Timestamp)
 		}
-		text = strings.ReplaceAll(ansi.ReplaceAllString(text, ""), "\n", " ")
-		fmt.Fprintf(f, "%s %s\n", prefix, text)
 	}
 	return dumpPath, nil
+}
+
+// writeDumpHeader writes the metadata block a reader (or a `head`) sees
+// first: agent, session id, project, model and date. It re-reads the
+// session's own header line rather than trusting a caller-supplied value,
+// since this whole file is a derived artifact regenerated from the JSONL.
+func writeDumpHeader(f *os.File, path string, lines []ParsedLine) {
+	fmt.Fprintf(f, "# tyci session dump\n\n")
+	fmt.Fprintf(f, "- source: %s\n", path)
+	for _, line := range lines {
+		if line.MsgType != "header" {
+			continue
+		}
+		var h Header
+		if json.Unmarshal([]byte(line.Raw), &h) != nil {
+			return
+		}
+		fmt.Fprintf(f, "- agent: tyci\n")
+		fmt.Fprintf(f, "- session id: %s\n", h.ID)
+		if h.ProjectRoot != "" {
+			fmt.Fprintf(f, "- project: %s\n", h.ProjectRoot)
+		} else if h.CWD != "" {
+			fmt.Fprintf(f, "- project: %s\n", h.CWD)
+		}
+		if h.Provider != "" || h.Model != "" {
+			fmt.Fprintf(f, "- model: %s/%s\n", h.Provider, h.Model)
+		}
+		if h.Timestamp != "" {
+			fmt.Fprintf(f, "- date: %s\n", h.Timestamp)
+		}
+		break
+	}
+	fmt.Fprintf(f, "\n")
+}
+
+// writeMessageDumpLines emits one self-identifying, non-wrapping line per
+// content block rather than squashing a whole turn into one line: a tool
+// call and its eventual result are each exactly the kind of thing grepped
+// for by name ("which file did I edit", "what was that error"), and merging
+// them into one line per event would either bury or truncate one of them.
+func writeMessageDumpLines(f *os.File, n int, ts, provider, model string, msg MessagePayload) {
+	role := msg.Role
+	if role == "" {
+		role = "unknown"
+	}
+	modelSuffix := ""
+	if role == "assistant" && (provider != "" || model != "") {
+		modelSuffix = fmt.Sprintf(" model=%s/%s", provider, model)
+	}
+	wrote := false
+	for _, b := range msg.Content {
+		switch {
+		case b.Type == "toolCall":
+			wrote = true
+			args := dumpCap(cleanDumpText(string(b.Arguments)))
+			fmt.Fprintf(f, "[%d] [%s] %s call id=%s args=%s\n", n, orDash(b.Name), ts, b.ID, args)
+		case role == "toolResult":
+			wrote = true
+			text := dumpCap(cleanDumpText(b.Text))
+			fmt.Fprintf(f, "[%d] [%s] %s result id=%s error=%t %s\n", n, orDash(b.ToolName), ts, b.ToolCallID, b.IsError, text)
+		case b.Type == "thinking" && b.Thinking != "":
+			wrote = true
+			fmt.Fprintf(f, "[%d] [thinking]%s %s %s\n", n, modelSuffix, ts, dumpCap(cleanDumpText(b.Thinking)))
+		case b.Text != "":
+			wrote = true
+			fmt.Fprintf(f, "[%d] [%s]%s %s %s\n", n, role, modelSuffix, ts, dumpCap(cleanDumpText(b.Text)))
+		}
+	}
+	if !wrote {
+		// A content-less event (e.g. a skipped/empty assistant turn) still
+		// gets one line so the event index in the prefix stays meaningful
+		// against the raw JSONL line numbers a reader might cross-reference.
+		fmt.Fprintf(f, "[%d] [%s]%s %s (empty)\n", n, role, modelSuffix, ts)
+	}
+}
+
+// cleanDumpText strips ANSI escapes and collapses newlines so no field can
+// ever break a dump line in two; grep depends on one match per line.
+func cleanDumpText(s string) string {
+	return strings.ReplaceAll(ansiEscape.ReplaceAllString(s, ""), "\n", " ")
+}
+
+// dumpCap truncates a field to dumpFieldCap runes. The marker names the
+// cut explicitly rather than silently dropping the rest, and the raw JSONL
+// (never deleted) is the place to look for the untruncated value.
+func dumpCap(s string) string {
+	r := []rune(s)
+	if len(r) <= dumpFieldCap {
+		return s
+	}
+	return string(r[:dumpFieldCap]) + fmt.Sprintf("...[truncated %d more chars]", len(r)-dumpFieldCap)
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 func messageText(msg MessagePayload) string {

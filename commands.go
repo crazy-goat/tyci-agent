@@ -362,6 +362,15 @@ func pricingContextLimit(provider, model string) int {
 	return limits.Context
 }
 
+// manualCompactSummary is used when a human types /compact directly, rather
+// than the model calling the compact tool with its own summary. There is no
+// model-authored summary to fall back on here, but compaction never deletes
+// anything (see agent.CompactSession / session.WriteCompaction): the raw
+// JSONL and the derived markdown dump both survive, so a generic marker
+// costs nothing. Any text the person typed after /compact is the optional
+// focus instruction, not the summary itself.
+const manualCompactSummary = "Manual /compact requested by the user. Earlier turns are not repeated here — see the raw session file and its markdown dump for the full record."
+
 // resolveFallbacksQuiet resolves each "provider/model" fallback spec to a
 // connector.ModelClient and reports nothing itself: it returns the resolved
 // clients alongside the specs that could not be resolved, leaving it to the

@@ -281,8 +281,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// Deliberately cancel the current iteration before changing its live
 				// history; compaction is a conversation boundary, not a queued prompt.
 				iterCancel()
-				summary := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
-				path, err := cond.Compact(summary, "")
+				focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
+				path, err := cond.Compact(manualCompactSummary, focus)
 				if err != nil {
 					tuiDisp.Error(fmt.Errorf("/compact: %v", err))
 				} else {

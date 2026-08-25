@@ -193,8 +193,8 @@ func (s *interactiveState) handleCommand(raw string, cancel context.CancelFunc) 
 		// Deliberately cancel the current iteration before changing its live
 		// history; compaction is a conversation boundary, not a queued prompt.
 		cancel()
-		arg := strings.TrimSpace(strings.TrimPrefix(line, "/compact"))
-		path, err := s.cond.Compact(arg, "")
+		focus := strings.TrimSpace(strings.TrimPrefix(line, "/compact"))
+		path, err := s.cond.Compact(manualCompactSummary, focus)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "/compact: %v\n", err)
 		} else {
