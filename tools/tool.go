@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/internal/hooks"
@@ -110,6 +111,33 @@ type ToolResult struct {
 	// usable, but callers and parents should treat it with reduced
 	// confidence. Distinct from Success=false.
 	Truncated bool `json:"truncated,omitempty"`
+
+	// validationError distinguishes rejected arguments from failures while
+	// executing an otherwise valid call. It is deliberately internal: the
+	// model only needs the actionable hint, not another wire-level field.
+	validationError bool `json:"-"`
+}
+
+// ValidationHint is the short, tool-specific recovery hint used when a tool
+// rejected its arguments. Runtime failures must not use this hint: retrying
+// with help cannot fix a missing file, a hook veto, or a network error.
+func ValidationHint(toolName string) string {
+	return fmt.Sprintf("Hint: if you are unsure about the parameters, call help(tool=%q) before retrying.", toolName)
+}
+
+func validationResult(err string) ToolResult {
+	return ToolResult{Type: "result", Success: false, Error: err, validationError: true}
+}
+
+func validationResultf(format string, args ...any) ToolResult {
+	return validationResult(fmt.Sprintf(format, args...))
+}
+
+func appendValidationHint(toolName string, res ToolResult) ToolResult {
+	if !res.Success && res.validationError && res.Error != "" && !strings.Contains(res.Error, "Hint: if you are unsure about the parameters") {
+		res.Error = appendNote(res.Error, ValidationHint(toolName))
+	}
+	return res
 }
 
 type Tool interface {
@@ -333,7 +361,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "help",
-				"description": "Full documentation for a tool, with worked examples. The tool list in your prompt is one line each on purpose; this is the manual. help() lists every tool, help(tool=\"lua\") returns one. Read help(\"lua\") and help(\"subagent\") before first using them, and whenever a refusal or an error surprises you — guessing at a tool costs more than asking.",
+				"description": "Full documentation for a tool, with worked examples. The tool list in your prompt is one line each on purpose; this is the manual. Use help() to list tools or help(tool=\"name\") to learn a tool's schema when you are unsure about its parameters or need to recover from a validation error.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -504,6 +532,21 @@ func builtinToolsSchema() []map[string]any {
 						"task":   map[string]any{"type": "string", "description": "The new message to append to that job's conversation before continuing it."},
 					},
 					"required": []string{"job_id", "task"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "compact",
+				"description": "Compact the conversation without deleting its raw JSONL history. First persist anything important to memory or a file, then provide a concise summary; optional focus instructions tell the compactor what to preserve. The result includes a path to the complete searchable markdown dump.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"summary": map[string]any{"type": "string", "description": "Concise summary of facts, decisions, unfinished work and next steps to preserve."},
+						"focus":   map[string]any{"type": "string", "description": "Optional instructions about what to preserve or prioritize."},
+					},
+					"required": []string{"summary"},
 				},
 			},
 		},
@@ -747,18 +790,19 @@ func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
 var LockRegistry = locks.NewRegistry()
 
 var toolRegistry = map[string]Tool{
-	"bash":   &BashTool{},
-	"lua":    &LuaEvalTool{},
-	"find":   &FindTool{},
-	"todo":   &TodoTool{},
-	"read":   &ReadTool{},
-	"write":  &WriteTool{},
-	"skills": &SkillsTool{},
-	"memory": &MemoryTool{},
-	"help":   &HelpTool{},
-	"agents": &AgentsTool{},
-	"cron":   &CronTool{},
-	"web":    &WebTool{},
+	"bash":    &BashTool{},
+	"lua":     &LuaEvalTool{},
+	"find":    &FindTool{},
+	"todo":    &TodoTool{},
+	"read":    &ReadTool{},
+	"write":   &WriteTool{},
+	"skills":  &SkillsTool{},
+	"memory":  &MemoryTool{},
+	"help":    &HelpTool{},
+	"agents":  &AgentsTool{},
+	"cron":    &CronTool{},
+	"compact": &CompactTool{},
+	"web":     &WebTool{},
 	// Waiter is nil until SetJobWaiter is called; plain wait (no job_id)
 	// works without it.
 	"wait":   &WaitTool{},
@@ -824,6 +868,7 @@ func RunTool(ctx context.Context, name string, arguments map[string]any) ToolRes
 	}
 
 	res := runToolInner(ctx, name, arguments)
+	res = appendValidationHint(name, res)
 
 	if hooks.Any(hooks.EventPostTool) {
 		note, fail := hooks.RunPost(ctx, name, arguments, res.Success, res.Content, res.Error)

@@ -46,7 +46,7 @@ func TestBtwWhileBusyGoesToTheCommandChannel(t *testing.T) {
 // the conversation the running turn is writing to, so they cannot run mid-turn
 // — but they must not be handed to the model either.
 func TestConversationChangingCommandsAreRefusedWhileBusy(t *testing.T) {
-	for _, typed := range []string{"/new", "/exit", "/resume", "/resume 2"} {
+	for _, typed := range []string{"/new", "/exit", "/resume", "/resume 2", "/compact", "/compact keep tests"} {
 		m := busyModel(t, typed)
 		handled, next := m.handleLocalSlashCommand()
 		if !handled {

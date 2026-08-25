@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -42,19 +43,25 @@ func (t *MemoryTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return t.list(cwd)
 	case "read":
 		if name == "" {
-			return failf("name is required for action=\"read\"")
+			return validationf("name is required for action=\"read\"")
 		}
 		body, err := instructions.Read(cwd, name)
 		if err != nil {
+			if errors.Is(err, instructions.ErrValidation) {
+				return validationf("%v", err)
+			}
 			return failf("%v", err)
 		}
 		return okf("%s", body)
 	case "write":
 		if name == "" {
-			return failf("name is required for action=\"write\" — a short slug like \"test-command\" or \"layering-rules\"")
+			return validationf("name is required for action=\"write\" — a short slug like \"test-command\" or \"layering-rules\"")
 		}
 		stored, err := instructions.Write(cwd, name, content)
 		if err != nil {
+			if errors.Is(err, instructions.ErrValidation) {
+				return validationf("%v", err)
+			}
 			return failf("%v", err)
 		}
 		// The note is already on disk, but the system prompt for THIS session
@@ -63,15 +70,18 @@ func (t *MemoryTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return okf("saved note %q. It is loaded into the system prompt at the start of a session, so it will be there next time rather than appearing in this conversation.", stored)
 	case "delete":
 		if name == "" {
-			return failf("name is required for action=\"delete\"")
+			return validationf("name is required for action=\"delete\"")
 		}
 		removed, err := instructions.Delete(cwd, name)
 		if err != nil {
+			if errors.Is(err, instructions.ErrValidation) {
+				return validationf("%v", err)
+			}
 			return failf("%v", err)
 		}
 		return okf("deleted note %q", removed)
 	default:
-		return failf("unknown action %q; use \"list\", \"read\", \"write\" or \"delete\"", action)
+		return validationf("unknown action %q; use \"list\", \"read\", \"write\" or \"delete\"", action)
 	}
 }
 
@@ -98,4 +108,8 @@ func okf(format string, args ...any) ToolResult {
 
 func failf(format string, args ...any) ToolResult {
 	return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf(format, args...)}
+}
+
+func validationf(format string, args ...any) ToolResult {
+	return validationResult(fmt.Sprintf(format, args...))
 }

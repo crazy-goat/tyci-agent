@@ -62,11 +62,15 @@ func (e *providerNotConfiguredError) Error() string {
 // inline. Capturing it here instead would freeze a directory the process may
 // still change.
 func newConductor(provider providers.Provider, modelName string, disp display.Display, cfg agent.Config, sessionPath string, resolver conductor.ModelResolver) *conductor.Conductor {
-	return conductor.New(conductor.Options{
+	c := conductor.New(conductor.Options{
 		Client:      provider.Client(modelName),
 		Sink:        disp,
 		Config:      cfg,
 		Resolver:    resolver,
 		SessionPath: sessionPath,
 	})
+	// Wire compaction for every frontend, including one-shot `tyci run`.
+	// The callback lazily opens the configured session before writing.
+	c.SetCompactor(c.Compact)
+	return c
 }

@@ -133,6 +133,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		return nil
 	}
 
+	cond.SetCompactor(cond.Compact)
+
 	// handleMsgCommand implements "/msg <job> <text>": posts text to job's
 	// mailbox, delivered at that job's next iteration boundary (see
 	// tools.JobMailboxNextMessages) — the human-facing equivalent of the
@@ -264,6 +266,18 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 			case trimmed == "/exit":
 				iterCancel()
 				return
+			case trimmed == "/compact" || strings.HasPrefix(trimmed, "/compact "):
+				// Deliberately cancel the current iteration before changing its live
+				// history; compaction is a conversation boundary, not a queued prompt.
+				iterCancel()
+				summary := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
+				path, err := cond.Compact(summary, "")
+				if err != nil {
+					tuiDisp.Error(fmt.Errorf("/compact: %v", err))
+				} else {
+					tuiDisp.ToolBlock("History compacted; raw record: " + path)
+				}
+				continue
 			case trimmed == "/new":
 				iterCancel()
 				// Stop all async work from the old conversation before clearing

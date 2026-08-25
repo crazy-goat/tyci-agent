@@ -9,6 +9,7 @@ import (
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
+	"github.com/decodo/tyci/tools"
 )
 
 func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connector.Message, cfg Config, totalUsage *stream.Usage) (more bool, usage *stream.Usage, totalEmitted bool, err error) {
@@ -21,6 +22,9 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 	// and a reader that wants to keep it past that point must copy it (see
 	// connector.WithConversation's doc comment and session.ForkMessages).
 	ctx = connector.WithConversation(ctx, *msgs)
+	if cfg.Compactor != nil {
+		ctx = tools.WithCompactor(ctx, cfg.Compactor)
+	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

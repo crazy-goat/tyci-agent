@@ -142,3 +142,38 @@ func TestMemoryIsInTheToolSchema(t *testing.T) {
 	}
 	t.Fatal("memory is missing from the tool schema")
 }
+
+func TestMemoryDeleteWithoutNameIncludesHelpHint(t *testing.T) {
+	memoryProject(t)
+	res := RunTool(context.Background(), "memory", map[string]any{"action": "delete"})
+	if res.Success {
+		t.Fatal("expected missing name to fail")
+	}
+	if !strings.Contains(res.Error, `help(tool="memory")`) {
+		t.Fatalf("expected memory help hint, got %q", res.Error)
+	}
+}
+
+func TestMemoryValidationErrorsFromInstructionsIncludeHelpHint(t *testing.T) {
+	memoryProject(t)
+
+	cases := []map[string]any{
+		{"action": "read", "name": "!!!"},
+		{"action": "write", "name": "valid", "content": "   "},
+		{"action": "delete", "name": "!!!"},
+	}
+	for _, input := range cases {
+		res := RunTool(context.Background(), "memory", input)
+		if res.Success {
+			t.Fatalf("expected validation failure for %+v", input)
+		}
+		if !strings.Contains(res.Error, `help(tool="memory")`) {
+			t.Fatalf("expected memory help hint for %+v, got %q", input, res.Error)
+		}
+	}
+
+	missing := RunTool(context.Background(), "memory", map[string]any{"action": "read", "name": "missing"})
+	if missing.Success || strings.Contains(missing.Error, "help(") {
+		t.Fatalf("missing note is runtime failure and must not get hint: %+v", missing)
+	}
+}

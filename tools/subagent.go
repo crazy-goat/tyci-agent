@@ -436,14 +436,14 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 	// Parse tasks
 	tasks, err := parseTasks(input, defaultModel)
 	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		return validationResult(err.Error())
 	}
 	if len(tasks) == 0 {
-		return ToolResult{Type: "result", Success: false, Error: "no tasks provided"}
+		return validationResult("no tasks provided")
 	}
 
 	if async, mixed := asyncTaskMode(tasks); mixed {
-		return ToolResult{Type: "result", Success: false, Error: "cannot mix async and non-async tasks in the same call; issue separate subagent calls"}
+		return validationResult("cannot mix async and non-async tasks in the same call; issue separate subagent calls")
 	} else if async {
 		return t.runAsync(ctx, tasks)
 	}

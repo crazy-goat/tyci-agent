@@ -40,6 +40,7 @@ func runInteractive(cond *conductor.Conductor, disp display.Display, historyFile
 }
 
 func (s *interactiveState) init() {
+	s.cond.SetCompactor(s.cond.Compact)
 	s.replaySession()
 	if s.historyFile == "" {
 		return
@@ -188,6 +189,18 @@ func (s *interactiveState) handleCommand(raw string, cancel context.CancelFunc) 
 		cancel()
 		fmt.Println("Bye!")
 		return true, true
+	case line == "/compact" || strings.HasPrefix(line, "/compact "):
+		// Deliberately cancel the current iteration before changing its live
+		// history; compaction is a conversation boundary, not a queued prompt.
+		cancel()
+		arg := strings.TrimSpace(strings.TrimPrefix(line, "/compact"))
+		path, err := s.cond.Compact(arg, "")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "/compact: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stdout, "History compacted; raw record: %s\n", path)
+		}
+		return false, true
 	case line == "/new":
 		cancel()
 		// Console /new drops the conversation but keeps writing to the

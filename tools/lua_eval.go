@@ -72,7 +72,7 @@ func (t *LuaEvalTool) Name() string { return "lua" }
 func (t *LuaEvalTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	script, ok := input["script"].(string)
 	if !ok || strings.TrimSpace(script) == "" {
-		return ToolResult{Type: "result", Success: false, Error: "script is required (a Lua chunk; use return to hand a value back)"}
+		return validationResult("script is required (a Lua chunk; use return to hand a value back)")
 	}
 
 	timeoutSec := intParam(input, "timeout", LuaDefaultTimeoutSec)

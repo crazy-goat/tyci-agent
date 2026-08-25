@@ -103,6 +103,35 @@ func TestRunToolBlockingPostHookFailsTheCall(t *testing.T) {
 	}
 }
 
+func TestRunToolValidationHintOnlyForArgumentErrors(t *testing.T) {
+	ResetFileStamps()
+	defer hooks.SetForTesting(nil)()
+
+	missing := RunTool(context.Background(), "read", map[string]any{})
+	if missing.Success || !strings.Contains(missing.Error, `help(tool="read")`) {
+		t.Fatalf("missing path should include a read help hint: %+v", missing)
+	}
+
+	missingFile := RunTool(context.Background(), "read", map[string]any{"path": filepath.Join(t.TempDir(), "missing")})
+	if missingFile.Success {
+		t.Fatal("missing file should fail")
+	}
+	if strings.Contains(missingFile.Error, "help(") {
+		t.Fatalf("runtime file failure must not include help hint: %q", missingFile.Error)
+	}
+
+	defer hooks.SetForTesting([]hooks.Hook{{
+		Event:   hooks.EventPreTool,
+		Tools:   []string{"read"},
+		Name:    "veto-read",
+		Command: `echo "blocked by policy"; exit 1`,
+	}})()
+	veto := RunTool(context.Background(), "read", map[string]any{"path": "known.txt"})
+	if veto.Success || strings.Contains(veto.Error, "help(") {
+		t.Fatalf("hook veto must not include help hint: %+v", veto)
+	}
+}
+
 func TestRunToolWithNoHooksIsUnchanged(t *testing.T) {
 	ResetFileStamps()
 	defer hooks.SetForTesting(nil)()

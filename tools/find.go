@@ -29,7 +29,7 @@ func (t *FindTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	case "grep":
 		return t.runGrep(ctx, input)
 	default:
-		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("unknown method %q; use \"glob\" or \"grep\"", method)}
+		return validationResultf("unknown method %q; use \"glob\" or \"grep\"", method)
 	}
 }
 
@@ -40,7 +40,7 @@ func (t *FindTool) Run(ctx context.Context, input map[string]any) ToolResult {
 func (t *FindTool) runGlob(ctx context.Context, input map[string]any) ToolResult {
 	patterns := stringListParam(input, "pattern", nil)
 	if len(patterns) == 0 {
-		return ToolResult{Type: "result", Success: false, Error: "pattern required (method: \"glob\")"}
+		return validationResult("pattern required (method: \"glob\")")
 	}
 	cwd := resolvePath(ctx, stringParam(input, "cwd", "."))
 	excludes := defaultExcludes(input)
@@ -56,11 +56,11 @@ func (t *FindTool) runGlob(ctx context.Context, input map[string]any) ToolResult
 
 	matchers, err := compileGlobMatchers(patterns)
 	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		return validationResult(err.Error())
 	}
 	excludeMatchers, err := compileGlobMatchers(excludes)
 	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		return validationResult(err.Error())
 	}
 
 	ig := newIgnoreMatcherFromInput(input)
@@ -145,7 +145,7 @@ func (t *FindTool) runGlob(ctx context.Context, input map[string]any) ToolResult
 func (t *FindTool) runGrep(ctx context.Context, input map[string]any) ToolResult {
 	pattern, ok := input["pattern"].(string)
 	if !ok || pattern == "" {
-		return ToolResult{Type: "result", Success: false, Error: "pattern required (method: \"grep\")"}
+		return validationResult("pattern required (method: \"grep\")")
 	}
 	cwd := resolvePath(ctx, stringParam(input, "cwd", "."))
 	includes := stringListParam(input, "include", []string{"**/*"})
@@ -172,16 +172,16 @@ func (t *FindTool) runGrep(ctx context.Context, input map[string]any) ToolResult
 	}
 	includeMatchers, err := compileGlobMatchers(includes)
 	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		return validationResult(err.Error())
 	}
 	excludeMatchers, err := compileGlobMatchers(excludes)
 	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		return validationResult(err.Error())
 	}
 
 	matcher, err := newContentMatcher(pattern, mode, caseSensitive)
 	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		return validationResult(err.Error())
 	}
 
 	ig := newIgnoreMatcherFromInput(input)

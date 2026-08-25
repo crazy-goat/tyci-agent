@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/decodo/tyci/connector"
 )
 
 // TestParseSessionFile_LargeLine verifies that parseSessionFile can handle
@@ -935,5 +937,94 @@ func TestFullRoundTrip(t *testing.T) {
 	}
 	if msgs[1].Content[1].Type != "toolCall" || msgs[1].Content[1].ID != "tc-1" {
 		t.Errorf("assistant toolCall block wrong: %+v", msgs[1].Content[1])
+	}
+}
+
+func TestCompactKeepsRawLogAndReplay(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "compact.jsonl")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "old"}}},
+		{Role: "assistant", Content: []connector.ContentBlock{{Type: "text", Text: "answer"}}},
+	}
+	if _, err := s.Compact("preserved summary", "tail-1", msgs[1:], 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"type":"compaction"`) || !strings.Contains(string(data), "old") {
+		t.Fatalf("raw log was not retained: %s", data)
+	}
+	_, replay, _, _, err := LoadForReplay(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replay) != 2 || replay[0].Content[0].Text != "preserved summary" || replay[1].Content[0].Text != "answer" {
+		t.Fatalf("replay = %#v", replay)
+	}
+	if _, err := os.Stat(strings.TrimSuffix(path, ".jsonl") + ".md"); err != nil {
+		t.Fatalf("markdown dump missing: %v", err)
+	}
+}
+
+func TestMarkdownDumpRefreshesAfterLaterMessage(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "refresh.jsonl")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Compact("summary", "", nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "new message"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "new message") {
+		t.Fatalf("dump was stale after WriteMessage: %s", data)
+	}
+	if err := s.WriteCompaction("second summary", "", nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "second summary") {
+		t.Fatalf("dump was stale after WriteCompaction: %s", data)
+	}
+}
+
+func TestCompactionLiveBoundaryDoesNotInventEventID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "boundary.jsonl")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.WriteCompaction("summary", "", nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "live-message-") {
+		t.Fatalf("synthetic live boundary id persisted: %s", data)
 	}
 }

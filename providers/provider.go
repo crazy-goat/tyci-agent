@@ -120,7 +120,7 @@ Context: date %s · working directory %s (do not leave it) · OS %s · temp dir 
 Posture — four reflexes this environment is built around:
 %s2. Write your loops in lua. Any operation over three or more files, or a step that depends on what the last one returned, is ONE lua call: tool(name, args) inside the script, return the conclusion only. What a script reads is thrown away; what YOU read stays in this conversation forever and is re-sent with every later request.
 3. Remember in memory. When you work out something a future session would have to work out again — the real test command, a rule the compiler does not enforce, a decision and its reason — write a note. It is loaded into the next session's prompt.
-4. Never guess: call help(tool). The list below is one line per tool on purpose. Read help("lua") and help("subagent") before first use.
+4. Call tools directly with the parameters you know. If validation rejects the arguments, or you are unsure of a tool's schema, call help(tool="name") before correcting and retrying.
 
 Contracts — enforced, not advice:
 - Your first tool call must be todo(...). Other tools are refused until a plan exists; todo(action="add_batch", items=[...]) is one call for the whole plan.

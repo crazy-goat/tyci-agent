@@ -35,11 +35,11 @@ func (t *ResumeTool) Name() string { return "resume" }
 func (t *ResumeTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	jobID, _ := input["job_id"].(string)
 	if jobID == "" {
-		return ToolResult{Type: "result", Success: false, Error: "job_id is required"}
+		return validationResult("job_id is required")
 	}
 	task, _ := input["task"].(string)
 	if task == "" {
-		return ToolResult{Type: "result", Success: false, Error: "task is required"}
+		return validationResult("task is required")
 	}
 
 	if jobResumer == nil {

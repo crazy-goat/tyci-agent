@@ -38,17 +38,17 @@ func (t *LockTool) Run(ctx context.Context, input map[string]any) ToolResult {
 
 	path, _ := input["path"].(string)
 	if path == "" {
-		return ToolResult{Type: "result", Success: false, Error: "path is required"}
+		return validationResult("path is required")
 	}
 
 	var ttl time.Duration
 	if raw, ok := input["seconds"]; ok && raw != nil {
 		secs, err := toInt(raw)
 		if err != nil {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("invalid seconds: %v", err)}
+			return validationResultf("invalid seconds: %v", err)
 		}
 		if secs < 0 {
-			return ToolResult{Type: "result", Success: false, Error: "seconds must be >= 0"}
+			return validationResult("seconds must be >= 0")
 		}
 		ttl = time.Duration(secs) * time.Second
 	}
@@ -97,11 +97,11 @@ func (t *UnlockTool) Run(ctx context.Context, input map[string]any) ToolResult {
 
 	path, _ := input["path"].(string)
 	if path == "" {
-		return ToolResult{Type: "result", Success: false, Error: "path is required"}
+		return validationResult("path is required")
 	}
 	holder, _ := input["holder"].(string)
 	if holder == "" {
-		return ToolResult{Type: "result", Success: false, Error: "holder is required"}
+		return validationResult("holder is required")
 	}
 
 	if !t.Registry.Release(path, holder) {

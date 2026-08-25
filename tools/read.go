@@ -100,7 +100,7 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	// in its own worktree is not the process's. See tools/workdir.go.
 	path = resolvePath(ctx, path)
 	if !ok {
-		return ToolResult{Type: "result", Success: false, Error: "path required"}
+		return validationResult("path required")
 	}
 
 	offset := intParam(input, "offset", 0)

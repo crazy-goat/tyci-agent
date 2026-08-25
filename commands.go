@@ -307,6 +307,8 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		ActiveSubagents: JobRegistry.HasActiveSubagents,
 		PendingJobs:     JobRegistry.PendingLines,
 		HasTodos:        tools.HasPendingTodos,
+		ContextLimit:    pricingContextLimit(provider.Name(), modelName),
+		ContextLimitFor: pricingContextLimit,
 		Interactive:     interactive,
 	}
 	ctx = connector.WithModelClient(ctx, provider.Client(modelName))
@@ -353,6 +355,11 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	}
 
 	return provider, modelName, cfg, ctx, sess, sessionPath, historyFile, dl, shutdown, nil
+}
+
+func pricingContextLimit(provider, model string) int {
+	_, limits := pricing.Lookup(provider, model)
+	return limits.Context
 }
 
 // resolveFallbacksQuiet resolves each "provider/model" fallback spec to a

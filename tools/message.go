@@ -78,11 +78,11 @@ func (t *MessageTool) Name() string { return "message" }
 func (t *MessageTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	rawID, _ := input["job_id"].(string)
 	if rawID == "" {
-		return ToolResult{Type: "result", Success: false, Error: "job_id is required"}
+		return validationResult("job_id is required")
 	}
 	text, _ := input["text"].(string)
 	if text == "" {
-		return ToolResult{Type: "result", Success: false, Error: "text is required"}
+		return validationResult("text is required")
 	}
 
 	if jobMailbox == nil {

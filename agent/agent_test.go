@@ -1303,3 +1303,19 @@ func TestRun_TotalNotDuplicatedOnFallbackSuccess(t *testing.T) {
 		t.Fatalf("expected exactly 1 Total() call after fallback success, got %d", got)
 	}
 }
+
+func TestBuildContextBudgetReminderStatesFact(t *testing.T) {
+	msg := buildContextBudgetReminder(120000, 200000)
+	if !strings.Contains(msg, "120000") || !strings.Contains(msg, "200000") || !strings.Contains(msg, "compact") {
+		t.Fatalf("reminder = %q", msg)
+	}
+}
+
+func TestBuildContextBudgetReminderIsApproximateForCurrentModel(t *testing.T) {
+	msg := buildContextBudgetReminder(120000, 200000)
+	for _, want := range []string{"approximate", "current model", "120000", "200000"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("reminder %q missing %q", msg, want)
+		}
+	}
+}

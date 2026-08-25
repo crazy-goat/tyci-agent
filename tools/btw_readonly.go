@@ -83,7 +83,7 @@ func (t *PromoteBtwTool) Name() string { return "promote_btw" }
 func (t *PromoteBtwTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	id, _ := input["job_id"].(string)
 	if id == "" {
-		return ToolResult{Type: "result", Success: false, Error: "job_id is required"}
+		return validationResult("job_id is required")
 	}
 	if jobPromoter == nil {
 		return ToolResult{Type: "result", Success: false, Error: "promote_btw unavailable: job registry not configured"}

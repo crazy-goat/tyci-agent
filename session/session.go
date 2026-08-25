@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -226,13 +227,14 @@ func newID() (string, error) {
 // WriteMessage writes a message event (user, assistant, or tool result).
 func (s *Session) WriteMessage(role string, blocks []ContentBlock, opts *MessageOptions) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return fmt.Errorf("session closed")
 	}
 
 	id, err := newID()
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 
@@ -264,7 +266,12 @@ func (s *Session) WriteMessage(role string, blocks []ContentBlock, opts *Message
 		}
 	}
 
-	return s.encoder.Encode(ev)
+	err = s.encoder.Encode(ev)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return s.refreshMarkdownDump()
 }
 
 // MessageOptions holds optional metadata for assistant messages.
@@ -280,12 +287,13 @@ type MessageOptions struct {
 // WriteSessionEnd writes the final session_end event.
 func (s *Session) WriteCompaction(summary string, tailStartID string, tailMessages []MessagePayload, droppedEvents int) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return fmt.Errorf("session closed")
 	}
 	id, err := newID()
 	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
 	ev := CompactionEvent{
@@ -300,13 +308,115 @@ func (s *Session) WriteCompaction(summary string, tailStartID string, tailMessag
 		TailMessages:  tailMessages,
 		DroppedEvents: droppedEvents,
 	}
-	return s.encoder.Encode(ev)
+	err = s.encoder.Encode(ev)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return s.refreshMarkdownDump()
+}
+
+// Compact appends a compaction event and regenerates the derived markdown
+// dump. The JSONL remains the source of truth and is never deleted.
+func (s *Session) Compact(summary, tailStartID string, tail []connector.Message, droppedEvents int) (string, error) {
+	payload := make([]MessagePayload, len(tail))
+	for i, msg := range tail {
+		payload[i] = MessagePayload{Role: msg.Role, Content: ContentBlocksFromConnector(msg.Content)}
+	}
+	if err := s.WriteCompaction(summary, tailStartID, payload, droppedEvents); err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	if !s.closed {
+		if err := s.file.Sync(); err != nil {
+			s.mu.Unlock()
+			return "", err
+		}
+	}
+	s.mu.Unlock()
+	return WriteMarkdownDump(s.path)
+}
+
+// WriteMarkdownDump writes a grep-friendly, derived view beside the JSONL.
+func WriteMarkdownDump(path string) (string, error) {
+	lines, err := parseSessionFile(path)
+	if err != nil {
+		return "", err
+	}
+	dumpPath := strings.TrimSuffix(path, filepath.Ext(path)) + ".md"
+	f, err := os.Create(dumpPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	ansi := regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
+	for i, line := range lines {
+		var ev struct {
+			Type    EventType      `json:"type"`
+			Message MessagePayload `json:"message"`
+			Summary MessagePayload `json:"summary"`
+		}
+		if json.Unmarshal([]byte(line.Raw), &ev) != nil {
+			continue
+		}
+		prefix := fmt.Sprintf("[%d] [%s]", i+1, ev.Type)
+		var text string
+		switch ev.Type {
+		case TypeMessage:
+			text = ev.Message.Role
+			for _, b := range ev.Message.Content {
+				value := b.Text
+				if value == "" {
+					value = b.Thinking
+				}
+				if value != "" {
+					text += " " + value
+				}
+				if b.Name != "" {
+					text += " tool=" + b.Name
+				}
+				if len(b.Arguments) > 0 {
+					text += " args=" + string(b.Arguments)
+				}
+			}
+		case TypeCompaction:
+			text = "summary " + messageText(ev.Summary)
+		default:
+			text = string(ev.Type)
+		}
+		text = strings.ReplaceAll(ansi.ReplaceAllString(text, ""), "\n", " ")
+		fmt.Fprintf(f, "%s %s\n", prefix, text)
+	}
+	return dumpPath, nil
+}
+
+func messageText(msg MessagePayload) string {
+	var out []string
+	for _, b := range msg.Content {
+		if b.Text != "" {
+			out = append(out, b.Text)
+		}
+		if b.Thinking != "" {
+			out = append(out, b.Thinking)
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// refreshMarkdownDump keeps the derived dump current after ordinary event
+// writes. The JSONL remains authoritative if regenerating the artifact fails.
+func (s *Session) refreshMarkdownDump() error {
+	if s.path == "" {
+		return nil
+	}
+	_, err := WriteMarkdownDump(s.path)
+	return err
 }
 
 func (s *Session) WriteSessionEnd(status string, exitCode int, totalUsage *Usage) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return fmt.Errorf("session closed")
 	}
 
@@ -319,7 +429,12 @@ func (s *Session) WriteSessionEnd(status string, exitCode int, totalUsage *Usage
 		TotalUsage: totalUsage,
 	}
 
-	return s.encoder.Encode(ev)
+	err := s.encoder.Encode(ev)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return s.refreshMarkdownDump()
 }
 
 // ─── Close ────────────────────────────────────────────────────────────────
@@ -703,6 +818,14 @@ func dropTrailingUnansweredToolCalls(msgs []connector.Message) []connector.Messa
 	copy(out, msgs)
 	out[len(out)-1] = connector.Message{Role: last.Role, Content: kept}
 	return out
+}
+
+// SanitizeCompactionSequence applies the replay sanitizer plus the fork-style
+// repair for a live compaction cut. A live compaction must not leave a trailing
+// assistant tool call without its result: the next model request has no way to
+// answer a call that was removed from the retained tail.
+func SanitizeCompactionSequence(msgs []connector.Message) []connector.Message {
+	return dropTrailingUnansweredToolCalls(SanitizeMessageSequence(msgs))
 }
 
 // ForkMessages returns an independent copy of msgs: a new backing array, so

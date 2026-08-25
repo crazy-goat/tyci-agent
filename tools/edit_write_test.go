@@ -216,3 +216,43 @@ func TestWriteTool_EditMultiple(t *testing.T) {
 		t.Fatalf("unexpected file: %q", string(data))
 	}
 }
+
+func TestWriteTool_SemanticValidationErrorsIncludeHelpHint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "short.txt")
+	writeFile(t, path, "one\ntwo\n")
+
+	outOfBounds := RunTool(context.Background(), "write", map[string]any{
+		"path": path, "content": "replacement", "range": "before:3",
+	})
+	if outOfBounds.Success {
+		t.Fatal("expected out-of-bounds range to fail")
+	}
+	if !strings.Contains(outOfBounds.Error, `help(tool="write")`) {
+		t.Fatalf("expected write help hint for range validation, got %q", outOfBounds.Error)
+	}
+
+	occurrence := RunTool(context.Background(), "write", map[string]any{
+		"path": path, "oldString": "one", "newString": "ONE", "occurrence": 2,
+	})
+	if occurrence.Success {
+		t.Fatal("expected out-of-range occurrence to fail")
+	}
+	if !strings.Contains(occurrence.Error, `help(tool="write")`) {
+		t.Fatalf("expected write help hint for occurrence validation, got %q", occurrence.Error)
+	}
+}
+
+func TestWriteTool_MissingOldStringIncludesHelpHint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.txt")
+	writeFile(t, path, "hello world")
+	res := RunTool(context.Background(), "write", map[string]any{
+		"path": path, "oldString": "missing", "newString": "replacement",
+	})
+	if res.Success {
+		t.Fatal("expected missing oldString to fail")
+	}
+	if !strings.Contains(res.Error, `help(tool="write")`) {
+		t.Fatalf("expected write help hint, got %q", res.Error)
+	}
+}

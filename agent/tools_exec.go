@@ -146,7 +146,7 @@ func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, i
 	var args map[string]any
 	if call.Arguments != "" {
 		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
-			return "Error: invalid arguments: " + err.Error(), true
+			return "Error: invalid arguments: " + err.Error() + "\n\n" + tools.ValidationHint(call.Name), true
 		}
 	}
 	if args == nil {

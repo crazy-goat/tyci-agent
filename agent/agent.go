@@ -109,6 +109,18 @@ type Config struct {
 	// acting.
 	HasTodos func() bool
 
+	// Compactor is called by the model-facing compact tool at a safe turn
+	// boundary. It appends an event and updates the live conversation.
+	Compactor func(summary, focus string) (string, error)
+
+	// ContextLimitFor returns the current model's published context window.
+	// It is evaluated at each turn so a fallback model gets its own limit.
+	ContextLimitFor func(provider, model string) int
+
+	// ContextLimit is the published context window in tokens. Zero disables
+	// the budget reminder when the catalog has no known limit.
+	ContextLimit int
+
 	// Interactive reports whether a human is present to answer a blocked
 	// job's question — true for the console REPL and the TUI, false for
 	// `tyci run` (and anything shelling out to it, e.g. cron: see
@@ -166,6 +178,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	// Tracks how many todo reminders we've injected this turn (see maxTodoReminders).
 	todoReminders := 0
 	jobReminders := 0
+	contextReminded := false
 
 	// lastStepWarned ensures buildLastStepWarning is injected at most once
 	// per Run call: once the model has been told this is its last turn,
@@ -354,6 +367,22 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			jobReminders = 0
 		}
 		if !more && !drained {
+			limit := cfg.ContextLimit
+			if cfg.ContextLimitFor != nil {
+				limit = cfg.ContextLimitFor(fs.mc.Provider(), fs.mc.Model())
+			}
+			if limit > 0 && !contextReminded {
+				used := contextTokens(*msgs)
+				if used*100 >= limit*50 {
+					contextReminded = true
+					reminder := buildContextBudgetReminder(used, limit)
+					*msgs = append(*msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: reminder}}})
+					if cfg.Session != nil {
+						_ = cfg.Session.WriteMessage("user", []session.ContentBlock{{Type: "text", Text: reminder}}, nil)
+					}
+					continue
+				}
+			}
 			// The model thinks it's done. Before returning, check whether it
 			// left todos open and, if so, nudge it once more (up to
 			// maxTodoReminders) with a harness-authored reminder — not a user
@@ -417,6 +446,20 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 // fire ends the loop the instant this turn completes, so a tool call here
 // would never have its result seen by the model — the only useful thing it
 // can do with this turn is write its summary as plain text right now.
+func contextTokens(msgs []connector.Message) int {
+	total := 0
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			total += len([]rune(block.Text)) + len([]rune(block.Thinking)) + len(block.Arguments)
+		}
+	}
+	return total
+}
+
+func buildContextBudgetReminder(used, limit int) string {
+	return fmt.Sprintf("[automated context budget reminder, not the user] You are at an approximate estimate of %d of %d context tokens for the current model. Persist anything important, then use compact(summary=\"...\", focus=\"...\") if continuing would crowd out useful history.", used, limit)
+}
+
 func buildLastStepWarning() string {
 	var b strings.Builder
 	b.WriteString("<system-reminder>\n")

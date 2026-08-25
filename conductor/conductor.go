@@ -28,6 +28,7 @@ package conductor
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/decodo/tyci/agent"
@@ -251,6 +252,9 @@ func (c *Conductor) SwitchModel(spec string) error {
 		return err
 	}
 	c.client = mc
+	if c.cfg.ContextLimitFor != nil {
+		c.cfg.ContextLimit = c.cfg.ContextLimitFor(mc.Provider(), mc.Model())
+	}
 	return nil
 }
 
@@ -274,6 +278,23 @@ func (c *Conductor) Messages() []connector.Message { return c.conversation }
 // resolution logic that already lives here.
 func (c *Conductor) Client() connector.ModelClient { return c.client }
 
+// Compact writes a compaction event for the live conversation and updates the
+// agent's history. It is safe to call at a turn boundary.
+func (c *Conductor) Compact(summary, focus string) (string, error) {
+	if strings.TrimSpace(summary) == "" {
+		return "", errors.New("compaction summary must not be empty")
+	}
+	c.EnsureSession()
+	if c.cfg.Session == nil {
+		return "", errors.New("no writable session")
+	}
+	path, err := agent.CompactSession(c.cfg.Session, &c.conversation, summary, focus)
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // Config is the agent.Config this conductor drives Submit with. Exposed for
 // the same reason as Client: a caller forking the conversation (e.g. /btw)
 // wants the same tool/schema/fallback behavior, minus the callbacks that are
@@ -291,6 +312,11 @@ func (c *Conductor) Config() agent.Config { return c.cfg }
 // the conversation is not being appended to, which is what makes it a safe
 // place to read the history from (see the TUI's mid-turn /btw).
 func (c *Conductor) SetNextMessages(fn func() []string) { c.cfg.NextMessages = fn }
+
+// SetCompactor wires the owner callback used by the model-facing compact tool.
+func (c *Conductor) SetCompactor(fn func(summary, focus string) (string, error)) {
+	c.cfg.Compactor = fn
+}
 
 // SetHistory replaces the conversation wholesale. Intended for seeding a
 // fresh Conductor with a transcript the caller has already rebuilt from a

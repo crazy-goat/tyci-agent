@@ -21,12 +21,15 @@
 package instructions
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 )
+
+var ErrValidation = errors.New("invalid memory note input")
 
 const (
 	// FileName is the project instructions file. AGENTS.md rather than a
@@ -192,7 +195,7 @@ func SanitizeName(name string) (string, error) {
 		clean = strings.ReplaceAll(clean, "--", "-")
 	}
 	if clean == "" {
-		return "", fmt.Errorf("name must contain letters or digits")
+		return "", fmt.Errorf("%w: name must contain letters or digits", ErrValidation)
 	}
 	if len(clean) > 60 {
 		clean = strings.Trim(clean[:60], "-")
@@ -244,10 +247,10 @@ func Write(cwd, name, content string) (string, error) {
 	}
 	content = strings.TrimSpace(content)
 	if content == "" {
-		return "", fmt.Errorf("content is empty; use action=\"delete\" to remove a note")
+		return "", fmt.Errorf("%w: content is empty; use action=\"delete\" to remove a note", ErrValidation)
 	}
 	if len(content) > maxMemoryFileBytes {
-		return "", fmt.Errorf("note is %d bytes, the limit is %d — a note is a conclusion, not a transcript", len(content), maxMemoryFileBytes)
+		return "", fmt.Errorf("%w: note is %d bytes, the limit is %d — a note is a conclusion, not a transcript", ErrValidation, len(content), maxMemoryFileBytes)
 	}
 
 	dir := MemoryDir(cwd)

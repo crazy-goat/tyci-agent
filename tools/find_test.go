@@ -322,3 +322,43 @@ func mustMkdir(t testing.TB, path string) {
 		t.Fatal(err)
 	}
 }
+
+func TestFindTool_ValidationErrorsIncludeHelpHint(t *testing.T) {
+	dir := t.TempDir()
+
+	cases := []struct {
+		name  string
+		input map[string]any
+	}{
+		{"invalid method", map[string]any{"method": "nope", "pattern": "*.go"}},
+		{"invalid glob", map[string]any{"method": "glob", "cwd": dir, "pattern": "["}},
+		{"invalid regex", map[string]any{"method": "grep", "cwd": dir, "pattern": "[", "mode": "regex"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := RunTool(context.Background(), "find", tc.input)
+			if res.Success {
+				t.Fatal("expected validation failure")
+			}
+			if !strings.Contains(res.Error, `help(tool="find")`) {
+				t.Fatalf("expected find help hint, got %q", res.Error)
+			}
+		})
+	}
+}
+
+func TestFindTool_GrepInvalidIncludeExcludeGlobIncludesHelpHint(t *testing.T) {
+	dir := t.TempDir()
+	for _, key := range []string{"include", "exclude"} {
+		t.Run(key, func(t *testing.T) {
+			input := map[string]any{"method": "grep", "cwd": dir, "pattern": "hit", key: "["}
+			res := RunTool(context.Background(), "find", input)
+			if res.Success {
+				t.Fatal("expected invalid glob to fail")
+			}
+			if !strings.Contains(res.Error, `help(tool="find")`) {
+				t.Fatalf("expected find help hint, got %q", res.Error)
+			}
+		})
+	}
+}

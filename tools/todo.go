@@ -194,7 +194,13 @@ func (t *TodoTool) Name() string { return "todo" }
 // goroutines. Keep this at 1 even if the locking story changes.
 func (t *TodoTool) MaxParallel() int { return 1 }
 
-func (t *TodoTool) Run(ctx context.Context, input map[string]any) ToolResult {
+func (t *TodoTool) Run(ctx context.Context, input map[string]any) (res ToolResult) {
+	defer func() {
+		if !res.Success {
+			res.validationError = true
+		}
+	}()
+
 	action := stringParam(input, "action", "list")
 	id := intParam(input, "id", 0)
 	content := stringParam(input, "content", "")

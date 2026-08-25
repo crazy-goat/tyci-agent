@@ -18,7 +18,7 @@ func (t *WriteTool) Name() string {
 func (t *WriteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	path, ok := input["path"].(string)
 	if !ok || path == "" {
-		return ToolResult{Type: "result", Success: false, Error: "path required"}
+		return validationResult("path required")
 	}
 	// Resolved before anything else so the freshness stamps, the hooks and the
 	// write itself all agree on which file this is. See tools/workdir.go.
@@ -32,7 +32,7 @@ func (t *WriteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	// Otherwise it's write mode
 	content, ok := input["content"].(string)
 	if !ok {
-		return ToolResult{Type: "result", Success: false, Error: "content required (or use oldString+newString for edit mode)"}
+		return validationResult("content required (or use oldString+newString for edit mode)")
 	}
 
 	return t.runWriteMode(ctx, input, path, content)
@@ -45,7 +45,7 @@ func (t *WriteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 func (t *WriteTool) runWriteMode(ctx context.Context, input map[string]any, path, content string) ToolResult {
 	r, err := parseWriteRange(input["range"])
 	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		return validationResult(err.Error())
 	}
 
 	// Append is purely additive and addresses no line numbers, so it cannot
@@ -74,7 +74,7 @@ func (t *WriteTool) runWriteMode(ctx context.Context, input map[string]any, path
 		}
 		lines, origTrailing := splitFileLines(string(data))
 		if r.from < 1 || r.from > len(lines) || (r.mode == "lines" && (r.to < r.from || r.to > len(lines))) {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("range out of bounds (file has %d lines)", len(lines))}
+			return validationResultf("range out of bounds (file has %d lines)", len(lines))
 		}
 		repl, replTrailing := splitReplacementLines(content)
 		var newLines []string
@@ -122,7 +122,7 @@ func (t *WriteTool) runWriteMode(ctx context.Context, input map[string]any, path
 		}
 	}
 
-	return ToolResult{Type: "result", Success: false, Error: "invalid range"}
+	return validationResult("invalid range")
 }
 
 func appendFile(path, content string) ToolResult {
@@ -150,7 +150,7 @@ func appendFile(path, content string) ToolResult {
 func (t *WriteTool) runEditMode(ctx context.Context, input map[string]any, path, oldStr string) ToolResult {
 	newStr, ok := input["newString"].(string)
 	if !ok {
-		return ToolResult{Type: "result", Success: false, Error: "newString required when oldString is provided"}
+		return validationResult("newString required when oldString is provided")
 	}
 	dryRun := boolParam(input, "dryRun", false)
 
@@ -167,12 +167,12 @@ func (t *WriteTool) runEditMode(ctx context.Context, input map[string]any, path,
 	text := string(data)
 	matches := findOccurrences(text, oldStr)
 	if len(matches) == 0 {
-		return ToolResult{Type: "result", Success: false, Error: "oldString not found in file"}
+		return validationResult("oldString not found in file")
 	}
 
 	occ, err := parseOccurrence(input)
 	if err != nil {
-		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		return validationResult(err.Error())
 	}
 
 	var selected []int
@@ -180,12 +180,12 @@ func (t *WriteTool) runEditMode(ctx context.Context, input map[string]any, path,
 		selected = matches
 	} else if occ.n > 0 {
 		if occ.n > len(matches) {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("occurrence %d requested, but only %d matches found", occ.n, len(matches))}
+			return validationResultf("occurrence %d requested, but only %d matches found", occ.n, len(matches))
 		}
 		selected = []int{matches[occ.n-1]}
 	} else {
 		if len(matches) != 1 {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("oldString matched %d times; use occurrence or make oldString more specific", len(matches))}
+			return validationResultf("oldString matched %d times; use occurrence or make oldString more specific", len(matches))
 		}
 		selected = matches
 	}

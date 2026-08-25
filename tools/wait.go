@@ -81,14 +81,14 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 
 	secRaw, hasSeconds := input["seconds"]
 	if !hasSeconds && jobID == "" {
-		return ToolResult{Type: "result", Success: false, Error: "seconds is required for a plain wait (or pass job_id to wait for a job)"}
+		return validationResult("seconds is required for a plain wait (or pass job_id to wait for a job)")
 	}
 	seconds := DefaultJobWaitSeconds
 	if hasSeconds {
 		var err error
 		seconds, err = toInt(secRaw)
 		if err != nil {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("seconds: %v", err)}
+			return validationResultf("seconds: %v", err)
 		}
 	}
 

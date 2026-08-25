@@ -205,6 +205,9 @@ func TestReadTool_PathRequired(t *testing.T) {
 	if !strings.Contains(res.Error, "path required") {
 		t.Errorf("expected 'path required', got: %s", res.Error)
 	}
+	if !res.validationError {
+		t.Fatal("missing path should be marked as a validation error")
+	}
 }
 
 func TestReadTool_TruncationByLines(t *testing.T) {

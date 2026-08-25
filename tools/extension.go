@@ -47,17 +47,13 @@ func (t *RequestTimeoutExtensionTool) Name() string { return "request_timeout_ex
 func (t *RequestTimeoutExtensionTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	seconds, ok := extensionSeconds(input["seconds"])
 	if !ok || seconds <= 0 || seconds > maxTimeoutExtensionSeconds {
-		return ToolResult{
-			Type:    "result",
-			Success: false,
-			Error:   fmt.Sprintf("seconds must be a positive integer no greater than %d", maxTimeoutExtensionSeconds),
-		}
+		return validationResultf("seconds must be a positive integer no greater than %d", maxTimeoutExtensionSeconds)
 	}
 
 	reason, _ := input["reason"].(string)
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
-		return ToolResult{Type: "result", Success: false, Error: "reason is required and must be nonempty"}
+		return validationResult("reason is required and must be nonempty")
 	}
 
 	jobID, ok := ctx.Value(JobIDCtxKey{}).(string)

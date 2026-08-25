@@ -58,7 +58,7 @@ func (t *AskTool) Name() string { return "ask_parent" }
 func (t *AskTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	question, _ := input["question"].(string)
 	if question == "" {
-		return ToolResult{Type: "result", Success: false, Error: "question is required"}
+		return validationResult("question is required")
 	}
 
 	jobID, ok := ctx.Value(JobIDCtxKey{}).(string)
@@ -133,17 +133,17 @@ func (t *AnswerTool) Name() string { return "answer_job" }
 func (t *AnswerTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	jobID, _ := input["job_id"].(string)
 	if jobID == "" {
-		return ToolResult{Type: "result", Success: false, Error: "job_id is required"}
+		return validationResult("job_id is required")
 	}
 
 	if action, _ := input["action"].(string); action == "extension" {
 		requestID, _ := input["request_id"].(string)
 		if requestID == "" {
-			return ToolResult{Type: "result", Success: false, Error: "request_id is required for extension answers"}
+			return validationResult("request_id is required for extension answers")
 		}
 		approve, ok := input["approve"].(bool)
 		if !ok {
-			return ToolResult{Type: "result", Success: false, Error: "approve is required for extension answers and must be a boolean"}
+			return validationResult("approve is required for extension answers and must be a boolean")
 		}
 		if jobExtensionRequester == nil {
 			return ToolResult{Type: "result", Success: false, Error: "answer_job unavailable: job extension requester not configured"}
@@ -159,7 +159,7 @@ func (t *AnswerTool) Run(ctx context.Context, input map[string]any) ToolResult {
 
 	text, _ := input["text"].(string)
 	if text == "" {
-		return ToolResult{Type: "result", Success: false, Error: "text is required"}
+		return validationResult("text is required")
 	}
 
 	if jobAnswerer == nil {

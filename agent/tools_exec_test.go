@@ -191,6 +191,16 @@ func (r *deadlineCapturingRunner) Run(ctx context.Context, name string, args map
 	return "", nil
 }
 
+func TestRunToolCall_InvalidJSONIncludesHelpHint(t *testing.T) {
+	got, failed := runToolCall(context.Background(), staticRunner{}, stream.ToolCall{Name: "read", Arguments: "{"}, 0)
+	if !failed {
+		t.Fatal("invalid JSON should fail")
+	}
+	if !strings.Contains(got, `help(tool="read")`) {
+		t.Fatalf("invalid JSON should include a read help hint: %q", got)
+	}
+}
+
 func TestRunToolCall_PreservesSuccessfulErrorLikeOutput(t *testing.T) {
 	for _, output := range []string{"Error: this is stdout", "❌ exit code 1 is just text"} {
 		got, failed := runToolCall(context.Background(), staticRunner{output: output}, stream.ToolCall{Name: "bash", Arguments: `{}`}, 0)

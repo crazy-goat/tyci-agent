@@ -783,3 +783,23 @@ func TestConductor_MaxIterationsIsReturnedNotSwallowed(t *testing.T) {
 		t.Fatalf("err = %v, want agent.ErrMaxIterations", err)
 	}
 }
+
+func TestSwitchModelRefreshesContextLimit(t *testing.T) {
+	primary := &connectortest.Fake{ProviderName: "p1", ModelName: "m1"}
+	fallback := &connectortest.Fake{ProviderName: "p2", ModelName: "m2"}
+	c := New(Options{Client: primary, Config: agent.Config{
+		ContextLimit: 10,
+		ContextLimitFor: func(provider, model string) int {
+			if provider == "p2" && model == "m2" {
+				return 20
+			}
+			return 10
+		},
+	}, Resolver: mapResolver{models: map[string]connector.ModelClient{"p2/m2": fallback}}})
+	if err := c.SwitchModel("p2/m2"); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Config().ContextLimit; got != 20 {
+		t.Fatalf("ContextLimit = %d, want 20", got)
+	}
+}

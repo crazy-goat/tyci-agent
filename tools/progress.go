@@ -37,7 +37,7 @@ func (t *ReportProgressTool) Name() string { return "report_progress" }
 func (t *ReportProgressTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	text, _ := input["text"].(string)
 	if text == "" {
-		return ToolResult{Type: "result", Success: false, Error: "text is required"}
+		return validationResult("text is required")
 	}
 
 	jobID, ok := ctx.Value(JobIDCtxKey{}).(string)

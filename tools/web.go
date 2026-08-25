@@ -57,7 +57,7 @@ func (t *WebTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	method, _ := input["method"].(string)
 	what, ok := input["what"].(string)
 	if !ok || what == "" {
-		return ToolResult{Type: "result", Success: false, Error: "what (query/term/URL) is required"}
+		return validationResult("what (query/term/URL) is required")
 	}
 
 	switch method {
@@ -80,8 +80,7 @@ func (t *WebTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return t.webGet(ctx, what, format)
 
 	default:
-		return ToolResult{Type: "result", Success: false,
-			Error: "method must be one of: search (real-time web), lookup (encyclopedic facts), get (fetch URL)"}
+		return validationResult("method must be one of: search (real-time web), lookup (encyclopedic facts), get (fetch URL)")
 	}
 }
 

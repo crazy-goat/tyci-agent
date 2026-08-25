@@ -110,7 +110,7 @@ func killAllowedInsideChild(ctx context.Context, callerJobID, targetID string, l
 func (t *KillJobTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	jobID, _ := input["job_id"].(string)
 	if jobID == "" {
-		return ToolResult{Type: "result", Success: false, Error: "job_id is required"}
+		return validationResult("job_id is required")
 	}
 
 	// Resolve short forms ("#N"/"N", as the jobs panel prints them) AND a

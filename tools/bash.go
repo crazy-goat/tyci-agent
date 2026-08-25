@@ -77,10 +77,10 @@ func (t *BashTool) Name() string {
 func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	cmdVal, ok := input["command"].(string)
 	if !ok {
-		return ToolResult{Type: "result", Success: false, Error: "command required"}
+		return validationResult("command required")
 	}
 	if cmdVal == "" {
-		return ToolResult{Type: "result", Success: false, Error: "empty command"}
+		return validationResult("empty command")
 	}
 
 	timeoutSec := intParam(input, "timeout", BashDefaultTimeoutSec)
