@@ -271,6 +271,7 @@ func (m *TuiModel) dropResidentCaches(idx int) {
 	delete(m.mdCacheRendered, idx)
 	delete(m.toolDisplayCache, idx)
 	delete(m.streamWraps, idx)
+	delete(m.mdStreamState, idx)
 }
 
 // blockLinesBytes returns the total byte length of a slice of line strings.

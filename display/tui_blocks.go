@@ -190,6 +190,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.dirtyBlocks = make(map[int]bool)
 		m.mdCacheRendered = make(map[int]string)
 		m.streamWraps = make(map[int]*streamWrap)
+		m.mdStreamState = make(map[int]*mdStreamState)
 		m.toolDisplayCache = make(map[int]string)
 		m.cachedTotalLines = -1
 		m.invalidateMessageRegion()
