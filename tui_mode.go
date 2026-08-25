@@ -251,7 +251,11 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				return
 			}
 			if resumePath == "" {
-				// User pressed Esc in the picker. Stay in the loop; do nothing.
+				// User pressed Esc in the picker. Stay in the loop; do nothing —
+				// but the bare "/resume" that opened the picker went through
+				// submit(), which marked the model busy (reading=false), and
+				// nothing since has posted a "done"/"reset" to clear it.
+				tuiDisp.ResetStatus()
 				continue
 			}
 			if err := resumeSession(resumePath, iterCancel); err != nil {
@@ -259,6 +263,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				tuiDisp.ResetStatus()
 				continue
 			}
+			// resumeSession's tuiDisp.Reset() already restored the idle/read
+			// state on success, so no ResetStatus is needed here.
 			continue
 
 		case <-tuiDisp.DoneCh():
@@ -288,6 +294,10 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				} else {
 					tuiDisp.ToolBlock("History compacted; raw record: " + path)
 				}
+				// Neither branch above posts anything that flips reading back
+				// to true; submit() marked the model busy when the command was
+				// typed at an idle prompt.
+				tuiDisp.ResetStatus()
 				continue
 			case trimmed == "/new":
 				iterCancel()
@@ -323,10 +333,18 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				if len(entries) == 0 {
 					dir, _ := session.SessionDir(wd)
 					tuiDisp.ToolBlock(fmt.Sprintf("ℹ️  No sessions in %s", dir))
+					// No picker opens, so no later message will restore the
+					// idle/read state submit() took away.
+					tuiDisp.ResetStatus()
 					continue
 				}
 				tuiEntries := resumeEntriesToTUI(entries)
 				tuiDisp.OpenResumePicker(tuiEntries)
+				// Opening the picker does not itself post a "done"/"reset";
+				// restore idle now. The picker's Esc path resets again via the
+				// SelectedResume() branch above, and a successful pick goes
+				// through resumeSession's Reset().
+				tuiDisp.ResetStatus()
 				continue
 			case trimmed == "/resume --all":
 				// Escape hatch: list sessions across every project, not
@@ -340,14 +358,19 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				}
 				if len(entries) == 0 {
 					tuiDisp.ToolBlock("ℹ️  No sessions recorded")
+					tuiDisp.ResetStatus()
 					continue
 				}
 				tuiDisp.OpenResumePicker(resumeEntriesToTUI(entries))
+				tuiDisp.ResetStatus()
 				continue
 			case trimmed == "/btw":
 				// Bare /btw: browse previous side-conversations from this session.
 				iterCancel()
 				tuiDisp.OpenBtwList()
+				// The list popup posts nothing that would clear the busy
+				// state submit() entered, so restore idle here.
+				tuiDisp.ResetStatus()
 				continue
 			case strings.HasPrefix(trimmed, "/btw "):
 				// /btw <question>: fork the current conversation into a
@@ -363,6 +386,10 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 					continue
 				}
 				startBtwQuestion(question)
+				// The side conversation streams to its own entry; nothing it
+				// posts touches the main model's reading flag, which submit()
+				// cleared when the command was typed.
+				tuiDisp.ResetStatus()
 				continue
 			case strings.HasPrefix(trimmed, "/msg "):
 				// /msg <job> <text>: posts to a job's mailbox. Doesn't touch
@@ -372,6 +399,10 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// the agent.
 				iterCancel()
 				handleMsgCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "/msg")))
+				// handleMsgCommand reports failures via tuiDisp.Error, which
+				// posts an error block but no "done" — the model would stay
+				// in the busy state submit() entered without this.
+				tuiDisp.ResetStatus()
 				continue
 			case strings.HasPrefix(trimmed, "/resume "):
 				// /resume <path|index>: forward to resolveSessionRef so the
