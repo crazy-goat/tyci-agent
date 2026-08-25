@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -242,6 +243,82 @@ func TestJobWaiterAdapter_TranslatesStatus(t *testing.T) {
 
 	if _, ok := adapter.Wait(context.Background(), "no-such-job", time.Millisecond); ok {
 		t.Error("expected unknown job id to report ok=false")
+	}
+}
+
+// TestJobWaiterAdapter_TranslatesProgressHistoryAndTruncation pins the real
+// wiring end to end (review E6): the two tests above this one only ever
+// exercised mockJobWaiter in tools/wait_test.go, so nothing pinned that
+// jobWaiterAdapter actually carries jobs.Job.ProgressHistory and
+// ProgressHistoryTruncated through to tools.JobStatus. Reports enough
+// notes to exceed the registry's live cap, the same way a chatty
+// backgrounded shell command does in practice (see tools/bash.go's
+// bashRun.setProgress), and checks both fields survive the real
+// jobWaiterAdapter.Wait translation, not just a hand-built status struct.
+func TestJobWaiterAdapter_TranslatesProgressHistoryAndTruncation(t *testing.T) {
+	reg := jobs.NewRegistry()
+	adapter := jobWaiterAdapter{reg: reg}
+
+	job := reg.Start(context.Background(), "chatty adapter test", jobs.KindOther, "", func(context.Context, string) (string, bool, error) {
+		return "done", false, nil
+	})
+
+	const notes = 30
+	for i := 0; i < notes; i++ {
+		if !reg.SetProgress(job.ID, fmt.Sprintf("note %d", i)) {
+			t.Fatalf("SetProgress failed for note %d", i)
+		}
+	}
+
+	status, ok := adapter.Wait(context.Background(), job.ID, time.Second)
+	if !ok {
+		t.Fatal("expected job to be found")
+	}
+	if len(status.ProgressHistory) == 0 || len(status.ProgressHistory) >= notes {
+		t.Fatalf("expected a bounded, non-empty ProgressHistory (< %d entries), got %d: %v", notes, len(status.ProgressHistory), status.ProgressHistory)
+	}
+	wantNewest := fmt.Sprintf("note %d", notes-1)
+	if got := status.ProgressHistory[len(status.ProgressHistory)-1]; got != wantNewest {
+		t.Fatalf("expected newest entry %q, got %q", wantNewest, got)
+	}
+	if !status.ProgressHistoryTruncated {
+		t.Error("expected ProgressHistoryTruncated=true after reporting far more notes than the cap retains")
+	}
+	if status.Progress != wantNewest {
+		t.Fatalf("expected Progress to still track the latest note %q, got %q", wantNewest, status.Progress)
+	}
+}
+
+// TestJobObserverAdapter_TranslatesProgressHistoryAndTruncation is
+// jobWaiterAdapter's test above, mirrored for jobObserverAdapter — the two
+// adapters translate the same jobs.Job fields independently (see
+// jobObserverAdapter's own doc comment for why they are not allowed to
+// share a method signature), so a fix to one's translation would not
+// necessarily catch a miss in the other's.
+func TestJobObserverAdapter_TranslatesProgressHistoryAndTruncation(t *testing.T) {
+	reg := jobs.NewRegistry()
+	adapter := jobObserverAdapter{reg: reg}
+
+	job := reg.Start(context.Background(), "chatty observer test", jobs.KindOther, "", func(context.Context, string) (string, bool, error) {
+		return "done", false, nil
+	})
+
+	const notes = 30
+	for i := 0; i < notes; i++ {
+		if !reg.SetProgress(job.ID, fmt.Sprintf("note %d", i)) {
+			t.Fatalf("SetProgress failed for note %d", i)
+		}
+	}
+
+	status, ok := adapter.Observe(context.Background(), job.ID, time.Second)
+	if !ok {
+		t.Fatal("expected job to be found")
+	}
+	if len(status.ProgressHistory) == 0 || len(status.ProgressHistory) >= notes {
+		t.Fatalf("expected a bounded, non-empty ProgressHistory (< %d entries), got %d: %v", notes, len(status.ProgressHistory), status.ProgressHistory)
+	}
+	if !status.ProgressHistoryTruncated {
+		t.Error("expected ProgressHistoryTruncated=true after reporting far more notes than the cap retains")
 	}
 }
 

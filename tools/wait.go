@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -49,9 +50,25 @@ type JobStatus struct {
 	Waiting bool
 	// Question is the pending question text while Waiting is true.
 	Question string
-	// Progress is the last status note the job reported via
-	// "report_progress", if any. Persists after the job finishes too.
+	// Progress is the last status note recorded for the job, if any —
+	// either an explicit "report_progress" call, or (the dominant source in
+	// practice) one throttled line of a backgrounded shell command's own
+	// output, see tools/bash.go's bashRun.setProgress. Persists after the
+	// job finishes too.
 	Progress string
+	// ProgressHistory is every such note recorded for the job, oldest
+	// first — the sequence Progress alone loses once a second note
+	// overwrites the first. May be shorter than the job's true call count:
+	// the registry bounds how many it retains (see
+	// ProgressHistoryTruncated).
+	ProgressHistory []string
+	// ProgressHistoryTruncated is true once the registry has evicted at
+	// least one older entry from ProgressHistory to keep it bounded — see
+	// jobs.Job.ProgressHistoryTruncated, which this mirrors. For a
+	// backgrounded shell command producing steady output this becomes true
+	// quickly (its notes arrive roughly once a second, so ~20s in); it is
+	// NOT a sign anything went wrong.
+	ProgressHistoryTruncated bool
 }
 
 type JobWaiter interface {
@@ -143,14 +160,63 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 				Content: fmt.Sprintf("job %s is waiting for an answer: %q. Relay it to the user (or genuinely-known info) unless you truly know the answer — call the \"answer_job\" tool with job_id=%q and that reply to unblock it. Never invent an answer standing in for a human who hasn't replied.%s", jobID, status.Question, jobID, clampedNote),
 			}
 		}
+		// Show the whole retained sequence, not just the latest note: a
+		// job that reported several times (a backgrounded shell command's
+		// own output is the dominant source of these, not just an explicit
+		// report_progress call — see JobStatus.Progress's doc comment) has
+		// told the parent several different things, and collapsing that
+		// down to "the last one" here would silently discard the same
+		// information SetProgress's history exists to keep (item 53).
+		// Fall back to Progress alone only for a JobWaiter implementation
+		// that never populates ProgressHistory.
+		//
+		// progressNote and progressSep together decide how the sentence
+		// after it starts: a single note (or none) stays on the SAME line,
+		// exactly as this read before ProgressHistory existed, while an
+		// actual multi-entry block gets its own paragraph so "You will be
+		// notified..." does not run on straight from the last bullet.
 		progressNote := ""
-		if status.Progress != "" {
-			progressNote = fmt.Sprintf(" Latest progress: %s.", status.Progress)
+		progressSep := " "
+		if len(status.ProgressHistory) > 1 {
+			block, dropped := renderProgressHistory(status.ProgressHistory, progressHistoryPreviewRuneBudget)
+			// Both budget-side dropping (computed just above) and
+			// registry-side eviction (status.ProgressHistoryTruncated,
+			// which carries no count of its own — see its doc comment)
+			// mean the same thing to whoever reads this: notes existed
+			// that are not shown. Folded into one line rather than two,
+			// per review E2.
+			omittedNote := ""
+			switch {
+			case dropped > 0 && status.ProgressHistoryTruncated:
+				omittedNote = fmt.Sprintf(" (%d older note(s) omitted here for length, plus earlier ones already dropped by the registry's cap)", dropped)
+			case dropped > 0:
+				omittedNote = fmt.Sprintf(" (%d older note(s) omitted here for length)", dropped)
+			case status.ProgressHistoryTruncated:
+				omittedNote = " (earlier notes already dropped by the registry's cap)"
+			}
+			progressNote = fmt.Sprintf(" Progress so far%s:\n%s", omittedNote, block)
+			progressSep = "\n"
+		} else if len(status.ProgressHistory) == 1 {
+			// flattenProgressLine here too, not just in the multi-entry
+			// block: a single note can contain "\n" exactly as easily as
+			// one of several can (tools/progress.go's Run rejects only the
+			// empty string), and a raw line break dropped mid-sentence into
+			// this result is the same defect the block rendering exists to
+			// avoid. No truncation note is possible in this shape — the
+			// registry only sets ProgressHistoryTruncated once it has
+			// evicted, which pins the length at progressHistoryCap (20), so
+			// a one-entry history cannot also be truncated. That is the only
+			// reason it is safe to render inline without one.
+			progressNote = fmt.Sprintf(" Latest progress: %s.", flattenProgressLine(status.ProgressHistory[0]))
+		} else if status.Progress != "" {
+			// Same flattening for the same reason. This branch only runs for
+			// a JobWaiter that never populates ProgressHistory at all.
+			progressNote = fmt.Sprintf(" Latest progress: %s.", flattenProgressLine(status.Progress))
 		}
 		return ToolResult{
 			Type:    "result",
 			Success: true,
-			Content: fmt.Sprintf("still running after %ds (job_id=%s).%s You will be notified when it finishes — get on with other work instead of polling; wait again only if you have nothing else to do.%s", seconds, jobID, progressNote, clampedNote),
+			Content: fmt.Sprintf("still running after %ds (job_id=%s).%s%sYou will be notified when it finishes — get on with other work instead of polling; wait again only if you have nothing else to do.%s", seconds, jobID, progressNote, progressSep, clampedNote),
 		}
 	}
 
@@ -182,6 +248,88 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	content += "; check status now."
 	content += clampedNote
 	return ToolResult{Type: "result", Success: true, Content: content}
+}
+
+// progressHistoryPreviewRuneBudget bounds the AGGREGATE size of the
+// rendered progress-history block wait() hands back, across however many
+// entries there are — not a per-entry cap (SetProgress already applies
+// one of those, see jobs/registry.go's progressEntryRuneCap). wait is a
+// tool the model calls repeatedly while a job is still running, and every
+// poll re-pays whatever this renders into that model's own permanent
+// conversation history, so this exists to bound what gets typed into the
+// context window over and over, not to bound registry memory. Same idiom
+// as subagentCompletionNotice's preview (tools/subagent.go's
+// subagentNoticePreviewLimit = 800): one rune budget for the whole block.
+const progressHistoryPreviewRuneBudget = 800
+
+// flattenProgressLine collapses a single progress entry's internal
+// newlines to spaces, same idiom as session.cleanDumpText and
+// display.Minimal.singleLine use elsewhere in this codebase for the same
+// reason: report_progress's text is model-supplied and nothing upstream
+// rejects a note containing "\n" (see tools/progress.go's Run), so without
+// this a multi-line note would be indistinguishable, once several entries
+// are joined, from several separate notes.
+func flattenProgressLine(s string) string {
+	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", " "), "\n", " "))
+}
+
+// renderProgressHistory renders history (oldest first) as one
+// "- "-prefixed, newline-separated block — each entry flattened via
+// flattenProgressLine first — fit within budget runes in total. When the
+// budget cannot hold every entry, the OLDEST are dropped first: whoever
+// calls wait() on a running job wants to know what it is doing NOW, not
+// how it started, and dropped reports how many entries the BUDGET left
+// out, so the caller can fold that into one honest line together with any
+// registry-side eviction (which carries no count of its own). Entries that
+// are empty once flattened are not counted in dropped — they are not notes
+// anybody wanted to read, so reporting them as omitted would overstate
+// what was lost.
+//
+// At least one entry (the newest) is always kept, even if it alone
+// exceeds budget, so a single long note still reads as something rather
+// than nothing.
+func renderProgressHistory(history []string, budget int) (rendered string, dropped int) {
+	if len(history) == 0 {
+		return "", 0
+	}
+	// Drop entries that are empty once flattened. This is not hypothetical
+	// tidying: tools/bash.go's pump posts EVERY output line of a
+	// backgrounded command, blank separator lines included, and
+	// report_progress's own empty-string rejection does not apply to that
+	// path — so without this a build that prints blank lines renders as a
+	// run of empty bullets.
+	flattened := make([]string, 0, len(history))
+	for _, entry := range history {
+		if line := flattenProgressLine(entry); line != "" {
+			flattened = append(flattened, line)
+		}
+	}
+	if len(flattened) == 0 {
+		return "", 0
+	}
+
+	// Walk newest-to-oldest, accumulating rune cost (entry plus its
+	// "- " marker and trailing newline), so the survivors are always the
+	// newest entries. start is the index of the oldest entry kept.
+	used := 0
+	start := len(flattened)
+	for start > 0 {
+		entry := flattened[start-1]
+		cost := len([]rune(entry)) + len([]rune("- \n"))
+		if used+cost > budget && start != len(flattened) {
+			break
+		}
+		used += cost
+		start--
+	}
+
+	var b strings.Builder
+	for _, entry := range flattened[start:] {
+		b.WriteString("- ")
+		b.WriteString(entry)
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n"), start
 }
 
 // defaultSleep blocks for d or until ctx is cancelled, whichever comes

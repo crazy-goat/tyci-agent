@@ -38,14 +38,16 @@ func (a jobWaiterAdapter) Wait(ctx context.Context, id string, timeout time.Dura
 		return tools.JobStatus{}, false
 	}
 	return tools.JobStatus{
-		ID:       job.ID,
-		Done:     job.Status != jobs.StatusRunning && job.Status != jobs.StatusWaitingAnswer,
-		Success:  job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
-		Content:  job.Result,
-		Error:    job.Err,
-		Waiting:  job.Status == jobs.StatusWaitingAnswer,
-		Question: job.Question,
-		Progress: job.Progress,
+		ID:                       job.ID,
+		Done:                     job.Status != jobs.StatusRunning && job.Status != jobs.StatusWaitingAnswer,
+		Success:                  job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
+		Content:                  job.Result,
+		Error:                    job.Err,
+		Waiting:                  job.Status == jobs.StatusWaitingAnswer,
+		Question:                 job.Question,
+		Progress:                 job.Progress,
+		ProgressHistory:          job.ProgressHistory,
+		ProgressHistoryTruncated: job.ProgressHistoryTruncated,
 	}, true
 }
 
@@ -68,14 +70,16 @@ func (a jobObserverAdapter) Observe(ctx context.Context, id string, timeout time
 		return tools.JobStatus{}, false
 	}
 	return tools.JobStatus{
-		ID:       job.ID,
-		Done:     job.Status != jobs.StatusRunning && job.Status != jobs.StatusWaitingAnswer,
-		Success:  job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
-		Content:  job.Result,
-		Error:    job.Err,
-		Waiting:  job.Status == jobs.StatusWaitingAnswer,
-		Question: job.Question,
-		Progress: job.Progress,
+		ID:                       job.ID,
+		Done:                     job.Status != jobs.StatusRunning && job.Status != jobs.StatusWaitingAnswer,
+		Success:                  job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
+		Content:                  job.Result,
+		Error:                    job.Err,
+		Waiting:                  job.Status == jobs.StatusWaitingAnswer,
+		Question:                 job.Question,
+		Progress:                 job.Progress,
+		ProgressHistory:          job.ProgressHistory,
+		ProgressHistoryTruncated: job.ProgressHistoryTruncated,
 	}, true
 }
 

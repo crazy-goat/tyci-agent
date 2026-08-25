@@ -21,14 +21,16 @@ func BuildSystemPrompt() string {
 // BuildSubagentSystemPrompt is the system prompt for a headless child agent
 // spawned via the subagent tool. It drops the subagent tool from the listing
 // (children cannot spawn further children) and states the subagent contract:
-// work autonomously, never ask questions, and end the turn with a single
+// decide and act on reasonable assumptions by default, reach for ask_parent
+// only as a genuine last resort, and end the turn with a single
 // self-contained final message that IS the result the parent receives.
 func BuildSubagentSystemPrompt() string {
 	return buildSystemPrompt(false, `
 You are a SUBAGENT spawned by a parent agent to complete ONE task and report back.
-- You cannot ask questions — there is no user to reply. Make reasonable assumptions and proceed.
+- Decide and act: make reasonable assumptions and proceed. That is the right call for almost every task.
+- ask_parent is a real tool and a genuine last resort — reach for it only when you are hard blocked and ANY assumption would make the work useless or unsafe, never for a preference or style question. It costs a full stall: you block until your parent answers, and fail immediately if nobody could ever reach you.
 - Do the whole task, then END YOUR TURN with a single self-contained final message that IS your result (the findings/answer/summary the parent needs). The parent sees only your final text, not your tool calls or thinking.
-- Do not stop early and do not loop. If you get blocked, state in your final message what you did and exactly what is blocking you.`)
+- Do not stop early and do not loop. If you are truly stuck with no way to get an answer — or you already asked and got none — state in your final message what you did and exactly what is blocking you.`)
 }
 
 // BuildSubagentSystemPromptWithRole returns the standard subagent system
@@ -88,6 +90,12 @@ func buildSystemPrompt(includeSubagent bool, roleNote string) string {
 	// none of it said the single most unusual thing about this harness: that
 	// async jobs NOTIFY you. Density beats completeness here; help(tool) is
 	// where completeness lives.
+	// The opening line is gated the same way posture/contracts/toolLines are:
+	// a top-level agent genuinely has nobody to ask (it has no ask_parent
+	// tool), but a child does — ask_parent is real and works — so stating
+	// the same absolute "nobody to ask" for both would contradict the child's
+	// own toolset a few lines later in the same prompt.
+	header := "You are tyci, a non-interactive coding agent. There is nobody to ask — decide and act."
 	posture := ""
 	contracts := ""
 	toolLines := ""
@@ -105,15 +113,16 @@ func buildSystemPrompt(includeSubagent bool, roleNote string) string {
 - agents(name?): named agents usable as subagent(agent="name").
 `
 	} else {
+		header = "You are tyci, a non-interactive coding agent. There is no interactive user — decide and act on reasonable assumptions by default."
 		posture = `1. Split work you can. You cannot spawn children, but everything below still applies: read narrowly, script your loops, and report a conclusion.
 `
-		toolLines = `- ask_parent(question): block until your parent — whoever spawned this job, human or agent — answers, or fails immediately if nobody could ever reach it. Last resort — you stall completely while waiting.
+		toolLines = `- ask_parent(question): last resort for a hard blocker where any assumption would make the work useless or unsafe. Blocks until your parent — whoever spawned this job, human or agent — answers, or fails immediately if nobody could ever reach it.
 - report_progress(text): post a status note so whoever is watching is not guessing.
 - wait(seconds): pause deliberately.
 `
 	}
 
-	prompt := fmt.Sprintf(`You are tyci, a non-interactive coding agent. There is nobody to ask — decide and act.%s
+	prompt := fmt.Sprintf(`%s%s
 
 Context: date %s · working directory %s (do not leave it) · OS %s · temp dir %s.
 
@@ -144,7 +153,7 @@ Tools — help(tool) for the manual:
 A child agent sees ONLY the task text you write — no history, no earlier findings. State what to do, which paths, and exactly what to return, in that order.
 
 Be terse.
-`, roleNote, date, wd, osName, tempDir, posture, contracts, toolLines)
+`, header, roleNote, date, wd, osName, tempDir, posture, contracts, toolLines)
 
 	// Standing project context: AGENTS.md plus any notes the agent wrote for
 	// itself in an earlier session. An earlier version of this read only

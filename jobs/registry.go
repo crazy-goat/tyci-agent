@@ -117,10 +117,10 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 		jobCtx, cancel = context.WithCancel(ctx)
 	}
 	job := &Job{
-		ID:           nextID(),
-		Description:  description,
-		Kind:         kind,
-		ParentID:     parentID,
+		ID:            nextID(),
+		Description:   description,
+		Kind:          kind,
+		ParentID:      parentID,
 		Status:        StatusRunning,
 		StartedAt:     now,
 		done:          make(chan struct{}),
@@ -788,11 +788,39 @@ func (r *Registry) Answer(id, text string, fromUser bool) bool {
 	}
 }
 
+// progressHistoryCap bounds the number of notes kept per job
+// (Job.ProgressHistory), oldest evicted first once full — see
+// SetProgress. This is NOT an overflow guard for a rare event: an explicit
+// "report_progress" call is voluntary and rare (tools/progress.go's
+// ReportProgressTool doc comment), but that tool is not this cap's
+// dominant caller. A backgrounded shell command posts one of these on
+// every output line it produces, throttled to at most one per second (see
+// tools/bash.go's bashRun.setProgress and bgProgressInterval) — for any
+// build or test run that keeps printing for more than ~20 seconds, which
+// is the ordinary case, not the unusual one. So this cap is a SLIDING
+// TAIL over a steady, roughly 1/s stream, not a rare-overflow backstop:
+// its job is to say which ~20 seconds of that stream a caller still sees,
+// not to catch something that almost never happens.
+const progressHistoryCap = 20
+
+// progressEntryRuneCap bounds a single note passed to SetProgress in
+// RUNES — never bytes, per this repo's documented history of byte-slicing
+// truncation bugs (see truncateTombstoneField's doc comment). An explicit
+// "report_progress" call is model-supplied text with no length limit
+// enforced anywhere upstream of here; a backgrounded shell command's own
+// output line is already cut to 120 runes by tools/bash.go's truncateLine
+// before it ever reaches here, well inside this cap, so this backstop
+// exists for the caller that has no cap of its own — without it, a single
+// report_progress call could make one job's history dominate memory on
+// its own, independent of progressHistoryCap.
+const progressEntryRuneCap = 2000
+
 // SetProgress records a short status note for the job identified by id,
-// visible via Snapshot().Progress without the job finishing. No restriction
-// on the job's current status — allowed even if called oddly (e.g. after the
-// job is already terminal), it's harmless. Returns false only when id is
-// unknown.
+// visible via Snapshot().Progress (the latest note) and
+// Snapshot().ProgressHistory (the full retained sequence) without the job
+// finishing. No restriction on the job's current status — allowed even if
+// called oddly (e.g. after the job is already terminal), it's harmless.
+// Returns false only when id is unknown.
 func (r *Registry) SetProgress(id, text string) bool {
 	r.mu.Lock()
 	job, ok := r.jobs[id]
@@ -800,7 +828,17 @@ func (r *Registry) SetProgress(id, text string) bool {
 		r.mu.Unlock()
 		return false
 	}
-	job.Progress = text
+	entry := truncateProgressEntry(text)
+	job.Progress = entry
+	job.ProgressHistory = append(job.ProgressHistory, entry)
+	if len(job.ProgressHistory) > progressHistoryCap {
+		// Drop the oldest and record that we did — see
+		// Job.ProgressHistoryTruncated's doc comment for why this bit has
+		// to exist: a bounded history that silently drops entries is
+		// indistinguishable from a complete one otherwise.
+		job.ProgressHistory = job.ProgressHistory[len(job.ProgressHistory)-progressHistoryCap:]
+		job.ProgressHistoryTruncated = true
+	}
 	onEvent := r.onEvent
 	snapshot := job.Snapshot()
 	r.mu.Unlock()
@@ -809,6 +847,18 @@ func (r *Registry) SetProgress(id, text string) bool {
 		onEvent(snapshot)
 	}
 	return true
+}
+
+// truncateProgressEntry truncates a single report_progress note to at most
+// progressEntryRuneCap runes, appending an ellipsis when it actually cut
+// something. Rune-based, never byte-based — see truncateTombstoneField's
+// doc comment for why byte slicing is not an option in this codebase.
+func truncateProgressEntry(s string) string {
+	runes := []rune(s)
+	if len(runes) <= progressEntryRuneCap {
+		return s
+	}
+	return string(runes[:progressEntryRuneCap]) + "…"
 }
 
 // TouchActivity records that the job identified by id showed a fresh sign of
@@ -964,7 +1014,16 @@ const MaxRetainedTerminalJobs = 50
 // computable: at most tombstoneCap * 5 * tombstoneFieldRuneCap runes, i.e.
 // at most 200 * 5 * 4000 = 4,000,000 runes, or ~16 MB assuming every rune
 // costs the UTF-8 max of 4 bytes (ASCII text, the common case, costs a
-// quarter of that). Truncating Result specifically means "the full
+// quarter of that). ProgressHistory adds up to a further
+// tombstoneCap * progressHistoryCap * tombstoneFieldRuneCap runes on top of
+// that (200 * 20 * 4000 = 16,000,000 runes, ~64 MB worst case) — see
+// truncateTombstoneProgressHistory, which bounds the whole slice
+// independently of SetProgress's own live caps rather than trusting they
+// stay in force. In practice SetProgress already caps each entry to the
+// smaller progressEntryRuneCap (2000), so the realistic number today is
+// about half that worst case — but the tombstone's OWN bound is what makes
+// this section's arithmetic true regardless of what SetProgress does later.
+// Truncating Result specifically means "the full
 // result", the premise the tombstone exists to satisfy, is honored only up
 // to tombstoneFieldRuneCap runes — far beyond the 800-rune completion-notice
 // preview it replaces, but not literally unbounded, which an in-memory
@@ -980,9 +1039,9 @@ const MaxRetainedTerminalJobs = 50
 const tombstoneCap = 200
 
 // tombstoneFieldRuneCap bounds each of a tombstoned Job's string fields
-// (Result, Err, Progress, Description, ExtensionReason) in runes — see
-// tombstoneCap's doc comment for the reasoning and the resulting
-// worst-case memory bound.
+// (Result, Err, Progress, Description, ExtensionReason, and every entry of
+// ProgressHistory) in runes — see tombstoneCap's doc comment for the
+// reasoning and the resulting worst-case memory bound.
 const tombstoneFieldRuneCap = 4000
 
 // pruneTerminalLocked drops the oldest finished jobs beyond
@@ -1023,6 +1082,7 @@ func (r *Registry) tombstoneLocked(snap Job) {
 	snap.Progress = truncateTombstoneField(snap.Progress)
 	snap.Description = truncateTombstoneField(snap.Description)
 	snap.ExtensionReason = truncateTombstoneField(snap.ExtensionReason)
+	snap.ProgressHistory = truncateTombstoneProgressHistory(snap.ProgressHistory)
 
 	if _, exists := r.tombstones[snap.ID]; !exists {
 		r.tombstoneOrder = append(r.tombstoneOrder, snap.ID)
@@ -1060,6 +1120,28 @@ func truncateTombstoneResult(s string) string {
 		return s
 	}
 	return string(runes[:tombstoneFieldRuneCap]) + fmt.Sprintf("\n\n[note: result truncated to %d runes for long-term retention]", tombstoneFieldRuneCap)
+}
+
+// truncateTombstoneProgressHistory bounds a tombstoned job's WHOLE progress
+// history, not just each entry: SetProgress already caps a live job's
+// history to progressHistoryCap entries of at most progressEntryRuneCap
+// runes each, but a tombstone must not depend on that invariant holding
+// forever elsewhere in this file — it enforces its own bound independently,
+// the same way tombstoneLocked's other fields do, so a future change to how
+// history is written can never silently blow up tombstone memory. Re-slices
+// to the newest progressHistoryCap entries (oldest first is already the
+// slice's order) and re-truncates each one to tombstoneFieldRuneCap runes
+// with truncateTombstoneField, same idiom as every other secondary field
+// tombstoneLocked truncates with a bare ellipsis.
+func truncateTombstoneProgressHistory(history []string) []string {
+	if len(history) > progressHistoryCap {
+		history = history[len(history)-progressHistoryCap:]
+	}
+	out := make([]string, len(history))
+	for i, entry := range history {
+		out[i] = truncateTombstoneField(entry)
+	}
+	return out
 }
 
 // PendingLines describes the jobs that are still outstanding, one line each,

@@ -48,11 +48,15 @@ func getJobProgressReporter() JobProgressReporter {
 // post a short status note, without ending the job. Given a job id and a
 // non-empty text it always succeeds; whether anyone reads the note before
 // the job finishes depends on the id actually reaching whoever is watching —
-// via "wait"'s still-running response or the end-of-turn pending-jobs
-// reminder (PendingLines does append it, jobs/registry.go:292), but NOT the
-// jobs panel: display's job-line renderer never surfaces Progress at all. A
-// blocking call under `tyci run`/`--print` hands out no job id, so there
-// nobody reads it either way.
+// via "wait"'s still-running response (which shows a bounded, newest-first
+// window of the retained sequence, not just the latest note — see
+// tools/wait.go's renderProgressHistory and its rune budget), the
+// end-of-turn pending-jobs reminder (Registry.PendingLines appends the
+// LATEST note only),
+// and the jobs panel (display/tui_jobs_panel.go's formatJobLine also shows
+// only the latest note, by design — see item 53's decision not to widen
+// that view). A blocking call under `tyci run`/`--print` hands out no job
+// id, so there nobody reads it either way.
 type ReportProgressTool struct{}
 
 func (t *ReportProgressTool) Name() string { return "report_progress" }

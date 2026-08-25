@@ -3,6 +3,7 @@ package providers
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -224,6 +225,109 @@ func TestSubagentPromptListsTheToolsOnlyAChildCanUse(t *testing.T) {
 	for _, name := range []string{"ask_parent(question)", "report_progress(text)"} {
 		if strings.Contains(parent, name) {
 			t.Errorf("the top-level prompt offers %s, which only works inside a job", name)
+		}
+	}
+}
+
+// noAskContradictionPatterns match the FAMILY of absolute "you cannot ask"
+// claims rather than a list of exact phrases, because a check pinned to
+// literal strings let "Never ask questions", "You have no way to ask" and
+// "do not ask anyone" sail straight through. Case-insensitive: a system
+// prompt is not guaranteed to keep any particular capitalization as it
+// evolves.
+//
+// Two patterns, not one, because the two families are shaped differently
+// and folding them into a single alternation made it unreadable:
+//
+//   - the VERB family ("cannot ask", "never ask", "do not ask"). This one
+//     requires the ask to be terminated — by an object it is allowed to
+//     take, then punctuation — precisely so it does NOT fire on legitimate
+//     text like "never ask for permission before reading a file", which a
+//     bare `(cannot|never|...)\s+ask` did fire on. A guard that cries wolf
+//     on innocent prose gets deleted by the first person it annoys, so the
+//     narrower pattern is the more durable one.
+//   - the NO-COUNTERPARTY family ("nobody to ask", "no user to reply").
+//     This one is not optional: it is the exact shape of both strings item
+//     41 deleted, and it is how the bug most plausibly comes back — by
+//     someone collapsing buildSystemPrompt's gated `header` (provider.go)
+//     back into one shared line, which would put "There is nobody to ask"
+//     into the child prompt again. A verb-only pattern is silent on that.
+var noAskContradictionPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(cannot|can not|never|do not|don't|no way to)\s+ask(\s+(questions?|anything|anyone|any\s+one|the\s+user|your\s+parent))?\s*[.,;:—-]`),
+	regexp.MustCompile(`(?i)no(body|\s+one|\s+user|\s+parent)\s+to\s+(ask|reply|answer)`),
+}
+
+// TestSubagentPromptDoesNotContradictItsOwnAskParentTool guards against item
+// 41 regressing: the child prompt hands out a real ask_parent tool, so it
+// must never simultaneously claim in absolute terms that it cannot ask. That
+// contradiction shipped for a while ("You cannot ask questions — there is no
+// user to reply" right above a working ask_parent tool) and made children's
+// use of ask_parent unpredictable, since they had to disbelieve their own
+// system prompt to use the tool they were given.
+func TestSubagentPromptDoesNotContradictItsOwnAskParentTool(t *testing.T) {
+	// Isolate from the developer's real ~/.tyci/AGENTS.md (see
+	// writeAgentDef's callers above for the same pattern) — otherwise
+	// whatever that file happens to say becomes part of the string this
+	// test asserts against, which has nothing to do with item 41.
+	t.Setenv("HOME", t.TempDir())
+
+	prompt := BuildSubagentSystemPrompt()
+
+	if !strings.Contains(prompt, "ask_parent(") {
+		t.Fatalf("expected the child prompt to expose ask_parent(), it did not:\n%s", prompt)
+	}
+	for _, pat := range noAskContradictionPatterns {
+		if m := pat.FindString(prompt); m != "" {
+			t.Errorf("child prompt contains an absolute claim (%q) that it cannot ask, alongside a working ask_parent tool:\n%s", m, prompt)
+		}
+	}
+}
+
+// TestNoAskContradictionPatterns_CatchTheRealFamilyWithoutFalseTripping is a
+// guard for the guard above. The check it protects is only worth having if it
+// (a) still fires on the two strings item 41 actually deleted and (b) stays
+// quiet on legitimate prompt text — an earlier single-regexp version failed
+// BOTH: it missed "There is nobody to ask" and "no user to reply" (the exact
+// strings that shipped the contradiction) while firing on "never ask for
+// permission before reading a file". Without this test that regression is
+// invisible, because a guard that matches nothing passes just as quietly as
+// a guard that works.
+func TestNoAskContradictionPatterns_CatchTheRealFamilyWithoutFalseTripping(t *testing.T) {
+	matchesAny := func(s string) bool {
+		for _, pat := range noAskContradictionPatterns {
+			if pat.MatchString(s) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Must fire. The first two are verbatim from the prompt item 41 fixed.
+	for _, s := range []string{
+		"- You cannot ask questions — there is no user to reply. Make reasonable assumptions and proceed.",
+		"You are tyci, a non-interactive coding agent. There is nobody to ask — decide and act.",
+		"Never ask questions.",
+		"You have no way to ask.",
+		"do not ask anyone.",
+		"don't ask, just decide.",
+		"There is no one to ask.",
+		"Nobody to reply, so proceed.",
+	} {
+		if !matchesAny(s) {
+			t.Errorf("guard missed an absolute no-ask claim: %q", s)
+		}
+	}
+
+	// Must stay quiet. These are things a prompt may legitimately say.
+	for _, s := range []string{
+		"never ask for permission before reading a file",
+		"do not ask for confirmation; just proceed",
+		"ask_parent is a real tool and a genuine last resort",
+		"If you are truly stuck with no way to get an answer — or you already asked and got none — say so.",
+		"never for a preference or style question",
+	} {
+		if matchesAny(s) {
+			t.Errorf("guard false-tripped on legitimate text: %q", s)
 		}
 	}
 }
