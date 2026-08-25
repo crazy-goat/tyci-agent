@@ -117,6 +117,44 @@ func TestCancelAllStopsLiveJobsAndReturnsKnownIDs(t *testing.T) {
 // TestCancelRefusesTerminalAndUnknown: false means "not running", never a
 // fake success. Revert check: remove the status guard from Cancel and the
 // already-terminal case flips this test's second half to true.
+func TestCancelWaitingAnswer(t *testing.T) {
+	r := NewRegistry()
+	asked := make(chan struct{})
+	job := r.Start(context.Background(), "question", KindSubagent, "", func(ctx context.Context, id string) (string, bool, error) {
+		close(asked)
+		_, _, ok := r.Ask(ctx, id, "continue?")
+		if ok {
+			t.Fatal("Ask unexpectedly received an answer")
+		}
+		return "", false, ctx.Err()
+	})
+	select {
+	case <-asked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("job did not start asking")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		snap, ok := r.Wait(context.Background(), job.ID, 10*time.Millisecond)
+		if ok && snap.Status == StatusWaitingAnswer {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job did not enter waiting_answer: ok=%v snap=%+v", ok, snap)
+		}
+	}
+	if !r.Cancel(job.ID) {
+		t.Fatal("Cancel refused a job waiting for an answer")
+	}
+	snap, ok := r.Wait(context.Background(), job.ID, 2*time.Second)
+	if !ok || snap.Status != StatusFailed {
+		t.Fatalf("waiting job did not terminate after Cancel: ok=%v snap=%+v", ok, snap)
+	}
+	if snap.Err != ErrStoppedByUser.Error() {
+		t.Fatalf("expected stopped error %q, got %q", ErrStoppedByUser.Error(), snap.Err)
+	}
+}
+
 func TestCancelRefusesTerminalAndUnknown(t *testing.T) {
 	r := NewRegistry()
 

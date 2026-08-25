@@ -207,11 +207,10 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 // path never races its parent already being torn down above it.
 //
 // Returns false when id resolves to nothing or to a job that has already
-// finished (done/failed/truncated/waiting_answer counts as finished enough
-// not to need stopping); the caller should report "not a running job"
-// rather than claim success. A waiting_answer job is refused on purpose: it
-// is not making progress, but killing someone's blocked question out from
-// under them is not kill_job's call — answering or ignoring it is.
+// finished (done/failed/truncated); the caller should report "not a running
+// job" rather than claim success. A waiting_answer job is cancellable: its
+// Ask call is blocked on the job context, so cancelling that context wakes it
+// and lets the job terminate instead of leaving it stuck indefinitely.
 //
 // The cancel funcs run OUTSIDE r.mu on purpose: a job's parting code path
 // (its fn returning into Start's completion bookkeeping) takes r.mu itself,
@@ -329,7 +328,7 @@ func (r *Registry) subtreeOrderLocked(target *Job) []*Job {
 // cancelableLocked reports whether a stop request on this job can act at
 // all. Caller must hold r.mu.
 func (r *Registry) cancelableLocked(job *Job) bool {
-	return job.Status == StatusRunning
+	return job.Status == StatusRunning || job.Status == StatusWaitingAnswer
 }
 
 func (r *Registry) Get(id string) (*Job, bool) {
