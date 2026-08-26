@@ -43,6 +43,24 @@ type Def struct {
 	Path             string // absolute path to the .md file
 }
 
+// ToolsDescription renders Tools for display to the model: "unrestricted"
+// for nil (no explicit tools: list — the agent still gets whatever the
+// standard subagent tool restrictions allow, e.g. never subagent/agents/
+// answer_job; this package cannot name that list without importing
+// package tools, which already imports agentdefs), or the comma-joined
+// allowlist otherwise. Shared by every place that lists agents to the
+// model, so a restricted agent's allowlist is never silently dropped on
+// one path while shown on another.
+func (d Def) ToolsDescription() string {
+	if d.Tools == nil {
+		return "unrestricted (subject to the standard subagent tool restrictions)"
+	}
+	if len(d.Tools) == 0 {
+		return "none"
+	}
+	return strings.Join(d.Tools, ", ")
+}
+
 // frontmatter holds the raw YAML frontmatter fields of a markdown agent file.
 // Temperature is a pointer (not a plain float64) so that yaml.v3 can
 // distinguish an omitted `temperature` key (nil) from an explicit
