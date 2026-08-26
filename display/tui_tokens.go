@@ -186,7 +186,8 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 	// data, and must not trigger this.
 	for _, r := range byModel {
 		if !r.Priced && pricing.ProviderNeedsPrices(r.Provider) {
-			out = append(out, "", "no prices for "+r.Provider+" —", "run `tyci provider refresh`")
+			out = append(out, "", "no prices for "+r.Provider+" —", "run `tyci provider refresh`",
+				"(if it's local/hand-added,", "edit providers.json instead)")
 			break
 		}
 	}

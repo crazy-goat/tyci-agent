@@ -227,7 +227,11 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	// catalog, which one priced provider among many unpriced ones would
 	// otherwise silence forever.
 	if pricing.ProviderNeedsPrices(provider.Name()) {
-		fmt.Fprintln(os.Stderr, "Warning: no prices for provider "+provider.Name()+" in providers.json — run `tyci provider refresh` to fix it.")
+		fmt.Fprintln(os.Stderr, "Warning: no prices for provider "+provider.Name()+" in providers.json.")
+		fmt.Fprintln(os.Stderr, "  If it's on models.dev, run `tyci provider refresh` to fix it.")
+		fmt.Fprintln(os.Stderr, "  If it's a hand-maintained/local provider (models.dev doesn't carry it),"+
+			" refresh can't fetch its prices — add them yourself under this provider's models in "+
+			connect.ProvidersJSONPath()+", as USD-per-million-tokens \"cost\": {\"input\":..., \"output\":...}.")
 	}
 
 	if agentName == "" {
