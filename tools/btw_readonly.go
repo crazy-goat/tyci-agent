@@ -73,10 +73,16 @@ type JobPromoter interface {
 }
 
 // jobPromoter is nil until SetJobPromoter is called. Guarded by
-// jobPromoterMu for the same reason jobNotifier is (see bgbash.go's
-// jobNotifierMu doc comment): it is read from job goroutines that outlive
-// the tool call that started them, while SetJobPromoter is called from the
-// setup path.
+// jobPromoterMu — but for only HALF of jobNotifierMu's rationale (see
+// bgbash.go), and the half that does not apply is worth naming so nobody
+// reasons from the wrong one: unlike the other job hooks in this package,
+// jobPromoter is NOT read from a detached job goroutine. promote_btw is in
+// subagentDeniedTools (toolgate.go) and the /btw evaluator's read-only gate
+// denies it too, so the only caller is the main agent loop — see
+// PromoteBtwTool's own comment below. What justifies the guard here is the
+// other half: "written once at startup" is a convention nothing enforces,
+// and a hook that is cheap to make race-free should not depend on today's
+// call graph staying this way.
 var (
 	jobPromoterMu sync.RWMutex
 	jobPromoter   JobPromoter

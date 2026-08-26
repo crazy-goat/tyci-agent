@@ -240,11 +240,15 @@ func TestJobGlobals_ConcurrentSetGet_RaceFree(t *testing.T) {
 			get:  func() { _ = getJobCanceler() },
 		},
 		{
-			// F11: kill_job's own id-resolution/subtree-walk read of
-			// jobLister via getJobLister() (killjob.go's Run and
-			// killAllowedInsideChild). parentIDOf's separate read path is
-			// covered by TestParentIDOf_ConcurrentSetJobListerAndRealCall_RaceFree
-			// below.
+			// F11: the getter itself, which is the single read point for
+			// jobLister's two production sites (killjob.go's Run and, via
+			// parentIDOf, notifyToParent). Like most entries in this table
+			// this exercises the getter in isolation, NOT those call sites —
+			// only parentIDOf has real-call-path coverage, in
+			// TestParentIDOf_ConcurrentSetJobListerAndRealCall_RaceFree
+			// below. That is sufficient while the getter stays the sole
+			// read point; it would not catch a NEW call site that read the
+			// global directly.
 			name: "jobLister",
 			set:  func() { SetJobLister(raceJobLister{}) },
 			get:  func() { _ = getJobLister() },

@@ -51,12 +51,21 @@ type fakeLister struct{ jobs []JobKindSource }
 func (f *fakeLister) ListJobs() []JobKindSource { return f.jobs }
 
 func withKillWiring(t *testing.T, c JobCanceler, l JobLister) {
+	// RESTORE what was there, do not blank it. Going through the setters is
+	// right (the globals are mutex-guarded now, so assigning them directly
+	// from a test is itself a race), but pairing that with an unconditional
+	// SetXxx(nil) on cleanup would leave any outer wiring destroyed rather
+	// than restored — the same shape of cross-test leak that made
+	// TestInitCommon_UntrustedProject_... fail under -count>1. Snapshot via
+	// the getters so this composes with any caller that already had hooks
+	// wired.
+	oldC, oldL := getJobCanceler(), getJobLister()
+	t.Cleanup(func() {
+		SetJobCanceler(oldC)
+		SetJobLister(oldL)
+	})
 	SetJobCanceler(c)
 	SetJobLister(l)
-	t.Cleanup(func() {
-		SetJobCanceler(nil)
-		SetJobLister(nil)
-	})
 }
 
 func childCtx(jobID string) context.Context {

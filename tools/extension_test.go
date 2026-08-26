@@ -44,7 +44,12 @@ func (f *fakeJobExtensionRequester) ResolveExtension(id, requestID string, appro
 
 func withFakeExtensionRequester(t *testing.T, f JobExtensionRequester) {
 	t.Helper()
-	old := jobExtensionRequester
+	// Through the getter, not the raw global: jobExtensionRequester is
+	// mutex-guarded, so reading it directly here is itself the data race the
+	// guard exists to remove — the write side already goes through the
+	// setter, which makes a raw read exactly the mismatched pair that
+	// -race reports once any setter goroutine is still live.
+	old := getJobExtensionRequester()
 	SetJobExtensionRequester(f)
 	t.Cleanup(func() { SetJobExtensionRequester(old) })
 }
