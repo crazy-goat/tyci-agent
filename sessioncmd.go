@@ -213,7 +213,7 @@ func runSessionShow(cmd *cobra.Command, args []string) error {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	var header *session.Header
-	var messages, compactions, toolCalls int
+	var messages, compactions, toolCalls, systemPrompts int
 	for scanner.Scan() {
 		raw := scanner.Bytes()
 		if len(raw) == 0 {
@@ -254,6 +254,8 @@ func runSessionShow(cmd *cobra.Command, args []string) error {
 			}
 		case session.TypeCompaction:
 			compactions++
+		case session.TypeSystemPrompt:
+			systemPrompts++
 		}
 	}
 	if header != nil {
@@ -285,8 +287,8 @@ func runSessionShow(cmd *cobra.Command, args []string) error {
 	if scanErr := scanner.Err(); scanErr != nil {
 		fmt.Fprintf(os.Stdout, "Warning: stopped reading early (%v); counts below are incomplete\n", scanErr)
 	}
-	fmt.Fprintf(os.Stdout, "Counts:  %d messages, %d tool calls, %d compactions\n",
-		messages, toolCalls, compactions)
+	fmt.Fprintf(os.Stdout, "Counts:  %d messages, %d tool calls, %d compactions, %d system prompts recorded\n",
+		messages, toolCalls, compactions, systemPrompts)
 	return nil
 }
 

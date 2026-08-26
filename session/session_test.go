@@ -1250,3 +1250,174 @@ func TestWriteMarkdownDump_MdSessionPathDoesNotTruncateItself(t *testing.T) {
 		t.Fatalf("dump not written to its distinct path: %v", err)
 	}
 }
+
+// ─── system_prompt ledger event ────────────────────────────────────────────
+
+// TestRebuildMessages_SkipsSystemPromptEvent proves the core requirement: a
+// system_prompt event sitting in the middle of a real conversation must never
+// surface as a []connector.Message. Built by comparing two RebuildMessages
+// runs over otherwise-identical histories, one with the event spliced in and
+// one without — if the event ever leaked, the two results would differ.
+func TestRebuildMessages_SkipsSystemPromptEvent(t *testing.T) {
+	header := ParsedLine{Raw: `{"type":"session","version":1,"id":"s1"}`, MsgType: "header"}
+	user := ParsedLine{Raw: `{"type":"message","id":"m1","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`, MsgType: "user"}
+	assistant := ParsedLine{Raw: `{"type":"message","id":"m2","message":{"role":"assistant","content":[{"type":"text","text":"hi there"}]}}`, MsgType: "assistant"}
+	systemPromptText := "SECRET LEDGER TEXT: you are tyci, tools: bash, read, write"
+	sysEvent := ParsedLine{
+		Raw:     fmt.Sprintf(`{"type":"system_prompt","id":"sp1","prompt":%q,"hash":"abc123"}`, systemPromptText),
+		MsgType: "system_prompt",
+	}
+
+	withoutEvent := []ParsedLine{header, user, assistant}
+	withEvent := []ParsedLine{header, sysEvent, user, assistant}
+
+	msgsWithout, err := RebuildMessages(withoutEvent)
+	if err != nil {
+		t.Fatalf("RebuildMessages(without) error: %v", err)
+	}
+	msgsWith, err := RebuildMessages(withEvent)
+	if err != nil {
+		t.Fatalf("RebuildMessages(with) error: %v", err)
+	}
+
+	withoutJSON, _ := json.Marshal(msgsWithout)
+	withJSON, _ := json.Marshal(msgsWith)
+	if string(withoutJSON) != string(withJSON) {
+		t.Fatalf("system_prompt event changed the rebuilt message list:\nwithout: %s\nwith:    %s", withoutJSON, withJSON)
+	}
+	if strings.Contains(string(withJSON), systemPromptText) {
+		t.Fatalf("system_prompt event text leaked into rebuilt messages: %s", withJSON)
+	}
+}
+
+// TestLoadForReplay_SkipsSystemPromptEvent is the same proof through the
+// actual /resume entry point (LoadForReplay), against a real session file
+// written with RecordSystemPrompt rather than a hand-built ParsedLine.
+func TestLoadForReplay_SkipsSystemPromptEvent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sp.jsonl")
+
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	systemPromptText := "SECRET LEDGER TEXT: you are tyci, tools: bash, read, write"
+	if _, err := s.RecordSystemPrompt(systemPromptText); err != nil {
+		t.Fatalf("RecordSystemPrompt: %v", err)
+	}
+	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "hello"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("assistant", []ContentBlock{{Type: "text", Text: "hi there"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, msgs, _, corrupt, err := LoadForReplay(path)
+	if err != nil {
+		t.Fatalf("LoadForReplay: %v", err)
+	}
+	if len(corrupt) != 0 {
+		t.Fatalf("expected no corrupt lines, got %d: %v", len(corrupt), corrupt)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (system_prompt must be skipped), got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" || msgs[1].Role != "assistant" {
+		t.Fatalf("unexpected message roles: %+v", msgs)
+	}
+	raw, _ := json.Marshal(summary.Messages)
+	if strings.Contains(string(raw), systemPromptText) {
+		t.Fatalf("system_prompt text leaked into LoadForReplay's rebuilt messages: %s", raw)
+	}
+}
+
+// TestRecordSystemPrompt_DedupesAndDetectsDrift verifies the append-only
+// ledger semantics: recording the same prompt twice writes only one event
+// (no needless duplicate entries on every resume), and recording a DIFFERENT
+// prompt appends a second event and reports drift=true — the signal a
+// resume path uses to warn the operator.
+func TestRecordSystemPrompt_DedupesAndDetectsDrift(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "drift.jsonl")
+
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	drift, err := s.RecordSystemPrompt("prompt v1")
+	if err != nil {
+		t.Fatalf("first RecordSystemPrompt: %v", err)
+	}
+	if drift {
+		t.Errorf("expected drift=false the first time a prompt is recorded")
+	}
+
+	drift, err = s.RecordSystemPrompt("prompt v1")
+	if err != nil {
+		t.Fatalf("repeat RecordSystemPrompt: %v", err)
+	}
+	if drift {
+		t.Errorf("expected drift=false when re-recording an unchanged prompt")
+	}
+
+	drift, err = s.RecordSystemPrompt("prompt v2 — tools changed")
+	if err != nil {
+		t.Fatalf("changed RecordSystemPrompt: %v", err)
+	}
+	if !drift {
+		t.Errorf("expected drift=true when the recorded prompt actually changed")
+	}
+
+	lines, err := parseSessionFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, l := range lines {
+		if l.MsgType == "system_prompt" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected exactly 2 system_prompt events on disk (v1, v2 — the duplicate v1 write must be a no-op), got %d", count)
+	}
+}
+
+// TestWriteMarkdownDump_RendersSystemPromptEvent verifies the dump case
+// switch has a real branch for TypeSystemPrompt instead of falling into the
+// generic default, per item 10's "grep-friendly" dump requirement.
+func TestWriteMarkdownDump_RendersSystemPromptEvent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dump.jsonl")
+
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordSystemPrompt("you are tyci, be terse"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dumpPath, err := WriteMarkdownDump(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dump, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(dump), "System Prompt (recorded)") {
+		t.Fatalf("expected a rendered system_prompt line in the dump, got:\n%s", dump)
+	}
+	if !strings.Contains(string(dump), "you are tyci, be terse") {
+		t.Fatalf("expected the recorded prompt text in the dump, got:\n%s", dump)
+	}
+}

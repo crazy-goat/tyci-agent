@@ -26,25 +26,30 @@ import (
 //     header, exactly as if the user had passed --session up front.
 //
 // Errors from session.Open are reported on stderr and the function returns
-// (nil, "", nil) so callers disable persistence for this session rather than
-// crashing the REPL. This is the one place the conductor writes to a stream
-// of its own instead of the Sink, and it is deliberate: it is a diagnostic
-// about the log file, the same class as the "session write" warnings
-// agent/session_log.go has always emitted, not a rendering decision.
-func ensureLazySession(sess *session.Session, sessionPath, cwd, modelName, providerName string) (*session.Session, string, error) {
+// (nil, "", false, nil) so callers disable persistence for this session
+// rather than crashing the REPL. This is the one place the conductor writes
+// to a stream of its own instead of the Sink, and it is deliberate: it is a
+// diagnostic about the log file, the same class as the "session write"
+// warnings agent/session_log.go has always emitted, not a rendering decision.
+//
+// The returned bool is true only when this call is the one that actually
+// opened the file (fresh or resumed) — the caller uses it to record the
+// system_prompt ledger event exactly once per open, instead of re-reading
+// the file on every Submit just to no-op against an already-open session.
+func ensureLazySession(sess *session.Session, sessionPath, cwd, modelName, providerName string) (*session.Session, string, bool, error) {
 	if sess != nil {
-		return sess, sessionPath, nil
+		return sess, sessionPath, false, nil
 	}
 	if sessionPath == "" {
-		return nil, "", nil
+		return nil, "", false, nil
 	}
 	resolvedCWD := normalizeCWD(cwd)
 	newSess, err := session.Open(sessionPath, resolvedCWD, modelName, providerName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: session: %v (continuing without session)\n", err)
-		return nil, "", nil
+		return nil, "", false, nil
 	}
-	return newSess, sessionPath, nil
+	return newSess, sessionPath, true, nil
 }
 
 // normalizeCWD falls back to the current working directory if the supplied

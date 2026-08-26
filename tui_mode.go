@@ -35,6 +35,9 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		}
 		replaySessionToDisplay(tuiDisp, cond.SessionPath())
 	}
+	if cond.SystemPromptDrift() {
+		fmt.Fprintln(os.Stderr, "Note: this session's system prompt has changed since it last ran (tools or prompt updated).")
+	}
 
 	// A person typing must not have to wait for whatever is running. Tools that
 	// can hand their work to the background check this and do so at once; the
@@ -130,6 +133,9 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		tuiDisp.Reset()
 		replaySessionToDisplay(tuiDisp, resumePath)
 		fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", summary.ID, len(msgs))
+		if cond.SystemPromptDrift() {
+			fmt.Fprintln(os.Stderr, "Note: this session's system prompt has changed since it last ran (tools or prompt updated).")
+		}
 		return nil
 	}
 

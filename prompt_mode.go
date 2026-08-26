@@ -43,6 +43,9 @@ func runPrompt(cond *conductor.Conductor, disp display.Display, prompt string, c
 	// the file open before deciding what history to prepend, because that
 	// decision reads IsResume() off the session itself.
 	sess := cond.EnsureSession()
+	if cond.SystemPromptDrift() {
+		fmt.Fprintln(os.Stderr, "Note: this session's system prompt has changed since it last ran (tools or prompt updated).")
+	}
 
 	if hist := resumeHistory(disp, sess, cond.SessionPath()); len(hist) > 0 {
 		cond.SetHistory(hist)
