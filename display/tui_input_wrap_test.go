@@ -289,6 +289,31 @@ func TestInputWrappedRows_CachesUnchangedLengthAndWidth(t *testing.T) {
 	}
 }
 
+// TestInputWrappedRows_SameLengthDifferentContentInvalidatesCache guards
+// against keying the cache on len(value) alone: a review of F19 found that a
+// same-byte-length swap (e.g. recalling a same-length history entry with a
+// newline in a different place, tui_keys.go's historyOlder/historyNewer)
+// would wrongly hit a length-keyed cache and return the previous value's
+// stale row count.
+func TestInputWrappedRows_SameLengthDifferentContentInvalidatesCache(t *testing.T) {
+	m := &TuiModel{}
+	m.input = textarea.New()
+	m.input.ShowLineNumbers = false
+	m.input.SetWidth(38)
+
+	m.input.SetValue(strings.Repeat("x", 20))
+	first := m.inputWrappedRows()
+	if first != 1 {
+		t.Fatalf("precondition: expected 1 row for a single unbroken 20-char line, got %d", first)
+	}
+
+	// Same length (20 bytes), but a hard newline makes it wrap onto 2 rows.
+	m.input.SetValue(strings.Repeat("y", 9) + "\n" + strings.Repeat("z", 10))
+	if got := m.inputWrappedRows(); got != 2 {
+		t.Fatalf("expected 2 rows for the same-length two-line value, got %d (stale length-keyed cache)", got)
+	}
+}
+
 // BenchmarkInputWrappedRows_RepeatedCallsUnchanged demonstrates the O(n)-per-
 // call cost the cache is meant to amortize away: with a large unchanged
 // value, repeated calls should be dominated by the cache hit path, not by
