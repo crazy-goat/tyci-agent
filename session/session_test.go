@@ -779,6 +779,53 @@ func TestRebuildMessages_DropsOrphanToolResults(t *testing.T) {
 	}
 }
 
+// F8 (item 10 inbox): LoadForReplay is what feeds the model on /resume
+// (tui_mode.go, interactive.go), but unlike RebuildMessages it never called
+// SanitizeMessageSequence. A JSONL truncated mid tool-call/result pair —
+// here, a header directly followed by an orphan toolResult whose matching
+// assistant toolCall was never written (e.g. the process died right after
+// the result but the call line got lost, or a compaction tail starts
+// mid-call) — must not leave that orphan toolResult in the replayed
+// history: providers reject an orphan tool result with a 400 the moment
+// /resume tries to send it.
+func TestLoadForReplay_DropsOrphanToolResultFromTruncatedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "truncated.jsonl")
+	lines := []string{
+		`{"type":"session","version":1,"id":"s1","model":"m","provider":"p"}`,
+		`{"type":"message","id":"t1","message":{"role":"toolResult","content":[{"type":"text","text":"orphan result","toolCallId":"call-orphan","toolName":"bash"}]}}`,
+		`{"type":"message","id":"a1","message":{"role":"assistant","content":[{"type":"text","text":"running tool"},{"type":"toolCall","id":"call-1","name":"bash","arguments":"{\"cmd\":\"ls\"}"}]}}`,
+		`{"type":"message","id":"t2","message":{"role":"toolResult","content":[{"type":"text","text":"matched result","toolCallId":"call-1","toolName":"bash"}]}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, msgs, _, corrupt, err := LoadForReplay(path)
+	if err != nil {
+		t.Fatalf("LoadForReplay() error: %v", err)
+	}
+	if len(corrupt) != 0 {
+		t.Fatalf("expected 0 corrupt lines (the orphan result parses fine, it's just unmatched), got %d: %v", len(corrupt), corrupt)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages after dropping the orphan tool result, got %d: %#v", len(msgs), msgs)
+	}
+	if msgs[0].Role != "assistant" || msgs[1].Role != "toolResult" {
+		t.Fatalf("unexpected roles after sanitize: %#v", msgs)
+	}
+	if msgs[1].Content[0].ToolCallID != "call-1" {
+		t.Fatalf("expected the matched tool result to survive, got %#v", msgs[1])
+	}
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if b.ToolCallID == "call-orphan" {
+				t.Fatalf("orphan tool result (call-orphan) survived into replay: %#v", msgs)
+			}
+		}
+	}
+}
+
 // ─── parseSessionFile edge cases ────────────────────────────────────────
 
 func TestParseSessionFile_SkipsEmptyLines(t *testing.T) {
@@ -1006,6 +1053,144 @@ func TestMarkdownDumpRefreshesAfterLaterMessage(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "second summary") {
 		t.Fatalf("dump was stale after WriteCompaction: %s", data)
+	}
+}
+
+// F9 (item 10 inbox): refreshMarkdownDump used to re-parse and rewrite the
+// ENTIRE derived dump on every single WriteMessage/WriteCompaction/
+// WriteSessionEnd call — O(n) per write, O(n^2) over a session's length.
+// recordDumpEvent replaces that with an O(1) append once the dump is known
+// to exist; a plain WriteMessage on an already-initialized session must
+// never trigger another full WriteMarkdownDump pass, however long the
+// session already is.
+func TestWriteMessage_DoesNotTriggerFullDumpRewrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hot-path.jsonl")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// The very first write of a brand-new session is allowed one full
+	// rewrite (there is no dump file yet to append to).
+	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "seed"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	ResetMarkdownFullRewritesForTesting()
+
+	const n = 500
+	for i := 0; i < n; i++ {
+		if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: fmt.Sprintf("message %d", i)}}, nil); err != nil {
+			t.Fatalf("WriteMessage(%d): %v", i, err)
+		}
+	}
+	if got := MarkdownFullRewritesForTesting(); got != 0 {
+		t.Fatalf("full dump rewrites = %d after %d plain WriteMessage calls, want 0 (O(1) append should have handled every one)", got, n)
+	}
+
+	data, err := os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "message 499") {
+		t.Fatalf("dump is missing the last appended message: %s", data)
+	}
+	if !strings.Contains(string(data), "seed") {
+		t.Fatalf("dump is missing the seed message written before the reset: %s", data)
+	}
+}
+
+// Correctness companion to the above: the incrementally-appended dump must
+// be byte-identical to what a full WriteMarkdownDump pass over the same
+// JSONL produces, across a mix of messages, a compaction, and a session
+// end — not just "has the right substrings".
+func TestIncrementalDump_MatchesFullRewriteByteForByte(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mixed.jsonl")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "hello"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("assistant", []ContentBlock{{Type: "text", Text: "hi there"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteCompaction("summary text", "", nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "after compaction"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteSessionEnd("success", 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	incremental, err := os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullPath, err := WriteMarkdownDump(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := os.ReadFile(fullPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(incremental) != string(full) {
+		t.Fatalf("incremental dump differs from a full rewrite of the same JSONL:\nincremental:\n%s\nfull:\n%s", incremental, full)
+	}
+}
+
+// A resumed session whose dump file was deleted (or never existed, e.g. a
+// session written before this feature) must get it backfilled by exactly
+// one full rewrite on the next write, then go back to appending.
+func TestRecordDumpEvent_BackfillsMissingDumpOnResume(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "backfill.jsonl")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "before restart"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	if err := os.Remove(strings.TrimSuffix(path, ".jsonl") + ".md"); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	ResetMarkdownFullRewritesForTesting()
+	if err := s2.WriteMessage("user", []ContentBlock{{Type: "text", Text: "after restart"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := MarkdownFullRewritesForTesting(); got != 1 {
+		t.Fatalf("full dump rewrites = %d, want exactly 1 (the backfill)", got)
+	}
+	data, err := os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "before restart") || !strings.Contains(string(data), "after restart") {
+		t.Fatalf("backfilled dump is missing pre- or post-restart content: %s", data)
+	}
+
+	ResetMarkdownFullRewritesForTesting()
+	if err := s2.WriteMessage("user", []ContentBlock{{Type: "text", Text: "third"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := MarkdownFullRewritesForTesting(); got != 0 {
+		t.Fatalf("full dump rewrites = %d after the backfill, want 0 (should be back to appending)", got)
 	}
 }
 

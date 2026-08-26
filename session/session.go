@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/decodo/tyci/connector"
@@ -130,6 +131,19 @@ type Session struct {
 
 	// Resume state
 	isResume bool
+
+	// Incremental markdown dump state (F9, item 10 inbox). dumpNextIndex is
+	// the number of JSONL lines already accounted for in the dump — the
+	// next event written will be at 1-based line number dumpNextIndex+1,
+	// matching WriteMarkdownDump's i+1 numbering. dumpReady is false until
+	// the dump file is known to exist and reflect everything before the
+	// next event; recordDumpEvent then does one full WriteMarkdownDump pass
+	// to (re)create/backfill it, and appends every event after that. Guarded
+	// by dumpMu rather than mu because every write already releases mu
+	// before touching the dump (see WriteMessage etc.).
+	dumpMu        sync.Mutex
+	dumpNextIndex int
+	dumpReady     bool
 }
 
 // ParsedLine holds a raw line and its parsed event type for resume.
@@ -176,10 +190,14 @@ func Open(path, cwd, model, provider string) (*Session, error) {
 		s.encoder = json.NewEncoder(f)
 		s.isResume = true
 
-		if _, err := parseSessionFile(path); err != nil {
+		lines, err := parseSessionFile(path)
+		if err != nil {
 			f.Close()
 			return nil, fmt.Errorf("parse session for resume: %w", err)
 		}
+		// Seeds the incremental dump counter from a parse this resume path
+		// already had to do anyway — no extra full-file read added for F9.
+		s.dumpNextIndex = len(lines)
 	} else {
 		// Create new file
 		f, err := os.Create(path)
@@ -206,6 +224,7 @@ func Open(path, cwd, model, provider string) (*Session, error) {
 			os.Remove(path)
 			return nil, fmt.Errorf("write header: %w", err)
 		}
+		s.dumpNextIndex = 1 // the header itself occupies line 1
 	}
 
 	return s, nil
@@ -271,7 +290,15 @@ func (s *Session) WriteMessage(role string, blocks []ContentBlock, opts *Message
 	if err != nil {
 		return err
 	}
-	return s.refreshMarkdownDump()
+	// json.Encoder.Encode already marshaled ev once to write it; marshaling
+	// it again here (cheap — one event, not the whole file) reuses the exact
+	// same rendering path the incremental dump append needs, rather than
+	// threading raw bytes out of the encoder.
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	return s.recordDumpEvent(raw)
 }
 
 // MessageOptions holds optional metadata for assistant messages.
@@ -313,7 +340,17 @@ func (s *Session) WriteCompaction(summary string, tailStartID string, tailMessag
 	if err != nil {
 		return err
 	}
-	return s.refreshMarkdownDump()
+	// A compaction event is rendered as one more dump line describing what
+	// got summarized — it does not retroactively rewrite how any EARLIER
+	// line renders (writeDumpLineFor's TypeCompaction case only prints the
+	// new event itself; nothing upstream re-derives prior lines from it), so
+	// the same O(1) append recordDumpEvent uses for ordinary messages is
+	// correct here too, not just a full rewrite as one might expect.
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	return s.recordDumpEvent(raw)
 }
 
 // Compact appends a compaction event and regenerates the derived markdown
@@ -389,40 +426,53 @@ func WriteMarkdownDump(path string) (string, error) {
 	writeDumpHeader(f, path, lines)
 
 	for i, line := range lines {
-		var ev struct {
-			Type      EventType      `json:"type"`
-			Timestamp string         `json:"timestamp"`
-			Message   MessagePayload `json:"message"`
-			Provider  string         `json:"provider,omitempty"`
-			Model     string         `json:"model,omitempty"`
-			Summary   MessagePayload `json:"summary"`
-			Status    string         `json:"status,omitempty"`
-			ExitCode  int            `json:"exit_code,omitempty"`
-			TailStart string         `json:"tail_start_id,omitempty"`
-			Dropped   int            `json:"dropped_events,omitempty"`
-		}
-		if json.Unmarshal([]byte(line.Raw), &ev) != nil {
-			continue
-		}
-		n := i + 1
-		switch ev.Type {
-		case TypeSession:
-			// The header is rendered separately at the top of the file; skip
-			// it here so it is not duplicated line-for-line.
-			continue
-		case TypeMessage:
-			writeMessageDumpLines(f, n, ev.Timestamp, ev.Provider, ev.Model, ev.Message)
-		case TypeCompaction:
-			text := dumpCap(cleanDumpText(messageText(ev.Summary)))
-			fmt.Fprintf(f, "[%d] [compaction] %s dropped=%d tail_start=%s summary=%s\n",
-				n, ev.Timestamp, ev.Dropped, orDash(ev.TailStart), text)
-		case TypeSessionEnd:
-			fmt.Fprintf(f, "[%d] [session_end] %s status=%s exit=%d\n", n, ev.Timestamp, ev.Status, ev.ExitCode)
-		default:
-			fmt.Fprintf(f, "[%d] [%s] %s\n", n, ev.Type, ev.Timestamp)
-		}
+		writeDumpLineFor(f, i+1, line.Raw)
 	}
 	return dumpPath, nil
+}
+
+// dumpLineFields is the subset of an event's JSON shape the dump renderer
+// needs, shared by WriteMarkdownDump's full pass and appendDumpLine's
+// single-event path (see writeDumpLineFor) so both render a given raw line
+// identically.
+type dumpLineFields struct {
+	Type      EventType      `json:"type"`
+	Timestamp string         `json:"timestamp"`
+	Message   MessagePayload `json:"message"`
+	Provider  string         `json:"provider,omitempty"`
+	Model     string         `json:"model,omitempty"`
+	Summary   MessagePayload `json:"summary"`
+	Status    string         `json:"status,omitempty"`
+	ExitCode  int            `json:"exit_code,omitempty"`
+	TailStart string         `json:"tail_start_id,omitempty"`
+	Dropped   int            `json:"dropped_events,omitempty"`
+}
+
+// writeDumpLineFor renders the dump line(s) for one raw JSONL event at
+// 1-based line number n. Extracted so the incremental append path
+// (appendDumpLine) renders a freshly-written event exactly the way a full
+// WriteMarkdownDump pass would, instead of duplicating the switch.
+func writeDumpLineFor(f *os.File, n int, raw string) {
+	var ev dumpLineFields
+	if json.Unmarshal([]byte(raw), &ev) != nil {
+		return
+	}
+	switch ev.Type {
+	case TypeSession:
+		// The header is rendered separately at the top of the file; skip
+		// it here so it is not duplicated line-for-line.
+		return
+	case TypeMessage:
+		writeMessageDumpLines(f, n, ev.Timestamp, ev.Provider, ev.Model, ev.Message)
+	case TypeCompaction:
+		text := dumpCap(cleanDumpText(messageText(ev.Summary)))
+		fmt.Fprintf(f, "[%d] [compaction] %s dropped=%d tail_start=%s summary=%s\n",
+			n, ev.Timestamp, ev.Dropped, orDash(ev.TailStart), text)
+	case TypeSessionEnd:
+		fmt.Fprintf(f, "[%d] [session_end] %s status=%s exit=%d\n", n, ev.Timestamp, ev.Status, ev.ExitCode)
+	default:
+		fmt.Fprintf(f, "[%d] [%s] %s\n", n, ev.Type, ev.Timestamp)
+	}
 }
 
 // writeDumpHeader writes the metadata block a reader (or a `head`) sees
@@ -536,14 +586,73 @@ func messageText(msg MessagePayload) string {
 	return strings.Join(out, " ")
 }
 
-// refreshMarkdownDump keeps the derived dump current after ordinary event
-// writes. The JSONL remains authoritative if regenerating the artifact fails.
-func (s *Session) refreshMarkdownDump() error {
+// markdownFullRewrites counts WriteMarkdownDump calls made through
+// recordDumpEvent's backfill path (as opposed to the O(1) append path). Test
+// hook for F9 (item 10 inbox): a plain WriteMessage on an already-dumped
+// session must not trigger one of these, however long the session already
+// is — see MarkdownFullRewritesForTesting.
+var markdownFullRewrites int64
+
+// MarkdownFullRewritesForTesting reports how many times recordDumpEvent has
+// fallen back to a full WriteMarkdownDump pass (new session's first event,
+// or backfilling a missing/deleted dump file) rather than appending. Exposed
+// for tests proving F9's fix: ordinary writes on an already-initialized
+// session must never hit this path.
+func MarkdownFullRewritesForTesting() int64 { return atomic.LoadInt64(&markdownFullRewrites) }
+
+// ResetMarkdownFullRewritesForTesting zeroes the counter MarkdownFullRewritesForTesting reports.
+func ResetMarkdownFullRewritesForTesting() { atomic.StoreInt64(&markdownFullRewrites, 0) }
+
+// recordDumpEvent keeps the derived per-session markdown dump current after
+// one JSONL event write (F9, item 10 inbox). raw is the exact bytes just
+// encoded for this event (sans trailing newline), reused here instead of
+// re-marshaling.
+//
+// Unlike the old refreshMarkdownDump, which called WriteMarkdownDump on
+// every single write — re-parsing and rewriting the ENTIRE dump, an O(n)
+// cost per write and O(n^2) over a session's length, on the agent's hot
+// path — this appends only the new event's rendered line(s) once the dump
+// file is known to already reflect everything before it. A full rewrite
+// still happens, but only once per session lifetime: the first event of a
+// brand-new session (no dump file yet) or the first event after resuming a
+// session whose dump file is missing (backfill covers a deleted or
+// pre-this-feature dump). Every ordinary write after that is a pure append.
+func (s *Session) recordDumpEvent(raw []byte) error {
 	if s.path == "" {
 		return nil
 	}
-	_, err := WriteMarkdownDump(s.path)
-	return err
+	s.dumpMu.Lock()
+	defer s.dumpMu.Unlock()
+
+	n := s.dumpNextIndex + 1
+	s.dumpNextIndex = n
+
+	if !s.dumpReady {
+		dumpPath := DumpPathFor(s.path)
+		if _, statErr := os.Stat(dumpPath); statErr != nil {
+			atomic.AddInt64(&markdownFullRewrites, 1)
+			if _, err := WriteMarkdownDump(s.path); err != nil {
+				return err
+			}
+		}
+		s.dumpReady = true
+		return nil
+	}
+	return s.appendDumpLine(n, raw)
+}
+
+// appendDumpLine appends the dump rendering of one event (already known to
+// belong at 1-based line number n) to the existing dump file. The
+// recordDumpEvent counterpart to WriteMarkdownDump's full rewrite.
+func (s *Session) appendDumpLine(n int, raw []byte) error {
+	dumpPath := DumpPathFor(s.path)
+	f, err := os.OpenFile(dumpPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	writeDumpLineFor(f, n, string(raw))
+	return nil
 }
 
 func (s *Session) WriteSessionEnd(status string, exitCode int, totalUsage *Usage) error {
@@ -567,7 +676,11 @@ func (s *Session) WriteSessionEnd(status string, exitCode int, totalUsage *Usage
 	if err != nil {
 		return err
 	}
-	return s.refreshMarkdownDump()
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	return s.recordDumpEvent(raw)
 }
 
 // ─── Close ────────────────────────────────────────────────────────────────
@@ -1416,6 +1529,12 @@ func LoadForReplay(path string) (ReplaySummary, []connector.Message, TotalUsage,
 	total.CacheWrite = usage.CacheWrite
 	total.TotalTokens = usage.TotalTokens
 	total.TotalCost = usage.TotalCost
+
+	// Matches RebuildMessages: a JSONL truncated mid tool-call/result pair
+	// (or a compaction tail that starts mid-call) otherwise leaves an
+	// orphan toolResult in the replayed history, which providers reject
+	// with a 400 the moment /resume tries to send it (F8, item 10 inbox).
+	msgs = SanitizeMessageSequence(msgs)
 
 	summary.Messages = msgs
 	summary.Usage = usage

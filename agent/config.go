@@ -40,6 +40,11 @@ type TyciConfig struct {
 	// startup once the user has opened and kept it, which is when the TUI
 	// saves true.
 	SidebarVisible bool `json:"sidebar_visible,omitempty"`
+	// AutoCompactPercent overrides the fraction of the model's context
+	// window (see Config.AutoCompactPercent in agent.go) that triggers
+	// automatic compaction. 0/absent uses defaultAutoCompactPercent; a
+	// negative value disables auto-compaction entirely.
+	AutoCompactPercent int `json:"auto_compact_percent,omitempty"`
 }
 
 // globalConfigDir returns the path to ~/.tyci.
@@ -95,6 +100,9 @@ func mergeTyciConfig(global, local TyciConfig) TyciConfig {
 	}
 	if local.SidebarVisible {
 		merged.SidebarVisible = true
+	}
+	if local.AutoCompactPercent != 0 {
+		merged.AutoCompactPercent = local.AutoCompactPercent
 	}
 	return merged
 }
@@ -187,6 +195,13 @@ func RemoveFavoriteModel(model string) error {
 // GetMaxTokens returns the configured reply cap, or 0 when unset.
 func GetMaxTokens() int {
 	return LoadTyciConfig().MaxTokens
+}
+
+// GetAutoCompactPercent returns the configured auto-compact threshold, or 0
+// when unset (meaning Config.AutoCompactPercent should fall back to
+// defaultAutoCompactPercent).
+func GetAutoCompactPercent() int {
+	return LoadTyciConfig().AutoCompactPercent
 }
 
 // promptCacheOnce memoises the config read behind PromptCacheEnabled. Every
