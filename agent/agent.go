@@ -417,7 +417,16 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				if autoCompactPercent == 0 {
 					autoCompactPercent = defaultAutoCompactPercent
 				}
-				if !autoCompacted && autoCompactPercent > 0 && cfg.Compactor != nil &&
+				justAutoCompacted := false
+				// cfg.Session != nil (review, F5 HIGH-3): a /btw or
+				// fork/resume child keeps the PARENT's Compactor (it closes
+				// over the main conversation, not this one — btwConfig,
+				// btw.go) while its own cfg.Session is nil. Without this
+				// guard, a long-running child would auto-compact the live
+				// main conversation on the harness's own initiative, no
+				// model or user action involved — the automatic version of
+				// the hole F10 closed for the model-driven path.
+				if !autoCompacted && autoCompactPercent > 0 && cfg.Compactor != nil && cfg.Session != nil &&
 					used > 0 && used*100 >= limit*autoCompactPercent {
 					autoCompacted = true
 					dumpPath := ""
@@ -425,19 +434,39 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 						dumpPath = session.DumpPathFor(cfg.Session.Path())
 					}
 					summary := buildAutoCompactSummary(used, limit, dumpPath)
-					if _, err := cfg.Compactor(summary, ""); err == nil {
+					_, compactErr := cfg.Compactor(summary, "")
+					// Whether or not compaction succeeded, do NOT `continue`
+					// here (review of F5): the model has already finished
+					// its answer for this turn (!more && !drained), and
+					// every other `continue` in this block first appends a
+					// user-role message to *msgs — re-invoking the provider
+					// right now would send a history ending on the
+					// assistant's own just-delivered turn, which Anthropic
+					// treats as an invalid prefill (rejects trailing
+					// whitespace) and which every other provider would just
+					// answer again with no new instruction. The benefit of
+					// compacting lands on the NEXT turn's request, which is
+					// the point of a backstop — fall through to return
+					// normally for this one.
+					if compactErr == nil {
 						// A fresh compaction leaves a tiny history; give the
 						// model a full reminder cycle again if it somehow
-						// grows back past the (lower) reminder threshold.
+						// grows back past the (lower) reminder threshold on
+						// a later turn. justAutoCompacted also skips the
+						// reminder check just below for THIS turn — `used`
+						// was measured before compaction ran, so checking it
+						// against the (unchanged) reminder threshold right
+						// now would fire a budget reminder based on a number
+						// that is already stale.
 						contextReminded = false
-						continue
+						justAutoCompacted = true
 					}
-					// Compaction failed (e.g. no writable session) — fall
-					// through to the reminder, which still gets the fact in
-					// front of the model even though the harness could not
-					// act on it itself.
+					// Compaction failing (e.g. no writable session) is not
+					// re-reported here — the reminder below still gets the
+					// fact in front of the model even though the harness
+					// could not act on it itself, same as before this fix.
 				}
-				if !contextReminded && used > 0 && used*100 >= limit*contextBudgetReminderPercent {
+				if !justAutoCompacted && !contextReminded && used > 0 && used*100 >= limit*contextBudgetReminderPercent {
 					contextReminded = true
 					reminder := buildContextBudgetReminder(used, limit)
 					*msgs = append(*msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: reminder}}})

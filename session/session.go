@@ -613,10 +613,18 @@ func ResetMarkdownFullRewritesForTesting() { atomic.StoreInt64(&markdownFullRewr
 // cost per write and O(n^2) over a session's length, on the agent's hot
 // path — this appends only the new event's rendered line(s) once the dump
 // file is known to already reflect everything before it. A full rewrite
-// still happens, but only once per session lifetime: the first event of a
-// brand-new session (no dump file yet) or the first event after resuming a
+// still happens, but only once per PROCESS per session: the first event of
+// a brand-new session (no dump file yet), the first event after resuming a
 // session whose dump file is missing (backfill covers a deleted or
-// pre-this-feature dump). Every ordinary write after that is a pure append.
+// pre-this-feature dump), AND — this is the case a stat-based check got
+// wrong, review of F9 — the first event after resuming a session whose
+// dump file already exists. That event is already appended to the JSONL by
+// the time this runs (WriteMessage/WriteCompaction write the line before
+// calling this), so an append here would assume the dump already reflects
+// it, which is false on a freshly-resumed process: the line is silently
+// lost from the dump forever. A full rewrite is unconditional on the first
+// call per process for exactly that reason. Every ordinary write after
+// that first one is a pure append.
 func (s *Session) recordDumpEvent(raw []byte) error {
 	if s.path == "" {
 		return nil
@@ -628,12 +636,9 @@ func (s *Session) recordDumpEvent(raw []byte) error {
 	s.dumpNextIndex = n
 
 	if !s.dumpReady {
-		dumpPath := DumpPathFor(s.path)
-		if _, statErr := os.Stat(dumpPath); statErr != nil {
-			atomic.AddInt64(&markdownFullRewrites, 1)
-			if _, err := WriteMarkdownDump(s.path); err != nil {
-				return err
-			}
+		atomic.AddInt64(&markdownFullRewrites, 1)
+		if _, err := WriteMarkdownDump(s.path); err != nil {
+			return err
 		}
 		s.dumpReady = true
 		return nil

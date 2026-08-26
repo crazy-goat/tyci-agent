@@ -1194,6 +1194,65 @@ func TestRecordDumpEvent_BackfillsMissingDumpOnResume(t *testing.T) {
 	}
 }
 
+// TestRecordDumpEvent_ResumeWithExistingDumpDoesNotDropFirstEvent guards the
+// review-found F9 regression: a resumed process whose dump file already
+// exists (the normal case — the previous run wrote it) must still fold in
+// the first event written after resume, not silently drop it because the
+// stat-based "is the dump current" check found the file already there.
+func TestRecordDumpEvent_ResumeWithExistingDumpDoesNotDropFirstEvent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "resume.jsonl")
+	s, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "before restart"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	// The dump file is left in place this time — unlike the backfill test
+	// above, this is the normal resume case.
+	if _, err := os.Stat(strings.TrimSuffix(path, ".jsonl") + ".md"); err != nil {
+		t.Fatalf("precondition: dump file should exist before resume: %v", err)
+	}
+
+	s2, err := Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	if err := s2.WriteMessage("user", []ContentBlock{{Type: "text", Text: "FIRST-AFTER-RESUME"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.WriteMessage("user", []ContentBlock{{Type: "text", Text: "second-after-resume"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "FIRST-AFTER-RESUME") {
+		t.Fatalf("dump is missing the first event written after resume (dropped by the stale stat-based check): %s", data)
+	}
+	if !strings.Contains(string(data), "second-after-resume") {
+		t.Fatalf("dump is missing the second event written after resume: %s", data)
+	}
+
+	fullPath, err := WriteMarkdownDump(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := os.ReadFile(fullPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(full) {
+		t.Fatalf("incremental dump after resume differs from a full rewrite of the same JSONL:\nincremental:\n%s\nfull:\n%s", data, full)
+	}
+}
+
 func TestCompactionLiveBoundaryDoesNotInventEventID(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "boundary.jsonl")
