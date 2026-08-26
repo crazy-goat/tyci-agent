@@ -51,9 +51,12 @@ type fakeLister struct{ jobs []JobKindSource }
 func (f *fakeLister) ListJobs() []JobKindSource { return f.jobs }
 
 func withKillWiring(t *testing.T, c JobCanceler, l JobLister) {
-	oldC, oldL := jobCanceler, jobLister
-	t.Cleanup(func() { jobCanceler, jobLister = oldC, oldL })
-	jobCanceler, jobLister = c, l
+	SetJobCanceler(c)
+	SetJobLister(l)
+	t.Cleanup(func() {
+		SetJobCanceler(nil)
+		SetJobLister(nil)
+	})
 }
 
 func childCtx(jobID string) context.Context {

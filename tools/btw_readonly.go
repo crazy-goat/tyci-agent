@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // BtwReadOnlyGate limits the evaluation phase of a /btw side-conversation to
@@ -71,9 +72,30 @@ type JobPromoter interface {
 	Promote(ctx context.Context, jobID string) (JobHandle, error)
 }
 
-var jobPromoter JobPromoter
+// jobPromoter is nil until SetJobPromoter is called. Guarded by
+// jobPromoterMu for the same reason jobNotifier is (see bgbash.go's
+// jobNotifierMu doc comment): it is read from job goroutines that outlive
+// the tool call that started them, while SetJobPromoter is called from the
+// setup path.
+var (
+	jobPromoterMu sync.RWMutex
+	jobPromoter   JobPromoter
+)
 
-func SetJobPromoter(p JobPromoter) { jobPromoter = p }
+func SetJobPromoter(p JobPromoter) {
+	jobPromoterMu.Lock()
+	jobPromoter = p
+	jobPromoterMu.Unlock()
+}
+
+// getJobPromoter copies the current JobPromoter out under RLock — see
+// getJobAsker's doc comment (ask.go) for why callers never hold the lock
+// while calling into the interface.
+func getJobPromoter() JobPromoter {
+	jobPromoterMu.RLock()
+	defer jobPromoterMu.RUnlock()
+	return jobPromoter
+}
 
 // PromoteBtwTool is intentionally available only to the parent/main schema.
 // The evaluator cannot call it because its read-only runtime gate denies it.
@@ -85,10 +107,11 @@ func (t *PromoteBtwTool) Run(ctx context.Context, input map[string]any) ToolResu
 	if id == "" {
 		return validationResult("job_id is required")
 	}
-	if jobPromoter == nil {
+	promoter := getJobPromoter()
+	if promoter == nil {
 		return ToolResult{Type: "result", Success: false, Error: "promote_btw unavailable: job registry not configured"}
 	}
-	h, err := jobPromoter.Promote(ctx, id)
+	h, err := promoter.Promote(ctx, id)
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}

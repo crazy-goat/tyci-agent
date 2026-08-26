@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,12 +28,31 @@ type JobExtensionRequester interface {
 }
 
 // jobExtensionRequester is nil until SetJobExtensionRequester is called.
-var jobExtensionRequester JobExtensionRequester
+// Guarded by jobExtensionRequesterMu for the same reason jobNotifier is (see
+// bgbash.go's jobNotifierMu doc comment): it is read from job goroutines
+// (request_timeout_extension blocks in WaitExtension for the lifetime of the
+// call) that outlive the tool call that started them, while
+// SetJobExtensionRequester is called from the setup path.
+var (
+	jobExtensionRequesterMu sync.RWMutex
+	jobExtensionRequester   JobExtensionRequester
+)
 
 // SetJobExtensionRequester wires timeout-extension tools to the shared job
 // registry. Called once from the composition root.
 func SetJobExtensionRequester(r JobExtensionRequester) {
+	jobExtensionRequesterMu.Lock()
 	jobExtensionRequester = r
+	jobExtensionRequesterMu.Unlock()
+}
+
+// getJobExtensionRequester copies the current JobExtensionRequester out
+// under RLock — see getJobAsker's doc comment (ask.go) for why callers never
+// hold the lock while calling into the interface.
+func getJobExtensionRequester() JobExtensionRequester {
+	jobExtensionRequesterMu.RLock()
+	defer jobExtensionRequesterMu.RUnlock()
+	return jobExtensionRequester
 }
 
 const maxTimeoutExtensionSeconds = 600
@@ -65,11 +85,12 @@ func (t *RequestTimeoutExtensionTool) Run(ctx context.Context, input map[string]
 		}
 	}
 
-	if jobExtensionRequester == nil {
+	requester := getJobExtensionRequester()
+	if requester == nil {
 		return ToolResult{Type: "result", Success: false, Error: "request_timeout_extension unavailable: job registry not configured"}
 	}
 
-	requestID, ok := jobExtensionRequester.RequestExtension(jobID, time.Duration(seconds)*time.Second, reason)
+	requestID, ok := requester.RequestExtension(jobID, time.Duration(seconds)*time.Second, reason)
 	if !ok || requestID == "" {
 		return ToolResult{Type: "result", Success: false, Error: "could not register a timeout extension request for this job"}
 	}
@@ -79,7 +100,7 @@ func (t *RequestTimeoutExtensionTool) Run(ctx context.Context, input map[string]
 	// (which nothing but jobID's own agent loop ever reads).
 	notifyToParent(parentIDOf(jobID), fmt.Sprintf("[timeout extension] request pending: job_id=%q request_id=%q seconds=%d reason=%q", jobID, requestID, seconds, reason))
 
-	approved, answered := jobExtensionRequester.WaitExtension(ctx, jobID, requestID)
+	approved, answered := requester.WaitExtension(ctx, jobID, requestID)
 	if !answered {
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("timeout extension request %q was rejected or no answer arrived", requestID)}
 	}

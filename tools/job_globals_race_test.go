@@ -17,6 +17,13 @@ package tools
 // of the seven vars back to a plain (unguarded) var and re-running
 // `-race` makes its subtest fail with a DATA RACE report — see the fix
 // commit's summary for which files/lines were reverted to check this.
+//
+// F11: four more of the same shape were found unguarded after that batch —
+// jobExtensionRequester (extension.go), jobCanceler and jobLister
+// (killjob.go), and jobPromoter (btw_readonly.go). Same pattern, same
+// verification method (each subtest below was manually confirmed to report
+// a DATA RACE when its var is reverted to unguarded — see the F11 fix
+// commit's summary).
 
 import (
 	"context"
@@ -74,6 +81,47 @@ type raceJobActivityToucher struct{}
 
 func (raceJobActivityToucher) TouchActivity(id string) {}
 
+// raceJobExtensionRequester, raceJobCanceler, raceJobLister and
+// raceJobPromoter are the F11 follow-up to the batch above: four more
+// job-hook globals (jobExtensionRequester, jobCanceler, jobLister,
+// jobPromoter) that got the same jobNotifier-style treatment but were missed
+// by the original B2 audit. Same rule: minimal, behavior-free fakes, only
+// exercising the concurrent Set/read path.
+
+type raceJobExtensionRequester struct{}
+
+func (raceJobExtensionRequester) RequestExtension(id string, seconds time.Duration, reason string) (string, bool) {
+	return "", false
+}
+
+func (raceJobExtensionRequester) WaitExtension(ctx context.Context, id, requestID string) (bool, bool) {
+	return false, false
+}
+
+func (raceJobExtensionRequester) ResolveExtension(id, requestID string, approve bool) bool {
+	return false
+}
+
+type raceJobCanceler struct{}
+
+func (raceJobCanceler) Cancel(id string) bool { return false }
+
+// raceJobLister answers ListJobs with one fixed job ("race-child", parented
+// on "race-parent") so parentIDOf(...) has something to actually walk during
+// the concurrent test below, instead of trivially short-circuiting on an
+// empty slice.
+type raceJobLister struct{}
+
+func (raceJobLister) ListJobs() []JobKindSource {
+	return []JobKindSource{fakeJob{id: "race-child", parentID: "race-parent"}}
+}
+
+type raceJobPromoter struct{}
+
+func (raceJobPromoter) Promote(ctx context.Context, jobID string) (JobHandle, error) {
+	return raceJobHandle{}, nil
+}
+
 // runConcurrentSetGet spawns goroutines that call set and get in a tight
 // loop for a bounded number of iterations, and fails the test if they do
 // not both finish within the timeout (a hang, not a race, would show up as
@@ -129,6 +177,10 @@ func TestJobGlobals_ConcurrentSetGet_RaceFree(t *testing.T) {
 		SetJobMailbox(nil)
 		SetJobResumer(nil)
 		SetJobActivityToucher(nil)
+		SetJobExtensionRequester(nil)
+		SetJobCanceler(nil)
+		SetJobLister(nil)
+		SetJobPromoter(nil)
 	})
 
 	cases := []struct {
@@ -173,6 +225,35 @@ func TestJobGlobals_ConcurrentSetGet_RaceFree(t *testing.T) {
 			name: "jobActivityToucher",
 			set:  func() { SetJobActivityToucher(raceJobActivityToucher{}) },
 			get:  func() { touchJobActivity("race-job") },
+		},
+		{
+			// F11: request_timeout_extension/answer_job's RequestExtension/
+			// WaitExtension/ResolveExtension path (extension.go, ask.go).
+			name: "jobExtensionRequester",
+			set:  func() { SetJobExtensionRequester(raceJobExtensionRequester{}) },
+			get:  func() { _ = getJobExtensionRequester() },
+		},
+		{
+			// F11: kill_job's Cancel dispatch (killjob.go).
+			name: "jobCanceler",
+			set:  func() { SetJobCanceler(raceJobCanceler{}) },
+			get:  func() { _ = getJobCanceler() },
+		},
+		{
+			// F11: kill_job's own id-resolution/subtree-walk read of
+			// jobLister via getJobLister() (killjob.go's Run and
+			// killAllowedInsideChild). parentIDOf's separate read path is
+			// covered by TestParentIDOf_ConcurrentSetJobListerAndRealCall_RaceFree
+			// below.
+			name: "jobLister",
+			set:  func() { SetJobLister(raceJobLister{}) },
+			get:  func() { _ = getJobLister() },
+		},
+		{
+			// F11: promote_btw's Promote dispatch (btw_readonly.go).
+			name: "jobPromoter",
+			set:  func() { SetJobPromoter(raceJobPromoter{}) },
+			get:  func() { _ = getJobPromoter() },
 		},
 	}
 
@@ -438,6 +519,22 @@ func TestCronRunNow_ConcurrentSetJobStarterAndRealSpawn_RaceFree(t *testing.T) {
 	wg.Wait()
 
 	waitRegistriesIdle(t, regA, regB)
+}
+
+// TestParentIDOf_ConcurrentSetJobListerAndRealCall_RaceFree races
+// SetJobLister against parentIDOf (killjob.go) — the second, easy-to-miss
+// read site for jobLister: it reads the global directly rather than going
+// through kill_job's Run, so a fix that only guarded the Run/
+// killAllowedInsideChild path (via getJobLister there) would still leave
+// this one racy.
+func TestParentIDOf_ConcurrentSetJobListerAndRealCall_RaceFree(t *testing.T) {
+	t.Cleanup(func() { SetJobLister(nil) })
+	SetJobLister(raceJobLister{})
+
+	runConcurrentSetGet(t,
+		func() { SetJobLister(raceJobLister{}) },
+		func() { _ = parentIDOf("race-child") },
+	)
 }
 
 // Not driven here: cron's in-session ticker (StartCronTicker, tools/cron.go)

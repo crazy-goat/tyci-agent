@@ -183,10 +183,11 @@ func (t *AnswerTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		if !ok {
 			return validationResult("approve is required for extension answers and must be a boolean")
 		}
-		if jobExtensionRequester == nil {
+		requester := getJobExtensionRequester()
+		if requester == nil {
 			return ToolResult{Type: "result", Success: false, Error: "answer_job unavailable: job extension requester not configured"}
 		}
-		if !jobExtensionRequester.ResolveExtension(jobID, requestID, approve) {
+		if !requester.ResolveExtension(jobID, requestID, approve) {
 			return ToolResult{Type: "result", Success: false, Error: "job_id/request_id not found or extension request already resolved"}
 		}
 		if approve {
