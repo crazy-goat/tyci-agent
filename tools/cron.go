@@ -351,13 +351,37 @@ func (t *CronTool) runNow(ctx context.Context, name string) ToolResult {
 // that recursively with arbitrary "run"/"--prompt" args is not something a
 // test should risk (unpredictable flag parsing, possible recursive test
 // execution). Test-only seam, exported to no one outside this package.
-var cronRunnerExeOverride string
+//
+// F25: cronRunner() below runs on a scheduled job's own goroutine
+// (CronRunNow/cronTick's spawn), while a test's override write happens from
+// the setup goroutine — the same read-during-execution/write-during-setup
+// shape as the rest of this global-var family, so it gets the same
+// sync.RWMutex + accessor treatment even though production never writes it.
+var (
+	cronRunnerExeOverrideMu sync.RWMutex
+	cronRunnerExeOverride   string
+)
+
+// setCronRunnerExeOverrideForTests and cronRunnerExeOverrideForTests are the
+// only way in or out of cronRunnerExeOverride — including for tests, which
+// used to read/write the bare var directly.
+func setCronRunnerExeOverrideForTests(exe string) {
+	cronRunnerExeOverrideMu.Lock()
+	cronRunnerExeOverride = exe
+	cronRunnerExeOverrideMu.Unlock()
+}
+
+func cronRunnerExeOverrideForTests() string {
+	cronRunnerExeOverrideMu.RLock()
+	defer cronRunnerExeOverrideMu.RUnlock()
+	return cronRunnerExeOverride
+}
 
 // cronRunner points at this binary: a scheduled job is the same `tyci run` a
 // person would type, so it has to be the same build — unless
 // cronRunnerExeOverride says otherwise (tests only, see its doc comment).
 func cronRunner() (*cron.Runner, error) {
-	exe := cronRunnerExeOverride
+	exe := cronRunnerExeOverrideForTests()
 	if exe == "" {
 		var err error
 		exe, err = os.Executable()

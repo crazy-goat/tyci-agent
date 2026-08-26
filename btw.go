@@ -389,6 +389,15 @@ func btwConfig(base agent.Config) agent.Config {
 	cfg.NextMessages = nil
 	cfg.PendingTodos = nil
 	cfg.HasTodos = nil
+	// F10: base (cond.Config()) carries the MAIN conversation's Compactor.
+	// GetAllToolsSchemaJSON below puts "compact" back in a /btw/fork/resume
+	// child's schema (it has no other owner check — see CompactTool.Run),
+	// so leaving this set would let such a child silently compact the
+	// user's live main conversation instead of its own throwaway one. Nil
+	// it out exactly like the other parent-owned state above; compactorFrom
+	// then returns nil and the tool reports its existing, honest "compact
+	// is unavailable" error instead of acting on the wrong conversation.
+	cfg.Compactor = nil
 	// base.Schema is the top-level, non-job schema (tools.
 	// GetTopLevelToolsSchemaJSON, set in commands.go), which excludes
 	// ask_parent because the top-level conversation has no job id. A /btw

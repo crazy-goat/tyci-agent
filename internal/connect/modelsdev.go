@@ -97,7 +97,7 @@ func EnsureProvidersJSON() error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat providers.json: %w", err)
 	}
-	body, err := fetchModelsDev(defaultHTTPClient)
+	body, err := fetchModelsDev(getDefaultHTTPClient())
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func EnsureProvidersJSON() error {
 // a degraded fetch — the caller should say so, because the cached prices may
 // be stale.
 func RefreshModels(providerFilter string, dryRun bool) (imported []RefreshProvider, keptUnchanged int, skippedZeroModels int, err error) {
-	body, err := fetchModelsDev(defaultHTTPClient)
+	body, err := fetchModelsDev(getDefaultHTTPClient())
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("fetching models.dev: %w", err)
 	}
@@ -278,9 +278,15 @@ func parseFilter(providerFilter string) map[string]bool {
 // by a connect test without a cycle — can fake the models.dev response
 // without a network call.
 func SetHTTPClientForTests(d HTTPDoer) (restore func()) {
+	defaultHTTPClientMu.Lock()
 	orig := defaultHTTPClient
 	defaultHTTPClient = d
-	return func() { defaultHTTPClient = orig }
+	defaultHTTPClientMu.Unlock()
+	return func() {
+		defaultHTTPClientMu.Lock()
+		defaultHTTPClient = orig
+		defaultHTTPClientMu.Unlock()
+	}
 }
 
 // fetchModelsDev fetches the models.dev API.

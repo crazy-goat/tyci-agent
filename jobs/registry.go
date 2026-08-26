@@ -148,6 +148,72 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 		var truncated bool
 		var err error
 		returned := false
+
+		// F4: this bookkeeping MUST run no matter how fn's frame unwinds —
+		// normal return, a recovered panic (both already flow through the
+		// inner recover below into err/result/truncated), or fn calling
+		// runtime.Goexit() (directly, or via something like a testing.T
+		// FailNow deep in its call chain). Goexit runs every deferred call
+		// on its way up the goroutine's stack but never resumes ordinary
+		// control flow in any of those frames — code that merely comes
+		// AFTER the inner func() call below is skipped entirely on that
+		// path. Before this was a defer, that is exactly what happened: the
+		// recover-based defer inside the inner func() would fire and set
+		// err, but cancel()/the registry bookkeeping/close(job.done) that
+		// followed it as plain sequential code never ran, leaving the job
+		// stuck in StatusRunning forever and Wait with no completion event
+		// to ever wake it. Making this whole block a defer on the OUTER
+		// frame fixes that: Goexit's unwind reaches it just like a panic or
+		// a normal return would.
+		defer func() {
+			cancel()
+
+			r.mu.Lock()
+			job.FinishedAt = time.Now()
+			job.Result = result
+			r.clearPendingExtensionLocked(job)
+			switch {
+			case err != nil:
+				job.Status = StatusFailed
+				job.Err = err.Error()
+				// A bare "context canceled" tells whoever reads the jobs panel
+				// nothing about who cancelled. When Cancel was the cause, say so
+				// instead — same failed status, an unmistakable message (see
+				// Cancel's doc comment for why there is no sixth status).
+				if errors.Is(err, context.Canceled) && job.cancelled {
+					job.Err = ErrStoppedByUser.Error()
+				}
+			case truncated:
+				job.Status = StatusTruncated
+			default:
+				job.Status = StatusDone
+			}
+			// C3 (batch-2 review): sweep whatever is still sitting in mailbox
+			// into the snapshot BEFORE anything else can happen to it — this
+			// job's own agent loop just stopped for good, so nothing will ever
+			// drain it through the normal path again, and once pruneTerminalLocked
+			// below (or a later prune) removes this job from r.jobs, even
+			// DrainMessages could no longer reach it. See ResidualMailbox's doc
+			// comment for why leaving this silently in place instead was a bug.
+			job.ResidualMailbox = job.mailbox
+			job.mailbox = nil
+			snapshot := job.Snapshot()
+			onEvent := r.onEvent
+			// This job just became terminal, so this is exactly the moment the
+			// retained-history bound can be exceeded. Prune before releasing the
+			// lock; the snapshot above is already taken, so this job's own
+			// completion event still reaches subscribers even in the (impossible
+			// with a 50-job floor, but harmless) case where it were pruned here.
+			r.pruneTerminalLocked()
+			r.mu.Unlock()
+
+			close(job.done)
+
+			if onEvent != nil {
+				onEvent(snapshot)
+			}
+		}()
+
 		func() {
 			defer func() {
 				if recovered := recover(); !returned {
@@ -155,8 +221,17 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 					// ordinary function error. In particular, keep the completion
 					// event and done signal intact so Wait and the interactive
 					// process do not get stranded by a bad job function.
+					//
+					// recovered == nil here does NOT mean "someone panicked with
+					// a nil value": since Go 1.21, panic(nil) is converted to a
+					// non-nil *runtime.PanicNilError by default, so recover()
+					// only comes back nil when this defer fired without a panic
+					// at all — i.e. fn called runtime.Goexit() (directly, or via
+					// something like testing.T.FailNow buried in its call
+					// chain), which still runs deferred calls on its way up the
+					// goroutine's stack but never lets control return normally.
 					if recovered == nil {
-						err = errors.New("job function panicked: <nil>")
+						err = errors.New("job function exited via runtime.Goexit() without returning")
 					} else {
 						err = panicError(recovered)
 					}
@@ -167,52 +242,6 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 			result, truncated, err = fn(jobCtx, job.ID)
 			returned = true
 		}()
-		cancel()
-
-		r.mu.Lock()
-		job.FinishedAt = time.Now()
-		job.Result = result
-		r.clearPendingExtensionLocked(job)
-		switch {
-		case err != nil:
-			job.Status = StatusFailed
-			job.Err = err.Error()
-			// A bare "context canceled" tells whoever reads the jobs panel
-			// nothing about who cancelled. When Cancel was the cause, say so
-			// instead — same failed status, an unmistakable message (see
-			// Cancel's doc comment for why there is no sixth status).
-			if errors.Is(err, context.Canceled) && job.cancelled {
-				job.Err = ErrStoppedByUser.Error()
-			}
-		case truncated:
-			job.Status = StatusTruncated
-		default:
-			job.Status = StatusDone
-		}
-		// C3 (batch-2 review): sweep whatever is still sitting in mailbox
-		// into the snapshot BEFORE anything else can happen to it — this
-		// job's own agent loop just stopped for good, so nothing will ever
-		// drain it through the normal path again, and once pruneTerminalLocked
-		// below (or a later prune) removes this job from r.jobs, even
-		// DrainMessages could no longer reach it. See ResidualMailbox's doc
-		// comment for why leaving this silently in place instead was a bug.
-		job.ResidualMailbox = job.mailbox
-		job.mailbox = nil
-		snapshot := job.Snapshot()
-		onEvent := r.onEvent
-		// This job just became terminal, so this is exactly the moment the
-		// retained-history bound can be exceeded. Prune before releasing the
-		// lock; the snapshot above is already taken, so this job's own
-		// completion event still reaches subscribers even in the (impossible
-		// with a 50-job floor, but harmless) case where it were pruned here.
-		r.pruneTerminalLocked()
-		r.mu.Unlock()
-
-		close(job.done)
-
-		if onEvent != nil {
-			onEvent(snapshot)
-		}
 	}()
 
 	return job

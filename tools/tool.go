@@ -631,17 +631,29 @@ func luaToolsSchema() []map[string]any {
 	return schema
 }
 
-var toolsSchema json.RawMessage
+// toolsSchema is written once, in init(), before any other goroutine can be
+// running — no real race is possible today. F25: guarded anyway, for
+// consistency with the rest of this global-var family and so a future
+// caller that writes it outside init() (there is no other today) inherits
+// the same safety the rest of the file already has.
+var (
+	toolsSchemaMu sync.RWMutex
+	toolsSchema   json.RawMessage
+)
 
 func init() {
 	// Load Lua tools from user directories
 	LoadAndRegisterLuaTools()
 
 	data, _ := json.Marshal(GetToolsSchema())
+	toolsSchemaMu.Lock()
 	toolsSchema = data
+	toolsSchemaMu.Unlock()
 }
 
 func GetToolsSchemaJSON() json.RawMessage {
+	toolsSchemaMu.RLock()
+	defer toolsSchemaMu.RUnlock()
 	return toolsSchema
 }
 
