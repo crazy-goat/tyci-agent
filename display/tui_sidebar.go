@@ -118,6 +118,13 @@ func (m *TuiModel) openSidebar(tab int) {
 		// context figure to jump to the Tokens tab while some other tab is
 		// already open) would just re-wrap everything for no reason.
 		m.invalidateAllBlockLineCounts()
+		// F20: fix the REAL m.input's width here, not just the copy
+		// renderFrame narrows for the one frame it draws (tui_view.go).
+		// Without this, m.input.Width() stays at the pre-open, full-terminal
+		// value until the next keystroke recomputes it, so the textarea's
+		// own reported height (used to size the input area) is briefly
+		// wrong for the now-narrower column.
+		m.input.SetWidth(max(10, m.mainColumnWidth()-2))
 	}
 }
 
@@ -135,6 +142,11 @@ func (m *TuiModel) closeSidebar() {
 	m.selection = SelectionState{}
 	m.selectionFlash = false
 	m.invalidateAllBlockLineCounts()
+	// F20's other direction: restore the REAL m.input's width back to the
+	// full terminal width immediately, symmetric with openSidebar's fix —
+	// sidebarActive is already false above, so mainColumnWidth() now
+	// returns m.width.
+	m.input.SetWidth(max(10, m.mainColumnWidth()-2))
 }
 
 // toggleSidebar is Ctrl+T's handler: close if open, otherwise reopen on
@@ -508,25 +520,44 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// underlying list once it's scrolled. Uses the clamped value,
 			// not m.sidebarScroll raw, so a resize that hasn't triggered a
 			// cursor move yet still maps clicks to the row actually drawn.
+			//
+			// `line` is an index into the RENDERED LINE list (one line per
+			// sidebarTaskRow — renderSidebarTasks emits exactly one styled
+			// line per row, headings included), computed once here. It is
+			// NOT the same thing as m.sidebarRowCount(), which on Tasks
+			// counts only job rows (see its doc comment) — Tasks mixes
+			// headings, a job-less synthetic root, and job rows into that
+			// one line-per-row list, so bounding the click against the job
+			// count instead of the actual line count rejected clicks on
+			// later job rows once enough headings preceded them (F3).
+			// Bounding against the real line count (sidebarTaskRows' own
+			// length) and finding the nearest job row at-or-after the
+			// clicked line — rather than assuming line index == job index —
+			// is what makes clicking a heading fall through to the next job
+			// below it instead of misfiring on an unrelated job or nothing.
 			if m.sidebarSelectable() && msg.Y >= layout.contentTop && msg.Y < layout.contentTop+layout.contentHeight {
-				row := msg.Y - layout.contentTop + m.sidebarVisibleScroll(layout)
-				if row < m.sidebarRowCount() {
-					if m.sidebarTab == sidebarTabTasks {
-						jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
-						line := row + m.sidebarVisibleScroll(layout)
-						selected := -1
-						for i, jobRow := range jobRows {
-							if jobRow >= line {
-								selected = i
-								break
-							}
+				line := msg.Y - layout.contentTop + m.sidebarVisibleScroll(layout)
+				switch m.sidebarTab {
+				case sidebarTabTasks:
+					width := m.sidebarLayout().contentWidth
+					if line < 0 || line >= len(m.sidebarTaskRows(width)) {
+						return m, nil
+					}
+					jobRows := m.sidebarTaskJobRows(width)
+					selected := -1
+					for i, jobRow := range jobRows {
+						if jobRow >= line {
+							selected = i
+							break
 						}
-						if selected >= 0 {
-							m.sidebarCursor = selected
-							return m.sidebarActivateRow()
-						}
-					} else {
-						m.sidebarCursor = row
+					}
+					if selected >= 0 {
+						m.sidebarCursor = selected
+						return m.sidebarActivateRow()
+					}
+				default:
+					if line >= 0 && line < m.sidebarRowCount() {
+						m.sidebarCursor = line
 						return m.sidebarActivateRow()
 					}
 				}

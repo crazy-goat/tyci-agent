@@ -167,6 +167,20 @@ func (m TuiModel) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.input.SetWidth(max(10, msg.Width-2))
 	m.resizeWidth = msg.Width
 	m.resizeHeight = msg.Height
+	// F14: m.width takes effect immediately (renderWidth/mainColumnWidth
+	// read it live), but the width-keyed streaming caches this method used
+	// to leave untouched until handleResizeFlush fired ~100ms later. In
+	// that window, a line cached at the old width (e.g. streamWrap's
+	// stableLines, or a block's cachedLineCount/cachedLines) was emitted at
+	// the new renderWidth(), and buildViewportRows' overlong-line safety
+	// net then re-wrapped that already-rendered, ANSI-heavy line as plain
+	// text — shredding it. invalidateAllBlockLineCounts only clears
+	// counters and maps (cheap: no re-wrap happens until something actually
+	// requests a block's lines again), so there is no need to debounce it
+	// with the expensive part — clampScroll's recompute and the painter's
+	// full-screen repaint, which do stay debounced below via resizeFlushMsg
+	// so a fast resize drag doesn't re-render on every intermediate size.
+	m.invalidateAllBlockLineCounts()
 	if !m.resizePending {
 		m.resizePending = true
 		return m, tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
@@ -183,8 +197,11 @@ func (m TuiModel) handleResizeFlush() (tea.Model, tea.Cmd) {
 			m.width = m.resizeWidth
 			m.height = m.resizeHeight
 			m.input.SetWidth(max(10, m.resizeWidth-2))
+			// A resize landed between the last handleResize call and this
+			// flush firing (the width/height mismatch above) without going
+			// through handleResize's own invalidation — cover it here too.
+			m.invalidateAllBlockLineCounts()
 		}
-		m.invalidateAllBlockLineCounts()
 		m.clampScroll()
 		if m.painter != nil {
 			// Geometry changed; force a clear+full redraw so no stale cells

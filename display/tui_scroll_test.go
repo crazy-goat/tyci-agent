@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestTuiModel_SubmitCreatesUserBlockAndResetsScroll(t *testing.T) {
@@ -87,5 +88,55 @@ func TestTuiModel_ViewAtBottomShowsTailOfLongStreamingBlock(t *testing.T) {
 	}
 	if !strings.Contains(view, "line-12") {
 		t.Fatalf("bottom view did not show newest line:\n%s", view)
+	}
+}
+
+// TestHandleResize_InvalidatesWidthCachesImmediately is F14's regression
+// test. handleResize used to set m.width immediately but leave the
+// width-keyed block caches (cachedLineCount/cachedLines, streamWraps) alone
+// until handleResizeFlush fired ~100ms later. In that window, renderWidth()
+// already reported the new, narrower width, but a block's cached lines were
+// still wrapped for the old, wider one — so a line rendered at width 80
+// could come back 78 columns wide while renderWidth()==30, which
+// buildViewportRows' overlong-line safety net then re-wrapped as plain
+// text, shredding any ANSI in it (a bold/glamour-styled line, not a raw
+// one, so the corruption is visible, not just short).
+func TestHandleResize_InvalidatesWidthCachesImmediately(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.ready = true
+	m.width = 80
+	m.height = 24
+
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "**" + strings.Repeat("word ", 20) + "**"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	m.renderFrame() // populate cachedLineCount/cachedLines at width 80
+
+	if lc := m.blocks[0].cachedLineCount; lc == 0 {
+		t.Fatal("expected the block to have a cached line count after rendering at width 80")
+	}
+
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 24})
+	m2 := model.(TuiModel)
+	if m2.width != 30 {
+		t.Fatalf("expected m.width to update immediately, got %d", m2.width)
+	}
+	if !m2.resizePending {
+		t.Fatal("expected the flush debounce to still be pending (the expensive repaint stays debounced)")
+	}
+
+	// Simulate the ~100ms window before resizeFlushMsg fires: the cache must
+	// already be invalidated, without waiting for handleResizeFlush.
+	if lc := m2.blocks[0].cachedLineCount; lc != 0 {
+		t.Fatalf("expected handleResize to invalidate the block's cached line count immediately, still has %d", lc)
+	}
+
+	renderWidth := m2.renderWidth()
+	if renderWidth != 30 {
+		t.Fatalf("expected renderWidth() == 30 immediately after resize, got %d", renderWidth)
+	}
+	for i, l := range m2.buildAllFlatRenderLines() {
+		if w := lipgloss.Width(l.Text); w > renderWidth {
+			t.Fatalf("line %d is %d cols wide mid-resize, wider than renderWidth() = %d: %q", i, w, renderWidth, l.Text)
+		}
 	}
 }

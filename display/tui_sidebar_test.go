@@ -276,6 +276,64 @@ func TestSidebarResize_ReclampsStaleScrollAndClickMapping(t *testing.T) {
 	}
 }
 
+// TestSidebarMouse_TaskClickPastJobCountBound is F3's regression test: the
+// old hit-test bounded the clicked line against m.sidebarRowCount(), which
+// on Tasks counts only job rows (5 here), not the actual rendered line
+// count (Subagents heading + root + Bash heading + 5 Bash jobs + Lua
+// heading = 9). A click on one of the later Bash rows (line index 6 or 7,
+// past the job-count bound of 5 but still well within the 9 real lines)
+// was silently dropped even though a job sat right there. It also caught
+// the sibling bug of re-adding the scroll offset a second time when
+// mapping the click to a job (the old code's `line := row + scroll`, when
+// `row` was already scroll-adjusted) — reachable only with a non-zero
+// scroll, which this test forces via a one-line contentHeight.
+func TestSidebarMouse_TaskClickPastJobCountBound(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.height = 7 // contentHeight = height-6 = 1, so a small scroll offset is easy to force
+	for i := 0; i < 5; i++ {
+		m.applyJobUpdate(jobs.Job{
+			ID:          fmt.Sprintf("job-%d", i),
+			Kind:        jobs.KindBash,
+			Status:      jobs.StatusDone,
+			Description: fmt.Sprintf("job-%d desc", i),
+			StartedAt:   time.Now().Add(-time.Duration(5-i) * time.Minute),
+		})
+	}
+	m.openSidebar(sidebarTabTasks)
+	layout := m.sidebarLayout()
+	if layout.contentHeight != 1 {
+		t.Skip("expected a 1-row content window at this height")
+	}
+
+	width := layout.contentWidth
+	rows := m.sidebarTaskRows(width)
+	jobRows := m.sidebarTaskJobRows(width)
+	if len(jobRows) != 5 {
+		t.Fatalf("expected 5 job rows, got %d", len(jobRows))
+	}
+	// The last Bash job's line index (Subagents heading + root + Bash
+	// heading + 4 earlier jobs = index 7) exceeds sidebarRowCount()'s job
+	// count of 5, which is exactly the bound the old code used.
+	lastJobLine := jobRows[len(jobRows)-1]
+	if lastJobLine < m.sidebarRowCount() {
+		t.Fatalf("test setup didn't reproduce the bug: last job line %d is not past the job-count bound %d", lastJobLine, m.sidebarRowCount())
+	}
+	wantDesc := rows[lastJobLine].job.Description
+
+	m.sidebarScroll = lastJobLine // scrolled so the last job row is the one visible line
+	model, _ := m.updateSidebar(tea.MouseMsg{
+		X: layout.contentLeft, Y: layout.contentTop,
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	m2 := model.(TuiModel)
+	if !m2.subagentModalActive {
+		t.Fatalf("expected the click on the last Bash row to open a job result modal")
+	}
+	if m2.subagentModalTitle != wantDesc {
+		t.Fatalf("expected the click to open %q, got %q", wantDesc, m2.subagentModalTitle)
+	}
+}
+
 // TestSidebarScroll_NonSelectableTabScrollsWithoutACursor covers the Tokens/
 // Lua tabs: sidebarRowCount is 0 for them (no selectable rows — see
 // sidebarSelectable), so Up/Down/wheel must scroll the view directly
@@ -1134,6 +1192,117 @@ func TestRenderFrame_SidebarActiveShowsBothColumns(t *testing.T) {
 	}
 	if !strings.Contains(frame, "Sidebar") {
 		t.Fatalf("expected the sidebar column's title to appear in the joined frame")
+	}
+}
+
+// TestRenderWidth_DoubleNarrowIsARealFootgun documents the exact failure
+// mode F13 fixed: feeding an already-narrowed width (mainColumnWidth's own
+// output) back into mainColumnWidth with sidebarActive still true narrows a
+// SECOND time, because mainColumnWidth has no way to tell "this width is
+// already final" from "this is the real, full terminal width" — both just
+// look like some m.width with sidebarActive set. This is exactly the shape
+// renderFrame's shadow model would have (tui_view.go: mainM.width =
+// m.mainColumnWidth()) if it did not also clear mainM.sidebarActive — see
+// TestRenderFrame_MainColumnWrapsAtSingleNarrowWidth for the guard that
+// actually exercises renderFrame and would catch that regression.
+func TestRenderWidth_DoubleNarrowIsARealFootgun(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 120
+	m.openSidebar(sidebarTabTokens)
+
+	onceNarrowed := m.mainColumnWidth()
+	shadow := m
+	shadow.width = onceNarrowed // sidebarActive still true — the bug case
+	twiceNarrowed := shadow.mainColumnWidth()
+
+	if twiceNarrowed >= onceNarrowed {
+		t.Fatalf("test premise broken: expected narrowing an already-narrow width to narrow further (got %d, from %d)",
+			twiceNarrowed, onceNarrowed)
+	}
+	// renderFrame's real shadow model must not be in that bug case: it
+	// clears sidebarActive right after copying the narrowed width in.
+	shadow.sidebarActive = false
+	if got := shadow.renderWidth(); got != onceNarrowed {
+		t.Fatalf("renderWidth() on the shadow model = %d, want the single-narrowed %d", got, onceNarrowed)
+	}
+}
+
+// TestRenderFrame_MainColumnWrapsAtSingleNarrowWidth is the end-to-end
+// companion to the above: it drives the actual renderFrame() path (not a
+// hand-built shadow model) and checks that wrapped transcript lines land at
+// mainColumnWidth(), not at a second, double-narrowed width. Long enough
+// text that a double-narrow (120 -> 71 -> 34) would visibly shorten lines
+// compared to a single narrow (120 -> 71).
+func TestRenderFrame_MainColumnWrapsAtSingleNarrowWidth(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 120
+	m.height = 30
+	longLine := strings.Repeat("word ", 40)
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: longLine})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	m.openSidebar(sidebarTabTokens)
+
+	mainW := m.mainColumnWidth()
+	m.renderFrame()
+
+	lines := m.getBlockLines(0, false)
+	if len(lines) == 0 {
+		t.Fatal("expected wrapped lines for the text block")
+	}
+	for i, l := range lines {
+		if w := lipgloss.Width(l); w > mainW {
+			t.Fatalf("line %d is %d cols wide, wider than the main column (%d): %q", i, w, mainW, l)
+		}
+	}
+	// A double-narrow would wrap so short that a 200-char line needs far
+	// more lines than fit in a single mainW-wide wrap.
+	wantMax := (len(longLine) / max(1, mainW-2)) + 2
+	if len(lines) > wantMax {
+		t.Fatalf("block wrapped into %d lines at width ~%d — looks double-narrowed (expected at most %d lines at mainColumnWidth=%d)",
+			len(lines), mainW, wantMax, mainW)
+	}
+}
+
+// TestSidebarToggle_SyncsRealInputWidth is F20's regression test:
+// renderFrame only narrows a COPY of the input (mainM.input) for the one
+// frame it draws — the real m.input.Width() used to stay at the old, wide
+// value until the next keystroke recomputed it (textarea.Model.SetWidth is
+// called on every input.Update, not on open/closeSidebar). openSidebar and
+// closeSidebar now set the real input's width directly, so it is correct
+// immediately, with no render or keystroke required.
+func TestSidebarToggle_SyncsRealInputWidth(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 120
+
+	// textarea.SetWidth(w) does not make Width() return w exactly — it
+	// reserves room for the prompt/line numbers first — so the expected
+	// values below are derived by driving a scratch copy (same Prompt/
+	// ShowLineNumbers config) through the same SetWidth call, not raw
+	// arithmetic on mainColumnWidth().
+	wantWidthFor := func(raw int) int {
+		scratch := m.input
+		scratch.SetWidth(max(10, raw-2))
+		return scratch.Width()
+	}
+	// The expected full-width value at m.width=120 — not the textarea's
+	// current Width(), which still reflects newTestModelForSidebar's
+	// construction-time width since setting m.width directly (as this test
+	// does, to isolate the sidebar toggle) does not itself resize the
+	// input; only handleResize or openSidebar/closeSidebar do that.
+	fullWidth := wantWidthFor(m.width)
+
+	m.openSidebar(sidebarTabTokens)
+	mainW := m.mainColumnWidth()
+	if mainW >= m.width {
+		t.Fatal("expected the sidebar to actually narrow the main column in this configuration")
+	}
+	if got, want := m.input.Width(), wantWidthFor(mainW); got != want {
+		t.Fatalf("expected m.input.Width() to be narrowed to %d immediately on open, got %d", want, got)
+	}
+
+	m.closeSidebar()
+	if got := m.input.Width(); got != fullWidth {
+		t.Fatalf("expected m.input.Width() to be restored to %d immediately on close, got %d", fullWidth, got)
 	}
 }
 

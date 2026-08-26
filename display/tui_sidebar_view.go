@@ -117,9 +117,18 @@ func (m TuiModel) mainColumnWidth() int {
 // displayed; openSidebar/closeSidebar already invalidate on the transition,
 // so the caches re-flow both ways.
 //
-// Callers run on either the real model or the shadow copy — both carry
-// sidebarActive, and mainColumnWidth reads only width/sidebarActive, so the
-// answer is identical from either.
+// NOT idempotent under sidebarActive=true if called on a model whose .width
+// is ALREADY the narrowed mainColumnWidth (F13): mainColumnWidth narrows
+// again on top of an already-narrow width, since it has no way to tell "this
+// width is already final" from "this is the real, full terminal width" —
+// both just look like some m.width with m.sidebarActive set. Concretely,
+// real width=120 narrows once to 71; feed 71 back in with sidebarActive
+// still true and it narrows AGAIN to 34. renderFrame's shadow model
+// (tui_view.go) is exactly this shape — mainM.width is set to
+// m.mainColumnWidth() — so it clears mainM.sidebarActive right after, which
+// is what keeps this method idempotent in practice: the one caller that
+// ever holds an already-narrowed width also stops claiming sidebarActive.
+// Do not construct a second shadow model without doing the same.
 func (m TuiModel) renderWidth() int {
 	if m.sidebarActive {
 		return m.mainColumnWidth()

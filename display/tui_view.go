@@ -98,12 +98,26 @@ func (m TuiModel) renderFrame() string {
 	if m.sidebarActive {
 		mainM := m
 		mainM.width = m.mainColumnWidth()
+		// mainM.width is now the FINAL, already-narrowed width — clearing
+		// sidebarActive here is what keeps renderWidth() idempotent (F13):
+		// left true, renderWidth would see sidebarActive and narrow
+		// mainM.width a second time (mainColumnWidth() on top of an already
+		// mainColumnWidth()'d value), wrapping every block far short of the
+		// column actually on screen. Nothing else on this render path reads
+		// sidebarActive off mainM (only mainColumnWidth/renderWidth do, and
+		// the real m above already used it to compute mainM.width), so this
+		// is safe to flip.
+		mainM.sidebarActive = false
 		// The textarea tracks its own wrap width separately from
 		// TuiModel.width; without this it would render m.input.View() still
 		// wrapped for the old, wider column. SetWidth only mutates plain int
 		// fields on textarea.Model (viewport.Width / width) — no pointer or
 		// slice state — so this is confined to mainM's copy and never
-		// touches the real m.input.
+		// touches the real m.input. (The real m.input's width is kept in
+		// sync separately, at the point the sidebar opens/closes/resizes —
+		// see openSidebar/closeSidebar/handleResizeFlush — so this copy is
+		// belt-and-suspenders for the one frame in between, not the only
+		// place the input's width is ever set; see F20.)
 		mainM.input.SetWidth(max(10, mainM.width-2))
 		mainBlock := mainM.renderMainColumn()
 		// The sidebar's own layout must be based on the REAL m (its width,
