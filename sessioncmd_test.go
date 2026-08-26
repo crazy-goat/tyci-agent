@@ -184,6 +184,78 @@ func TestRunSessionShow_SkipsCorruptAndTruncatedLines(t *testing.T) {
 	}
 }
 
+// F6 (item 10 inbox): "tyci session export --markdown" did not exist as a
+// subcommand, so a session that never got compacted had no way to produce
+// its searchable markdown dump on demand — only compaction ever called
+// session.WriteMarkdownDump. This is the regression test for that gap.
+func TestRunSessionExport_Markdown_WritesAndPrintsDump(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "export.jsonl")
+
+	s, err := session.Open(path, "/some/project", "gpt-5", "openai")
+	if err != nil {
+		t.Fatalf("session.Open: %v", err)
+	}
+	if err := s.WriteMessage("user", []session.ContentBlock{
+		{Type: "text", Text: "find the bug in main.go"},
+	}, nil); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	cmd := sessionExportCmd
+	if err := cmd.Flags().Set("markdown", "true"); err != nil {
+		t.Fatalf("Set markdown flag: %v", err)
+	}
+	out := captureStdout(t, func() {
+		if err := runSessionExport(cmd, []string{path}); err != nil {
+			t.Fatalf("runSessionExport: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "find the bug in main.go") {
+		t.Errorf("expected the dump content on stdout, got:\n%s", out)
+	}
+	if !strings.Contains(out, "# tyci session dump") {
+		t.Errorf("expected the dump's own header in stdout, got:\n%s", out)
+	}
+
+	dumpPath := strings.TrimSuffix(path, ".jsonl") + ".md"
+	data, err := os.ReadFile(dumpPath)
+	if err != nil {
+		t.Fatalf("dump file was not written to disk: %v", err)
+	}
+	if string(data) != out {
+		t.Errorf("stdout should be exactly the regenerated dump file's content:\nstdout:\n%s\nfile:\n%s", out, data)
+	}
+}
+
+// Without --markdown, export must refuse rather than silently doing
+// something else — there is currently exactly one supported format, and a
+// caller that forgot the flag should get an actionable error, not output
+// in a format they didn't ask for.
+func TestRunSessionExport_RequiresMarkdownFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "export.jsonl")
+	s, err := session.Open(path, "/some/project", "gpt-5", "openai")
+	if err != nil {
+		t.Fatalf("session.Open: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	cmd := sessionExportCmd
+	if err := cmd.Flags().Set("markdown", "false"); err != nil {
+		t.Fatalf("Set markdown flag: %v", err)
+	}
+	if err := runSessionExport(cmd, []string{path}); err == nil {
+		t.Fatal("expected an error when --markdown is not set, got nil")
+	}
+}
+
 // TestRunSessionShow_ReportsScanErrorInsteadOfSwallowingIt is the
 // regression test for silently dropping scanner.Err(): bufio.Scanner does
 // not resynchronize after bufio.ErrTooLong (a line bigger than the 8 MB

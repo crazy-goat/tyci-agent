@@ -121,6 +121,14 @@ type Config struct {
 	// the budget reminder when the catalog has no known limit.
 	ContextLimit int
 
+	// AutoCompactPercent is the fraction (as a percentage, matching
+	// contextBudgetReminderPercent) of the model's context window that
+	// triggers an automatic compaction — the same Compactor above invokes,
+	// not just the reminder text. Zero uses defaultAutoCompactPercent. A
+	// negative value disables auto-compaction, leaving only the reminder
+	// (item 10's spec called for both; F5 in the inbox is this trigger).
+	AutoCompactPercent int
+
 	// Interactive reports whether a human is present to answer a blocked
 	// job's question — true for the console REPL and the TUI, false for
 	// `tyci run` (and anything shelling out to it, e.g. cron: see
@@ -191,6 +199,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	todoReminders := 0
 	jobReminders := 0
 	contextReminded := false
+	autoCompacted := false
 
 	// lastStepWarned ensures buildLastStepWarning is injected at most once
 	// per Run call: once the model has been told this is its last turn,
@@ -396,7 +405,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			if cfg.ContextLimitFor != nil {
 				limit = cfg.ContextLimitFor(fs.mc.Provider(), fs.mc.Model())
 			}
-			if limit > 0 && !contextReminded {
+			if limit > 0 {
 				// Input+Output alone undercounts on providers that report a
 				// cached prompt prefix separately (Anthropic: CacheRead/
 				// CacheWrite, see api/anthropic.go — prompt caching is on by
@@ -404,7 +413,60 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				// occupy the context window even though they were not
 				// re-billed at full price, so they must count here.
 				used := lastRoundUsage.Input + lastRoundUsage.CacheRead + lastRoundUsage.CacheWrite + lastRoundUsage.Output
-				if used > 0 && used*100 >= limit*contextBudgetReminderPercent {
+				autoCompactPercent := cfg.AutoCompactPercent
+				if autoCompactPercent == 0 {
+					autoCompactPercent = defaultAutoCompactPercent
+				}
+				justAutoCompacted := false
+				// cfg.Session != nil (review, F5 HIGH-3): a /btw or
+				// fork/resume child keeps the PARENT's Compactor (it closes
+				// over the main conversation, not this one — btwConfig,
+				// btw.go) while its own cfg.Session is nil. Without this
+				// guard, a long-running child would auto-compact the live
+				// main conversation on the harness's own initiative, no
+				// model or user action involved — the automatic version of
+				// the hole F10 closed for the model-driven path.
+				if !autoCompacted && autoCompactPercent > 0 && cfg.Compactor != nil && cfg.Session != nil &&
+					used > 0 && used*100 >= limit*autoCompactPercent {
+					autoCompacted = true
+					dumpPath := ""
+					if cfg.Session != nil {
+						dumpPath = session.DumpPathFor(cfg.Session.Path())
+					}
+					summary := buildAutoCompactSummary(used, limit, dumpPath)
+					_, compactErr := cfg.Compactor(summary, "")
+					// Whether or not compaction succeeded, do NOT `continue`
+					// here (review of F5): the model has already finished
+					// its answer for this turn (!more && !drained), and
+					// every other `continue` in this block first appends a
+					// user-role message to *msgs — re-invoking the provider
+					// right now would send a history ending on the
+					// assistant's own just-delivered turn, which Anthropic
+					// treats as an invalid prefill (rejects trailing
+					// whitespace) and which every other provider would just
+					// answer again with no new instruction. The benefit of
+					// compacting lands on the NEXT turn's request, which is
+					// the point of a backstop — fall through to return
+					// normally for this one.
+					if compactErr == nil {
+						// A fresh compaction leaves a tiny history; give the
+						// model a full reminder cycle again if it somehow
+						// grows back past the (lower) reminder threshold on
+						// a later turn. justAutoCompacted also skips the
+						// reminder check just below for THIS turn — `used`
+						// was measured before compaction ran, so checking it
+						// against the (unchanged) reminder threshold right
+						// now would fire a budget reminder based on a number
+						// that is already stale.
+						contextReminded = false
+						justAutoCompacted = true
+					}
+					// Compaction failing (e.g. no writable session) is not
+					// re-reported here — the reminder below still gets the
+					// fact in front of the model even though the harness
+					// could not act on it itself, same as before this fix.
+				}
+				if !justAutoCompacted && !contextReminded && used > 0 && used*100 >= limit*contextBudgetReminderPercent {
 					contextReminded = true
 					reminder := buildContextBudgetReminder(used, limit)
 					*msgs = append(*msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: reminder}}})
@@ -485,6 +547,26 @@ const contextBudgetReminderPercent = 50
 
 func buildContextBudgetReminder(used, limit int) string {
 	return fmt.Sprintf("[automated context budget reminder, not the user] You are at %d of %d context tokens for the current model (last request's measured usage). Persist anything important, then use compact(summary=\"...\", focus=\"...\") if continuing would crowd out useful history.", used, limit)
+}
+
+// defaultAutoCompactPercent is the fraction of the model's published context
+// window that triggers automatic compaction when cfg.AutoCompactPercent is
+// left at zero. Higher than contextBudgetReminderPercent deliberately: the
+// reminder gives the model room to compact itself with a summary tailored to
+// what it is doing; auto-compaction is the backstop for when it does not,
+// so it should not fire so early that it routinely preempts a model that was
+// about to comply on its own.
+const defaultAutoCompactPercent = 85
+
+// buildAutoCompactSummary produces the lead message for a compaction the
+// harness triggered, not the model. There is no model-authored summary to
+// use (unlike the compact tool), but per item 10 design point (a) compaction
+// never deletes anything — the raw JSONL and the dump at dumpPath both
+// survive — so a factual marker naming the measured usage and where the
+// full record lives costs nothing and lets the model recover context on
+// request. Mirrors commands.go's manualCompactSummary for /compact.
+func buildAutoCompactSummary(used, limit int, dumpPath string) string {
+	return fmt.Sprintf("Automatic compaction triggered at %d of %d context tokens (no model or user request). Earlier turns are not repeated here — the raw session file and its markdown dump at %s hold the full record.", used, limit, dumpPath)
 }
 
 func buildLastStepWarning() string {

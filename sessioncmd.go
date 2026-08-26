@@ -32,6 +32,7 @@ Examples:
   tyci session show <index>
   tyci session show <path>
   tyci session delete <index|path>
+  tyci session export <index|path> --markdown
 `,
 }
 
@@ -55,15 +56,31 @@ var sessionDeleteCmd = &cobra.Command{
 	RunE:  runSessionDelete,
 }
 
+var sessionExportCmd = &cobra.Command{
+	Use:   "export <index|path>",
+	Short: "Regenerate the searchable markdown dump for a session, on demand",
+	Long: `Regenerate the same grep-friendly per-session markdown dump that
+compaction writes beside a session's JSONL (session.WriteMarkdownDump), for
+any session — not just one that happened to get compacted. The dump is a
+derived artifact: this never touches the JSONL, only recomputes the .md
+sibling file from it and prints the result.
+`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSessionExport,
+}
+
 func init() {
 	sessionListCmd.Flags().StringP("cwd", "C", ".", "Directory whose sessions to list")
 	sessionListCmd.Flags().Bool("all", false, "List sessions for every project, not just the current one")
 	sessionShowCmd.Flags().StringP("cwd", "C", ".", "Directory whose sessions to search")
 	sessionDeleteCmd.Flags().StringP("cwd", "C", ".", "Directory whose sessions to search")
+	sessionExportCmd.Flags().StringP("cwd", "C", ".", "Directory whose sessions to search")
+	sessionExportCmd.Flags().Bool("markdown", false, "Export the markdown dump (the only format currently supported)")
 
 	sessionCmd.AddCommand(sessionListCmd)
 	sessionCmd.AddCommand(sessionShowCmd)
 	sessionCmd.AddCommand(sessionDeleteCmd)
+	sessionCmd.AddCommand(sessionExportCmd)
 }
 
 func resolveSessionRef(cwdFlag, ref string) (string, error) {
@@ -308,6 +325,36 @@ func runSessionDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "Deleted %s\n", path)
+	return nil
+}
+
+// runSessionExport is F6 (item 10 inbox): "the same renderer gives tyci
+// session export --markdown for free" — item 10 shipped the renderer
+// (session.WriteMarkdownDump) and the auto-write path (compaction), but
+// never this on-demand subcommand, so a user with a session that never got
+// compacted had no way to get its searchable dump at all.
+func runSessionExport(cmd *cobra.Command, args []string) error {
+	markdown, _ := cmd.Flags().GetBool("markdown")
+	if !markdown {
+		return fmt.Errorf("session export currently only supports --markdown")
+	}
+	cwdFlag, _ := cmd.Flags().GetString("cwd")
+	path, err := resolveSessionRef(cwdFlag, args[0])
+	if err != nil {
+		return err
+	}
+	dumpPath, err := session.WriteMarkdownDump(path)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(dumpPath)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stdout.Write(data); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Markdown dump written to %s\n", dumpPath)
 	return nil
 }
 
