@@ -1305,7 +1305,7 @@ func TestRun_TotalNotDuplicatedOnFallbackSuccess(t *testing.T) {
 }
 
 func TestBuildContextBudgetReminderStatesFact(t *testing.T) {
-	msg := buildContextBudgetReminder(120000, 200000)
+	msg := buildContextBudgetReminder(120000, 200000, true)
 	if !strings.Contains(msg, "120000") || !strings.Contains(msg, "200000") || !strings.Contains(msg, "compact") {
 		t.Fatalf("reminder = %q", msg)
 	}
@@ -1316,7 +1316,7 @@ func TestBuildContextBudgetReminderStatesFact(t *testing.T) {
 // (b). It is scoped to the current model, whose context window differs by
 // model and provider.
 func TestBuildContextBudgetReminderIsFactualForCurrentModel(t *testing.T) {
-	msg := buildContextBudgetReminder(120000, 200000)
+	msg := buildContextBudgetReminder(120000, 200000, true)
 	for _, want := range []string{"current model", "120000", "200000"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("reminder %q missing %q", msg, want)

@@ -468,7 +468,20 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				}
 				if !justAutoCompacted && !contextReminded && used > 0 && used*100 >= limit*contextBudgetReminderPercent {
 					contextReminded = true
-					reminder := buildContextBudgetReminder(used, limit)
+					// cfg.Compactor != nil (F10 review follow-up, deferred
+					// until package B's agent.go rewrite landed): unlike a
+					// plain subagent (never had compact — subagentDeniedTools
+					// already excludes it), a /btw or fork/resume child has
+					// no Compactor of its own (btwConfig nils it, F10) and
+					// compact is no longer even in its schema
+					// (GetAllToolsSchemaJSONWithout) — telling it to call
+					// compact(...) anyway would point at a tool it does not
+					// have, the wasted-round-trip class F10's review found.
+					// The budget fact itself is still worth surfacing (it
+					// can still persist to memory/a file), so only the
+					// compact-specific instruction is conditional, not the
+					// whole reminder.
+					reminder := buildContextBudgetReminder(used, limit, cfg.Compactor != nil)
 					*msgs = append(*msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: reminder}}})
 					if cfg.Session != nil {
 						_ = cfg.Session.WriteMessage("user", []session.ContentBlock{{Type: "text", Text: reminder}}, nil)
@@ -545,8 +558,11 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 // call compact before the next request grows further.
 const contextBudgetReminderPercent = 50
 
-func buildContextBudgetReminder(used, limit int) string {
-	return fmt.Sprintf("[automated context budget reminder, not the user] You are at %d of %d context tokens for the current model (last request's measured usage). Persist anything important, then use compact(summary=\"...\", focus=\"...\") if continuing would crowd out useful history.", used, limit)
+func buildContextBudgetReminder(used, limit int, canCompact bool) string {
+	if canCompact {
+		return fmt.Sprintf("[automated context budget reminder, not the user] You are at %d of %d context tokens for the current model (last request's measured usage). Persist anything important, then use compact(summary=\"...\", focus=\"...\") if continuing would crowd out useful history.", used, limit)
+	}
+	return fmt.Sprintf("[automated context budget reminder, not the user] You are at %d of %d context tokens for the current model (last request's measured usage). Persist anything important now if continuing would crowd out useful history — compact is not available in this conversation.", used, limit)
 }
 
 // defaultAutoCompactPercent is the fraction of the model's published context

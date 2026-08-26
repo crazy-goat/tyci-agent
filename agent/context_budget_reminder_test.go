@@ -73,6 +73,51 @@ func TestRun_ContextBudgetReminder_FiresOnceThenFinishes(t *testing.T) {
 	}
 }
 
+// TestRun_ContextBudgetReminder_OmitsCompactMentionWithoutCompactor guards
+// an F10 review follow-up: a /btw or fork/resume child has cfg.Compactor
+// nil (btwConfig, F10) and no "compact" in its schema, so telling it to
+// "use compact(...)" would point at a tool it does not have — the same
+// wasted-round-trip class F10's review found for the auto-compact trigger.
+// The budget fact itself still fires (this child can persist to memory/a
+// file even without compact), only the compact-specific sentence is
+// conditional.
+func TestRun_ContextBudgetReminder_OmitsCompactMentionWithoutCompactor(t *testing.T) {
+	p := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		OnExhausted: []stream.Event{
+			stream.TextDelta{Text: "done"},
+			stream.Finish{Usage: stream.Usage{Input: 150000, Output: 1000}},
+		},
+	}
+	d := &silentDisplay{}
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
+	}
+
+	if _, err := Run(context.Background(), p, d, &msgs, Config{
+		MaxRetries:   1,
+		ContextLimit: 200000,
+		Compactor:    nil, // btwConfig's shape for a /btw/fork/resume child
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countReminderLines(msgs); got != 1 {
+		t.Fatalf("reminder count = %d, want 1 (the budget fact must still fire without a Compactor)", got)
+	}
+	for _, m := range msgs {
+		if m.Role != "user" || len(m.Content) == 0 || !strings.Contains(m.Content[0].Text, "automated context budget reminder") {
+			continue
+		}
+		if strings.Contains(m.Content[0].Text, "compact(summary") {
+			t.Fatalf("reminder without a Compactor must not tell the model to call compact(...): %q", m.Content[0].Text)
+		}
+		if !strings.Contains(m.Content[0].Text, "compact is not available") {
+			t.Fatalf("reminder without a Compactor should say so: %q", m.Content[0].Text)
+		}
+	}
+}
+
 func TestRun_ContextBudgetReminder_NoNudgeBelowThreshold(t *testing.T) {
 	p := &connectortest.Fake{
 		ProviderName: "count",
