@@ -160,14 +160,14 @@ func TestUnlockToolNilRegistry(t *testing.T) {
 }
 
 func TestLockUnlockRegisteredInToolRegistry(t *testing.T) {
-	lockTool, ok := toolRegistry["lock"]
+	lockTool, ok := lookupTool("lock")
 	if !ok {
 		t.Fatal("expected \"lock\" tool to be registered")
 	}
 	if _, ok := lockTool.(*LockTool); !ok {
 		t.Fatal("expected \"lock\" tool to be a *LockTool")
 	}
-	unlockTool, ok := toolRegistry["unlock"]
+	unlockTool, ok := lookupTool("unlock")
 	if !ok {
 		t.Fatal("expected \"unlock\" tool to be registered")
 	}

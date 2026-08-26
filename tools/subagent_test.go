@@ -378,17 +378,17 @@ func TestParseTasks_TasksArrayEmpty(t *testing.T) {
 // the executable registry. Before the fix, SetSubAgentRunner was never called and
 // RunTool returned "unknown tool: subagent".
 func TestSetSubAgentRunner_RegistersTool(t *testing.T) {
-	if _, ok := toolRegistry["subagent"]; ok {
+	if _, ok := lookupTool("subagent"); ok {
 		t.Fatal("precondition: subagent should not be registered before SetSubAgentRunner")
 	}
 	t.Cleanup(func() {
-		delete(toolRegistry, "subagent")
+		unregisterTool("subagent")
 		subagentToolInstance = nil
 	})
 
 	SetSubAgentRunner(&mockRunner{})
 
-	tool, ok := toolRegistry["subagent"]
+	tool, ok := lookupTool("subagent")
 	if !ok {
 		t.Fatal("subagent tool not registered after SetSubAgentRunner")
 	}
@@ -1430,7 +1430,7 @@ func TestRunTasks_SiblingChildrenGetDistinctTodoLists(t *testing.T) {
 // adapter's job and is verified separately by the integration smoke test.
 func TestRunSingleTask_TruncatedFlagReachesToolResult(t *testing.T) {
 	t.Cleanup(func() {
-		delete(toolRegistry, "subagent")
+		unregisterTool("subagent")
 		subagentToolInstance = nil
 	})
 	SetSubAgentRunner(&mockRunner{
@@ -1457,7 +1457,7 @@ func TestRunSingleTask_TruncatedFlagReachesToolResult(t *testing.T) {
 // spuriously appended to a complete answer.
 func TestRunSingleTask_CleanSuccessNotTruncated(t *testing.T) {
 	t.Cleanup(func() {
-		delete(toolRegistry, "subagent")
+		unregisterTool("subagent")
 		subagentToolInstance = nil
 	})
 	SetSubAgentRunner(&mockRunner{
@@ -1517,7 +1517,7 @@ func (w testJobWaiter) Wait(ctx context.Context, id string, timeout time.Duratio
 // completes with the task's result reachable through the injected registry.
 func TestSubagentAsync_ReturnsJobIDImmediately(t *testing.T) {
 	t.Cleanup(func() {
-		delete(toolRegistry, "subagent")
+		unregisterTool("subagent")
 		subagentToolInstance = nil
 		SetJobStarter(nil)
 	})
@@ -1583,7 +1583,7 @@ func TestSubagentAsync_ReturnsJobIDImmediately(t *testing.T) {
 // SetJobStarter yet.
 func TestSubagentAsync_NoJobStarterConfigured(t *testing.T) {
 	t.Cleanup(func() {
-		delete(toolRegistry, "subagent")
+		unregisterTool("subagent")
 		subagentToolInstance = nil
 		SetJobStarter(nil)
 	})
@@ -1605,7 +1605,7 @@ func TestSubagentAsync_NoJobStarterConfigured(t *testing.T) {
 // one interpretation.
 func TestSubagentAsync_MixedBatchRejected(t *testing.T) {
 	t.Cleanup(func() {
-		delete(toolRegistry, "subagent")
+		unregisterTool("subagent")
 		subagentToolInstance = nil
 	})
 	SetSubAgentRunner(&mockRunner{})
@@ -1630,7 +1630,7 @@ func TestSubagentAsync_MixedBatchRejected(t *testing.T) {
 // nothing should be forwarded to the parent's stream.Output at all.
 func TestSubagentAsync_DoesNotStreamToParentToolIdx(t *testing.T) {
 	t.Cleanup(func() {
-		delete(toolRegistry, "subagent")
+		unregisterTool("subagent")
 		subagentToolInstance = nil
 		SetJobStarter(nil)
 	})
@@ -1692,7 +1692,7 @@ func spawnedJobsJSON(content string) string {
 // everything away.
 func TestSubagentAsync_ResultExplainsTheChannels(t *testing.T) {
 	t.Cleanup(func() {
-		delete(toolRegistry, "subagent")
+		unregisterTool("subagent")
 		subagentToolInstance = nil
 		SetJobStarter(nil)
 	})

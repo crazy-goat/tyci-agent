@@ -312,7 +312,7 @@ func TestWebSchema_present(t *testing.T) {
 }
 
 func TestWebRegistry_registered(t *testing.T) {
-	tool, ok := toolRegistry["web"]
+	tool, ok := lookupTool("web")
 	if !ok {
 		t.Fatal("web tool not registered in toolRegistry")
 	}

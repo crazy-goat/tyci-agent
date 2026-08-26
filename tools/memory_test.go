@@ -119,7 +119,7 @@ func TestMemoryRejectsBadInput(t *testing.T) {
 // TestMemoryIsInTheToolSchema: a tool the model is never told about is a tool
 // that is never used.
 func TestMemoryIsInTheToolSchema(t *testing.T) {
-	if _, ok := toolRegistry["memory"]; !ok {
+	if _, ok := lookupTool("memory"); !ok {
 		t.Fatal("memory is not registered")
 	}
 

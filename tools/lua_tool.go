@@ -524,14 +524,22 @@ func LoadAndRegisterLocalLuaTools(dir string) {
 // found that tool already present and concluded, wrongly, that an
 // untrusted project's Lua had been loaded.
 //
-// Deliberately not mutex-guarded, matching toolRegistry itself: the map is
-// written at init and by these test helpers, never concurrently.
+// Takes toolRegistryMu for both the snapshot and the restore: toolRegistry
+// is mutex-guarded now (see tool.go's toolRegistryMu doc comment), so this
+// helper's own map access has to go through the same lock as every other
+// reader/writer, even though nothing else touches the registry during the
+// brief window between the two locked sections in a normal test.
 func SnapshotLuaToolsForTesting() func() {
+	toolRegistryMu.RLock()
 	saved := make(map[string]Tool, len(toolRegistry))
 	for name, tool := range toolRegistry {
 		saved[name] = tool
 	}
+	toolRegistryMu.RUnlock()
+
 	return func() {
+		toolRegistryMu.Lock()
+		defer toolRegistryMu.Unlock()
 		for name := range toolRegistry {
 			if _, kept := saved[name]; !kept {
 				delete(toolRegistry, name)
@@ -550,8 +558,14 @@ func registerLuaToolsFromDir(dir string) {
 		return
 	}
 
+	// The collision check and the write must be one atomic critical section
+	// under a single Lock: a locked read followed by a separately locked
+	// write would let another writer land in between and register the same
+	// name first, so this loop's insert would silently clobber it instead
+	// of reporting the collision it exists to catch.
+	toolRegistryMu.Lock()
+	defer toolRegistryMu.Unlock()
 	for _, tool := range tools {
-		// Check for name collision
 		if _, exists := toolRegistry[tool.name]; exists {
 			fmt.Fprintf(os.Stderr, "Warning: lua tool %s conflicts with built-in tool, skipping\n", tool.name)
 			continue

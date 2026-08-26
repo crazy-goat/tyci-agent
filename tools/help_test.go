@@ -24,7 +24,7 @@ func TestHelpIndexListsEveryTool(t *testing.T) {
 	}
 	// Every registered tool must be findable, or help sends the model looking
 	// for documentation that does not exist.
-	for name := range toolRegistry {
+	for _, name := range toolNames() {
 		if !strings.Contains(res.Content, name) {
 			t.Errorf("%q is registered but missing from the index", name)
 		}

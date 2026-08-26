@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/internal/hooks"
@@ -588,17 +589,33 @@ func builtinToolsSchema() []map[string]any {
 // convention in the Lua schema format, so every parameter is advertised as
 // optional.
 func luaToolsSchema() []map[string]any {
-	names := make([]string, 0, len(toolRegistry))
+	// One pass under one RLock: collecting names here and re-indexing
+	// toolRegistry[name] in a second, separately-locked pass would let a
+	// write (registerLuaToolsFromDir, or a test's registerTool/unregisterTool)
+	// land between the two and panic on the single-value type assertion
+	// `toolRegistry[name].(*LuaTool)` — nil if the name is gone by then,
+	// wrong type if it now maps to something else. (A tool merely not
+	// appearing because it was added after the first pass is not a bug,
+	// which is why panicking is the whole failure mode here.) Snapshotting the *LuaTool pointers themselves here means
+	// the rest of the function needs no lock at all.
+	type luaEntry struct {
+		name string
+		tool *LuaTool
+	}
+	toolRegistryMu.RLock()
+	entries := make([]luaEntry, 0, len(toolRegistry))
 	for name, tool := range toolRegistry {
-		if _, ok := tool.(*LuaTool); ok {
-			names = append(names, name)
+		if lt, ok := tool.(*LuaTool); ok {
+			entries = append(entries, luaEntry{name, lt})
 		}
 	}
-	sort.Strings(names)
+	toolRegistryMu.RUnlock()
+
+	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 
 	var schema []map[string]any
-	for _, name := range names {
-		lt := toolRegistry[name].(*LuaTool)
+	for _, e := range entries {
+		lt := e.tool
 		schema = append(schema, map[string]any{
 			"type": "function",
 			"function": map[string]any{
@@ -789,6 +806,24 @@ func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
 // without a parallel, tools-package-only accessor to keep in sync.
 var LockRegistry = locks.NewRegistry()
 
+// toolRegistryMu guards every read and write of toolRegistry. Unlike the
+// job-hook globals this package already guards (jobNotifier, jobStarter,
+// etc. — see bgbash.go's jobNotifierMu doc comment), a race on this one
+// isn't a silently-torn value: it's a *map*, written after init by
+// SetSubAgentRunner, registerLuaToolsFromDir and the test helpers below,
+// and read on every tool call (runToolInner), every dispatcher concurrency
+// check (MaxParallelFor) and the Lua schema builder (luaToolsSchema) — all
+// of which can run on job/agent goroutines concurrently with a write. A
+// concurrent Go map read/write doesn't produce a torn pointer that might go
+// unnoticed; it's `fatal error: concurrent map read and map write`, which
+// aborts the whole process.
+//
+// Same iron rule as every other lock in this package: a caller never holds
+// toolRegistryMu while calling into a Tool it just looked up, because a
+// tool's Run can itself reach back into other tools (e.g. subagent calling
+// other tools) or into other locked package state.
+var toolRegistryMu sync.RWMutex
+
 var toolRegistry = map[string]Tool{
 	"bash":    &BashTool{},
 	"lua":     &LuaEvalTool{},
@@ -824,6 +859,50 @@ var toolRegistry = map[string]Tool{
 	"kill_job": &KillJobTool{},
 }
 
+// lookupTool returns the tool registered under name, copying the interface
+// value out under RLock so the caller never holds toolRegistryMu while
+// running it (that call can itself reach back into the registry or into
+// other locked package state — the same reason getJobStarter etc. never
+// hold their lock across a call into the interface).
+func lookupTool(name string) (Tool, bool) {
+	toolRegistryMu.RLock()
+	defer toolRegistryMu.RUnlock()
+	tool, ok := toolRegistry[name]
+	return tool, ok
+}
+
+// registerTool installs tool under name, replacing whatever was registered
+// there. Used both by production wiring (SetSubAgentRunner) and by tests
+// that swap in a fake tool for the duration of one test.
+func registerTool(name string, tool Tool) {
+	toolRegistryMu.Lock()
+	toolRegistry[name] = tool
+	toolRegistryMu.Unlock()
+}
+
+// unregisterTool removes name from the registry if present. Mirrors
+// registerTool for test cleanup (e.g. restoring the registry to how it was
+// before a test's swapTool/registerTool call).
+func unregisterTool(name string) {
+	toolRegistryMu.Lock()
+	delete(toolRegistry, name)
+	toolRegistryMu.Unlock()
+}
+
+// toolNames returns a snapshot of every currently-registered tool name.
+// Snapshotting (rather than handing back a way to range over the live map)
+// means a caller can safely take as long as it likes inspecting the names
+// without holding toolRegistryMu.
+func toolNames() []string {
+	toolRegistryMu.RLock()
+	defer toolRegistryMu.RUnlock()
+	names := make([]string, 0, len(toolRegistry))
+	for name := range toolRegistry {
+		names = append(names, name)
+	}
+	return names
+}
+
 // SetJobWaiter wires the "wait" tool's job_id polling path (tools/wait.go)
 // to a JobWaiter. Called once from main() with an adapter over the app's
 // shared jobs.Registry — the same registry /btw side-conversations and the
@@ -832,20 +911,31 @@ var toolRegistry = map[string]Tool{
 // This package deliberately does not import "jobs" itself (see JobWaiter's
 // doc comment on the import-cycle risk); the caller supplies an
 // implementation that satisfies the interface structurally.
+//
+// This mutates the *WaitTool already sitting in the registry rather than
+// replacing the registry entry (SetSubAgentRunner's approach, below) — so
+// unlike a map-slot swap, this write races with WaitTool.Run reading the
+// same field on job/agent goroutines. See WaitTool.setWaiter's doc comment
+// for the guard.
 func SetJobWaiter(w JobWaiter) {
-	if wt, ok := toolRegistry["wait"].(*WaitTool); ok {
-		wt.Waiter = w
+	tool, _ := lookupTool("wait")
+	if wt, ok := tool.(*WaitTool); ok {
+		wt.setWaiter(w)
 	}
 }
 
 // subagentToolInstance is the singleton SubagentTool used by the registry.
+// Only ever written by SetSubAgentRunner and by test cleanup after that
+// test's own goroutines have already joined, so — unlike toolRegistry or
+// WaitTool.Waiter — nothing reads it concurrently with a write; it needs no
+// lock of its own.
 var subagentToolInstance *SubagentTool
 
 // SetSubAgentRunner sets the runner for the subagent tool and registers it.
 // Must be called before any subagent tool usage.
 func SetSubAgentRunner(runner SubAgentRunner) {
 	subagentToolInstance = &SubagentTool{Runner: runner}
-	toolRegistry["subagent"] = subagentToolInstance
+	registerTool("subagent", subagentToolInstance)
 }
 
 func RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {
@@ -891,7 +981,7 @@ func RunTool(ctx context.Context, name string, arguments map[string]any) ToolRes
 }
 
 func runToolInner(ctx context.Context, name string, arguments map[string]any) ToolResult {
-	if tool, ok := toolRegistry[name]; ok {
+	if tool, ok := lookupTool(name); ok {
 		return tool.Run(ctx, arguments)
 	}
 
@@ -921,7 +1011,7 @@ func MaxParallelFor(name string) int {
 	if mcpRunner := GetMCPToolRunner(); mcpRunner != nil && mcpRunner.HasTool(name) {
 		return 0
 	}
-	tool, ok := toolRegistry[name]
+	tool, ok := lookupTool(name)
 	if !ok {
 		return 0
 	}

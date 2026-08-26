@@ -157,11 +157,11 @@ func TestLuaToolSchemaVisibleToModel(t *testing.T) {
 	}
 
 	const name = "schema-visible-lua"
-	if _, exists := toolRegistry[name]; exists {
+	if _, exists := lookupTool(name); exists {
 		t.Fatalf("test tool name %q already registered — pick a different name", name)
 	}
-	toolRegistry[name] = tools[0]
-	defer delete(toolRegistry, name)
+	registerTool(name, tools[0])
+	defer unregisterTool(name)
 
 	for _, schema := range []struct {
 		label string
