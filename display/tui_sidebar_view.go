@@ -80,6 +80,9 @@ func (m TuiModel) sidebarColumnWidth() int {
 // letting either column go negative. Both sides render squeezed in that
 // case, which is an acceptable degraded state — nothing crashes.
 func (m TuiModel) mainColumnWidth() int {
+	if m.widthFinal {
+		return m.width
+	}
 	if !m.sidebarActive {
 		return m.width
 	}
@@ -117,14 +120,67 @@ func (m TuiModel) mainColumnWidth() int {
 // displayed; openSidebar/closeSidebar already invalidate on the transition,
 // so the caches re-flow both ways.
 //
-// Callers run on either the real model or the shadow copy — both carry
-// sidebarActive, and mainColumnWidth reads only width/sidebarActive, so the
-// answer is identical from either.
+// NOT idempotent under sidebarActive=true if called on a model whose .width
+// is ALREADY the narrowed mainColumnWidth (F13): mainColumnWidth narrows
+// again on top of an already-narrow width, since it has no way to tell "this
+// width is already final" from "this is the real, full terminal width" —
+// both just look like some m.width with m.sidebarActive set. Concretely,
+// real width=120 narrows once to 71; feed 71 back in with sidebarActive
+// still true and it narrows AGAIN to 34. mainShadow() (below) is the ONLY
+// sanctioned way to build a model in that shape, and it clears
+// sidebarActive as part of constructing it — every caller that needs a
+// main-column-width copy of the model (renderFrame's side-by-side render in
+// tui_view.go, routeSidebarMsg's main-column mouse dispatch in
+// tui_sidebar.go) must go through it rather than hand-narrowing .width
+// again, or this idempotence guarantee silently breaks for that one caller.
 func (m TuiModel) renderWidth() int {
 	if m.sidebarActive {
 		return m.mainColumnWidth()
 	}
 	return m.width
+}
+
+// mainShadow returns a copy of m narrowed to mainColumnWidth() with
+// sidebarActive cleared — the "shadow model" used to RENDER through the
+// main conversation's own width-keyed logic while the sidebar is open (see
+// renderWidth's doc comment for why clearing sidebarActive here, not just
+// narrowing width, is required). Render-only is load-bearing: clearing
+// sidebarActive is safe exactly because nothing on a pure render path
+// (renderMainColumn and everything it calls) treats sidebarActive as
+// anything but a width-narrowing switch.
+//
+// Do NOT use this to dispatch a message (a mouse click, a resize) — a
+// dispatched message can run a handler that reads sidebarActive as real UI
+// state rather than a width hint (e.g. openSidebar/closeSidebar deciding
+// their own open/closed transition), and clearing it there makes an
+// already-open sidebar look closed to that handler. Use dispatchShadow
+// (below) for that case — found by review of an F13 fix that used this for
+// both and broke the sidebar's own mouse-click-to-open handling (double-
+// narrowed input width, clobbered saved scroll position, a full cache
+// invalidation, all on a single click).
+func (m TuiModel) mainShadow() TuiModel {
+	shadow := m
+	shadow.width = m.mainColumnWidth()
+	shadow.sidebarActive = false
+	return shadow
+}
+
+// dispatchShadow returns a copy of m narrowed to mainColumnWidth() with
+// widthFinal set, WITHOUT touching sidebarActive — unlike mainShadow, safe
+// to dispatch a message through (e.g. routeSidebarMsg's main-column mouse
+// handling in tui_sidebar.go). .width is narrowed directly (not just an
+// override mainColumnWidth() consults) because other code — statusRightHit,
+// buildContextCost — reads .width directly rather than going through
+// mainColumnWidth(); widthFinal is what stops mainColumnWidth()/
+// renderWidth() from narrowing that already-narrow value a second time
+// (F13), while sidebarActive stays true and accurate for any handler that
+// reads it as real UI state rather than a width hint (e.g.
+// openSidebar/closeSidebar deciding their own open/closed transition).
+func (m TuiModel) dispatchShadow() TuiModel {
+	shadow := m
+	shadow.width = m.mainColumnWidth()
+	shadow.widthFinal = true
+	return shadow
 }
 
 func (m TuiModel) sidebarLayout() sidebarLayoutT {

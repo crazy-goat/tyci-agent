@@ -455,6 +455,21 @@ type TuiModel struct {
 	// conversation (see tui_sidebar_view.go's sidebarLayout/mainColumnWidth)
 	// — both stay visible and interactive at once.
 	sidebarActive bool
+	// widthFinal, when true, tells mainColumnWidth()/renderWidth() that
+	// .width is ALREADY the final, narrowed value — return it unchanged
+	// rather than narrowing again. Set only by dispatchShadow()
+	// (tui_sidebar_view.go) for routing a message (e.g. a mouse click)
+	// against the narrowed main-column width while leaving sidebarActive
+	// untouched: other code (statusRightHit, buildContextCost) reads the
+	// raw .width field directly rather than going through
+	// mainColumnWidth(), which is why the shadow must narrow .width itself
+	// rather than only overriding what mainColumnWidth() computes — but
+	// mainShadow()'s trick of also clearing sidebarActive to prevent
+	// double-narrowing broke handlers (openSidebar/closeSidebar) that read
+	// sidebarActive as real UI state, not a width hint (review of F13).
+	// widthFinal separates "don't narrow again" from "the sidebar is
+	// closed", so both can be satisfied at once.
+	widthFinal bool
 	// sidebarFocused is the conversation<->sidebar focus state machine while
 	// the sidebar column is open: false means keyboard input still goes to
 	// the prompt/input box as normal (Left/Right do whatever they do in the

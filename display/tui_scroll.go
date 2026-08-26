@@ -73,6 +73,59 @@ func (m *TuiModel) invalidateTotalLines() {
 	m.invalidateMessageRegion()
 }
 
+// invalidateDirtyBlockWidthCaches is F14's immediate, cheap half of the
+// resize fix: it clears the width-keyed streaming caches (streamWraps,
+// mdStreamState, mdCacheRendered) and cachedLineCount/cachedLines for
+// CURRENTLY-STREAMING (dirty) blocks only, right when handleResize fires —
+// not the full invalidateAllBlockLineCounts sweep, and deliberately not
+// cachedTotalLines.
+//
+// Why the narrower scope: an earlier version of this fix called the full
+// invalidateAllBlockLineCounts() immediately on every resize event, which a
+// review round measured at up to ~37x the per-event cost on a session with
+// a few hundred blocks (1.3ms -> 49ms for a single Update+View). The
+// expense was never the invalidation itself (clearing maps/counters is
+// O(dirty blocks)) — it was invalidateTotalLines() setting cachedTotalLines
+// = -1, which forces totalRenderedLines' NEXT call (View() runs right after
+// every Update(), so that's immediate) to loop over every resident block
+// and, for every FLUSHED one, see `flushedWidth != renderWidth()` (true for
+// all of them the instant m.width changes) and page it back in from disk —
+// on every single resize event during a drag, not once per gesture.
+//
+// The actual bug this exists to fix — a line cached at the old width
+// emitted at the new renderWidth() and shredded by buildViewportRows'
+// overlong-line safety net — only has a REAL, newly-worsened window on the
+// block that's actively streaming right now (streamWrap.stableLines /
+// mdStreamState's renderedPrefixLines are exactly the caches that can hold
+// a partial, old-width wrap while new tokens keep arriving mid-resize).
+// Finished/resident blocks sit unchanged until something re-renders them;
+// item 51 didn't change that pre-existing, accepted ~100ms-and-self-heals
+// window for them (see this item's own history), so leaving their caches
+// alone until the debounced handleResizeFlush — which still runs the FULL
+// invalidateAllBlockLineCounts exactly as before this fix — is the same
+// trade this project already made, just no longer also applied per-event
+// to the one thing that got measurably worse.
+func (m *TuiModel) invalidateDirtyBlockWidthCaches() {
+	if len(m.dirtyBlocks) == 0 {
+		return
+	}
+	for idx := range m.dirtyBlocks {
+		if idx < 0 || idx >= len(m.blocks) {
+			continue
+		}
+		m.blocks[idx].cachedLineCount = 0
+		m.blocks[idx].cachedLines = nil
+		delete(m.streamWraps, idx)
+		delete(m.mdStreamState, idx)
+		delete(m.mdCacheRendered, idx)
+	}
+	// buildMessageRegionCached's key already includes m.width (which
+	// changed immediately, unrelated to this fix), so it would rebuild
+	// anyway — this is just explicit and matches invalidateAllBlockLineCounts'
+	// own call, at negligible cost (a bool set).
+	m.invalidateMessageRegion()
+}
+
 // invalidateAllBlockLineCounts clears per-block line counts and total line cache.
 // Called on resize since wrap width changes.
 //

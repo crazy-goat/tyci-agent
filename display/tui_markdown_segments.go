@@ -53,6 +53,17 @@ type mdStreamState struct {
 // self-healing edge case (forceRenderDirtyBlocks re-renders the whole block
 // from scratch once it finishes), consistent with 4-space code blocks being
 // out of scope for this scanner.
+// F16(b): indent is a raw character count (a tab counts as 1, not several
+// visual columns), so the fenceIndent+3 closing-slack check is
+// column-inconsistent for a tab-indented fence — direction depends on which
+// side has the tab: on the OPENER it narrows tolerance (safe: a closer goes
+// unrecognized, degrading to raw text like F15); on the CLOSER it can
+// widen it (opener "```" + closer "\t\t```" counts as indent=2, closing a
+// fence that visually (≈16 cols in a nested list) should still be open —
+// the riskier premature-close/garbling direction). Left as-is: consistent
+// with the rest of this character-based scanner, tabs in fence indentation
+// are rare in LLM output, and a column-width-aware fix needs a tab-stop
+// convention this code has no other reason to carry.
 func fenceLineInfo(line string) (indent int, marker byte, run int, rest string, ok bool) {
 	n := len(line)
 	i := 0
@@ -238,12 +249,19 @@ func (m *TuiModel) renderStreamingMarkdown(idx int, content string) string {
 	// non-empty when there is anything to show. Rebuilding that exact
 	// concatenation would copy the whole (possibly large) prefix on every
 	// token, which is the exact cost F1 removes above; skip it.
-	switch {
-	case len(st.renderedPrefixLines) == 0:
-		return tailWrapped
-	case len(tailLines) == 0:
-		return st.renderedPrefixJoined
-	default:
+	//
+	// F16(a): this used to just `return tailWrapped`, trusting the unstated
+	// invariant "len(tailLines) > 0 implies tailWrapped != ''". That's false:
+	// streamWrap.render returns ("", [""]) for a tail that's currently just
+	// pending whitespace/newlines, and the old "" then made getBlockLines
+	// wipe the cachedLines just set above, vanishing an already-styled
+	// block for a frame. Guard on len(lines) instead — the thing this
+	// string's emptiness must actually track.
+	if len(lines) == 0 {
+		return ""
+	}
+	if tailWrapped != "" {
 		return tailWrapped
 	}
+	return st.renderedPrefixJoined
 }

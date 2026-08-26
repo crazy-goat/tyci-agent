@@ -363,6 +363,79 @@ func TestSegmentPartitionCoversContentExactlyOnce(t *testing.T) {
 	}
 }
 
+// ─── F16(a): the composer's tailWrapped/tailLines invariant ──────────────
+
+// TestStreamWrapRender_CanReturnEmptyOutWithNonEmptyLines pins down the
+// low-level fact renderStreamingMarkdown's composer used to silently rely
+// on: streamWrap.render's own `if out == "" { lines = []string{""} }`
+// (tui_render_block.go) means content that wraps to nothing (every logical
+// line empty — reachable only when content is composed entirely of bare
+// "\n"s) comes back as out="" but a NON-empty, one-element lines slice.
+// "len(tailLines) > 0" is therefore not proof that "tailWrapped != ''".
+func TestStreamWrapRender_CanReturnEmptyOutWithNonEmptyLines(t *testing.T) {
+	sw := &streamWrap{}
+	out, lines := sw.render("\n", false, 80)
+	if out != "" {
+		t.Fatalf("expected out == \"\" for an all-newline tail, got %q", out)
+	}
+	if len(lines) == 0 {
+		t.Fatalf("expected a non-empty lines slice even though out == \"\", got %v", lines)
+	}
+}
+
+// TestRenderStreamingMarkdown_NonEmptyPrefixSurvivesBlankTail is F16(a)'s
+// regression test at renderStreamingMarkdown's level: with a styled prefix
+// already flushed and a pending tail that happens to be pure "\n" (so
+// streamWrap.render returns "" per the test above), the function's return
+// value is only ever consulted by getBlockLines for an `== ""` emptiness
+// check (see its doc comment) — if it wrongly returns "" here, getBlockLines
+// wipes the cachedLines this call just populated with real, non-empty
+// prefix content, vanishing an already-styled block for a frame.
+//
+// The mdStreamState fields are set directly (scanPos already past the
+// tail, safeUpto == renderedUpto so no new flush fires this call) to
+// isolate the composer from scan()'s own behavior — in ordinary streaming
+// scan() sweeps a completed all-newline segment into safeUpto immediately,
+// so this exact state is a boundary case of the type's contract, not
+// something scan() itself produces; the composer must still handle it
+// correctly rather than trust an invariant scan() doesn't actually
+// guarantee syntactically.
+func TestRenderStreamingMarkdown_NonEmptyPrefixSurvivesBlankTail(t *testing.T) {
+	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.width = 80
+	m.height = 24
+	m.status = "responding"
+	m.blocks = append(m.blocks, block{kind: "text", dirty: true})
+	idx := 0
+	m.dirtyBlocks[idx] = true
+
+	flushed := "already flushed prefix\n"
+	content := flushed + "\n" // pending tail: a single bare newline, content[len(flushed):] == "\n"
+	st := &mdStreamState{
+		renderedPrefixLines:  []string{"styled prefix line"},
+		renderedPrefixJoined: "styled prefix line\n",
+		renderedUpto:         len(flushed),
+		// scanPos == len(content) (computed from the FINAL content, tail
+		// included) makes st.scan(content) a no-op inside
+		// renderStreamingMarkdown below, so this test isolates the
+		// composer's handling of the tail from scan()'s own behavior —
+		// which would otherwise immediately sweep this trailing "\n" into
+		// safeUpto itself (see the test's doc comment).
+		scanPos:  len(content),
+		safeUpto: len(flushed),
+	}
+	m.mdStreamState[idx] = st
+
+	got := m.renderStreamingMarkdown(idx, content)
+	if got == "" {
+		t.Fatal("renderStreamingMarkdown returned \"\" despite a non-empty styled prefix — " +
+			"getBlockLines would read this as \"nothing rendered\" and wipe the cachedLines just set")
+	}
+	if len(m.blocks[idx].cachedLines) == 0 {
+		t.Fatalf("expected cachedLines to hold the flushed prefix, got %v", m.blocks[idx].cachedLines)
+	}
+}
+
 // ─── Self-healing: final render must match the unstreamed render ────────
 
 // TestFinalRenderMatchesUnstreamed is the property that operationalizes
