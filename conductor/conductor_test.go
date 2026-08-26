@@ -743,6 +743,117 @@ func TestConductor_ResumeSwapsSessionAndHistory(t *testing.T) {
 	}
 }
 
+// TestConductor_RecordsSystemPromptOnFirstOpenWithoutDrift covers the lazy
+// (auto-generated path) open: the first Submit materializes the session file
+// and must record cfg.System as the ledger's first system_prompt event, with
+// no drift reported (there is nothing on disk yet to have drifted from).
+func TestConductor_RecordsSystemPromptOnFirstOpenWithoutDrift(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sp.jsonl")
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m",
+		Turns: [][]stream.Event{{stream.Finish{}}}}
+	c := New(Options{Client: client, Sink: &recorder{}, SessionPath: path, WorkDir: dir,
+		Config: agent.Config{System: "prompt v1"}})
+
+	if _, err := c.Submit(context.Background(), "hi"); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if c.SystemPromptDrift() {
+		t.Errorf("expected no drift on first open")
+	}
+	c.EndSession("ok", 0)
+
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), `"type":"system_prompt"`) {
+		t.Errorf("system_prompt event not written on first open:\n%s", data)
+	}
+	if !strings.Contains(string(data), "prompt v1") {
+		t.Errorf("recorded event does not carry the prompt text:\n%s", data)
+	}
+}
+
+// TestConductor_ExplicitSessionOpenRecordsSystemPromptAtConstruction covers
+// the OTHER open path (explicit --session, already-open Config.Session at
+// construction time — see New's doc comment): the event must be recorded
+// during New itself, not deferred to the first Submit.
+func TestConductor_ExplicitSessionOpenRecordsSystemPromptAtConstruction(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "explicit.jsonl")
+	sess, err := session.Open(path, dir, "m", "p")
+	if err != nil {
+		t.Fatalf("seed Open: %v", err)
+	}
+
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m"}
+	c := New(Options{Client: client, Sink: &recorder{}, SessionPath: path, WorkDir: dir,
+		Config: agent.Config{System: "prompt v1", Session: sess}})
+	c.EndSession("ok", 0)
+
+	if c.SystemPromptDrift() {
+		t.Errorf("expected no drift for a brand-new session file")
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), `"type":"system_prompt"`) {
+		t.Errorf("system_prompt event not written at construction:\n%s", data)
+	}
+}
+
+// TestConductor_ResumeDetectsSystemPromptDrift is the drift check's core
+// proof: a session recorded with one prompt, resumed by a Conductor whose
+// cfg.System has since changed (as if tools were added/removed or the
+// harness prompt was edited), must report SystemPromptDrift()=true and
+// append a SECOND system_prompt event — the first is never touched.
+func TestConductor_ResumeDetectsSystemPromptDrift(t *testing.T) {
+	dir := t.TempDir()
+	oldPath := filepath.Join(dir, "old.jsonl")
+
+	seed, err := session.Open(oldPath, dir, "m", "p")
+	if err != nil {
+		t.Fatalf("seed Open: %v", err)
+	}
+	if _, err := seed.RecordSystemPrompt("prompt v1 (old tools)"); err != nil {
+		t.Fatalf("seed RecordSystemPrompt: %v", err)
+	}
+	_ = seed.Close()
+
+	client := &connectortest.Fake{ProviderName: "p", ModelName: "m"}
+	c := New(Options{Client: client, Sink: &recorder{}, WorkDir: dir,
+		Config: agent.Config{System: "prompt v2 (tools changed)"}})
+
+	if err := c.Resume(oldPath, nil, stream.Usage{}); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if !c.SystemPromptDrift() {
+		t.Errorf("expected SystemPromptDrift()=true after resuming onto a session recorded with a different prompt")
+	}
+	c.EndSession("ok", 0)
+
+	data, _ := os.ReadFile(oldPath)
+	if n := strings.Count(string(data), `"type":"system_prompt"`); n != 2 {
+		t.Errorf("expected 2 system_prompt events (old + drifted new), got %d:\n%s", n, data)
+	}
+	if !strings.Contains(string(data), "prompt v1 (old tools)") || !strings.Contains(string(data), "prompt v2 (tools changed)") {
+		t.Errorf("both prompt generations must survive on disk (append-only ledger):\n%s", data)
+	}
+
+	// A resume onto the SAME (already up to date) prompt must not report
+	// drift or duplicate the event.
+	client2 := &connectortest.Fake{ProviderName: "p", ModelName: "m"}
+	c2 := New(Options{Client: client2, Sink: &recorder{}, WorkDir: dir,
+		Config: agent.Config{System: "prompt v2 (tools changed)"}})
+	if err := c2.Resume(oldPath, nil, stream.Usage{}); err != nil {
+		t.Fatalf("second Resume: %v", err)
+	}
+	if c2.SystemPromptDrift() {
+		t.Errorf("expected no drift when resuming with the already-current prompt")
+	}
+	c2.EndSession("ok", 0)
+	data, _ = os.ReadFile(oldPath)
+	if n := strings.Count(string(data), `"type":"system_prompt"`); n != 2 {
+		t.Errorf("re-resuming with an unchanged prompt must not append a third event, got %d:\n%s", n, data)
+	}
+}
+
 // TestConductor_ResumeOpenErrorKeepsRunning verifies a failed /resume reports
 // the error and does not take the conversation down with it.
 func TestConductor_ResumeOpenErrorKeepsRunning(t *testing.T) {

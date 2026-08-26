@@ -6,6 +6,8 @@ package session
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,10 +29,11 @@ import (
 type EventType string
 
 const (
-	TypeSession    EventType = "session"
-	TypeMessage    EventType = "message"
-	TypeCompaction EventType = "compaction"
-	TypeSessionEnd EventType = "session_end"
+	TypeSession      EventType = "session"
+	TypeMessage      EventType = "message"
+	TypeCompaction   EventType = "compaction"
+	TypeSessionEnd   EventType = "session_end"
+	TypeSystemPrompt EventType = "system_prompt"
 )
 
 // Usage mirrors stream.Usage but is JSON-serializable without coupling.
@@ -106,6 +109,20 @@ type SessionEnd struct {
 	Status     string    `json:"status"`
 	ExitCode   int       `json:"exit_code"`
 	TotalUsage *Usage    `json:"total_usage,omitempty"`
+}
+
+// SystemPromptEvent records the exact system prompt actually sent to the
+// model for this session, as a ledger entry: it exists to be read back by a
+// human or a drift check, never by RebuildMessages/LoadForReplay (both skip
+// TypeSystemPrompt explicitly — see the doc comment on RecordSystemPrompt).
+// Hash is a truncated sha256 of Prompt, stored alongside the full text so a
+// drift check can compare cheaply without re-hashing on every read.
+type SystemPromptEvent struct {
+	Type      EventType `json:"type"`
+	ID        string    `json:"id"`
+	Timestamp string    `json:"timestamp"`
+	Prompt    string    `json:"prompt"`
+	Hash      string    `json:"hash"`
 }
 
 type CompactionEvent struct {
@@ -353,6 +370,96 @@ func (s *Session) WriteCompaction(summary string, tailStartID string, tailMessag
 	return s.recordDumpEvent(raw)
 }
 
+// HashSystemPrompt returns a short, stable fingerprint of a system prompt
+// text, used both when recording a SystemPromptEvent and when a caller wants
+// to compare a freshly built prompt against one already on disk without
+// carrying the full text around. Truncated to 16 hex chars (64 bits) — this
+// is a drift signal, not a security digest, so collision resistance at that
+// length is more than enough.
+func HashSystemPrompt(prompt string) string {
+	sum := sha256.Sum256([]byte(prompt))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// lastSystemPromptHash returns the hash recorded by the most recent
+// system_prompt event in the session file, if any.
+func (s *Session) lastSystemPromptHash() (string, bool) {
+	if s.path == "" {
+		return "", false
+	}
+	lines, err := parseSessionFile(s.path)
+	if err != nil {
+		return "", false
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if lines[i].MsgType != "system_prompt" {
+			continue
+		}
+		var ev SystemPromptEvent
+		if json.Unmarshal([]byte(lines[i].Raw), &ev) == nil {
+			return ev.Hash, true
+		}
+	}
+	return "", false
+}
+
+// RecordSystemPrompt appends a system_prompt ledger event carrying the exact
+// system prompt text actually in use, but only when it differs from the last
+// one recorded for this session (or none exists yet) — following the same
+// append-only-view philosophy as WriteCompaction: nothing is ever rewritten,
+// a new event is appended only when the effective prompt actually changed.
+//
+// drift is true exactly when a PREVIOUS system_prompt event existed and its
+// hash differs from prompt's — the signal a resume path uses to warn that
+// tools or the prompt were updated since this session last ran. drift is
+// always false the first time a session records a prompt (there is nothing
+// to have drifted from), even though the event is still written.
+//
+// This event is ledger data only: RebuildMessages and LoadForReplay both
+// skip TypeSystemPrompt explicitly, so its text never reaches a
+// []connector.Message and is never replayed back to the model.
+func (s *Session) RecordSystemPrompt(prompt string) (drift bool, err error) {
+	hash := HashSystemPrompt(prompt)
+	prevHash, hadPrev := s.lastSystemPromptHash()
+	if hadPrev && prevHash == hash {
+		return false, nil
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return false, fmt.Errorf("session closed")
+	}
+	id, err := newID()
+	if err != nil {
+		s.mu.Unlock()
+		return false, err
+	}
+	ev := SystemPromptEvent{
+		Type:      TypeSystemPrompt,
+		ID:        id,
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Prompt:    prompt,
+		Hash:      hash,
+	}
+	err = s.encoder.Encode(ev)
+	s.mu.Unlock()
+	if err != nil {
+		return false, err
+	}
+	// Same reasoning as WriteMessage: re-marshal the one event (cheap) to
+	// feed the incremental dump append (F9) instead of threading raw bytes
+	// out of the encoder.
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		return hadPrev, err
+	}
+	if err := s.recordDumpEvent(raw); err != nil {
+		return hadPrev, err
+	}
+	return hadPrev, nil
+}
+
 // Compact appends a compaction event and regenerates the derived markdown
 // dump. The JSONL remains the source of truth and is never deleted.
 func (s *Session) Compact(summary, tailStartID string, tail []connector.Message, droppedEvents int) (string, error) {
@@ -446,6 +553,8 @@ type dumpLineFields struct {
 	ExitCode  int            `json:"exit_code,omitempty"`
 	TailStart string         `json:"tail_start_id,omitempty"`
 	Dropped   int            `json:"dropped_events,omitempty"`
+	Prompt    string         `json:"prompt,omitempty"`
+	Hash      string         `json:"hash,omitempty"`
 }
 
 // writeDumpLineFor renders the dump line(s) for one raw JSONL event at
@@ -470,6 +579,10 @@ func writeDumpLineFor(f *os.File, n int, raw string) {
 			n, ev.Timestamp, ev.Dropped, orDash(ev.TailStart), text)
 	case TypeSessionEnd:
 		fmt.Fprintf(f, "[%d] [session_end] %s status=%s exit=%d\n", n, ev.Timestamp, ev.Status, ev.ExitCode)
+	case TypeSystemPrompt:
+		text := dumpCap(cleanDumpText(ev.Prompt))
+		fmt.Fprintf(f, "[%d] [system_prompt] %s hash=%s System Prompt (recorded): %s\n",
+			n, ev.Timestamp, ev.Hash, text)
 	default:
 		fmt.Fprintf(f, "[%d] [%s] %s\n", n, ev.Type, ev.Timestamp)
 	}
@@ -804,6 +917,8 @@ func parseSessionFile(path string) ([]ParsedLine, error) {
 			pl.MsgType = "compaction"
 		case TypeSessionEnd:
 			pl.MsgType = "session_end"
+		case TypeSystemPrompt:
+			pl.MsgType = "system_prompt"
 		}
 
 		lines = append(lines, pl)
@@ -895,6 +1010,11 @@ func RebuildMessages(lines []ParsedLine) ([]connector.Message, error) {
 
 	for _, l := range lines[startIdx:] {
 		if l.MsgType == "session_end" {
+			continue
+		}
+		if l.MsgType == "system_prompt" {
+			// Ledger data, not a conversation turn — never replayed back to
+			// the model. See RecordSystemPrompt's doc comment.
 			continue
 		}
 		if l.MsgType == "compaction" {
@@ -1496,6 +1616,10 @@ func LoadForReplay(path string) (ReplaySummary, []connector.Message, TotalUsage,
 			}
 			msgs = rebuilt
 		case "session_end":
+			continue
+		case "system_prompt":
+			// Ledger data, not a conversation turn — never replayed back to
+			// the model. See RecordSystemPrompt's doc comment.
 			continue
 		case "user", "assistant", "toolResult":
 			msg, ok := rebuildMessageLine(l.Raw)

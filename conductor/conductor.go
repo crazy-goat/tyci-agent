@@ -28,6 +28,8 @@ package conductor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -126,11 +128,17 @@ type Conductor struct {
 	mu       sync.Mutex
 	cancel   context.CancelFunc
 	inFlight bool
+
+	// systemPromptDrift records whether the most recent session open/resume
+	// found a system_prompt event on disk that DIFFERS from cfg.System — see
+	// recordSystemPrompt. Read by SystemPromptDrift, which a frontend checks
+	// once right after construction or after Resume.
+	systemPromptDrift bool
 }
 
 // New builds a Conductor over opts.
 func New(opts Options) *Conductor {
-	return &Conductor{
+	c := &Conductor{
 		client:       opts.Client,
 		sink:         opts.Sink,
 		cfg:          opts.Config,
@@ -139,7 +147,44 @@ func New(opts Options) *Conductor {
 		sessionPath:  opts.SessionPath,
 		workDir:      opts.WorkDir,
 	}
+	// Config.Session is already open here when the caller used an explicit
+	// --session (see Options.Config's doc comment) — that is itself a
+	// resume, so the ledger event and drift check belong here too, not only
+	// in EnsureSession's lazy-open path.
+	if c.cfg.Session != nil {
+		c.recordSystemPrompt()
+	}
+	return c
 }
+
+// recordSystemPrompt appends (or re-appends, on genuine drift) the
+// system_prompt ledger event for the currently open session — see
+// session.Session.RecordSystemPrompt's doc comment for the append-only
+// semantics and why RebuildMessages/LoadForReplay never see it. Errors are
+// reported on stderr rather than returned: this is diagnostic ledger
+// bookkeeping, the same class of best-effort write as WriteSessionEnd's
+// callers already tolerate failing, not something worth failing a resume or
+// a turn over.
+func (c *Conductor) recordSystemPrompt() {
+	if c.cfg.Session == nil || c.cfg.System == "" {
+		return
+	}
+	drift, err := c.cfg.Session.RecordSystemPrompt(c.cfg.System)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: recording system prompt: %v\n", err)
+		return
+	}
+	c.systemPromptDrift = drift
+}
+
+// SystemPromptDrift reports whether the session currently open recorded a
+// DIFFERENT system prompt the last time it ran — i.e. tools or the prompt
+// itself changed since this session was last used. Purely informational:
+// nothing about resume or the live conversation changes because of it (the
+// freshly-built prompt in cfg.System is still what is sent to the model).
+// A frontend checks this once right after construction or after Resume and
+// prints a note; it is not re-checked per turn.
+func (c *Conductor) SystemPromptDrift() bool { return c.systemPromptDrift }
 
 // Submit records prompt as a user turn and runs the agent loop over the
 // conversation until the model stops asking for tools.
@@ -353,10 +398,13 @@ func (c *Conductor) SessionPath() string { return c.sessionPath }
 // look at the session before the first prompt — one-shot prompt mode needs
 // IsResume() in order to decide whether to prepend a transcript.
 func (c *Conductor) EnsureSession() *session.Session {
-	sess, path, _ := ensureLazySession(c.cfg.Session, c.sessionPath, c.workDir, c.client.Model(), c.client.Provider())
+	sess, path, opened, _ := ensureLazySession(c.cfg.Session, c.sessionPath, c.workDir, c.client.Model(), c.client.Provider())
 	c.cfg.Session = sess
 	if sess != nil {
 		c.sessionPath = path
+	}
+	if opened {
+		c.recordSystemPrompt()
 	}
 	return sess
 }
@@ -404,5 +452,6 @@ func (c *Conductor) Resume(path string, msgs []connector.Message, usage stream.U
 	c.sessionPath = path
 	c.conversation = msgs
 	c.usage = usage
+	c.recordSystemPrompt()
 	return nil
 }

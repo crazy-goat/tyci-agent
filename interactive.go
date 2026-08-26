@@ -89,6 +89,9 @@ func (s *interactiveState) replaySession() {
 	if len(rebuiltMsgs) > 0 {
 		fmt.Fprintf(os.Stderr, "ℹ Resumed session %s (%d messages)\n", sess.ID(), len(rebuiltMsgs))
 	}
+	if s.cond.SystemPromptDrift() {
+		fmt.Fprintln(os.Stderr, "Note: this session's system prompt has changed since it last ran (tools or prompt updated).")
+	}
 }
 
 func (s *interactiveState) loop() {
@@ -358,5 +361,8 @@ func (s *interactiveState) handleResume(arg string) {
 	replaySessionToDisplay(s.display, path)
 	fmt.Fprintf(os.Stdout, "\nResumed session %s (%d messages, usage in/out: %d/%d)\n",
 		summary.ID, len(msgs), total.Input, total.Output)
+	if s.cond.SystemPromptDrift() {
+		fmt.Fprintln(os.Stderr, "Note: this session's system prompt has changed since it last ran (tools or prompt updated).")
+	}
 	fmt.Printf("\033]133;C\007")
 }

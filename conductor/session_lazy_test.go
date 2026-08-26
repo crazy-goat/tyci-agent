@@ -14,7 +14,7 @@ import (
 // NOT create anything on disk. This guards against the "empty session jsonl
 // left behind by an abandoned REPL" regression.
 func TestEnsureLazySession_EmptyPathReturnsNil(t *testing.T) {
-	got, path, err := ensureLazySession(nil, "", "/tmp", "m", "p")
+	got, path, opened, err := ensureLazySession(nil, "", "/tmp", "m", "p")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -23,6 +23,9 @@ func TestEnsureLazySession_EmptyPathReturnsNil(t *testing.T) {
 	}
 	if path != "" {
 		t.Errorf("expected empty returned path, got %q", path)
+	}
+	if opened {
+		t.Errorf("expected opened=false for empty path")
 	}
 }
 
@@ -37,7 +40,7 @@ func TestEnsureLazySession_ExistingSessionReturned(t *testing.T) {
 	}
 	defer existing.Close()
 
-	got, gotPath, err := ensureLazySession(existing, p, dir, "m", "p")
+	got, gotPath, opened, err := ensureLazySession(existing, p, dir, "m", "p")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -46,6 +49,9 @@ func TestEnsureLazySession_ExistingSessionReturned(t *testing.T) {
 	}
 	if gotPath != p {
 		t.Errorf("path = %q, want %q", gotPath, p)
+	}
+	if opened {
+		t.Errorf("expected opened=false when the session was already open")
 	}
 }
 
@@ -57,7 +63,7 @@ func TestEnsureLazySession_CreatesFreshFile(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "fresh.jsonl")
 
-	got, gotPath, err := ensureLazySession(nil, p, dir, "model-x", "prov-y")
+	got, gotPath, opened, err := ensureLazySession(nil, p, dir, "model-x", "prov-y")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -70,6 +76,9 @@ func TestEnsureLazySession_CreatesFreshFile(t *testing.T) {
 	}
 	if got.IsResume() {
 		t.Errorf("expected fresh session (IsResume=false), got true")
+	}
+	if !opened {
+		t.Errorf("expected opened=true for a freshly created session")
 	}
 
 	// Verify header was written: defaults to a session row (no full Open
@@ -98,13 +107,16 @@ func TestEnsureLazySession_ResumesExistingFile(t *testing.T) {
 	_ = seed.WriteMessage("user", []session.ContentBlock{{Type: "text", Text: "one"}}, nil)
 	_ = seed.Close()
 
-	got, _, err := ensureLazySession(nil, p, dir, "m", "p")
+	got, _, opened, err := ensureLazySession(nil, p, dir, "m", "p")
 	if err != nil {
 		t.Fatalf("ensureLazySession: %v", err)
 	}
 	t.Cleanup(func() { _ = got.Close() })
 	if !got.IsResume() {
 		t.Errorf("expected resume (IsResume=true) for pre-existing file")
+	}
+	if !opened {
+		t.Errorf("expected opened=true when a preexisting file is lazily opened for the first time")
 	}
 
 	// The seeded user message must still be there.
@@ -122,7 +134,7 @@ func TestEnsureLazySession_OpenErrorYieldsNil(t *testing.T) {
 	// Make session.Open fail by pointing at a path inside a directory
 	// that exists but cannot contain a file (the path is a directory).
 	dir := t.TempDir()
-	got, gotPath, err := ensureLazySession(nil, dir, dir, "m", "p")
+	got, gotPath, opened, err := ensureLazySession(nil, dir, dir, "m", "p")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -131,5 +143,8 @@ func TestEnsureLazySession_OpenErrorYieldsNil(t *testing.T) {
 	}
 	if gotPath != "" {
 		t.Errorf("expected empty path on open error, got %q", gotPath)
+	}
+	if opened {
+		t.Errorf("expected opened=false when session.Open fails")
 	}
 }
