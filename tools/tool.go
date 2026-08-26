@@ -592,9 +592,11 @@ func luaToolsSchema() []map[string]any {
 	// One pass under one RLock: collecting names here and re-indexing
 	// toolRegistry[name] in a second, separately-locked pass would let a
 	// write (registerLuaToolsFromDir, or a test's registerTool/unregisterTool)
-	// land between the two and either drop an entry or panic on a nil type
-	// assertion when the name now maps to something that isn't a *LuaTool
-	// (or is gone). Snapshotting the *LuaTool pointers themselves here means
+	// land between the two and panic on the single-value type assertion
+	// `toolRegistry[name].(*LuaTool)` — nil if the name is gone by then,
+	// wrong type if it now maps to something else. (A tool merely not
+	// appearing because it was added after the first pass is not a bug,
+	// which is why panicking is the whole failure mode here.) Snapshotting the *LuaTool pointers themselves here means
 	// the rest of the function needs no lock at all.
 	type luaEntry struct {
 		name string

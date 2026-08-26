@@ -579,10 +579,21 @@ func TestParentIDOf_ConcurrentSetJobListerAndRealCall_RaceFree(t *testing.T) {
 // TestToolRegistry_ConcurrentRegistrationAndRealToolCalls_RaceFree drives
 // concurrent writers into toolRegistry — SetSubAgentRunner (replaces the
 // "subagent" slot with a brand-new *SubagentTool) and registerLuaToolsFromDir
-// (adds a fresh Lua-tool slot, after a check-then-write collision check)
+// (which after the first iteration takes its collision branch — see below)
 // — concurrently with the real production read paths: RunTool (->
 // runToolInner -> tool.Run), MaxParallelFor, and GetToolsSchema (which
-// calls luaToolsSchema). An unguarded map here does not merely risk a torn
+// calls luaToolsSchema).
+//
+// Note on the lua writer: the fixture directory is registered once before
+// the goroutines start, so every later iteration hits
+// registerLuaToolsFromDir's collision branch and never inserts again. What
+// it contributes for the rest of the run is a locked map READ plus a stderr
+// warning, not a stream of inserts. That is enough for what this test is
+// for — an unguarded read racing SetSubAgentRunner's write is already the
+// bug — but do not read it as "insert vs read" coverage: the insert happens
+// exactly once.
+//
+// An unguarded map here does not merely risk a torn
 // value the way the job-hook globals above do: a concurrent Go map
 // read/write is `fatal error: concurrent map read and map write`, which
 // aborts the whole process — see the fix commit's summary for the real
@@ -653,10 +664,15 @@ func TestToolRegistry_ConcurrentRegistrationAndRealToolCalls_RaceFree(t *testing
 	const n = 500
 	for i := 0; i < n; i++ {
 		// Real call path: RunTool -> runToolInner -> lookupTool -> tool.Run.
-		// "help" with no args just builds the index (helpIndex) — cheap,
-		// side-effect-free, and does not itself touch toolRegistry, so this
-		// exercises the registry lookup without adding a second point of
-		// contention to reason about.
+		// "help" with no args builds the index, which reaches the registry a
+		// SECOND time: helpIndex -> GetAllToolsSchema -> GetToolsSchema ->
+		// luaToolsSchema -> toolRegistryMu.RLock. That is deliberate and it
+		// makes this test stronger, not weaker — it covers both the
+		// single-entry lookup and the whole-map iteration, which are the two
+		// shapes that abort the process when unguarded. It also proves the
+		// two are not nested: lookupTool's lock is released before Run, so
+		// luaToolsSchema takes a fresh RLock rather than recursing (RWMutex
+		// is not reentrant, so a nested acquire would deadlock here).
 		res := RunTool(ctx, "help", map[string]any{})
 		if !res.Success {
 			t.Fatalf("help %d failed: %s", i, res.Error)
