@@ -376,20 +376,26 @@ func (m TuiModel) routeSidebarMsg(msg tea.Msg) (handled bool, model tea.Model, c
 
 	case tea.MouseMsg:
 		if msg.X < m.mainColumnWidth() {
-			// mainShadow() (tui_sidebar_view.go), not a hand-rolled copy:
-			// this used to just set mainM.width = m.mainColumnWidth() and
-			// leave sidebarActive=true, which is the exact double-narrow
-			// shape F13 fixed in renderFrame's shadow model — except worse
-			// here, since getBlockLines writes cachedLines through a slice
-			// that shares the real model's backing array, so a
-			// double-narrowed wrap computed on a cold cache during this
-			// dispatch would stick PERMANENTLY, not just for one frame.
-			mainM := m.mainShadow()
+			// dispatchShadow() (tui_sidebar_view.go), NOT mainShadow():
+			// this used to go through mainShadow(), which clears
+			// sidebarActive for width purposes — correct for rendering, but
+			// wrong here, because dispatching a message can run a handler
+			// that reads sidebarActive as real UI state. Concretely, a
+			// click on the status bar's context figure routes here and
+			// calls openSidebar, which used mainShadow()'s falsified
+			// sidebarActive=false to conclude the sidebar was CLOSED and
+			// ran its whole open-transition on an already-open sidebar:
+			// double-narrowed input width, clobbered saved scroll position,
+			// a full cache invalidation — all from one click (review of
+			// F13's mainShadow() fix). dispatchShadow narrows width via
+			// widthFinal instead, leaving sidebarActive true and
+			// accurate for any handler that reads it.
+			mainM := m.dispatchShadow()
 			mainM.sidebarFocused = false
 			newModel, cmd := mainM.handleMouseMsg(msg)
 			result := newModel.(TuiModel)
 			result.width = m.width // restore the real (unnarrowed) width
-			result.sidebarActive = m.sidebarActive
+			result.widthFinal = false
 			return true, result, cmd
 		}
 		m.sidebarFocused = true

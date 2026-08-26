@@ -731,6 +731,48 @@ func TestSidebarMouse_MainColumnDispatchDoesNotDoubleNarrowCache(t *testing.T) {
 	}
 }
 
+// TestSidebarMouse_ContextFigureClickWhileAlreadyOpenDoesNotReopen is the
+// second review round's finding on F13's mainShadow() fix: routing the
+// mouse dispatch through mainShadow() (which clears sidebarActive) made
+// openSidebar's `wasActive` read false even though the sidebar was already
+// open, so a click on the status bar's context figure re-ran the whole
+// closed->open transition on an ALREADY-open sidebar — double-narrowing
+// the real input's width, clobbering the saved scroll position, and
+// forcing a full cache invalidation, all from one click. dispatchShadow
+// (widthFinal, sidebarActive left untouched) fixes this: openSidebar
+// sees the true sidebarActive=true and skips the transition entirely.
+func TestSidebarMouse_ContextFigureClickWhileAlreadyOpenDoesNotReopen(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 120
+	m.lastUsage.Input = 100
+	if m.buildContextCost() == "" {
+		t.Skip("no context cost to click in this configuration")
+	}
+	m.openSidebar(sidebarTabTasks)
+	m.scrollLine = 42
+	m.atBottom = false
+	m.savedScrollLine = 42
+	m.savedAtBottom = false
+	wantInputWidth := m.input.Width()
+
+	mainWidth := m.mainColumnWidth()
+	model, _ := m.Update(tea.MouseMsg{
+		X: mainWidth - 1, Y: m.statusBarY(),
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	m2 := model.(TuiModel)
+
+	if m2.sidebarTab != sidebarTabTokens {
+		t.Fatalf("expected the click to switch to the Tokens tab, got %d", m2.sidebarTab)
+	}
+	if m2.input.Width() != wantInputWidth {
+		t.Fatalf("input width changed from %d to %d — the click re-ran openSidebar's closed->open transition on an already-open sidebar", wantInputWidth, m2.input.Width())
+	}
+	if m2.savedScrollLine != 42 || m2.savedAtBottom != false {
+		t.Fatalf("savedScrollLine/savedAtBottom clobbered: got (%d, %v), want (42, false) — openSidebar's wasActive-guarded save ran when it should not have", m2.savedScrollLine, m2.savedAtBottom)
+	}
+}
+
 // TestSidebarMouse_SidebarColumnClickFocusesSidebar is the mirror case: a
 // click physically inside the sidebar column (a tab label) must reach
 // updateSidebar and set focus onto the sidebar.
