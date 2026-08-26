@@ -212,6 +212,10 @@ type TuiModel struct {
 	width, height    int
 	blocks           []block
 	input            textarea.Model
+	wrapCacheValid   bool // caches inputWrappedRows() by (value, width)
+	wrapCacheValue   string
+	wrapCacheWidth   int
+	wrapCacheRows    int
 	ready            bool
 	quitting         bool
 	lastUsage        stream.Usage

@@ -283,6 +283,35 @@ func TestSubagentPromptDoesNotContradictItsOwnAskParentTool(t *testing.T) {
 	}
 }
 
+// TestSubagentPromptWithoutAskParent_DoesNotClaimItIsReal guards F22: a named
+// agent whose `tools:` whitelist omits ask_parent never actually receives
+// that tool from GetSubagentToolsSchemaJSONFor, so the shared child prompt
+// must not tell it "ask_parent is a real tool" — that flips item 41's bug
+// (an absent tool wrongly denied) into a worse one (an absent tool wrongly
+// promised). BuildSubagentSystemPromptWithRole(role, hasAskParent=false) is
+// what main.go's RunTaskWithSystem calls when the agent definition's
+// def.Tools list does not include "ask_parent".
+func TestSubagentPromptWithoutAskParent_DoesNotClaimItIsReal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	prompt := BuildSubagentSystemPromptWithRole("ROLA: does one narrow thing.", false)
+
+	if strings.Contains(prompt, "ask_parent(") {
+		t.Errorf("expected no ask_parent mention in the contract note for an agent without it:\n%s", prompt)
+	}
+	if strings.Contains(strings.ToLower(prompt), "ask_parent is a real tool") {
+		t.Errorf("prompt falsely claims ask_parent is real for an agent whose whitelist omits it:\n%s", prompt)
+	}
+	// The rest of the contract (decide-and-act, single final message) must
+	// still be present — only the ask_parent bullet is gated.
+	if !strings.Contains(prompt, "You are a SUBAGENT spawned by a parent agent") {
+		t.Errorf("expected the base subagent contract to survive:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "ROLA: does one narrow thing.") {
+		t.Errorf("expected the role to still be appended:\n%s", prompt)
+	}
+}
+
 // TestNoAskContradictionPatterns_CatchTheRealFamilyWithoutFalseTripping is a
 // guard for the guard above. The check it protects is only worth having if it
 // (a) still fires on the two strings item 41 actually deleted and (b) stays

@@ -20,11 +20,31 @@ import (
 // bubbles@v1.0.0 textarea/textarea.go). Do not "simplify" it: the trailing
 // space handling and the double-width-rune edge are load-bearing; a plain
 // space-split wrap disagrees with the widget and reintroduces the bug.
+//
+// Called multiple times per keystroke (capInputHeight and friends), so it
+// caches its result keyed on (value, width): repeated calls within the same
+// keystroke handler — or navigation that swaps in a different value — hit
+// the cache only when the string is byte-identical to what was last wrapped.
+// m.input.Value() already builds the full string on every call, so this
+// comparison is a cheap memcmp on a string the caller paid to construct
+// anyway; keying on length alone would wrongly hit the cache when history
+// navigation (tui_keys.go's historyOlder/historyNewer) or search selection
+// swaps in a same-length value with different wrap structure (e.g. a moved
+// newline), returning a stale row count.
 func (m *TuiModel) inputWrappedRows() int {
-	rows := 0
-	for _, line := range strings.Split(m.input.Value(), "\n") {
-		rows += len(wrapRunes([]rune(line), m.input.Width()))
+	value := m.input.Value()
+	width := m.input.Width()
+	if m.wrapCacheValid && m.wrapCacheValue == value && m.wrapCacheWidth == width {
+		return m.wrapCacheRows
 	}
+	rows := 0
+	for _, line := range strings.Split(value, "\n") {
+		rows += len(wrapRunes([]rune(line), width))
+	}
+	m.wrapCacheValid = true
+	m.wrapCacheValue = value
+	m.wrapCacheWidth = width
+	m.wrapCacheRows = rows
 	return rows
 }
 
