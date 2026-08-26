@@ -672,6 +672,27 @@ func GetAllToolsSchemaJSON() json.RawMessage {
 	return data
 }
 
+// GetAllToolsSchemaJSONWithout is GetAllToolsSchemaJSON with the named tools
+// removed. Used by btwConfig (btw.go, F10) for a /btw/fork/resume child:
+// that config's Compactor is nilled out because it would otherwise point at
+// the wrong (or no) conversation, so advertising "compact" in its schema
+// only sets up a call that CompactTool.Run always refuses — dropping it
+// from the schema is more honest than leaving it to fail at call time.
+func GetAllToolsSchemaJSONWithout(deny map[string]bool) json.RawMessage {
+	schema := GetAllToolsSchema()
+	filtered := make([]map[string]any, 0, len(schema))
+	for _, s := range schema {
+		if fn, ok := s["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok && deny[name] {
+				continue
+			}
+		}
+		filtered = append(filtered, s)
+	}
+	data, _ := json.Marshal(filtered)
+	return data
+}
+
 // topLevelDeniedTools names tools withheld from the top-level, non-job main
 // agent conversation because they structurally cannot work there:
 //

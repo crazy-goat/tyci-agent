@@ -403,7 +403,14 @@ func btwConfig(base agent.Config) agent.Config {
 	// ask_parent because the top-level conversation has no job id. A /btw
 	// side-conversation IS a job (see startBtw, which stamps jobCtx with
 	// tools.JobIDCtxKey before running it) and must get ask_parent back.
-	cfg.Schema = tools.GetAllToolsSchemaJSON()
+	//
+	// "compact" is dropped explicitly (review of F10) rather than left in:
+	// with cfg.Compactor nil above, CompactTool.Run would always refuse it
+	// anyway, but the context-budget reminder (agent/agent.go) tells the
+	// model to call compact() once it crosses the threshold with no idea
+	// this child can't use it — advertising a tool guaranteed to fail wastes
+	// a round-trip for no benefit.
+	cfg.Schema = tools.GetAllToolsSchemaJSONWithout(map[string]bool{"compact": true})
 	return cfg
 }
 
