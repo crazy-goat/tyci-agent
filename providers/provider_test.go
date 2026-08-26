@@ -74,7 +74,7 @@ func TestBuildSubagentSystemPromptWithRole_ContainsRoleContractAndCwd(t *testing
 		t.Fatal(err)
 	}
 
-	prompt := BuildSubagentSystemPromptWithRole("ROLA: you review Go diffs for correctness.")
+	prompt := BuildSubagentSystemPromptWithRole("ROLA: you review Go diffs for correctness.", true)
 
 	if !strings.Contains(prompt, "ROLA: you review Go diffs for correctness.") {
 		t.Errorf("expected role text in prompt:\n%s", prompt)
@@ -98,7 +98,7 @@ func TestBuildSubagentSystemPromptWithRole_OmitsAvailableAgents(t *testing.T) {
 
 	writeAgentDef(t, filepath.Join(tmp, ".tyci", "agents"), "reviewer", "Reviews Go diffs")
 
-	prompt := BuildSubagentSystemPromptWithRole("some role")
+	prompt := BuildSubagentSystemPromptWithRole("some role", true)
 	if strings.Contains(prompt, "Available agents") {
 		t.Errorf("expected no 'Available agents' section in a subagent's prompt:\n%s", prompt)
 	}
@@ -114,7 +114,7 @@ func TestBuildSubagentSystemPromptWithRole_IncludesAgentsMd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prompt := BuildSubagentSystemPromptWithRole("ROLA")
+	prompt := BuildSubagentSystemPromptWithRole("ROLA", true)
 
 	if !strings.Contains(prompt, "--- AGENTS.md ---") {
 		t.Errorf("expected AGENTS.md section in prompt:\n%s", prompt)
@@ -137,7 +137,7 @@ func TestBuildSubagentSystemPromptWithRole_IncludesAgentsMd(t *testing.T) {
 // degenerate case: an empty role must not leave a dangling "Your role:"
 // separator with nothing after it.
 func TestBuildSubagentSystemPromptWithRole_EmptyRoleReturnsBasePrompt(t *testing.T) {
-	prompt := BuildSubagentSystemPromptWithRole("")
+	prompt := BuildSubagentSystemPromptWithRole("", true)
 	if strings.Contains(prompt, "Your role:") {
 		t.Errorf("expected no role section for an empty role:\n%s", prompt)
 	}

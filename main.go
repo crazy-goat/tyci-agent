@@ -330,7 +330,19 @@ func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model 
 	if opts.SystemPromptMode == "replace" {
 		return r.run(ctx, task, model, system, opts)
 	}
-	return r.run(ctx, task, model, providers.BuildSubagentSystemPromptWithRole(system), opts)
+	// opts.Tools is the agent's `tools:` whitelist (empty/nil means
+	// unrestricted); tools.IsSubagentDenied("ask_parent") is always false, so
+	// hasAskParent is true unless a non-empty whitelist explicitly omits it.
+	// See F22 in TODO.md: the prompt must not claim ask_parent is real for an
+	// agent that was never actually given it.
+	hasAskParent := len(opts.Tools) == 0
+	for _, name := range opts.Tools {
+		if name == "ask_parent" {
+			hasAskParent = true
+			break
+		}
+	}
+	return r.run(ctx, task, model, providers.BuildSubagentSystemPromptWithRole(system, hasAskParent), opts)
 }
 
 // run executes one subagent turn and normalizes the outcome into a result the

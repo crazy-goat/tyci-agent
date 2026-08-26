@@ -15,7 +15,7 @@ import (
 )
 
 func BuildSystemPrompt() string {
-	return buildSystemPrompt(true, "")
+	return buildSystemPrompt(true, "", true)
 }
 
 // BuildSubagentSystemPrompt is the system prompt for a headless child agent
@@ -24,13 +24,32 @@ func BuildSystemPrompt() string {
 // decide and act on reasonable assumptions by default, reach for ask_parent
 // only as a genuine last resort, and end the turn with a single
 // self-contained final message that IS the result the parent receives.
+//
+// A plain (unnamed) subagent is never restricted by a `tools:` whitelist, so
+// ask_parent is always actually available to it — this is the hasAskParent=
+// true case of buildSubagentContractNote.
 func BuildSubagentSystemPrompt() string {
-	return buildSystemPrompt(false, `
+	return buildSystemPrompt(false, buildSubagentContractNote(true), true)
+}
+
+// buildSubagentContractNote is the fixed subagent-contract prose spliced
+// into buildSystemPrompt's roleNote slot. The ask_parent bullet is included
+// only when hasAskParent is true: a named agent whose `tools:` whitelist
+// omits ask_parent (tools/toolgate.go's subagentDeniedTools/allowed-list
+// filtering) never actually gets that tool from
+// GetSubagentToolsSchemaJSONFor, so telling it "ask_parent is a real tool"
+// would be a false promise — worse than item 41's original bug, which only
+// omitted the tool without asserting it was real. See F22 in TODO.md.
+func buildSubagentContractNote(hasAskParent bool) string {
+	askParentBullet := ""
+	if hasAskParent {
+		askParentBullet = "\n- ask_parent is a real tool and a genuine last resort — reach for it only when you are hard blocked and ANY assumption would make the work useless or unsafe, never for a preference or style question. It costs a full stall: you block until your parent answers, and fail immediately if nobody could ever reach you."
+	}
+	return `
 You are a SUBAGENT spawned by a parent agent to complete ONE task and report back.
-- Decide and act: make reasonable assumptions and proceed. That is the right call for almost every task.
-- ask_parent is a real tool and a genuine last resort — reach for it only when you are hard blocked and ANY assumption would make the work useless or unsafe, never for a preference or style question. It costs a full stall: you block until your parent answers, and fail immediately if nobody could ever reach you.
+- Decide and act: make reasonable assumptions and proceed. That is the right call for almost every task.` + askParentBullet + `
 - Do the whole task, then END YOUR TURN with a single self-contained final message that IS your result (the findings/answer/summary the parent needs). The parent sees only your final text, not your tool calls or thinking.
-- Do not stop early and do not loop. If you are truly stuck with no way to get an answer — or you already asked and got none — state in your final message what you did and exactly what is blocking you.`)
+- Do not stop early and do not loop. If you are truly stuck with no way to get an answer — or you already asked and got none — state in your final message what you did and exactly what is blocking you.`
 }
 
 // BuildSubagentSystemPromptWithRole returns the standard subagent system
@@ -44,6 +63,11 @@ You are a SUBAGENT spawned by a parent agent to complete ONE task and report bac
 // what happened before this function existed: a named agent's body REPLACED
 // the whole prompt, so it lost the contract, AGENTS.md and everything else.
 //
+// hasAskParent must reflect the agent's actual whitelist (see
+// tools.SubagentOptions.Tools and GetSubagentToolsSchemaJSONFor): when false,
+// the ask_parent contract bullet is omitted entirely rather than asserting a
+// tool the agent cannot actually call — see buildSubagentContractNote/F22.
+//
 // The role is appended AFTER the base prompt is fully assembled, rather than
 // threaded through the existing roleNote parameter (which buildSystemPrompt
 // splices in at the very top, ahead of the AGENTS.md and skills sections —
@@ -55,8 +79,8 @@ You are a SUBAGENT spawned by a parent agent to complete ONE task and report bac
 // separator buildSystemPrompt already uses for AGENTS.md and skills, so the
 // role shows up as one more clearly delimited section, never silently glued
 // onto the prose above it.
-func BuildSubagentSystemPromptWithRole(role string) string {
-	prompt := BuildSubagentSystemPrompt()
+func BuildSubagentSystemPromptWithRole(role string, hasAskParent bool) string {
+	prompt := buildSystemPrompt(false, buildSubagentContractNote(hasAskParent), hasAskParent)
 	role = strings.TrimSpace(role)
 	if role == "" {
 		return prompt
@@ -64,7 +88,13 @@ func BuildSubagentSystemPromptWithRole(role string) string {
 	return prompt + "\n---\nYour role:\n" + role
 }
 
-func buildSystemPrompt(includeSubagent bool, roleNote string) string {
+// hasAskParent is only consulted when includeSubagent is false (a child
+// prompt): it gates both the Tools-section ask_parent line and (via the
+// caller-supplied roleNote) the contract paragraph, so the two never
+// disagree about whether the tool actually exists for this agent. Ignored
+// for the top-level prompt (includeSubagent=true), which never mentions
+// ask_parent as one of its own tools.
+func buildSystemPrompt(includeSubagent bool, roleNote string, hasAskParent bool) string {
 	wd, _ := os.Getwd()
 	if wd == "" {
 		wd = "."
@@ -116,8 +146,16 @@ func buildSystemPrompt(includeSubagent bool, roleNote string) string {
 		header = "You are tyci, a non-interactive coding agent. There is no interactive user — decide and act on reasonable assumptions by default."
 		posture = `1. Split work you can. You cannot spawn children, but everything below still applies: read narrowly, script your loops, and report a conclusion.
 `
-		toolLines = `- ask_parent(question): last resort for a hard blocker where any assumption would make the work useless or unsafe. Blocks until your parent — whoever spawned this job, human or agent — answers, or fails immediately if nobody could ever reach it.
-- report_progress(text): post a status note so whoever is watching is not guessing.
+		// The ask_parent line is gated on hasAskParent: a named agent whose
+		// `tools:` whitelist omits ask_parent never gets it from
+		// GetSubagentToolsSchemaJSONFor, so listing it here would describe a
+		// tool the agent cannot actually call. See buildSubagentContractNote
+		// and F22 in TODO.md for the matching gate on the contract paragraph.
+		if hasAskParent {
+			toolLines = `- ask_parent(question): last resort for a hard blocker where any assumption would make the work useless or unsafe. Blocks until your parent — whoever spawned this job, human or agent — answers, or fails immediately if nobody could ever reach it.
+`
+		}
+		toolLines += `- report_progress(text): post a status note so whoever is watching is not guessing.
 - wait(seconds): pause deliberately.
 `
 	}

@@ -20,11 +20,30 @@ import (
 // bubbles@v1.0.0 textarea/textarea.go). Do not "simplify" it: the trailing
 // space handling and the double-width-rune edge are load-bearing; a plain
 // space-split wrap disagrees with the widget and reintroduces the bug.
+//
+// Called multiple times per keystroke (capInputHeight and friends), so it
+// caches its result keyed on (len(value), width): typing a run of ordinary
+// characters changes the length every call, but repeated calls within the
+// same keystroke handler — or navigation that doesn't change the text —
+// hit the cache and skip the O(n) wrap. This is a length-based cache, not a
+// content hash, so it can theoretically miss a change that swaps runes
+// without changing the total count; that only matters if it under-caches
+// (recomputes when unneeded), which is safe — it never returns a stale
+// result for a still-current length+width pair because both need to match.
 func (m *TuiModel) inputWrappedRows() int {
-	rows := 0
-	for _, line := range strings.Split(m.input.Value(), "\n") {
-		rows += len(wrapRunes([]rune(line), m.input.Width()))
+	value := m.input.Value()
+	width := m.input.Width()
+	if m.wrapCacheValid && m.wrapCacheLen == len(value) && m.wrapCacheWidth == width {
+		return m.wrapCacheRows
 	}
+	rows := 0
+	for _, line := range strings.Split(value, "\n") {
+		rows += len(wrapRunes([]rune(line), width))
+	}
+	m.wrapCacheValid = true
+	m.wrapCacheLen = len(value)
+	m.wrapCacheWidth = width
+	m.wrapCacheRows = rows
 	return rows
 }
 

@@ -99,11 +99,12 @@ func (m *TuiModel) capInputHeight() {
 	}
 	m.input.SetHeight(lines)
 	// SetHeight changes viewport.Height but does not call the textarea's
-	// unexported repositionView(). If a previous Update scrolled the viewport
-	// down (because the old height was too small to show the cursor), those
-	// lines are now hidden above the viewport. Sending PageUp scrolls the
-	// viewport back to the top; the trailing repositionView in Update then
-	// brings the cursor back into view if content exceeds the new height.
+	// unexported repositionView(). The synthetic KeyPgUp below is actually
+	// inert: textarea.New() zeroes the viewport's KeyMap, and KeyPgUp is not
+	// handled anywhere in the textarea's own Update switch either. What
+	// really brings the cursor back into view is the trailing repositionView()
+	// call at the end of every textarea.Update, which any input.Update()
+	// triggers regardless of the message sent.
 	m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 }
 
