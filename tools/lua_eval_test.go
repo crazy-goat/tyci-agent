@@ -487,11 +487,11 @@ func (f *fakeTool) Run(ctx context.Context, input map[string]any) ToolResult {
 // must not run in parallel.
 func swapTool(t *testing.T, name string, run func(context.Context, map[string]any) ToolResult) func() {
 	t.Helper()
-	if _, exists := toolRegistry[name]; exists {
+	if _, exists := lookupTool(name); exists {
 		t.Fatalf("%q is a real tool; pick a name that cannot collide", name)
 	}
-	toolRegistry[name] = &fakeTool{name: name, run: run}
-	return func() { delete(toolRegistry, name) }
+	registerTool(name, &fakeTool{name: name, run: run})
+	return func() { unregisterTool(name) }
 }
 
 // ---------------------------------------------------------------------------

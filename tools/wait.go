@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -83,7 +84,23 @@ type JobWaiter interface {
 type WaitTool struct {
 	// Waiter is nilable. When nil, job_id requests fail with a clear error
 	// instead of panicking; omitting job_id (plain wait) works regardless.
+	//
+	// Assigning this field directly (as tests do — `&WaitTool{Waiter: w}`)
+	// is fine for a private instance nothing else can reach yet: the write
+	// happens before the instance is shared with any other goroutine. The
+	// registered "wait" singleton in toolRegistry is different: SetJobWaiter
+	// (tool.go) mutates it in place, after Run and waitForJob below may
+	// already be reading it on other job/agent goroutines — a data race on
+	// the field itself, which guarding toolRegistry's map access does
+	// nothing for (the race isn't on the map slot). So Run/waitForJob never
+	// read Waiter directly; they go through waiter(), and SetJobWaiter goes
+	// through setWaiter, both guarded by waiterMu. Test code that builds its
+	// own WaitTool and only ever touches Waiter from one goroutine can keep
+	// assigning the field directly — waiterMu's zero value works with no
+	// setup.
 	Waiter JobWaiter
+
+	waiterMu sync.RWMutex
 
 	// Sleep is overridable for tests. nil uses the default context-aware
 	// sleep (defaultSleep). Returns false if ctx was cancelled before d
@@ -92,6 +109,27 @@ type WaitTool struct {
 }
 
 func (t *WaitTool) Name() string { return "wait" }
+
+// waiter copies the current Waiter out under RLock — same reason as every
+// other getter in this package (see bgbash.go's jobNotifierMu doc comment):
+// the caller must not hold waiterMu while calling into the JobWaiter it
+// returns.
+func (t *WaitTool) waiter() JobWaiter {
+	t.waiterMu.RLock()
+	defer t.waiterMu.RUnlock()
+	return t.Waiter
+}
+
+// setWaiter installs w as this instance's Waiter under Lock. SetJobWaiter
+// (tool.go) is the only production caller, wiring the registered "wait"
+// singleton once from main()'s setup path — but that write still races with
+// Run/waitForJob reading the field on job/agent goroutines started earlier,
+// hence the lock.
+func (t *WaitTool) setWaiter(w JobWaiter) {
+	t.waiterMu.Lock()
+	t.Waiter = w
+	t.waiterMu.Unlock()
+}
 
 func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	jobID, _ := input["job_id"].(string)
@@ -133,10 +171,16 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	note, _ := input["note"].(string)
 
 	if jobID != "" {
-		if t.Waiter == nil {
+		// Copy the interface value out under RLock once, then use this
+		// local copy for both the nil check and the actual wait below —
+		// same reason as getJobStarter's doc comment (subagent.go): a
+		// second read via t.waiter() after the nil check could observe a
+		// different value if SetJobWaiter ran in between.
+		waiter := t.waiter()
+		if waiter == nil {
 			return ToolResult{Type: "result", Success: false, Error: "job registry unavailable; omit job_id to just wait N seconds"}
 		}
-		status, ok, interrupted := t.waitForJob(ctx, jobID, time.Duration(seconds)*time.Second)
+		status, ok, interrupted := t.waitForJob(ctx, waiter, jobID, time.Duration(seconds)*time.Second)
 		if !ok {
 			return ToolResult{Type: "result", Success: false, Error: "unknown job_id — ids come from a backgrounded bash command, subagent(async=true), or resume; use the exact string that result gave you"}
 		}
@@ -354,7 +398,7 @@ func defaultSleep(ctx context.Context, d time.Duration) bool {
 //   - a person typed, which outranks everything.
 //
 // interrupted reports the last of those. ok is false for an unknown id.
-func (t *WaitTool) waitForJob(ctx context.Context, jobID string, total time.Duration) (status JobStatus, ok, interrupted bool) {
+func (t *WaitTool) waitForJob(ctx context.Context, waiter JobWaiter, jobID string, total time.Duration) (status JobStatus, ok, interrupted bool) {
 	deadline := time.Now().Add(total)
 	for {
 		slice := jobPollInterval
@@ -365,7 +409,7 @@ func (t *WaitTool) waitForJob(ctx context.Context, jobID string, total time.Dura
 			return status, true, false
 		}
 
-		status, ok = t.Waiter.Wait(ctx, jobID, slice)
+		status, ok = waiter.Wait(ctx, jobID, slice)
 		if !ok {
 			return status, false, false
 		}

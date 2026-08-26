@@ -24,9 +24,35 @@ package tools
 // verification method (each subtest below was manually confirmed to report
 // a DATA RACE when its var is reverted to unguarded — see the F11 fix
 // commit's summary).
+//
+// F24: two more races, different shape from the seven/four above.
+//
+//  1. toolRegistry (tool.go) is a *map*, not a scalar/interface var —
+//     written after init by SetSubAgentRunner and registerLuaToolsFromDir,
+//     read on every tool call (runToolInner), every dispatcher concurrency
+//     check (MaxParallelFor) and the Lua schema builder (luaToolsSchema).
+//     A racing map read/write in Go doesn't quietly tear a value; it's
+//     `fatal error: concurrent map read and map write`, which aborts the
+//     process outright. Guarded by toolRegistryMu (tool.go) with
+//     lookupTool/registerTool/unregisterTool/toolNames as the only ways in
+//     or out — including from tests, which used to reach into the map
+//     directly.
+//  2. WaitTool.Waiter (wait.go) is a struct field mutated in place by
+//     SetJobWaiter after the "wait" tool is already registered and being
+//     read by other goroutines via Run/waitForJob. Guarding toolRegistry
+//     does nothing for this one — the race is on the field, not the map
+//     slot — so it gets its own waiterMu, in the same job-hook shape as
+//     jobNotifier et al., just scoped to one WaitTool instance instead of a
+//     package-level var.
+//
+// Verified manually for both: reverting toolRegistryMu or waiterMu back to
+// no-ops and re-running `-race` reproduces a real failure for each test
+// below — see the fix commit's summary for the exact output.
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -355,7 +381,7 @@ func waitRegistriesIdle(t *testing.T, regs ...*jobs.Registry) {
 // with SetJobStarter swaps.
 func TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree(t *testing.T) {
 	t.Cleanup(func() {
-		delete(toolRegistry, "subagent")
+		unregisterTool("subagent")
 		subagentToolInstance = nil
 		SetJobStarter(nil)
 		SetJobNotifier(nil)

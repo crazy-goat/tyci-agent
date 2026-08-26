@@ -316,7 +316,7 @@ func TestWaitTool_Name(t *testing.T) {
 }
 
 func TestWaitTool_RegisteredInToolRegistry(t *testing.T) {
-	tool, ok := toolRegistry["wait"]
+	tool, ok := lookupTool("wait")
 	if !ok {
 		t.Fatal("wait tool not registered in toolRegistry")
 	}
