@@ -221,6 +221,7 @@ Be terse.
 				if def.Description != "" {
 					line += " — " + def.Description
 				}
+				line += " [tools: " + def.ToolsDescription() + "]"
 				prompt += line + "\n"
 			}
 		}

@@ -11,6 +11,13 @@ import (
 // writeAgentDef writes a minimal agent markdown definition file into dir.
 func writeAgentDef(t *testing.T, dir, name, description string) {
 	t.Helper()
+	writeAgentDefWithTools(t, dir, name, description, "")
+}
+
+// writeAgentDefWithTools is writeAgentDef plus an optional frontmatter
+// `tools:` line, for pinning the restricted-allowlist case.
+func writeAgentDefWithTools(t *testing.T, dir, name, description, tools string) {
+	t.Helper()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -18,9 +25,29 @@ func writeAgentDef(t *testing.T, dir, name, description string) {
 	if description != "" {
 		fm += "description: " + description + "\n"
 	}
+	if tools != "" {
+		fm += "tools: " + tools + "\n"
+	}
 	fm += "---\nbody\n"
 	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(fm), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestBuildSystemPrompt_listsAgents_restrictedAllowlist: the exact
+// regression item 44 fixed — a restricted agent's tools: allowlist must
+// not be silently dropped on the session-start prompt-injection path (as
+// opposed to the agents() tool's own listing, which had it already).
+func TestBuildSystemPrompt_listsAgents_restrictedAllowlist(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+
+	writeAgentDefWithTools(t, filepath.Join(tmp, ".tyci", "agents"), "docs-writer", "Writes docs", "read,find")
+
+	prompt := BuildSystemPrompt()
+	if !strings.Contains(prompt, "docs-writer — Writes docs [tools: read, find]") {
+		t.Errorf("prompt should show the restricted agent's allowlist, got:\n%s", prompt)
 	}
 }
 
@@ -38,8 +65,8 @@ func TestBuildSystemPrompt_listsAgents(t *testing.T) {
 	if !strings.Contains(prompt, "Available agents for subagent(agent=\"name\"):") {
 		t.Fatalf("prompt missing agents header:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "reviewer — Reviews Go diffs for correctness") {
-		t.Errorf("prompt missing agent name+description line:\n%s", prompt)
+	if !strings.Contains(prompt, "reviewer — Reviews Go diffs for correctness [tools: unrestricted (subject to the standard subagent tool restrictions)]") {
+		t.Errorf("prompt missing agent name+description+tools line:\n%s", prompt)
 	}
 }
 
@@ -82,7 +109,7 @@ func TestBuildSystemPrompt_agentWithoutDescription(t *testing.T) {
 	writeAgentDef(t, filepath.Join(tmp, ".tyci", "agents"), "explorer", "")
 
 	prompt := BuildSystemPrompt()
-	if !strings.Contains(prompt, "- explorer\n") {
+	if !strings.Contains(prompt, "- explorer [tools: unrestricted (subject to the standard subagent tool restrictions)]\n") {
 		t.Errorf("expected bare agent name line without description:\n%s", prompt)
 	}
 	if strings.Contains(prompt, "explorer —") {

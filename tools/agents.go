@@ -39,11 +39,7 @@ func (t *AgentsTool) Run(_ context.Context, input map[string]any) ToolResult {
 		if len(def.Fallback) > 0 {
 			fmt.Fprintf(&b, "Fallback models: %s\n", strings.Join(def.Fallback, ", "))
 		}
-		if def.Tools == nil {
-			fmt.Fprintf(&b, "Tools: unrestricted (every tool except subagent)\n")
-		} else {
-			fmt.Fprintf(&b, "Tools: %s\n", strings.Join(def.Tools, ", "))
-		}
+		fmt.Fprintf(&b, "Tools: %s\n", def.ToolsDescription())
 		if def.MaxIterations > 0 {
 			fmt.Fprintf(&b, "Max iterations: %d (legacy field; ignored for subagents; execution is unlimited)\n", def.MaxIterations)
 		}
@@ -64,9 +60,9 @@ func (t *AgentsTool) Run(_ context.Context, input map[string]any) ToolResult {
 	fmt.Fprintf(&b, "Available agents for subagent(agent=\"name\") (%d):\n", len(defs))
 	for _, def := range defs {
 		if def.Description != "" {
-			fmt.Fprintf(&b, "  - %s: %s\n", def.Name, def.Description)
+			fmt.Fprintf(&b, "  - %s: %s [tools: %s]\n", def.Name, def.Description, def.ToolsDescription())
 		} else {
-			fmt.Fprintf(&b, "  - %s\n", def.Name)
+			fmt.Fprintf(&b, "  - %s [tools: %s]\n", def.Name, def.ToolsDescription())
 		}
 	}
 

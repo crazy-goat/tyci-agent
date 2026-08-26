@@ -58,6 +58,9 @@ func TestAgentsTool_ListsAvailableAgents(t *testing.T) {
 	if !strings.Contains(res.Content, "reviewer") || !strings.Contains(res.Content, "reviews code for correctness") {
 		t.Errorf("expected listing to name the agent and its description, got: %s", res.Content)
 	}
+	if !strings.Contains(res.Content, "[tools: read, find]") {
+		t.Errorf("expected listing to show the agent's tool allowlist, got: %s", res.Content)
+	}
 }
 
 func TestAgentsTool_LoadsOneAgentsFullDefinition(t *testing.T) {
