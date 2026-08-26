@@ -125,9 +125,8 @@ func (f *fakeMCPClient) SetElicitationHandler(h mcp.ElicitationHandler) {}
 // package-level global rather than taking a runner as a parameter.
 func withRunner(t *testing.T, runner *MCPToolRunner) {
 	t.Helper()
-	prev := globalMCPRunner
-	globalMCPRunner = runner
-	t.Cleanup(func() { globalMCPRunner = prev })
+	restore := SetMCPToolRunnerForTests(runner)
+	t.Cleanup(restore)
 }
 
 // newTestRunnerWithTool builds a runner with one connected fake server and

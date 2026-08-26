@@ -314,8 +314,16 @@ func (r *MCPToolRunner) MCPToolsSchema() []map[string]any {
 	return schema
 }
 
-// globalMCPRunner is the global MCP tool runner.
-var globalMCPRunner *MCPToolRunner
+// globalMCPRunner is the global MCP tool runner. F25: written by InitMCP
+// (setup path) and SetMCPToolRunnerForTests, read by GetMCPToolRunner at
+// TOOL EXECUTION TIME — i.e. from a job goroutine, same risk profile as the
+// seven globals batch 1 (B2) already guarded and the four F11 fixed.
+// Guarded by globalMCPRunnerMu with the same copy-under-RLock-then-call-
+// unlocked pattern as the rest of that family.
+var (
+	globalMCPRunnerMu sync.RWMutex
+	globalMCPRunner   *MCPToolRunner
+)
 
 // InitMCP initializes the global MCP tool runner. wd and includeLocal are
 // forwarded to MCPToolRunner.Connect — see its doc comment for the
@@ -325,12 +333,16 @@ func InitMCP(ctx context.Context, wd string, includeLocal bool) error {
 	if err := runner.Connect(ctx, wd, includeLocal); err != nil {
 		return err
 	}
+	globalMCPRunnerMu.Lock()
 	globalMCPRunner = runner
+	globalMCPRunnerMu.Unlock()
 	return nil
 }
 
 // GetMCPToolRunner returns the global MCP tool runner.
 func GetMCPToolRunner() *MCPToolRunner {
+	globalMCPRunnerMu.RLock()
+	defer globalMCPRunnerMu.RUnlock()
 	return globalMCPRunner
 }
 
@@ -340,9 +352,15 @@ func GetMCPToolRunner() *MCPToolRunner {
 // that need deterministic before/after state around a real InitMCP call —
 // mirrors the same pattern as internal/connect.SetHTTPClientForTests.
 func SetMCPToolRunnerForTests(r *MCPToolRunner) (restore func()) {
+	globalMCPRunnerMu.Lock()
 	orig := globalMCPRunner
 	globalMCPRunner = r
-	return func() { globalMCPRunner = orig }
+	globalMCPRunnerMu.Unlock()
+	return func() {
+		globalMCPRunnerMu.Lock()
+		globalMCPRunner = orig
+		globalMCPRunnerMu.Unlock()
+	}
 }
 
 // ShutdownMCP closes every connected MCP server's client (killing stdio

@@ -139,9 +139,7 @@ func TestWatchForWaiting_WakesWhenAlreadyWaitingBeforeCalled(t *testing.T) {
 // closes that gap.
 func TestRunWithHandoff_WakesWhenChildAsksMidCall(t *testing.T) {
 	reg := wakeEnv(t)
-	prevAfter := SubagentBackgroundAfterSec
-	SubagentBackgroundAfterSec = 30 * time.Second
-	t.Cleanup(func() { SubagentBackgroundAfterSec = prevAfter })
+	t.Cleanup(SetSubagentBackgroundAfterSecForTests(30 * time.Second))
 
 	askedAt100ms := make(chan struct{})
 	answered := make(chan struct{})
@@ -188,7 +186,7 @@ func TestRunWithHandoff_WakesWhenChildAsksMidCall(t *testing.T) {
 		// Comfortably below SubagentBackgroundAfterSec (30s): the wake, not
 		// the timer, must be what ended this call.
 		if elapsed > 5*time.Second {
-			t.Fatalf("runWithHandoff took %s to return after the child asked; expected a prompt wake well under the %s handoff timer", elapsed, SubagentBackgroundAfterSec)
+			t.Fatalf("runWithHandoff took %s to return after the child asked; expected a prompt wake well under the %s handoff timer", elapsed, SubagentBackgroundAfterSec())
 		}
 		// C1: the wake alone is not enough — the handoff message must
 		// actually carry the question, or the ONLY thing delivered here

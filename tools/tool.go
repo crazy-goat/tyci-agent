@@ -631,17 +631,29 @@ func luaToolsSchema() []map[string]any {
 	return schema
 }
 
-var toolsSchema json.RawMessage
+// toolsSchema is written once, in init(), before any other goroutine can be
+// running — no real race is possible today. F25: guarded anyway, for
+// consistency with the rest of this global-var family and so a future
+// caller that writes it outside init() (there is no other today) inherits
+// the same safety the rest of the file already has.
+var (
+	toolsSchemaMu sync.RWMutex
+	toolsSchema   json.RawMessage
+)
 
 func init() {
 	// Load Lua tools from user directories
 	LoadAndRegisterLuaTools()
 
 	data, _ := json.Marshal(GetToolsSchema())
+	toolsSchemaMu.Lock()
 	toolsSchema = data
+	toolsSchemaMu.Unlock()
 }
 
 func GetToolsSchemaJSON() json.RawMessage {
+	toolsSchemaMu.RLock()
+	defer toolsSchemaMu.RUnlock()
 	return toolsSchema
 }
 
@@ -657,6 +669,27 @@ func GetAllToolsSchema() []map[string]any {
 // GetAllToolsSchemaJSON returns all tools schema as JSON including MCP tools.
 func GetAllToolsSchemaJSON() json.RawMessage {
 	data, _ := json.Marshal(GetAllToolsSchema())
+	return data
+}
+
+// GetAllToolsSchemaJSONWithout is GetAllToolsSchemaJSON with the named tools
+// removed. Used by btwConfig (btw.go, F10) for a /btw/fork/resume child:
+// that config's Compactor is nilled out because it would otherwise point at
+// the wrong (or no) conversation, so advertising "compact" in its schema
+// only sets up a call that CompactTool.Run always refuses — dropping it
+// from the schema is more honest than leaving it to fail at call time.
+func GetAllToolsSchemaJSONWithout(deny map[string]bool) json.RawMessage {
+	schema := GetAllToolsSchema()
+	filtered := make([]map[string]any, 0, len(schema))
+	for _, s := range schema {
+		if fn, ok := s["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok && deny[name] {
+				continue
+			}
+		}
+		filtered = append(filtered, s)
+	}
+	data, _ := json.Marshal(filtered)
 	return data
 }
 

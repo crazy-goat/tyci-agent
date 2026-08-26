@@ -31,13 +31,12 @@ func handoffEnv(t *testing.T, after time.Duration) (*jobs.Registry, *recordingNo
 	SetJobNotifier(notifier)
 	SetBackgroundBashEnabled(true) // the per-mode flag both handoffs share
 
-	prevAfter := SubagentBackgroundAfterSec
-	SubagentBackgroundAfterSec = after
+	restoreAfter := SetSubagentBackgroundAfterSecForTests(after)
 	t.Cleanup(func() {
 		SetJobStarter(nil)
 		SetJobNotifier(nil)
 		SetBackgroundBashEnabled(false)
-		SubagentBackgroundAfterSec = prevAfter
+		restoreAfter()
 	})
 	return reg, notifier
 }

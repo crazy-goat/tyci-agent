@@ -195,18 +195,37 @@ func runConcurrentSetGet(t *testing.T, set func(), get func()) {
 // through — see e.g. tools/subagent.go's getJobStarter, tools/ask.go's
 // getJobAsker/getJobAnswerer).
 func TestJobGlobals_ConcurrentSetGet_RaceFree(t *testing.T) {
+	// F26: RESTORE what was there, do not blank it. An unconditional
+	// SetXxx(nil) on cleanup would destroy any outer wiring a caller running
+	// before/after this test in the same process had set up, instead of
+	// restoring it — the same shape of cross-test leak F12 found (and
+	// withKillWiring, killjob_test.go, already avoids for jobCanceler/
+	// jobLister). Snapshot every global via its existing getter first.
+	jobActivityToucherMu.RLock()
+	oldActivityToucher := jobActivityToucher
+	jobActivityToucherMu.RUnlock()
+	oldStarter := getJobStarter()
+	oldAsker := getJobAsker()
+	oldAnswerer := getJobAnswerer()
+	oldProgressReporter := getJobProgressReporter()
+	oldMailbox := getJobMailbox()
+	oldResumer := getJobResumer()
+	oldExtensionRequester := getJobExtensionRequester()
+	oldCanceler := getJobCanceler()
+	oldLister := getJobLister()
+	oldPromoter := getJobPromoter()
 	t.Cleanup(func() {
-		SetJobStarter(nil)
-		SetJobAsker(nil)
-		SetJobAnswerer(nil)
-		SetJobProgressReporter(nil)
-		SetJobMailbox(nil)
-		SetJobResumer(nil)
-		SetJobActivityToucher(nil)
-		SetJobExtensionRequester(nil)
-		SetJobCanceler(nil)
-		SetJobLister(nil)
-		SetJobPromoter(nil)
+		SetJobStarter(oldStarter)
+		SetJobAsker(oldAsker)
+		SetJobAnswerer(oldAnswerer)
+		SetJobProgressReporter(oldProgressReporter)
+		SetJobMailbox(oldMailbox)
+		SetJobResumer(oldResumer)
+		SetJobActivityToucher(oldActivityToucher)
+		SetJobExtensionRequester(oldExtensionRequester)
+		SetJobCanceler(oldCanceler)
+		SetJobLister(oldLister)
+		SetJobPromoter(oldPromoter)
 	})
 
 	cases := []struct {
@@ -500,9 +519,9 @@ func TestCronRunNow_ConcurrentSetJobStarterAndRealSpawn_RaceFree(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	prevOverride := cronRunnerExeOverride
-	cronRunnerExeOverride = "/bin/echo"
-	t.Cleanup(func() { cronRunnerExeOverride = prevOverride })
+	prevOverride := cronRunnerExeOverrideForTests()
+	setCronRunnerExeOverrideForTests("/bin/echo")
+	t.Cleanup(func() { setCronRunnerExeOverrideForTests(prevOverride) })
 
 	wd := t.TempDir()
 	addRes := (&CronTool{}).Run(WithWorkdir(context.Background(), wd), map[string]any{
@@ -558,7 +577,10 @@ func TestCronRunNow_ConcurrentSetJobStarterAndRealSpawn_RaceFree(t *testing.T) {
 // killAllowedInsideChild path (via getJobLister there) would still leave
 // this one racy.
 func TestParentIDOf_ConcurrentSetJobListerAndRealCall_RaceFree(t *testing.T) {
-	t.Cleanup(func() { SetJobLister(nil) })
+	// F26: snapshot-and-restore, not SetJobLister(nil) — see the identical
+	// note on TestJobGlobals_ConcurrentSetGet_RaceFree's cleanup above.
+	oldLister := getJobLister()
+	t.Cleanup(func() { SetJobLister(oldLister) })
 	SetJobLister(raceJobLister{})
 
 	runConcurrentSetGet(t,

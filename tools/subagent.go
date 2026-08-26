@@ -44,7 +44,41 @@ const (
 //
 // A var, not a const, so tests can shrink it instead of waiting out a real
 // 60s timer to exercise the timer.C exit of runWithHandoff's select.
-var SubagentBackgroundAfterSec = 60 * time.Second
+//
+// F25: read on a job goroutine (runWithHandoff's timer below) while tests
+// write it unguarded from their own setup goroutine — same shape as the
+// rest of this global-var family, even though production itself never
+// writes it. Guarded by subagentBackgroundAfterSecMu; SubagentBackgroundAfterSec
+// stays the exported name (nothing outside this package reads it, but the
+// name is part of this package's existing surface) and is now a func.
+var (
+	subagentBackgroundAfterSecMu sync.RWMutex
+	subagentBackgroundAfterSec   = 60 * time.Second
+)
+
+// SubagentBackgroundAfterSec returns the current handoff duration. Was a
+// plain var; kept as a zero-argument func under the same exported name so
+// every read (including the test files below) goes through the lock.
+func SubagentBackgroundAfterSec() time.Duration {
+	subagentBackgroundAfterSecMu.RLock()
+	defer subagentBackgroundAfterSecMu.RUnlock()
+	return subagentBackgroundAfterSec
+}
+
+// SetSubagentBackgroundAfterSecForTests overrides the handoff duration and
+// returns a func that restores the previous value — the only test-facing
+// way to shrink the real 60s wait down to something a test can afford.
+func SetSubagentBackgroundAfterSecForTests(d time.Duration) (restore func()) {
+	subagentBackgroundAfterSecMu.Lock()
+	orig := subagentBackgroundAfterSec
+	subagentBackgroundAfterSec = d
+	subagentBackgroundAfterSecMu.Unlock()
+	return func() {
+		subagentBackgroundAfterSecMu.Lock()
+		subagentBackgroundAfterSec = orig
+		subagentBackgroundAfterSecMu.Unlock()
+	}
+}
 
 // ErrSubagentTruncated and ErrSubagentTimedOut remain compatibility sentinels
 // for custom runners and previously persisted results. The built-in subagent
@@ -1093,7 +1127,7 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 	// Ask), so there is nothing to watch for.
 	var waitingWakeC <-chan struct{}
 	if handoff {
-		timer := time.NewTimer(SubagentBackgroundAfterSec)
+		timer := time.NewTimer(SubagentBackgroundAfterSec())
 		defer timer.Stop()
 		timerC = timer.C
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/decodo/tyci/internal/tyciconfig"
 )
@@ -29,7 +30,25 @@ type HTTPDoer interface {
 // connection pool — instead of a fresh &http.Client{} (with its own
 // Transport) constructed inside every function. Deliberately without a
 // Timeout, which is what the replaced literals had.
-var defaultHTTPClient HTTPDoer = &http.Client{}
+//
+// F25: guarded by defaultHTTPClientMu for consistency with the rest of this
+// global-var family. Production never writes it (only SetHTTPClientForTests
+// does, from a test's setup goroutine), so this is defensive rather than a
+// reproduced race — see TODO.md's F25 entry for what was and wasn't
+// verified with -race.
+var (
+	defaultHTTPClientMu sync.RWMutex
+	defaultHTTPClient   HTTPDoer = &http.Client{}
+)
+
+// getDefaultHTTPClient copies the current client out under RLock — see
+// tools/ask.go's getJobAsker doc comment for why callers never hold the
+// lock while calling into the interface.
+func getDefaultHTTPClient() HTTPDoer {
+	defaultHTTPClientMu.RLock()
+	defer defaultHTTPClientMu.RUnlock()
+	return defaultHTTPClient
+}
 
 // AddProvider adds a provider with auth separation:
 // 1. Fetches models from the API
@@ -57,7 +76,7 @@ func AddProvider(name, apiType, baseURL, token string, test bool, testModel stri
 	resolvedToken := ResolveToken(token)
 
 	// Fetch models
-	modelIDs, err := fetchOpenAIModels(defaultHTTPClient, baseURL, resolvedToken)
+	modelIDs, err := fetchOpenAIModels(getDefaultHTTPClient(), baseURL, resolvedToken)
 	if err != nil {
 		return fmt.Errorf("fetching models: %w", err)
 	}
@@ -132,7 +151,7 @@ func AddProvider(name, apiType, baseURL, token string, test bool, testModel stri
 			modelName = modelIDs[0]
 		}
 		if modelName != "" {
-			if err := testConnectivity(defaultHTTPClient, baseURL, resolvedToken, modelName); err != nil {
+			if err := testConnectivity(getDefaultHTTPClient(), baseURL, resolvedToken, modelName); err != nil {
 				fmt.Fprintf(os.Stdout, "\u26a0\ufe0f Connectivity test failed: %v\n", err)
 			} else {
 				fmt.Fprintf(os.Stdout, "\u2713 Connectivity check passed (%s returned 200)\n", modelName)
