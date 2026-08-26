@@ -575,3 +575,150 @@ func TestParentIDOf_ConcurrentSetJobListerAndRealCall_RaceFree(t *testing.T) {
 // above already exercises the exact same getJobStarter().Start call site the
 // ticker would reach through cronRunner/runNow's shared code — driving the
 // ticker itself would only add flakiness for no new coverage.
+
+// TestToolRegistry_ConcurrentRegistrationAndRealToolCalls_RaceFree drives
+// concurrent writers into toolRegistry — SetSubAgentRunner (replaces the
+// "subagent" slot with a brand-new *SubagentTool) and registerLuaToolsFromDir
+// (adds a fresh Lua-tool slot, after a check-then-write collision check)
+// — concurrently with the real production read paths: RunTool (->
+// runToolInner -> tool.Run), MaxParallelFor, and GetToolsSchema (which
+// calls luaToolsSchema). An unguarded map here does not merely risk a torn
+// value the way the job-hook globals above do: a concurrent Go map
+// read/write is `fatal error: concurrent map read and map write`, which
+// aborts the whole process — see the fix commit's summary for the real
+// -race/-count=1 output with toolRegistryMu reverted to a no-op.
+func TestToolRegistry_ConcurrentRegistrationAndRealToolCalls_RaceFree(t *testing.T) {
+	t.Cleanup(func() {
+		unregisterTool("subagent")
+		unregisterTool("f24-race-lua")
+		subagentToolInstance = nil
+	})
+
+	// A real Lua tool directory the writer goroutine (re)loads on every
+	// iteration — registerLuaToolsFromDir's "does this collide with a
+	// built-in" check and its insert must be one atomic critical section
+	// against concurrent readers and the other writer goroutine below.
+	tmpDir := t.TempDir()
+	toolContent := `return {
+  schema = {
+    name = "f24-race-lua",
+    description = "F24 concurrency test tool",
+    parameters = {}
+  },
+  run = function(ctx, args)
+    return {success = true, content = "ok"}
+  end
+}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "f24.lua"), []byte(toolContent), 0644); err != nil {
+		t.Fatalf("write test lua tool: %v", err)
+	}
+
+	// Seed the registry before the reader loop starts, same reasoning as
+	// TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree's
+	// pre-seed: nothing otherwise synchronizes the first writer pass against
+	// the first read below.
+	SetSubAgentRunner(&mockRunner{})
+	registerLuaToolsFromDir(tmpDir)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				SetSubAgentRunner(&mockRunner{})
+			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				registerLuaToolsFromDir(tmpDir)
+			}
+		}
+	}()
+
+	ctx := context.Background()
+	const n = 500
+	for i := 0; i < n; i++ {
+		// Real call path: RunTool -> runToolInner -> lookupTool -> tool.Run.
+		// "help" with no args just builds the index (helpIndex) — cheap,
+		// side-effect-free, and does not itself touch toolRegistry, so this
+		// exercises the registry lookup without adding a second point of
+		// contention to reason about.
+		res := RunTool(ctx, "help", map[string]any{})
+		if !res.Success {
+			t.Fatalf("help %d failed: %s", i, res.Error)
+		}
+		// Real call path: MaxParallelFor -> lookupTool.
+		_ = MaxParallelFor("bash")
+		// Real call path: GetToolsSchema -> luaToolsSchema -> toolRegistry
+		// snapshot.
+		_ = GetToolsSchema()
+	}
+
+	close(stop)
+	wg.Wait()
+}
+
+// TestWaitToolRun_ConcurrentSetJobWaiterAndRealJobIDWait_RaceFree drives the
+// registered "wait" singleton's real job_id path (RunTool("wait", ...) ->
+// WaitTool.Run -> waitForJob -> waiter.Wait) concurrently with SetJobWaiter
+// swaps. This is race B from F24: SetJobWaiter used to write wt.Waiter
+// directly on the registered *WaitTool while Run/waitForJob read the same
+// field from other goroutines — a data race on the struct field itself, not
+// on the toolRegistry map slot, so guarding the map (race A, above) does
+// nothing for it. Guarded instead by WaitTool.waiterMu (wait.go).
+func TestWaitToolRun_ConcurrentSetJobWaiterAndRealJobIDWait_RaceFree(t *testing.T) {
+	t.Cleanup(func() { SetJobWaiter(nil) })
+
+	waiterA := &mockJobWaiter{ok: true, status: JobStatus{ID: "job-a", Done: true, Success: true, Content: "a"}}
+	waiterB := &mockJobWaiter{ok: true, status: JobStatus{ID: "job-b", Done: true, Success: true, Content: "b"}}
+	SetJobWaiter(waiterA)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		flip := false
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				if flip {
+					SetJobWaiter(waiterA)
+				} else {
+					SetJobWaiter(waiterB)
+				}
+				flip = !flip
+			}
+		}
+	}()
+
+	ctx := context.Background()
+	const n = 500
+	for i := 0; i < n; i++ {
+		// Real call path: RunTool -> runToolInner -> lookupTool("wait") ->
+		// WaitTool.Run -> waitForJob -> waiter().Wait. Both waiters report
+		// Done immediately, so this returns without any real sleep.
+		res := RunTool(ctx, "wait", map[string]any{"seconds": JobMinWaitSeconds, "job_id": "job-x"})
+		if !res.Success {
+			t.Fatalf("wait %d failed: %s", i, res.Error)
+		}
+	}
+	close(stop)
+	wg.Wait()
+}
