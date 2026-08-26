@@ -53,22 +53,17 @@ type mdStreamState struct {
 // self-healing edge case (forceRenderDirtyBlocks re-renders the whole block
 // from scratch once it finishes), consistent with 4-space code blocks being
 // out of scope for this scanner.
-// F16(b), re-verified: indent is a raw character count (a tab counts as 1,
-// not the multiple visual columns a terminal renders it as), so the
-// fenceIndent+3 closing-slack check in scan() is column-inconsistent for a
-// tab-indented fence — e.g. an opener of "\t```" (indent=1 char) tolerates a
-// closer only up to 4 CHARACTERS of indent, not 4 visual columns worth of
-// tab-equivalent whitespace. Left as a character count deliberately: (1)
-// it's consistent with every other indent comparison in this scanner, which
-// is character-based throughout, not column-based; (2) tabs in a fence's
-// own indentation are rare from LLM-generated markdown, the only real input
-// source here; (3) miscounting a tab as narrower than its visual width
-// biases toward a NARROWER tolerance window, i.e. toward failing to
-// recognize a genuine closer — the same safe "phantom fence stays open,
-// streams raw for the rest of the message" degrade F15 already accepts,
-// not the more dangerous false-positive-close/garbling direction. A real
-// column-width-aware fix would need a tab-stop convention this scanner has
-// no other reason to carry, for a case with no observed real-world impact.
+// F16(b): indent is a raw character count (a tab counts as 1, not several
+// visual columns), so the fenceIndent+3 closing-slack check is
+// column-inconsistent for a tab-indented fence — direction depends on which
+// side has the tab: on the OPENER it narrows tolerance (safe: a closer goes
+// unrecognized, degrading to raw text like F15); on the CLOSER it can
+// widen it (opener "```" + closer "\t\t```" counts as indent=2, closing a
+// fence that visually (≈16 cols in a nested list) should still be open —
+// the riskier premature-close/garbling direction). Left as-is: consistent
+// with the rest of this character-based scanner, tabs in fence indentation
+// are rare in LLM output, and a column-width-aware fix needs a tab-stop
+// convention this code has no other reason to carry.
 func fenceLineInfo(line string) (indent int, marker byte, run int, rest string, ok bool) {
 	n := len(line)
 	i := 0
@@ -255,36 +250,18 @@ func (m *TuiModel) renderStreamingMarkdown(idx int, content string) string {
 	// concatenation would copy the whole (possibly large) prefix on every
 	// token, which is the exact cost F1 removes above; skip it.
 	//
-	// F16(a): the default case below used to just `return tailWrapped`,
-	// trusting the unstated invariant "len(tailLines) > 0 implies
-	// tailWrapped != ''". That invariant is FALSE: streamWrap.render (F1's
-	// caching aside) returns ("", [""]) whenever the tail is currently just
-	// whitespace/newlines pending the next paragraph (its own `if out == ""
-	// { lines = []string{""} }` case) — one line, but an empty string.
-	// len(lines) here already strips that single trailing blank (see the
-	// trim right above), so when the prefix is non-empty the true `lines`
-	// this function just cached is real, non-empty content — but the OLD
-	// code would still hand getBlockLines a bare "", which it reads as
-	// "nothing rendered" and uses to WIPE the cachedLines just set above
-	// (getBlockLines' `rendered == ""` branch), vanishing an already-styled
-	// block for a frame. Guard on len(lines) — the thing this string's
-	// emptiness must actually track — rather than on tailWrapped/
-	// renderedPrefixJoined individually.
+	// F16(a): this used to just `return tailWrapped`, trusting the unstated
+	// invariant "len(tailLines) > 0 implies tailWrapped != ''". That's false:
+	// streamWrap.render returns ("", [""]) for a tail that's currently just
+	// pending whitespace/newlines, and the old "" then made getBlockLines
+	// wipe the cachedLines just set above, vanishing an already-styled
+	// block for a frame. Guard on len(lines) instead — the thing this
+	// string's emptiness must actually track.
 	if len(lines) == 0 {
 		return ""
 	}
-	switch {
-	case len(st.renderedPrefixLines) == 0:
+	if tailWrapped != "" {
 		return tailWrapped
-	case len(tailLines) == 0:
-		return st.renderedPrefixJoined
-	case tailWrapped != "":
-		return tailWrapped
-	default:
-		// Both prefix and tail are non-empty (len(lines) > 0, checked
-		// above), but the tail wrapped to "" — fall back to the prefix,
-		// which is guaranteed non-empty here and costs nothing extra since
-		// renderedPrefixJoined is already cached.
-		return st.renderedPrefixJoined
 	}
+	return st.renderedPrefixJoined
 }

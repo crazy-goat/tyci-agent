@@ -669,6 +669,66 @@ func TestSidebarMouse_MainColumnClickRoutesToMainAndUnfocuses(t *testing.T) {
 	if m2.sidebarTab != sidebarTabTokens {
 		t.Fatalf("expected clicking the context figure to switch to the Tokens tab, got %d", m2.sidebarTab)
 	}
+	if !m2.sidebarActive {
+		t.Fatalf("expected the sidebar to stay open after a main-column click dispatched through its shadow model")
+	}
+}
+
+// TestSidebarMouse_MainColumnDispatchDoesNotDoubleNarrowCache is the review
+// round's Blocker 2 for F13: routeSidebarMsg's main-column mouse dispatch
+// built its OWN shadow model by hand (mainM.width = mainColumnWidth(),
+// leaving sidebarActive=true) instead of going through mainShadow() — the
+// exact double-narrow shape F13 fixed in renderFrame, except worse here.
+// getBlockLines writes m.blocks[idx].cachedLines through a slice that
+// shares the real model's backing array, so a block rendered with a COLD
+// cache during this dispatch (e.g. clampScroll -> totalRenderedLines calling
+// getBlockLines for an unrendered block while scrolling) gets its
+// double-narrowed wrap cached PERMANENTLY — restoring result.width
+// afterward does not touch that cache.
+func TestSidebarMouse_MainColumnDispatchDoesNotDoubleNarrowCache(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 120
+	longLine := strings.Repeat("word ", 20) // long enough to wrap differently at mainW vs mainW twice-narrowed
+	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: longLine})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	m.openSidebar(sidebarTabTokens)
+	mainW := m.mainColumnWidth()
+	if mainW >= m.width {
+		t.Fatal("test premise broken: expected the sidebar to actually narrow the main column")
+	}
+	// Cold cache: nothing has rendered this block at any width yet.
+	if m.blocks[0].cachedLines != nil {
+		t.Fatal("test premise broken: expected a cold cache (no cachedLines yet) for this block")
+	}
+	// Force clampScroll (called from handleMouseMsg's wheel handling) down
+	// the path that actually recomputes totalRenderedLines instead of
+	// short-circuiting at scrollLine<=0.
+	m.atBottom = false
+	m.scrollLine = 1
+
+	model, _ := m.Update(tea.MouseMsg{
+		X: mainW - 1, Y: 5, // inside the (physical) main column
+		Button: tea.MouseButtonWheelUp,
+	})
+	m2 := model.(TuiModel)
+	if m2.width != m.width {
+		t.Fatalf("expected the real width to survive the shadow-model dispatch, got %d want %d", m2.width, m.width)
+	}
+
+	got := m2.blocks[0].cachedLines
+	if got == nil {
+		t.Fatal("expected the mouse dispatch to have rendered the block's cold cache")
+	}
+	want := strings.Split(renderMarkdownWithCache(collapseRepeatedLines(longLine), false, mainW), "\n")
+	if len(got) != len(want) {
+		t.Fatalf("block cached at the WRONG width during sidebar mouse dispatch: got %d lines, want %d "+
+			"(single mainColumnWidth()=%d narrow) — looks double-narrowed", len(got), len(want), mainW)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("line %d differs from the single-narrow-width render:\ngot:  %q\nwant: %q", i, got[i], want[i])
+		}
+	}
 }
 
 // TestSidebarMouse_SidebarColumnClickFocusesSidebar is the mirror case: a
@@ -1303,6 +1363,85 @@ func TestSidebarToggle_SyncsRealInputWidth(t *testing.T) {
 	m.closeSidebar()
 	if got := m.input.Width(); got != fullWidth {
 		t.Fatalf("expected m.input.Width() to be restored to %d immediately on close, got %d", fullWidth, got)
+	}
+}
+
+// TestSidebarToggle_SyncsRealInputHeight is Blocker 3 from an independent
+// review round on F20: fixing m.input's WIDTH was not the whole fix.
+// textarea.SetWidth does not recompute how many rows the value needs at the
+// new width — that's capInputHeight's job (tui_input.go) — so a long prompt
+// stayed rendered at its PRE-open row count until the next keystroke
+// happened to call capInputHeight, which is the exact symptom F20 was filed
+// for, just moved from width to height. Repro: a ~200-char prompt at
+// width=120 needs only 2 wrapped rows, but 4 once narrowed to
+// mainColumnWidth() — openSidebar must reflect that immediately.
+func TestSidebarToggle_SyncsRealInputHeight(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 120
+	m.input.SetValue(strings.Repeat("x", 202))
+	// newTestModelForSidebar constructs the textarea at its own default
+	// width, not m.width=120 (only handleResize/openSidebar/closeSidebar
+	// sync that) — set it explicitly before capping height, or fullHeight
+	// below would reflect the wrong (construction-time) width.
+	m.input.SetWidth(max(10, m.width-2))
+	m.capInputHeight() // establish the pre-open, full-width row count
+
+	wantHeightFor := func(raw int) int {
+		scratch := m
+		scratch.input.SetWidth(max(10, raw-2))
+		scratch.capInputHeight()
+		return scratch.input.Height()
+	}
+	fullHeight := m.input.Height()
+	narrowHeight := wantHeightFor(120 - m.sidebarColumnWidth())
+	if narrowHeight <= fullHeight {
+		t.Skip("test premise broken: expected narrowing to need MORE wrapped rows for this prompt")
+	}
+
+	m.openSidebar(sidebarTabTokens)
+	if got := m.input.Height(); got != narrowHeight {
+		t.Fatalf("expected m.input.Height() to grow to %d immediately on open (mainColumnWidth=%d), got %d — "+
+			"stuck at the pre-open row count until the next keystroke", narrowHeight, m.mainColumnWidth(), got)
+	}
+
+	m.closeSidebar()
+	if got := m.input.Height(); got != fullHeight {
+		t.Fatalf("expected m.input.Height() to shrink back to %d immediately on close, got %d", fullHeight, got)
+	}
+}
+
+// TestHandleResize_KeepsInputNarrowedWhileSidebarOpen is the other half of
+// the same review-round Blocker 3: handleResize/handleResizeFlush
+// (tui_update.go) used to call m.input.SetWidth(max(10, msg.Width-2)) using
+// the RAW terminal width even while the sidebar was open, undoing F20's fix
+// on the very next resize event — the input would jump back to the
+// full-terminal width instead of staying at mainColumnWidth(). Both must use
+// mainColumnWidth(), which already reflects m.width by the time they call it.
+func TestHandleResize_KeepsInputNarrowedWhileSidebarOpen(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 120
+	m.openSidebar(sidebarTabTokens)
+
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	m2 := model.(TuiModel)
+	wantWidth := func(mm TuiModel, raw int) int {
+		scratch := mm.input
+		scratch.SetWidth(max(10, raw-2))
+		return scratch.Width()
+	}
+	if got, want := m2.input.Width(), wantWidth(m2, m2.mainColumnWidth()); got != want {
+		t.Fatalf("expected m.input.Width() to stay narrowed to mainColumnWidth()=%d (%d) immediately after resize, got %d — "+
+			"using the raw terminal width instead of mainColumnWidth() undoes F20 on every resize", m2.mainColumnWidth(), want, got)
+	}
+	if fullWant := wantWidth(m2, 140); m2.input.Width() == fullWant {
+		t.Fatalf("test premise broken: narrowed and full-terminal widths coincide (%d) at these numbers", fullWant)
+	}
+
+	// Same check through the debounced flush path.
+	m3model, _ := m2.Update(resizeFlushMsg{})
+	m3 := m3model.(TuiModel)
+	if got, want := m3.input.Width(), wantWidth(m3, m3.mainColumnWidth()); got != want {
+		t.Fatalf("expected m.input.Width() to stay narrowed after handleResizeFlush too, got %d want %d", got, want)
 	}
 }
 

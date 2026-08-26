@@ -96,28 +96,23 @@ func (m TuiModel) renderFrame() string {
 	// sidebar naturally invalidates/recomputes the right caches with no
 	// extra per-frame bookkeeping here.
 	if m.sidebarActive {
-		mainM := m
-		mainM.width = m.mainColumnWidth()
-		// mainM.width is now the FINAL, already-narrowed width — clearing
-		// sidebarActive here is what keeps renderWidth() idempotent (F13):
-		// left true, renderWidth would see sidebarActive and narrow
-		// mainM.width a second time (mainColumnWidth() on top of an already
-		// mainColumnWidth()'d value), wrapping every block far short of the
-		// column actually on screen. Nothing else on this render path reads
-		// sidebarActive off mainM (only mainColumnWidth/renderWidth do, and
-		// the real m above already used it to compute mainM.width), so this
-		// is safe to flip.
-		mainM.sidebarActive = false
+		// mainShadow() (tui_sidebar_view.go) narrows .width to
+		// mainColumnWidth() AND clears sidebarActive — see its doc comment
+		// for why the latter is required, not cosmetic (F13): this is the
+		// one and only way to build this kind of shadow copy anywhere in
+		// the package, so renderWidth() stays idempotent through it.
+		mainM := m.mainShadow()
 		// The textarea tracks its own wrap width separately from
 		// TuiModel.width; without this it would render m.input.View() still
 		// wrapped for the old, wider column. SetWidth only mutates plain int
 		// fields on textarea.Model (viewport.Width / width) — no pointer or
 		// slice state — so this is confined to mainM's copy and never
-		// touches the real m.input. (The real m.input's width is kept in
-		// sync separately, at the point the sidebar opens/closes/resizes —
-		// see openSidebar/closeSidebar/handleResizeFlush — so this copy is
-		// belt-and-suspenders for the one frame in between, not the only
-		// place the input's width is ever set; see F20.)
+		// touches the real m.input. (The real m.input's width/height are
+		// kept in sync separately, at the point the sidebar opens/closes
+		// and on every resize — see openSidebar/closeSidebar/handleResize/
+		// handleResizeFlush — so this copy is belt-and-suspenders for the
+		// one frame in between, not the only place the input's width is
+		// ever set; see F20.)
 		mainM.input.SetWidth(max(10, mainM.width-2))
 		mainBlock := mainM.renderMainColumn()
 		// The sidebar's own layout must be based on the REAL m (its width,

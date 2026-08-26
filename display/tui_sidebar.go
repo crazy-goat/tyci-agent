@@ -123,8 +123,15 @@ func (m *TuiModel) openSidebar(tab int) {
 		// Without this, m.input.Width() stays at the pre-open, full-terminal
 		// value until the next keystroke recomputes it, so the textarea's
 		// own reported height (used to size the input area) is briefly
-		// wrong for the now-narrower column.
+		// wrong for the now-narrower column. SetWidth alone does not
+		// recompute the row count a review round caught this missing: a
+		// ~200-char prompt at width=120 needs 4 wrapped rows once narrowed
+		// to mainColumnWidth()=71, but stayed rendered at the pre-narrow 2
+		// rows until the next keystroke happened to call capInputHeight —
+		// the exact symptom F20 was filed for, still present after only
+		// fixing the width.
 		m.input.SetWidth(max(10, m.mainColumnWidth()-2))
+		m.capInputHeight()
 	}
 }
 
@@ -145,8 +152,10 @@ func (m *TuiModel) closeSidebar() {
 	// F20's other direction: restore the REAL m.input's width back to the
 	// full terminal width immediately, symmetric with openSidebar's fix —
 	// sidebarActive is already false above, so mainColumnWidth() now
-	// returns m.width.
+	// returns m.width. capInputHeight follows for the same reason as
+	// openSidebar's call: SetWidth alone never recomputes the row count.
 	m.input.SetWidth(max(10, m.mainColumnWidth()-2))
+	m.capInputHeight()
 }
 
 // toggleSidebar is Ctrl+T's handler: close if open, otherwise reopen on
@@ -367,12 +376,20 @@ func (m TuiModel) routeSidebarMsg(msg tea.Msg) (handled bool, model tea.Model, c
 
 	case tea.MouseMsg:
 		if msg.X < m.mainColumnWidth() {
-			mainM := m
-			mainM.width = m.mainColumnWidth()
+			// mainShadow() (tui_sidebar_view.go), not a hand-rolled copy:
+			// this used to just set mainM.width = m.mainColumnWidth() and
+			// leave sidebarActive=true, which is the exact double-narrow
+			// shape F13 fixed in renderFrame's shadow model — except worse
+			// here, since getBlockLines writes cachedLines through a slice
+			// that shares the real model's backing array, so a
+			// double-narrowed wrap computed on a cold cache during this
+			// dispatch would stick PERMANENTLY, not just for one frame.
+			mainM := m.mainShadow()
 			mainM.sidebarFocused = false
 			newModel, cmd := mainM.handleMouseMsg(msg)
 			result := newModel.(TuiModel)
 			result.width = m.width // restore the real (unnarrowed) width
+			result.sidebarActive = m.sidebarActive
 			return true, result, cmd
 		}
 		m.sidebarFocused = true
@@ -539,7 +556,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 				line := msg.Y - layout.contentTop + m.sidebarVisibleScroll(layout)
 				switch m.sidebarTab {
 				case sidebarTabTasks:
-					width := m.sidebarLayout().contentWidth
+					width := layout.contentWidth // already computed above, same layout
 					if line < 0 || line >= len(m.sidebarTaskRows(width)) {
 						return m, nil
 					}

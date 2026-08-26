@@ -123,17 +123,37 @@ func (m TuiModel) mainColumnWidth() int {
 // width is already final" from "this is the real, full terminal width" —
 // both just look like some m.width with m.sidebarActive set. Concretely,
 // real width=120 narrows once to 71; feed 71 back in with sidebarActive
-// still true and it narrows AGAIN to 34. renderFrame's shadow model
-// (tui_view.go) is exactly this shape — mainM.width is set to
-// m.mainColumnWidth() — so it clears mainM.sidebarActive right after, which
-// is what keeps this method idempotent in practice: the one caller that
-// ever holds an already-narrowed width also stops claiming sidebarActive.
-// Do not construct a second shadow model without doing the same.
+// still true and it narrows AGAIN to 34. mainShadow() (below) is the ONLY
+// sanctioned way to build a model in that shape, and it clears
+// sidebarActive as part of constructing it — every caller that needs a
+// main-column-width copy of the model (renderFrame's side-by-side render in
+// tui_view.go, routeSidebarMsg's main-column mouse dispatch in
+// tui_sidebar.go) must go through it rather than hand-narrowing .width
+// again, or this idempotence guarantee silently breaks for that one caller.
 func (m TuiModel) renderWidth() int {
 	if m.sidebarActive {
 		return m.mainColumnWidth()
 	}
 	return m.width
+}
+
+// mainShadow returns a copy of m narrowed to mainColumnWidth() with
+// sidebarActive cleared — the "shadow model" used to render or dispatch
+// through the main conversation's own width-keyed logic while the sidebar
+// is open (see renderWidth's doc comment for why clearing sidebarActive
+// here, not just narrowing width, is required). This is the ONLY place that
+// should ever construct such a copy: a second, independently hand-rolled
+// shadow model that narrows .width but leaves sidebarActive=true silently
+// double-narrows every width-keyed read through it (F13) — and unlike
+// renderFrame's transient shadow, one built for dispatching a message
+// (e.g. a mouse click) can leave that double-narrowed wrap PERMANENTLY
+// cached in m.blocks[idx].cachedLines, since getBlockLines writes through a
+// slice that shares the real model's backing array.
+func (m TuiModel) mainShadow() TuiModel {
+	shadow := m
+	shadow.width = m.mainColumnWidth()
+	shadow.sidebarActive = false
+	return shadow
 }
 
 func (m TuiModel) sidebarLayout() sidebarLayoutT {
