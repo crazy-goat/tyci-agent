@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // BtwReadOnlyGate limits the evaluation phase of a /btw side-conversation to
@@ -71,9 +72,36 @@ type JobPromoter interface {
 	Promote(ctx context.Context, jobID string) (JobHandle, error)
 }
 
-var jobPromoter JobPromoter
+// jobPromoter is nil until SetJobPromoter is called. Guarded by
+// jobPromoterMu — but for only HALF of jobNotifierMu's rationale (see
+// bgbash.go), and the half that does not apply is worth naming so nobody
+// reasons from the wrong one: unlike the other job hooks in this package,
+// jobPromoter is NOT read from a detached job goroutine. promote_btw is in
+// subagentDeniedTools (toolgate.go) and the /btw evaluator's read-only gate
+// denies it too, so the only caller is the main agent loop — see
+// PromoteBtwTool's own comment below. What justifies the guard here is the
+// other half: "written once at startup" is a convention nothing enforces,
+// and a hook that is cheap to make race-free should not depend on today's
+// call graph staying this way.
+var (
+	jobPromoterMu sync.RWMutex
+	jobPromoter   JobPromoter
+)
 
-func SetJobPromoter(p JobPromoter) { jobPromoter = p }
+func SetJobPromoter(p JobPromoter) {
+	jobPromoterMu.Lock()
+	jobPromoter = p
+	jobPromoterMu.Unlock()
+}
+
+// getJobPromoter copies the current JobPromoter out under RLock — see
+// getJobAsker's doc comment (ask.go) for why callers never hold the lock
+// while calling into the interface.
+func getJobPromoter() JobPromoter {
+	jobPromoterMu.RLock()
+	defer jobPromoterMu.RUnlock()
+	return jobPromoter
+}
 
 // PromoteBtwTool is intentionally available only to the parent/main schema.
 // The evaluator cannot call it because its read-only runtime gate denies it.
@@ -85,10 +113,11 @@ func (t *PromoteBtwTool) Run(ctx context.Context, input map[string]any) ToolResu
 	if id == "" {
 		return validationResult("job_id is required")
 	}
-	if jobPromoter == nil {
+	promoter := getJobPromoter()
+	if promoter == nil {
 		return ToolResult{Type: "result", Success: false, Error: "promote_btw unavailable: job registry not configured"}
 	}
-	h, err := jobPromoter.Promote(ctx, id)
+	h, err := promoter.Promote(ctx, id)
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}

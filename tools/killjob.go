@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // Item 26's kill_job plumbing: the contracts satisfied structurally by
@@ -22,13 +23,32 @@ type JobCanceler interface {
 
 // jobCanceler is nil until SetJobCanceler is called; KillJobTool then stays
 // bash-only (the pre-item-26 behaviour) instead of failing, so tests and
-// modes without a registry keep working.
-var jobCanceler JobCanceler
+// modes without a registry keep working. Guarded by jobCancelerMu for the
+// same reason jobNotifier is (see bgbash.go's jobNotifierMu doc comment): it
+// is read from job goroutines that outlive the tool call that started them,
+// while SetJobCanceler is called from the setup path.
+var (
+	jobCancelerMu sync.RWMutex
+	jobCanceler   JobCanceler
+)
 
 // SetJobCanceler wires kill_job's subagent path to a JobCanceler over the
 // app's shared jobs.Registry — the same registry every other job hook in
 // this package runs on.
-func SetJobCanceler(c JobCanceler) { jobCanceler = c }
+func SetJobCanceler(c JobCanceler) {
+	jobCancelerMu.Lock()
+	jobCanceler = c
+	jobCancelerMu.Unlock()
+}
+
+// getJobCanceler copies the current JobCanceler out under RLock — see
+// getJobAsker's doc comment (ask.go) for why callers never hold the lock
+// while calling into the interface.
+func getJobCanceler() JobCanceler {
+	jobCancelerMu.RLock()
+	defer jobCancelerMu.RUnlock()
+	return jobCanceler
+}
 
 // JobKindSource exposes just enough of one registered job for the safety
 // rule below, without importing "jobs": ID is the full id, ParentID the
@@ -48,11 +68,31 @@ type JobLister interface {
 // jobLister is nil until SetJobLister is called. Unset, the inside-a-child
 // subtree check cannot run and refuses everything except the child itself —
 // fail closed: without parentage data there is no way to prove a target IS
-// yours, and one confused child must not take down unrelated work.
-var jobLister JobLister
+// yours, and one confused child must not take down unrelated work. Guarded
+// by jobListerMu for the same reason jobNotifier is (see bgbash.go's
+// jobNotifierMu doc comment): it is read from job goroutines that outlive
+// the tool call that started them, while SetJobLister is called from the
+// setup path.
+var (
+	jobListerMu sync.RWMutex
+	jobLister   JobLister
+)
 
 // SetJobLister wires kill_job's parent walk to the app's shared registry.
-func SetJobLister(l JobLister) { jobLister = l }
+func SetJobLister(l JobLister) {
+	jobListerMu.Lock()
+	jobLister = l
+	jobListerMu.Unlock()
+}
+
+// getJobLister copies the current JobLister out under RLock — see
+// getJobAsker's doc comment (ask.go) for why callers never hold the lock
+// while calling into the interface.
+func getJobLister() JobLister {
+	jobListerMu.RLock()
+	defer jobListerMu.RUnlock()
+	return jobLister
+}
 
 // parentIDOf resolves jobID's own ParentID via the wired JobLister — for a
 // call site that only has a job's own id in hand, not its spawner's (see
@@ -61,10 +101,11 @@ func SetJobLister(l JobLister) { jobLister = l }
 // lister is wired or jobID is unknown; notifyToParent's fallback to main
 // handles both the same as a job with no parent at all.
 func parentIDOf(jobID string) string {
-	if jobLister == nil {
+	lister := getJobLister()
+	if lister == nil {
 		return ""
 	}
-	for _, j := range jobLister.ListJobs() {
+	for _, j := range lister.ListJobs() {
 		if j.ID() == jobID {
 			return j.ParentID()
 		}
@@ -139,9 +180,14 @@ func (t *KillJobTool) Run(ctx context.Context, input map[string]any) ToolResult 
 	// wired. If the lister is nil (no registry: tests, --print mode) the raw
 	// id passes through as an unknown target — matching how every tool here
 	// degrades when its adapter is unset.
+	//
+	// Read once into a local: the lister is also passed to
+	// killAllowedInsideChild below, and two separate reads of the global
+	// could straddle a concurrent SetJobLister and see different values.
+	lister := getJobLister()
 	fullID, known := jobID, false
-	if jobLister != nil {
-		for _, j := range jobLister.ListJobs() {
+	if lister != nil {
+		for _, j := range lister.ListJobs() {
 			if j.ID() == jobID {
 				fullID, known = j.ID(), true
 				break
@@ -159,7 +205,7 @@ func (t *KillJobTool) Run(ctx context.Context, input map[string]any) ToolResult 
 	// Inside a child agent only its own subtree is fair game. The refusal
 	// names the boundary so the model can self-correct instead of retrying
 	// blindly.
-	if !killAllowedInsideChild(ctx, callerJobID, fullID, jobLister) {
+	if !killAllowedInsideChild(ctx, callerJobID, fullID, lister) {
 		return ToolResult{
 			Type:    "result",
 			Success: false,
@@ -176,7 +222,8 @@ func (t *KillJobTool) Run(ctx context.Context, input map[string]any) ToolResult 
 		}
 	}
 
-	if known && jobCanceler != nil && jobCanceler.Cancel(fullID) {
+	canceler := getJobCanceler()
+	if known && canceler != nil && canceler.Cancel(fullID) {
 		return ToolResult{
 			Type:    "result",
 			Success: true,
