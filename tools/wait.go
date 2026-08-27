@@ -51,6 +51,14 @@ type JobStatus struct {
 	Waiting bool
 	// Question is the pending question text while Waiting is true.
 	Question string
+	// QuestionSeq is the ask that produced Question (jobs.Job.QuestionSeq
+	// mirrored) — an unforgeable per-ask id, unlike Question itself, which
+	// is free text a job can pose identically more than once across its
+	// lifetime. handOff's pendingQuestions peek uses this, not Question
+	// text, to key jobs.Notifier.MarkQuestionShown so the "already shown"
+	// mark from one ask can never be mistaken for covering a later,
+	// identically-worded one (item 54 review finding 1).
+	QuestionSeq int
 	// Progress is the last status note recorded for the job, if any —
 	// either an explicit "report_progress" call, or (the dominant source in
 	// practice) one throttled line of a backgrounded shell command's own

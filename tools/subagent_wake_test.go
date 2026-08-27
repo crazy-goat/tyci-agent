@@ -43,13 +43,14 @@ func (w realJobObserver) Observe(ctx context.Context, id string, timeout time.Du
 		return JobStatus{}, false
 	}
 	return JobStatus{
-		ID:       job.ID,
-		Done:     job.Status != jobs.StatusRunning && job.Status != jobs.StatusWaitingAnswer,
-		Success:  job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
-		Content:  job.Result,
-		Error:    job.Err,
-		Waiting:  job.Status == jobs.StatusWaitingAnswer,
-		Question: job.Question,
+		ID:          job.ID,
+		Done:        job.Status != jobs.StatusRunning && job.Status != jobs.StatusWaitingAnswer,
+		Success:     job.Status == jobs.StatusDone || job.Status == jobs.StatusTruncated,
+		Content:     job.Result,
+		Error:       job.Err,
+		Waiting:     job.Status == jobs.StatusWaitingAnswer,
+		Question:    job.Question,
+		QuestionSeq: job.QuestionSeq,
 	}, true
 }
 
@@ -191,14 +192,13 @@ func TestRunWithHandoff_WakesWhenChildAsksMidCall(t *testing.T) {
 		// C1: the wake alone is not enough — the handoff message must
 		// actually carry the question, or the ONLY thing delivered here
 		// would be the fact that a child exists and is running, not what
-		// it is blocked on. (Separately, the async onEvent notice for this
-		// same question is NOT suppressed in this scenario — nobody here
-		// is in a REPORTING Wait, only the observer-backed watcher, which
-		// does not count — so it still gets queued too; see review round
-		// 1's note on that harmless, deliberate redundancy. This
-		// assertion is about the handoff message specifically, which is
-		// the delivery path that must not depend on that notice arriving
-		// or being read.)
+		// it is blocked on. (Separately: this registry has no onEvent hook
+		// wired — see wakeEnv — so there is no ask-notice in play here to
+		// worry about duplicating. Production wires one via main.go's
+		// wireTools, and item 54's fix is what keeps that notice from
+		// repeating what this same handoff message already says; see
+		// TestWiring_54_* in wiring_ask_notice_dedup_test.go for that,
+		// end to end.)
 		if !strings.Contains(r.res.Content, question) {
 			t.Fatalf("handoff message does not mention the pending question %q — it only promises one will come, without delivering it: %s", question, r.res.Content)
 		}

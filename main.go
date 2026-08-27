@@ -794,11 +794,30 @@ func wireTools() {
 			// drop the notice silently — a dropped notice leaves no trace
 			// that a child ever asked anything, while a forwarded one at
 			// least reaches someone, tagged as not its original addressee.
+			// TODO(item 54 review finding 2): the reg.Post branch below is NOT
+			// covered by the MarkQuestionShown dedup — that only suppresses a
+			// duplicate on the main JobNotifier queue (the j.ParentID == ""
+			// case). A mid-level subagent (one with a live ParentID) whose
+			// blocking call hands a child off still gets this same ask-notice
+			// duplicated in its own mailbox exactly as before item 54, since
+			// nothing here checks or records "already shown" against a
+			// mailbox-routed message. Fixing it properly needs the same key
+			// (jobID+QuestionSeq) threaded through jobs.Job's
+			// mailbox/Post/DrainMessages path, which item 54 did not have
+			// time to do — see the PR discussion for triage.
 			if j.ParentID == "" || !reg.Post(j.ParentID, text) {
 				if j.ParentID != "" {
 					text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", j.ParentID, text)
 				}
-				notices.Notify(text)
+				// NotifyQuestion (not plain Notify): keyed by j.ID/j.QuestionSeq
+				// — an unforgeable per-ask id, not the question text itself,
+				// so an identically-worded LATER ask from the same job is
+				// never mistaken for this one (item 54 review finding 1) — so
+				// a blocking subagent call's handoff message, if it ends up
+				// carrying this exact ask too (see tools/subagent.go's
+				// handOff/markQuestionsShown), can mark this entry shown and
+				// Drain will not repeat it.
+				notices.NotifyQuestion(j.ID, j.QuestionSeq, text)
 			}
 		}
 

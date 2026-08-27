@@ -69,6 +69,19 @@ type Job struct {
 	// StatusWaitingAnswer (set by Ask, cleared once answered or unblocked).
 	Question string
 
+	// QuestionSeq increments every time Ask poses a new question on this
+	// job (set under Registry.mu, right next to Question — see Ask). It
+	// exists so a question can be keyed unforgeably: Question is free text,
+	// and a child that asks the exact same words twice across its lifetime
+	// (retrying after a timeout, asking again after being answered once)
+	// would otherwise produce two notices with an identical jobID+question
+	// key. jobs.Notifier's NotifyQuestion/MarkQuestionShown key on
+	// jobID+QuestionSeq instead, specifically so the first ask's "already
+	// shown" mark can never be mistaken for covering the second ask (item
+	// 54 review finding 1). Never reset — always increasing for the life of
+	// the job.
+	QuestionSeq int
+
 	// QuestionHasWaiter is true when, at the moment Ask set Status to
 	// StatusWaitingAnswer, at least one caller was already blocked inside
 	// Registry.Wait for this specific job (see waiters below). It exists so
@@ -307,6 +320,7 @@ func (j *Job) Snapshot() Job {
 		StartedAt:         j.StartedAt,
 		FinishedAt:        j.FinishedAt,
 		Question:          j.Question,
+		QuestionSeq:       j.QuestionSeq,
 		QuestionHasWaiter: j.QuestionHasWaiter,
 		Progress:          j.Progress,
 		// Deep-copied for the exact reason ResidualMailbox is below: a

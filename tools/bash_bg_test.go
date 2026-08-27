@@ -14,15 +14,30 @@ import (
 )
 
 // recordingNotifier captures the completion notices a background command
-// produces, standing in for the app's jobs.Notifier.
+// produces, standing in for the app's jobs.Notifier. It also records
+// MarkQuestionShown calls (jobID -> seq) so tests can assert whether handOff
+// told the notifier a question was already delivered via the handoff
+// message — see subagent_handoff_test.go's question-notice tests. Keyed on
+// seq (jobs.Job.QuestionSeq), not question text, matching the real
+// jobs.Notifier's key (item 54 review finding 1).
 type recordingNotifier struct {
-	mu   sync.Mutex
-	seen []string
+	mu    sync.Mutex
+	seen  []string
+	shown map[string]int
 }
 
 func (n *recordingNotifier) Notify(text string) {
 	n.mu.Lock()
 	n.seen = append(n.seen, text)
+	n.mu.Unlock()
+}
+
+func (n *recordingNotifier) MarkQuestionShown(jobID string, seq int) {
+	n.mu.Lock()
+	if n.shown == nil {
+		n.shown = make(map[string]int)
+	}
+	n.shown[jobID] = seq
 	n.mu.Unlock()
 }
 
@@ -32,6 +47,13 @@ func (n *recordingNotifier) all() []string {
 	out := make([]string, len(n.seen))
 	copy(out, n.seen)
 	return out
+}
+
+func (n *recordingNotifier) shownFor(jobID string) (int, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	seq, ok := n.shown[jobID]
+	return seq, ok
 }
 
 // bgTestEnv wires the background-bash feature onto a fresh job registry and
