@@ -192,17 +192,6 @@ func notifyToParent(parentID, text string) {
 		case mb == nil:
 			text = fmt.Sprintf("[for job %s, but no mailbox is wired to route it there — delivered here instead] %s", parentID, text)
 		case mb.Post(parentID, text):
-			// TODO(item 54 review finding 2): this delivery is NOT covered by
-			// the MarkQuestionShown dedup below — that only suppresses a
-			// duplicate on the main JobNotifier queue. A mid-level subagent
-			// (one with a live ParentID) whose blocking call hands a child
-			// off still gets this same ask-notice duplicated in its own
-			// mailbox exactly as before item 54, since nothing here checks
-			// or records "already shown" against a mailbox-routed message.
-			// Fixing it properly needs the same key (jobID+QuestionSeq)
-			// threaded through jobs.Job's mailbox/Post/DrainMessages path,
-			// which item 54 did not have time to do — see the PR discussion
-			// for triage.
 			return
 		default:
 			text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", parentID, text)

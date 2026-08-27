@@ -182,9 +182,9 @@ func (n *Notifier) consumeShownLocked(jobID string, seq int) bool {
 // bug, precisely because seq makes an unconsumed mark harmless rather than a
 // leak that can misfire later: main.go's onEvent hook never calls
 // NotifyQuestion at all for a job with a live ParentID (it routes into that
-// parent job's own mailbox instead — see notifyToParent in
-// tools/bgbash.go, and the TODO there for item 54 review finding 2, which
-// this dedup does not yet cover) or for a job whose question a REPORTING
+// parent job's own mailbox instead via reg.Post — see the TODO next to that
+// call in main.go for item 54 review finding 2, which this dedup does not
+// yet cover) or for a job whose question a REPORTING
 // Wait call is about to deliver synchronously (QuestionHasWaiter — see
 // Job's doc comment). handOff calls this whenever the handoff message
 // carries the question, regardless of which of those applies, since it has
