@@ -67,8 +67,27 @@ var cronRunNowCmd = &cobra.Command{
 	RunE:  cronRunCmd.RunE,
 }
 
+var cronTickCmd = &cobra.Command{
+	Use:   "tick",
+	Short: "Run every job that is currently due, then exit",
+	Long: `Run every job that is currently due, then exit.
+
+This is the one-shot entry point meant to be invoked by the OS's own
+scheduler (cron, launchd, systemd timers, Task Scheduler) rather than by a
+person: point it at a schedule of e.g. "every 5m" or "every 1m" and it does
+not need a tyci session — interactive, console, or TUI — open anywhere for
+jobs to fire. Jobs not yet due are skipped silently; the command always
+exits 0 once the check has run, regardless of whether an individual job's
+prompt run failed (that failure is recorded in the job's own log and status,
+not surfaced as this command's exit code).`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runCronTick(cmd.Context(), cmd.OutOrStdout())
+	},
+}
+
 func init() {
-	cronCmd.AddCommand(cronListCmd, cronRunCmd, cronRunNowCmd)
+	cronCmd.AddCommand(cronListCmd, cronRunCmd, cronRunNowCmd, cronTickCmd)
 	rootCmd.AddCommand(cronCmd)
 }
 
@@ -140,6 +159,36 @@ func runCronJob(ctx context.Context, out interface{ Write([]byte) (int, error) }
 		return fmt.Errorf("cron job %q failed: %w (log: %s)", name, err, cron.LogPath(configDir, name))
 	}
 	fmt.Fprintf(out, "finished %q (log: %s)\n", name, cron.LogPath(configDir, name))
+	return nil
+}
+
+// runCronTick is the standalone counterpart to StartCronTicker (tools/cron.go):
+// that one runs inside a live tyci session on a minute ticker, this one is a
+// single check-and-dispatch meant for the OS's own scheduler to invoke, so
+// cron jobs fire whether or not anyone has a tyci session open.
+func runCronTick(ctx context.Context, out interface{ Write([]byte) (int, error) }) error {
+	_, dirs, err := loadCronFile()
+	if err != nil {
+		return err
+	}
+	configDir, err := cronConfigDir()
+	if err != nil {
+		return err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cron: find executable: %w", err)
+	}
+	runner := &cron.Runner{ConfigDir: configDir, LocalDir: localCronDir(dirs, configDir), Exe: exe, Progress: out}
+	n, err := runner.Tick(ctx)
+	if err != nil {
+		return fmt.Errorf("cron tick: %w", err)
+	}
+	if n == 0 {
+		fmt.Fprintln(out, "no jobs due")
+		return nil
+	}
+	fmt.Fprintf(out, "ran %d due job(s)\n", n)
 	return nil
 }
 
