@@ -396,3 +396,61 @@ func TestOpenAIStream_Temperature(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Request URL tests (TODO.md item 50 — Nexos fallback opt-out)
+// =============================================================================
+
+// TestOpenAIStream_FallbacksQueryParam verifies that ?fallbacks=... from the
+// provider URI (threaded through Endpoint.Options by providers.uriOptions)
+// reaches the outgoing Chat Completions request as a URL query parameter —
+// not a header or body field — and that omitting the option leaves the URL
+// unchanged (no stray "?").
+func TestOpenAIStream_FallbacksQueryParam(t *testing.T) {
+	tests := []struct {
+		name    string
+		options map[string]string
+		wantURL string
+	}{
+		{
+			name:    "no options leaves the URL untouched",
+			options: nil,
+			wantURL: "https://api.nexos.ai/v1/chat/completions",
+		},
+		{
+			name:    "fallbacks=false appended as a query parameter",
+			options: map[string]string{OptFallbacks: "false"},
+			wantURL: "https://api.nexos.ai/v1/chat/completions?fallbacks=false",
+		},
+		{
+			name:    "fallbacks merges with reasoning without dropping either",
+			options: map[string]string{OptFallbacks: "false", OptReasoning: "true"},
+			wantURL: "https://api.nexos.ai/v1/chat/completions?fallbacks=false",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doer := &stubDoer{}
+			c, err := NewOpenAI(Endpoint{
+				BaseURL: "https://api.nexos.ai",
+				Path:    "/v1/chat/completions",
+				APIKey:  "sk-test",
+				HTTP:    doer,
+				Options: tt.options,
+			})
+			if err != nil {
+				t.Fatalf("NewOpenAI: %v", err)
+			}
+
+			req := Request{Model: "gpt-5.6-luna"}
+			if err := c.Stream(context.Background(), req, func(stream.Event) error { return nil }); err != nil {
+				t.Fatalf("Stream: %v", err)
+			}
+
+			if got := doer.got.URL.String(); got != tt.wantURL {
+				t.Fatalf("request URL = %q, want %q", got, tt.wantURL)
+			}
+		})
+	}
+}

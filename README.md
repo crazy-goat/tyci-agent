@@ -100,6 +100,13 @@ openai://GPT 5.6 Luna@@api.nexos.ai/v1?api=responses&reasoning=xhigh
 `reasoning=xhigh` is forwarded as `reasoning: {"effort":"xhigh"}` by the
 Responses connector. The bare `responses://...` scheme is accepted as an alias.
 
+`?fallbacks=false` is forwarded verbatim as a `?fallbacks=false` query
+parameter on the outgoing request, for gateways like Nexos that read it to
+disable their own server-side provider fallback for that request. It merges
+with `api=` and `reasoning=` without dropping or duplicating either. This is
+unrelated to tyci/OpenCode/Pi's own application-level fallback lists (which
+model to try next when a request fails) — those stay configured separately.
+
 ### 2. Run the agent
 
 ```bash

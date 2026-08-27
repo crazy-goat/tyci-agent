@@ -15,6 +15,9 @@ import (
 // protocol for one model while keeping the provider scheme as openai.
 // ?reasoning=true remains available for chat-completion requests. Responses
 // models may use ?reasoning=xhigh (or another provider-supported effort).
+// ?fallbacks=false is forwarded verbatim as a query parameter on the outgoing
+// request URL; see the Fallbacks field doc below for what it does and does
+// not control.
 type ProviderURI struct {
 	APIType         string // openai, anthropic, gemini, responses
 	Protocol        string // optional wire-protocol override from ?api=...
@@ -24,6 +27,20 @@ type ProviderURI struct {
 	Path            string // optional path (e.g., "/v1/chat/completions"), without query
 	Reasoning       bool   // send "reasoning": true in chat requests
 	ReasoningEffort string // Responses reasoning effort, e.g. "xhigh"
+
+	// Fallbacks carries the raw value of ?fallbacks=... from the URI (e.g.
+	// "false"), or "" when the option is absent. It is forwarded verbatim as
+	// a ?fallbacks=... query parameter on the outgoing request URL — Nexos
+	// Chat Completions and Responses read it to opt a request out of Nexos'
+	// own server-side provider fallback.
+	//
+	// This is unrelated to tyci's, OpenCode's, or Pi's application-level
+	// fallback lists (which model/provider to try next when a request
+	// fails) — those remain configured separately wherever tyci resolves a
+	// model chain. Setting ?fallbacks=false here only tells Nexos not to
+	// silently reroute a single request to another upstream model on its
+	// side; it has no effect on tyci's own retry/fallback behavior.
+	Fallbacks string
 }
 
 // String returns the URI in the format: api_type://model@auth_token@host/path.
@@ -38,6 +55,9 @@ func (u ProviderURI) String() string {
 		query = append(query, "reasoning="+u.ReasoningEffort)
 	} else if u.Reasoning {
 		query = append(query, "reasoning=true")
+	}
+	if u.Fallbacks != "" {
+		query = append(query, "fallbacks="+u.Fallbacks)
 	}
 	if len(query) > 0 {
 		s += "?" + strings.Join(query, "&")
@@ -98,6 +118,7 @@ func Parse(uri string) (ProviderURI, error) {
 	reasoning := false // default: don't send reasoning field
 	reasoningEffort := ""
 	protocol := ""
+	fallbacks := ""
 	path := rawPath
 	if idx := strings.Index(rawPath, "?"); idx >= 0 {
 		path = rawPath[:idx]
@@ -121,6 +142,8 @@ func Parse(uri string) (ProviderURI, error) {
 				}
 			case "reasoning_effort":
 				reasoningEffort = kv[1]
+			case "fallbacks":
+				fallbacks = kv[1]
 			}
 		}
 	}
@@ -134,5 +157,6 @@ func Parse(uri string) (ProviderURI, error) {
 		Path:            path,
 		Reasoning:       reasoning,
 		ReasoningEffort: reasoningEffort,
+		Fallbacks:       fallbacks,
 	}, nil
 }

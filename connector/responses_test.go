@@ -158,3 +158,50 @@ func TestResponsesStreamRequest(t *testing.T) {
 		t.Fatalf("Responses tool shape = %#v", tool)
 	}
 }
+
+// TestResponsesStream_FallbacksQueryParam covers the Responses API path for
+// TODO.md item 50: ?fallbacks=... must reach the outgoing request as a URL
+// query parameter, merged with ?reasoning=... (a body field, sent
+// separately) without either being dropped or duplicated.
+func TestResponsesStream_FallbacksQueryParam(t *testing.T) {
+	doer := &responsesRequestDoer{}
+	c, err := NewResponses(Endpoint{
+		BaseURL: "https://api.nexos.ai",
+		Path:    "/v1/responses",
+		APIKey:  "sk-test",
+		HTTP:    doer,
+		Options: map[string]string{OptReasoningEffort: "xhigh", OptFallbacks: "false"},
+	})
+	if err != nil {
+		t.Fatalf("NewResponses: %v", err)
+	}
+
+	err = c.Stream(context.Background(), Request{
+		Model: "gpt-5.6-luna",
+		Messages: []Message{{
+			Role:    "user",
+			Content: []ContentBlock{{Type: "text", Text: "hello"}},
+		}},
+	}, func(stream.Event) error { return nil })
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	wantURL := "https://api.nexos.ai/v1/responses?fallbacks=false"
+	if got := doer.request.URL.String(); got != wantURL {
+		t.Fatalf("request URL = %q, want %q", got, wantURL)
+	}
+
+	body, err := io.ReadAll(doer.request.Body)
+	if err != nil {
+		t.Fatalf("Read request body: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("request JSON: %v (body %s)", err, body)
+	}
+	reasoning, ok := payload["reasoning"].(map[string]any)
+	if !ok || reasoning["effort"] != "xhigh" {
+		t.Fatalf("reasoning effort still reaches the body alongside the query fallbacks option: got %#v", payload["reasoning"])
+	}
+}
