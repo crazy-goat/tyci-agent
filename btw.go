@@ -145,6 +145,14 @@ func (a jobActivityToucherAdapter) TouchActivity(id string) {
 	a.reg.TouchActivity(id)
 }
 
+// jobProgressHeartbeatAdapter satisfies tools.JobProgressHeartbeat over
+// JobRegistry — backs the periodic report_progress nudge (item 15).
+type jobProgressHeartbeatAdapter struct{ reg *jobs.Registry }
+
+func (a jobProgressHeartbeatAdapter) NeedsProgressHeartbeat(id string, after time.Duration) bool {
+	return a.reg.NeedsProgressHeartbeat(id, after)
+}
+
 // jobMailboxAdapter satisfies tools.JobMailbox over JobRegistry: backs the
 // "message" tool and the "/msg" slash command (Resolve/Post), and the
 // per-job NextMessages drain wired into a background subagent's own

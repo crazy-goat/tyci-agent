@@ -133,6 +133,10 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 	// duration) rather than a zero time.Time producing a nonsense one. See
 	// Job.lastActivity's doc comment.
 	job.lastActivity = now.UnixNano()
+	// Same seeding for lastProgressAt — see its doc comment. Without this a
+	// freshly started job would read as having gone quiet since the Unix
+	// epoch, immediately eligible for a progress-heartbeat nudge.
+	job.lastProgressAt = now
 
 	r.mu.Lock()
 	r.jobs[job.ID] = job
@@ -859,6 +863,7 @@ func (r *Registry) SetProgress(id, text string) bool {
 	}
 	entry := truncateProgressEntry(text)
 	job.Progress = entry
+	job.lastProgressAt = time.Now()
 	job.ProgressHistory = append(job.ProgressHistory, entry)
 	if len(job.ProgressHistory) > progressHistoryCap {
 		// Drop the oldest and record that we did — see
@@ -888,6 +893,47 @@ func truncateProgressEntry(s string) string {
 		return s
 	}
 	return string(runes[:progressEntryRuneCap]) + "…"
+}
+
+// NeedsProgressHeartbeat reports whether the RUNNING job identified by id
+// should be nudged, right now, to post a report_progress note — because more
+// than `after` has elapsed since the later of: this job's start, its last
+// real progress note (lastProgressAt), or the last time this same method
+// already returned true for it (lastHeartbeatNudgeAt). That last clause is
+// the trap item 15's spec calls out explicitly: without it, a child that
+// never calls report_progress would get nagged on every single iteration
+// after first crossing the threshold, instead of at most once per `after`
+// interval.
+//
+// This is a single check-AND-set, not two separate calls — a true result
+// stamps lastHeartbeatNudgeAt to now in the same critical section, so a
+// caller polling this once per loop iteration can never observe a stale
+// "yes, nudge" for longer than one call. Same discipline as Ask's
+// QuestionHasWaiter above.
+//
+// Returns false for a non-running job (StatusWaitingAnswer is already a dead
+// end the parent has to unblock, not something a self-nudge fixes; a
+// terminal job has nothing left to report) or an unknown id, and for
+// after <= 0 (nothing would ever elapse).
+func (r *Registry) NeedsProgressHeartbeat(id string, after time.Duration) bool {
+	if after <= 0 {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok || job.Status != StatusRunning {
+		return false
+	}
+	reference := job.lastProgressAt
+	if job.lastHeartbeatNudgeAt.After(reference) {
+		reference = job.lastHeartbeatNudgeAt
+	}
+	if time.Since(reference) < after {
+		return false
+	}
+	job.lastHeartbeatNudgeAt = time.Now()
+	return true
 }
 
 // TouchActivity records that the job identified by id showed a fresh sign of
