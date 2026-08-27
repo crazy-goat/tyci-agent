@@ -276,6 +276,148 @@ func TestSidebarResize_ReclampsStaleScrollAndClickMapping(t *testing.T) {
 	}
 }
 
+// TestSidebarJobsShrink_ReclampsStaleScrollAndClickMapping is item 34's
+// regression test for the same stale-scroll hazard
+// TestSidebarResize_ReclampsStaleScrollAndClickMapping covers, but through a
+// data-shrink path instead of a terminal-resize one: sidebarVisibleScroll's
+// doc comment calls out "a resize (or a tab's content shrinking)" as the two
+// ways a stored sidebarScroll can go stale, but only the resize half had a
+// test. Here the job list shrinks (jobs removed from backgroundJobs, as
+// pruneBackgroundJobsLocked's eviction does) with no WindowSizeMsg ever sent,
+// so the layout itself never changes — only the underlying line count does.
+// sidebarVisibleScroll must still re-clamp on demand, and a row click must
+// map against that corrected value rather than the stale pre-shrink one.
+func TestSidebarJobsShrink_ReclampsStaleScrollAndClickMapping(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 100
+	m.height = 15
+	for i := 0; i < 10; i++ {
+		m.applyJobUpdate(jobs.Job{
+			ID:          fmt.Sprintf("job-%d", i),
+			Kind:        jobs.KindBash,
+			Status:      jobs.StatusDone,
+			Description: fmt.Sprintf("job-%d desc", i),
+			StartedAt:   time.Now().Add(-time.Duration(10-i) * time.Minute),
+			FinishedAt:  time.Now().Add(-time.Duration(10-i) * time.Minute),
+		})
+	}
+	m.openSidebar(sidebarTabTasks)
+	layout := m.sidebarLayout()
+	if layout.contentHeight >= 10 {
+		t.Skip("terminal too tall for this test to exercise overflow")
+	}
+	for i := 0; i < 9; i++ {
+		m.sidebarMoveCursor(1)
+	}
+	if m.sidebarScroll == 0 {
+		t.Fatalf("expected a non-zero scroll before shrinking (the list should have overflowed)")
+	}
+
+	// Shrink the job list directly — no WindowSizeMsg, no layout change —
+	// mirroring what pruneBackgroundJobsLocked does when old finished jobs
+	// age out. Leaves only "job-9", the newest.
+	for i := 0; i < 9; i++ {
+		delete(m.backgroundJobs, fmt.Sprintf("job-%d", i))
+	}
+
+	// The layout (and thus contentHeight) is unchanged; only the content
+	// shrank, so this exercises exactly the "or a tab's content shrinking"
+	// half of sidebarVisibleScroll's doc comment.
+	if got := m.sidebarVisibleScroll(layout); got != 0 {
+		t.Fatalf("expected sidebarScroll to be re-clamped to 0 once the shrunk list fits, got %d", got)
+	}
+
+	// A click on the first content row must open the one remaining job
+	// ("job-9"), not some row offset by the stale, pre-shrink scroll, which
+	// would either open nothing or (with a taller list) the wrong job.
+	model, _ := m.updateSidebar(tea.MouseMsg{
+		X: layout.contentLeft, Y: layout.contentTop,
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	m2 := model.(TuiModel)
+	if !m2.subagentModalActive {
+		t.Fatalf("expected the click to open a job result modal")
+	}
+	if want := "job-9 desc"; m2.subagentModalTitle != want {
+		t.Fatalf("expected the click to open %q (the only remaining job), got %q", want, m2.subagentModalTitle)
+	}
+}
+
+// TestSidebarTasksSubagentRows_NonzeroScrollClickMapsToCorrectJob covers the
+// Tasks click-mapping path (tui_sidebar.go's MouseMsg handling in
+// updateSidebar) specifically through the Subagents heading + synthetic root
+// row that sidebarTaskRows always prepends — TestSidebarMouse_
+// TaskClickPastJobCountBound already covers headings-before-job-rows via the
+// Bash heading, but with zero subagents that path never exercises the root
+// row (isRoot, no job) that real Subagents-tab content always has ahead of
+// any job rows. This forces a one-line contentHeight (like that test) so a
+// non-zero sidebarScroll is trivial to produce, and checks both that a click
+// on the last subagent row maps to the right job past the heading+root offset
+// and that sidebarVisibleScroll clamps an out-of-range scroll against the
+// full rendered line count (headings, root, and all three groups).
+func TestSidebarTasksSubagentRows_NonzeroScrollClickMapsToCorrectJob(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.height = 7 // contentHeight = height-6 = 1, so a small scroll offset is easy to force
+	for i := 0; i < 5; i++ {
+		m.applyJobUpdate(jobs.Job{
+			ID:          fmt.Sprintf("sub-%d", i),
+			Kind:        jobs.KindSubagent,
+			Status:      jobs.StatusDone,
+			Description: fmt.Sprintf("sub-%d desc", i),
+			StartedAt:   time.Now().Add(-time.Duration(5-i) * time.Minute),
+		})
+	}
+	m.openSidebar(sidebarTabTasks)
+	layout := m.sidebarLayout()
+	if layout.contentHeight != 1 {
+		t.Skip("expected a 1-row content window at this height")
+	}
+
+	width := layout.contentWidth
+	rows := m.sidebarTaskRows(width)
+	jobRows := m.sidebarTaskJobRows(width)
+	if len(jobRows) != 5 {
+		t.Fatalf("expected 5 job rows, got %d", len(jobRows))
+	}
+	// rows[0] is the "Subagents" heading, rows[1] is the synthetic root —
+	// neither has a job, so every real job row sits past index 1.
+	if !rows[0].isHeading || rows[0].group != "Subagents" {
+		t.Fatalf("test setup didn't reproduce the shape: rows[0] = %+v", rows[0])
+	}
+	if rows[1].job != nil {
+		t.Fatalf("test setup didn't reproduce the shape: expected rows[1] to be the job-less root, got %+v", rows[1])
+	}
+	lastJobLine := jobRows[len(jobRows)-1]
+	if lastJobLine <= 1 {
+		t.Fatalf("test setup didn't reproduce the bug: last job line %d is not past the heading+root rows", lastJobLine)
+	}
+	wantDesc := rows[lastJobLine].job.Description
+
+	m.sidebarScroll = lastJobLine // scrolled so the last subagent row is the one visible line
+	model, _ := m.updateSidebar(tea.MouseMsg{
+		X: layout.contentLeft, Y: layout.contentTop,
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	m2 := model.(TuiModel)
+	if !m2.subagentModalActive {
+		t.Fatalf("expected the click on the last subagent row to open a job result modal")
+	}
+	if m2.subagentModalTitle != wantDesc {
+		t.Fatalf("expected the click to open %q, got %q", wantDesc, m2.subagentModalTitle)
+	}
+
+	// sidebarVisibleScroll must clamp a stale, out-of-range scroll against
+	// the full line count (headings + root + all groups), not just the job
+	// rows — the same clamp bound TestSidebarResize_
+	// ReclampsStaleScrollAndClickMapping checks via a resize.
+	m3 := m2
+	m3.sidebarScroll = 9999
+	wantClamp := len(rows) - layout.contentHeight
+	if got := m3.sidebarVisibleScroll(layout); got != wantClamp {
+		t.Fatalf("expected an out-of-range scroll to clamp to %d (lineCount-contentHeight), got %d", wantClamp, got)
+	}
+}
+
 // TestSidebarMouse_TaskClickPastJobCountBound is F3's regression test: the
 // old hit-test bounded the clicked line against m.sidebarRowCount(), which
 // on Tasks counts only job rows (5 here), not the actual rendered line
