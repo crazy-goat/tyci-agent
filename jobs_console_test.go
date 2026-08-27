@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -86,19 +88,48 @@ func TestPrintJobs_LiveJobsNeverCapped(t *testing.T) {
 // fall through to the "Unknown command" default branch. A bare
 // &interactiveState{} is safe here because the /jobs branch touches only
 // the global JobRegistry and os.Stdout, never s.cond/s.display.
+//
+// Asserting only (exit, handled) == (false, true) would be vacuous — the
+// "Unknown command" default branch returns the exact same pair, so a typo
+// or a dropped case in the switch would leave this test green while the
+// console silently regressed to "Unknown command: /jobs". Redirect
+// os.Stdout through a pipe and assert on the actual printed text instead.
 func TestHandleCommand_JobsIsRecognized(t *testing.T) {
 	reg := jobs.NewRegistry()
-	orig := JobRegistry
+	origRegistry := JobRegistry
 	JobRegistry = reg
-	defer func() { JobRegistry = orig }()
+	defer func() { JobRegistry = origRegistry }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = origStdout }()
 
 	s := &interactiveState{}
 	_, cancel := context.WithCancel(context.Background())
 	exit, handled := s.handleCommand("/jobs", cancel)
+
+	w.Close()
+	os.Stdout = origStdout
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+
 	if exit {
 		t.Fatal("/jobs must not exit the loop")
 	}
 	if !handled {
 		t.Fatal("/jobs must be handled, not fall through to submit/unknown-command")
+	}
+	got := buf.String()
+	if strings.Contains(got, "Unknown command") {
+		t.Fatalf("expected /jobs to be recognized, got: %q", got)
+	}
+	if got != "No background jobs.\n" {
+		t.Fatalf("expected the empty-registry message, got: %q", got)
 	}
 }
