@@ -18,11 +18,13 @@ var cronCmd = &cobra.Command{
 	Short: "List and manually run scheduled prompts",
 }
 
+var cronListDir string
+
 var cronListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List scheduled prompts",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		f, dirs, err := loadCronFile()
+		f, dirs, err := loadCronFile(cronListDir)
 		if err != nil {
 			return err
 		}
@@ -67,6 +69,8 @@ var cronRunNowCmd = &cobra.Command{
 	RunE:  cronRunCmd.RunE,
 }
 
+var cronTickDir string
+
 var cronTickCmd = &cobra.Command{
 	Use:   "tick",
 	Short: "Run every job that is currently due, then exit",
@@ -79,14 +83,21 @@ not need a tyci session — interactive, console, or TUI — open anywhere for
 jobs to fire. Jobs not yet due are skipped silently; the command always
 exits 0 once the check has run, regardless of whether an individual job's
 prompt run failed (that failure is recorded in the job's own log and status,
-not surfaced as this command's exit code).`,
+not surfaced as this command's exit code).
+
+A crontab/launchd/systemd entry runs with cwd = $HOME (or whatever it was
+configured with), not your project directory, so project-local
+.tyci/cron.json jobs (TODO.md item 22) won't be found unless the entry either
+cd's into the project first or passes --dir explicitly.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runCronTick(cmd.Context(), cmd.OutOrStdout())
+		return runCronTick(cmd.Context(), cmd.OutOrStdout(), cronTickDir)
 	},
 }
 
 func init() {
+	cronListCmd.Flags().StringVar(&cronListDir, "dir", "", "project directory to resolve project-local cron.json from (default: current directory)")
+	cronTickCmd.Flags().StringVar(&cronTickDir, "dir", "", "project directory to resolve project-local cron.json from (default: current directory)")
 	cronCmd.AddCommand(cronListCmd, cronRunCmd, cronRunNowCmd, cronTickCmd)
 	rootCmd.AddCommand(cronCmd)
 }
@@ -99,14 +110,22 @@ func cronConfigDir() (string, error) {
 	return filepath.Join(home, ".tyci"), nil
 }
 
-func cronDirs() ([]string, error) {
+// cronDirs resolves the jobs-file directories to consult. wd overrides the
+// directory project-local configuration is resolved from — pass "" to use
+// the process's actual current directory. This is what lets `tick`/`list`
+// (see their --dir flags) find a project's .tyci/cron.json when invoked by
+// an OS scheduler whose cwd is not the project (commonly $HOME).
+func cronDirs(wd string) ([]string, error) {
 	global, err := cronConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return []string{global}, nil
+	if wd == "" {
+		var err error
+		wd, err = os.Getwd()
+		if err != nil {
+			return []string{global}, nil
+		}
 	}
 	root, err := session.ProjectKey(wd)
 	if err != nil || root == "" {
@@ -125,8 +144,8 @@ func cronDirs() ([]string, error) {
 	return []string{global, filepath.Join(root, ".tyci")}, nil
 }
 
-func loadCronFile() (*cron.File, []string, error) {
-	dirs, err := cronDirs()
+func loadCronFile(wd string) (*cron.File, []string, error) {
+	dirs, err := cronDirs(wd)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -138,7 +157,7 @@ func loadCronFile() (*cron.File, []string, error) {
 }
 
 func runCronJob(ctx context.Context, out interface{ Write([]byte) (int, error) }, name string) error {
-	f, dirs, err := loadCronFile()
+	f, dirs, err := loadCronFile("")
 	if err != nil {
 		return err
 	}
@@ -166,8 +185,15 @@ func runCronJob(ctx context.Context, out interface{ Write([]byte) (int, error) }
 // that one runs inside a live tyci session on a minute ticker, this one is a
 // single check-and-dispatch meant for the OS's own scheduler to invoke, so
 // cron jobs fire whether or not anyone has a tyci session open.
-func runCronTick(ctx context.Context, out interface{ Write([]byte) (int, error) }) error {
-	_, dirs, err := loadCronFile()
+//
+// It takes a cross-process lock before dispatching so that two overlapping
+// invocations — two `tick` processes racing, or a live session's ticker and
+// an external crontab's `tick` — can't both see the same job as due and both
+// run it: Job.LastRun in cron.json is only written back after a run
+// finishes (cron.MarkRun), so without this lock both readers would see the
+// same "not run yet" state.
+func runCronTick(ctx context.Context, out interface{ Write([]byte) (int, error) }, wd string) error {
+	dirs, err := cronDirs(wd)
 	if err != nil {
 		return err
 	}
@@ -175,6 +201,17 @@ func runCronTick(ctx context.Context, out interface{ Write([]byte) (int, error) 
 	if err != nil {
 		return err
 	}
+
+	release, ok, err := cron.TryLock(cron.LockPath(configDir))
+	if err != nil {
+		return fmt.Errorf("cron tick: %w", err)
+	}
+	if !ok {
+		fmt.Fprintln(out, "another tick is already running, skipping")
+		return nil
+	}
+	defer release()
+
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("cron: find executable: %w", err)

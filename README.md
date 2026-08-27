@@ -327,7 +327,7 @@ List and run the scheduled prompts created by the agent's `cron` tool (jobs live
 `~/.tyci/cron.json`, plus a project-local `.tyci/cron.json` when the project is trusted).
 
 ```bash
-tyci cron list                # List scheduled jobs: schedule, next/last run, status
+tyci cron list                 # List scheduled jobs: schedule, next/last run, status
 tyci cron run <name>           # Run one job immediately, regardless of its schedule
 tyci cron run_now <name>       # Alias for `run`
 tyci cron tick                 # Run every job that is currently due, then exit
@@ -339,11 +339,24 @@ is the standalone alternative: a single check-and-dispatch that needs no session
 all, meant to be invoked periodically by the OS's own scheduler (a `cron` entry, a
 `launchd` job, a systemd timer) so scheduled prompts keep firing even when nobody has
 tyci open. It always exits `0` once the check has run; an individual job's failure is
-recorded in that job's own log and status, not surfaced as `tick`'s exit code. Example
-crontab entry to check every 5 minutes:
+recorded in that job's own log and status, not surfaced as `tick`'s exit code.
+
+Two `tick` invocations (or `tick` overlapping a live session's own ticker) racing the
+same due job is expected and handled: `tick` takes an exclusive, non-blocking
+cross-process lock before dispatching, so an overlapping invocation just prints
+`another tick is already running, skipping` and exits `0` instead of double-running
+anything.
+
+`list` and `tick` resolve project-local `.tyci/cron.json` jobs from the current
+directory, same as any other tyci command — but a crontab/launchd/systemd entry runs
+with its own cwd (commonly `$HOME`), not your project's. Either `cd` into the project
+first, or pass `--dir <project>` explicitly. Example crontab entry to check every 5
+minutes:
 
 ```
-*/5 * * * * /path/to/tyci cron tick >> ~/.tyci/cron-tick.log 2>&1
+*/5 * * * * cd /path/to/project && /path/to/tyci cron tick >> ~/.tyci/cron-tick.log 2>&1
+# or, equivalently:
+*/5 * * * * /path/to/tyci cron tick --dir /path/to/project >> ~/.tyci/cron-tick.log 2>&1
 ```
 
 ### Display Modes

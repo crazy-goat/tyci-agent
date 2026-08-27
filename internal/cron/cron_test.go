@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -307,6 +308,81 @@ func TestTickRunsOnlyWhatIsDue(t *testing.T) {
 	}
 	if _, err := os.Stat(LogPath(dir, "off")); !os.IsNotExist(err) {
 		t.Error("a disabled job ran")
+	}
+}
+
+// TestTickLockPreventsConcurrentDoubleDispatch is the regression test for the
+// cross-process double-dispatch bug: two separate `tyci cron tick`
+// invocations (modelled here as two independent Runners against the same
+// ConfigDir, exactly like two OS processes would be) racing the same due job
+// must not both run it. Job.LastRun is only written back after a run
+// finishes, so without the TryLock guard that runCronTick/StartCronTicker
+// take around Tick, both readers see the same "never run" state and both
+// dispatch — this test fails on that old behaviour (two sets of log headers)
+// and passes once the lock serializes the two Ticks.
+func TestTickLockPreventsConcurrentDoubleDispatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stand-in")
+	}
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "fake-tyci")
+	// Sleeps long enough that, if both Ticks were allowed to run the job at
+	// once, their windows would overlap: the whole point is to give a would-be
+	// second dispatch every chance to happen if the lock did not stop it.
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nsleep 0.3\necho ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	f, _ := Load(dir)
+	_ = f.Add(Job{Name: "due-now", Prompt: "look busy", Dir: dir, Schedule: "every 1h"})
+	if err := Save(dir, f); err != nil {
+		t.Fatal(err)
+	}
+
+	lockPath := LockPath(dir)
+	attempt := func() (dispatched int) {
+		release, ok, err := TryLock(lockPath)
+		if err != nil {
+			t.Errorf("TryLock: %v", err)
+			return 0
+		}
+		if !ok {
+			return 0
+		}
+		defer release()
+		r := &Runner{ConfigDir: dir, Exe: exe}
+		n, err := r.Tick(context.Background())
+		if err != nil {
+			t.Errorf("Tick: %v", err)
+		}
+		return n
+	}
+
+	var wg sync.WaitGroup
+	results := make([]int, 2)
+	start := make(chan struct{})
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i] = attempt()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	total := results[0] + results[1]
+	if total != 1 {
+		t.Fatalf("both ticks dispatched (results=%v), want exactly one — the lock did not prevent double-dispatch", results)
+	}
+
+	logged, err := os.ReadFile(LogPath(dir, "due-now"))
+	if err != nil {
+		t.Fatalf("no log written: %v", err)
+	}
+	if got := strings.Count(string(logged), "look busy"); got != 1 {
+		t.Errorf("log has %d start-header lines for the job, want exactly 1 (proof of a single dispatch):\n%s", got, logged)
 	}
 }
 
