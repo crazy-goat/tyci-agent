@@ -90,6 +90,15 @@ type raceJobProgressReporter struct{}
 
 func (raceJobProgressReporter) SetProgress(id, text string) bool { return false }
 
+// raceJobProgressHeartbeat is item 15's addition to this family: the
+// periodic report_progress nudge's JobProgressHeartbeat global gets the
+// same guarded pattern as every other job-hook global in this file.
+type raceJobProgressHeartbeat struct{}
+
+func (raceJobProgressHeartbeat) NeedsProgressHeartbeat(id string, after time.Duration) bool {
+	return false
+}
+
 type raceJobMailbox struct{}
 
 func (raceJobMailbox) Resolve(id string) (string, bool) { return "", false }
@@ -208,6 +217,7 @@ func TestJobGlobals_ConcurrentSetGet_RaceFree(t *testing.T) {
 	oldAsker := getJobAsker()
 	oldAnswerer := getJobAnswerer()
 	oldProgressReporter := getJobProgressReporter()
+	oldProgressHeartbeat := getJobProgressHeartbeat()
 	oldMailbox := getJobMailbox()
 	oldResumer := getJobResumer()
 	oldExtensionRequester := getJobExtensionRequester()
@@ -219,6 +229,7 @@ func TestJobGlobals_ConcurrentSetGet_RaceFree(t *testing.T) {
 		SetJobAsker(oldAsker)
 		SetJobAnswerer(oldAnswerer)
 		SetJobProgressReporter(oldProgressReporter)
+		SetJobProgressHeartbeat(oldProgressHeartbeat)
 		SetJobMailbox(oldMailbox)
 		SetJobResumer(oldResumer)
 		SetJobActivityToucher(oldActivityToucher)
@@ -252,6 +263,12 @@ func TestJobGlobals_ConcurrentSetGet_RaceFree(t *testing.T) {
 			name: "jobProgressReporter",
 			set:  func() { SetJobProgressReporter(raceJobProgressReporter{}) },
 			get:  func() { _ = getJobProgressReporter() },
+		},
+		{
+			// Item 15: the periodic report_progress nudge's global.
+			name: "jobProgressHeartbeat",
+			set:  func() { SetJobProgressHeartbeat(raceJobProgressHeartbeat{}) },
+			get:  func() { _ = getJobProgressHeartbeat() },
 		},
 		{
 			name: "jobMailbox",

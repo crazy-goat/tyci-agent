@@ -139,6 +139,26 @@ type Config struct {
 	// interactive run to wait on a human describes someone who is not
 	// there.
 	Interactive bool
+
+	// ProgressHeartbeat, if set, is checked once per loop iteration — the
+	// same "next iteration boundary" spot as the last-step warning below —
+	// and reports whether this run has gone quiet long enough (no
+	// report_progress note) to deserve a harness-authored nudge asking it to
+	// post one. It only ever applies to a subagent's own loop (wired from
+	// tools.JobProgressHeartbeatCheck, bound to that job's own id); the main
+	// conversation has nothing watching it that this could unblock, so it is
+	// left nil there.
+	//
+	// The callback carries no threshold or "have I already nagged" state of
+	// its own to track here: it already re-arms itself once it fires (see
+	// jobs.Registry.NeedsProgressHeartbeat), so calling it more than once
+	// per interval simply keeps returning false. That is why, unlike
+	// PendingTodos/PendingJobs above, there is no separate
+	// maxProgressHeartbeats counter next to maxTodoReminders/
+	// maxJobReminders — the time gate itself is what keeps this from
+	// crowding out the real conversation, per item 15's decided design
+	// (time-based, not step-based, reusing SubagentBackgroundAfterSec).
+	ProgressHeartbeat func() bool
 }
 
 // maxTodoReminders bounds how many times, within a single turn, the agent
@@ -225,6 +245,21 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			if warn {
 				lastStepWarned = true
 				reminder := buildLastStepWarning()
+				*msgs = append(*msgs, connector.Message{
+					Role:    "user",
+					Content: []connector.ContentBlock{{Type: "text", Text: reminder}},
+				})
+				if cfg.Session != nil {
+					blocks := []session.ContentBlock{{Type: "text", Text: reminder}}
+					_ = cfg.Session.WriteMessage("user", blocks, nil)
+				}
+			} else if cfg.ProgressHeartbeat != nil && cfg.ProgressHeartbeat() {
+				// Deliberately in the `else` branch: the last-step warning
+				// above forbids tool calls this turn (there is no next
+				// runOnce left to see their result), while this nudge exists
+				// specifically to ask for one (report_progress) — the two
+				// must never fire on the same iteration.
+				reminder := buildProgressHeartbeatReminder()
 				*msgs = append(*msgs, connector.Message{
 					Role:    "user",
 					Content: []connector.ContentBlock{{Type: "text", Text: reminder}},
@@ -583,6 +618,25 @@ const defaultAutoCompactPercent = 85
 // request. Mirrors commands.go's manualCompactSummary for /compact.
 func buildAutoCompactSummary(used, limit int, dumpPath string) string {
 	return fmt.Sprintf("Automatic compaction triggered at %d of %d context tokens (no model or user request). Earlier turns are not repeated here — the raw session file and its markdown dump at %s hold the full record.", used, limit, dumpPath)
+}
+
+// buildProgressHeartbeatReminder produces the harness-authored nudge
+// injected into a subagent's own loop when it has gone quiet — no
+// report_progress note — for longer than SubagentBackgroundAfterSec (see
+// tools.JobProgressHeartbeatCheck and jobs.Registry.NeedsProgressHeartbeat).
+// Fire-and-forget by design (item 15): nothing requires the model to answer
+// in any particular shape or even acknowledge this message, only to call
+// report_progress once, so whoever is watching this job (wait, the jobs
+// panel) is not blind for the whole run the way a child that never reports
+// is today.
+func buildProgressHeartbeatReminder() string {
+	var b strings.Builder
+	b.WriteString("<system-reminder>\n")
+	b.WriteString("This is an automated check from the harness, not a message from the user. ")
+	b.WriteString("You have been running for a while without posting a status update. ")
+	b.WriteString("Call report_progress with one short line on where you are and what you're doing next, then continue your work as normal.\n")
+	b.WriteString("</system-reminder>")
+	return b.String()
 }
 
 func buildLastStepWarning() string {

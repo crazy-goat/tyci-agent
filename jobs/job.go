@@ -105,6 +105,16 @@ type Job struct {
 	// is that something.
 	ProgressHistoryTruncated bool
 
+	// LastProgressAt is when this job last reported real progress via
+	// SetProgress (report_progress tool), seeded to StartedAt at Start so a
+	// job that has said nothing yet reads as "quiet since it started" rather
+	// than a zero time.Time producing a nonsense duration — the same seeding
+	// idiom lastActivity below uses, and for the same reason. Used by
+	// Registry.NeedsProgressHeartbeat (item 15) to decide when a running
+	// subagent has gone quiet long enough to deserve a harness nudge asking
+	// it to call report_progress.
+	LastProgressAt time.Time
+
 	// LastActivity is materialized by Snapshot from lastActivity below — it
 	// only ever holds a meaningful value on a Snapshot()-returned copy, not
 	// on the live *Job (which tracks the same information in lastActivity
@@ -204,6 +214,18 @@ type Job struct {
 	// rare, deliberate act, not something fired on every streamed token), so
 	// a plain slice under the registry lock is simplest.
 	mailbox []string
+
+	// lastHeartbeatNudgeAt is when Registry.NeedsProgressHeartbeat last
+	// returned true for this job — i.e. when the harness last injected a
+	// "post a report_progress note" reminder into this job's own loop.
+	// Deliberately separate from LastProgressAt: a nudge is not a real
+	// progress note (the child may ignore it), but it still has to count as
+	// "quiet time reset" for nagging purposes, or a child that never calls
+	// report_progress would get nagged on every single iteration once the
+	// threshold is first crossed — exactly the trap item 15 calls out.
+	// Unexported and guarded by Registry.mu, same as lastActivity/cancelled
+	// above; Snapshot never needs to expose it.
+	lastHeartbeatNudgeAt time.Time
 
 	// ResidualMailbox is set ONCE, at the moment this job goes terminal (see
 	// Registry.Start's completion path), to whatever was still sitting in

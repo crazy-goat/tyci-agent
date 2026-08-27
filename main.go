@@ -453,6 +453,10 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		MaxTokens:     opts.MaxTokens,
 		NoPromptCache: !agent.PromptCacheEnabled(),
 		NextMessages:  tools.JobMailboxNextMessages(jobID),
+		// Item 15: nudge this child, at most once per SubagentBackgroundAfterSec,
+		// to post a report_progress note when it has gone quiet — nil (a
+		// no-op) when jobID is empty, e.g. a test that calls run() directly.
+		ProgressHeartbeat: tools.JobProgressHeartbeatCheck(jobID),
 	}
 
 	// Children spend the parent's money, so they record against the same
@@ -698,6 +702,7 @@ func wireTools() {
 	tools.SetJobAnswerer(jobAnswererAdapter{reg: JobRegistry})
 	tools.SetJobProgressReporter(jobProgressAdapter{reg: JobRegistry})
 	tools.SetJobActivityToucher(jobActivityToucherAdapter{reg: JobRegistry})
+	tools.SetJobProgressHeartbeat(jobProgressHeartbeatAdapter{reg: JobRegistry})
 	tools.SetJobMailbox(jobMailboxAdapter{reg: JobRegistry})
 	tools.SetJobResumer(jobResumerAdapter{reg: JobRegistry})
 	tools.SetJobPromoter(btwPromotionAdapter{})
