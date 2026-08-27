@@ -210,7 +210,18 @@ type luaEnv struct {
 }
 
 // restrictLuaStdlib removes the parts of the Lua standard library that would
-// let a script act on the machine without going through a tool.
+// let a script act on the machine without going through a tool, then rebinds
+// print onto the "lua" tool's own log() (gopher-lua's own print writes
+// straight to stdout, which in TUI mode paints over the screen). It is a
+// thin wrapper over the exported RestrictLuaStdlib — see that doc comment
+// for why this exists at all.
+func restrictLuaStdlib(L *lua.LState, env *luaEnv) {
+	RestrictLuaStdlib(L)
+	L.SetGlobal("print", L.NewFunction(env.luaLog))
+}
+
+// RestrictLuaStdlib removes the parts of the Lua standard library that
+// would let a script act on the machine without going through a tool.
 //
 // This closes a real hole rather than tidying up. gopher-lua opens every
 // standard library by default, so before this a model-written script could
@@ -224,9 +235,20 @@ type luaEnv struct {
 //
 // What is left is the pure part of the language — string, table, math,
 // coroutine, plus os.time/os.date/os.clock, which compute rather than act.
-// print is rebound onto log() because gopher-lua's own print writes straight
-// to stdout, which in TUI mode paints over the screen.
-func restrictLuaStdlib(L *lua.LState, env *luaEnv) {
+//
+// Exported (unlike the "lua" tool's own restrictLuaStdlib wrapper above) so
+// every other Lua host in the codebase gets the identical restriction
+// instead of a hand-rolled, easily-drifting copy — currently
+// internal/workflow's orchestration engine, whose Lua VM used to be a bare
+// lua.NewState() with the full standard library open, letting a
+// project-local .tyci/agents/*.lua script call os.execute/io.open directly
+// and bypass every tool-layer protection (pre_tool/post_tool hooks, the
+// write-freshness guard, tool gating) the same way a "lua" tool script would
+// have before this function existed. Callers that want their own print
+// binding (as this file's restrictLuaStdlib does, onto log()) set it
+// themselves after calling this; gopher-lua's default print is left in
+// place otherwise.
+func RestrictLuaStdlib(L *lua.LState) {
 	for _, name := range []string{
 		"io",       // io.open, io.lines: unmediated file access
 		"package",  // loads Lua modules from disk
@@ -253,9 +275,6 @@ func restrictLuaStdlib(L *lua.LState, env *luaEnv) {
 		}
 		L.SetGlobal("os", safe)
 	}
-
-	// print goes to the collected log, not to the terminal.
-	L.SetGlobal("print", L.NewFunction(env.luaLog))
 }
 
 func (e *luaEnv) install(L *lua.LState) {

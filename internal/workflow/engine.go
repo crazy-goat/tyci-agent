@@ -16,18 +16,48 @@ import (
 	"github.com/decodo/tyci/tools"
 )
 
+// defaultSessionMaxIterations is the tool-call iteration cap a session gets
+// when nothing else specifies one: neither an explicit max_iterations option
+// nor a named agent (whose frontmatter can set max_iterations) was passed to
+// tyci.new_session/resume_session. It matches the value this package
+// hardcoded before MaxIterations became configurable.
+const defaultSessionMaxIterations = 10
+
 // Engine orchestrates Lua workflow scripts.
 type Engine struct {
 	L        *lua.LState
 	ctx      context.Context
 	prompt   string
 	sessions map[string]*luaSession
+
+	// WorkDir is the directory named-agent lookups (tyci.agents(),
+	// tyci.new_session/resume_session's opts.agent) resolve project-local
+	// definitions from. Empty means "the process's actual current
+	// directory" (os.Getwd(), via agentdefs' own default) — the behavior
+	// before this field existed. The CLI entry point (workflowcmd.go) sets
+	// it from --dir so a script run with an explicit --dir resolves agent
+	// definitions from the same directory its own script discovery used,
+	// instead of silently falling back to the process cwd.
+	WorkDir string
 }
 
 // NewEngine creates a new workflow engine.
+//
+// The Lua state is stripped of everything that would let a script act on
+// the machine directly (RestrictLuaStdlib — os.execute, io.open, require,
+// etc.) and given ctx as its cancellation context (L.SetContext), the same
+// two protections tools/lua_eval.go's "lua" tool applies to a model-written
+// script: filesystem/process access must go through tyci.run_tool (gated,
+// hooked, write-freshness-guarded), and a runaway `while true do end` in a
+// project-local .tyci/agents/*.lua script can be cancelled instead of
+// hanging the process. Before this, a workflow script ran with the full
+// gopher-lua standard library open and no cancellation hook at all.
 func NewEngine(ctx context.Context, prompt string) *Engine {
+	L := lua.NewState()
+	tools.RestrictLuaStdlib(L)
+	L.SetContext(ctx)
 	return &Engine{
-		L:        lua.NewState(),
+		L:        L,
 		ctx:      ctx,
 		prompt:   prompt,
 		sessions: make(map[string]*luaSession),
@@ -78,6 +108,11 @@ func (e *Engine) registerTyciAPI() {
 	// tyci.resume_session()
 	e.L.SetField(tyci, "resume_session", e.L.NewFunction(e.luaResumeSession))
 
+	// tyci.subagent() / tyci.wait() — fan-out sugar so a script doesn't have
+	// to hand-roll tyci.run_tool("subagent", ...) / tyci.run_tool("wait", ...).
+	e.L.SetField(tyci, "subagent", e.L.NewFunction(e.luaSubagent))
+	e.L.SetField(tyci, "wait", e.L.NewFunction(e.luaWait))
+
 	e.L.SetGlobal("tyci", tyci)
 }
 
@@ -108,7 +143,7 @@ func (e *Engine) luaModels(L *lua.LState) int {
 
 // luaAgents returns configured agent names.
 func (e *Engine) luaAgents(L *lua.LState) int {
-	defs := agentdefs.List("")
+	defs := agentdefs.List(e.WorkDir)
 	arr := L.NewTable()
 	for i, def := range defs {
 		arr.RawSetInt(i+1, lua.LString(def.Name))
@@ -120,37 +155,138 @@ func (e *Engine) luaAgents(L *lua.LState) int {
 // luaRunTool runs a built-in tool.
 func (e *Engine) luaRunTool(L *lua.LState) int {
 	name := L.CheckString(1)
-	argsTable := L.OptTable(2, nil)
-
-	// Convert Lua table to Go map
-	args := make(map[string]any)
-	if argsTable != nil {
-		argsTable.ForEach(func(key, value lua.LValue) {
-			if keyStr, ok := key.(lua.LString); ok {
-				args[string(keyStr)] = convertLuaValueToGo(value)
-			}
-		})
-	}
+	args := luaTableToArgs(L.OptTable(2, nil))
 
 	result := tools.RunTool(e.ctx, name, args)
+	L.Push(toolResultToLua(L, result))
+	return 1
+}
 
-	// Convert result to Lua table
+// luaSubagent is sugar for tyci.run_tool("subagent", args): spawn one or
+// more child agents (opts.task for a single child, opts.tasks for a
+// parallel fan-out) without a script having to name the tool itself. Pass
+// async=true (or async=true on individual tasks) to get job_id(s) back
+// immediately and pair the call with tyci.wait().
+func (e *Engine) luaSubagent(L *lua.LState) int {
+	argsTable := L.OptTable(1, nil)
+	args := luaTableToArgs(argsTable)
+	result := tools.RunTool(e.ctx, "subagent", args)
+	L.Push(toolResultToLua(L, result))
+	return 1
+}
+
+// luaWait is sugar for tyci.run_tool("wait", args): block until a
+// background job (spawned via tyci.subagent(async=true, ...)) finishes, or
+// simply pause. Accepts either a bare job_id string — tyci.wait(job_id) — or
+// an options table — tyci.wait({job_id=..., seconds=...}) — matching the
+// "wait" tool's own job_id/seconds parameters.
+func (e *Engine) luaWait(L *lua.LState) int {
+	args := make(map[string]any)
+	switch v := L.Get(1).(type) {
+	case lua.LString:
+		args["job_id"] = string(v)
+	case lua.LNumber:
+		// tyci.wait(30) — a bare plain sleep, matching the "wait" tool's own
+		// seconds-only form (job_id omitted).
+		args["seconds"] = float64(v)
+	case *lua.LTable:
+		args = luaTableToArgs(v)
+	}
+
+	result := tools.RunTool(e.ctx, "wait", args)
+	L.Push(toolResultToLua(L, result))
+	return 1
+}
+
+// luaTableToArgs converts an optional Lua table of named arguments to a Go
+// map, the same conversion luaRunTool has always done for tyci.run_tool's
+// own args table — shared here so tyci.subagent/tyci.wait build their
+// arguments identically.
+func luaTableToArgs(t *lua.LTable) map[string]any {
+	args := make(map[string]any)
+	if t == nil {
+		return args
+	}
+	t.ForEach(func(key, value lua.LValue) {
+		if keyStr, ok := key.(lua.LString); ok {
+			args[string(keyStr)] = convertLuaValueToGo(value)
+		}
+	})
+	return args
+}
+
+// toolResultToLua converts a tools.ToolResult to the {success, content,
+// error} table every tyci.* tool-invoking function pushes.
+func toolResultToLua(L *lua.LState, result tools.ToolResult) *lua.LTable {
 	tbl := L.NewTable()
 	L.SetField(tbl, "success", lua.LBool(result.Success))
 	L.SetField(tbl, "content", lua.LString(result.Content))
 	L.SetField(tbl, "error", lua.LString(result.Error))
-	L.Push(tbl)
-	return 1
+	return tbl
 }
 
-// luaNewSession creates a new agent session.
+// sessionOptions resolves the model, MaxIterations, and (when named) full
+// agent definition a new/resumed session should use from an optional opts
+// table passed to tyci.new_session/tyci.resume_session. opts may set:
+//
+//   - agent (string): a named agent definition (./.tyci/agents/<name>.md,
+//     global falling back to ~/.tyci/agents/<name>.md, resolved from
+//     e.WorkDir) — its `max_iterations` and `model` frontmatter seed the
+//     session (the same source per-agent config values come from everywhere
+//     else in the app, see internal/agentdefs.Def), and def is returned so
+//     the caller can also apply its `tools:` whitelist and system prompt
+//     (sessionAwait does this — see agentdefs below for why that matters:
+//     without it, a session opted into an agent's smaller tool set in name
+//     only, while the model conversation still got the full, ungated
+//     top-level schema).
+//   - max_iterations (number): overrides whatever the agent (or the
+//     default) would otherwise supply.
+//
+// model is the value already passed positionally to new_session/
+// resume_session (empty string if none). It wins over an agent's frontmatter
+// model unless model is empty.
+func (e *Engine) sessionOptions(opts *lua.LTable, model string) (resolvedModel string, maxIterations int, def *agentdefs.Def) {
+	resolvedModel = model
+	maxIterations = defaultSessionMaxIterations
+
+	if opts == nil {
+		return resolvedModel, maxIterations, nil
+	}
+
+	if agentName, ok := opts.RawGetString("agent").(lua.LString); ok && string(agentName) != "" {
+		if found, ok := agentdefs.Get(e.WorkDir, string(agentName)); ok {
+			def = &found
+			if def.MaxIterations > 0 {
+				maxIterations = def.MaxIterations
+			}
+			if resolvedModel == "" && def.Model != "" {
+				resolvedModel = def.Model
+			}
+		}
+	}
+
+	if mi, ok := opts.RawGetString("max_iterations").(lua.LNumber); ok {
+		maxIterations = int(mi)
+	}
+
+	return resolvedModel, maxIterations, def
+}
+
+// luaNewSession creates a new agent session. The optional second argument is
+// an opts table — see sessionOptions — that can name an agent definition
+// (applying its tools: whitelist, system prompt, and max_iterations) and/or
+// set max_iterations directly.
 func (e *Engine) luaNewSession(L *lua.LState) int {
 	model := L.OptString(1, "")
+	opts := L.OptTable(2, nil)
+	model, maxIterations, def := e.sessionOptions(opts, model)
 
 	session := &luaSession{
-		engine:   e,
-		model:    model,
-		messages: []providers.RichMessage{},
+		engine:        e,
+		model:         model,
+		maxIterations: maxIterations,
+		agentDef:      def,
+		messages:      []providers.RichMessage{},
 	}
 
 	// Store session in registry
@@ -193,10 +329,15 @@ func (e *Engine) luaResumeSession(L *lua.LState) int {
 		return 2
 	}
 
+	opts := L.OptTable(2, nil)
+	model, maxIterations, def := e.sessionOptions(opts, sessionData.Model)
+
 	session := &luaSession{
-		engine:   e,
-		model:    sessionData.Model,
-		messages: sessionData.Messages,
+		engine:        e,
+		model:         model,
+		maxIterations: maxIterations,
+		agentDef:      def,
+		messages:      sessionData.Messages,
 	}
 
 	// Store session in registry
@@ -287,16 +428,60 @@ func (e *Engine) sessionAwait(L *lua.LState) int {
 	// Create collector
 	collector := &responseCollector{}
 
-	// Build config
+	// Build config. Tools/Schema wire the same global tool registry a normal
+	// top-level session gets (see main.go's toolsAdapter +
+	// tools.GetTopLevelToolsSchemaJSON) — without this, a session the engine
+	// drives can be told to call a tool but the model never receives a tool
+	// schema, and any call it emits anyway has nothing to dispatch it.
+	// MaxIterations comes from the session (see sessionOptions): script- or
+	// agent-frontmatter-settable instead of a hardcoded constant.
+	//
+	// When the session was created with a named agent (opts.agent), that
+	// agent's tools: whitelist, system prompt and recursion restriction are
+	// applied the same way main.go's real subagent path
+	// (subagentToolRunner.Run + agentRunner.RunTaskWithSystem) applies a
+	// named agent's definition — not just MaxIterations/Model. Without this
+	// the session would be opted into a smaller tool set in name only: the
+	// model conversation would still see the full, ungated top-level
+	// schema, exactly the gap a named agent's tools: list exists to close.
 	systemPrompt := providers.BuildSystemPrompt()
+	schema := tools.GetTopLevelToolsSchemaJSON()
+	runCtx := e.ctx
+
+	if def := session.agentDef; def != nil {
+		if def.SystemPromptMode == agentdefs.SystemPromptModeReplace {
+			systemPrompt = def.SystemPrompt
+		} else {
+			hasAskParent := len(def.Tools) == 0
+			for _, name := range def.Tools {
+				if name == "ask_parent" {
+					hasAskParent = true
+					break
+				}
+			}
+			systemPrompt = providers.BuildSubagentSystemPromptWithRole(def.SystemPrompt, hasAskParent)
+		}
+		schema = tools.GetSubagentToolsSchemaJSONFor(def.Tools)
+		// Deny "subagent"/"agents" recursion unconditionally (mirroring
+		// main.go's subagentToolRunner.Run), then layer the agent's own
+		// tools: whitelist gate on top when it has one. AllowOnlySubagent
+		// returns nil for an unrestricted definition (Tools == nil), so
+		// WithToolGate's nil check is a no-op in that case — the recursion
+		// denial still applies.
+		runCtx = tools.WithToolGate(runCtx, tools.DenySubagentRecursion())
+		runCtx = tools.WithToolGate(runCtx, tools.AllowOnlySubagent(def.Tools))
+	}
+
 	cfg := agent.Config{
 		System:        systemPrompt,
 		MaxRetries:    1,
-		MaxIterations: 10,
+		MaxIterations: session.maxIterations,
+		Tools:         engineToolRunner{},
+		Schema:        schema,
 	}
 
 	// Run agent
-	_, err := agent.Run(e.ctx, provider.Client(modelName), collector, &session.messages, cfg)
+	_, err := agent.Run(runCtx, provider.Client(modelName), collector, &session.messages, cfg)
 	if err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))
@@ -376,9 +561,10 @@ func checkSession(L *lua.LState, e *Engine) *luaSession {
 		}
 	}
 	return &luaSession{
-		engine:   e,
-		model:    L.GetField(tbl, "model").String(),
-		messages: []providers.RichMessage{},
+		engine:        e,
+		model:         L.GetField(tbl, "model").String(),
+		maxIterations: defaultSessionMaxIterations,
+		messages:      []providers.RichMessage{},
 	}
 }
 
@@ -387,6 +573,37 @@ type luaSession struct {
 	engine   *Engine
 	model    string
 	messages []providers.RichMessage
+	// maxIterations is the tool-call iteration cap sessionAwait passes to
+	// agent.Run — see sessionOptions for how it is resolved from
+	// tyci.new_session/resume_session's opts table.
+	maxIterations int
+	// agentDef, when non-nil, is the named agent definition opts.agent
+	// resolved to sessionOptions — sessionAwait applies its tools:
+	// whitelist (tool gate + filtered schema) and system prompt, not just
+	// MaxIterations/Model. nil means "no named agent": the session keeps
+	// the unrestricted top-level tool set (today's default behavior).
+	agentDef *agentdefs.Def
+}
+
+// engineToolRunner adapts the global tools registry to agent.ToolRunner —
+// the same shape main.go's toolsAdapter uses for a normal top-level session
+// — so a session the engine creates can actually call tyci tools from
+// within the model conversation it drives.
+type engineToolRunner struct{}
+
+func (engineToolRunner) Run(ctx context.Context, name string, args map[string]any) (string, error) {
+	result := tools.RunTool(ctx, name, args)
+	if result.Success {
+		// Surface result.Truncated the same way main.go's toolsAdapter does
+		// — a stable, parseable suffix marker — so a workflow-driven
+		// session sees the same "may be incomplete" signal a normal
+		// top-level session does, instead of it being silently dropped.
+		if result.Truncated {
+			return result.Content + "\n\n" + tools.TruncatedMarker, nil
+		}
+		return result.Content, nil
+	}
+	return "", fmt.Errorf("%s", result.Error)
 }
 
 // responseCollector collects agent responses.
@@ -437,16 +654,56 @@ func convertLuaValueToGo(v lua.LValue) any {
 	case lua.LString:
 		return string(val)
 	case *lua.LTable:
-		result := make(map[string]any)
-		val.ForEach(func(key, value lua.LValue) {
-			if keyStr, ok := key.(lua.LString); ok {
-				result[string(keyStr)] = convertLuaValueToGo(value)
-			}
-		})
-		return result
+		return convertLuaTable(val)
 	default:
 		return val.String()
 	}
+}
+
+// convertLuaTable converts a Lua table to either a Go slice or a Go map,
+// depending on its shape — mirroring tools/lua_tool.go's convertLuaTable
+// (the "lua" tool's own conversion), which the fix here is deliberately
+// kept in lockstep with. A table is treated as an array when it has at
+// least one entry and its keys are exactly 1..n, the same rule Lua's own
+// ipairs/table.insert work by.
+//
+// Before this fix, tyci.subagent({tasks = {...}}) was dead: a Lua array
+// passed through the old convertLuaValueToGo (which only kept string keys)
+// arrived at tools/subagent.go as map[string]any{} instead of []any{...},
+// and parseTasks rejects that with "tasks must be an array" — the fan-out
+// sugar item 7 asked for never actually worked.
+//
+// An empty table is ambiguous (equally a list of nothing and a record with
+// no fields) and becomes an empty map, matching what a JSON encoder does
+// with it and what the tools on the receiving end expect (objects).
+func convertLuaTable(t *lua.LTable) any {
+	n := t.Len() // Lua's array length: the n of a 1..n run
+	if n > 0 {
+		// Confirm there are no string keys hiding alongside the array part;
+		// a mixed table is a record that happens to have numbered fields,
+		// and turning it into a list would drop them.
+		mixed := false
+		t.ForEach(func(key, _ lua.LValue) {
+			if _, ok := key.(lua.LString); ok {
+				mixed = true
+			}
+		})
+		if !mixed {
+			arr := make([]any, 0, n)
+			for i := 1; i <= n; i++ {
+				arr = append(arr, convertLuaValueToGo(t.RawGetInt(i)))
+			}
+			return arr
+		}
+	}
+
+	result := make(map[string]any)
+	t.ForEach(func(key, value lua.LValue) {
+		if keyStr, ok := key.(lua.LString); ok {
+			result[string(keyStr)] = convertLuaValueToGo(value)
+		}
+	})
+	return result
 }
 
 // RunWorkflow executes a Lua workflow script.

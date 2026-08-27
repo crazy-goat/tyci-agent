@@ -1,0 +1,270 @@
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// trustWorkflowProject records project (an absolute path outside any git
+// repo, matching session.ProjectKey's non-git fallback) as trusted in the
+// test HOME's trust.json — the same file internal/trust.SetTrusted writes,
+// built by hand here since the subprocess under test runs with HOME=testDir
+// while this test process's own HOME is the real one. Needed because
+// `tyci workflow run`/`list` now gate project-local .tyci/agents/*.lua
+// discovery on trust.Decide, the same way .tyci/tools/*.lua and
+// .tyci/cron.json are gated — see workflowcmd.go's workflowTrustedDirs.
+type trustRecord struct {
+	Trusted   bool      `json:"trusted"`
+	DecidedAt time.Time `json:"decided_at"`
+}
+
+type trustFile struct {
+	Projects map[string]trustRecord `json:"projects"`
+}
+
+func trustWorkflowProject(t *testing.T, project string) {
+	t.Helper()
+	abs, err := filepath.Abs(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Resolved through symlinks: on macOS the temp dir is reached through
+	// one (/tmp -> /private/tmp, and similarly for /var/folders), and the
+	// subprocess computes its project key from its own os.Getwd() after
+	// actually cd'ing into project (cmd.Dir) — which returns the
+	// symlink-resolved physical path, not the string this test started
+	// with. Without this, the recorded trust.json key never matches what
+	// workflowTrustedDirs looks up. See commands_trust_wiring_test.go's
+	// TestInitCommon_TrustedProject_LoadsLocalHooksAndLuaToo for the same
+	// fix applied to an in-process equivalent.
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+
+	tyciDir := filepath.Join(testDir, ".tyci")
+	if err := os.MkdirAll(tyciDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	trustPath := filepath.Join(tyciDir, "trust.json")
+
+	f := trustFile{Projects: map[string]trustRecord{}}
+	if data, err := os.ReadFile(trustPath); err == nil {
+		_ = json.Unmarshal(data, &f) // corrupt/missing file: start clean, same as internal/trust.load
+		if f.Projects == nil {
+			f.Projects = map[string]trustRecord{}
+		}
+	}
+	f.Projects[abs] = trustRecord{Trusted: true, DecidedAt: time.Now()}
+
+	data, err := json.Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(trustPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWorkflowRunCLI_DiscoversAndRunsProjectLocalScript verifies TODO.md
+// item 7's CLI entry point end to end: `tyci workflow run <name>` discovers
+// a Lua orchestration script under <project>/.tyci/agents/<name>.lua (the
+// same directory named markdown agent definitions use — see
+// internal/workflow.ResolveScript) and actually executes it through the
+// engine.
+func TestWorkflowRunCLI_DiscoversAndRunsProjectLocalScript(t *testing.T) {
+	project := t.TempDir()
+	agentsDir := filepath.Join(project, ".tyci", "agents")
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	script := `return "hello, " .. prompt`
+	if err := os.WriteFile(filepath.Join(agentsDir, "greet.lua"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	trustWorkflowProject(t, project)
+
+	cmd := exec.Command(binPath, "workflow", "run", "greet", "--prompt", "world")
+	cmd.Dir = project
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("workflow run: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "hello, world" {
+		t.Fatalf("workflow run output = %q, want %q", got, "hello, world")
+	}
+}
+
+// TestWorkflowListCLI_ListsProjectLocalScript verifies `tyci workflow list`
+// surfaces a project-local .lua script.
+func TestWorkflowListCLI_ListsProjectLocalScript(t *testing.T) {
+	project := t.TempDir()
+	agentsDir := filepath.Join(project, ".tyci", "agents")
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "triage.lua"), []byte(`return "ok"`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	trustWorkflowProject(t, project)
+
+	cmd := exec.Command(binPath, "workflow", "list")
+	cmd.Dir = project
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("workflow list: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "triage") {
+		t.Fatalf("workflow list output = %q, want it to contain %q", out, "triage")
+	}
+}
+
+// TestWorkflowRunCLI_UntrustedProjectSkipsProjectLocalScript is the
+// regression test for the security fix: an UNtrusted project's
+// .tyci/agents/*.lua must not be discoverable by name at all — before this
+// fix, ResolveScript/ListScripts consulted the project-local directory
+// unconditionally, letting a name-based `tyci workflow run <name>` execute
+// arbitrary project-supplied Lua (full os/io stdlib, at the time) with no
+// trust decision in the way, in a directory the test process never marked
+// trusted.
+func TestWorkflowRunCLI_UntrustedProjectSkipsProjectLocalScript(t *testing.T) {
+	project := t.TempDir()
+	agentsDir := filepath.Join(project, ".tyci", "agents")
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentsDir, "untrusted.lua"), []byte(`return "should not run"`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately NOT calling trustWorkflowProject: this project has no
+	// recorded trust decision, so trust.Decide (non-interactive here) must
+	// default to untrusted.
+
+	runCmd := exec.Command(binPath, "workflow", "run", "untrusted")
+	runCmd.Dir = project
+	runCmd.Env = testEnv()
+	out, err := runCmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected an untrusted project's workflow script to fail to resolve, got output %q", out)
+	}
+	if !strings.Contains(string(out), "not trusted") {
+		t.Errorf("workflow run output = %q, want it to mention the project is not trusted", out)
+	}
+	if strings.Contains(string(out), "should not run") {
+		t.Fatalf("untrusted project's script actually ran; output = %q", out)
+	}
+
+	listCmd := exec.Command(binPath, "workflow", "list")
+	listCmd.Dir = project
+	listCmd.Env = testEnv()
+	listOut, err := listCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("workflow list: %v\n%s", err, listOut)
+	}
+	if strings.Contains(string(listOut), "untrusted") {
+		t.Fatalf("workflow list surfaced an untrusted project's script; output = %q", listOut)
+	}
+}
+
+// TestWorkflowRunCLI_UnknownScriptFails verifies a name that resolves to
+// nothing is a clean error, not a panic or an empty success.
+func TestWorkflowRunCLI_UnknownScriptFails(t *testing.T) {
+	cmd := exec.Command(binPath, "workflow", "run", "does-not-exist")
+	cmd.Dir = t.TempDir()
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected an error for an unknown workflow script, got output %q", out)
+	}
+	if !strings.Contains(string(out), "does-not-exist") {
+		t.Fatalf("error output = %q, want it to mention the missing script name", out)
+	}
+}
+
+// TestWorkflowRunCLI_ExplicitPathBypassesDiscovery verifies a .lua path
+// (rather than a bare name) is used directly, without needing to live under
+// .tyci/agents at all.
+func TestWorkflowRunCLI_ExplicitPathBypassesDiscovery(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "adhoc.lua")
+	if err := os.WriteFile(scriptPath, []byte(`return "ran adhoc script"`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(binPath, "workflow", "run", scriptPath)
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("workflow run: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "ran adhoc script" {
+		t.Fatalf("workflow run output = %q, want %q", got, "ran adhoc script")
+	}
+}
+
+// TestWorkflowRunCLI_RegistersProvidersWithoutTyciModels is the regression
+// test for the fix to workflowcmd.go: `tyci workflow run` used to skip
+// registerProviders() entirely (unlike every other agent-running path, all
+// wired through initCommon), so session:await() failed with "model not
+// found" unless a script happened to call tyci.models() first — a call
+// whose real job is listing providers, and whose side effect of also
+// registering them was the only thing making session:await() work at all.
+//
+// This drives a script that calls session:await() WITHOUT ever calling
+// tyci.models(), and checks the failure it gets back (a real model call
+// against a fake test URI has nowhere to actually succeed) is a connection
+// failure, never "model not found: ...": that specific error string is only
+// possible when providers were never registered.
+func TestWorkflowRunCLI_RegistersProvidersWithoutTyciModels(t *testing.T) {
+	// A project-local model.json with a model unique to this test, pointed
+	// at a host nothing listens on (127.0.0.1:1 — connection refused
+	// immediately, unlike the real example.com the global test-provider
+	// uses, which this test cannot afford to actually dial).
+	project := t.TempDir()
+	tyciDir := filepath.Join(project, ".tyci")
+	if err := os.MkdirAll(tyciDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	modelCfg := map[string]map[string]map[string]string{
+		"wf-provider": {
+			"wf-model": {"uri": "openai://wf-model@$TEST_API_KEY@127.0.0.1:1/v1"},
+		},
+	}
+	data, err := json.Marshal(modelCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tyciDir, "model.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	scriptPath := filepath.Join(project, "await.lua")
+	script := `
+		local s = tyci.new_session("wf-provider/wf-model")
+		local reply, err = s:await()
+		if err then
+			return "ERR:" .. err
+		end
+		return "OK:" .. (reply.content or "")
+	`
+	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(binPath, "workflow", "run", scriptPath)
+	cmd.Dir = project // so localModelJSONPath (os.Getwd()-based) picks up .tyci/model.json above
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	// The connection-refused dial is expected to fail (RunE returns that
+	// error); what matters is which failure.
+	_ = err
+	if strings.Contains(string(out), "model not found") {
+		t.Fatalf("workflow run reported \"model not found\" — registerProviders() was not called before running the script; output = %q", out)
+	}
+}
