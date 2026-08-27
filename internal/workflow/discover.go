@@ -50,9 +50,15 @@ func ResolveScript(wd, name string) (string, error) {
 // does exactly that for an untrusted project.
 func ResolveScriptIn(dirs []string, name string) (string, error) {
 	if strings.HasSuffix(name, ".lua") {
+		// A .lua-suffixed argument is unambiguously a path, not a bare name
+		// for discovery — return here (success or failure) rather than
+		// falling through to the dirs search below, which would otherwise
+		// go looking for a confusing "<name>.lua.lua" and report that
+		// instead of the actual problem.
 		if info, err := os.Stat(name); err == nil && !info.IsDir() {
 			return name, nil
 		}
+		return "", fmt.Errorf("workflow script %q not found", name)
 	}
 
 	for i := len(dirs) - 1; i >= 0; i-- {
