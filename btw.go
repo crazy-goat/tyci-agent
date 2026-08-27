@@ -190,6 +190,15 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		// job finishes, the same as any other /btw or subagent list.
 		defer tools.MarkTodoAgentDone(newJobID)
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, newJobID)
+		// The forked transcript (entry.msgs) may itself contain todo(...)
+		// calls/results naming ids from entry.todoAgentID's list — carry
+		// that list forward onto newJobID rather than let the resumed agent
+		// see those ids silently resolve to a fresh, empty list. NOT jobID:
+		// for an ordinary subagent's stashed run, its todo(...) calls landed
+		// under its own TodoAgentCtxKey id, not its job id (see
+		// resumableEntry.todoAgentID's doc comment) — using jobID here would
+		// silently no-op for exactly that (the common) case.
+		tools.CopyTodoListForResume(entry.todoAgentID, newJobID)
 
 		// entry.cfg was stashed bound to whatever job id was actually
 		// running when it was recorded (agentRunner.run's own stash, or a
@@ -227,7 +236,7 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		// call started from) — otherwise a second resume off of newJobID
 		// would inherit the same stale-mailbox bug one level down.
 		if err == nil || truncated || deadlineExceeded || stopped {
-			stashResumable(newJobID, resumableEntry{msgs: forked, mc: entry.mc, cfg: runCfg})
+			stashResumable(newJobID, resumableEntry{msgs: forked, mc: entry.mc, cfg: runCfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx)})
 		}
 
 		return text, truncated, err
@@ -373,7 +382,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		// Timeout and kill_job still leave useful partial work. Preserve it so
 		// the parent can resume the promoted conversation instead of losing it.
 		if err == nil || truncated || deadlineExceeded || stopped {
-			stashResumable(jobID, resumableEntry{msgs: msgs, mc: client, cfg: cfg})
+			stashResumable(jobID, resumableEntry{msgs: msgs, mc: client, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx)})
 		}
 		return text, truncated, err
 	})

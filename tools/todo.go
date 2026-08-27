@@ -162,6 +162,18 @@ func todoAgentIDFromCtx(ctx context.Context) string {
 	return mainAgentTodoID
 }
 
+// TodoAgentIDFromContext exports todoAgentIDFromCtx's resolution for
+// callers outside this package that need to know WHICH agent's todo list a
+// given context reads/writes — today, main.go/btw.go/fork.go stashing a
+// resumableEntry, so a later `resume` can copy the right list forward (see
+// CopyTodoListForResume) instead of guessing that the job id and the todo
+// agent id are the same thing, which they are not for an ordinary subagent
+// (TodoAgentCtxKey, set per-call by subagent.go's runSingleTask, takes
+// priority over JobIDCtxKey — see todoAgentIDFromCtx).
+func TodoAgentIDFromContext(ctx context.Context) string {
+	return todoAgentIDFromCtx(ctx)
+}
+
 // AllTodoItems returns a snapshot of every todo in the MAIN conversation's
 // list, sorted by id. Used by the TUI to enrich todo(doing/done/blocked, N)
 // renders and read backwards-compatibly from the display package, which has
@@ -387,6 +399,42 @@ func normalizeAddFields(_ string, status string) (string, string) {
 		return "", fmt.Sprintf("invalid status=%q — allowed: todo, doing, done, blocked — fix: drop \"status\" to use default \"todo\", or pick one of the allowed values", status)
 	}
 	return status, ""
+}
+
+// CopyTodoListForResume seeds newAgentID's todo list from oldAgentID's, so a
+// `resume` call — which re-keys the conversation onto a brand-new job id
+// (item 17/btw.go's jobResumerAdapter.Resume) — does not leave the forked
+// transcript's own past todo(...) calls pointing at ids that silently
+// resolve to an empty list. Called once, before the resumed job's first
+// iteration, so it must win over any list newAgentID might already have
+// (there shouldn't be one yet, but a defensive overwrite costs nothing and
+// avoids an ordering assumption on the caller). A no-op if oldAgentID has no
+// list at all (already evicted, or the original run never touched todo) —
+// which, since mainAgentTodoID is the empty string, is also what an
+// oldAgentID left at resumableEntry's zero value would mean: refuse rather
+// than silently copy the MAIN conversation's entire list into a resumed
+// background job.
+func CopyTodoListForResume(oldAgentID, newAgentID string) {
+	if newAgentID == "" || newAgentID == mainAgentTodoID || oldAgentID == mainAgentTodoID {
+		return
+	}
+	todoStore.Lock()
+	defer todoStore.Unlock()
+	old, ok := todoStore.agents[oldAgentID]
+	if !ok {
+		return
+	}
+	items := make([]todoItem, len(old.items))
+	copy(items, old.items)
+	// Same eviction sweep every other insert gets (getOrCreateLocked) —
+	// skipped here, this insert would otherwise never trigger it, and a
+	// long chain of resumes would grow todoStore.agents unbounded.
+	evictOldChildListsLocked(newAgentID)
+	todoStore.agents[newAgentID] = &todoAgentList{
+		nextID:       old.nextID,
+		items:        items,
+		lastActivity: time.Now(),
+	}
 }
 
 // ClearTodoList resets the MAIN conversation's todo list (used on /new).

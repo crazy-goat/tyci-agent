@@ -667,3 +667,107 @@ func TestEviction_DropsOldestTerminalChildList_KeepsNewestAndMain(t *testing.T) 
 		t.Errorf("main's list should be untouched by child eviction, got: %+v", items)
 	}
 }
+
+// ─── CopyTodoListForResume (item 43) ─────────────────────────────────────
+//
+// `resume` re-keys a stored conversation onto a brand-new job id
+// (btw.go's jobResumerAdapter.Resume). Without a copy, the resumed job's
+// todo list starts empty even though the forked transcript's own past
+// todo(...) calls/results still name ids from the OLD job's list — a
+// resumed agent reading its own history sees ids that now silently
+// resolve to nothing.
+
+func TestCopyTodoListForResume_CarriesItemsAndNextID(t *testing.T) {
+	t.Cleanup(resetTodoStoreForTest)
+	tool := &TodoTool{}
+
+	tool.Run(childTodoCtx("old-job"), map[string]any{"action": "add", "content": "first"})
+	tool.Run(childTodoCtx("old-job"), map[string]any{"action": "add", "content": "second"})
+	tool.Run(childTodoCtx("old-job"), map[string]any{"action": "doing", "id": 1})
+
+	CopyTodoListForResume("old-job", "new-job")
+
+	res := tool.Run(childTodoCtx("new-job"), map[string]any{"action": "list"})
+	if !res.Success {
+		t.Fatalf("list on resumed job failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "first") || !strings.Contains(res.Content, "second") {
+		t.Errorf("resumed job's list should carry the old job's items, got: %q", res.Content)
+	}
+	if !strings.Contains(res.Content, "[doing]") {
+		t.Errorf("resumed job's list should carry the old job's statuses, got: %q", res.Content)
+	}
+
+	// The old job's own list must be untouched — a copy, not a move — since
+	// the old (terminal) job's list may still be inspected (e.g. item 1's
+	// Subagents tab) independently of the resume.
+	oldRes := tool.Run(childTodoCtx("old-job"), map[string]any{"action": "list"})
+	if !strings.Contains(oldRes.Content, "first") || !strings.Contains(oldRes.Content, "second") {
+		t.Errorf("old job's own list should be unchanged after copy, got: %q", oldRes.Content)
+	}
+
+	// nextID carries forward too, so a NEW item added post-resume does not
+	// collide with an id already referenced by the forked transcript's
+	// history (e.g. an old assistant turn discussing "item 2").
+	res = tool.Run(childTodoCtx("new-job"), map[string]any{"action": "add", "content": "third"})
+	if !res.Success || !strings.Contains(res.Content, "3. [todo] third") {
+		t.Errorf("expected the new item to continue the old id sequence at 3, got: %v %q", res.Success, res.Content)
+	}
+}
+
+func TestCopyTodoListForResume_NoOldListIsANoOp(t *testing.T) {
+	t.Cleanup(resetTodoStoreForTest)
+	tool := &TodoTool{}
+
+	CopyTodoListForResume("never-existed", "new-job")
+
+	res := tool.Run(childTodoCtx("new-job"), map[string]any{"action": "list"})
+	if !strings.Contains(res.Content, "Todo list is empty") {
+		t.Errorf("expected an empty list when the old job never had one, got: %q", res.Content)
+	}
+}
+
+func TestCopyTodoListForResume_ChainedResumeCarriesForward(t *testing.T) {
+	t.Cleanup(resetTodoStoreForTest)
+	tool := &TodoTool{}
+
+	tool.Run(childTodoCtx("job-1"), map[string]any{"action": "add", "content": "only item"})
+	CopyTodoListForResume("job-1", "job-2")
+	tool.Run(childTodoCtx("job-2"), map[string]any{"action": "add", "content": "added after first resume"})
+	CopyTodoListForResume("job-2", "job-3")
+
+	res := tool.Run(childTodoCtx("job-3"), map[string]any{"action": "list"})
+	if !strings.Contains(res.Content, "only item") || !strings.Contains(res.Content, "added after first resume") {
+		t.Errorf("a chained resume should carry the whole accumulated list forward, got: %q", res.Content)
+	}
+}
+
+// TestCopyTodoListForResume_RefusesMainAgentIDAsSource pins the zero-value
+// footgun a reviewer flagged: mainAgentTodoID is "", the same value an
+// oldAgentID left unset (a resumableEntry.todoAgentID that was never
+// assigned) would have — this must refuse, not silently copy the whole
+// main conversation's list into a resumed background job.
+func TestCopyTodoListForResume_RefusesMainAgentIDAsSource(t *testing.T) {
+	t.Cleanup(resetTodoStoreForTest)
+	tool := &TodoTool{}
+	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main's own plan"})
+
+	CopyTodoListForResume(mainAgentTodoID, "new-job")
+
+	res := tool.Run(childTodoCtx("new-job"), map[string]any{"action": "list"})
+	if !strings.Contains(res.Content, "Todo list is empty") {
+		t.Errorf("expected an empty list, main's plan must never leak via an unset/zero-value source id, got: %q", res.Content)
+	}
+}
+
+func TestCopyTodoListForResume_RefusesMainAgentID(t *testing.T) {
+	t.Cleanup(resetTodoStoreForTest)
+	tool := &TodoTool{}
+	tool.Run(childTodoCtx("old-job"), map[string]any{"action": "add", "content": "should not leak to main"})
+
+	CopyTodoListForResume("old-job", mainAgentTodoID)
+
+	if items := AllTodoItems(); len(items) != 0 {
+		t.Errorf("main list must never be overwritten by CopyTodoListForResume, got: %+v", items)
+	}
+}
