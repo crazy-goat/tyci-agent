@@ -15,6 +15,114 @@ import (
 	"github.com/decodo/tyci/tools"
 )
 
+// slashCommandDisplay is the narrow slice of *display.TUI that
+// handleBareResumeCommand/handleResumeAllCommand/handleBareBtwCommand/
+// handleBtwQuestionCommand/handleMsgSlashCommand/handleCompactCommand
+// actually call. Extracted so item 37's fix — every one of them must call
+// ResetStatus() on every exit path, since none of them ever runs a real
+// agent turn and nothing else would restore TuiModel.reading — can be
+// pinned with a fake in tests instead of runTUI's real *display.TUI, which
+// drives a live bubbletea Program and isn't practically unit-testable.
+type slashCommandDisplay interface {
+	Error(err error)
+	ToolBlock(msg string)
+	ResetStatus()
+	OpenResumePicker(entries []display.TuiResumeEntry)
+	OpenBtwList()
+}
+
+// handleBareResumeCommand implements bare "/resume": list cwd's sessions in
+// the popup picker. Calls disp.ResetStatus() before doing anything else —
+// opening a picker (or failing to) never runs the agent, so nothing else on
+// any exit path would restore reading.
+func handleBareResumeCommand(disp slashCommandDisplay, wd string, resumeEntries func(string) ([]session.ResumeEntry, error)) {
+	disp.ResetStatus()
+	entries, err := resumeEntries(wd)
+	if err != nil {
+		disp.Error(fmt.Errorf("/resume: %v", err))
+		return
+	}
+	if len(entries) == 0 {
+		dir, _ := session.SessionDir(wd)
+		disp.ToolBlock(fmt.Sprintf("ℹ️  No sessions in %s", dir))
+		return
+	}
+	disp.OpenResumePicker(resumeEntriesToTUI(entries))
+}
+
+// handleResumeAllCommand implements "/resume --all" — same shape as
+// handleBareResumeCommand, across every project instead of just cwd.
+func handleResumeAllCommand(disp slashCommandDisplay, resumeEntriesAll func() ([]session.ResumeEntry, error)) {
+	disp.ResetStatus()
+	entries, err := resumeEntriesAll()
+	if err != nil {
+		disp.Error(fmt.Errorf("/resume --all: %v", err))
+		return
+	}
+	if len(entries) == 0 {
+		disp.ToolBlock("ℹ️  No sessions recorded")
+		return
+	}
+	disp.OpenResumePicker(resumeEntriesToTUI(entries))
+}
+
+// handleBareBtwCommand implements bare "/btw": browse previous side
+// conversations. The list popup has no success-path equivalent of
+// resumeSession's Reset() — nothing else restores reading on any exit
+// (Esc, viewing an entry, or nothing at all).
+func handleBareBtwCommand(disp slashCommandDisplay) {
+	disp.ResetStatus()
+	disp.OpenBtwList()
+}
+
+// handleBtwQuestionCommand implements "/btw <question>": forks the current
+// conversation into an INDEPENDENT background side conversation (its own
+// sink, its own modal) via spawn — it never produces a "done" for the main
+// conversation, so without ResetStatus here the main prompt would stay
+// stuck refusing input for as long as the side conversation takes to close.
+func handleBtwQuestionCommand(disp slashCommandDisplay, question string, spawn func(string)) {
+	question = strings.TrimSpace(question)
+	if question == "" {
+		disp.Error(fmt.Errorf("/btw: question required"))
+		disp.ResetStatus()
+		return
+	}
+	disp.ResetStatus()
+	spawn(question)
+}
+
+// handleMsgSlashCommand implements "/msg <job> <text>": posts to a job's
+// mailbox. Same class of bug as the two commands above — this never runs
+// the agent, so nothing else would restore reading.
+func handleMsgSlashCommand(disp slashCommandDisplay, arg string, post func(string)) {
+	disp.ResetStatus()
+	post(arg)
+}
+
+// handleCompactCommand implements "/compact [focus]". compact does the
+// actual work (empty-history/no-session checks, cond.Compact) and returns
+// (resultMessage, isError) for disp to render — kept a plain func so this
+// stays testable without a real *conductor.Conductor. Same class of bug as
+// the commands above: compaction never runs the agent, so nothing else
+// would restore reading — but UNLIKE the other five handlers, compact() can
+// be a genuinely slow, synchronous model round-trip, so ResetStatus() runs
+// AFTER it returns, not before: resetting first would flip the status bar
+// to idle (and let a prompt typed mid-compaction go straight to the
+// transcript instead of the pending-message queue) for the whole duration
+// of the compaction call, which is exactly the busy state ResetStatus is
+// supposed to end, not start.
+func handleCompactCommand(disp slashCommandDisplay, compact func() (string, bool)) {
+	msg, isErr := compact()
+	disp.ResetStatus()
+	if isErr {
+		disp.Error(errors.New(msg))
+		return
+	}
+	if msg != "" {
+		disp.ToolBlock(msg)
+	}
+}
+
 // runTUI is the full-screen frontend. It reads user input, dispatches slash
 // commands and paints; the conversation behind it — history, model client,
 // session log, usage — is the conductor's.
@@ -287,31 +395,30 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// Deliberately cancel the current iteration before changing its live
 				// history; compaction is a conversation boundary, not a queued prompt.
 				iterCancel()
-				if len(cond.Messages()) == 0 {
-					// Nothing to compact yet: manualCompactSummary is never
-					// empty, so without this check a bare /compact on a
-					// fresh session would still create a session file and a
-					// dump for no reason.
-					tuiDisp.Error(fmt.Errorf("/compact: nothing to compact yet"))
-					continue
-				}
 				focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
-				sess := cond.EnsureSession()
-				if sess == nil {
-					tuiDisp.Error(fmt.Errorf("/compact: no writable session"))
-					continue
-				}
-				// DumpPathFor is deterministic, so the real path can be
-				// folded into the summary that becomes the compacted
-				// history's lead message — not just printed here — before
-				// Compact ever writes it.
-				dumpPath := session.DumpPathFor(cond.SessionPath())
-				path, err := cond.Compact(manualCompactSummary(dumpPath), focus)
-				if err != nil {
-					tuiDisp.Error(fmt.Errorf("/compact: %v", err))
-				} else {
-					tuiDisp.ToolBlock("History compacted; raw record: " + path)
-				}
+				handleCompactCommand(tuiDisp, func() (string, bool) {
+					if len(cond.Messages()) == 0 {
+						// Nothing to compact yet: manualCompactSummary is never
+						// empty, so without this check a bare /compact on a
+						// fresh session would still create a session file and a
+						// dump for no reason.
+						return "/compact: nothing to compact yet", true
+					}
+					sess := cond.EnsureSession()
+					if sess == nil {
+						return "/compact: no writable session", true
+					}
+					// DumpPathFor is deterministic, so the real path can be
+					// folded into the summary that becomes the compacted
+					// history's lead message — not just printed here — before
+					// Compact ever writes it.
+					dumpPath := session.DumpPathFor(cond.SessionPath())
+					path, err := cond.Compact(manualCompactSummary(dumpPath), focus)
+					if err != nil {
+						return fmt.Sprintf("/compact: %v", err), true
+					}
+					return "History compacted; raw record: " + path, false
+				})
 				continue
 			case trimmed == "/new":
 				iterCancel()
@@ -338,40 +445,18 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// Bare /resume: list cwd's sessions in the popup picker.
 				iterCancel()
 				wd, _ := os.Getwd()
-				entries, err := session.ResumeEntries(wd)
-				if err != nil {
-					tuiDisp.Error(fmt.Errorf("/resume: %v", err))
-					tuiDisp.ResetStatus()
-					continue
-				}
-				if len(entries) == 0 {
-					dir, _ := session.SessionDir(wd)
-					tuiDisp.ToolBlock(fmt.Sprintf("ℹ️  No sessions in %s", dir))
-					continue
-				}
-				tuiEntries := resumeEntriesToTUI(entries)
-				tuiDisp.OpenResumePicker(tuiEntries)
+				handleBareResumeCommand(tuiDisp, wd, session.ResumeEntries)
 				continue
 			case trimmed == "/resume --all":
 				// Escape hatch: list sessions across every project, not
 				// just the one containing cwd.
 				iterCancel()
-				entries, err := session.ResumeEntriesAll()
-				if err != nil {
-					tuiDisp.Error(fmt.Errorf("/resume --all: %v", err))
-					tuiDisp.ResetStatus()
-					continue
-				}
-				if len(entries) == 0 {
-					tuiDisp.ToolBlock("ℹ️  No sessions recorded")
-					continue
-				}
-				tuiDisp.OpenResumePicker(resumeEntriesToTUI(entries))
+				handleResumeAllCommand(tuiDisp, session.ResumeEntriesAll)
 				continue
 			case trimmed == "/btw":
 				// Bare /btw: browse previous side-conversations from this session.
 				iterCancel()
-				tuiDisp.OpenBtwList()
+				handleBareBtwCommand(tuiDisp)
 				continue
 			case strings.HasPrefix(trimmed, "/btw "):
 				// /btw <question>: fork the current conversation into a
@@ -380,13 +465,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// iteration) so it keeps going independently of the main
 				// thread's turns.
 				iterCancel()
-				question := strings.TrimSpace(strings.TrimPrefix(trimmed, "/btw"))
-				if question == "" {
-					tuiDisp.Error(fmt.Errorf("/btw: question required"))
-					tuiDisp.ResetStatus()
-					continue
-				}
-				startBtwQuestion(question)
+				handleBtwQuestionCommand(tuiDisp, strings.TrimPrefix(trimmed, "/btw"), startBtwQuestion)
 				continue
 			case strings.HasPrefix(trimmed, "/msg "):
 				// /msg <job> <text>: posts to a job's mailbox. Doesn't touch
@@ -395,7 +474,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// cancelled like every other command below that doesn't run
 				// the agent.
 				iterCancel()
-				handleMsgCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "/msg")))
+				handleMsgSlashCommand(tuiDisp, strings.TrimSpace(strings.TrimPrefix(trimmed, "/msg")), handleMsgCommand)
 				continue
 			case strings.HasPrefix(trimmed, "/resume "):
 				// /resume <path|index>: forward to resolveSessionRef so the
