@@ -452,7 +452,22 @@ func StartCronTicker(ctx context.Context, interval time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if _, err := runner.Tick(ctx); err != nil {
+				// Cross-process lock: an external `tyci cron tick` (e.g. from
+				// a crontab) may be dispatching the same due jobs right now.
+				// Without this, both this ticker and that process would see
+				// the same "not run yet" cron.json state (LastRun is only
+				// written back after a run finishes) and both would dispatch
+				// it — see runCronTick's doc comment in croncmd.go.
+				release, ok, err := cron.TryLock(cron.LockPath(cronConfigDir()))
+				if err != nil || !ok {
+					// Either the lock file couldn't be opened, or another
+					// tick already holds it — either way, skip this tick and
+					// let the next one try again.
+					continue
+				}
+				_, err = runner.Tick(ctx)
+				release()
+				if err != nil {
 					// A broken or unreadable jobs file must not kill the
 					// scheduler: the next tick may find it fixed.
 					continue

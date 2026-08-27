@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/decodo/tyci/session"
 )
@@ -49,6 +50,77 @@ func TestCronRunRequiresExistingName(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `cron job "missing" not found`) {
 		t.Fatalf("output = %q", out)
+	}
+}
+
+func TestCronTickRunsWithNoInteractiveSessionAndSkipsWhatIsNotDue(t *testing.T) {
+	temp := t.TempDir()
+	data := map[string]any{"jobs": []map[string]any{{
+		"name": "future", "prompt": "not yet", "dir": temp, "schedule": "every 1h",
+		"last_run": time.Now().Format(time.RFC3339),
+	}}}
+	body, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(testDir, ".tyci")
+	if err := os.MkdirAll(global, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(global, "cron.json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// tick is a plain one-shot invocation of the binary — nothing else of
+	// tyci's is running, no console/TUI session, which is the whole point:
+	// it must work exactly like this so an OS scheduler can call it.
+	cmd := exec.Command(binPath, "cron", "tick")
+	cmd.Dir = temp
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cron tick: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "no jobs due") {
+		t.Fatalf("cron tick output = %q, want the not-yet-due job skipped", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(global, "cron-logs", "future.log")); !os.IsNotExist(statErr) {
+		t.Fatalf("a job that is not due must not have run: %v", statErr)
+	}
+}
+
+func TestCronTickDispatchesADueJob(t *testing.T) {
+	temp := t.TempDir()
+	data := map[string]any{"jobs": []map[string]any{{
+		"name": "due-now", "prompt": "look busy", "dir": temp, "schedule": "every 1h",
+	}}}
+	body, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(testDir, ".tyci")
+	if err := os.MkdirAll(global, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(global, "cron.json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(binPath, "cron", "tick")
+	cmd.Dir = temp
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cron tick: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "ran 1 due job(s)") {
+		t.Fatalf("cron tick output = %q, want the due job reported as dispatched", out)
+	}
+	// Regardless of whether the dispatched `tyci run` succeeded (it has no
+	// provider configured here), a log must exist recording the attempt —
+	// proof the job was actually started, not merely recognized as due.
+	if _, statErr := os.Stat(filepath.Join(global, "cron-logs", "due-now.log")); statErr != nil {
+		t.Fatalf("expected a log for the dispatched job: %v", statErr)
 	}
 }
 
