@@ -86,6 +86,16 @@ type resumableEntry struct {
 	msgs []connector.Message
 	mc   connector.ModelClient
 	cfg  agent.Config
+	// todoAgentID is whichever agent id the stashed run's own todo(...)
+	// calls actually landed under (tools.TodoAgentIDFromContext of the
+	// context that run used) — NOT necessarily the job id: an ordinary
+	// subagent gets its own TodoAgentCtxKey id, distinct from and taking
+	// priority over its job id, while a /btw job or a chained resume has
+	// only JobIDCtxKey set and so is keyed by job id after all. Recorded at
+	// stash time so a later `resume` can copy the right list forward (see
+	// jobResumerAdapter.Resume, tools.CopyTodoListForResume) instead of
+	// guessing.
+	todoAgentID string
 }
 
 // resumableMu guards resumable and resumableOrder.
@@ -470,7 +480,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// tool call can continue this exact conversation as a brand-new job. See
 	// stashResumable's doc comment for the (bounded) retention policy.
 	if jobID != "" && (err == nil || truncated || deadlineExceeded || stoppedByUser) {
-		stashResumable(jobID, resumableEntry{msgs: msgs, mc: mc, cfg: cfg})
+		stashResumable(jobID, resumableEntry{msgs: msgs, mc: mc, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(ctx)})
 	}
 
 	if stoppedByUser {
