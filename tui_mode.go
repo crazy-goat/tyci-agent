@@ -104,10 +104,16 @@ func handleMsgSlashCommand(disp slashCommandDisplay, arg string, post func(strin
 // (resultMessage, isError) for disp to render — kept a plain func so this
 // stays testable without a real *conductor.Conductor. Same class of bug as
 // the commands above: compaction never runs the agent, so nothing else
-// would restore reading.
+// would restore reading — but UNLIKE the other five handlers, compact() can
+// be a genuinely slow, synchronous model round-trip, so ResetStatus() runs
+// AFTER it returns, not before: resetting first would flip the status bar
+// to idle (and let a prompt typed mid-compaction go straight to the
+// transcript instead of the pending-message queue) for the whole duration
+// of the compaction call, which is exactly the busy state ResetStatus is
+// supposed to end, not start.
 func handleCompactCommand(disp slashCommandDisplay, compact func() (string, bool)) {
-	disp.ResetStatus()
 	msg, isErr := compact()
+	disp.ResetStatus()
 	if isErr {
 		disp.Error(errors.New(msg))
 		return

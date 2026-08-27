@@ -214,8 +214,13 @@ func TestHandleCompactCommand_RestoresReadingOnSuccess(t *testing.T) {
 	if f.lastToolBlock == "" {
 		t.Error("expected the success message to be surfaced")
 	}
-	if f.calls[0] != "ResetStatus" {
-		t.Errorf("ResetStatus must run before the compact work's result is rendered, got %v", f.calls)
+	// UNLIKE the other five handlers, compact() can be a genuinely slow
+	// synchronous call — ResetStatus must run AFTER it returns, not before,
+	// so the status bar stays "busy" for its actual duration instead of
+	// reading idle (and accepting a stray prompt straight into the
+	// transcript) while compaction is still running.
+	if f.calls[len(f.calls)-2] != "ResetStatus" {
+		t.Errorf("ResetStatus must run right after compact() returns, before its result is rendered, got %v", f.calls)
 	}
 }
 
