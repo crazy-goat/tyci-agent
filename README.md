@@ -26,6 +26,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 
 - Go 1.25 or later
 - A terminal with true-color support (for TUI mode)
+- macOS or Linux — Windows is not a supported target (`internal/readline/read.go` and `tools/bash.go` use unix-only syscalls and will not build on Windows)
 
 ### Build from source
 
