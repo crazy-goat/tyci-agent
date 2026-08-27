@@ -44,7 +44,15 @@ project has been decided trusted (internal/trust, the same gate
 still runs a script named by an explicit path (you typed it), but name-based
 discovery falls back to the global ~/.tyci/agents directory only. This is a
 one-shot CLI invocation (like "tyci run"), so the trust decision never
-blocks on an interactive prompt: an unknown project is treated as untrusted.`,
+blocks on an interactive prompt: an unknown project is treated as untrusted.
+
+NOTE: unlike "tyci run"/"console"/"tui", this command does not (yet) load
+project-local hooks (.tyci/hooks.json), project-local Lua tools
+(.tyci/tools/*.lua), or MCP servers (.tyci/mcp.json). A script's
+tyci.run_tool calls still reach every built-in tool (and any global
+~/.tyci/tools Lua tool) with the runtime tool gate and write-freshness guard
+intact — it is specifically the project-local hooks/tools/MCP wiring that is
+missing here for now.`,
 	Args: cobra.ExactArgs(1),
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		_, dirs := workflowTrustedDirs()

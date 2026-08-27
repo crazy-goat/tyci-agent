@@ -68,6 +68,30 @@ func TestNewSession_ExplicitMaxIterations(t *testing.T) {
 	}
 }
 
+// TestNewSession_NonPositiveMaxIterationsIsIgnored is the regression test
+// for the fix to sessionOptions: opts.max_iterations = 0 (or negative) used
+// to be applied verbatim, and 0 silently means "unlimited" to
+// agent.Config.MaxIterations (see agent.Config's doc comment) — not "don't
+// loop", which is what a caller writing max_iterations = 0 almost certainly
+// intends. A non-positive override must be ignored, falling back to
+// whatever default/agent-sourced value sessionOptions would otherwise have
+// produced, the same guard already applied to a named agent's
+// def.MaxIterations.
+func TestNewSession_NonPositiveMaxIterationsIsIgnored(t *testing.T) {
+	for _, mi := range []float64{0, -1, -5} {
+		engine := NewEngine(t.Context(), "prompt")
+		opts := engine.L.NewTable()
+		engine.L.SetField(opts, "max_iterations", lua.LNumber(mi))
+
+		_, sess := newSessionTable(t, engine, "some/model", opts)
+
+		if sess.maxIterations != defaultSessionMaxIterations {
+			t.Errorf("max_iterations=%v: maxIterations = %d, want the default %d (non-positive override must be ignored)",
+				mi, sess.maxIterations, defaultSessionMaxIterations)
+		}
+	}
+}
+
 // TestNewSession_MaxIterationsFromNamedAgent verifies the other half: an
 // agent name passed as opts.agent sources MaxIterations from that agent
 // definition's frontmatter — the same place per-agent config values come

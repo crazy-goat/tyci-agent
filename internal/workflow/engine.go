@@ -47,11 +47,25 @@ type Engine struct {
 // the machine directly (RestrictLuaStdlib — os.execute, io.open, require,
 // etc.) and given ctx as its cancellation context (L.SetContext), the same
 // two protections tools/lua_eval.go's "lua" tool applies to a model-written
-// script: filesystem/process access must go through tyci.run_tool (gated,
-// hooked, write-freshness-guarded), and a runaway `while true do end` in a
-// project-local .tyci/agents/*.lua script can be cancelled instead of
-// hanging the process. Before this, a workflow script ran with the full
-// gopher-lua standard library open and no cancellation hook at all.
+// script: filesystem/process access must go through tyci.run_tool (which
+// applies the runtime tool gate and the write-freshness guard — see
+// tools.RunTool), and a runaway `while true do end` in a project-local
+// .tyci/agents/*.lua script can be cancelled instead of hanging the
+// process. Before this, a workflow script ran with the full gopher-lua
+// standard library open and no cancellation hook at all.
+//
+// NOT yet true of this entry point, unlike every other agent-running path
+// (main.go's initCommon, used by `run`/`console`/`tui`/cron): pre_tool/
+// post_tool hooks (.tyci/hooks.json), project-local Lua *tools*
+// (.tyci/tools/*.lua — distinct from the *.lua orchestration scripts this
+// package runs), and MCP servers (.tyci/mcp.json) are none of them loaded
+// by `tyci workflow run` today. A script's tyci.run_tool calls still reach
+// every BUILT-IN tool (and any global ~/.tyci/tools Lua tool, which loads
+// unconditionally at process startup) with the runtime gate and
+// write-freshness guard intact — it is specifically the project-local
+// hooks/tools/MCP wiring initCommon does that is missing here. Wiring that
+// in is tracked as follow-up work, not done here to keep this change in
+// scope.
 func NewEngine(ctx context.Context, prompt string) *Engine {
 	L := lua.NewState()
 	tools.RestrictLuaStdlib(L)
@@ -265,7 +279,11 @@ func (e *Engine) sessionOptions(opts *lua.LTable, model string) (resolvedModel s
 		}
 	}
 
-	if mi, ok := opts.RawGetString("max_iterations").(lua.LNumber); ok {
+	// Only a positive value overrides: 0 (Lua's "false"-ish default for an
+	// absent field coerced by a careless caller) or a negative number must
+	// not silently mean "unlimited" — same guard as def.MaxIterations > 0
+	// above.
+	if mi, ok := opts.RawGetString("max_iterations").(lua.LNumber); ok && mi > 0 {
 		maxIterations = int(mi)
 	}
 
@@ -452,14 +470,17 @@ func (e *Engine) sessionAwait(L *lua.LState) int {
 		if def.SystemPromptMode == agentdefs.SystemPromptModeReplace {
 			systemPrompt = def.SystemPrompt
 		} else {
-			hasAskParent := len(def.Tools) == 0
-			for _, name := range def.Tools {
-				if name == "ask_parent" {
-					hasAskParent = true
-					break
-				}
-			}
-			systemPrompt = providers.BuildSubagentSystemPromptWithRole(def.SystemPrompt, hasAskParent)
+			// hasAskParent is always false here, unlike the real subagent
+			// path (main.go's agentRunner.RunTaskWithSystem), which derives
+			// it from the agent's tools: whitelist: a workflow session has
+			// no job id (it isn't spawned via the subagent/job machinery),
+			// so ask_parent always fails with "only works inside a job"
+			// regardless of whether it's on the whitelist. Claiming it's a
+			// real, usable tool here would be a false promise the model
+			// only discovers by calling it and getting an error — see
+			// buildSubagentContractNote/F22 for why that distinction
+			// matters.
+			systemPrompt = providers.BuildSubagentSystemPromptWithRole(def.SystemPrompt, false)
 		}
 		schema = tools.GetSubagentToolsSchemaJSONFor(def.Tools)
 		// Deny "subagent"/"agents" recursion unconditionally (mirroring
