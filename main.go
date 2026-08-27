@@ -798,7 +798,15 @@ func wireTools() {
 				if j.ParentID != "" {
 					text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", j.ParentID, text)
 				}
-				notices.Notify(text)
+				// NotifyQuestion (not plain Notify): keyed by j.ID/j.QuestionSeq
+				// — an unforgeable per-ask id, not the question text itself,
+				// so an identically-worded LATER ask from the same job is
+				// never mistaken for this one (item 54 review finding 1) — so
+				// a blocking subagent call's handoff message, if it ends up
+				// carrying this exact ask too (see tools/subagent.go's
+				// handOff/markQuestionsShown), can mark this entry shown and
+				// Drain will not repeat it.
+				notices.NotifyQuestion(j.ID, j.QuestionSeq, text)
 			}
 		}
 

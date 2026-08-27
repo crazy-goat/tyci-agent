@@ -595,6 +595,12 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 	}
 	job.Status = StatusWaitingAnswer
 	job.Question = question
+	// Unforgeable per-ask key (item 54 review finding 1): Question is free
+	// text a child could pose twice across its lifetime with the exact same
+	// words, which would otherwise make two distinct asks indistinguishable
+	// to anything keying on jobID+question text — see QuestionSeq's doc
+	// comment on Job.
+	job.QuestionSeq++
 	// See jobs.Job's QuestionHasWaiter doc comment: recorded now, while
 	// still holding r.mu, so it reflects exactly the set of Wait calls that
 	// were registered before this question existed — not a count that

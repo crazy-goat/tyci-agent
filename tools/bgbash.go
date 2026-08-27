@@ -102,9 +102,21 @@ func backgroundAllowed(ctx context.Context) bool {
 // and JobStarter), and the producer is better placed to phrase the notice
 // than the consumer is.
 //
+// MarkQuestionShown lets this package (specifically handOff in subagent.go)
+// tell the same notifier that a "child is blocked on a question" notice it
+// may already have queued (via jobs.Registry.Ask's onEvent hook — see
+// main.go's wireTools) was just also delivered through a handoff message, so
+// a later drain of the queue does not repeat it. Keyed on jobID+seq — seq is
+// jobs.Job.QuestionSeq, an unforgeable per-ask id, NOT the question text:
+// keying on text would let one ask's "shown" mark wrongly suppress a later,
+// identically-worded ask from the same job (item 54 review finding 1). See
+// jobs.Notifier's MarkQuestionShown doc comment for the full reasoning,
+// including the one path (Esc/ctx.Done) that deliberately never calls this.
+//
 // jobs.Notifier satisfies this structurally; main() wires it in wireTools.
 type JobNotifier interface {
 	Notify(text string)
+	MarkQuestionShown(jobID string, seq int)
 }
 
 // jobNotifier is nil until SetJobNotifier is called. Unlike the other job
@@ -180,6 +192,17 @@ func notifyToParent(parentID, text string) {
 		case mb == nil:
 			text = fmt.Sprintf("[for job %s, but no mailbox is wired to route it there — delivered here instead] %s", parentID, text)
 		case mb.Post(parentID, text):
+			// TODO(item 54 review finding 2): this delivery is NOT covered by
+			// the MarkQuestionShown dedup below — that only suppresses a
+			// duplicate on the main JobNotifier queue. A mid-level subagent
+			// (one with a live ParentID) whose blocking call hands a child
+			// off still gets this same ask-notice duplicated in its own
+			// mailbox exactly as before item 54, since nothing here checks
+			// or records "already shown" against a mailbox-routed message.
+			// Fixing it properly needs the same key (jobID+QuestionSeq)
+			// threaded through jobs.Job's mailbox/Post/DrainMessages path,
+			// which item 54 did not have time to do — see the PR discussion
+			// for triage.
 			return
 		default:
 			text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", parentID, text)
@@ -190,6 +213,28 @@ func notifyToParent(parentID, text string) {
 	jobNotifierMu.RUnlock()
 	if n != nil {
 		n.Notify(text)
+	}
+}
+
+// markQuestionsShown tells the wired JobNotifier that each jobID/seq pair in
+// questions was just delivered via a handoff message, so a "child is
+// blocked on a question" notice already queued for that exact ask is left
+// out the next time the queue drains — see handOff (subagent.go), which is
+// the only caller, and JobNotifier.MarkQuestionShown's doc comment for why
+// this keys on seq (jobs.Job.QuestionSeq), not the question text. A no-op
+// with no notifier wired (tests that don't exercise this).
+func markQuestionsShown(questions map[string]pendingQuestion) {
+	if len(questions) == 0 {
+		return
+	}
+	jobNotifierMu.RLock()
+	n := jobNotifier
+	jobNotifierMu.RUnlock()
+	if n == nil {
+		return
+	}
+	for jobID, q := range questions {
+		n.MarkQuestionShown(jobID, q.Seq)
 	}
 }
 
