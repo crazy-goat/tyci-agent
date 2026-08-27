@@ -453,10 +453,28 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		MaxTokens:     opts.MaxTokens,
 		NoPromptCache: !agent.PromptCacheEnabled(),
 		NextMessages:  tools.JobMailboxNextMessages(jobID),
-		// Item 15: nudge this child, at most once per SubagentBackgroundAfterSec,
-		// to post a report_progress note when it has gone quiet — nil (a
-		// no-op) when jobID is empty, e.g. a test that calls run() directly.
-		ProgressHeartbeat: tools.JobProgressHeartbeatCheck(jobID),
+	}
+
+	// Item 15: nudge this child, at most once per SubagentBackgroundAfterSec,
+	// to post a report_progress note when it has gone quiet. Only wired when
+	// report_progress is actually reachable for this agent — report_progress
+	// is NOT in alwaysAllowedTools (tools/toolgate.go), so a non-empty
+	// tools: whitelist that omits it (e.g. builtin "reviewer": find, read,
+	// bash, or "locator": find, read) leaves the child with no way to ever
+	// satisfy this nudge: LastProgressAt would never advance, and the
+	// reminder would re-fire roughly every SubagentBackgroundAfterSec for
+	// the rest of the run — exactly the "crowd out the real conversation"
+	// outcome item 15 exists to avoid. Same hasAskParent-shaped check as
+	// RunTaskWithSystem above (opts.Tools empty/nil means unrestricted).
+	hasReportProgress := len(opts.Tools) == 0
+	for _, name := range opts.Tools {
+		if name == "report_progress" {
+			hasReportProgress = true
+			break
+		}
+	}
+	if hasReportProgress {
+		cfg.ProgressHeartbeat = tools.JobProgressHeartbeatCheck(jobID)
 	}
 
 	// Children spend the parent's money, so they record against the same

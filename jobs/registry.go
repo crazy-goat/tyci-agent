@@ -133,10 +133,10 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 	// duration) rather than a zero time.Time producing a nonsense one. See
 	// Job.lastActivity's doc comment.
 	job.lastActivity = now.UnixNano()
-	// Same seeding for LastProgressAt — see its doc comment. Without this a
+	// Same seeding for lastProgressAt — see its doc comment. Without this a
 	// freshly started job would read as having gone quiet since the Unix
 	// epoch, immediately eligible for a progress-heartbeat nudge.
-	job.LastProgressAt = now
+	job.lastProgressAt = now
 
 	r.mu.Lock()
 	r.jobs[job.ID] = job
@@ -863,7 +863,7 @@ func (r *Registry) SetProgress(id, text string) bool {
 	}
 	entry := truncateProgressEntry(text)
 	job.Progress = entry
-	job.LastProgressAt = time.Now()
+	job.lastProgressAt = time.Now()
 	job.ProgressHistory = append(job.ProgressHistory, entry)
 	if len(job.ProgressHistory) > progressHistoryCap {
 		// Drop the oldest and record that we did — see
@@ -898,7 +898,7 @@ func truncateProgressEntry(s string) string {
 // NeedsProgressHeartbeat reports whether the RUNNING job identified by id
 // should be nudged, right now, to post a report_progress note — because more
 // than `after` has elapsed since the later of: this job's start, its last
-// real progress note (LastProgressAt), or the last time this same method
+// real progress note (lastProgressAt), or the last time this same method
 // already returned true for it (lastHeartbeatNudgeAt). That last clause is
 // the trap item 15's spec calls out explicitly: without it, a child that
 // never calls report_progress would get nagged on every single iteration
@@ -925,7 +925,7 @@ func (r *Registry) NeedsProgressHeartbeat(id string, after time.Duration) bool {
 	if !ok || job.Status != StatusRunning {
 		return false
 	}
-	reference := job.LastProgressAt
+	reference := job.lastProgressAt
 	if job.lastHeartbeatNudgeAt.After(reference) {
 		reference = job.lastHeartbeatNudgeAt
 	}

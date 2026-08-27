@@ -128,6 +128,48 @@ func TestNeedsProgressHeartbeat_NotRunning_NeverFires(t *testing.T) {
 	}
 }
 
+// TestNeedsProgressHeartbeat_WaitingForAnswer_NeverFires pins the other
+// non-running status: a job blocked in Ask (StatusWaitingAnswer) is already
+// a dead end only the parent's answer_job can unblock — a report_progress
+// nudge would not help it, and per NeedsProgressHeartbeat's doc comment this
+// status is deliberately excluded the same way a terminal job is.
+func TestNeedsProgressHeartbeat_WaitingForAnswer_NeverFires(t *testing.T) {
+	r := NewRegistry()
+	release := make(chan struct{})
+	defer close(release)
+
+	askStarted := make(chan struct{})
+	job := r.Start(context.Background(), "asking child", KindSubagent, "", func(ctx context.Context, jobID string) (string, bool, error) {
+		close(askStarted)
+		_, _, _ = r.Ask(ctx, jobID, "what now?")
+		<-release
+		return "done", false, nil
+	})
+
+	<-askStarted
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		reachedWaiting := false
+		for _, snap := range r.List() {
+			if snap.ID == job.ID && snap.Status == StatusWaitingAnswer {
+				reachedWaiting = true
+				break
+			}
+		}
+		if reachedWaiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the job to reach StatusWaitingAnswer")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if r.NeedsProgressHeartbeat(job.ID, time.Nanosecond) {
+		t.Fatal("expected no nudge for a job that is blocked waiting for an answer")
+	}
+}
+
 // TestNeedsProgressHeartbeat_UnknownJob_ReturnsFalse pins the not-found case.
 func TestNeedsProgressHeartbeat_UnknownJob_ReturnsFalse(t *testing.T) {
 	r := NewRegistry()

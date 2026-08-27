@@ -235,6 +235,18 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 		// caller deadline is about to stop this run. Ordinary subagent runs
 		// configure neither, so they do not receive a synthetic last-step
 		// warning. This must run before runOnce so a capped final turn sees it.
+		//
+		// warnedThisIteration tracks only THIS turn's last-step warning — unlike
+		// lastStepWarned (sticky for the rest of Run, so the warning itself is
+		// never repeated), it exists solely to keep the progress-heartbeat nudge
+		// below off the same turn as the warning. Using lastStepWarned for that
+		// too was a bug (review finding on item 15): it made the heartbeat
+		// permanently disabled after the FIRST warning fired, instead of only
+		// skipped on that one turn — a subagent that somehow keeps running past
+		// its warned "last" turn (e.g. a caller deadline that never actually
+		// cancels the ctx) would then go the rest of its life with no nudge at
+		// all.
+		warnedThisIteration := false
 		if !lastStepWarned {
 			warn := cfg.MaxIterations > 0 && iter == cfg.MaxIterations-1
 			if !warn {
@@ -244,6 +256,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			}
 			if warn {
 				lastStepWarned = true
+				warnedThisIteration = true
 				reminder := buildLastStepWarning()
 				*msgs = append(*msgs, connector.Message{
 					Role:    "user",
@@ -253,21 +266,20 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 					blocks := []session.ContentBlock{{Type: "text", Text: reminder}}
 					_ = cfg.Session.WriteMessage("user", blocks, nil)
 				}
-			} else if cfg.ProgressHeartbeat != nil && cfg.ProgressHeartbeat() {
-				// Deliberately in the `else` branch: the last-step warning
-				// above forbids tool calls this turn (there is no next
-				// runOnce left to see their result), while this nudge exists
-				// specifically to ask for one (report_progress) — the two
-				// must never fire on the same iteration.
-				reminder := buildProgressHeartbeatReminder()
-				*msgs = append(*msgs, connector.Message{
-					Role:    "user",
-					Content: []connector.ContentBlock{{Type: "text", Text: reminder}},
-				})
-				if cfg.Session != nil {
-					blocks := []session.ContentBlock{{Type: "text", Text: reminder}}
-					_ = cfg.Session.WriteMessage("user", blocks, nil)
-				}
+			}
+		}
+		// The progress-heartbeat nudge is independent of lastStepWarned's
+		// sticky state — only gated on NOT sharing a turn with the last-step
+		// warning above (which forbids tool calls; report_progress is one).
+		if !warnedThisIteration && cfg.ProgressHeartbeat != nil && cfg.ProgressHeartbeat() {
+			reminder := buildProgressHeartbeatReminder()
+			*msgs = append(*msgs, connector.Message{
+				Role:    "user",
+				Content: []connector.ContentBlock{{Type: "text", Text: reminder}},
+			})
+			if cfg.Session != nil {
+				blocks := []session.ContentBlock{{Type: "text", Text: reminder}}
+				_ = cfg.Session.WriteMessage("user", blocks, nil)
 			}
 		}
 		// runOnce accumulates usage into totalUsage and emits d.Total
