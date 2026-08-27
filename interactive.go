@@ -238,6 +238,10 @@ func (s *interactiveState) handleCommand(raw string, cancel context.CancelFunc) 
 		cancel()
 		s.handleModelCommand(strings.TrimSpace(strings.TrimPrefix(line, "/model")))
 		return false, true
+	case line == "/jobs":
+		cancel()
+		printJobs(os.Stdout, JobRegistry.List())
+		return false, true
 	default:
 		cmd := strings.Fields(line)[0]
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
