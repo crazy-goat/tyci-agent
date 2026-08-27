@@ -17,19 +17,33 @@ const OptReasoning = "reasoning"
 // ?reasoning=xhigh (or another provider-supported value) in the URI.
 const OptReasoningEffort = "reasoning_effort"
 
+// OptFallbacks carries the raw ?fallbacks=... value from the provider URI
+// (see tyciconfig.ProviderURI.Fallbacks). It is forwarded as a query
+// parameter on the outgoing request URL, not a header or body field — today
+// this only means something to Nexos, whose Chat Completions and Responses
+// endpoints read ?fallbacks=false to disable their own server-side provider
+// fallback for that one request. It has no effect on tyci/OpenCode/Pi's own
+// application-level fallback lists, which are a separate concern.
+const OptFallbacks = "fallbacks"
+
 // openAI speaks the OpenAI chat-completions protocol, which most third-party
 // providers (DeepSeek, GLM, Xiaomi, OpenRouter, ...) also expose. It is the
 // fallback protocol for any api_type we do not recognize.
 type openAI struct {
 	ep        Endpoint
 	reasoning bool
+	fallbacks string
 }
 
 func init() { registerBuiltin(KindOpenAI, NewOpenAI) }
 
 // NewOpenAI builds an OpenAI chat-completions connector.
 func NewOpenAI(ep Endpoint) (Connector, error) {
-	return &openAI{ep: ep, reasoning: ep.option(OptReasoning) == "true"}, nil
+	return &openAI{
+		ep:        ep,
+		reasoning: ep.option(OptReasoning) == "true",
+		fallbacks: ep.option(OptFallbacks),
+	}, nil
 }
 
 func (c *openAI) Kind() string { return KindOpenAI }
@@ -47,8 +61,12 @@ func (c *openAI) Stream(ctx context.Context, req Request, emit func(stream.Event
 	if c.reasoning {
 		body.Reasoning = true
 	}
+	url := c.ep.URL()
+	if c.fallbacks != "" {
+		url = c.ep.URLWithQuery(map[string]string{OptFallbacks: c.fallbacks})
+	}
 	s := api.ChatStreamer{HTTP: c.ep.HTTP, Headers: c.ep.Headers}
-	return s.Stream(ctx, c.ep.APIKey, c.ep.URL(), body, emit)
+	return s.Stream(ctx, c.ep.APIKey, url, body, emit)
 }
 
 // messagesToChat converts a Message slice to a ChatMessage slice,

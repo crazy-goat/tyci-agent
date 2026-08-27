@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/decodo/tyci/stream"
 )
@@ -84,6 +85,32 @@ type Endpoint struct {
 
 // URL returns the full request URL.
 func (e Endpoint) URL() string { return e.BaseURL + e.Path }
+
+// URLWithQuery returns URL() with extra query parameters merged in.
+// It exists for options that a provider expects as a query string rather
+// than a header or body field — today only OptFallbacks (?fallbacks=false)
+// for Nexos. params take precedence over any query parameter already present
+// on the base URL, and the result is correctly URL-encoded via net/url; keys
+// are never dropped or duplicated. An empty params merges to a no-op.
+func (e Endpoint) URLWithQuery(params map[string]string) string {
+	base := e.URL()
+	if len(params) == 0 {
+		return base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		// base is built from Endpoint fields we control (BaseURL + Path);
+		// a parse failure here would mean a malformed provider config. Fall
+		// back to the unmodified URL rather than sending a request to "".
+		return base
+	}
+	q := u.Query()
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
 
 // option returns the value of a connector option, or "" when unset.
 func (e Endpoint) option(name string) string {

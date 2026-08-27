@@ -37,8 +37,12 @@ func (c *responses) Stream(ctx context.Context, req Request, emit func(stream.Ev
 	if effort := c.ep.option(OptReasoningEffort); effort != "" {
 		body.Reasoning = &api.ResponsesReasoning{Effort: effort}
 	}
+	url := c.ep.URL()
+	if fallbacks := c.ep.option(OptFallbacks); fallbacks != "" {
+		url = c.ep.URLWithQuery(map[string]string{OptFallbacks: fallbacks})
+	}
 	s := api.ResponsesStreamer{HTTP: c.ep.HTTP, Headers: c.ep.Headers}
-	return s.Stream(ctx, c.ep.APIKey, c.ep.URL(), body, emit)
+	return s.Stream(ctx, c.ep.APIKey, url, body, emit)
 }
 
 func stringPointer(s string) *string { return &s }

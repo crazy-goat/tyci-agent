@@ -508,7 +508,10 @@ func (p *dynamicProvider) kindFor(apiType string) (string, error) {
 // Returns nil when there is nothing to pass.
 func uriOptions(uri string) map[string]string {
 	parsed, err := tyciconfig.Parse(uri)
-	if err != nil || (!parsed.Reasoning && parsed.ReasoningEffort == "") {
+	if err != nil {
+		return nil
+	}
+	if !parsed.Reasoning && parsed.ReasoningEffort == "" && parsed.Fallbacks == "" {
 		return nil
 	}
 	options := make(map[string]string)
@@ -517,6 +520,9 @@ func uriOptions(uri string) map[string]string {
 	}
 	if parsed.ReasoningEffort != "" {
 		options[connector.OptReasoningEffort] = parsed.ReasoningEffort
+	}
+	if parsed.Fallbacks != "" {
+		options[connector.OptFallbacks] = parsed.Fallbacks
 	}
 	return options
 }
