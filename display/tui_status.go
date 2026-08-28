@@ -40,10 +40,14 @@ func (m TuiModel) buildStatus() string {
 		elapsedSuffix := fmt.Sprintf(" %.1fs", elapsed.Seconds())
 
 		switch m.status {
+		case "sending":
+			leftParts = append(leftParts, "⟳ sending request..."+elapsedSuffix)
+		case "waiting":
+			leftParts = append(leftParts, "⟳ waiting for response..."+elapsedSuffix)
 		case "thinking":
-			leftParts = append(leftParts, "⟳ thinking..."+elapsedSuffix)
+			leftParts = append(leftParts, "⟳ thinking..."+elapsedSuffix+m.throughputSuffix())
 		case "responding":
-			leftParts = append(leftParts, "⟳ responding..."+elapsedSuffix)
+			leftParts = append(leftParts, "⟳ responding..."+elapsedSuffix+m.throughputSuffix())
 		case "tool":
 			// Named, and timed from the tool's own start. "tool... 13.7s" was
 			// the one status that answered neither of the questions a person
@@ -162,6 +166,37 @@ func truncateStatusText(s string, maxW int) string {
 		runes = runes[:len(runes)-1]
 	}
 	return "…"
+}
+
+// trackDeltaBytes records n more bytes of thinking/text delta for the
+// current round's cumulative throughput estimate (see throughputSuffix),
+// remembering when the round's first delta arrived so the rate is averaged
+// over the whole receiving phase instead of jittering per delta.
+func (m *TuiModel) trackDeltaBytes(n int) {
+	if m.roundFirstDeltaAt.IsZero() {
+		m.roundFirstDeltaAt = time.Now()
+	}
+	m.roundBytes += n
+}
+
+// throughputSuffix returns " · ~N tok/s" once the round has received enough
+// to estimate a rate, or "" before that. Tokens are estimated as bytes/4 (a
+// common rule of thumb across providers — not exact, but a jittery precise
+// count would be worse than a stable approximate one here), and the rate is
+// averaged over the whole receiving phase since the round's FIRST delta —
+// not the gap since the last one — so it settles instead of swinging wildly
+// between chunks. The 0.5s floor avoids a wild "~4000 tok/s" from a single
+// delta landing within the same millisecond it arrived.
+func (m TuiModel) throughputSuffix() string {
+	if m.roundFirstDeltaAt.IsZero() || m.roundBytes <= 0 {
+		return ""
+	}
+	elapsed := time.Since(m.roundFirstDeltaAt).Seconds()
+	if elapsed < 0.5 {
+		return ""
+	}
+	tokPerSec := float64(m.roundBytes) / 4 / elapsed
+	return fmt.Sprintf(" · ~%d tok/s", int(tokPerSec+0.5))
 }
 
 // displayPath returns a short, human-friendly representation of the working

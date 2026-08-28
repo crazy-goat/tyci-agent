@@ -28,14 +28,52 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		// status bar shows per-turn wall time instead of accumulating from
 		// the user's initial submit. See issue #83.
 		m.requestStartTime = time.Now()
+		// Throughput is per-round too (item 55): a fast first round followed
+		// by a slow tool-driven one must not average across both.
+		m.roundBytes = 0
+		m.roundFirstDeltaAt = time.Time{}
+		// m.status is deliberately NOT reset here. The monotonic phase guard
+		// below relies on every path that continues into another round
+		// having already dropped status to a rank -1 state ("tool" via
+		// ToolCallStart, or "idle" via done/reset) — so "sending" is never
+		// starved by the previous round's "waiting"/"thinking". If a future
+		// round-continuation path skips both, reset status here.
+	case "phase":
+		// Sent by TUI.Phase (agent.PhaseSink), which agent/run_once.go calls
+		// as the round crosses "sending" → "waiting" → "thinking" — the two
+		// transport milestones (httptrace's WroteRequest/GotFirstResponseByte)
+		// plus the moment Request() itself fires. Restart the elapsed clock
+		// at the boundary, same as "tool" already does with its own
+		// per-block start time, so "waiting for response 12.3s" answers the
+		// actual question instead of showing the whole turn's age.
+		//
+		// net/http gives no ordering guarantee between the two hooks (see
+		// api/phase_trace.go): with a large request body and an early server
+		// reply, GotFirstResponseByte can fire before WroteRequest, so
+		// "thinking" can arrive here before "waiting". Drop a transition
+		// that would rewind the bar to an earlier phase instead of showing
+		// it — the late event is stale, not new information.
+		if phaseRank(msg.content) < phaseRank(m.status) {
+			break
+		}
+		if m.status != msg.content {
+			m.status = msg.content
+			m.requestStartTime = time.Now()
+		}
 	case "thinking":
-		m.status = "thinking"
+		if m.status != "thinking" {
+			m.status = "thinking"
+			m.requestStartTime = time.Now()
+		}
 		m.appendOrAppend("thinking", msg.content)
+		m.trackDeltaBytes(len(msg.content))
 	case "text":
 		if m.status != "responding" {
 			m.status = "responding"
+			m.requestStartTime = time.Now()
 		}
 		m.appendOrAppend("text", msg.content)
+		m.trackDeltaBytes(len(msg.content))
 	case "tool-start":
 		// New tool block → force-render previous dirty blocks (thinking/text)
 		m.forceRenderDirtyBlocks()
@@ -338,6 +376,25 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 	// Adding a block only shifts line offsets; earlier blocks render the same.
 	m.invalidateTotalLines()
 	m.maybeFlushOldBlocks()
+}
+
+// phaseRank orders the three transport phases so the "phase" case above can
+// reject a late-arriving hook trying to rewind the status bar (see that
+// case's comment). Anything outside the three known names — most often a
+// leftover status from further along in the round ("thinking" from real
+// model output, "responding", "tool") — ranks below all of them so the
+// phase sequence always starts fresh at "sending".
+func phaseRank(status string) int {
+	switch status {
+	case "sending":
+		return 0
+	case "waiting":
+		return 1
+	case "thinking":
+		return 2
+	default:
+		return -1
+	}
 }
 
 // jsonMaybeComplete reports whether s could be a complete JSON document, used

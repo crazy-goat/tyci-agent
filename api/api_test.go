@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/decodo/tyci/stream"
@@ -860,5 +861,54 @@ data: [DONE]
 	}
 	if got := text.String(); got != "the names match" {
 		t.Errorf("text = %q", got)
+	}
+}
+
+// TestChatStreamer_PhaseEventsArriveBeforeFirstDelta is the httptest-backed
+// proof for item 55's ordering claim: withPhaseTrace's httptrace hooks run
+// on the transport's own write/read-loop goroutines, not this streamer's,
+// and net/http gives no ordering guarantee between them or Do() returning —
+// but ChatStreamer.Stream calls stop() right after Do() and before reading
+// the response body, and stop blocks until both hooks (if fired) have been
+// forwarded to emit. So RequestSent and ResponseStarted must land, in that
+// order, on the emitted event slice before anything the read loop itself
+// produces.
+func TestChatStreamer_PhaseEventsArriveBeforeFirstDelta(t *testing.T) {
+	sseEvents := `data: {"choices":[{"delta":{"content":"hi"}}]}
+data: {"choices":[{"finish_reason":"stop"}]}
+data: [DONE]
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(sseEvents))
+	}))
+	defer server.Close()
+
+	var mu sync.Mutex
+	var events []stream.Event
+	emit := func(e stream.Event) error {
+		mu.Lock()
+		events = append(events, e)
+		mu.Unlock()
+		return nil
+	}
+
+	body := ChatRequest{Model: "gpt-4", Stream: true, Messages: []ChatMessage{{Role: "user", Content: "hi"}}}
+	if err := (ChatStreamer{}).Stream(testCtx(), "test-key", server.URL, body, emit); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	if len(events) < 3 {
+		t.Fatalf("expected at least 3 events (RequestSent, ResponseStarted, a delta), got %d: %#v", len(events), events)
+	}
+	if _, ok := events[0].(stream.RequestSent); !ok {
+		t.Fatalf("events[0] = %T, want stream.RequestSent", events[0])
+	}
+	if _, ok := events[1].(stream.ResponseStarted); !ok {
+		t.Fatalf("events[1] = %T, want stream.ResponseStarted", events[1])
+	}
+	if _, ok := events[2].(stream.TextDelta); !ok {
+		t.Fatalf("events[2] = %T, want stream.TextDelta (the first delta, after both phase events)", events[2])
 	}
 }

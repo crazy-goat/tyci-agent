@@ -154,7 +154,7 @@ func (m *TuiModel) invalidateAllBlockLineCounts() {
 // agentBusy reports whether the agent is actively producing output.
 func (m *TuiModel) agentBusy() bool {
 	switch m.status {
-	case "thinking", "responding", "tool":
+	case "sending", "waiting", "thinking", "responding", "tool":
 		return true
 	}
 	return false

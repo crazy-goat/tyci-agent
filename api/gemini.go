@@ -65,7 +65,10 @@ func (s GeminiStreamer) Stream(ctx context.Context, apiKey, endpoint string, bod
 		dl.WriteRequest("POST", endpoint, jsonBody)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(jsonBody)))
+	traceCtx, stopTrace := withPhaseTrace(ctx, emit)
+	defer stopTrace()
+
+	req, err := http.NewRequestWithContext(traceCtx, "POST", endpoint, strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return err
 	}
@@ -75,6 +78,11 @@ func (s GeminiStreamer) Stream(ctx context.Context, apiKey, endpoint string, bod
 	applyExtraHeaders(req, s.Headers)
 
 	resp, err := doer(s.HTTP).Do(req)
+	// The httptrace hooks race Do() returning (net/http gives no
+	// ordering guarantee between them), so stop the trace right here,
+	// before touching resp or err, to guarantee every phase emit has
+	// already happened — see phaseTrace.stop's doc comment.
+	stopTrace()
 	if err != nil {
 		return err
 	}

@@ -1,5 +1,11 @@
 [
   {
+    "type": "stream.RequestSent"
+  },
+  {
+    "type": "stream.ResponseStarted"
+  },
+  {
     "type": "ThinkingDelta",
     "text": "let me check the tool"
   },
