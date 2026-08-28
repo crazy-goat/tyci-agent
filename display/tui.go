@@ -221,10 +221,17 @@ type TuiModel struct {
 	lastUsage        stream.Usage
 	lastStats        stream.Stats
 	reading          bool
-	requestStartTime time.Time // set on submit, cleared on done/reset; used by buildStatus for live elapsed counter
-	status           string    // "idle", "thinking", "responding", "tool"
+	requestStartTime time.Time // set on submit, cleared on done/reset, reset again at every phase boundary; used by buildStatus for the live elapsed counter
+	status           string    // "idle", "sending", "waiting", "thinking", "responding", "tool"
 	statusMessage    string    // transient user-facing status, e.g. copy result
 	modelName        string    // model name shown in status bar
+
+	// Cumulative receive-throughput tracking for the "~N tok/s" suffix
+	// buildStatus appends while thinking/responding. Both reset on
+	// "request-start" (a new round) and are read, never written, from
+	// buildStatus itself — see throughputSuffix.
+	roundBytes        int       // bytes delivered via Thinking/Text deltas so far this round
+	roundFirstDeltaAt time.Time // when the round's first delta arrived; zero until then
 
 	// Model switching (Tab/Shift+Tab) — uses favoriteModels when available.
 	models            []string                          // all available models (format: "provider/model")

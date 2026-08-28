@@ -28,14 +28,36 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		// status bar shows per-turn wall time instead of accumulating from
 		// the user's initial submit. See issue #83.
 		m.requestStartTime = time.Now()
+		// Throughput is per-round too (item 55): a fast first round followed
+		// by a slow tool-driven one must not average across both.
+		m.roundBytes = 0
+		m.roundFirstDeltaAt = time.Time{}
+	case "phase":
+		// Sent by TUI.Phase (agent.PhaseSink), which agent/run_once.go calls
+		// as the round crosses "sending" → "waiting" → "thinking" — the two
+		// transport milestones (httptrace's WroteRequest/GotFirstResponseByte)
+		// plus the moment Request() itself fires. Restart the elapsed clock
+		// at the boundary, same as "tool" already does with its own
+		// per-block start time, so "waiting for response 12.3s" answers the
+		// actual question instead of showing the whole turn's age.
+		if m.status != msg.content {
+			m.status = msg.content
+			m.requestStartTime = time.Now()
+		}
 	case "thinking":
-		m.status = "thinking"
+		if m.status != "thinking" {
+			m.status = "thinking"
+			m.requestStartTime = time.Now()
+		}
 		m.appendOrAppend("thinking", msg.content)
+		m.trackDeltaBytes(len(msg.content))
 	case "text":
 		if m.status != "responding" {
 			m.status = "responding"
+			m.requestStartTime = time.Now()
 		}
 		m.appendOrAppend("text", msg.content)
+		m.trackDeltaBytes(len(msg.content))
 	case "tool-start":
 		// New tool block → force-render previous dirty blocks (thinking/text)
 		m.forceRenderDirtyBlocks()

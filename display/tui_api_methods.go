@@ -157,6 +157,16 @@ func (t *TUI) Request(_ string) {
 	t.post(tuiMsgBlock{kind: "request-start"})
 }
 
+// Phase implements agent.PhaseSink. TUI is the only Sink that shows the
+// transport phase, so agent/run_once.go asserts for this method rather than
+// widening agent.Sink for the other four displays (see PhaseSink's doc
+// comment). name is one of "sending", "waiting" or "thinking" — handled by
+// display/tui_blocks.go's "phase" kind, which restarts the elapsed clock at
+// the boundary the same way the "tool" status already does.
+func (t *TUI) Phase(name string) {
+	t.post(tuiMsgBlock{kind: "phase", content: name})
+}
+
 // ToolFinish is a no-op in TUI mode — tool summaries are not rendered.
 func (t *TUI) ToolFinish() {}
 
