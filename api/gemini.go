@@ -65,7 +65,7 @@ func (s GeminiStreamer) Stream(ctx context.Context, apiKey, endpoint string, bod
 		dl.WriteRequest("POST", endpoint, jsonBody)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(string(jsonBody)))
+	req, err := http.NewRequestWithContext(withPhaseTrace(ctx, emit), "POST", endpoint, strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return err
 	}

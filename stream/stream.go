@@ -48,6 +48,28 @@ type StreamError struct{ Err error }
 
 func (StreamError) sealed() {}
 
+// RequestSent marks the moment the HTTP request (headers + body) has
+// finished being written to the wire — net/http/httptrace's WroteRequest,
+// attached to the request context by every streamer (api/chat.go,
+// api/responses.go, api/anthropic.go, api/gemini.go). It is the boundary
+// between the "sending request" and "waiting for response" phases the
+// status bar shows (display/tui_blocks.go's "phase" kind), emitted once per
+// attempt before anything else arrives on the channel.
+type RequestSent struct{}
+
+func (RequestSent) sealed() {}
+
+// ResponseStarted marks the first byte of the HTTP response arriving —
+// net/http/httptrace's GotFirstResponseByte. It is the boundary between
+// "waiting for response" and the model's own output: everything from here
+// until the first ThinkingDelta/TextDelta/ToolCallStart (a model can sit
+// silently prefilling for a while after headers land) is folded into the
+// "thinking" phase rather than getting a phase of its own, since there is
+// nothing more specific to call it yet.
+type ResponseStarted struct{}
+
+func (ResponseStarted) sealed() {}
+
 // There is deliberately no Retry event. Retrying is the agent loop's job, not
 // the stream's: api.RetryableError travels up from the connector and
 // agent.Run re-runs the whole request, reporting each attempt through the
