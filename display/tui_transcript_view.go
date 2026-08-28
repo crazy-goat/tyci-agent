@@ -16,9 +16,9 @@ func (m TuiModel) renderTranscriptViewerView() string {
 		Bold(true).
 		Foreground(lipgloss.Color("252")).
 		Background(lipgloss.Color("60")).
-		Width(popupWidth - 2).
+		Width(max(0, popupWidth - 2)).
 		Padding(0, 1)
-	title := titleStyle.Render(fmt.Sprintf(" %s ", truncateString(m.transcriptViewerTitle, popupWidth-4)))
+	title := titleStyle.Render(fmt.Sprintf(" %s ", truncateString(m.transcriptViewerTitle, max(0, popupWidth-4))))
 
 	allLines := m.transcriptViewerLines
 	totalLines := len(allLines)
@@ -45,8 +45,8 @@ func (m TuiModel) renderTranscriptViewerView() string {
 	*m.modalRenderBuffer = newRenderBuffer(contentHeight)
 	for i := visibleStart; i < visibleEnd; i++ {
 		line := allLines[i]
-		if runes := []rune(line); len(runes) > popupWidth-4 {
-			line = string(runes[:popupWidth-4])
+		if runes := []rune(line); len(runes) > max(0, popupWidth-4) {
+			line = string(runes[:max(0, popupWidth-4)])
 		}
 		y := layout.contentTop + len(contentLines)
 		m.modalRenderBuffer.Add(line, "transcript", -1, i, y)
@@ -70,7 +70,7 @@ func (m TuiModel) renderTranscriptViewerView() string {
 	}
 	footerStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245")).
-		Width(popupWidth - 2).
+		Width(max(0, popupWidth - 2)).
 		Padding(0, 1)
 	footer := footerStyle.Render(footerText)
 

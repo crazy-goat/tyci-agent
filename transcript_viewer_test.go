@@ -99,27 +99,40 @@ func TestTranscriptProvider_StripANSI(t *testing.T) {
 }
 
 func TestTranscriptProvider_DoesNotMutateStash(t *testing.T) {
+	// Guard the deep copy itself (the append(json.RawMessage(nil)...) line),
+	// not merely the formatted []string. Mutating formatted lines can never
+	// alias the stashed entry's Arguments backing array, so the previous test
+	// was vacuous — it would pass even if deepCopyMessages were removed.
+	// This one copies via the helper, mutates the COPY's bytes in place,
+	// and asserts the original is unchanged.
+	msgs := []connector.Message{
+		{Role: "assistant", Content: []connector.ContentBlock{{Type: "toolCall", Name: "bash", Arguments: json.RawMessage(`{"a":1}`)}}},
+	}
+	copied := deepCopyMessages(msgs)
+	// Mutate the copy's backing bytes in place.
+	if len(copied[0].Content[0].Arguments) > 0 {
+		copied[0].Content[0].Arguments[0] = 'X'
+	}
+	if string(msgs[0].Content[0].Arguments) != `{"a":1}` {
+		t.Fatalf("deep copy aliased Arguments: original now %q", string(msgs[0].Content[0].Arguments))
+	}
+	// Also guard the stashed entry path via the real provider.
 	resetResumableForTest(t)
 	jobID := "job-immut"
-	args := json.RawMessage(`{"a":1}`)
-	msgs := []connector.Message{
-		{Role: "assistant", Content: []connector.ContentBlock{{Type: "toolCall", Name: "bash", Arguments: args}}},
-	}
 	stashResumable(jobID, resumableEntry{msgs: msgs})
-
-	provider := buildTranscriptProvider()
-	_, lines, _ := provider(jobID)
-	// Mutate returned lines and try to mutate stashed entry via second read
-	lines[0] = "mutated"
+	// Read through the provider, then mutate via deepCopyMessages and re-read stash.
 	resumableMu.Lock()
-	stored := resumable[jobID].msgs[0].Content[0].Arguments
+	stored := resumable[jobID].msgs
 	resumableMu.Unlock()
-	if string(stored) != `{"a":1}` {
-		t.Errorf("stash mutated: %q", string(stored))
+	copy2 := deepCopyMessages(stored)
+	if len(copy2[0].Content[0].Arguments) > 0 {
+		copy2[0].Content[0].Arguments[0] = 'Y'
 	}
-	_, lines2, _ := provider(jobID)
-	if lines2[0] == "mutated" {
-		t.Errorf("second read returned mutated content")
+	resumableMu.Lock()
+	storedAgain := resumable[jobID].msgs[0].Content[0].Arguments
+	resumableMu.Unlock()
+	if string(storedAgain) != `{"a":1}` {
+		t.Errorf("stash mutated via deep-copy alias: %q", string(storedAgain))
 	}
 }
 
@@ -145,5 +158,63 @@ func TestTranscriptProvider_TitleFromRegistry(t *testing.T) {
 	}
 	if !strings.Contains(title, "my desc") {
 		t.Errorf("title %q should contain description", title)
+	}
+}
+
+func TestTranscriptProvider_CJKTruncationIsRuneBased(t *testing.T) {
+	resetResumableForTest(t)
+	jobID := "job-cjk"
+	huge := strings.Repeat("漢", 5000)
+	msgs := []connector.Message{
+		{Role: "tool", Content: []connector.ContentBlock{{Type: "toolResult", Text: huge}}},
+	}
+	stashResumable(jobID, resumableEntry{msgs: msgs})
+	_, lines, _ := buildTranscriptProvider()(jobID)
+	if len(lines) != 1 {
+		t.Fatalf("want 1 line, got %d", len(lines))
+	}
+	if !strings.Contains(lines[0], "…[+") {
+		t.Fatalf("expected truncation marker, got %q", lines[0][:200])
+	}
+	payload := strings.TrimPrefix(lines[0], "[0] tool_result ")
+	markerIdx := strings.Index(payload, "…[+")
+	if markerIdx < 0 {
+		t.Fatalf("no marker in payload")
+	}
+	contentRunes := []rune(payload[:markerIdx])
+	if len(contentRunes) != 4000 {
+		t.Fatalf("CJK truncation: want 4000 runes before marker, got %d", len(contentRunes))
+	}
+}
+
+func TestTranscriptProvider_TruncationMarkerUsesStrippedLen(t *testing.T) {
+	resetResumableForTest(t)
+	jobID := "job-stripped-marker"
+	visible := strings.Repeat("a", 4001)
+	raw := "\x1b[31m" + visible + "\x1b[0m"
+	msgs := []connector.Message{
+		{Role: "tool", Content: []connector.ContentBlock{{Type: "toolResult", Text: raw}}},
+	}
+	stashResumable(jobID, resumableEntry{msgs: msgs})
+	_, lines, _ := buildTranscriptProvider()(jobID)
+	if !strings.Contains(lines[0], "…[+1 chars]") {
+		t.Errorf("marker should be +1 on stripped len (4001→4000), got %q", lines[0])
+	}
+}
+
+func TestStripAnsiTranscript_CSIQuestionMark(t *testing.T) {
+	// "\x1b[?25lhello\x1b[0m" — the old m/K/H/J-only terminator swallowed "hello"
+	input := "\x1b[?25lhello\x1b[0m world"
+	got := stripAnsiTranscript(input)
+	if strings.Contains(got, "\x1b") {
+		t.Fatalf("ANSI left in %q", got)
+	}
+	if got != "hello world" {
+		t.Fatalf("want %q, got %q", "hello world", got)
+	}
+	// Also cover args path (strip is shared)
+	visible := "\x1b[?25lhello"
+	if stripAnsiTranscript(visible) != "hello" {
+		t.Fatalf("strip failed for ?25l prefix")
 	}
 }

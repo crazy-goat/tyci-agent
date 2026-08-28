@@ -65,6 +65,9 @@ func (m TuiModel) updateTranscriptViewer(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.transcriptViewerScroll > m.transcriptViewerMaxScroll() {
+			m.transcriptViewerScroll = m.transcriptViewerMaxScroll()
+		}
 		return m, nil
 	case selectionFlashDoneMsg:
 		m.selectionFlash = false
@@ -180,11 +183,6 @@ func (m TuiModel) updateTranscriptViewer(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.handleModalMouseMsg(msg)
 			}
 		}
-		return m, nil
-	case tuiMsgBlock:
-		// Keep streaming live while the viewer is open — same F13 class
-		// of regression as the subagent modal.
-		m.handleBlockMsg(msg)
 		return m, nil
 	}
 	return m, nil

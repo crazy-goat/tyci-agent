@@ -26,21 +26,7 @@ func buildTranscriptProvider() display.TranscriptProvider {
 			resumableMu.Unlock()
 			return "", nil, false
 		}
-		// Defensive copy under lock: msgs slice + each ContentBlock slice.
-		msgs := make([]connector.Message, len(entry.msgs))
-		for i, m := range entry.msgs {
-			msgs[i].Role = m.Role
-			if len(m.Content) > 0 {
-				msgs[i].Content = append([]connector.ContentBlock(nil), m.Content...)
-				// Deep-copy Arguments bytes where present so caller can't
-				// mutate shared backing array.
-				for j := range msgs[i].Content {
-					if len(m.Content[j].Arguments) > 0 {
-						msgs[i].Content[j].Arguments = append(json.RawMessage(nil), m.Content[j].Arguments...)
-					}
-				}
-			}
-		}
+		msgs := deepCopyMessages(entry.msgs)
 		// Title: prefer the job's description from JobRegistry; fall back
 		// to jobID when the registry already evicted it.
 		title := jobID
@@ -59,6 +45,24 @@ func truncateForTitle(s string) string {
 		return s
 	}
 	return string([]rune(s)[:57]) + "..."
+}
+
+// deepCopyMessages copies msgs deeply so the caller can mutate the copy
+// without aliasing the stashed entry's backing arrays (notably Arguments).
+func deepCopyMessages(msgs []connector.Message) []connector.Message {
+	out := make([]connector.Message, len(msgs))
+	for i, m := range msgs {
+		out[i].Role = m.Role
+		if len(m.Content) > 0 {
+			out[i].Content = append([]connector.ContentBlock(nil), m.Content...)
+			for j := range out[i].Content {
+				if len(m.Content[j].Arguments) > 0 {
+					out[i].Content[j].Arguments = append(json.RawMessage(nil), m.Content[j].Arguments...)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func formatTranscriptLines(msgs []connector.Message) []string {
@@ -92,8 +96,9 @@ func formatTranscriptLines(msgs []connector.Message) []string {
 			case "toolCall":
 				args := string(b.Arguments)
 				args = stripAnsiTranscript(args)
-				if len(args) > 2000 {
-					args = args[:2000] + fmt.Sprintf("…[+%d chars]", len(string(b.Arguments))-2000)
+				argsRunes := []rune(args)
+				if len(argsRunes) > 2000 {
+					args = string(argsRunes[:2000]) + fmt.Sprintf("…[+%d chars]", len(argsRunes)-2000)
 				}
 				// Keep on one line.
 				args = strings.ReplaceAll(args, "\n", " ")
@@ -101,8 +106,9 @@ func formatTranscriptLines(msgs []connector.Message) []string {
 				out = append(out, line)
 			case "toolResult":
 				text := stripAnsiTranscript(b.Text)
-				if len(text) > transcriptBlockCap {
-					text = text[:transcriptBlockCap] + fmt.Sprintf("…[+%d chars]", len(b.Text)-transcriptBlockCap)
+				textRunes := []rune(text)
+				if len(textRunes) > transcriptBlockCap {
+					text = string(textRunes[:transcriptBlockCap]) + fmt.Sprintf("…[+%d chars]", len(textRunes)-transcriptBlockCap)
 				}
 				// Preserve internal newlines as escaped \n? No — keep verbatim
 				// but flattened to one logical line per block for grep.
@@ -111,8 +117,9 @@ func formatTranscriptLines(msgs []connector.Message) []string {
 				out = append(out, line)
 			default: // "text" and any unknown type
 				text := stripAnsiTranscript(b.Text)
-				if len(text) > transcriptBlockCap {
-					text = text[:transcriptBlockCap] + fmt.Sprintf("…[+%d chars]", len(b.Text)-transcriptBlockCap)
+				textRunes := []rune(text)
+				if len(textRunes) > transcriptBlockCap {
+					text = string(textRunes[:transcriptBlockCap]) + fmt.Sprintf("…[+%d chars]", len(textRunes)-transcriptBlockCap)
 				}
 				text = strings.ReplaceAll(text, "\n", "\\n")
 				line = fmt.Sprintf("[%d] %s: %s", i, role, text)
@@ -128,7 +135,7 @@ func stripAnsiTranscript(s string) string {
 	inEsc := false
 	for _, r := range s {
 		if inEsc {
-			if r == 'm' || r == 'K' || r == 'H' || r == 'J' {
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
 				inEsc = false
 			}
 			continue

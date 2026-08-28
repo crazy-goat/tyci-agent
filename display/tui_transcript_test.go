@@ -359,3 +359,54 @@ func TestTranscriptViewer_KeyUpDoesNotBubble(t *testing.T) {
 		t.Fatalf("Up should increase scroll when more lines exist")
 	}
 }
+
+func TestTranscriptViewer_ZeroSizeNoPanic(t *testing.T) {
+    m := newTestModelForSidebar()
+    m.width = 0
+    m.height = 0
+    m.openTranscriptViewer("title that is definitely longer than any popup", []string{"a very long line that exceeds popup width and exercises slicing", strings.Repeat("x", 500)})
+    defer func() {
+        if r := recover(); r != nil {
+            t.Fatalf("panic at 0x0: %v", r)
+        }
+    }()
+    _ = m.renderTranscriptViewerView()
+    // Also hit the other 0x0 path: popupWidth-4 == -6 branch
+    m.width = 0
+    m.height = 0
+    m.openTranscriptViewer(strings.Repeat("漢", 100), []string{strings.Repeat("漢", 200)})
+    _ = m.renderTranscriptViewerView()
+}
+
+func TestTranscriptViewer_ResizeClampsScroll(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 80
+	m.height = 12
+	lines := make([]string, 60)
+	for i := range lines {
+		lines[i] = "line"
+	}
+	m.openTranscriptViewer("title", lines)
+	// Start short so maxScroll is large, then grow so max shrinks and triggers clamp.
+	m.transcriptViewerScroll = m.transcriptViewerMaxScroll()
+	if m.transcriptViewerScroll == 0 {
+		t.Fatalf("need maxScroll>0 to exercise clamp")
+	}
+	prev := m.transcriptViewerScroll
+	m.width = 80
+	m.height = 30
+	updated, _ := m.updateTranscriptViewer(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m2 := updated.(TuiModel)
+	if m2.transcriptViewerScroll != m2.transcriptViewerMaxScroll() {
+		t.Fatalf("scroll not clamped after resize: got %d, want max %d (was %d)", m2.transcriptViewerScroll, m2.transcriptViewerMaxScroll(), prev)
+	}
+	_ = footerPctIsSane(m2)
+}
+
+func footerPctIsSane(m TuiModel) bool {
+	max := m.transcriptViewerMaxScroll()
+	if max == 0 {
+		return true
+	}
+	return m.transcriptViewerScroll <= max
+}
