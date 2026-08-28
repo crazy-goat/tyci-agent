@@ -865,11 +865,14 @@ data: [DONE]
 }
 
 // TestChatStreamer_PhaseEventsArriveBeforeFirstDelta is the httptest-backed
-// proof for item 55's goroutine-safety claim: withPhaseTrace's httptrace
-// hooks run on the transport's own write/read-loop goroutines, not this
-// streamer's, and net/http guarantees both fire before http.Client.Do
-// returns — so RequestSent and ResponseStarted must land, in that order, on
-// the emitted event slice before anything the read loop itself produces.
+// proof for item 55's ordering claim: withPhaseTrace's httptrace hooks run
+// on the transport's own write/read-loop goroutines, not this streamer's,
+// and net/http gives no ordering guarantee between them or Do() returning —
+// but ChatStreamer.Stream calls stop() right after Do() and before reading
+// the response body, and stop blocks until both hooks (if fired) have been
+// forwarded to emit. So RequestSent and ResponseStarted must land, in that
+// order, on the emitted event slice before anything the read loop itself
+// produces.
 func TestChatStreamer_PhaseEventsArriveBeforeFirstDelta(t *testing.T) {
 	sseEvents := `data: {"choices":[{"delta":{"content":"hi"}}]}
 data: {"choices":[{"finish_reason":"stop"}]}
