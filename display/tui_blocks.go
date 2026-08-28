@@ -40,6 +40,16 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		// at the boundary, same as "tool" already does with its own
 		// per-block start time, so "waiting for response 12.3s" answers the
 		// actual question instead of showing the whole turn's age.
+		//
+		// net/http gives no ordering guarantee between the two hooks (see
+		// api/phase_trace.go): with a large request body and an early server
+		// reply, GotFirstResponseByte can fire before WroteRequest, so
+		// "thinking" can arrive here before "waiting". Drop a transition
+		// that would rewind the bar to an earlier phase instead of showing
+		// it — the late event is stale, not new information.
+		if phaseRank(msg.content) < phaseRank(m.status) {
+			break
+		}
 		if m.status != msg.content {
 			m.status = msg.content
 			m.requestStartTime = time.Now()
@@ -360,6 +370,25 @@ func (m *TuiModel) appendOrAppend(kind, content string) {
 	// Adding a block only shifts line offsets; earlier blocks render the same.
 	m.invalidateTotalLines()
 	m.maybeFlushOldBlocks()
+}
+
+// phaseRank orders the three transport phases so the "phase" case above can
+// reject a late-arriving hook trying to rewind the status bar (see that
+// case's comment). Anything outside the three known names — most often a
+// leftover status from further along in the round ("thinking" from real
+// model output, "responding", "tool") — ranks below all of them so the
+// phase sequence always starts fresh at "sending".
+func phaseRank(status string) int {
+	switch status {
+	case "sending":
+		return 0
+	case "waiting":
+		return 1
+	case "thinking":
+		return 2
+	default:
+		return -1
+	}
 }
 
 // jsonMaybeComplete reports whether s could be a complete JSON document, used

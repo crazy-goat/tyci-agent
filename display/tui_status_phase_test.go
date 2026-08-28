@@ -76,6 +76,33 @@ func TestHandleBlockMsg_PhaseNoOpWhenUnchanged(t *testing.T) {
 	}
 }
 
+// TestHandleBlockMsg_PhaseIgnoresInvertedOrder: net/http gives no ordering
+// guarantee between WroteRequest and GotFirstResponseByte (see
+// api/phase_trace.go), so with a large upload and an early server reply,
+// "thinking" (from GotFirstResponseByte) can be posted before "waiting"
+// (from WroteRequest). The late "waiting" must be dropped rather than
+// rewinding the bar backwards.
+func TestHandleBlockMsg_PhaseIgnoresInvertedOrder(t *testing.T) {
+	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.status = "sending"
+
+	// ResponseStarted fires first (out of order).
+	m.handleBlockMsg(tuiMsgBlock{kind: "phase", content: "thinking"})
+	if m.status != "thinking" {
+		t.Fatalf("status = %q, want %q after early thinking phase", m.status, "thinking")
+	}
+	afterFirst := m.requestStartTime
+
+	// The late WroteRequest arrives after — must be dropped, not rewind the bar.
+	m.handleBlockMsg(tuiMsgBlock{kind: "phase", content: "waiting"})
+	if m.status != "thinking" {
+		t.Errorf("status = %q, want %q (late 'waiting' must be dropped)", m.status, "thinking")
+	}
+	if !m.requestStartTime.Equal(afterFirst) {
+		t.Error("requestStartTime must not restart on a dropped, out-of-order phase")
+	}
+}
+
 // TestHandleBlockMsg_RequestStartResetsThroughput: a new round must not
 // inherit the previous round's byte count, or a fast first round's tail
 // would inflate a slow second round's early rate.
