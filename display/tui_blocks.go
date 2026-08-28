@@ -32,6 +32,12 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		// by a slow tool-driven one must not average across both.
 		m.roundBytes = 0
 		m.roundFirstDeltaAt = time.Time{}
+		// m.status is deliberately NOT reset here. The monotonic phase guard
+		// below relies on every path that continues into another round
+		// having already dropped status to a rank -1 state ("tool" via
+		// ToolCallStart, or "idle" via done/reset) — so "sending" is never
+		// starved by the previous round's "waiting"/"thinking". If a future
+		// round-continuation path skips both, reset status here.
 	case "phase":
 		// Sent by TUI.Phase (agent.PhaseSink), which agent/run_once.go calls
 		// as the round crosses "sending" → "waiting" → "thinking" — the two
