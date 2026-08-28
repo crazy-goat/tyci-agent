@@ -608,6 +608,7 @@ var tuiCmd = &cobra.Command{
 		// cwd-scoped session listing bare "/resume" already uses (tui_mode.go)
 		// — reusing session.ResumeEntries rather than the display package
 		// importing "session" itself (same layering rule as jobs/tools).
+		tuiDisp.SetTranscriptProvider(buildTranscriptProvider())
 		tuiDisp.SetSessionLister(func() []display.TuiResumeEntry {
 			wd, _ := os.Getwd()
 			entries, err := session.ResumeEntries(wd)

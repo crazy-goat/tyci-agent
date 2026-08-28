@@ -567,6 +567,12 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					jobRows := m.sidebarTaskJobRows(width)
+					rows := m.sidebarTaskRows(width)
+					// Root row (job==nil) is the synthetic "main" entry — clicking
+					// it is a no-op (you are already in the main conversation).
+					if line >= 0 && line < len(rows) && rows[line].job == nil && !rows[line].isHeading {
+						return m, nil
+					}
 					selected := -1
 					for i, jobRow := range jobRows {
 						if jobRow >= line {
@@ -647,8 +653,16 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 		rows := m.sidebarTaskRows(m.sidebarLayout().contentWidth)
 		jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
 		if m.sidebarCursor >= 0 && m.sidebarCursor < len(jobRows) {
-			if job := rows[jobRows[m.sidebarCursor]].job; job != nil {
+			idx := jobRows[m.sidebarCursor]
+			if job := rows[idx].job; job != nil {
+				isSubagent := rows[idx].subagent
 				m.closeSidebar()
+				if isSubagent && m.transcriptProvider != nil {
+					if title, lines, ok := m.transcriptProvider(job.ID); ok {
+						m.openTranscriptViewer(title, lines)
+						return m, nil
+					}
+				}
 				m.openJobResultModal(*job)
 			}
 		}

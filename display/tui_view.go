@@ -23,7 +23,7 @@ func (m TuiModel) View() string {
 // normal transcript view, and 0 (disabled) for full-screen overlays and states
 // that never scroll a stream, where a plain line diff is correct and cheaper.
 func (m TuiModel) paintScrollBottom() int {
-	if !m.ready || m.quitting || m.todoModalActive || m.subagentModalActive || m.pickerActive || m.historySearchActive || m.resumePickerActive || m.btwModalActive || m.btwListActive || m.jobsModalActive || m.sidebarActive {
+	if !m.ready || m.quitting || m.todoModalActive || m.subagentModalActive || m.pickerActive || m.historySearchActive || m.resumePickerActive || m.btwModalActive || m.btwListActive || m.jobsModalActive || m.transcriptViewerActive || m.sidebarActive {
 		return 0
 	}
 	return m.messageRegionHeight()
@@ -55,6 +55,11 @@ func (m TuiModel) renderFrame() string {
 	// ── Background jobs modal overlay mode (Ctrl+B) ──
 	if m.jobsModalActive {
 		return m.renderJobsModalView()
+	}
+
+	// ── Transcript viewer overlay mode (item 49) ──
+	if m.transcriptViewerActive {
+		return m.renderTranscriptViewerView()
 	}
 
 	// ── Subagent modal overlay mode ──
