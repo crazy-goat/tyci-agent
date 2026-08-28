@@ -12,6 +12,27 @@ import (
 	"github.com/decodo/tyci/tools"
 )
 
+// PhaseSink is an optional Sink capability: a display that can show which
+// transport phase the current round is in — sending the request, waiting on
+// the server, or (once headers arrive) receiving the model's own output —
+// is told the phase name to show right now.
+//
+// Optional rather than folded into Sink itself, matching toolDurationSink /
+// streamProgressDisplay (run_tools.go): only display.TUI shows phases, and
+// the other Sink implementations (Minimal, Terminal, BtwSink, the various
+// collectors, the ledger watch wrapper) would gain a method they ignore.
+// Asserted once per round, right where the two phases it does not already
+// know about begin — see below.
+type PhaseSink interface {
+	// Phase names the phase now starting: "sending" (Request() until the
+	// request body is written), "waiting" (until the response's first
+	// byte), or "thinking" (from there until the model's own first token —
+	// display.TUI reuses its existing "thinking" status for this so a
+	// silently prefilling model shows a growing "thinking... Ns" instead of
+	// a second bespoke label).
+	Phase(name string)
+}
+
 func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connector.Message, cfg Config, totalUsage *stream.Usage) (more bool, usage *stream.Usage, totalEmitted bool, err error) {
 	ctx = connector.WithModelClient(ctx, mc)
 	// Stamped once per round, alongside the model client, so a tool call made
@@ -29,6 +50,14 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 	defer cancel()
 
 	d.Request(roundInputLabel(*msgs))
+	ps, _ := d.(PhaseSink)
+	if ps != nil {
+		// The request is about to be built and sent — nothing from the
+		// transport marks this moment (WroteRequest fires once the body is
+		// already on the wire), so it is set here rather than sourced from
+		// a stream event like the two phases below.
+		ps.Phase("sending")
+	}
 
 	events, streamErr := mc.Stream(streamCtx, connector.Request{
 		Model:         mc.Model(),
@@ -60,6 +89,14 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 
 	for ev := range events {
 		switch e := ev.(type) {
+		case stream.RequestSent:
+			if ps != nil {
+				ps.Phase("waiting")
+			}
+		case stream.ResponseStarted:
+			if ps != nil {
+				ps.Phase("thinking")
+			}
 		case stream.ThinkingDelta:
 			if !hasFirstToken {
 				firstToken = time.Since(startTime)

@@ -56,3 +56,15 @@ func (w *watcher) Summary(usage stream.Usage, stats stream.Stats) {
 	Record(w.kind, w.provider, w.model, w.jobID, usage)
 	w.Sink.Summary(usage, stats)
 }
+
+// Phase forwards to the wrapped Sink's Phase, if it has one. The embedded
+// Sink field is an interface value, so Go does not promote a method the
+// underlying concrete type (display.TUI) has but the Sink interface itself
+// doesn't declare — agent.PhaseSink is optional precisely so most Sinks can
+// skip it, and *watcher must type-assert the same way agent/run_once.go
+// does rather than relying on embedding to see through it.
+func (w *watcher) Phase(name string) {
+	if ps, ok := w.Sink.(interface{ Phase(string) }); ok {
+		ps.Phase(name)
+	}
+}
