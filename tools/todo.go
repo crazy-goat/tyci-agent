@@ -180,9 +180,29 @@ func TodoAgentIDFromContext(ctx context.Context) string {
 // no ctx and must always show the main agent's list regardless of which
 // subagent or /btw side-conversation last wrote somewhere.
 func AllTodoItems() []TodoItem {
+	return AllTodoItemsForAgent(mainAgentTodoID)
+}
+
+// AllTodoItemsForAgent returns a snapshot of the todo list for agentID,
+// sorted by id. Unknown/evicted agentID yields an empty slice (never
+// panics). Used by the transcript viewer to resolve a child's own todo
+// ids without creating a list as a side effect — see buildTranscriptProvider.
+func AllTodoItemsForAgent(agentID string) []TodoItem {
 	todoStore.Lock()
 	defer todoStore.Unlock()
-	l := getOrCreateLocked(mainAgentTodoID)
+	if agentID == mainAgentTodoID {
+		l := getOrCreateLocked(mainAgentTodoID)
+		out := make([]TodoItem, len(l.items))
+		for i, it := range l.items {
+			out[i] = TodoItem{ID: it.ID, Content: it.Content, Status: it.Status, ParentID: it.ParentID}
+		}
+		sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+		return out
+	}
+	l, ok := todoStore.agents[agentID]
+	if !ok {
+		return nil
+	}
 	out := make([]TodoItem, len(l.items))
 	for i, it := range l.items {
 		out[i] = TodoItem{ID: it.ID, Content: it.Content, Status: it.Status, ParentID: it.ParentID}

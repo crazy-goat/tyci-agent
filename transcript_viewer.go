@@ -7,6 +7,7 @@ import (
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/display"
+	"github.com/decodo/tyci/tools"
 )
 
 // transcriptBlockCap caps a single block's rendered text so one huge tool
@@ -27,6 +28,7 @@ func buildTranscriptProvider() display.TranscriptProvider {
 			return "", nil, false
 		}
 		msgs := deepCopyMessages(entry.msgs)
+		todoAgentID := entry.todoAgentID
 		// Title: prefer the job's description from JobRegistry; fall back
 		// to jobID when the registry already evicted it.
 		title := jobID
@@ -35,7 +37,7 @@ func buildTranscriptProvider() display.TranscriptProvider {
 		}
 		resumableMu.Unlock()
 
-		lines := formatTranscriptLines(msgs)
+		lines := formatTranscriptLinesWithTodoAgent(msgs, todoAgentID)
 		return title, lines, true
 	}
 }
@@ -66,6 +68,10 @@ func deepCopyMessages(msgs []connector.Message) []connector.Message {
 }
 
 func formatTranscriptLines(msgs []connector.Message) []string {
+	return formatTranscriptLinesWithTodoAgent(msgs, "")
+}
+
+func formatTranscriptLinesWithTodoAgent(msgs []connector.Message, todoAgentID string) []string {
 	var out []string
 	for i, m := range msgs {
 		role := m.Role
@@ -95,7 +101,15 @@ func formatTranscriptLines(msgs []connector.Message) []string {
 				out = append(out, line)
 			case "toolCall":
 				args := string(b.Arguments)
-				args = stripAnsiTranscript(args)
+				resolved := ""
+				if b.Name == "todo" {
+					resolved = formatTodoToolCallForTranscript(args, todoAgentID)
+				}
+				if resolved != "" {
+					args = resolved
+				} else {
+					args = stripAnsiTranscript(args)
+				}
 				argsRunes := []rune(args)
 				if len(argsRunes) > 2000 {
 					args = string(argsRunes[:2000]) + fmt.Sprintf("…[+%d chars]", len(argsRunes)-2000)
@@ -128,6 +142,68 @@ func formatTranscriptLines(msgs []connector.Message) []string {
 		}
 	}
 	return out
+}
+
+func formatTodoToolCallForTranscript(rawJSON, todoAgentID string) string {
+	if rawJSON == "" {
+		return ""
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(rawJSON), &args); err != nil {
+		return ""
+	}
+	action, _ := args["action"].(string)
+	if action == "" {
+		return ""
+	}
+	if idVal, ok := args["id"].(float64); ok && idVal > 0 && transcriptTargetsSingleItem(action) {
+		if todoAgentID != "" {
+			items := tools.AllTodoItemsForAgent(todoAgentID)
+			if items == nil {
+				// unknown/evicted agent -> fall back to raw args exactly as before
+				return ""
+			}
+			if content := lookupTodoContentForAgent(int(idVal), todoAgentID); content != "" {
+				return action + ", " + fmt.Sprintf("%d", int(idVal)) + ". " + truncateForTranscript(content, 40)
+			}
+		} else {
+			// no todoAgentID -> no per-agent store to resolve against, fall back to raw
+			return ""
+		}
+		return action + ", " + fmt.Sprintf("%d", int(idVal))
+	}
+	if content, ok := args["content"].(string); ok && content != "" {
+		return action + ": " + truncateForTranscript(strings.TrimSpace(content), 50)
+	}
+	return action
+}
+
+func lookupTodoContentForAgent(id int, agentID string) string {
+	for _, item := range tools.AllTodoItemsForAgent(agentID) {
+		if item.ID == id {
+			return strings.TrimSpace(item.Content)
+		}
+	}
+	return ""
+}
+
+func transcriptTargetsSingleItem(action string) bool {
+	switch action {
+	case "doing", "done", "blocked", "update", "remove":
+		return true
+	}
+	return false
+}
+
+func truncateForTranscript(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return string(runes[:maxLen])
+	}
+	return string(runes[:maxLen-3]) + "..."
 }
 
 func stripAnsiTranscript(s string) string {
