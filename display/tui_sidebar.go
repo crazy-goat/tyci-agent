@@ -702,7 +702,8 @@ func (m TuiModel) sidebarSubmitResume() (tea.Model, tea.Cmd) {
 	}
 	m.closeSidebar()
 	m.input.SetValue("/resume")
-	return m.submit(), nil
+	next := m.submit().(TuiModel)
+	return next, next.armStatusTick()
 }
 
 // sidebarResumeSubagentRow is 'r' on a Subagents row: it drafts (but does

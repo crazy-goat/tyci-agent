@@ -23,6 +23,22 @@ func statusTickCmd() tea.Cmd {
 	})
 }
 
+// armStatusTick starts the status-tick chain if (and only if) a turn is
+// actually in flight and no chain is already running. Every place a turn
+// can start — both submit() call sites, and the request-start/phase block
+// handlers for turns the REPL starts itself without going through submit()
+// — calls this instead of statusTickCmd() directly, so arming is a correct
+// no-op when a chain is already ticking rather than a second, redundant
+// chain (issue: item 56, "waiting for response" freezing on turns that
+// never called submit()).
+func (m *TuiModel) armStatusTick() tea.Cmd {
+	if m.reading || m.statusTickArmed {
+		return nil
+	}
+	m.statusTickArmed = true
+	return statusTickCmd()
+}
+
 func (m TuiModel) Init() tea.Cmd {
 	return textarea.Blink
 }
@@ -73,8 +89,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// popup happens to be open when they arrive. Dispatch them unconditionally,
 	// ahead of every exclusivity check below, just like /btw messages.
 	if block, ok := msg.(tuiMsgBlock); ok {
-		m.handleBlockMsg(block)
-		return m, nil
+		return m, m.handleBlockMsg(block)
 	}
 	// /btw entries run independently of the main view and likewise must land
 	// regardless of which overlay is active.
@@ -138,10 +153,14 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case statusTickMsg:
-		// Keep ticking while request is in flight; stop when idle.
+		// Keep ticking while request is in flight; stop when idle, and clear
+		// the armed flag so the next turn-start (whichever path it takes)
+		// is free to start a fresh chain instead of finding one "armed"
+		// that has actually already died.
 		if !m.reading {
 			return m, statusTickCmd()
 		}
+		m.statusTickArmed = false
 		return m, nil
 	case statusMessageClearMsg:
 		if m.statusMessage == msg.message {
@@ -160,8 +179,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 	case tuiMsgBlock:
-		m.handleBlockMsg(msg)
-		return m, nil
+		return m, m.handleBlockMsg(msg)
 	case tea.MouseMsg:
 		return m.handleMouseMsg(msg)
 	}

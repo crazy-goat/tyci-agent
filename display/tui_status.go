@@ -179,24 +179,32 @@ func (m *TuiModel) trackDeltaBytes(n int) {
 	m.roundBytes += n
 }
 
-// throughputSuffix returns " · ~N tok/s" once the round has received enough
-// to estimate a rate, or "" before that. Tokens are estimated as bytes/4 (a
-// common rule of thumb across providers — not exact, but a jittery precise
-// count would be worse than a stable approximate one here), and the rate is
-// averaged over the whole receiving phase since the round's FIRST delta —
-// not the gap since the last one — so it settles instead of swinging wildly
-// between chunks. The 0.5s floor avoids a wild "~4000 tok/s" from a single
-// delta landing within the same millisecond it arrived.
+// throughputSuffix returns " · ~N tok" (and, once enough time has passed to
+// estimate a rate, " · ~N tok/s" as well) once the round has received its
+// first delta, or "" before that. Tokens are estimated as bytes/4 (a common
+// rule of thumb across providers — not exact, but a jittery precise count
+// would be worse than a stable approximate one here).
+//
+// The two numbers answer different questions and so have different gates:
+// the received count is exact-ish and useful immediately (item 56 — a
+// "responding..." status with a frozen elapsed timer and no count at all
+// gives no sense of progress), so it's shown from the very first delta. The
+// rate needs enough wall time to not be wild ("~4000 tok/s" from one delta
+// landing within the same millisecond it arrived), so it keeps the 0.5s
+// floor and is averaged over the whole receiving phase since the round's
+// FIRST delta — not the gap since the last one — so it settles instead of
+// swinging between chunks.
 func (m TuiModel) throughputSuffix() string {
 	if m.roundFirstDeltaAt.IsZero() || m.roundBytes <= 0 {
 		return ""
 	}
+	suffix := fmt.Sprintf(" · ~%d tok", m.roundBytes/4)
 	elapsed := time.Since(m.roundFirstDeltaAt).Seconds()
 	if elapsed < 0.5 {
-		return ""
+		return suffix
 	}
 	tokPerSec := float64(m.roundBytes) / 4 / elapsed
-	return fmt.Sprintf(" · ~%d tok/s", int(tokPerSec+0.5))
+	return suffix + fmt.Sprintf(" · ~%d tok/s", int(tokPerSec+0.5))
 }
 
 // displayPath returns a short, human-friendly representation of the working
