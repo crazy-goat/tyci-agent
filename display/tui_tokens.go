@@ -30,7 +30,34 @@ func (m TuiModel) contextUsed() (used, limit int, ok bool) {
 // Everything else that used to live here — per-turn input/output/cache
 // breakdown, timings, throughput — is in the sidebar's Tokens tab, one click
 // away on the context figure.
+//
+// The whole return value is bounded to at most m.width-1 columns (see
+// rightBudget below) — not just the cost half of it. buildStatus
+// (tui_status.go) truncates the LEFT side of the status bar against
+// however wide THIS turns out to be, but never truncates this side itself;
+// an unbounded right therefore forces lipgloss to WRAP the whole status row
+// instead of clipping it, exactly the failure mode buildStatus's own
+// comment documents for an unbounded left ("a single ~106-char message
+// turned a 20-line frame into 20+ lines"). The -1 reserve is not
+// decorative: buildStatus's maxLeftW clamps to a floor of 1 column even
+// when the right side leaves no room at all, so the right side must leave
+// at least that 1 column free or left+right together exceed m.width by
+// exactly the amount the floor forced — measured, not assumed: at
+// rightW == m.width, leftW's forced-1 pushes the total to m.width+1.
 func (m TuiModel) buildContextCost() string {
+	// rightBudget bounds this function's ENTIRE output. m.width <= 0 (no
+	// resize has happened yet) is treated as "don't know", not "zero room":
+	// this renders unbounded, same as before this budget existed — a real
+	// terminal always resizes to a positive width before the first frame,
+	// so this only matters for a TuiModel built directly in a test.
+	rightBudget := math.MaxInt
+	if m.width > 0 {
+		rightBudget = m.width - 1
+		if rightBudget < 0 {
+			rightBudget = 0
+		}
+	}
+
 	var parts []string
 
 	used, limit, ok := m.contextUsed()
@@ -45,34 +72,31 @@ func (m TuiModel) buildContextCost() string {
 		// No published limit: the absolute number is still useful.
 		ctxPart = "ctx " + fmtTokens(used)
 	}
+	// ctxPart itself has never been width-bounded (this predates the scout
+	// kind), but rightBudget now makes that a documented invariant instead
+	// of an accident: a ctxPart wider than the whole right-side budget
+	// cannot be shown at all without wrapping the row on its own, so it is
+	// dropped rather than rendered — this is the one case nothing later
+	// (formatCost's own fitting) can rescue, since there is no fallback
+	// shorter than "nothing" for the context figure.
+	if ctxPart != "" && lipgloss.Width(ctxPart) > rightBudget {
+		ctxPart = ""
+	}
 	if ctxPart != "" {
 		parts = append(parts, ctxPart)
 	}
 
 	snap := ledger.Get()
-	// budget bounds formatCost's own width so ctxPart + ", " + cost never
-	// grows wider than the terminal on its own. buildStatus (tui_status.go)
-	// truncates the LEFT side of the status bar against however wide the
-	// right side turned out to be, but never truncates the right side
-	// itself — an unbounded right therefore forces lipgloss to WRAP the
-	// whole status row instead of clipping it, exactly the failure mode
-	// buildStatus's own comment documents for an unbounded left ("a single
-	// ~106-char message turned a 20-line frame into 20+ lines"). Adding
-	// the scout breakdown gave the right side a second parenthetical,
-	// which is what newly pushed some narrow-terminal sessions over
-	// m.width. math.MaxInt (m.width not yet known, e.g. before the first
-	// resize) means "no limit": render every breakdown.
-	budget := math.MaxInt
-	if m.width > 0 {
-		budget = m.width
-		if ctxPart != "" {
-			budget -= lipgloss.Width(ctxPart) + 2 // ", " separator
-		}
-		if budget < 0 {
-			budget = 0
+	// costBudget is whatever rightBudget has left after ctxPart and its
+	// ", " separator (only spent when ctxPart survived the check above).
+	costBudget := rightBudget
+	if ctxPart != "" {
+		costBudget -= lipgloss.Width(ctxPart) + 2 // ", " separator
+		if costBudget < 0 {
+			costBudget = 0
 		}
 	}
-	if cost := formatCost(snap, budget); cost != "" {
+	if cost := formatCost(snap, costBudget); cost != "" {
 		parts = append(parts, cost)
 	}
 	return strings.Join(parts, ", ")
@@ -102,13 +126,23 @@ func (m TuiModel) buildContextCost() string {
 // misrepresent the bill.
 func formatCost(snap ledger.Snapshot, maxWidth int) string {
 	total := snap.TotalUSD()
+	fits := func(s string) bool { return lipgloss.Width(s) <= maxWidth }
+
 	if total == 0 {
 		if snap.Unpriced == 0 {
 			return ""
 		}
-		return "$0.00"
+		// "$0.00" goes through the same fits check as every other rendered
+		// form below — a caller squeezing maxWidth down for a narrow
+		// terminal must not have this one branch bypass it (that bypass
+		// was the bug: a session with only unpriced usage could render
+		// "$0.00" past maxWidth with nothing else in this function ever
+		// getting a chance to drop it).
+		if fits("$0.00") {
+			return "$0.00"
+		}
+		return ""
 	}
-	fits := func(s string) bool { return lipgloss.Width(s) <= maxWidth }
 
 	base := fmtUSD(total) + "$"
 	full := base
