@@ -221,6 +221,7 @@ type TuiModel struct {
 	lastUsage        stream.Usage
 	lastStats        stream.Stats
 	reading          bool
+	statusTickArmed  bool      // true while a statusTickCmd() chain is ticking — see armStatusTick (tui_update.go); prevents a second submit()/request-start/phase from starting a second, redundant chain
 	requestStartTime time.Time // set on submit, cleared on done/reset, reset again at every phase boundary; used by buildStatus for the live elapsed counter
 	status           string    // "idle", "sending", "waiting", "thinking", "responding", "tool"
 	statusMessage    string    // transient user-facing status, e.g. copy result

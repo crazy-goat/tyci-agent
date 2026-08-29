@@ -63,7 +63,8 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if handled, next := m.handleLocalSlashCommand(); handled {
 			return next, nil
 		}
-		return m.submit(), statusTickCmd()
+		next := m.submit().(TuiModel)
+		return next, next.armStatusTick()
 	case tea.KeyCtrlN, tea.KeyCtrlJ:
 		// Same pre-set height logic as Alt+Enter above.
 		newH := m.inputWrappedRows() + 1
@@ -251,7 +252,13 @@ func (m TuiModel) handleKeyWhileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if handled, next := m.handleLocalSlashCommand(); handled {
 			return next, nil
 		}
-		return m.submit(), nil
+		// Busy-path Enter only ever queues (submit() itself checks
+		// !m.reading), so this never actually starts a turn — but calling
+		// armStatusTick here too, rather than hardcoding nil, keeps every
+		// submit() caller looking the same and costs nothing: the tick
+		// chain from whatever turn is already running is untouched.
+		next := m.submit().(TuiModel)
+		return next, next.armStatusTick()
 	case tea.KeyCtrlN, tea.KeyCtrlJ:
 		// Ctrl+N / Ctrl+J: insert a newline in the textarea.
 		newH := m.inputWrappedRows() + 1

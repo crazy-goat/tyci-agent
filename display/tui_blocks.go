@@ -4,10 +4,18 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/decodo/tyci/stream"
 )
 
-func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
+// handleBlockMsg returns a tea.Cmd (armStatusTick's, on the "request-start"
+// and "phase" cases — see below) instead of being purely a state mutator,
+// because those two are the turn-start paths the REPL can drive without
+// ever calling TuiModel.submit() (a job-notice turn from tui_mode.go's
+// JobNotices.Signal case, item 56): submit() already arms the tick, but
+// nothing else did.
+func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
+	var cmd tea.Cmd
 	switch msg.kind {
 	case "thinking", "text", "tool-start", "tool-end", "block", "error":
 		periodicFreeOSMemory(&m.blockEventCount)
@@ -24,6 +32,18 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 	}
 	switch msg.kind {
 	case "request-start":
+		// A turn that never went through TuiModel.submit() — the REPL
+		// driving itself from a job notice (tui_mode.go's JobNotices.Signal
+		// case) instead of a person pressing Enter — leaves m.reading true:
+		// nothing else flips it. Left uncorrected, the status bar stays
+		// hidden (buildStatus only shows it while !reading) and a line
+		// typed during the turn is treated as a fresh submit instead of
+		// being queued. request-start is the one event guaranteed to fire
+		// at the start of every turn, submit()-driven or not, so it's the
+		// right place to catch this (item 56).
+		if m.reading {
+			m.reading = false
+		}
 		// Reset the elapsed-time counter at the start of each API turn so the
 		// status bar shows per-turn wall time instead of accumulating from
 		// the user's initial submit. See issue #83.
@@ -38,6 +58,10 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		// ToolCallStart, or "idle" via done/reset) — so "sending" is never
 		// starved by the previous round's "waiting"/"thinking". If a future
 		// round-continuation path skips both, reset status here.
+		//
+		// submit() already arms the tick for the paths that go through it;
+		// this covers the ones that don't (see the comment above).
+		cmd = m.armStatusTick()
 	case "phase":
 		// Sent by TUI.Phase (agent.PhaseSink), which agent/run_once.go calls
 		// as the round crosses "sending" → "waiting" → "thinking" — the two
@@ -60,6 +84,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 			m.status = msg.content
 			m.requestStartTime = time.Now()
 		}
+		cmd = m.armStatusTick()
 	case "thinking":
 		if m.status != "thinking" {
 			m.status = "thinking"
@@ -267,7 +292,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 					m.queueItems = append(m.queueItems, s)
 				default:
 					m.invalidateTotalLines()
-					return
+					return cmd
 				}
 			}
 		}
@@ -279,6 +304,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) {
 		m.scrollLine = 0
 	}
 	m.clampScroll()
+	return cmd
 }
 
 // newContentBlock builds a thinking/text/user block for appendOrAppend. A
