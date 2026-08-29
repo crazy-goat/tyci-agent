@@ -59,6 +59,10 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionLister = sl.fn
 		return m, nil
 	}
+	if tp, ok := msg.(tuiSetTranscriptProviderMsg); ok {
+		m.transcriptProvider = tp.fn
+		return m, nil
+	}
 	// Same delivery pattern, same "can arrive at any point in startup"
 	// guarantee: the sidebar persistence callback (TUI.SetSidebarPersister).
 	if sp, ok := msg.(tuiSetSidebarPersisterMsg); ok {
@@ -98,6 +102,9 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if m.jobsModalActive {
 		return m.updateJobsModal(msg)
+	}
+	if m.transcriptViewerActive {
+		return m.updateTranscriptViewer(msg)
 	}
 	if m.sidebarActive {
 		if handled, model, cmd := m.routeSidebarMsg(msg); handled {
