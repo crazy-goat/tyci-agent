@@ -172,11 +172,14 @@ var alwaysAllowedTools = []string{"help", "lua"}
 //     mechanical reason as "agents" (dead weight, not a safety concern),
 //     even though the underlying reasoning differs from "subagent"/
 //     "agents" (recursion/discovery vs. "cannot possibly have a use for
-//     this"). NOTE: this stops being true once item 21 (nested subagents /
-//     "scout") lands — a depth-2+ agent that CAN spawn further children
-//     would need answer_job back even though it's still, at that point, "a
-//     subagent". When that lands, this entry likely needs to move to a
-//     depth-aware check rather than a flat denial.
+//     this"). Item 21 ("Grandchildren" / "scout") landed without changing
+//     this: a depth 1-3 agent can now nest, but only via "scout", which
+//     registers no job of its own at any depth — so it can never have a
+//     job to message or a blocked ask_parent call to unblock either. The
+//     "depth-2+ agent that can spawn further children" this note used to
+//     warn about would only exist if a general subagent were ever allowed
+//     to nest, which item 21 deliberately did not do (see
+//     AllowedDelegationTool in this file: "subagent" stays depth-0-only).
 //   - message: posts to a running job's mailbox, steering it mid-flight.
 //     Same reasoning as answer_job — a plain subagent child can never have
 //     a job of its own to message, since it is always denied "subagent"
@@ -241,6 +244,67 @@ func SubagentDeniedNames() []string {
 // listed it.
 func DenySubagentRecursion() ToolGate {
 	return Deny("tool is not available to subagents (recursion/discovery denied)", SubagentDeniedNames()...)
+}
+
+// AllowedDelegationTool returns which delegation tool — "subagent" or
+// "scout" — a caller at depth may reach, or "" when neither is available.
+// This is the single place that decision is made; both the schema builders
+// (GetTopLevelToolsSchema, GetSubagentToolsSchemaJSONForAtDepth in tool.go)
+// and the runtime gates (main.go's subagentToolRunner.Run for a child, and
+// RunTool's own built-in check below for the top level — cmd_interactive.
+// go's toolsAdapter.Run is a bare passthrough to RunTool with no depth
+// check of its own) read from it, so a tool offered at some depth is
+// always one that depth's runtime permits, and vice versa — the same
+// invariant subagentDeniedTools already guarantees for the schema-vs-gate
+// pair below.
+//
+//   - depth 0 (the top-level conversation) gets the full "subagent": jobs,
+//     async, worktree isolation, named agents. None of that is safe to hand
+//     to something that can itself spawn more of the same, which is why
+//     depth 0 is the only depth that gets it.
+//   - depth 1-3 may only spawn "scout": synchronous, no job of its own, a
+//     narrow read-only tool profile, MaxIterations capped at 15, and a
+//     deadline that shrinks toward the caller's own instead of resetting —
+//     properties that hold at every depth, not just the first, which is
+//     why scout is allowed to nest instead of being a one-shot.
+//   - depth 4 gets neither. A scout spawned from a scout at depth 3 lands
+//     its own children at depth 4, and that is as deep as delegation goes.
+//     Depth alone does not bound the cost of getting there, though — 16
+//     leaves at depth 4 (two scouts deep, three times over) is the same
+//     whether the cap is depth 4 or depth 40. The concurrency semaphore
+//     (see scout.go) is what actually controls the burn; this cap is only
+//     the last line, not the primary one.
+func AllowedDelegationTool(depth int) string {
+	switch {
+	case depth == 0:
+		return "subagent"
+	case depth >= 1 && depth <= 3:
+		return "scout"
+	default:
+		return ""
+	}
+}
+
+// ToolAllowedAtDepth reports whether name is permitted for a caller at
+// depth. Only "subagent" and "scout" are depth-restricted — every other
+// name is unaffected here and returns true; subagentDeniedTools and a
+// named agent's own tools: whitelist are what govern those.
+func ToolAllowedAtDepth(depth int, name string) bool {
+	if name != "subagent" && name != "scout" {
+		return true
+	}
+	return AllowedDelegationTool(depth) == name
+}
+
+// DelegationDepthError builds the refusal text for a delegation tool denied
+// at depth, naming the one alternative (if any) so a model told "no" also
+// learns what it can do instead, the same courtesy newAllowGate's refusal
+// extends for an ordinary whitelist miss.
+func DelegationDepthError(depth int, name string) string {
+	if allowed := AllowedDelegationTool(depth); allowed != "" {
+		return fmt.Sprintf("%q is not available at nesting depth %d; use %q instead", name, depth, allowed)
+	}
+	return fmt.Sprintf("%q is not available at nesting depth %d; this is as deep as delegation goes", name, depth)
 }
 
 // Deny builds a gate refusing the named tools and allowing everything else.

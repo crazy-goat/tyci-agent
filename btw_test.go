@@ -414,6 +414,82 @@ func TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread(t *testin
 	}
 }
 
+// TestBtwPromotionAdapter_ScoutSchemaGateAgreement is the regression test
+// for review finding 2: a promoted /btw job used to build its schema from
+// tools.GetSubagentToolsSchemaJSON() (unrestricted, depth-agnostic) while
+// running at whatever depth ctx defaulted to (0, since nothing ever called
+// tools.WithDepth on its runCtx) — offering "scout" in the schema while
+// RunTool's own depth-0 gate always refused it. The fix
+// (btw.go's btwPromotionAdapter.Promote) now runs the promoted job at
+// promotedDepth = caller depth + 1 (an ordinary "child" depth, exactly like
+// runSingleTask assigns every other subagent), stamping that same depth on
+// both the schema (tools.GetSubagentToolsSchemaJSONForAtDepth) and runCtx
+// (tools.WithDepth) — so this test drives a real promoted job through
+// withTestWiring's real agentRunner and confirms both halves agree: the
+// schema offered "scout", and calling it actually ran instead of being
+// refused with a nesting-depth error.
+func TestBtwPromotionAdapter_ScoutSchemaGateAgreement(t *testing.T) {
+	reg, _ := withTestWiring(t)
+
+	fake := &connectortest.Fake{
+		ProviderName: "btw-scout-schema-test",
+		Script: func(turn int, req connector.Request) []stream.Event {
+			switch turn {
+			case 0:
+				// The promoted job's own first turn: call scout.
+				return []stream.Event{
+					stream.ToolCall{ID: "tc-scout", Name: "scout", Arguments: `{"task":"look around"}`},
+					stream.Finish{Reason: "tool_calls"},
+				}
+			case 1:
+				// Scout's own nested turn, driven by the same fake client
+				// (scout inherits the promoted job's model client) — answer
+				// immediately with no further tool calls.
+				return []stream.Event{
+					stream.TextDelta{Text: "scouted"},
+					stream.Finish{Reason: "stop"},
+				}
+			default:
+				return []stream.Event{
+					stream.TextDelta{Text: "done: " + lastToolResultText(req)},
+					stream.Finish{Reason: "stop"},
+				}
+			}
+		},
+	}
+
+	evaluationID := "btw-evaluation-scout-schema-test"
+	btwEvaluationsMu.Lock()
+	btwEvaluations[evaluationID] = &btwEvaluation{
+		msgs: []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "context"}}}},
+		mc:   fake, question: "scout schema/gate test",
+	}
+	btwEvaluationsMu.Unlock()
+
+	handle, err := (btwPromotionAdapter{}).Promote(context.Background(), evaluationID)
+	if err != nil {
+		t.Fatalf("Promote: %v", err)
+	}
+	job, ok := reg.Wait(context.Background(), handle.ID(), 5*time.Second)
+	if !ok || job.Status != jobs.StatusDone {
+		t.Fatalf("promoted job did not finish: ok=%v job=%+v", ok, job)
+	}
+
+	requests := fake.Requests()
+	if len(requests) == 0 {
+		t.Fatal("expected at least one model request")
+	}
+	if names := schemaToolNames(t, requests[0].Tools); !names["scout"] {
+		t.Fatalf("expected the promoted job's schema to offer \"scout\" (depth 1), got tools: %v", names)
+	}
+	if strings.Contains(job.Result, "not available at nesting depth") {
+		t.Fatalf("schema offered \"scout\" but the runtime gate refused it: %q", job.Result)
+	}
+	if !strings.Contains(job.Result, "done: scouted") {
+		t.Fatalf("expected the scout call to actually run and its result to reach the final answer, got %q", job.Result)
+	}
+}
+
 // TestBtwPromotionAdapter_UsesChildRuntimeGate prevents the promoted path from
 // accidentally becoming a privileged agent.Run: a hallucinated secondary
 // subagent call must be refused, and the registry must still contain only the

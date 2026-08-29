@@ -4,20 +4,30 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/decodo/tyci/tools"
 )
 
 // TestSubagentToolRunner_NoWhitelistAllowsEverythingButSubagent locks in
 // today's default (allowed empty/nil): every real tool passes through, and
 // "subagent" is still hard-denied regardless of any whitelist — recursion
 // into child subagents is never permitted.
+//
+// Run's own depth-derived check only denies "subagent" for a caller NOT at
+// depth 0 (item 21) — subagentToolRunner.Run always represents a real
+// child's own tool dispatch in production, i.e. always depth >= 1, so this
+// test wraps ctx with tools.WithDepth(..., 1) to match that instead of
+// relying on context.Background()'s default depth 0, which item 21 makes a
+// legitimate (top-level) depth for "subagent".
 func TestSubagentToolRunner_NoWhitelistAllowsEverythingButSubagent(t *testing.T) {
 	r := &subagentToolRunner{}
+	ctx := tools.WithDepth(context.Background(), 1)
 
-	if _, err := r.Run(context.Background(), "todo", map[string]any{"action": "list"}); err != nil {
+	if _, err := r.Run(ctx, "todo", map[string]any{"action": "list"}); err != nil {
 		t.Errorf("expected \"todo\" to be allowed with no whitelist, got error: %v", err)
 	}
 
-	_, err := r.Run(context.Background(), "subagent", map[string]any{"task": "x"})
+	_, err := r.Run(ctx, "subagent", map[string]any{"task": "x"})
 	if err == nil {
 		t.Fatal("expected \"subagent\" to always be denied, even with no whitelist")
 	}
@@ -84,7 +94,7 @@ func TestSubagentToolRunner_WhitelistAllowsAlwaysAllowedTools(t *testing.T) {
 func TestSubagentToolRunner_WhitelistStillDeniesSubagent(t *testing.T) {
 	r := &subagentToolRunner{allowed: []string{"subagent"}}
 
-	_, err := r.Run(context.Background(), "subagent", map[string]any{"task": "x"})
+	_, err := r.Run(tools.WithDepth(context.Background(), 1), "subagent", map[string]any{"task": "x"})
 	if err == nil {
 		t.Fatal("expected \"subagent\" to be denied even when explicitly whitelisted")
 	}

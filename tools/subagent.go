@@ -282,6 +282,24 @@ type subagentTask struct {
 	// Ignored (no history to inherit) when the context carries none, e.g. a
 	// call made outside a running agent.Run round.
 	InheritHistory bool `json:"inherit_history,omitempty"`
+
+	// toolsOverride, maxIterationsCap and scoutMode are never populated
+	// from JSON — there is no wire field for any of them, and parseTasks
+	// never sets them. They exist purely so tools/scout.go can hand
+	// runSingleTask a fixed tool profile, iteration cap and "this is a
+	// scout" marker without duplicating runSingleTask's
+	// model/temperature/fallback resolution or its worktree/history/todo
+	// plumbing. Zero value (nil / 0 / false) for every ordinary subagent
+	// task leaves opts exactly as it was before scout existed.
+	toolsOverride    []string
+	maxIterationsCap int
+	// scoutMode, when true, tells main.go's agentRunner.run to build this
+	// child's schema and runtime gate from scoutGate/scoutSchemaJSONForDepth
+	// (tools/scout.go) instead of the ordinary AllowOnlySubagent/
+	// GetSubagentToolsSchemaJSONForAtDepth path — the latter always folds
+	// alwaysAllowedTools ("lua") in, which a scout must never have (see
+	// scoutToolProfile's doc comment).
+	scoutMode bool
 }
 
 // subagentResult holds the outcome of one subagent execution.
@@ -1454,6 +1472,19 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	if task.InheritHistory {
 		opts.History = connector.ConversationFromContext(ctx)
 	}
+	// toolsOverride/maxIterationsCap/scoutMode are scout.go's private hook
+	// into this function (see subagentTask's doc comment) — nil/0/false
+	// for every ordinary subagent task, so this changes nothing for the
+	// plain-subagent path.
+	if task.toolsOverride != nil {
+		opts.Tools = task.toolsOverride
+	}
+	if task.maxIterationsCap > 0 {
+		opts.MaxIterationsCap = task.maxIterationsCap
+	}
+	if task.scoutMode {
+		opts.ScoutMode = true
+	}
 
 	// Get tool index for streaming (passed by agent.executeTools). Only
 	// resolved when streamToParent, so an async job never picks up the
@@ -1477,6 +1508,13 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	// but nothing ever called its Text/Thinking.
 	runCtx = context.WithValue(runCtx, SubagentSinkCtxKey{}, c)
 
+	// This child's own nesting depth is the caller's plus one — top level
+	// (nothing set on ctx) is depth 0, so its subagent's own children land
+	// at depth 1, a scout that subagent spawns lands at depth 2, and so on.
+	// See DepthCtxKey's doc comment for how this bounds which of
+	// subagent/scout (if either) this child may itself call.
+	runCtx = WithDepth(runCtx, DepthFromContext(ctx)+1)
+
 	// Give this child its own todo-list identity (see TodoAgentCtxKey's doc
 	// comment) — a fresh one on every call, so a child never inherits or
 	// collides with its parent's or a sibling's plan. This covers both the
@@ -1494,6 +1532,16 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	todoAgentID := nextTodoAgentID()
 	runCtx = context.WithValue(runCtx, TodoAgentCtxKey{}, todoAgentID)
 	defer MarkTodoAgentDone(todoAgentID)
+
+	// Stamp this child's own identity as the caller identity scout.go's
+	// concurrency semaphore keys on (see scoutCallerCtxKey in scout.go).
+	// Reuses todoAgentID rather than minting a second fresh id: it is
+	// already exactly "a fresh, unique id for this one child", and using
+	// JobIDCtxKey instead would collapse every scout nested under a job
+	// (or under another scout, which never carries a job id at all — see
+	// scout.go's doc comment on why it strips JobIDCtxKey) into one shared
+	// bucket instead of one per actual caller.
+	runCtx = context.WithValue(runCtx, scoutCallerCtxKey{}, todoAgentID)
 
 	// Every tool resolves relative paths against Workdir (see workdir.go), so
 	// this one line is what makes the child's reads, writes and shell commands

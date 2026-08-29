@@ -23,8 +23,32 @@ type SubagentOptions struct {
 	// kill_job).
 	MaxIterations *int
 
+	// MaxIterationsCap, when > 0, IS applied to the child's agent.Config
+	// (main.go's agentRunner.run sets cfg.MaxIterations from this field
+	// verbatim). Unlike the legacy MaxIterations above, this one is never
+	// populated from a task's own JSON input or a named agent's
+	// frontmatter — subagent execution stays deliberately unlimited, per
+	// MaxIterations's doc comment. Only tools/scout.go sets it, to the
+	// fixed cap item 21 requires (15): a scout is a "crippled" delegation
+	// tool by design, and an iteration cap is part of what keeps it that
+	// way regardless of what its task string asks for.
+	MaxIterationsCap int
+
+	// ScoutMode, when true, tells main.go's agentRunner.run and
+	// subagentToolRunner.Run to build this child's schema and runtime gate
+	// from tools/scout.go's scoutGate/scoutSchemaJSONForDepth instead of
+	// the ordinary AllowOnlySubagent/GetSubagentToolsSchemaJSONForAtDepth
+	// path. Only tools/scout.go ever sets it. The distinction matters
+	// because the ordinary path always folds alwaysAllowedTools ("lua")
+	// into both the schema and the runtime gate, and a scout must never
+	// have lua (it can dispatch tool("bash", ...) internally) — see
+	// scoutToolProfile's doc comment in tools/scout.go.
+	ScoutMode bool
+
 	// Tools, when non-empty, restricts the child to these tool names.
 	// Empty/nil means "every tool except subagent" (today's behavior).
+	// Ignored when ScoutMode is true (scout's tool list is scoutToolProfile,
+	// applied via scoutGate/scoutSchemaJSONForDepth instead).
 	Tools []string
 
 	// Temperature, when non-nil, is the sampling temperature for the child.
@@ -311,6 +335,20 @@ func builtinToolsSchema() []map[string]any {
 						"isolation":       map[string]any{"type": "string", "enum": []string{"worktree"}, "description": "Give this child its own checkout of the repository, on its own branch, instead of the shared working directory: \"worktree\". Use it whenever two or more children WRITE at the same time — then they cannot clobber each other and nothing has to take turns on a lock. The cost is that its edits are not in your tree: the result tells you the branch and how to diff it, and you decide whether to merge. A child that only reads needs nothing here, and its checkout is removed automatically when it changed no files. Needs a git repository."},
 						"inherit_history": map[string]any{"type": "boolean", "description": "Seed this child with YOUR conversation so far — every message up to this call — instead of starting it from just task alone. Use this when the child needs context it would otherwise have no way to see (earlier findings, decisions, file contents already read). The child still only gets task appended as its own new turn on top of that history; it does not see anything that happens in your conversation afterward."},
 					},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "scout",
+				"description": "Run one narrow, read-only sub-task and get back its text conclusion, synchronously — no job_id, no async, nothing to wait() or kill_job on: this call does not return until the scout is done. Available a few levels deeper than subagent itself, so a subagent (or a scout it spawned) can still delegate a sub-question of its own — a plain subagent cannot. Use it for a bounded lookup a child could answer in a few tool calls: \"does this repo already have X\", \"summarize what this file does\", \"grep for every caller of Y\". A scout can read files and search (grep/glob) — it has no shell, cannot write or edit anything, cannot pick a model or a named agent, and stops after 15 tool-call iterations — and it may itself call scout again (up to a small nesting limit). It inherits YOUR remaining time budget (capped at 180s), so a slow parent means a slow scout, not a fresh 180s reset — nest a few of these and the chain still converges. Prefer subagent when you need write access, async, worktree isolation or a named agent; reach for scout only when none of that applies and you are already too deep to call subagent yourself.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"task": map[string]any{"type": "string", "description": "Clear, detailed task description for the scout. It has no history and no earlier findings — only this text — so say what to look at and what to report back."},
+					},
+					"required": []string{"task"},
 				},
 			},
 		},
@@ -716,8 +754,23 @@ func GetTopLevelToolsSchema() []map[string]any {
 	filtered := make([]map[string]any, 0, len(schema))
 	for _, s := range schema {
 		if fn, ok := s["function"].(map[string]any); ok {
-			if name, ok := fn["name"].(string); ok && topLevelDeniedTools[name] {
-				continue
+			if name, ok := fn["name"].(string); ok {
+				if topLevelDeniedTools[name] {
+					continue
+				}
+				// The top level is always depth 0 (see DepthCtxKey's doc
+				// comment): it gets the full "subagent", never "scout" —
+				// ToolAllowedAtDepth(0, ...) is the same helper the depth
+				// 1-3 schema filter below and subagentToolRunner.Run
+				// consult for a child; RunTool's own built-in depth check
+				// (below in this file) covers the top level, since
+				// cmd_interactive.go's toolsAdapter.Run is a bare
+				// passthrough to RunTool with no depth check of its own —
+				// so this schema can never drift from what depth 0
+				// actually permits at runtime.
+				if !ToolAllowedAtDepth(0, name) {
+					continue
+				}
 			}
 		}
 		filtered = append(filtered, s)
@@ -798,8 +851,17 @@ func GetSubagentToolsSchemaJSON() json.RawMessage {
 // AllowOnlySubagent must honour exactly the same two cases so a tool
 // offered here is always one the gate will actually let through.
 func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
+	data, _ := json.Marshal(subagentToolsSchemaFor(allowed))
+	return data
+}
+
+// subagentToolsSchemaFor is GetSubagentToolsSchemaJSONFor before the final
+// marshal, split out so GetSubagentToolsSchemaJSONForAtDepth (below) can
+// apply its extra depth filter to the same list without re-parsing JSON it
+// just produced.
+func subagentToolsSchemaFor(allowed []string) []map[string]any {
 	if len(allowed) == 0 {
-		return GetSubagentToolsSchemaJSON()
+		return GetSubagentToolsSchema()
 	}
 	want := make(map[string]bool, len(allowed)+len(alwaysAllowedTools))
 	for _, name := range allowed {
@@ -828,8 +890,82 @@ func GetSubagentToolsSchemaJSONFor(allowed []string) json.RawMessage {
 		}
 		filtered = append(filtered, s)
 	}
+	return filtered
+}
+
+// GetSubagentToolsSchemaJSONForAtDepth is GetSubagentToolsSchemaJSONFor with
+// an additional filter for which delegation tool (if either) belongs in a
+// child's schema at its own nesting depth — see AllowedDelegationTool in
+// toolgate.go. "subagent" is already stripped by subagentDeniedTools for
+// every subagent regardless of depth; this is what additionally keeps
+// "scout" out of an unrestricted child's schema at depth 4 (nothing) or
+// hands it out at depth 1-3, matching exactly what
+// main.go's subagentToolRunner.Run permits for the same depth — the
+// tool-for-tool invariant this file's other schema builders already keep
+// with their runtime-gate counterparts.
+//
+// depth is the CHILD's own depth (the depth this schema is being built
+// for), not the caller's — i.e. the value already stashed in the child's
+// context by runSingleTask (tools/subagent.go) via WithDepth before
+// main.go's agentRunner.run ever reads opts.Tools.
+func GetSubagentToolsSchemaJSONForAtDepth(allowed []string, depth int) json.RawMessage {
+	schema := subagentToolsSchemaFor(allowed)
+	filtered := make([]map[string]any, 0, len(schema)+1)
+	for _, s := range schema {
+		if fn, ok := s["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok && !ToolAllowedAtDepth(depth, name) {
+				continue
+			}
+		}
+		filtered = append(filtered, s)
+	}
+	// scout.go deliberately never lists "scout" in its own tools:
+	// whitelist ("no recursion tool visible by name-listing tricks" — see
+	// scoutToolProfile's doc comment), so subagentToolsSchemaFor above
+	// already dropped it for a whitelisted scout before this function ever
+	// saw it. Whether a depth 1-3 scout may call scout again is entirely
+	// the depth gate's call, not the whitelist's, so add it back here when
+	// depth allows it and a whitelist took it out.
+	//
+	// The depth >= 1 guard below is load-bearing, not defensive dead code:
+	// this function is documented as "only ever runs for a child" (depth
+	// >= 1), which used to be true only by convention — nothing in this
+	// file enforced it. AllowedDelegationTool(0) returns "subagent", so a
+	// caller that got the depth arithmetic wrong (e.g. forgot the +1 when
+	// deriving a child's own depth from its caller's) and passed 0 here
+	// would silently put "subagent" BACK into a schema subagentDeniedTools
+	// deliberately stripped a few lines up in subagentToolsSchemaFor —
+	// while the runtime gate (subagentToolRunner.Run's unconditional
+	// DenySubagentRecursion) would still refuse it. That is exactly the
+	// schema-offers/gate-denies mismatch this whole file's other builders
+	// exist to prevent. Round 1 of item 21 added two callers that compute
+	// their depth as callerDepth+1 (btw.go's Promote,
+	// internal/workflow/engine.go's sessionAwait) — a future caller doing
+	// that arithmetic wrong is exactly the scenario this guard closes,
+	// rather than relying on every caller getting it right forever.
+	if depth >= 1 {
+		if tool := AllowedDelegationTool(depth); tool != "" {
+			if _, present := findSchemaEntryByName(filtered, tool); !present {
+				if entry, ok := findSchemaEntryByName(GetToolsSchema(), tool); ok {
+					filtered = append(filtered, entry)
+				}
+			}
+		}
+	}
 	data, _ := json.Marshal(filtered)
 	return data
+}
+
+// findSchemaEntryByName returns the schema entry named name, if present.
+func findSchemaEntryByName(schema []map[string]any, name string) (map[string]any, bool) {
+	for _, s := range schema {
+		if fn, ok := s["function"].(map[string]any); ok {
+			if n, ok := fn["name"].(string); ok && n == name {
+				return s, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // LockRegistry is the one shared advisory-lock registry behind the "lock"/
@@ -964,11 +1100,21 @@ func SetJobWaiter(w JobWaiter) {
 // lock of its own.
 var subagentToolInstance *SubagentTool
 
-// SetSubAgentRunner sets the runner for the subagent tool and registers it.
-// Must be called before any subagent tool usage.
+// scoutToolInstance is the singleton ScoutTool used by the registry, set
+// alongside subagentToolInstance by SetSubAgentRunner below — a scout runs
+// through the exact same SubAgentRunner (main.go's agentRunner) a subagent
+// does, just via runSingleTask directly instead of the job-spawning paths
+// (see scout.go).
+var scoutToolInstance *ScoutTool
+
+// SetSubAgentRunner sets the runner for the subagent tool and registers it,
+// and does the same for the scout tool with the same runner. Must be called
+// before any subagent or scout tool usage.
 func SetSubAgentRunner(runner SubAgentRunner) {
 	subagentToolInstance = &SubagentTool{Runner: runner}
 	registerTool("subagent", subagentToolInstance)
+	scoutToolInstance = &ScoutTool{Runner: runner}
+	registerTool("scout", scoutToolInstance)
 }
 
 func RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {
@@ -977,6 +1123,28 @@ func RunTool(ctx context.Context, name string, arguments map[string]any) ToolRes
 	// the check lives here and not only in the layer above.
 	if err := checkToolGate(ctx, name); err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
+
+	// Which of "subagent"/"scout" (if either) a caller may reach is a
+	// property of nesting depth alone (AllowedDelegationTool/
+	// ToolAllowedAtDepth in toolgate.go), not of a ToolGate that would have
+	// to be installed at every call site to matter — and it does have to
+	// matter at every call site: a lua script's tool() call reaches this
+	// function directly (see toolgate.go's package doc comment on why),
+	// bypassing whatever Go-level check a caller like main.go's
+	// subagentToolRunner.Run makes before ever dispatching here.
+	// cmd_interactive.go's toolsAdapter.Run, the top-level dispatcher, does
+	// NOT make any such check of its own — it is a bare passthrough
+	// straight to this function — which is exactly why this check has to
+	// live here rather than only in subagentToolRunner.Run: it is the one
+	// place both the top-level path and every child path actually go
+	// through. Checking it here, unconditionally, is what makes the
+	// top-level conversation (depth 0, never offered "scout" in its
+	// schema, but with no ToolGate of its own to stop a hallucinated or
+	// lua-driven call to it) actually safe rather than safe only by the
+	// model not asking.
+	if depth := DepthFromContext(ctx); (name == "subagent" || name == "scout") && !ToolAllowedAtDepth(depth, name) {
+		return ToolResult{Type: "result", Success: false, Error: DelegationDepthError(depth, name)}
 	}
 
 	// User hooks wrap every tool call, built-in and MCP alike, and this is

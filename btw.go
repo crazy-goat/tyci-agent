@@ -200,6 +200,16 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		// job finishes, the same as any other /btw or subagent list.
 		defer tools.MarkTodoAgentDone(newJobID)
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, newJobID)
+		// entry.depth is the nesting depth the ORIGINAL run actually
+		// executed at (stashed alongside todoAgentID — see
+		// resumableEntry.depth's doc comment, main.go). Without restamping
+		// it here, runCtx would default back to depth 0: entry.cfg.Schema
+		// below (built once at the original spawn) still offers "scout"
+		// for a resumed depth-1+ subagent, but tools.RunTool's own
+		// depth-derived gate would see depth 0 and refuse it — the exact
+		// schema/gate mismatch class item 21's depth machinery exists to
+		// prevent, just reached via resume instead of a fresh spawn.
+		runCtx = tools.WithDepth(runCtx, entry.depth)
 		// The forked transcript (entry.msgs) may itself contain todo(...)
 		// calls/results naming ids from entry.todoAgentID's list — carry
 		// that list forward onto newJobID rather than let the resumed agent
@@ -246,7 +256,11 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		// call started from) — otherwise a second resume off of newJobID
 		// would inherit the same stale-mailbox bug one level down.
 		if err == nil || truncated || deadlineExceeded || stopped {
-			stashResumable(newJobID, resumableEntry{msgs: forked, mc: entry.mc, cfg: runCfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx)})
+			// Same depth as the run just finished — resuming a
+			// conversation does not change how deep it is nested, so a
+			// chained resume off of newJobID must restore the exact same
+			// depth this one did, not silently reset to 0.
+			stashResumable(newJobID, resumableEntry{msgs: forked, mc: entry.mc, cfg: runCfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx), depth: entry.depth})
 		}
 
 		return text, truncated, err
@@ -362,7 +376,23 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 	client := eval.mc
 	cfg := btwConfig(eval.cfg)
 	cfg.Tools = &subagentToolRunner{}
-	cfg.Schema = tools.GetSubagentToolsSchemaJSON()
+	// A promoted /btw job is, in every way that matters to item 21's depth
+	// gate, an ordinary subagent — it runs through subagentToolRunner (not
+	// toolsAdapter), and DenySubagentRecursion below denies it "subagent"
+	// exactly like any other child. Its depth must say so too: promotedDepth
+	// is the CALLER's own depth (normally 0, the top-level conversation
+	// that ran /btw) plus one, the same "caller depth + 1" rule
+	// runSingleTask applies to every other child (tools/subagent.go). Without
+	// this, runCtx below never carries a depth at all, defaulting to 0 —
+	// which would offer "scout" in this schema (GetSubagentToolsSchema
+	// includes it unconditionally, see its own doc comment) while the
+	// depth-0 runtime gate in tools.RunTool refuses it, and refuses it with
+	// a message pointing at "subagent" — which subagentDeniedTools/
+	// DenySubagentRecursion below ALSO refuses for this same child. Fixing
+	// the depth fixes both sides of that mismatch at once, through the same
+	// depth-derived schema/gate machinery every other child already uses.
+	promotedDepth := tools.DepthFromContext(ctx) + 1
+	cfg.Schema = tools.GetSubagentToolsSchemaJSONForAtDepth(nil, promotedDepth)
 	cfg.PendingJobs = nil
 	question := eval.question
 	btwEvaluationsMu.Unlock()
@@ -378,6 +408,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		// Match an ordinary child: background bash and kill_job must see the
 		// child sink, while this same collector receives streamed output.
 		runCtx = context.WithValue(runCtx, tools.SubagentSinkCtxKey{}, c)
+		runCtx = tools.WithDepth(runCtx, promotedDepth)
 		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
 		runCtx = tools.WithToolGate(runCtx, tools.DenySubagentRecursion())
 		msgs = session.ForkMessagesWithTurn(msgs, btwPromotionTask)
@@ -392,7 +423,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		// Timeout and kill_job still leave useful partial work. Preserve it so
 		// the parent can resume the promoted conversation instead of losing it.
 		if err == nil || truncated || deadlineExceeded || stopped {
-			stashResumable(jobID, resumableEntry{msgs: msgs, mc: client, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx)})
+			stashResumable(jobID, resumableEntry{msgs: msgs, mc: client, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx), depth: promotedDepth})
 		}
 		return text, truncated, err
 	})
@@ -429,7 +460,21 @@ func btwConfig(base agent.Config) agent.Config {
 	// model to call compact() once it crosses the threshold with no idea
 	// this child can't use it — advertising a tool guaranteed to fail wastes
 	// a round-trip for no benefit.
-	cfg.Schema = tools.GetAllToolsSchemaJSONWithout(map[string]bool{"compact": true})
+	//
+	// "scout" is dropped for the same reason as a discovered-while-fixing-
+	// item-21 bug, not F10: this default schema is the one fork.go's
+	// ForkChildJob uses UNMODIFIED (unlike /btw's own evaluation phase and
+	// promoted job, which each overwrite cfg.Schema afterward with their
+	// own depth-correct builder). A forked child keeps base.Tools verbatim
+	// (toolsAdapter{}, the real top-level dispatcher) and never calls
+	// tools.WithDepth, so it runs at depth 0 — same as the live top-level
+	// conversation it forked from, correctly still offering "subagent".
+	// But GetAllToolsSchemaJSONWithout is the raw, unfiltered registry
+	// schema (only "compact" removed above), so it would also offer
+	// "scout" — which depth 0's runtime gate (tools.RunTool's own
+	// depth-derived check) always refuses. Excluding it here keeps this
+	// schema honest for the one caller that uses it as-is.
+	cfg.Schema = tools.GetAllToolsSchemaJSONWithout(map[string]bool{"compact": true, "scout": true})
 	return cfg
 }
 

@@ -96,6 +96,22 @@ type resumableEntry struct {
 	// jobResumerAdapter.Resume, tools.CopyTodoListForResume) instead of
 	// guessing.
 	todoAgentID string
+
+	// depth is the nesting depth (tools.DepthFromContext) the stashed run
+	// actually executed at — captured at stash time the same way
+	// todoAgentID is, so a later resume can restore it via tools.WithDepth
+	// instead of the resumed run silently defaulting back to depth 0. A
+	// resumed depth-1 subagent's stashed cfg.Schema (built once at spawn
+	// time by agentRunner.run, see depth/GetSubagentToolsSchemaJSONForAtDepth
+	// there) still offers "scout" — correct for depth 1 — but without this,
+	// the runtime gate on resume would see depth 0 (ctx never re-stamped)
+	// and refuse it, the same schema/gate mismatch class as findings 2/4.
+	// Zero value (0) is the right default for every stash site that never
+	// sets it explicitly (e.g. this package's own tests): depth 0 is what
+	// tools.DepthFromContext already returns for a context nobody ever
+	// wrapped with WithDepth, so an old/test-built entry with no explicit
+	// depth behaves exactly as before this field existed.
+	depth int
 }
 
 // resumableMu guards resumable and resumableOrder.
@@ -441,13 +457,38 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// makes the resume hint further down actionable instead of a dead end.
 	jobID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
 
+	// depth is this child's own nesting depth, stashed on ctx by
+	// runSingleTask (tools/subagent.go) via tools.WithDepth right next to
+	// SubagentSinkCtxKey — top level is depth 0, so every subagent's own
+	// child lands here at depth >= 1. Both the schema below and
+	// subagentToolRunner.Run's runtime gate read the SAME
+	// tools.AllowedDelegationTool/ToolAllowedAtDepth helpers for the same
+	// depth, so a delegation tool offered here is always one the gate
+	// will actually let this child call.
+	depth := tools.DepthFromContext(ctx)
+
+	// opts.ScoutMode picks the schema builder: a scout's schema comes from
+	// tools.ScoutSchemaJSONForDepth (ScoutGate's own tool list, no
+	// alwaysAllowedTools "lua" folded in), never
+	// GetSubagentToolsSchemaJSONForAtDepth, which folds lua into every
+	// ordinary subagent's schema regardless of its tools: whitelist — see
+	// SubagentOptions.ScoutMode's doc comment (tools/tool.go).
+	schema := tools.GetSubagentToolsSchemaJSONForAtDepth(opts.Tools, depth)
+	if opts.ScoutMode {
+		schema = tools.ScoutSchemaJSONForDepth(depth)
+	}
+
 	cfg := agent.Config{
-		System:        system,
-		MaxRetries:    1,
-		MaxIterations: 0,
+		System:     system,
+		MaxRetries: 1,
+		// opts.MaxIterationsCap is 0 (unlimited) for every ordinary
+		// subagent — only tools/scout.go ever sets it, to 15. Plain
+		// MaxIterations stays deliberately unpopulated; see its doc
+		// comment in tools/tool.go.
+		MaxIterations: opts.MaxIterationsCap,
 		Debug:         false,
-		Tools:         &subagentToolRunner{allowed: opts.Tools},
-		Schema:        tools.GetSubagentToolsSchemaJSONFor(opts.Tools),
+		Tools:         &subagentToolRunner{allowed: opts.Tools, scoutMode: opts.ScoutMode},
+		Schema:        schema,
 		Fallbacks:     fallbacks,
 		Temperature:   opts.Temperature,
 		MaxTokens:     opts.MaxTokens,
@@ -502,7 +543,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// tool call can continue this exact conversation as a brand-new job. See
 	// stashResumable's doc comment for the (bounded) retention policy.
 	if jobID != "" && (err == nil || truncated || deadlineExceeded || stoppedByUser) {
-		stashResumable(jobID, resumableEntry{msgs: msgs, mc: mc, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(ctx)})
+		stashResumable(jobID, resumableEntry{msgs: msgs, mc: mc, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(ctx), depth: depth})
 	}
 
 	if stoppedByUser {
@@ -514,10 +555,22 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		return subagentStoppedMessage(text, jobID)
 	}
 	if truncated || deadlineExceeded {
-		// agentRunner configures child runs without a MaxIterations or
-		// subagent-specific deadline. Keep the legacy cutoff normalization for
-		// externally supplied contexts and compatibility with older runners.
-		return subagentCutoffMessage(text, deadlineExceeded, jobID, tools.DefaultSubagentMaxIterations, err)
+		// agentRunner configures an ORDINARY child run without a
+		// MaxIterations cap or subagent-specific deadline, so
+		// tools.DefaultSubagentMaxIterations (-1) is the right number to
+		// report for one of those — legacy cutoff normalization for
+		// externally supplied contexts and compatibility with older
+		// runners. A scout (tools/scout.go) is the one caller that DOES
+		// set a real cap via opts.MaxIterationsCap, and truncated here can
+		// only mean IT was hit (cfg.MaxIterations came straight from that
+		// field above) — report the real number instead of the sentinel,
+		// or a truncated scout's cutoff message would nonsensically read
+		// "hit its -1-iteration limit".
+		maxIter := tools.DefaultSubagentMaxIterations
+		if cfg.MaxIterations > 0 {
+			maxIter = cfg.MaxIterations
+		}
+		return subagentCutoffMessage(text, deadlineExceeded, jobID, maxIter, err)
 	}
 	if err != nil {
 		return "", err
@@ -631,14 +684,40 @@ type subagentToolRunner struct {
 	// passed to the model (tools.GetSubagentToolsSchemaJSONFor) is only a
 	// hint — a model can still emit a call for a tool it wasn't offered
 	// (stale cached tool list, hallucinated name, etc.) — so this is the
-	// real enforcement point. Empty/nil means no restriction (today's
-	// behavior): every tool except "subagent" is allowed.
+	// real enforcement point. Empty/nil means no restriction: every tool
+	// except "subagent" is allowed (and, at depth 1-3 only, "scout" — see
+	// Run's depth check below, which decides both regardless of what
+	// allowed says). Ignored entirely when scoutMode is true.
 	allowed []string
+
+	// scoutMode, when true, makes Run enforce tools.ScoutGate() instead of
+	// tools.AllowOnlySubagent(allowed) for every non-delegation tool call —
+	// see SubagentOptions.ScoutMode's doc comment (tools/tool.go) for why
+	// AllowOnlySubagent must never be the enforcement path for a scout (it
+	// unconditionally folds "lua" back in, which a scout must never have).
+	scoutMode bool
 }
 
 func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[string]any) (string, error) {
-	if name == "subagent" {
-		return "", fmt.Errorf("subagent tool is not available to subagents (recursion denied)")
+	// Which of "subagent"/"scout" (if either) this child may reach is a
+	// property of its nesting depth alone (tools.AllowedDelegationTool),
+	// checked here BEFORE the whitelist gate below — this child is always
+	// at depth >= 1 (subagentToolRunner.Run only ever runs a real child's
+	// own tool calls), so "subagent" is always denied here exactly like
+	// before this item existed. "scout" is new: a depth 1-3 child may call
+	// it even though it is deliberately never present in that child's own
+	// tools: whitelist, including scout's own (see scoutToolProfile's doc
+	// comment in tools/scout.go) — depth decides this, not the whitelist,
+	// so the whitelist-membership check further down must be skipped for
+	// these two names rather than asked to agree with a list that was
+	// never meant to mention them.
+	depth := tools.DepthFromContext(ctx)
+	isDelegationTool := name == "subagent" || name == "scout"
+	if isDelegationTool && !tools.ToolAllowedAtDepth(depth, name) {
+		if name == "subagent" {
+			return "", fmt.Errorf("subagent tool is not available to subagents (recursion denied)")
+		}
+		return "", fmt.Errorf("%s", tools.DelegationDepthError(depth, name))
 	}
 	// tools.AllowOnlySubagent is the single source of truth for what a
 	// whitelisted child may call: it mirrors
@@ -654,7 +733,20 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 	// consulted r.allowed verbatim: neither alwaysAllowedTools nor
 	// subagentDeniedTools entered into it.
 	var gate tools.ToolGate
-	if len(r.allowed) > 0 {
+	switch {
+	case isDelegationTool:
+		// Handled entirely by the depth check above: neither r.allowed
+		// nor r.scoutMode's ScoutGate ever lists "subagent"/"scout"
+		// themselves (see this func's doc comment above and
+		// scoutToolProfile's doc comment in tools/scout.go), so asking
+		// either gate about these two names would only ever refuse a call
+		// the depth check just approved.
+	case r.scoutMode:
+		gate = tools.ScoutGate()
+		if err := gate(name); err != nil {
+			return "", err
+		}
+	case len(r.allowed) > 0:
 		gate = tools.AllowOnlySubagent(r.allowed)
 		if err := gate(name); err != nil {
 			return "", err

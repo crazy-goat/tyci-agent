@@ -482,7 +482,44 @@ func (e *Engine) sessionAwait(L *lua.LState) int {
 			// matters.
 			systemPrompt = providers.BuildSubagentSystemPromptWithRole(def.SystemPrompt, false)
 		}
-		schema = tools.GetSubagentToolsSchemaJSONFor(def.Tools)
+		// A named-agent workflow session is, for item 21's depth gate,
+		// exactly the same shape as an ordinary restricted subagent: it
+		// runs through engineToolRunner -> tools.RunTool with
+		// DenySubagentRecursion/AllowOnlySubagent gates, same as
+		// subagentToolRunner.Run's child. Its depth must say so too —
+		// otherwise runCtx defaults to depth 0, which offers "scout" in an
+		// UNRESTRICTED definition's schema (GetSubagentToolsSchema includes
+		// it unconditionally — it is not one of subagentDeniedTools) while
+		// the depth-0 runtime gate in tools.RunTool refuses it. sessionDepth
+		// is the session's own caller depth (e.ctx's, normally 0) plus one,
+		// the same "caller depth + 1" rule runSingleTask applies to every
+		// other child (tools/subagent.go). The PLAIN workflow session above
+		// (def == nil) deliberately does NOT get this: it is meant to
+		// behave exactly like the real top-level conversation (see this
+		// func's own comment above schema's declaration), so it stays at
+		// depth 0 and keeps "subagent".
+		sessionDepth := tools.DepthFromContext(e.ctx) + 1
+		runCtx = tools.WithDepth(runCtx, sessionDepth)
+		if len(def.Tools) == 0 {
+			// Unrestricted named agent: the depth-aware builder adds
+			// "scout" back in at depth 1-3 — safe here because
+			// AllowOnlySubagent(nil) below is a no-op (see its own call),
+			// so nothing downstream denies "scout" once the depth check
+			// two lines down (in tools.RunTool) has approved it.
+			schema = tools.GetSubagentToolsSchemaJSONForAtDepth(def.Tools, sessionDepth)
+		} else {
+			// A RESTRICTED whitelist is different: AllowOnlySubagent(def.Tools)
+			// below is one static gate wrapped onto runCtx for the whole
+			// session, with no per-call exemption for "scout" the way
+			// main.go's subagentToolRunner.Run has (see its isDelegationTool
+			// switch) — so offering "scout" here would advertise a tool
+			// that gate then refuses on every actual call. Keep the plain,
+			// non-depth-aware schema (never offers "scout" unless def.Tools
+			// explicitly lists it, which AllowOnlySubagent would then also
+			// permit) until engineToolRunner grows that same per-call
+			// exemption.
+			schema = tools.GetSubagentToolsSchemaJSONFor(def.Tools)
+		}
 		// Deny "subagent"/"agents" recursion unconditionally (mirroring
 		// main.go's subagentToolRunner.Run), then layer the agent's own
 		// tools: whitelist gate on top when it has one. AllowOnlySubagent
