@@ -2,6 +2,7 @@ package display
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -40,20 +41,20 @@ func TestFmtUSD_PrecisionByMagnitude(t *testing.T) {
 // Unpriced tokens render as a plain $0.00 — the owner's explicit choice
 // (2026-08-23), replacing the old "?$" marker.
 func TestFormatCost_UnpricedShowsZeroDollars(t *testing.T) {
-	got := formatCost(ledger.Snapshot{Unpriced: 1})
+	got := formatCost(ledger.Snapshot{Unpriced: 1}, math.MaxInt)
 	if got != "$0.00" {
 		t.Fatalf("formatCost = %q, want $0.00", got)
 	}
 }
 
 func TestFormatCost_EmptyWhenNothingSpent(t *testing.T) {
-	if got := formatCost(ledger.Snapshot{}); got != "" {
+	if got := formatCost(ledger.Snapshot{}, math.MaxInt); got != "" {
 		t.Fatalf("formatCost = %q, want empty", got)
 	}
 }
 
 func TestFormatCost_CallsOutDelegatedSpend(t *testing.T) {
-	got := formatCost(ledger.Snapshot{MainUSD: 1, SubagentUSD: 2})
+	got := formatCost(ledger.Snapshot{MainUSD: 1, SubagentUSD: 2}, math.MaxInt)
 	if !strings.Contains(got, "3.00$") || !strings.Contains(got, "sub 2.00$") {
 		t.Fatalf("formatCost = %q, want total and subagent share", got)
 	}
@@ -63,7 +64,7 @@ func TestFormatCost_CallsOutDelegatedSpend(t *testing.T) {
 // round B's whole point is telling scout spend apart from ordinary
 // subagent spend, which a shared figure could never show.
 func TestFormatCost_CallsOutScoutSpendSeparatelyFromSubagent(t *testing.T) {
-	got := formatCost(ledger.Snapshot{MainUSD: 1, SubagentUSD: 2, ScoutUSD: 0.5})
+	got := formatCost(ledger.Snapshot{MainUSD: 1, SubagentUSD: 2, ScoutUSD: 0.5}, math.MaxInt)
 	if !strings.Contains(got, "3.50$") {
 		t.Fatalf("formatCost = %q, want the combined total (3.50)", got)
 	}
@@ -78,9 +79,49 @@ func TestFormatCost_CallsOutScoutSpendSeparatelyFromSubagent(t *testing.T) {
 // A partially-priced session renders the known total as a plain dollar
 // figure, with no "+?" suffix (dropped by decision 2026-08-23).
 func TestFormatCost_MarksLowerBound(t *testing.T) {
-	got := formatCost(ledger.Snapshot{MainUSD: 1.5, Unpriced: 2})
+	got := formatCost(ledger.Snapshot{MainUSD: 1.5, Unpriced: 2}, math.MaxInt)
 	if !strings.HasPrefix(got, "1.5") || strings.Contains(got, "?") {
 		t.Fatalf("formatCost = %q, want a plain dollar amount without any \"?\" marker", got)
+	}
+}
+
+// TestFormatCost_MergesParensWhenTooNarrowForBoth pins F1: on a terminal too
+// narrow for "$X (sub Y$) (scout Z$)" but wide enough for a single merged
+// bracket, both figures must still be visible, just sharing one "(...)"
+// instead of two — cheaper than dropping either outright.
+func TestFormatCost_MergesParensWhenTooNarrowForBoth(t *testing.T) {
+	snap := ledger.Snapshot{MainUSD: 1, SubagentUSD: 5, ScoutUSD: 0.5}
+	full := formatCost(snap, math.MaxInt)
+	merged := formatCost(snap, lipgloss.Width(full)-1)
+	if strings.Contains(merged, ")  (") || strings.Count(merged, "(") != 1 {
+		t.Fatalf("formatCost = %q, want exactly one merged bracket", merged)
+	}
+	if !strings.Contains(merged, "sub 5.00$") || !strings.Contains(merged, "scout 0.500$") {
+		t.Fatalf("formatCost = %q, want both figures still present in the merged bracket", merged)
+	}
+	if lipgloss.Width(merged) >= lipgloss.Width(full) {
+		t.Fatalf("merged form (%q) should be narrower than the full form (%q)", merged, full)
+	}
+}
+
+// TestFormatCost_DropsBreakdownWhenTooNarrowForMergedBracket: narrower
+// still, even the merged bracket does not fit — the bare total must survive
+// on its own rather than the whole cost figure vanishing.
+func TestFormatCost_DropsBreakdownWhenTooNarrowForMergedBracket(t *testing.T) {
+	snap := ledger.Snapshot{MainUSD: 1, SubagentUSD: 5, ScoutUSD: 0.5}
+	got := formatCost(snap, lipgloss.Width("6.50$")+1)
+	if got != "6.50$" {
+		t.Fatalf("formatCost = %q, want the bare total 6.50$", got)
+	}
+}
+
+// TestFormatCost_EmptyWhenEvenBareTotalDoesNotFit: an absurdly tight budget
+// (narrower than the bare total itself) must omit the cost figure entirely
+// rather than truncate it mid-number, which would misrepresent the bill.
+func TestFormatCost_EmptyWhenEvenBareTotalDoesNotFit(t *testing.T) {
+	snap := ledger.Snapshot{MainUSD: 1234}
+	if got := formatCost(snap, 1); got != "" {
+		t.Fatalf("formatCost = %q, want empty when even the bare total does not fit", got)
 	}
 }
 

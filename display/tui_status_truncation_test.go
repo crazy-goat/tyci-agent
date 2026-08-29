@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/decodo/tyci/internal/ledger"
+	"github.com/decodo/tyci/internal/pricing"
+	"github.com/decodo/tyci/stream"
 )
 
 // TestBuildStatus_LongStatusMessageIsTruncatedNotWrapped guards the item-27
@@ -68,6 +71,43 @@ func TestTruncateStatusText_CapsToMaxWidthWithEllipsis(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "…") {
 		t.Fatalf("expected truncated result to end in an ellipsis, got %q", got)
+	}
+}
+
+// TestBuildStatus_ScoutCostOnNarrowTerminalDoesNotWrap is F1's regression
+// test: item 21 round B added a second parenthetical (scout) to the right
+// side of the status bar, which buildStatus's own truncation (above) never
+// covers — only the LEFT side is capped against the right's width, the
+// right side itself never is. On a narrow terminal with main + subagent +
+// scout spend, the pre-fix right side ("ctx ..., X.XX$ (sub Y$) (scout Z$)")
+// could exceed m.width on its own, wrapping the whole fixed-height status
+// row exactly like the overlong-message failure this file's other tests
+// guard against.
+func TestBuildStatus_ScoutCostOnNarrowTerminalDoesNotWrap(t *testing.T) {
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"p":{"id":"p","models":{
+		"m":{"id":"m","name":"m","cost":{"input":3,"output":15},"limit":{"context":200000}}
+	}}}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	ledger.Record(ledger.Main, "p", "m", "", stream.Usage{Input: 198_000, Output: 100})
+	ledger.Record(ledger.Subagent, "p", "m", "job-1", stream.Usage{Input: 1_000_000, Output: 1000})
+	ledger.Record(ledger.Scout, "p", "m", "", stream.Usage{Input: 100_000, Output: 1000})
+
+	m := newModel(nil, "p/m", "", []string{"p/m"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m.width = 50
+	m.reading = true
+	m.modelName = "m"
+	m.lastUsage = stream.Usage{Input: 198_000, Output: 100}
+
+	result := m.buildStatus()
+
+	if got := lipgloss.Width(result); got > m.width {
+		t.Fatalf("buildStatus() rendered width = %d, want <= m.width (%d); got %q", got, m.width, result)
 	}
 }
 

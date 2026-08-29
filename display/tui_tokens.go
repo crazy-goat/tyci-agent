@@ -2,8 +2,10 @@ package display
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/internal/pricing"
 )
@@ -32,25 +34,53 @@ func (m TuiModel) buildContextCost() string {
 	var parts []string
 
 	used, limit, ok := m.contextUsed()
+	var ctxPart string
 	switch {
 	case ok:
 		// Absolute first, share of the window after it: the token count is
 		// what you compare against yesterday, the percentage is what tells
 		// you how close the wall is.
-		parts = append(parts, fmt.Sprintf("ctx %s (%d%%)", fmtTokens(used), used*100/limit))
+		ctxPart = fmt.Sprintf("ctx %s (%d%%)", fmtTokens(used), used*100/limit)
 	case used > 0:
 		// No published limit: the absolute number is still useful.
-		parts = append(parts, "ctx "+fmtTokens(used))
+		ctxPart = "ctx " + fmtTokens(used)
+	}
+	if ctxPart != "" {
+		parts = append(parts, ctxPart)
 	}
 
 	snap := ledger.Get()
-	if cost := formatCost(snap); cost != "" {
+	// budget bounds formatCost's own width so ctxPart + ", " + cost never
+	// grows wider than the terminal on its own. buildStatus (tui_status.go)
+	// truncates the LEFT side of the status bar against however wide the
+	// right side turned out to be, but never truncates the right side
+	// itself — an unbounded right therefore forces lipgloss to WRAP the
+	// whole status row instead of clipping it, exactly the failure mode
+	// buildStatus's own comment documents for an unbounded left ("a single
+	// ~106-char message turned a 20-line frame into 20+ lines"). Adding
+	// the scout breakdown gave the right side a second parenthetical,
+	// which is what newly pushed some narrow-terminal sessions over
+	// m.width. math.MaxInt (m.width not yet known, e.g. before the first
+	// resize) means "no limit": render every breakdown.
+	budget := math.MaxInt
+	if m.width > 0 {
+		budget = m.width
+		if ctxPart != "" {
+			budget -= lipgloss.Width(ctxPart) + 2 // ", " separator
+		}
+		if budget < 0 {
+			budget = 0
+		}
+	}
+	if cost := formatCost(snap, budget); cost != "" {
 		parts = append(parts, cost)
 	}
 	return strings.Join(parts, ", ")
 }
 
-// formatCost renders the session bill in the Tokens tab. Delegated work is called out
+// formatCost renders the session bill for the status bar — buildContextCost
+// is its only caller (the Tokens tab, buildUsageDetail below, builds its own
+// per-model breakdown independently). Delegated work is called out
 // separately when there is any, because a surprising total is nearly always
 // children — scouts get their own "(scout ...)" figure alongside "(sub ...)"
 // rather than folding into it, so a burst of scout calls does not hide
@@ -59,7 +89,18 @@ func (m TuiModel) buildContextCost() string {
 // old "+?" lower-bound marker: the ledger still tracks unpriced rows, so the
 // figure stays available to anything that wants it, but the UI no longer
 // decorates the cost with it.
-func formatCost(snap ledger.Snapshot) string {
+//
+// maxWidth caps the rendered string so the status bar's right side can
+// never itself wrap the row (see buildContextCost's budget comment). When
+// the full breakdown doesn't fit, the two parenthetical clauses collapse
+// into one shared bracket first ("(sub X$ scout Y$)" instead of two
+// separate ones) — cheaper than dropping one outright, since both figures
+// stay visible on a merely-tight terminal. Only on a terminal too narrow
+// even for that does the breakdown disappear, falling back to the bare
+// total; and on a terminal too narrow even for the bare total, the whole
+// cost figure is omitted rather than truncated mid-number, which would
+// misrepresent the bill.
+func formatCost(snap ledger.Snapshot, maxWidth int) string {
 	total := snap.TotalUSD()
 	if total == 0 {
 		if snap.Unpriced == 0 {
@@ -67,14 +108,38 @@ func formatCost(snap ledger.Snapshot) string {
 		}
 		return "$0.00"
 	}
-	s := fmtUSD(total) + "$"
+	fits := func(s string) bool { return lipgloss.Width(s) <= maxWidth }
+
+	base := fmtUSD(total) + "$"
+	full := base
 	if snap.SubagentUSD > 0 {
-		s += " (sub " + fmtUSD(snap.SubagentUSD) + "$)"
+		full += " (sub " + fmtUSD(snap.SubagentUSD) + "$)"
 	}
 	if snap.ScoutUSD > 0 {
-		s += " (scout " + fmtUSD(snap.ScoutUSD) + "$)"
+		full += " (scout " + fmtUSD(snap.ScoutUSD) + "$)"
 	}
-	return s
+	if fits(full) {
+		return full
+	}
+
+	var bits []string
+	if snap.SubagentUSD > 0 {
+		bits = append(bits, "sub "+fmtUSD(snap.SubagentUSD)+"$")
+	}
+	if snap.ScoutUSD > 0 {
+		bits = append(bits, "scout "+fmtUSD(snap.ScoutUSD)+"$")
+	}
+	if len(bits) > 0 {
+		merged := base + " (" + strings.Join(bits, " ") + ")"
+		if fits(merged) {
+			return merged
+		}
+	}
+
+	if fits(base) {
+		return base
+	}
+	return ""
 }
 
 // fmtUSD keeps small bills legible: cents matter at $0.03, they do not at $12.

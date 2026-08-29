@@ -58,8 +58,8 @@ func (k Kind) String() string {
 // model collapsing into one shared "subagent" bucket (TODO item 1's
 // Subagents tab needs per-child counts to build its tree). It is empty for
 // the main conversation (which is not a job) and for any call made outside a
-// tracked job — Get/Snapshot's rollups (MainUSD, SubagentUSD, Main, Sub) do
-// not key off JobID at all, so they stay correct regardless.
+// tracked job — Get/Snapshot's rollups (MainUSD, SubagentUSD, ScoutUSD,
+// Main, Sub) do not key off JobID at all, so they stay correct regardless.
 type Row struct {
 	Kind     Kind
 	Provider string

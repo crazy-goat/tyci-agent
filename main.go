@@ -526,8 +526,20 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// that dies on its last iteration still accounts for what it spent.
 	//
 	// A scout is recorded under ledger.Scout rather than ledger.Subagent so
-	// its cost is countable on its own (see ledger.Kind's doc comment) —
-	// same jobID either way, so UsageByJob's per-child tracking is unaffected.
+	// its cost is countable on its own (see ledger.Kind's doc comment). jobID
+	// here is ALWAYS "" for a scout — tools/scout.go strips JobIDCtxKey to ""
+	// before calling runSingleTask ("a scout registers no job of its own"),
+	// and nothing downstream re-sets it — so a scout has no per-child
+	// tracking at all: its cost never reaches ledger.UsageByJob or the
+	// Subagents tab's tree, only Snapshot's own rollups (MainUSD/
+	// SubagentUSD/ScoutUSD/TotalUSD) see it. This is not new: before this
+	// change the same jobID="" rows were recorded as ledger.Subagent, so
+	// they were already invisible to UsageByJob. One visible consequence
+	// worth naming: display/tui_sidebar.go's buildSubagentTree gives the
+	// tree's synthetic root row snap.TotalUSD(), which includes ScoutUSD —
+	// so the root can show more than the sum of its rendered children,
+	// exactly as it already could for scout cost folded into SubagentUSD
+	// before this change.
 	kind := ledger.Subagent
 	if opts.ScoutMode {
 		kind = ledger.Scout

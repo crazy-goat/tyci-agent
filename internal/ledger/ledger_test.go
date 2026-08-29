@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"os"
 	"testing"
 
 	"github.com/decodo/tyci/internal/pricing"
@@ -92,21 +93,23 @@ func TestKind_ScoutIsDistinctFromSubagent(t *testing.T) {
 // TestKind_ScoutIsDistinctFromSubagent above could not exercise, since both
 // its rows were unpriced.
 func TestGet_ScoutUSDCountsOnItsOwn(t *testing.T) {
+	// A real, priced catalog entry — via Record, not by poking the package's
+	// unexported rows/order globals directly — so this exercises the actual
+	// write path (Record -> pricing.Lookup -> Cost) instead of asserting
+	// against a hand-built Row that could drift from what Record would ever
+	// produce. writeTestCatalog mirrors display/tui_tokens_test.go's helper
+	// of the same name (that one lives in a different package, so it can't
+	// be reused directly).
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"p":{"id":"p","models":{"m":{"id":"m","name":"m","cost":{"input":1,"output":1}}}}}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	t.Cleanup(pricing.Reset)
+
 	Reset()
 	t.Cleanup(Reset)
-	// pricing.Lookup has no way to answer "priced" for an arbitrary
-	// provider/model without a real catalog on disk, so this test asserts
-	// the ROUTING (which Snapshot field a Scout row's cost lands in)
-	// directly against a hand-built Row rather than going through Record —
-	// mirrors how tui_tokens_test.go tests formatCost against a literal
-	// ledger.Snapshot instead of seeding a catalog.
-	rows = map[key]*Row{
-		{kind: Scout, provider: "p", model: "m", jobID: "j"}: {
-			Kind: Scout, Provider: "p", Model: "m", JobID: "j",
-			Usage: stream.Usage{Input: 1}, USD: 2.5, Priced: true, Runs: 1,
-		},
-	}
-	order = []key{{kind: Scout, provider: "p", model: "m", jobID: "j"}}
+	// 1,000,000 input @ $1/M + 1,500,000 output @ $1/M = $2.5.
+	Record(Scout, "p", "m", "j", stream.Usage{Input: 1_000_000, Output: 1_500_000})
 
 	s := Get()
 	if s.ScoutUSD != 2.5 {
@@ -117,6 +120,20 @@ func TestGet_ScoutUSDCountsOnItsOwn(t *testing.T) {
 	}
 	if s.TotalUSD() != 2.5 {
 		t.Fatalf("TotalUSD = %v, want 2.5", s.TotalUSD())
+	}
+}
+
+// writeTestCatalog seeds a minimal models.dev-shaped provider catalog under
+// homeDir/.tyci/providers.json — mirrors display/tui_tokens_test.go's
+// helper of the same name (different package, so not directly reusable).
+func writeTestCatalog(t *testing.T, homeDir, body string) {
+	t.Helper()
+	dir := homeDir + "/.tyci"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/providers.json", []byte(body), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 
