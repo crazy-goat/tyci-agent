@@ -500,6 +500,17 @@ func (e *Engine) sessionAwait(L *lua.LState) int {
 		// depth 0 and keeps "subagent".
 		sessionDepth := tools.DepthFromContext(e.ctx) + 1
 		runCtx = tools.WithDepth(runCtx, sessionDepth)
+		// This named-agent session reaches scout-eligible depth (>=1)
+		// without ever going through runSingleTask, which is otherwise the
+		// only stamper of scout's per-caller concurrency bucket (see
+		// WithScoutCaller's doc comment in tools/scout.go). Unlike btw.go's
+		// two sites, a workflow session has no job id to reuse (it isn't
+		// spawned via the subagent/job machinery at all — see the
+		// hasAskParent comment above), so mint a fresh one instead. This
+		// runs once per sessionAwait call, mirroring runSingleTask minting a
+		// fresh todoAgentID once per child invocation rather than once per
+		// session's whole lifetime.
+		runCtx = tools.WithScoutCaller(runCtx, tools.NewScoutCallerID("workflow-session"))
 		if len(def.Tools) == 0 {
 			// Unrestricted named agent: the depth-aware builder adds
 			// "scout" back in at depth 1-3 — safe here because

@@ -307,6 +307,62 @@ func TestScoutTool_ConcurrencyCapRejectsExtraCallFromSameCaller(t *testing.T) {
 	}
 }
 
+// TestScoutTool_DistinctExternalCallersGetDistinctBuckets pins the fix for
+// the residual A-round bug: btw.go's promoted /btw job, its resumed-job
+// path, and internal/workflow/engine.go's named-agent session all reach
+// scout-eligible depth without going through runSingleTask, so before
+// WithScoutCaller existed they all fell back to scoutCallerIDFromContext
+// returning "" and shared ONE 2-slot bucket — an unrelated third caller's
+// scout got refused by a cap that was never meant to apply to it. Here two
+// distinct ids stamped via WithScoutCaller (standing in for two such
+// external callers, e.g. one resumed /btw job and one promoted /btw job)
+// each fill their own maxScoutsPerCaller slots concurrently; both must
+// succeed, proving they landed in separate buckets rather than fighting
+// over a shared one.
+func TestScoutTool_DistinctExternalCallersGetDistinctBuckets(t *testing.T) {
+	defer SnapshotScoutConcurrencyForTesting()()
+
+	release := make(chan struct{})
+	var started sync.WaitGroup
+	started.Add(2 * maxScoutsPerCaller)
+
+	r := &blockingScoutRunner{release: release, started: &started}
+	st := &ScoutTool{Runner: r}
+
+	ctxA := WithScoutCaller(scoutTestCtx(), "external-caller-A")
+	ctxB := WithScoutCaller(scoutTestCtx(), "external-caller-B")
+
+	var wg sync.WaitGroup
+	resultsA := make([]ToolResult, maxScoutsPerCaller)
+	resultsB := make([]ToolResult, maxScoutsPerCaller)
+	for i := 0; i < maxScoutsPerCaller; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			resultsA[i] = st.Run(ctxA, map[string]any{"task": "hold-a"})
+		}(i)
+		go func(i int) {
+			defer wg.Done()
+			resultsB[i] = st.Run(ctxB, map[string]any{"task": "hold-b"})
+		}(i)
+	}
+
+	started.Wait() // all four in-flight calls (2 per caller) have reached the runner
+
+	close(release)
+	wg.Wait()
+	for i, res := range resultsA {
+		if !res.Success {
+			t.Errorf("expected caller A's in-flight scout %d to succeed, got error: %s", i, res.Error)
+		}
+	}
+	for i, res := range resultsB {
+		if !res.Success {
+			t.Errorf("expected caller B's in-flight scout %d to succeed, got error: %s", i, res.Error)
+		}
+	}
+}
+
 // blockingScoutRunner blocks inside RunTask until release is closed,
 // signalling started (once per call) the moment it begins blocking — lets
 // a test know both concurrent calls are genuinely in flight before it

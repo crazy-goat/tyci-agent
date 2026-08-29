@@ -210,6 +210,14 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		// schema/gate mismatch class item 21's depth machinery exists to
 		// prevent, just reached via resume instead of a fresh spawn.
 		runCtx = tools.WithDepth(runCtx, entry.depth)
+		// This resumed job reaches scout-eligible depth (entry.depth >= 1)
+		// without ever going through runSingleTask, which is otherwise the
+		// only stamper of scout's per-caller concurrency bucket (see
+		// WithScoutCaller's doc comment in tools/scout.go). newJobID is
+		// already a process-unique id for this one resumed run — the same
+		// property runSingleTask's todoAgentID has — so reuse it directly
+		// rather than minting a second id.
+		runCtx = tools.WithScoutCaller(runCtx, newJobID)
 		// The forked transcript (entry.msgs) may itself contain todo(...)
 		// calls/results naming ids from entry.todoAgentID's list — carry
 		// that list forward onto newJobID rather than let the resumed agent
@@ -409,6 +417,11 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		// child sink, while this same collector receives streamed output.
 		runCtx = context.WithValue(runCtx, tools.SubagentSinkCtxKey{}, c)
 		runCtx = tools.WithDepth(runCtx, promotedDepth)
+		// Same reasoning as the resumed-job path above: this promoted /btw
+		// job reaches scout-eligible depth without going through
+		// runSingleTask, so it stamps its own scout caller id — jobID is
+		// already process-unique for this one promoted run.
+		runCtx = tools.WithScoutCaller(runCtx, jobID)
 		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
 		runCtx = tools.WithToolGate(runCtx, tools.DenySubagentRecursion())
 		msgs = session.ForkMessagesWithTurn(msgs, btwPromotionTask)
