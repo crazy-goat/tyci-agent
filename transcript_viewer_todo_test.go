@@ -133,7 +133,9 @@ func TestTranscriptProvider_TodoLongContentTruncated(t *testing.T) {
 	line := lines[0]
 	if !strings.Contains(line, "...") {
 		snippet := line
-		if len(snippet) > 500 { snippet = snippet[:500] }
+		if len(snippet) > 500 {
+			snippet = snippet[:500]
+		}
 		t.Fatalf("expected '...' in resolved long content, got %q", snippet)
 	}
 	// Resolved content truncated to 40 via truncateForTranscript
