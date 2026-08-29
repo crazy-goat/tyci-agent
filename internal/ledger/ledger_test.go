@@ -54,6 +54,72 @@ func TestRecord_SplitsMainFromSubagentAndAccumulates(t *testing.T) {
 	}
 }
 
+// TestKind_ScoutIsDistinctFromSubagent pins item 21 round B's addition: a
+// scout's spend must be countable on its own (ScoutUSD), while its token
+// usage still rolls up into Sub alongside ordinary subagents — a scout is a
+// crippled subagent, and the token-side rollup treats it as one; only the
+// dollar figure gets its own line, because telling scout cost apart from
+// subagent cost is the whole point of the split.
+func TestKind_ScoutIsDistinctFromSubagent(t *testing.T) {
+	if got := Scout.String(); got != "scout" {
+		t.Fatalf("Scout.String() = %q, want %q", got, "scout")
+	}
+
+	Reset()
+	t.Cleanup(Reset)
+	u := stream.Usage{Input: 1000, Output: 100}
+	Record(Subagent, "p", "m", "job-1", u)
+	Record(Scout, "p", "m", "job-2", u)
+
+	s := Get()
+	if s.Sub.Output != 200 {
+		t.Fatalf("Sub.Output = %d, want 200 (subagent + scout combined)", s.Sub.Output)
+	}
+	if s.Unpriced != 2 {
+		t.Fatalf("Unpriced = %d, want 2 ('p'/'m' has no catalog price)", s.Unpriced)
+	}
+	// Both rows are unpriced ("p"/"m" is not a real catalog entry), so
+	// SubagentUSD/ScoutUSD/TotalUSD all stay at their zero value here — this
+	// test is about which BUCKET a row would land in, not the dollar
+	// arithmetic itself (see TestGet_ScoutUSDCountsOnItsOwn for that).
+	if s.TotalUSD() != s.MainUSD+s.SubagentUSD+s.ScoutUSD {
+		t.Fatalf("TotalUSD must equal Main+Subagent+Scout, got %v", s)
+	}
+}
+
+// TestGet_ScoutUSDCountsOnItsOwn proves ScoutUSD accumulates independently
+// of SubagentUSD once a row is actually priced — the case
+// TestKind_ScoutIsDistinctFromSubagent above could not exercise, since both
+// its rows were unpriced.
+func TestGet_ScoutUSDCountsOnItsOwn(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+	// pricing.Lookup has no way to answer "priced" for an arbitrary
+	// provider/model without a real catalog on disk, so this test asserts
+	// the ROUTING (which Snapshot field a Scout row's cost lands in)
+	// directly against a hand-built Row rather than going through Record —
+	// mirrors how tui_tokens_test.go tests formatCost against a literal
+	// ledger.Snapshot instead of seeding a catalog.
+	rows = map[key]*Row{
+		{kind: Scout, provider: "p", model: "m", jobID: "j"}: {
+			Kind: Scout, Provider: "p", Model: "m", JobID: "j",
+			Usage: stream.Usage{Input: 1}, USD: 2.5, Priced: true, Runs: 1,
+		},
+	}
+	order = []key{{kind: Scout, provider: "p", model: "m", jobID: "j"}}
+
+	s := Get()
+	if s.ScoutUSD != 2.5 {
+		t.Fatalf("ScoutUSD = %v, want 2.5", s.ScoutUSD)
+	}
+	if s.SubagentUSD != 0 {
+		t.Fatalf("SubagentUSD = %v, want 0 (this row is a Scout, not a Subagent)", s.SubagentUSD)
+	}
+	if s.TotalUSD() != 2.5 {
+		t.Fatalf("TotalUSD = %v, want 2.5", s.TotalUSD())
+	}
+}
+
 // TestByModel_AggregatesAcrossJobIDs covers the regression a per-job Row key
 // introduced: Get().Rows now has one row per {Kind,Provider,Model,JobID}, so
 // twelve subagents on the same model would otherwise render as twelve

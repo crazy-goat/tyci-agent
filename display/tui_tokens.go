@@ -52,10 +52,13 @@ func (m TuiModel) buildContextCost() string {
 
 // formatCost renders the session bill in the Tokens tab. Delegated work is called out
 // separately when there is any, because a surprising total is nearly always
-// children. Unpriced models contribute $0.00 — the owner's explicit choice
-// (2026-08-23), reversing the old "+?" lower-bound marker: the ledger still
-// tracks unpriced rows, so the figure stays available to anything that wants
-// it, but the UI no longer decorates the cost with it.
+// children — scouts get their own "(scout ...)" figure alongside "(sub ...)"
+// rather than folding into it, so a burst of scout calls does not hide
+// inside what looks like an ordinary subagent bill. Unpriced models
+// contribute $0.00 — the owner's explicit choice (2026-08-23), reversing the
+// old "+?" lower-bound marker: the ledger still tracks unpriced rows, so the
+// figure stays available to anything that wants it, but the UI no longer
+// decorates the cost with it.
 func formatCost(snap ledger.Snapshot) string {
 	total := snap.TotalUSD()
 	if total == 0 {
@@ -67,6 +70,9 @@ func formatCost(snap ledger.Snapshot) string {
 	s := fmtUSD(total) + "$"
 	if snap.SubagentUSD > 0 {
 		s += " (sub " + fmtUSD(snap.SubagentUSD) + "$)"
+	}
+	if snap.ScoutUSD > 0 {
+		s += " (scout " + fmtUSD(snap.ScoutUSD) + "$)"
 	}
 	return s
 }
@@ -151,8 +157,11 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 			// every row renders a plain dollar figure.
 			cost := "$" + fmtUSD(r.USD)
 			label := r.Model
-			if r.Kind == ledger.Subagent {
+			switch r.Kind {
+			case ledger.Subagent:
 				label = "↳ " + label
+			case ledger.Scout:
+				label = "↳scout " + label
 			}
 			out = append(out, fmt.Sprintf("  %-*s %5s %s", labelWidth,
 				truncateRunes(label, labelWidth), fmtTokens(r.Usage.Input+r.Usage.Output), cost))
@@ -163,20 +172,32 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 		// spent, not a quantity meant to compare one model's tokens against
 		// another's (see item 1's Subagents-tab tokens-don't-roll-up note,
 		// which is about comparing rows, not this whole-session sum).
-		var totalTokens, delegatedTokens int
+		var totalTokens, delegatedTokens, scoutTokens int
 		for _, r := range byModel {
 			n := r.Usage.Input + r.Usage.Output
 			totalTokens += n
-			if r.Kind == ledger.Subagent {
+			if r.Kind == ledger.Subagent || r.Kind == ledger.Scout {
 				delegatedTokens += n
+			}
+			if r.Kind == ledger.Scout {
+				scoutTokens += n
 			}
 		}
 		snap := ledger.Get()
 		out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "total",
 			fmtTokens(totalTokens), fmtUSD(snap.TotalUSD())))
-		if snap.SubagentUSD > 0 {
+		// "of that delegated" is subagents and scouts combined — the token
+		// figure above already sums both kinds, so the dollar figure next to
+		// it must too, or the two numbers on the same line would describe
+		// different populations. Scout gets its own separate line only when
+		// non-zero, mirroring formatCost's status-bar treatment above.
+		if delegated := snap.SubagentUSD + snap.ScoutUSD; delegated > 0 {
 			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "of that delegated",
-				fmtTokens(delegatedTokens), fmtUSD(snap.SubagentUSD)))
+				fmtTokens(delegatedTokens), fmtUSD(delegated)))
+		}
+		if snap.ScoutUSD > 0 {
+			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "  of that scout",
+				fmtTokens(scoutTokens), fmtUSD(snap.ScoutUSD)))
 		}
 	}
 

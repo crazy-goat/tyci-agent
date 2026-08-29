@@ -59,6 +59,22 @@ func TestFormatCost_CallsOutDelegatedSpend(t *testing.T) {
 	}
 }
 
+// Scout gets its own "(scout ...)" figure alongside "(sub ...)" — item 21
+// round B's whole point is telling scout spend apart from ordinary
+// subagent spend, which a shared figure could never show.
+func TestFormatCost_CallsOutScoutSpendSeparatelyFromSubagent(t *testing.T) {
+	got := formatCost(ledger.Snapshot{MainUSD: 1, SubagentUSD: 2, ScoutUSD: 0.5})
+	if !strings.Contains(got, "3.50$") {
+		t.Fatalf("formatCost = %q, want the combined total (3.50)", got)
+	}
+	if !strings.Contains(got, "sub 2.00$") {
+		t.Fatalf("formatCost = %q, want the subagent share called out", got)
+	}
+	if !strings.Contains(got, "scout 0.500$") {
+		t.Fatalf("formatCost = %q, want the scout share called out", got)
+	}
+}
+
 // A partially-priced session renders the known total as a plain dollar
 // figure, with no "+?" suffix (dropped by decision 2026-08-23).
 func TestFormatCost_MarksLowerBound(t *testing.T) {
@@ -153,6 +169,42 @@ func TestBuildUsageDetail_TotalRowSumsTokensAcrossModels(t *testing.T) {
 	}
 	if !strings.Contains(delegated, "5.2k") {
 		t.Fatalf("delegated row should show only the subagent's token count (5200): %q", delegated)
+	}
+}
+
+// A scout row must render with its own "↳scout" label (distinct from an
+// ordinary subagent's "↳"), and "of that delegated"/"of that scout" must
+// both include it — the per-model breakdown is where a burst of scout
+// calls would otherwise hide inside what looks like an ordinary subagent
+// line.
+func TestBuildUsageDetail_ScoutRowLabeledSeparatelyFromSubagent(t *testing.T) {
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"p":{"id":"p","models":{
+		"m1":{"id":"m1","name":"m1","cost":{"input":1,"output":1}},
+		"m2":{"id":"m2","name":"m2","cost":{"input":1,"output":1}},
+		"m3":{"id":"m3","name":"m3","cost":{"input":1,"output":1}}
+	}}}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+	ledger.Record(ledger.Main, "p", "m1", "", stream.Usage{Input: 1000, Output: 100})
+	ledger.Record(ledger.Subagent, "p", "m2", "", stream.Usage{Input: 5000, Output: 200})
+	ledger.Record(ledger.Scout, "p", "m3", "", stream.Usage{Input: 2000, Output: 300})
+
+	m := TuiModel{modelName: "m1"}
+	lines := strings.Join(m.buildUsageDetail(40), "\n")
+
+	for _, want := range []string{"↳scout m3", "of that delegated", "of that scout"} {
+		if !strings.Contains(lines, want) {
+			t.Errorf("detail missing %q:\n%s", want, lines)
+		}
+	}
+	// The ordinary subagent row must keep its plain "↳" label, not the
+	// scout one, or the two kinds would be indistinguishable again.
+	if strings.Contains(lines, "↳scout m2") {
+		t.Errorf("subagent row m2 must not carry the scout label:\n%s", lines)
 	}
 }
 

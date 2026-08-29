@@ -524,7 +524,15 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// sink, so a child that runs for ten minutes shows up in the parent's
 	// cost figure as it works rather than only when it returns — and a child
 	// that dies on its last iteration still accounts for what it spent.
-	_, err = agent.Run(ctx, mc, ledger.Watch(sink, ledger.Subagent, mc.Provider(), mc.Model(), jobID), &msgs, cfg)
+	//
+	// A scout is recorded under ledger.Scout rather than ledger.Subagent so
+	// its cost is countable on its own (see ledger.Kind's doc comment) —
+	// same jobID either way, so UsageByJob's per-child tracking is unaffected.
+	kind := ledger.Subagent
+	if opts.ScoutMode {
+		kind = ledger.Scout
+	}
+	_, err = agent.Run(ctx, mc, ledger.Watch(sink, kind, mc.Provider(), mc.Model(), jobID), &msgs, cfg)
 	text := strings.TrimSpace(collectedText())
 
 	// stoppedByUser is the kill switch (jobs.Registry.Cancel, reached today
