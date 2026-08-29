@@ -14,29 +14,89 @@ import (
 // 0.1s precision.
 const statusTickInterval = 250 * time.Millisecond
 
-// statusTickCmd returns a command that ticks every statusTickInterval while
-// a request is in flight, keeping the elapsed-time counter in the status bar
-// live.
-func statusTickCmd() tea.Cmd {
-	return tea.Tick(statusTickInterval, func(time.Time) tea.Msg {
+// jobsOnlyTickInterval is the tick cadence once no turn is in flight and the
+// chain is only alive to keep a background job's elapsed/quiet time current
+// (item 57). formatDurationShort and jobDuration are both second-granular,
+// so ticking faster than 1s here would just burn idle CPU for a change
+// nobody can see.
+const jobsOnlyTickInterval = 1 * time.Second
+
+// wantsStatusTick reports whether the status-tick chain has a reason to
+// keep running: a turn is in flight (the original item 56 reason), or a
+// background job is both non-terminal and currently painted somewhere on
+// screen (item 57 — without this, a job's elapsed/quiet time freezes
+// between job.updated events once the turn that started it has ended).
+func (m TuiModel) wantsStatusTick() bool {
+	return !m.reading || m.hasLiveJobsToPaint()
+}
+
+// hasLiveJobsToPaint reports whether some non-terminal backgroundJobs entry
+// is currently visible somewhere on screen. It is not enough for a live job
+// to exist: nothing needs repainting for it unless one of the three places
+// that render a job's duration is actually on screen right now.
+func (m TuiModel) hasLiveJobsToPaint() bool {
+	if len(m.runningBackgroundJobs()) == 0 {
+		// No running/waiting-answer job at all — pruneBackgroundJobsLocked
+		// or terminal-status transitions already got us here.
+		return false
+	}
+	if m.jobsModalActive {
+		return true
+	}
+	if m.sidebarActive && m.sidebarTab == sidebarTabTasks {
+		return true
+	}
+	// The inline jobs panel (renderJobsPanel) renders whenever the main
+	// conversation view renders and runningBackgroundJobs is non-empty —
+	// which it is, since the check above already returned otherwise. The
+	// only way it does NOT render is when some other full-screen overlay
+	// has replaced the main view instead (renderFrame's overlay chain in
+	// tui_view.go); the sidebar does not count here — see its "does not
+	// replace the main view" doc comment — so it's deliberately absent
+	// from this list.
+	return !(m.historySearchActive || m.resumePickerActive || m.todoModalActive ||
+		m.transcriptViewerActive || m.subagentModalActive || m.btwListActive ||
+		m.btwModalActive || m.pickerActive)
+}
+
+// statusTickCmd returns a command that fires once after interval, keeping
+// the status-tick chain (elapsed-time counters in the status bar and, since
+// item 57, the jobs panel/sidebar/jobs-modal) live.
+func statusTickCmd(interval time.Duration) tea.Cmd {
+	return tea.Tick(interval, func(time.Time) tea.Msg {
 		return statusTickMsg{}
 	})
 }
 
-// armStatusTick starts the status-tick chain if (and only if) a turn is
-// actually in flight and no chain is already running. Every place a turn
-// can start — both submit() call sites, and the request-start/phase block
+// armStatusTick starts the status-tick chain if (and only if) something
+// actually needs it and no chain is already running. Every place a turn can
+// start — both submit() call sites, and the request-start/phase block
 // handlers for turns the REPL starts itself without going through submit()
 // — calls this instead of statusTickCmd() directly, so arming is a correct
 // no-op when a chain is already ticking rather than a second, redundant
 // chain (issue: item 56, "waiting for response" freezing on turns that
-// never called submit()).
+// never called submit()). Item 57 widened the "something needs it" check
+// from "!m.reading" to wantsStatusTick(), and added call sites at
+// tuiMsgJobUpdate and sidebar/jobs-modal open so a job-only chain (no turn
+// in flight) gets armed too.
 func (m *TuiModel) armStatusTick() tea.Cmd {
-	if m.reading || m.statusTickArmed {
+	if m.statusTickArmed || !m.wantsStatusTick() {
 		return nil
 	}
 	m.statusTickArmed = true
-	return statusTickCmd()
+	return statusTickCmd(m.tickInterval())
+}
+
+// tickInterval picks the tick chain's cadence: the fast, sub-second
+// statusTickInterval while a turn is actually in flight (status bar elapsed
+// time needs 0.1s precision), or the coarser jobsOnlyTickInterval when the
+// chain is alive only to repaint a background job's second-granular
+// duration.
+func (m TuiModel) tickInterval() time.Duration {
+	if !m.reading {
+		return statusTickInterval
+	}
+	return jobsOnlyTickInterval
 }
 
 func (m TuiModel) Init() tea.Cmd {
@@ -56,11 +116,20 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ignoredJobIDs[id] = true
 		}
 		m.invalidateTotalLines()
+		// No need to touch statusTickArmed here even if a job-only chain is
+		// currently ticking: backgroundJobs is now empty, so the pending
+		// tick's own wantsStatusTick() check (statusTickMsg, above) will
+		// find nothing left to paint and clear the flag itself on its next
+		// fire — same as a job finishing normally. Nothing left stuck.
 		return m, nil
 	}
 	if upd, ok := msg.(tuiMsgJobUpdate); ok {
 		m.applyJobUpdate(upd.Job)
-		return m, nil
+		// A job update can be the only thing keeping a live job's time on
+		// screen after the turn that started it has already ended (item
+		// 57) — arm (or no-op if a chain is already ticking, e.g. mid-turn)
+		// so its elapsed/quiet time doesn't freeze until the next update.
+		return m, m.armStatusTick()
 	}
 	// A finished file scan (tui_filecomplete.go) is pure state: it must land
 	// whatever overlay happens to be open, or the popup would sit on
@@ -116,14 +185,25 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateTodoModal(msg)
 	}
 	if m.jobsModalActive {
-		return m.updateJobsModal(msg)
+		model, cmd := m.updateJobsModal(msg)
+		// The modal is exactly one of the three places a live job's time
+		// is painted (hasLiveJobsToPaint) — re-arm on every message routed
+		// here so opening it (or a job finishing while it's open) doesn't
+		// wait for the next job.updated to start repainting (item 57).
+		next := model.(TuiModel)
+		return next, tea.Batch(cmd, next.armStatusTick())
 	}
 	if m.transcriptViewerActive {
 		return m.updateTranscriptViewer(msg)
 	}
 	if m.sidebarActive {
 		if handled, model, cmd := m.routeSidebarMsg(msg); handled {
-			return model, cmd
+			// Same reasoning as the jobs-modal branch above: a tab switch
+			// (arrow keys, tab-row click) can land on/off the Tasks tab,
+			// changing hasLiveJobsToPaint — re-arm on every routed message
+			// rather than only on the specific switch-tab keys.
+			next := model.(TuiModel)
+			return next, tea.Batch(cmd, next.armStatusTick())
 		}
 		// Falls through to the normal (non-sidebar) handling below: the
 		// sidebar is open but unfocused (m.sidebarFocused == false), and
@@ -153,12 +233,13 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case statusTickMsg:
-		// Keep ticking while request is in flight; stop when idle, and clear
-		// the armed flag so the next turn-start (whichever path it takes)
-		// is free to start a fresh chain instead of finding one "armed"
-		// that has actually already died.
-		if !m.reading {
-			return m, statusTickCmd()
+		// Keep ticking while a turn is in flight OR a live job still needs
+		// painting somewhere (item 57); stop otherwise, and clear the armed
+		// flag so the next thing that needs a chain (turn-start, job
+		// update, sidebar/jobs-modal open) is free to start a fresh one
+		// instead of finding one "armed" that has actually already died.
+		if m.wantsStatusTick() {
+			return m, statusTickCmd(m.tickInterval())
 		}
 		m.statusTickArmed = false
 		return m, nil

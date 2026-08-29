@@ -331,7 +331,7 @@ func TestUpdate_StatusTickMsg_DoesNotMutateModel(t *testing.T) {
 // ─── statusTickCmd ─────────────────────────────────────────────────────
 
 func TestStatusTickCmd_ReturnsNonNil(t *testing.T) {
-	cmd := statusTickCmd()
+	cmd := statusTickCmd(statusTickInterval)
 	if cmd == nil {
 		t.Error("statusTickCmd should return non-nil command")
 	}
@@ -341,7 +341,7 @@ func TestStatusTickCmd_ProducesStatusTickMsg(t *testing.T) {
 	// Verify the command produces a statusTickMsg when executed.
 	// We can't easily run tea commands without a program, but we can
 	// at least verify it's a tick command by checking it returns something.
-	cmd := statusTickCmd()
+	cmd := statusTickCmd(statusTickInterval)
 	_ = cmd // would produce statusTickMsg when executed in tea.Program
 	// This is a basic smoke test that the function doesn't panic.
 }
