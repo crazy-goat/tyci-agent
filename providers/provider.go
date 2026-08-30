@@ -88,6 +88,86 @@ func BuildSubagentSystemPromptWithRole(role string, hasAskParent bool) string {
 	return prompt + "\n---\nYour role:\n" + role
 }
 
+// BuildScoutSystemPrompt is the system prompt for a scout: the read-only,
+// depth-uncapped lookup child defined in tools/scout.go. It is a dedicated
+// builder rather than a fourth includeSubagent-shaped branch through
+// buildSystemPrompt because a scout's actual profile (tools/scout.go's
+// scoutToolProfile: exactly find, read, help — verified at tools/scout.go
+// ~line 94) has almost nothing in common with what buildSystemPrompt
+// assembles for every other agent: no todo-first contract (scout has no todo
+// tool), no lua, no bash, no memory/cron/lock/web, and a hard 15-iteration
+// cap (scoutMaxIterations, tools/scout.go) that means it must go narrow and
+// return a conclusion rather than survey. Threading that through the shared
+// template as a fifth/sixth conditional would mean gating nearly every line
+// in header/posture/contracts/toolLines on "unless this is a scout" — worse
+// than the hasAskParent-shaped gates already there, and the exact pattern
+// F31 (TODO.md) found does not extend. Only the genuinely shared machinery
+// (envContext, projectContextTail) is reused.
+func BuildScoutSystemPrompt() string {
+	wd, date, osName, tempDir := envContext()
+
+	prompt := fmt.Sprintf(`You are tyci's scout: a read-only lookup agent spawned to answer ONE narrow question and return.
+
+Context: date %s · working directory %s (do not leave it) · OS %s · temp dir %s.
+
+What you are:
+- Read-only. You cannot write, edit, or run shell commands, and you cannot spawn subagents or further scouts unless told otherwise.
+- Tools — help(tool) for the manual:
+  - find(pattern, method?): glob file paths, or grep file contents.
+  - read(path, offset?, limit?, lineNumbers?): read a file.
+  - help(tool?): manuals.
+- No todo plan required — start looking immediately.
+- Hard budget: about 15 tool calls total. Go narrow, not broad. Do not attempt a survey — pick the most likely path first, confirm or rule it out, and stop as soon as you have an answer.
+- END with a single self-contained final message that IS your answer — the fact, the file:line, or the conclusion the caller needs. No tool calls, no history, are visible to your caller.
+- Be terse.
+`, date, wd, osName, tempDir)
+
+	return prompt + projectContextTail(wd)
+}
+
+// envContext returns the environment values every system prompt variant
+// splices into its own "Context: date ... " line: today's date, the current
+// working directory (or "." if it could not be determined), the OS name,
+// and the platform's temp-dir spelling. Factored out of buildSystemPrompt so
+// BuildScoutSystemPrompt computes the identical values without duplicating
+// the wd-fallback/tempDir-by-OS logic.
+func envContext() (wd, date, osName, tempDir string) {
+	wd, _ = os.Getwd()
+	if wd == "" {
+		wd = "."
+	}
+	date = time.Now().Format("2006-01-02")
+	osName = runtime.GOOS
+	tempDir = "/tmp"
+	if osName == "windows" {
+		tempDir = "%TEMP%"
+	}
+	return wd, date, osName, tempDir
+}
+
+// projectContextTail is the standing project context every child prompt
+// appends after its own body: AGENTS.md (see instructions.Load's doc
+// comment for why it is loaded via home+wd rather than a bare "./AGENTS.md"
+// read) plus the skills list. Factored out of buildSystemPrompt so
+// BuildScoutSystemPrompt gets the identical tail without duplicating it —
+// deliberately EXCLUDES the "Available agents" section buildSystemPrompt
+// appends for includeSubagent=true, since a scout cannot spawn subagents at
+// all (see BuildScoutSystemPrompt's doc comment) and listing agents would
+// tempt a call to a tool it does not have, exactly as buildSystemPrompt's own
+// comment on that section already says for an ordinary child.
+func projectContextTail(wd string) string {
+	var tail string
+	home, _ := os.UserHomeDir()
+	tail += instructions.Load(home, wd)
+
+	skillsDir := filepath.Join(os.Getenv("HOME"), ".tyci", "skills")
+	if skillNames, err := listSkillNames(skillsDir); err == nil && len(skillNames) > 0 {
+		tail += "\n---\nAvailable skills: " + strings.Join(skillNames, ", ")
+		tail += "\nUse skills(name) to load a skill's full content.\n"
+	}
+	return tail
+}
+
 // hasAskParent is only consulted when includeSubagent is false (a child
 // prompt): it gates both the Tools-section ask_parent line and (via the
 // caller-supplied roleNote) the contract paragraph, so the two never
@@ -95,18 +175,7 @@ func BuildSubagentSystemPromptWithRole(role string, hasAskParent bool) string {
 // for the top-level prompt (includeSubagent=true), which never mentions
 // ask_parent as one of its own tools.
 func buildSystemPrompt(includeSubagent bool, roleNote string, hasAskParent bool) string {
-	wd, _ := os.Getwd()
-	if wd == "" {
-		wd = "."
-	}
-
-	date := time.Now().Format("2006-01-02")
-	osName := runtime.GOOS
-
-	tempDir := "/tmp"
-	if osName == "windows" {
-		tempDir = "%TEMP%"
-	}
+	wd, date, osName, tempDir := envContext()
 
 	// Posture, tool list and contracts are assembled from three pieces rather
 	// than one template: what a top-level agent needs to know and what a child
@@ -194,19 +263,9 @@ Be terse.
 `, header, roleNote, date, wd, osName, tempDir, posture, contracts, toolLines)
 
 	// Standing project context: AGENTS.md plus any notes the agent wrote for
-	// itself in an earlier session. An earlier version of this read only
-	// ./AGENTS.md, which meant nothing was found when tyci ran from a
-	// subdirectory, there was no way to state something once for every
-	// project, and an oversized file was pasted into every request unbounded.
-	home, _ := os.UserHomeDir()
-	prompt += instructions.Load(home, wd)
-
-	// List available skills (names only, not content)
-	skillsDir := filepath.Join(os.Getenv("HOME"), ".tyci", "skills")
-	if skillNames, err := listSkillNames(skillsDir); err == nil && len(skillNames) > 0 {
-		prompt += "\n---\nAvailable skills: " + strings.Join(skillNames, ", ")
-		prompt += "\nUse skills(name) to load a skill's full content.\n"
-	}
+	// itself in an earlier session, and the skills list. See
+	// projectContextTail's doc comment for why this is a shared helper.
+	prompt += projectContextTail(wd)
 
 	// List available agents (name + description only) so the model can
 	// discover the subagent tool's agent parameter instead of guessing a

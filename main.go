@@ -324,9 +324,21 @@ func withIsolatedPool(mc connector.ModelClient, fallbacks []connector.ModelClien
 }
 
 // RunTask runs a plain subagent (no named agent) with the dedicated subagent
-// system prompt.
+// system prompt — or, when opts.ScoutMode is set, the dedicated scout prompt
+// instead. tools/scout.go's ScoutTool.Run never sets task.Agent on the
+// subagentTask it builds, so tools/subagent.go's runSingleTask always takes
+// the def.SystemPrompt == "" branch and calls RunTask (never
+// RunTaskWithSystem) for a scout — verified at tools/subagent.go's
+// runSingleTask, ~line 1555. Before this branch, a scout got
+// BuildSubagentSystemPrompt unconditionally, which advertises tools
+// (lua, bash, todo, memory, cron, ...) a scout does not have and is refused
+// by tools.ScoutGate — see F31 in TODO.md.
 func (r *agentRunner) RunTask(ctx context.Context, task string, model string, opts tools.SubagentOptions) (string, error) {
-	return r.run(ctx, task, model, providers.BuildSubagentSystemPrompt(), opts)
+	system := providers.BuildSubagentSystemPrompt()
+	if opts.ScoutMode {
+		system = providers.BuildScoutSystemPrompt()
+	}
+	return r.run(ctx, task, model, system, opts)
 }
 
 // RunTaskWithSystem runs a subagent with a named agent's system prompt.

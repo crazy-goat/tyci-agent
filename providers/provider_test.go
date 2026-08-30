@@ -972,3 +972,64 @@ func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
 		Request:    req,
 	}, nil
 }
+
+// TestBuildScoutSystemPrompt_OmitsUnavailableTools is F31 (TODO.md): a
+// scout's actual tool profile is exactly find/read/help (tools/scout.go's
+// scoutToolProfile), so its prompt must not advertise tools it will have
+// refused by tools.ScoutGate, and must not claim the plan-first contract
+// ("first tool call must be todo") that only applies to a top-level/ordinary
+// subagent run.
+func TestBuildScoutSystemPrompt_OmitsUnavailableTools(t *testing.T) {
+	prompt := BuildScoutSystemPrompt()
+
+	// Matched as a tool-call form ("write(", not the bare word "write") so
+	// this does not false-positive on the prompt's own prose ("cannot write,
+	// edit, or run shell commands", "cannot spawn subagents") — the claim
+	// being tested is "not advertised as an available tool", not "the word
+	// never appears".
+	unavailable := []string{"lua(", "bash(", "todo(", "write(", "subagent(", "memory(", "cron(", "web("}
+	for _, name := range unavailable {
+		if strings.Contains(prompt, name) {
+			t.Errorf("expected scout prompt to not advertise unavailable tool %q, got:\n%s", name, prompt)
+		}
+	}
+	if strings.Contains(prompt, "first tool call must be todo") {
+		t.Errorf("expected scout prompt to not contain the plan-first contract, got:\n%s", prompt)
+	}
+}
+
+// TestBuildScoutSystemPrompt_MentionsActualTools locks in the positive side:
+// the three tools a scout genuinely has (tools/scout.go's scoutToolProfile)
+// must actually be named.
+func TestBuildScoutSystemPrompt_MentionsActualTools(t *testing.T) {
+	prompt := BuildScoutSystemPrompt()
+
+	for _, name := range []string{"find", "read", "help"} {
+		if !strings.Contains(prompt, name) {
+			t.Errorf("expected scout prompt to mention %q, got:\n%s", name, prompt)
+		}
+	}
+}
+
+// TestBuildScoutSystemPrompt_IncludesAgentsMd checks the scout prompt still
+// gets the project's AGENTS.md via the shared projectContextTail helper —
+// the whole point of factoring that helper out rather than duplicating it.
+func TestBuildScoutSystemPrompt_IncludesAgentsMd(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("Use tabs for indentation."), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+
+	prompt := BuildScoutSystemPrompt()
+	if !strings.Contains(prompt, "--- AGENTS.md ---") {
+		t.Errorf("expected AGENTS.md section in scout prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Use tabs for indentation.") {
+		t.Errorf("expected AGENTS.md content in scout prompt:\n%s", prompt)
+	}
+}
