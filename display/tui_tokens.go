@@ -47,15 +47,15 @@ func (m TuiModel) contextUsed() (used, limit int, ok bool) {
 func (m TuiModel) buildContextCost() string {
 	// rightBudget bounds this function's ENTIRE output. m.width <= 0 (no
 	// resize has happened yet) is treated as "don't know", not "zero room":
-	// this renders unbounded, same as before this budget existed — a real
-	// terminal always resizes to a positive width before the first frame,
-	// so this only matters for a TuiModel built directly in a test.
+	// this renders unbounded, same as before this budget existed. That
+	// unbounded frame IS built before the first WindowSizeMsg, but it is
+	// never painted — paintRegion (tui_painter.go) returns early on
+	// width <= 0 — so the only caller that sees it is a TuiModel built
+	// directly in a test.
 	rightBudget := math.MaxInt
 	if m.width > 0 {
+		// m.width >= 1 here, so m.width-1 is never negative; no floor needed.
 		rightBudget = m.width - 1
-		if rightBudget < 0 {
-			rightBudget = 0
-		}
 	}
 
 	var parts []string
