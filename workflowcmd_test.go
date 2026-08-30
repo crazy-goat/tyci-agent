@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -156,6 +157,23 @@ func TestWorkflowRunCLI_UntrustedProjectSkipsProjectLocalScript(t *testing.T) {
 	if !strings.Contains(string(out), "not trusted") {
 		t.Errorf("workflow run output = %q, want it to mention the project is not trusted", out)
 	}
+	// Round 2 finding 1: the ONLY assertion on this name-based-discovery
+	// path used to be the bare "not trusted" substring check above, which
+	// the warning's UNCONDITIONAL clause (hooks/Lua tools/cron dir/mcp.json,
+	// present on every untrusted run) already satisfies on its own —
+	// hardcoding warnWorkflowUntrusted(false) in workflowcmd.go passed the
+	// whole suite. This is name-based discovery specifically, so the
+	// discoveredByName clause must also be present.
+	if !strings.Contains(string(out), "not discoverable by name") {
+		t.Errorf("workflow run output = %q, want the warning's script-discovery clause on the name-based path", out)
+	}
+	// Round 2 finding 2: pin the warning to exactly once. The RunE
+	// restructure (round 1) exists specifically to stop a second
+	// warnWorkflowUntrusted call from creeping back into the
+	// name-based-discovery branch; nothing before this asserted the count.
+	if n := strings.Count(string(out), "not trusted"); n != 1 {
+		t.Errorf("workflow run output = %q, want exactly one untrusted-project warning, got %d", out, n)
+	}
 	if strings.Contains(string(out), "should not run") {
 		t.Fatalf("untrusted project's script actually ran; output = %q", out)
 	}
@@ -199,12 +217,36 @@ func TestWorkflowRunCLI_ExplicitPathBypassesDiscovery(t *testing.T) {
 
 	cmd := exec.Command(binPath, "workflow", "run", scriptPath)
 	cmd.Env = testEnv()
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("workflow run: %v\n%s", err, out)
+	// stdout and stderr captured separately, not CombinedOutput: this
+	// fixture directory has no recorded trust decision, so (since round 1
+	// finding 1) stderr now carries the untrusted-project warning even for
+	// an explicit path. This test's own concern is narrower: the script's
+	// own result must be exactly its return value on stdout, regardless of
+	// that warning (which TestWorkflowRunCLI_UntrustedProject_Skips... above
+	// asserts the text of).
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("workflow run: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
 	}
-	if got := strings.TrimSpace(string(out)); got != "ran adhoc script" {
-		t.Fatalf("workflow run output = %q, want %q", got, "ran adhoc script")
+	if got := strings.TrimSpace(stdout.String()); got != "ran adhoc script" {
+		t.Fatalf("workflow run stdout = %q, want %q", got, "ran adhoc script")
+	}
+	// Round 2 finding 3: stderr used to be ignored entirely here, which is
+	// exactly why round 2's mutation 2 (a second warnWorkflowUntrusted call
+	// injected into the name-based-discovery branch) went unnoticed by this
+	// test — a stray extra warning, or a leaked ledger summary, on this
+	// EXPLICIT-path run would pass silently. This is an untrusted, explicit
+	// path: exactly one warning, with no "not discoverable by name" clause
+	// (that only applies to name-based discovery, which an explicit path
+	// never goes through), and nothing else on stderr.
+	wantStderr := "tyci: this project is not trusted — project-local hooks (.tyci/hooks.json), " +
+		"Lua tools (.tyci/tools/*.lua), the local cron dir, and mcp.json are skipped this session. " +
+		"Global ~/.tyci/ content still loads as usual. Run tyci in an interactive mode " +
+		"(console/tui) in this directory to be asked, or edit ~/.tyci/trust.json directly.\n"
+	if stderr.String() != wantStderr {
+		t.Fatalf("workflow run stderr = %q, want exactly %q", stderr.String(), wantStderr)
 	}
 }
 
@@ -266,5 +308,138 @@ func TestWorkflowRunCLI_RegistersProvidersWithoutTyciModels(t *testing.T) {
 	_ = err
 	if strings.Contains(string(out), "model not found") {
 		t.Fatalf("workflow run reported \"model not found\" — registerProviders() was not called before running the script; output = %q", out)
+	}
+}
+
+// writeWorkflowEnvProbe writes a project with a .tyci/hooks.json that vetoes
+// the built-in "read" tool with a distinctive message, a .tyci/tools/*.lua
+// tool ("wf-env-probe-tool"), and a probe.lua workflow script (returned as
+// its absolute path) that calls both directly via tyci.run_tool and reports
+// what happened as "<hook-outcome>|<tool-outcome>". Shared by the trusted
+// and untrusted variants of TestWorkflowRunCLI below (F28): the fixture is
+// identical, only trust differs.
+//
+// The probe script uses an EXPLICIT .lua path (see workflowExplicitPath),
+// deliberately bypassing the separate script-DISCOVERY trust gate (already
+// covered by TestWorkflowRunCLI_UntrustedProjectSkipsProjectLocalScript
+// above) so this test isolates the hooks/Lua-tools/cron-dir/MCP trust gate
+// instead — the one setupProjectLocalEnv wires up.
+func writeWorkflowEnvProbe(t *testing.T, project string) (scriptPath string) {
+	t.Helper()
+	tyciDir := filepath.Join(project, ".tyci")
+	toolsDir := filepath.Join(tyciDir, "tools")
+	if err := os.MkdirAll(toolsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hooksJSON := `{"hooks":[{"event":"pre_tool","name":"wf-env-probe-hook","tools":["read"],"command":"echo hook-vetoed-wf-read; exit 1"}]}`
+	if err := os.WriteFile(filepath.Join(tyciDir, "hooks.json"), []byte(hooksJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+	luaTool := `return {
+  schema = { name = "wf-env-probe-tool", description = "d", parameters = {} },
+  run = function(ctx, args) return {success = true, content = "project-tool-ran"} end
+}`
+	if err := os.WriteFile(filepath.Join(toolsDir, "probe.lua"), []byte(luaTool), 0644); err != nil {
+		t.Fatal(err)
+	}
+	script := `
+		local hook_res = tyci.run_tool("read", {path = "wf-env-probe-nonexistent-marker"})
+		local hook_outcome = "ALLOWED"
+		if not hook_res.success then hook_outcome = hook_res.error end
+		local tool_res = tyci.run_tool("wf-env-probe-tool", {})
+		local tool_outcome = "MISSING"
+		if tool_res.success then tool_outcome = tool_res.content end
+		return hook_outcome .. "|" .. tool_outcome
+	`
+	scriptPath = filepath.Join(project, "probe.lua")
+	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return scriptPath
+}
+
+// TestWorkflowRunCLI_TrustedProject_LoadsProjectLocalHooksAndLuaTools is
+// F28's positive case: `tyci workflow run` on a trusted project must load
+// project-local hooks (.tyci/hooks.json) and Lua tools (.tyci/tools/*.lua)
+// exactly like `tyci run`/console/tui already do via initCommon — before
+// the fix, workflowcmd.go called only registerProviders(), so a workflow
+// script's tyci.run_tool calls silently ran with hooks off and no
+// project-local tools regardless of trust.
+func TestWorkflowRunCLI_TrustedProject_LoadsProjectLocalHooksAndLuaTools(t *testing.T) {
+	project := t.TempDir()
+	scriptPath := writeWorkflowEnvProbe(t, project)
+	trustWorkflowProject(t, project)
+
+	cmd := exec.Command(binPath, "workflow", "run", scriptPath)
+	cmd.Dir = project
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("workflow run: %v\n%s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if !strings.Contains(got, "hook-vetoed-wf-read") {
+		t.Errorf("workflow run output = %q, want the project-local hook to have vetoed the read call", got)
+	}
+	if !strings.Contains(got, "project-tool-ran") {
+		t.Errorf("workflow run output = %q, want the project-local Lua tool to have run", got)
+	}
+}
+
+// TestWorkflowRunCLI_UntrustedProject_SkipsProjectLocalHooksAndLuaTools is
+// F28's negative case: an untrusted project must keep getting the same
+// posture initCommon already gives `tyci run` — project-local hooks and Lua
+// tools skipped, exactly the same trust gate .tyci/agents/*.lua discovery
+// goes through (workflowTrustedDirs), not a second, independently-decided
+// trust answer.
+func TestWorkflowRunCLI_UntrustedProject_SkipsProjectLocalHooksAndLuaTools(t *testing.T) {
+	project := t.TempDir()
+	scriptPath := writeWorkflowEnvProbe(t, project)
+	// Deliberately NOT calling trustWorkflowProject: this project has no
+	// recorded trust decision, so trust.Decide (non-interactive here)
+	// defaults to untrusted.
+
+	cmd := exec.Command(binPath, "workflow", "run", scriptPath)
+	cmd.Dir = project
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("workflow run: %v\n%s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if strings.Contains(got, "hook-vetoed-wf-read") {
+		t.Errorf("workflow run output = %q, project-local hook must not run for an untrusted project", got)
+	}
+	if strings.Contains(got, "project-tool-ran") {
+		t.Errorf("workflow run output = %q, project-local Lua tool must not run for an untrusted project", got)
+	}
+	if !strings.Contains(got, "MISSING") {
+		t.Errorf("workflow run output = %q, want the unregistered project-local tool to report MISSING", got)
+	}
+
+	// Round 1 finding 1's regression check: an untrusted project run with
+	// an EXPLICIT .lua path (scriptPath here, not a bare name) used to
+	// print NOTHING about hooks/tools/mcp being skipped — the warning only
+	// fired inside the name-based-discovery branch, which an explicit path
+	// bypasses entirely. Silence there was a silent loss of a protection
+	// the user thinks they have. The warning must appear regardless, and
+	// must name what THIS invocation actually skipped (hooks/Lua
+	// tools/cron dir/mcp.json), not just workflow-script discovery.
+	if !strings.Contains(got, "not trusted") {
+		t.Fatalf("workflow run output = %q, want an untrusted-project warning even for an explicit .lua path", got)
+	}
+	if !strings.Contains(got, "hooks (.tyci/hooks.json)") {
+		t.Errorf("workflow run output = %q, want the warning to name project-local hooks as skipped", got)
+	}
+	if !strings.Contains(got, "Lua tools (.tyci/tools/*.lua)") {
+		t.Errorf("workflow run output = %q, want the warning to name project-local Lua tools as skipped", got)
+	}
+	if !strings.Contains(got, "mcp.json are skipped") {
+		t.Errorf("workflow run output = %q, want the warning to name mcp.json as skipped", got)
+	}
+	// An explicit path never went through name-based script discovery, so
+	// the warning must not claim that gate did anything here.
+	if strings.Contains(got, "not discoverable by name") {
+		t.Errorf("workflow run output = %q, an explicit .lua path bypasses script discovery entirely, so the warning must not mention it", got)
 	}
 }

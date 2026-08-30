@@ -108,6 +108,92 @@ func localModelJSONPath() string {
 	return filepath.Join(wd, ".tyci", "model.json")
 }
 
+// setupProjectLocalEnv wires up the project-local environment every
+// agent-running entry point needs and none may silently skip (TODO.md item
+// F28): hook config (.tyci/hooks.json), Lua tools (.tyci/tools/*.lua), the
+// local cron dir, and — subject to connectMCP and the --no-mcp opt-out —
+// MCP servers (.tyci/mcp.json). All four are gated on `trusted`, which the
+// caller decides (via trust.Decide) and passes in rather than this func
+// deciding it again: initCommon and workflowcmd.go's RunE each make their
+// own trust decision and print their own untrusted warning (initCommon's
+// here in this file; workflowcmd.go's own warnWorkflowUntrusted, which also
+// names this func's four skipped pieces plus, when relevant, workflow-script
+// discovery), and threading the same bool through here guarantees both ever
+// act on exactly one answer instead of risking two different ones from two
+// separate trust.Decide calls, and guarantees this func itself never prints
+// a second, redundant untrusted warning.
+//
+// ctx is wrapped with a cancel only when MCP actually connects (see
+// tools.InitMCP below); the returned context is what the caller must use
+// going forward. The returned shutdown func closes any connected MCP
+// servers and cancels that context, and must be deferred by the caller so a
+// stdio server's child process never outlives this one; it is a no-op when
+// MCP was never connected.
+func setupProjectLocalEnv(ctx context.Context, wd string, trusted, connectMCP, noMCP bool) (context.Context, func()) {
+	// Hook config: global always, project-local only once this project is
+	// trusted. hooks.DefaultPaths puts the global path first and the
+	// project path second, so slicing to [:1] keeps only the global one for
+	// an untrusted project.
+	hookPaths := hooks.DefaultPaths(wd)
+	if !trusted {
+		hookPaths = hookPaths[:1]
+	}
+	// Hook config problems are reported here, before any display owns the
+	// screen, because a hook that failed to load is a silent loss of a
+	// protection the user thinks they have.
+	for _, err := range hooks.Load(hookPaths...) {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
+
+	// Project-local Lua tools (./.tyci/tools) — same trust gate. The global
+	// ones (~/.tyci/tools) are already loaded unconditionally by the tools
+	// package's own init() (see tools.LoadAndRegisterLuaTools).
+	if trusted {
+		tools.LoadAndRegisterLocalLuaTools(filepath.Join(wd, ".tyci", "tools"))
+	}
+
+	// Project-local cron.json (TODO.md item 22) — same trust gate: a
+	// scheduled job is a whole unattended agent turn, the same shape of
+	// risk as hooks.json and .tyci/tools. Recorded here (always, not just
+	// when trusted — an untrusted decision must overwrite whatever a
+	// previous call in this process set, the same reset-on-every-call shape
+	// SetBackgroundBashEnabled/SetJobStarter use) rather than decided again
+	// inside tools/cron.go.
+	if trusted {
+		tools.SetLocalCronDir(filepath.Join(wd, ".tyci"))
+	} else {
+		tools.SetLocalCronDir("")
+	}
+
+	// Project-local mcp.json (TODO.md item 22) is gated the same way, down
+	// at the tools.InitMCP call below: a server definition there can launch
+	// an arbitrary binary, exactly the shape of trust hooks.json and
+	// .tyci/tools already require. `trusted` is threaded through rather
+	// than decided again there.
+	//
+	// Connecting MCP servers ties their child processes' lifetime to ctx
+	// (see mcp.ConnectAllTimeout's stdio path, exec.CommandContext) —
+	// canceling it is the backstop that kills even a server whose handshake
+	// never completed and so was never registered for tools.ShutdownMCP to
+	// close gracefully. --no-mcp always wins over connectMCP. When MCP ends
+	// up not connecting at all, ctx is never wrapped with a cancel: nothing
+	// was started, so there is nothing to cancel or close, and shutdown is
+	// a plain no-op.
+	shutdown := func() {}
+	if connectMCP && !noMCP {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		if err := tools.InitMCP(ctx, wd, trusted); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: MCP: %v\n", err)
+		}
+		shutdown = func() {
+			tools.ShutdownMCP()
+			cancel()
+		}
+	}
+	return ctx, shutdown
+}
+
 // initCommon wires up everything a command needs to run the agent loop:
 // provider/model resolution, debug logging, session, history file, and the
 // tool schema handed to the model.
@@ -159,47 +245,6 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 				"content still loads as usual. Run tyci in an interactive mode (console/tui) "+
 				"in this directory to be asked, or edit ~/.tyci/trust.json directly.")
 	}
-
-	// Hook config: global always, project-local only once this project is
-	// trusted (see trust.Decide above). hooks.DefaultPaths puts the global
-	// path first and the project path second, so slicing to [:1] keeps only
-	// the global one for an untrusted project.
-	hookPaths := hooks.DefaultPaths(wd)
-	if !trusted {
-		hookPaths = hookPaths[:1]
-	}
-	// Hook config problems are reported here, before any display owns the
-	// screen, because a hook that failed to load is a silent loss of a
-	// protection the user thinks they have.
-	for _, err := range hooks.Load(hookPaths...) {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-
-	// Project-local Lua tools (./.tyci/tools) — same trust gate. The global
-	// ones (~/.tyci/tools) are already loaded unconditionally by the tools
-	// package's own init() (see tools.LoadAndRegisterLuaTools).
-	if trusted {
-		tools.LoadAndRegisterLocalLuaTools(filepath.Join(wd, ".tyci", "tools"))
-	}
-
-	// Project-local cron.json (TODO.md item 22) — same trust gate: a
-	// scheduled job is a whole unattended agent turn, the same shape of
-	// risk as hooks.json and .tyci/tools. Recorded here (always, not just
-	// when trusted — an untrusted decision must overwrite whatever a
-	// previous call in this process set, the same reset-on-every-call shape
-	// SetBackgroundBashEnabled/SetJobStarter use) rather than decided again
-	// inside tools/cron.go.
-	if trusted {
-		tools.SetLocalCronDir(filepath.Join(wd, ".tyci"))
-	} else {
-		tools.SetLocalCronDir("")
-	}
-
-	// Project-local mcp.json (TODO.md item 22) is gated the same way, down
-	// at the tools.InitMCP call below: a server definition there can launch
-	// an arbitrary binary, exactly the shape of trust hooks.json and
-	// .tyci/tools already require. `trusted` is threaded through rather
-	// than decided again there.
 
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: maxRetries, BaseBackoff: 4, MaxBackoff: 128}
@@ -265,29 +310,15 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		ctx = context.Background()
 	}
 
-	// shutdown is what the caller defers. Connecting MCP servers ties their
-	// child processes' lifetime to ctx (see mcp.ConnectAllTimeout's stdio
-	// path, exec.CommandContext) — canceling it is the backstop that kills
-	// even a server whose handshake never completed and so was never
-	// registered for tools.ShutdownMCP to close gracefully. --no-mcp always
-	// wins over connectMCP: it exists specifically so a caller that would
-	// otherwise connect (run, for cron's sake — see this func's doc
-	// comment) can still opt out. When MCP ends up not connecting at all,
-	// ctx is never wrapped with a cancel: nothing was started, so there is
-	// nothing to cancel or close, and shutdown is a plain no-op.
+	// Project-local environment: hooks (.tyci/hooks.json), Lua tools
+	// (.tyci/tools/*.lua), the local cron dir, and (subject to connectMCP
+	// and --no-mcp) mcp.json — all gated on `trusted`, decided once above.
+	// Shared with `tyci workflow run` (workflowcmd.go), which has its own
+	// trust decision and its own untrusted warning (warnWorkflowUntrusted)
+	// and must not decide trust a second time here nor print a second
+	// warning.
 	noMCP, _ := cmd.Flags().GetBool("no-mcp")
-	shutdown := func() {}
-	if connectMCP && !noMCP {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithCancel(ctx)
-		if err := tools.InitMCP(ctx, wd, trusted); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: MCP: %v\n", err)
-		}
-		shutdown = func() {
-			tools.ShutdownMCP()
-			cancel()
-		}
-	}
+	ctx, shutdown := setupProjectLocalEnv(ctx, wd, trusted, connectMCP, noMCP)
 
 	debugFlag, _ := cmd.Flags().GetBool("debug")
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")
