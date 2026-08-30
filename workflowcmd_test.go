@@ -268,3 +268,110 @@ func TestWorkflowRunCLI_RegistersProvidersWithoutTyciModels(t *testing.T) {
 		t.Fatalf("workflow run reported \"model not found\" — registerProviders() was not called before running the script; output = %q", out)
 	}
 }
+
+// writeWorkflowEnvProbe writes a project with a .tyci/hooks.json that vetoes
+// the built-in "read" tool with a distinctive message, a .tyci/tools/*.lua
+// tool ("wf-env-probe-tool"), and a probe.lua workflow script (returned as
+// its absolute path) that calls both directly via tyci.run_tool and reports
+// what happened as "<hook-outcome>|<tool-outcome>". Shared by the trusted
+// and untrusted variants of TestWorkflowRunCLI below (F28): the fixture is
+// identical, only trust differs.
+//
+// The probe script uses an EXPLICIT .lua path (see workflowExplicitPath),
+// deliberately bypassing the separate script-DISCOVERY trust gate (already
+// covered by TestWorkflowRunCLI_UntrustedProjectSkipsProjectLocalScript
+// above) so this test isolates the hooks/Lua-tools/cron-dir/MCP trust gate
+// instead — the one setupProjectLocalEnv wires up.
+func writeWorkflowEnvProbe(t *testing.T, project string) (scriptPath string) {
+	t.Helper()
+	tyciDir := filepath.Join(project, ".tyci")
+	toolsDir := filepath.Join(tyciDir, "tools")
+	if err := os.MkdirAll(toolsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	hooksJSON := `{"hooks":[{"event":"pre_tool","name":"wf-env-probe-hook","tools":["read"],"command":"echo hook-vetoed-wf-read; exit 1"}]}`
+	if err := os.WriteFile(filepath.Join(tyciDir, "hooks.json"), []byte(hooksJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+	luaTool := `return {
+  schema = { name = "wf-env-probe-tool", description = "d", parameters = {} },
+  run = function(ctx, args) return {success = true, content = "project-tool-ran"} end
+}`
+	if err := os.WriteFile(filepath.Join(toolsDir, "probe.lua"), []byte(luaTool), 0644); err != nil {
+		t.Fatal(err)
+	}
+	script := `
+		local hook_res = tyci.run_tool("read", {path = "wf-env-probe-nonexistent-marker"})
+		local hook_outcome = "ALLOWED"
+		if not hook_res.success then hook_outcome = hook_res.error end
+		local tool_res = tyci.run_tool("wf-env-probe-tool", {})
+		local tool_outcome = "MISSING"
+		if tool_res.success then tool_outcome = tool_res.content end
+		return hook_outcome .. "|" .. tool_outcome
+	`
+	scriptPath = filepath.Join(project, "probe.lua")
+	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return scriptPath
+}
+
+// TestWorkflowRunCLI_TrustedProject_LoadsProjectLocalHooksAndLuaTools is
+// F28's positive case: `tyci workflow run` on a trusted project must load
+// project-local hooks (.tyci/hooks.json) and Lua tools (.tyci/tools/*.lua)
+// exactly like `tyci run`/console/tui already do via initCommon — before
+// the fix, workflowcmd.go called only registerProviders(), so a workflow
+// script's tyci.run_tool calls silently ran with hooks off and no
+// project-local tools regardless of trust.
+func TestWorkflowRunCLI_TrustedProject_LoadsProjectLocalHooksAndLuaTools(t *testing.T) {
+	project := t.TempDir()
+	scriptPath := writeWorkflowEnvProbe(t, project)
+	trustWorkflowProject(t, project)
+
+	cmd := exec.Command(binPath, "workflow", "run", scriptPath)
+	cmd.Dir = project
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("workflow run: %v\n%s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if !strings.Contains(got, "hook-vetoed-wf-read") {
+		t.Errorf("workflow run output = %q, want the project-local hook to have vetoed the read call", got)
+	}
+	if !strings.Contains(got, "project-tool-ran") {
+		t.Errorf("workflow run output = %q, want the project-local Lua tool to have run", got)
+	}
+}
+
+// TestWorkflowRunCLI_UntrustedProject_SkipsProjectLocalHooksAndLuaTools is
+// F28's negative case: an untrusted project must keep getting the same
+// posture initCommon already gives `tyci run` — project-local hooks and Lua
+// tools skipped, exactly the same trust gate .tyci/agents/*.lua discovery
+// goes through (workflowTrustedDirs), not a second, independently-decided
+// trust answer.
+func TestWorkflowRunCLI_UntrustedProject_SkipsProjectLocalHooksAndLuaTools(t *testing.T) {
+	project := t.TempDir()
+	scriptPath := writeWorkflowEnvProbe(t, project)
+	// Deliberately NOT calling trustWorkflowProject: this project has no
+	// recorded trust decision, so trust.Decide (non-interactive here)
+	// defaults to untrusted.
+
+	cmd := exec.Command(binPath, "workflow", "run", scriptPath)
+	cmd.Dir = project
+	cmd.Env = testEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("workflow run: %v\n%s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if strings.Contains(got, "hook-vetoed-wf-read") {
+		t.Errorf("workflow run output = %q, project-local hook must not run for an untrusted project", got)
+	}
+	if strings.Contains(got, "project-tool-ran") {
+		t.Errorf("workflow run output = %q, project-local Lua tool must not run for an untrusted project", got)
+	}
+	if !strings.Contains(got, "MISSING") {
+		t.Errorf("workflow run output = %q, want the unregistered project-local tool to report MISSING", got)
+	}
+}

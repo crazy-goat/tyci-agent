@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/decodo/tyci/internal/agentdefs"
+	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/internal/trust"
 	"github.com/decodo/tyci/internal/workflow"
 	"github.com/decodo/tyci/session"
@@ -46,19 +48,29 @@ discovery falls back to the global ~/.tyci/agents directory only. This is a
 one-shot CLI invocation (like "tyci run"), so the trust decision never
 blocks on an interactive prompt: an unknown project is treated as untrusted.
 
-NOTE: unlike "tyci run"/"console"/"tui", this command does not (yet) load
-project-local hooks (.tyci/hooks.json), project-local Lua tools
-(.tyci/tools/*.lua), or MCP servers (.tyci/mcp.json). A script's
-tyci.run_tool calls still reach every built-in tool (and any global
-~/.tyci/tools Lua tool) with the runtime tool gate and write-freshness guard
-intact — it is specifically the project-local hooks/tools/MCP wiring that is
-missing here for now.`,
+Like "tyci run"/"console"/"tui", this command loads project-local hooks
+(.tyci/hooks.json), project-local Lua tools (.tyci/tools/*.lua), the local
+cron dir, and connects MCP servers (.tyci/mcp.json) — all gated on the same
+trust decision this command already makes for script discovery (see
+workflowTrustedDirs), via the shared setupProjectLocalEnv helper
+(commands.go) that initCommon also calls. --no-mcp opts out of the MCP
+connect, same as for "tyci run".`,
 	Args: cobra.ExactArgs(1),
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		_, dirs := workflowTrustedDirs()
 		return workflow.ListScriptsIn(dirs), cobra.ShellCompDirectiveNoFileComp
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// workflowTrustedDirs makes the one trust decision this whole
+		// invocation uses (non-interactive, same posture as `tyci run`):
+		// both for whether NAME-based script discovery may resolve into the
+		// project-local .tyci/agents directory below, and for the
+		// project-local hooks/Lua-tools/cron-dir/MCP setup further down
+		// (setupProjectLocalEnv). Decided once, unconditionally — including
+		// for an explicit .lua path, which bypasses only the script-
+		// discovery trust gate, not this one.
+		trusted, dirs := workflowTrustedDirs()
+
 		// An explicit .lua path is a deliberate, direct instruction — the
 		// caller typed the exact file to run, no name-based discovery
 		// involved — so it bypasses the trust gate entirely, the same way
@@ -67,7 +79,6 @@ missing here for now.`,
 		// .tyci/agents directory.
 		path, explicit := workflowExplicitPath(args[0])
 		if !explicit {
-			trusted, dirs := workflowTrustedDirs()
 			if !trusted {
 				fmt.Fprintln(os.Stderr,
 					"tyci: this project is not trusted — project-local workflow scripts "+
@@ -90,13 +101,27 @@ missing here for now.`,
 		// trap for a script that never calls tyci.models() at all.
 		registerProviders()
 
-		engine := workflow.NewEngine(cmd.Context(), workflowPrompt)
+		// Project-local hooks/Lua tools/cron dir/MCP (F28): the same
+		// environment initCommon wires up for `run`/`console`/`tui`, gated
+		// on the same `trusted` value decided above rather than deciding
+		// trust again here (see setupProjectLocalEnv's doc comment on why
+		// that would risk two different answers and a duplicate warning).
+		wd := workflowDir
+		if wd == "" {
+			wd, _ = os.Getwd()
+		}
+		noMCP, _ := cmd.Flags().GetBool("no-mcp")
+		ctx, shutdown := setupProjectLocalEnv(cmd.Context(), wd, trusted, true, noMCP)
+		defer shutdown()
+
+		engine := workflow.NewEngine(ctx, workflowPrompt)
 		engine.WorkDir = workflowDir
 		result, err := engine.Run(path)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), result)
+		printWorkflowLedgerSummary(cmd.ErrOrStderr())
 		return nil
 	},
 }
@@ -116,6 +141,39 @@ var workflowListCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// printWorkflowLedgerSummary prints a one-line token/cost summary of what
+// this invocation's named-agent sessions spent, to w (stderr — see F32's
+// caller: stdout carries the script's own printed result, which a caller
+// may pipe or parse, so this must never touch it).
+//
+// `tyci workflow run` is a one-shot CLI process, not the TUI — the ledger
+// (internal/ledger) it records into (see engine.go's ledger.Watch wrap of
+// the session's sink) has, today, exactly two readers, both in package
+// display (tui_tokens.go, tui_sidebar.go), and neither runs here. Without
+// this, a workflow session's spend would be recorded but never surfaced —
+// an invisible fix. display's own formatting (formatCost et al.) is
+// unexported and built for the TUI's width-constrained status bar
+// (truncation, lipgloss wrapping); reusing it would mean dragging that
+// machinery, and the TUI's own weight, into this CLI path for no benefit,
+// so this formats locally instead, matching the token/cost convention
+// display/tui_tokens.go's Tokens-tab breakdown uses (a row's tokens are
+// Usage.Input+Usage.Output; the dollar figure is Snapshot.TotalUSD()).
+//
+// Prints nothing when the snapshot is empty — a script that ran no agent
+// session (never called tyci.new_session/resume_session, or never awaited
+// one) has nothing to report, and a "$0.00" line for that would be noise.
+func printWorkflowLedgerSummary(w io.Writer) {
+	snap := ledger.Get()
+	if len(snap.Rows) == 0 {
+		return
+	}
+	var tokens int
+	for _, r := range snap.Rows {
+		tokens += r.Usage.Input + r.Usage.Output
+	}
+	fmt.Fprintf(w, "tyci workflow: %d tokens, $%.2f\n", tokens, snap.TotalUSD())
 }
 
 // workflowExplicitPath reports whether name is an existing .lua file path
