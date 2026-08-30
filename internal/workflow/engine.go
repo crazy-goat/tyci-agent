@@ -559,9 +559,8 @@ func (e *Engine) sessionAwait(L *lua.LState) int {
 	// tokens/dollars are recorded nowhere, invisible to ledger.Get(). This
 	// wrap sits OUTSIDE the "if def := session.agentDef; def != nil" block
 	// above, so it covers every session this engine drives, not only a
-	// named-agent one — a PLAIN session (def == nil, the common case: see
-	// this func's own comment on why it stays at depth 0 and keeps
-	// "subagent") is recorded exactly the same way.
+	// named-agent one — a PLAIN session (def == nil, the common case) is
+	// recorded exactly the same way.
 	//
 	// ledger.Subagent for every workflow session, plain ones included: a
 	// script-driven session is delegated work by construction — it is the

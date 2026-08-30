@@ -157,6 +157,23 @@ func TestWorkflowRunCLI_UntrustedProjectSkipsProjectLocalScript(t *testing.T) {
 	if !strings.Contains(string(out), "not trusted") {
 		t.Errorf("workflow run output = %q, want it to mention the project is not trusted", out)
 	}
+	// Round 2 finding 1: the ONLY assertion on this name-based-discovery
+	// path used to be the bare "not trusted" substring check above, which
+	// the warning's UNCONDITIONAL clause (hooks/Lua tools/cron dir/mcp.json,
+	// present on every untrusted run) already satisfies on its own —
+	// hardcoding warnWorkflowUntrusted(false) in workflowcmd.go passed the
+	// whole suite. This is name-based discovery specifically, so the
+	// discoveredByName clause must also be present.
+	if !strings.Contains(string(out), "not discoverable by name") {
+		t.Errorf("workflow run output = %q, want the warning's script-discovery clause on the name-based path", out)
+	}
+	// Round 2 finding 2: pin the warning to exactly once. The RunE
+	// restructure (round 1) exists specifically to stop a second
+	// warnWorkflowUntrusted call from creeping back into the
+	// name-based-discovery branch; nothing before this asserted the count.
+	if n := strings.Count(string(out), "not trusted"); n != 1 {
+		t.Errorf("workflow run output = %q, want exactly one untrusted-project warning, got %d", out, n)
+	}
 	if strings.Contains(string(out), "should not run") {
 		t.Fatalf("untrusted project's script actually ran; output = %q", out)
 	}
@@ -215,6 +232,21 @@ func TestWorkflowRunCLI_ExplicitPathBypassesDiscovery(t *testing.T) {
 	}
 	if got := strings.TrimSpace(stdout.String()); got != "ran adhoc script" {
 		t.Fatalf("workflow run stdout = %q, want %q", got, "ran adhoc script")
+	}
+	// Round 2 finding 3: stderr used to be ignored entirely here, which is
+	// exactly why round 2's mutation 2 (a second warnWorkflowUntrusted call
+	// injected into the name-based-discovery branch) went unnoticed by this
+	// test — a stray extra warning, or a leaked ledger summary, on this
+	// EXPLICIT-path run would pass silently. This is an untrusted, explicit
+	// path: exactly one warning, with no "not discoverable by name" clause
+	// (that only applies to name-based discovery, which an explicit path
+	// never goes through), and nothing else on stderr.
+	wantStderr := "tyci: this project is not trusted — project-local hooks (.tyci/hooks.json), " +
+		"Lua tools (.tyci/tools/*.lua), the local cron dir, and mcp.json are skipped this session. " +
+		"Global ~/.tyci/ content still loads as usual. Run tyci in an interactive mode " +
+		"(console/tui) in this directory to be asked, or edit ~/.tyci/trust.json directly.\n"
+	if stderr.String() != wantStderr {
+		t.Fatalf("workflow run stderr = %q, want exactly %q", stderr.String(), wantStderr)
 	}
 }
 
