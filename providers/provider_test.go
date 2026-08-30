@@ -972,3 +972,100 @@ func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
 		Request:    req,
 	}, nil
 }
+
+// TestBuildScoutSystemPrompt_OmitsUnavailableTools is F31 (TODO.md): a
+// scout's actual tool profile is exactly find/read/help (tools/scout.go's
+// scoutToolProfile), so its prompt must not advertise tools it will have
+// refused by tools.ScoutGate, and must not claim the plan-first contract
+// ("first tool call must be todo") that only applies to a top-level/ordinary
+// subagent run. canSpawnScout=true is used here (the scout-CAN-nest case),
+// which puts "scout(task)" in the prompt too — the delegation line's own
+// wording is covered separately by
+// TestBuildScoutSystemPrompt_DelegationLineMatchesCanSpawnScout below, so
+// this test only needs to hold for the tools genuinely never on a scout's
+// profile — "scout(task)" is not one of those, and is covered there, not here.
+func TestBuildScoutSystemPrompt_OmitsUnavailableTools(t *testing.T) {
+	prompt := BuildScoutSystemPrompt(true)
+
+	// Matched as a tool-call form ("write(", not the bare word "write") so
+	// this does not false-positive on the prompt's own prose ("cannot write,
+	// edit, or run shell commands", "cannot spawn subagents") — the claim
+	// being tested is "not advertised as an available tool", not "the word
+	// never appears".
+	unavailable := []string{"lua(", "bash(", "todo(", "write(", "subagent(", "memory(", "cron(", "web("}
+	for _, name := range unavailable {
+		if strings.Contains(prompt, name) {
+			t.Errorf("expected scout prompt to not advertise unavailable tool %q, got:\n%s", name, prompt)
+		}
+	}
+	if strings.Contains(prompt, "first tool call must be todo") {
+		t.Errorf("expected scout prompt to not contain the plan-first contract, got:\n%s", prompt)
+	}
+}
+
+// TestBuildScoutSystemPrompt_MentionsActualTools locks in the positive side:
+// the three tools a scout genuinely has (tools/scout.go's scoutToolProfile)
+// must actually be named as callable tool forms — not bare substrings,
+// which would also match the ordinary subagent prompt's own prose (e.g.
+// "read" inside "Read-only") and so would pass even if
+// BuildScoutSystemPrompt were stubbed to just return
+// BuildSubagentSystemPrompt().
+func TestBuildScoutSystemPrompt_MentionsActualTools(t *testing.T) {
+	prompt := BuildScoutSystemPrompt(true)
+
+	for _, form := range []string{"find(pattern", "read(path", "help(tool"} {
+		if !strings.Contains(prompt, form) {
+			t.Errorf("expected scout prompt to mention %q, got:\n%s", form, prompt)
+		}
+	}
+}
+
+// TestBuildScoutSystemPrompt_DelegationLineMatchesCanSpawnScout locks in
+// BuildScoutSystemPrompt's own half of the invariant: given canSpawnScout,
+// the "can I spawn another scout" line must say exactly that, with no
+// hedge. The OTHER half — that main.go's RunTask computes canSpawnScout
+// from the right depth via the same tools.AllowedDelegationTool(depth) ==
+// "scout" predicate tools.ScoutSchemaJSONForDepth uses for the schema — is
+// NOT testable here any more: BuildScoutSystemPrompt no longer takes a
+// depth (see its doc comment on why providers must not import tools), so a
+// wrong depth->bool mapping at the call site cannot be caught at this
+// layer. That seam is covered end-to-end by
+// TestRunTask_ScoutMode_PromptAndSchemaAgreeAtEveryDepth in
+// main_scout_prompt_test.go (package main), which drives the real
+// agentRunner.RunTask across depth 0..4 and asserts the wire schema and the
+// wire system prompt agree.
+func TestBuildScoutSystemPrompt_DelegationLineMatchesCanSpawnScout(t *testing.T) {
+	for _, canSpawn := range []bool{true, false} {
+		prompt := BuildScoutSystemPrompt(canSpawn)
+		mentionsScoutTool := strings.Contains(prompt, "scout(task)")
+		if mentionsScoutTool != canSpawn {
+			t.Errorf("canSpawnScout=%v: scout(task) mentioned = %v, want %v:\n%s",
+				canSpawn, mentionsScoutTool, canSpawn, prompt)
+		}
+		if canSpawn && strings.Contains(prompt, "cannot spawn subagents or further scouts") {
+			t.Errorf("canSpawnScout=%v: expected the unconditional \"cannot spawn\" line to be replaced, got:\n%s", canSpawn, prompt)
+		}
+		if !canSpawn && !strings.Contains(prompt, "cannot spawn subagents or further scouts") {
+			t.Errorf("canSpawnScout=%v: expected the unconditional \"cannot spawn\" line, got:\n%s", canSpawn, prompt)
+		}
+	}
+}
+
+// TestBuildScoutSystemPrompt_IncludesAgentsMd checks the scout prompt still
+// gets the project's AGENTS.md via the shared projectContextTail helper —
+// the whole point of factoring that helper out rather than duplicating it.
+func TestBuildScoutSystemPrompt_IncludesAgentsMd(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("Use tabs for indentation."), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	prompt := BuildScoutSystemPrompt(true)
+	if !strings.Contains(prompt, "--- AGENTS.md ---") {
+		t.Errorf("expected AGENTS.md section in scout prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Use tabs for indentation.") {
+		t.Errorf("expected AGENTS.md content in scout prompt:\n%s", prompt)
+	}
+}
