@@ -65,3 +65,47 @@ func TestRunTask_NoScoutMode_UsesSubagentPrompt(t *testing.T) {
 		t.Errorf("expected NOT the scout prompt for a plain subagent, got:\n%s", got)
 	}
 }
+
+// TestRunTask_ScoutMode_PromptAndSchemaAgreeAtEveryDepth is the end-to-end
+// wiring test for F31's round-2 finding: DelegationLineMatchesSchema
+// (providers package) proves BuildScoutSystemPrompt itself is correct given
+// a canSpawnScout bool, but nothing at the level below caught main.go's
+// RunTask computing that bool from the WRONG depth (e.g. an off-by-one)
+// before this test existed — TestRunTask_ScoutMode_UsesScoutPrompt only ever
+// runs at depth 0 (a bare context.Background()), which is a depth where the
+// prompt and the schema trivially agree (neither offers "scout"), so it
+// could never catch a mismatch either.
+//
+// This drives agentRunner.RunTask across every depth a scout can actually
+// encounter (0..4 — see tools.AllowedDelegationTool's doc comment: depth 0
+// is the top level, 1..3 is where a scout may itself spawn one more scout,
+// 4 is past the cap) and asserts the ONE invariant that actually matters:
+// whatever the wire schema says about "scout" being offered, the system
+// prompt's own "can you spawn another scout" line must say the same thing.
+// schemaToolNames is the existing helper from main_delegation_depth_test.go
+// (same package).
+func TestRunTask_ScoutMode_PromptAndSchemaAgreeAtEveryDepth(t *testing.T) {
+	for depth := 0; depth <= 4; depth++ {
+		fake := connectortest.Text("scout answer")
+		ctx := connector.WithModelClient(context.Background(), fake)
+		ctx = tools.WithDepth(ctx, depth)
+
+		r := &agentRunner{}
+		if _, err := r.RunTask(ctx, "look something up", "", tools.SubagentOptions{ScoutMode: true}); err != nil {
+			t.Fatalf("depth %d: RunTask: %v", depth, err)
+		}
+
+		reqs := fake.Requests()
+		if len(reqs) != 1 {
+			t.Fatalf("depth %d: expected 1 request, got %d", depth, len(reqs))
+		}
+		req := reqs[0]
+
+		promptOffersScout := strings.Contains(req.System, "scout(task)")
+		schemaOffersScout := schemaToolNames(t, req.Tools)["scout"]
+		if promptOffersScout != schemaOffersScout {
+			t.Errorf("depth %d: prompt says scout(task) available = %v, schema actually offers \"scout\" = %v — these must agree:\nSystem:\n%s",
+				depth, promptOffersScout, schemaOffersScout, req.System)
+		}
+	}
+}

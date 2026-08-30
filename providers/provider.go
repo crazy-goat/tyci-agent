@@ -12,7 +12,6 @@ import (
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/internal/instructions"
-	"github.com/decodo/tyci/tools"
 )
 
 func BuildSystemPrompt() string {
@@ -92,44 +91,52 @@ func BuildSubagentSystemPromptWithRole(role string, hasAskParent bool) string {
 // BuildScoutSystemPrompt is the system prompt for a scout: the read-only
 // lookup child defined in tools/scout.go. Scouts nest, but not forever —
 // tools.AllowedDelegationTool returns "scout" only for depth 1..3
-// (tools/toolgate.go:277-286), so a scout itself runs at depth 2..4 and the
-// chain terminates at depth 4, where AllowedDelegationTool returns "".
-// It is a dedicated builder rather than a fourth includeSubagent-shaped
-// branch through buildSystemPrompt because a scout's actual profile
-// (tools/scout.go's scoutToolProfile: exactly find, read, help — verified
-// at tools/scout.go ~line 94) has almost nothing in common with what
-// buildSystemPrompt assembles for every other agent: no todo-first contract
-// (scout has no todo tool), no lua, no bash, no memory/cron/lock/web, and a
-// hard 15-ITERATION cap (scoutMaxIterations, tools/scout.go — agent.Config.
-// MaxIterations counts loop iterations, not individual tool calls; one
-// iteration can carry several parallel tool calls, see agent/agent.go:233)
-// that means it must go narrow and return a conclusion rather than survey.
-// Threading that through the shared template as a fifth/sixth conditional
-// would mean gating nearly every line in header/posture/contracts/toolLines
-// on "unless this is a scout" — worse than the hasAskParent-shaped gates
-// already there, and the exact pattern F31 (TODO.md) found does not extend.
-// Only the genuinely shared machinery (envContext, projectContextTail) is
-// reused.
+// (tools/toolgate.go:277-286), so a scout itself runs at depth 2..4 (its
+// caller is at depth 1..3) and the chain terminates at depth 4, where
+// AllowedDelegationTool returns "". It is a dedicated builder rather than a
+// fourth includeSubagent-shaped branch through buildSystemPrompt because a
+// scout's actual profile (tools/scout.go's scoutToolProfile: exactly find,
+// read, help — verified at tools/scout.go ~line 94) has almost nothing in
+// common with what buildSystemPrompt assembles for every other agent: no
+// todo-first contract (scout has no todo tool), no lua, no bash, no
+// memory/cron/lock/web, and a hard 15-ITERATION cap (scoutMaxIterations,
+// tools/scout.go — agent.Config.MaxIterations counts loop iterations, not
+// individual tool calls; one iteration can carry several parallel tool
+// calls, see agent/agent.go:233) that means it must go narrow and return a
+// conclusion rather than survey. Threading that through the shared template
+// as a fifth/sixth conditional would mean gating nearly every line in
+// header/posture/contracts/toolLines on "unless this is a scout" — worse
+// than the hasAskParent-shaped gates already there, and the exact pattern
+// F31 (TODO.md) found does not extend. Only the genuinely shared machinery
+// (envContext, projectContextTail) is reused.
 //
-// depth is this scout's OWN nesting depth (tools.DepthFromContext at the
-// call site, main.go's agentRunner.RunTask) — the same depth
-// tools.ScoutSchemaJSONForDepth(depth) uses to decide whether to append the
-// "scout" tool entry back into this scout's own schema. The prompt's
-// delegation line is derived from the identical
-// tools.AllowedDelegationTool(depth) == "scout" check so the two can never
-// disagree about whether "scout" is really offered — the same bug F31
-// fixes (a prompt describing a tool profile that isn't the caller's real
-// one), just inverted: here the prompt was the one claiming LESS than the
-// schema actually offers. A scout spawned by an ordinary subagent (depth 1)
-// runs its own children at depth 2, which is inside 1..3, so "scout" really
-// is in that common case's schema — "unless told otherwise" in an earlier
-// version of this prompt hedged nothing, because nothing else in the prompt
-// ever told it otherwise.
-func BuildScoutSystemPrompt(depth int) string {
+// canSpawnScout must be computed by the caller from the SAME predicate
+// tools.ScoutSchemaJSONForDepth uses to decide whether to append the
+// "scout" tool entry to this scout's own schema:
+// tools.AllowedDelegationTool(depth) == "scout", where depth
+// (tools.DepthFromContext) is this scout's OWN nesting depth. This function
+// deliberately takes the already-evaluated bool rather than depth itself
+// (or importing package tools to evaluate the predicate here) — providers
+// is a small prompt-text package that tools (the largest package in the
+// repo) does not depend on, and a providers -> tools import would flip
+// that: any future file under tools/ that wanted prompt text would create
+// an import cycle, invisibly, until someone hit it. main.go already imports
+// both packages, so it is the same single source of truth, just evaluated
+// one frame earlier at the call site. The prompt's delegation line is
+// derived from canSpawnScout so it can never disagree with the schema about
+// whether "scout" is really offered — the same bug F31 fixes (a prompt
+// describing a tool profile that isn't the caller's real one), just
+// inverted: here the prompt was the one claiming LESS than the schema
+// actually offers. A scout spawned by an ordinary subagent (depth 1) itself
+// runs at depth 2, which is inside 1..3, so "scout" really is in its own
+// schema — "unless told otherwise" in an earlier version of this prompt
+// hedged nothing, because nothing else in the prompt ever told it
+// otherwise.
+func BuildScoutSystemPrompt(canSpawnScout bool) string {
 	wd, date, osName, tempDir := envContext()
 
 	delegationLine := "You cannot spawn subagents or further scouts."
-	if scoutDelegationAllowed(depth) {
+	if canSpawnScout {
 		delegationLine = "You cannot spawn subagents, but a scout(task) tool IS in your list — use it for one further narrow lookup if the question genuinely splits that way."
 	}
 
@@ -150,17 +157,6 @@ What you are:
 `, date, wd, osName, tempDir, delegationLine)
 
 	return prompt + projectContextTail(wd)
-}
-
-// scoutDelegationAllowed reports whether a scout running at depth actually
-// has the "scout" tool in its own schema — see tools.ScoutSchemaJSONForDepth,
-// which appends the "scout" entry under this exact condition. Kept as its
-// own tiny function (rather than inlined at the call site) so
-// BuildScoutSystemPrompt's one call to tools.AllowedDelegationTool reads as
-// "the same check the schema uses", which is the whole point: the prompt
-// and the schema must never disagree.
-func scoutDelegationAllowed(depth int) bool {
-	return tools.AllowedDelegationTool(depth) == "scout"
 }
 
 // envContext returns the environment values every system prompt variant

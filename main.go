@@ -336,15 +336,19 @@ func withIsolatedPool(mc connector.ModelClient, fallbacks []connector.ModelClien
 //
 // depth (tools.DepthFromContext) is this scout's OWN nesting depth — the
 // same value runSingleTask (tools/subagent.go) stamped onto ctx via
-// WithDepth just before calling here. Passed through to
-// BuildScoutSystemPrompt so its "can you spawn another scout" line agrees
-// with tools.ScoutSchemaJSONForDepth(depth), which is what actually decides
-// whether this scout's own schema carries the "scout" tool — see
-// BuildScoutSystemPrompt's doc comment.
+// WithDepth just before calling here. canSpawnScout is computed from it via
+// tools.AllowedDelegationTool(depth) == "scout" — the SAME predicate
+// tools.ScoutSchemaJSONForDepth(depth) uses to decide whether this scout's
+// own schema carries the "scout" tool — and passed to BuildScoutSystemPrompt
+// so its "can you spawn another scout" line can never disagree with the
+// schema. The predicate is evaluated here, not inside providers, so that
+// package never has to import tools (see BuildScoutSystemPrompt's doc
+// comment for why that edge is worth avoiding).
 func (r *agentRunner) RunTask(ctx context.Context, task string, model string, opts tools.SubagentOptions) (string, error) {
 	system := providers.BuildSubagentSystemPrompt()
 	if opts.ScoutMode {
-		system = providers.BuildScoutSystemPrompt(tools.DepthFromContext(ctx))
+		depth := tools.DepthFromContext(ctx)
+		system = providers.BuildScoutSystemPrompt(tools.AllowedDelegationTool(depth) == "scout")
 	}
 	return r.run(ctx, task, model, system, opts)
 }
