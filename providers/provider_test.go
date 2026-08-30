@@ -983,7 +983,7 @@ func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
 // wording is covered separately by
 // TestBuildScoutSystemPrompt_DelegationLineMatchesCanSpawnScout below, so
 // this test only needs to hold for the tools genuinely never on a scout's
-// profile, "scout(task)" included that's covered there, not here.
+// profile — "scout(task)" is not one of those, and is covered there, not here.
 func TestBuildScoutSystemPrompt_OmitsUnavailableTools(t *testing.T) {
 	prompt := BuildScoutSystemPrompt(true)
 

@@ -76,8 +76,10 @@ func TestRunTask_NoScoutMode_UsesSubagentPrompt(t *testing.T) {
 // prompt and the schema trivially agree (neither offers "scout"), so it
 // could never catch a mismatch either.
 //
-// This drives agentRunner.RunTask across every depth a scout can actually
-// encounter (0..4 — see tools.AllowedDelegationTool's doc comment: depth 0
+// This drives agentRunner.RunTask across depth 0..4, which spans every depth
+// a scout's OWN depth can take (2..4) plus both neighbours — depth 0 and 1
+// are a scout's caller, tested here for branch coverage of the predicate.
+// (See tools.AllowedDelegationTool's doc comment: depth 0
 // is the top level, 1..3 is where a scout may itself spawn one more scout,
 // 4 is past the cap) and asserts the ONE invariant that actually matters:
 // whatever the wire schema says about "scout" being offered, the system
