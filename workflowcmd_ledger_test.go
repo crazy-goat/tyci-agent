@@ -132,6 +132,65 @@ func TestWorkflowRunCLI_LedgerSummary_OnStderrOnly_StdoutOnlyScriptResult(t *tes
 	}
 }
 
+// TestWorkflowRunCLI_LedgerSummary_PrintedEvenOnScriptError is round 1
+// finding 3's regression test: printWorkflowLedgerSummary used to run only
+// on the success path (after engine.Run returned a nil error), so a script
+// that drove one or more session:await() calls — spending real money,
+// already recorded in the ledger — and then hit a Lua error partway through
+// reported nothing at all: exactly the one moment the user most wants the
+// number, and the failure mode F32 exists to prevent. RunE must defer the
+// summary print unconditionally, right after setupProjectLocalEnv, not call
+// it only just before its own final `return nil`.
+func TestWorkflowRunCLI_LedgerSummary_PrintedEvenOnScriptError(t *testing.T) {
+	ledger.Reset()
+	t.Cleanup(ledger.Reset)
+	writeLedgerTestHome(t)
+
+	fake := &connectortest.Fake{
+		ProviderName: "wf-ledger-cli-err-fake",
+		ModelName:    "wf-ledger-cli-err-model",
+		Turns: [][]stream.Event{
+			{
+				stream.TextDelta{Text: "partial"},
+				stream.Finish{Usage: stream.Usage{Input: 6, Output: 1}},
+			},
+		},
+	}
+	providers.Register(&wfLedgerFakeProvider{name: "wf-ledger-cli-err-provider", model: "wf-ledger-cli-err-model", client: fake})
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "summary_err.lua")
+	// Awaits successfully (recording usage in the ledger), then fails with
+	// a plain Lua runtime error — engine.Run must return a non-nil error
+	// from this, while the ledger already holds what the await spent.
+	script := `
+		local s = tyci.new_session("wf-ledger-cli-err-provider/wf-ledger-cli-err-model")
+		local reply, err = s:await()
+		if err then
+			error(err)
+		end
+		error("deliberate failure after a successful session")
+	`
+	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, stdout, stderr := newWorkflowRunTestCmd(t)
+	runErr := workflowRunCmd.RunE(cmd, []string{scriptPath})
+	if runErr == nil {
+		t.Fatal("expected the script's deliberate Lua error to surface as RunE's error")
+	}
+	if got := stdout.String(); got != "" {
+		t.Errorf("stdout = %q, want nothing printed for a script that never returned a result", got)
+	}
+	if !strings.Contains(stderr.String(), "tyci workflow:") {
+		t.Fatalf("stderr = %q, want the ledger summary even though the script errored out after its session:await()", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "7 tokens") {
+		t.Errorf("stderr = %q, want it to report 7 tokens (6 input + 1 output) from the session that ran before the error", stderr.String())
+	}
+}
+
 // TestPrintWorkflowLedgerSummary_EmptySnapshotPrintsNothing is the
 // companion unit test: a script that never runs an agent session (never
 // calls tyci.new_session/resume_session, or never awaits one) leaves the

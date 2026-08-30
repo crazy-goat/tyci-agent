@@ -115,11 +115,13 @@ func localModelJSONPath() string {
 // MCP servers (.tyci/mcp.json). All four are gated on `trusted`, which the
 // caller decides (via trust.Decide) and passes in rather than this func
 // deciding it again: initCommon and workflowcmd.go's RunE each make their
-// own trust decision (with their own call-site-specific untrusted warning,
-// worded for what THEY are skipping), and threading the same bool through
-// here guarantees both ever act on exactly one answer instead of risking
-// two different ones from two separate trust.Decide calls, and guarantees
-// this func itself never prints a second, redundant untrusted warning.
+// own trust decision and print their own untrusted warning (initCommon's
+// here in this file; workflowcmd.go's own warnWorkflowUntrusted, which also
+// names this func's four skipped pieces plus, when relevant, workflow-script
+// discovery), and threading the same bool through here guarantees both ever
+// act on exactly one answer instead of risking two different ones from two
+// separate trust.Decide calls, and guarantees this func itself never prints
+// a second, redundant untrusted warning.
 //
 // ctx is wrapped with a cancel only when MCP actually connects (see
 // tools.InitMCP below); the returned context is what the caller must use
@@ -312,8 +314,9 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	// (.tyci/tools/*.lua), the local cron dir, and (subject to connectMCP
 	// and --no-mcp) mcp.json — all gated on `trusted`, decided once above.
 	// Shared with `tyci workflow run` (workflowcmd.go), which has its own
-	// trust decision and its own untrusted-warning wording and must not
-	// decide trust a second time here nor print a second warning.
+	// trust decision and its own untrusted warning (warnWorkflowUntrusted)
+	// and must not decide trust a second time here nor print a second
+	// warning.
 	noMCP, _ := cmd.Flags().GetBool("no-mcp")
 	ctx, shutdown := setupProjectLocalEnv(ctx, wd, trusted, connectMCP, noMCP)
 

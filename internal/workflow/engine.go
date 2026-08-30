@@ -59,16 +59,17 @@ type Engine struct {
 // (.tyci/tools/*.lua — distinct from the *.lua orchestration scripts this
 // package runs), the local cron dir, and MCP servers (.tyci/mcp.json) are
 // NOT this constructor's concern: `tyci workflow run` (workflowcmd.go, the
-// only production caller of NewEngine) wires all four up itself, trust-gated
-// the same way main.go's initCommon does for `run`/`console`/`tui`/cron
-// (commands.go's setupProjectLocalEnv, shared by both), before ever calling
-// NewEngine — so by the time a script's tyci.run_tool reaches tools.RunTool
-// via e.ctx, the same project-local content initCommon would have loaded is
-// already in place (or correctly absent, for an untrusted project). A
-// caller of NewEngine that skips that setup (as this package's own tests
-// mostly do, deliberately, to stay independent of it) gets only what loads
-// unconditionally: every BUILT-IN tool and any global ~/.tyci/tools Lua
-// tool.
+// only caller of NewEngine in this repo — the exported RunWorkflow below
+// also calls it, but has no caller of its own today) wires all four up
+// itself, trust-gated the same way main.go's initCommon does for
+// `run`/`console`/`tui`/cron (commands.go's setupProjectLocalEnv, shared by
+// both), before ever calling NewEngine — so by the time a script's
+// tyci.run_tool reaches tools.RunTool via e.ctx, the same project-local
+// content initCommon would have loaded is already in place (or correctly
+// absent, for an untrusted project). A caller of NewEngine that skips that
+// setup (as this package's own tests mostly do, deliberately, to stay
+// independent of it) gets only what loads unconditionally: every BUILT-IN
+// tool and any global ~/.tyci/tools Lua tool.
 func NewEngine(ctx context.Context, prompt string) *Engine {
 	L := lua.NewState()
 	tools.RestrictLuaStdlib(L)
@@ -554,14 +555,24 @@ func (e *Engine) sessionAwait(L *lua.LState) int {
 
 	// Run agent. Wrapped in ledger.Watch (F32) the same way every other
 	// agent.Run call site delegating work is (main.go's runSingleTask,
-	// fork.go, btw.go, conductor.go) — otherwise a named-agent workflow
-	// session's tokens/dollars are recorded nowhere, invisible to
-	// ledger.Get(). ledger.Subagent: a workflow session is delegated work,
-	// the same shape as any other child. jobID "" because a workflow
-	// session has no job id of its own — it isn't spawned via the
-	// subagent/job machinery at all (see sessionDepth's comment above on
-	// how it still gets a depth without one), the same already-documented
-	// "untracked job" case main.go uses for a scout (main.go:552-566).
+	// fork.go, btw.go, conductor.go) — otherwise a workflow session's
+	// tokens/dollars are recorded nowhere, invisible to ledger.Get(). This
+	// wrap sits OUTSIDE the "if def := session.agentDef; def != nil" block
+	// above, so it covers every session this engine drives, not only a
+	// named-agent one — a PLAIN session (def == nil, the common case: see
+	// this func's own comment on why it stays at depth 0 and keeps
+	// "subagent") is recorded exactly the same way.
+	//
+	// ledger.Subagent for every workflow session, plain ones included: a
+	// script-driven session is delegated work by construction — it is the
+	// SCRIPT deciding to spend tokens, not a person typing into a
+	// conversation — and this process has no "main conversation" for
+	// ledger.Main to mean anything (there is no top-level agent.Run here
+	// the way main.go has one). jobID "" because a workflow session has no
+	// job id of its own — it isn't spawned via the subagent/job machinery
+	// at all (see sessionDepth's comment above on how it still gets a depth
+	// without one), the same already-documented "untracked job" case
+	// main.go uses for a scout (main.go:552-566).
 	client := provider.Client(modelName)
 	_, err := agent.Run(runCtx, client, ledger.Watch(collector, ledger.Subagent, client.Provider(), client.Model(), ""), &session.messages, cfg)
 	if err != nil {

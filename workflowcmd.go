@@ -73,19 +73,22 @@ connect, same as for "tyci run".`,
 
 		// An explicit .lua path is a deliberate, direct instruction — the
 		// caller typed the exact file to run, no name-based discovery
-		// involved — so it bypasses the trust gate entirely, the same way
-		// ResolveScript/ResolveScriptIn special-case it. Trust only governs
-		// whether NAME-based discovery may resolve into the project-local
-		// .tyci/agents directory.
+		// involved — so it bypasses the SCRIPT-DISCOVERY trust gate
+		// entirely, the same way ResolveScript/ResolveScriptIn special-case
+		// it. It does NOT bypass the separate project-local
+		// hooks/tools/cron-dir/MCP gate below (setupProjectLocalEnv) — an
+		// untrusted project must warn either way, which is why
+		// warnWorkflowUntrusted is called unconditionally just below,
+		// before the explicit/name-based branch. Before this fix, an
+		// untrusted project run with an explicit path skipped hooks/tools/
+		// MCP exactly as it should, but printed NOTHING about it: silent
+		// loss of a protection the user thinks they have (round 1 finding
+		// 1) — the one thing this whole warning exists to prevent.
 		path, explicit := workflowExplicitPath(args[0])
+		if !trusted {
+			warnWorkflowUntrusted(!explicit)
+		}
 		if !explicit {
-			if !trusted {
-				fmt.Fprintln(os.Stderr,
-					"tyci: this project is not trusted — project-local workflow scripts "+
-						"(.tyci/agents/*.lua) are skipped this session. Global ~/.tyci/agents "+
-						"content still loads as usual. Run tyci in an interactive mode "+
-						"(console/tui) in this directory to be asked, or edit ~/.tyci/trust.json directly.")
-			}
 			resolved, err := workflow.ResolveScriptIn(dirs, args[0])
 			if err != nil {
 				return err
@@ -113,6 +116,14 @@ connect, same as for "tyci run".`,
 		noMCP, _ := cmd.Flags().GetBool("no-mcp")
 		ctx, shutdown := setupProjectLocalEnv(cmd.Context(), wd, trusted, true, noMCP)
 		defer shutdown()
+		// Deferred (round 1 finding 3), not called only on the success
+		// path below: engine.Run failing partway through a script (a Lua
+		// error after one or more session:await() calls already spent real
+		// money) must not swallow the one number the user most wants right
+		// then. printWorkflowLedgerSummary already no-ops on an empty
+		// ledger, so this is silent for a script that never ran a session
+		// and dies before ever calling one.
+		defer printWorkflowLedgerSummary(cmd.ErrOrStderr())
 
 		engine := workflow.NewEngine(ctx, workflowPrompt)
 		engine.WorkDir = workflowDir
@@ -121,7 +132,6 @@ connect, same as for "tyci run".`,
 			return err
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), result)
-		printWorkflowLedgerSummary(cmd.ErrOrStderr())
 		return nil
 	},
 }
@@ -143,10 +153,39 @@ var workflowListCmd = &cobra.Command{
 	},
 }
 
+// warnWorkflowUntrusted prints the one untrusted-project warning this
+// command ever prints for a given invocation, naming everything an
+// untrusted decision (internal/trust) actually skips: the project-local
+// environment setupProjectLocalEnv wires up (hooks, Lua tools, the local
+// cron dir, mcp.json) — skipped unconditionally, whether the script was
+// found by name or given as an explicit .lua path — plus, only when
+// discoveredByName, workflow-script discovery itself (.tyci/agents/*.lua).
+//
+// An explicit path bypasses the SCRIPT-DISCOVERY gate only (it is a direct
+// instruction: the caller typed the exact file), not this one — before this
+// fix, `tyci workflow run ./probe.lua` in an untrusted project with a
+// project-local hooks.json veto silently ran with that hook off and printed
+// nothing at all (round 1 finding 1): the same silent-loss-of-protection
+// shape hooks.Load's own error reporting exists to prevent, just for the
+// trust gate instead of a config parse error.
+func warnWorkflowUntrusted(discoveredByName bool) {
+	msg := "tyci: this project is not trusted — project-local hooks (.tyci/hooks.json), " +
+		"Lua tools (.tyci/tools/*.lua), the local cron dir, and mcp.json are skipped this session"
+	if discoveredByName {
+		msg += ", and project-local workflow scripts (.tyci/agents/*.lua) are not discoverable by name"
+	}
+	msg += ". Global ~/.tyci/ content still loads as usual. Run tyci in an interactive mode " +
+		"(console/tui) in this directory to be asked, or edit ~/.tyci/trust.json directly."
+	fmt.Fprintln(os.Stderr, msg)
+}
+
 // printWorkflowLedgerSummary prints a one-line token/cost summary of what
-// this invocation's named-agent sessions spent, to w (stderr — see F32's
+// this invocation's workflow sessions spent, to w (stderr — see F32's
 // caller: stdout carries the script's own printed result, which a caller
-// may pipe or parse, so this must never touch it).
+// may pipe or parse, so this must never touch it). "Sessions" here is every
+// tyci.new_session/resume_session the script drove, not just a named-agent
+// one — see engine.go's ledger.Watch comment for why a plain session (the
+// common case) is recorded exactly the same way.
 //
 // `tyci workflow run` is a one-shot CLI process, not the TUI — the ledger
 // (internal/ledger) it records into (see engine.go's ledger.Watch wrap of
