@@ -12,6 +12,7 @@ import (
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/internal/agentdefs"
 	"github.com/decodo/tyci/internal/instructions"
+	"github.com/decodo/tyci/tools"
 )
 
 func BuildSystemPrompt() string {
@@ -88,41 +89,78 @@ func BuildSubagentSystemPromptWithRole(role string, hasAskParent bool) string {
 	return prompt + "\n---\nYour role:\n" + role
 }
 
-// BuildScoutSystemPrompt is the system prompt for a scout: the read-only,
-// depth-uncapped lookup child defined in tools/scout.go. It is a dedicated
-// builder rather than a fourth includeSubagent-shaped branch through
-// buildSystemPrompt because a scout's actual profile (tools/scout.go's
-// scoutToolProfile: exactly find, read, help — verified at tools/scout.go
-// ~line 94) has almost nothing in common with what buildSystemPrompt
-// assembles for every other agent: no todo-first contract (scout has no todo
-// tool), no lua, no bash, no memory/cron/lock/web, and a hard 15-iteration
-// cap (scoutMaxIterations, tools/scout.go) that means it must go narrow and
-// return a conclusion rather than survey. Threading that through the shared
-// template as a fifth/sixth conditional would mean gating nearly every line
-// in header/posture/contracts/toolLines on "unless this is a scout" — worse
-// than the hasAskParent-shaped gates already there, and the exact pattern
-// F31 (TODO.md) found does not extend. Only the genuinely shared machinery
-// (envContext, projectContextTail) is reused.
-func BuildScoutSystemPrompt() string {
+// BuildScoutSystemPrompt is the system prompt for a scout: the read-only
+// lookup child defined in tools/scout.go. Scouts nest, but not forever —
+// tools.AllowedDelegationTool returns "scout" only for depth 1..3
+// (tools/toolgate.go:277-286), so a scout itself runs at depth 2..4 and the
+// chain terminates at depth 4, where AllowedDelegationTool returns "".
+// It is a dedicated builder rather than a fourth includeSubagent-shaped
+// branch through buildSystemPrompt because a scout's actual profile
+// (tools/scout.go's scoutToolProfile: exactly find, read, help — verified
+// at tools/scout.go ~line 94) has almost nothing in common with what
+// buildSystemPrompt assembles for every other agent: no todo-first contract
+// (scout has no todo tool), no lua, no bash, no memory/cron/lock/web, and a
+// hard 15-ITERATION cap (scoutMaxIterations, tools/scout.go — agent.Config.
+// MaxIterations counts loop iterations, not individual tool calls; one
+// iteration can carry several parallel tool calls, see agent/agent.go:233)
+// that means it must go narrow and return a conclusion rather than survey.
+// Threading that through the shared template as a fifth/sixth conditional
+// would mean gating nearly every line in header/posture/contracts/toolLines
+// on "unless this is a scout" — worse than the hasAskParent-shaped gates
+// already there, and the exact pattern F31 (TODO.md) found does not extend.
+// Only the genuinely shared machinery (envContext, projectContextTail) is
+// reused.
+//
+// depth is this scout's OWN nesting depth (tools.DepthFromContext at the
+// call site, main.go's agentRunner.RunTask) — the same depth
+// tools.ScoutSchemaJSONForDepth(depth) uses to decide whether to append the
+// "scout" tool entry back into this scout's own schema. The prompt's
+// delegation line is derived from the identical
+// tools.AllowedDelegationTool(depth) == "scout" check so the two can never
+// disagree about whether "scout" is really offered — the same bug F31
+// fixes (a prompt describing a tool profile that isn't the caller's real
+// one), just inverted: here the prompt was the one claiming LESS than the
+// schema actually offers. A scout spawned by an ordinary subagent (depth 1)
+// runs its own children at depth 2, which is inside 1..3, so "scout" really
+// is in that common case's schema — "unless told otherwise" in an earlier
+// version of this prompt hedged nothing, because nothing else in the prompt
+// ever told it otherwise.
+func BuildScoutSystemPrompt(depth int) string {
 	wd, date, osName, tempDir := envContext()
+
+	delegationLine := "You cannot spawn subagents or further scouts."
+	if scoutDelegationAllowed(depth) {
+		delegationLine = "You cannot spawn subagents, but a scout(task) tool IS in your list — use it for one further narrow lookup if the question genuinely splits that way."
+	}
 
 	prompt := fmt.Sprintf(`You are tyci's scout: a read-only lookup agent spawned to answer ONE narrow question and return.
 
 Context: date %s · working directory %s (do not leave it) · OS %s · temp dir %s.
 
 What you are:
-- Read-only. You cannot write, edit, or run shell commands, and you cannot spawn subagents or further scouts unless told otherwise.
+- Read-only. You cannot write, edit, or run shell commands. %s
 - Tools — help(tool) for the manual:
   - find(pattern, method?): glob file paths, or grep file contents.
   - read(path, offset?, limit?, lineNumbers?): read a file.
   - help(tool?): manuals.
 - No todo plan required — start looking immediately.
-- Hard budget: about 15 tool calls total. Go narrow, not broad. Do not attempt a survey — pick the most likely path first, confirm or rule it out, and stop as soon as you have an answer.
+- Hard budget: about 15 rounds of tool calls. Go narrow, not broad. Do not attempt a survey — pick the most likely path first, confirm or rule it out, and stop as soon as you have an answer.
 - END with a single self-contained final message that IS your answer — the fact, the file:line, or the conclusion the caller needs. No tool calls, no history, are visible to your caller.
 - Be terse.
-`, date, wd, osName, tempDir)
+`, date, wd, osName, tempDir, delegationLine)
 
 	return prompt + projectContextTail(wd)
+}
+
+// scoutDelegationAllowed reports whether a scout running at depth actually
+// has the "scout" tool in its own schema — see tools.ScoutSchemaJSONForDepth,
+// which appends the "scout" entry under this exact condition. Kept as its
+// own tiny function (rather than inlined at the call site) so
+// BuildScoutSystemPrompt's one call to tools.AllowedDelegationTool reads as
+// "the same check the schema uses", which is the whole point: the prompt
+// and the schema must never disagree.
+func scoutDelegationAllowed(depth int) bool {
+	return tools.AllowedDelegationTool(depth) == "scout"
 }
 
 // envContext returns the environment values every system prompt variant
@@ -148,13 +186,13 @@ func envContext() (wd, date, osName, tempDir string) {
 // projectContextTail is the standing project context every child prompt
 // appends after its own body: AGENTS.md (see instructions.Load's doc
 // comment for why it is loaded via home+wd rather than a bare "./AGENTS.md"
-// read) plus the skills list. Factored out of buildSystemPrompt so
-// BuildScoutSystemPrompt gets the identical tail without duplicating it —
-// deliberately EXCLUDES the "Available agents" section buildSystemPrompt
-// appends for includeSubagent=true, since a scout cannot spawn subagents at
-// all (see BuildScoutSystemPrompt's doc comment) and listing agents would
-// tempt a call to a tool it does not have, exactly as buildSystemPrompt's own
-// comment on that section already says for an ordinary child.
+// read) plus the skills list — nothing else. The "Available agents" section
+// is NOT part of this tail: it lives in buildSystemPrompt itself, appended
+// separately after this helper's return and gated on includeSubagent, so it
+// was never inside the region this function extracts and there is nothing
+// here for it to exclude. Factored out of buildSystemPrompt purely so
+// BuildScoutSystemPrompt gets the identical AGENTS.md+skills tail without
+// duplicating instructions.Load's home+wd wiring.
 func projectContextTail(wd string) string {
 	var tail string
 	home, _ := os.UserHomeDir()

@@ -11,6 +11,7 @@ import (
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/stream"
+	"github.com/decodo/tyci/tools"
 )
 
 func TestBuildSystemPrompt_noAgentsMd(t *testing.T) {
@@ -978,16 +979,20 @@ func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
 // scoutToolProfile), so its prompt must not advertise tools it will have
 // refused by tools.ScoutGate, and must not claim the plan-first contract
 // ("first tool call must be todo") that only applies to a top-level/ordinary
-// subagent run.
+// subagent run. depth=1 is used here (an ordinary scout's own depth), where
+// "scout" is ALSO in its own schema (tools.AllowedDelegationTool(1) ==
+// "scout") — the delegation line's own wording is covered separately by
+// TestBuildScoutSystemPrompt_DelegationLineMatchesSchema below, so this test
+// only needs to hold for the tools genuinely never on a scout's profile.
 func TestBuildScoutSystemPrompt_OmitsUnavailableTools(t *testing.T) {
-	prompt := BuildScoutSystemPrompt()
+	prompt := BuildScoutSystemPrompt(1)
 
 	// Matched as a tool-call form ("write(", not the bare word "write") so
 	// this does not false-positive on the prompt's own prose ("cannot write,
 	// edit, or run shell commands", "cannot spawn subagents") — the claim
 	// being tested is "not advertised as an available tool", not "the word
 	// never appears".
-	unavailable := []string{"lua(", "bash(", "todo(", "write(", "subagent(", "memory(", "cron(", "web("}
+	unavailable := []string{"lua(", "bash(", "todo(", "write(", "memory(", "cron(", "web("}
 	for _, name := range unavailable {
 		if strings.Contains(prompt, name) {
 			t.Errorf("expected scout prompt to not advertise unavailable tool %q, got:\n%s", name, prompt)
@@ -1000,13 +1005,52 @@ func TestBuildScoutSystemPrompt_OmitsUnavailableTools(t *testing.T) {
 
 // TestBuildScoutSystemPrompt_MentionsActualTools locks in the positive side:
 // the three tools a scout genuinely has (tools/scout.go's scoutToolProfile)
-// must actually be named.
+// must actually be named as callable tool forms — not bare substrings,
+// which would also match the ordinary subagent prompt's own prose (e.g.
+// "read" inside "Read-only") and so would pass even if
+// BuildScoutSystemPrompt were stubbed to just return
+// BuildSubagentSystemPrompt().
 func TestBuildScoutSystemPrompt_MentionsActualTools(t *testing.T) {
-	prompt := BuildScoutSystemPrompt()
+	prompt := BuildScoutSystemPrompt(1)
 
-	for _, name := range []string{"find", "read", "help"} {
-		if !strings.Contains(prompt, name) {
-			t.Errorf("expected scout prompt to mention %q, got:\n%s", name, prompt)
+	for _, form := range []string{"find(pattern", "read(path", "help(tool"} {
+		if !strings.Contains(prompt, form) {
+			t.Errorf("expected scout prompt to mention %q, got:\n%s", form, prompt)
+		}
+	}
+}
+
+// TestBuildScoutSystemPrompt_DelegationLineMatchesSchema is the regression
+// test for the reviewer's finding on this prompt: the "can I spawn another
+// scout" line must agree with tools.ScoutSchemaJSONForDepth(depth), which is
+// what actually decides whether "scout" is in this scout's own tool schema
+// (tools.AllowedDelegationTool(depth) == "scout" for depth 1..3). Covers
+// both sides: a depth where scout IS offered (1 and 3 — 1 is the common
+// case, a scout spawned directly by an ordinary subagent) and one where it
+// is NOT (0, top level, which a scout never actually runs at itself but
+// exercises the other branch of the same conditional; and 4, past the cap).
+func TestBuildScoutSystemPrompt_DelegationLineMatchesSchema(t *testing.T) {
+	cases := []struct {
+		depth    int
+		canScout bool
+	}{
+		{depth: 1, canScout: true},
+		{depth: 3, canScout: true},
+		{depth: 0, canScout: false},
+		{depth: 4, canScout: false},
+	}
+	for _, tc := range cases {
+		prompt := BuildScoutSystemPrompt(tc.depth)
+		mentionsScoutTool := strings.Contains(prompt, "scout(task)")
+		if mentionsScoutTool != tc.canScout {
+			t.Errorf("depth %d: scout(task) mentioned = %v, want %v (tools.AllowedDelegationTool(%d) == %q):\n%s",
+				tc.depth, mentionsScoutTool, tc.canScout, tc.depth, tools.AllowedDelegationTool(tc.depth), prompt)
+		}
+		if tc.canScout && strings.Contains(prompt, "cannot spawn subagents or further scouts") {
+			t.Errorf("depth %d: expected the unconditional \"cannot spawn\" line to be replaced, got:\n%s", tc.depth, prompt)
+		}
+		if !tc.canScout && !strings.Contains(prompt, "cannot spawn subagents or further scouts") {
+			t.Errorf("depth %d: expected the unconditional \"cannot spawn\" line, got:\n%s", tc.depth, prompt)
 		}
 	}
 }
@@ -1019,13 +1063,9 @@ func TestBuildScoutSystemPrompt_IncludesAgentsMd(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("Use tabs for indentation."), 0644); err != nil {
 		t.Fatal(err)
 	}
-	origWd, _ := os.Getwd()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
+	t.Chdir(dir)
 
-	prompt := BuildScoutSystemPrompt()
+	prompt := BuildScoutSystemPrompt(1)
 	if !strings.Contains(prompt, "--- AGENTS.md ---") {
 		t.Errorf("expected AGENTS.md section in scout prompt:\n%s", prompt)
 	}

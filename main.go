@@ -333,10 +333,18 @@ func withIsolatedPool(mc connector.ModelClient, fallbacks []connector.ModelClien
 // BuildSubagentSystemPrompt unconditionally, which advertises tools
 // (lua, bash, todo, memory, cron, ...) a scout does not have and is refused
 // by tools.ScoutGate — see F31 in TODO.md.
+//
+// depth (tools.DepthFromContext) is this scout's OWN nesting depth — the
+// same value runSingleTask (tools/subagent.go) stamped onto ctx via
+// WithDepth just before calling here. Passed through to
+// BuildScoutSystemPrompt so its "can you spawn another scout" line agrees
+// with tools.ScoutSchemaJSONForDepth(depth), which is what actually decides
+// whether this scout's own schema carries the "scout" tool — see
+// BuildScoutSystemPrompt's doc comment.
 func (r *agentRunner) RunTask(ctx context.Context, task string, model string, opts tools.SubagentOptions) (string, error) {
 	system := providers.BuildSubagentSystemPrompt()
 	if opts.ScoutMode {
-		system = providers.BuildScoutSystemPrompt()
+		system = providers.BuildScoutSystemPrompt(tools.DepthFromContext(ctx))
 	}
 	return r.run(ctx, task, model, system, opts)
 }
