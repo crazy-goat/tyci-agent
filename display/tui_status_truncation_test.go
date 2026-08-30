@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/decodo/tyci/internal/ledger"
+	"github.com/decodo/tyci/internal/pricing"
+	"github.com/decodo/tyci/stream"
 )
 
 // TestBuildStatus_LongStatusMessageIsTruncatedNotWrapped guards the item-27
@@ -68,6 +71,95 @@ func TestTruncateStatusText_CapsToMaxWidthWithEllipsis(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "…") {
 		t.Fatalf("expected truncated result to end in an ellipsis, got %q", got)
+	}
+}
+
+// TestBuildStatus_NarrowTerminalNeverWraps is F1's regression test,
+// hardened after review found the original single-width version (m.width =
+// 50) passed even on the pre-fix code: that width happened to be wide
+// enough for that one ledger to just barely fit. A single width cannot
+// prove the invariant buildStatus actually needs — "never wider than
+// m.width, for every m.width" — only a sweep can, and only a sweep catches
+// the narrower failure bands review found (0..14, 21, 46, 48 on the first
+// fix attempt: 1..14 because ctxPart itself was never width-bounded, 46/48
+// because the budget left the right side exactly m.width wide with no
+// margin for buildStatus's own 1-column left-side floor).
+//
+// Swept for three ledger shapes: main+subagent+scout (every breakdown
+// clause active), main only (no breakdown at all, so ctxPart alone can
+// still be the failure), and a session entirely on an unpriced model (the
+// "$0.00" branch, which review found bypassed the width check completely).
+// Width 0 is excluded from the sweep and treated separately below — see its
+// own comment for why.
+func TestBuildStatus_NarrowTerminalNeverWraps(t *testing.T) {
+	cases := []struct {
+		name    string
+		catalog string
+		record  func()
+	}{
+		{
+			name: "main+subagent+scout",
+			catalog: `{"p":{"id":"p","models":{
+				"m":{"id":"m","name":"m","cost":{"input":3,"output":15},"limit":{"context":200000}}
+			}}}`,
+			record: func() {
+				ledger.Record(ledger.Main, "p", "m", "", stream.Usage{Input: 198_000, Output: 100})
+				ledger.Record(ledger.Subagent, "p", "m", "job-1", stream.Usage{Input: 1_000_000, Output: 1000})
+				ledger.Record(ledger.Scout, "p", "m", "", stream.Usage{Input: 100_000, Output: 1000})
+			},
+		},
+		{
+			name: "main only",
+			catalog: `{"p":{"id":"p","models":{
+				"m":{"id":"m","name":"m","cost":{"input":3,"output":15},"limit":{"context":200000}}
+			}}}`,
+			record: func() {
+				ledger.Record(ledger.Main, "p", "m", "", stream.Usage{Input: 198_000, Output: 100})
+			},
+		},
+		{
+			name: "fully unpriced session",
+			catalog: `{"unpriced":{"id":"unpriced","models":{
+				"m":{"id":"m","name":"m","limit":{"context":200000}}
+			}}}`,
+			record: func() {
+				ledger.Record(ledger.Main, "unpriced", "m", "", stream.Usage{Input: 198_000, Output: 100})
+				ledger.Record(ledger.Subagent, "unpriced", "m", "job-1", stream.Usage{Input: 1_000_000, Output: 1000})
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestCatalog(t, dir, tc.catalog)
+			t.Setenv("HOME", dir)
+			pricing.Reset()
+			ledger.Reset()
+			t.Cleanup(pricing.Reset)
+			t.Cleanup(ledger.Reset)
+			tc.record()
+
+			m := newModel(nil, "p/m", "", []string{"p/m"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+			m.reading = true
+			m.modelName = "m"
+			m.lastUsage = stream.Usage{Input: 198_000, Output: 100}
+
+			// Width 0 is buildContextCost's own documented "not yet
+			// resized" state, rendered unbounded on purpose (see its
+			// comment) — a live terminal never actually renders at width
+			// 0, so it is not swept here, only smoke-tested for no panic.
+			m.width = 0
+			_ = m.buildStatus()
+
+			for w := 1; w <= 120; w++ {
+				m.width = w
+				result := m.buildStatus()
+				if got := lipgloss.Width(result); got > w {
+					t.Fatalf("width=%d: buildStatus() rendered width = %d, want <= %d; got %q", w, got, w, result)
+				}
+			}
+		})
 	}
 }
 

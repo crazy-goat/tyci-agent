@@ -23,18 +23,32 @@ import (
 
 // Kind separates the conversation from work it delegated. That split is the
 // interesting one: an unexpectedly large bill is nearly always children.
+//
+// Scout is its own Kind rather than folding into Subagent, even though a
+// scout IS a (deliberately crippled) subagent under the hood — item 21
+// round B needs to answer "how much of this did scouts cost" on its own,
+// which a shared bucket with ordinary subagents could never show. Token
+// rollups (Get's Main/Sub) still treat Scout as delegated work alongside
+// Subagent (see Get below) — only the dollar figure gets its own line, since
+// nothing here needs to tell a scout's tokens apart from a subagent's, only
+// its cost.
 type Kind int
 
 const (
 	Main Kind = iota
 	Subagent
+	Scout
 )
 
 func (k Kind) String() string {
-	if k == Subagent {
+	switch k {
+	case Subagent:
 		return "subagent"
+	case Scout:
+		return "scout"
+	default:
+		return "main"
 	}
-	return "main"
 }
 
 // Row is the accumulated usage of one model, for one Kind, for one job.
@@ -44,8 +58,8 @@ func (k Kind) String() string {
 // model collapsing into one shared "subagent" bucket (TODO item 1's
 // Subagents tab needs per-child counts to build its tree). It is empty for
 // the main conversation (which is not a job) and for any call made outside a
-// tracked job — Get/Snapshot's rollups (MainUSD, SubagentUSD, Main, Sub) do
-// not key off JobID at all, so they stay correct regardless.
+// tracked job — Get/Snapshot's rollups (MainUSD, SubagentUSD, ScoutUSD,
+// Main, Sub) do not key off JobID at all, so they stay correct regardless.
 type Row struct {
 	Kind     Kind
 	Provider string
@@ -62,9 +76,11 @@ type Row struct {
 // Snapshot is a consistent view of the ledger, safe to hold and render.
 type Snapshot struct {
 	Rows []Row
-	// MainUSD and SubagentUSD sum only the rows whose model was priced.
+	// MainUSD, SubagentUSD and ScoutUSD sum only the rows whose model was
+	// priced.
 	MainUSD     float64
 	SubagentUSD float64
+	ScoutUSD    float64
 	// Unpriced is the number of rows whose model has no price in the catalog.
 	// Non-zero means TotalUSD is a lower bound, not the bill.
 	Unpriced int
@@ -72,8 +88,8 @@ type Snapshot struct {
 	Sub      stream.Usage
 }
 
-// TotalUSD is main plus delegated work.
-func (s Snapshot) TotalUSD() float64 { return s.MainUSD + s.SubagentUSD }
+// TotalUSD is main plus everything delegated, scouts included.
+func (s Snapshot) TotalUSD() float64 { return s.MainUSD + s.SubagentUSD + s.ScoutUSD }
 
 type key struct {
 	kind     Kind
@@ -153,10 +169,12 @@ func Get() Snapshot {
 			s.Unpriced++
 		case r.Kind == Subagent:
 			s.SubagentUSD += r.USD
+		case r.Kind == Scout:
+			s.ScoutUSD += r.USD
 		default:
 			s.MainUSD += r.USD
 		}
-		if r.Kind == Subagent {
+		if r.Kind == Subagent || r.Kind == Scout {
 			s.Sub.Add(r.Usage)
 		} else {
 			s.Main.Add(r.Usage)

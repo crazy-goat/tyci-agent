@@ -2,8 +2,10 @@ package display
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/decodo/tyci/internal/ledger"
 	"github.com/decodo/tyci/internal/pricing"
 )
@@ -28,47 +30,150 @@ func (m TuiModel) contextUsed() (used, limit int, ok bool) {
 // Everything else that used to live here — per-turn input/output/cache
 // breakdown, timings, throughput — is in the sidebar's Tokens tab, one click
 // away on the context figure.
+//
+// The whole return value is bounded to at most m.width-1 columns (see
+// rightBudget below) — not just the cost half of it. buildStatus
+// (tui_status.go) truncates the LEFT side of the status bar against
+// however wide THIS turns out to be, but never truncates this side itself;
+// an unbounded right therefore forces lipgloss to WRAP the whole status row
+// instead of clipping it, exactly the failure mode buildStatus's own
+// comment documents for an unbounded left ("a single ~106-char message
+// turned a 20-line frame into 20+ lines"). The -1 reserve is not
+// decorative: buildStatus's maxLeftW clamps to a floor of 1 column even
+// when the right side leaves no room at all, so the right side must leave
+// at least that 1 column free or left+right together exceed m.width by
+// exactly the amount the floor forced — measured, not assumed: at
+// rightW == m.width, leftW's forced-1 pushes the total to m.width+1.
 func (m TuiModel) buildContextCost() string {
+	// rightBudget bounds this function's ENTIRE output. m.width <= 0 (no
+	// resize has happened yet) is treated as "don't know", not "zero room":
+	// this renders unbounded, same as before this budget existed. That
+	// unbounded frame IS built before the first WindowSizeMsg, but it is
+	// never painted — paintRegion (tui_painter.go) returns early on
+	// width <= 0 — so the only caller that sees it is a TuiModel built
+	// directly in a test.
+	rightBudget := math.MaxInt
+	if m.width > 0 {
+		// m.width >= 1 here, so m.width-1 is never negative; no floor needed.
+		rightBudget = m.width - 1
+	}
+
 	var parts []string
 
 	used, limit, ok := m.contextUsed()
+	var ctxPart string
 	switch {
 	case ok:
 		// Absolute first, share of the window after it: the token count is
 		// what you compare against yesterday, the percentage is what tells
 		// you how close the wall is.
-		parts = append(parts, fmt.Sprintf("ctx %s (%d%%)", fmtTokens(used), used*100/limit))
+		ctxPart = fmt.Sprintf("ctx %s (%d%%)", fmtTokens(used), used*100/limit)
 	case used > 0:
 		// No published limit: the absolute number is still useful.
-		parts = append(parts, "ctx "+fmtTokens(used))
+		ctxPart = "ctx " + fmtTokens(used)
+	}
+	// ctxPart itself has never been width-bounded (this predates the scout
+	// kind), but rightBudget now makes that a documented invariant instead
+	// of an accident: a ctxPart wider than the whole right-side budget
+	// cannot be shown at all without wrapping the row on its own, so it is
+	// dropped rather than rendered — this is the one case nothing later
+	// (formatCost's own fitting) can rescue, since there is no fallback
+	// shorter than "nothing" for the context figure.
+	if ctxPart != "" && lipgloss.Width(ctxPart) > rightBudget {
+		ctxPart = ""
+	}
+	if ctxPart != "" {
+		parts = append(parts, ctxPart)
 	}
 
 	snap := ledger.Get()
-	if cost := formatCost(snap); cost != "" {
+	// costBudget is whatever rightBudget has left after ctxPart and its
+	// ", " separator (only spent when ctxPart survived the check above).
+	costBudget := rightBudget
+	if ctxPart != "" {
+		costBudget -= lipgloss.Width(ctxPart) + 2 // ", " separator
+		if costBudget < 0 {
+			costBudget = 0
+		}
+	}
+	if cost := formatCost(snap, costBudget); cost != "" {
 		parts = append(parts, cost)
 	}
 	return strings.Join(parts, ", ")
 }
 
-// formatCost renders the session bill in the Tokens tab. Delegated work is called out
+// formatCost renders the session bill for the status bar — buildContextCost
+// is its only caller (the Tokens tab, buildUsageDetail below, builds its own
+// per-model breakdown independently). Delegated work is called out
 // separately when there is any, because a surprising total is nearly always
-// children. Unpriced models contribute $0.00 — the owner's explicit choice
-// (2026-08-23), reversing the old "+?" lower-bound marker: the ledger still
-// tracks unpriced rows, so the figure stays available to anything that wants
-// it, but the UI no longer decorates the cost with it.
-func formatCost(snap ledger.Snapshot) string {
+// children — scouts get their own "(scout ...)" figure alongside "(sub ...)"
+// rather than folding into it, so a burst of scout calls does not hide
+// inside what looks like an ordinary subagent bill. Unpriced models
+// contribute $0.00 — the owner's explicit choice (2026-08-23), reversing the
+// old "+?" lower-bound marker: the ledger still tracks unpriced rows, so the
+// figure stays available to anything that wants it, but the UI no longer
+// decorates the cost with it.
+//
+// maxWidth caps the rendered string so the status bar's right side can
+// never itself wrap the row (see buildContextCost's budget comment). When
+// the full breakdown doesn't fit, the two parenthetical clauses collapse
+// into one shared bracket first ("(sub X$ scout Y$)" instead of two
+// separate ones) — cheaper than dropping one outright, since both figures
+// stay visible on a merely-tight terminal. Only on a terminal too narrow
+// even for that does the breakdown disappear, falling back to the bare
+// total; and on a terminal too narrow even for the bare total, the whole
+// cost figure is omitted rather than truncated mid-number, which would
+// misrepresent the bill.
+func formatCost(snap ledger.Snapshot, maxWidth int) string {
 	total := snap.TotalUSD()
+	fits := func(s string) bool { return lipgloss.Width(s) <= maxWidth }
+
 	if total == 0 {
 		if snap.Unpriced == 0 {
 			return ""
 		}
-		return "$0.00"
+		// "$0.00" goes through the same fits check as every other rendered
+		// form below — a caller squeezing maxWidth down for a narrow
+		// terminal must not have this one branch bypass it (that bypass
+		// was the bug: a session with only unpriced usage could render
+		// "$0.00" past maxWidth with nothing else in this function ever
+		// getting a chance to drop it).
+		if fits("$0.00") {
+			return "$0.00"
+		}
+		return ""
 	}
-	s := fmtUSD(total) + "$"
+
+	base := fmtUSD(total) + "$"
+	full := base
 	if snap.SubagentUSD > 0 {
-		s += " (sub " + fmtUSD(snap.SubagentUSD) + "$)"
+		full += " (sub " + fmtUSD(snap.SubagentUSD) + "$)"
 	}
-	return s
+	if snap.ScoutUSD > 0 {
+		full += " (scout " + fmtUSD(snap.ScoutUSD) + "$)"
+	}
+	if fits(full) {
+		return full
+	}
+
+	var bits []string
+	if snap.SubagentUSD > 0 {
+		bits = append(bits, "sub "+fmtUSD(snap.SubagentUSD)+"$")
+	}
+	if snap.ScoutUSD > 0 {
+		bits = append(bits, "scout "+fmtUSD(snap.ScoutUSD)+"$")
+	}
+	if len(bits) > 0 {
+		merged := base + " (" + strings.Join(bits, " ") + ")"
+		if fits(merged) {
+			return merged
+		}
+	}
+
+	if fits(base) {
+		return base
+	}
+	return ""
 }
 
 // fmtUSD keeps small bills legible: cents matter at $0.03, they do not at $12.
@@ -151,8 +256,11 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 			// every row renders a plain dollar figure.
 			cost := "$" + fmtUSD(r.USD)
 			label := r.Model
-			if r.Kind == ledger.Subagent {
+			switch r.Kind {
+			case ledger.Subagent:
 				label = "↳ " + label
+			case ledger.Scout:
+				label = "↳scout " + label
 			}
 			out = append(out, fmt.Sprintf("  %-*s %5s %s", labelWidth,
 				truncateRunes(label, labelWidth), fmtTokens(r.Usage.Input+r.Usage.Output), cost))
@@ -163,20 +271,32 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 		// spent, not a quantity meant to compare one model's tokens against
 		// another's (see item 1's Subagents-tab tokens-don't-roll-up note,
 		// which is about comparing rows, not this whole-session sum).
-		var totalTokens, delegatedTokens int
+		var totalTokens, delegatedTokens, scoutTokens int
 		for _, r := range byModel {
 			n := r.Usage.Input + r.Usage.Output
 			totalTokens += n
-			if r.Kind == ledger.Subagent {
+			if r.Kind == ledger.Subagent || r.Kind == ledger.Scout {
 				delegatedTokens += n
+			}
+			if r.Kind == ledger.Scout {
+				scoutTokens += n
 			}
 		}
 		snap := ledger.Get()
 		out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "total",
 			fmtTokens(totalTokens), fmtUSD(snap.TotalUSD())))
-		if snap.SubagentUSD > 0 {
+		// "of that delegated" is subagents and scouts combined — the token
+		// figure above already sums both kinds, so the dollar figure next to
+		// it must too, or the two numbers on the same line would describe
+		// different populations. Scout gets its own separate line only when
+		// non-zero, mirroring formatCost's status-bar treatment above.
+		if delegated := snap.SubagentUSD + snap.ScoutUSD; delegated > 0 {
 			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "of that delegated",
-				fmtTokens(delegatedTokens), fmtUSD(snap.SubagentUSD)))
+				fmtTokens(delegatedTokens), fmtUSD(delegated)))
+		}
+		if snap.ScoutUSD > 0 {
+			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "  of that scout",
+				fmtTokens(scoutTokens), fmtUSD(snap.ScoutUSD)))
 		}
 	}
 

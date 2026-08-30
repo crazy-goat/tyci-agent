@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"os"
 	"testing"
 
 	"github.com/decodo/tyci/internal/pricing"
@@ -51,6 +52,88 @@ func TestRecord_SplitsMainFromSubagentAndAccumulates(t *testing.T) {
 	}
 	if s.Main.Output != 200 || s.Sub.Output != 100 {
 		t.Fatalf("main/sub totals = %d/%d, want 200/100", s.Main.Output, s.Sub.Output)
+	}
+}
+
+// TestKind_ScoutIsDistinctFromSubagent pins item 21 round B's addition: a
+// scout's spend must be countable on its own (ScoutUSD), while its token
+// usage still rolls up into Sub alongside ordinary subagents — a scout is a
+// crippled subagent, and the token-side rollup treats it as one; only the
+// dollar figure gets its own line, because telling scout cost apart from
+// subagent cost is the whole point of the split.
+func TestKind_ScoutIsDistinctFromSubagent(t *testing.T) {
+	if got := Scout.String(); got != "scout" {
+		t.Fatalf("Scout.String() = %q, want %q", got, "scout")
+	}
+
+	Reset()
+	t.Cleanup(Reset)
+	u := stream.Usage{Input: 1000, Output: 100}
+	Record(Subagent, "p", "m", "job-1", u)
+	Record(Scout, "p", "m", "job-2", u)
+
+	s := Get()
+	if s.Sub.Output != 200 {
+		t.Fatalf("Sub.Output = %d, want 200 (subagent + scout combined)", s.Sub.Output)
+	}
+	if s.Unpriced != 2 {
+		t.Fatalf("Unpriced = %d, want 2 ('p'/'m' has no catalog price)", s.Unpriced)
+	}
+	// Both rows are unpriced ("p"/"m" is not a real catalog entry), so
+	// SubagentUSD/ScoutUSD/TotalUSD all stay at their zero value here — this
+	// test is about which BUCKET a row would land in, not the dollar
+	// arithmetic itself (see TestGet_ScoutUSDCountsOnItsOwn for that).
+	if s.TotalUSD() != s.MainUSD+s.SubagentUSD+s.ScoutUSD {
+		t.Fatalf("TotalUSD must equal Main+Subagent+Scout, got %v", s)
+	}
+}
+
+// TestGet_ScoutUSDCountsOnItsOwn proves ScoutUSD accumulates independently
+// of SubagentUSD once a row is actually priced — the case
+// TestKind_ScoutIsDistinctFromSubagent above could not exercise, since both
+// its rows were unpriced.
+func TestGet_ScoutUSDCountsOnItsOwn(t *testing.T) {
+	// A real, priced catalog entry — via Record, not by poking the package's
+	// unexported rows/order globals directly — so this exercises the actual
+	// write path (Record -> pricing.Lookup -> Cost) instead of asserting
+	// against a hand-built Row that could drift from what Record would ever
+	// produce. writeTestCatalog mirrors display/tui_tokens_test.go's helper
+	// of the same name (that one lives in a different package, so it can't
+	// be reused directly).
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"p":{"id":"p","models":{"m":{"id":"m","name":"m","cost":{"input":1,"output":1}}}}}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	t.Cleanup(pricing.Reset)
+
+	Reset()
+	t.Cleanup(Reset)
+	// 1,000,000 input @ $1/M + 1,500,000 output @ $1/M = $2.5.
+	Record(Scout, "p", "m", "j", stream.Usage{Input: 1_000_000, Output: 1_500_000})
+
+	s := Get()
+	if s.ScoutUSD != 2.5 {
+		t.Fatalf("ScoutUSD = %v, want 2.5", s.ScoutUSD)
+	}
+	if s.SubagentUSD != 0 {
+		t.Fatalf("SubagentUSD = %v, want 0 (this row is a Scout, not a Subagent)", s.SubagentUSD)
+	}
+	if s.TotalUSD() != 2.5 {
+		t.Fatalf("TotalUSD = %v, want 2.5", s.TotalUSD())
+	}
+}
+
+// writeTestCatalog seeds a minimal models.dev-shaped provider catalog under
+// homeDir/.tyci/providers.json — mirrors display/tui_tokens_test.go's
+// helper of the same name (different package, so not directly reusable).
+func writeTestCatalog(t *testing.T, homeDir, body string) {
+	t.Helper()
+	dir := homeDir + "/.tyci"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/providers.json", []byte(body), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 
