@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-02
+
+First release: a CLI that runs LLM agents with a multi-turn agent loop, tool execution, session persistence, streaming responses and a TUI, configured through a JSON model registry.
+
 ### Added
 - `bin/lint.sh` runs `golangci-lint fmt --diff`, `golangci-lint run`, `go vet` and shellcheck; `--fix` applies `golangci-lint fmt` first. `make lint` calls it and the CI `lint` job runs only this script with pinned golangci-lint and shellcheck (#102)
 - `docs/workflow.md` and `docs/release-workflow.md` follow the shared crazy-goat templates; project commands live in the new `AGENTS.md`
@@ -26,3 +30,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Findings of `golangci-lint` (unchecked errors, deprecated `x/ansi` mode constants, empty branches, redundant conversions and unformatted files), so `lint` passes again (#102)
+- Tests no longer depend on the developer's `~/.tyci`, the PTY tests work on Linux CI, and the CI test jobs pass again
