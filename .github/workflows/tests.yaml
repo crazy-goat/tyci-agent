@@ -1,0 +1,106 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Changes
+    uses: crazy-goat/.github/.github/workflows/changes.yml@main
+    with:
+      # Not every Markdown file is documentation: internal/agentdefs/builtin/*.md is
+      # embedded in the binary and read by tests, so only top-level docs are listed.
+      docs-regex: '^((README|CHANGELOG|AGENTS|TODO|CONTRIBUTING)\.md|docs/.*|LICENSE.*|\.github/ISSUE_TEMPLATE/.*|\.github/pull_request_template\.md|\.gitignore)$'
+
+  docs:
+    name: Docs
+    uses: crazy-goat/.github/.github/workflows/docs-check.yml@main
+
+  lint:
+    name: Lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.13.2/install.sh \
+            | sh -s -- -b "$HOME/.local/bin" v2.13.2
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install shellcheck
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz \
+            | tar -xJ --strip-components=1 -C "$HOME/.local/bin" shellcheck-v0.11.0/shellcheck
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: shellcheck --version
+      - run: bin/lint.sh
+
+  test:
+    name: Go test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - run: go build ./...
+      - run: go test ./... -count=1
+      - run: go test -race ./... -count=1
+
+  test-tagged:
+    name: Go test (noanthropic,nogemini)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - run: go build -tags "noanthropic,nogemini" ./...
+      - run: go test -tags "noanthropic,nogemini" ./... -count=1
+
+  ci-ok:
+    name: ci-ok
+    needs: [changes, docs, lint, test, test-tagged]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check results
+        env:
+          CODE: ${{ needs.changes.outputs.code }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Code changes: $CODE"
+          echo "Results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in failure|cancelled) exit 1 ;; esac
+          done
+          # Documentation-only changes skip the heavy jobs; code changes need all of them.
+          if [ "$CODE" = "true" ]; then
+            for r in $RESULTS; do
+              [ "$r" = "success" ] || exit 1
+            done
+          fi
