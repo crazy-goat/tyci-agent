@@ -41,10 +41,10 @@ In `CHANGELOG.md`:
 - Add a fresh empty `## [Unreleased]` above it.
 - Group entries under Added, Changed, Deprecated, Removed, Fixed, Security.
 - Update the compare links at the bottom, if the file has them.
-- Bump the version in files that carry it (`composer.json` does not need it, but
-  `package.json`, `version.go`, extension headers do). See `AGENTS.md`.
+- There is no version constant to bump: the version comes from the tag.
 
-Open a PR titled `chore: release vX.Y.Z`, wait for `ci-ok`, squash merge.
+Open a PR titled `chore: release vX.Y.Z`, wait for `ci-ok`, squash merge
+(`gh pr merge --squash --delete-branch`).
 
 ## 4. Tag
 
@@ -58,12 +58,13 @@ git push origin vX.Y.Z
 
 ## 5. GitHub Release
 
-Pushing the tag starts `.github/workflows/release.yml`, which calls the shared
-workflow from `crazy-goat/.github`. It creates the GitHub Release with the notes
-from the matching `CHANGELOG.md` section, and fails when the section is missing.
-
-Repositories that build binaries or images run their build first. Only the last
-step (creating the release) is shared.
+Pushing the tag starts `.github/workflows/release.yaml`. It is self-contained: it builds
+the four `tyci_<os>_<arch>` binaries (linux and darwin, amd64 and arm64), creates the
+GitHub Release with the notes from the matching `CHANGELOG.md` section, and attaches the
+binaries and a `checksums.txt` file. It fails when the section is missing. The workflow
+reads `CHANGELOG.md` from the tagged commit, so the release PR with the `## [X.Y.Z]`
+section must be **merged before** you tag. Tags with a `-` (for example `v0.1.0-rc.1`)
+become pre-releases.
 
 ```bash
 gh run watch
@@ -80,7 +81,7 @@ Make sure the next milestone `vX.Y.(Z+1)` (or the next minor) exists.
 
 ## 7. After the release
 
-- Check that install instructions work with the new version (Packagist, Go proxy, ...).
+- Check that install instructions work with the new version (release binaries and `checksums.txt`).
 - If something is wrong, do not move the tag. Fix forward with a patch release.
 
 ## Checklist
@@ -89,5 +90,5 @@ Make sure the next milestone `vX.Y.(Z+1)` (or the next minor) exists.
 - [ ] CHANGELOG section `[X.Y.Z] - date` written, `[Unreleased]` is empty
 - [ ] Release PR merged
 - [ ] Annotated tag `vX.Y.Z` pushed
-- [ ] GitHub Release exists with the CHANGELOG notes
+- [ ] GitHub Release exists with the CHANGELOG notes and the four binaries
 - [ ] Milestone closed, next milestone exists
