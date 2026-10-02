@@ -56,23 +56,29 @@ func (n *recordingNotifier) shownFor(jobID string) (int, bool) {
 	return seq, ok
 }
 
-// bgFinishCap is how long a backgrounded command's job may take to reach a
-// terminal status in these tests, and bgCleanupCap the same bound for the
-// teardown below. Stopping one of these commands is a single SIGKILL to a
-// process group plus a reap — microseconds of real work — but the runners that
-// execute this suite under -race are shared and heavily loaded, and there the
-// same teardown was observed to take seconds.
+// The three values every background-bash test here is built around: the two
+// caps on waiting, and the command that has to be killed.
 //
-// The old 5s caps are what turned that into the reported cascade: a test that
-// gave up waiting reported "job did not finish within 5s (status running)",
-// then "1 background slot(s) still in use after cleanup", and left its job
-// running — so the NEXT test's KillAllBackgroundBash found three commands where
-// it had started two. These caps are bounds the runner can actually meet, not
-// new sleeps: both waits still block on the real transition (the job's terminal
-// status, the slot its goroutine releases) and return as soon as it happens.
+// What is known: on the macOS -race job, TestKillJobStopsBackgroundCommand and
+// TestKillJob_BashPathKeepsOldMessage were seen failing with the job still
+// running after 5s, and cleanup then reporting "1 background slot(s) still in
+// use". The mechanism could NOT be reproduced locally — thousands of
+// start-then-group-kill cycles stayed far under a second — so it is assumed to
+// be a loaded runner, not a lost SIGKILL (see findings.md).
+//
+// What these caps must therefore never do is hide a lost kill. That is what
+// bgSleeper is for: a command that outlives both caps by 20x, so if the SIGKILL
+// does nothing, the job cannot reach a terminal status inside bgFinishCap and
+// the test fails instead of passing on the command's own exit. With the old 5s
+// cap and a "sleep 30" command that gap held; raising the cap to 30s without
+// lengthening the command would have removed it (a no-op kill then "passes" at
+// 30.0s). Every test that expects its backgrounded command to be stopped uses
+// bgSleeper; the ones that let a command finish on its own use a sleep well
+// inside bgFinishCap.
 const (
 	bgFinishCap  = 30 * time.Second
 	bgCleanupCap = 30 * time.Second
+	bgSleeper    = "sleep 600"
 )
 
 // killBackgroundBashAndWait empties the process-global background state: it
@@ -309,7 +315,7 @@ func TestBashExplicitTimeoutStillBackgrounds(t *testing.T) {
 
 	start := time.Now()
 	res := (&BashTool{}).Run(context.Background(), map[string]any{
-		"command":          "sleep 30",
+		"command":          bgSleeper,
 		"timeout":          600,
 		"background_after": 1,
 	})
@@ -403,7 +409,7 @@ func TestKillJobStopsBackgroundCommand(t *testing.T) {
 	reg, _ := bgTestEnv(t)
 
 	res := (&BashTool{}).Run(context.Background(), map[string]any{
-		"command":           "sleep 30; echo never",
+		"command":           bgSleeper + "; echo never",
 		"run_in_background": true,
 	})
 	if !res.Success {
@@ -438,7 +444,7 @@ func TestKillAllBackgroundBash(t *testing.T) {
 	var ids []string
 	for i := 0; i < 2; i++ {
 		res := (&BashTool{}).Run(context.Background(), map[string]any{
-			"command":           "sleep 30",
+			"command":           bgSleeper,
 			"run_in_background": true,
 		})
 		if !res.Success {
@@ -466,7 +472,7 @@ func TestBashBackgroundSlotCapFallsBackToForeground(t *testing.T) {
 
 	for i := 0; i < maxBackgroundBash; i++ {
 		res := (&BashTool{}).Run(context.Background(), map[string]any{
-			"command":           "sleep 30",
+			"command":           bgSleeper,
 			"run_in_background": true,
 		})
 		if !res.Success || !strings.Contains(res.Content, "job_id") {

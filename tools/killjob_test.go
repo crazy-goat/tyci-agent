@@ -107,7 +107,7 @@ func TestKillJob_BashPathKeepsOldMessage(t *testing.T) {
 	withKillWiring(t, c, nil)
 
 	res := (&BashTool{}).Run(context.Background(), map[string]any{
-		"command":           "sleep 30; echo never",
+		"command":           bgSleeper + "; echo never",
 		"run_in_background": true,
 	})
 	if !res.Success {
