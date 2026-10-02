@@ -63,13 +63,9 @@ func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
 	origReg, origBus, origNotices := JobRegistry, jobEventBus, JobNotices
 
 	reg := jobs.NewRegistry()
-	// Publish drops events when a subscriber's buffer is full. Tests that
-	// flood the registry (floodRegistryPastTerminalCap) emit well over 100
-	// events in a burst, so a small buffer lets a slow runner's drain
-	// goroutine lag and lose a terminal event, and the cleanup below would
-	// then time out after 2s and fail the test. Size the buffer for the
-	// largest burst.
-	bus := eventbus.New(4096)
+	// Production bus size: the cleanup below subscribes coalesced, so a burst
+	// of events (floodRegistryPastTerminalCap) cannot lose a terminal state.
+	bus := eventbus.New(jobEventBusSize)
 	// A fresh notice queue too: wireTools points the tools package at
 	// whatever JobNotices currently is, so leaving the production one in
 	// place would let one test's background-command notices show up in
@@ -77,17 +73,42 @@ func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
 	JobRegistry, jobEventBus, JobNotices = reg, bus, jobs.NewNotifier()
 	wireTools()
 
-	evCh, unsub := bus.Subscribe("job.updated")
+	sub, unsub := bus.SubscribeCoalesced("job.updated", func(ev eventbus.Event) string {
+		if j, ok := ev.Payload.(jobs.Job); ok {
+			return j.ID
+		}
+		return ""
+	}, eventbus.WithReplaces(func(pending, incoming eventbus.Event) bool {
+		// A snapshot published late must not replace a newer one (#131).
+		p, pok := pending.Payload.(jobs.Job)
+		n, nok := incoming.Payload.(jobs.Job)
+		return !pok || !nok || n.EventSeq >= p.EventSeq
+	}))
 	var mu sync.Mutex
 	seen := make(map[string]jobs.Status)
+	latest := make(map[string]uint64) // highest EventSeq recorded per job
+	record := func() {
+		for _, ev := range sub.Drain() {
+			if j, ok := ev.Payload.(jobs.Job); ok {
+				mu.Lock()
+				if prev, ok := latest[j.ID]; !ok || j.EventSeq >= prev {
+					latest[j.ID] = j.EventSeq
+					seen[j.ID] = j.Status
+				}
+				mu.Unlock()
+			}
+		}
+	}
 	drainDone := make(chan struct{})
 	go func() {
 		defer close(drainDone)
-		for ev := range evCh {
-			if j, ok := ev.Payload.(jobs.Job); ok {
-				mu.Lock()
-				seen[j.ID] = j.Status
-				mu.Unlock()
+		for {
+			select {
+			case <-sub.Ready():
+				record()
+			case <-sub.Done():
+				record()
+				return
 			}
 		}
 	}()

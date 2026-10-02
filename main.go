@@ -22,6 +22,10 @@ import (
 	"github.com/decodo/tyci/tools"
 )
 
+// jobEventBusSize is the buffer of each plain subscription on jobEventBus. Tests
+// build their bus with the same size to exercise production delivery semantics.
+const jobEventBusSize = 32
+
 // jobEventBus is the single, process-wide bus carrying JobRegistry's
 // status-change events (topic "job.updated") to the TUI (the only
 // subscriber today, wired in commands.go's tuiCmd via TUI.SetJobEventBus —
@@ -29,7 +33,7 @@ import (
 // the exact same instance without threading it through function
 // signatures; every other mode (console, --print, etc.) simply never
 // subscribes, so this costs them nothing.
-var jobEventBus = eventbus.New(32)
+var jobEventBus = eventbus.New(jobEventBusSize)
 
 // JobNotices is the single, process-wide queue of short completion notices
 // produced by background work — today, shell commands the bash tool moved to
