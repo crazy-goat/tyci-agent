@@ -25,9 +25,9 @@ type fakeProvider struct {
 	client connector.ModelClient
 }
 
-func (p *fakeProvider) Name() string          { return p.name }
-func (p *fakeProvider) IsConfigured() bool    { return true }
-func (p *fakeProvider) Models() []string      { return []string{p.model} }
+func (p *fakeProvider) Name() string       { return p.name }
+func (p *fakeProvider) IsConfigured() bool { return true }
+func (p *fakeProvider) Models() []string   { return []string{p.model} }
 func (p *fakeProvider) Client(string) connector.ModelClient {
 	return p.client
 }

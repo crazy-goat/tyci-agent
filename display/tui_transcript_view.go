@@ -16,7 +16,7 @@ func (m TuiModel) renderTranscriptViewerView() string {
 		Bold(true).
 		Foreground(lipgloss.Color("252")).
 		Background(lipgloss.Color("60")).
-		Width(max(0, popupWidth - 2)).
+		Width(max(0, popupWidth-2)).
 		Padding(0, 1)
 	title := titleStyle.Render(fmt.Sprintf(" %s ", truncateString(m.transcriptViewerTitle, max(0, popupWidth-4))))
 
@@ -70,7 +70,7 @@ func (m TuiModel) renderTranscriptViewerView() string {
 	}
 	footerStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245")).
-		Width(max(0, popupWidth - 2)).
+		Width(max(0, popupWidth-2)).
 		Padding(0, 1)
 	footer := footerStyle.Render(footerText)
 

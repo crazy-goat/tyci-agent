@@ -33,7 +33,7 @@ func TestSidebarOpen_WideTableRendersAtMainColumnWidth(t *testing.T) {
 	table := "| Option | What it does |\n" +
 		"|--------|--------------|\n" +
 		row("renderWidth", "one source of truth for the width block lines are wrapped and cached at")
-		row("mainColumnWidth", "the narrowed main conversation column while the sidebar is open")
+	row("mainColumnWidth", "the narrowed main conversation column while the sidebar is open")
 
 	m.appendOrAppend("text", table)
 	m.forceRenderDirtyBlocks() // block finishes at full width, sidebar closed

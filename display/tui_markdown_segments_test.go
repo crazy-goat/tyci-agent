@@ -371,7 +371,7 @@ func TestSegmentPartitionCoversContentExactlyOnce(t *testing.T) {
 // (tui_render_block.go) means content that wraps to nothing (every logical
 // line empty — reachable only when content is composed entirely of bare
 // "\n"s) comes back as out="" but a NON-empty, one-element lines slice.
-// "len(tailLines) > 0" is therefore not proof that "tailWrapped != ''".
+// "len(tailLines) > 0" is therefore not proof that "tailWrapped != ”".
 func TestStreamWrapRender_CanReturnEmptyOutWithNonEmptyLines(t *testing.T) {
 	sw := &streamWrap{}
 	out, lines := sw.render("\n", false, 80)

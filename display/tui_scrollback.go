@@ -384,7 +384,7 @@ func (m *TuiModel) ensureBlockResident(idx int) []string {
 			if bj.flushed || bj.dirty || queued[j] || bj.cachedLines == nil {
 				continue
 			}
-		m.scrollback.flushBlock(bj, m.renderWidth())
+			m.scrollback.flushBlock(bj, m.renderWidth())
 			m.dropResidentCaches(j)
 		}
 	}

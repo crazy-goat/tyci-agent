@@ -361,21 +361,21 @@ func TestTranscriptViewer_KeyUpDoesNotBubble(t *testing.T) {
 }
 
 func TestTranscriptViewer_ZeroSizeNoPanic(t *testing.T) {
-    m := newTestModelForSidebar()
-    m.width = 0
-    m.height = 0
-    m.openTranscriptViewer("title that is definitely longer than any popup", []string{"a very long line that exceeds popup width and exercises slicing", strings.Repeat("x", 500)})
-    defer func() {
-        if r := recover(); r != nil {
-            t.Fatalf("panic at 0x0: %v", r)
-        }
-    }()
-    _ = m.renderTranscriptViewerView()
-    // Also hit the other 0x0 path: popupWidth-4 == -6 branch
-    m.width = 0
-    m.height = 0
-    m.openTranscriptViewer(strings.Repeat("漢", 100), []string{strings.Repeat("漢", 200)})
-    _ = m.renderTranscriptViewerView()
+	m := newTestModelForSidebar()
+	m.width = 0
+	m.height = 0
+	m.openTranscriptViewer("title that is definitely longer than any popup", []string{"a very long line that exceeds popup width and exercises slicing", strings.Repeat("x", 500)})
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panic at 0x0: %v", r)
+		}
+	}()
+	_ = m.renderTranscriptViewerView()
+	// Also hit the other 0x0 path: popupWidth-4 == -6 branch
+	m.width = 0
+	m.height = 0
+	m.openTranscriptViewer(strings.Repeat("漢", 100), []string{strings.Repeat("漢", 200)})
+	_ = m.renderTranscriptViewerView()
 }
 
 func TestTranscriptViewer_ResizeClampsScroll(t *testing.T) {
