@@ -16,3 +16,7 @@ vendor/
 
 # Claude Code working directories (its own git worktrees live in here)
 .claude/
+/findings.md
+/review.md
+/.env.worktree
+/dist/
