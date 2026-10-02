@@ -269,7 +269,7 @@ func replaySessionToDisplay(disp display.Display, sessionPath string) {
 		fmt.Fprintf(os.Stderr, "Warning: cannot replay session: %v\n", err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only
 
 	// Walk JSONL, build one formatted block per message, then push them.
 	type replayEntry struct {

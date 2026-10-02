@@ -53,7 +53,7 @@ func (l *Logger) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.file != nil {
-		l.file.Close()
+		_ = l.file.Close() // best effort: a debug log must not fail the caller
 		l.file = nil
 	}
 }

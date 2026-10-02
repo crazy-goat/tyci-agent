@@ -103,7 +103,7 @@ func readFirstUserPrompt(path string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only
 	sc := bufio.NewScanner(f)
 	// Allow long first prompts.
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)

@@ -213,7 +213,11 @@ func (lc *LuaContext) ctxTempfile(L *lua.LState) int {
 		L.Push(lua.LString(""))
 		return 1
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpFile.Name())
+		L.Push(lua.LString(""))
+		return 1
+	}
 	L.Push(lua.LString(tmpFile.Name()))
 	return 1
 }

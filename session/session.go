@@ -209,7 +209,7 @@ func Open(path, cwd, model, provider string) (*Session, error) {
 
 		lines, err := parseSessionFile(path)
 		if err != nil {
-			f.Close()
+			_ = f.Close() // the parse error is what gets reported
 			return nil, fmt.Errorf("parse session for resume: %w", err)
 		}
 		// Seeds the incremental dump counter from a parse this resume path
@@ -237,7 +237,7 @@ func Open(path, cwd, model, provider string) (*Session, error) {
 			ProjectRoot: projectRoot,
 		}
 		if err := s.encoder.Encode(h); err != nil {
-			f.Close()
+			_ = f.Close() // the write error is what gets reported
 			os.Remove(path)
 			return nil, fmt.Errorf("write header: %w", err)
 		}
@@ -528,12 +528,13 @@ func WriteMarkdownDump(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-
 	writeDumpHeader(f, path, lines)
 
 	for i, line := range lines {
 		writeDumpLineFor(f, i+1, line.Raw)
+	}
+	if err := f.Close(); err != nil {
+		return "", err
 	}
 	return dumpPath, nil
 }
@@ -768,9 +769,8 @@ func (s *Session) appendDumpLine(n int, raw []byte) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	writeDumpLineFor(f, n, string(raw))
-	return nil
+	return f.Close()
 }
 
 func (s *Session) WriteSessionEnd(status string, exitCode int, totalUsage *Usage) error {
@@ -876,7 +876,7 @@ func parseSessionFile(path string) ([]ParsedLine, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only
 
 	var lines []ParsedLine
 	scanner := bufio.NewScanner(f)
@@ -1462,7 +1462,7 @@ func peekHeader(path string) (Header, bool) {
 	if err != nil {
 		return Header{}, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {

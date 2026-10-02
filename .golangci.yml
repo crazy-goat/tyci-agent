@@ -13,9 +13,7 @@ linters:
         - fmt.Fprintf
         - fmt.Fprintln
         - (io.Closer).Close
-        - (*os.File).Close
         - (io.ReadCloser).Close
-        - io.Copy
         - os.Remove
         - os.RemoveAll
     staticcheck:

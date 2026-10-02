@@ -469,7 +469,7 @@ func grepFile(path, rel string, matcher *contentMatcher, contextLines, maxLineLe
 	if err != nil {
 		return nil, 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only
 
 	// 3. Read first chunk for binary detection (and as the start of our data buffer)
 	head := make([]byte, binaryPeekSize)

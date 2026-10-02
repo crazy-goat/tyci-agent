@@ -226,7 +226,7 @@ func (c *HTTPClient) sendNotification(ctx context.Context, req Request) error {
 	defer resp.Body.Close()
 
 	// Drain the body to allow connection reuse
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body) // best effort: only for connection reuse
 
 	return nil
 }

@@ -173,7 +173,7 @@ func Save(configDir string, f *File) error {
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close() // the write error is what gets reported
 		return fmt.Errorf("cron: %w", err)
 	}
 	if err := tmp.Close(); err != nil {

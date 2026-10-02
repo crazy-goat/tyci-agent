@@ -21,15 +21,15 @@ func TryLock(path string) (release func(), ok bool, err error) {
 	ol := new(windows.Overlapped)
 	err = windows.LockFileEx(h, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, ol)
 	if err != nil {
-		f.Close()
+		_ = f.Close() // the lock error is what gets reported
 		if err == windows.ERROR_LOCK_VIOLATION {
 			return func() {}, false, nil
 		}
 		return func() {}, false, fmt.Errorf("cron: lock %s: %w", path, err)
 	}
 	release = func() {
-		windows.UnlockFileEx(h, 0, 1, 0, ol)
-		f.Close()
+		_ = windows.UnlockFileEx(h, 0, 1, 0, ol)
+		_ = f.Close() // lock file only; nothing was written
 	}
 	return release, true, nil
 }

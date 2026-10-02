@@ -130,8 +130,12 @@ func appendFile(path, content string) ToolResult {
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
-	defer f.Close()
 	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		forgetFileStamp(path)
+		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
+	if err := f.Close(); err != nil {
 		forgetFileStamp(path)
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}

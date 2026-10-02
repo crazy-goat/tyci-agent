@@ -112,7 +112,12 @@ func (r *Runner) RunJob(ctx context.Context, j Job) error {
 	if err != nil {
 		return fmt.Errorf("cron: open log: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		// The log is the only record of this run, so say so when it cannot be flushed.
+		if err := f.Close(); err != nil {
+			r.logf("closing log for %s: %v", j.Name, err)
+		}
+	}()
 
 	start := r.now()
 	fmt.Fprintf(f, "\n=== %s: %s\n", start.Format(time.RFC3339), j.Prompt)
