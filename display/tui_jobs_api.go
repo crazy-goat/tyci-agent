@@ -26,11 +26,25 @@ func (t *TUI) SetJobEventBus(bus *eventbus.Bus) {
 	if bus == nil {
 		return
 	}
-	sub, unsubscribe := bus.SubscribeCoalesced("job.updated", jobEventKey, eventbus.WithReplaces(jobEventReplaces))
+	sub, unsubscribe := subscribeJobUpdates(bus)
 	go func() {
 		defer unsubscribe()
 		forwardJobUpdates(sub, t.done, t.prog.Send)
 	}()
+}
+
+// subscribeJobUpdates builds the TUI's one "job.updated" subscription:
+// coalesced per job ID, and keeping the snapshot with the higher EventSeq (see
+// jobEventReplaces).
+//
+// It exists so there is a single place that decides how the TUI subscribes.
+// The tests in tui_jobs_test.go drive forwardJobUpdates against a real
+// subscription, and when each of them built its own they stopped covering this
+// wiring: dropping eventbus.WithReplaces(jobEventReplaces) from
+// SetJobEventBus left TestForwardJobUpdates_LateSnapshotDoesNotOverwriteTerminalState
+// (#131) passing, because the test passed the option in itself.
+func subscribeJobUpdates(bus *eventbus.Bus) (*eventbus.Coalesced, func()) {
+	return bus.SubscribeCoalesced("job.updated", jobEventKey, eventbus.WithReplaces(jobEventReplaces))
 }
 
 // jobEventKey coalesces "job.updated" events by job ID. Payloads that are
