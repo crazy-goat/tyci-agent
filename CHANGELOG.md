@@ -7,10 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- `eventbus.Bus.SubscribeCoalesced`: a subscription that keeps only the latest event per key, so a slow consumer never loses the newest state (#113)
+- `eventbus.Bus.SubscribeCoalesced`: a subscription that keeps only the latest event per key, so a slow consumer never loses the newest state (#113). The optional `eventbus.WithReplaces` decides which of two events with the same key is kept (#131)
 
 ### Fixed
-- The TUI jobs panel no longer shows a finished job as running when a progress snapshot taken just before the job ended reaches it after the terminal event; job snapshots published to `onEvent` now carry a per-job `EventSeq` and the TUI ignores older ones (#131)
+- The TUI jobs panel no longer shows a finished job as running when a progress snapshot taken just before the job ended reaches it after the terminal event; job snapshots published to `onEvent` now carry a per-job `EventSeq`, and both the TUI's coalescing subscription and the model ignore older ones (#131)
 - The TUI jobs panel no longer shows a finished job as running forever when a burst of `job.updated` events overflows the 32-slot bus while the TUI is busy; the TUI now subscribes with per-job coalescing (#113)
 
 ## [0.1.0] - 2026-10-02

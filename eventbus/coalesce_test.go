@@ -131,3 +131,31 @@ func TestCoalescedCloseEndsSubscriptionAndSubscribeAfterClose(t *testing.T) {
 		t.Fatal("Done not closed for a subscription made after Bus.Close")
 	}
 }
+
+func TestCoalescedWithReplacesKeepsTheEventThePredicatePrefers(t *testing.T) {
+	b := New(1)
+	defer b.Close()
+
+	c, unsub := b.SubscribeCoalesced("topic", keyByPayloadID, WithReplaces(func(pending, incoming Event) bool {
+		return incoming.Payload.(item).n >= pending.Payload.(item).n
+	}))
+	defer unsub()
+
+	// "a" arrives out of order: n=3 is published before n=2.
+	b.Publish("topic", item{id: "a", n: 1})
+	b.Publish("topic", item{id: "a", n: 3})
+	b.Publish("topic", item{id: "a", n: 2})
+	b.Publish("topic", item{id: "b", n: 1})
+
+	waitReady(t, c)
+	got := c.Drain()
+	want := []item{{"a", 3}, {"b", 1}}
+	if len(got) != len(want) {
+		t.Fatalf("got %d events, want %d: %+v", len(got), len(want), got)
+	}
+	for i, evt := range got {
+		if evt.Payload.(item) != want[i] {
+			t.Errorf("event %d = %+v, want %+v", i, evt.Payload, want[i])
+		}
+	}
+}

@@ -13,7 +13,8 @@ import "sync"
 // subscription ends (unsubscribe or Bus.Close); events published before
 // that are still returned by Drain.
 type Coalesced struct {
-	key func(Event) string
+	key      func(Event) string
+	replaces func(pending, incoming Event) bool
 
 	mu      sync.Mutex
 	order   []string
@@ -24,23 +25,38 @@ type Coalesced struct {
 	closeOnce sync.Once
 }
 
-func newCoalesced(key func(Event) string) *Coalesced {
-	return &Coalesced{
+// CoalesceOption customizes a coalesced subscription.
+type CoalesceOption func(*Coalesced)
+
+// WithReplaces sets when an incoming event replaces the pending one with the
+// same key. The default is always: the newest published event wins. Use it
+// when events carry their own order (for example a sequence number) and can
+// be published out of that order.
+func WithReplaces(replaces func(pending, incoming Event) bool) CoalesceOption {
+	return func(c *Coalesced) { c.replaces = replaces }
+}
+
+func newCoalesced(key func(Event) string, opts ...CoalesceOption) *Coalesced {
+	c := &Coalesced{
 		key:     key,
 		pending: make(map[string]Event),
 		ready:   make(chan struct{}, 1),
 		done:    make(chan struct{}),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // SubscribeCoalesced subscribes to topic with per-key coalescing (see
 // Coalesced). key maps an event to its identity; events with the same key
-// replace each other until the next Drain.
-func (b *Bus) SubscribeCoalesced(topic string, key func(Event) string) (*Coalesced, func()) {
+// replace each other until the next Drain, unless WithReplaces says otherwise.
+func (b *Bus) SubscribeCoalesced(topic string, key func(Event) string, opts ...CoalesceOption) (*Coalesced, func()) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	c := newCoalesced(key)
+	c := newCoalesced(key, opts...)
 	if b.closed {
 		c.close()
 		return c, func() {}
@@ -105,10 +121,12 @@ func (c *Coalesced) put(evt Event) {
 	k := c.key(evt)
 
 	c.mu.Lock()
-	if _, ok := c.pending[k]; !ok {
+	if old, ok := c.pending[k]; !ok {
 		c.order = append(c.order, k)
+		c.pending[k] = evt
+	} else if c.replaces == nil || c.replaces(old, evt) {
+		c.pending[k] = evt
 	}
-	c.pending[k] = evt
 	c.mu.Unlock()
 
 	select {

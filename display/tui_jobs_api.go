@@ -26,7 +26,7 @@ func (t *TUI) SetJobEventBus(bus *eventbus.Bus) {
 	if bus == nil {
 		return
 	}
-	sub, unsubscribe := bus.SubscribeCoalesced("job.updated", jobEventKey)
+	sub, unsubscribe := bus.SubscribeCoalesced("job.updated", jobEventKey, eventbus.WithReplaces(jobEventReplaces))
 	go func() {
 		defer unsubscribe()
 		forwardJobUpdates(sub, t.done, t.prog.Send)
@@ -40,6 +40,21 @@ func jobEventKey(evt eventbus.Event) string {
 		return j.ID
 	}
 	return ""
+}
+
+// jobEventReplaces keeps the snapshot with the higher EventSeq: the registry
+// publishes after releasing its lock, so a stale snapshot can arrive after a
+// newer one (#131). Payloads that are not a jobs.Job always replace.
+func jobEventReplaces(pending, incoming eventbus.Event) bool {
+	p, ok := pending.Payload.(jobs.Job)
+	if !ok {
+		return true
+	}
+	n, ok := incoming.Payload.(jobs.Job)
+	if !ok {
+		return true
+	}
+	return n.EventSeq >= p.EventSeq
 }
 
 // forwardJobUpdates sends each coalesced job snapshot to send until done

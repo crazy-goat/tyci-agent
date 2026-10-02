@@ -551,3 +551,48 @@ func TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates(t *testing.T
 		}
 	}
 }
+
+// TestForwardJobUpdates_LateSnapshotDoesNotOverwriteTerminalState is the
+// regression test for #131: the registry publishes after releasing its lock, so
+// a "running" snapshot taken before the terminal one can reach the bus after it,
+// while the TUI is still busy and has not drained yet.
+func TestForwardJobUpdates_LateSnapshotDoesNotOverwriteTerminalState(t *testing.T) {
+	bus := eventbus.New(32)
+	defer bus.Close()
+
+	sub, unsubscribe := bus.SubscribeCoalesced("job.updated", jobEventKey, eventbus.WithReplaces(jobEventReplaces))
+	defer unsubscribe()
+
+	started := time.Now()
+	bus.Publish("job.updated", jobs.Job{ID: "job-1", Status: jobs.StatusRunning, StartedAt: started, EventSeq: 1})
+	// Drained and applied: the TUI holds "running" (seq 1).
+	m := newTestModelForJobs()
+	for _, evt := range sub.Drain() {
+		m.applyJobUpdate(evt.Payload.(jobs.Job))
+	}
+
+	// Terminal (seq 3) is published first, then the older progress snapshot (seq 2),
+	// both before the next drain.
+	bus.Publish("job.updated", jobs.Job{ID: "job-1", Status: jobs.StatusDone, StartedAt: started, FinishedAt: time.Now(), EventSeq: 3})
+	bus.Publish("job.updated", jobs.Job{ID: "job-1", Status: jobs.StatusRunning, StartedAt: started, Progress: "late", EventSeq: 2})
+
+	stop := make(chan struct{})
+	consumerDone := make(chan struct{})
+	go func() {
+		defer close(consumerDone)
+		forwardJobUpdates(sub, stop, func(msg tea.Msg) {
+			model, _ := m.Update(msg)
+			m = model.(TuiModel)
+		})
+	}()
+	unsubscribe()
+	select {
+	case <-consumerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("consumer did not finish")
+	}
+
+	if got := m.backgroundJobs["job-1"].Status; got != jobs.StatusDone {
+		t.Fatalf("status = %s, want done", got)
+	}
+}
