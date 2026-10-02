@@ -738,7 +738,7 @@ func runC1Iteration(t *testing.T) {
 		t.Error("lock still held after both subagents finished")
 	}
 	if name := gaveUp.Load(); name != nil {
-		t.Errorf("%v retried lock too many times without ever winning", name)
+		t.Errorf("%v never got the lock: it waited for it, retried, and hit a second conflict even though the test had already seen the lock go free", name)
 	}
 }
 

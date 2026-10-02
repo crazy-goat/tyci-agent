@@ -5,7 +5,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 // fakeCanceler records which id Cancel was called with and answers
@@ -128,7 +127,7 @@ func TestKillJob_BashPathKeepsOldMessage(t *testing.T) {
 	}
 
 	// Wait for the registry side so cleanup slots drain.
-	waitForJob(t, reg, id, 5*time.Second)
+	waitForJob(t, reg, id, bgFinishCap)
 }
 
 // TestKillJob_InsideChildRefusesUnrelatedTarget: a child (sink ctx set)

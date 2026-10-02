@@ -56,6 +56,50 @@ func (n *recordingNotifier) shownFor(jobID string) (int, bool) {
 	return seq, ok
 }
 
+// bgFinishCap is how long a backgrounded command's job may take to reach a
+// terminal status in these tests, and bgCleanupCap the same bound for the
+// teardown below. Stopping one of these commands is a single SIGKILL to a
+// process group plus a reap — microseconds of real work — but the runners
+// that execute this suite under -race are shared and heavily loaded, and
+// there the very same teardown was observed to take seconds, which turned a
+// loaded runner into a red build ("job did not finish within 5s (status
+// running)", "1 background slot(s) still in use after cleanup"). These caps
+// are bounds the runner can actually meet, not new sleeps: both waits below
+// still block on the real transition (the job's terminal status, the slot the
+// job goroutine releases), and both return as soon as it happens.
+const (
+	bgFinishCap  = 30 * time.Second
+	bgCleanupCap = 30 * time.Second
+)
+
+// killBackgroundBashAndWait empties the process-global background state: it
+// signals every backgrounded command and waits until no slot is occupied and
+// no id is still registered.
+//
+// Both halves matter, and the second is why this is a helper rather than a
+// bare KillAllBackgroundBash() in each test's cleanup. A slot is released by
+// the job goroutine reacting to the kill, not by the kill itself, so a test
+// that returned without waiting left its slot behind — and left the id
+// registered too, which is how the next test's KillAllBackgroundBash came to
+// report "expected to kill 2 commands, killed 3" for the two commands it
+// started itself (TestKillAllBackgroundBash). Background state is
+// process-global, so an incomplete cleanup in one test is a failure in the
+// next, which is why every environment here that can start a backgrounded
+// command calls this on the way out.
+func killBackgroundBashAndWait(t *testing.T) {
+	t.Helper()
+	KillAllBackgroundBash()
+	deadline := time.Now().Add(bgCleanupCap)
+	for time.Now().Before(deadline) {
+		if backgroundSlotsInUse() == 0 && len(runningBackgroundBash()) == 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Errorf("background state leaked past cleanup: %d slot(s) in use, still registered: %v",
+		backgroundSlotsInUse(), runningBackgroundBash())
+}
+
 // bgTestEnv wires the background-bash feature onto a fresh job registry and
 // notifier, and restores the previous globals afterwards. Backgrounding is
 // process-global state, so every test that touches it must go through here or
@@ -71,17 +115,7 @@ func bgTestEnv(t *testing.T) (*jobs.Registry, *recordingNotifier) {
 	SetBackgroundBashEnabled(true)
 
 	t.Cleanup(func() {
-		KillAllBackgroundBash()
-		// A slot is released by the job goroutine reacting to the kill, not by
-		// the kill itself, so without waiting here the leftover slots would
-		// count against the NEXT test's cap — background state is global.
-		deadline := time.Now().Add(5 * time.Second)
-		for backgroundSlotsInUse() > 0 && time.Now().Before(deadline) {
-			time.Sleep(5 * time.Millisecond)
-		}
-		if n := backgroundSlotsInUse(); n != 0 {
-			t.Errorf("%d background slot(s) still in use after cleanup", n)
-		}
+		killBackgroundBashAndWait(t)
 		SetBackgroundBashEnabled(false)
 		SetJobStarter(nil)
 		SetJobProgressReporter(nil)
@@ -168,7 +202,7 @@ func TestBashRunInBackgroundReturnsImmediately(t *testing.T) {
 	}
 
 	id := jobIDFromResult(t, res.Content)
-	job := waitForJob(t, reg, id, 5*time.Second)
+	job := waitForJob(t, reg, id, bgFinishCap)
 	if job.Status != jobs.StatusDone {
 		t.Fatalf("expected job done, got %s (err=%q)", job.Status, job.Err)
 	}
@@ -208,7 +242,7 @@ func TestBashBackgroundedCommandSurvivesToolCallCancellation(t *testing.T) {
 	cancel()
 
 	id := jobIDFromResult(t, res.Content)
-	if job := waitForJob(t, reg, id, 5*time.Second); job.Status != jobs.StatusDone {
+	if job := waitForJob(t, reg, id, bgFinishCap); job.Status != jobs.StatusDone {
 		t.Fatalf("expected job done, got %s (err=%q)", job.Status, job.Err)
 	}
 	if _, err := os.Stat(marker); err != nil {
@@ -240,7 +274,7 @@ func TestBashAutoBackgroundAfterThreshold(t *testing.T) {
 	}
 
 	id := jobIDFromResult(t, res.Content)
-	job := waitForJob(t, reg, id, 5*time.Second)
+	job := waitForJob(t, reg, id, bgFinishCap)
 	if job.Result != "eventually" {
 		t.Fatalf("expected the full output in the job result, got %q", job.Result)
 	}
@@ -377,7 +411,7 @@ func TestKillJobStopsBackgroundCommand(t *testing.T) {
 		t.Fatalf("kill_job failed: %s", killRes.Error)
 	}
 
-	job := waitForJob(t, reg, id, 5*time.Second)
+	job := waitForJob(t, reg, id, bgFinishCap)
 	if job.Status != jobs.StatusFailed {
 		t.Fatalf("expected a killed command to be recorded as failed, got %s", job.Status)
 	}
@@ -412,7 +446,7 @@ func TestKillAllBackgroundBash(t *testing.T) {
 		t.Fatalf("expected to kill 2 commands, killed %d", n)
 	}
 	for _, id := range ids {
-		if job := waitForJob(t, reg, id, 5*time.Second); job.Status != jobs.StatusFailed {
+		if job := waitForJob(t, reg, id, bgFinishCap); job.Status != jobs.StatusFailed {
 			t.Fatalf("job %s: expected failed after KillAll, got %s", id, job.Status)
 		}
 	}
@@ -505,7 +539,7 @@ func TestBashBackgroundFailureNoticeCarriesExitCode(t *testing.T) {
 		t.Fatalf("the handoff itself should succeed, got error: %s", res.Error)
 	}
 	id := jobIDFromResult(t, res.Content)
-	if job := waitForJob(t, reg, id, 5*time.Second); job.Status != jobs.StatusFailed {
+	if job := waitForJob(t, reg, id, bgFinishCap); job.Status != jobs.StatusFailed {
 		t.Fatalf("expected failed, got %s", job.Status)
 	}
 

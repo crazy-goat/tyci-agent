@@ -25,6 +25,17 @@ func requireSh(t *testing.T) {
 // broken pipe.
 const initScript = `printf '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"fake","version":"1.0"}}}\n'; cat >/dev/null`
 
+// initTimeout bounds the handshake with the fake server above: spawn a shell,
+// have it write one line, read that line back. That is microseconds of real
+// work, but it involves starting a process, and the shared runners this suite
+// also runs on have stalled for seconds doing exactly that — a 10s deadline
+// turned into "Initialize() error: initialize: context deadline exceeded" on
+// an Ubuntu -race run of TestStdioClientCloseConcurrentCallsDoNotRace. The
+// bound is generous on purpose: it is a deadline on real work (nothing here
+// waits longer than the handshake takes), not a sleep, and the tests that
+// guard against a deadlock keep their own much tighter timer.
+const initTimeout = 30 * time.Second
+
 // TestStdioClientInitializeHandshake performs a real stdio handshake against
 // a script that speaks the protocol. Before the Initialize locking fix,
 // Initialize takes c.mu and holds it for the whole call, then sendRequest
@@ -37,7 +48,7 @@ func TestStdioClientInitializeHandshake(t *testing.T) {
 
 	c := NewStdioClient("fake", "sh", []string{"-c", initScript})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
 	defer cancel()
 
 	initDone := make(chan error, 1)
@@ -69,7 +80,7 @@ func TestStdioClientCloseForceKillsHangingProcess(t *testing.T) {
 	// and keep running well past any reasonable grace period.
 	script := initScript + `; sleep 30`
 	c := NewStdioClient("fake", "sh", []string{"-c", script})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
 	defer cancel()
 	if err := c.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize() error: %v", err)
@@ -105,7 +116,7 @@ func TestStdioClientCloseWakesInFlightRequest(t *testing.T) {
 	requireSh(t)
 
 	c := NewStdioClient("fake", "sh", []string{"-c", initScript})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
 	defer cancel()
 	if err := c.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize() error: %v", err)
@@ -186,7 +197,7 @@ func TestStdioClientCloseConcurrentCallsDoNotRace(t *testing.T) {
 
 	script := initScript + `; sleep 30`
 	c := NewStdioClient("fake", "sh", []string{"-c", script})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
 	defer cancel()
 	if err := c.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize() error: %v", err)

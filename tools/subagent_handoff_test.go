@@ -84,6 +84,56 @@ func jobLiveStatus(s jobs.Status) bool {
 	return s == jobs.StatusRunning || s == jobs.StatusWaitingAnswer
 }
 
+// TestHandoffEnvDrainsBeforeNotifierIsTornDown pins the invariant the
+// cross-test notice leak above broke, so it cannot come back unnoticed: once
+// a handoffEnv test's cleanup has run, nothing it started may still be running.
+//
+// The inner test is the leak, made deterministic instead of left to a loaded
+// runner's timing: it hands a child over and then unblocks it, but the child
+// takes handoffLeakSlowChild to return, so a cleanup that does not wait comes
+// back with the job still running and the notice not yet posted. Both halves
+// are asserted below — the leak showed up as one without the other.
+func TestHandoffEnvDrainsBeforeNotifierIsTornDown(t *testing.T) {
+	var (
+		reg      *jobs.Registry
+		notifier *recordingNotifier
+	)
+	// Long enough that an un-drained cleanup cannot race past it, short
+	// enough to keep the test quick when the drain works (it waits exactly
+	// this long, and no longer).
+	const handoffLeakSlowChild = 100 * time.Millisecond
+
+	ok := t.Run("inner", func(t *testing.T) {
+		reg, notifier = handoffEnv(t, 0)
+		release := make(chan struct{})
+		tool := handoffTool(t, func() (string, error) {
+			<-release
+			// Simulates a child that takes a moment to unwind. Not a
+			// synchronization point for anything the assertions rely on —
+			// it exists so the regression is reproducible without relying
+			// on how quickly a goroutine happens to be scheduled.
+			time.Sleep(handoffLeakSlowChild)
+			return "late", nil
+		})
+		st := tool.spawn(context.Background(), subagentTask{Task: "slow"}, false, true)
+		tool.handOff(context.Background(), []*spawnedTask{st}, true)
+		close(release)
+		// Returned while the child is still on its way out.
+	})
+	if !ok {
+		t.Fatal("the inner test failed; its cleanup state is not worth asserting on")
+	}
+
+	for _, j := range reg.List() {
+		if jobLiveStatus(j.Status) {
+			t.Fatalf("handoffEnv's cleanup returned with job %s still %s: its completion notice would land in the NEXT test's notifier", j.ID, j.Status)
+		}
+	}
+	if notices := notifier.all(); len(notices) != 1 {
+		t.Fatalf("expected the handed-over child's one completion notice to have been posted before the cleanup returned, got %d: %v", len(notices), notices)
+	}
+}
+
 func handoffTool(t *testing.T, work func() (string, error)) *SubagentTool {
 	t.Helper()
 	return &SubagentTool{Runner: &mockRunner{

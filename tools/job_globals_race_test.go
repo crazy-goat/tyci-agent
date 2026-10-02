@@ -475,11 +475,7 @@ func TestBashToolRun_ConcurrentSetJobStarterAndRealHandoff_RaceFree(t *testing.T
 	SetJobNotifier(jobs.NewNotifier())
 	SetBackgroundBashEnabled(true)
 	t.Cleanup(func() {
-		KillAllBackgroundBash()
-		deadline := time.Now().Add(5 * time.Second)
-		for backgroundSlotsInUse() > 0 && time.Now().Before(deadline) {
-			time.Sleep(5 * time.Millisecond)
-		}
+		killBackgroundBashAndWait(t)
 		SetBackgroundBashEnabled(false)
 		SetJobStarter(nil)
 		SetJobProgressReporter(nil)

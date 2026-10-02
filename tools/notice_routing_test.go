@@ -39,11 +39,7 @@ func noticeRoutingEnv(t *testing.T) (*jobs.Registry, *recordingNotifier) {
 	SetJobNotifier(notifier)
 	SetBackgroundBashEnabled(true)
 	t.Cleanup(func() {
-		KillAllBackgroundBash()
-		deadline := time.Now().Add(5 * time.Second)
-		for backgroundSlotsInUse() > 0 && time.Now().Before(deadline) {
-			time.Sleep(5 * time.Millisecond)
-		}
+		killBackgroundBashAndWait(t)
 		SetJobStarter(nil)
 		SetJobMailbox(nil)
 		SetJobNotifier(nil)
@@ -76,7 +72,7 @@ func TestNotifyToParent_RoutesToForkMailbox_NotMainQueue(t *testing.T) {
 		t.Fatalf("expected success, got error: %s", res.Error)
 	}
 	id := jobIDFromResult(t, res.Content)
-	_ = waitForJob(t, reg, id, 5*time.Second)
+	_ = waitForJob(t, reg, id, bgFinishCap)
 
 	// Give the (already-finished) job's onEvent-driven notify a moment to
 	// land — it fires synchronously inside the job's own goroutine before
@@ -157,7 +153,7 @@ func TestNotifyToParent_ParentAlreadyGone_ForwardsToMainTagged(t *testing.T) {
 		t.Fatalf("expected success, got error: %s", res.Error)
 	}
 	id := jobIDFromResult(t, res.Content)
-	_ = waitForJob(t, reg, id, 5*time.Second)
+	_ = waitForJob(t, reg, id, bgFinishCap)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

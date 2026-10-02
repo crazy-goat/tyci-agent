@@ -48,7 +48,7 @@ echo $! > ` + pidFile + `
 wait`
 
 	c := NewStdioClient("fake", "sh", []string{"-c", script})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
 	defer cancel()
 	if err := c.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize() error: %v", err)
