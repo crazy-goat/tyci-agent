@@ -1,7 +1,11 @@
 # Go build configuration
 BINARY=tyci
 
-.PHONY: build release minimal clean install install-local
+.PHONY: build release minimal clean install install-local lint
+
+# Static analysis, linters and formatter check (see AGENTS.md)
+lint:
+	bin/lint.sh
 
 # Debug build (with debug symbols, no optimizations)
 build:
