@@ -75,8 +75,9 @@ func (b *Bus) SubscribeCoalesced(topic string, key func(Event) string) (*Coalesc
 	return c, unsubscribe
 }
 
-// Ready receives a value whenever Drain has something to return. One
-// signal can stand for many events, so always drain fully after it fires.
+// Ready receives a value after new events become pending. One signal can
+// stand for many events, and a signal may find nothing left to drain (an
+// earlier Drain already took it), so Drain fully and tolerate an empty result.
 func (c *Coalesced) Ready() <-chan struct{} { return c.ready }
 
 // Done closes when the subscription ends.
