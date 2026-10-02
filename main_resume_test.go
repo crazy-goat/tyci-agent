@@ -9,23 +9,8 @@ import (
 
 	"github.com/decodo/tyci/connector"
 	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/stream"
 	"github.com/decodo/tyci/tools"
 )
-
-// alwaysHelpTool is a Fake that calls the always-registered "help" tool on
-// every turn, so the child agent never finishes on its own. It is retained for
-// legacy cutoff-message tests; ordinary subagent runs are now unlimited.
-func alwaysHelpTool() *connectortest.Fake {
-	return &connectortest.Fake{
-		ProviderName: "always-help",
-		ModelName:    "always-help-1",
-		OnExhausted: []stream.Event{
-			stream.ToolCall{ID: "tc", Name: "help", Arguments: "{}"},
-			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
-		},
-	}
-}
 
 // TestSubagentCutoffMessage_ZeroOutput_StaysResumable pins the item 28(B)
 // fix: subagentCutoffMessage (the decision run() delegates to once a child

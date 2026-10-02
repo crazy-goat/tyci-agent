@@ -240,9 +240,7 @@ func TestTranscriptViewer_YankCopiesAll(t *testing.T) {
 	m2 := updated.(TuiModel)
 	// Should set a status message and return a copy feedback cmd
 	_ = m2
-	if cmd == nil {
-		// copyFeedbackCmd may be nil if clipboard not wired? Still check status
-	}
+	_ = cmd
 }
 
 func TestTranscriptViewer_OuterClickCloses(t *testing.T) {

@@ -33,8 +33,6 @@ type tuiMsgBlock struct {
 	duration time.Duration
 }
 
-type tuiInputSubmitted string
-
 // tuiResumeRequestMsg is sent by TUI.OpenResumePicker to activate the
 // /resume popup. The bubbletea event loop captures it inside Update() and
 // activates the picker state (cursor at 0 = newest); on Enter/Esc, the

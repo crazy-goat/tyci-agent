@@ -71,14 +71,6 @@ var sidebarTabNames = [sidebarTabCount]string{
 	sidebarTabTasks:    "Tasks",
 }
 
-// Compatibility aliases for older package-local tests. They are not rendered
-// as separate tabs and all map to the unified Tasks view.
-const (
-	sidebarTabBash      = sidebarTabTasks
-	sidebarTabLua       = sidebarTabTasks
-	sidebarTabSubagents = sidebarTabTasks
-)
-
 // openSidebar opens the sidebar on the given tab, saving scroll state the
 // same way every other full-screen overlay in this package does. Focus
 // always starts on the conversation (sidebarFocused = false), never

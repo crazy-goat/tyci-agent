@@ -102,7 +102,7 @@ func AddProvider(name, apiType, baseURL, token string, test bool, testModel stri
 
 	cfg := make(map[string]map[string]uriEntry)
 	if data, err := os.ReadFile(configPath); err == nil {
-		json.Unmarshal(data, &cfg)
+		_ = json.Unmarshal(data, &cfg)
 	}
 	if cfg == nil {
 		cfg = make(map[string]map[string]uriEntry)

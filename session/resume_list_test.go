@@ -31,9 +31,6 @@ func TestResumeEntries_BasicList(t *testing.T) {
 	// Use a future mtime to make "newer" deterministic, then "old" older.
 	futureTS := futureUnixMillis(t)
 
-	type fileSet struct {
-		path string
-	}
 	_ = old // we'll set mtime explicitly below
 
 	// Write second file with later mtime, plus second user message we

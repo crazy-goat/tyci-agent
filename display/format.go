@@ -122,12 +122,6 @@ func buildStatRate(usage stream.Usage, stats stream.Stats) string {
 	return fmt.Sprintf("tok/s=%.1f", rate)
 }
 
-// buildUsageLine returns the full usage line with tokens and timing concatenated.
-// Kept for backward compatibility (used by Minimal display).
-func buildUsageLine(usage stream.Usage, stats stream.Stats) string {
-	return usageTokens(usage) + " " + timingTokens(usage, stats)
-}
-
 // usageTokens builds the token-count part (left side).
 // in= shows actual new input tokens (total minus cache read), with cache read in brackets.
 // ctx= shows total context (Input + Output).

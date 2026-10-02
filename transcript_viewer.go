@@ -67,10 +67,6 @@ func deepCopyMessages(msgs []connector.Message) []connector.Message {
 	return out
 }
 
-func formatTranscriptLines(msgs []connector.Message) []string {
-	return formatTranscriptLinesWithTodoAgent(msgs, "")
-}
-
 func formatTranscriptLinesWithTodoAgent(msgs []connector.Message, todoAgentID string) []string {
 	var out []string
 	for i, m := range msgs {

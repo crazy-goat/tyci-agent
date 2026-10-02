@@ -93,7 +93,7 @@ func watchESC(cancel context.CancelFunc) func() {
 	// Tweak: keep ISIG (for Ctrl+C signals) and OPOST (output processing),
 	// set VMIN=0 VTIME=1 so read() returns every 100ms instead of blocking forever.
 	if err := applyTerminalTweaks(fd); err != nil {
-		term.Restore(fd, oldState)
+		_ = term.Restore(fd, oldState)
 		return func() {}
 	}
 
@@ -126,7 +126,7 @@ func watchESC(cancel context.CancelFunc) func() {
 
 	return func() {
 		close(stop) // signal goroutine to stop
-		term.Restore(fd, oldState)
+		_ = term.Restore(fd, oldState)
 		// Don't wait for goroutine — it will exit on next timeout or stop signal
 	}
 }
@@ -459,25 +459,4 @@ func formatMessageForReplay(role string, msgRaw map[string]any) string {
 	// which is exactly what makes scroll math stable in the long-session
 	// case.
 	return strings.TrimRight(out, "\n")
-}
-
-// parseUsageFromMap extracts stream.Usage from a JSON map.
-func parseUsageFromMap(u map[string]any) stream.Usage {
-	var us stream.Usage
-	if v, ok := u["input"].(float64); ok {
-		us.Input = int(v)
-	}
-	if v, ok := u["output"].(float64); ok {
-		us.Output = int(v)
-	}
-	if v, ok := u["reasoning"].(float64); ok {
-		us.Reasoning = int(v)
-	}
-	if v, ok := u["cacheRead"].(float64); ok {
-		us.CacheRead = int(v)
-	}
-	if v, ok := u["cacheWrite"].(float64); ok {
-		us.CacheWrite = int(v)
-	}
-	return us
 }

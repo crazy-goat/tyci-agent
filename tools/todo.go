@@ -194,7 +194,7 @@ func AllTodoItemsForAgent(agentID string) []TodoItem {
 		l := getOrCreateLocked(mainAgentTodoID)
 		out := make([]TodoItem, len(l.items))
 		for i, it := range l.items {
-			out[i] = TodoItem{ID: it.ID, Content: it.Content, Status: it.Status, ParentID: it.ParentID}
+			out[i] = TodoItem(it)
 		}
 		sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 		return out
@@ -205,7 +205,7 @@ func AllTodoItemsForAgent(agentID string) []TodoItem {
 	}
 	out := make([]TodoItem, len(l.items))
 	for i, it := range l.items {
-		out[i] = TodoItem{ID: it.ID, Content: it.Content, Status: it.Status, ParentID: it.ParentID}
+		out[i] = TodoItem(it)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

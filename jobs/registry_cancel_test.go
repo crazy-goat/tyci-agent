@@ -45,14 +45,6 @@ func (b *blockerSet) fn(ctx context.Context, jobID string) (string, bool, error)
 	return "partial work of " + jobID, false, ctx.Err()
 }
 
-func (b *blockerSet) finishOrder() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	out := make([]string, len(b.finished))
-	copy(out, b.finished)
-	return out
-}
-
 // waitStarted blocks until every id has been seen started (with a timeout),
 // so a Cancel issued before a goroutine gets scheduled can't flake.
 func (b *blockerSet) waitStarted(t *testing.T, want int) {

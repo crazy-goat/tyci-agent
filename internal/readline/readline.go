@@ -86,7 +86,7 @@ func (e *LineEditor) Read(ctx context.Context, prompt string) (string, error) {
 	if err := e.enableRawMode(); err != nil {
 		return "", err
 	}
-	defer e.disableRawMode()
+	defer func() { _ = e.disableRawMode() }()
 
 	e.render()
 

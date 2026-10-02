@@ -5,10 +5,28 @@ linters:
     - errcheck
     - unused
     - misspell
-
   settings:
-    misspell:
-      locale: US
+    errcheck:
+      # Best-effort calls whose errors carry no useful information.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (io.ReadCloser).Close
+        - io.Copy
+        - os.Remove
+        - os.RemoveAll
+    staticcheck:
+      # Keep the bug checks (SA, S). Style (ST) and quickfix (QF) checks are not enforced.
+      checks: ["all", "-ST*", "-QF*"]
+  exclusions:
+    rules:
+      # Tests set up and tear down state; unchecked errors there add noise only.
+      - path: _test\.go
+        linters:
+          - errcheck
 
 formatters:
   enable:

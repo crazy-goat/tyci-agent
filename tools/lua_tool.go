@@ -224,7 +224,7 @@ func (t *LuaTool) run(ctx context.Context, input map[string]any) ToolResult {
 
 	// Call the run function
 	if err := L.CallByParam(lua.P{
-		Fn:      runVal.(lua.LValue),
+		Fn:      runVal,
 		NRet:    1,
 		Protect: true,
 	}, sandbox, argsTable); err != nil {

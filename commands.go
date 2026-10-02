@@ -40,12 +40,12 @@ var rootCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// If args were given (unknown subcommand), show help.
 		if len(args) > 0 {
-			cmd.Help()
+			_ = cmd.Help()
 			return nil
 		}
 		// TUI requires a terminal; fall back to help when piped.
 		if !term.IsTerminal(int(os.Stdout.Fd())) {
-			cmd.Help()
+			_ = cmd.Help()
 			return nil
 		}
 		// Default: launch the TUI.
@@ -94,7 +94,7 @@ func registerProviders() {
 	if err := connect.EnsureProvidersJSON(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: providers.json: %v\n", err)
 	}
-	providers.RegisterProvidersFromProvidersJSON(connect.ProvidersJSONPath())
+	_ = providers.RegisterProvidersFromProvidersJSON(connect.ProvidersJSONPath())
 	providers.RegisterProvidersFromConfigMerged(connect.ModelJSONPath(), localModelJSONPath())
 }
 
@@ -510,8 +510,8 @@ var runCmd = &cobra.Command{
 
 func init() {
 	runCmd.Flags().String("prompt", "", "Prompt for response (required)")
-	runCmd.RegisterFlagCompletionFunc("model", completeProviderModels)
-	runCmd.RegisterFlagCompletionFunc("agent", completeAgents)
+	_ = runCmd.RegisterFlagCompletionFunc("model", completeProviderModels)
+	_ = runCmd.RegisterFlagCompletionFunc("agent", completeAgents)
 }
 
 // ---------------------------------------------------------------------------
@@ -831,7 +831,7 @@ var agentListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List configured agents",
 	Run: func(cmd *cobra.Command, args []string) {
-		agent.DisplayAgents()
+		_ = agent.DisplayAgents()
 	},
 }
 

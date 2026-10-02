@@ -136,11 +136,6 @@ func (m TuiModel) renderModelPickerContent() string {
 				b.WriteString("\n")
 				headerRendered++
 			}
-			// Headers before visibleStart also count as rendered to push content up
-			if renderedModels < visibleStart {
-				// This header is before visible range; we need to account for its space
-				// but we don't render it
-			}
 			continue
 		}
 		isSelected := modelIdx == m.pickerCursor

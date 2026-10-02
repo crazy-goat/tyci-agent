@@ -188,7 +188,7 @@ func (r *MCPToolRunner) Close() {
 		wg.Add(1)
 		go func(c mcp.Client) {
 			defer wg.Done()
-			c.Close()
+			_ = c.Close()
 		}(client)
 	}
 	wg.Wait()

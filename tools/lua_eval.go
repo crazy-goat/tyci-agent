@@ -202,11 +202,10 @@ func luaSuccess(logs, ret string, returned bool, calls int) string {
 type luaEnv struct {
 	ctx context.Context
 
-	mu       sync.Mutex
-	log      strings.Builder
-	dropped  int
-	calls    int
-	streamed bool
+	mu      sync.Mutex
+	log     strings.Builder
+	dropped int
+	calls   int
 }
 
 // restrictLuaStdlib removes the parts of the Lua standard library that would

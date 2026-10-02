@@ -121,7 +121,7 @@ func ForkNewSession(cwd, model, provider string, base []connector.Message) (*ses
 	for _, msg := range forked {
 		blocks := session.ContentBlocksFromConnector(msg.Content)
 		if err := sess.WriteMessage(msg.Role, blocks, nil); err != nil {
-			sess.Close()
+			_ = sess.Close()
 			return nil, nil, fmt.Errorf("fork-as-new-session: writing forked history: %w", err)
 		}
 	}

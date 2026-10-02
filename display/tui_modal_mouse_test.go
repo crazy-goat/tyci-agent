@@ -814,8 +814,7 @@ func TestModalMouse_CopyFromMultiLineSelection(t *testing.T) {
 
 	// Release
 	msg3 := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, X: cx + 6, Y: cy + 2}
-	result, _ = m.handleModalMouseMsg(msg3)
-	m = result.(TuiModel)
+	_, _ = m.handleModalMouseMsg(msg3)
 
 	if *copied == "" {
 		t.Fatal("expected text to be copied")

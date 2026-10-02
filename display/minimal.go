@@ -3,7 +3,6 @@ package display
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -96,21 +95,6 @@ func (m *Minimal) tickRender() {
 	}
 	m.lastRender = now
 	m.renderLocked(false)
-}
-
-func getTerminalWidth() int {
-	if w := os.Getenv("COLUMNS"); w != "" {
-		if width, err := strconv.Atoi(w); err == nil && width > 0 {
-			return width
-		}
-	}
-	if term.IsTerminal(int(os.Stdout.Fd())) {
-		width, _, err := term.GetSize(int(os.Stdout.Fd()))
-		if err == nil && width > 0 {
-			return width
-		}
-	}
-	return 100
 }
 
 // formatElapsed renders a duration as a fixed-width bracketed time string.
@@ -220,10 +204,6 @@ func (m *Minimal) renderLocked(final bool) {
 
 	// Pending (empty) lines: show a spinner so user sees liveness.
 	if content == "" && !final {
-		bodyAvail -= 2
-		if bodyAvail < 3 {
-			bodyAvail = 3
-		}
 		spinner := []rune("-/|\\")[int(time.Since(m.blockStart)/minRenderInterval)%4]
 		out := prefix + " " + string(spinner)
 		if visibleWidth(out) > maxW {

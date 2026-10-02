@@ -23,7 +23,7 @@ func TestPainterEnterOnFirstPaint(t *testing.T) {
 	got := out.String()
 	// First paint must enter the alternate screen, hide the cursor and clear.
 	for _, want := range []string{
-		ansi.SetMode(ansi.AltScreenBufferMode),
+		ansi.SetMode(ansi.ModeAltScreenSaveCursor),
 		ansi.HideCursor,
 		ansi.EraseEntireScreen,
 	} {
@@ -62,14 +62,14 @@ func TestPainterEnablesMouseWhenConfigured(t *testing.T) {
 	var out bytes.Buffer
 	p := newPainter(&out, true)
 	p.paint("x", 80, 24)
-	if !strings.Contains(out.String(), ansi.SetMode(ansi.MouseCellMotionMode, ansi.MouseSgrExtMode)) {
+	if !strings.Contains(out.String(), ansi.SetMode(ansi.ModeMouseButtonEvent, ansi.ModeMouseExtSgr)) {
 		t.Fatalf("mouse-enabled painter should emit mouse enable sequence: %q", out.String())
 	}
 
 	var out2 bytes.Buffer
 	p2 := newPainter(&out2, false)
 	p2.paint("x", 80, 24)
-	if strings.Contains(out2.String(), ansi.SetMode(ansi.MouseCellMotionMode, ansi.MouseSgrExtMode)) {
+	if strings.Contains(out2.String(), ansi.SetMode(ansi.ModeMouseButtonEvent, ansi.ModeMouseExtSgr)) {
 		t.Fatal("mouse-disabled painter should not emit mouse enable sequence")
 	}
 }
@@ -84,9 +84,9 @@ func TestPainterStopRestoresTerminal(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		ansi.ShowCursor,
-		ansi.ResetMode(ansi.MouseCellMotionMode, ansi.MouseSgrExtMode),
-		ansi.ResetMode(ansi.BracketedPasteMode),
-		ansi.ResetMode(ansi.AltScreenBufferMode),
+		ansi.ResetMode(ansi.ModeMouseButtonEvent, ansi.ModeMouseExtSgr),
+		ansi.ResetMode(ansi.ModeBracketedPaste),
+		ansi.ResetMode(ansi.ModeAltScreenSaveCursor),
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stop missing restore sequence %q\noutput: %q", want, got)

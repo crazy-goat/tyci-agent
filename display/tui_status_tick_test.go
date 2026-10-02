@@ -60,9 +60,6 @@ func TestBuildStatus_NoSuffixWhenRequestStartTimeIsZero(t *testing.T) {
 	if strings.Contains(result, "0.0s") {
 		t.Errorf("buildStatus should not show '0.0s' for zero start time, got: %q", result)
 	}
-	if strings.Contains(result, "responding...") && !strings.Contains(result, "0.0s") {
-		// Expected: spinner without suffix because elapsed is meaningless
-	}
 }
 
 func TestBuildStatus_ShowsThinkingSuffix(t *testing.T) {

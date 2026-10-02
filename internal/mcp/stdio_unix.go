@@ -23,7 +23,7 @@ func killProcessGroup(cmd *exec.Cmd) {
 	}
 	pgid, err := syscall.Getpgid(cmd.Process.Pid)
 	if err != nil {
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		return
 	}
 	// Negative pid signals the whole process group.

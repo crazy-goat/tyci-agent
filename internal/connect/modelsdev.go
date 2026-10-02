@@ -312,22 +312,3 @@ func fetchModelsDev(doer HTTPDoer) ([]byte, error) {
 	}
 	return body, nil
 }
-
-// writeModelJSON writes the config to model.json (used by `tyci connect`).
-func writeModelJSON(path string, cfg map[string]map[string]uriEntry) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding config: %w", err)
-	}
-
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("writing config: %w", err)
-	}
-
-	return nil
-}

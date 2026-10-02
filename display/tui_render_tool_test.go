@@ -252,14 +252,6 @@ func TestPrintTodoRenderMatrix(t *testing.T) {
 	tools.ClearTodoList()
 }
 
-func mustMarshal(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-	return string(b)
-}
-
 func mustRun(t *testing.T, tool *tools.TodoTool, input map[string]any) {
 	t.Helper()
 	res := tool.Run(context.Background(), input)

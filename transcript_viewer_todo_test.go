@@ -10,17 +10,6 @@ import (
 	"github.com/decodo/tyci/tools"
 )
 
-func resetTodoStoreForTranscriptTest(t *testing.T) {
-	t.Helper()
-	// tools has no exported reset; do it via tool clear + direct map wipe
-	// Use the same technique as tools/todo_test.go resetTodoStoreForTest but
-	// we are in package main so we must access via exported API.
-	// Instead, snapshot and restore the todoStore around the test by using
-	// the per-agent lists we create: we clean them up via clearing.
-	// Simplest: use tools API to clear what we create, and rely on unique ids.
-	_ = context.Background()
-}
-
 func seedTodosForAgent(t *testing.T, agentID string, contents []string) {
 	t.Helper()
 	tool := &tools.TodoTool{}

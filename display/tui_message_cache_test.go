@@ -325,10 +325,6 @@ func TestMessageRegionCache_WelcomeToContentTransition(t *testing.T) {
 	m := newCacheModel()
 	m.renderFrame() // welcome screen cached
 
-	if !m.messageRegion.hasContent {
-		// Expected: no blocks → hasContent = false
-	}
-
 	// Add a block → hasContent changes → cache invalidated.
 	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "first message"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "done"})

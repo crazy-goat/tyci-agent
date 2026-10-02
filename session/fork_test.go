@@ -101,7 +101,7 @@ func TestForkMessages_DoesNotAliasOriginal(t *testing.T) {
 	orig = append(orig, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "hi"}}})
 
 	forked := ForkMessages(orig)
-	forked = append(forked, connector.Message{Role: "assistant", Content: []connector.ContentBlock{{Type: "text", Text: "hello"}}})
+	_ = append(forked, connector.Message{Role: "assistant", Content: []connector.ContentBlock{{Type: "text", Text: "hello"}}})
 
 	if len(orig) != 1 {
 		t.Fatalf("appending to the fork must not grow the original, got len %d", len(orig))
@@ -146,7 +146,7 @@ func TestForkAtIndex_CleanCut(t *testing.T) {
 	// must not leak into the fork (Content blocks are still shared per
 	// message — see ForkMessages' doc comment — so this checks slice
 	// independence, not a deep copy of every block).
-	msgs = append(msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "q3"}}})
+	_ = append(msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "q3"}}})
 	if len(got) != 2 {
 		t.Fatalf("ForkAtIndex must not alias the original message slice, got len %d after appending to the original", len(got))
 	}

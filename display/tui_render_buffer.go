@@ -163,12 +163,7 @@ func (m *TuiModel) buildViewportRows(msgHeight int) []renderRow {
 			}
 			continue
 		}
-		rows = append(rows, renderRow{
-			Text:       line.Text,
-			SourceKind: line.SourceKind,
-			BlockIndex: line.BlockIndex,
-			SourceLine: line.SourceLine,
-		})
+		rows = append(rows, renderRow(line))
 	}
 
 	if len(rows) > msgHeight {

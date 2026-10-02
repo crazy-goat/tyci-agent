@@ -151,15 +151,6 @@ func (m *TuiModel) invalidateAllBlockLineCounts() {
 	m.scrollback.residentBytes = m.residentBlockBytes()
 }
 
-// agentBusy reports whether the agent is actively producing output.
-func (m *TuiModel) agentBusy() bool {
-	switch m.status {
-	case "sending", "waiting", "thinking", "responding", "tool":
-		return true
-	}
-	return false
-}
-
 // scrollDown moves the viewport n lines towards the newest content, and
 // restores follow-the-bottom when it gets there.
 //

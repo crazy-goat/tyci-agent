@@ -27,7 +27,7 @@ func TryLock(path string) (release func(), ok bool, err error) {
 		return func() {}, false, fmt.Errorf("cron: lock %s: %w", path, err)
 	}
 	release = func() {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		f.Close()
 	}
 	return release, true, nil

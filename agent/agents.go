@@ -442,7 +442,7 @@ func DisplayAgents() error {
 	if err != nil {
 		return err
 	}
-	if agents == nil || len(agents) == 0 {
+	if len(agents) == 0 {
 		fmt.Println("No agents configured.")
 		return nil
 	}
@@ -488,7 +488,7 @@ func SetLocal(name, model string) error {
 
 	agents := make(Agents)
 	if data, err := os.ReadFile(lPath); err == nil {
-		json.Unmarshal(data, &agents)
+		_ = json.Unmarshal(data, &agents)
 	}
 	if agents == nil {
 		agents = make(Agents)
@@ -527,16 +527,4 @@ func DeleteLocal(name string) error {
 	}
 	delete(agents, name)
 	return SaveLocal(agents, wd)
-}
-
-// parseModelFlag extracts provider and model from "provider/model" format.
-func parseModelFlag(s string) (provider, model string, err error) {
-	if s == "" {
-		return "", "", fmt.Errorf("empty model")
-	}
-	parts := strings.SplitN(s, "/", 2)
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid model format: %q (expected provider/model)", s)
-	}
-	return parts[0], parts[1], nil
 }

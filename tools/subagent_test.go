@@ -50,17 +50,6 @@ func (m *mockRunner) RunTaskWithSystem(ctx context.Context, task string, model s
 	return "mock response with custom system", nil
 }
 
-// failingRunner always returns an error
-type failingRunner struct{}
-
-func (f *failingRunner) RunTask(ctx context.Context, task string, model string, opts SubagentOptions) (string, error) {
-	return "", fmt.Errorf("agent failed")
-}
-
-func (f *failingRunner) RunTaskWithSystem(ctx context.Context, task string, model string, system string, opts SubagentOptions) (string, error) {
-	return "", fmt.Errorf("agent failed")
-}
-
 func TestCollector_Text(t *testing.T) {
 	c := newCollector()
 	c.Text("hello")

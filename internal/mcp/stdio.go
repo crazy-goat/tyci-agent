@@ -116,19 +116,19 @@ func (c *StdioClient) Initialize(ctx context.Context) error {
 
 	resp, err := c.sendRequest(ctx, initReq)
 	if err != nil {
-		c.Close()
+		_ = c.Close()
 		return fmt.Errorf("initialize: %w", err)
 	}
 
 	if resp.Error != nil {
-		c.Close()
+		_ = c.Close()
 		return fmt.Errorf("initialize error: %s", resp.Error.Message)
 	}
 
 	// Send initialized notification
 	notif := InitializedNotification()
 	if err := c.sendNotification(notif); err != nil {
-		c.Close()
+		_ = c.Close()
 		return fmt.Errorf("sending initialized: %w", err)
 	}
 
@@ -466,6 +466,6 @@ func (c *StdioClient) sendResponse(resp Response) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stdin != nil {
-		c.stdin.Write(data)
+		_, _ = c.stdin.Write(data)
 	}
 }

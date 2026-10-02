@@ -47,10 +47,10 @@ func newPainter(out io.Writer, mouse bool) *painter {
 // after bubbletea has already switched stdin into raw mode.
 func (p *painter) enter() {
 	var b strings.Builder
-	b.WriteString(ansi.SetMode(ansi.AltScreenBufferMode))
-	b.WriteString(ansi.SetMode(ansi.BracketedPasteMode))
+	b.WriteString(ansi.SetMode(ansi.ModeAltScreenSaveCursor))
+	b.WriteString(ansi.SetMode(ansi.ModeBracketedPaste))
 	if p.mouse {
-		b.WriteString(ansi.SetMode(ansi.MouseCellMotionMode, ansi.MouseSgrExtMode))
+		b.WriteString(ansi.SetMode(ansi.ModeMouseButtonEvent, ansi.ModeMouseExtSgr))
 	}
 	b.WriteString(ansi.HideCursor)
 	b.WriteString(ansi.EraseEntireScreen)
@@ -74,10 +74,10 @@ func (p *painter) stop() {
 	var b strings.Builder
 	b.WriteString(ansi.ShowCursor)
 	if p.mouse {
-		b.WriteString(ansi.ResetMode(ansi.MouseCellMotionMode, ansi.MouseSgrExtMode))
+		b.WriteString(ansi.ResetMode(ansi.ModeMouseButtonEvent, ansi.ModeMouseExtSgr))
 	}
-	b.WriteString(ansi.ResetMode(ansi.BracketedPasteMode))
-	b.WriteString(ansi.ResetMode(ansi.AltScreenBufferMode))
+	b.WriteString(ansi.ResetMode(ansi.ModeBracketedPaste))
+	b.WriteString(ansi.ResetMode(ansi.ModeAltScreenSaveCursor))
 	_, _ = io.WriteString(p.out, b.String())
 	p.started = false
 }

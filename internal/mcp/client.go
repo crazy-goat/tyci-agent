@@ -325,7 +325,7 @@ func ConnectAllTimeoutForProject(ctx context.Context, timeout time.Duration, wd 
 				// leaving it open for the rest of the session.
 				go func() {
 					if o := <-ch; o.client != nil {
-						o.client.Close()
+						_ = o.client.Close()
 					}
 				}()
 			}
@@ -366,7 +366,7 @@ func connectOne(ctx context.Context, name string, serverCfg ServerConfig, token 
 	}
 
 	if err := client.Initialize(ctx); err != nil {
-		client.Close()
+		_ = client.Close()
 		return nil, nil, fmt.Errorf("initialize: %w", err)
 	}
 
@@ -378,7 +378,7 @@ func connectOne(ctx context.Context, name string, serverCfg ServerConfig, token 
 
 	toolList, err := client.ListTools(ctx)
 	if err != nil {
-		client.Close()
+		_ = client.Close()
 		return nil, nil, fmt.Errorf("listing tools: %w", err)
 	}
 

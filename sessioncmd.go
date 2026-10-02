@@ -317,7 +317,7 @@ func runSessionDelete(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stdout, "Delete %s? [y/N] ", path)
 	var ans string
-	fmt.Scanln(&ans)
+	_, _ = fmt.Scanln(&ans)
 	ans = strings.ToLower(strings.TrimSpace(ans))
 	if ans != "y" && ans != "yes" {
 		fmt.Fprintln(os.Stdout, "Aborted.")

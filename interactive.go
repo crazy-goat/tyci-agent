@@ -55,7 +55,7 @@ func (s *interactiveState) init() {
 
 func (s *interactiveState) close() {
 	if s.editor != nil {
-		s.editor.Close()
+		_ = s.editor.Close()
 	}
 	if s.cond.Session() != nil {
 		s.cond.EndSession("ok", 0)

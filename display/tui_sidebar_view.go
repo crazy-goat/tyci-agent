@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/decodo/tyci/jobs"
-	"github.com/decodo/tyci/tools"
 )
 
 // sidebarLayoutT is the sidebar's own layout shape — a full-height column
@@ -437,39 +436,6 @@ func (m TuiModel) renderSidebarSessions(width int) []string {
 	return out
 }
 
-func (m TuiModel) renderSidebarBash(width int) []string {
-	list := m.sidebarBashJobs()
-	if len(list) == 0 {
-		return []string{"", "  No backgrounded bash commands this session."}
-	}
-	var out []string
-	for i, j := range list {
-		line := " " + formatJobLine(j, max(1, width-1))
-		out = append(out, rowStyle(width, i == m.sidebarCursor).Render(truncateToWidth(line, width)))
-	}
-	return out
-}
-
-func (m TuiModel) renderSidebarLua(width int) []string {
-	history := tools.LuaRunHistory()
-	if len(history) == 0 {
-		return []string{"", "  No Lua tool runs this session."}
-	}
-	var out []string
-	for i := len(history) - 1; i >= 0; i-- {
-		r := history[i]
-		icon, color := "✓", lipgloss.Color("114")
-		if !r.Success {
-			icon, color = "✗", lipgloss.Color("203")
-		}
-		iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
-		line := fmt.Sprintf(" %s %-20s %6s ago  %s", iconStyled,
-			truncateString(r.Name, 20), formatDurationShort(time.Since(r.StartedAt)), r.Duration.Round(time.Millisecond))
-		out = append(out, truncateToWidth(line, width))
-	}
-	return out
-}
-
 // formatDurationShort renders a duration as whole seconds while recent,
 // otherwise as whole minutes.
 func formatDurationShort(d time.Duration) string {
@@ -477,18 +443,6 @@ func formatDurationShort(d time.Duration) string {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}
 	return fmt.Sprintf("%dm", int(d.Minutes()))
-}
-
-// renderSidebarSubagents renders the Subagents tree — see buildSubagentTree.
-// waiting_answer rows render undimmed regardless of depth (they must never
-// look like inert history); finished (done/failed/truncated) rows dim.
-func (m TuiModel) renderSidebarSubagents(width int) []string {
-	rows := m.buildSubagentTree()
-	var out []string
-	for i, row := range rows {
-		out = append(out, rowStyle(width, i == m.sidebarCursor).Render(truncateToWidth(m.formatSubagentRow(row, width), width)))
-	}
-	return out
 }
 
 func (m TuiModel) formatSubagentRow(row subagentTreeRow, width int) string {
