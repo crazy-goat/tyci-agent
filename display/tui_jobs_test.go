@@ -48,6 +48,24 @@ func TestApplyJobUpdate_InsertsAndUpdatesByID(t *testing.T) {
 	}
 }
 
+func TestApplyJobUpdate_IgnoresStaleSnapshotAfterTerminal(t *testing.T) {
+	m := newTestModelForJobs()
+	started := time.Now()
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Status: jobs.StatusRunning, StartedAt: started, EventSeq: 1})
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Status: jobs.StatusDone, StartedAt: started, FinishedAt: time.Now(), EventSeq: 3})
+
+	// A progress snapshot taken before the terminal one but published after it.
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Status: jobs.StatusRunning, StartedAt: started, Progress: "late", EventSeq: 2})
+
+	got := m.backgroundJobs["job-1"]
+	if got.Status != jobs.StatusDone {
+		t.Fatalf("status = %s, want done (a late running snapshot overwrote the terminal one)", got.Status)
+	}
+	if got.Progress != "" {
+		t.Errorf("progress = %q, want the terminal snapshot to be kept", got.Progress)
+	}
+}
+
 func TestApplyJobUpdate_IgnoresResetOldJobAndAcceptsNewJob(t *testing.T) {
 	m := newTestModelForJobs()
 	old := jobs.Job{ID: "old", Description: "old task", Status: jobs.StatusRunning, StartedAt: time.Now()}

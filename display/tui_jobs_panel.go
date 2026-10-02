@@ -36,6 +36,12 @@ func (m *TuiModel) applyJobUpdate(j jobs.Job) {
 	if m.backgroundJobs == nil {
 		m.backgroundJobs = make(map[string]jobs.Job)
 	}
+	// Snapshots are published after the registry lock is released, so a late
+	// one (an old "running" state arriving after the terminal event) must not
+	// overwrite a newer state (#131).
+	if prev, ok := m.backgroundJobs[j.ID]; ok && j.EventSeq < prev.EventSeq {
+		return
+	}
 	m.backgroundJobs[j.ID] = j
 	m.pruneBackgroundJobsLocked()
 	// The panel's height depends on len(backgroundJobs), which changes the

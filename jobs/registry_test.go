@@ -362,6 +362,83 @@ func TestSetOnEvent_CalledOnStartAndCompletion(t *testing.T) {
 	}
 }
 
+// A SetProgress snapshot taken while the job is running can reach onEvent after
+// the job's terminal snapshot (#131). EventSeq lets a subscriber tell that the
+// late one is older.
+func TestSetOnEvent_EventSeqOrdersLateSnapshotBeforeTerminal(t *testing.T) {
+	r := NewRegistry()
+
+	var mu sync.Mutex
+	var events []Job
+	inHook := make(chan struct{})
+	release := make(chan struct{})
+	r.SetOnEvent(func(j Job) {
+		if j.Status == StatusRunning && j.Progress == "late" {
+			close(inHook)
+			<-release
+		}
+		mu.Lock()
+		events = append(events, j)
+		mu.Unlock()
+	})
+
+	finish := make(chan struct{})
+	job := r.Start(context.Background(), "racy", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
+		<-finish
+		return "ok", false, nil
+	})
+
+	progressDone := make(chan struct{})
+	go func() {
+		defer close(progressDone)
+		r.SetProgress(job.ID, "late")
+	}()
+	select {
+	case <-inHook:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the progress snapshot to reach onEvent")
+	}
+
+	close(finish)
+	select {
+	case <-job.done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the job to finish")
+	}
+	// The terminal event is published after job.done closes; wait for it.
+	deadline := time.Now().Add(time.Second)
+	for {
+		mu.Lock()
+		n := len(events)
+		mu.Unlock()
+		if n == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the terminal event, have %d events", n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(release)
+	<-progressDone
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events (start, terminal, late progress), got %d", len(events))
+	}
+	terminal, late := events[1], events[2]
+	if terminal.Status != StatusDone || late.Status != StatusRunning {
+		t.Fatalf("unexpected delivery order: %s then %s", terminal.Status, late.Status)
+	}
+	if late.EventSeq >= terminal.EventSeq {
+		t.Fatalf("late snapshot EventSeq %d must be lower than terminal EventSeq %d", late.EventSeq, terminal.EventSeq)
+	}
+	if events[0].EventSeq >= late.EventSeq {
+		t.Fatalf("EventSeq must grow: start %d, late %d", events[0].EventSeq, late.EventSeq)
+	}
+}
+
 func TestSetOnEvent_NilIsNoop(t *testing.T) {
 	r := NewRegistry()
 	// nil is the default; explicitly setting it back to nil must not panic.

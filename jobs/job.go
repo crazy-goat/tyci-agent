@@ -134,6 +134,18 @@ type Job struct {
 	// data race to one reading it directly off a live *Job.
 	lastProgressAt time.Time
 
+	// EventSeq orders the snapshots handed to Registry's onEvent hook. It is
+	// set under Registry.mu (see eventSnapshotLocked) and only ever grows for
+	// the life of the job. onEvent runs after the lock is released, so two
+	// goroutines can publish their snapshots in the opposite order from the
+	// one they were taken in (#131); a subscriber that keeps the latest state
+	// per job must ignore a snapshot whose EventSeq is lower than the one it
+	// holds. Zero on snapshots that were not published (List, Get, Wait).
+	EventSeq uint64
+
+	// eventSeq is the live counter behind EventSeq, guarded by Registry.mu.
+	eventSeq uint64
+
 	// LastActivity is materialized by Snapshot from lastActivity below — it
 	// only ever holds a meaningful value on a Snapshot()-returned copy, not
 	// on the live *Job (which tracks the same information in lastActivity

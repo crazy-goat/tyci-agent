@@ -40,6 +40,16 @@ func (r *Registry) SetOnEvent(fn func(Job)) {
 	r.onEvent = fn
 }
 
+// eventSnapshotLocked takes the snapshot that is about to be published to
+// onEvent and stamps it with the job's next EventSeq. Caller must hold r.mu,
+// so the sequence order is the order in which the states were observed.
+func eventSnapshotLocked(job *Job) Job {
+	job.eventSeq++
+	snapshot := job.Snapshot()
+	snapshot.EventSeq = job.eventSeq
+	return snapshot
+}
+
 var idCounter uint64
 var extensionIDCounter uint64
 
@@ -141,10 +151,11 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 	r.mu.Lock()
 	r.jobs[job.ID] = job
 	onEvent := r.onEvent
+	startSnapshot := eventSnapshotLocked(job)
 	r.mu.Unlock()
 
 	if onEvent != nil {
-		onEvent(job.Snapshot())
+		onEvent(startSnapshot)
 	}
 
 	go func() {
@@ -201,7 +212,7 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 			// comment for why leaving this silently in place instead was a bug.
 			job.ResidualMailbox = job.mailbox
 			job.mailbox = nil
-			snapshot := job.Snapshot()
+			snapshot := eventSnapshotLocked(job)
 			onEvent := r.onEvent
 			// This job just became terminal, so this is exactly the moment the
 			// retained-history bound can be exceeded. Prune before releasing the
@@ -612,7 +623,7 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 	}
 	answerCh := job.answerCh
 	onEvent := r.onEvent
-	snapshot := job.Snapshot()
+	snapshot := eventSnapshotLocked(job)
 	r.mu.Unlock()
 
 	if onEvent != nil {
@@ -652,7 +663,7 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 		// mistake for its own answer.
 		job.answerCh = nil
 	}
-	snapshot = job.Snapshot()
+	snapshot = eventSnapshotLocked(job)
 	onEvent = r.onEvent
 	r.mu.Unlock()
 
@@ -880,7 +891,7 @@ func (r *Registry) SetProgress(id, text string) bool {
 		job.ProgressHistoryTruncated = true
 	}
 	onEvent := r.onEvent
-	snapshot := job.Snapshot()
+	snapshot := eventSnapshotLocked(job)
 	r.mu.Unlock()
 
 	if onEvent != nil {
