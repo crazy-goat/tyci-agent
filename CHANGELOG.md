@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - `WORKFLOW.md` is replaced by `docs/workflow.md`
-- Documentation under `docs/` and `TODO.md` are translated to English
+- Documentation under `docs/` and `TODO.md` is translated to English; Polish remains only as test data in the subagent test plans
 - The CI workflow `ci.yml` is now `tests.yaml` and reads the Go version from `go.mod`
 - `.golangci.yml`: the `misspell` check no longer forces the US locale, style-only staticcheck checks (ST, QF) are not enforced, and tests are excluded from `errcheck`
 

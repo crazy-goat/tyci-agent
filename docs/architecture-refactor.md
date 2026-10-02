@@ -287,7 +287,7 @@ moment `Run` starts accepting a `ModelClient` (which is not a
 `providers.Provider`), `run_once.go` physically has nothing left to call
 `WithProvider` with. Writing/reading the context must therefore change in the same
 step as the `Run` signature — hence one commit
-(`250481e agent: fallback rozwiazywany przez wywolujacego, ModelClient w kontekscie`)
+(`250481e`, "agent: fallback resolved by the caller, ModelClient in the context", translated from the original Polish subject)
 covering both points of the plan.
 
 **`session/session.go` also stopped importing `providers`, even though the plan
