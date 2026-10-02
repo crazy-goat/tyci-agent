@@ -31,7 +31,7 @@ locking logic.
 ### Section 7 — Lock between background jobs
 
 - **7.1 — PASS.** Two-way race for `hot.go`: exactly one gets the lock
-  first, the other retries → `done B`. Auto-release after the winner finishes
+  first, the other retries → `gotowe B`. Auto-release after the winner finishes
   works without an explicit `unlock`.
 - **7.2 — PASS in mechanism** (details in "What did not pass").
 - **7.3 — PASS after scenario fix** (details below).
@@ -46,9 +46,9 @@ locking logic.
 ### Section 7/8 — Communication
 
 - **7.6 — PASS.** `wait(job_id)` works **from inside** a subagent: job B read
-  the completion of job A (`job finished: A done`). The shared
+  the completion of job A (`job finished: A gotowe`). The shared
   `jobs.Registry` is available, not a per-agent instance.
-- **8.1 — PASS.** Producer→consumer via the main thread: the password `granite`
+- **8.1 — PASS.** Producer→consumer via the main thread: the password `granitowiec`
   passed in the `task` text and correctly converted to `GRANITE`.
 - **8.2 — PASS.** The subagent does not have the `subagent` tool (`Unknown tool:
   subagent`) — recursion is structurally blocked; the child ended
@@ -64,10 +64,10 @@ locking logic.
 - **What happened:** job **B** got ahead of A and got the lock first. Job A returned a
   conflict error (`hot.go already locked by "holder-f8594e1d9b94"`) and did **not**
   perform `wait` (because it failed), but still returned the boilerplate
-  `done A` at the end — it did not stick to the "if it succeeds" condition.
+  `gotowe A` at the end — it did not stick to the "if it succeeds" condition.
 - **Is it a bug?** No. The lock/auto-release mechanism was correct: exactly one
   winner, the other had a conflict trace, never both at once, never a real
-  "failed B". It is an inconsistency in the child model's output/reporting.
+  "nie udało się B". It is an inconsistency in the child model's output/reporting. <!-- english-ok -->
 - **Risk:** a misleading job result for machine parsing; scenario evaluation
   based on the final text is susceptible to this.
 
@@ -81,8 +81,8 @@ locking logic.
 - **Round 2 (added `wait 4s` + explicit `unlock` by the winner):** real contention
   — at least one result with a conflict trace (C2 took the lock only on the 5th
   attempt). Criterion partially met.
-- **Round 3 (reporting `first time / after conflict / failed`):**
-  C1 `after conflict`, C2 `first time`, C3 **`failed C3`**.
+- **Round 3 (reporting `pierwszy raz / po konflikcie / nie udało się`):** <!-- english-ok -->
+  C1 `po konflikcie`, C2 `pierwszy raz`, C3 **`nie udało się C3`**. <!-- english-ok -->
 - **What did not work:** with a limit of 5 attempts with `wait 1s`, when both winners
   held the resource for 4s each (~8s+ in total), the third job exhausted the limit before
   reaching its turn in the queue. This is brittleness of the **scenario parameters**, not an auto-release

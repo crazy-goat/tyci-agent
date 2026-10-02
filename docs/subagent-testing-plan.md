@@ -14,7 +14,7 @@ panels/modals — those modes have no UI to observe.
 Goal: make sure the old, synchronous `subagent` behaves identically to how it
 did before this whole round of changes.
 
-- [ ] **0.1** `subagent(task: "count to 5 and return the result")` (without `async`) —
+- [ ] **0.1** `subagent(task: "policz do 5 i zwróć wynik")` (without `async`) — <!-- english-ok -->
       blocks the turn, the subagent modal shows a live stream, the result comes
       back as text in the same turn.
 - [ ] **0.2** `subagent(tasks: [{task:"A"},{task:"B"}])` (two parallel, sync)
@@ -24,12 +24,12 @@ did before this whole round of changes.
 - [ ] **0.3** `subagent(agent: "reviewer", task: "...")` — the named agent from
       `internal/agentdefs/builtin/reviewer.md` works: model/tools/temperature
       from the frontmatter are respected.
-- [ ] **0.4** `subagent(agent: "nonexistent", task: "x")` — hard error
+- [ ] **0.4** `subagent(agent: "nieistniejący", task: "x")` — hard error <!-- english-ok -->
       ("agent not found"), not a silent fallback to a plain subagent.
 
 ## 1. Async spawn (`subagent(async: true)`)
 
-- [ ] **1.1** `subagent(task: "something that takes ~30s", async: true)` — the turn
+- [ ] **1.1** `subagent(task: "coś co potrwa ~30s", async: true)` — the turn <!-- english-ok -->
       **immediately** gets a result with `job_id`, it does not wait for completion.
 - [ ] **1.2** Right after 1.1: the **background jobs panel** (bottom bar, above the
       input field) shows a new entry with status `running`.
@@ -72,7 +72,7 @@ did before this whole round of changes.
 - [ ] **2.5** `wait(job_id: "<id of a job that is still running>", seconds: 3)` —
       returns after 3s with "still running after 3s (job_id=...). Call wait again...",
       **Success: true** (this is not an error).
-- [ ] **2.6** `wait(job_id: "nonexistent-id", seconds: 5)` — error "unknown
+- [ ] **2.6** `wait(job_id: "nieistniejące-id", seconds: 5)` — error "unknown <!-- english-ok -->
       job_id".
 - [ ] **2.7** ESC/cancellation during `wait(seconds: 60)` — interrupts
       immediately (does not wait until the end), returns "wait cancelled after ~Ns".
@@ -95,7 +95,7 @@ did before this whole round of changes.
 
 ## 4. `/btw`
 
-- [ ] **4.1** During a normal conversation: `/btw what unit tests do we have today in tools?`
+- [ ] **4.1** During a normal conversation: `/btw jakie mamy dziś testy jednostkowe w tools?` <!-- english-ok -->
       — the modal opens **immediately**, shows a live stream of the answer.
 - [ ] **4.2** While 4.1 is running (btw modal open or closed), keep typing
       in the main thread — **the main thread is not blocked**, you can

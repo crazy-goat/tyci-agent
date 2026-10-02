@@ -55,17 +55,14 @@ an optional, additional verification, not a condition for running the test.
       6.2). **Expected:** success.
 
       Then call `subagent` with `async=true` and `task` set
-      exactly to: `"Call the lock tool with path=\"shared.go\" (without
-      seconds). Return in the result the exact text of the error message if the lock
-      fails."`. Wait for the job to finish via `wait(job_id, seconds:
+      exactly to: `"Wywołaj narzędzie lock z path=\"shared.go\" (bez seconds). Zwróć w wyniku dokładną treść komunikatu błędu, jeśli lock się nie uda."`. Wait for the job to finish via `wait(job_id, seconds: <!-- english-ok -->
       10)`. **Expected:** the job ends `done`, and its result contains a
       conflict error pointing to the `holder` from the first call.
 - [ ] **6.2** Call `unlock` with `path="shared.go"` and the `holder` remembered from
       6.1. **Expected:** success, `shared.go` unlocked. (This step by itself
       does not test retry on the subagent side — scenario 7.1 serves that.)
 - [ ] **6.3** Call `subagent` with `async=true` and `task` set exactly
-      to: `"Call the lock tool with path=\"x.go\" (without seconds). Do not
-      call unlock. End the answer with the short text 'done'."`. Wait
+      to: `"Wywołaj narzędzie lock z path=\"x.go\" (bez seconds). Nie wywołuj unlock. Zakończ odpowiedź krótkim tekstem 'gotowe'."`. Wait <!-- english-ok -->
       for `done` via `wait(job_id, seconds: 10)`. Immediately afterwards call
       `lock` with `path="x.go"` (without `seconds`). **Expected:** the second `lock`
       succeeds right away, without a conflict error — `x.go` must be
@@ -73,9 +70,7 @@ an optional, additional verification, not a condition for running the test.
       `context.WithoutCancel` + auto-release mechanism, covered by the unit test
       `L-5` in `wiring_test.go` — this checks the same property end-to-end).
 - [ ] **6.4** Like 6.3, but the job is to **fail**. Call `subagent` with
-      `async=true` and `task` set exactly to: `"Call the lock tool
-      with path=\"y.go\" (without seconds). Then call the bash tool with
-      the command \"this-command-does-not-exist-xyz\". Do not call unlock."`.
+      `async=true` and `task` set exactly to: `"Wywołaj narzędzie lock z path=\"y.go\" (bez seconds). Następnie wywołaj narzędzie bash z komendą \"this-command-does-not-exist-xyz\". Nie wywołuj unlock."`. <!-- english-ok -->
       Wait for status `failed` via `wait(job_id, seconds: 10)`.
       Immediately afterwards call `lock` with `path="y.go"` (without `seconds`).
       **Expected:** success even though the job ended with an error — the deferred
@@ -85,35 +80,29 @@ an optional, additional verification, not a condition for running the test.
 
 - [ ] **7.1** Call `subagent` with `async=true` and `tasks` set to
       exactly two elements:
-      1. `{"task": "Call the lock tool with path=\"hot.go\" (without seconds).
-         If it succeeds, call wait with seconds=5. Then finish with the short
-         text 'done A', do not call unlock.", "async": true}`
-      2. `{"task": "Call the lock tool with path=\"hot.go\" (without seconds).
-         If you get a conflict error, call wait with seconds=2, and
-         then try lock again. Repeat this at most 3 times.
-         Finish with the text 'done B' if it succeeded, or 'failed B'
-         if not after 3 attempts.", "async": true}`
+      1. `{"task": "Wywołaj narzędzie lock z path=\"hot.go\" (bez seconds). Jeśli się uda, wywołaj wait z seconds=5. Następnie zakończ krótkim tekstem 'gotowe A', nie wywołuj unlock.", "async": true}` <!-- english-ok -->
+      2. `{"task": "Wywołaj narzędzie lock z path=\"hot.go\" (bez seconds). Jeśli dostaniesz błąd konfliktu, wywołaj wait z seconds=2, a następnie spróbuj lock ponownie. Powtórz to maksymalnie 3 razy. Zakończ tekstem 'gotowe B' jeśli się udało, albo 'nie udało się B' jeśli nie po 3 próbach.", "async": true}` <!-- english-ok -->
 
       For both returned `job_id`s call `wait(job_id, seconds: 15)` until both
       reach status `done`. **Expected:** both `done`; the result of the first
-      contains "done A"; the result of the second contains "done B" (not "failed
+      contains "gotowe A"; the result of the second contains "gotowe B" (nie "nie udało się <!-- english-ok -->
       B" — if that appears, it means the first did not release the lock
       despite the absence of `unlock`, i.e. a bug in auto-release, not in this scenario).
 - [ ] **7.2** Repeat step 7.1 (a new `subagent` call with the same
       two tasks) 3 more times in a row. **Expected:** the result is
       stable every time — always exactly one of the two gets the lock
       first (the second has a trace of a conflict error with retry in its result),
-      never both "done" at once without any conflict error in either of the two
+      never both "gotowe" at once without any conflict error in either of the two
       results (which would mean both got the lock simultaneously), and never
-      "failed B".
+      "nie udało się B". <!-- english-ok -->
 - [ ] **7.3** A three-way race for the same resource (extending 7.1 from 2 to 3).
       Call `subagent` with `async=true` and `tasks` set to exactly
       three elements, each with the same pattern as task B in 7.1 (lock →
       on conflict wait(seconds=2) and retry, max 5 times), but with a **different**
-      final text for each (`"done C1"`, `"done C2"`, `"done
+      final text for each (`"gotowe C1"`, `"gotowe C2"`, `"gotowe
       C3"`) and all on `path="triple.go"`. `wait` on all three
       `job_id`s (seconds: 20 each). **Expected:** all three `done` with the
-      corresponding "done Cn" (none "failed"); in the content of the results of at
+      corresponding "gotowe Cn" (none "nie udało się"); in the content of the results of at <!-- english-ok -->
       least two of the three there must be a trace of a conflict error (because they
       could not all get the lock on the first try) — if in
       none of the three results there is a trace of a conflict, it means the test did not
@@ -124,14 +113,8 @@ an optional, additional verification, not a condition for running the test.
       classic two-resource deadlock should structurally not be
       possible; this test pins that). Call `subagent` with `async=true` and
       `tasks`:
-      1. `{"task": "Call lock with path=\"r1.go\" (without seconds). If it
-         succeeds, call wait with seconds=3. Then try lock with
-         path=\"r2.go\". Finish with text describing the result of both lock attempts.",
-         "async": true}`
-      2. `{"task": "Call lock with path=\"r2.go\" (without seconds). If it
-         succeeds, call wait with seconds=3. Then try lock with
-         path=\"r1.go\". Finish with text describing the result of both lock attempts.",
-         "async": true}`
+      1. `{"task": "Wywołaj lock z path=\"r1.go\" (bez seconds). Jeśli się uda, wywołaj wait z seconds=3. Następnie spróbuj lock z path=\"r2.go\". Zakończ tekstem opisującym wynik obu prób lock.", "async": true}` <!-- english-ok -->
+      2. `{"task": "Wywołaj lock z path=\"r2.go\" (bez seconds). Jeśli się uda, wywołaj wait z seconds=3. Następnie spróbuj lock z path=\"r1.go\". Zakończ tekstem opisującym wynik obu prób lock.", "async": true}` <!-- english-ok -->
 
       `wait` on both `job_id`s (seconds: 15). **Expected:** both `done` in
       a reasonable time (no hang, no timeout on `wait`) — each reports
@@ -145,14 +128,8 @@ an optional, additional verification, not a condition for running the test.
       7.1, where the winner does **not** call unlock and relies solely on
       auto-release after the job finishes). Call `subagent` with `async=true`
       and `tasks`:
-      1. `{"task": "Call lock with path=\"queue.go\" (without seconds). Call
-         wait with seconds=3 (simulating work). Call unlock with
-         path=\"queue.go\" and the holder you got from lock. Finish with
-         the text 'work A done'.", "async": true}`
-      2. `{"task": "In a loop at most 5 times: call lock with
-         path=\"queue.go\" (without seconds); if it succeeds, finish with the text
-         'received after ' + attempt number + ' attempts'; if there is a conflict, call
-         wait with seconds=1 and try again.", "async": true}`
+      1. `{"task": "Wywołaj lock z path=\"queue.go\" (bez seconds). Wywołaj wait z seconds=3 (symulacja pracy). Wywołaj unlock z path=\"queue.go\" i holderem który dostałeś z lock. Zakończ tekstem 'praca A gotowa'.", "async": true}` <!-- english-ok -->
+      2. `{"task": "W pętli maksymalnie 5 razy: wywołaj lock z path=\"queue.go\" (bez seconds); jeśli sukces, zakończ tekstem 'odebrano po ' + numer próby + ' próbach'; jeśli konflikt, wywołaj wait z seconds=1 i spróbuj ponownie.", "async": true}` <!-- english-ok -->
 
       `wait` on both `job_id`s (seconds: 15). **Expected:** task 2 never
       gets the lock on the first attempt (because task 1 holds it for at
@@ -164,15 +141,12 @@ an optional, additional verification, not a condition for running the test.
 - [ ] **7.6** Visibility of `wait(job_id)` **from inside** another subagent, not
       only from the main thread (today the only channel through which one job can
       learn about the state of another). First call `subagent` with
-      `async=true, task="Call wait with seconds=8, then finish with the text
-      'A done'."` — remember the returned `job_id` (call it `<ID_A>`,
+      `async=true, task="Wywołaj wait z seconds=8, potem zakończ tekstem 'A gotowe'."` — remember the returned `job_id` (call it `<ID_A>`, <!-- english-ok -->
       substituting the real value in the step below). Immediately afterwards call
       `subagent` with `async=true` and `task` set exactly to (substituting the
-      real `<ID_A>`): `"Call the wait tool with job_id=\"<ID_A>\" and
-      seconds=15. Return the exact content of that call's response as your
-      result."`. `wait` on the second `job_id` (seconds: 20). **Expected:** the second
+      real `<ID_A>`): `"Wywołaj narzędzie wait z job_id=\"<ID_A>\" i seconds=15. Zwróć dokładną treść odpowiedzi tego wywołania jako swój wynik."`. `wait` on the second `job_id` (seconds: 20). **Expected:** the second <!-- english-ok -->
       job ends `done`, and its result contains content along the lines of "job
-      finished" with the text "A done" — proof that `wait` is available
+      finished" with the text "A gotowe" — proof that `wait` is available
       inside a subagent and sees the same shared `jobs.Registry` as the
       main thread (not a separate, per-agent instance).
 
@@ -185,21 +159,17 @@ reading the result of one job and **manually** pasting it into the `task` text o
 the next — the scenarios below verify that this works predictably at all.
 
 - [ ] **8.1** Produce→consume with the main thread as intermediary. Call
-      `subagent` with `async=true, task="Come up with and return as the result one random
-      password word (any, a single word, no explanations)."`. Wait for
+      `subagent` with `async=true, task="Wymyśl i zwróć jako wynik jedno losowe słowo-hasło (dowolne, jedno słowo, bez wyjaśnień)."`. Wait for <!-- english-ok -->
       `done` via `wait(job_id, seconds: 10)` and remember the exact password from the
       returned result. Then call `subagent` with `async=true, task`
-      set exactly to (substituting the real password): `"The received
-      password is: '<PASSWORD>'. Return as the result the same password written in capital
-      letters."`. `wait` on the second `job_id`. **Expected:** the result of the second
+      set exactly to (substituting the real password): `"Otrzymane hasło to: '<HASŁO>'. Zwróć jako wynik to samo hasło zapisane wielkimi literami."`. `wait` on the second `job_id`. **Expected:** the result of the second <!-- english-ok -->
       job is the password from the first correctly converted to capital letters —
       confirms that the main thread is able to faithfully pass the result
       of one job as input to the other (the only "communication channel"
       between subagents that exists today).
 - [ ] **8.2** A subagent trying to bypass the lack of direct communication by
       calling `subagent` itself (recursion). Call `subagent` with
-      `async=true, task="Call the subagent tool with task='anything'. Return
-      as the result the exact error text if this fails."`. `wait` on
+      `async=true, task="Wywołaj narzędzie subagent z task='cokolwiek'. Zwróć jako wynik dokładną treść błędu, jeśli to się nie uda."`. `wait` on <!-- english-ok -->
       `job_id` (seconds: 10). **Expected:** the job ends `done` (not
       `failed` — the child should handle the error and finish
       correctly), and its result contains a message about forbidden recursion.
