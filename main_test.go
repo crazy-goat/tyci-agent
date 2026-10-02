@@ -47,8 +47,6 @@ func TestMain(m *testing.M) {
 		os.Stderr.WriteString("mkdir temp: " + err.Error())
 		os.Exit(1)
 	}
-	// Remove the temp directory in a defer; ignore errors on cleanup.
-	defer func() { _ = os.RemoveAll(testDir) }()
 
 	// Create a minimal model.json so subprocess tests can find a model.
 	tyciDir := filepath.Join(testDir, ".tyci")
