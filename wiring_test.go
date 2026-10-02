@@ -63,7 +63,12 @@ func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
 	origReg, origBus, origNotices := JobRegistry, jobEventBus, JobNotices
 
 	reg := jobs.NewRegistry()
-	bus := eventbus.New(64)
+	// Publish drops events when a subscriber's buffer is full. Tests that
+	// flood the registry (floodRegistryPastTerminalCap) emit well over 100
+	// events in a burst, so a small buffer lets a slow runner's drain
+	// goroutine lag and lose a terminal event, and the cleanup below would
+	// then wait for it forever. Size the buffer for the largest burst.
+	bus := eventbus.New(4096)
 	// A fresh notice queue too: wireTools points the tools package at
 	// whatever JobNotices currently is, so leaving the production one in
 	// place would let one test's background-command notices show up in

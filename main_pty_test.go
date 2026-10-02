@@ -3,9 +3,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -24,7 +26,7 @@ import (
 func openPTY(t *testing.T) (master *os.File, slave *os.File) {
 	t.Helper()
 
-	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		t.Skipf("cannot open /dev/ptmx: %v (skipping PTY test)", err)
 	}
@@ -84,8 +86,29 @@ func runInteractivePTY(t *testing.T) (*os.File, *exec.Cmd) {
 
 	master, slave := openPTY(t)
 
+	// TestMain runs the tests from an empty temp directory with a fresh HOME,
+	// so the project is unknown and an interactive start would block on
+	// "Trust this project? [y/N]" instead of showing the prompt. Record the
+	// decision up front.
+	// A directory of its own, so the shared test cwd stays unrecorded for
+	// the tests that assert the untrusted-project behaviour.
+	cwd := t.TempDir()
+	trustJSON, err := json.Marshal(map[string]any{"projects": map[string]any{
+		cwd: map[string]any{"trusted": true, "decided_at": time.Now()},
+	}})
+	if err != nil {
+		t.Fatalf("marshal trust.json: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(testDir, ".tyci"), 0o700); err != nil {
+		t.Fatalf("mkdir .tyci: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(testDir, ".tyci", "trust.json"), trustJSON, 0o600); err != nil {
+		t.Fatalf("write trust.json: %v", err)
+	}
+
 	cmd := exec.Command(binPath, "console", "--model", "test-provider/test-model", "--no-session", "--history-file", "/dev/null")
 	cmd.Env = testEnv("TERM=xterm-256color")
+	cmd.Dir = cwd
 	cmd.Stdin = slave
 	cmd.Stdout = slave
 	cmd.Stderr = slave

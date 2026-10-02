@@ -998,6 +998,11 @@ func TestCompactKeepsRawLogAndReplay(t *testing.T) {
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "old"}}},
 		{Role: "assistant", Content: []connector.ContentBlock{{Type: "text", Text: "answer"}}},
 	}
+	// The compacted-away message must really be in the raw log; asserting on
+	// a short word like "old" matched the temp path ("folders") on macOS.
+	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "compacted-away-turn"}}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.Compact("preserved summary", "tail-1", msgs[1:], 1); err != nil {
 		t.Fatal(err)
 	}
@@ -1008,7 +1013,7 @@ func TestCompactKeepsRawLogAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"type":"compaction"`) || !strings.Contains(string(data), "old") {
+	if !strings.Contains(string(data), `"type":"compaction"`) || !strings.Contains(string(data), "compacted-away-turn") {
 		t.Fatalf("raw log was not retained: %s", data)
 	}
 	_, replay, _, _, err := LoadForReplay(path)

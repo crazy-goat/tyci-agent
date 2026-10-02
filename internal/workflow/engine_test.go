@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	lua "github.com/yuin/gopher-lua"
@@ -12,6 +14,20 @@ import (
 // workflow script returns the names of agent definitions visible from the
 // current working directory.
 func TestLuaAgents_ReturnsConfiguredAgents(t *testing.T) {
+	// Built-in agents are only unpacked into ~/.tyci/agents by agentdefs.Sync
+	// at startup, so with a clean HOME (CI) the list is empty. Provide a
+	// definition in an isolated HOME instead of relying on the developer's.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".tyci", "agents")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	def := "---\ndescription: test agent\n---\nYou are a test agent.\n"
+	if err := os.WriteFile(filepath.Join(dir, "lua-test-agent.md"), []byte(def), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	engine := NewEngine(t.Context(), "test prompt")
 
 	// Invoke the tyci.agents() entry point directly and inspect the pushed
@@ -37,7 +53,7 @@ func TestLuaAgents_ReturnsConfiguredAgents(t *testing.T) {
 		}
 	})
 	if len(got) == 0 {
-		t.Fatal("tyci.agents should list at least the built-in agents")
+		t.Fatal("tyci.agents should list the configured agents")
 	}
 
 	for _, def := range want {
