@@ -59,45 +59,50 @@ func (n *recordingNotifier) shownFor(jobID string) (int, bool) {
 // bgFinishCap is how long a backgrounded command's job may take to reach a
 // terminal status in these tests, and bgCleanupCap the same bound for the
 // teardown below. Stopping one of these commands is a single SIGKILL to a
-// process group plus a reap — microseconds of real work — but the runners
-// that execute this suite under -race are shared and heavily loaded, and
-// there the very same teardown was observed to take seconds, which turned a
-// loaded runner into a red build ("job did not finish within 5s (status
-// running)", "1 background slot(s) still in use after cleanup"). These caps
-// are bounds the runner can actually meet, not new sleeps: both waits below
-// still block on the real transition (the job's terminal status, the slot the
-// job goroutine releases), and both return as soon as it happens.
+// process group plus a reap — microseconds of real work — but the runners that
+// execute this suite under -race are shared and heavily loaded, and there the
+// same teardown was observed to take seconds.
+//
+// The old 5s caps are what turned that into the reported cascade: a test that
+// gave up waiting reported "job did not finish within 5s (status running)",
+// then "1 background slot(s) still in use after cleanup", and left its job
+// running — so the NEXT test's KillAllBackgroundBash found three commands where
+// it had started two. These caps are bounds the runner can actually meet, not
+// new sleeps: both waits still block on the real transition (the job's terminal
+// status, the slot its goroutine releases) and return as soon as it happens.
 const (
 	bgFinishCap  = 30 * time.Second
 	bgCleanupCap = 30 * time.Second
 )
 
 // killBackgroundBashAndWait empties the process-global background state: it
-// signals every backgrounded command and waits until no slot is occupied and
-// no id is still registered.
+// signals every backgrounded command and waits until no slot is occupied.
 //
-// Both halves matter, and the second is why this is a helper rather than a
-// bare KillAllBackgroundBash() in each test's cleanup. A slot is released by
-// the job goroutine reacting to the kill, not by the kill itself, so a test
-// that returned without waiting left its slot behind — and left the id
-// registered too, which is how the next test's KillAllBackgroundBash came to
-// report "expected to kill 2 commands, killed 3" for the two commands it
-// started itself (TestKillAllBackgroundBash). Background state is
-// process-global, so an incomplete cleanup in one test is a failure in the
-// next, which is why every environment here that can start a backgrounded
-// command calls this on the way out.
+// A slot is released by the job goroutine reacting to the kill, not by the
+// kill itself, so a test that returned without waiting left its state behind
+// and the NEXT test started on top of it — which is how the next test's
+// KillAllBackgroundBash came to report "expected to kill 2 commands, killed 3"
+// for the two commands it had started itself (TestKillAllBackgroundBash).
+// Background state is process-global, so an incomplete cleanup in one test is a
+// failure in another; every environment here that can start a backgrounded
+// command therefore calls this on the way out, from one place.
+//
+// Waiting for zero slots needs no second condition: a job's defers run LIFO,
+// so unregisterBackgroundBash always runs BEFORE releaseBackgroundSlot (see
+// handoff in bash.go) — no slot can be free while its id is still registered.
+// The ids are read again only for the leak message, where naming the stuck ones
+// is the point.
 func killBackgroundBashAndWait(t *testing.T) {
 	t.Helper()
 	KillAllBackgroundBash()
 	deadline := time.Now().Add(bgCleanupCap)
-	for time.Now().Before(deadline) {
-		if backgroundSlotsInUse() == 0 && len(runningBackgroundBash()) == 0 {
-			return
-		}
+	for backgroundSlotsInUse() > 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Errorf("background state leaked past cleanup: %d slot(s) in use, still registered: %v",
-		backgroundSlotsInUse(), runningBackgroundBash())
+	if backgroundSlotsInUse() != 0 {
+		t.Errorf("background state leaked past cleanup: %d slot(s) in use, still registered: %v",
+			backgroundSlotsInUse(), runningBackgroundBash())
+	}
 }
 
 // bgTestEnv wires the background-bash feature onto a fresh job registry and

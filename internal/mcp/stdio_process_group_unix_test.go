@@ -42,13 +42,18 @@ func TestStdioClientCloseKillsWholeProcessGroup(t *testing.T) {
 	// here would notice stdin closing, which is exactly what forces Close
 	// into its force-kill path instead of the "process exited on its own"
 	// path.
-	script := `printf '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"fake","version":"1.0"}}}\n'
+	//
+	// `read -r _` first, like initScript: the response must not be printed
+	// before the client's request has been read, or readLoop can consume it
+	// before sendRequest has registered the pending entry and drop it.
+	script := `read -r _
+printf '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"fake","version":"1.0"}}}\n'
 sleep 60 &
 echo $! > ` + pidFile + `
 wait`
 
 	c := NewStdioClient("fake", "sh", []string{"-c", script})
-	ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := c.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize() error: %v", err)
