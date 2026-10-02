@@ -29,7 +29,7 @@ tyci/
 type Provider interface {
     Name() string              // "zen", "anthropic", "openai"
     IsConfigured() bool        // true if the API key is non-empty
-    Models() []string          // np. ["glm-5.1", "kimi-k2.5"]
+    Models() []string          // e.g. ["glm-5.1", "kimi-k2.5"]
     Send(ctx context.Context, model, prompt, system string, handler StreamHandler) error
 }
 ```
@@ -38,7 +38,7 @@ type Provider interface {
 
 ```go
 type StreamHandler interface {
-    Chunk(text string)         // kolejny fragment odpowiedzi
+    Chunk(text string)         // next fragment of the response
     Summary(usage UsageInfo)   // summary at the end of streaming
     End()
     Error(err error)
@@ -87,7 +87,7 @@ Only configured providers (IsConfigured=true) are shown.
 
 ### Model Selection
 
-Model podawany jako `provider/model`:
+The model is given as `provider/model`:
 ```
 tyci -m zen/glm-5.1 -p "prompt"
 ```
@@ -98,7 +98,7 @@ If only `model` is given without a prefix (e.g. `-m glm-5.1`), find the first pr
 
 - `-p`, `--prompt` string - prompt (required)
 - `-s`, `--system` string - system prompt
-- `-m`, `--model` string - model w formacie `provider/model` (default: `zen/glm-5.1`)
+- `-m`, `--model` string - model in the `provider/model` format (default: `zen/glm-5.1`)
 - `-o`, `--output` string - output file (default: stdout)
 - `--list` - list available models
 
@@ -114,8 +114,8 @@ If only `model` is given without a prefix (e.g. `-m glm-5.1`), find the first pr
 
 ## Implementation Notes
 
-- Providerzy jako osobne paczki Go (`package zen`, `package anthropic`, etc.)
-- Wspólny interfejs `Provider` w `providers/provider.go`
+- Providers as separate Go packages (`package zen`, `package anthropic`, etc.)
+- Shared `Provider` interface in `providers/provider.go`
 - Registry in `providers/registry.go` with the function `Register(p Provider)`
 - Each provider builds its own requests to its API (OpenAI-compatible or Anthropic-compatible)
 - Streaming support: parsing SSE (`data:` lines)

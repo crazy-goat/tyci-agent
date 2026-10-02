@@ -32,7 +32,7 @@ Below are the observations collected from inspecting the code in `display/tui_*.
 1. **Glamour inserts vertical gaps between markdown sections.**
    For a typical answer with 3 headings, a list and a closing line we get
    ~9 lines with content and ~6 empty "padding" lines (each with `lipgloss.Width = width`,
-   because glamour pads every line to `m.width`). After ANSI streaming each
+   because glamour pads every line to `m.width`). After stripping ANSI each
    such "padding" line is just spaces — it looks like an empty row
    in the terminal. This is glamour's behaviour, not our code's.
 

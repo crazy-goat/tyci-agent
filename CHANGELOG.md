@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - CI: aggregate `ci-ok` check; heavy jobs are skipped for documentation-only changes; a fast `docs` job checks Markdown
 - Release workflow: pushing a `vX.Y.Z` tag publishes a GitHub release with notes from this file and `tyci` binaries for linux and darwin (amd64, arm64)
 - Dependabot for Go modules and GitHub Actions
-- Issue forms and a pull request template
+- A pull request template
 
 ### Changed
 - `WORKFLOW.md` is replaced by `docs/workflow.md`
