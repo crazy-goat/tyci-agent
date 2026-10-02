@@ -393,6 +393,9 @@ func TestNoAskContradictionPatterns_CatchTheRealFamilyWithoutFalseTripping(t *te
 // times plus a fifteen-line code example that already lives in help("lua").
 // Density is the point; this is the guard that keeps it.
 func TestPromptStaysShort(t *testing.T) {
+	// Run outside the repository: the prompt embeds the AGENTS.md found from the
+	// working directory upwards, which is not part of the budget under test.
+	t.Chdir(t.TempDir())
 	const budget = 5000
 	if got := len(BuildSystemPrompt()); got > budget {
 		t.Errorf("system prompt is %d bytes, budget is %d — put the detail in help(tool) instead", got, budget)
