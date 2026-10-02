@@ -985,8 +985,6 @@ func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
 // this test only needs to hold for the tools genuinely never on a scout's
 // profile — "scout(task)" is not one of those, and is covered there, not here.
 func TestBuildScoutSystemPrompt_OmitsUnavailableTools(t *testing.T) {
-	// Run outside the repository so its AGENTS.md (which mentions tools) is not embedded.
-	t.Chdir(t.TempDir())
 	prompt := BuildScoutSystemPrompt(true)
 
 	// Matched as a tool-call form ("write(", not the bare word "write") so

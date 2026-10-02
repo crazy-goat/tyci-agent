@@ -35,6 +35,11 @@ func testEnv(extra ...string) []string {
 	return append(env, extra...)
 }
 
+// repoDir and realHome are the checkout and the HOME TestMain started in. A
+// test that runs `go build` needs both: the module lives in repoDir, and the
+// module and build caches live under the real HOME.
+var repoDir, realHome string
+
 func TestMain(m *testing.M) {
 	var err error
 	testDir, err = os.MkdirTemp("", "tyci-test")
@@ -89,7 +94,35 @@ func TestMain(m *testing.M) {
 		os.Stderr.WriteString("build failed: " + string(out))
 		os.Exit(1)
 	}
-	os.Exit(m.Run())
+
+	// Run the tests outside the repository with an empty HOME: the system
+	// prompt embeds the AGENTS.md found from the working directory upwards
+	// and the user's instructions from HOME, so without this the results
+	// would depend on the checkout and on the machine.
+	repoDir, err = os.Getwd()
+	if err != nil {
+		os.Stderr.WriteString("getwd: " + err.Error())
+		os.Exit(1)
+	}
+	realHome = os.Getenv("HOME")
+	isolated, err := os.MkdirTemp("", "tyci-isolated")
+	if err != nil {
+		os.Stderr.WriteString("mkdir temp: " + err.Error())
+		os.Exit(1)
+	}
+	defer func() { _ = os.RemoveAll(isolated) }()
+	if err := os.Chdir(isolated); err != nil {
+		os.Stderr.WriteString("chdir: " + err.Error())
+		os.Exit(1)
+	}
+	if err := os.Setenv("HOME", isolated); err != nil {
+		os.Stderr.WriteString("setenv HOME: " + err.Error())
+		os.Exit(1)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(testDir)
+	_ = os.RemoveAll(isolated)
+	os.Exit(code)
 }
 
 func TestRunRequiresPrompt(t *testing.T) {

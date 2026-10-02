@@ -239,7 +239,7 @@ func TestWireGolden(t *testing.T) {
 }
 
 func goldenPath(name string) string {
-	return filepath.Join("testdata", name)
+	return filepath.Join(packageDir, "testdata", name)
 }
 
 // pickHeaders extracts the whitelisted headers in a deterministic form.

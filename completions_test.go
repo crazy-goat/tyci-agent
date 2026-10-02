@@ -139,6 +139,8 @@ func buildTyciBinary(t *testing.T) string {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "tyci")
 	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd.Dir = repoDir
+	cmd.Env = append(os.Environ(), "HOME="+realHome)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
