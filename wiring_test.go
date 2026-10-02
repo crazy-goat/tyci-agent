@@ -31,6 +31,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -549,6 +550,15 @@ func TestWiring_L5_NoTTLLockInAsyncJobReleasedOnJobTermination(t *testing.T) {
 // C-1 (high priority, flagship): two async subagents race for the same lock.
 // =============================================================================
 
+// c1LockWaitCap bounds how long the losing child of the C-1 race waits for the
+// winner's lock to be released before giving up. It is a hang guard for a
+// broken invariant, NOT a timing budget: the wait ends the moment the test
+// closes its lockFree channel, which it does as soon as the registry reports
+// the lock free (microseconds later in practice). A generous value costs
+// nothing when the test works and turns a would-be deadlock into a readable
+// failure instead.
+const c1LockWaitCap = 30 * time.Second
+
 // TestWiring_C1_TwoAsyncSubagentsRaceForSameLock spawns two async subagents
 // in one subagent(tasks:[...], async:true) call; both try to lock the same
 // path. Exactly one must win; the loser must see an informative conflict
@@ -573,12 +583,18 @@ func runC1Iteration(t *testing.T) {
 	// and blocks until the test releases it, so the other one is
 	// GUARANTEED to observe a real conflict at least once instead of maybe
 	// winning the underlying race itself. The one that sees "already
-	// locked" retries — the wait+retry idiom (C-3) — until it succeeds.
+	// locked" waits for the test's lockFree (the wait+retry idiom, C-3)
+	// instead of retrying on a timer, and succeeds on that one retry.
 	holderChan := make(chan string, 1)
 	release := make(chan struct{})
+	// lockFree is closed by the test once the winner's no-TTL lock has
+	// really been released (see the loop after close(release)). It is the
+	// ONLY thing the loser waits for — see the conflict branch below.
+	lockFree := make(chan struct{})
+	var gaveUp atomic.Value
 
 	childScript := func(name string) func(int, connector.Request) []stream.Event {
-		attempts := 0
+		conflicts := 0
 		return func(turn int, req connector.Request) []stream.Event {
 			if turn == 0 {
 				return []stream.Event{
@@ -588,9 +604,31 @@ func runC1Iteration(t *testing.T) {
 			}
 			result := lastToolResultText(req)
 			if strings.Contains(result, "already locked") {
-				attempts++
-				if attempts > 500 {
-					t.Fatalf("%s retried lock too many times without ever winning", name)
+				conflicts++
+				if conflicts > 2 {
+					// A second conflict means the lock was not actually free
+					// when the test said it was — a real defect, not a race.
+					// Not t.Fatalf: this runs on a script goroutine, where
+					// Goexit would just fail the job. Report it and stop.
+					gaveUp.Store(name)
+					return []stream.Event{stream.TextDelta{Text: name + " gave up"}, stream.Finish{Reason: "stop"}}
+				}
+				// WAIT for the lock, do not retry in a loop. The winner's
+				// lock is released by its job going terminal (L-5), which
+				// cannot happen until the test closes `release` and then
+				// sees the registry report the lock free — so a retry loop
+				// here is a race with the test's own progress, and it used
+				// to lose it: 500 backoff retries (~2.5s) elapsed before a
+				// loaded macOS runner had finished the parent's agent.Run,
+				// and the loser gave up ("b retried lock too many times
+				// without ever winning").
+				// c1LockWaitCap is a hang guard, not a timing budget: the
+				// wait below ends as soon as lockFree is closed.
+				select {
+				case <-lockFree:
+				case <-time.After(c1LockWaitCap):
+					gaveUp.Store(name)
+					return []stream.Event{stream.TextDelta{Text: name + " gave up"}, stream.Finish{Reason: "stop"}}
 				}
 				return []stream.Event{
 					stream.ToolCall{ID: fmt.Sprintf("l%d", turn), Name: "lock", Arguments: `{"path":"/race/path"}`},
@@ -654,8 +692,26 @@ func runC1Iteration(t *testing.T) {
 
 	close(release)
 
-	// Both jobs must eventually finish; poll List() until both terminal.
+	// The loser is waiting on lockFree, and the lock it wants only becomes
+	// free once the WINNER's job goes terminal (its deferred cancel drops
+	// the no-TTL lock — the L-5 mechanism this test also pins). So wait for
+	// the registry to actually report it free before letting the loser try
+	// again: that is the real synchronization, and it replaces the loser's
+	// old retry budget entirely.
 	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, locked := tools.LockRegistry.IsLocked("/race/path"); !locked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the winner's lock was still held 5s after it was released — it should auto-release when the winner's job went terminal")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(lockFree)
+
+	// Both jobs must eventually finish; poll List() until both terminal.
+	deadline = time.Now().Add(5 * time.Second)
 	for {
 		list := reg.List()
 		done := 0
@@ -680,6 +736,9 @@ func runC1Iteration(t *testing.T) {
 	}
 	if _, locked := tools.LockRegistry.IsLocked("/race/path"); locked {
 		t.Error("lock still held after both subagents finished")
+	}
+	if name := gaveUp.Load(); name != nil {
+		t.Errorf("%v retried lock too many times without ever winning", name)
 	}
 }
 
