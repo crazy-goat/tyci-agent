@@ -85,7 +85,7 @@ an optional, additional verification, not a condition for running the test.
 
       For both returned `job_id`s call `wait(job_id, seconds: 15)` until both
       reach status `done`. **Expected:** both `done`; the result of the first
-      contains "gotowe A"; the result of the second contains "gotowe B" (nie "nie udało się <!-- english-ok -->
+      contains "gotowe A"; the result of the second contains "gotowe B" (not "nie udało się <!-- english-ok -->
       B" — if that appears, it means the first did not release the lock
       despite the absence of `unlock`, i.e. a bug in auto-release, not in this scenario).
 - [ ] **7.2** Repeat step 7.1 (a new `subagent` call with the same

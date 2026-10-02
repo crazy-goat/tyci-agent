@@ -110,7 +110,6 @@ func TestMain(m *testing.M) {
 		os.Stderr.WriteString("mkdir temp: " + err.Error())
 		os.Exit(1)
 	}
-	defer func() { _ = os.RemoveAll(isolated) }()
 	if err := os.Chdir(isolated); err != nil {
 		os.Stderr.WriteString("chdir: " + err.Error())
 		os.Exit(1)
