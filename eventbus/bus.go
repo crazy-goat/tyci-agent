@@ -14,10 +14,11 @@ type Event struct {
 }
 
 type Bus struct {
-	mu      sync.RWMutex
-	subs    map[string][]chan Event
-	bufSize int
-	closed  bool
+	mu        sync.RWMutex
+	subs      map[string][]chan Event
+	coalesced map[string][]*Coalesced
+	bufSize   int
+	closed    bool
 }
 
 func New(bufSize int) *Bus {
@@ -65,7 +66,8 @@ func (b *Bus) Subscribe(topic string) (<-chan Event, func()) {
 
 // Publish never blocks on a slow or stalled subscriber: a full channel means
 // that subscriber simply misses this event, rather than the producer
-// stalling on behalf of one consumer.
+// stalling on behalf of one consumer. Coalesced subscribers (see
+// SubscribeCoalesced) never miss the latest event per key.
 func (b *Bus) Publish(topic string, payload any) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -75,7 +77,8 @@ func (b *Bus) Publish(topic string, payload any) {
 	}
 
 	chans := b.subs[topic]
-	if len(chans) == 0 {
+	coalesced := b.coalesced[topic]
+	if len(chans) == 0 && len(coalesced) == 0 {
 		return
 	}
 
@@ -85,6 +88,9 @@ func (b *Bus) Publish(topic string, payload any) {
 		case ch <- evt:
 		default:
 		}
+	}
+	for _, c := range coalesced {
+		c.put(evt)
 	}
 }
 
@@ -102,5 +108,11 @@ func (b *Bus) Close() {
 			close(ch)
 		}
 		delete(b.subs, topic)
+	}
+	for topic, subs := range b.coalesced {
+		for _, c := range subs {
+			c.close()
+		}
+		delete(b.coalesced, topic)
 	}
 }

@@ -3,11 +3,14 @@ package display
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/decodo/tyci/eventbus"
 	"github.com/decodo/tyci/jobs"
 )
 
@@ -456,5 +459,77 @@ func TestHandleGlobalKey_CtrlBOpensJobsModal(t *testing.T) {
 	m2 := model.(TuiModel)
 	if !m2.jobsModalActive {
 		t.Error("expected Ctrl+B to open the jobs modal")
+	}
+}
+
+// TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates is the
+// regression test for #113: a burst of far more "job.updated" events than
+// the production bus's 32-slot buffer, published while the TUI consumer is
+// slow, must still leave every job in its terminal state in the model.
+func TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates(t *testing.T) {
+	bus := eventbus.New(32) // same size as main.go's jobEventBus
+	defer bus.Close()
+
+	sub, unsubscribe := bus.SubscribeCoalesced("job.updated", jobEventKey)
+	defer unsubscribe()
+
+	// The model is only touched by the consumer goroutine, like bubbletea's
+	// event loop; msgs counts how many updates actually reached it.
+	m := newTestModelForJobs()
+	var msgs atomic.Int64
+	consumerDone := make(chan struct{})
+	stop := make(chan struct{})
+	go func() {
+		defer close(consumerDone)
+		forwardJobUpdates(sub, stop, func(msg tea.Msg) {
+			time.Sleep(time.Millisecond) // a busy Bubble Tea loop
+			model, _ := m.Update(msg)
+			m = model.(TuiModel)
+			msgs.Add(1)
+		})
+	}()
+
+	const jobCount = jobs.MaxRetainedTerminalJobs
+	const progressPerJob = 20
+	terminal := []jobs.Status{jobs.StatusDone, jobs.StatusFailed, jobs.StatusTruncated}
+	var wg sync.WaitGroup
+	for i := 0; i < jobCount; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			j := jobs.Job{ID: fmt.Sprintf("job-%d", i), Description: "flood", Status: jobs.StatusRunning, StartedAt: time.Now()}
+			bus.Publish("job.updated", j)
+			for p := 0; p < progressPerJob; p++ {
+				j.Progress = fmt.Sprintf("step %d", p)
+				bus.Publish("job.updated", j)
+			}
+			j.Status = terminal[i%len(terminal)]
+			j.FinishedAt = time.Now()
+			bus.Publish("job.updated", j)
+		}(i)
+	}
+	wg.Wait()
+
+	// All events are published; end the subscription so the consumer
+	// delivers what is still pending and returns.
+	unsubscribe()
+	select {
+	case <-consumerDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("consumer did not finish")
+	}
+
+	published := int64(jobCount * (progressPerJob + 2))
+	if got := msgs.Load(); got >= published {
+		t.Logf("consumer kept up (%d of %d events); the flood did not exercise coalescing", got, published)
+	}
+	if len(m.backgroundJobs) != jobCount {
+		t.Fatalf("model has %d jobs, want %d", len(m.backgroundJobs), jobCount)
+	}
+	for i := 0; i < jobCount; i++ {
+		id := fmt.Sprintf("job-%d", i)
+		if got, want := m.backgroundJobs[id].Status, terminal[i%len(terminal)]; got != want {
+			t.Errorf("%s status = %s, want %s", id, got, want)
+		}
 	}
 }
