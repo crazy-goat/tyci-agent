@@ -591,6 +591,15 @@ func runC1Iteration(t *testing.T) {
 	// really been released (see the loop after close(release)). It is the
 	// ONLY thing the loser waits for — see the conflict branch below.
 	lockFree := make(chan struct{})
+	// Closed exactly once, on the normal path below or — if an assertion
+	// fires before that — from the cleanup. Without that, a failing
+	// iteration would leave the loser's script goroutine blocked on lockFree
+	// for c1LockWaitCap after the test (and withTestWiring's globals) were
+	// already gone, and it could run on into later iterations: the exact
+	// "leaks into the next test" pattern this test file is about.
+	var freeOnce sync.Once
+	allowRetry := func() { freeOnce.Do(func() { close(lockFree) }) }
+	t.Cleanup(allowRetry)
 	var gaveUp atomic.Value
 
 	childScript := func(name string) func(int, connector.Request) []stream.Event {
@@ -605,9 +614,11 @@ func runC1Iteration(t *testing.T) {
 			result := lastToolResultText(req)
 			if strings.Contains(result, "already locked") {
 				conflicts++
-				if conflicts > 2 {
-					// A second conflict means the lock was not actually free
-					// when the test said it was — a real defect, not a race.
+				if conflicts > 1 {
+					// The first conflict is the expected one: the winner is
+					// holding the lock. A second one means the lock was not
+					// actually free when the test said it was — a real defect,
+					// not a race.
 					// Not t.Fatalf: this runs on a script goroutine, where
 					// Goexit would just fail the job. Report it and stop.
 					gaveUp.Store(name)
@@ -618,10 +629,11 @@ func runC1Iteration(t *testing.T) {
 				// cannot happen until the test closes `release` and then
 				// sees the registry report the lock free — so a retry loop
 				// here is a race with the test's own progress, and it used
-				// to lose it: 500 backoff retries (~2.5s) elapsed before a
-				// loaded macOS runner had finished the parent's agent.Run,
-				// and the loser gave up ("b retried lock too many times
-				// without ever winning").
+				// to lose it: this script used to call `lock` again straight
+				// away, and on a fast runner the loser burned all 500
+				// attempts before the test had even got as far as releasing
+				// the winner ("b retried lock too many times without ever
+				// winning").
 				// c1LockWaitCap is a hang guard, not a timing budget: the
 				// wait below ends as soon as lockFree is closed.
 				select {
@@ -697,7 +709,8 @@ func runC1Iteration(t *testing.T) {
 	// the no-TTL lock — the L-5 mechanism this test also pins). So wait for
 	// the registry to actually report it free before letting the loser try
 	// again: that is the real synchronization, and it replaces the loser's
-	// old retry budget entirely.
+	// old retry budget entirely. allowRetry (not a bare close) so a
+	// t.Fatal above still releases the loser.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if _, locked := tools.LockRegistry.IsLocked("/race/path"); !locked {
@@ -708,7 +721,7 @@ func runC1Iteration(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	close(lockFree)
+	allowRetry()
 
 	// Both jobs must eventually finish; poll List() until both terminal.
 	deadline = time.Now().Add(5 * time.Second)
