@@ -1,540 +1,540 @@
-# Refactor: wymienny frontend / agent / provider / connector
+# Refactor: swappable frontend / agent / provider / connector
 
-Cel: każdy element wymienny i testowalny osobno.
+Goal: every element swappable and testable on its own.
 
 ```
 frontend  (tui | console | minimal | headless | rpc)
-    │  Submit(prompt), Interrupt();  odbiera eventy przez Sink
+    │  Submit(prompt), Interrupt();  receives events through Sink
     ▼
-agent     (pętla, tools, sesja, retry, fallback)
-    │  widzi WYŁĄCZNIE: ModelClient + Sink
+agent     (loop, tools, session, retry, fallback)
+    │  sees ONLY: ModelClient + Sink
     ▼
-provider  (uniwersalny: katalog modeli, URI, auth, wybór connectora)
+provider  (universal: model catalog, URI, auth, connector selection)
     ▼
 connector  openai │ anthropic │ gemini │ responses ║ fake │ replay │ flaky
     ▼
-HTTPDoer  (wstrzykiwany per connector)
+HTTPDoer  (injected per connector)
 ```
 
-Kluczowe: wymienny jest connector, nie provider — jest jedna implementacja
-providera, jawnie konstruowana z wstrzykniętymi zależnościami. Sam `Provider`
-zostaje interfejsem, bo inaczej agent byłby związany z typem konkretnym
-(patrz odstępstwa etapu 4).
+Key point: the connector is swappable, not the provider — there is a single
+provider implementation, explicitly constructed with injected dependencies. The
+`Provider` itself stays an interface, because otherwise the agent would be tied
+to a concrete type (see the deviations of stage 4).
 
-## Stan wyjściowy
+## Starting state
 
-Gotowe:
-- `display.Display` — interfejs, 4 implementacje (TUI/Terminal/Minimal/collector)
-- `providers.Provider` — interfejs, jest `mockProvider` w testach agenta
-- `api.ClientFromContext` — podmiana `*http.Client`, testy na `httptest`
+Done:
+- `display.Display` — interface, 4 implementations (TUI/Terminal/Minimal/collector)
+- `providers.Provider` — interface, there is a `mockProvider` in the agent tests
+- `api.ClientFromContext` — swapping `*http.Client`, tests on `httptest`
 
-Do naprawy:
-- `agent` importuje `display` (`agent.go:12`, `run_once.go:10`, `fallback.go`)
-- brak connectorów — jest `switch` w `providers/config.go:250-330`
-- `api.StreamChat/StreamAnthropic/StreamGemini` to funkcje pakietowe → build tagi `noanthropic`/`nogemini` jako obejście
-- `api/client.go` — martwy, równoległy model danych
-- globalne singletony: `providers.providers`, rejestr tools, `SetSubAgentRunner`
-- `agent/fallback.go:36` woła globalny `providers.FindModel`
-- własne `&http.Client{}` w `internal/mcp`, `internal/connect`
+To fix:
+- `agent` imports `display` (`agent.go:12`, `run_once.go:10`, `fallback.go`)
+- no connectors — there is a `switch` in `providers/config.go:250-330`
+- `api.StreamChat/StreamAnthropic/StreamGemini` are package-level functions → `noanthropic`/`nogemini` build tags as a workaround
+- `api/client.go` — dead, parallel data model
+- global singletons: `providers.providers`, tool registry, `SetSubAgentRunner`
+- `agent/fallback.go:36` calls the global `providers.FindModel`
+- own `&http.Client{}` in `internal/mcp`, `internal/connect`
 
 ---
 
-## Etap 0 — siatka bezpieczeństwa (0,5d) — ZROBIONE
+## Stage 0 — safety net (0.5d) — DONE
 
-- [x] `go test ./... -count=1` zielone przed startem
-- [x] testy charakteryzujące `dynamicProvider.Stream` dla 3 apiType przez `httptest`
-- [x] golden files z wysyłanym JSON-em (ochrona wire formatu)
+- [x] `go test ./... -count=1` green before starting
+- [x] characterization tests of `dynamicProvider.Stream` for 3 apiTypes through `httptest`
+- [x] golden files with the JSON sent (wire format protection)
 
 `providers/wire_golden_test.go` + `providers/testdata/wire_{openai,anthropic,gemini}_{request,events}.golden.json`.
-Golden zamraża metodę, ścieżkę, whitelistę nagłówków i ciało; drugi golden — sekwencję `stream.Event`.
-Regeneracja: `go test ./providers/ -run TestWireGolden -update`.
-Plik ma `//go:build !noanthropic && !nogemini` — do skasowania w etapie 3 razem ze stubami.
+The golden freezes the method, path, header whitelist and body; the second golden — the `stream.Event` sequence.
+Regeneration: `go test ./providers/ -run TestWireGolden -update`.
+The file has `//go:build !noanthropic && !nogemini` — to be deleted in stage 3 together with the stubs.
 
-## Etap 1 — odwrócenie `agent → display` (0,5d) — ZROBIONE
+## Stage 1 — inverting `agent → display` (0.5d) — DONE
 
-- [x] `agent.Sink` = kopia dzisiejszego `display.Display` (`agent/sink.go`)
-- [x] sygnatury w `agent.go` / `run_once.go` / `fallback.go` / `run_tools.go` na `Sink` (7 miejsc)
-- [x] zero zmian w `display/` (typowanie strukturalne załatwia sprawę)
-- [x] weryfikacja: `go list -deps ./agent | grep display` → pusto
+- [x] `agent.Sink` = copy of today's `display.Display` (`agent/sink.go`)
+- [x] signatures in `agent.go` / `run_once.go` / `fallback.go` / `run_tools.go` switched to `Sink` (7 places)
+- [x] zero changes in `display/` (structural typing does the job)
+- [x] verification: `go list -deps ./agent | grep display` → empty
 
-Goldeny z etapu 0 przeszły bez `-update` — dowód, że zachowanie nietknięte.
-`display.Display` zostaje dla call-site'ów; docelowo do usunięcia po etapie 6.
+The goldens from stage 0 passed without `-update` — proof that behavior is untouched.
+`display.Display` stays for call sites; to be removed eventually after stage 6.
 
-## Etap 2 — pakiet `connector` (1,5–2d) — ZROBIONE
+## Stage 2 — `connector` package (1.5–2d) — DONE
 
-- [x] `connector/connector.go`: `Connector`, `Endpoint`, `Factory`, `Registry` (wartość, nie global)
-- [x] `connector/openai.go` + przeniesienie `RichMessagesToChat`
-- [x] `connector/anthropic.go` + `RichMessagesToAnthropic` (`ConvertToolsToAnthropic` została w `api/` — używa jej też `anthropic_client.go` i ma stub pod build tagi; przeniesienie wymagałoby zmian w `api/`, czyli wyjścia poza etap)
+- [x] `connector/connector.go`: `Connector`, `Endpoint`, `Factory`, `Registry` (a value, not a global)
+- [x] `connector/openai.go` + moving `RichMessagesToChat`
+- [x] `connector/anthropic.go` + `RichMessagesToAnthropic` (`ConvertToolsToAnthropic` stayed in `api/` — `anthropic_client.go` uses it too and it has a stub under build tags; moving it would require changes in `api/`, i.e. going beyond the stage)
 - [x] `connector/gemini.go` + `RichMessagesToGemini`, `convertToolsToGemini`
-- [x] ciała connectorów najpierw tylko wołają dzisiejsze `api.StreamX` (bez zmiany HTTP)
-- [x] `dynamicProvider.Stream` skrócone do: URI → klucz → `registry.New` → `conn.Stream` (125 → 39 linii)
-- [x] golden files z etapu 0 nadal przechodzą **bez** `-update`
+- [x] connector bodies at first only call today's `api.StreamX` (no HTTP change)
+- [x] `dynamicProvider.Stream` shortened to: URI → key → `registry.New` → `conn.Stream` (125 → 39 lines)
+- [x] golden files from stage 0 still pass **without** `-update`
 
-Kanoniczne typy wiadomości (`Message`, `ContentBlock`, `Request`) mieszkają teraz
-w `connector`; `providers` trzyma aliasy ze znakiem `=`, więc `agent/`, `session/`,
-`display/`, `tools/` i `main` nie wymagały ANI JEDNEJ zmiany. `pakiet api/` nietknięty.
+The canonical message types (`Message`, `ContentBlock`, `Request`) now live
+in `connector`; `providers` keeps aliases with the `=` sign, so `agent/`, `session/`,
+`display/`, `tools/` and `main` did not need A SINGLE change. The `api/` package is untouched.
 
-Jedyna świadoma mikro-zmiana zachowania: wysyłka `stream.StreamError` jest teraz
-jednolita i robi `select` na `ctx.Done()`. Wcześniej gałąź openai blokowała bez
-`select` (anthropic i gemini już miały). Widoczne tylko przy już anulowanym ctx.
+The only deliberate micro-change in behavior: sending `stream.StreamError` is now
+uniform and does a `select` on `ctx.Done()`. Previously the openai branch blocked without
+`select` (anthropic and gemini already had it). Visible only with an already cancelled ctx.
 
-## Etap 3 — `HTTPDoer` (1d) — ZROBIONE
+## Stage 3 — `HTTPDoer` (1d) — DONE
 
 - [x] `type HTTPDoer interface{ Do(*http.Request) (*http.Response, error) }` (`api/api.go`)
-- [x] `api.StreamX(...)` → metody `ChatStreamer` / `AnthropicStreamer` / `GeminiStreamer`,
-      każda z polami `HTTP HTTPDoer` i `Headers map[string]string`
-- [x] `ClientFromContext` jako fallback gdy `Endpoint.HTTP == nil` — **fallback ZOSTAJE do etapu 4**
-- [x] `connector.Endpoint.HTTP` i `.Headers` faktycznie konsumowane (były martwymi polami po etapie 2)
-- [x] wstrzykiwalny klient w `internal/connect/{connect,modelsdev}.go` (`internal/mcp/http.go` miał już pole)
-- [x] usunąć martwy `api/client.go` (+ `chat_client.go`, `anthropic_client.go`,
-      `gemini_client.go` i ich dwa stuby — razem 1070 linii porzuconej
-      równoległej implementacji `Streamer`/`StreamRequest`/`*Client`)
-- [x] usunąć martwy `tyciconfig.ProviderURI.FullEndpoint()`
-- [x] `default:` w starym switchu potwierdzony jako martwy — `tyciconfig.Parse`
-      normalizuje każdy nieznany scheme do `openai` (`uri.go:45-51`, pokryte przez
-      `TestParseURI_table`). Fallback na openai w `providers.kindFor` **usunięty całkiem**
-- [x] usunąć `api/anthropic_stub.go`, `api/gemini_stub.go`
-- [x] build tagi przeniesione z `api/` na poziom `connector/`; rejestracja per-kind
-- [x] goldeny z etapu 0 nadal przechodzą **bez** `-update`
+- [x] `api.StreamX(...)` → methods `ChatStreamer` / `AnthropicStreamer` / `GeminiStreamer`,
+      each with fields `HTTP HTTPDoer` and `Headers map[string]string`
+- [x] `ClientFromContext` as a fallback when `Endpoint.HTTP == nil` — **the fallback STAYS until stage 4**
+- [x] `connector.Endpoint.HTTP` and `.Headers` actually consumed (they were dead fields after stage 2)
+- [x] injectable client in `internal/connect/{connect,modelsdev}.go` (`internal/mcp/http.go` already had the field)
+- [x] remove the dead `api/client.go` (+ `chat_client.go`, `anthropic_client.go`,
+      `gemini_client.go` and their two stubs — 1070 lines in total of an abandoned
+      parallel `Streamer`/`StreamRequest`/`*Client` implementation)
+- [x] remove the dead `tyciconfig.ProviderURI.FullEndpoint()`
+- [x] `default:` in the old switch confirmed dead — `tyciconfig.Parse`
+      normalizes every unknown scheme to `openai` (`uri.go:45-51`, covered by
+      `TestParseURI_table`). The openai fallback in `providers.kindFor` **removed entirely**
+- [x] remove `api/anthropic_stub.go`, `api/gemini_stub.go`
+- [x] build tags moved from `api/` to the `connector/` level; per-kind registration
+- [x] goldens from stage 0 still pass **without** `-update`
 
-### Odstępstwa od planu (świadome)
+### Deviations from the plan (deliberate)
 
-**`ClientFromContext` i `HTTPClientKey` zostają.** Plan mówił „potem usunąć" — zawężone.
-Kontekst jest dziś JEDYNĄ drogą wstrzyknięcia klienta: realny konsument to izolowany
-pool połączeń subagenta (`tools/subagent.go:408-415`) plus golden testy. Usunięcie
-fallbacku wymaga, żeby ktoś podał `HTTPDoer` przy budowie providera — a provider staje
-się strukturą dopiero w etapie 4. Wybór klienta: `if s.HTTP != nil { s.HTTP } else
-{ ClientFromContext(ctx) }`, komentarz przy `api.doer()` wskazuje etap 4.
+**`ClientFromContext` and `HTTPClientKey` stay.** The plan said "then remove" — narrowed.
+The context is today the ONLY way to inject a client: the real consumer is the subagent's
+isolated connection pool (`tools/subagent.go:408-415`) plus the golden tests. Removing the
+fallback requires someone to supply an `HTTPDoer` when building the provider — and the provider
+becomes a struct only in stage 4. Client selection: `if s.HTTP != nil { s.HTTP } else
+{ ClientFromContext(ctx) }`, a comment at `api.doer()` points to stage 4.
 
-**Build tagi NIE znikają, tylko się przeprowadzają.** Plan zakładał „usunąć build tagi",
-ale `make minimal` musi nadal fizycznie nie zawierać kodu anthropic/gemini — inaczej
-„minimal" przestaje być minimalny. Zamiast tego:
+**Build tags do NOT disappear, they move.** The plan assumed "remove build tags",
+but `make minimal` must still physically contain no anthropic/gemini code — otherwise
+"minimal" stops being minimal. Instead:
 
-- `connector/anthropic.go` + `connector/gemini.go` (i ich testy) dostają tagi
-  `!noanthropic` / `!nogemini`; `api/anthropic{,_types}.go` i `api/gemini{,_types}.go` też,
-- rejestracja w domyślnym rejestrze składa się per-kind: każdy plik connectora dopisuje
-  swoją fabrykę z `init()` do `connector.builtinFactories`, więc tag usuwający plik
-  usuwa też rejestrację — nie ma jednego miejsca wymieniającego trójkę,
-- `Makefile` bez zmian (`minimal` = te same dwa tagi).
+- `connector/anthropic.go` + `connector/gemini.go` (and their tests) get the tags
+  `!noanthropic` / `!nogemini`; `api/anthropic{,_types}.go` and `api/gemini{,_types}.go` too,
+- registration in the default registry is assembled per-kind: each connector file appends
+  its factory from `init()` to `connector.builtinFactories`, so a tag that removes the file
+  removes the registration too — there is no single place listing the trio,
+- `Makefile` unchanged (`minimal` = the same two tags).
 
-Zweryfikowane `go tool nm`: build `-tags "noanthropic nogemini"` nie zawiera ani jednego
-symbolu anthropic/gemini (pełny build ma 7), binarka jest o ~72 kB mniejsza.
+Verified with `go tool nm`: a `-tags "noanthropic nogemini"` build contains not a single
+anthropic/gemini symbol (the full build has 7), and the binary is ~72 kB smaller.
 
-**Pułapka, którą to odkryło:** po etapie 2 `providers.kindFor` używało `Registry.Has`
-z fallbackiem na openai. W buildzie minimalnym URI `anthropic://` pojechałoby wtedy po
-cichu connectorem openai — Anthropic-owy request na endpoint chat-completions, czyli
-cichy zły request zamiast czytelnego błędu ze stuba. Naprawione: `connector.IsKnownKind`
-+ `connector.ErrExcluded` dają dokładnie dawny komunikat („anthropic support excluded at
-build time (rebuild without -tags noanthropic)"), a fallback na openai zniknął całkiem.
-Testy: `TestDynamicProviderKindFor_*` w `providers/provider_test.go` (działają bez tagów,
-bo wstrzykują własny rejestr).
+**A trap this uncovered:** after stage 2 `providers.kindFor` used `Registry.Has`
+with a fallback to openai. In the minimal build an `anthropic://` URI would then silently go through
+the openai connector — an Anthropic-style request to the chat-completions endpoint, i.e.
+a silent wrong request instead of a readable error from the stub. Fixed: `connector.IsKnownKind`
++ `connector.ErrExcluded` give exactly the old message ("anthropic support excluded at
+build time (rebuild without -tags noanthropic)"), and the openai fallback is gone entirely.
+Tests: `TestDynamicProviderKindFor_*` in `providers/provider_test.go` (they work without tags,
+because they inject their own registry).
 
-**`providers/wire_golden_test.go` zachowuje tag `!noanthropic && !nogemini`.** Plan
-zakładał skasowanie go razem ze stubami. Nie da się: plik asertuje goldeny anthropic
-i gemini, których build bez tych connectorów z definicji nie wyprodukuje.
+**`providers/wire_golden_test.go` keeps the `!noanthropic && !nogemini` tag.** The plan
+assumed deleting it together with the stubs. Not possible: the file asserts the anthropic
+and gemini goldens, which a build without those connectors by definition cannot produce.
 
-**`connector.Endpoint.Headers` skonsumowane** (plan tego nie wymieniał). Nagłówki są
-ustawiane PO domyślnych, więc mogą je nadpisać; mapa jest dziś zawsze pusta, więc bajty
-na drucie się nie zmieniają. Dowód, że pole nie jest dekoracją:
+**`connector.Endpoint.Headers` consumed** (the plan did not mention it). Headers are
+set AFTER the defaults, so they can override them; the map is always empty today, so the bytes
+on the wire do not change. Proof that the field is not decoration:
 `connector/endpoint_http_test.go`.
 
-**Dług zastany naprawiony przy okazji:** `go test -tags "noanthropic nogemini" ./api/`
-znów się kompiluje. Helpery `testCtx()` i `as()` przeniesione z plików pod tagami do
-nieotagowanego `api/api_test.go`, a testy `TestStreamGemini_*` wydzielone do
-`api/gemini_test.go` pod `//go:build !nogemini`. Sprawdzone wszystkie cztery kombinacje
-tagów: build + vet + test.
+**Pre-existing debt fixed along the way:** `go test -tags "noanthropic nogemini" ./api/`
+compiles again. The helpers `testCtx()` and `as()` moved from tagged files to the
+untagged `api/api_test.go`, and the `TestStreamGemini_*` tests were split out into
+`api/gemini_test.go` under `//go:build !nogemini`. All four tag combinations checked:
+build + vet + test.
 
-**`internal/connect`:** trzy `&http.Client{}` (2× `connect.go`, 1× `modelsdev.go`)
-zastąpione parametrem `HTTPDoer` na fetcherach i jednym `defaultHTTPClient` w
-wywołaniach z CLI. Bez `Timeout`, dokładnie jak zastąpione literały.
-`fetchModelsDev` przeszło z `client.Get` na `NewRequest`+`Do` (ten sam request).
+**`internal/connect`:** three `&http.Client{}` (2× `connect.go`, 1× `modelsdev.go`)
+replaced by an `HTTPDoer` parameter on the fetchers and one `defaultHTTPClient` in
+the CLI calls. No `Timeout`, exactly like the literals they replaced.
+`fetchModelsDev` went from `client.Get` to `NewRequest`+`Do` (the same request).
 
-Zero zmian obserwowalnego zachowania w pełnym buildzie. Jedyna zmiana zachowania
-dotyczy buildu minimalnego i jest naprawą opisanej wyżej pułapki: nieznany api_type
-(nieosiągalny przez `parseURI`) daje teraz błąd `unsupported api_type` zamiast cichego
-przekierowania na connector openai.
+Zero changes in observable behavior in the full build. The only behavior change
+concerns the minimal build and is a fix for the trap described above: an unknown api_type
+(unreachable through `parseURI`) now yields an `unsupported api_type` error instead of a silent
+redirect to the openai connector.
 
-## Etap 4 — provider jako struktura (1d) — ZROBIONE
+## Stage 4 — provider as a struct (1d) — DONE
 
-- [x] `providers.Provider`: implementacja staje się jawnie konstruowaną strukturą
-      (`Catalog` jako wartość, `AuthSource`, `connectors`, `http`) — **interfejs
-      `Provider` zostaje**, patrz odstępstwa
-- [x] usunąć `api.ClientFromContext` / `api.HTTPClientKey` — provider wstrzykuje
-      `HTTPDoer` do `connector.Endpoint.HTTP`. Izolowany pool przeniesiony
-      z `tools/subagent.go` do `main.go:withIsolatedPool`; wstrzyknięcia
-      w `providers/provider_test.go` i `providers/wire_golden_test.go` idą przez `Deps.HTTP`
-- [x] `AuthSource` jako interfejs (`LiteralAuth` / `AuthFile` / `EnvAuth` / `AuthChain`)
-- [x] `providers.Default` zostaje dla CLI; `Catalog` jest wartością, testy budują własny
-- [x] goldeny z etapu 0 nadal przechodzą **bez** `-update`
+- [x] `providers.Provider`: the implementation becomes an explicitly constructed struct
+      (`Catalog` as a value, `AuthSource`, `connectors`, `http`) — **the `Provider`
+      interface stays**, see deviations
+- [x] remove `api.ClientFromContext` / `api.HTTPClientKey` — the provider injects
+      `HTTPDoer` into `connector.Endpoint.HTTP`. The isolated pool moved
+      from `tools/subagent.go` to `main.go:withIsolatedPool`; injections
+      in `providers/provider_test.go` and `providers/wire_golden_test.go` go through `Deps.HTTP`
+- [x] `AuthSource` as an interface (`LiteralAuth` / `AuthFile` / `EnvAuth` / `AuthChain`)
+- [x] `providers.Default` stays for the CLI; `Catalog` is a value, tests build their own
+- [x] goldens from stage 0 still pass **without** `-update`
 
-### Odstępstwa od planu (świadome)
+### Deviations from the plan (deliberate)
 
-**`providers.Provider` ZOSTAJE interfejsem.** „interface → struct" z nagłówka planu
-zawężone do implementacji: `dynamicProvider` przestaje sięgać po `defaultConnectors`,
-`connect.GetKey` i `os.Getenv`, a dostaje je przez `NewProvider(name, entries, Deps)`.
-Gdyby `Provider` przestał być interfejsem, `agent.Run(ctx, p providers.Provider, ...)`
-związałby agenta z typem konkretnym — dokładne odwrócenie celu refaktoru — i wywaliłby
-fake'i z `main_resolve_test.go` oraz `agent/agent_test.go`. Wymienność zostaje na
-poziomie connectora, jak mówi diagram.
+**`providers.Provider` STAYS an interface.** The "interface → struct" from the plan header
+narrowed to the implementation: `dynamicProvider` stops reaching for `defaultConnectors`,
+`connect.GetKey` and `os.Getenv`, and gets them through `NewProvider(name, entries, Deps)`.
+If `Provider` stopped being an interface, `agent.Run(ctx, p providers.Provider, ...)`
+would tie the agent to a concrete type — the exact reverse of the goal of the refactor — and would break
+the fakes from `main_resolve_test.go` and `agent/agent_test.go`. Swappability stays
+at the connector level, as the diagram says.
 
-**`WithHTTP` NIE wchodzi do interfejsu `Provider`.** Jest metodą konkretnego typu plus
-opcjonalnym interfejsem `providers.HTTPInjector`. Inaczej każdy fake providera musiałby
-implementować troskę o HTTP, o której agent nie ma prawa wiedzieć. `main.go` robi
-type-assert; provider bez tej metody zostaje nietknięty i ma dzisiejsze zachowanie
-„brak izolacji" — czyli to, co fake'i mają dziś.
+**`WithHTTP` does NOT go into the `Provider` interface.** It is a method of the concrete type plus
+an optional interface `providers.HTTPInjector`. Otherwise every provider fake would have to
+implement an HTTP concern that the agent has no right to know about. `main.go` does a
+type assert; a provider without this method stays untouched and gets today's
+"no isolation" behavior — which is what the fakes have today.
 
-Koszt tego kompromisu, świadomy: wstrzykiwanie transportu jest niewidoczne w kontrakcie
-`Provider`, więc implementacja, która nie jest `*dynamicProvider`, po cichu nie dostaje
-izolacji i nic tego nie wykryje przy kompilacji. Luka w etapie 5 (provider fallbackowy)
-mogła zaistnieć dokładnie dlatego. Podobnie `Deps.HTTP == nil` prowadzi do globalnego
-`api.defaultClient` — provider nie jest pełnym właścicielem swojego transportu, bo
-normalna ścieżka produkcyjna celowo trzyma jeden klient na proces (reużycie połączeń).
-„Wszystko wstrzykiwalne" jest więc prawdą dla wywołującego, który się o to zgłosi.
+The cost of this compromise, deliberate: transport injection is invisible in the
+`Provider` contract, so an implementation that is not a `*dynamicProvider` silently gets no
+isolation and nothing will detect this at compile time. The gap in stage 5 (the fallback provider)
+could have appeared for exactly this reason. Likewise `Deps.HTTP == nil` leads to the global
+`api.defaultClient` — the provider is not the full owner of its transport, because
+the normal production path deliberately keeps one client per process (connection reuse).
+"Everything injectable" is therefore true for a caller who asks for it.
 
-**`WithHTTP` zwraca kopię, nigdy nie mutuje odbiornika.** Równoległe subagenty
-(`subagent(tasks=[...])` → `runTasks` → goroutine per task) współdzielą jedną wartość
-providera; mutacja przelałaby pool jednego dziecka do requestów drugiego.
+**`WithHTTP` returns a copy, never mutates the receiver.** Parallel subagents
+(`subagent(tasks=[...])` → `runTasks` → goroutine per task) share a single provider
+value; mutation would leak one child's pool into another's requests.
 Test: `TestWithHTTP_ReturnsCopy`, `TestWithIsolatedPool_FreshClientPerCall`.
 
-**Ziarnistość izolowanego poolu bez zmian.** Dziś jeden `*http.Client` na
-`runSingleTask`. Po przeniesieniu: jeden na wejście w `agentRunner.run`, a `run` jest
-wołane dokładnie raz na `RunTask`/`RunTaskWithSystem`, czyli raz na `runSingleTask`.
-Równoległe `subagent(tasks=[a,b,c])` nadal tworzy trzy poole.
+**Granularity of the isolated pool unchanged.** Today one `*http.Client` per
+`runSingleTask`. After the move: one per entry into `agentRunner.run`, and `run` is
+called exactly once per `RunTask`/`RunTaskWithSystem`, i.e. once per `runSingleTask`.
+Parallel `subagent(tasks=[a,b,c])` still creates three pools.
 
-**Brak realnej różnicy semantycznej po wyjęciu klienta z kontekstu.** Plan podejrzewał,
-że klient z kontekstu obejmował *dowolne* wywołanie warstwy `api` w biegu dziecka,
-a po zmianie obejmuje tylko strumienie providera. Zweryfikowane: `api` wykonuje HTTP
-wyłącznie w trzech miejscach (`chat.go:147`, `anthropic.go:120`, `gemini.go:77`), wszystkie
-przez `doer()`, a jedynymi nietestowymi konstruktorami streamerów są trzy connectory
-budowane wyłącznie przez `dynamicProvider.Stream`. Pozostali konsumenci HTTP w biegu
-dziecka (`tools/web.go`, `internal/mcp`, `internal/connect`) zawsze mieli własnych
-klientów i nigdy nie czytali klucza kontekstowego. Zbiór objętych wywołań jest ten sam.
+**No real semantic difference after taking the client out of the context.** The plan suspected
+that the client from the context covered *any* call of the `api` layer in the child's run,
+and after the change it covers only the provider's streams. Verified: `api` performs HTTP
+only in three places (`chat.go:147`, `anthropic.go:120`, `gemini.go:77`), all
+through `doer()`, and the only non-test constructors of streamers are the three connectors
+built exclusively by `dynamicProvider.Stream`. The other HTTP consumers in the child's
+run (`tools/web.go`, `internal/mcp`, `internal/connect`) always had their own
+clients and never read the context key. The set of covered calls is the same.
 
-**`doer()` zachowuje osłonę na typed-nil `*http.Client`.** Skasowany
-`ClientFromContext` miał `cl != nil`; `Deps.HTTP` to interfejs, więc
-`Deps{HTTP: jakisNilowyKlient}` łatwo wyprodukować. Bez osłony byłaby to panika
-w `net/http` zamiast dawnego zjazdu na `defaultClient`.
+**`doer()` keeps the guard against a typed-nil `*http.Client`.** The deleted
+`ClientFromContext` had `cl != nil`; `Deps.HTTP` is an interface, so
+`Deps{HTTP: someNilClient}` is easy to produce. Without the guard it would be a panic
+in `net/http` instead of the former fall back to `defaultClient`.
 
-**`api.defaultClient` ZOSTAJE.** To domyślka, nie odczyt kontekstu: provider z `http == nil`
-mówi „nie mam własnego klienta" i to jest normalna ścieżka produkcyjna.
+**`api.defaultClient` STAYS.** It is a default, not a context read: a provider with `http == nil`
+says "I have no client of my own" and that is the normal production path.
 
-**`providers/providers_test.go` nie wymagał przepisania.** Plan mówił „844 linie" — liczba
-zastana z przed etapu 2. Plik ma dziś 282 linie i pokrywa `LoadConfig` / `MustLoadConfig` /
-`parseURI` / `parseModel`, czyli rzeczy nietknięte przez ten etap. Dopisane zostały testy
-`Catalog`; nic nie zostało usunięte.
+**`providers/providers_test.go` did not need rewriting.** The plan said "844 lines" — a number
+inherited from before stage 2. The file has 282 lines today and covers `LoadConfig` / `MustLoadConfig` /
+`parseURI` / `parseModel`, i.e. things untouched by this stage. `Catalog` tests
+were added; nothing was removed.
 
-**Bugi wire-formatu Gemini przeniesione POZA etap 4** (patrz „Bugi znalezione przy etapie 0").
-Goldeny są siatką bezpieczeństwa tego refaktoru — celowe pęknięcie ich w tym samym etapie
-odebrałoby możliwość odróżnienia „refaktor coś zepsuł" od „zmieniliśmy zachowanie świadomie".
+**Gemini wire-format bugs moved OUT of stage 4** (see "Bugs found at stage 0").
+The goldens are the safety net of this refactor — deliberately breaking them in the same stage
+would remove the ability to tell "the refactor broke something" from "we changed behavior on purpose".
 
-**Nazwy testów: 6 przekształceń, 0 usunięć.** `TestClientFromContext_{DefaultClient,
+**Test names: 6 transformations, 0 deletions.** `TestClientFromContext_{DefaultClient,
 OverrideFromContext,NilClientInContext}` → `TestDoer_{NoInjectionUsesDefaultClient,
-InjectedClientWins,TypedNilClientUsesDefaultClient}` (te same trzy gwarancje przez nową
-ścieżkę wstrzyknięcia). `TestChatStreamer_{HTTPFieldWinsOverContext,
-NilHTTPFallsBackToContext}` → `...OverDefaultClient` / `...ToDefaultClient` oraz
-`TestEndpointNilHTTPUsesContextClient` → `...UsesDefaultClient` — same nazwy stały się
-nieprawdziwe po zniknięciu kontekstu.
+InjectedClientWins,TypedNilClientUsesDefaultClient}` (the same three guarantees through the new
+injection path). `TestChatStreamer_{HTTPFieldWinsOverContext,
+NilHTTPFallsBackToContext}` → `...OverDefaultClient` / `...ToDefaultClient` and
+`TestEndpointNilHTTPUsesContextClient` → `...UsesDefaultClient` — the names themselves became
+untrue once the context was gone.
 
-**Stara notatka „`config.go:Stream` robi `for _, e := range p.entries`" jest nieaktualna.**
-Etap 2 zamienił tę pętlę na `findEntry`, który indeksuje `p.entries[i]`. Nie ma czego
-sprzątać; notatka skasowana.
+**The old note "`config.go:Stream` does `for _, e := range p.entries`" is outdated.**
+Stage 2 turned that loop into `findEntry`, which indexes `p.entries[i]`. There is nothing
+to clean up; the note was deleted.
 
-**Etap 5 nietknięty świadomie.** `agent/fallback.go` nadal woła globalne
-`providers.FindModel`, a `providers.WithProvider` / `ProviderFromContext` zostają —
-to zakres etapu 5.
+**Stage 5 deliberately untouched.** `agent/fallback.go` still calls the global
+`providers.FindModel`, and `providers.WithProvider` / `ProviderFromContext` stay —
+that is the scope of stage 5.
 
-### Weryfikacja
+### Verification
 
-- `go build` + `go vet` + `go test ./... -count=1` zielone we wszystkich czterech
-  kombinacjach tagów (brak, `noanthropic`, `nogemini`, `noanthropic nogemini`),
-- `gofmt -l .` puste,
-- `git diff --stat d724940..HEAD -- providers/testdata` **puste** — wire format przeżył,
-- `grep -rn "ClientFromContext\|HTTPClientKey" --include="*.go" .` → nic (także w komentarzach),
-- `go tool nm` na buildzie `-tags "noanthropic nogemini"`: zero symboli anthropic/gemini
-  (pełny build: 25 unikalnych). Te same liczby na binarce zbudowanej z `d724940`,
-  czyli bez regresji względem etapu 3. Uwaga: etap 3 zapisał „pełny build ma 7" —
-  inna miara (`grep` po samych nazwach vs po całych liniach `nm`), nie zmiana stanu.
+- `go build` + `go vet` + `go test ./... -count=1` green in all four
+  tag combinations (none, `noanthropic`, `nogemini`, `noanthropic nogemini`),
+- `gofmt -l .` empty,
+- `git diff --stat d724940..HEAD -- providers/testdata` **empty** — the wire format survived,
+- `grep -rn "ClientFromContext\|HTTPClientKey" --include="*.go" .` → nothing (also in comments),
+- `go tool nm` on a `-tags "noanthropic nogemini"` build: zero anthropic/gemini symbols
+  (full build: 25 unique). The same numbers on a binary built from `d724940`,
+  i.e. no regression relative to stage 3. Note: stage 3 recorded "the full build has 7" —
+  a different measure (`grep` on names only vs. on whole `nm` lines), not a change of state.
 
-## Etap 5 — fallback poza agentem (0,5d) — ZROBIONE
+## Stage 5 — fallback outside the agent (0.5d) — DONE
 
-- [x] `Config.FallbackModels []string` → `Fallbacks []connector.ModelClient` rozwiązane przez wywołującego
+- [x] `Config.FallbackModels []string` → `Fallbacks []connector.ModelClient` resolved by the caller
       (`commands.go:resolveFallbacks`, `main.go:resolveModelClient`, `internal/workflow/engine.go`)
-- [x] `agent/fallback.go` przestaje wołać `providers.FindModel` — iteruje `cfg.Fallbacks`,
-      już rozwiązane; jedyny błąd możliwy w pętli to nieudany `Stream`, nie "nie znaleziono"
+- [x] `agent/fallback.go` stops calling `providers.FindModel` — it iterates `cfg.Fallbacks`,
+      already resolved; the only possible error in the loop is a failed `Stream`, not "not found"
 - [x] `providers.WithProvider`/`ProviderFromContext` + `WithModel`/`ModelFromContext`
-      (`providers/context.go`, usunięty) → `connector.WithModelClient`/`ModelClientFromContext` —
-      jedna wartość w kontekście, bo `ModelClient` niesie już swój model
-- [x] weryfikacja: `agent` nie importuje `providers` (`go list -deps ./agent` — patrz niżej)
-- [x] **kryterium akceptacji: provider fallbackowy dziecka też dostaje izolowany pool.**
-      `main.go:withIsolatedPool` wiąże teraz provider główny ORAZ każdy fallback z JEDNYM
-      prywatnym `http.Client` (współdzielonym w ramach jednego przebiegu dziecka, bo primary
-      i fallback nigdy nie działają równolegle). `agentRunner.run` przepuszcza przez ten sam
-      wrapper listę fallbacków, która dziś jest zawsze pusta (nazwane subagenty nie mają
-      jeszcze podłączonego `GetFallbackModels` — to zostaje poza zakresem, patrz odstępstwa),
-      więc mechanizm jest gotowy, zanim ktoś go faktycznie użyje.
-      Testy: `TestWithIsolatedPool_WrapsFallbacksWithPrimary`,
+      (`providers/context.go`, deleted) → `connector.WithModelClient`/`ModelClientFromContext` —
+      one value in the context, because `ModelClient` already carries its model
+- [x] verification: `agent` does not import `providers` (`go list -deps ./agent` — see below)
+- [x] **acceptance criterion: the child's fallback provider also gets an isolated pool.**
+      `main.go:withIsolatedPool` now binds the primary provider AND every fallback to ONE
+      private `http.Client` (shared within a single child run, because primary
+      and fallback never run in parallel). `agentRunner.run` passes through the same
+      wrapper the fallback list, which is always empty today (named subagents do not
+      have `GetFallbackModels` wired up yet — that stays out of scope, see deviations),
+      so the mechanism is ready before anyone actually uses it.
+      Tests: `TestWithIsolatedPool_WrapsFallbacksWithPrimary`,
       `TestWithIsolatedPool_FallbackPoolDistinctAcrossChildren`.
 
-### Odstępstwa od planu (świadome)
+### Deviations from the plan (deliberate)
 
-**Etapy 4 i 5 planu ("suggested commit sequence") połączone w jeden commit
-zamiast dwóch.** Plan proponował: commit 4 — `Run` bierze `ModelClient`
-+ `fallback.go` przestaje wołać `FindModel`; commit 5 — osobno przełączyć
-przenoszenie kontekstu. Nie da się rozdzielić bez commitu przejściowego, który
-byłby czerwony albo wymuszał tymczasowy dual-write: `agent/run_once.go` woła
-`providers.WithProvider(ctx, p)`, gdzie `p` jest `providers.Provider` — w
-chwili, gdy `Run` zaczyna przyjmować `ModelClient` (który nie jest
-`providers.Provider`), `run_once.go` fizycznie nie ma już czym wywołać
-`WithProvider`. Napisanie/odczyt konteksu muszą więc zmienić się w tym samym
-kroku co sygnatura `Run` — stąd jeden commit
+**Stages 4 and 5 of the plan ("suggested commit sequence") merged into one commit
+instead of two.** The plan proposed: commit 4 — `Run` takes a `ModelClient`
++ `fallback.go` stops calling `FindModel`; commit 5 — separately switch the
+context carrying. It cannot be split without an intermediate commit that
+would be red or force a temporary dual-write: `agent/run_once.go` calls
+`providers.WithProvider(ctx, p)`, where `p` is a `providers.Provider` — at the
+moment `Run` starts accepting a `ModelClient` (which is not a
+`providers.Provider`), `run_once.go` physically has nothing left to call
+`WithProvider` with. Writing/reading the context must therefore change in the same
+step as the `Run` signature — hence one commit
 (`250481e agent: fallback rozwiazywany przez wywolujacego, ModelClient w kontekscie`)
-obejmujący oba punkty planu.
+covering both points of the plan.
 
-**`session/session.go` też przestał importować `providers`, mimo że plan
-("Design decisions ALREADY MADE") mówił wprost: "Keep the aliases in
-providers — the CLI and session still use them."** Odkryte przy weryfikacji
-`go list -deps ./agent`: `agent` importuje `session` (typ `*session.Session`
-w `Config.Session`), a `session.go` importował `providers` wyłącznie po
-aliasy `RichMessage`/`ContentBlock` (te same typy co `connector.Message`/
-`ContentBlock` — `providers` tylko re-eksportuje `connector`). Bez tej zmiany
-"`agent` nie importuje `providers`" byłoby prawdziwe tylko dla importów
-bezpośrednich, a `go list -deps ./agent | grep providers` i tak by coś
-wypisało — czyli nagłówkowe kryterium etapu byłoby fałszywe. Naprawa: to samo
-mechaniczne przepisanie na `connector.Message`/`ContentBlock`, które dostał
-`agent/` w commicie 3 — zero zmiany zachowania (alias to ten sam typ), test
-session/ nie wymagał modyfikacji. `providers` zostaje właścicielem aliasów;
-`session` teraz woli własną, bezpośrednią nazwę, tak jak `agent`.
+**`session/session.go` also stopped importing `providers`, even though the plan
+("Design decisions ALREADY MADE") said explicitly: "Keep the aliases in
+providers — the CLI and session still use them."** Discovered while verifying
+`go list -deps ./agent`: `agent` imports `session` (the `*session.Session` type
+in `Config.Session`), and `session.go` imported `providers` solely for the
+`RichMessage`/`ContentBlock` aliases (the same types as `connector.Message`/
+`ContentBlock` — `providers` only re-exports `connector`). Without this change
+"`agent` does not import `providers`" would be true only for direct imports,
+and `go list -deps ./agent | grep providers` would still print something — so the
+stage's headline criterion would be false. Fix: the same mechanical rewrite to
+`connector.Message`/`ContentBlock` that `agent/` got in commit 3 — zero
+behavior change (the alias is the same type), the session/ test needed no
+modification. `providers` remains the owner of the aliases; `session` now prefers its
+own, direct name, just like `agent`.
 
-**`resolveModelClient` (dawne `resolveProviderModel`) dostało nową gałąź, bez
-odpowiednika w kodzie sprzed etapu.** Stary kod trzymał `providers.Provider`
-i `model string` jako DWIE niezależne wartości w kontekście, więc subagent z
-jawnym bare-name override (`model` różny od modelu rodzica, bez `/`) po
-prostu dostawał `(rodzicProvider, nowyModel)` — provider nie wiedział o
-żadnym konkretnym modelu, więc nie było czego przerabiać. `ModelClient` niesie
-swój model na trwałe, więc gdy override różni się od `mc.Model()`,
-`resolveModelClient` musi odtworzyć nowy `ModelClient` na tym samym providerze
-przez `providers.GetProvider(mc.Provider())` (odczyt z globalnego katalogu po
-nazwie). Zachowanie funkcjonalnie identyczne — provider rodzica, inny model —
-ale ścieżka kodu jest nowa, bo poprzednio nie było jej czym pokryć: żaden
-istniejący test tego przypadku nie używał (override w testach i tools/
-zawsze był albo `""`, albo pełnym `"provider/model"`). Dodany test:
+**`resolveModelClient` (formerly `resolveProviderModel`) got a new branch, with no
+counterpart in the pre-stage code.** The old code held `providers.Provider`
+and `model string` as TWO independent values in the context, so a subagent with
+an explicit bare-name override (`model` different from the parent's model, without `/`) simply
+got `(parentProvider, newModel)` — the provider knew nothing about any
+specific model, so there was nothing to rebuild. A `ModelClient` carries
+its model permanently, so when the override differs from `mc.Model()`,
+`resolveModelClient` must recreate a new `ModelClient` on the same provider
+through `providers.GetProvider(mc.Provider())` (a read from the global catalog by
+name). Functionally identical behavior — the parent's provider, a different model —
+but the code path is new, because previously there was nothing to cover it with: no
+existing test used this case (the override in tests and tools/
+was always either `""` or a full `"provider/model"`). Added test:
 `TestResolveModelClient_BareOverrideDifferentModelReusesProvider`.
 
-**Dwa martwe pola `fallbackState.active`/`.fullModel` usunięte przy okazji.**
-Ustawiane w `agent/fallback.go`, nigdy odczytywane (`grep` to potwierdza).
-Nie do uniknięcia: przy zamianie `provider+model+fullModel` na jedno pole
-`mc connector.ModelClient` trzeba było dotknąć każdego pola struktury; to nie
-jest osobne "ulepszenie na boku", tylko efekt obowiązkowej przebudowy.
+**Two dead fields `fallbackState.active`/`.fullModel` removed along the way.**
+Set in `agent/fallback.go`, never read (`grep` confirms it).
+Unavoidable: when replacing `provider+model+fullModel` with a single field
+`mc connector.ModelClient` every field of the struct had to be touched; this
+is not a separate "improvement on the side", just a consequence of the mandatory rebuild.
 
-**Dług zastany zauważony i ŚWIADOMIE nietknięty:** `agent.Config.ProviderName`
-jest zapisywany w sześciu miejscach (`commands.go`, `interactive.go` ×2,
-`tui_mode.go` ×3) i nigdzie w całym repo nie jest odczytywany — pole
-write-only sprzed tego etapu. Nie naprawiane tutaj: nie ma z tym nic
-wspólnego zakres Etapu 5, a "nie commitować nieproszonych poprawek" jest
-twardym ograniczeniem tego zadania.
+**Pre-existing debt noticed and DELIBERATELY untouched:** `agent.Config.ProviderName`
+is written in six places (`commands.go`, `interactive.go` ×2,
+`tui_mode.go` ×3) and is read nowhere in the whole repo — a
+write-only field from before this stage. Not fixed here: it has nothing
+to do with the scope of Stage 5, and "do not commit unrequested fixes" is
+a hard constraint of this task.
 
-**`Config.Model` i `Config.ProviderName` zostają w strukturze, mimo że `agent`
-już ich wewnętrznie nie potrzebuje** (`runOnce`/`fallback.go` czytają
-`mc.Model()`/`mc.Provider()`). Powód: wywołujący (`prompt_mode.go:29`,
-`interactive.go`, `tui_mode.go`) czytają/piszą `cfg.Model` do własnych celów
-(nazwa sesji, przełączanie modelu), niezależnych od tego, jak `Run` go
-zużywa. Usunięcie pola złamałoby te call site'y bez żadnej korzyści.
+**`Config.Model` and `Config.ProviderName` stay in the struct, even though `agent`
+no longer needs them internally** (`runOnce`/`fallback.go` read
+`mc.Model()`/`mc.Provider()`). Reason: callers (`prompt_mode.go:29`,
+`interactive.go`, `tui_mode.go`) read/write `cfg.Model` for their own purposes
+(session name, model switching), independent of how `Run` consumes it.
+Removing the field would break those call sites with no benefit.
 
-Rozstrzygnięcie obu odłożone na **przed etap 6** — patrz „Do posprzątania PRZED
-`Conductor`" w sekcji etapu 6. Powód, dla którego nie zostaje to tu na zawsze:
-`Conductor` przenosi `agent.Config` do nowego API, a pole, którego agent nie
-czyta, w nowym API wygląda jak kontrakt. `ProviderName` nie ma przy tym nawet
-tego usprawiedliwienia co `Model` — nie czyta go nikt, ani agent, ani wywołujący.
+Resolution of both postponed to **before stage 6** — see "Cleanup BEFORE
+`Conductor`" in the stage 6 section. The reason it does not stay here forever:
+`Conductor` carries `agent.Config` over into a new API, and a field the agent does not
+read looks like a contract in a new API. `ProviderName` does not even have
+the excuse `Model` has — nobody reads it, neither the agent nor the callers.
 
-### Weryfikacja
+### Verification
 
-- `go build` + `go vet` + `go test ./... -count=1` zielone we wszystkich czterech
-  kombinacjach tagów (brak, `noanthropic`, `nogemini`, `noanthropic nogemini`),
-- `go test -race ./agent/ ./providers/ ./tools/ .` zielone,
-- `gofmt -l .` puste,
-- `git diff --stat a04f9a8..HEAD -- providers/testdata` **puste** — wire format przeżył,
-- `go list -deps ./agent | grep decodo/tyci/providers` → **puste** (dowód nagłówkowy etapu),
-- nazwy testów: 6 przekształceń 1:1 (`TestResolveProviderModel_*` →
-  `TestResolveModelClient_*`), 16 dodanych (nowe pakiety `connector`/`providers`
-  + jeden nowy przypadek `resolveModelClient` + dwa testy izolacji fallbacków),
-  0 usunięć bez odpowiednika.
+- `go build` + `go vet` + `go test ./... -count=1` green in all four
+  tag combinations (none, `noanthropic`, `nogemini`, `noanthropic nogemini`),
+- `go test -race ./agent/ ./providers/ ./tools/ .` green,
+- `gofmt -l .` empty,
+- `git diff --stat a04f9a8..HEAD -- providers/testdata` **empty** — the wire format survived,
+- `go list -deps ./agent | grep decodo/tyci/providers` → **empty** (headline proof of the stage),
+- test names: 6 transformations 1:1 (`TestResolveProviderModel_*` →
+  `TestResolveModelClient_*`), 16 added (new packages `connector`/`providers`
+  + one new `resolveModelClient` case + two fallback isolation tests),
+  0 deletions without a counterpart.
 
-## Etap 6 — frontend jako sterownik (2d) — ZROBIONE
+## Stage 6 — frontend as a driver (2d) — DONE
 
-**Rozstrzygnięte PRZED tym etapem:** `Provider.FreeModels()` było w produkcji
-martwe (jedyna nietestowa implementacja zwracała `nil` bezwarunkowo).
-**Decyzja: wycięte, nie zaimplementowane** — patrz „Sprzątanie przed `Conductor`"
-niżej. Metoda nie wchodzi do projektu `Conductor`.
+**Resolved BEFORE this stage:** `Provider.FreeModels()` was dead in production
+(the only non-test implementation returned `nil` unconditionally).
+**Decision: cut out, not implemented** — see "Cleanup before `Conductor`"
+below. The method does not enter the `Conductor` design.
 
-### Sprzątanie przed `Conductor` — ZROBIONE
+### Cleanup before `Conductor` — DONE
 
-`Conductor` projektuje się wokół `agent.Config` i `connector.ModelClient`. Trzy
-z poniższych to pola i abstrakcje, które etap 5 zostawił w stanie „istnieje, ale
-nikt tego nie czyta". Przeniesienie ich do nowego API utrwaliłoby błąd, więc
-kolejność była: najpierw sprzątanie, potem `Conductor`.
+`Conductor` is designed around `agent.Config` and `connector.ModelClient`. Three
+of the items below are fields and abstractions that stage 5 left in the state "exists, but
+nobody reads it". Carrying them into the new API would have entrenched the mistake, so
+the order was: cleanup first, then `Conductor`.
 
-- [x] **`agent.Config.Model` — agent to ignorował.** Pole usunięte z `Config`.
-      Model jest wyłącznie właściwością `connector.ModelClient` podanego do `Run`
-      (`mc.Model()`); wywołujący, którzy potrzebują nazwy do własnych celów,
-      trzymają własną zmienną. `runPrompt` dostał jawny parametr `modelName`
-      (czytał `cfg.Model` przy zakładaniu sesji i przy budowie klienta);
-      `commands.go` / `interactive.go` / `tui_mode.go` miały już `provider` +
-      `modelName` obok `cfg`, więc zapisy do `cfg` były czystą duplikacją;
-      `main.go` i `internal/workflow/engine.go` tylko pisały. Dwa źródła prawdy →
-      jedno. Komentarz „agent tego nie czyta" świadomie NIE został zostawiony —
-      to właśnie stan, który usuwaliśmy.
+- [x] **`agent.Config.Model` — the agent ignored it.** Field removed from `Config`.
+      The model is solely a property of the `connector.ModelClient` passed to `Run`
+      (`mc.Model()`); callers who need the name for their own purposes
+      keep their own variable. `runPrompt` got an explicit `modelName` parameter
+      (it read `cfg.Model` when creating the session and when building the client);
+      `commands.go` / `interactive.go` / `tui_mode.go` already had `provider` +
+      `modelName` next to `cfg`, so the writes to `cfg` were pure duplication;
+      `main.go` and `internal/workflow/engine.go` only wrote. Two sources of truth →
+      one. The comment "the agent does not read this" was deliberately NOT left in place —
+      that is exactly the state we were removing.
       Commit `8d90b5d`.
-- [x] **`agent.Config.ProviderName` — martwe i mylące.** Usunięte tym samym
-      commitem. Metadane sesji biorą `mc.Provider()` (`run_once.go`).
-- [x] **`Provider.FreeModels()` wycięte.** Metoda wypadła z interfejsu, z
-      `dynamicProvider` i z trzech atrap w testach; zniknęła druga pętla w
-      `Catalog.FindModel` (razem z komentarzem, który opisywał ją jakby była żywa)
-      oraz cztery martwe pętle w CLI. Zachowawcze *przez konstrukcję* — każde
-      użycie iterowało po `nil`; dowód per użycie w opisie commita `76a8629`.
-      Jedyne miejsce z wpływem na sterowanie, `provider list --models`, miało
-      warunek `len(models) == 0 && len(freeModels) == 0`, który redukuje się do
-      `len(models) == 0`, więc komunikat „(no models)" pojawia się dokładnie tam,
-      gdzie dotąd.
-- [x] **`providers.Provider` jest już wyłącznie interfejsem katalogu.**
-      `Stream` wypadło z interfejsu; `Provider` = `Name` + `IsConfigured` +
-      `Models` + `Client(model) connector.ModelClient`. Jedyną drogą do wysłania
-      requestu jest `connector.ModelClient`. Commity `bec3622` (fabryka staje się
-      metodą) i `60c32db` (`Stream` zdjęte z interfejsu).
-- [x] **`HTTPInjector` — trzy ogniwa → jedno.** `providers.HTTPInjector` usunięty
-      całkiem, `dynamicProvider.WithHTTP` → nieeksportowane `withHTTP`
-      zwracające typ konkretny. Zostaje jedno ogniwo, `connector.HTTPInjector`
-      na `modelClient`, i jedna zamierzona assertion w
-      `main.go:withIsolatedPool` (atrapy `ModelClienta` jej nie spełniają i mają
-      przechodzić bez izolacji, jak dotąd). Żeby nie mogła po cichu przestać
-      działać dla ścieżki produkcyjnej, `providers/client.go` ma
-      `var _ connector.HTTPInjector = (*modelClient)(nil)` — awaria runtime
-      zamieniona na awarię builda. Commit `60c32db`.
+- [x] **`agent.Config.ProviderName` — dead and misleading.** Removed in the same
+      commit. Session metadata takes `mc.Provider()` (`run_once.go`).
+- [x] **`Provider.FreeModels()` cut out.** The method dropped out of the interface, out of
+      `dynamicProvider` and out of three test fakes; the second loop in
+      `Catalog.FindModel` disappeared (together with a comment that described it as if it were live)
+      along with four dead loops in the CLI. Conservative *by construction* — every
+      use iterated over `nil`; per-use proof in the description of commit `76a8629`.
+      The only place with an effect on control flow, `provider list --models`, had
+      the condition `len(models) == 0 && len(freeModels) == 0`, which reduces to
+      `len(models) == 0`, so the "(no models)" message appears exactly where
+      it did before.
+- [x] **`providers.Provider` is now solely a catalog interface.**
+      `Stream` dropped out of the interface; `Provider` = `Name` + `IsConfigured` +
+      `Models` + `Client(model) connector.ModelClient`. The only way to send
+      a request is `connector.ModelClient`. Commits `bec3622` (the factory becomes
+      a method) and `60c32db` (`Stream` taken off the interface).
+- [x] **`HTTPInjector` — three links → one.** `providers.HTTPInjector` removed
+      entirely, `dynamicProvider.WithHTTP` → unexported `withHTTP`
+      returning the concrete type. One link stays, `connector.HTTPInjector`
+      on `modelClient`, and one intentional assertion in
+      `main.go:withIsolatedPool` (`ModelClient` fakes do not satisfy it and are supposed
+      to pass through without isolation, as before). So that it cannot silently stop
+      working for the production path, `providers/client.go` has
+      `var _ connector.HTTPInjector = (*modelClient)(nil)` — a runtime failure
+      turned into a build failure. Commit `60c32db`.
 
-#### Projekt podziału `Provider` i dlaczego tak
+#### The `Provider` split design and why it is this way
 
-`Provider` **zostaje interfejsem** (ograniczenie z etapu 4: struktura zepsułaby
-każdą atrapę i wciągnęła typ konkretny do sygnatur). Podział wygląda tak:
+`Provider` **stays an interface** (a constraint from stage 4: a struct would break
+every fake and drag the concrete type into signatures). The split looks like this:
 
 ```
-Provider (katalog)                 connector.ModelClient (transport)
+Provider (catalog)                 connector.ModelClient (transport)
   Name() / IsConfigured()            Provider() / Model()
   Models()                           Stream(ctx, Request)
-  Client(model) ──────────────────▶  (+ opcjonalnie connector.HTTPInjector)
+  Client(model) ──────────────────▶  (+ optionally connector.HTTPInjector)
 ```
 
-Kluczowa decyzja: **fabryka `ModelClient` jest metodą `Provider`, nie funkcją
-pakietową.** Dawne `providers.Client(p Provider, model string)` zniknęło.
-Powód jest wprost o cichej awarii: funkcja przyjmująca interfejs `Provider`,
-który nie ma już `Stream`, musiałaby transport *odnaleźć za* interfejsem, czyli
-przez type assertion — a nieudana assertion w takim miejscu degraduje bez
-błędu. Jako metoda jest sprawdzana przez kompilator: każda implementacja
-`Provider` musi umieć wydać swojego klienta i sama decyduje, co ten klient
-potrafi. To także dlatego atrapy w testach są dziś *lżejsze*, nie cięższe —
-katalogowa atrapa nie dziedziczy transportu, o który nie prosiła.
+Key decision: **the `ModelClient` factory is a `Provider` method, not a
+package-level function.** The former `providers.Client(p Provider, model string)` is gone.
+The reason is precisely about silent failure: a function taking the `Provider` interface,
+which no longer has `Stream`, would have to *find the transport behind* the interface, i.e.
+through a type assertion — and a failed assertion in such a place degrades without
+an error. As a method it is checked by the compiler: every implementation of
+`Provider` must be able to issue its client and itself decides what that client
+can do. That is also why the test fakes are *lighter* today, not heavier —
+a catalog fake does not inherit a transport it did not ask for.
 
-Skutek dla łańcucha HTTP: `modelClient` trzyma `*dynamicProvider` (typ
-konkretny), więc `modelClient.WithHTTP(h)` = `c.p.withHTTP(h).Client(c.model)` —
-oba skoki statyczne, nie ma czego nie dopasować. Zostaje jedna assertion, w
-`main.go`, i jest to jedyne miejsce, gdzie „brak izolacji" jest poprawną
-odpowiedzią (atrapy). `var _` w `providers/client.go` gwarantuje, że nigdy nie
-jest to odpowiedź dla klienta z produkcji.
+Consequence for the HTTP chain: `modelClient` holds a `*dynamicProvider` (the concrete
+type), so `modelClient.WithHTTP(h)` = `c.p.withHTTP(h).Client(c.model)` —
+both hops are static, there is nothing to fail to match. One assertion remains, in
+`main.go`, and it is the only place where "no isolation" is the correct
+answer (fakes). The `var _` in `providers/client.go` guarantees that it is never
+the answer for a production client.
 
-Wypadło przy tym z zasięgu `dynamicProvider.Stream`: metoda została na typie
-**nieeksportowanym**, więc spoza pakietu `providers` nie ma żadnej drogi do
-strumienia poza `connector.ModelClient`. Testy w `providers/`, które budowały
-providera przez `NewProvider`, streamują teraz przez `p.Client(model).Stream(...)`,
-czyli przez ścieżkę produkcyjną — dotyczy to też `wire_golden_test.go`.
+As a result `dynamicProvider.Stream` went out of reach: the method stayed on an
+**unexported** type, so from outside the `providers` package there is no path to a
+stream other than `connector.ModelClient`. Tests in `providers/` that built
+a provider through `NewProvider` now stream through `p.Client(model).Stream(...)`,
+i.e. through the production path — this also applies to `wire_golden_test.go`.
 
-#### Odstępstwa od planu (świadome)
+#### Deviations from the plan (deliberate)
 
-**Zadania „rozdziel `Provider`" i „skróć łańcuch `HTTPInjector`" nie dały się
-rozdzielić na dwa commity po granicy zadań.** Plan przewidywał osobny commit na
-każde. Granica nie jest jednak szwem, który się kompiluje: w chwili, gdy
-`Provider` traci `Stream`, `modelClient` musi trzymać typ konkretny (trzymanie
-`Provider` + assertion do jakiegoś „streamera" odtworzyłoby dokładnie ten tryb
-cichej awarii, który usuwamy), a `modelClient` z polem `*dynamicProvider`
-unieważnia sygnaturę `providers.HTTPInjector` (`WithHTTP(HTTPDoer) Provider`) —
-Go nie ma kowariancji zwracanego typu, więc interfejs przestaje być spełniany
-przez cokolwiek i musi zniknąć w tym samym commicie. Rozbicie poszło więc po
-szwie, który *da się* skompilować: `bec3622` wprowadza nową fabrykę
-(`Provider.Client`), `60c32db` usuwa starą drogę (`Stream` z interfejsu +
-`providers.HTTPInjector`). Każdy z dwóch commitów jest zielony osobno.
+**The tasks "split `Provider`" and "shorten the `HTTPInjector` chain" could not be
+separated into two commits along the task boundary.** The plan envisioned a separate commit for
+each. But the boundary is not a seam that compiles: the moment
+`Provider` loses `Stream`, `modelClient` must hold the concrete type (holding
+`Provider` + an assertion to some "streamer" would recreate exactly the silent
+failure mode we are removing), and a `modelClient` with a `*dynamicProvider` field
+invalidates the signature of `providers.HTTPInjector` (`WithHTTP(HTTPDoer) Provider`) —
+Go has no return-type covariance, so the interface stops being satisfied
+by anything and must disappear in the same commit. The split therefore went along a
+seam that *can* be compiled: `bec3622` introduces the new factory
+(`Provider.Client`), `60c32db` removes the old path (`Stream` from the interface +
+`providers.HTTPInjector`). Each of the two commits is green on its own.
 
-**`dynamicProvider.Stream` zostało eksportowane.** Zdjęcie go z interfejsu
-wystarcza: typ jest nieeksportowany, a `NewProvider` zwraca `Provider`, więc
-metoda jest nieosiągalna spoza pakietu. Przemianowanie na `stream` dołożyłoby
-tylko kolizję czytelniczą z importowanym pakietem `stream`.
+**`dynamicProvider.Stream` was left exported.** Taking it off the interface
+is enough: the type is unexported and `NewProvider` returns `Provider`, so
+the method is unreachable from outside the package. Renaming it to `stream` would only add
+a readability clash with the imported `stream` package.
 
-**Ziarnistość i semantyka izolowanego poolu bez zmian.** `withIsolatedPool`
-nadal daje jeden `*http.Client` na wejście w `agentRunner.run` (czyli na
-`RunTask`/`RunTaskWithSystem`), wspólny dla modelu głównego i wszystkich jego
-fallbacków. Oba testy izolacji fallbacków z etapu 5 przechodzą bez zmian w
-asercjach; zmieniła się tylko atrapa — `recordingInjector` nagrywa wstrzyknięty
-klient na poziomie `ModelClient`, a nie `Provider`, bo `withIsolatedPool` widzi
-wyłącznie `ModelClienty` i to jest poziom, na którym jego kontrakt istnieje.
+**Granularity and semantics of the isolated pool unchanged.** `withIsolatedPool`
+still gives one `*http.Client` per entry into `agentRunner.run` (i.e. per
+`RunTask`/`RunTaskWithSystem`), shared by the main model and all its
+fallbacks. Both fallback isolation tests from stage 5 pass with no changes in
+the assertions; only the fake changed — `recordingInjector` records the injected
+client at the `ModelClient` level, not `Provider`, because `withIsolatedPool` sees
+only `ModelClient`s and that is the level at which its contract exists.
 
-**Nazwy testów: 1 przekształcenie 1:1, 1 dodanie, 2 usunięcia (netto −1).**
+**Test names: 1 transformation 1:1, 1 addition, 2 deletions (net −1).**
 `TestNewProvider_ImplementsHTTPInjector` → `TestProviderClient_ImplementsHTTPInjector`
-(ta sama gwarancja przeniesiona z providera na klienta, plus sprawdzenie, że
-wstrzyknięty klient faktycznie ląduje w `Endpoint.HTTP`).
-`TestClient_WithHTTPNoopWhenProviderIsNotInjector` **usunięty bez następcy**:
-gałąź, którą opisywał, przestała istnieć (każdy `modelClient` owija
-`dynamicProvider`, który zawsze jest `HTTPInjectorem`). Gwarancję „`ModelClient`
-bez `HTTPInjectora` przechodzi `withIsolatedPool` nietknięty" trzyma
-`TestWithIsolatedPool_PassesThroughNonInjector` w `main_resolve_test.go`.
-Atrapa `recordingProvider` (nie test) usunięta jako niepotrzebna — po podziale
-atrapa `Providera` wydaje WŁASNEGO klienta, więc nie dotknęłaby `modelClient`
-ani razu; `TestClient_{ProviderAndModel,StreamForcesBoundModel}` idą teraz przez
-prawdziwy provider z nagrywającym connectorem.
+(the same guarantee moved from the provider to the client, plus a check that the
+injected client actually lands in `Endpoint.HTTP`).
+`TestClient_WithHTTPNoopWhenProviderIsNotInjector` **deleted with no successor**:
+the branch it described ceased to exist (every `modelClient` wraps a
+`dynamicProvider`, which is always an `HTTPInjector`). The guarantee "a `ModelClient`
+without `HTTPInjector` passes through `withIsolatedPool` untouched" is held by
+`TestWithIsolatedPool_PassesThroughNonInjector` in `main_resolve_test.go`.
+The `recordingProvider` fake (not a test) removed as unnecessary — after the split
+a `Provider` fake issues ITS OWN client, so it would not have touched `modelClient`
+even once; `TestClient_{ProviderAndModel,StreamForcesBoundModel}` now go through
+a real provider with a recording connector.
 
-**`TestCatalog_FindModelBareName` stracił przypadek „freebie"** — asercja
-opisywała usuniętą pętlę `FreeModels`. Test i jego dwie pozostałe asercje
-zostają.
+**`TestCatalog_FindModelBareName` lost the "freebie" case** — the assertion
+described the removed `FreeModels` loop. The test and its two remaining assertions
+stay.
 
-#### Weryfikacja
+#### Verification
 
-- **4/4 commitów zielonych osobno.** Sprawdzone w jednorazowym
-  `git worktree --detach`, commit po commicie: `go build ./... && go vet ./... &&
-  go test ./... -count=1 && gofmt -l .` (puste) + `go build` z tagami
-  `noanthropic`, `nogemini`, `noanthropic nogemini`. Worktree usunięty.
-- `go build` + `go vet` + `go test ./... -count=1` zielone we wszystkich czterech
-  kombinacjach tagów (brak, `noanthropic`, `nogemini`, `noanthropic nogemini`),
-- `go test -race ./agent/ ./providers/ ./tools/ .` zielone,
-- `gofmt -l .` puste,
-- `git diff --stat ace8e16..HEAD -- providers/testdata` **puste** — wire format
-  przeżył, ani jednego `-update`,
-- `go list -deps ./agent | grep decodo/tyci/providers` → **puste**
-  (kryterium nagłówkowe całego refaktoru),
-- `grep -rn "FreeModels" --include="*.go" .` → dwa komentarze opisujące usunięcie,
-  zero kodu; `grep -rn "providers.HTTPInjector"` → jeden komentarz historyczny
-  (opis skróconego łańcucha w `providers/client.go`), zero kodu,
-- nazwy testów: 1027 → 1026 (`comm` na posortowanych listach `func Test*` przed
-  i po): 1 przekształcenie 1:1, 1 dodany, 2 usunięte — wyliczone wyżej.
+- **4/4 commits green on their own.** Checked in a throwaway
+  `git worktree --detach`, commit by commit: `go build ./... && go vet ./... &&
+  go test ./... -count=1 && gofmt -l .` (empty) + `go build` with the tags
+  `noanthropic`, `nogemini`, `noanthropic nogemini`. Worktree removed.
+- `go build` + `go vet` + `go test ./... -count=1` green in all four
+  tag combinations (none, `noanthropic`, `nogemini`, `noanthropic nogemini`),
+- `go test -race ./agent/ ./providers/ ./tools/ .` green,
+- `gofmt -l .` empty,
+- `git diff --stat ace8e16..HEAD -- providers/testdata` **empty** — the wire format
+  survived, not a single `-update`,
+- `go list -deps ./agent | grep decodo/tyci/providers` → **empty**
+  (headline criterion of the whole refactor),
+- `grep -rn "FreeModels" --include="*.go" .` → two comments describing the removal,
+  zero code; `grep -rn "providers.HTTPInjector"` → one historical comment
+  (description of the shortened chain in `providers/client.go`), zero code,
+- test names: 1027 → 1026 (`comm` on sorted `func Test*` lists before
+  and after): 1 transformation 1:1, 1 added, 2 deleted — itemized above.
 
-#### Znalezione po drodze, ŚWIADOMIE nietknięte
+#### Found along the way, DELIBERATELY untouched
 
-- **`subagentDefaultMaxIterations` w `main.go:125` jest martwą stałą** —
-  zdefiniowana jako alias `tools.DefaultSubagentMaxIterations` i nigdzie nie
-  używana (`tools.ResolveMaxIter` robi to samo po stronie `tools/`). Nie ruszane:
-  poza zakresem.
-- **`display.ProviderModels` dostaje dziś tylko modele płatne** — po wycięciu
-  `FreeModels` nie ma już ścieżki, którą TUI mogłoby dostać model oznaczony jako
-  darmowy. Jeśli „free models" mają kiedyś wrócić, muszą wrócić jako właściwość
-  wpisu w katalogu (`ModelEntry`), nie jako druga metoda interfejsu — poprzedni
-  kształt zgnił właśnie dlatego, że nikt nie miał czym go wypełnić.
+- **`subagentDefaultMaxIterations` in `main.go:125` is a dead constant** —
+  defined as an alias of `tools.DefaultSubagentMaxIterations` and not used
+  anywhere (`tools.ResolveMaxIter` does the same on the `tools/` side). Not touched:
+  out of scope.
+- **`display.ProviderModels` today receives only paid models** — after cutting out
+  `FreeModels` there is no longer a path by which the TUI could get a model marked
+  as free. If "free models" ever return, they must return as a property
+  of a catalog entry (`ModelEntry`), not as a second interface method — the previous
+  shape rotted precisely because nobody had anything to populate it with.
 
-### `Conductor` — ZROBIONE
+### `Conductor` — DONE
 
-- [x] `Conductor`: `conversation` + `cfg` + `ModelClient` + sesja (`conductor/conductor.go`)
+- [x] `Conductor`: `conversation` + `cfg` + `ModelClient` + session (`conductor/conductor.go`)
 - [x] API: `Submit(ctx, prompt)`, `Interrupt()`, `SwitchModel(spec)` — plus `Resume`
-      i operacje na stanie, patrz niżej
-- [x] przeniesienie logiki z `interactive_agent.go`, `tui_mode.go`, `prompt_mode.go`
-      oraz punktu konstrukcji w `commands.go`
-- [x] TUI/konsola tylko wołają metody i renderują eventy
-- [x] smoke test: headless driver bez żadnego UI
+      and state operations, see below
+- [x] moving the logic out of `interactive_agent.go`, `tui_mode.go`, `prompt_mode.go`
+      and the construction point in `commands.go`
+- [x] TUI/console only call methods and render events
+- [x] smoke test: headless driver with no UI at all
       (`TestConductor_HeadlessConversation`)
 
-#### Kształt API
+#### API shape
 
 ```go
 type ModelResolver interface {
@@ -542,13 +542,13 @@ type ModelResolver interface {
 }
 
 type Options struct {
-    Client      connector.ModelClient // model, na którym zaczyna rozmowa
-    Sink        agent.Sink            // dokąd lecą eventy pętli
-    Config      agent.Config          // Config.Session = log, którego Conductor staje się właścicielem
-    Resolver    ModelResolver         // opcjonalny; bez niego SwitchModel zwraca ErrNoResolver
-    History     []connector.Message   // zasianie rozmowy (wznowienie)
-    SessionPath string                // pusty = brak persystencji
-    WorkDir     string                // pusty = os.Getwd() w chwili otwierania pliku
+    Client      connector.ModelClient // the model the conversation starts on
+    Sink        agent.Sink            // where the loop's events go
+    Config      agent.Config          // Config.Session = the log Conductor becomes the owner of
+    Resolver    ModelResolver         // optional; without it SwitchModel returns ErrNoResolver
+    History     []connector.Message   // seeding the conversation (resume)
+    SessionPath string                // empty = no persistence
+    WorkDir     string                // empty = os.Getwd() at the moment the file is opened
 }
 
 func New(opts Options) *Conductor
@@ -571,518 +571,517 @@ func (c *Conductor) EnsureSession() *session.Session
 func (c *Conductor) EndSession(status string, exitCode int)
 ```
 
-Granica przebiega tak: **`Conductor` mówi, co się stało; frontend decyduje, jak
-to wygląda.** W `Conductorze` jest historia rozmowy, `agent.Config`, aktualny
-`ModelClient`, log sesji, akumulacja `stream.Usage`, leniwe zakładanie pliku
-sesji, `agent.Run` i anulowanie tury. We froncie zostaje wszystko, co jest
-decyzją prezentacji albo własnością terminala: teksty błędów i ich `\n`,
-`display.End()`, kody wyjścia, replay transkryptu, picker `/resume`, tytuł okna,
-listowanie modeli, a także **kto nasłuchuje SIGINT-a i ESC-a** — `Interrupt()`
-mówi tylko „przerwij bieżącą turę", nie „obsłuż klawiaturę".
+The boundary runs like this: **`Conductor` says what happened; the frontend decides how
+it looks.** `Conductor` holds the conversation history, `agent.Config`, the current
+`ModelClient`, the session log, `stream.Usage` accumulation, lazy creation of the session
+file, `agent.Run` and turn cancellation. The frontend keeps everything that is
+a presentation decision or terminal property: error texts and their `\n`,
+`display.End()`, exit codes, transcript replay, the `/resume` picker, window title,
+model listing, and also **who listens for SIGINT and ESC** — `Interrupt()`
+says only "abort the current turn", not "handle the keyboard".
 
-`Conductor` nie importuje `providers`. Zmiana modelu idzie przez
-`ModelResolver` — interfejs zadeklarowany po stronie konsumenta, dokładnie jak
-`agent.Sink` i `connector.HTTPDoer`. Implementacja (`main.catalogResolver`)
-siedzi w CLI, bo katalog jest własnością CLI.
+`Conductor` does not import `providers`. Switching the model goes through
+`ModelResolver` — an interface declared on the consumer side, exactly like
+`agent.Sink` and `connector.HTTPDoer`. The implementation (`main.catalogResolver`)
+sits in the CLI, because the catalog is owned by the CLI.
 
-#### Rozstrzygnięcie pułapki `SwitchModel` / globalnego katalogu
+#### Resolving the `SwitchModel` / global catalog trap
 
-Notatka do etapu mówiła, że `main.resolveModelClient` musi sięgać po globalne
-`providers.GetProvider(mc.Provider())`, bo z `connector.ModelClient` nie da się
-wrócić do katalogu, i że `SwitchModel` uderzy w ten sam problem. **Nie uderza**,
-i to nie przypadkiem: `SwitchModel` dostaje od użytkownika pełną specyfikację
-`provider/model`, więc nie musi niczego odzyskiwać z bieżącego klienta —
-`ModelResolver.Resolve(spec)` zwraca gotowego klienta i to wystarcza. Katalog
-zostaje po stronie `main`, `Conductor` widzi tylko funkcję jednego argumentu.
-Przypadek `resolveModelClient` (subagent z gołą nazwą modelu, która ma
-odziedziczyć providera rodzica) jest inny — tam specyfikacja jest *niepełna* —
-i dlatego zostaje w `main` nietknięty. To ta sama granica z dwóch stron:
-niepełne specyfikacje wymagają katalogu, więc rozwiązuje je ten, kto katalog ma.
+The stage note said that `main.resolveModelClient` must reach for the global
+`providers.GetProvider(mc.Provider())`, because from a `connector.ModelClient` there is no way
+back to the catalog, and that `SwitchModel` would hit the same problem. **It does not**,
+and not by accident: `SwitchModel` receives the full `provider/model` specification
+from the user, so it does not need to recover anything from the current client —
+`ModelResolver.Resolve(spec)` returns a ready client and that is enough. The catalog
+stays on the `main` side, `Conductor` sees only a one-argument function.
+The `resolveModelClient` case (a subagent with a bare model name that is supposed to
+inherit the parent's provider) is different — there the specification is *incomplete* —
+and therefore stays in `main` untouched. It is the same boundary from two sides:
+incomplete specifications need the catalog, so whoever has the catalog resolves them.
 
-#### Odstępstwa od planu (świadome)
+#### Deviations from the plan (deliberate)
 
-**Trzy zmiany zachowania, wszystkie wymuszone przez zejście do jednego
-właściciela stanu. Żadna nie jest kosmetyczna, więc wszystkie są tu wypisane.**
+**Three behavior changes, all forced by collapsing to a single state owner.
+None is cosmetic, so all are listed here.**
 
-1. **`/resume` w konsoli faktycznie przepina sesję, którą widzi agent.**
-   `interactive.handleResume` ustawiał `s.sessionPtr`, ale **nigdy**
-   `s.cfg.Session`. Po wznowieniu (jeśli użytkownik zdążył wcześniej cokolwiek
-   napisać) agent pisał dalej do porzuconego pliku, `close()` zapisywał
-   `session_end` do starego, a na ekranie pojawiała się ścieżka nowego. Przy
-   jednym polu w `Conductorze` taki rozjazd nie jest reprezentowalny. Błąd
-   zastany, wywrócony przy okazji unifikacji — nie dało się go „zachować".
-2. **`/resume` w konsoli zamyka porzuconą sesję przez `WriteSessionEnd` zamiast
-   gołego `Close()`** — czyli tak, jak od zawsze robiło to TUI. Ta sama
-   przyczyna: `Conductor.Resume` jest jeden.
-3. **TUI: usage z tury przerwanej ESC-em jest doliczana do sumy.** Gałąź `ESC`
-   w `runTUI` jako jedyna gubiła częściowe zużycie (gałąź `resultCh` doliczała
-   je nawet przy anulowaniu). `Conductor` sumuje w jednym miejscu, w `Submit`,
-   więc niespójność znika. Widoczne wyłącznie w polu `usage` zdarzenia
-   `session_end`.
+1. **`/resume` in the console actually rebinds the session the agent sees.**
+   `interactive.handleResume` set `s.sessionPtr`, but **never**
+   `s.cfg.Session`. After resuming (if the user had already typed anything
+   earlier) the agent kept writing to the abandoned file, `close()` wrote
+   `session_end` to the old one, and the screen showed the path of the new one. With
+   a single field in `Conductor` such a divergence is not representable. A
+   pre-existing bug, overturned by the unification — it could not be "preserved".
+2. **`/resume` in the console closes the abandoned session with `WriteSessionEnd` instead of
+   a bare `Close()`** — i.e. the way the TUI has always done it. Same
+   cause: there is a single `Conductor.Resume`.
+3. **TUI: usage from a turn interrupted with ESC is added to the total.** The `ESC` branch
+   in `runTUI` was the only one that dropped partial usage (the `resultCh` branch added
+   it even on cancellation). `Conductor` sums in one place, in `Submit`,
+   so the inconsistency disappears. Visible only in the `usage` field of the
+   `session_end` event.
 
-**Mikroprzesunięcie: watchery przerwania są uzbrajane odrobinę wcześniej.**
-Dotąd konsola dopisywała wiadomość użytkownika i otwierała plik sesji *przed*
-`startInterruptWatcher`; teraz robi to `Submit`, więc watcher jest już
-uzbrojony. Okno to kilka mikrosekund na zapis jednej linii JSONL; skutek jest
-taki, że Ctrl+C trafiony dokładnie w to okno anuluje turę zamiast zabić proces.
+**Micro-shift: interrupt watchers are armed slightly earlier.**
+Until now the console appended the user message and opened the session file *before*
+`startInterruptWatcher`; now `Submit` does it, so the watcher is already
+armed. The window is a few microseconds for writing one JSONL line; the effect is
+that a Ctrl+C hitting exactly that window cancels the turn instead of killing the process.
 
-**`/new` NADAL działa inaczej w konsoli i w TUI — celowo.** Konsola tylko
-czyści rozmowę (`ClearHistory`), TUI dodatkowo kończy log i zeruje usage
-(`EndSession` + `ClearHistory` + `ResetUsage`). To zastana różnica, której ten
-etap nie miał prawa ujednolicać. Zmieniło się tylko to, że jest ona teraz
-**widoczna** — trzy wywołania obok jednego — zamiast być zakopana w dwóch
-kopiach pętli.
+**`/new` STILL works differently in the console and in the TUI — on purpose.** The console only
+clears the conversation (`ClearHistory`), the TUI additionally ends the log and zeroes usage
+(`EndSession` + `ClearHistory` + `ResetUsage`). That is a pre-existing difference that this
+stage had no right to unify. The only change is that it is now
+**visible** — three calls next to one — instead of buried in two
+copies of the loop.
 
-**Sprawdzenie `IsConfigured` przy zmianie modelu zostało rozdzielone flagą.**
-`catalogResolver{requireConfigured: true}` dla konsoli (`/model` odmawia
-providerowi bez klucza i mówi, jak go dodać), `catalogResolver{}` dla TUI
-(lista modeli jest już przefiltrowana po `auth.json`, a ciche odrzucenie
-ulubionego modelu wyglądałoby jak martwy klawisz). Jedyny skutek uboczny:
-`/resume` w konsoli, który próbuje wrócić do modelu zapisanego w sesji, nie
-przełączy się na providera, który w międzyczasie stracił klucz — zostanie na
-działającym modelu zamiast przełączyć się na martwy.
+**The `IsConfigured` check on model change was split by a flag.**
+`catalogResolver{requireConfigured: true}` for the console (`/model` refuses
+a provider without a key and says how to add one), `catalogResolver{}` for the TUI
+(the model list is already filtered by `auth.json`, and silently rejecting a
+favorite model would look like a dead key). The only side effect:
+`/resume` in the console, which tries to return to the model stored in the session, will not
+switch to a provider that has lost its key in the meantime — it will stay on a
+working model instead of switching to a dead one.
 
-**`ensureLazySession` + `normalizeCWD` przeniesione do `conductor/` w całości,
-z testami.** Leniwe zakładanie pliku sesji jest właściwością `Conductora`, nie
-`main`. To jedyne miejsce, w którym `Conductor` pisze na własny strumień
-(`os.Stderr`) zamiast do `Sink`: ostrzeżenie „nie dało się otworzyć logu,
-lecę dalej bez niego". Świadomie zostawione dosłownie takie, jakie było — to ta
-sama klasa diagnostyki, którą `agent/session_log.go` emituje od zawsze, a nie
-decyzja o wyglądzie. Kandydat na wstrzykiwany hook, gdyby kiedyś pojawił się
-frontend, któremu stderr przeszkadza.
+**`ensureLazySession` + `normalizeCWD` moved to `conductor/` in full,
+with tests.** Lazy creation of the session file is a property of `Conductor`, not
+`main`. This is the only place where `Conductor` writes to its own stream
+(`os.Stderr`) instead of to the `Sink`: the warning "could not open the log,
+continuing without it". Deliberately left literally as it was — it is the
+same class of diagnostics that `agent/session_log.go` has always emitted, not
+a presentation decision. A candidate for an injectable hook, should a
+frontend ever appear for which stderr is a nuisance.
 
-**`main.go:agentRunner` i `internal/workflow/engine.go` ZOSTAJĄ przy
-`agent.Run`.** Oba to wywołujący headless, którym `Conductor` nic nie daje:
+**`main.go:agentRunner` and `internal/workflow/engine.go` STAY with
+`agent.Run`.** Both are headless callers for which `Conductor` gives nothing:
 
-- `agentRunner.run` buduje jedną wiadomość, woła `agent.Run` raz i normalizuje
-  wynik na `tools.ErrSubagentTruncated`. Nie ma rozmowy do posiadania (`msgs`
-  żyje jeden przebieg), nie ma sesji, nie ma zmiany modelu ani przerwania.
-  Adopcja oszczędziłaby trzy linie i dołożyła alokację.
-- `engine.sessionAwait` trzyma `session.messages` w obiekcie Lua, który jest
-  serializowany do tablic Lua (`sessionMessages`, `sessionSave`, `sessionLoad`)
-  i dopisuje wiadomości o **dowolnej roli** (`sessionSystem` wstawia `system`).
-  `Conductor.Submit` dopisuje wyłącznie `user`, więc adopcja wymagałaby
-  dołożenia do API `AppendMessage(role, ...)` — czyli poszerzenia kontraktu pod
-  jedynego wywołującego, który i tak nie ma frontendu do odseparowania.
+- `agentRunner.run` builds one message, calls `agent.Run` once and normalizes the
+  result to `tools.ErrSubagentTruncated`. There is no conversation to own (`msgs`
+  lives for one run), no session, no model switching or interruption.
+  Adoption would save three lines and add an allocation.
+- `engine.sessionAwait` keeps `session.messages` in a Lua object that is
+  serialized to Lua tables (`sessionMessages`, `sessionSave`, `sessionLoad`)
+  and appends messages of **any role** (`sessionSystem` inserts `system`).
+  `Conductor.Submit` appends only `user`, so adoption would require
+  adding `AppendMessage(role, ...)` to the API — i.e. widening the contract for
+  the one caller who has no frontend to separate anyway.
 
-Kryterium było: „jeśli adopcja upraszcza — zrób; jeśli nie daje nic — zostaw
-i napisz dlaczego". Tu nie dawała nic w obu przypadkach.
+The criterion was: "if adoption simplifies — do it; if it gives nothing — leave it
+and write down why". Here it gave nothing in both cases.
 
-**Etapy migracji rozbite na cztery commity, od najprostszego sterownika.**
-`conductor` (nieużywany) → `prompt_mode` → konsola → TUI. Każdy zielony osobno;
-`main` przez trzy commity trzymał własną kopię `ensureLazySession`, skasowaną
-dopiero wtedy, gdy ostatni sterownik przestał jej używać.
+**Migration stages split into four commits, starting from the simplest driver.**
+`conductor` (unused) → `prompt_mode` → console → TUI. Each green on its own;
+for three commits `main` kept its own copy of `ensureLazySession`, deleted
+only when the last driver stopped using it.
 
-#### Weryfikacja
+#### Verification
 
-- **6/6 commitów zielonych osobno.** Sprawdzone w jednorazowym
-  `git worktree --detach`, commit po commicie: `go build ./... && go vet ./... &&
-  go test ./... -count=1 && gofmt -l .` (puste) + `go build` z tagami
-  `noanthropic`, `nogemini`, `noanthropic nogemini`. Worktree usunięty.
-- `go build` + `go vet` + `go test ./... -count=1` zielone we wszystkich czterech
-  kombinacjach tagów (brak, `noanthropic`, `nogemini`, `noanthropic nogemini`),
-- `go test -race ./conductor/ ./agent/ ./providers/ ./tools/ .` zielone,
-- `gofmt -l .` puste,
-- `git diff --stat 0ad2271..HEAD -- providers/testdata` **puste** — wire format
-  przeżył, ani jednego `-update`,
-- `go list -deps ./conductor | grep decodo/tyci/providers` → **puste**
-  (kryterium nagłówkowe tego etapu),
-- `go list -deps ./agent | grep decodo/tyci/providers` → **puste**
-  (kryterium nagłówkowe całego refaktoru, nietknięte),
-- nazwy testów: 1026 → 1043 (`comm` na posortowanych listach `func Test*`):
-  **17 dodanych, 0 usuniętych, 0 przekształceń.** Cztery testy
-  `TestEnsureLazySession_*` przeniosły się z `main` do `conductor` razem z
-  kodem — ta sama nazwa, ten sam plik, inny pakiet, więc `comm` ich nie widzi.
-- sterowniki: `interactive_agent.go` 99→62, `tui_mode.go` 372→320,
+- **6/6 commits green on their own.** Checked in a throwaway
+  `git worktree --detach`, commit by commit: `go build ./... && go vet ./... &&
+  go test ./... -count=1 && gofmt -l .` (empty) + `go build` with the tags
+  `noanthropic`, `nogemini`, `noanthropic nogemini`. Worktree removed.
+- `go build` + `go vet` + `go test ./... -count=1` green in all four
+  tag combinations (none, `noanthropic`, `nogemini`, `noanthropic nogemini`),
+- `go test -race ./conductor/ ./agent/ ./providers/ ./tools/ .` green,
+- `gofmt -l .` empty,
+- `git diff --stat 0ad2271..HEAD -- providers/testdata` **empty** — the wire format
+  survived, not a single `-update`,
+- `go list -deps ./conductor | grep decodo/tyci/providers` → **empty**
+  (headline criterion of this stage),
+- `go list -deps ./agent | grep decodo/tyci/providers` → **empty**
+  (headline criterion of the whole refactor, untouched),
+- test names: 1026 → 1043 (`comm` on sorted `func Test*` lists):
+  **17 added, 0 removed, 0 transformations.** Four `TestEnsureLazySession_*`
+  tests moved from `main` to `conductor` together with the
+  code — same name, same file, different package, so `comm` does not see them.
+- drivers: `interactive_agent.go` 99→62, `tui_mode.go` 372→320,
   `prompt_mode.go` 102→92, `interactive.go` 308→301, `cmd_interactive.go`
-  533→483 (leniwa sesja wyszła), `commands.go` 922→940 (+18: konstrukcja
-  `Conductora` i komentarze przy trzech `RunE`). Razem −135 linii w sterownikach
-  przy +421 liniach nowego, testowanego pakietu.
+  533→483 (lazy session removed), `commands.go` 922→940 (+18: `Conductor`
+  construction and comments at three `RunE`s). In total −135 lines in the drivers
+  against +421 lines of the new, tested package.
 
-#### Smoke test headless
+#### Headless smoke test
 
-`TestConductor_HeadlessConversation` prowadzi pełną rozmowę: prompt użytkownika
-→ model prosi o narzędzie → narzędzie działa → model odpowiada. Współpracownicy
-to skryptowany `connector.ModelClient` (atrapa oddająca ustaloną sekwencję
-`stream.Event` na wywołanie), `Sink` zapisujący do slice'ów i `ToolRunner`
-oparty o mapę. **Ani jednego UI: bez TUI, bez terminala, bez readline, bez
-`os.Stdout`.** Asercje pokrywają dokładnie to, co dotąd było nieosiągalne bez
-podniesienia frontendu: dwa wywołania modelu (drugie z doklejonym wynikiem
-narzędzia), wykonanie narzędzia z argumentami przesłanymi strumieniem,
-zsumowane usage z obu tur oraz role wiadomości w rozmowie, którą `Conductor`
-teraz posiada (`user, assistant, toolResult, assistant`).
+`TestConductor_HeadlessConversation` runs a full conversation: user prompt
+→ the model asks for a tool → the tool runs → the model answers. The collaborators
+are a scripted `connector.ModelClient` (a fake yielding a fixed sequence of
+`stream.Event`s per call), a `Sink` writing to slices and a map-backed
+`ToolRunner`. **Not a single UI: no TUI, no terminal, no readline, no
+`os.Stdout`.** The assertions cover exactly what was previously unreachable without
+bringing up a frontend: two model calls (the second with the tool result appended),
+tool execution with arguments sent through the stream, usage
+summed from both turns, and the message roles in the conversation that `Conductor`
+now owns (`user, assistant, toolResult, assistant`).
 
-Atrapy są lokalne dla pakietu. Etap 7 (`connector/connectortest`) je zastąpi —
-budowanie tej infrastruktury tutaj byłoby robieniem etapu 7 w commicie etapu 6.
+The fakes are local to the package. Stage 7 (`connector/connectortest`) will replace them —
+building that infrastructure here would be doing stage 7 in a stage 6 commit.
 
-#### Znalezione po drodze, ŚWIADOMIE nietknięte
+#### Found along the way, DELIBERATELY untouched
 
-- **Martwy `if` w `runTUI`, gałąź ESC:** `if !errors.Is(res.err,
-  context.Canceled) && res.err != nil { }` — ciało puste od zawsze, z
-  komentarzem „Real error, not just cancellation". Zachowane dosłownie: to
-  zastany kod, a nie coś, co ten etap wprowadził.
-- **`interactive.listAvailableModels` i `handleResume` to nadal 100 linii
-  formatowania w `interactive.go`.** Jest to prezentacja, więc zostaje we
-  froncie zgodnie z podziałem — ale `listAvailableModels` mogłoby żyć obok
-  `provider list` w `commands.go` zamiast w pliku REPL-a.
-- **`Conductor` nie ma dziś żadnego zabezpieczenia przed równoległym `Submit`.**
-  Kontrakt („wszystkie metody poza `Interrupt` z jednej gorutyny") jest opisany
-  w komentarzu, nie wymuszony. Żaden dzisiejszy frontend go nie łamie; gdyby
-  doszedł frontend RPC, trzeba będzie albo mutexa na całości, albo kolejki.
+- **A dead `if` in `runTUI`, ESC branch:** `if !errors.Is(res.err,
+  context.Canceled) && res.err != nil { }` — the body has always been empty, with
+  the comment "Real error, not just cancellation". Preserved literally: it is
+  pre-existing code, not something this stage introduced.
+- **`interactive.listAvailableModels` and `handleResume` are still 100 lines
+  of formatting in `interactive.go`.** It is presentation, so it stays in the frontend
+  per the split — but `listAvailableModels` could live next to
+  `provider list` in `commands.go` instead of in the REPL file.
+- **`Conductor` today has no protection against a parallel `Submit`.**
+  The contract ("all methods except `Interrupt` from one goroutine") is described
+  in a comment, not enforced. No frontend today breaks it; if an RPC frontend
+  arrives, it will need either a mutex around the whole thing or a queue.
 
-## Etap 7 — connectory testowe (1d) — ZROBIONE
+## Stage 7 — test connectors (1d) — DONE
 
-Etap rozbity na 7A, 7B i 7C — wszystkie zrobione, podział opisany pod listą.
-Czego etap świadomie nie zrobił, jest wypisane w „Czego etap 7 NIE zrobił".
+The stage is split into 7A, 7B and 7C — all done, the split is described under the list.
+What the stage deliberately did not do is listed in "What stage 7 did NOT do".
 
-- [x] `connector/connectortest/fake.go` — skryptowana sekwencja `stream.Event`.
-      Konfiguracja literałem struktury (jak `conductor.Options`, `agent.Config`,
-      `connector.Endpoint`), tryby: `Turns`, `OnExhausted`, `StreamErr`,
-      `BlockUntilCancel`. `Fake` świadomie NIE implementuje
-      `connector.HTTPInjector` — cichy fallback tego interfejsu jest testowany
-      właśnie klientami, które go nie mają; pilnuje tego osobny test.
-- [x] `flaky.go` — dekorator wstrzykujący 429 / 500 / EOF w środku streamu.
-      Awarie per-wywołanie (`Failures[n]`, `nil` = przejście do owiniętego
-      klienta), dwa miejsca awarii: błąd z samego `Stream` (ścieżka fallbacku)
-      i `stream.StreamError` po N eventach (ścieżka retry). Konstruktory błędów
-      są związane z realnym konsumentem testem na `api.IsRetryable`.
-- **`record.go` / `replay.go` — świadomie NIE powstaną.** Pozycja skreślona
-      w 7C, nie przeoczona. Po 7B wszystkie testy chodzą na `Fake`/`Flaky`
-      i nagrywarka nie ma ani jednego konsumenta — a ten refaktor wyciął już
-      `FreeModels` dokładnie za to, że była metodą interfejsu, której nikt nie
-      miał czym wypełnić. Zbudowanie teraz nagrywarki bez użytkownika byłoby
-      powtórzeniem tego samego błędu w nowym miejscu.
-      Kiedy warto wrócić: gdy pojawi się scenariusz „nagraj prawdziwą rozmowę
-      prawdziwym kluczem, odtwarzaj ją w CI bez klucza" — czyli gdy zacznie
-      brakować pokrycia dla wire-formatu żywego providera, którego `Fake` z
-      definicji nie odtwarza, bo siedzi *nad* transportem.
-- [x] pokryć `Flaky` ścieżkę awarii w środku streamu. Pozycja brzmiała
-      pierwotnie „przepisać testy retry/fallback z `httptest` na `Flaky`" i
-      w tym brzmieniu nie miała przedmiotu: żaden test retry ani fallback nie
-      chodził przez `httptest`. Testy agenta zawsze używały atrap w procesie,
-      a `httptest` w `api/` obsługuje testy samej warstwy HTTP (parsowanie SSE,
-      nagłówki, kody stanu), których `Flaky` nie zastąpi, bo siedzi *nad*
-      transportem. Zamiast przepisywania doszły dwa testy na to, czego nie
-      umiała żadna atrapa — awarię po N wyemitowanych eventach:
-      `TestRunFallback_MidStreamFailureAfterPartialText` (ścieżka fallbacku) i
-      `TestRun_RetryRecoversAfterMidStreamRateLimit` (ścieżka retry, pierwszy
-      w ogóle test udanego retry w tym pakiecie).
-- [x] zastąpić `mockProvider` z `agent/agent_test.go` przez `Fake` — razem
-      z pozostałymi dziesięcioma atrapami w `agent/` i `bareModelClient`
-      z `main_resolve_test.go`.
-- [x] wycofać `api.defaultClientProvider` — mutowalna zmienna globalna istniejąca
-      wyłącznie jako seam testowy (`api/api_test.go:757-763` podmienia ją i
-      przywraca w `defer`). Dziś bezpieczna, bo w `api/` nie ma ani jednego
-      `t.Parallel()`, ale to bezpieczeństwo z przypadku. Ostatecznie nie
-      potrzeba było nawet connectora testowego: `httptest` mówi zwykłym HTTP
-      pod `127.0.0.1`, więc prawdziwy `defaultClient` dosięga serwera bez
-      żadnej podmiany.
+- [x] `connector/connectortest/fake.go` — a scripted `stream.Event` sequence.
+      Configuration by struct literal (like `conductor.Options`, `agent.Config`,
+      `connector.Endpoint`), modes: `Turns`, `OnExhausted`, `StreamErr`,
+      `BlockUntilCancel`. `Fake` deliberately does NOT implement
+      `connector.HTTPInjector` — the silent fallback of that interface is tested
+      precisely with clients that lack it; a separate test guards this.
+- [x] `flaky.go` — a decorator injecting 429 / 500 / EOF in the middle of a stream.
+      Per-call failures (`Failures[n]`, `nil` = pass through to the wrapped
+      client), two failure points: an error from `Stream` itself (the fallback path)
+      and `stream.StreamError` after N events (the retry path). The error constructors
+      are tied to the real consumer by a test on `api.IsRetryable`.
+- **`record.go` / `replay.go` — deliberately will NOT be created.** An item crossed out
+      in 7C, not overlooked. After 7B all tests run on `Fake`/`Flaky`
+      and a recorder would not have a single consumer — and this refactor already cut out
+      `FreeModels` precisely for being an interface method that nobody
+      had anything to populate. Building a recorder with no user now would be
+      repeating the same mistake in a new place.
+      When it is worth coming back: when a scenario appears like "record a real conversation
+      with a real key, replay it in CI without the key" — i.e. when coverage
+      of the wire format of a live provider starts to be missing, which `Fake` by
+      definition does not reproduce, because it sits *above* the transport.
+- [x] cover the `Flaky` mid-stream failure path. The item originally read
+      "rewrite the retry/fallback tests from `httptest` to `Flaky`" and
+      in that wording it had no subject: no retry or fallback test
+      ran through `httptest`. The agent tests always used in-process fakes,
+      and `httptest` in `api/` serves tests of the HTTP layer itself (SSE parsing,
+      headers, status codes), which `Flaky` will not replace, because it sits *above*
+      the transport. Instead of a rewrite, two tests were added for what no fake
+      could do — a failure after N emitted events:
+      `TestRunFallback_MidStreamFailureAfterPartialText` (the fallback path) and
+      `TestRun_RetryRecoversAfterMidStreamRateLimit` (the retry path, the first
+      test of a successful retry in this package at all).
+- [x] replace `mockProvider` from `agent/agent_test.go` with `Fake` — together
+      with the other ten fakes in `agent/` and `bareModelClient`
+      from `main_resolve_test.go`.
+- [x] retire `api.defaultClientProvider` — a mutable global variable existing
+      solely as a test seam (`api/api_test.go:757-763` swaps it and
+      restores it in a `defer`). Safe today, because there is not a single
+      `t.Parallel()` in `api/`, but that safety is by accident. In the end
+      there was not even a need for a test connector: `httptest` speaks plain HTTP
+      under `127.0.0.1`, so the real `defaultClient` reaches the server without
+      any swapping.
 
-#### Co zrobiło 7A
+#### What 7A did
 
-Pakiet `connector/connectortest` (`Fake` + `Flaky`, z własnymi testami) i trzej
-pierwsi konsumenci przepięci od razu, żeby API nie powstało w próżni:
-`conductor/conductor_test.go` (lokalny `fakeClient` usunięty),
-`tools/subagent_test.go`, `providers/providers_test.go`. Z 16 ręcznie pisanych
-atrap `connector.ModelClient` zostało 13 (11 w `agent/`, 2 w
+The `connector/connectortest` package (`Fake` + `Flaky`, with its own tests) and the first
+three consumers rewired immediately, so the API is not born in a vacuum:
+`conductor/conductor_test.go` (the local `fakeClient` removed),
+`tools/subagent_test.go`, `providers/providers_test.go`. Of the 16 hand-written
+`connector.ModelClient` fakes, 13 remained (11 in `agent/`, 2 in
 `main_resolve_test.go`).
 
-#### Co zrobiło 7B
+#### What 7B did
 
-Wszystkie 11 atrap w `agent/` przepięte na `connectortest.Fake` — z 16 ręcznie
-pisanych atrap `connector.ModelClient` sprzed etapu 7 zostały dwie, obie
-w `main_resolve_test.go` i obie z powodu, dla którego `Fake` się nie nadaje
-(patrz niżej). Zero zmian w kodzie produkcyjnym poza wycofaniem
+All 11 fakes in `agent/` rewired to `connectortest.Fake` — of the 16 hand-written
+`connector.ModelClient` fakes from before stage 7, two remained, both
+in `main_resolve_test.go` and both for the reason for which `Fake` does not fit
+(see below). Zero changes in production code apart from retiring
 `defaultClientProvider`.
 
-Co wyszło przy przepinaniu:
+What came out while rewiring:
+- **`Usage` in `Finish` is load-bearing, `Reason` is not.** `runOnce` reads only
+  `e.Usage` and emits `Summary`/`Total` only when `hasUsage(lastUsage)` — a zero
+  `Usage` decides whether the cost line appears at all, so every
+  number stands explicitly in the `Turns` literal at the call site. `Finish.Reason`
+  is read nowhere, so the difference between `"stop"` and `""` is cosmetic.
+- **The `planGuard*Provider`s could be rewired.** The fear that they react to the content
+  of the request did not materialize: they decided solely by call number.
+  Their final calls closed the channel without any event, which is written
+  explicitly as `OnExhausted: []stream.Event{}` — omitting the field would give a bare
+  `Finish`, which is something else.
+- **Two fakes answered the same way to EVERY call**
+  (`countingTextProvider`, `alwaysToolProvider`), not just the first. Their
+  script sits in `OnExhausted` with empty `Turns`, because `OnExhausted`
+  applies from turn zero.
+- **`Fake.Calls()` counts exactly what `p.calls` and `callCount()` counted** —
+  every entry into `Stream`, regardless of result.
+- Along the way the dead helper `newFailingProvider` (unused) disappeared.
 
-- **`Usage` w `Finish` jest nośne, `Reason` nie.** `runOnce` czyta wyłącznie
-  `e.Usage` i emituje `Summary`/`Total` tylko gdy `hasUsage(lastUsage)` — zerowe
-  `Usage` decyduje o tym, czy linia kosztów w ogóle się pojawi, więc każda
-  liczba stoi jawnie w literale `Turns` w miejscu wywołania. `Finish.Reason`
-  nie jest czytany nigdzie, więc różnica `"stop"` vs `""` jest kosmetyczna.
-- **`planGuard*Provider` dały się przepiąć.** Obawa, że reagują na treść
-  żądania, się nie potwierdziła: decydowały wyłącznie po numerze wywołania.
-  Ich końcowe wywołania zamykały kanał bez żadnego eventu, co zapisane jest
-  jawnie jako `OnExhausted: []stream.Event{}` — pominięcie pola dałoby gołe
-  `Finish`, czyli co innego.
-- **Dwie atrapy odpowiadały tak samo na KAŻDE wywołanie**
-  (`countingTextProvider`, `alwaysToolProvider`), nie tylko na pierwsze. Ich
-  skrypt siedzi w `OnExhausted` przy pustym `Turns`, bo `OnExhausted`
-  obowiązuje od tury zerowej.
-- **`Fake.Calls()` liczy dokładnie to, co liczyły `p.calls` i `callCount()`** —
-  każde wejście w `Stream`, niezależnie od wyniku.
-- Przy okazji zniknął martwy helper `newFailingProvider` (nieużywany).
+`main_resolve_test.go`: `bareModelClient` rewired to `Fake` and this is a
+strengthening, not cosmetics — `TestWithIsolatedPool_PassesThroughNonInjector`
+now checks the real shared fake instead of a fake made for this one test,
+so if someone adds `Fake.WithHTTP`, the test will break loudly.
+`recordingInjector`/`recordingClient` **stay**: they exist in order to
+implement `HTTPInjector` and remember the injected HTTP clients, which
+`Fake` by definition does not do.
 
-`main_resolve_test.go`: `bareModelClient` przepięty na `Fake` i to jest
-wzmocnienie, nie kosmetyka — `TestWithIsolatedPool_PassesThroughNonInjector`
-sprawdza teraz realny wspólny fake zamiast atrapy zrobionej pod ten jeden test,
-więc gdyby ktoś dorobił `Fake.WithHTTP`, test głośno pęknie.
-`recordingInjector`/`recordingClient` **zostają**: istnieją po to, żeby
-`HTTPInjector` implementować i zapamiętywać wstrzyknięte klienty HTTP, czego
-`Fake` z definicji nie robi.
+#### What 7C did
 
-#### Co zrobiło 7C
+Closing out the stage: one design change and two removals of dead code, each
+in a separate commit. Zero changes in the goldens.
 
-Domknięcie etapu: jedna zmiana projektowa i dwa usunięcia martwego kodu, każde
-osobnym commitem. Zero zmian w goldenach.
+- **`Conductor` rejects a parallel `Submit`.** The contract stopped being
+  a comment. A second, parallel `Submit` gets an explicit `ErrTurnInFlight`
+  (a sentinel next to `ErrNoResolver`). Rejected variants and why they
+  fell out: a **mutex** would silently serialize the calls, so a frontend bug
+  would look like a hang instead of like an error; a **queue** is a separate feature
+  nobody ordered, with its own questions about ordering and cancellation.
+  What is decisive is **where** the check stands: `Submit` used to start by
+  appending the user message to the conversation and writing it to the session log,
+  so a rejection made anywhere later would leave a trace of
+  a call that "did not go through". Claiming the turn is atomic (a single
+  `test-and-set` in a single critical section under the existing `c.mu`)
+  and happens **before the first state mutation**; the flag is cleared
+  in a `defer` registered immediately, so neither an early `return` nor
+  a panic in the agent loop will leave the conductor busy forever.
+  The scope is deliberately narrow: `Submit` is protected against a second `Submit`.
+  `Messages()`, `Usage()`, `SetHistory()` and the rest **still** belong to the
+  goroutine running the conversation — scattering mutexes over the getters
+  is a different, bigger design change and was not done. `Interrupt` unchanged.
+  The test `TestConductor_ConcurrentSubmitIsRejected` (under `-race`) proves
+  three things: exactly one `Submit` goes through, the rejected one **left no
+  trace** in the conversation, and after the first finishes the next `Submit`
+  goes through again. Which of the two prompts wins is up to the scheduler
+  and the test does not assume it.
+- **The dead `if` in the ESC branch** (`tui_mode.go`) removed. The receive from the channel
+  stayed — waiting for the agent to finish is load-bearing, because the agent still writes to
+  display and the screen must not be repainted before it ends — but with no
+  assignment and no condition, with a comment saying **why** the result
+  is discarded (the error was already shown by `d.Error()` in `agent.Run`).
+- **The dead constant `subagentDefaultMaxIterations`** (`main.go`) removed.
+  The comment above it, however, described a real behavior change (the default
+  value stopped being a hard-coded 10, so calls omitting
+  `MaxIterations` run without a limit) — that knowledge concerns
+  `tools.DefaultSubagentMaxIterations`, not the dead alias, so it was
+  **moved** to the comment at the constant itself, not deleted together
+  with the code that held it.
+- `record.go` / `replay.go` — crossed out of the plan, rationale at the item
+  itself above.
 
-- **`Conductor` odrzuca równoległy `Submit`.** Kontrakt przestał być
-  komentarzem. Drugi, równoległy `Submit` dostaje jawny `ErrTurnInFlight`
-  (sentinel obok `ErrNoResolver`). Odrzucone warianty i powód, dla którego
-  odpadły: **mutex** po cichu zserializowałby wywołania, więc błąd frontendu
-  wyglądałby jak zawieszenie zamiast jak błąd; **kolejka** to osobna funkcja,
-  której nikt nie zamawiał, z własnymi pytaniami o kolejność i anulowanie.
-  Rozstrzygające jest **gdzie** stoi sprawdzenie: `Submit` zaczynał od
-  dopisania wiadomości użytkownika do rozmowy i zapisania jej do logu sesji,
-  więc odrzucenie podjęte gdziekolwiek później zostawiałoby ślad po
-  wywołaniu, które „nie przeszło". Zajęcie tury jest atomowe (jedno
-  `test-and-set` w pojedynczej sekcji krytycznej pod istniejącym `c.mu`)
-  i wykonuje się **przed pierwszą mutacją stanu**; flaga jest zdejmowana
-  w `defer` zarejestrowanym natychmiast, więc ani wcześniejszy `return`, ani
-  panika w pętli agenta nie zostawią conductora zajętego na zawsze.
-  Zakres celowo wąski: chroniony jest `Submit` przed drugim `Submit`.
-  `Messages()`, `Usage()`, `SetHistory()` i reszta **dalej** należą do
-  gorutyny prowadzącej rozmowę — rozsypanie mutexów po getterach to inna,
-  większa zmiana projektowa i nie została zrobiona. `Interrupt` bez zmian.
-  Test `TestConductor_ConcurrentSubmitIsRejected` (pod `-race`) dowodzi
-  trzech rzeczy: dokładnie jeden `Submit` przechodzi, odrzucony **nie
-  zostawił śladu** w rozmowie, a po zakończeniu pierwszego kolejny `Submit`
-  znowu przechodzi. Który z dwóch promptów wygrywa, należy do schedulera
-  i test tego nie zakłada.
-- **Martwy `if` w gałęzi ESC** (`tui_mode.go`) usunięty. Odbiór z kanału
-  został — czekanie na zakończenie agenta jest nośne, bo agent wciąż pisze do
-  display i ekran nie może być przemalowany przed jego końcem — ale bez
-  przypisania i bez warunku, za to z komentarzem mówiącym **dlaczego** wynik
-  jest odrzucany (błąd został już pokazany przez `d.Error()` w `agent.Run`).
-- **Martwa stała `subagentDefaultMaxIterations`** (`main.go`) usunięta.
-  Komentarz nad nią opisywał jednak realną zmianę zachowania (domyślna wartość
-  przestała być zakodowanym na sztywno 10, więc wywołania pomijające
-  `MaxIterations` chodzą bez ograniczenia) — ta wiedza dotyczy
-  `tools.DefaultSubagentMaxIterations`, nie martwego aliasu, więc została
-  **przeniesiona** do komentarza przy samej stałej, a nie skasowana razem
-  z kodem, który ją przechowywał.
-- `record.go` / `replay.go` — skreślone z planu, uzasadnienie przy samej
-  pozycji wyżej.
+#### What stage 7 did NOT do
 
-#### Czego etap 7 NIE zrobił
+- **Injectable `BaseBackoff` in the retry loop** — still not done, the description of the debt
+  is below in "To fix". It is a design change in production code of the
+  same kind as `agent.Sink` or `providers.AuthSource` and deserves
+  its own decision, not tacking onto a stage about test connectors. The cost
+  we pay for it today is itemized at that item: the retry path
+  for errors without a `Retry-After` header (500, EOF) remains uncovered, because
+  a test would have to really sleep for four seconds.
+- **`Conductor` writes to `os.Stderr`** in `session_lazy.go` — untouched,
+  see "To fix".
+- Two hand-written `connector.ModelClient` fakes in `main_resolve_test.go`
+  (`recordingClient`, `recordingInjector`) **stay on purpose**: they implement
+  `HTTPInjector`, which `Fake` by definition does not do.
 
-- **Wstrzykiwalny `BaseBackoff` w pętli retry** — nadal nie zrobione, opis
-  długu niżej w „Do poprawy". To zmiana projektowa w kodzie produkcyjnym tego
-  samego gatunku co `agent.Sink` czy `providers.AuthSource` i zasługuje na
-  własną decyzję, nie na doklejenie do etapu o connectorach testowych. Koszt,
-  który za to płacimy dziś, jest wyliczony przy tamtej pozycji: ścieżka retry
-  dla błędów bez nagłówka `Retry-After` (500, EOF) pozostaje niepokryta, bo
-  test musiałby naprawdę przespać cztery sekundy.
-- **`Conductor` pisze do `os.Stderr`** w `session_lazy.go` — nietknięte,
-  patrz „Do poprawy".
-- Dwie ręcznie pisane atrapy `connector.ModelClient` w `main_resolve_test.go`
-  (`recordingClient`, `recordingInjector`) **zostają celowo**: implementują
-  `HTTPInjector`, czego `Fake` z definicji nie robi.
+### To fix — surfaced at stage 6
 
-### Do poprawy — wyszło przy etapie 6
+The first two items are literally an order for stage 7: without them `Fake` will not cover
+what the local fakes cover today, and rewriting the tests would be a regression
+of coverage. The rest is debt found along the way and deliberately untouched.
 
-Pierwsze dwie pozycje to wprost zamówienie na etap 7: bez nich `Fake` nie pokryje
-tego, co dziś pokrywają lokalne atrapy, i przepisanie testów byłoby regresem
-pokrycia. Reszta to dług znaleziony po drodze i świadomie nietknięty.
-
-- [x] **`Fake` musi umieć wisieć do anulowania, nie tylko odgrywać skrypt.**
-      Atrapa w `conductor/conductor_test.go:39-58` ma tryb `blockUntilCancel`:
-      `Stream` ignoruje skrypt, blokuje się i zgłasza anulowanie jako
-      `stream.StreamError{ctx.Err()}` — czyli tak, jak robią to prawdziwe
-      connectory. Naiwny `Fake` odgrywający tylko sekwencję eventów tego nie ma,
-      a bez tego nie da się przetestować `Interrupt()` ani żadnej ścieżki ESC.
-      Zaprojektować to od razu, nie doklejać potem.
-      Zrobione w 7A jako pole `Fake.BlockUntilCancel`; ten sam tryb obsługuje
-      `blockingProvider` z `agent/agent_test.go:1155-1172`, który znika w 7B.
-- [ ] **Backoff w pętli retry nie jest wstrzykiwalny — i to jest jedyny powód,
-      dla którego testy retry robią gimnastykę z anulowaniem kontekstu.**
-      Znalezione przy 7B, świadomie nietknięte: uczynienie go wstrzykiwalnym to
-      zmiana projektowa w kodzie produkcyjnym, tego samego gatunku co `agent.Sink`
-      czy `providers.AuthSource`, i zasługuje na własną decyzję.
-      Czego brakuje: `agent/agent.go:147-149` liczy backoff przez
+- [x] **`Fake` must be able to hang until cancelled, not only play back a script.**
+      The fake in `conductor/conductor_test.go:39-58` has a `blockUntilCancel` mode:
+      `Stream` ignores the script, blocks and reports cancellation as
+      `stream.StreamError{ctx.Err()}` — just as the real connectors do.
+      A naive `Fake` playing back only an event sequence does not have this,
+      and without it neither `Interrupt()` nor any ESC path can be tested.
+      Design it right away, do not bolt it on later.
+      Done in 7A as the field `Fake.BlockUntilCancel`; the same mode serves
+      `blockingProvider` from `agent/agent_test.go:1155-1172`, which disappears in 7B.
+- [ ] **Backoff in the retry loop is not injectable — and that is the only reason
+      the retry tests do gymnastics with context cancellation.**
+      Found at 7B, deliberately untouched: making it injectable is
+      a design change in production code, of the same kind as `agent.Sink`
+      or `providers.AuthSource`, and deserves its own decision.
+      What is missing: `agent/agent.go:147-149` computes backoff through
       `api.CalcBackoff(attempt, lastErr, api.RetryConfig{MaxRetries: cfg.MaxRetries})`
-      i śpi przez `sleepWithCountdown`. `RetryConfig` ma pole `BaseBackoff`,
-      ale pętla go nie wypełnia, więc `WithDefaults` wstawia 4 — **minimum
-      cztery sekundy snu na próbę**, rosnące wykładniczo. Ani `agent.Config`,
-      ani `Run` nie mają czym tego przestawić, a `sleepWithCountdown` woła
-      `time.After` bezpośrednio.
-      Co to kosztuje dziś: `TestRun_TotalCalledOnAllRetriesExhausted`
-      (`agent/agent_test.go`) uruchamia `Run` w gorutynie i pollinguje display
-      w oczekiwaniu na `ToolBlock("retry 1/5 …")`, żeby anulować kontekst
-      w trakcie pierwszego backoffu. Cała ta konstrukcja istnieje wyłącznie po
-      to, żeby nie spać. Z tego samego powodu nowy test awarii w środku streamu
-      (`TestRunFallback_MidStreamFailureAfterPartialText`) musi używać błędu
-      **nie**retryowalnego — retryowalny wpuściłby go w tę samą pułapkę.
-      Jedyna dziś istniejąca furtka — i jest wąska: `CalcBackoff` honoruje
-      nagłówek `Retry-After` z 429 dosłownie, więc `connectortest.RateLimited("0")`
-      prosi o zerowy sen i `sleepWithCountdown` wraca natychmiast. Korzysta
-      z tego `TestRun_RetryRecoversAfterMidStreamRateLimit` — nowy w 7B,
-      pokrywa **udany** retry, którego nie pokrywało nic (jedyny wcześniejszy
-      test retry anuluje kontekst w pierwszym backoffie i nigdy nie dochodzi do
-      odzyskania). Furtka nie działa dla 500 ani EOF: tam zawsze idą cztery
-      sekundy z `BaseBackoff`, więc ścieżka retry dla błędów bez `Retry-After`
-      pozostaje niepokryta.
-      Co by dało wstrzyknięcie: skrypt „500, 500, potem sukces" i „retry
-      wyczerpane" bez gimnastyki z anulowaniem i bez czekania. Do rozstrzygnięcia:
-      pole `BaseBackoff` w `agent.Config` przekazywane do `RetryConfig`, czy
-      wstrzykiwany `Sleep func(context.Context, time.Duration) error`.
-- [x] **`Conductor` nie pilnuje równoległego `Submit`.** Kontrakt „wszystkie
-      metody z gorutyny prowadzącej rozmowę, wyjątkiem jest `Interrupt`" jest
-      komentarzem (`conductor/conductor.go:89-91`), nie mechanizmem. Dziś żaden
-      frontend go nie łamie, ale frontend po RPC — czyli dokładnie to, po co ta
-      separacja powstała — złamie go pierwszego dnia. Do rozstrzygnięcia: mutex,
-      kolejka, czy jawny błąd „turn already in flight". Test na to jest tani i
-      naturalnie należy do etapu 7 (`-race` + dwa równoległe `Submit`).
-      Zrobione w 7C jako `ErrTurnInFlight` — rozstrzygnięcie i, co ważniejsze,
-      **miejsce** sprawdzenia opisane w „Co zrobiło 7C".
-- [ ] **`Conductor` pisze do `os.Stderr` w jednym miejscu**
-      (`conductor/session_lazy.go:44`, ostrzeżenie „continuing without session").
-      Przeniesione dosłownie, więc nie jest regresem, ale w pakiecie, którego
-      cały sens polega na tym, że nie wie, jaki ma frontend, jest to zgrzyt.
-      Kandydat na wstrzykiwany hook `Warn func(error)` — dokładnie tak, jak
-      `providers.AuthFile` rozwiązał ten sam problem w etapie 4.
-- [x] **Martwy `if` z pustym ciałem w gałęzi ESC** (`tui_mode.go:277-279`):
+      and sleeps through `sleepWithCountdown`. `RetryConfig` has a `BaseBackoff`
+      field, but the loop does not fill it, so `WithDefaults` puts in 4 — **a minimum
+      of four seconds of sleep per attempt**, growing exponentially. Neither `agent.Config`
+      nor `Run` has anything to change that with, and `sleepWithCountdown` calls
+      `time.After` directly.
+      What this costs today: `TestRun_TotalCalledOnAllRetriesExhausted`
+      (`agent/agent_test.go`) runs `Run` in a goroutine and polls the display
+      waiting for `ToolBlock("retry 1/5 …")` in order to cancel the context
+      during the first backoff. This whole construction exists solely so as
+      not to sleep. For the same reason the new mid-stream failure test
+      (`TestRunFallback_MidStreamFailureAfterPartialText`) must use a **non**-retryable
+      error — a retryable one would lead it into the same trap.
+      The only escape hatch that exists today — and it is narrow: `CalcBackoff` honors
+      the `Retry-After` header from a 429 literally, so `connectortest.RateLimited("0")`
+      asks for zero sleep and `sleepWithCountdown` returns immediately. Used by
+      `TestRun_RetryRecoversAfterMidStreamRateLimit` — new in 7B,
+      covers a **successful** retry, which nothing covered before (the only earlier
+      retry test cancels the context in the first backoff and never reaches
+      recovery). The hatch does not work for 500 or EOF: there it is always four
+      seconds from `BaseBackoff`, so the retry path for errors without `Retry-After`
+      remains uncovered.
+      What injection would give: a script "500, 500, then success" and "retries
+      exhausted" without cancellation gymnastics and without waiting. To be decided:
+      a `BaseBackoff` field in `agent.Config` passed to `RetryConfig`, or an injected
+      `Sleep func(context.Context, time.Duration) error`.
+- [x] **`Conductor` does not guard against a parallel `Submit`.** The contract "all
+      methods from the goroutine running the conversation, the exception is `Interrupt`" is
+      a comment (`conductor/conductor.go:89-91`), not a mechanism. No
+      frontend breaks it today, but an RPC frontend — exactly what this
+      separation was created for — will break it on day one. To be decided: a mutex,
+      a queue, or an explicit "turn already in flight" error. A test for this is cheap and
+      naturally belongs to stage 7 (`-race` + two parallel `Submit`s).
+      Done in 7C as `ErrTurnInFlight` — the decision and, more importantly, the
+      **place** of the check are described in "What 7C did".
+- [ ] **`Conductor` writes to `os.Stderr` in one place**
+      (`conductor/session_lazy.go:44`, the warning "continuing without session").
+      Carried over literally, so it is not a regression, but in a package whose
+      whole point is that it does not know which frontend it has, it is a jarring note.
+      A candidate for an injectable hook `Warn func(error)` — exactly the way
+      `providers.AuthFile` solved the same problem in stage 4.
+- [x] **A dead `if` with an empty body in the ESC branch** (`tui_mode.go:277-279`):
       `if !errors.Is(res.err, context.Canceled) && res.err != nil { }` plus
-      komentarz „Real error, not just cancellation". Warunek jest policzony i
-      wyrzucony. Albo błąd ma być pokazany, albo warunek ma zniknąć — dziś
-      wygląda jak niedokończona obsługa błędu i przy `-race`/lincie nikt tego
-      nie złapie, bo formalnie jest poprawny.
-      Zrobione w 7C: warunek zniknął, bo błąd JEST już pokazany przez
-      `agent.Run`; został sam odbiór z kanału, który jest nośny.
-- [x] **Martwa stała `subagentDefaultMaxIterations`** (`main.go:130`) — alias na
-      `tools.DefaultSubagentMaxIterations`, nieużywany nigdzie. Ten sam gatunek
-      długu co usunięte w etapie 6 pola `agent.Config`.
-      Zrobione w 7C, razem z przeniesieniem wiedzy z jej komentarza do
+      the comment "Real error, not just cancellation". The condition is computed and
+      thrown away. Either the error is to be shown or the condition has to go — today
+      it looks like unfinished error handling, and under `-race`/the linter nobody will catch it,
+      because it is formally correct.
+      Done in 7C: the condition went away, because the error IS already shown by
+      `agent.Run`; only the receive from the channel remained, which is load-bearing.
+- [x] **Dead constant `subagentDefaultMaxIterations`** (`main.go:130`) — an alias for
+      `tools.DefaultSubagentMaxIterations`, used nowhere. The same kind of
+      debt as the `agent.Config` fields removed in stage 6.
+      Done in 7C, together with moving the knowledge from its comment to
       `tools/tool.go`.
-- [ ] **Gdyby „free models" miały kiedyś wrócić** (wycięte w etapie 6), muszą
-      wrócić jako właściwość wpisu w katalogu (`ModelEntry`), nie jako druga
-      metoda interfejsu `Provider`. Poprzedni kształt zgnił dokładnie dlatego,
-      że był metodą, której nikt nie miał czym wypełnić.
+- [ ] **If "free models" ever return** (cut out in stage 6), they must
+      return as a property of a catalog entry (`ModelEntry`), not as a second
+      method of the `Provider` interface. The previous shape rotted precisely because
+      it was a method nobody had anything to populate.
 
 ---
 
-## Uwagi
+## Notes
 
-Ryzyka:
-- etap 2 przenosi konwersje wiadomości — najbardziej podatne na cichy regres (stąd etap 0)
-- `agent/agent_test.go` (1216 linii) do przepisania — mechaniczne, ale objętościowe.
-  `providers/providers_test.go` figurowało tu jako 844 linie: to liczba sprzed
-  rozbicia w etapie 2, dziś plik ma 282 linie i etap 4 nie musiał go przepisywać.
+Risks:
+- stage 2 moves message conversions — the most prone to a silent regression (hence stage 0)
+- `agent/agent_test.go` (1216 lines) to be rewritten — mechanical, but voluminous.
+  `providers/providers_test.go` was listed here as 844 lines: that is the number from before the
+  split in stage 2, today the file has 282 lines and stage 4 did not have to rewrite it.
 
-Zyski poza czystością: znikają build tagi i pliki stubów, znika martwy `api/client.go`,
-testy retry przestają potrzebować serwera HTTP.
+Gains beyond cleanliness: build tags and stub files disappear, the dead `api/client.go` disappears,
+retry tests stop needing an HTTP server.
 
-Łącznie ~8–9 dni. Etapy 1, 2 i 7 dają ~80% wartości — można zatrzymać się przed etapem 6.
+In total ~8–9 days. Stages 1, 2 and 7 give ~80% of the value — it is possible to stop before stage 6.
 
-Poza zakresem (osobno): globalny rejestr `tools` i `tools.SetSubAgentRunner`.
-
----
-
-## Bugi znalezione przy etapie 0
-
-Golden files zamrażają obecne (błędne) zachowanie celowo. Każda naprawa = świadome
-pęknięcie golden + regeneracja z `-update`, w OSOBNYM commicie — nigdy przy okazji
-etapów 2-3. Inaczej czerwony test przestaje odróżniać „przeniesienie coś zepsuło"
-od „zmieniliśmy zachowanie".
-
-Kryterium kolejności to nie „przed czy po refactorze", tylko **czy naprawę da się
-zweryfikować**. Golden dowodzi, że coś się nie zmieniło — nie że nowe zachowanie
-jest poprawne. Fix wymagający dokumentacji dostawcy i realnego wywołania to osobna
-robota z innym cyklem sprzężenia zwrotnego.
-
-### Teraz — tanie, weryfikowalne offline
-
-- [x] **openai: wiele `toolResult` w jednej wiadomości zlewa się w jedną** — teksty sklejone bez separatora, `tool_call_id` nadpisany przez ostatni blok (`convert.go:68-73`). Czysta logika, wzorzec poprawny obok (anthropic/gemini). Naprawione przed etapem 1, żeby etap 2 przenosił poprawny kod zamiast uzbrajać pułapkę. Uwaga: bug był uśpiony — `agent/run_tools.go:64` emituje 1 wiadomość na 1 tool call, a resume odtwarza 1:1.
-
-### Osobne zadanie PO etapie 4 — nie „przy okazji" żadnego etapu
-
-Gemini: trzy defekty rozsmarowane po `parseURI` (ścieżka), switchu w `config.go`
-(model), `api/gemini.go` (nagłówek). `case "gemini": // different path structure`
-jest wprost objawem brakującej abstrakcji — connector sam buduje swój URL i nagłówki.
-Wymaga dokumentacji Gemini + realnego wywołania z kluczem.
-
-Znacznik wędrował: etap 2 → 3 → 4. Zatrzymany tutaj jako **samodzielne zadanie po
-etapie 4**, bo goldeny są siatką bezpieczeństwa refaktoru: naprawa wire-formatu
-w tym samym etapie co przenoszenie kodu odbiera możliwość odróżnienia „przeniesienie
-coś zepsuło" od „zmieniliśmy zachowanie świadomie". `TODO` w `connector/gemini.go`
-zostaje na miejscu do tego czasu.
-
-- [ ] **gemini: `role: "assistant"`** w `contents[]` — Gemini zna tylko `user`/`model` (`convert.go:173-176`)
-- [ ] **gemini: brak ścieżki i modelu** — `POST /` zamiast `/v1beta/models/<model>:streamGenerateContent`; `GeminiRequest` nie ma pola `model`, więc `req.Model` jest gubiony
-- [ ] **gemini/anthropic: `Authorization: Bearer`** zamiast `x-goog-api-key` / `x-api-key` (`api/gemini.go:59`, `api/anthropic.go:102`) — działa tylko przez proxy OpenAI-style
-
-### Osobno, kiedykolwiek — to decyzje projektowe, nie bugfixy
-
-Wymagają ustalenia konwencji albo dotykają konsumentów (`display/`), więc nie
-wchodzą w okolice refactoru.
-
-- [ ] **`IsError` honorowane tylko przez Anthropic** — openai i gemini nie mają natywnego odpowiednika, trzeba ZDECYDOWAĆ konwencję, a nie „naprawić"
-- [ ] **bloki `thinking` odrzucane we wszystkich 3 konwerterach** — istotne dla Anthropic extended thinking (wymaga odesłania podpisanych bloków)
-- [ ] **`Finish.Reason` nieznormalizowany** — `tool_calls` / `tool_use` / `STOP` / `stop` (gemini miesza wielkość liter)
-- [ ] **`ConvertToolsToAnthropic` przy błędzie parsowania zwraca format OpenAI as-is** i loguje globalnym `log.Printf` (`api/anthropic.go:362`)
+Out of scope (separately): the global `tools` registry and `tools.SetSubAgentRunner`.
 
 ---
 
-## Dług zastany (nie nasza regresja, znalezione po drodze)
+## Bugs found at stage 0
 
-- [x] `go test -tags "noanthropic nogemini" ./api/` **nie kompilował się** — `testCtx()`
-  siedzi w `api/anthropic_test.go` (plik z `//go:build !noanthropic`), a używa go
-  `api/api_test.go`. Zweryfikowane na czystym drzewie przed etapem 2: ten sam błąd.
-  `go build -tags ...` przechodzi, więc `make minimal` działa; problem dotyczył tylko
-  uruchamiania testów z tagami. Naprawione w etapie 3 (helpery przeniesione do
-  nieotagowanego pliku, testy gemini wydzielone pod `!nogemini`).
-- [x] `gofmt` całego repo zrobiony w osobnym commicie (8caa1ff) — przed etapem 2.
-- [x] **`IsConfigured()` powtarza lookup niezmienny w pętli.** `p.authSource().Key(p.name)`
-  nie zależy od `e`, a stoi w `for _, e := range p.entries` — dla providera bez klucza
-  wykonuje się tyle razy, ile ma modeli (617 dla `nano-gpt`). `connect.GetKey` →
-  `LoadAuth()` czyta i parsuje `auth.json` przy każdym wywołaniu, bez cache.
-  Zmierzone na realnym katalogu (128 providerów, 3827 modeli): `FindModel` na
-  nietrafionej nazwie bez prefiksu = **11,8 ms** i ~3800 odczytów pliku. To O(modele)
-  tam, gdzie potrzeba O(providerzy). Stary kod miał identyczną pętlę — etap 4 tylko
-  uczynił niezmienność widoczną. Naprawa: wyciągnąć wywołanie przed pętlę + dekorator
-  z cache na `AuthSource` (to jest właśnie miejsce, w którym takie coś należy).
-  Nie pilne: 11,8 ms nikogo nie boli, page cache to amortyzuje.
-  **Zrobione:** lookup przeniesiony pod pętlę (`providers/config.go`,
-  `dynamicProvider.IsConfigured`) — każdy wpis z tokenem w URI wciąż zwiera
-  obwód bez żadnego I/O (żadnej zmiany w tej gałęzi), a providery bez tokenu
-  czytają `auth.json` najwyżej raz na wywołanie, nie raz na model. Test ze
-  szpiegowanym `AuthSource` (`TestDynamicProviderIsConfigured_authSourceCalledOncePerProvider`,
-  `..._uriTokenShortCircuitsBeforeAuthSource`) przypina obie właściwości i
-  celowo PADA na starej pętli (zweryfikowane mutation-checkiem: licznik 3
-  wywołań zamiast 1). Commit `d2cd0f2`.
-  **Świadomie NIE zrobione:** dekorator z cache na `AuthSource`. Po tej
-  naprawie koszt to O(providerzy) — ~128 odczytów zamiast ~3800 (11,8 ms →
-  ~0,4 ms) na realnym katalogu. Cache zbiłby to do jednego odczytu na cały
-  proces, ale za cenę realnego bug-a: długo żyjący REPL/TUI przestałby widzieć
-  klucz dodany przez `tyci provider auth set` z drugiego terminala, dopóki
-  proces by nie padł. 0,4 ms nie jest wart staleness bug — rozstrzygnięcie, nie
-  zaległość.
-- [x] **`IsConfigured` sprawdza token z URI surowo, `Stream` go rozwiązuje.** Wpis
-  z nierozwiązywalnym `$FOO` pokazuje się jako skonfigurowany i wywala się dopiero
-  przy żądaniu. Asymetria zastana, świadomie zachowana w etapie 4 (inaczej
-  `provider list` zacząłby ukrywać providerów, których użytkownik skonfigurował) —
-  do rozstrzygnięcia jako konwencja, nie do „naprawienia" po cichu.
-  **Zrobione:** werdykt `IsConfigured()` zostaje DOKŁADNIE taki jak wcześniej
-  (żaden istniejący test się nie zmienił) — asymetria jest już konwencją, nie
-  bugiem. Dodany trzeci, diagnostyczny kanał: `Provider.ConfigWarnings() []string`
-  nazywa zmienne środowiskowe, do których odwołują się wpisy URI providera i
-  które są puste/nieustawione (zdeduplikowane, posortowane —
+The golden files freeze the current (incorrect) behavior on purpose. Each fix = a deliberate
+break of the golden + regeneration with `-update`, in a SEPARATE commit — never alongside
+stages 2-3. Otherwise a red test stops distinguishing "the move broke something"
+from "we changed behavior".
+
+The ordering criterion is not "before or after the refactor", but **whether the fix can be
+verified**. A golden proves that something did not change — not that the new behavior
+is correct. A fix requiring provider documentation and a real call is a separate
+job with a different feedback cycle.
+
+### Now — cheap, verifiable offline
+
+- [x] **openai: multiple `toolResult`s in one message merge into one** — texts glued together without a separator, `tool_call_id` overwritten by the last block (`convert.go:68-73`). Pure logic, the correct pattern is right next to it (anthropic/gemini). Fixed before stage 1, so that stage 2 moved correct code instead of arming a trap. Note: the bug was dormant — `agent/run_tools.go:64` emits 1 message per 1 tool call, and resume reproduces 1:1.
+
+### A separate task AFTER stage 4 — not "while at it" in any stage
+
+Gemini: three defects scattered across `parseURI` (path), the switch in `config.go`
+(model), `api/gemini.go` (header). `case "gemini": // different path structure`
+is directly a symptom of a missing abstraction — the connector builds its own URL and headers.
+Requires Gemini documentation + a real call with a key.
+
+The marker wandered: stage 2 → 3 → 4. Stopped here as a **standalone task after
+stage 4**, because the goldens are the safety net of the refactor: fixing the wire format
+in the same stage as moving code removes the ability to tell "the move
+broke something" from "we changed behavior on purpose". The `TODO` in `connector/gemini.go`
+stays in place until then.
+
+- [ ] **gemini: `role: "assistant"`** in `contents[]` — Gemini knows only `user`/`model` (`convert.go:173-176`)
+- [ ] **gemini: missing path and model** — `POST /` instead of `/v1beta/models/<model>:streamGenerateContent`; `GeminiRequest` has no `model` field, so `req.Model` is lost
+- [ ] **gemini/anthropic: `Authorization: Bearer`** instead of `x-goog-api-key` / `x-api-key` (`api/gemini.go:59`, `api/anthropic.go:102`) — works only through an OpenAI-style proxy
+
+### Separately, whenever — these are design decisions, not bugfixes
+
+They require settling a convention or touch consumers (`display/`), so they
+do not belong in the vicinity of the refactor.
+
+- [ ] **`IsError` honored only by Anthropic** — openai and gemini have no native equivalent, a convention has to be DECIDED, not "fixed"
+- [ ] **`thinking` blocks dropped in all 3 converters** — relevant for Anthropic extended thinking (requires sending back signed blocks)
+- [ ] **`Finish.Reason` not normalized** — `tool_calls` / `tool_use` / `STOP` / `stop` (gemini mixes letter case)
+- [ ] **`ConvertToolsToAnthropic` on a parse error returns the OpenAI format as-is** and logs with the global `log.Printf` (`api/anthropic.go:362`)
+
+---
+
+## Pre-existing debt (not our regression, found along the way)
+
+- [x] `go test -tags "noanthropic nogemini" ./api/` **did not compile** — `testCtx()`
+  sits in `api/anthropic_test.go` (a file with `//go:build !noanthropic`), and `api/api_test.go`
+  uses it. Verified on a clean tree before stage 2: the same error.
+  `go build -tags ...` passes, so `make minimal` works; the problem concerned only
+  running tests with tags. Fixed in stage 3 (helpers moved to an
+  untagged file, gemini tests split out under `!nogemini`).
+- [x] `gofmt` of the whole repo done in a separate commit (8caa1ff) — before stage 2.
+- [x] **`IsConfigured()` repeats a loop-invariant lookup.** `p.authSource().Key(p.name)`
+  does not depend on `e`, yet it stands in `for _, e := range p.entries` — for a provider without a key
+  it executes as many times as it has models (617 for `nano-gpt`). `connect.GetKey` →
+  `LoadAuth()` reads and parses `auth.json` on every call, with no cache.
+  Measured on a real catalog (128 providers, 3827 models): `FindModel` on
+  a missed name without a prefix = **11.8 ms** and ~3800 file reads. That is O(models)
+  where O(providers) is needed. The old code had an identical loop — stage 4 only
+  made the invariance visible. Fix: hoist the call out of the loop + a caching
+  decorator on `AuthSource` (that is exactly the place where such a thing belongs).
+  Not urgent: 11.8 ms hurts nobody, the page cache amortizes it.
+  **Done:** lookup moved below the loop (`providers/config.go`,
+  `dynamicProvider.IsConfigured`) — every entry with a token in the URI still
+  short-circuits without any I/O (no change in that branch), and providers without a token
+  read `auth.json` at most once per call, not once per model. A test with a
+  spied `AuthSource` (`TestDynamicProviderIsConfigured_authSourceCalledOncePerProvider`,
+  `..._uriTokenShortCircuitsBeforeAuthSource`) pins both properties and
+  deliberately FAILS on the old loop (verified with a mutation check: a counter of 3
+  calls instead of 1). Commit `d2cd0f2`.
+  **Deliberately NOT done:** a caching decorator on `AuthSource`. After this
+  fix the cost is O(providers) — ~128 reads instead of ~3800 (11.8 ms →
+  ~0.4 ms) on a real catalog. A cache would bring it down to one read for the whole
+  process, but at the price of a real bug: a long-lived REPL/TUI would stop seeing
+  a key added by `tyci provider auth set` from a second terminal until the
+  process died. 0.4 ms is not worth a staleness bug — a decision, not a
+  backlog item.
+- [x] **`IsConfigured` checks the URI token raw, `Stream` resolves it.** An entry
+  with an unresolvable `$FOO` shows up as configured and blows up only
+  on request. A pre-existing asymmetry, deliberately preserved in stage 4 (otherwise
+  `provider list` would start hiding providers that the user configured) —
+  to be decided as a convention, not "fixed" silently.
+  **Done:** the `IsConfigured()` verdict stays EXACTLY as before
+  (no existing test changed) — the asymmetry is already a convention, not
+  a bug. Added a third, diagnostic channel: `Provider.ConfigWarnings() []string`
+  names the environment variables referenced by the provider's URI entries and
+  which are empty/unset (deduplicated, sorted —
   `dynamicProvider.ConfigWarnings`, `providers/config.go`). `provider list`
-  drukuje je pod providerem bez zmiany `✓`/`(not configured)`
-  (`commands.go`). `resolveAPIKey` nazywa brakującą zmienną w komunikacie
-  błędu, gdy `uriKey` jest referencją środowiskową (`connect.LooksLikeEnvRef`);
-  ścieżka bez referencji zachowuje dotychczasowy komunikat co do znaku
-  (`TestDynamicProvider_ResolveAPIKeyErrorMessage`, niezmieniony). Dwie atrapy
-  `Provider` w testach (`fakeProvider`, `catalogStub`) dostały jednoliniowe
-  `ConfigWarnings` zwracające `nil` — sprawdzone grepem, że nie ma czwartej
-  implementacji. Commit `4b59f9a`.
-  **Świadomie NIE zrobione:** `ConfigWarnings` widzi tylko referencje z URI, nie
-  z `auth.json` — `AuthFile.Key` zwraca goły string po `connect.ResolveToken`,
-  więc nierozwiązana referencja zapisana ręcznie w `auth.json` jest z tej
-  strony nieodróżnialna od braku klucza. W praktyce ta ścieżka wymaga ręcznej
-  edycji pliku, bo `provider auth set` (`commands.go:760`) odrzuca
-  nierozwiązywalne `$FOO` już przy zapisie. Pokrycie tego wymagałoby zmiany
-  interfejsu `AuthSource`, który dziś zwraca goły `string` — poza zakresem tej
-  naprawy.
+  prints them under the provider without changing `✓`/`(not configured)`
+  (`commands.go`). `resolveAPIKey` names the missing variable in the error
+  message when `uriKey` is an environment reference (`connect.LooksLikeEnvRef`);
+  the path without a reference keeps the existing message to the character
+  (`TestDynamicProvider_ResolveAPIKeyErrorMessage`, unchanged). Two
+  `Provider` fakes in tests (`fakeProvider`, `catalogStub`) got a one-line
+  `ConfigWarnings` returning `nil` — checked with grep that there is no fourth
+  implementation. Commit `4b59f9a`.
+  **Deliberately NOT done:** `ConfigWarnings` sees only references from the URI, not
+  from `auth.json` — `AuthFile.Key` returns a bare string after `connect.ResolveToken`,
+  so an unresolved reference written by hand into `auth.json` is, from this
+  side, indistinguishable from a missing key. In practice this path requires manual
+  editing of the file, because `provider auth set` (`commands.go:760`) rejects
+  an unresolvable `$FOO` already at write time. Covering it would require changing the
+  `AuthSource` interface, which today returns a bare `string` — out of scope of this
+  fix.

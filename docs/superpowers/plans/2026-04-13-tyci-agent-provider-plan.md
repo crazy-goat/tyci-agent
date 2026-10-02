@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Refaktor `tyci` na provider-based architecture z osobnymi providerami dla Zen, Anthropic i OpenAI.
+**Goal:** Refactor `tyci` to a provider-based architecture with separate providers for Zen, Anthropic and OpenAI.
 
-**Architecture:** Każdy provider jest osobnym pakietem Go w `providers/<name>/`. Wspólny interfejs `Provider` definiuje zachowanie. Na starcie rejestr iteruje po providerach i buduje listę dostępnych modeli.
+**Architecture:** Each provider is a separate Go package in `providers/<name>/`. A common `Provider` interface defines the behavior. On startup the registry iterates over the providers and builds the list of available models.
 
 **Tech Stack:** Go 1.24, net/http, encoding/json
 
@@ -647,7 +647,7 @@ Expected output:
 Available models:
 ```
 
-(ponieważ żaden API key nie jest ustawiony)
+(because no API key is set)
 
 - [ ] **Step 3: Commit**
 

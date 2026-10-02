@@ -151,7 +151,7 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	lines := strings.Split(text, "\n")
 	totalFileLines := len(lines)
 
-	// offset jest 1-indeksowany (linie), zamień na 0-indeksowany
+	// offset is 1-indexed (lines), convert to 0-indexed
 	startLine := 0
 	if offset > 0 {
 		startLine = offset - 1
@@ -161,7 +161,7 @@ func (t *ReadTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			Error: fmt.Sprintf("offset %d is beyond end of file (%d lines total)", offset, totalFileLines)}
 	}
 
-	// Weź fragment od startLine
+	// Take the fragment starting at startLine
 	var selectedText string
 	var userLimited bool
 	if limit > 0 {

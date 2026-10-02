@@ -311,7 +311,7 @@ func TestWithIsolatedPool_RealProviderGetsCopy(t *testing.T) {
 	}
 }
 
-// TestWithIsolatedPool_WrapsFallbacksWithPrimary is the Etap 5 acceptance
+// TestWithIsolatedPool_WrapsFallbacksWithPrimary is the Stage 5 acceptance
 // criterion: a child's fallback client must be bound to the SAME isolated
 // pool as its primary — not left on the shared default client. Before this
 // stage the agent resolved fallbacks itself, mid-run, from the global

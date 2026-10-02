@@ -1,10 +1,10 @@
 # Tools Implementation Plan
 
-> **For agentic workers:** Implementacja task po tasku bez subagentów - proste pliki.
+> **For agentic workers:** Implement task by task without subagents - simple files.
 
-**Goal:** Dodanie tooli (read, write, edit, bash) do tyci z wymianą przez stdin/stdout pipe.
+**Goal:** Add tools (read, write, edit, bash) to tyci, exchanging data via a stdin/stdout pipe.
 
-**Architecture:** CLI przyjmuje JSON z stdin, wykonuje tool, zwraca JSON przez stdout. Tool wywoływany przez AI jako subprocess.
+**Architecture:** The CLI accepts JSON from stdin, executes the tool, and returns JSON via stdout. The tool is invoked by the AI as a subprocess.
 
 **Tech Stack:** Go 1.24, os/exec, encoding/json
 
@@ -14,12 +14,12 @@
 
 ```
 tyci/
-├── main.go           # rozszerzony o tool execution
+├── main.go           # extended with tool execution
 ├── tools/
-│   ├── tool.go     # interfejs Tool
-│   ├── read.go    # plik read
-│   ├── write.go   # plik write
-│   ├── edit.go   # plik edit
+│   ├── tool.go     # Tool interface
+│   ├── read.go    # file read
+│   ├── write.go   # file write
+│   ├── edit.go   # file edit
 │   └── bash.go   # shell command
 ```
 

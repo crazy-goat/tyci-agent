@@ -2,23 +2,23 @@
 
 ## Overview
 
-Refaktoryzacja `tyci` na architekturę provider-based. Każdy provider (Zen, Anthropic, OpenAI) jest osobnym katalogem z własną implementacją. Na starcie iterujemy po providerach, każdy zgłasza gotowość i listę modeli.
+Refactoring `tyci` to a provider-based architecture. Each provider (Zen, Anthropic, OpenAI) is a separate directory with its own implementation. On startup we iterate over the providers; each reports readiness and its list of models.
 
 ## Structure
 
 ```
 tyci/
-├── main.go                    # główna logika, inicjalizacja providerów
+├── main.go                    # main logic, provider initialization
 ├── go.mod
 ├── providers/
-│   ├── provider.go           # interfejsy Provider i StreamHandler
-│   ├── registry.go           # rejestr providerów
+│   ├── provider.go           # Provider and StreamHandler interfaces
+│   ├── registry.go           # provider registry
 │   ├── zen/
-│   │   └── provider.go       # implementacja Zen provider
+│   │   └── provider.go       # Zen provider implementation
 │   ├── anthropic/
-│   │   └── provider.go       # implementacja Anthropic provider
+│   │   └── provider.go       # Anthropic provider implementation
 │   └── openai/
-│       └── provider.go       # implementacja OpenAI-compatible provider
+│       └── provider.go       # OpenAI-compatible provider implementation
 ```
 
 ## Interfaces
@@ -28,7 +28,7 @@ tyci/
 ```go
 type Provider interface {
     Name() string              // "zen", "anthropic", "openai"
-    IsConfigured() bool        // true jeśli API key jest niepusty
+    IsConfigured() bool        // true if the API key is non-empty
     Models() []string          // np. ["glm-5.1", "kimi-k2.5"]
     Send(ctx context.Context, model, prompt, system string, handler StreamHandler) error
 }
@@ -39,7 +39,7 @@ type Provider interface {
 ```go
 type StreamHandler interface {
     Chunk(text string)         // kolejny fragment odpowiedzi
-    Summary(usage UsageInfo)   // podsumowanie na końcu streamingu
+    Summary(usage UsageInfo)   // summary at the end of streaming
     End()
     Error(err error)
 }
@@ -53,7 +53,7 @@ type UsageInfo struct {
 
 ## Provider Configuration
 
-Każdy provider odczytuje swoją zmienną środowiskową:
+Each provider reads its own environment variable:
 
 | Provider   | Env Variable    |
 |------------|-----------------|
@@ -61,7 +61,7 @@ Każdy provider odczytuje swoją zmienną środowiskową:
 | anthropic  | ANTHROPIC_API_KEY |
 | openai     | OPENAI_API_KEY  |
 
-`IsConfigured()` zwraca `true` jeśli odpowiednia zmienna env jest ustawiona i niepusta.
+`IsConfigured()` returns `true` if the corresponding env variable is set and non-empty.
 
 ## Supported Models
 
@@ -83,7 +83,7 @@ Available models:
   ✓ anthropic/minimax-m2.5
 ```
 
-Tylko skonfigurowane (IsConfigured=true) providery są pokazywane.
+Only configured providers (IsConfigured=true) are shown.
 
 ### Model Selection
 
@@ -92,7 +92,7 @@ Model podawany jako `provider/model`:
 tyci -m zen/glm-5.1 -p "prompt"
 ```
 
-Jeśli podany tylko `model` bez prefixu (np. `-m glm-5.1`), wyszukaj pierwszego providera który go ma.
+If only `model` is given without a prefix (e.g. `-m glm-5.1`), find the first provider that has it.
 
 ### Flags
 
@@ -104,19 +104,19 @@ Jeśli podany tylko `model` bez prefixu (np. `-m glm-5.1`), wyszukaj pierwszego 
 
 ## Data Flow
 
-1. Inicjalizacja: każdy provider rejestruje się w globalnym rejestrze
-2. Rejestr buduje listę dostępnych modeli z skonfigurowanych providerów
-3. Użytkownik wybiera model lub używa `--list`
-4. `main.go` wywołuje `provider.Send()` z odpowiednim `StreamHandler`
-5. Provider wysyła request, streaming odpowiedzi przez `handler.Chunk()`
-6. Na końcu `handler.Summary(usage)` i `handler.End()`
-7. Błędy przez `handler.Error()`
+1. Initialization: each provider registers itself in the global registry
+2. The registry builds the list of available models from the configured providers
+3. The user selects a model or uses `--list`
+4. `main.go` calls `provider.Send()` with the appropriate `StreamHandler`
+5. The provider sends the request and streams the response via `handler.Chunk()`
+6. At the end, `handler.Summary(usage)` and `handler.End()`
+7. Errors via `handler.Error()`
 
 ## Implementation Notes
 
 - Providerzy jako osobne paczki Go (`package zen`, `package anthropic`, etc.)
 - Wspólny interfejs `Provider` w `providers/provider.go`
-- Rejestr w `providers/registry.go` z funkcją `Register(p Provider)`
-- Każdy provider sam tworzy requesty do swojego API (OpenAI-compatible lub Anthropic-compatible)
-- Obsługa streaming: parsowanie SSE (`data:` lines)
-- Graceful error handling - każdy błąd idzie przez `handler.Error()`
+- Registry in `providers/registry.go` with the function `Register(p Provider)`
+- Each provider builds its own requests to its API (OpenAI-compatible or Anthropic-compatible)
+- Streaming support: parsing SSE (`data:` lines)
+- Graceful error handling - every error goes through `handler.Error()`

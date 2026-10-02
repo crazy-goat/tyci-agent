@@ -6,7 +6,7 @@ package providers
 // dynamicProvider.Stream for every supported apiType.
 //
 // These tests are a safety net for the connector refactor (docs/architecture-refactor.md,
-// Etap 0). They deliberately assert on TODAY's behavior — including its quirks —
+// Stage 0). They deliberately assert on TODAY's behavior — including its quirks —
 // so that any silent change in message conversion, endpoint resolution, headers or
 // stream-event mapping shows up as a diff.
 //

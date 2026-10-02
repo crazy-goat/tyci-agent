@@ -279,7 +279,7 @@ func resolveModelClient(ctx context.Context, model string) (connector.ModelClien
 // something the tools package should know about, and the api layer no longer
 // reads the context at all; a client now carries its own transport instead.
 //
-// Etap 5 (docs/architecture-refactor.md) closed a latent gap here: before the
+// Stage 5 (docs/architecture-refactor.md) closed a latent gap here: before the
 // caller resolved fallbacks, agent/fallback.go pulled a fresh provider from
 // the global catalog mid-run, invisibly to this wrapper — a fallback
 // triggered inside a child run would have silently fallen back to the shared

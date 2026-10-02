@@ -1,226 +1,224 @@
-# Self-test: komunikacja i lock między agentami
+# Self-test: communication and lock between agents
 
-Uzupełnienie do `docs/subagent-testing-plan.md`, które testowało `lock`/`wait`/
-async `subagent` z perspektywy **jednego** wątku wywołań. Ten plik pokrywa to,
-czego tamten świadomie nie testował: kontencję locków **między** agentami
-(główny wątek vs. job w tle, dwa joby w tle między sobą). Zobacz też
-`docs/findings.md` (P2/P3/P4) — część scenariuszy niżej to weryfikacja granic
-tych propozycji, nie gotowej funkcjonalności.
+A supplement to `docs/subagent-testing-plan.md`, which tested `lock`/`wait`/
+async `subagent` from the perspective of a **single** call thread. This file covers
+what that one deliberately did not test: lock contention **between** agents
+(main thread vs. background job, two background jobs against each other). See also
+`docs/findings.md` (P2/P3/P4) — some of the scenarios below verify the boundaries
+of those proposals, not finished functionality.
 
-**To nie jest test manualny dla człowieka.** To self-test: wykonuje go ten sam
-`tyci`, w którym go uruchamiasz, na sobie samym. Wklejasz prompt z sekcji
-niżej jako jedną wiadomość, a agent **sam** wywołuje kolejne narzędzia
-(`lock`/`unlock`/`subagent`/`wait`), sam odczytuje wyniki tych wywołań (treść
-zwróconą przez narzędzie — nie panel TUI, którego nie widzi) i sam ocenia
-zgodność z oczekiwaniem. Ty tylko obserwujesz i ewentualnie potwierdzasz na
-koniec, że raport się zgadza z tym, co widziałeś w panelu/modalu — to
-opcjonalna, dodatkowa weryfikacja, nie warunek wykonania testu.
+**This is not a manual test for a human.** It is a self-test: it is executed by the same
+`tyci` in which you run it, on itself. You paste the prompt from the section
+below as a single message, and the agent **itself** calls the successive tools
+(`lock`/`unlock`/`subagent`/`wait`), itself reads the results of those calls (the content
+returned by the tool — not the TUI panel, which it cannot see) and itself judges
+conformance with the expectation. You only observe and optionally confirm at the
+end that the report matches what you saw in the panel/modal — this is
+an optional, additional verification, not a condition for running the test.
 
-## Prompt do wklejenia w tyci
+## Prompt to paste into tyci
 
-> Wykonaj na sobie self-test zdefiniowany niżej. To NIE jest scenariusz do
-> opisania czy zaplanowania — wykonaj każdy krok **naprawdę**, prawdziwym
-> wywołaniem narzędzia, w podanej kolejności, bez pytania mnie o zgodę
-> pomiędzy krokami. Po każdym kroku sam oceń, czy wynik zgadza się z
-> "Oczekiwane" — na podstawie treści zwróconej przez narzędzie (`Content`
-> sukcesu albo `Error`), nie zgaduj i nie zakładaj. Jeśli krok wymaga
-> odczekania na zakończenie joba w tle, użyj `wait(job_id: "...", seconds:
-> N)` żeby to sprawdzić zamiast zgadywać — to jedyny sposób, w jaki Ty sam
-> możesz zobaczyć status joba, boa nie masz wglądu w panel TUI.
+> Run the self-test defined below on yourself. This is NOT a scenario to
+> describe or plan — execute every step **for real**, with a real
+> tool call, in the given order, without asking me for permission
+> between steps. After each step, judge for yourself whether the result matches
+> "Expected" — based on the content returned by the tool (the success `Content`
+> or the `Error`), do not guess and do not assume. If a step requires waiting
+> for a background job to finish, use `wait(job_id: "...", seconds:
+> N)` to check it instead of guessing — that is the only way you yourself
+> can see a job's status, because you have no view into the TUI panel.
 >
-> Dla kroków, w których zlecasz zadanie subagentowi (`subagent(...,
-> task: "...")`), treść `task` musi być dokładnie tą podaną niżej — to
-> subagent (osobny model) musi dostać jednoznaczną instrukcję jakiego
-> wywołania narzędzia od niego oczekujesz, więc nie parafrazuj i nie
-> skracaj tej treści.
+> For steps in which you assign a task to a subagent (`subagent(...,
+> task: "...")`), the `task` text must be exactly the one given below —
+> the subagent (a separate model) must receive an unambiguous instruction about which
+> tool call you expect from it, so do not paraphrase and do not
+> shorten that text.
 >
-> Na koniec, po wykonaniu wszystkich kroków z sekcji 6 i 7, zbierz
-> wszystkie niezgodności w jeden raport w formacie zbliżonym do
-> `docs/findings.md` (nagłówek per finding: P-numer, krótki opis, dokładne
-> wywołania które to wywołały, oczekiwane vs. rzeczywiste, sugerowana waga:
-> bug / do decyzji / brak problemu). Jeśli wszystko się zgadzało — napisz to
-> wprost, nie zmyślaj problemów żeby raport wyglądał bogaciej. Nie zapisuj
-> raportu do pliku sam — pokaż go w odpowiedzi, human zdecyduje gdzie go
-> umieścić.
+> At the end, after executing all steps from sections 6 and 7, collect
+> all discrepancies into one report in a format similar to
+> `docs/findings.md` (a heading per finding: P-number, short description, the exact
+> calls that triggered it, expected vs. actual, suggested severity:
+> bug / needs decision / no problem). If everything matched — say so
+> explicitly, do not invent problems to make the report look richer. Do not save the
+> report to a file yourself — show it in your response, the human will decide where to
+> put it.
 >
-> --- SCENARIUSZE ---
-> (wklej tu treść sekcji 6 i 7 z `docs/subagent-testing-plan-cross-agent.md`,
-> albo po prostu odwołaj się do tego pliku jeśli masz do niego dostęp przez
+> --- SCENARIOS ---
+> (paste here the content of sections 6 and 7 from `docs/subagent-testing-plan-cross-agent.md`,
+> or just refer to that file if you have access to it via
 > `read`)
 
-## 6. Lock: główny wątek vs. job w tle
+## 6. Lock: main thread vs. background job
 
-- [ ] **6.1** Wywołaj `lock` z `path="shared.go"`, **bez** parametru
-      `seconds`. Zapamiętaj `holder` ze zwróconego wyniku (będzie potrzebny w
-      6.2). **Oczekiwane:** sukces.
+- [ ] **6.1** Call `lock` with `path="shared.go"`, **without** the `seconds`
+      parameter. Remember the `holder` from the returned result (it will be needed in
+      6.2). **Expected:** success.
 
-      Następnie wywołaj `subagent` z `async=true` i `task` ustawionym
-      dokładnie na: `"Wywołaj narzędzie lock z path=\"shared.go\" (bez
-      seconds). Zwróć w wyniku dokładną treść komunikatu błędu, jeśli lock
-      się nie uda."`. Poczekaj na zakończenie joba przez `wait(job_id, seconds:
-      10)`. **Oczekiwane:** job kończy się `done`, a w jego wyniku jest błąd
-      konfliktu wskazujący na `holder` z pierwszego wywołania.
-- [ ] **6.2** Wywołaj `unlock` z `path="shared.go"` i `holder` zapamiętanym z
-      6.1. **Oczekiwane:** sukces, `shared.go` odblokowane. (Ten krok sam w
-      sobie nie testuje retry po stronie subagenta — do tego służy scenariusz
-      7.1.)
-- [ ] **6.3** Wywołaj `subagent` z `async=true` i `task` ustawionym dokładnie
-      na: `"Wywołaj narzędzie lock z path=\"x.go\" (bez seconds). Nie
-      wywołuj unlock. Zakończ odpowiedź krótkim tekstem 'gotowe'."`. Poczekaj
-      na `done` przez `wait(job_id, seconds: 10)`. Natychmiast potem wywołaj
-      `lock` z `path="x.go"` (bez `seconds`). **Oczekiwane:** drugie `lock`
-      się udaje od razu, bez błędu konfliktu — `x.go` musi zostać
-      automatycznie odblokowane krótko po zakończeniu joba (mechanizm
-      `context.WithoutCancel` + auto-release, pokryty testem jednostkowym
-      `L-5` w `wiring_test.go` — to sprawdza tę samą własność end-to-end).
-- [ ] **6.4** Jak 6.3, ale job ma **zawieść**. Wywołaj `subagent` z
-      `async=true` i `task` ustawionym dokładnie na: `"Wywołaj narzędzie lock
-      z path=\"y.go\" (bez seconds). Następnie wywołaj narzędzie bash z
-      komendą \"this-command-does-not-exist-xyz\". Nie wywołuj unlock."`.
-      Poczekaj na status `failed` przez `wait(job_id, seconds: 10)`.
-      Natychmiast potem wywołaj `lock` z `path="y.go"` (bez `seconds`).
-      **Oczekiwane:** sukces mimo że job zakończył się błędem — deferred
-      release działa też na ścieżce błędu.
+      Then call `subagent` with `async=true` and `task` set
+      exactly to: `"Call the lock tool with path=\"shared.go\" (without
+      seconds). Return in the result the exact text of the error message if the lock
+      fails."`. Wait for the job to finish via `wait(job_id, seconds:
+      10)`. **Expected:** the job ends `done`, and its result contains a
+      conflict error pointing to the `holder` from the first call.
+- [ ] **6.2** Call `unlock` with `path="shared.go"` and the `holder` remembered from
+      6.1. **Expected:** success, `shared.go` unlocked. (This step by itself
+      does not test retry on the subagent side — scenario 7.1 serves that.)
+- [ ] **6.3** Call `subagent` with `async=true` and `task` set exactly
+      to: `"Call the lock tool with path=\"x.go\" (without seconds). Do not
+      call unlock. End the answer with the short text 'done'."`. Wait
+      for `done` via `wait(job_id, seconds: 10)`. Immediately afterwards call
+      `lock` with `path="x.go"` (without `seconds`). **Expected:** the second `lock`
+      succeeds right away, without a conflict error — `x.go` must be
+      automatically unlocked shortly after the job finishes (the
+      `context.WithoutCancel` + auto-release mechanism, covered by the unit test
+      `L-5` in `wiring_test.go` — this checks the same property end-to-end).
+- [ ] **6.4** Like 6.3, but the job is to **fail**. Call `subagent` with
+      `async=true` and `task` set exactly to: `"Call the lock tool
+      with path=\"y.go\" (without seconds). Then call the bash tool with
+      the command \"this-command-does-not-exist-xyz\". Do not call unlock."`.
+      Wait for status `failed` via `wait(job_id, seconds: 10)`.
+      Immediately afterwards call `lock` with `path="y.go"` (without `seconds`).
+      **Expected:** success even though the job ended with an error — the deferred
+      release also works on the error path.
 
-## 7. Lock: dwa joby w tle między sobą
+## 7. Lock: two background jobs against each other
 
-- [ ] **7.1** Wywołaj `subagent` z `async=true` i `tasks` ustawionym na
-      dokładnie dwa elementy:
-      1. `{"task": "Wywołaj narzędzie lock z path=\"hot.go\" (bez seconds).
-         Jeśli się uda, wywołaj wait z seconds=5. Następnie zakończ krótkim
-         tekstem 'gotowe A', nie wywołuj unlock.", "async": true}`
-      2. `{"task": "Wywołaj narzędzie lock z path=\"hot.go\" (bez seconds).
-         Jeśli dostaniesz błąd konfliktu, wywołaj wait z seconds=2, a
-         następnie spróbuj lock ponownie. Powtórz to maksymalnie 3 razy.
-         Zakończ tekstem 'gotowe B' jeśli się udało, albo 'nie udało się B'
-         jeśli nie po 3 próbach.", "async": true}`
+- [ ] **7.1** Call `subagent` with `async=true` and `tasks` set to
+      exactly two elements:
+      1. `{"task": "Call the lock tool with path=\"hot.go\" (without seconds).
+         If it succeeds, call wait with seconds=5. Then finish with the short
+         text 'done A', do not call unlock.", "async": true}`
+      2. `{"task": "Call the lock tool with path=\"hot.go\" (without seconds).
+         If you get a conflict error, call wait with seconds=2, and
+         then try lock again. Repeat this at most 3 times.
+         Finish with the text 'done B' if it succeeded, or 'failed B'
+         if not after 3 attempts.", "async": true}`
 
-      Dla obu zwróconych `job_id` wywołaj `wait(job_id, seconds: 15)` aż oba
-      dojdą do statusu `done`. **Oczekiwane:** oba `done`; wynik pierwszego
-      zawiera "gotowe A"; wynik drugiego zawiera "gotowe B" (nie "nie udało
-      się B" — jeśli to się pojawi, to znaczy że pierwszy nie zwolnił locka
-      mimo braku `unlock`, czyli bug w auto-release, a nie w tym scenariuszu).
-- [ ] **7.2** Powtórz krok 7.1 (nowe wywołanie `subagent` z tymi samymi
-      dwoma zadaniami) jeszcze 3 razy pod rząd. **Oczekiwane:** wynik
-      stabilny za każdym razem — zawsze dokładnie jeden z dwóch dostaje lock
-      jako pierwszy (drugi ma w swoim wyniku ślad błędu konfliktu z retry),
-      nigdy oba naraz "gotowe" bez żadnego błędu konfliktu w żadnym z dwóch
-      wyników (co by znaczyło, że oba dostały lock jednocześnie), i nigdy
-      "nie udało się B".
-- [ ] **7.3** Trójstronny wyścig o ten sam zasób (rozszerzenie 7.1 z 2 na 3).
-      Wywołaj `subagent` z `async=true` i `tasks` ustawionym na dokładnie
-      trzy elementy, każdy z tym samym wzorcem co zadanie B w 7.1 (lock →
-      jeśli konflikt to wait(seconds=2) i retry, max 5 razy), ale z **innym**
-      tekstem końcowym dla każdego (`"gotowe C1"`, `"gotowe C2"`, `"gotowe
-      C3"`) i wszystkie na `path="triple.go"`. `wait` na wszystkie trzy
-      `job_id` (seconds: 20 każdy). **Oczekiwane:** wszystkie trzy `done` z
-      odpowiednim "gotowe Cn" (żaden "nie udało się"); w treści wyników co
-      najmniej dwóch z trzech musi wystąpić ślad błędu konfliktu (bo nie
-      mogły wszystkie trzy dostać locka za pierwszym razem) — jeśli w
-      żadnym z trzech wyników nie ma śladu konfliktu, to znaczy że test nie
-      wymusił realnej rywalizacji (zbyt szybkie zwolnienie) i trzeba
-      powtórzyć z dłuższym `wait` po stronie zwycięzcy.
-- [ ] **7.4** Brak prawdziwego deadlocku przy odwrotnej kolejności locków
-      (`lock` jest nieblokujący — zwraca błąd od razu zamiast czekać, więc
-      klasyczny deadlock dwóch zasobów strukturalnie nie powinien być
-      możliwy; ten test to pinuje). Wywołaj `subagent` z `async=true` i
+      For both returned `job_id`s call `wait(job_id, seconds: 15)` until both
+      reach status `done`. **Expected:** both `done`; the result of the first
+      contains "done A"; the result of the second contains "done B" (not "failed
+      B" — if that appears, it means the first did not release the lock
+      despite the absence of `unlock`, i.e. a bug in auto-release, not in this scenario).
+- [ ] **7.2** Repeat step 7.1 (a new `subagent` call with the same
+      two tasks) 3 more times in a row. **Expected:** the result is
+      stable every time — always exactly one of the two gets the lock
+      first (the second has a trace of a conflict error with retry in its result),
+      never both "done" at once without any conflict error in either of the two
+      results (which would mean both got the lock simultaneously), and never
+      "failed B".
+- [ ] **7.3** A three-way race for the same resource (extending 7.1 from 2 to 3).
+      Call `subagent` with `async=true` and `tasks` set to exactly
+      three elements, each with the same pattern as task B in 7.1 (lock →
+      on conflict wait(seconds=2) and retry, max 5 times), but with a **different**
+      final text for each (`"done C1"`, `"done C2"`, `"done
+      C3"`) and all on `path="triple.go"`. `wait` on all three
+      `job_id`s (seconds: 20 each). **Expected:** all three `done` with the
+      corresponding "done Cn" (none "failed"); in the content of the results of at
+      least two of the three there must be a trace of a conflict error (because they
+      could not all get the lock on the first try) — if in
+      none of the three results there is a trace of a conflict, it means the test did not
+      force real contention (release too fast) and it needs to be
+      repeated with a longer `wait` on the winner's side.
+- [ ] **7.4** No real deadlock with reverse lock order
+      (`lock` is non-blocking — it returns an error immediately instead of waiting, so the
+      classic two-resource deadlock should structurally not be
+      possible; this test pins that). Call `subagent` with `async=true` and
       `tasks`:
-      1. `{"task": "Wywołaj lock z path=\"r1.go\" (bez seconds). Jeśli się
-         uda, wywołaj wait z seconds=3. Następnie spróbuj lock z
-         path=\"r2.go\". Zakończ tekstem opisującym wynik obu prób lock.",
+      1. `{"task": "Call lock with path=\"r1.go\" (without seconds). If it
+         succeeds, call wait with seconds=3. Then try lock with
+         path=\"r2.go\". Finish with text describing the result of both lock attempts.",
          "async": true}`
-      2. `{"task": "Wywołaj lock z path=\"r2.go\" (bez seconds). Jeśli się
-         uda, wywołaj wait z seconds=3. Następnie spróbuj lock z
-         path=\"r1.go\". Zakończ tekstem opisującym wynik obu prób lock.",
+      2. `{"task": "Call lock with path=\"r2.go\" (without seconds). If it
+         succeeds, call wait with seconds=3. Then try lock with
+         path=\"r1.go\". Finish with text describing the result of both lock attempts.",
          "async": true}`
 
-      `wait` na oba `job_id` (seconds: 15). **Oczekiwane:** oba `done` w
-      rozsądnym czasie (nie hang, nie timeout na `wait`) — każdy zgłasza
-      sukces na swoim pierwszym locku i błąd konfliktu na drugiej próbie
-      (bo drugi zasób jest trzymany przez tego drugiego). To potwierdza że
-      system nie ma trybu "poczekaj aż zasób się zwolni" wbudowanego w sam
-      `lock` (byłoby to źródłem prawdziwego deadlocku) — obecny model
-      "spróbuj, dostań błąd, sam zdecyduj co dalej" jest bezpieczny z tego
-      punktu widzenia.
-- [ ] **7.5** Przekazanie "pałeczki" przez jawny `unlock` (w kontraście do
-      7.1, gdzie zwycięzca **nie** wywołuje unlock i polega wyłącznie na
-      auto-release po zakończeniu joba). Wywołaj `subagent` z `async=true`
-      i `tasks`:
-      1. `{"task": "Wywołaj lock z path=\"queue.go\" (bez seconds). Wywołaj
-         wait z seconds=3 (symulacja pracy). Wywołaj unlock z
-         path=\"queue.go\" i holderem który dostałeś z lock. Zakończ
-         tekstem 'praca A gotowa'.", "async": true}`
-      2. `{"task": "W pętli maksymalnie 5 razy: wywołaj lock z
-         path=\"queue.go\" (bez seconds); jeśli sukces, zakończ tekstem
-         'odebrano po ' + numer próby + ' próbach'; jeśli konflikt, wywołaj
-         wait z seconds=1 i spróbuj ponownie.", "async": true}`
+      `wait` on both `job_id`s (seconds: 15). **Expected:** both `done` in
+      a reasonable time (no hang, no timeout on `wait`) — each reports
+      success on its first lock and a conflict error on the second attempt
+      (because the second resource is held by the other one). This confirms that the
+      system has no built-in "wait until the resource is released" mode in `lock`
+      itself (that would be a source of real deadlock) — the current model
+      "try, get an error, decide for yourself what to do next" is safe from this
+      point of view.
+- [ ] **7.5** Passing the "baton" via an explicit `unlock` (in contrast to
+      7.1, where the winner does **not** call unlock and relies solely on
+      auto-release after the job finishes). Call `subagent` with `async=true`
+      and `tasks`:
+      1. `{"task": "Call lock with path=\"queue.go\" (without seconds). Call
+         wait with seconds=3 (simulating work). Call unlock with
+         path=\"queue.go\" and the holder you got from lock. Finish with
+         the text 'work A done'.", "async": true}`
+      2. `{"task": "In a loop at most 5 times: call lock with
+         path=\"queue.go\" (without seconds); if it succeeds, finish with the text
+         'received after ' + attempt number + ' attempts'; if there is a conflict, call
+         wait with seconds=1 and try again.", "async": true}`
 
-      `wait` na oba `job_id` (seconds: 15). **Oczekiwane:** zadanie 2 nigdy
-      nie dostaje locka przy pierwszej próbie (bo zadanie 1 trzyma go co
-      najmniej ~3s), dostaje go dopiero po jawnym `unlock` zadania 1 — czyli
-      nie wcześniej niż licznik prób odpowiadający upływowi ~3s. Jeśli
-      zadanie 2 zgłosi sukces przy pierwszej próbie, to znaczy że `lock` na
-      `queue.go` w ogóle nie zadziałał w zadaniu 1 — potraktuj to jako
-      poważne znalezisko, nie drobiazg.
-- [ ] **7.6** Widoczność `wait(job_id)` **z wnętrza** innego subagenta, nie
-      tylko z głównego wątku (dziś jedyny kanał, w jaki jeden job może
-      dowiedzieć się o stanie drugiego). Najpierw wywołaj `subagent` z
-      `async=true, task="Wywołaj wait z seconds=8, potem zakończ tekstem
-      'A gotowe'."` — zapamiętaj zwrócony `job_id` (nazwij go `<ID_A>`
-      podstawiając realną wartość w kroku niżej). Natychmiast potem wywołaj
-      `subagent` z `async=true` i `task` ustawionym dokładnie na (podstawiając
-      prawdziwe `<ID_A>`): `"Wywołaj narzędzie wait z job_id=\"<ID_A>\" i
-      seconds=15. Zwróć dokładną treść odpowiedzi tego wywołania jako swój
-      wynik."`. `wait` na drugi `job_id` (seconds: 20). **Oczekiwane:** drugi
-      job kończy się `done`, a jego wynik zawiera treść w stylu "job
-      finished" z tekstem "A gotowe" — dowód, że `wait` jest dostępny
-      wewnątrz subagenta i widzi ten sam, współdzielony `jobs.Registry` co
-      główny wątek (nie osobną, per-agentową instancję).
+      `wait` on both `job_id`s (seconds: 15). **Expected:** task 2 never
+      gets the lock on the first attempt (because task 1 holds it for at
+      least ~3s), it gets it only after task 1's explicit `unlock` — i.e.
+      not earlier than the attempt count corresponding to ~3s elapsing. If
+      task 2 reports success on the first attempt, it means the `lock` on
+      `queue.go` did not work at all in task 1 — treat this as a
+      serious finding, not a trifle.
+- [ ] **7.6** Visibility of `wait(job_id)` **from inside** another subagent, not
+      only from the main thread (today the only channel through which one job can
+      learn about the state of another). First call `subagent` with
+      `async=true, task="Call wait with seconds=8, then finish with the text
+      'A done'."` — remember the returned `job_id` (call it `<ID_A>`,
+      substituting the real value in the step below). Immediately afterwards call
+      `subagent` with `async=true` and `task` set exactly to (substituting the
+      real `<ID_A>`): `"Call the wait tool with job_id=\"<ID_A>\" and
+      seconds=15. Return the exact content of that call's response as your
+      result."`. `wait` on the second `job_id` (seconds: 20). **Expected:** the second
+      job ends `done`, and its result contains content along the lines of "job
+      finished" with the text "A done" — proof that `wait` is available
+      inside a subagent and sees the same shared `jobs.Registry` as the
+      main thread (not a separate, per-agent instance).
 
-## 8. Komunikacja między subagentami przez główny wątek
+## 8. Communication between subagents via the main thread
 
-Bezpośrednia komunikacja subagent→subagent (bez pośrednictwa głównego wątku)
-jest świadomie poza zakresem tej rundy prac ("nested agents" — pominięte na
-wczesnym etapie planowania). Jedyny dziś dostępny kanał to główny wątek
-odczytujący wynik jednego joba i **ręcznie** wklejający go do treści `task`
-kolejnego — poniższe scenariusze weryfikują, że to w ogóle działa
-przewidywalnie.
+Direct subagent→subagent communication (without the main thread as intermediary)
+is deliberately out of scope for this round of work ("nested agents" — skipped at
+an early planning stage). The only channel available today is the main thread
+reading the result of one job and **manually** pasting it into the `task` text of
+the next — the scenarios below verify that this works predictably at all.
 
-- [ ] **8.1** Produkuj→konsumuj przez główny wątek jako pośrednika. Wywołaj
-      `subagent` z `async=true, task="Wymyśl i zwróć jako wynik jedno losowe
-      słowo-hasło (dowolne, jedno słowo, bez wyjaśnień)."`. Poczekaj na
-      `done` przez `wait(job_id, seconds: 10)` i zapamiętaj dokładne hasło ze
-      zwróconego wyniku. Następnie wywołaj `subagent` z `async=true, task`
-      ustawionym dokładnie na (podstawiając prawdziwe hasło): `"Otrzymane
-      hasło to: '<HASŁO>'. Zwróć jako wynik to samo hasło zapisane wielkimi
-      literami."`. `wait` na drugi `job_id`. **Oczekiwane:** wynik drugiego
-      joba to poprawnie zamienione na wielkie litery hasło z pierwszego —
-      potwierdza, że główny wątek jest w stanie wiernie przekazać wynik
-      jednego joba jako wejście drugiego (jedyny dziś istniejący "kanał
-      komunikacji" między subagentami).
-- [ ] **8.2** Subagent próbujący ominąć brak bezpośredniej komunikacji przez
-      wywołanie `subagent` samego siebie (rekurencja). Wywołaj `subagent` z
-      `async=true, task="Wywołaj narzędzie subagent z task='cokolwiek'. Zwróć
-      jako wynik dokładną treść błędu, jeśli to się nie uda."`. `wait` na
-      `job_id` (seconds: 10). **Oczekiwane:** job kończy się `done` (nie
-      `failed` — to child powinien obsłużyć błąd i zakończyć się
-      poprawnie), a jego wynik zawiera komunikat o zabronionej rekurencji.
-      Jeśli job zamiast tego wisi/timeoutuje albo faktycznie wystartował
-      zagnieżdżonego subagenta — to jest bug (odpowiednik testu `A-11` z
-      `wiring_test.go`, tu weryfikowany end-to-end zamiast fakeowym LLM).
+- [ ] **8.1** Produce→consume with the main thread as intermediary. Call
+      `subagent` with `async=true, task="Come up with and return as the result one random
+      password word (any, a single word, no explanations)."`. Wait for
+      `done` via `wait(job_id, seconds: 10)` and remember the exact password from the
+      returned result. Then call `subagent` with `async=true, task`
+      set exactly to (substituting the real password): `"The received
+      password is: '<PASSWORD>'. Return as the result the same password written in capital
+      letters."`. `wait` on the second `job_id`. **Expected:** the result of the second
+      job is the password from the first correctly converted to capital letters —
+      confirms that the main thread is able to faithfully pass the result
+      of one job as input to the other (the only "communication channel"
+      between subagents that exists today).
+- [ ] **8.2** A subagent trying to bypass the lack of direct communication by
+      calling `subagent` itself (recursion). Call `subagent` with
+      `async=true, task="Call the subagent tool with task='anything'. Return
+      as the result the exact error text if this fails."`. `wait` on
+      `job_id` (seconds: 10). **Expected:** the job ends `done` (not
+      `failed` — the child should handle the error and finish
+      correctly), and its result contains a message about forbidden recursion.
+      If the job instead hangs/times out or actually started a
+      nested subagent — that is a bug (the equivalent of test `A-11` from
+      `wiring_test.go`, here verified end-to-end instead of with a fake LLM).
 
-## Co NIE jest tu testowane (świadomy brak)
+## What is NOT tested here (deliberate gap)
 
-Poniższe wymagałyby mechanizmów opisanych jako otwarte w `docs/findings.md`
-(P3/P4) lub w sekcji "Co NIE jest jeszcze zaimplementowane" głównego planu:
+The following would require mechanisms described as open in `docs/findings.md`
+(P3/P4) or in the "What is NOT implemented yet" section of the main plan:
 
-- Subagent **proszący** główny wątek o zwolnienie locka (blokujące `ask`) —
-  dziś jedyna dostępna strategia to `wait` + retry w pętli po stronie modelu
-  (patrz 7.1), nie ma dedykowanego mechanizmu powiadomienia "lock released".
-- `read` ostrzegający, że czytana ścieżka jest aktualnie zalokowana przez
-  innego agenta (P3 — propozycja, niezaimplementowana).
-- `write`/`edit` fizycznie egzekwujące lock (P2 — świadomie zaakceptowany
-  brak, `lock` jest dziś czysto advisory/kooperacyjny, nic nie blokuje
-  faktycznego zapisu na zablokowanej ścieżce).
-- Strukturalny `note`/`intent` przy locku widoczny dla innych agentów bez
-  parsowania treści błędu (P4 — propozycja).
+- A subagent **asking** the main thread to release a lock (a blocking `ask`) —
+  today the only available strategy is `wait` + retry in a loop on the model side
+  (see 7.1), there is no dedicated "lock released" notification mechanism.
+- `read` warning that the path being read is currently locked by
+  another agent (P3 — proposal, not implemented).
+- `write`/`edit` physically enforcing the lock (P2 — a deliberately accepted
+  gap, `lock` is today purely advisory/cooperative, nothing blocks
+  the actual write to a locked path).
+- A structured `note`/`intent` on a lock visible to other agents without
+  parsing the error text (P4 — proposal).
