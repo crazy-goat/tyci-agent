@@ -488,7 +488,7 @@ func TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates(t *testing.T
 	bus := eventbus.New(32) // same size as main.go's jobEventBus
 	defer bus.Close()
 
-	sub, unsubscribe := bus.SubscribeCoalesced("job.updated", jobEventKey)
+	sub, unsubscribe := subscribeJobUpdates(bus)
 	defer unsubscribe()
 
 	// The model is only touched by the consumer goroutine, like bubbletea's
@@ -560,7 +560,7 @@ func TestForwardJobUpdates_LateSnapshotDoesNotOverwriteTerminalState(t *testing.
 	bus := eventbus.New(32)
 	defer bus.Close()
 
-	sub, unsubscribe := bus.SubscribeCoalesced("job.updated", jobEventKey, eventbus.WithReplaces(jobEventReplaces))
+	sub, unsubscribe := subscribeJobUpdates(bus)
 	defer unsubscribe()
 
 	started := time.Now()
