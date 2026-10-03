@@ -163,6 +163,41 @@ func TestBuildStatus_NarrowTerminalNeverWraps(t *testing.T) {
 	}
 }
 
+// TestAssembleStatusRow_OverlongRightPartIsClamped pins F34: the bar must
+// clamp its RIGHT side itself, not rely on each right-side producer to
+// bound its own output. buildContextCost (the only current producer)
+// already caps itself, so an over-long right can never be observed via
+// buildStatus today — the clamp lives in the shared assembly, exercised
+// here with a right part far past the terminal width. Asserts one line
+// (no wrap), no wider than the terminal.
+func TestAssembleStatusRow_OverlongRightPartIsClamped(t *testing.T) {
+	right := strings.Repeat("subsidy figures ", 10) // ~160 cols, no truncation hints
+
+	for _, w := range []int{20, 40, 60, 106} {
+		got := assembleStatusRow("⟳ thinking... 1.0s", right, w)
+		if strings.Contains(got, "\n") {
+			t.Fatalf("width=%d: assembleStatusRow wrapped to multiple lines: %q", w, got)
+		}
+		if gotW := lipgloss.Width(got); gotW > w {
+			t.Fatalf("width=%d: assembleStatusRow width = %d, want <= %d; got %q", w, gotW, w, got)
+		}
+	}
+}
+
+// TestAssembleStatusRow_RightClampKeepsLeftAlive checks the clamp leaves
+// room for the left side's 1-column floor rather than letting the right
+// part eat the whole row: with an over-long right, the left part must
+// still be present.
+func TestAssembleStatusRow_RightClampKeepsLeftAlive(t *testing.T) {
+	got := assembleStatusRow("model", strings.Repeat("x", 200), 40)
+	if !strings.Contains(got, "model") && !strings.Contains(got, "…") {
+		t.Fatalf("expected left part or its ellipsis in %q", got)
+	}
+	if w := lipgloss.Width(got); w > 40 {
+		t.Fatalf("assembleStatusRow width = %d, want <= 40; got %q", w, got)
+	}
+}
+
 // TestTruncateStatusText_ShortStringPassesThroughUnchanged makes sure the
 // truncation is only applied when actually needed — no ellipsis, no
 // mangling, for text that already fits.

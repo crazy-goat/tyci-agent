@@ -73,8 +73,32 @@ func (m TuiModel) buildStatus() string {
 		return ""
 	}
 
-	left := strings.Join(leftParts, " │ ")
-	right := strings.Join(rightParts, " │ ")
+	return assembleStatusRow(strings.Join(leftParts, " │ "), strings.Join(rightParts, " │ "), m.width)
+}
+
+// assembleStatusRow joins the left and right parts of the status bar into
+// one row, clamping BOTH sides to the terminal width. Extracted from
+// buildStatus so the width invariant can be tested with an over-long right
+// part directly — buildStatus's only right-side producer (buildContextCost)
+// already caps itself, so an over-long right never reaches the bar through
+// buildStatus alone.
+func assembleStatusRow(left, right string, width int) string {
+	// Clamp the right side in the bar itself, not just in each producer.
+	// buildContextCost (the only current producer) bounds its own output,
+	// but the protection then sits with the producer: any future item
+	// appended to rightParts without its own budget lets an over-long
+	// right string through, forcing lipgloss to WRAP the row and drifting
+	// the fixed frame height — the same failure mode the left-side cap
+	// below exists to prevent. width <= 0 ("no resize yet") stays
+	// unbounded, matching buildContextCost's documented contract; that
+	// frame is never painted.
+	if width > 0 {
+		maxRightW := width - 3 // reserve room for the left-side floor + gaps
+		if maxRightW < 1 {
+			maxRightW = 1
+		}
+		right = truncateStatusText(right, maxRightW)
+	}
 
 	// Hard-cap left BEFORE computing padding. Every fragment above is
 	// attacker-free but not length-free: m.statusMessage in particular can
@@ -91,7 +115,7 @@ func (m TuiModel) buildStatus() string {
 	// funnels through, fixes every caller at once instead of each caller
 	// remembering to truncate its own message.
 	rightW := lipgloss.Width(right)
-	maxLeftW := m.width - rightW - 3 // leading space + gap + trailing space
+	maxLeftW := width - rightW - 3 // leading space + gap + trailing space
 	if maxLeftW < 1 {
 		maxLeftW = 1
 	}
@@ -99,7 +123,7 @@ func (m TuiModel) buildStatus() string {
 
 	// Right-align the right part, with leading and trailing space.
 	leftW := lipgloss.Width(left)
-	padding := m.width - leftW - rightW
+	padding := width - leftW - rightW
 	if padding >= 2 {
 		return " " + left + strings.Repeat(" ", padding-2) + right + " "
 	}
