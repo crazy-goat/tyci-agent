@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `eventbus.Bus.SubscribeCoalesced`: a subscription that keeps only the latest event per key, so a slow consumer never loses the newest state (#113). The optional `eventbus.WithReplaces` decides which of two events with the same key is kept (#131)
 
 ### Fixed
+- Untrusted-project warnings for agent commands now name the skipped local cron directory and MCP configuration as well as hooks and Lua tools, using the same warning helper as workflow runs (#126)
 - The TUI jobs panel no longer shows a finished job as running when a progress snapshot taken just before the job ended reaches it after the terminal event; job snapshots published to `onEvent` now carry a per-job `EventSeq`, and both the TUI's coalescing subscription and the model ignore older ones (#131)
 - The TUI jobs panel no longer shows a finished job as running forever when a burst of `job.updated` events overflows the 32-slot bus while the TUI is busy; the TUI now subscribes with per-job coalescing (#113)
 

@@ -169,6 +169,12 @@ var workflowListCmd = &cobra.Command{
 // shape hooks.Load's own error reporting exists to prevent, just for the
 // trust gate instead of a config parse error.
 func warnWorkflowUntrusted(discoveredByName bool) {
+	warnProjectUntrusted(discoveredByName)
+}
+
+// warnProjectUntrusted is shared by agent and workflow entry points so the
+// list of skipped project-local content stays in sync.
+func warnProjectUntrusted(discoveredByName bool) {
 	msg := "tyci: this project is not trusted — project-local hooks (.tyci/hooks.json), " +
 		"Lua tools (.tyci/tools/*.lua), the local cron dir, and mcp.json are skipped this session"
 	if discoveredByName {
