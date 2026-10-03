@@ -2,7 +2,6 @@ package display
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -31,32 +30,22 @@ func (m TuiModel) contextUsed() (used, limit int, ok bool) {
 // breakdown, timings, throughput — is in the sidebar's Tokens tab, one click
 // away on the context figure.
 //
-// The whole return value is bounded to at most m.width-1 columns (see
-// rightBudget below) — not just the cost half of it. buildStatus
-// (tui_status.go) truncates the LEFT side of the status bar against
-// however wide THIS turns out to be, but never truncates this side itself;
-// an unbounded right therefore forces lipgloss to WRAP the whole status row
-// instead of clipping it, exactly the failure mode buildStatus's own
-// comment documents for an unbounded left ("a single ~106-char message
-// turned a 20-line frame into 20+ lines"). The -1 reserve is not
-// decorative: buildStatus's maxLeftW clamps to a floor of 1 column even
-// when the right side leaves no room at all, so the right side must leave
-// at least that 1 column free or left+right together exceed m.width by
-// exactly the amount the floor forced — measured, not assumed: at
-// rightW == m.width, leftW's forced-1 pushes the total to m.width+1.
+// The whole return value is bounded by statusRightBudget (tui_status.go) —
+// not just the cost half of it — because this side must never wrap the
+// status row: assembleStatusRow renders the bar as one fixed-height row
+// via lipgloss, which WRAPS content wider than the terminal instead of
+// clipping it (the same failure mode its own comment documents for an
+// unbounded left: "a single ~106-char message turned a 20-line frame into
+// 20+ lines").
+//
+// The budget is NOT written out here. It used to be, as m.width-1, while
+// assembleStatusRow allowed m.width-3: two budgets in two files, the
+// tighter one silently winning, and a $0.596 bill rendering as "0.59…".
+// The reserve is the leading space plus the left side's 1-column floor;
+// the trailing space is not counted, because the assembly gives it up
+// first when the gap runs out of room.
 func (m TuiModel) buildContextCost() string {
-	// rightBudget bounds this function's ENTIRE output. m.width <= 0 (no
-	// resize has happened yet) is treated as "don't know", not "zero room":
-	// this renders unbounded, same as before this budget existed. That
-	// unbounded frame IS built before the first WindowSizeMsg, but it is
-	// never painted — paintRegion (tui_painter.go) returns early on
-	// width <= 0 — so the only caller that sees it is a TuiModel built
-	// directly in a test.
-	rightBudget := math.MaxInt
-	if m.width > 0 {
-		// m.width >= 1 here, so m.width-1 is never negative; no floor needed.
-		rightBudget = m.width - 1
-	}
+	rightBudget := statusRightBudget(m.width)
 
 	var parts []string
 
