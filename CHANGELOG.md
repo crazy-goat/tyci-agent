@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The TUI jobs panel no longer shows a finished job as running when a progress snapshot taken just before the job ended reaches it after the terminal event; job snapshots published to `onEvent` now carry a per-job `EventSeq`, and both the TUI's coalescing subscription and the model ignore older ones (#131)
 - The TUI jobs panel no longer shows a finished job as running forever when a burst of `job.updated` events overflows the 32-slot bus while the TUI is busy; the TUI now subscribes with per-job coalescing (#113)
 - The status bar now clamps its right part to the terminal width instead of relying on each right-side item to bound itself, so a future over-long right item can no longer wrap the row and break the fixed frame height (#125)
-- The status bar no longer ellipsizes the session cost mid-number on a narrow terminal: the right side's width budget is now one function (`assembleStatusRow`'s, which the producer reserves the same amount of), and when the side does not fit, whole items are dropped instead of being cut (#153)
+- The status bar no longer truncates the session cost mid-number on a narrow terminal: the right side's width budget is one function (`display.statusRightBudget`), and when a figure does not fit, it is dropped whole instead of being cut, so a narrow bar now loses the bill rather than showing a shortened one (#153). The left side of the bar is unchanged and still truncates from the tail
 
 ## [0.1.0] - 2026-10-02
 

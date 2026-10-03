@@ -74,22 +74,30 @@ func (m TuiModel) buildStatus() string {
 		return ""
 	}
 
-	return assembleStatusRow(strings.Join(leftParts, " │ "), strings.Join(rightParts, statusRightSep), m.width)
+	return assembleStatusRow(strings.Join(leftParts, statusSep), strings.Join(rightParts, statusSep), m.width)
 }
 
-// statusRightSep joins the status bar's right-side items. It is also what
-// assembleStatusRow splits on to drop whole items when the row is too
-// narrow, so a producer must not render the separator inside its own text.
-const statusRightSep = " │ "
+// statusSep joins the items of both sides of the status bar. The right side
+// is also SPLIT on it by fitStatusRight, which drops items whole, so an item
+// must be neither empty nor contain the separator itself: a doubled separator
+// makes a drop leave the " │ " that preceded the missing item behind, and a
+// leading one renders as an item of its own. buildStatus only appends
+// non-empty items, so neither can happen today.
+const statusSep = " │ "
 
-// statusRightReserve is how many columns the status bar keeps for everything
-// that is not its right side: the leading space (always rendered) and the
-// left side's 1-column floor (assembleStatusRow never truncates the left to
-// nothing). The trailing space is deliberately NOT part of the reserve — it
-// is what assembleStatusRow gives up first when the gap runs out of room,
-// which is what makes this exact: a 1-column left plus a width-2 right
-// renders as " " + left + right, still exactly `width` columns.
-const statusRightReserve = 2
+// statusRightReserve is 1, which is the tight bound — not a margin.
+//
+// The right side may therefore fill width-1 columns, and the row still fits:
+// the left side floors at 1 column (assembleStatusRow never truncates it to
+// nothing), so left+right is then exactly `width`, rendered without either
+// surrounding space. One column less and a figure that used to be shown
+// disappears at every width where the right side would have been exactly
+// width-1 wide; one column more and the two sides' floors push the row one
+// column past the terminal.
+//
+// 1 is also what the shipped code used before #125 clamped the right side in
+// the bar, so keeping it renders every session exactly as v0.1.0 did.
+const statusRightReserve = 1
 
 // statusRightBudget is how many columns the right side of the status bar may
 // occupy at a given terminal width.
@@ -122,16 +130,25 @@ func statusRightBudget(width int) int {
 // the run being ellipsized: the items are figures (a context percentage, a
 // dollar amount), and half of one reads as the whole while stating less —
 // which for a bill is worse than showing none.
+//
+// An item that does not fit on its own takes the rest with it: there is
+// nothing shorter than "nothing" to show in its place, and cutting it is the
+// thing this function exists to avoid.
 func fitStatusRight(right string, maxW int) string {
 	if right == "" || lipgloss.Width(right) <= maxW {
 		return right
 	}
-	items := strings.Split(right, statusRightSep)
+	items := strings.Split(right, statusSep)
 	kept := ""
 	for _, item := range items {
+		if strings.TrimSpace(item) == "" {
+			continue // see statusSep: an item with nothing to show is not one,
+			// and keeping the separator in front of it is what would
+			// manufacture a trailing " │ "
+		}
 		candidate := item
 		if kept != "" {
-			candidate = kept + statusRightSep + item
+			candidate = kept + statusSep + item
 		}
 		if lipgloss.Width(candidate) > maxW {
 			break

@@ -41,9 +41,9 @@ func (m TuiModel) contextUsed() (used, limit int, ok bool) {
 // The budget is NOT written out here. It used to be, as m.width-1, while
 // assembleStatusRow allowed m.width-3: two budgets in two files, the
 // tighter one silently winning, and a $0.596 bill rendering as "0.59…".
-// The reserve is the leading space plus the left side's 1-column floor;
-// the trailing space is not counted, because the assembly gives it up
-// first when the gap runs out of room.
+// statusRightBudget is that same m.width-1 — the tight bound, and the number
+// this function used before the second clamp existed — so a session renders
+// here exactly as it did before #125.
 func (m TuiModel) buildContextCost() string {
 	rightBudget := statusRightBudget(m.width)
 
@@ -62,12 +62,11 @@ func (m TuiModel) buildContextCost() string {
 		ctxPart = "ctx " + fmtTokens(used)
 	}
 	// ctxPart itself has never been width-bounded (this predates the scout
-	// kind), but rightBudget now makes that a documented invariant instead
-	// of an accident: a ctxPart wider than the whole right-side budget
+	// kind), but the budget covers it: one wider than the whole right side
 	// cannot be shown at all without wrapping the row on its own, so it is
-	// dropped rather than rendered — this is the one case nothing later
-	// (formatCost's own fitting) can rescue, since there is no fallback
-	// shorter than "nothing" for the context figure.
+	// dropped rather than rendered — the one case nothing later (formatCost's
+	// own fitting) can rescue, since there is no fallback shorter than
+	// "nothing" for the context figure.
 	if ctxPart != "" && lipgloss.Width(ctxPart) > rightBudget {
 		ctxPart = ""
 	}

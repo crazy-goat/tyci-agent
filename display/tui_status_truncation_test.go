@@ -1,7 +1,6 @@
 package display
 
 import (
-	"math"
 	"strings"
 	"testing"
 
@@ -279,20 +278,43 @@ func TestBuildStatus_RightSideIsNeverCutMidFigure(t *testing.T) {
 	}
 }
 
-// TestBuildStatus_WholeBillAtTwentyFourColumns pins the exact rendering the
-// issue reported: at 24 columns the right side (22) plus the 1-column left
-// plus the leading space is exactly the terminal, so the bar was already
-// showing everything before #150 and lost the last digits of the bill after
-// it — the clamp bought nothing on this input and cost the user money.
-func TestBuildStatus_WholeBillAtTwentyFourColumns(t *testing.T) {
+// TestBuildStatus_RightSideMatchesShippedRenderingAtEveryCutWidth pins the
+// widths where the reserve is decided, against what v0.1.0 rendered — this is
+// the user's baseline, since both #125 and #153 are still in [Unreleased].
+//
+// The expected strings are the shipped ones, measured from the v0.1.0 tag
+// (3860a4b), and deliberately not computed from statusRightReserve: the point
+// of the table is to pin the *value* of the budget by what a person sees, so
+// that growing the reserve by a column — which is safe for the wrap invariant
+// and would still pass every other test in this file — fails here instead. It
+// does: at 23 columns the bill is exactly 22 wide, so a reserve of 2 drops it
+// and renders " m      ctx 198k (99%) " instead.
+//
+// Note what is NOT claimed: the left side still truncates from the tail, so a
+// scroll offset renders as "↑1…" on a narrow bar (see truncateStatusText).
+// This table is about the right side alone.
+func TestBuildStatus_RightSideMatchesShippedRenderingAtEveryCutWidth(t *testing.T) {
 	m := statusBarCostModel(t, func() {
 		ledger.Record(ledger.Main, "p", "m", "", stream.Usage{Input: 198_000, Output: 100})
 	})
-	m.width = 24
 
-	want := " mctx 198k (99%), 0.596$"
-	if got := m.buildStatus(); got != want {
-		t.Fatalf("buildStatus() at width 24 = %q, want %q", got, want)
+	cases := []struct {
+		width int
+		want  string
+	}{
+		{7, "m0.596$"},                  // 6-wide right: fits next to a 1-column left
+		{8, " m0.596$"},                 // ...and gets its leading space back
+		{15, "mctx 198k (99%)"},         // the ctx figure swaps in for the bill
+		{16, " mctx 198k (99%)"},        //
+		{23, "mctx 198k (99%), 0.596$"}, // the reported case, one column tighter
+		{24, " mctx 198k (99%), 0.596$"},
+		{25, " mctx 198k (99%), 0.596$ "},
+	}
+	for _, c := range cases {
+		m.width = c.width
+		if got := m.buildStatus(); got != c.want {
+			t.Errorf("buildStatus() at width %d = %q, want %q (as rendered by v0.1.0)", c.width, got, c.want)
+		}
 	}
 }
 
@@ -309,7 +331,7 @@ func TestBuildStatus_WholeBillAtTwentyFourColumns(t *testing.T) {
 // there the useful content is at the start, not the end.)
 func TestAssembleStatusRow_RightSideDropsWholeItems(t *testing.T) {
 	items := []string{"ctx 198k (99%)", "0.596$", "12.34$ (sub 5.00$ scout 0.500$)"}
-	right := strings.Join(items, statusRightSep)
+	right := strings.Join(items, statusSep)
 
 	for w := 1; w <= 80; w++ {
 		got := assembleStatusRow("m", right, w)
@@ -333,64 +355,91 @@ func TestAssembleStatusRow_RightSideDropsWholeItems(t *testing.T) {
 	}
 }
 
-// TestAssembleStatusRow_RightSideDropBoundaries pins the two edges of the
-// budget from the other direction: at exactly the budget nothing is dropped,
-// and one column short of it exactly the last item goes — the budget is
-// spent to the column, not held back.
+// TestAssembleStatusRow_RightSideDropBoundaries pins the ladder's edges: the
+// widths at which each item starts fitting, at which the last one stops
+// fitting, and at which even the first one does not. The numbers are written
+// out rather than computed from statusRightReserve, so the table pins what the
+// budget buys (57 columns of right side at width 58) instead of restating the
+// arithmetic that produced it.
 func TestAssembleStatusRow_RightSideDropBoundaries(t *testing.T) {
-	items := []string{"ctx 198k (99%)", "0.596$", "12.34$ (sub 5.00$ scout 0.500$)"}
-	right := strings.Join(items, statusRightSep)
-	exact := lipgloss.Width(right) + statusRightReserve
+	items := []string{"ctx 198k (99%)", "0.596$", "12.34$ (sub 5.00$ scout 0.500$)"} // 14 / 23 / 57 columns together
+	right := strings.Join(items, statusSep)
 
-	if got := assembleStatusRow("model", right, exact); !strings.Contains(got, right) {
-		t.Fatalf("width=%d: the right side fits the budget exactly, want no item dropped; got %q", exact, got)
+	cases := []struct {
+		width     int
+		wantItems int
+	}{
+		{58, 3}, // 57 columns of right side: everything fits
+		{57, 2}, // one column short: the last item goes
+		{24, 2}, // the first two still fit
+		{23, 1}, // 22 columns: only the ctx figure
+		{15, 1}, // 14 columns: the ctx figure, just
+		{14, 0}, // 13 columns: not even that
+		{1, 0},  // ...down to the narrowest terminal there is
 	}
-
-	got := assembleStatusRow("model", right, exact-1)
-	if strings.Contains(got, items[2]) {
-		t.Fatalf("width=%d: one column short of the budget, want the last item dropped; got %q", exact-1, got)
-	}
-	if want := strings.Join(items[:2], statusRightSep); !strings.Contains(got, want) {
-		t.Fatalf("width=%d: the first two items still fit, want them kept whole; got %q", exact-1, got)
+	for _, c := range cases {
+		got := assembleStatusRow("m", right, c.width)
+		if want := strings.Join(items[:c.wantItems], statusSep); !strings.Contains(got, want) {
+			t.Errorf("width=%d: want the first %d item(s) %q kept whole; got %q", c.width, c.wantItems, want, got)
+		}
+		for _, item := range items[c.wantItems:] {
+			if strings.Contains(got, item) {
+				t.Errorf("width=%d: item %q is over the budget but survived: %q", c.width, item, got)
+			}
+		}
+		if gotW := lipgloss.Width(got); gotW > c.width {
+			t.Errorf("width=%d: assembleStatusRow width = %d; got %q", c.width, gotW, got)
+		}
+		if strings.Contains(got, "…") {
+			t.Errorf("width=%d: an item was cut instead of dropped: %q", c.width, got)
+		}
 	}
 }
 
-// TestStatusRightBudget_ReservesLeadingSpaceAndLeftFloor states the one
-// budget as a table, so the reserve cannot change without someone reading
-// why: width - statusRightReserve, where the reserve is the leading space
-// plus the left side's 1-column floor. The trailing space is not counted —
-// the assembly gives it up first — and width <= 0 ("no resize yet") stays
-// unbounded, the frame being built but never painted.
-func TestStatusRightBudget_ReservesLeadingSpaceAndLeftFloor(t *testing.T) {
-	cases := []struct{ width, want int }{
-		{-1, math.MaxInt}, // not resized yet: unbounded by contract
-		{0, math.MaxInt},
-		{1, 0},   // nothing fits next to the left side's own column
-		{2, 0},   // ...and the trailing space has gone too
-		{3, 1},   // too narrow for any figure, but the rule is not "min 1"
-		{24, 22}, // the width #153 was reported on
-		{120, 118},
-	}
-	for _, c := range cases {
-		if got := statusRightBudget(c.width); got != c.want {
-			t.Errorf("statusRightBudget(%d) = %d, want %d", c.width, got, c.want)
+// TestFitStatusRight_EmptyItemDoesNotLeaveATrailingSeparator guards the one
+// input shape that could make a drop manufacture a separator: buildStatus
+// never appends an empty item, but a future producer might, and then
+// "a │  │ b" would keep "a │ " — a separator with nothing after it. Both the
+// empty item and the whitespace-only one are checked, since the second is
+// what a doubled separator actually produces once split.
+func TestFitStatusRight_EmptyItemDoesNotLeaveATrailingSeparator(t *testing.T) {
+	for _, input := range []string{
+		"a" + statusSep + statusSep + "b",
+		"a" + statusSep + " " + statusSep + "b",
+	} {
+		got := fitStatusRight(input, 6)
+		if got != "a"+statusSep+"b" {
+			t.Errorf("fitStatusRight(%q, 6) = %q, want the empty item skipped: %q", input, got, "a"+statusSep+"b")
+		}
+		if strings.HasPrefix(got, statusSep) || strings.HasSuffix(got, statusSep) {
+			t.Errorf("fitStatusRight(%q, 6) = %q, a separator with no item on one side of it", input, got)
 		}
 	}
 }
 
 // TestBuildContextCost_HonorsTheSharedRightBudget is the producer's half of
 // "one budget in one place": whatever buildContextCost renders must fit
-// statusRightBudget, which is the number assembleStatusRow enforces. A
-// producer over budget is the failure #153 was — the bar cut it one layer
-// above, silently, because the two budgets disagreed. Swept over every width
-// on the widest ledger shape (a full breakdown, not the bare total) so the
-// whole ladder in formatCost is exercised at a narrow width.
+// statusRightBudget, the number assembleStatusRow enforces. A producer over
+// budget is the failure #153 was — the bar dropped its tail one layer above,
+// silently — so this asserts against the shared helper rather than a literal.
+// Two honest limits: a producer that does not CALL the helper cannot be caught
+// here at the tight bound (a local m.width-1 and statusRightBudget are the same
+// number), and what it does catch is a producer that budgets wider than the
+// bar, at any width. The helper's VALUE is pinned elsewhere, by the shipped
+// rendering in TestBuildStatus_RightSideMatchesShippedRenderingAtEveryCutWidth,
+// which a wrong constant cannot pass.
+//
+// Swept over every width on the widest ledger shape (a full breakdown, not the
+// bare total) so the whole ladder in formatCost is exercised at a narrow
+// width, plus a budget-free check that a rendered cost is always the complete
+// figure from the ledger rather than a prefix of it.
 func TestBuildContextCost_HonorsTheSharedRightBudget(t *testing.T) {
 	m := statusBarCostModel(t, func() {
 		ledger.Record(ledger.Main, "p", "m", "", stream.Usage{Input: 198_000, Output: 100})
 		ledger.Record(ledger.Subagent, "p", "m", "job-1", stream.Usage{Input: 1_000_000, Output: 1000})
 		ledger.Record(ledger.Scout, "p", "m", "", stream.Usage{Input: 100_000, Output: 1000})
 	})
+	bareTotal := fmtUSD(ledger.Get().TotalUSD()) + "$"
 
 	for w := 1; w <= 120; w++ {
 		m.width = w
@@ -398,9 +447,37 @@ func TestBuildContextCost_HonorsTheSharedRightBudget(t *testing.T) {
 		if strings.Contains(got, "…") {
 			t.Errorf("width=%d: buildContextCost ellipsized a figure: %q", w, got)
 		}
+		if strings.Contains(got, "$") && !strings.Contains(got, bareTotal) {
+			t.Errorf("width=%d: buildContextCost rendered a partial bill, want %q whole or none of it: %q", w, bareTotal, got)
+		}
 		if gotW := lipgloss.Width(got); gotW > statusRightBudget(w) {
 			t.Errorf("width=%d: buildContextCost is %d columns wide, want <= %d (statusRightBudget): %q",
 				w, gotW, statusRightBudget(w), got)
 		}
+	}
+}
+
+// TestStatusBarRendersWholeFiguresBeforeTheFirstResize pins the one width rule
+// that is not about columns: m.width <= 0 means "no resize yet", so both sides
+// render whole and the row may be wider than the (still unknown) terminal.
+// The frame is never painted — paintRegion returns early on width <= 0 — so
+// this contract exists only so the pre-resize frame does not come out as a
+// stub with its figures silently dropped. A budget that floored at 0 here
+// would look fine in every width sweep and still blank the bar on startup.
+func TestStatusBarRendersWholeFiguresBeforeTheFirstResize(t *testing.T) {
+	m := statusBarCostModel(t, func() {
+		ledger.Record(ledger.Main, "p", "m", "", stream.Usage{Input: 198_000, Output: 100})
+	})
+	m.width = 0
+
+	const whole = "ctx 198k (99%), 0.596$"
+	if got := m.buildContextCost(); got != whole {
+		t.Fatalf("buildContextCost() before the first resize = %q, want %q (unbounded, not dropped)", got, whole)
+	}
+	if got := m.buildStatus(); !strings.Contains(got, whole) {
+		t.Fatalf("buildStatus() before the first resize dropped a figure: %q", got)
+	}
+	if got := assembleStatusRow("model", whole, 0); !strings.Contains(got, whole) {
+		t.Fatalf("assembleStatusRow at width 0 cut the right side: %q", got)
 	}
 }
