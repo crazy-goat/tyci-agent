@@ -115,10 +115,9 @@ func localModelJSONPath() string {
 // MCP servers (.tyci/mcp.json). All four are gated on `trusted`, which the
 // caller decides (via trust.Decide) and passes in rather than this func
 // deciding it again: initCommon and workflowcmd.go's RunE each make their
-// own trust decision and print their own untrusted warning (initCommon's
-// here in this file; workflowcmd.go's own warnWorkflowUntrusted, which also
+// own trust decision and use the shared warnProjectUntrusted warning, which
 // names this func's four skipped pieces plus, when relevant, workflow-script
-// discovery), and threading the same bool through here guarantees both ever
+// discovery, and threading the same bool through here guarantees both ever
 // act on exactly one answer instead of risking two different ones from two
 // separate trust.Decide calls, and guarantees this func itself never prints
 // a second, redundant untrusted warning.
@@ -239,11 +238,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		fmt.Fprintf(os.Stderr, "Warning: trust: %v\n", err)
 	}
 	if !trusted {
-		fmt.Fprintln(os.Stderr,
-			"tyci: this project is not trusted — project-local hooks (.tyci/hooks.json) "+
-				"and Lua tools (.tyci/tools/) are skipped this session. Global ~/.tyci/ "+
-				"content still loads as usual. Run tyci in an interactive mode (console/tui) "+
-				"in this directory to be asked, or edit ~/.tyci/trust.json directly.")
+		warnProjectUntrusted(false)
 	}
 
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")

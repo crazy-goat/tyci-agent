@@ -487,7 +487,9 @@ provider nor the agent loop notices them on its own:
 
 Hooks run a shell command around every tool call. They live in
 `~/.tyci/hooks.json` (yours) and `./.tyci/hooks.json` (the project's); both
-are loaded, global first.
+are loaded, global first, when the project is trusted. In an untrusted project,
+tyci warns that project-local hooks, Lua tools, the local cron directory and
+MCP configuration are skipped; global `~/.tyci/` content still loads.
 
 ```json
 {
