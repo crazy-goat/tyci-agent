@@ -152,6 +152,19 @@ tyci run --agent my-agent --prompt "Hello"
 | `cron` | List and run scheduled prompts |
 | `completion` | Generate shell completion script |
 
+### Version
+
+```bash
+tyci --version
+```
+
+Prints the version of the running binary. A release build has the version
+stamped in from its Git tag. A binary without a stamp reports the main-module
+version the Go toolchain recorded — that is what a `go install` build of a
+tagged release carries, and what a plain `go build` from a Git checkout carries
+as a pseudo-version derived from the commit. A build with no version
+information at all (a source tarball, `-buildvcs=false`) reports `dev`.
+
 ### Common Flags
 
 These flags work with `run`, `console`, and `tui`:

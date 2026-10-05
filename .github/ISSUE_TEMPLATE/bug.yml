@@ -1,0 +1,55 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Please write in English. Thanks for the report!
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happens, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: A minimal example is best (code, config, command).
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      description: Paste the full error. It is formatted as code automatically.
+      render: text
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: tyci --version output
+      description: Run `tyci --version` and paste the output. Add your OS and terminal if the bug looks display-related.
+      placeholder: tyci version v0.2.0
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where to start
+      description: Files that are probably involved and the command that runs the related tests. Maintainers fill this in for `good first issue`.
+    validations:
+      required: false
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+      description: How do we know it is fixed?
+      placeholder: "- [ ] A test reproduces the bug and now passes"
+    validations:
+      required: false

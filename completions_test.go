@@ -136,9 +136,18 @@ func TestCompletionBinaryInvocation(t *testing.T) {
 
 func buildTyciBinary(t *testing.T) string {
 	t.Helper()
+	return buildTyciBinaryArgs(t)
+}
+
+// buildTyciBinaryArgs builds the real binary with extra `go build` arguments
+// (for example `-ldflags`, used by the version tests), then returns its path.
+func buildTyciBinaryArgs(t *testing.T, args ...string) string {
+	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "tyci")
-	cmd := exec.Command("go", "build", "-o", bin, ".")
+	goArgs := append([]string{"build", "-o", bin}, args...)
+	goArgs = append(goArgs, ".")
+	cmd := exec.Command("go", goArgs...)
 	cmd.Dir = repoDir
 	cmd.Env = append(os.Environ(), "HOME="+realHome)
 	if out, err := cmd.CombinedOutput(); err != nil {

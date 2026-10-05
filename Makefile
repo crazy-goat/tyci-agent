@@ -1,6 +1,13 @@
 # Go build configuration
 BINARY=tyci
 
+# Version stamped into the binary and reported by `tyci --version`. A release
+# passes the tag explicitly (`make release VERSION=v1.2.3`); by default it is
+# the nearest git tag, with a distance/dirty suffix when the tree has moved on
+# (`git describe`), or "dev" outside a git checkout.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION_LDFLAG := -X main.version=$(VERSION)
+
 .PHONY: build release minimal clean install install-local lint
 
 # Static analysis, linters and formatter check (see AGENTS.md)
@@ -11,12 +18,13 @@ lint:
 build:
 	go build \
 		-gcflags "all=-N -l" \
+		-ldflags "$(VERSION_LDFLAG)" \
 		-o $(BINARY) .
 
 # Optimized release build (stripped, optimized, trimmed paths)
 release:
 	go build \
-		-ldflags "-s -w" \
+		-ldflags "-s -w $(VERSION_LDFLAG)" \
 		-trimpath \
 		-o $(BINARY) .
 
@@ -24,7 +32,7 @@ release:
 minimal:
 	go build \
 		-tags "noanthropic nogemini" \
-		-ldflags "-s -w" \
+		-ldflags "-s -w $(VERSION_LDFLAG)" \
 		-trimpath \
 		-o $(BINARY) .
 

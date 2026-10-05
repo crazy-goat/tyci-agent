@@ -35,6 +35,7 @@ import (
 var rootCmd = &cobra.Command{
 	Use:           "tyci",
 	Short:         "LLM-powered AI agent CLI",
+	Version:       resolveVersion(),
 	SilenceErrors: true,
 	SilenceUsage:  true,
 	RunE: func(cmd *cobra.Command, args []string) error {
