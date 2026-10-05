@@ -129,9 +129,7 @@ func (m TuiModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateSubagentModal handles keyboard input when the subagent modal is active.
-// It also forwards tuiMsgBlock messages to handleBlockMsg so streaming
-// (tool-progress, tool-end, error, done, reset) continues to work.
+// openModelPicker activates the model picker popup.
 func (m *TuiModel) openModelPicker() {
 	m.pickerActive = true
 	m.pickerFilter = ""

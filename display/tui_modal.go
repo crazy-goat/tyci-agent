@@ -171,16 +171,7 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Block all other mouse events (non-left-button, outside clicks)
 		// from leaking through to background tool blocks.
 		return m, nil
-
-	case tuiMsgBlock:
-		// Forward block messages to the normal handler so streaming
-		// (tool-progress, tool-end, error, done, reset) works while
-		// the subagent modal is active.
-		m.handleBlockMsg(msg)
-		return m, nil
 	}
 
 	return m, nil
 }
-
-// openModelPicker activates the model picker popup.
