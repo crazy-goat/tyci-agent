@@ -244,7 +244,7 @@ func (s *interactiveState) handleCommand(raw string, cancel context.CancelFunc) 
 		return false, true
 	default:
 		cmd := strings.Fields(line)[0]
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		return false, true
 	}
 }

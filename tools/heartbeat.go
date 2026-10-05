@@ -55,11 +55,11 @@ func getJobProgressHeartbeat() JobProgressHeartbeat {
 
 // JobProgressHeartbeatCheck returns a ProgressHeartbeat-shaped callback
 // (agent.Config.ProgressHeartbeat) bound to jobID: calling it asks whether
-// jobID has gone quiet for more than SubagentBackgroundAfterSec — reused
+// jobID has gone quiet for more than SubagentBackgroundAfter — reused
 // here as this reminder's threshold too, per item 15's decided design
 // ("time-based, not step-based"): iterations vary from one second to ten
 // minutes and MaxIterations defaults to unlimited, so a flat iteration count
-// would be meaningless, for exactly the reason SubagentBackgroundAfterSec
+// would be meaningless, for exactly the reason SubagentBackgroundAfter
 // itself already exists as a time-based handoff rather than a step count.
 //
 // Returns nil when jobID is empty or no JobProgressHeartbeat is wired, so a
@@ -79,6 +79,6 @@ func JobProgressHeartbeatCheck(jobID string) func() bool {
 		if heartbeat == nil {
 			return false
 		}
-		return heartbeat.NeedsProgressHeartbeat(jobID, SubagentBackgroundAfterSec())
+		return heartbeat.NeedsProgressHeartbeat(jobID, SubagentBackgroundAfter())
 	}
 }

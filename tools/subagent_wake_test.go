@@ -2,7 +2,7 @@ package tools
 
 // B5 (batch-2 audit): runWithHandoff's blocking-call select used to be
 // blind to a spawned child entering StatusWaitingAnswer — it only noticed a
-// blocked child indirectly, by sitting out the rest of SubagentBackgroundAfterSec
+// blocked child indirectly, by sitting out the rest of SubagentBackgroundAfter
 // (or the whole call, without handoff) before the handoff even let the
 // parent see the queued ask-notice. These tests assert on the wake itself
 // (a channel closing / a goroutine unblocking), not on wall-clock luck.
@@ -128,7 +128,7 @@ func TestWatchForWaiting_WakesWhenAlreadyWaitingBeforeCalled(t *testing.T) {
 // TestRunWithHandoff_WakesWhenChildAsksMidCall is B5's main scenario: a
 // child that asks a question shortly after runWithHandoff's select has
 // already committed to blocking must make the call return promptly,
-// instead of only after SubagentBackgroundAfterSec (here set far longer
+// instead of only after SubagentBackgroundAfter (here set far longer
 // than the assertion's margin, so a pass proves the wake fired — it cannot
 // be explained by the timer arm winning instead).
 //
@@ -140,7 +140,7 @@ func TestWatchForWaiting_WakesWhenAlreadyWaitingBeforeCalled(t *testing.T) {
 // closes that gap.
 func TestRunWithHandoff_WakesWhenChildAsksMidCall(t *testing.T) {
 	reg := wakeEnv(t)
-	t.Cleanup(SetSubagentBackgroundAfterSecForTests(30 * time.Second))
+	t.Cleanup(SetSubagentBackgroundAfterForTests(30 * time.Second))
 
 	askedAt100ms := make(chan struct{})
 	answered := make(chan struct{})
@@ -184,10 +184,10 @@ func TestRunWithHandoff_WakesWhenChildAsksMidCall(t *testing.T) {
 		if !r.res.Success {
 			t.Fatalf("handoff result was not success: %+v", r.res)
 		}
-		// Comfortably below SubagentBackgroundAfterSec (30s): the wake, not
+		// Comfortably below SubagentBackgroundAfter (30s): the wake, not
 		// the timer, must be what ended this call.
 		if elapsed > 5*time.Second {
-			t.Fatalf("runWithHandoff took %s to return after the child asked; expected a prompt wake well under the %s handoff timer", elapsed, SubagentBackgroundAfterSec())
+			t.Fatalf("runWithHandoff took %s to return after the child asked; expected a prompt wake well under the %s handoff timer", elapsed, SubagentBackgroundAfter())
 		}
 		// C1: the wake alone is not enough — the handoff message must
 		// actually carry the question, or the ONLY thing delivered here

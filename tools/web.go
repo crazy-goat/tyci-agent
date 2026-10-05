@@ -314,32 +314,32 @@ func (t *WebTool) webLookup(ctx context.Context, term string) ToolResult {
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("# Lookup: %s\n\n", term))
+	fmt.Fprintf(&b, "# Lookup: %s\n\n", term)
 
 	// Step 1: DuckDuckGo Instant Answer
 	ddgURL := fmt.Sprintf("https://api.duckduckgo.com/?q=%s&format=json&no_html=1", url.QueryEscape(term))
 	ddgResp, err := t.doGet(ctx, client, ddgURL)
 	if err != nil {
-		b.WriteString(fmt.Sprintf("⚠️ DuckDuckGo unavailable: %s\n\n", err))
+		fmt.Fprintf(&b, "⚠️ DuckDuckGo unavailable: %s\n\n", err)
 	} else {
 		var ddg ddgResponse
 		if err := json.Unmarshal([]byte(ddgResp), &ddg); err != nil {
-			b.WriteString(fmt.Sprintf("⚠️ DuckDuckGo response parse error: %s\n\n", err))
+			fmt.Fprintf(&b, "⚠️ DuckDuckGo response parse error: %s\n\n", err)
 		} else {
 			if ddg.AbstractText != "" {
-				b.WriteString(fmt.Sprintf("**Abstract** (%s):\n%s\n\n", ddg.AbstractSource, ddg.AbstractText))
+				fmt.Fprintf(&b, "**Abstract** (%s):\n%s\n\n", ddg.AbstractSource, ddg.AbstractText)
 			}
 			if ddg.Answer != "" {
-				b.WriteString(fmt.Sprintf("**Answer**: %s\n\n", ddg.Answer))
+				fmt.Fprintf(&b, "**Answer**: %s\n\n", ddg.Answer)
 			}
 			for _, topic := range ddg.RelatedTopics {
 				if topic.Text != "" {
-					b.WriteString(fmt.Sprintf("- %s\n", topic.Text))
+					fmt.Fprintf(&b, "- %s\n", topic.Text)
 				}
 				if len(topic.Topics) > 0 {
 					for _, sub := range topic.Topics {
 						if sub.Text != "" {
-							b.WriteString(fmt.Sprintf("  - %s\n", sub.Text))
+							fmt.Fprintf(&b, "  - %s\n", sub.Text)
 						}
 					}
 				}
@@ -355,13 +355,13 @@ func (t *WebTool) webLookup(ctx context.Context, term string) ToolResult {
 	wikiURL := fmt.Sprintf("https://en.wikipedia.org/api/rest_v1/page/summary/%s", url.PathEscape(term))
 	wikiResp, err := t.doGet(ctx, client, wikiURL)
 	if err != nil {
-		b.WriteString(fmt.Sprintf("⚠️ Wikipedia summary unavailable: %s\n\n", err))
+		fmt.Fprintf(&b, "⚠️ Wikipedia summary unavailable: %s\n\n", err)
 	} else {
 		var wiki wikiSummary
 		if err := json.Unmarshal([]byte(wikiResp), &wiki); err != nil {
-			b.WriteString(fmt.Sprintf("⚠️ Wikipedia response parse error: %s\n\n", err))
+			fmt.Fprintf(&b, "⚠️ Wikipedia response parse error: %s\n\n", err)
 		} else if wiki.Extract != "" {
-			b.WriteString(fmt.Sprintf("**Wikipedia**: %s\n%s\n\n", wiki.Title, wiki.Extract))
+			fmt.Fprintf(&b, "**Wikipedia**: %s\n%s\n\n", wiki.Title, wiki.Extract)
 		} else {
 			b.WriteString("(no summary found on Wikipedia)\n\n")
 		}
@@ -374,18 +374,18 @@ func (t *WebTool) webLookup(ctx context.Context, term string) ToolResult {
 			url.QueryEscape(term))
 		searchResp, err := t.doGet(ctx, client, searchURL)
 		if err != nil {
-			b.WriteString(fmt.Sprintf("⚠️ Wikipedia search unavailable: %s\n\n", err))
+			fmt.Fprintf(&b, "⚠️ Wikipedia search unavailable: %s\n\n", err)
 		} else {
 			var ws wikiSearchResponse
 			if err := json.Unmarshal([]byte(searchResp), &ws); err != nil {
-				b.WriteString(fmt.Sprintf("⚠️ Wikipedia search parse error: %s\n\n", err))
+				fmt.Fprintf(&b, "⚠️ Wikipedia search parse error: %s\n\n", err)
 			} else if len(ws.Query.Search) > 0 {
 				b.WriteString("**Wikipedia search results**:\n")
 				for i, s := range ws.Query.Search {
 					if i >= 10 {
 						break
 					}
-					b.WriteString(fmt.Sprintf("- %s\n", s.Title))
+					fmt.Fprintf(&b, "- %s\n", s.Title)
 				}
 				b.WriteString("\n")
 			} else {

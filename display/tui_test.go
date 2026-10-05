@@ -656,7 +656,7 @@ func BenchmarkTUIView(b *testing.B) {
 		}
 		var content strings.Builder
 		for j := 0; j < 10; j++ {
-			content.WriteString(fmt.Sprintf("Line %d of block %d. This is some sample text to simulate a realistic conversation.\n", j, i))
+			fmt.Fprintf(&content, "Line %d of block %d. This is some sample text to simulate a realistic conversation.\n", j, i)
 		}
 		m.handleBlockMsg(tuiMsgBlock{kind: kind, content: content.String()})
 	}

@@ -20,7 +20,7 @@ import (
 // Subagents do not get an implicit wall-clock or iteration backstop. Their
 // contexts remain cancelable through the jobs registry (kill_job), and a
 // blocking foreground call may still hand work to the background after
-// SubagentBackgroundAfterSec.
+// SubagentBackgroundAfter.
 //
 // These constants remain as deprecated compatibility names for callers that
 // used them when constructing schemas or wait durations. They are not used to
@@ -31,7 +31,7 @@ const (
 	SubagentMaxTimeoutSec = SubagentTimeoutSec
 )
 
-// SubagentBackgroundAfterSec is how long a blocking subagent call waits before
+// SubagentBackgroundAfter is how long a blocking subagent call waits before
 // handing its children to the background — the same handoff the bash tool does
 // at 30s.
 //
@@ -48,35 +48,34 @@ const (
 // F25: read on a job goroutine (runWithHandoff's timer below) while tests
 // write it unguarded from their own setup goroutine — same shape as the
 // rest of this global-var family, even though production itself never
-// writes it. Guarded by subagentBackgroundAfterSecMu; SubagentBackgroundAfterSec
-// stays the exported name (nothing outside this package reads it, but the
-// name is part of this package's existing surface) and is now a func.
+// writes it. Guarded by subagentBackgroundAfterMu and read through
+// SubagentBackgroundAfter().
 var (
-	subagentBackgroundAfterSecMu sync.RWMutex
-	subagentBackgroundAfterSec   = 60 * time.Second
+	subagentBackgroundAfterMu sync.RWMutex
+	subagentBackgroundAfter   = 60 * time.Second
 )
 
-// SubagentBackgroundAfterSec returns the current handoff duration. Was a
-// plain var; kept as a zero-argument func under the same exported name so
-// every read (including the test files below) goes through the lock.
-func SubagentBackgroundAfterSec() time.Duration {
-	subagentBackgroundAfterSecMu.RLock()
-	defer subagentBackgroundAfterSecMu.RUnlock()
-	return subagentBackgroundAfterSec
+// SubagentBackgroundAfter returns the current handoff duration. Every read
+// goes through the lock; tests override it with
+// SetSubagentBackgroundAfterForTests.
+func SubagentBackgroundAfter() time.Duration {
+	subagentBackgroundAfterMu.RLock()
+	defer subagentBackgroundAfterMu.RUnlock()
+	return subagentBackgroundAfter
 }
 
-// SetSubagentBackgroundAfterSecForTests overrides the handoff duration and
+// SetSubagentBackgroundAfterForTests overrides the handoff duration and
 // returns a func that restores the previous value — the only test-facing
 // way to shrink the real 60s wait down to something a test can afford.
-func SetSubagentBackgroundAfterSecForTests(d time.Duration) (restore func()) {
-	subagentBackgroundAfterSecMu.Lock()
-	orig := subagentBackgroundAfterSec
-	subagentBackgroundAfterSec = d
-	subagentBackgroundAfterSecMu.Unlock()
+func SetSubagentBackgroundAfterForTests(d time.Duration) (restore func()) {
+	subagentBackgroundAfterMu.Lock()
+	orig := subagentBackgroundAfter
+	subagentBackgroundAfter = d
+	subagentBackgroundAfterMu.Unlock()
 	return func() {
-		subagentBackgroundAfterSecMu.Lock()
-		subagentBackgroundAfterSec = orig
-		subagentBackgroundAfterSecMu.Unlock()
+		subagentBackgroundAfterMu.Lock()
+		subagentBackgroundAfter = orig
+		subagentBackgroundAfterMu.Unlock()
 	}
 }
 
@@ -531,7 +530,7 @@ func (s *streamingCollector) flushPartial() {
 func (s *streamingCollector) CollectedText() string {
 	s.collector.mu.Lock()
 	defer s.collector.mu.Unlock()
-	return s.collector.text.String()
+	return s.text.String()
 }
 
 // StreamProgress implements the streamer interface so that the subagent's
@@ -574,7 +573,7 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 	}
 
 	// A blocking call still blocks — but not forever. After
-	// SubagentBackgroundAfterSec the children carry on in the background and
+	// SubagentBackgroundAfter the children carry on in the background and
 	// the turn ends, which is the only way the person at the keyboard gets
 	// their prompt back. Requires a job registry to hand them to; without one
 	// (a one-shot `tyci run`, where there is no next turn to deliver a notice
@@ -923,7 +922,7 @@ func subagentCompletionNotice(label, jobID string, res subagentResult) string {
 // handedAtStart is true for an async call, where the parent is told the ids
 // and nothing is returned inline; false for a blocking call, which waits and
 // only hands over if the child is still going after
-// SubagentBackgroundAfterSec.
+// SubagentBackgroundAfter.
 func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtStart, streamToParent bool) *spawnedTask {
 	st := &spawnedTask{
 		task:   task,
@@ -1091,7 +1090,7 @@ func watchForWaiting(ctx context.Context, observer JobObserver, jobID string, wa
 }
 
 // runWithHandoff runs a blocking subagent call as background jobs and waits
-// for them — up to SubagentBackgroundAfterSec when handoff is true, or until
+// for them — up to SubagentBackgroundAfter when handoff is true, or until
 // every child finishes (or the parent ctx is cancelled) when it is false.
 //
 // handoff is true exactly when backgroundAllowed(ctx) held at the call site
@@ -1155,7 +1154,7 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 	// Ask), so there is nothing to watch for.
 	var waitingWakeC <-chan struct{}
 	if handoff {
-		timer := time.NewTimer(SubagentBackgroundAfterSec())
+		timer := time.NewTimer(SubagentBackgroundAfter())
 		defer timer.Stop()
 		timerC = timer.C
 

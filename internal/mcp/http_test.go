@@ -37,7 +37,8 @@ func TestHTTPClientInitialize(t *testing.T) {
 			return
 		}
 
-		if req.Method == "initialize" {
+		switch req.Method {
+		case "initialize":
 			result := InitializeResult{
 				ProtocolVersion: "2024-11-05",
 				ServerInfo: ServerInfo{
@@ -53,7 +54,7 @@ func TestHTTPClientInitialize(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
-		} else if req.Method == "notifications/initialized" {
+		case "notifications/initialized":
 			// Notifications don't get responses
 			w.WriteHeader(http.StatusAccepted)
 		}

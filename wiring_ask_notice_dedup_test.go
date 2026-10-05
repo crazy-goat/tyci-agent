@@ -82,7 +82,7 @@ func waitForJobWaitingAnswer(t *testing.T, reg *jobs.Registry) string {
 func TestWiring_54a_HandoffCarriesQuestion_DrainDoesNotDuplicate(t *testing.T) {
 	reg, _ := withTestWiring(t)
 	enableBackgroundBash(t)
-	t.Cleanup(tools.SetSubagentBackgroundAfterSecForTests(time.Minute))
+	t.Cleanup(tools.SetSubagentBackgroundAfterForTests(time.Minute))
 
 	childFake := &connectortest.Fake{ProviderName: "d54a-child"}
 	childFake.Script = childAsksOneQuestionScript("which branch?")
@@ -137,7 +137,7 @@ func TestWiring_54b_HandoffWithoutObserver_DrainSurfacesTheQuestion(t *testing.T
 	// Short: with no observer wired, runWithHandoff's wake path is disabled
 	// (see its doc comment on waitingWakeC), so only this timer can end the
 	// wait.
-	t.Cleanup(tools.SetSubagentBackgroundAfterSecForTests(20 * time.Millisecond))
+	t.Cleanup(tools.SetSubagentBackgroundAfterForTests(20 * time.Millisecond))
 
 	tools.SetJobObserver(nil)
 	t.Cleanup(func() { tools.SetJobObserver(jobObserverAdapter{reg: JobRegistry}) })
@@ -216,7 +216,7 @@ func (d delayedObserver) Observe(ctx context.Context, id string, timeout time.Du
 func TestWiring_54c_EscCtxDone_NoticeStillSurfaces(t *testing.T) {
 	reg, _ := withTestWiring(t)
 	enableBackgroundBash(t)
-	t.Cleanup(tools.SetSubagentBackgroundAfterSecForTests(time.Minute))
+	t.Cleanup(tools.SetSubagentBackgroundAfterForTests(time.Minute))
 
 	tools.SetJobObserver(delayedObserver{inner: jobObserverAdapter{reg: JobRegistry}, delay: 300 * time.Millisecond})
 	t.Cleanup(func() { tools.SetJobObserver(jobObserverAdapter{reg: JobRegistry}) })

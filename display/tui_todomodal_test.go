@@ -193,7 +193,7 @@ func TestTodoModal_ClickOpensModal(t *testing.T) {
 	m.reading = true
 
 	// Find an X position that hits the todos counter.
-	var todosX int = -1
+	todosX := -1
 	for x := 0; x < 80; x++ {
 		if m.topBarCounterHit(x) == "todos" {
 			todosX = x

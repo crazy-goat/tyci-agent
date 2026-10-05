@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `eventbus.Bus.SubscribeCoalesced`: a subscription that keeps only the latest event per key, so a slow consumer never loses the newest state (#113). The optional `eventbus.WithReplaces` decides which of two events with the same key is kept (#131)
 
 ### Changed
+- `golangci-lint` now enforces the staticcheck style/quickfix checks ST1005, ST1011, QF1001, QF1003, QF1008, QF1011 and QF1012; the unknown-command error in TUI and interactive mode is now lowercase (#116)
+- Three exported Go symbols were renamed for the ST1011 cleanup: `jobs.Job.ExtensionSeconds` → `jobs.Job.ExtensionDuration`, `tools.SubagentBackgroundAfterSec()` → `tools.SubagentBackgroundAfter()`, and `tools.SetSubagentBackgroundAfterSecForTests()` → `tools.SetSubagentBackgroundAfterForTests()`. Go callers must use the new names; no compatibility aliases were kept (#116)
 - A failure to close the debug log now prints `Warning: debug log: close: ...` to stderr instead of being silently discarded; the command still succeeds, and a second close on a nil file returns nil (#118)
 
 ### Fixed

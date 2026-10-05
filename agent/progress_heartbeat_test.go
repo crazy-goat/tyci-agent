@@ -9,7 +9,7 @@ package agent
 //
 // These tests exercise agent.Run's injection point directly against a fake
 // cfg.ProgressHeartbeat callback — the time-based gating itself (at most one
-// nudge per SubagentBackgroundAfterSec) is jobs.Registry's responsibility
+// nudge per SubagentBackgroundAfter) is jobs.Registry's responsibility
 // and is pinned by jobs/heartbeat_test.go; Run only needs to know "inject
 // when the callback says so, and never otherwise".
 

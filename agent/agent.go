@@ -157,7 +157,7 @@ type Config struct {
 	// maxProgressHeartbeats counter next to maxTodoReminders/
 	// maxJobReminders — the time gate itself is what keeps this from
 	// crowding out the real conversation, per item 15's decided design
-	// (time-based, not step-based, reusing SubagentBackgroundAfterSec).
+	// (time-based, not step-based, reusing SubagentBackgroundAfter).
 	ProgressHeartbeat func() bool
 }
 
@@ -177,7 +177,7 @@ const maxJobReminders = 2
 // makes will take — so it is picked deliberately generous: long enough to
 // cover a slow model response and one ordinary tool call, short enough that
 // it still fires with real turns left rather than only in the final second.
-// 45s mirrors the same order of magnitude as SubagentBackgroundAfterSec
+// 45s mirrors the same order of magnitude as SubagentBackgroundAfter
 // (tools/subagent.go), which makes the same kind of "one more round trip"
 // judgment call for a different deadline.
 const lastStepDeadlineThreshold = 45 * time.Second
@@ -335,7 +335,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				return totalUsage, err
 			}
 
-			var lastErr error = err
+			lastErr := err
 			recovered := false
 			for attempt := 0; attempt < cfg.MaxRetries; attempt++ {
 				backoff := api.CalcBackoff(attempt, lastErr, api.RetryConfig{MaxRetries: cfg.MaxRetries})
@@ -634,7 +634,7 @@ func buildAutoCompactSummary(used, limit int, dumpPath string) string {
 
 // buildProgressHeartbeatReminder produces the harness-authored nudge
 // injected into a subagent's own loop when it has gone quiet — no
-// report_progress note — for longer than SubagentBackgroundAfterSec (see
+// report_progress note — for longer than SubagentBackgroundAfter (see
 // tools.JobProgressHeartbeatCheck and jobs.Registry.NeedsProgressHeartbeat).
 // Fire-and-forget by design (item 15): nothing requires the model to answer
 // in any particular shape or even acknowledge this message, only to call

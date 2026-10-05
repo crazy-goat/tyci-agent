@@ -85,14 +85,14 @@ func TestPrintJobs_LiveJobsNeverCapped(t *testing.T) {
 }
 
 // TestHandleCommand_JobsIsRecognized pins the dispatch: "/jobs" must not
-// fall through to the "Unknown command" default branch. A bare
+// fall through to the "unknown command" default branch. A bare
 // &interactiveState{} is safe here because the /jobs branch touches only
 // the global JobRegistry and os.Stdout, never s.cond/s.display.
 //
 // Asserting only (exit, handled) == (false, true) would be vacuous — the
-// "Unknown command" default branch returns the exact same pair, so a typo
+// "unknown command" default branch returns the exact same pair, so a typo
 // or a dropped case in the switch would leave this test green while the
-// console silently regressed to "Unknown command: /jobs". Redirect
+// console silently regressed to "unknown command: /jobs". Redirect
 // os.Stdout through a pipe and assert on the actual printed text instead.
 func TestHandleCommand_JobsIsRecognized(t *testing.T) {
 	reg := jobs.NewRegistry()
@@ -126,7 +126,7 @@ func TestHandleCommand_JobsIsRecognized(t *testing.T) {
 		t.Fatal("/jobs must be handled, not fall through to submit/unknown-command")
 	}
 	got := buf.String()
-	if strings.Contains(got, "Unknown command") {
+	if strings.Contains(strings.ToLower(got), "unknown command") {
 		t.Fatalf("expected /jobs to be recognized, got: %q", got)
 	}
 	if got != "No background jobs.\n" {

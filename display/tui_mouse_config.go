@@ -7,5 +7,5 @@ import (
 
 func tuiMouseEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("TYCI_TUI_MOUSE")))
-	return !(v == "0" || v == "false" || v == "off" || v == "no")
+	return v != "0" && v != "false" && v != "off" && v != "no"
 }

@@ -29,12 +29,13 @@ func (m TuiModel) renderToolBlock(idx int, b block) string {
 		m.toolDisplayCache[idx] = line
 	}
 
-	if b.toolState == "running" {
+	switch b.toolState {
+	case "running":
 		line += " ⟳"
 		// Advertised while running too: the modal shows the tool's live
 		// output, which is the moment it is most worth opening.
 		line += " " + hintStyle.Render("- click for progress")
-	} else if b.toolState == "done" {
+	case "done":
 		dur := b.duration
 		if dur == 0 {
 			dur = time.Since(b.startTime) // fallback, shouldn't happen

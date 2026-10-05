@@ -54,9 +54,9 @@ func (m TuiModel) hasLiveJobsToPaint() bool {
 	// tui_view.go); the sidebar does not count here — see its "does not
 	// replace the main view" doc comment — so it's deliberately absent
 	// from this list.
-	return !(m.historySearchActive || m.resumePickerActive || m.todoModalActive ||
-		m.transcriptViewerActive || m.subagentModalActive || m.btwListActive ||
-		m.btwModalActive || m.pickerActive)
+	return !m.historySearchActive && !m.resumePickerActive && !m.todoModalActive &&
+		!m.transcriptViewerActive && !m.subagentModalActive && !m.btwListActive &&
+		!m.btwModalActive && !m.pickerActive
 }
 
 // statusTickCmd returns a command that fires once after interval, keeping

@@ -101,12 +101,13 @@ func (m TuiModel) renderSelectableLine(line string, y int) string {
 		to = end.X
 	}
 	if start.Y != end.Y {
-		if y == start.Y {
+		switch y {
+		case start.Y:
 			to = lineWidth
-		} else if y == end.Y {
+		case end.Y:
 			from = 0
 			to = end.X
-		} else {
+		default:
 			from = 0
 			to = lineWidth
 		}
@@ -203,12 +204,13 @@ func (m TuiModel) selectedText() string {
 			to = end.X
 		}
 		if start.Y != end.Y {
-			if line.Y == start.Y {
+			switch line.Y {
+			case start.Y:
 				to = lipgloss.Width(plain)
-			} else if line.Y == end.Y {
+			case end.Y:
 				from = 0
 				to = end.X
-			} else {
+			default:
 				from = 0
 				to = lipgloss.Width(plain)
 			}

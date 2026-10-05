@@ -50,9 +50,9 @@ func TestJobProgressHeartbeatCheck_NilWithoutWiringOrJobID(t *testing.T) {
 // TestJobProgressHeartbeatCheck_DelegatesToWiredHeartbeat pins the happy
 // path: the returned closure calls through to the wired
 // JobProgressHeartbeat with exactly the bound job id and the current
-// SubagentBackgroundAfterSec threshold, and returns whatever it reports.
+// SubagentBackgroundAfter threshold, and returns whatever it reports.
 func TestJobProgressHeartbeatCheck_DelegatesToWiredHeartbeat(t *testing.T) {
-	restore := SetSubagentBackgroundAfterSecForTests(5 * time.Second)
+	restore := SetSubagentBackgroundAfterForTests(5 * time.Second)
 	defer restore()
 
 	fake := &fakeJobProgressHeartbeat{result: true}
@@ -72,7 +72,7 @@ func TestJobProgressHeartbeatCheck_DelegatesToWiredHeartbeat(t *testing.T) {
 		t.Fatalf("expected job id %q, got %q", "job-42-1", fake.calls[0].id)
 	}
 	if fake.calls[0].after != 5*time.Second {
-		t.Fatalf("expected the current SubagentBackgroundAfterSec (5s), got %s", fake.calls[0].after)
+		t.Fatalf("expected the current SubagentBackgroundAfter (5s), got %s", fake.calls[0].after)
 	}
 
 	fake.result = false
