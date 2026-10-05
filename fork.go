@@ -1,18 +1,10 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"strings"
 
-	"github.com/crazy-goat/tyci-agent/agent"
-	"github.com/crazy-goat/tyci-agent/conductor"
 	"github.com/crazy-goat/tyci-agent/connector"
-	"github.com/crazy-goat/tyci-agent/internal/ledger"
-	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/session"
-	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // Package-level notes on session forking (TODO.md item 5):
@@ -29,68 +21,14 @@ import (
 //
 // Either way, the result is a sanitized []connector.Message (a cut that
 // lands inside a tool-call/result pair is repaired by
-// session.SanitizeMessageSequence — see its doc comment) that this file's
-// two fork PATHS consume identically:
+// session.SanitizeMessageSequence — see its doc comment) that the fork path
+// consumes identically:
 //
-//   - ForkChildJob: fork-as-background-child. The forked history plus a new
-//     user turn (the task) becomes the seed for a background subagent job,
-//     reusing the same JobRegistry/resumable machinery as /btw and
-//     jobResumerAdapter.Resume (btw.go) — so the fork is pollable with
-//     wait(job_id=...) and itself resumable/forkable again afterward.
 //   - ForkNewSession: fork-as-new-session. The forked history (no extra
 //     turn appended — the point is to keep talking as the user, not to hand
 //     off a task) is written into a brand-new, independently persisted
 //     session file, so the caller can resume it exactly like any other
 //     `tyci session list`/`/resume` entry.
-
-// ForkChildJob starts a background subagent job seeded with base — already
-// the fork point's history (see session.ForkAtIndex / session.ForkAtEventID)
-// — with task appended as the child's own new user turn. It registers the
-// job as resumable, exactly like jobResumerAdapter.Resume (btw.go), so a
-// forked child can itself be resumed or forked again once it finishes.
-//
-// client is the conductor's already-resolved model client; cfg its config.
-// Both get the same treatment startBtw gives a /btw side-conversation:
-// wrapped through withIsolatedPool so the fork shares no HTTP connection
-// pool with the parent, and passed through btwConfig so it does not touch
-// the parent's Session/NextMessages/PendingTodos.
-func ForkChildJob(ctx context.Context, cond *conductor.Conductor, base []connector.Message, task string) *jobs.Job {
-	forked := session.ForkMessagesWithTurn(base, task)
-	cfg := btwConfig(cond.Config())
-	client, fallbacks := withIsolatedPool(cond.Client(), cfg.Fallbacks)
-	cfg.Fallbacks = fallbacks
-
-	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
-	return JobRegistry.Start(ctx, task, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
-		jobCtx = context.WithValue(jobCtx, tools.JobIDCtxKey{}, jobID)
-		defer tools.MarkTodoAgentDone(jobID)
-		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
-
-		c := &collector{}
-		// Same accounting as any other child conversation (main.go's
-		// agentRunner.run, conductor.go's own turn): without this the fork
-		// spends real tokens that never reach internal/ledger, so the
-		// Subagents tree would render it as "0 tok $0.00" — looking free
-		// when it isn't, exactly the silent-omission failure the ledger
-		// exists to avoid.
-		_, err := agent.Run(jobCtx, client, ledger.Watch(c, ledger.Subagent, client.Provider(), client.Model(), jobID), &forked, cfg)
-		truncated := errors.Is(err, agent.ErrMaxIterations)
-		if truncated {
-			err = nil
-		}
-		text := strings.TrimSpace(c.text.String())
-
-		// Same re-registration as jobResumerAdapter.Resume: a usable
-		// transcript (clean finish or truncated-but-produced-text) makes
-		// this job resumable/forkable again, chaining exactly like any
-		// other async subagent or /btw job.
-		if err == nil || truncated {
-			stashResumable(jobID, resumableEntry{msgs: forked, mc: client, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(jobCtx)})
-		}
-
-		return text, truncated, err
-	})
-}
 
 // ForkNewSession creates a brand-new, independently persisted session file
 // under cwd, seeded with base — already the fork point's history (see
@@ -99,7 +37,7 @@ func ForkChildJob(ctx context.Context, cond *conductor.Conductor, base []connect
 // other freshly-Open'd session) plus the exact []connector.Message it wrote,
 // ready to hand to agent.Config.
 //
-// Unlike ForkChildJob, no extra user turn is appended: fork-as-new-session
+// No extra user turn is appended: fork-as-new-session
 // exists for continuing AS the user rather than handing off a task, so the
 // fork is just the history, waiting for whatever the user types next —
 // which is also why it is a session.Session, not a jobs.Job: the point is
