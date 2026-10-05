@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 func TestRoundInputLabel_FirstRound(t *testing.T) {

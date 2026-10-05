@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci/internal/connect"
+	"github.com/crazy-goat/tyci-agent/internal/connect"
 )
 
 // AuthSource resolves the credential for one provider. Returning "" means

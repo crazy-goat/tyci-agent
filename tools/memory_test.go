@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/internal/instructions"
+	"github.com/crazy-goat/tyci-agent/internal/instructions"
 )
 
 // memoryProject moves the test into an empty project so the tool's notes land

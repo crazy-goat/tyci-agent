@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/decodo/tyci/stream"
+import "github.com/crazy-goat/tyci-agent/stream"
 
 // Sink is the event interface the agent loop writes to. It is defined here,
 // on the consumer side, rather than by the package that implements it — the

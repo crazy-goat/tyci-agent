@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/internal/cron"
+	"github.com/crazy-goat/tyci-agent/internal/cron"
 )
 
 // withCronHome points the tool's job list at a temp directory: the tool reads

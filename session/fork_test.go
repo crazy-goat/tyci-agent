@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
+	"github.com/crazy-goat/tyci-agent/connector"
 )
 
 // ─── dropTrailingUnansweredToolCalls: the fork-only half of the repair ─────

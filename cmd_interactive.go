@@ -9,12 +9,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/internal/readline"
-	"github.com/decodo/tyci/providers"
-	"github.com/decodo/tyci/session"
-	"github.com/decodo/tyci/stream"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/display"
+	"github.com/crazy-goat/tyci-agent/internal/readline"
+	"github.com/crazy-goat/tyci-agent/providers"
+	"github.com/crazy-goat/tyci-agent/session"
+	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 	"golang.org/x/term"
 )
 

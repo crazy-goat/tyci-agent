@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // handoffEnv wires a job registry and notifier, and overrides

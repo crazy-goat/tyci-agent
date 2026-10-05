@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/decodo/tyci/conductor"
-	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/session"
-	"github.com/decodo/tyci/stream"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/conductor"
+	"github.com/crazy-goat/tyci-agent/display"
+	"github.com/crazy-goat/tyci-agent/session"
+	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // slashCommandDisplay is the narrow slice of *display.TUI that

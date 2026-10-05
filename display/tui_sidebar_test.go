@@ -9,9 +9,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/decodo/tyci/internal/ledger"
-	"github.com/decodo/tyci/jobs"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/jobs"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 func newTestModelForSidebar() TuiModel {

@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/decodo/tyci/internal/worktree"
+	"github.com/crazy-goat/tyci-agent/internal/worktree"
 )
 
 // TestFinishWorktreeRunsDespiteCancelledContext: cleanup must happen even

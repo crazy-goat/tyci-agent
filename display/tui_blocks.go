@@ -5,7 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // handleBlockMsg returns a tea.Cmd (armStatusTick's, on the "request-start"

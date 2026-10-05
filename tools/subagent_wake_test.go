@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // realJobObserver wraps a real jobs.Registry via WaitObserve — the

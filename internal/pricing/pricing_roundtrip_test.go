@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/internal/connect"
+	"github.com/crazy-goat/tyci-agent/internal/connect"
 )
 
 // fakeModelsDevDoer is a connect.HTTPDoer that returns a canned models.dev

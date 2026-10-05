@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/internal/hooks"
+	"github.com/crazy-goat/tyci-agent/internal/hooks"
 )
 
 // RunTool is the single choke point every tool call passes through — built-in

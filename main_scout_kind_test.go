@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/internal/ledger"
-	"github.com/decodo/tyci/stream"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // TestAgentRunnerRun_ScoutModeRecordsUnderScoutKind pins item 21 round B: a

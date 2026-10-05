@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // TestIsStoppedByUser_AttributionRequiresNonHandoffCtx: a genuine

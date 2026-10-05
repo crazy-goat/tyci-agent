@@ -3,7 +3,7 @@ package ledger
 import (
 	"testing"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // silentSink implements Sink doing nothing, for embedding into the two

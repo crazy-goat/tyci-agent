@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // realJobMailbox mirrors main.go's jobMailboxAdapter (over a real

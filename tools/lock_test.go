@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/locks"
+	"github.com/crazy-goat/tyci-agent/locks"
 )
 
 func TestLockToolRunSuccess(t *testing.T) {

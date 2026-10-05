@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 func (m TuiModel) renderToolBlock(idx int, b block) string {

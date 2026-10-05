@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decodo/tyci/internal/connect"
+	"github.com/crazy-goat/tyci-agent/internal/connect"
 )
 
 // Client defines the interface for MCP servers.

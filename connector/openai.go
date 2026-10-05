@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/api"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // OptReasoning is the Endpoint option that enables the non-standard

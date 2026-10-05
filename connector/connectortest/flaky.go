@@ -5,9 +5,9 @@ import (
 	"io"
 	"sync"
 
-	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/api"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // Failure describes what happens on one Stream call of a Flaky.

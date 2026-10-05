@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/decodo/tyci/internal/gitinfo"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 func (m TuiModel) buildStatus() string {
