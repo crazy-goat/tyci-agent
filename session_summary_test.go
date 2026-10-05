@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/providers"
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/providers"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // TestBuildResumeSummary covers the deterministic text layout of the info

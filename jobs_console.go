@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // maxConsoleTerminalJobLines caps how many finished jobs "/jobs" prints, the

@@ -8,11 +8,11 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/providers"
-	"github.com/decodo/tyci/stream"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/providers"
+	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // fakeProvider adapts a connector.ModelClient (connectortest.Fake) to the

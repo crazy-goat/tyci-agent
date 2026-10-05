@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/spf13/cobra"
 )
 

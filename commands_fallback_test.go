@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/providers"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/providers"
 )
 
 // captureStderr redirects os.Stderr for the duration of fn and returns

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // TestSubagentCutoffMessage_ZeroOutput_StaysResumable pins the item 28(B)

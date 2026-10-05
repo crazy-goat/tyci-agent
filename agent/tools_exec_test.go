@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/stream"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // serializingRunner simulates an LLM dispatcher-fronted tool runner. It

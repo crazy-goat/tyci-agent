@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/internal/debug"
-	"github.com/decodo/tyci/providers"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/internal/debug"
+	"github.com/crazy-goat/tyci-agent/providers"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // TestAgentRunnerRun_TemperatureReachesRequest is the end of the temperature

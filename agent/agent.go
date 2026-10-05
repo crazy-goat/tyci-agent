@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/session"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/api"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/session"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 type ToolRunner interface {

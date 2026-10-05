@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // collect drains ch until it closes and returns everything it saw.

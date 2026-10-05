@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/internal/agentdefs"
-	"github.com/decodo/tyci/internal/worktree"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/internal/worktree"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // Subagents do not get an implicit wall-clock or iteration backstop. Their

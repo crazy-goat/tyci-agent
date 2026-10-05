@@ -9,14 +9,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/decodo/tyci/agent"
-	"github.com/decodo/tyci/conductor"
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/internal/ledger"
-	"github.com/decodo/tyci/jobs"
-	"github.com/decodo/tyci/session"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/conductor"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/display"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/jobs"
+	"github.com/crazy-goat/tyci-agent/session"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // JobRegistry is the app's one shared background-job registry. /btw side

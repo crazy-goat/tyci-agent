@@ -8,13 +8,13 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/decodo/tyci/agent"
-	"github.com/decodo/tyci/internal/agentdefs"
-	"github.com/decodo/tyci/internal/connect"
-	"github.com/decodo/tyci/internal/ledger"
-	"github.com/decodo/tyci/providers"
-	"github.com/decodo/tyci/stream"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/internal/connect"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/providers"
+	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // defaultSessionMaxIterations is the tool-call iteration cap a session gets

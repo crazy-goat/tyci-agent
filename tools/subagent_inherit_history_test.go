@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
+	"github.com/crazy-goat/tyci-agent/connector"
 )
 
 // ─── parsing: inherit_history reaches subagentTask ─────────────────────────

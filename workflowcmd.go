@@ -6,11 +6,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci/internal/agentdefs"
-	"github.com/decodo/tyci/internal/ledger"
-	"github.com/decodo/tyci/internal/trust"
-	"github.com/decodo/tyci/internal/workflow"
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/internal/trust"
+	"github.com/crazy-goat/tyci-agent/internal/workflow"
+	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/spf13/cobra"
 )
 

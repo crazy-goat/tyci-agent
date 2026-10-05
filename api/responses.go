@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/decodo/tyci/internal/debug"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/internal/debug"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // ResponsesContentPart is one text part in a Responses API message input.

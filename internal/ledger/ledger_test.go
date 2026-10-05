@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/decodo/tyci/internal/pricing"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/internal/pricing"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 func TestCost_SplitsCacheFromFreshInput(t *testing.T) {

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // TestRunTask_ScoutMode_UsesScoutPrompt is F31 (TODO.md): a scout's system

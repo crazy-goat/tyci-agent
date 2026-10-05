@@ -3,7 +3,7 @@ package providers
 import (
 	"testing"
 
-	"github.com/decodo/tyci/connector"
+	"github.com/crazy-goat/tyci-agent/connector"
 )
 
 func TestURIOptionsResponsesReasoningEffort(t *testing.T) {

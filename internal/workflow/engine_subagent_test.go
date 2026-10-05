@@ -10,9 +10,9 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // fakeSubAgentRunner is a minimal tools.SubAgentRunner that records every

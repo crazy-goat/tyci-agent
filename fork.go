@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // Package-level notes on session forking (TODO.md item 5):

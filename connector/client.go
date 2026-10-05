@@ -3,7 +3,7 @@ package connector
 import (
 	"context"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // ModelClient is one resolved model reachable through one provider:

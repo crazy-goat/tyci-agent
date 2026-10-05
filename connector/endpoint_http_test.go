@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // stubDoer answers every request from memory and records what it received.

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/internal/hooks"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/internal/hooks"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 func runLua(t *testing.T, script string, args map[string]any) ToolResult {
