@@ -6,9 +6,9 @@ import (
 	"io"
 	"testing"
 
-	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/api"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // scripted returns a Fake that emits the same three-event turn every call.

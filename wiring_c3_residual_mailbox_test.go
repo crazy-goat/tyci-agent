@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 func TestWiring_C3_ResidualMailboxSweptToMainOnCompletion(t *testing.T) {

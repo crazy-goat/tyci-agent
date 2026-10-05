@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/decodo/tyci/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 )
 
 // @-completion for file paths and named agents in the input line.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // BtwSink is the agent.Sink for one /btw side-conversation. It streams the

@@ -10,8 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/decodo/tyci/eventbus"
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/eventbus"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 func newTestModelForJobs() TuiModel {

@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/decodo/tyci/conductor"
-	"github.com/decodo/tyci/providers"
+	"github.com/crazy-goat/tyci-agent/conductor"
+	"github.com/crazy-goat/tyci-agent/providers"
 )
 
 // catalogResolver is what keeps package conductor free of package providers:

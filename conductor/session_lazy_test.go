@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // TestEnsureLazySession_EmptyPathReturnsNil verifies the no-session path:

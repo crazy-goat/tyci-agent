@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 func (t *TUI) ModelChanges() <-chan string {

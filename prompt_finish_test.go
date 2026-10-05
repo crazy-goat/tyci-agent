@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/decodo/tyci/agent"
-	"github.com/decodo/tyci/conductor"
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/conductor"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // This file is finding (2) from item 8 batch 2's review: os.Exit inside

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // recordingToucher is a fake JobActivityToucher that just records every id

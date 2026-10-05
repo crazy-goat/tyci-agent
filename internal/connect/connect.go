@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/decodo/tyci/internal/tyciconfig"
+	"github.com/crazy-goat/tyci-agent/internal/tyciconfig"
 )
 
 type uriEntry struct {

@@ -7,7 +7,7 @@ process in [docs/release-workflow.md](docs/release-workflow.md).
 Everything is written in English (code, comments, docs, commits, issues).
 
 tyci-agent is a CLI that runs LLM-powered agents (binary name `tyci`). It is a single Go
-module, `github.com/decodo/tyci`, with the `main` package at the repository root.
+module, `github.com/crazy-goat/tyci-agent`, with the `main` package at the repository root.
 macOS and Linux only; Windows is not a supported target (unix-only syscalls).
 
 ## Layout

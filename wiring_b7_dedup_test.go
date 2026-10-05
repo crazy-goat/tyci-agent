@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // waitUntilRegistered polls jobs.Registry.WaiterCount (a real, synchronized
