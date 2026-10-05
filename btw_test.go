@@ -125,12 +125,11 @@ func TestBtwConfig_StripsMainThreadCallbacksButKeepsToolBehavior(t *testing.T) {
 	if got.HasTodos != nil {
 		t.Error("HasTodos must be nil — that's the main thread's todo list")
 	}
-	// F10: jobResumerAdapter.Resume (btw.go) builds/reuses a child's
-	// agent.Config through this function with no tool gate, and
-	// GetAllToolsSchemaJSON below puts "compact" back in the child's schema
-	// with no owner check (CompactTool.Run). Carrying the main
-	// conversation's Compactor into that child would let it silently compact
-	// the user's LIVE main conversation.
+	// F10: a /btw child must never be able to compact the user's live main
+	// conversation. btwConfig is where that is decided, and the resumable path
+	// reuses the config btwConfig built (btw.go:516 builds it,
+	// jobResumerAdapter.Resume copies the stashed entry) rather than rebuilding a
+	// config of its own, so asserting it here covers both paths.
 	if got.Compactor != nil {
 		t.Error("Compactor must be nil — a /btw/fork/resume child must not be able to compact the main conversation")
 	}

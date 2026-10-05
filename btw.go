@@ -303,13 +303,6 @@ func forkMessagesForBtw(msgs []connector.Message, question string) []connector.M
 	return session.ForkMessagesWithTurn(msgs, question)
 }
 
-// btwConfig derives the agent.Config for a /btw fork from the main
-// conversation's config. It keeps the model behavior (tools, schema,
-// fallbacks, retries) but detaches everything that ties the config to the
-// main thread's own state: Session (a side conversation writes no session
-// log), NextMessages (the main TUI's pending-input queue), and
-// PendingTodos/HasTodos (the main thread's todo list). None of those belong
-// to an independent fork that must never touch the main conversation.
 // btwEvaluation is the completed, read-only side conversation waiting for a
 // positive decision from the parent. The transcript is kept here rather than
 // in the jobs registry so promotion can consume it exactly once and create a
@@ -444,6 +437,13 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 	return jobHandleAdapter{job}, nil
 }
 
+// btwConfig derives the agent.Config for a /btw fork from the main
+// conversation's config. It keeps the model behavior (tools, schema,
+// fallbacks, retries) but detaches everything that ties the config to the
+// main thread's own state: Session (a side conversation writes no session
+// log), NextMessages (the main TUI's pending-input queue), and
+// PendingTodos/HasTodos (the main thread's todo list). None of those belong
+// to an independent fork that must never touch the main conversation.
 func btwConfig(base agent.Config) agent.Config {
 	cfg := base
 	// A /btw/fork/resume child is unlimited just like an ordinary subagent;
@@ -453,14 +453,15 @@ func btwConfig(base agent.Config) agent.Config {
 	cfg.NextMessages = nil
 	cfg.PendingTodos = nil
 	cfg.HasTodos = nil
-	// F10: base (cond.Config()) carries the MAIN conversation's Compactor.
-	// GetAllToolsSchemaJSON below puts "compact" back in a /btw/fork/resume
-	// child's schema (it has no other owner check — see CompactTool.Run),
-	// so leaving this set would let such a child silently compact the
-	// user's live main conversation instead of its own throwaway one. Nil
-	// it out exactly like the other parent-owned state above; compactorFrom
-	// then returns nil and the tool reports its existing, honest "compact
-	// is unavailable" error instead of acting on the wrong conversation.
+	// F10, history: base (cond.Config()) carries the MAIN conversation's
+	// Compactor, and an earlier revision left it set here while calling
+	// GetAllToolsSchemaJSON, which put "compact" back in a /btw child's schema
+	// with no owner check — a child could then silently compact the user's live
+	// main conversation instead of its own throwaway one.
+	//
+	// F10, current behavior: it is nil-ed here, and the tool is excluded from the
+	// schema below. Both halves are present; this line is the owner check, not a
+	// description of a gap still open.
 	cfg.Compactor = nil
 	// base.Schema is the top-level, non-job schema (tools.
 	// GetTopLevelToolsSchemaJSON, set in commands.go), which excludes
@@ -468,12 +469,11 @@ func btwConfig(base agent.Config) agent.Config {
 	// side-conversation IS a job (see startBtw, which stamps jobCtx with
 	// tools.JobIDCtxKey before running it) and must get ask_parent back.
 	//
-	// "compact" is dropped explicitly (review of F10) rather than left in:
-	// with cfg.Compactor nil above, CompactTool.Run would always refuse it
-	// anyway, but the context-budget reminder (agent/agent.go) tells the
-	// model to call compact() once it crosses the threshold with no idea
-	// this child can't use it — advertising a tool guaranteed to fail wastes
-	// a round-trip for no benefit.
+	// "compact" is excluded here so the tool list and the context-budget reminder
+	// agree with each other: buildContextBudgetReminder (agent/agent.go) takes
+	// cfg.Compactor as an argument and, when it is nil, keeps the budget warning
+	// while dropping the "use compact(...)" instruction. Leaving the tool in this
+	// schema would advertise something this conversation cannot use.
 	//
 	// "scout" is dropped as a safe default: GetAllToolsSchemaJSONWithout is
 	// the raw registry schema, so it would offer "scout", which the depth-0
