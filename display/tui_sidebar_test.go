@@ -1670,18 +1670,15 @@ func TestSidebarToggle_InvalidatesTranscriptWrapCache(t *testing.T) {
 // ─── Streamed blocks must keep landing while the sidebar has focus ────────
 
 // TestSidebarFocused_StreamedBlocksStillLandInTranscript is the regression
-// test for a review finding: routeSidebarMsg's default branch forwarded
-// every non-Window/Mouse/Key message to updateSidebar while sidebarFocused,
-// and updateSidebar's switch had no case for tuiMsgBlock, so it fell
-// through to its own "return m, nil" — silently dropping streamed model
-// output (text/tool/done blocks) any time the user had focus in the
+// test for a review finding: streamed model output (text/tool/done blocks)
+// must keep landing in the transcript even while the user has focus in the
 // sidebar, which is exactly the state a side-by-side layout is meant to
 // make normal (browsing Bash/Subagents while the agent keeps working).
-// Worse than a cosmetic gap: "done" is what flips m.reading back to true
-// (tui_blocks.go), so a dropped done could leave the input stuck
-// non-reading indefinitely. tuiMsgBlock must now reach handleBlockMsg
-// unconditionally, focus or not — mirroring tui_modal.go's identical
-// carve-out for the older subagent modal.
+// tuiMsgBlock reaches handleBlockMsg unconditionally, focus or not: the
+// early return at the top of Update (tui_update.go) dispatches it before
+// any sidebar routing, so updateSidebar never sees it. Worse than a
+// cosmetic gap, "done" is what flips m.reading back to true (tui_blocks.go),
+// so a dropped done could leave the input stuck non-reading indefinitely.
 func TestSidebarFocused_StreamedBlocksStillLandInTranscript(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.reading = false // as if a turn were still in flight
