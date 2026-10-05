@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/decodo/tyci/session"
 )
 
 // ---------------------------------------------------------------------------
@@ -89,12 +91,22 @@ func runInteractivePTY(t *testing.T) (*os.File, *exec.Cmd) {
 	// TestMain runs the tests from an empty temp directory with a fresh HOME,
 	// so the project is unknown and an interactive start would block on
 	// "Trust this project? [y/N]" instead of showing the prompt. Record the
-	// decision up front.
+	// decision up front, keyed exactly the way the child looks it up:
+	// session.ProjectKey of its os.Getwd(), which is the symlink-resolved
+	// real path, not the raw t.TempDir() string.
 	// A directory of its own, so the shared test cwd stays unrecorded for
 	// the tests that assert the untrusted-project behaviour.
 	cwd := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatalf("eval symlinks: %v", err)
+	}
+	key, err := session.ProjectKey(resolved)
+	if err != nil {
+		t.Fatalf("project key: %v", err)
+	}
 	trustJSON, err := json.Marshal(map[string]any{"projects": map[string]any{
-		cwd: map[string]any{"trusted": true, "decided_at": time.Now()},
+		key: map[string]any{"trusted": true, "decided_at": time.Now()},
 	}})
 	if err != nil {
 		t.Fatalf("marshal trust.json: %v", err)
