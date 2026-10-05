@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // requestRecorder is a connector that remembers every Request it was asked to

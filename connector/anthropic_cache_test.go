@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // capturingDoer keeps the request body so a test can assert on the JSON that

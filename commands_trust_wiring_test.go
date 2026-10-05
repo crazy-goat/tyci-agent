@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/decodo/tyci/internal/hooks"
-	"github.com/decodo/tyci/internal/trust"
-	"github.com/decodo/tyci/providers"
-	"github.com/decodo/tyci/session"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/internal/hooks"
+	"github.com/crazy-goat/tyci-agent/internal/trust"
+	"github.com/crazy-goat/tyci-agent/providers"
+	"github.com/crazy-goat/tyci-agent/session"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // This file covers item 23's trust gate as wired into initCommon

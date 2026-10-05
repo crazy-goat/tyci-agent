@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // durationRunner sleeps for calls named "slow" and returns at once otherwise.

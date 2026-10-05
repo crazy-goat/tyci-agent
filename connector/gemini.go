@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/api"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // gemini speaks the Gemini generateContent protocol.

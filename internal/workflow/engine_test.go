@@ -7,7 +7,7 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/decodo/tyci/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 )
 
 // TestLuaAgents_ReturnsConfiguredAgents verifies that tyci.agents() in a Lua

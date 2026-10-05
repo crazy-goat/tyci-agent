@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/decodo/tyci/agent"
+	"github.com/crazy-goat/tyci-agent/agent"
 )
 
 // runAgentIteration hands one user line to the conductor and renders the

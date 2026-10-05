@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // fakeModelClient is a minimal ModelClient for exercising the context

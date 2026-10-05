@@ -7,8 +7,8 @@ import (
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/decodo/tyci/jobs"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/jobs"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 const tuiMaxHistory = 500

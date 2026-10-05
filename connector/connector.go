@@ -17,7 +17,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // Connector kinds. These match the api_type of a provider URI

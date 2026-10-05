@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decodo/tyci/stream"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // planRequiredError is the message returned to the LLM when it attempts

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/decodo/tyci/internal/skills"
+	"github.com/crazy-goat/tyci-agent/internal/skills"
 )
 
 type SkillsTool struct{}

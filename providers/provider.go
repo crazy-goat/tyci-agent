@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci/api"
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/internal/agentdefs"
-	"github.com/decodo/tyci/internal/instructions"
+	"github.com/crazy-goat/tyci-agent/api"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/internal/instructions"
 )
 
 func BuildSystemPrompt() string {

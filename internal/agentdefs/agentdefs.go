@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/decodo/tyci/internal/gitinfo"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"gopkg.in/yaml.v3"
 )
 

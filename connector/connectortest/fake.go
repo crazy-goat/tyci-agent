@@ -17,8 +17,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // Fake is a connector.ModelClient that replays one scripted slice of

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // CompactSession is the default compactor used by top-level conductors.
