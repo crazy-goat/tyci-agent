@@ -29,6 +29,7 @@ func TestInit_CreatesFileInCorrectDir(t *testing.T) {
 	if l == nil {
 		t.Fatal("Init() returned nil logger")
 	}
+	t.Cleanup(func() { _ = l.Close() })
 
 	// Verify file exists
 	expectedDir := filepath.Join(dir, ".tyci", "debug")
