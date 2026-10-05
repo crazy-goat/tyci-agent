@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/stream"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // PhaseSink is an optional Sink capability: a display that can show which

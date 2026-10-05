@@ -8,7 +8,7 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/decodo/tyci/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 )
 
 // newSessionTable is a small test helper: calls tyci.new_session(model,

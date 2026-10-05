@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // TestSubagentToolRunner_NoWhitelistAllowsEverythingButSubagent locks in

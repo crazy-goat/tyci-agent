@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/decodo/tyci/internal/cron"
-	"github.com/decodo/tyci/internal/trust"
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/internal/cron"
+	"github.com/crazy-goat/tyci-agent/internal/trust"
+	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/spf13/cobra"
 )
 

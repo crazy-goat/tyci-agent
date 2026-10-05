@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decodo/tyci/internal/cron"
+	"github.com/crazy-goat/tyci-agent/internal/cron"
 )
 
 // CronTool implements the "cron" tool: prompts that run later, on a schedule,

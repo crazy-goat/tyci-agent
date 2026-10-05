@@ -353,7 +353,7 @@ the excuse `Model` has — nobody reads it, neither the agent nor the callers.
 - `go test -race ./agent/ ./providers/ ./tools/ .` green,
 - `gofmt -l .` empty,
 - `git diff --stat a04f9a8..HEAD -- providers/testdata` **empty** — the wire format survived,
-- `go list -deps ./agent | grep decodo/tyci/providers` → **empty** (headline proof of the stage),
+- `go list -deps ./agent | grep crazy-goat/tyci-agent/providers` → **empty** (headline proof of the stage),
 - test names: 6 transformations 1:1 (`TestResolveProviderModel_*` →
   `TestResolveModelClient_*`), 16 added (new packages `connector`/`providers`
   + one new `resolveModelClient` case + two fallback isolation tests),
@@ -503,7 +503,7 @@ stay.
 - `gofmt -l .` empty,
 - `git diff --stat ace8e16..HEAD -- providers/testdata` **empty** — the wire format
   survived, not a single `-update`,
-- `go list -deps ./agent | grep decodo/tyci/providers` → **empty**
+- `go list -deps ./agent | grep crazy-goat/tyci-agent/providers` → **empty**
   (headline criterion of the whole refactor),
 - `grep -rn "FreeModels" --include="*.go" .` → two comments describing the removal,
   zero code; `grep -rn "providers.HTTPInjector"` → one historical comment
@@ -685,9 +685,9 @@ only when the last driver stopped using it.
 - `gofmt -l .` empty,
 - `git diff --stat 0ad2271..HEAD -- providers/testdata` **empty** — the wire format
   survived, not a single `-update`,
-- `go list -deps ./conductor | grep decodo/tyci/providers` → **empty**
+- `go list -deps ./conductor | grep crazy-goat/tyci-agent/providers` → **empty**
   (headline criterion of this stage),
-- `go list -deps ./agent | grep decodo/tyci/providers` → **empty**
+- `go list -deps ./agent | grep crazy-goat/tyci-agent/providers` → **empty**
   (headline criterion of the whole refactor, untouched),
 - test names: 1026 → 1043 (`comm` on sorted `func Test*` lists):
   **17 added, 0 removed, 0 transformations.** Four `TestEnsureLazySession_*`

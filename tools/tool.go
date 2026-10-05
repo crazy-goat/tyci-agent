@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/internal/hooks"
-	"github.com/decodo/tyci/locks"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/internal/hooks"
+	"github.com/crazy-goat/tyci-agent/locks"
 )
 
 // SubagentOptions are per-call knobs the parent supplies for a single

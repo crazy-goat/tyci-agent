@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/decodo/tyci/agent"
-	"github.com/decodo/tyci/conductor"
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/providers"
+	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/conductor"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/display"
+	"github.com/crazy-goat/tyci-agent/providers"
 )
 
 // catalogResolver is the CLI's implementation of conductor.ModelResolver: it

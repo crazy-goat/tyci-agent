@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/decodo/tyci/internal/instructions"
+	"github.com/crazy-goat/tyci-agent/internal/instructions"
 )
 
 // MemoryTool implements the "memory" tool: short notes the agent writes for

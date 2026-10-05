@@ -5,7 +5,7 @@ import (
 	"net/http/httptrace"
 	"sync"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // phaseTrace owns the hand-off between the transport's hook goroutines and

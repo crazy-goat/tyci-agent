@@ -11,7 +11,7 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // The "lua" tool: a script the model writes inline, with every other tyci

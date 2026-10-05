@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 func TestCronListCLI(t *testing.T) {

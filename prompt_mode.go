@@ -6,10 +6,10 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/decodo/tyci/conductor"
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/conductor"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/display"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // runPrompt executes one non-interactive turn.
