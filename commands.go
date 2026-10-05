@@ -484,7 +484,9 @@ var runCmd = &cobra.Command{
 		// `tyci run`. See finishPromptRun's doc comment (prompt_finish.go).
 		cleanup := func() {
 			if dl != nil {
-				dl.Close()
+				if err := dl.Close(); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
+				}
 			}
 			shutdown()
 		}
@@ -525,7 +527,11 @@ var consoleCmd = &cobra.Command{
 		}
 		defer shutdown()
 		if dl != nil {
-			defer dl.Close()
+			defer func() {
+				if err := dl.Close(); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
+				}
+			}()
 		}
 		disp := display.NewTerminal()
 
@@ -565,7 +571,11 @@ var tuiCmd = &cobra.Command{
 		}
 		defer shutdown()
 		if dl != nil {
-			defer dl.Close()
+			defer func() {
+				if err := dl.Close(); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
+				}
+			}()
 		}
 
 		authKeys, err := connect.ListKeys()

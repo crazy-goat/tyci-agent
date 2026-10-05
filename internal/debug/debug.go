@@ -49,13 +49,18 @@ func Init() (*Logger, error) {
 	return &Logger{ID: id, file: f}, nil
 }
 
-func (l *Logger) Close() {
+// Close closes the log file. It is safe to call more than once; later calls
+// return nil. Callers decide how to treat a returned error (the commands
+// only print a warning: a debug log must not fail the command).
+func (l *Logger) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.file != nil {
-		_ = l.file.Close() // best effort: a debug log must not fail the caller
-		l.file = nil
+	if l.file == nil {
+		return nil
 	}
+	err := l.file.Close()
+	l.file = nil // never retry a failed close: the fd state is undefined
+	return err
 }
 
 func (l *Logger) Write(p []byte) (int, error) {
