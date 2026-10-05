@@ -175,5 +175,3 @@ func (m TuiModel) updateSubagentModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	return m, nil
 }
-
-// openModelPicker activates the model picker popup.
