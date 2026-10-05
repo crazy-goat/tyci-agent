@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/internal/mcp"
+	"github.com/crazy-goat/tyci-agent/internal/mcp"
 )
 
 // TestMCPToolRunnerRunToolUnknownNameDoesNotPanic covers F8's first

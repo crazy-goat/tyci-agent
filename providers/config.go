@@ -8,10 +8,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/internal/connect"
-	"github.com/decodo/tyci/internal/tyciconfig"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/internal/connect"
+	"github.com/crazy-goat/tyci-agent/internal/tyciconfig"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // uriEntry is the inner JSON object with just a URI.

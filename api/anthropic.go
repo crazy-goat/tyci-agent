@@ -13,8 +13,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/decodo/tyci/internal/debug"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/internal/debug"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // anthropicMessageUsage captures the usage inside a message_start event.

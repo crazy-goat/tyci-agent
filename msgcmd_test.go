@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 func TestParseMsgCommand(t *testing.T) {

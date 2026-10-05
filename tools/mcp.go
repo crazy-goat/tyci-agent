@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/decodo/tyci/internal/mcp"
+	"github.com/crazy-goat/tyci-agent/internal/mcp"
 )
 
 // mcpConnectTimeout bounds how long Connect waits for a single configured

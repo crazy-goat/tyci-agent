@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 func TestMessagesToResponses(t *testing.T) {

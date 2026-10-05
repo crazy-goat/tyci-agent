@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 func seedTodosForAgent(t *testing.T, agentID string, contents []string) {

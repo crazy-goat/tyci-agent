@@ -23,8 +23,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/display"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // fakeSlashDisplay implements slashCommandDisplay and records every call, in

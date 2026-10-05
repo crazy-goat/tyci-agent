@@ -14,7 +14,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // ---------------------------------------------------------------------------

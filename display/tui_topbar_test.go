@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // ─── displayPath ──────────────────────────────────────────────────────────

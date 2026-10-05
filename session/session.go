@@ -20,8 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/internal/gitinfo"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────

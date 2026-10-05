@@ -6,10 +6,10 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/internal/ledger"
-	"github.com/decodo/tyci/providers"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/providers"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // TestSessionAwait_RecordsLedgerUsage is the regression test for F32:

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/connector"
+	"github.com/crazy-goat/tyci-agent/connector"
 )
 
 // TestScoutToolProfile_AllowsProfileDeniesRest pins scout's own runtime

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/decodo/tyci/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 )
 
 // ResolveScript finds a Lua orchestration script by name, following the same
