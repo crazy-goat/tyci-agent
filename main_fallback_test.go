@@ -144,7 +144,7 @@ func TestAgentRunnerRun_UnresolvedFallbackLogsToDebugNotStderr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("debug.Init: %v", err)
 	}
-	t.Cleanup(dl.Close)
+	t.Cleanup(func() { _ = dl.Close() })
 	ctx = debug.NewContext(ctx, dl)
 
 	opts := tools.SubagentOptions{Fallbacks: []string{"totally-unregistered-prov/ghost"}}

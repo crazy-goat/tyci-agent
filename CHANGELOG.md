@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - `eventbus.Bus.SubscribeCoalesced`: a subscription that keeps only the latest event per key, so a slow consumer never loses the newest state (#113). The optional `eventbus.WithReplaces` decides which of two events with the same key is kept (#131)
 
+### Changed
+- A failure to close the debug log now prints `Warning: debug log: close: ...` to stderr instead of being silently discarded; the command still succeeds, and a second close on a nil file returns nil (#118)
+
 ### Fixed
 - Untrusted-project warnings for agent commands now name the skipped local cron directory and MCP configuration as well as hooks and Lua tools, using the same warning helper as workflow runs (#126)
 - The TUI jobs panel no longer shows a finished job as running when a progress snapshot taken just before the job ended reaches it after the terminal event; job snapshots published to `onEvent` now carry a per-job `EventSeq`, and both the TUI's coalescing subscription and the model ignore older ones (#131)
