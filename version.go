@@ -19,10 +19,12 @@ var readBuildInfo = debug.ReadBuildInfo
 // preference order:
 //
 //  1. the version stamped into the binary with -ldflags "-X main.version=...",
-//  2. the main-module version the Go toolchain recorded, which is what a
-//     `go install github.com/decodo/tyci@vX.Y.Z` build carries — and also what
-//     a plain `go build` from a Git checkout carries, as a pseudo-version
-//     derived from the checked-out commit,
+//     which is what release builds (the release tag) and Makefile builds
+//     (`git describe --tags --always --dirty`, or "dev" without Git) carry,
+//  2. the main-module version the Go toolchain recorded: a tag for a build at
+//     an exact tag, or a pseudo-version for a commit after a tag, as produced
+//     by `go install github.com/crazy-goat/tyci-agent@vX.Y.Z` or a plain
+//     `go build` from a Git checkout,
 //  3. "dev" when the toolchain recorded no version at all (a source tarball,
 //     `go build -buildvcs=false`, tests).
 //

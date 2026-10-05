@@ -6,7 +6,14 @@ BINARY=tyci
 # the nearest git tag, with a distance/dirty suffix when the tree has moved on
 # (`git describe`), or "dev" outside a git checkout.
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-VERSION_LDFLAG := -X main.version=$(VERSION)
+
+# The version reaches the compiler through the environment, never through the
+# recipe text. `git describe` output can legally contain backticks, `$(...)`
+# and quotes, and Make substitutes `$(VERSION)` into the recipe before the
+# shell parses it — a double-quoted `$(VERSION)` would then run command
+# substitution. Exported like this the tag is data the shell expands, not
+# source it evaluates.
+export TYCI_BUILD_VERSION := $(VERSION)
 
 .PHONY: build release minimal clean install install-local lint
 
@@ -18,13 +25,13 @@ lint:
 build:
 	go build \
 		-gcflags "all=-N -l" \
-		-ldflags "$(VERSION_LDFLAG)" \
+		-ldflags "-X main.version=$${TYCI_BUILD_VERSION}" \
 		-o $(BINARY) .
 
 # Optimized release build (stripped, optimized, trimmed paths)
 release:
 	go build \
-		-ldflags "-s -w $(VERSION_LDFLAG)" \
+		-ldflags "-s -w -X main.version=$${TYCI_BUILD_VERSION}" \
 		-trimpath \
 		-o $(BINARY) .
 
@@ -32,7 +39,7 @@ release:
 minimal:
 	go build \
 		-tags "noanthropic nogemini" \
-		-ldflags "-s -w $(VERSION_LDFLAG)" \
+		-ldflags "-s -w -X main.version=$${TYCI_BUILD_VERSION}" \
 		-trimpath \
 		-o $(BINARY) .
 
