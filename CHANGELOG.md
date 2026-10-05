@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The TUI jobs panel no longer shows a finished job as running forever when a burst of `job.updated` events overflows the 32-slot bus while the TUI is busy; the TUI now subscribes with per-job coalescing (#113)
 - The status bar now clamps its right part to the terminal width instead of relying on each right-side item to bound itself, so a future over-long right item can no longer wrap the row and break the fixed frame height (#125)
 - The status bar no longer truncates the session cost mid-number on a narrow terminal: the right side's width budget is one function (`display.statusRightBudget`), and when a figure does not fit, it is dropped whole instead of being cut, so a narrow bar now loses the bill rather than showing a shortened one (#153). The left side of the bar is unchanged and still truncates from the tail
+- The Go module now declares `github.com/crazy-goat/tyci-agent`, matching the repository and fixing Go module installation and dependency resolution (#115)
 
 ## [0.1.0] - 2026-10-02
 
