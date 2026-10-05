@@ -230,7 +230,7 @@ type Job struct {
 	// context below remain private so Snapshot never copies synchronization
 	// primitives.
 	ExtensionRequestID string
-	ExtensionSeconds   time.Duration
+	ExtensionDuration  time.Duration
 	ExtensionReason    string
 	ExtensionPending   bool
 	ExtensionAccepted  bool
@@ -352,7 +352,7 @@ func (j *Job) Snapshot() Job {
 		// everywhere today, so no live bug yet — but nothing enforces that.
 		ResidualMailbox:    append([]string(nil), j.ResidualMailbox...),
 		ExtensionRequestID: j.ExtensionRequestID,
-		ExtensionSeconds:   j.ExtensionSeconds,
+		ExtensionDuration:  j.ExtensionDuration,
 		ExtensionReason:    j.ExtensionReason,
 		ExtensionPending:   j.ExtensionPending,
 		ExtensionAccepted:  j.ExtensionAccepted,

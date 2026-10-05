@@ -1,7 +1,7 @@
 package tools
 
 // A blocking subagent call hands its children to the background after
-// SubagentBackgroundAfterSec, the same way bash does at 30s. Without it a slow
+// SubagentBackgroundAfter, the same way bash does at 30s. Without it a slow
 // child holds the whole turn open, and the person at the keyboard cannot type
 // anything until it returns.
 
@@ -19,7 +19,7 @@ import (
 )
 
 // handoffEnv wires a job registry and notifier, and overrides
-// SubagentBackgroundAfterSec to after — a real 60s wait would otherwise make
+// SubagentBackgroundAfter to after — a real 60s wait would otherwise make
 // every test either wait it out or exercise the wait's early-exit paths
 // (UserPending, ctx.Done()) exclusively, leaving the timer.C arm of
 // runWithHandoff's select with no coverage at all.
@@ -45,7 +45,7 @@ func handoffEnv(t *testing.T, after time.Duration) (*jobs.Registry, *recordingNo
 	SetJobNotifier(notifier)
 	SetBackgroundBashEnabled(true) // the per-mode flag both handoffs share
 
-	restoreAfter := SetSubagentBackgroundAfterSecForTests(after)
+	restoreAfter := SetSubagentBackgroundAfterForTests(after)
 	t.Cleanup(func() {
 		drainJobs(t, reg)
 		SetJobStarter(nil)
@@ -675,7 +675,7 @@ func TestBlockingCallStillHandsOffOnContextCancel(t *testing.T) {
 // `case <-timer.C` arm directly, with nobody typing and no ctx cancellation
 // to trigger the other two exits — the arm every other test in this file
 // carefully avoids (they all set a window long enough that the timer never
-// fires). Made possible by SubagentBackgroundAfterSec being a var: without
+// fires). Made possible by SubagentBackgroundAfter being a var: without
 // that, this either waits out a real 60s or cannot be tested at all.
 func TestBlockingCallHandsOffAtTimerExpiry(t *testing.T) {
 	reg, notifier := handoffEnv(t, 20*time.Millisecond)

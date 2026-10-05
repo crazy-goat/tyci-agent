@@ -199,7 +199,7 @@ func (m *TuiModel) spacerAfter(i int) bool {
 	if i+1 >= len(m.blocks) {
 		return false
 	}
-	return !(compactKind(m.blocks[i].kind) && compactKind(m.blocks[i+1].kind))
+	return !compactKind(m.blocks[i].kind) || !compactKind(m.blocks[i+1].kind)
 }
 
 // compactKind names the block kinds that pack together without a spacer.

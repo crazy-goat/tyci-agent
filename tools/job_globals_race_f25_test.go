@@ -8,9 +8,9 @@ package tools
 //     read by GetMCPToolRunner, which MCP-backed tool calls resolve on their
 //     own job goroutine. Same risk profile as the seven B2 globals and the
 //     four F11 ones.
-//   - SubagentBackgroundAfterSec (subagent.go): read by runWithHandoff's
+//   - SubagentBackgroundAfter (subagent.go): read by runWithHandoff's
 //     timer on the calling job's own goroutine; production never writes it,
-//     only SetSubagentBackgroundAfterSecForTests does (tests shrinking the
+//     only SetSubagentBackgroundAfterForTests does (tests shrinking the
 //     real 60s wait), so this one's exposure is test-only — same shape as
 //     cronRunnerExeOverride.
 //
@@ -25,8 +25,8 @@ func TestJobGlobals_F25_ConcurrentSetGet_RaceFree(t *testing.T) {
 	oldRunner := GetMCPToolRunner()
 	t.Cleanup(func() { SetMCPToolRunnerForTests(oldRunner) })
 
-	oldAfter := SubagentBackgroundAfterSec()
-	t.Cleanup(func() { SetSubagentBackgroundAfterSecForTests(oldAfter) })
+	oldAfter := SubagentBackgroundAfter()
+	t.Cleanup(func() { SetSubagentBackgroundAfterForTests(oldAfter) })
 
 	cases := []struct {
 		name string
@@ -39,9 +39,9 @@ func TestJobGlobals_F25_ConcurrentSetGet_RaceFree(t *testing.T) {
 			get:  func() { _ = GetMCPToolRunner() },
 		},
 		{
-			name: "subagentBackgroundAfterSec",
-			set:  func() { SetSubagentBackgroundAfterSecForTests(oldAfter) },
-			get:  func() { _ = SubagentBackgroundAfterSec() },
+			name: "subagentBackgroundAfter",
+			set:  func() { SetSubagentBackgroundAfterForTests(oldAfter) },
+			get:  func() { _ = SubagentBackgroundAfter() },
 		},
 	}
 

@@ -697,7 +697,7 @@ func (r *Registry) RequestExtension(id string, seconds time.Duration, reason str
 	}
 	requestID := nextExtensionID()
 	job.ExtensionRequestID = requestID
-	job.ExtensionSeconds = seconds
+	job.ExtensionDuration = seconds
 	job.ExtensionReason = reason
 	job.ExtensionPending = true
 	job.ExtensionAccepted = false
@@ -720,7 +720,7 @@ func (r *Registry) clearPendingExtensionLocked(job *Job) {
 	job.extensionResolved = true
 	job.extensionApproved = false
 	job.ExtensionRequestID = ""
-	job.ExtensionSeconds = 0
+	job.ExtensionDuration = 0
 	job.ExtensionReason = ""
 }
 
@@ -790,7 +790,7 @@ func (r *Registry) ResolveExtension(id, requestID string, approve bool) bool {
 		return false
 	}
 	if approve {
-		if !job.extensionCtx.extend(job.ExtensionSeconds) {
+		if !job.extensionCtx.extend(job.ExtensionDuration) {
 			r.clearPendingExtensionLocked(job)
 			r.mu.Unlock()
 			return false

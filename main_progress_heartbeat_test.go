@@ -5,7 +5,7 @@ package main
 // (tools/toolgate.go) — so a whitelisted agent whose tools: list omits it
 // (e.g. builtin "reviewer": find, read, bash, or "locator": find, read)
 // could never satisfy the nudge. LastProgressAt would never advance and the
-// reminder would re-fire roughly every SubagentBackgroundAfterSec for the
+// reminder would re-fire roughly every SubagentBackgroundAfter for the
 // rest of the run, the exact "crowd out the real conversation" outcome item
 // 15 exists to avoid.
 //
@@ -14,7 +14,7 @@ package main
 // with a tools: whitelist of ["find", "read"] (report_progress omitted), and
 // asserts the harness-authored heartbeat reminder never appears anywhere in
 // the child's own transcript — even though the run spans several iterations,
-// each one comfortably past a shrunk SubagentBackgroundAfterSec, which would
+// each one comfortably past a shrunk SubagentBackgroundAfter, which would
 // have triggered at least one nudge had the gate not been fixed.
 
 import (
@@ -34,7 +34,7 @@ import (
 func TestWiring_Item15_WhitelistedAgentWithoutReportProgress_NeverNagged(t *testing.T) {
 	withTestWiring(t)
 
-	restore := tools.SetSubagentBackgroundAfterSecForTests(20 * time.Millisecond)
+	restore := tools.SetSubagentBackgroundAfterForTests(20 * time.Millisecond)
 	defer restore()
 
 	var mu sync.Mutex
@@ -54,7 +54,7 @@ func TestWiring_Item15_WhitelistedAgentWithoutReportProgress_NeverNagged(t *test
 		mu.Unlock()
 
 		if turn < totalTurns {
-			// Sleep past the shrunk SubagentBackgroundAfterSec so, by the next
+			// Sleep past the shrunk SubagentBackgroundAfter so, by the next
 			// iteration boundary, a heartbeat nudge would already be due if
 			// cfg.ProgressHeartbeat were (wrongly) wired for this agent.
 			time.Sleep(40 * time.Millisecond)

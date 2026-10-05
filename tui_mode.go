@@ -495,7 +495,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				continue
 			default:
 				cmd := strings.Fields(trimmed)[0]
-				tuiDisp.Error(fmt.Errorf("Unknown command: %s", cmd))
+				tuiDisp.Error(fmt.Errorf("unknown command: %s", cmd))
 				tuiDisp.ResetStatus()
 				iterCancel()
 				continue

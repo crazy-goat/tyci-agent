@@ -17,8 +17,9 @@ linters:
         - os.Remove
         - os.RemoveAll
     staticcheck:
-      # Keep the bug checks (SA, S). Style (ST) and quickfix (QF) checks are not enforced.
-      checks: ["all", "-ST*", "-QF*"]
+      # Keep the bug checks (SA, S). Of the style (ST) and quickfix (QF) checks only
+      # the ones listed here are enforced.
+      checks: ["all", "-ST*", "-QF*", "ST1005", "ST1011", "QF1001", "QF1003", "QF1008", "QF1011", "QF1012"]
   exclusions:
     rules:
       # Tests set up and tear down state; unchecked errors there add noise only.

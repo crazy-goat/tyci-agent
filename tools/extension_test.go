@@ -14,7 +14,7 @@ type fakeJobExtensionRequester struct {
 	resolveOK bool
 
 	gotRequestID  string
-	gotSeconds    time.Duration
+	gotDuration   time.Duration
 	gotReason     string
 	gotResolveID  string
 	gotResolveReq string
@@ -23,7 +23,7 @@ type fakeJobExtensionRequester struct {
 
 func (f *fakeJobExtensionRequester) RequestExtension(id string, seconds time.Duration, reason string) (string, bool) {
 	f.gotRequestID = id
-	f.gotSeconds = seconds
+	f.gotDuration = seconds
 	f.gotReason = reason
 	if f.requestID == "" {
 		return "", false
@@ -108,8 +108,8 @@ func TestRequestTimeoutExtension_RequestsAndWaits(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected approved request to succeed, got %q", res.Error)
 	}
-	if fake.gotRequestID != "job-42" || fake.gotSeconds != 45*time.Second || fake.gotReason != "the build is still running" {
-		t.Fatalf("requester saw wrong request: id=%q seconds=%s reason=%q", fake.gotRequestID, fake.gotSeconds, fake.gotReason)
+	if fake.gotRequestID != "job-42" || fake.gotDuration != 45*time.Second || fake.gotReason != "the build is still running" {
+		t.Fatalf("requester saw wrong request: id=%q seconds=%s reason=%q", fake.gotRequestID, fake.gotDuration, fake.gotReason)
 	}
 }
 

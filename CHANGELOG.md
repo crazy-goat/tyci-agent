@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - `eventbus.Bus.SubscribeCoalesced`: a subscription that keeps only the latest event per key, so a slow consumer never loses the newest state (#113). The optional `eventbus.WithReplaces` decides which of two events with the same key is kept (#131)
 
+### Changed
+- `golangci-lint` now enforces the staticcheck style/quickfix checks ST1005, ST1011, QF1001, QF1003, QF1008, QF1011 and QF1012; the unknown-command error in TUI and interactive mode is now lowercase (#116)
+
 ### Fixed
 - Untrusted-project warnings for agent commands now name the skipped local cron directory and MCP configuration as well as hooks and Lua tools, using the same warning helper as workflow runs (#126)
 - The TUI jobs panel no longer shows a finished job as running when a progress snapshot taken just before the job ended reaches it after the terminal event; job snapshots published to `onEvent` now carry a per-job `EventSeq`, and both the TUI's coalescing subscription and the model ignore older ones (#131)

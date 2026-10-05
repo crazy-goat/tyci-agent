@@ -524,14 +524,14 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		NextMessages:  tools.JobMailboxNextMessages(jobID),
 	}
 
-	// Item 15: nudge this child, at most once per SubagentBackgroundAfterSec,
+	// Item 15: nudge this child, at most once per SubagentBackgroundAfter,
 	// to post a report_progress note when it has gone quiet. Only wired when
 	// report_progress is actually reachable for this agent — report_progress
 	// is NOT in alwaysAllowedTools (tools/toolgate.go), so a non-empty
 	// tools: whitelist that omits it (e.g. builtin "reviewer": find, read,
 	// bash, or "locator": find, read) leaves the child with no way to ever
 	// satisfy this nudge: LastProgressAt would never advance, and the
-	// reminder would re-fire roughly every SubagentBackgroundAfterSec for
+	// reminder would re-fire roughly every SubagentBackgroundAfter for
 	// the rest of the run — exactly the "crowd out the real conversation"
 	// outcome item 15 exists to avoid. Same hasAskParent-shaped check as
 	// RunTaskWithSystem above (opts.Tools empty/nil means unrestricted).

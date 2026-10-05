@@ -117,7 +117,8 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 		}
 		if idx >= 0 && idx < len(m.blocks) {
 			b := m.blocks[idx]
-			if b.kind == "thinking" {
+			switch b.kind {
+			case "thinking":
 				// A thinking block never renders its full text inline — it
 				// is always the one-line collapsed form (renderThinkingBlock)
 				// — so there is nothing to glamour-render here. What this
@@ -142,7 +143,7 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				delete(m.streamWraps, idx)
 				delete(m.mdStreamState, idx)
 				delete(m.mdCacheRendered, idx)
-			} else if b.kind == "text" {
+			case "text":
 				content := collapseRepeatedLines(b.content)
 				// renderWidth, not m.width: with the sidebar open the only
 				// thing on screen is the narrowed main column (see
@@ -164,7 +165,7 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamWraps, idx)
 				delete(m.mdStreamState, idx)
-			} else if b.kind == "error" || b.kind == "block" {
+			case "error", "block":
 				rendered := renderErrorOrBlock(b, m.renderWidth())
 				if rendered != "" {
 					m.mdCacheRendered[idx] = rendered
@@ -178,7 +179,7 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamWraps, idx)
 				delete(m.mdStreamState, idx)
-			} else {
+			default:
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamWraps, idx)
 				delete(m.mdStreamState, idx)
