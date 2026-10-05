@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - `golangci-lint` now enforces the staticcheck style/quickfix checks ST1005, ST1011, QF1001, QF1003, QF1008, QF1011 and QF1012; the unknown-command error in TUI and interactive mode is now lowercase (#116)
+- Three exported Go symbols were renamed for the ST1011 cleanup: `jobs.Job.ExtensionSeconds` → `jobs.Job.ExtensionDuration`, `tools.SubagentBackgroundAfterSec()` → `tools.SubagentBackgroundAfter()`, and `tools.SetSubagentBackgroundAfterSecForTests()` → `tools.SetSubagentBackgroundAfterForTests()`. Go callers must use the new names; no compatibility aliases were kept (#116)
 
 ### Fixed
 - Untrusted-project warnings for agent commands now name the skipped local cron directory and MCP configuration as well as hooks and Lua tools, using the same warning helper as workflow runs (#126)

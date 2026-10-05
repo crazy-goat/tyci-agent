@@ -55,9 +55,9 @@ var (
 	subagentBackgroundAfter   = 60 * time.Second
 )
 
-// SubagentBackgroundAfter returns the current handoff duration. Was a
-// plain var; kept as a zero-argument func under the same exported name so
-// every read (including the test files below) goes through the lock.
+// SubagentBackgroundAfter returns the current handoff duration. Every read
+// goes through the lock; tests override it with
+// SetSubagentBackgroundAfterForTests.
 func SubagentBackgroundAfter() time.Duration {
 	subagentBackgroundAfterMu.RLock()
 	defer subagentBackgroundAfterMu.RUnlock()
