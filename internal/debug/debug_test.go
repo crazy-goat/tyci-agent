@@ -3,6 +3,7 @@ package debug
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,6 +133,60 @@ func TestLogger_DoubleClose(t *testing.T) {
 	l.Close()
 	// Second close should not panic
 	l.Close()
+}
+
+func TestLogger_CloseReturnsNilOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	setHome(t, dir)
+
+	l, err := Init()
+	if err != nil {
+		t.Fatalf("Init() error: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+}
+
+func TestLogger_DoubleCloseReturnsNil(t *testing.T) {
+	dir := t.TempDir()
+	setHome(t, dir)
+
+	l, err := Init()
+	if err != nil {
+		t.Fatalf("Init() error: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("first Close() = %v, want nil", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("second Close() = %v, want nil", err)
+	}
+}
+
+func TestLogger_CloseReturnsFileError(t *testing.T) {
+	f, err := os.Create(filepath.Join(t.TempDir(), "x"))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Close the underlying file first so the logger's Close hits an
+	// already-closed descriptor and returns the error.
+	if err := f.Close(); err != nil {
+		t.Fatalf("close setup file: %v", err)
+	}
+
+	l := &Logger{file: f}
+	err = l.Close()
+	if err == nil {
+		t.Fatal("Close() = nil, want an error from closing an already-closed file")
+	}
+	if !errors.Is(err, os.ErrClosed) {
+		t.Errorf("Close() = %v, want an error wrapping os.ErrClosed", err)
+	}
+	// The failed close clears the file, so a retry returns nil.
+	if err := l.Close(); err != nil {
+		t.Errorf("second Close() = %v, want nil", err)
+	}
 }
 
 func TestLogger_WriteRequest(t *testing.T) {
