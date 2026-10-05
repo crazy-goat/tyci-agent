@@ -245,9 +245,10 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		runCfg.NextMessages = tools.JobMailboxNextMessages(newJobID)
 
 		c := &collector{}
-		// See ForkChildJob's identical comment (fork.go): without this the
-		// resumed conversation's real spend never reaches internal/ledger,
-		// and the Subagents tree would render it as free.
+		// Record the resumed conversation's real spend in internal/ledger via
+		// ledger.Watch: without it the spend never reaches the ledger and the
+		// Subagents tree would render this conversation as free. Every child
+		// conversation (resume, /btw) must do the same.
 		_, err := agent.Run(runCtx, entry.mc, ledger.Watch(c, ledger.Subagent, entry.mc.Provider(), entry.mc.Model(), newJobID), &forked, runCfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		deadlineExceeded := errors.Is(err, context.DeadlineExceeded)
@@ -474,19 +475,11 @@ func btwConfig(base agent.Config) agent.Config {
 	// this child can't use it — advertising a tool guaranteed to fail wastes
 	// a round-trip for no benefit.
 	//
-	// "scout" is dropped for the same reason as a discovered-while-fixing-
-	// item-21 bug, not F10: this default schema is the one fork.go's
-	// ForkChildJob uses UNMODIFIED (unlike /btw's own evaluation phase and
-	// promoted job, which each overwrite cfg.Schema afterward with their
-	// own depth-correct builder). A forked child keeps base.Tools verbatim
-	// (toolsAdapter{}, the real top-level dispatcher) and never calls
-	// tools.WithDepth, so it runs at depth 0 — same as the live top-level
-	// conversation it forked from, correctly still offering "subagent".
-	// But GetAllToolsSchemaJSONWithout is the raw, unfiltered registry
-	// schema (only "compact" removed above), so it would also offer
-	// "scout" — which depth 0's runtime gate (tools.RunTool's own
-	// depth-derived check) always refuses. Excluding it here keeps this
-	// schema honest for the one caller that uses it as-is.
+	// "scout" is dropped as a safe default: GetAllToolsSchemaJSONWithout is
+	// the raw registry schema, so it would offer "scout", which the depth-0
+	// runtime gate (tools.RunTool's depth check) always refuses. Callers
+	// that need a depth-specific schema (/btw evaluation, Promote) overwrite
+	// cfg.Schema afterwards; this default only keeps the schema honest.
 	cfg.Schema = tools.GetAllToolsSchemaJSONWithout(map[string]bool{"compact": true, "scout": true})
 	return cfg
 }
@@ -550,10 +543,9 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		// shared with any other job, so mutating it right before the one
 		// agent.Run call that uses it is safe.
 		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
-		// See ForkChildJob's identical comment (fork.go): a /btw
-		// side-conversation spends the parent's money like any other child
-		// and must record against the same ledger, or it renders as free in
-		// the Subagents tree.
+		// Same ledger accounting as Resume: a /btw side-conversation spends the
+		// parent's money and must record against the same ledger, or it renders
+		// as free in the Subagents tree.
 		_, err := agent.Run(jobCtx, client, ledger.Watch(sink, ledger.Subagent, client.Provider(), client.Model(), jobID), &forked, cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {
