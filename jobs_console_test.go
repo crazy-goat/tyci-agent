@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 func TestPrintJobs_EmptyRegistry(t *testing.T) {

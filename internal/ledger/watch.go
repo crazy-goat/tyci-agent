@@ -1,6 +1,6 @@
 package ledger
 
-import "github.com/decodo/tyci/stream"
+import "github.com/crazy-goat/tyci-agent/stream"
 
 // Sink is the event interface the agent loop writes to, restated here so this
 // package never has to import agent (which would be a cycle: the conductor

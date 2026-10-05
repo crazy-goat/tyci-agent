@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/display"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/display"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // transcriptBlockCap caps a single block's rendered text so one huge tool

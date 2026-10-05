@@ -17,8 +17,8 @@ package ledger
 import (
 	"sync"
 
-	"github.com/decodo/tyci/internal/pricing"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/internal/pricing"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // Kind separates the conversation from work it delegated. That split is the

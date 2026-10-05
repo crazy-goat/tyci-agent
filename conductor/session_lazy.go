@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // ensureLazySession opens a session file at sessionPath if it isn't already

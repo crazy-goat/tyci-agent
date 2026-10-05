@@ -12,7 +12,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	lua "github.com/yuin/gopher-lua"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 const (

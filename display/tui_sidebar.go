@@ -42,10 +42,10 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/decodo/tyci/internal/ledger"
-	"github.com/decodo/tyci/jobs"
-	"github.com/decodo/tyci/stream"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/jobs"
+	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // sidebarStatusCmd shows msg in the status bar for 2 seconds, mirroring

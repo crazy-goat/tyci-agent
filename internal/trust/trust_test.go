@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // isolatedHome points $HOME at a fresh temp directory for the duration of

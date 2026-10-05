@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/decodo/tyci/internal/agentdefs"
-	"github.com/decodo/tyci/session"
+	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // AgentsFile is the name of the local config file (in the project root).

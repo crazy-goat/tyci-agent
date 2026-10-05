@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/jobs"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/jobs"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // TestBashBackgroundedProgress_SurfacedByWaitAsHistorySequence covers review

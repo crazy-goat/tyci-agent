@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // parseMsgCommand splits "/msg"'s argument (the text after "/msg ", already

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/decodo/tyci/locks"
+	"github.com/crazy-goat/tyci-agent/locks"
 )
 
 // newHolderID returns a short random identifier used to label a lock's

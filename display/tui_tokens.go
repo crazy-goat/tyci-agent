@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/decodo/tyci/internal/ledger"
-	"github.com/decodo/tyci/internal/pricing"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/internal/pricing"
 )
 
 // contextUsed is how much of the model's context window the last turn

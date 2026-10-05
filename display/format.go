@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // stripAnsi removes ANSI escape sequences from a string.
