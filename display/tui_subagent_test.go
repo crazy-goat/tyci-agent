@@ -360,38 +360,38 @@ func TestUpdateSubagentModal_EnterDoesNotCloseWhenRunning(t *testing.T) {
 	}
 }
 
-func TestUpdateSubagentModal_ForwardsTuiMsgBlock(t *testing.T) {
-	// When modal is active, tuiMsgBlock messages (tool-progress, etc.)
-	// should still be processed by handleBlockMsg.
+func TestUpdate_ModalActive_DispatchesToolProgress(t *testing.T) {
+	// With the modal active, a tuiMsgBlock must still be processed by
+	// handleBlockMsg.
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "subagent"})
 	m.openToolBlockModal(m.toolQueue[0])
+	m.subagentModalActive = true
 
-	// Simulate a tool-progress arriving while modal is active
-	// This goes through Update -> updateSubagentModal -> case tuiMsgBlock -> handleBlockMsg
-	newModel, _ := m.updateSubagentModal(tuiMsgBlock{
+	// Update dispatches blocks before the modal handler.
+	updated, _ := m.Update(tuiMsgBlock{
 		kind:    "tool-progress",
 		toolIdx: 0,
 		content: "streaming line\n",
 	})
-	tm := newModel.(TuiModel)
+	tm := updated.(TuiModel)
 
 	if tm.subagentModalText() != "streaming line\n" {
 		t.Errorf("expected 'streaming line\\n' in modal, got %q", tm.subagentModalText())
 	}
 }
 
-func TestUpdateSubagentModal_ForwardsDoneMessage(t *testing.T) {
+func TestUpdate_ModalActive_DispatchesDone(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.subagentModalActive = true
 	m.reading = false
 	m.status = "tool"
 
-	newModel, _ := m.updateSubagentModal(tuiMsgBlock{
+	updated, _ := m.Update(tuiMsgBlock{
 		kind:  "done",
 		usage: stream.Usage{Input: 10, Output: 5},
 	})
-	tm := newModel.(TuiModel)
+	tm := updated.(TuiModel)
 
 	if !tm.reading {
 		t.Error("done message should set reading=true even when modal is active")
@@ -552,8 +552,8 @@ func TestSubagentModalContent_MultipleUpdateCycles_NoPanic(t *testing.T) {
 		})
 
 		// Simulate bubbletea calling Update (by value) — this must not panic.
-		// We use updateSubagentModal directly which is called by value.
-		updated, _ := m.updateSubagentModal(tuiMsgBlock{
+		// We call Update, as bubbletea does.
+		updated, _ := m.Update(tuiMsgBlock{
 			kind:    "tool-progress",
 			toolIdx: 0,
 			content: "streaming cycle\n",

@@ -259,8 +259,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
-	case tuiMsgBlock:
-		return m, m.handleBlockMsg(msg)
 	case tea.MouseMsg:
 		return m.handleMouseMsg(msg)
 	}
