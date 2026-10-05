@@ -44,7 +44,9 @@ make release
 make minimal
 ```
 
-The binary is named `tyci` in the current directory.
+The binary is named `tyci` in the current directory. Each target stamps a
+version into the binary, shown by `tyci --version`: by default the nearest
+`git describe` tag, or an explicit one with `make release VERSION=v0.2.0`.
 
 ### Install to ~/local/bin
 
@@ -151,6 +153,29 @@ tyci run --agent my-agent --prompt "Hello"
 | `provider` | Manage provider settings |
 | `cron` | List and run scheduled prompts |
 | `completion` | Generate shell completion script |
+
+### Version
+
+```bash
+tyci --version
+```
+
+Prints the version of the running binary, which depends on how it was built:
+
+- A **release binary** (`.github/workflows/release.yaml`) stamps the release
+  tag, for example `tyci version v0.2.0`.
+- The **Makefile targets** `build`, `release` and `minimal` stamp the output of
+  `git describe --tags --always --dirty` — for example `v0.2.0-12-gabc1234`,
+  `v0.2.0-dirty`, or a bare commit hash when no tag is reachable. Without Git
+  they stamp `dev`. Pass `VERSION=v0.2.0` to pin it:
+  `make release VERSION=v0.2.0`.
+- A binary with **no stamp** reports the main-module version the Go toolchain
+  recorded: a tag for a build at an exact tag, or a pseudo-version for a commit
+  after a tag, as produced by `go install` or a plain `go build`.
+- A build with **no version information at all** (`go build -buildvcs=false`, a
+  source tarball) reports `dev`.
+
+Please include the `tyci --version` output in bug reports.
 
 ### Common Flags
 

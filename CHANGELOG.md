@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `tyci --version` prints the build version: release binaries stamp the release tag, Makefile builds stamp `git describe` output (or `dev` without Git, overridable with `VERSION=`), an unstamped binary reports the main-module version the Go toolchain recorded, and a build with no version information reports `dev` (#117)
 - `eventbus.Bus.SubscribeCoalesced`: a subscription that keeps only the latest event per key, so a slow consumer never loses the newest state (#113). The optional `eventbus.WithReplaces` decides which of two events with the same key is kept (#131)
 
 ### Changed
