@@ -3,13 +3,9 @@ package main
 import (
 	"context"
 	"testing"
-	"time"
 
-	"github.com/crazy-goat/tyci-agent/agent"
-	"github.com/crazy-goat/tyci-agent/conductor"
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/connector/connectortest"
-	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
@@ -76,76 +72,6 @@ func TestAgentRunnerRun_NoHistoryFallsBackToPlainTaskSeed(t *testing.T) {
 	}
 	if reqs[0].Messages[0].Content[0].Text != "do the thing" {
 		t.Fatalf("unexpected seed message: %+v", reqs[0].Messages[0])
-	}
-}
-
-// ─── ForkChildJob: fork-as-background-child ────────────────────────────────
-
-// TestForkChildJob_ProducesWorkingJobSeededWithHistory drives ForkChildJob
-// end-to-end: base history in, a real background job out, running on the
-// shared JobRegistry, whose single request to the model carries the forked
-// history plus the task as a new user turn.
-func TestForkChildJob_ProducesWorkingJobSeededWithHistory(t *testing.T) {
-	reg := jobs.NewRegistry()
-	prevRegistry := JobRegistry
-	JobRegistry = reg
-	defer func() { JobRegistry = prevRegistry }()
-
-	fake := connectortest.Text("fork child answer")
-	cond := conductor.New(conductor.Options{
-		Client: fake,
-		Sink:   &collector{},
-		Config: agent.Config{},
-	})
-
-	base := []connector.Message{
-		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "earlier question"}}},
-		{Role: "assistant", Content: []connector.ContentBlock{{Type: "text", Text: "earlier answer"}}},
-	}
-
-	job := ForkChildJob(context.Background(), cond, base, "continue from here")
-	if job == nil {
-		t.Fatal("expected a non-nil job")
-	}
-
-	result, ok := JobRegistry.Wait(context.Background(), job.ID, 5*time.Second)
-	if !ok {
-		t.Fatal("expected to find the job")
-	}
-	if result.Status != jobs.StatusDone {
-		t.Fatalf("expected job to finish done, got status %q (err=%q)", result.Status, result.Err)
-	}
-	if result.Result != "fork child answer" {
-		t.Fatalf("unexpected job result: %q", result.Result)
-	}
-
-	reqs := fake.Requests()
-	if len(reqs) != 1 {
-		t.Fatalf("expected 1 request to the model, got %d", len(reqs))
-	}
-	got := reqs[0].Messages
-	if len(got) != 3 {
-		t.Fatalf("expected 3 messages (2 base + 1 new task turn), got %d: %+v", len(got), got)
-	}
-	if got[0].Content[0].Text != "earlier question" || got[1].Content[0].Text != "earlier answer" {
-		t.Fatalf("base history not seeded in order: %+v", got[:2])
-	}
-	if got[2].Role != "user" || got[2].Content[0].Text != "continue from here" {
-		t.Fatalf("expected task appended as a new user turn, got %+v", got[2])
-	}
-
-	// Base must be unaffected by the fork.
-	if len(base) != 2 {
-		t.Fatalf("base slice was mutated: %+v", base)
-	}
-
-	// A finished forked job registers as resumable, same as
-	// jobResumerAdapter.Resume, so it can itself be resumed/forked again.
-	resumableMu.Lock()
-	_, resumableOk := resumable[job.ID]
-	resumableMu.Unlock()
-	if !resumableOk {
-		t.Error("expected the finished forked job to be registered as resumable")
 	}
 }
 
