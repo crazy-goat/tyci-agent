@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/conductor"
-	"github.com/decodo/tyci/connector/connectortest"
-	"github.com/decodo/tyci/session"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/conductor"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/session"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // TestManualCompactSummary_CarriesRealDumpPathIntoConversation pins the fix

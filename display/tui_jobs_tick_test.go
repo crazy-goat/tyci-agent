@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // Item 57: the status tick chain (item 56) is what keeps a background job's

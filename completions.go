@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/decodo/tyci/agent"
-	"github.com/decodo/tyci/internal/connect"
-	"github.com/decodo/tyci/providers"
+	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/internal/connect"
+	"github.com/crazy-goat/tyci-agent/providers"
 	"github.com/spf13/cobra"
 )
 

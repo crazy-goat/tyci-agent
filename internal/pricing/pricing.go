@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/decodo/tyci/internal/connect"
+	"github.com/crazy-goat/tyci-agent/internal/connect"
 )
 
 // Rates is the price of a million tokens, in USD, split by how the tokens

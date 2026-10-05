@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/decodo/tyci/internal/trust"
-	"github.com/decodo/tyci/providers"
-	"github.com/decodo/tyci/session"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/internal/trust"
+	"github.com/crazy-goat/tyci-agent/providers"
+	"github.com/crazy-goat/tyci-agent/session"
+	"github.com/crazy-goat/tyci-agent/tools"
 	"github.com/spf13/cobra"
 )
 

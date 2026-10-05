@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/decodo/tyci/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 )
 
 // AgentsTool lets the model discover named agents on demand — the "agent"

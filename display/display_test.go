@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 func captureOutput(t *testing.T) (stdoutBuf, stderrBuf *bytes.Buffer, sync func(), restore func()) {

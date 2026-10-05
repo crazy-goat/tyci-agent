@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // TestWorkflowRunCLI_ConnectsMCP is round 1 finding 4's regression test:

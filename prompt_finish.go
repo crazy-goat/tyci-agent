@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/decodo/tyci/agent"
-	"github.com/decodo/tyci/conductor"
-	"github.com/decodo/tyci/display"
+	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/conductor"
+	"github.com/crazy-goat/tyci-agent/display"
 )
 
 // exitFunc is os.Exit, indirected so a test can observe an exit (and its

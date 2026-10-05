@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/decodo/tyci/tools"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // closeTodoModal closes the todo list modal and restores scroll state.

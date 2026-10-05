@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/connector"
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 func TestTranscriptProvider_OKFalseForUnknown(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // TestWithPhaseTrace_HookAfterStopIsNoOp is the fix for the round-1 finding:

@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/decodo/tyci/jobs"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // openJobsModal opens the background-jobs list modal (Ctrl+B).

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/decodo/tyci/connector"
+	"github.com/crazy-goat/tyci-agent/connector"
 )
 
 // TestParseSessionFile_LargeLine verifies that parseSessionFile can handle

@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/decodo/tyci/internal/ledger"
-	"github.com/decodo/tyci/internal/pricing"
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/internal/pricing"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // TestBuildStatus_LongStatusMessageIsTruncatedNotWrapped guards the item-27

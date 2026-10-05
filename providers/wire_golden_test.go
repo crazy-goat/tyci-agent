@@ -36,7 +36,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/decodo/tyci/stream"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 var update = flag.Bool("update", false, "regenerate providers/testdata golden files")
