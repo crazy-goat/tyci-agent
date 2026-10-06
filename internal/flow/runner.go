@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
 // ErrPaused is returned when the run enters an ask state.
-// Pause/resume logic beyond this stub belongs to the max_visits issue.
-var ErrPaused = errors.New("run paused")
+var ErrPaused = errors.New("flow: run paused")
 
 // Run walks the workflow until it reaches end (status done), ask
 // (status paused, ErrPaused), or a failure (status failed).
@@ -85,16 +85,15 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 			return nil
 		}
 		if s.Ask != "" {
-			st.Status = "paused"
-			st.Ask = &Ask{Message: s.Ask}
-			st.UpdatedAt = time.Now()
-			if r.Store != nil {
-				if saveErr := r.Store.Save(st); saveErr != nil {
-					return saveErr
-				}
+			return r.pause(st, s.Ask, "")
+		}
+		if limit := r.effectiveLimit(s); limit > 0 && st.Visits[cur]+1 > limit {
+			askState, ok := r.WF.States["ask"]
+			if !ok || askState.Ask == "" {
+				return r.fail(ctx, st, `max_visits needs an "ask" state`, errors.New(`max_visits needs an "ask" state`))
 			}
-			r.notify("run " + st.Run + " paused: " + s.Ask)
-			return ErrPaused
+			st.Current = "ask"
+			return r.pause(st, askState.Ask, "max_visits:"+cur)
 		}
 
 		st.Visits[cur]++
@@ -311,4 +310,90 @@ func (r *Runner) notify(msg string) {
 	if r.Notify != nil {
 		r.Notify(msg)
 	}
+}
+
+// effectiveLimit returns the visit limit of a state: its own max_visits,
+// else defaults.max_visits. 0 means unlimited.
+func (r *Runner) effectiveLimit(s State) int {
+	if s.MaxVisits != 0 {
+		return s.MaxVisits
+	}
+	return r.WF.Defaults.MaxVisits
+}
+
+// pause saves the run as paused and returns ErrPaused.
+func (r *Runner) pause(st *RunState, message, reason string) error {
+	st.Status = "paused"
+	st.Ask = &Ask{Message: message, Reason: reason}
+	st.UpdatedAt = time.Now()
+	if r.Store != nil {
+		if err := r.Store.Save(st); err != nil {
+			return err
+		}
+	}
+	r.notify("run " + st.Run + " paused: " + message)
+	return ErrPaused
+}
+
+// Resume answers a paused run. The answer only selects a key of the ask
+// state's on map (then "*"); it never runs anything. An unknown answer keeps
+// the run paused and returns an error that lists the allowed keys.
+// Leaving the ask state for a state that is not an end state resets all
+// visit counters. An ask state without on ends the run done.
+func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error {
+	if st == nil || r.WF == nil {
+		return errors.New("flow: run state or workflow is nil")
+	}
+	if st.Status != "paused" {
+		return fmt.Errorf("flow: run is %q, not paused", st.Status)
+	}
+	s, ok := r.WF.States[st.Current]
+	if !ok || s.Ask == "" {
+		return fmt.Errorf("flow: current state %q is not an ask state", st.Current)
+	}
+	next, ok := s.On[answer]
+	if !ok {
+		next, ok = s.On["*"]
+	}
+	if !ok && len(s.On) > 0 {
+		keys := make([]string, 0, len(s.On))
+		for k := range s.On {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return fmt.Errorf("flow: unknown answer %q, allowed: %s", answer, strings.Join(keys, ", "))
+	}
+	now := time.Now()
+	st.History = append(st.History, Step{
+		Seq:       len(st.History) + 1,
+		State:     st.Current,
+		Kind:      "ask",
+		Key:       answer,
+		To:        next,
+		StartedAt: now,
+		EndedAt:   now,
+	})
+	st.Ask = nil
+	st.UpdatedAt = now
+	if !ok {
+		st.Status = "done"
+		if r.Store != nil {
+			if err := r.Store.Save(st); err != nil {
+				return err
+			}
+		}
+		r.notify("run " + st.Run + " done")
+		return nil
+	}
+	if !r.WF.States[next].End {
+		st.Visits = map[string]int{}
+	}
+	st.Current = next
+	st.Status = "running"
+	if r.Store != nil {
+		if err := r.Store.Save(st); err != nil {
+			return err
+		}
+	}
+	return r.Run(ctx, st)
 }

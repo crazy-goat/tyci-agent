@@ -9,8 +9,8 @@ import "fmt"
 //   - exactly one kind (check, agent, ask, end) per state,
 //   - at least one end state.
 //
-// Unreachable-state warnings (SDR rule 7), role/script resolution (rules 4, 5)
-// and the max_visits-needs-ask rule (rule 6) belong to later issues and are
+// max_visits needs a state named ask of kind ask (rule 6).
+// Unreachable-state warnings (SDR rule 7) and role/script resolution (rules 4, 5) belong to later issues and are
 // deliberately not checked here; the seams (MaxVisits, Task, Ask fields) stay.
 func validateStructure(wf *Workflow) []error {
 	var errs []error
@@ -56,8 +56,20 @@ func validateStructure(wf *Workflow) []error {
 			}
 		}
 	}
+	if st, ok := wf.States["ask"]; (wf.Defaults.MaxVisits != 0 || anyMaxVisits(wf)) && (!ok || st.Ask == "") {
+		errs = append(errs, fmt.Errorf(`max_visits is set, so the workflow needs a state named "ask" of kind ask`))
+	}
 	if len(wf.States) > 0 && !hasEnd {
 		errs = append(errs, fmt.Errorf("workflow has no end state"))
 	}
 	return errs
+}
+
+func anyMaxVisits(wf *Workflow) bool {
+	for _, s := range wf.States {
+		if s.MaxVisits != 0 {
+			return true
+		}
+	}
+	return false
 }

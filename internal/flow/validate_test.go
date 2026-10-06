@@ -85,3 +85,24 @@ func TestValidateStructure_ReportsAllErrors(t *testing.T) {
 		t.Fatalf("expected all errors (name, start, kinds, target, no-end), got %d: %v", len(errs), errs)
 	}
 }
+
+func TestValidate_MaxVisitsNeedsAskState(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+		"a":   {Check: "x.sh", MaxVisits: 2, On: map[string]string{"go": "end"}},
+		"end": {End: true},
+	}}
+	errs := validateStructure(wf)
+	found := false
+	for _, err := range errs {
+		if strings.Contains(err.Error(), `"ask"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected ask-state error, got %v", errs)
+	}
+	wf.States["ask"] = State{Ask: "help", On: map[string]string{"stop": "end"}}
+	if errs := validateStructure(wf); len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+}
