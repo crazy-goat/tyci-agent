@@ -30,6 +30,12 @@ func SetWorkflowManager(m WorkflowManager) {
 	workflowMgrMu.Unlock()
 }
 
+func workflowManagerSet() bool {
+	workflowMgrMu.RLock()
+	defer workflowMgrMu.RUnlock()
+	return workflowMgr != nil
+}
+
 func getWorkflowManager() (WorkflowManager, *ToolResult) {
 	workflowMgrMu.RLock()
 	defer workflowMgrMu.RUnlock()

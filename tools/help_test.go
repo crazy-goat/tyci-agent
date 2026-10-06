@@ -18,6 +18,7 @@ func runHelp(t *testing.T, tool string) ToolResult {
 }
 
 func TestHelpIndexListsEveryTool(t *testing.T) {
+	withWorkflowManager(t, &fakeWorkflowManager{})
 	res := runHelp(t, "")
 	if !res.Success {
 		t.Fatalf("%s", res.Error)

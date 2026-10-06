@@ -16,6 +16,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 	"github.com/crazy-goat/tyci-agent/internal/connect"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
+	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/hooks"
 	"github.com/crazy-goat/tyci-agent/internal/pricing"
 	"github.com/crazy-goat/tyci-agent/internal/readline"
@@ -551,6 +552,9 @@ var consoleCmd = &cobra.Command{
 		// requireConfigured: /model in the console refuses a provider
 		// without credentials and says how to add one.
 		cond := newConductor(provider, modelName, disp, cfg, sessionPath, catalogResolver{requireConfigured: true})
+		// Chat tools workflow_start/status/resume exist only in tui and console:
+		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
+		tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})
 		workflowManager.SetBase(ctx)
 		defer workflowManager.Shutdown(3 * time.Second)
 		runInteractive(cond, disp, historyFile, ctx)
@@ -681,6 +685,9 @@ var tuiCmd = &cobra.Command{
 		// providers that are already in auth.json (see authSet above), and
 		// silently refusing a favorite would read as a dead key press.
 		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath, catalogResolver{})
+		// Chat tools workflow_start/status/resume exist only in tui and console:
+		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
+		tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})
 		workflowManager.SetBase(ctx)
 		defer workflowManager.Shutdown(3 * time.Second)
 		runTUI(cond, tuiDisp, ctx)

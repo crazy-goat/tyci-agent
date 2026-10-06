@@ -51,6 +51,7 @@ func TestWorkflowTools_StartStatusResume(t *testing.T) {
 }
 
 func TestSubagentToolSetExcludesWorkflowTools(t *testing.T) {
+	withWorkflowManager(t, &fakeWorkflowManager{})
 	names := []string{"workflow_start", "workflow_status", "workflow_resume"}
 	for _, schema := range []string{string(GetSubagentToolsSchemaJSON()), string(GetSubagentToolsSchemaJSONFor(names))} {
 		for _, n := range names {
@@ -67,5 +68,12 @@ func TestSubagentToolSetExcludesWorkflowTools(t *testing.T) {
 		if gate(n) == nil {
 			t.Errorf("gate allows %s", n)
 		}
+	}
+}
+
+func TestWorkflowToolsAbsentFromSchemaWithoutManager(t *testing.T) {
+	SetWorkflowManager(nil)
+	if strings.Contains(string(GetToolsSchemaJSON())+string(GetAllToolsSchemaJSON()), `"workflow_start"`) {
+		t.Error("schema offers workflow_start without a manager")
 	}
 }
