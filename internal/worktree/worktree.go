@@ -40,6 +40,9 @@ type Worktree struct {
 	// BaseCommit is the commit the branch started from. Kept so Changed can
 	// recognise work that was committed rather than left in the working tree.
 	BaseCommit string
+	// keepParent marks a worktree that lives in a shared directory: Remove
+	// deletes only Dir, not its parent, so sibling worktrees survive.
+	keepParent bool
 }
 
 // Add creates a worktree for repo on a new branch named after label.
@@ -70,6 +73,69 @@ func Add(ctx context.Context, repo, label string) (*Worktree, error) {
 		return nil, fmt.Errorf("worktree: git worktree add: %w: %s", err, out)
 	}
 	return &Worktree{Dir: target, Branch: branch, Repo: root, BaseCommit: strings.TrimSpace(base)}, nil
+}
+
+// AddIssue creates <home>/.tyci/worktrees/<repoName>/issue-<n> on branch
+// issue-<n> from origin/<defaultBranch>. It fails if the directory or the
+// branch already exists.
+//
+// home is a parameter so tests can pass t.TempDir(); callers pass the result
+// of os.UserHomeDir. The branch starts from origin/<defaultBranch>, not HEAD,
+// so the worktree holds the latest shared state rather than whatever the
+// local checkout happens to point at.
+func AddIssue(ctx context.Context, home, repo string, issue int, defaultBranch string) (*Worktree, error) {
+	if issue <= 0 {
+		return nil, fmt.Errorf("worktree: invalid issue number %d: must be positive", issue)
+	}
+	if defaultBranch == "" {
+		return nil, fmt.Errorf("worktree: default branch must not be empty")
+	}
+	if home == "" {
+		return nil, fmt.Errorf("worktree: home directory must not be empty")
+	}
+
+	root, err := Root(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+
+	branch := fmt.Sprintf("issue-%d", issue)
+	target := filepath.Join(home, ".tyci", "worktrees", filepath.Base(root), branch)
+
+	if _, err := os.Stat(target); err == nil {
+		return nil, fmt.Errorf("worktree: %s already exists; remove it first (git worktree remove --force %s)", target, target)
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("worktree: stat %s: %w", target, err)
+	}
+
+	if _, err := git(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+		return nil, fmt.Errorf("worktree: branch %s already exists; remove it first (git branch -D %s)", branch, branch)
+	}
+
+	// git creates the leaf itself; only the shared parents may be made here.
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return nil, fmt.Errorf("worktree: mkdir parents of %s: %w", target, err)
+	}
+
+	if out, err := git(ctx, root, "fetch", "origin", defaultBranch); err != nil {
+		return nil, fmt.Errorf("worktree: git fetch origin %s: %w: %s", defaultBranch, err, out)
+	}
+
+	if out, err := git(ctx, root, "worktree", "add", "-b", branch, target, "origin/"+defaultBranch); err != nil {
+		return nil, fmt.Errorf("worktree: git worktree add: %w: %s", err, out)
+	}
+
+	base, err := git(ctx, root, "rev-parse", "origin/"+defaultBranch)
+	if err != nil {
+		// The worktree, its branch and its git registration already exist
+		// at this point, but the caller gets no handle to Remove them with,
+		// so clean up here and leave no state behind for a retry.
+		_, _ = git(ctx, root, "worktree", "remove", "--force", target)
+		_, _ = git(ctx, root, "branch", "-D", branch)
+		_ = os.RemoveAll(target)
+		return nil, fmt.Errorf("worktree: git rev-parse origin/%s: %w: %s", defaultBranch, err, base)
+	}
+	return &Worktree{Dir: target, Branch: branch, Repo: root, BaseCommit: strings.TrimSpace(base), keepParent: true}, nil
 }
 
 // Changed reports whether anything was actually modified in the worktree —
@@ -111,6 +177,11 @@ func (w *Worktree) Remove(ctx context.Context) error {
 		_ = out
 	}
 	_, _ = git(ctx, w.Repo, "branch", "-D", w.Branch)
+	if w.keepParent {
+		// Issue worktrees share <home>/.tyci/worktrees/<repo> with their
+		// siblings; only the leaf belongs to this worktree.
+		return os.RemoveAll(w.Dir)
+	}
 	// The temp parent, not just the checkout git made inside it.
 	return os.RemoveAll(filepath.Dir(w.Dir))
 }

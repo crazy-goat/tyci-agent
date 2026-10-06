@@ -47,11 +47,10 @@ func (m *TuiModel) closeResumePicker(selected string) {
 
 // ─── Update handler ──────────────────────────────────────────────────────
 
-// updateResumePicker routes key events while the /resume modal is open. Any
-// other message (mouse, resize, status tick) is forwarded so streaming and
-// resize continue to work — the modal is full-screen on a blank background
-// so we don't expect to interact with the underlying transcript, but the
-// model still needs the resize tick to invalidate caches if a SIGWINCH fires.
+// updateResumePicker handles messages while the /resume modal is open.
+// Key and mouse wheel events control the picker, while window resize events
+// update the model dimensions. Stream blocks are dispatched by Update before
+// reaching this handler; other messages are ignored.
 func (m TuiModel) updateResumePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:

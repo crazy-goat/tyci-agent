@@ -137,7 +137,8 @@ tyci run --agent my-agent --prompt "Hello"
 │   └── .managed.json   # sha256 bookkeeping for the builtin definitions (see below)
 ├── history             # Readline history file
 ├── debug/              # Debug logs (when --no-debug is not set)
-└── sessions/           # Auto-generated session files (JSONL)
+├── sessions/           # Auto-generated session files (JSONL)
+└── worktrees/          # Fixed-path issue worktrees (<repo>/issue-N)
 ```
 
 ## CLI Reference

@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `internal/worktree.AddIssue` creates fixed-path issue worktrees at `~/.tyci/worktrees/<repo>/issue-N` on branch `issue-N` from `origin/<default branch>`; `Remove` deletes only the issue leaf so sibling worktrees survive (#158)
+
 ## [0.2.0] - 2026-10-05
 
 ### Added

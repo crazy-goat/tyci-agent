@@ -410,7 +410,7 @@ type SubagentSinkCtxKey struct{}
 type streamingCollector struct {
 	*collector
 	toolIdx int
-	mu      sync.Mutex
+	lineMu  sync.Mutex      // protects lineBuf only; collector.mu guards accumulated text
 	lineBuf strings.Builder // buffer for partial lines
 
 	// parentOutput saves the stream.OnOutput callback from the parent's
@@ -491,8 +491,8 @@ func (s *streamingCollector) pushText(text string) {
 	if s.stop != nil && s.stop.Load() {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.lineMu.Lock()
+	defer s.lineMu.Unlock()
 
 	s.lineBuf.WriteString(text)
 	content := s.lineBuf.String()
@@ -515,8 +515,8 @@ func (s *streamingCollector) flushPartial() {
 	if s.parentOutput == nil {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.lineMu.Lock()
+	defer s.lineMu.Unlock()
 	if s.lineBuf.Len() > 0 {
 		s.parentOutput(s.toolIdx, s.lineBuf.String())
 		s.lineBuf.Reset()
@@ -528,8 +528,8 @@ func (s *streamingCollector) flushPartial() {
 // this collector — rather than a separate one — is the actual Sink that
 // drove agent.Run.
 func (s *streamingCollector) CollectedText() string {
-	s.collector.mu.Lock()
-	defer s.collector.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.text.String()
 }
 

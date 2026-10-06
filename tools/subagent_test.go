@@ -431,6 +431,7 @@ func TestStreamingCollector_PreservesThreadSafety(t *testing.T) {
 			defer wg.Done()
 			sc.Text("a\n")
 			sc.Thinking("b\n")
+			_ = sc.CollectedText()
 		}()
 	}
 	wg.Wait()
@@ -440,6 +441,10 @@ func TestStreamingCollector_PreservesThreadSafety(t *testing.T) {
 	lines := mo.lines()
 	if len(lines) != 40 {
 		t.Errorf("expected 40 lines, got %d", len(lines))
+	}
+	got := sc.CollectedText()
+	if got != strings.Repeat("a\n", 20) {
+		t.Errorf("CollectedText = %q, want 20 a-lines", got)
 	}
 }
 
