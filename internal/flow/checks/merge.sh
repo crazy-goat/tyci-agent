@@ -3,7 +3,7 @@
 # Merging is the most dangerous step, so the rules are fixed:
 #   - merge only when the required check `ci-ok` is `pass`;
 #   - the merge call ALWAYS has --squash --delete-branch --match-head-commit <local HEAD>;
-#   - never --admin, --auto, a plain merge or a rebase.
+#   - no other merge mode is ever used (no admin bypass, no auto merge, no plain merge, no rebase).
 # Protected paths are the self-modification stop: a PR that changes the process files
 # (.github/, .tyci/, internal/flow/checks/) is never merged unattended.
 #
