@@ -146,7 +146,7 @@ func ResolveCheck(rel, repoDir, home string, embedded fs.FS, runDir string) (str
 	}
 	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
 		if seg == ".." {
-			return "", fmt.Errorf("check path %q must not contain ..", rel)
+			return "", fmt.Errorf("check path %q must not contain a parent segment", rel)
 		}
 	}
 	for _, base := range []string{repoDir, home} {
