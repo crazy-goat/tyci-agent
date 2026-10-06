@@ -299,6 +299,10 @@ type subagentTask struct {
 	// alwaysAllowedTools ("lua") in, which a scout must never have (see
 	// scoutToolProfile's doc comment).
 	scoutMode bool
+	// systemPrompt, when set, replaces the named agent's system prompt. It is
+	// Go-only like the fields above: no json tag, never set by parseTasks.
+	// RunSubagentTask (subagent_task.go) is its only writer.
+	systemPrompt string
 }
 
 // subagentResult holds the outcome of one subagent execution.
@@ -1552,10 +1556,14 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	// Run the task via the runner interface. def.SystemPrompt is empty when
 	// no agent was named (def is the zero value), so this also covers the
 	// plain-subagent case without a separate branch on task.Agent.
+	system := def.SystemPrompt
+	if task.systemPrompt != "" {
+		system = task.systemPrompt
+	}
 	var content string
 	var err error
-	if def.SystemPrompt != "" {
-		content, err = runner.RunTaskWithSystem(runCtx, task.Task, mName, def.SystemPrompt, opts)
+	if system != "" {
+		content, err = runner.RunTaskWithSystem(runCtx, task.Task, mName, system, opts)
 	} else {
 		content, err = runner.RunTask(runCtx, task.Task, mName, opts)
 	}

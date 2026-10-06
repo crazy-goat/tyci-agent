@@ -1,0 +1,207 @@
+package flow
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
+	"github.com/crazy-goat/tyci-agent/tools"
+)
+
+type fakeRender struct{}
+
+func (fakeRender) Render(name string, _ RunContext) (string, error) { return "rendered " + name, nil }
+
+func testCfg() *flowconfig.Config {
+	return &flowconfig.Config{
+		Models:       map[string]string{"m": "prov/model"},
+		DefaultModel: "m",
+		Roles: map[string]flowconfig.Role{
+			"worker": {Prompt: "W"}, "review": {Prompt: "R"}, "merge_decision": {Prompt: "M"},
+		},
+	}
+}
+
+type spawnRec struct {
+	specs  []tools.TaskSpec
+	result string
+	err    error
+	n      int
+	hook   func()
+}
+
+func (s *spawnRec) spawn(_ context.Context, sp tools.TaskSpec) (string, string, error) {
+	s.specs = append(s.specs, sp)
+	s.n++
+	if s.hook != nil {
+		s.hook()
+	}
+	return s.result, "sess-" + string(rune('a'+s.n)), s.err
+}
+
+func newRunner(s *spawnRec) *SubagentRunner {
+	return &SubagentRunner{
+		Cfg: testCfg(), Render: fakeRender{}, Spawn: s.spawn,
+		IssueContext: func(context.Context, string, int) (string, error) { return "ISSUE", nil },
+	}
+}
+
+func gitRepo(t *testing.T) string {
+	t.Helper()
+	d := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-qm", "i"}} {
+		c := exec.Command("git", args...)
+		c.Dir = d
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	return d
+}
+
+func writeReview(t *testing.T, dir, text string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "review.md"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSubagentRunner_UsesRunWorktree(t *testing.T) {
+	s := &spawnRec{}
+	wt := t.TempDir()
+	key, _, err := newRunner(s).Run(context.Background(), "worker", "", RunContext{Worktree: wt})
+	if err != nil || key != "done" {
+		t.Fatalf("key=%q err=%v", key, err)
+	}
+	sp := s.specs[0]
+	if sp.Dir != wt || sp.Model != "prov/model" || sp.SystemPrompt != "W" || !strings.Contains(sp.Task, "ISSUE") {
+		t.Errorf("spec = %+v", sp)
+	}
+}
+
+func TestSubagentRunner_ErrorGivesErrorKey(t *testing.T) {
+	s := &spawnRec{err: errors.New("boom")}
+	_, _, err := newRunner(s).Run(context.Background(), "worker", "", RunContext{})
+	if err == nil {
+		t.Fatal("want error (the runner maps it to key error)")
+	}
+	wf := &Workflow{Start: "w", States: map[string]State{
+		"w": {Agent: "worker", On: map[string]string{"done": "end", "error": "end"}}, "end": {End: true}}}
+	rn := &Runner{WF: wf, Agents: newRunner(s)}
+	st := &RunState{Version: 1, Current: "w", Status: "running", Visits: map[string]int{}}
+	_ = rn.Run(context.Background(), st)
+	if len(st.History) == 0 || st.History[0].Key != "error" {
+		t.Fatalf("history = %+v", st.History)
+	}
+}
+
+func TestSubagentRunner_SessionIDsDifferBetweenWorkerAndReview(t *testing.T) {
+	s := &spawnRec{}
+	r := newRunner(s)
+	run := t.TempDir()
+	writeReview(t, run, "ACCEPT\n")
+	_, w, _ := r.Run(context.Background(), "worker", "", RunContext{Worktree: gitRepo(t)})
+	_, v, _ := r.Run(context.Background(), "review", "", RunContext{Worktree: gitRepo(t), RunDir: run})
+	if w == "" || v == "" || w == v {
+		t.Errorf("sessions %q %q", w, v)
+	}
+}
+
+func TestVerdict_AcceptChangesAndGarbage(t *testing.T) {
+	cases := []struct {
+		text, want string
+		warn       bool
+	}{
+		{"ACCEPT\nmore", "ACCEPT", false},
+		{"CHANGES", "CHANGES", false},
+		{"", "CHANGES", true},
+		{"accept\n", "CHANGES", true},
+	}
+	for _, c := range cases {
+		d := t.TempDir()
+		writeReview(t, d, c.text)
+		v, w := readVerdict(d)
+		if v != c.want || (w != "") != c.warn {
+			t.Errorf("%q: v=%q w=%q", c.text, v, w)
+		}
+	}
+	if v, w := readVerdict(t.TempDir()); v != "CHANGES" || w == "" {
+		t.Errorf("missing: v=%q w=%q", v, w)
+	}
+}
+
+func TestVerdict_ReviewerDirtyWorktreeForcesChanges(t *testing.T) {
+	run, wt := t.TempDir(), gitRepo(t)
+	writeReview(t, run, "ACCEPT\n")
+	s := &spawnRec{hook: func() { _ = os.WriteFile(filepath.Join(wt, "x"), []byte("x"), 0o644) }}
+	var warns []string
+	r := newRunner(s)
+	r.Warn = func(m string) { warns = append(warns, m) }
+	key, _, err := r.Run(context.Background(), "review", "", RunContext{Worktree: wt, RunDir: run})
+	if err != nil || key != "CHANGES" || len(warns) != 1 || !strings.Contains(warns[0], "modified the worktree") {
+		t.Fatalf("key=%q err=%v warns=%v", key, err, warns)
+	}
+}
+
+func TestVerdict_CleanWorktreeAccepts(t *testing.T) {
+	run := t.TempDir()
+	writeReview(t, run, "ACCEPT\n")
+	key, _, _ := newRunner(&spawnRec{}).Run(context.Background(), "review", "", RunContext{Worktree: gitRepo(t), RunDir: run})
+	if key != "ACCEPT" {
+		t.Errorf("key=%q", key)
+	}
+}
+
+func TestVerdict_DirtyCheckOnlyForReviewState(t *testing.T) {
+	wt := gitRepo(t)
+	_ = os.WriteFile(filepath.Join(wt, "x"), []byte("x"), 0o644)
+	key, _, err := newRunner(&spawnRec{}).Run(context.Background(), "review", "findings_to_issues", RunContext{Worktree: wt})
+	if err != nil || key != "done" {
+		t.Errorf("key=%q err=%v", key, err)
+	}
+}
+
+func TestMergeDecision_ParsesFirstWord(t *testing.T) {
+	for in, want := range map[string]string{"Retry.": "retry", "code please": "code", "banana": "ask", "": "ask"} {
+		s := &spawnRec{result: in}
+		key, _, _ := newRunner(s).Run(context.Background(), "merge_decision", "", RunContext{})
+		if key != want {
+			t.Errorf("%q -> %q, want %q", in, key, want)
+		}
+	}
+}
+
+func stubGh(t *testing.T, script string) {
+	t.Helper()
+	d := t.TempDir()
+	if err := os.WriteFile(filepath.Join(d, "gh"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", d+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestFetchIssueContext_DropsCommentsFromNonWriteUsers(t *testing.T) {
+	stubGh(t, `case "$1" in
+issue) echo '{"title":"T","body":"BODY","author":{"login":"owner"},"comments":[{"author":{"login":"alice"},"body":"GOOD"},{"author":{"login":"mallory"},"body":"EVIL"}]}';;
+api) case "$2" in *owner*|*alice*) echo write;; *) echo read;; esac;;
+esac`)
+	out, err := fetchIssueContext(context.Background(), "o/r", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "BODY") || !strings.Contains(out, "GOOD") || strings.Contains(out, "EVIL") {
+		t.Errorf("out = %q", out)
+	}
+}
+
+func TestFetchIssueContext_GhErrorReturnsError(t *testing.T) {
+	stubGh(t, "exit 1")
+	if _, err := fetchIssueContext(context.Background(), "o/r", 1); err == nil {
+		t.Fatal("want error")
+	}
+}
