@@ -85,7 +85,7 @@ func TestBashBackgroundedProgress_SurfacedByWaitAsHistorySequence(t *testing.T) 
 	}
 
 	waitTool := &WaitTool{Waiter: regJobWaiterForBashTest{reg: reg}}
-	waitRes := waitTool.Run(context.Background(), map[string]any{"seconds": 30, "job_id": id})
+	waitRes := waitTool.Run(stillRunningCtx(t), map[string]any{"seconds": 30, "job_id": id})
 	if !waitRes.Success {
 		t.Fatalf("expected wait() to succeed while job is still running, got error: %s", waitRes.Error)
 	}
