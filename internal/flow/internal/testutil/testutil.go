@@ -38,7 +38,15 @@ func RunCheck(t *testing.T, script string, env map[string]string) (key string, e
 // RunCheckOut is RunCheck that also returns the full stdout.
 func RunCheckOut(t *testing.T, script string, env map[string]string) (key string, exit int, stdout, stderr string) {
 	t.Helper()
+	return RunCheckIn(t, "", script, env)
+}
+
+// RunCheckIn is RunCheckOut with the working directory set to dir (unchanged when empty).
+// Give an absolute script path when dir is set.
+func RunCheckIn(t *testing.T, dir, script string, env map[string]string) (key string, exit int, stdout, stderr string) {
+	t.Helper()
 	cmd := exec.Command("bash", script)
+	cmd.Dir = dir
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "GH_LOG=" + os.Getenv("GH_LOG")}
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
