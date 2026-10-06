@@ -117,7 +117,7 @@ func (m *mockJobWaiter) Wait(ctx context.Context, id string, timeout time.Durati
 
 func TestWaitTool_JobIDWithoutWaiter(t *testing.T) {
 	tool := &WaitTool{}
-	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
 	if res.Success {
 		t.Fatal("expected failure when Waiter is nil")
 	}
@@ -128,7 +128,7 @@ func TestWaitTool_JobIDWithoutWaiter(t *testing.T) {
 
 func TestWaitTool_JobIDUnknown(t *testing.T) {
 	tool := &WaitTool{Waiter: &mockJobWaiter{ok: false}}
-	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
 	if res.Success {
 		t.Fatal("expected failure for unknown job_id")
 	}
@@ -141,7 +141,7 @@ func TestWaitTool_JobIDDoneSuccess(t *testing.T) {
 	tool := &WaitTool{Waiter: &mockJobWaiter{ok: true, status: JobStatus{
 		ID: "abc", Done: true, Success: true, Content: "built artifact.zip",
 	}}}
-	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
 	if !res.Success {
 		t.Fatalf("expected success, got error: %s", res.Error)
 	}
@@ -154,7 +154,7 @@ func TestWaitTool_JobIDDoneFailure(t *testing.T) {
 	tool := &WaitTool{Waiter: &mockJobWaiter{ok: true, status: JobStatus{
 		ID: "abc", Done: true, Success: false, Error: "build failed: exit 1",
 	}}}
-	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
 	if res.Success {
 		t.Fatal("expected failure to propagate")
 	}
