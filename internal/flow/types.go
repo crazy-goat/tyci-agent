@@ -111,7 +111,7 @@ type AgentRunner interface {
 }
 
 // StateSaver persists the run state after every transition.
-// The real file implementation arrives in a later issue.
+// Store is the file implementation.
 type StateSaver interface {
 	Save(*RunState) error
 }
@@ -122,6 +122,7 @@ type Runner struct {
 	Checks CheckRunner
 	Agents AgentRunner
 	Store  StateSaver
+	RunDir string // run directory: TYCI_RUN_DIR and RunContext.RunDir
 	Notify func(string)
 	OnSkip func(*RunState)
 }

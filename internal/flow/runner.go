@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -94,6 +98,11 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 		}
 
 		st.Visits[cur]++
+		if r.Store != nil {
+			if saveErr := r.Store.Save(st); saveErr != nil {
+				return saveErr
+			}
+		}
 
 		switch {
 		case s.Check != "":
@@ -101,8 +110,7 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 				return r.fail(ctx, st, fmt.Sprintf("no check runner for state %q", cur), fmt.Errorf("no check runner for state %q", cur))
 			}
 			started := time.Now()
-			// RunDir wiring arrives with the check-execution issue; empty for now.
-			env := buildCheckEnv(st, s, "")
+			env := buildCheckEnv(st, s, r.RunDir)
 			key, res, runErr := r.Checks.Run(ctx, s, env, st.Worktree)
 			ended := time.Now()
 			if ctx.Err() != nil {
@@ -115,6 +123,7 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 			if !ok {
 				return r.failUnknownKey(st, cur, key)
 			}
+			readPRFile(st, r.RunDir)
 			st.History = append(st.History, Step{
 				Seq:        len(st.History) + 1,
 				State:      cur,
@@ -142,7 +151,8 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 				Repo:      st.Repo,
 				Branch:    st.Branch,
 				Worktree:  st.Worktree,
-				Reason:    st.Reason,
+				RunDir:    r.RunDir,
+				Reason:    MaskSecrets(st.Reason),
 				StateName: cur,
 				Issue:     st.Issue,
 				PR:        st.PR,
@@ -216,6 +226,20 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 				fmt.Sprintf("state %q has no check, agent, ask or end", cur),
 				fmt.Errorf("state %q has no check, agent, ask or end", cur))
 		}
+	}
+}
+
+// readPRFile copies the PR number from <runDir>/pr (written by push.sh).
+func readPRFile(st *RunState, runDir string) {
+	if runDir == "" {
+		return
+	}
+	b, err := os.ReadFile(filepath.Join(runDir, "pr"))
+	if err != nil {
+		return
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && n > 0 {
+		st.PR = n
 	}
 }
 
