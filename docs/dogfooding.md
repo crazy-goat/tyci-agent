@@ -113,11 +113,19 @@ Version 0.3.0 cannot resume a run after a restart.
    Find it with `pgrep -fl 'tyci'`.
 2. Do not use `pkill -f 'tyci tui'`. It kills other sessions.
 3. After a hard kill, `state.json` keeps `status: running`. This is expected.
+   A `running` or `paused` run blocks a new `workflow_start` for the same issue.
+   Answer a `paused` run with `stop`, or remove its run directory (step 5).
 4. Remove the worktree and the branch:
 
 ```bash
 git -C ~/work/crazy-goat/tyci-agent worktree remove --force ~/.tyci/worktrees/tyci-agent/issue-N
 git -C ~/work/crazy-goat/tyci-agent branch -D issue-N
+```
+
+5. Remove the run directory. Without this step, the old `running` state blocks a new start for the issue:
+
+```bash
+rm -rf ~/.tyci/runs/tyci-agent/<run>
 ```
 
 ## 10. Read `state.json`
