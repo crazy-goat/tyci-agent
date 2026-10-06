@@ -551,6 +551,8 @@ var consoleCmd = &cobra.Command{
 		// requireConfigured: /model in the console refuses a provider
 		// without credentials and says how to add one.
 		cond := newConductor(provider, modelName, disp, cfg, sessionPath, catalogResolver{requireConfigured: true})
+		workflowManager.SetBase(ctx)
+		defer workflowManager.Shutdown(3 * time.Second)
 		runInteractive(cond, disp, historyFile, ctx)
 		return nil
 	},
@@ -679,6 +681,8 @@ var tuiCmd = &cobra.Command{
 		// providers that are already in auth.json (see authSet above), and
 		// silently refusing a favorite would read as a dead key press.
 		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath, catalogResolver{})
+		workflowManager.SetBase(ctx)
+		defer workflowManager.Shutdown(3 * time.Second)
 		runTUI(cond, tuiDisp, ctx)
 		return nil
 	},

@@ -198,7 +198,7 @@ var alwaysAllowedTools = []string{"help", "lua"}
 // "subagent" or "agents" by name, or the three will drift the way
 // AllowOnlySubagent's whitelisted path and this package's own unrestricted
 // path once did.
-var subagentDeniedTools = map[string]bool{"subagent": true, "agents": true, "answer_job": true, "message": true, "promote_btw": true, "resume": true, "request_timeout_extension": true, "compact": true}
+var subagentDeniedTools = map[string]bool{"subagent": true, "agents": true, "answer_job": true, "message": true, "promote_btw": true, "resume": true, "request_timeout_extension": true, "compact": true, "workflow_start": true, "workflow_status": true, "workflow_resume": true}
 
 // IsSubagentDenied reports whether name is one of subagentDeniedTools.
 func IsSubagentDenied(name string) bool {

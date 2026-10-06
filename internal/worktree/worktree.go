@@ -233,3 +233,9 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
+
+// ForIssue rebuilds the handle of an issue worktree made by AddIssue, from a
+// saved run state. repo is the repository root; Remove deletes only dir.
+func ForIssue(repo, dir, branch string) *Worktree {
+	return &Worktree{Dir: dir, Branch: branch, Repo: repo, keepParent: true}
+}

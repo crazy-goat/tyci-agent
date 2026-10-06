@@ -175,6 +175,7 @@ type Tool interface {
 // included here — GetAllToolsSchema adds those.
 func GetToolsSchema() []map[string]any {
 	schema := builtinToolsSchema()
+	schema = append(schema, workflowToolsSchema()...)
 	schema = append(schema, luaToolsSchema()...)
 	return schema
 }
@@ -1026,6 +1027,10 @@ var toolRegistry = map[string]Tool{
 	// stays bash-only): the bash path acts on the bgbash.go registry the
 	// bash tool populates.
 	"kill_job": &KillJobTool{},
+
+	"workflow_start":  &WorkflowStartTool{},
+	"workflow_status": &WorkflowStatusTool{},
+	"workflow_resume": &WorkflowResumeTool{},
 }
 
 // lookupTool returns the tool registered under name, copying the interface

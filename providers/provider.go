@@ -237,6 +237,7 @@ func buildSystemPrompt(includeSubagent bool, roleNote string, hasAskParent bool)
 `
 		contracts = `- A child BLOCKED on a question makes no progress and is discarded when it times out: answer_job(job_id, text) is your NEXT action — relay a real answer (the user's, or something you genuinely know), never one invented for a human who hasn't replied.
 - Parallel children writing shared paths must lock/unlock them — say so in each task's text.
+- For process work (issues, PRs) use the workflow tools; do not run git or gh by hand.
 `
 		toolLines = `- subagent(task|tasks, agent?, model?, async?): delegate to child agents; tasks=[...] runs them in parallel.
 - wait(seconds, job_id?): read a finished job's result, or pause deliberately.
@@ -244,6 +245,7 @@ func buildSystemPrompt(includeSubagent bool, roleNote string, hasAskParent bool)
 - resume(job_id, task): continue a finished async job — it keeps its whole conversation.
 - kill_job(job_id): stop a backgrounded shell command.
 - agents(name?): named agents usable as subagent(agent="name").
+- workflow_start(issue, workflow?) · workflow_status(run?) · workflow_resume(run, answer): runs for issues and PRs. A notice arrives when a run finishes or pauses.
 `
 	} else {
 		header = "You are tyci, a non-interactive coding agent. There is no interactive user — decide and act on reasonable assumptions by default."

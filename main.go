@@ -15,6 +15,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/eventbus"
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
+	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/providers"
@@ -998,6 +999,9 @@ func wireTools() {
 	// JobNotices.Signal — which is exactly why backgrounding itself stays off
 	// until a mode opts in via tools.SetBackgroundBashEnabled.
 	tools.SetJobNotifier(JobNotices)
+
+	// Chat tools workflow_start/status/resume (tools/flow_tools.go).
+	tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})
 }
 
 func main() {
