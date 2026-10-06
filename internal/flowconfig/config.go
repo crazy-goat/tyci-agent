@@ -3,6 +3,7 @@
 package flowconfig
 
 import (
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,9 +30,19 @@ type Role struct {
 	Prompt string `json:"prompt"` // system prompt; "@file.md" = file relative to the config file
 }
 
-// defaultPrompt is the hook for embedded default prompts (added by a later issue).
+//go:embed prompts/*.md
+var promptFS embed.FS
+
+// defaultPrompt returns the embedded prompt of a builtin role.
 func defaultPrompt(role string) (string, bool) {
-	return "", false
+	if !isBuiltinRole(role) {
+		return "", false
+	}
+	b, err := promptFS.ReadFile("prompts/" + role + ".md")
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
 }
 
 func isBuiltinRole(name string) bool {
@@ -149,13 +160,16 @@ func (c *Config) validate() error {
 
 // Role returns the named role. Only worker, review and merge_decision fall back to embedded prompts.
 func (c *Config) Role(name string) (Role, error) {
-	if r, ok := c.Roles[name]; ok {
+	r, ok := c.Roles[name]
+	if ok && r.Prompt != "" {
 		return r, nil
 	}
-	if isBuiltinRole(name) {
-		if p, ok := defaultPrompt(name); ok {
-			return Role{Prompt: p}, nil
-		}
+	if p, found := defaultPrompt(name); found {
+		r.Prompt = p
+		return r, nil
+	}
+	if ok {
+		return r, nil
 	}
 	return Role{}, fmt.Errorf("role %q is not defined", name)
 }
