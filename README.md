@@ -24,15 +24,15 @@ and a rich TUI — all configurable through a simple JSON model registry.
 
 ### Prerequisites
 
-- Go 1.25 or later
+- Go 1.26.0 or later
 - A terminal with true-color support (for TUI mode)
 - macOS or Linux — Windows is not a supported target (`internal/readline/read.go` and `tools/bash.go` use unix-only syscalls and will not build on Windows)
 
 ### Build from source
 
 ```bash
-git clone https://github.com/crazy-goat/tyci.git
-cd tyci
+git clone https://github.com/crazy-goat/tyci-agent.git
+cd tyci-agent
 
 # Development build (with debug symbols)
 make build
@@ -53,6 +53,19 @@ version into the binary, shown by `tyci --version`: by default the nearest
 ```bash
 make install
 ```
+
+## Issue-to-merge workflow
+
+`tyci` can take a GitHub issue to a merged pull request. The chat has three tools:
+`workflow_start`, `workflow_status` and `workflow_resume`. The issue needs the label
+`accepted`, and its author needs write access.
+
+- Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
+- Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
+- Run state: `~/.tyci/runs/<repo>/<run>/state.json`
+- Overrides: `.tyci/workflows/` and `.tyci/checks/`
+
+See [docs/dogfooding.md](docs/dogfooding.md) for the full runbook.
 
 ## Quick Start
 

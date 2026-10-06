@@ -65,7 +65,8 @@ run only for code changes. The required check is `ci-ok`. Pushing a `vX.Y.Z` tag
 ## Conventions
 
 - Commit scopes: `agent`, `api`, `connector`, `providers`, `tools`, `display`, `session`,
-  `jobs`, `mcp`, `cron`, `cli`, `docs`, `ci`.
+  `jobs`, `mcp`, `cron`, `cli`, `docs`, `ci`, `workflow`, `checks`, `roles`, `config`,
+  `chat`, `worktree`.
   Example: `fix(tools): close the response body on cancel (#12)`.
 - Commands, flags and the on-disk formats under `~/.tyci/` are a public interface. Change them
   deliberately and document the change in `CHANGELOG.md` and `README.md`.
