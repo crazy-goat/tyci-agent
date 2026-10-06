@@ -123,6 +123,8 @@ type Runner struct {
 	Agents AgentRunner
 	Store  StateSaver
 	RunDir string // run directory: TYCI_RUN_DIR and RunContext.RunDir
-	Notify func(string)
-	OnSkip func(*RunState)
+	// DefaultBranch is TYCI_DEFAULT_BRANCH and RunContext.DefaultBranch.
+	DefaultBranch string
+	Notify        func(string)
+	OnSkip        func(*RunState)
 }

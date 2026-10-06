@@ -116,7 +116,7 @@ func TestExecChecker_EnvAndCwd(t *testing.T) {
 
 func TestExecChecker_UsesOnlyGivenEnv(t *testing.T) {
 	t.Setenv("SECRET_X", "s3")
-	env := buildCheckEnv(&RunState{}, State{}, "")
+	env := buildCheckEnv(&RunState{}, State{}, "", "")
 	if k, _ := runScript(t, "c.sh", `echo "[${SECRET_X:-}]"`, State{Check: "c.sh"}, env, time.Minute); k != "[]" {
 		t.Fatalf("key %q", k)
 	}
@@ -128,7 +128,7 @@ func TestExecChecker_UsesOnlyGivenEnv(t *testing.T) {
 func TestExecChecker_GhTokenPassedThrough(t *testing.T) {
 	t.Setenv("GH_TOKEN", "tok")
 	t.Setenv("LANG", "C")
-	env := buildCheckEnv(&RunState{}, State{}, "")
+	env := buildCheckEnv(&RunState{}, State{}, "", "")
 	k, _ := runScript(t, "c.sh", `echo "$GH_TOKEN $LANG"`, State{Check: "c.sh"}, env, time.Minute)
 	if k != "tok C" {
 		t.Fatalf("key %q", k)

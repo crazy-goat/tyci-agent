@@ -115,9 +115,10 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 			return ResolveCheck(rel, projectDir(info), info.Home, Embedded(), runDir)
 		}
 		r := &Runner{
-			WF:     wf,
-			Store:  &Store{Dir: runDir},
-			RunDir: runDir,
+			WF:            wf,
+			Store:         &Store{Dir: runDir},
+			RunDir:        runDir,
+			DefaultBranch: info.DefaultBranch,
 			// The run dir with state.json stays; only the worktree goes.
 			OnSkip: removeWorktreeHook(info.Root),
 		}

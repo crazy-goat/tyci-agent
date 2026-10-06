@@ -109,7 +109,7 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 				return r.fail(ctx, st, fmt.Sprintf("no check runner for state %q", cur), fmt.Errorf("no check runner for state %q", cur))
 			}
 			started := time.Now()
-			env := buildCheckEnv(st, s, r.RunDir)
+			env := buildCheckEnv(st, s, r.RunDir, r.DefaultBranch)
 			key, res, runErr := r.Checks.Run(ctx, s, env, st.Worktree)
 			ended := time.Now()
 			if ctx.Err() != nil {
@@ -147,15 +147,16 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 			}
 			started := time.Now()
 			rc := RunContext{
-				Repo:      st.Repo,
-				Branch:    st.Branch,
-				Worktree:  st.Worktree,
-				RunDir:    r.RunDir,
-				Reason:    MaskSecrets(st.Reason),
-				StateName: cur,
-				Issue:     st.Issue,
-				PR:        st.PR,
-				Visit:     st.Visits[cur],
+				Repo:          st.Repo,
+				Branch:        st.Branch,
+				Worktree:      st.Worktree,
+				RunDir:        r.RunDir,
+				DefaultBranch: r.DefaultBranch,
+				Reason:        MaskSecrets(st.Reason),
+				StateName:     cur,
+				Issue:         st.Issue,
+				PR:            st.PR,
+				Visit:         st.Visits[cur],
 			}
 			key, session, runErr := r.Agents.Run(ctx, s.Agent, s.Task, rc)
 			ended := time.Now()

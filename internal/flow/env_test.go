@@ -28,12 +28,12 @@ func TestBuildCheckEnv_ContainsAllTyciVars(t *testing.T) {
 		Current:  "ci",
 		Visits:   map[string]int{"ci": 2},
 	}
-	env := envMap(buildCheckEnv(st, State{}, "/tmp/run"))
+	env := envMap(buildCheckEnv(st, State{}, "/tmp/run", "main"))
 	for k, want := range map[string]string{
 		"TYCI_REPO":           "o/r",
 		"TYCI_ISSUE":          "160",
 		"TYCI_BRANCH":         "issue-160",
-		"TYCI_DEFAULT_BRANCH": "",
+		"TYCI_DEFAULT_BRANCH": "main",
 		"TYCI_WORKTREE":       "/tmp/wt",
 		"TYCI_RUN_DIR":        "/tmp/run",
 		"TYCI_STATE":          "ci",
@@ -51,8 +51,6 @@ func TestBuildCheckEnv_ContainsAllTyciVars(t *testing.T) {
 			t.Errorf("expected %s in env", k)
 		}
 	}
-	// TYCI_DEFAULT_BRANCH is empty until wired, but the key must be present:
-	// a map lookup alone cannot tell a dropped var from an empty one.
 	if _, ok := env["TYCI_DEFAULT_BRANCH"]; !ok {
 		t.Error("expected TYCI_DEFAULT_BRANCH in env")
 	}
@@ -60,7 +58,7 @@ func TestBuildCheckEnv_ContainsAllTyciVars(t *testing.T) {
 
 func TestBuildCheckEnv_EmptyPRWhenZero(t *testing.T) {
 	st := &RunState{Current: "a", Visits: map[string]int{"a": 1}}
-	env := envMap(buildCheckEnv(st, State{}, "/tmp/run"))
+	env := envMap(buildCheckEnv(st, State{}, "/tmp/run", "main"))
 	v, ok := env["TYCI_PR"]
 	if !ok {
 		t.Fatal("TYCI_PR missing")
@@ -73,7 +71,7 @@ func TestBuildCheckEnv_EmptyPRWhenZero(t *testing.T) {
 func TestBuildCheckEnv_DropsOtherParentVars(t *testing.T) {
 	t.Setenv("SECRET_X", "s3cr3t")
 	st := &RunState{Current: "a", Visits: map[string]int{"a": 1}}
-	env := envMap(buildCheckEnv(st, State{}, "/tmp/run"))
+	env := envMap(buildCheckEnv(st, State{}, "/tmp/run", "main"))
 	if _, ok := env["SECRET_X"]; ok {
 		t.Fatal("SECRET_X leaked into check env")
 	}
@@ -92,7 +90,7 @@ func TestBuildCheckEnv_TokensAbsentWhenUnset(t *testing.T) {
 		}
 	}
 	st := &RunState{Current: "a", Visits: map[string]int{"a": 1}}
-	env := envMap(buildCheckEnv(st, State{}, "/tmp/run"))
+	env := envMap(buildCheckEnv(st, State{}, "/tmp/run", "main"))
 	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
 		if _, ok := env[k]; ok {
 			t.Errorf("%s present although unset in parent", k)

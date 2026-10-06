@@ -14,9 +14,9 @@ import (
 // The state name comes from st.Current and the visit count from
 // st.Visits[current] (the caller increments before running).
 // st.PR == 0 yields an empty TYCI_PR.
-// TYCI_DEFAULT_BRANCH is empty until a later issue wires the default branch
-// through; the seam is left here. Nothing else from the parent env leaks in.
-func buildCheckEnv(st *RunState, s State, runDir string) []string {
+// TYCI_DEFAULT_BRANCH is the defaultBranch argument (Runner.DefaultBranch).
+// Nothing else from the parent env leaks in.
+func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string {
 	_ = s
 	env := make([]string, 0, 16)
 	for _, k := range []string{"PATH", "HOME", "LANG"} {
@@ -51,7 +51,7 @@ func buildCheckEnv(st *RunState, s State, runDir string) []string {
 		"TYCI_REPO="+repo,
 		"TYCI_ISSUE="+issue,
 		"TYCI_BRANCH="+branch,
-		"TYCI_DEFAULT_BRANCH=",
+		"TYCI_DEFAULT_BRANCH="+defaultBranch,
 		"TYCI_WORKTREE="+worktree,
 		"TYCI_RUN_DIR="+runDir,
 		"TYCI_STATE="+state,
