@@ -108,8 +108,7 @@ func AddIssue(ctx context.Context, home, repo string, issue int, defaultBranch s
 		return nil, fmt.Errorf("worktree: stat %s: %w", target, err)
 	}
 
-	if out, err := git(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
-		_ = out
+	if _, err := git(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
 		return nil, fmt.Errorf("worktree: branch %s already exists; remove it first (git branch -D %s)", branch, branch)
 	}
 
