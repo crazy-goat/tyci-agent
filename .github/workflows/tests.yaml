@@ -65,7 +65,6 @@ jobs:
           go-version-file: go.mod
           check-latest: true
       - run: go build ./...
-      - run: go test ./... -count=1
       - run: go test -race ./... -count=1
 
   test-tagged:

@@ -117,7 +117,7 @@ func (m *mockJobWaiter) Wait(ctx context.Context, id string, timeout time.Durati
 
 func TestWaitTool_JobIDWithoutWaiter(t *testing.T) {
 	tool := &WaitTool{}
-	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
 	if res.Success {
 		t.Fatal("expected failure when Waiter is nil")
 	}
@@ -128,7 +128,7 @@ func TestWaitTool_JobIDWithoutWaiter(t *testing.T) {
 
 func TestWaitTool_JobIDUnknown(t *testing.T) {
 	tool := &WaitTool{Waiter: &mockJobWaiter{ok: false}}
-	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
 	if res.Success {
 		t.Fatal("expected failure for unknown job_id")
 	}
@@ -141,7 +141,7 @@ func TestWaitTool_JobIDDoneSuccess(t *testing.T) {
 	tool := &WaitTool{Waiter: &mockJobWaiter{ok: true, status: JobStatus{
 		ID: "abc", Done: true, Success: true, Content: "built artifact.zip",
 	}}}
-	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
 	if !res.Success {
 		t.Fatalf("expected success, got error: %s", res.Error)
 	}
@@ -154,7 +154,7 @@ func TestWaitTool_JobIDDoneFailure(t *testing.T) {
 	tool := &WaitTool{Waiter: &mockJobWaiter{ok: true, status: JobStatus{
 		ID: "abc", Done: true, Success: false, Error: "build failed: exit 1",
 	}}}
-	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
 	if res.Success {
 		t.Fatal("expected failure to propagate")
 	}
@@ -167,7 +167,7 @@ func TestWaitTool_JobIDStillRunning(t *testing.T) {
 	tool := &WaitTool{Waiter: &mockJobWaiter{ok: true, status: JobStatus{
 		ID: "abc", Done: false,
 	}}}
-	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
 	if !res.Success {
 		t.Fatalf("still-running should not be an error, got: %s", res.Error)
 	}
@@ -190,7 +190,7 @@ func TestWaitTool_JobIDStillRunning_ShowsProgressSequence(t *testing.T) {
 		Progress:        "step three",
 		ProgressHistory: []string{"step one", "step two", "step three"},
 	}}}
-	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
 	if !res.Success {
 		t.Fatalf("still-running should not be an error, got: %s", res.Error)
 	}
@@ -211,7 +211,7 @@ func TestWaitTool_JobIDStillRunning_FallsBackToProgressWithoutHistory(t *testing
 		Done:     false,
 		Progress: "only the latest",
 	}}}
-	res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+	res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
 	if !res.Success {
 		t.Fatalf("still-running should not be an error, got: %s", res.Error)
 	}
@@ -570,7 +570,7 @@ func TestWaitTool_JobIDStillRunning_FlattensSingleNoteNewlines(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tool := &WaitTool{Waiter: &mockJobWaiter{ok: true, status: tc.status}}
-			res := tool.Run(context.Background(), map[string]any{"seconds": 5, "job_id": "abc"})
+			res := tool.Run(stillRunningCtx(t), map[string]any{"seconds": 5, "job_id": "abc"})
 			if !res.Success {
 				t.Fatalf("still-running should not be an error, got: %s", res.Error)
 			}
@@ -613,4 +613,14 @@ func TestRenderProgressHistory_AllBlankRendersNothing(t *testing.T) {
 	if rendered != "" || dropped != 0 {
 		t.Fatalf("expected nothing rendered and nothing reported dropped, got %q / %d", rendered, dropped)
 	}
+}
+
+// stillRunningCtx ends a job wait early. A job that never finishes would keep
+// the wait tool polling until its 30s minimum; the tool treats a cancelled
+// context the same way, so the still-running result comes back in 200ms.
+func stillRunningCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	t.Cleanup(cancel)
+	return ctx
 }
