@@ -47,7 +47,7 @@ func TestTasks_NoFunctionsAllowed(t *testing.T) {
 		}
 	}
 	for _, n := range []string{"findings_to_issues", "merge_decision"} {
-		b, _ := taskFS.ReadFile("tasks/" + n + ".md")
+		b, _ := embedded.ReadFile("tasks/" + n + ".md")
 		for _, f := range []string{"{{call", "{{printf", "{{env", "{{exec"} {
 			if strings.Contains(string(b), f) {
 				t.Errorf("%s uses %s", n, f)

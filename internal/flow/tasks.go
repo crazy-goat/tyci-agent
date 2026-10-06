@@ -2,13 +2,9 @@ package flow
 
 import (
 	"bytes"
-	"embed"
 	"fmt"
 	"text/template"
 )
-
-//go:embed tasks/*.md
-var taskFS embed.FS
 
 // TaskData is the only data a task template can read.
 type TaskData struct {
@@ -18,7 +14,7 @@ type TaskData struct {
 
 // RenderTask renders the embedded task template name (without extension).
 func RenderTask(name string, d TaskData) (string, error) {
-	b, err := taskFS.ReadFile("tasks/" + name + ".md")
+	b, err := embedded.ReadFile("tasks/" + name + ".md")
 	if err != nil {
 		return "", fmt.Errorf("unknown task %q", name)
 	}

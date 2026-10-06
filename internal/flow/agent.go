@@ -18,9 +18,14 @@ import (
 )
 
 // TaskRenderer turns a task template name into task text.
-// The real implementation belongs to the findings_to_issues issue.
+// TaskTemplates is the production implementation.
 type TaskRenderer interface {
 	Render(name string, rc RunContext) (string, error)
+}
+
+// NewSubagentRunner returns a runner that renders the embedded task templates.
+func NewSubagentRunner(cfg *flowconfig.Config, spawn func(ctx context.Context, s tools.TaskSpec) (string, string, error)) *SubagentRunner {
+	return &SubagentRunner{Cfg: cfg, Render: TaskTemplates{}, Spawn: spawn}
 }
 
 // SubagentRunner runs an agent state as a subagent in the run worktree.
