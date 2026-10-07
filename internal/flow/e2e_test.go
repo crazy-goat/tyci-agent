@@ -332,7 +332,7 @@ func happy() map[string][]string {
 	}
 }
 
-const happyStates = "check_done, code, review, lock, update, post_review, ci, comments, merge, findings"
+const happyStates = "check_done, open_pr, code, review, lock, update, post_review, ci, comments, merge, findings"
 
 func TestE2E_Gate_NoLabel_NoAgentStarted(t *testing.T) {
 	e := newE2E(t, nil)
@@ -394,7 +394,7 @@ func TestE2E_ReviewChangesThenAccept(t *testing.T) {
 		"findings": {"done"},
 	})
 	e.mustFinish()
-	e.wantStates("check_done, code, review, code, review, lock, update, post_review, ci, comments, merge, findings")
+	e.wantStates("check_done, open_pr, code, review, code, review, lock, update, post_review, ci, comments, merge, findings")
 	e.wantMerged()
 	// #340: post_review.sh posts the newest review report.
 	body, _ := os.ReadFile(filepath.Join(e.ctl, "review_body"))
@@ -437,9 +437,9 @@ func TestE2E_Behind_RebasesThenCIThenMerge(t *testing.T) {
 	e2eCommit(t, e.work, "main2.txt", "m")
 	e2eGit(t, e.work, "push", "-q", "origin", "main")
 	e.mustFinish()
-	e.wantStates("check_done, code, review, lock, update, post_review, ci, comments, merge, rebase, ci, comments, merge, findings")
+	e.wantStates("check_done, open_pr, code, review, lock, update, post_review, ci, comments, merge, rebase, ci, comments, merge, findings")
 	e.wantMerged()
-	if k := e.st.History[9].Key; k != "ok" {
+	if k := e.st.History[10].Key; k != "ok" {
 		t.Errorf("rebase key = %q, want ok", k)
 	}
 	if m := strings.TrimSpace(e2eGit(t, e.origin, "log", "--format=%s", "-1", "--merges", "refs/heads/"+e.st.Branch)); m == "" {
@@ -464,8 +464,8 @@ func TestE2E_RebaseConflict_GoesToCode(t *testing.T) {
 	e2eCommit(t, e.work, "clash.txt", "main\n")
 	e2eGit(t, e.work, "push", "-q", "origin", "main")
 	e.mustFinish()
-	e.wantStates("check_done, code, review, lock, update, code, review, lock, update, post_review, ci, comments, merge, findings")
-	if k := e.st.History[4].Key; k != "conflict" {
+	e.wantStates("check_done, open_pr, code, review, lock, update, code, review, lock, update, post_review, ci, comments, merge, findings")
+	if k := e.st.History[5].Key; k != "conflict" {
 		t.Errorf("rebase key = %q", k)
 	}
 }
@@ -476,7 +476,7 @@ func TestE2E_MergeFail_MergeDecisionRetry(t *testing.T) {
 	e := newE2E(t, s)
 	e.ctlSet("merge_fail_once", "")
 	e.mustFinish()
-	e.wantStates("check_done, code, review, lock, update, post_review, ci, comments, merge, merge_decision, merge, findings")
+	e.wantStates("check_done, open_pr, code, review, lock, update, post_review, ci, comments, merge, merge_decision, merge, findings")
 	e.wantMerged()
 }
 
@@ -486,7 +486,7 @@ func TestE2E_MergeFail_MergeDecisionAsk(t *testing.T) {
 	e := newE2E(t, s)
 	e.ctlSet("merge_fail", "")
 	e.mustPause()
-	e.wantStates("check_done, code, review, lock, update, post_review, ci, comments, merge, merge_decision")
+	e.wantStates("check_done, open_pr, code, review, lock, update, post_review, ci, comments, merge, merge_decision")
 	if e.st.Current != "ask" {
 		t.Errorf("current = %q", e.st.Current)
 	}
@@ -496,8 +496,8 @@ func TestE2E_ProtectedPath_StopsBeforeMerge(t *testing.T) {
 	e := newE2E(t, happy())
 	e.agents.OnRun["code"] = func(wt string) { e2eCommit(t, wt, ".github/workflows/ci.yml", "on: push\n") }
 	e.mustPause()
-	e.wantStates("check_done, code, review, lock, update, post_review, ci, comments, merge")
-	if k := e.st.History[8].Key; k != "protected" {
+	e.wantStates("check_done, open_pr, code, review, lock, update, post_review, ci, comments, merge")
+	if k := e.st.History[9].Key; k != "protected" {
 		t.Errorf("merge key = %q", k)
 	}
 	e.wantNoMerge()
@@ -512,9 +512,13 @@ func TestE2E_PushFail_GoesToAsk(t *testing.T) {
 	e2eCommit(t, other, "other.txt", "o")
 	e2eGit(t, other, "push", "-q", "origin", e.st.Branch)
 	e.mustPause()
-	e.wantStates("check_done, code, review, lock, update")
-	if h := e.st.History[4]; h.Key != "fail" || h.To != "ask" {
+	e.wantStates("check_done, open_pr, code, review, lock, update")
+	if h := e.st.History[5]; h.Key != "fail" || h.To != "ask" {
 		t.Errorf("push step = %+v", h)
+	}
+	// #368: the pause message says why, so a human or an LLM knows what to decide.
+	if e.st.Ask == nil || !strings.Contains(e.st.Ask.Message, "the branches diverged") {
+		t.Errorf("ask = %+v, want the divergence reason", e.st.Ask)
 	}
 }
 
@@ -526,8 +530,8 @@ func TestE2E_CITimeout_GoesToAsk(t *testing.T) {
 	ci.TimeoutSec = 1
 	e.wf.States["ci"] = ci
 	e.mustPause()
-	e.wantStates("check_done, code, review, lock, update, post_review, ci")
-	if h := e.st.History[6]; h.Key != "timeout" || h.To != "ask" {
+	e.wantStates("check_done, open_pr, code, review, lock, update, post_review, ci")
+	if h := e.st.History[7]; h.Key != "timeout" || h.To != "ask" {
 		t.Errorf("ci step = %+v", h)
 	}
 }
@@ -586,5 +590,73 @@ func TestE2E_NoSecretsInStateJson(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "gh down, token ***") {
 		t.Errorf("stderr tail not recorded and masked:\n%s", b)
+	}
+}
+
+// earlierPR simulates an earlier run that stopped before the merge: the issue branch on
+// origin has a commit that changes name, and its PR is still open.
+func (e *e2e) earlierPR(name, content string) {
+	e.t.Helper()
+	other := filepath.Join(e.t.TempDir(), "other")
+	e2eGit(e.t, filepath.Dir(other), "clone", "-q", e.origin, other)
+	e2eGit(e.t, other, "checkout", "-q", "-b", e.st.Branch)
+	e2eCommit(e.t, other, name, content)
+	e2eGit(e.t, other, "push", "-q", "origin", e.st.Branch)
+	e.ctlSet("pr", "")
+}
+
+// #368: a new run for an issue with an open PR continues that PR and does not code again.
+func TestE2E_OpenPR_ContinuesWithoutCode(t *testing.T) {
+	e := newE2E(t, map[string][]string{"findings": {"done"}})
+	e.earlierPR("earlier.txt", "e")
+	prHead := e2eGit(t, e.origin, "rev-parse", "refs/heads/"+e.st.Branch)
+	e2eCommit(t, e.work, "main2.txt", "m")
+	e2eGit(t, e.work, "push", "-q", "origin", "main")
+	e.mustFinish()
+	e.wantStates("check_done, open_pr, lock, update, post_review, ci, comments, merge, findings")
+	e.wantMerged()
+	if e.st.Visits["code"] != 0 || e.st.PR != e2ePR {
+		t.Errorf("code visits = %d, PR = %d", e.st.Visits["code"], e.st.PR)
+	}
+	if k := e.st.History[4].Key; k != "skip" {
+		t.Errorf("post_review key = %q, want skip", k)
+	}
+	if err := exec.Command("git", "-C", e.origin, "merge-base", "--is-ancestor", prHead, "refs/heads/"+e.st.Branch).Run(); err != nil {
+		t.Errorf("the pushed branch does not contain the earlier PR head: %v", err)
+	}
+}
+
+// #368: an open PR whose only conflict with main is CHANGELOG.md is merged without a human.
+func TestE2E_OpenPR_ChangelogConflictMerges(t *testing.T) {
+	e := newE2E(t, map[string][]string{"findings": {"done"}})
+	e2eCommit(t, e.work, "CHANGELOG.md", "# Changelog\n\nold\n")
+	e2eGit(t, e.work, "push", "-q", "origin", "main")
+	e.earlierPR("CHANGELOG.md", "# Changelog\nmine\n\nold\n")
+	e2eCommit(t, e.work, "CHANGELOG.md", "# Changelog\ntheirs\n\nold\n")
+	e2eGit(t, e.work, "push", "-q", "origin", "main")
+	e.mustFinish()
+	e.wantStates("check_done, open_pr, lock, update, post_review, ci, comments, merge, findings")
+	e.wantMerged()
+	got := e2eGit(t, e.origin, "show", "refs/heads/"+e.st.Branch+":CHANGELOG.md")
+	if !strings.Contains(got, "mine") || !strings.Contains(got, "theirs") {
+		t.Errorf("CHANGELOG.md on the PR branch = %q, want both entries", got)
+	}
+}
+
+// #368: red CI on the continued PR goes to code with the run so far, then merges.
+func TestE2E_OpenPR_RedCIGoesToCode(t *testing.T) {
+	e := newE2E(t, map[string][]string{"code": {"done"}, "review": {"ACCEPT"}, "findings": {"done"}})
+	e.earlierPR("earlier.txt", "e")
+	e.ctlSet("ci_bucket", "fail")
+	e.agents.OnRun["code"] = func(wt string) {
+		e2eCommit(t, wt, "fix.txt", "f")
+		e.ctlSet("ci_bucket", "pass")
+	}
+	e.mustFinish()
+	e.wantStates("check_done, open_pr, lock, update, post_review, ci, code, review, lock, update, post_review, ci, comments, merge, findings")
+	e.wantMerged()
+	files := e2eGit(t, e.origin, "ls-tree", "--name-only", "refs/heads/"+e.st.Branch)
+	if !strings.Contains(files, "earlier.txt") || !strings.Contains(files, "fix.txt") {
+		t.Errorf("PR branch files = %q, want the earlier work and the fix", files)
 	}
 }

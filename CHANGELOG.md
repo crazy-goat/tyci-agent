@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Orchestrator: the TUI chat prompt is short and imperative: one tool list with when to use each tool, and what each `ask` answer (`retry`, `retry <note>`, `stop`, `goto <state>`) does plus a default rule. The TUI chat has no "create a plan first" todo gate any more. The oracle prompt and the `workflow_*` tool descriptions are shorter and clearer (#371).
+- Flow: a new run for an issue with an open PR from an earlier run continues that PR. The new state `open_pr` (`checks/open_pr.sh`) moves the worktree to the PR head and goes to `lock`, `update` (merge of `origin/<default>`) and `ci`; it does not code the issue again. Without an open PR the run codes from `origin/<default>` as before. `post_review.sh` returns `skip` when the run has no review. `rebase.sh` names the conflicting files and the fix, and `push.sh` says when the branch diverged, so the next agent or the human knows what to do (#368).
 - Chat: the "Release needed" greeting no longer invites you to ask tyci for a release; it says to release outside tyci (docs/release-workflow.md) (#289).
 - Cron: a scheduled run no longer blocks the next tick, a repeating job's notice does not start a model turn in an idle chat (and carries no log tail), and a notice goes to the job that scheduled it (with the end of the log) (#316).
 - Flow: `merge.sh` returns `behind` (rebase) when `ci-ok` is missing and the PR is behind the default branch, like `ci_wait.sh` (#326).

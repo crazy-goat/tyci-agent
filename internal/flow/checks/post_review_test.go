@@ -66,14 +66,24 @@ func TestPostReview_FailStillExitsZero(t *testing.T) {
 		review string
 		env    map[string]string
 	}{
-		"gh fails":  {"ACCEPT\n", map[string]string{"GH_FAIL": "1"}},
-		"no review": {"", nil},
-		"no PR":     {"ACCEPT\n", map[string]string{"TYCI_PR": ""}},
+		"gh fails":     {"ACCEPT\n", map[string]string{"GH_FAIL": "1"}},
+		"empty review": {"", nil},
+		"no PR":        {"ACCEPT\n", map[string]string{"TYCI_PR": ""}},
 	} {
-		key, exit, _ := runPostReview(t, tc.review, tc.env)
+		dir := t.TempDir()
+		writeArtifact(t, dir, "003-review", "report.md", tc.review)
+		key, exit, _ := runPostReviewIn(t, dir, tc.env)
 		if key != "fail" || exit != 0 {
 			t.Errorf("%s: key=%q exit=%d", name, key, exit)
 		}
+	}
+}
+
+// #368: a run that continued an open PR has no review report; nothing is posted.
+func TestPostReview_NoReviewSkips(t *testing.T) {
+	key, exit, body := runPostReview(t, "", nil)
+	if key != "skip" || exit != 0 || body != "" {
+		t.Errorf("key=%q exit=%d body=%q", key, exit, body)
 	}
 }
 

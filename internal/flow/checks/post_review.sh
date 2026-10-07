@@ -7,7 +7,8 @@
 # Env in:  TYCI_PR, TYCI_REPO, TYCI_RUN_DIR. The report is report.md in the
 #          newest $TYCI_RUN_DIR/artifacts/NNN-review dir (highest NNN).
 # Keys:    ok    the review was posted
-#          fail  no PR, no review report, or gh failed (the runner records it, the run goes on)
+#          skip  the run has no review report (it continued an open PR without a new review)
+#          fail  no PR, an empty review report, or gh failed (the runner records it, the run goes on)
 # Always exits 0.
 set -euo pipefail
 
@@ -23,8 +24,13 @@ for f in "${TYCI_RUN_DIR:-}"/artifacts/*-review/report.md; do
         review=$f
     fi
 done
-if [ -z "$pr" ] || [ -z "$review" ] || [ ! -s "$review" ]; then
-    echo "post_review.sh: no PR number or no review report" >&2
+if [ -z "$review" ]; then
+    echo "post_review.sh: this run has no review report (it continued an open PR of an earlier run); nothing to post" >&2
+    echo skip
+    exit 0
+fi
+if [ -z "$pr" ] || [ ! -s "$review" ]; then
+    echo "post_review.sh: no PR number or an empty review report" >&2
     echo fail
     exit 0
 fi

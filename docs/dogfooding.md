@@ -97,6 +97,14 @@ Each role agent of a run is a job named `<run-id>/<role>`, for example
 `20261007-102102-527/worker`. Use the `message` tool on a live agent. If a role runs
 twice, the name points to the newest job. The `resume` tool does not accept this name.
 
+If an earlier run of the same issue stopped and left its pull request open (branch
+`issue-N`), the new run continues that pull request. The state `open_pr` moves the
+worktree to the head of the pull request and the run goes to `lock`, `update` and `ci`.
+It does not code the issue again. Red CI or a merge conflict goes to `code` as usual. A
+conflict only in `CHANGELOG.md` is resolved without an agent (both entries stay). If the
+worktree has its own commits that are not on the pull request, or a push finds that the
+branch diverged, the run pauses at `ask` and the pause message says what to decide.
+
 The loop limits its retries with `max_visits`: `code` runs at most 3 times and `ci`
 at most 3 times. At the limit the run pauses at `ask`.
 
