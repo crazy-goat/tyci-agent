@@ -3,15 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
 	"github.com/crazy-goat/tyci-agent/internal/orchestrator"
 )
-
-// defaultWorkers is the worker limit until the config key exists.
-const defaultWorkers = 3
 
 // startOrchestrator starts one orchestrator whose notices and plan go to post.
 // It returns nil, and starts nothing, on a resumed session.
@@ -51,10 +49,19 @@ func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string)) 
 		post("orchestrator config: " + err.Error())
 		return nil
 	}
+	projectCfg := ""
+	if info.Trusted {
+		projectCfg = filepath.Join(info.Root, ".tyci", "config.json")
+	}
+	oc, err := orchestrator.LoadConfig(filepath.Join(info.Home, ".tyci", "config.json"), projectCfg)
+	if err != nil {
+		post("orchestrator config: " + err.Error())
+		return nil
+	}
 	f, err := newForge(fc.Forge)
 	if err != nil {
 		post(orchestrator.FormatSpecial(orchestrator.ForgeError, err.Error()))
 		return nil
 	}
-	return startOrchestrator(ctx, false, orchestrator.Config{Workers: defaultWorkers}, f, orchestrator.NewRunner(workflowManager), post)
+	return startOrchestrator(ctx, false, oc, f, orchestrator.NewRunner(workflowManager), post)
 }

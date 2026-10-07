@@ -200,10 +200,8 @@ func TestRunnerStartErrorMarksFailed(t *testing.T) {
 	if e.status(1) != StatusFailed || e.status(2) != StatusWip {
 		t.Fatalf("%+v", e.o.Roadmap().Items)
 	}
-	e.o.mu.Lock()
-	defer e.o.mu.Unlock()
-	if e.o.inFlight[1] || !e.o.inFlight[2] {
-		t.Fatalf("inFlight %v", e.o.inFlight)
+	if e.o.busy() != 1 {
+		t.Fatalf("busy %d", e.o.busy())
 	}
 }
 

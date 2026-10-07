@@ -198,3 +198,11 @@ func TestCheckTimeout_Default(t *testing.T) {
 		t.Fatal(d)
 	}
 }
+
+func TestLoad_OrchestratorSectionIsAccepted(t *testing.T) {
+	home := t.TempDir()
+	write(t, home, ".tyci/config.json", `{"orchestrator":{"workers":2}}`)
+	if _, err := Load(home, t.TempDir(), true); err != nil {
+		t.Fatal(err)
+	}
+}

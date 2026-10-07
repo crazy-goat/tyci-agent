@@ -19,11 +19,12 @@ const defaultCheckTimeout = 1800 * time.Second
 
 // Config is the merged workflow config.
 type Config struct {
-	Models          map[string]string `json:"models"`            // alias -> provider URI
-	DefaultModel    string            `json:"default_model"`     // alias, used when a role has no model
-	Roles           map[string]Role   `json:"roles"`             //
-	CheckTimeoutSec int               `json:"check_timeout_sec"` // 0 means 1800
-	Forge           Forge             `json:"forge"`             // where the orchestrator reads issues
+	Models          map[string]string `json:"models"`                 // alias -> provider URI
+	DefaultModel    string            `json:"default_model"`          // alias, used when a role has no model
+	Roles           map[string]Role   `json:"roles"`                  //
+	CheckTimeoutSec int               `json:"check_timeout_sec"`      // 0 means 1800
+	Forge           Forge             `json:"forge"`                  // where the orchestrator reads issues
+	Orchestrator    json.RawMessage   `json:"orchestrator,omitempty"` // read by orchestrator.LoadConfig
 
 	// Keys owned by the agent config (agent.TyciConfig) in the same file.
 	// They are accepted so the file loads, and ignored here.

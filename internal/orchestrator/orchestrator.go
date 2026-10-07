@@ -52,8 +52,8 @@ type Orchestrator struct {
 
 	mu       sync.Mutex
 	roadmap  Roadmap
-	inFlight map[int]bool
-	announce bool // send "started #N" notices (false until the first fill is done)
+	inFlight map[int]string // issue -> run id; only acquire, setRunID, release and busy touch it
+	announce bool           // send "started #N" notices (false until the first fill is done)
 	stop     chan struct{}
 }
 
@@ -65,7 +65,7 @@ func New(cfg Config, f forge.Forge, r Runner, h Hooks) *Orchestrator {
 	if cfg.AcceptedLabel == "" {
 		cfg.AcceptedLabel = "accepted"
 	}
-	return &Orchestrator{cfg: cfg, f: f, r: r, h: h, inFlight: map[int]bool{}, stop: make(chan struct{})}
+	return &Orchestrator{cfg: cfg, f: f, r: r, h: h, inFlight: map[int]string{}, stop: make(chan struct{})}
 }
 
 // Start runs the orchestrator in a goroutine and returns at once. Cancel ctx
@@ -163,10 +163,11 @@ func (o *Orchestrator) planReady(started []int, special error) {
 	if o.h.PlanReady == nil {
 		return
 	}
+	busy := o.busy()
 	o.mu.Lock()
 	pr := PlanReady{Roadmap: copyRoadmap(o.roadmap), Total: o.cfg.Workers, Started: started, Special: special, Free: -1}
 	if o.cfg.Workers > 0 {
-		pr.Free = o.cfg.Workers - len(o.inFlight)
+		pr.Free = o.cfg.Workers - busy
 	}
 	o.mu.Unlock()
 	o.h.PlanReady(pr)
@@ -285,43 +286,99 @@ func (o *Orchestrator) depState(issue int) ItemStatus {
 	return StatusDone
 }
 
+// acquire takes a slot for the issue. It returns false when the issue already
+// runs or the worker limit is reached. It takes o.mu; callers must not hold it.
+func (o *Orchestrator) acquire(issue int) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if _, ok := o.inFlight[issue]; ok {
+		return false
+	}
+	if o.cfg.Workers > 0 && len(o.inFlight) >= o.cfg.Workers {
+		return false
+	}
+	o.inFlight[issue] = ""
+	return true
+}
+
+// setRunID stores the run id of an acquired issue.
+func (o *Orchestrator) setRunID(issue int, id string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if _, ok := o.inFlight[issue]; ok {
+		o.inFlight[issue] = id
+	}
+}
+
+// release frees the slot of the issue.
+func (o *Orchestrator) release(issue int) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.inFlight, issue)
+}
+
+// busy returns the number of used slots.
+func (o *Orchestrator) busy() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return len(o.inFlight)
+}
+
+// candidate reports the issue at index i of the plan and whether it can start
+// now. ok is false past the end of the plan.
+func (o *Orchestrator) candidate(i int) (issue int, startable, ok bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if i >= len(o.roadmap.Items) {
+		return 0, false, false
+	}
+	it := &o.roadmap.Items[i]
+	return it.Issue, it.Status == StatusTodo && o.ready(it), true
+}
+
 // fill starts every ready item while a slot is free. It returns the started issues.
 func (o *Orchestrator) fill(ctx context.Context, finished chan<- finishedRun) []int {
 	var started []int
-	var notes []string
 	o.mu.Lock()
-	notes = append(notes, o.markBlocked()...)
-	for i := range o.roadmap.Items {
-		if ctx.Err() != nil {
-			break
-		}
-		it := &o.roadmap.Items[i]
-		if it.Status != StatusTodo || o.inFlight[it.Issue] || !o.ready(it) {
-			continue
-		}
-		if o.cfg.Workers > 0 && len(o.inFlight) >= o.cfg.Workers {
-			break
-		}
-		o.inFlight[it.Issue] = true
-		it.Status = StatusWip
-		h, err := o.r.Start(ctx, o.cfg.Workflow, map[string]string{"issue": strconv.Itoa(it.Issue)})
-		if err != nil {
-			delete(o.inFlight, it.Issue)
-			it.Status = StatusFailed
-			notes = append(notes, fmt.Sprintf("#%d failed: %v; slot freed", it.Issue, err))
-			notes = append(notes, o.markBlocked()...)
-			continue
-		}
-		it.RunID = h.ID()
-		started = append(started, it.Issue)
-		if o.announce {
-			notes = append(notes, fmt.Sprintf("started #%d (run %s)", it.Issue, it.RunID))
-		}
-		go o.watch(it.Issue, h, finished)
-	}
+	notes := o.markBlocked()
 	o.mu.Unlock()
+	for i := 0; ctx.Err() == nil; i++ {
+		issue, startable, ok := o.candidate(i)
+		if !ok {
+			break
+		}
+		if !startable || !o.acquire(issue) {
+			continue
+		}
+		o.setStatus(i, StatusWip)
+		h, err := o.r.Start(ctx, o.cfg.Workflow, map[string]string{"issue": strconv.Itoa(issue)})
+		if err != nil {
+			o.release(issue)
+			o.mu.Lock()
+			o.roadmap.Items[i].Status = StatusFailed
+			notes = append(notes, fmt.Sprintf("#%d failed: %v; slot freed", issue, err))
+			notes = append(notes, o.markBlocked()...)
+			o.mu.Unlock()
+			continue
+		}
+		o.setRunID(issue, h.ID())
+		o.mu.Lock()
+		o.roadmap.Items[i].RunID = h.ID()
+		o.mu.Unlock()
+		started = append(started, issue)
+		if o.announce {
+			notes = append(notes, fmt.Sprintf("started #%d (run %s)", issue, h.ID()))
+		}
+		go o.watch(issue, h, finished)
+	}
 	o.notify(notes...)
 	return started
+}
+
+func (o *Orchestrator) setStatus(i int, s ItemStatus) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.roadmap.Items[i].Status = s
 }
 
 func (o *Orchestrator) ready(it *Item) bool {
@@ -383,6 +440,9 @@ func (o *Orchestrator) watch(issue int, h RunHandle, finished chan<- finishedRun
 func (o *Orchestrator) stopped() <-chan struct{} { return o.stop }
 
 func (o *Orchestrator) finish(f finishedRun) {
+	if !f.ask {
+		o.release(f.issue)
+	}
 	o.mu.Lock()
 	it := o.item(f.issue)
 	var notes []string
@@ -393,7 +453,6 @@ func (o *Orchestrator) finish(f finishedRun) {
 		it.Status = StatusAsk
 		notes = append(notes, fmt.Sprintf("#%d waits for your answer", f.issue))
 	default:
-		delete(o.inFlight, f.issue)
 		switch f.res.Outcome {
 		case "merged":
 			it.Status = StatusDone

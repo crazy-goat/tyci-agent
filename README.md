@@ -67,6 +67,16 @@ make install
 
 See [docs/dogfooding.md](docs/dogfooding.md) for the full runbook.
 
+Orchestrator keys (section `orchestrator`; the project file wins key by key):
+
+| Key | Default | Rule |
+|---|---|---|
+| `orchestrator.workers` | 3 | integer >= 0; 0 = unlimited |
+| `orchestrator.plan_timeout_sec` | 0 | integer >= 0; 0 = no timeout |
+| `orchestrator.accepted_label` | `accepted` | non-empty string |
+
+An invalid value stops the orchestrator start and the message names the key and the file.
+
 ## Quick Start
 
 ### 1. Configure a provider
