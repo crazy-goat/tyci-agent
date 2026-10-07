@@ -35,7 +35,7 @@ func TestRun_AutoCompact_TriggersPastThreshold(t *testing.T) {
 		ModelName:    "count-1",
 		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "working"},
-			// 90% of 200000 — past defaultAutoCompactPercent (85).
+			// past HardLimit (170000).
 			stream.Finish{Usage: stream.Usage{Input: 180000, Output: 1000}},
 		}},
 		OnExhausted: []stream.Event{
@@ -56,6 +56,7 @@ func TestRun_AutoCompact_TriggersPastThreshold(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		HardLimit:    170000,
 		Session:      sess,
 		Compactor:    compactor,
 	}); err != nil {
@@ -69,8 +70,8 @@ func TestRun_AutoCompact_TriggersPastThreshold(t *testing.T) {
 	if len(msgs) == 0 || !strings.Contains(msgs[0].Content[0].Text, "Automatic compaction triggered") {
 		t.Fatalf("msgs[0] = %#v, want the auto-compact summary as the lead message", msgs)
 	}
-	if !strings.Contains(msgs[0].Content[0].Text, "181000") || !strings.Contains(msgs[0].Content[0].Text, "200000") {
-		t.Fatalf("summary = %q, want the measured 181000/200000 figures", msgs[0].Content[0].Text)
+	if !strings.Contains(msgs[0].Content[0].Text, "181000") || !strings.Contains(msgs[0].Content[0].Text, "170000") {
+		t.Fatalf("summary = %q, want the measured 181000 and 170000 figures", msgs[0].Content[0].Text)
 	}
 }
 
@@ -81,8 +82,7 @@ func TestRun_AutoCompact_NoTriggerBelowThreshold(t *testing.T) {
 		ModelName:    "count-1",
 		OnExhausted: []stream.Event{
 			stream.TextDelta{Text: "done"},
-			// 60% of 200000 — over the reminder threshold (50%) but under
-			// the default auto-compact threshold (85%).
+			// 60% of 200000 — under the default soft (80%) and hard (95%) limits.
 			stream.Finish{Usage: stream.Usage{Input: 120000, Output: 0}},
 		},
 	}
@@ -99,6 +99,7 @@ func TestRun_AutoCompact_NoTriggerBelowThreshold(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		SoftLimit:    100000,
 		Session:      sess,
 		Compactor:    compactor,
 	}); err != nil {
@@ -160,7 +161,7 @@ func TestRun_AutoCompact_CustomPercent(t *testing.T) {
 		ModelName:    "count-1",
 		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "working"},
-			// 60% of 200000 — would not trigger the default (85%) threshold.
+			// 60% of 200000 — would not trigger the default hard limit (95%).
 			stream.Finish{Usage: stream.Usage{Input: 120000, Output: 0}},
 		}},
 		OnExhausted: []stream.Event{
@@ -227,6 +228,7 @@ func TestRun_AutoCompact_DoesNotReinvokeProviderAfterCompacting(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		HardLimit:    170000,
 		Session:      sess,
 		Compactor:    compactor,
 	}); err != nil {
@@ -264,6 +266,7 @@ func TestRun_AutoCompact_SkipsWhenNoOwnSession(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		HardLimit:    170000,
 		Session:      nil, // btwConfig's shape: parent's Compactor, no own Session
 		Compactor:    compactor,
 	}); err != nil {
@@ -271,5 +274,182 @@ func TestRun_AutoCompact_SkipsWhenNoOwnSession(t *testing.T) {
 	}
 	if compactCalls != 0 {
 		t.Fatalf("compactCalls = %d, want 0 (must not compact the parent's conversation from a child with no session of its own)", compactCalls)
+	}
+}
+
+func TestCompactThresholds(t *testing.T) {
+	tests := []struct {
+		name                    string
+		window, soft, hard, pct int
+		wantSoft, wantHard      int
+	}{
+		{"automatic", 1000000, 0, 0, 0, 800000, 950000},
+		{"user limits", 1000000, 100000, 150000, 0, 100000, 150000},
+		{"user limits capped by window", 1000, 5000, 9000, 0, 1000, 1000},
+		{"legacy percent", 1000000, 0, 0, 50, 800000, 500000},
+		{"hard wins over legacy percent", 1000000, 0, 150000, 50, 800000, 150000},
+		{"negative percent disables hard", 1000000, 0, 0, -1, 800000, 0},
+		{"unknown window, user limits only", 0, 100, 200, 0, 100, 200},
+		{"unknown window, nothing set", 0, 0, 0, 0, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, h := compactThresholds(tt.window, tt.soft, tt.hard, tt.pct)
+			if s != tt.wantSoft || h != tt.wantHard {
+				t.Fatalf("got (%d, %d), want (%d, %d)", s, h, tt.wantSoft, tt.wantHard)
+			}
+		})
+	}
+}
+
+// User limits work when the catalog knows no window (a custom model).
+func TestRun_HardLimit_WithoutKnownWindow(t *testing.T) {
+	sess := newAutoCompactSession(t)
+	p := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		OnExhausted: []stream.Event{
+			stream.TextDelta{Text: "done"},
+			stream.Finish{Usage: stream.Usage{Input: 150001, Output: 1}},
+		},
+	}
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
+	}
+	var compactCalls int
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries: 1,
+		HardLimit:  150000,
+		Session:    sess,
+		Compactor: func(summary, focus string) (string, error) {
+			compactCalls++
+			return "", nil
+		},
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if compactCalls != 1 {
+		t.Fatalf("compactCalls = %d, want 1", compactCalls)
+	}
+}
+
+// A child without Compactor and Session must not be told about auto-compaction.
+func TestRun_SoftNotice_NoHardLimitClaimWithoutCompactor(t *testing.T) {
+	p := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		OnExhausted: []stream.Event{
+			stream.TextDelta{Text: "done"},
+			stream.Finish{Usage: stream.Usage{Input: 120001, Output: 1}},
+		},
+	}
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
+	}
+	_, _ = Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries: 1,
+		SoftLimit:  100000,
+		HardLimit:  150000,
+	})
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if strings.Contains(b.Text, "hard limit") {
+				t.Fatalf("notice names the hard limit: %q", b.Text)
+			}
+		}
+	}
+}
+
+// toolRound is one model round that calls read and reports usage.
+func toolRound(id string, input int) []stream.Event {
+	return []stream.Event{
+		stream.ToolCallStart{ID: id, Name: "read"},
+		stream.ToolCall{ID: id, Name: "read", Arguments: `{}`},
+		stream.Finish{Usage: stream.Usage{Input: input}, Reason: "tool_calls"},
+	}
+}
+
+// #304: an agent without a session (subagent, flow role) compacts in memory
+// after a tool round past the hard limit, and keeps its task.
+func TestRun_InLoopCompaction_HardLimitKeepsTask(t *testing.T) {
+	runner := newMockToolRunner()
+	runner.SetResult("read", "file content")
+	p := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		Turns: [][]stream.Event{
+			toolRound("t1", 1000), toolRound("t2", 1000), toolRound("t3", 1000),
+			toolRound("t4", 1000), toolRound("t5", 180000),
+		},
+		OnExhausted: []stream.Event{
+			stream.TextDelta{Text: "done"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+	}
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "the task"}}},
+	}
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries:       1,
+		ContextLimit:     1000000,
+		SoftLimit:        150000,
+		HardLimit:        170000,
+		Tools:            runner,
+		InLoopCompaction: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if msgs[0].Content[0].Text != "the task" {
+		t.Fatalf("msgs[0] = %q, want the task", msgs[0].Content[0].Text)
+	}
+	if !strings.Contains(msgs[1].Content[0].Text, "automated context compaction") ||
+		!strings.Contains(msgs[1].Content[0].Text, "180000") {
+		t.Fatalf("msgs[1] = %q, want the compaction note", msgs[1].Content[0].Text)
+	}
+	// task + note + 8 kept messages + the final answer.
+	if len(msgs) != 11 {
+		t.Fatalf("len(msgs) = %d, want 11", len(msgs))
+	}
+	if got := countReminderLines(msgs); got != 0 {
+		t.Fatalf("reminder count = %d, want 0 (the compaction replaces the notice)", got)
+	}
+	if last := msgs[len(msgs)-1]; last.Role != "assistant" || last.Content[0].Text != "done" {
+		t.Fatalf("last = %#v, want the final answer", last)
+	}
+}
+
+// #304: the soft notice of a session-less agent comes after a tool round,
+// not after its final answer (which would force one more round).
+func TestRun_InLoopCompaction_SoftNoticeMidTurn(t *testing.T) {
+	runner := newMockToolRunner()
+	runner.SetResult("read", "file content")
+	p := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		Turns:        [][]stream.Event{toolRound("t1", 120000)},
+		OnExhausted: []stream.Event{
+			stream.TextDelta{Text: "done"},
+			// Past the soft limit again: no notice after the final answer.
+			stream.Finish{Usage: stream.Usage{Input: 130000}},
+		},
+	}
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
+	}
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries:       1,
+		ContextLimit:     200000,
+		SoftLimit:        100000,
+		Tools:            runner,
+		InLoopCompaction: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countReminderLines(msgs); got != 1 {
+		t.Fatalf("reminder count = %d, want 1", got)
+	}
+	// go, tool call, tool result, notice, final answer.
+	if len(msgs) != 5 || !strings.Contains(msgs[3].Content[0].Text, "190000 tokens (hard limit)") {
+		t.Fatalf("msgs = %#v", msgs)
 	}
 }

@@ -442,3 +442,13 @@ func TestProjectDirFromRepositorySubdirectory(t *testing.T) {
 		t.Fatalf("List(subdir) = %v, want [from-root]", defs)
 	}
 }
+
+func TestParse_CompactLimits(t *testing.T) {
+	def, err := Parse("a.md", []byte("---\ncompact_soft_limit: 100000\ncompact_hard_limit: 150000\n---\nbody"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.CompactSoftLimit != 100000 || def.CompactHardLimit != 150000 {
+		t.Fatalf("limits = %d, %d", def.CompactSoftLimit, def.CompactHardLimit)
+	}
+}

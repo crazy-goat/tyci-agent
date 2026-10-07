@@ -488,6 +488,30 @@ parts that are identical on every turn. The cache read/write counts already
 appear in the usage line. Turn it off with `{"prompt_cache": false}` in
 `~/.tyci/config.json` if your endpoint rejects the `cache_control` field.
 
+**Context limits.** Two limits, in tokens, control compaction. Past the soft
+limit the agent gets a notice and may call `compact`. Past the hard limit
+tyci compacts without asking. Set them in `~/.tyci/config.json`:
+
+```json
+{ "compact_soft_limit": 100000, "compact_hard_limit": 150000 }
+```
+
+Override them per agent with `compact_soft_limit` / `compact_hard_limit` in an
+`agents.json` entry. Subagents also read them from the agent definition
+frontmatter. The main conversation started with `--agent <name>` ignores
+frontmatter limits. Flow roles use `roles.<name>.compact_soft_limit` and
+`roles.<name>.compact_hard_limit` in the flow config.
+
+A limit is capped by the model window. An unset soft limit is 80% and an unset
+hard limit is 95% of the window. The legacy `auto_compact_percent` sets the
+hard limit only when no hard limit is set; a negative value disables it. The
+window of nexos models comes from the nexos API (see `nexos-models.json`).
+
+The main conversation checks the limits when the turn ends. Subagents and flow
+roles check them after each tool round. Past the hard limit they compact in
+memory: they keep the task and the last 8 messages, with a note that older
+messages were removed.
+
 ## Long subagents
 
 A blocking `subagent` call waits 60s. After that its children move to the
