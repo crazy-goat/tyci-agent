@@ -15,6 +15,9 @@ type TaskSpec struct {
 	SystemPrompt  string
 	Dir           string // existing directory; becomes the child's working directory
 	MaxIterations int
+	// Name, when set, registers the run as a job with this description, so
+	// the jobs list, "message" and "resume" can reach it by this name.
+	Name string
 }
 
 // RunSubagentTask runs spec through the registered subagent runner in
@@ -25,7 +28,21 @@ func RunSubagentTask(ctx context.Context, s TaskSpec) (result, sessionID string,
 	if subagentToolInstance == nil || subagentToolInstance.Runner == nil {
 		return "", "", errors.New("no subagent runner is set")
 	}
-	return runSubagentTask(ctx, subagentToolInstance.Runner, s)
+	runner := subagentToolInstance.Runner
+	starter := getJobStarter()
+	if s.Name == "" || starter == nil {
+		return runSubagentTask(ctx, runner, s)
+	}
+	var res, id string
+	var runErr error
+	done := make(chan struct{})
+	starter.Start(ctx, s.Name, JobKindSubagent, "", func(jobCtx context.Context, jobID string) (string, bool, error) {
+		defer close(done)
+		res, id, runErr = runSubagentTask(context.WithValue(jobCtx, JobIDCtxKey{}, jobID), runner, s)
+		return res, false, runErr
+	})
+	<-done
+	return res, id, runErr
 }
 
 func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (string, string, error) {

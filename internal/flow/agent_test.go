@@ -205,3 +205,18 @@ func TestFetchIssueContext_GhErrorReturnsError(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestSubagentRunner_NamesJobAndAddsNote(t *testing.T) {
+	s := &spawnRec{}
+	rc := RunContext{Worktree: t.TempDir(), Run: "20261007-102102-527", Note: "fix the conflict"}
+	if _, _, err := newRunner(s).Run(context.Background(), "worker", "", rc); err != nil {
+		t.Fatal(err)
+	}
+	sp := s.specs[0]
+	if sp.Name != "20261007-102102-527/worker" {
+		t.Fatalf("name = %q", sp.Name)
+	}
+	if !strings.Contains(sp.Task, "fix the conflict") {
+		t.Fatalf("task lacks the note: %q", sp.Task)
+	}
+}
