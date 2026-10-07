@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Flow: `tyci` resumes runs from `state.json` after a crash or kill, at the saved state and without a new visit; `state.json` gets `pid`, `resumed` and `agent_seq`, and `merge.sh` returns `merged` for a PR that is already merged (#182).
 - Config keys `compact_soft_limit` and `compact_hard_limit` (config.json, agents.json, agent frontmatter, flow roles) set the context notice and auto-compaction limits in tokens. Subagents and flow roles now compact automatically past the hard limit (#304).
 - Flow: role agents of a run are jobs named `<run-id>/<role>` (the `message` tool reaches them), and an `ask` answer can be `retry <note>` (the note goes into the next worker prompt) or `goto <state>` (#327).
 - Flow: the final review is posted as a PR review, and new PR comments from team members go back to the worker (#187).

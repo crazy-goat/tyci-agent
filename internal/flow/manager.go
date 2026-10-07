@@ -70,6 +70,8 @@ type Manager struct {
 type activeRun struct {
 	cancel context.CancelFunc
 	issue  int
+	// adoptable: resumed by ResumeAll; the next Start of the issue returns it.
+	adoptable bool
 }
 
 // RunEvent tells a subscriber that a run started again (Status running, after
@@ -136,6 +138,8 @@ func (m *Manager) SetBase(ctx context.Context) {
 }
 
 // Start prepares a run and starts it in a goroutine. It returns at once.
+// A run of the issue resumed by ResumeAll is returned instead of a new one,
+// and a run of the issue whose owner process is gone is resumed.
 func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string, error) {
 	if req.Workflow == "" {
 		req.Workflow = DefaultWorkflow
@@ -149,8 +153,14 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if id, ok := m.adopt(req.Issue); ok {
+		return id, nil, nil
+	}
 	if err := m.refuse(info, req.Issue); err != nil {
 		return "", nil, err
+	}
+	if id, found, err := m.resumeStale(info, req.Issue); found {
+		return id, nil, err
 	}
 	st, wf, warnings, err := m.Prepare(ctx, info, req)
 	if err != nil {

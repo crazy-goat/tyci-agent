@@ -65,6 +65,14 @@ make install
 - Run state: `~/.tyci/runs/<repo>/<run>/state.json`
 - Overrides: `.tyci/workflows/` and `.tyci/checks/`
 
+A run survives a restart. `state.json` keeps the owner process (`pid`) and the number of
+resumes (`resumed`). When `tyci` or `tyci console` starts, it resumes every `running` run
+of the current repository whose owner process is gone, at its saved state (the agent of
+that state starts again in the same worktree, and the visit is not counted again). At most
+`orchestrator.workers` runs are resumed; a later start of the issue resumes the others.
+A run resumed 3 times, or one whose worktree is gone, pauses for an answer. Paused runs
+stay paused and their notice is shown again.
+
 See [docs/dogfooding.md](docs/dogfooding.md) for the full runbook.
 
 Orchestrator keys (section `orchestrator`; the project file wins key by key):
