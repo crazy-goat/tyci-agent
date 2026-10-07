@@ -346,17 +346,15 @@ func TestPanicIsRecovered(t *testing.T) {
 	e.waitStop()
 }
 
-func TestBusyManagerKeepsIssuesTodo(t *testing.T) {
+func TestBusyIssueKeepsTodoAndOthersStart(t *testing.T) {
 	e := newEnv(t, Config{Workers: 3}, issue(1, ""), issue(2, ""), issue(3, ""))
 	busy := fmt.Errorf("%w: run x is active", flow.ErrBusy)
-	e.r.startErr[1], e.r.startErr[2], e.r.startErr[3] = busy, busy, busy
+	e.r.startErr[1] = busy
 	e.start()
-	for _, n := range []int{1, 2, 3} {
-		if e.status(n) != StatusTodo {
-			t.Fatalf("#%d: %+v", n, e.o.Roadmap().Items)
-		}
+	if e.status(1) != StatusTodo {
+		t.Fatalf("#1: %+v", e.o.Roadmap().Items)
 	}
-	if e.r.starts(2) != 0 || e.o.busy() != 0 {
-		t.Fatalf("starts(2)=%d busy=%d", e.r.starts(2), e.o.busy())
+	if e.r.starts(2) != 1 || e.r.starts(3) != 1 || e.o.busy() != 2 {
+		t.Fatalf("starts(2)=%d starts(3)=%d busy=%d", e.r.starts(2), e.r.starts(3), e.o.busy())
 	}
 }

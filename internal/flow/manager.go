@@ -79,8 +79,6 @@ type RunEvent struct {
 	Status string
 	PR     int
 	Reason string
-	// Changed is the UpdatedAt of the saved state; it differs for each pause.
-	Changed time.Time
 }
 
 // Subscribe registers fn for the run events. fn runs on the run goroutine and must
@@ -158,7 +156,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 	if err != nil {
 		return "", warnings, err
 	}
-	m.launch(info, wf, st, func(ctx context.Context, r *Runner) error { return r.Run(ctx, st) })
+	m.launch(info, wf, st, false, func(ctx context.Context, r *Runner) error { return r.Run(ctx, st) })
 	return st.Run, warnings, nil
 }
 
@@ -189,7 +187,7 @@ func (m *Manager) refuse(info RepoInfo, issue int) error {
 }
 
 // launch registers the run as active and runs it. m.mu must be held.
-func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, do func(context.Context, *Runner) error) {
+func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool, do func(context.Context, *Runner) error) {
 	parent := m.base
 	if parent == nil {
 		parent = context.Background()
@@ -206,7 +204,7 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, do func(cont
 			m.mu.Lock()
 			delete(m.active, st.Run)
 			m.mu.Unlock()
-			m.emit(RunEvent{Run: st.Run, Status: st.Status, PR: st.PR, Reason: st.Reason, Changed: st.UpdatedAt})
+			m.emit(RunEvent{Run: st.Run, Status: st.Status, PR: st.PR, Reason: st.Reason})
 		}()
 		defer func() {
 			if p := recover(); p != nil {
@@ -218,6 +216,9 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, do func(cont
 				m.notify(st, wf)
 			}
 		}()
+		if resumed {
+			m.emit(RunEvent{Run: st.Run, Status: "running"})
+		}
 		err := do(ctx, r)
 		if err != nil && st.Status == "running" {
 			st.Status = "failed"
@@ -306,9 +307,8 @@ func (m *Manager) Resume(runID, answer string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("%w: run %s is active", ErrBusy, st.Run)
 	}
-	m.launch(info, wf, st, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
+	m.launch(info, wf, st, true, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
 	m.mu.Unlock()
-	m.emit(RunEvent{Run: st.Run, Status: "running"})
 	return nil
 }
 

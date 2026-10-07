@@ -129,6 +129,13 @@ func (h *flowHandle) add(ev flow.RunEvent) {
 	}
 }
 
+func drain(c chan struct{}) {
+	select {
+	case <-c:
+	default:
+	}
+}
+
 func signal(c chan struct{}) {
 	select {
 	case c <- struct{}{}:
@@ -155,8 +162,10 @@ func (h *flowHandle) watch(ctx context.Context) {
 			}
 			switch ev.Status {
 			case "running":
+				drain(h.asks)
 				signal(h.resumed)
 			case "paused":
+				drain(h.resumed)
 				signal(h.asks)
 			case "done":
 				if ev.PR > 0 {
