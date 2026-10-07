@@ -255,19 +255,13 @@ func TestAnthropicStream_Temperature(t *testing.T) {
 	}
 }
 
-func TestAnthropicThinkingEffort(t *testing.T) {
+func TestAnthropicIgnoresReasoningEffort(t *testing.T) {
+	// Thinking blocks are not round-tripped yet, so thinking stays off.
 	body := reasoningBody(t, NewAnthropic, "medium")
-	th, _ := body["thinking"].(map[string]any)
-	if th["type"] != "enabled" || th["budget_tokens"] != float64(4096) {
-		t.Fatalf("thinking = %v", body["thinking"])
+	if _, ok := body["thinking"]; ok {
+		t.Fatal("thinking must not be sent for Anthropic")
 	}
-	if body["max_tokens"].(float64) <= 4096 {
-		t.Fatalf("max_tokens = %v, must exceed budget", body["max_tokens"])
-	}
-	if _, ok := body["temperature"]; ok {
-		t.Fatal("temperature must be dropped with thinking")
-	}
-	if _, ok := reasoningBody(t, NewAnthropic, "")["thinking"]; ok {
-		t.Fatal("thinking sent without option")
+	if _, ok := body["temperature"]; !ok {
+		t.Fatal("temperature must be kept")
 	}
 }

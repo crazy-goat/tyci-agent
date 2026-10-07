@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Models: `?reasoning=<effort>` now also sets `reasoning_effort` (Chat Completions) and the Gemini `thinkingConfig` budget; the catalog keeps `reasoning`, `reasoning_options` and `tool_call` (#120).
 - Orchestrator: the TUI shows one notice per start-up stage (reading the forge, issue count, planning, fallback reason) before the greeting (#312).
 - Watchdog: a running subagent with no activity for `watchdog.idle_after` (default 3m) gets a notice sent to its parent; after each further `watchdog.escalate_after` (default 3m) the notice goes one level up, ending at the human, once. It never kills or nudges a job. Global `config.json` only; invalid durations fail at start (#185).
 - Flow: `tyci` resumes runs from `state.json` after a crash or kill, at the saved state and without a new visit; `state.json` gets `pid`, `resumed` and `agent_seq`, and `merge.sh` returns `merged` for a PR that is already merged (#182).

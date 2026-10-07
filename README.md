@@ -133,7 +133,12 @@ openai://GPT 5.6 Luna@@api.nexos.ai/v1?api=responses&reasoning=xhigh
 ```
 
 `reasoning=xhigh` is forwarded as `reasoning: {"effort":"xhigh"}` by the
-Responses connector. The bare `responses://...` scheme is accepted as an alias.
+Responses connector. The same option also works for other protocols:
+`openai` (Chat Completions) sends it as `reasoning_effort` (a number is not
+sent); `gemini` maps `low`, `medium`, `high` to a `thinkingConfig` budget of
+1024, 4096 or 16384 tokens, or takes a number as the budget; other words
+(for example `xhigh`) are ignored there. `anthropic` ignores the option,
+because thinking blocks are not yet sent back in tool loops. The bare `responses://...` scheme is accepted as an alias.
 
 `?fallbacks=false` is forwarded verbatim as a `?fallbacks=false` query
 parameter on the outgoing request, for gateways like Nexos that read it to

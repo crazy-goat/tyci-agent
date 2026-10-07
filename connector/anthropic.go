@@ -70,15 +70,6 @@ func (c *anthropic) Stream(ctx context.Context, req Request, emit func(stream.Ev
 		Tools:       tools,
 		Temperature: req.Temperature,
 	}
-	if budget := thinkingBudget(c.ep.option(OptReasoningEffort)); budget > 0 {
-		// Extended thinking needs max_tokens above the budget and rejects
-		// a custom temperature.
-		if body.MaxTokens <= budget {
-			body.MaxTokens = budget + maxTokens
-		}
-		body.Temperature = nil
-		body.Thinking = &api.AnthropicThinking{Type: "enabled", BudgetTokens: budget}
-	}
 	s := api.AnthropicStreamer{HTTP: c.ep.HTTP, Headers: c.ep.Headers}
 	return s.Stream(ctx, c.ep.APIKey, c.ep.URL(), body, emit)
 }

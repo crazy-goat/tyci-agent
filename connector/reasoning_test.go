@@ -41,6 +41,9 @@ func TestOpenAIReasoningEffort(t *testing.T) {
 	if got := reasoningBody(t, NewOpenAI, "high")["reasoning_effort"]; got != "high" {
 		t.Fatalf("reasoning_effort = %v", got)
 	}
+	if _, ok := reasoningBody(t, NewOpenAI, "2000")["reasoning_effort"]; ok {
+		t.Fatal("numeric effort must not be sent as reasoning_effort")
+	}
 	if _, ok := reasoningBody(t, NewOpenAI, "")["reasoning_effort"]; ok {
 		t.Fatal("reasoning_effort sent without option")
 	}

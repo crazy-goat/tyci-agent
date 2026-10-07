@@ -58,7 +58,12 @@ func (c *openAI) Stream(ctx context.Context, req Request, emit func(stream.Event
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
 	}
-	body.ReasoningEffort = c.ep.option(OptReasoningEffort)
+	// A number is a token budget (Anthropic, Gemini); effort-style APIs reject it.
+	if e := c.ep.option(OptReasoningEffort); e != "" {
+		if _, err := strconv.Atoi(e); err != nil {
+			body.ReasoningEffort = e
+		}
+	}
 	// Only send the reasoning field when ?reasoning=true was in the URI.
 	if c.reasoning {
 		body.Reasoning = true
