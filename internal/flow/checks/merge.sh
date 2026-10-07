@@ -27,9 +27,17 @@ if [ -n "$protected" ]; then
     exit 0
 fi
 
-bucket=$(gh pr checks "$TYCI_PR" -R "$TYCI_REPO" --json name,bucket --jq '[.[] | select(.name == "ci-ok")][0].bucket // ""') || bucket=""
+errf=$(mktemp)
+trap 'rm -f "$errf"' EXIT
+bucket=$(gh pr checks "$TYCI_PR" -R "$TYCI_REPO" --json name,bucket --jq '[.[] | select(.name == "ci-ok")][0].bucket // ""' 2>"$errf") || bucket=""
+# gh exits 1 with this text when no check exists: that is "missing", the same as in ci_wait.sh.
+case "$(cat "$errf")" in *"no checks reported"*) bucket="" ;; esac
 if [ "$bucket" != pass ]; then
     echo "merge.sh: ci-ok is '${bucket:-missing}'" >&2
+    if [ -z "$bucket" ] && [ "$(gh pr view "$TYCI_PR" -R "$TYCI_REPO" --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null || true)" = BEHIND ]; then
+        echo behind
+        exit 0
+    fi
     echo fail
     exit 0
 fi
