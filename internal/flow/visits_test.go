@@ -3,6 +3,7 @@ package flow
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -283,5 +284,31 @@ func TestResume_GotoUnknownStateRejected(t *testing.T) {
 	}
 	if st.Status != "paused" {
 		t.Fatalf("status %q", st.Status)
+	}
+}
+
+// firstSaveStore keeps a copy of the first saved state.
+type firstSaveStore struct{ first *RunState }
+
+func (f *firstSaveStore) Save(st *RunState) error {
+	if f.first == nil {
+		cp := *st
+		f.first = &cp
+	}
+	return nil
+}
+
+func TestResume_SavesCurrentPID(t *testing.T) {
+	r, st, _ := pausedRun(t, loopWF(1, 0, 0))
+	st.PID = deadPID(t) // the owner before a restart
+	fs := &firstSaveStore{}
+	r.Store = fs
+	r.Checks = &fakeChecks{keys: map[string][]string{"ci.sh": {"green"}, "merge.sh": {"merged"}}}
+	r.Agents = &fakeAgents{keys: map[string][]string{"code": {"done"}}}
+	if err := r.Resume(context.Background(), st, "retry"); err != nil {
+		t.Fatal(err)
+	}
+	if fs.first == nil || fs.first.Status != "running" || fs.first.PID != os.Getpid() {
+		t.Fatalf("first save = %+v, want running with pid %d", fs.first, os.Getpid())
 	}
 }

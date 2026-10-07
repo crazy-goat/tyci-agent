@@ -54,7 +54,7 @@ type Orchestrator struct {
 
 	mu       sync.Mutex
 	roadmap  Roadmap
-	inFlight map[int]string // issue -> run id; only acquire, setRunID, release and busy touch it
+	inFlight map[int]string // issue -> run id; only adoptResumed, acquire, setRunID, release and busy touch it
 	announce bool           // send "started #N" notices (false until the first fill is done)
 	stop     chan struct{}
 }
@@ -119,6 +119,7 @@ func (o *Orchestrator) loop(ctx context.Context) {
 	o.roadmap = rm
 	o.mu.Unlock()
 	finished := make(chan finishedRun)
+	o.adoptResumed(ctx, finished)
 	replanned := false
 	ready := true
 	for {
@@ -288,6 +289,30 @@ func (o *Orchestrator) depState(issue int) ItemStatus {
 		return it.Status
 	}
 	return StatusDone
+}
+
+// adoptResumed takes a slot for every run resumed after a restart, before the
+// first fill, so resumed runs count toward the worker limit. A resumed run
+// takes its slot even when its issue is not in the plan or cannot start yet.
+func (o *Orchestrator) adoptResumed(ctx context.Context, finished chan<- finishedRun) {
+	a, ok := o.r.(Adopter)
+	if !ok {
+		return
+	}
+	for _, issue := range a.Adoptable() {
+		h, ok := a.Adopt(ctx, issue)
+		if !ok {
+			continue
+		}
+		o.mu.Lock()
+		o.inFlight[issue] = h.ID()
+		if it := o.item(issue); it != nil && it.Status == StatusTodo {
+			it.Status = StatusWip
+			it.RunID = h.ID()
+		}
+		o.mu.Unlock()
+		go o.watch(issue, h, finished)
+	}
 }
 
 // acquire takes a slot for the issue. It returns false when the issue already

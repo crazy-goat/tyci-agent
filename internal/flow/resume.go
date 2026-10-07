@@ -196,6 +196,30 @@ func (m *Manager) adopt(issue int) (string, bool) {
 	return "", false
 }
 
+// Adoptable returns the issues of the runs resumed by ResumeAll that no Start
+// or Adopt returned yet, in issue order.
+func (m *Manager) Adoptable() []int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []int
+	for _, a := range m.active {
+		if a.adoptable {
+			out = append(out, a.issue)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+// Adopt returns the run of the issue resumed by ResumeAll, once. Unlike Start
+// it never starts a new run: ok is false when there is no such run (for
+// example, it ended already).
+func (m *Manager) Adopt(issue int) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.adopt(issue)
+}
+
 // resumeStale resumes a run of the issue whose owner process is gone. found is
 // false when there is no such run. m.mu must be held.
 func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool, err error) {

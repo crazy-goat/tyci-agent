@@ -88,8 +88,12 @@ func TestPrepareRun_CallOrder(t *testing.T) {
 	if st.Status != "running" || st.Current != "a" || st.Branch != "b" || st.Worktree != "/w" {
 		t.Fatalf("bad state: %+v", st)
 	}
-	if _, err := Load(filepath.Join(home, st.Run)); err != nil {
+	saved, err := Load(filepath.Join(home, st.Run))
+	if err != nil {
 		t.Fatalf("state not saved: %v", err)
+	}
+	if saved.PID != os.Getpid() {
+		t.Fatalf("pid = %d, want %d", saved.PID, os.Getpid())
 	}
 }
 

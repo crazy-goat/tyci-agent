@@ -331,3 +331,25 @@ func TestResume_EndToEnd_StubScripts(t *testing.T) {
 	}
 	e.wantMerged()
 }
+
+func TestManager_AdoptReturnsResumedRunOnce(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	st := saveRun(t, e.home, 5, nil)
+	e.m.ResumeAll(0)
+	e.notice(t)
+	if got := e.m.Adoptable(); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("adoptable = %v", got)
+	}
+	if id, ok := e.m.Adopt(5); !ok || id != st.Run {
+		t.Fatalf("adopt = %q, %v", id, ok)
+	}
+	if got := e.m.Adoptable(); len(got) != 0 {
+		t.Fatalf("adoptable after adopt = %v", got)
+	}
+	if _, ok := e.m.Adopt(5); ok {
+		t.Fatal("second adopt returned the run")
+	}
+	close(c.release)
+	e.notice(t)
+}

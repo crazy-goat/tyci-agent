@@ -115,12 +115,17 @@ the run stops at `ask` before the merge. Review and merge the pull request yours
 
 ## 9. Stop and clean up a stuck run
 
-Version 0.3.0 cannot resume a run after a restart.
+A `running` run survives a crash or a kill (`kill <pid>`, `kill -9`). The next `tyci` or
+`tyci console` start in the same repository resumes it at its saved state. A normal quit
+does not leave a run to resume.
 
-1. Quit the TUI with Ctrl+C in its terminal. Or run `kill <pid>` for that process only.
-   Find it with `pgrep -fl 'tyci'`.
-2. Do not use `pkill -f 'tyci tui'`. It kills other sessions.
-3. After a hard kill, `state.json` keeps `status: running`. This is expected.
+1. Quit the TUI with Ctrl+C in its terminal. A normal quit cancels the active runs and saves
+   them as `failed` (reason `cancelled`). The next start does not resume them.
+2. If the TUI does not respond, run `kill <pid>` for that process only. Find it with
+   `pgrep -fl 'tyci'`. Do not use `pkill -f 'tyci tui'`. It kills other sessions.
+3. After a kill or a crash, `state.json` keeps `status: running`. The next start resumes the
+   run. To stop it for good, remove its run directory (step 5) before you start `tyci` again.
+   A run resumed 3 times pauses for an answer.
    A `running` or `paused` run blocks a new `workflow_start` for the same issue.
    Answer a `paused` run with `stop`, or remove its run directory (step 5).
 4. Remove the worktree and the branch:
@@ -130,7 +135,7 @@ git -C ~/work/crazy-goat/tyci-agent worktree remove --force ~/.tyci/worktrees/ty
 git -C ~/work/crazy-goat/tyci-agent branch -D issue-N
 ```
 
-5. Remove the run directory. Without this step, the old `running` state blocks a new start for the issue:
+5. Remove the run directory. Without this step, the next start resumes an old `running` run, and a `running` or `paused` run blocks a new start for the issue:
 
 ```bash
 rm -rf ~/.tyci/runs/tyci-agent/<run>
@@ -149,7 +154,10 @@ The file is `~/.tyci/runs/<repo>/<run>/state.json`.
 | `pr` | The pull request number, when known |
 | `last_comment_id` | Highest PR issue comment id handled (`last_review_comment_id`: the same for PR review comments; the two id sequences differ) |
 | `visits` | Visit count per state |
-| `history` | One entry per step: `seq`, `state`, `kind`, `key`, `to`, `exit`, `stderr_tail`, `warnings`, `error` (agent error text, masked) |
+| `pid` | The owner process of a `running` run. A dead owner makes the run resumable at the next start |
+| `resumed` | How many times the run was resumed after a restart (at most 3, then it pauses) |
+| `agent_seq` | The run-wide agent counter |
+| `history` | One entry per step: `seq`, `state`, `kind`, `key`, `to`, `exit`, `stderr_tail`, `warnings`, `error` (agent error text, masked). `kind` is `check`, `agent`, `ask` or `resume` (a resume after a restart, with `key: resumed`) |
 
 New PR comments from team members (write or admin permission) go to `comments.md` in the run directory; the next `code` visit reads it. `fetch_comments.sh` also writes `last_comment_id` and `last_review_comment_id` there, and the runner copies them to `state.json`.
 

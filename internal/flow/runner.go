@@ -490,6 +490,7 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 	}
 	st.Current = next
 	st.Status = "running"
+	st.PID = os.Getpid()
 	if r.Store != nil {
 		if err := r.Store.Save(st); err != nil {
 			return err

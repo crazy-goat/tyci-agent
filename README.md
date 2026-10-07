@@ -65,11 +65,12 @@ make install
 - Run state: `~/.tyci/runs/<repo>/<run>/state.json`
 - Overrides: `.tyci/workflows/` and `.tyci/checks/`
 
-A run survives a restart. `state.json` keeps the owner process (`pid`) and the number of
+A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
 resumes (`resumed`). When `tyci` or `tyci console` starts, it resumes every `running` run
 of the current repository whose owner process is gone, at its saved state (the agent of
 that state starts again in the same worktree, and the visit is not counted again). At most
 `orchestrator.workers` runs are resumed; a later start of the issue resumes the others.
+The orchestrator counts the resumed runs as workers before it starts new runs.
 A run resumed 3 times, or one whose worktree is gone, pauses for an answer. Paused runs
 stay paused and their notice is shown again.
 
