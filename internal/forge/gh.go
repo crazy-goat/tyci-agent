@@ -155,7 +155,7 @@ func (g *GitHub) milestoneNumber(ctx context.Context, title string) (int, error)
 }
 
 // Issues returns the open issues of a milestone title, or those without a
-// milestone for "". Pull requests are skipped.
+// milestone for "". Items that are not issues are skipped.
 func (g *GitHub) Issues(ctx context.Context, milestone string) ([]Issue, error) {
 	ms := "none"
 	if milestone != "" {
