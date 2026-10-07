@@ -5,6 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"time"
+
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // TaskSpec describes one subagent run started from Go (the workflow engine),
@@ -24,6 +28,22 @@ type TaskSpec struct {
 	// Transcript, when set, is the path of the run transcript of this agent
 	// visit (see internal/runlog). The child writes its redacted messages there.
 	Transcript string
+	// Resume, when set, is the session id of an earlier named run. Task is
+	// then sent as a new user turn in that conversation; the other fields
+	// except Dir are ignored.
+	Resume string
+	// OnDone, when set, receives the usage of the run after it ends (also
+	// after an error). The workflow runner stores it in the run history.
+	OnDone func(TaskStats)
+}
+
+// TaskStats is what a finished subagent run reports: the model it used and
+// its usage summed over all turns.
+type TaskStats struct {
+	Model     string
+	Usage     stream.Usage
+	Turns     int
+	ToolCalls int
 }
 
 // TranscriptCtxKey carries TaskSpec.Transcript to the subagent runner.
@@ -31,9 +51,12 @@ type TranscriptCtxKey struct{}
 
 // RunSubagentTask runs spec through the registered subagent runner in
 // spec.Dir, without creating a worktree. It returns the final answer and a
-// fresh id for this run. Child runs that run as jobs write a session file
-// under the "agents" directory; the id is only a unique label for the run history.
+// session id. For a named run the session id is its job id, which
+// TaskSpec.Resume accepts; otherwise it is a fresh unique label.
 func RunSubagentTask(ctx context.Context, s TaskSpec) (result, sessionID string, err error) {
+	if s.Resume != "" {
+		return resumeSubagentTask(ctx, s)
+	}
 	if subagentToolInstance == nil || subagentToolInstance.Runner == nil {
 		return "", "", errors.New("no subagent runner is set")
 	}
@@ -51,11 +74,52 @@ func RunSubagentTask(ctx context.Context, s TaskSpec) (result, sessionID string,
 		// mark the job as unroutable: ask_parent then fails at once.
 		jobCtx = context.WithValue(jobCtx, JobIDCtxKey{}, jobID)
 		jobCtx = context.WithValue(jobCtx, AskUnroutableCtxKey{}, true)
-		res, id, runErr = runSubagentTask(jobCtx, runner, s)
+		res, _, runErr = runSubagentTask(jobCtx, runner, s)
+		id = jobID
 		return res, false, runErr
 	})
 	<-done
 	return res, id, runErr
+}
+
+// resumeSubagentTask sends s.Task to the finished conversation s.Resume and
+// waits for the answer. The new job id is the new session id.
+func resumeSubagentTask(ctx context.Context, s TaskSpec) (string, string, error) {
+	resumer := getJobResumer()
+	var waiter JobWaiter
+	if tool, ok := lookupTool("wait"); ok {
+		if wt, ok := tool.(*WaitTool); ok {
+			waiter = wt.waiter()
+		}
+	}
+	if resumer == nil || waiter == nil {
+		return "", "", errors.New("resume unavailable: job registry not configured")
+	}
+	// Same rule as a named run: nobody answers ask_parent for a role agent.
+	jobCtx := context.WithValue(WithWorkdir(ctx, s.Dir), AskUnroutableCtxKey{}, true)
+	h, err := resumer.Resume(jobCtx, s.Resume, s.Task)
+	if err != nil {
+		return "", "", err
+	}
+	id := h.ID()
+	for {
+		st, ok := waiter.Wait(ctx, id, time.Minute)
+		if !ok {
+			return "", id, fmt.Errorf("resumed job %s is unknown", id)
+		}
+		if st.Done {
+			if !st.Success {
+				return st.Content, id, errors.New(st.Error)
+			}
+			return st.Content, id, nil
+		}
+		if ctx.Err() != nil {
+			if c := getJobCanceler(); c != nil {
+				c.Cancel(id)
+			}
+			return "", id, ctx.Err()
+		}
+	}
 }
 
 func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (string, string, error) {
@@ -72,6 +136,9 @@ func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (st
 	}
 	id := hex.EncodeToString(b)
 	res := runSingleTask(WithWorkdir(ctx, s.Dir), runner, t, 0, false)
+	if s.OnDone != nil {
+		s.OnDone(TaskStats{Model: res.Model, Usage: res.Usage, Turns: res.Turns, ToolCalls: res.ToolCalls})
+	}
 	if !res.Success {
 		return res.Content, id, errors.New(res.Error)
 	}

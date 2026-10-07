@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunSubagentTask_UsesDirAndSystemPrompt(t *testing.T) {
@@ -117,6 +118,61 @@ func TestRunSubagentTask_NamedJobIsAskUnroutable(t *testing.T) {
 	}
 	if !unroutable || jobID != "job1" {
 		t.Errorf("unroutable=%v jobID=%v", unroutable, jobID)
+	}
+}
+
+// #340: a named run returns its job id as the session id, so Resume can use it.
+func TestRunSubagentTask_NamedRunSessionIsJobID(t *testing.T) {
+	oldStarter := getJobStarter()
+	SetJobStarter(inlineJobStarter{})
+	oldInst := subagentToolInstance
+	t.Cleanup(func() {
+		SetJobStarter(oldStarter)
+		subagentToolInstance = oldInst
+	})
+	subagentToolInstance = &SubagentTool{Runner: &ctxRunner{rec: &recordingRunner{}, fn: func(context.Context) {}}}
+	if _, id, err := RunSubagentTask(context.Background(), TaskSpec{Task: "x", Name: "run/worker"}); err != nil || id != "job1" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+}
+
+type fakeResumer struct {
+	jobID, task, dir string
+	unroutable       bool
+}
+
+func (f *fakeResumer) Resume(ctx context.Context, jobID, task string) (JobHandle, error) {
+	f.jobID, f.task, f.dir = jobID, task, Workdir(ctx)
+	f.unroutable, _ = ctx.Value(AskUnroutableCtxKey{}).(bool)
+	return testJobHandle{"job2"}, nil
+}
+
+type fakeWaiter struct{ calls int }
+
+func (w *fakeWaiter) Wait(_ context.Context, id string, _ time.Duration) (JobStatus, bool) {
+	w.calls++
+	return JobStatus{ID: id, Done: w.calls > 1, Success: true, Content: "written"}, true
+}
+
+func TestRunSubagentTask_ResumeSendsTaskToSession(t *testing.T) {
+	oldResumer := getJobResumer()
+	tool, _ := lookupTool("wait")
+	wt := tool.(*WaitTool)
+	oldWaiter := wt.waiter()
+	t.Cleanup(func() {
+		SetJobResumer(oldResumer)
+		SetJobWaiter(oldWaiter)
+	})
+	r, w := &fakeResumer{}, &fakeWaiter{}
+	SetJobResumer(r)
+	SetJobWaiter(w)
+	dir := t.TempDir()
+	out, id, err := RunSubagentTask(context.Background(), TaskSpec{Task: "write it", Resume: "job1", Dir: dir})
+	if err != nil || out != "written" || id != "job2" {
+		t.Fatalf("out=%q id=%q err=%v", out, id, err)
+	}
+	if r.jobID != "job1" || r.task != "write it" || r.dir != dir || !r.unroutable || w.calls != 2 {
+		t.Errorf("resumer=%+v waits=%d", r, w.calls)
 	}
 }
 

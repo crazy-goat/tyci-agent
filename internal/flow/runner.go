@@ -190,8 +190,10 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					return saveErr
 				}
 			}
+			var stats StepStats
 			rc := RunContext{
 				AgentSeq:      st.AgentSeq,
+				Stats:         &stats,
 				Repo:          st.Repo,
 				Branch:        st.Branch,
 				Worktree:      st.Worktree,
@@ -204,6 +206,8 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Issue:         st.Issue,
 				PR:            st.PR,
 				Visit:         st.Visits[cur],
+				ArtifactDir:   artDir,
+				RunSoFar:      runSoFar(st, cur, r.RunDir),
 			}
 			key, session, runErr := r.Agents.Run(ctx, s.Agent, s.Task, rc)
 			ended := time.Now()
@@ -213,6 +217,9 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			}
 			if s.Agent == "worker" {
 				st.Note = ""
+			}
+			if errors.Is(runErr, ErrNoArtifact) {
+				return r.pauseNoArtifact(ctx, st, cur, s.Agent, art, started, ended, session, runErr)
 			}
 			if runErr != nil {
 				key = "error"
@@ -228,6 +235,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 						StartedAt: started,
 						EndedAt:   ended,
 						Role:      s.Agent,
+						Stats:     agentStats(&stats),
 						Artifact:  art,
 					})
 					return r.fail(ctx, st, reason, runErr)
@@ -241,6 +249,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					StartedAt: started,
 					EndedAt:   ended,
 					Role:      s.Agent,
+					Stats:     agentStats(&stats),
 					Error:     runErr.Error(),
 					Artifact:  art,
 				})
@@ -266,6 +275,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				StartedAt: started,
 				EndedAt:   ended,
 				Role:      s.Agent,
+				Stats:     agentStats(&stats),
 				Session:   session,
 				Artifact:  art,
 			})
@@ -282,6 +292,30 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				fmt.Errorf("state %q has no check, agent, ask or end", cur))
 		}
 	}
+}
+
+// pauseNoArtifact records the agent step and pauses the run in the "ask"
+// state with the reason "no artifact from <role>".
+func (r *Runner) pauseNoArtifact(ctx context.Context, st *RunState, cur, role, art string, started, ended time.Time, session string, runErr error) error {
+	askState, ok := r.WF.States["ask"]
+	if !ok || askState.Ask == "" {
+		return r.fail(ctx, st, runErr.Error(), runErr)
+	}
+	st.History = append(st.History, Step{
+		Seq:       len(st.History) + 1,
+		State:     cur,
+		Kind:      "agent",
+		Key:       "error",
+		To:        "ask",
+		StartedAt: started,
+		EndedAt:   ended,
+		Role:      role,
+		Session:   session,
+		Error:     runErr.Error(),
+		Artifact:  art,
+	})
+	st.Current = "ask"
+	return r.pause(st, askState.Ask, runErr.Error())
 }
 
 // readPRFile copies the PR number from <runDir>/pr (written by push.sh).
@@ -530,4 +564,13 @@ func (r *Runner) warn(msg string) {
 	if r.Warn != nil {
 		r.Warn(msg)
 	}
+}
+
+// agentStats returns s for the history, or nil when the agent reported no usage.
+func agentStats(s *StepStats) *StepStats {
+	if *s == (StepStats{}) {
+		return nil
+	}
+	c := *s
+	return &c
 }

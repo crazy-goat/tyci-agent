@@ -19,15 +19,29 @@ case "$*" in
 esac
 `
 
+func writeArtifact(t *testing.T, runDir, art, name, text string) {
+	t.Helper()
+	d := filepath.Join(runDir, "artifacts", art)
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, name), []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func runPostReview(t *testing.T, review string, env map[string]string) (key string, exit int, body string) {
 	t.Helper()
-	logPath := testutil.StubGH(t, reviewGh)
 	dir := t.TempDir()
 	if review != "" {
-		if err := os.WriteFile(filepath.Join(dir, "review.md"), []byte(review), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeArtifact(t, dir, "003-review", "report.md", review)
 	}
+	return runPostReviewIn(t, dir, env)
+}
+
+func runPostReviewIn(t *testing.T, dir string, env map[string]string) (key string, exit int, body string) {
+	t.Helper()
+	logPath := testutil.StubGH(t, reviewGh)
 	base := map[string]string{"TYCI_REPO": "o/r", "TYCI_PR": "9", "TYCI_RUN_DIR": dir}
 	for k, v := range env {
 		base[k] = v
@@ -60,5 +74,18 @@ func TestPostReview_FailStillExitsZero(t *testing.T) {
 		if key != "fail" || exit != 0 {
 			t.Errorf("%s: key=%q exit=%d", name, key, exit)
 		}
+	}
+}
+
+// #340: the newest review report wins (numeric order, not text order).
+func TestPostReview_PostsNewestReviewReport(t *testing.T) {
+	dir := t.TempDir()
+	writeArtifact(t, dir, "003-review", "report.md", "CHANGES\nold\n")
+	writeArtifact(t, dir, "999-review", "report.md", "CHANGES\nolder\n")
+	writeArtifact(t, dir, "1000-review", "report.md", "ACCEPT\nnewest\n")
+	writeArtifact(t, dir, "1001-code", "report.md", "worker report\n")
+	key, _, body := runPostReviewIn(t, dir, nil)
+	if key != "ok" || !strings.Contains(body, "ACCEPT\nnewest") {
+		t.Fatalf("key=%q body=%q", key, body)
 	}
 }

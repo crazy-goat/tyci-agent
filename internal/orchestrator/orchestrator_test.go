@@ -359,6 +359,14 @@ func TestBusyIssueKeepsTodoAndOthersStart(t *testing.T) {
 	}
 }
 
+func TestStartupStageNotices(t *testing.T) {
+	e := newEnv(t, Config{Workers: 1}, issue(1, ""))
+	e.start()
+	e.waitNote("Reading milestones and issues")
+	e.waitNote("Read 1 open issues of milestone v0.4.0")
+	e.waitNote("Planning the order")
+}
+
 func TestResumedRunsCountTowardWorkers(t *testing.T) {
 	// Runs of #4 and #9 were resumed after a restart; #9 is not in the plan.
 	e := newEnv(t, Config{Workers: 3}, five()...)

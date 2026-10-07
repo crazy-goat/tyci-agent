@@ -318,6 +318,7 @@ type subagentResult struct {
 	Error     string       `json:"error,omitempty"`
 	ToolCalls int          `json:"tool_calls"`
 	Usage     stream.Usage `json:"usage"`
+	Turns     int          `json:"turns,omitempty"`
 	Model     string       `json:"model,omitempty"`
 	// Truncated is true when the child ran to its MaxIterations cap and
 	// self-stopped with a partial answer (still a "success" but flagged so
@@ -331,6 +332,7 @@ type collector struct {
 	thinking  strings.Builder
 	text      strings.Builder
 	toolCalls int
+	turns     int
 	usage     stream.Usage
 	err       error
 }
@@ -359,7 +361,8 @@ func (c *collector) ToolFinish()                     {}
 func (c *collector) ToolBlock(msg string)            {}
 func (c *collector) Summary(usage stream.Usage, stats stream.Stats) {
 	c.mu.Lock()
-	c.usage = usage
+	c.usage.Add(usage)
+	c.turns++
 	c.mu.Unlock()
 }
 func (c *collector) Total(usage stream.Usage) {}
@@ -377,6 +380,7 @@ func (c *collector) Result() subagentResult {
 		Content:   c.text.String(),
 		Thinking:  c.thinking.String(),
 		ToolCalls: c.toolCalls,
+		Turns:     c.turns,
 		Usage:     c.usage,
 	}
 }

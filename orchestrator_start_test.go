@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
 	"github.com/crazy-goat/tyci-agent/internal/forge/fake"
@@ -51,6 +52,16 @@ func (p *poster) wait(t *testing.T) string {
 	return ""
 }
 
+// waitNot returns the next post that does not start with the progress prefix.
+func (p *poster) waitNot(t *testing.T, prefix string) string {
+	t.Helper()
+	for {
+		if s := p.wait(t); !strings.HasPrefix(s, prefix) {
+			return s
+		}
+	}
+}
+
 func TestStartOrchestratorOnce(t *testing.T) {
 	f := &fake.Fake{RepoName: "o/r", Ms: []forge.Milestone{{Number: 1, Title: "v0.4.0", OpenCount: 0}}}
 	p := newPoster()
@@ -61,7 +72,7 @@ func TestStartOrchestratorOnce(t *testing.T) {
 	if o == nil || time.Since(begin) > time.Second {
 		t.Fatal("did not return at once")
 	}
-	if got := p.wait(t); !strings.Contains(got, "has no issues") {
+	if got := p.waitNot(t, "Reading milestones"); !strings.Contains(got, "has no issues") {
 		t.Fatal(got)
 	}
 }
@@ -122,12 +133,31 @@ func TestMissingGhOneLine(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startOrchestrator(ctx, false, orchestrator.Config{Workers: 3}, g, r, p.post)
-	got := p.wait(t)
+	got := p.waitNot(t, "Reading milestones")
 	if !strings.HasPrefix(got, "forge error:") || strings.Contains(got, "\n") {
 		t.Fatalf("%q", got)
 	}
 	time.Sleep(50 * time.Millisecond)
 	if len(p.ch) != 0 || r.starts() != 0 {
 		t.Fatal("extra output or runs")
+	}
+}
+
+func TestStepLine(t *testing.T) {
+	t0 := time.Now()
+	s := flow.Step{State: "code", Key: "done", Role: "worker", StartedAt: t0, EndedAt: t0.Add(90 * time.Second),
+		Stats: &flow.StepStats{Model: "anthropic/opus", Input: 1500, CostUSD: 1.234}}
+	want := "code -> done: worker · opus · 1.5k tok · $1.23 · 1m30s"
+	if got := stepLine(s); got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if got := stepLine(flow.Step{State: "ci", Key: "ok"}); got != "ci -> ok" {
+		t.Fatalf("got %q", got)
+	}
+	if got := stepLine(flow.Step{State: "ci", Key: "ok", StartedAt: t0, EndedAt: t0.Add(42 * time.Second)}); got != "ci -> ok: 42s" {
+		t.Fatalf("check step: got %q", got)
+	}
+	if got := stepLine(flow.Step{State: "code", Key: "fail", Role: "worker", StartedAt: t0, EndedAt: t0.Add(5 * time.Second)}); got != "code -> fail: worker · 5s" {
+		t.Fatalf("agent without stats: got %q", got)
 	}
 }

@@ -254,3 +254,14 @@ func TestAnthropicStream_Temperature(t *testing.T) {
 		})
 	}
 }
+
+func TestAnthropicIgnoresReasoningEffort(t *testing.T) {
+	// Thinking blocks are not round-tripped yet, so thinking stays off.
+	body := reasoningBody(t, NewAnthropic, "medium")
+	if _, ok := body["thinking"]; ok {
+		t.Fatal("thinking must not be sent for Anthropic")
+	}
+	if _, ok := body["temperature"]; !ok {
+		t.Fatal("temperature must be kept")
+	}
+}

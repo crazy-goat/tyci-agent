@@ -164,8 +164,8 @@ Every check and agent step gets its own artifact dir, in execution order:
 ```
 ~/.tyci/runs/<repo>/<run>/artifacts/
   001-check_done/output.log
-  002-code/
-  003-review/
+  002-code/report.md
+  003-review/report.md
   004-ci/output.log
   004-ci/ci-failed.log
 ```
@@ -181,10 +181,24 @@ Every check and agent step gets its own artifact dir, in execution order:
 - After the step, every file in the dir has its secrets masked and is cut to 64 KiB: the tail stays,
   after a truncation line. Files are mode 0600, dirs 0700.
 
-New PR comments from team members (write or admin permission) go to `comments.md` in the run directory; the next `code` visit reads it. `fetch_comments.sh` also writes `last_comment_id` and `last_review_comment_id` there, and the runner copies them to `state.json`.
+Every agent (worker, review, merge_decision, findings) must write `report.md` in its artifact dir
+before it ends: what it did, the result, what is left.
 
-The reviewer writes `review.md` in the run directory (`$TYCI_RUN_DIR`). Its first line
-is `ACCEPT` or `CHANGES`.
+- The task text of every agent has a "Run so far" section: the steps since the last visit of
+  its state (all steps on the first visit), each with `seq`, state, key and the absolute paths
+  of its artifact files, plus the agent's own artifact dir. The agent reads the files with the
+  `read` tool.
+- After the agent ends, the runner checks that `report.md` exists and is not empty. If not, it
+  sends one message in the same session: "You did not leave your artifact at <path>. Write it
+  now." After 2 reminders without a report, the run pauses in `ask` with the reason
+  `no artifact from <role>`.
+- The reviewer's `report.md` is the review. Its first line is `ACCEPT` or `CHANGES`.
+  `post_review.sh` posts the newest `NNN-review/report.md` (highest `NNN`).
+
+New PR comments from team members (write or admin permission) go to `comments.md` in the artifact
+dir of the `comments` step; the next `code` visit sees the file in "Run so far".
+`fetch_comments.sh` also writes `last_comment_id` and `last_review_comment_id` in the run
+directory, and the runner copies them to `state.json`.
 
 ## 11. Override the defaults
 

@@ -31,6 +31,23 @@ type ModelsDevModel struct {
 	Name  string         `json:"name"`
 	Cost  ModelsDevCost  `json:"cost"`
 	Limit ModelsDevLimit `json:"limit"`
+
+	// Reasoning, ReasoningOptions and ToolCall are carried so a refresh does
+	// not drop them. ToolCall is a pointer: nil means the catalog did not say.
+	Reasoning        bool                    `json:"reasoning,omitempty"`
+	ReasoningOptions []ModelsDevReasoningOpt `json:"reasoning_options,omitempty"`
+	ToolCall         *bool                   `json:"tool_call,omitempty"`
+}
+
+// ModelsDevReasoningOpt is one way a model accepts reasoning settings. Type is
+// "toggle", "effort" or "budget_tokens"; Values lists the allowed effort
+// values of an "effort" option. Min and Max are the token bounds of a
+// "budget_tokens" option; they are pointers because min 0 is a real value.
+type ModelsDevReasoningOpt struct {
+	Type   string   `json:"type"`
+	Values []string `json:"values,omitempty"`
+	Min    *int     `json:"min,omitempty"`
+	Max    *int     `json:"max,omitempty"`
 }
 
 // ModelsDevCost is USD per million tokens, as models.dev publishes it.

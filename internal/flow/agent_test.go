@@ -66,7 +66,7 @@ func gitRepo(t *testing.T) string {
 
 func writeReview(t *testing.T, dir, text string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "review.md"), []byte(text), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "report.md"), []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -119,7 +119,7 @@ func TestSubagentRunner_SessionIDsDifferBetweenWorkerAndReview(t *testing.T) {
 	run := t.TempDir()
 	writeReview(t, run, "ACCEPT\n")
 	_, w, _ := r.Run(context.Background(), "worker", "", RunContext{Worktree: gitRepo(t)})
-	_, v, _ := r.Run(context.Background(), "review", "", RunContext{Worktree: gitRepo(t), RunDir: run})
+	_, v, _ := r.Run(context.Background(), "review", "", RunContext{Worktree: gitRepo(t), ArtifactDir: run})
 	if w == "" || v == "" || w == v {
 		t.Errorf("sessions %q %q", w, v)
 	}
@@ -138,12 +138,12 @@ func TestVerdict_AcceptChangesAndGarbage(t *testing.T) {
 	for _, c := range cases {
 		d := t.TempDir()
 		writeReview(t, d, c.text)
-		v, w := readVerdict(d)
+		v, w := readVerdict(filepath.Join(d, "report.md"))
 		if v != c.want || (w != "") != c.warn {
 			t.Errorf("%q: v=%q w=%q", c.text, v, w)
 		}
 	}
-	if v, w := readVerdict(t.TempDir()); v != "CHANGES" || w == "" {
+	if v, w := readVerdict(filepath.Join(t.TempDir(), "report.md")); v != "CHANGES" || w == "" {
 		t.Errorf("missing: v=%q w=%q", v, w)
 	}
 }
@@ -155,7 +155,7 @@ func TestVerdict_ReviewerDirtyWorktreeForcesChanges(t *testing.T) {
 	var warns []string
 	r := newRunner(s)
 	r.Warn = func(m string) { warns = append(warns, m) }
-	key, _, err := r.Run(context.Background(), "review", "", RunContext{Worktree: wt, RunDir: run})
+	key, _, err := r.Run(context.Background(), "review", "", RunContext{Worktree: wt, ArtifactDir: run})
 	if err != nil || key != "CHANGES" || len(warns) != 1 || !strings.Contains(warns[0], "modified the worktree") {
 		t.Fatalf("key=%q err=%v warns=%v", key, err, warns)
 	}
@@ -164,7 +164,7 @@ func TestVerdict_ReviewerDirtyWorktreeForcesChanges(t *testing.T) {
 func TestVerdict_CleanWorktreeAccepts(t *testing.T) {
 	run := t.TempDir()
 	writeReview(t, run, "ACCEPT\n")
-	key, _, _ := newRunner(&spawnRec{}).Run(context.Background(), "review", "", RunContext{Worktree: gitRepo(t), RunDir: run})
+	key, _, _ := newRunner(&spawnRec{}).Run(context.Background(), "review", "", RunContext{Worktree: gitRepo(t), ArtifactDir: run})
 	if key != "ACCEPT" {
 		t.Errorf("key=%q", key)
 	}

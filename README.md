@@ -63,7 +63,8 @@ make install
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
 - Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
 - Run state: `~/.tyci/runs/<repo>/<run>/state.json`
-- Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`)
+- Run usage: agent steps in `state.json` carry `stats` (tokens, cost, turns); `workflow_status` and the Runs tab show it
+- Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`, agents must write `report.md`)
 - Overrides: `.tyci/workflows/` and `.tyci/checks/`
 
 A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
@@ -133,7 +134,12 @@ openai://GPT 5.6 Luna@@api.nexos.ai/v1?api=responses&reasoning=xhigh
 ```
 
 `reasoning=xhigh` is forwarded as `reasoning: {"effort":"xhigh"}` by the
-Responses connector. The bare `responses://...` scheme is accepted as an alias.
+Responses connector. The same option also works for other protocols:
+`openai` (Chat Completions) sends it as `reasoning_effort` (a number is not
+sent); `gemini` maps `low`, `medium`, `high` to a `thinkingConfig` budget of
+1024, 4096 or 16384 tokens, or takes a number as the budget; other words
+(for example `xhigh`) are ignored there. `anthropic` ignores the option,
+because thinking blocks are not yet sent back in tool loops. The bare `responses://...` scheme is accepted as an alias.
 
 `?fallbacks=false` is forwarded verbatim as a `?fallbacks=false` query
 parameter on the outgoing request, for gateways like Nexos that read it to

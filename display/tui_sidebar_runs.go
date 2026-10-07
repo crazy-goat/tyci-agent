@@ -16,6 +16,7 @@ type TuiRunRow struct {
 	Role   string // role of the running agent, may be empty
 	Since  time.Time
 	Steps  []string // last history steps, "state -> key"
+	Totals string   // tokens, cost and time of the whole run, may be empty
 }
 
 func (m TuiModel) renderSidebarRuns(width int) []string {
@@ -41,6 +42,9 @@ func (m TuiModel) renderSidebarRuns(width int) []string {
 			line += " " + formatDurationShort(time.Since(r.Since))
 		}
 		out = append(out, truncateToWidth(line, width), dim.Render(truncateToWidth("   "+r.ID, width)))
+		if r.Totals != "" {
+			out = append(out, dim.Render(truncateToWidth("   total: "+r.Totals, width)))
+		}
 		for _, s := range r.Steps {
 			out = append(out, dim.Render(truncateToWidth("   "+s, width)))
 		}

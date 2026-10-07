@@ -252,3 +252,11 @@ func TestGeminiStream_Temperature(t *testing.T) {
 		})
 	}
 }
+
+func TestGeminiThinkingEffort(t *testing.T) {
+	gc, _ := reasoningBody(t, NewGemini, "low")["generationConfig"].(map[string]any)
+	tc, _ := gc["thinkingConfig"].(map[string]any)
+	if tc["thinkingBudget"] != float64(1024) {
+		t.Fatalf("generationConfig = %v", gc)
+	}
+}
