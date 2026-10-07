@@ -535,6 +535,8 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		}
 		if cfg.HardLimit == 0 {
 			cfg.HardLimit = tc.CompactHardLimit
+			// The legacy key applies only when no hard limit is set.
+			cfg.AutoCompactPercent = tc.AutoCompactPercent
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -97,4 +98,33 @@ type toolRunnerFunc func(context.Context, string, map[string]any) (string, error
 
 func (f toolRunnerFunc) Run(ctx context.Context, name string, args map[string]any) (string, error) {
 	return f(ctx, name, args)
+}
+
+// #304: when the task is still inside the kept tail, compactInMemory does not
+// copy it a second time to the head.
+func TestCompactInMemory_TaskInTailNotDuplicated(t *testing.T) {
+	text := func(role, s string) connector.Message {
+		return connector.Message{Role: role, Content: []connector.ContentBlock{{Type: "text", Text: s}}}
+	}
+	var msgs []connector.Message
+	for i := range 4 {
+		msgs = append(msgs, text("user", fmt.Sprintf("old %d", i)), text("assistant", fmt.Sprintf("old reply %d", i)))
+	}
+	task := text("user", "the task")
+	msgs = append(msgs, task)
+	for i := range 3 {
+		msgs = append(msgs, text("assistant", fmt.Sprintf("work %d", i)), text("user", fmt.Sprintf("result %d", i)))
+	}
+	if !compactInMemory(&msgs, &task, "note") {
+		t.Fatal("compactInMemory returned false")
+	}
+	count := 0
+	for _, m := range msgs {
+		if reflect.DeepEqual(m, task) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("task appears %d times, want 1: %+v", count, msgs)
+	}
 }
