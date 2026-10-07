@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
 	"github.com/crazy-goat/tyci-agent/internal/forge/fake"
 )
@@ -343,4 +344,19 @@ func TestPanicIsRecovered(t *testing.T) {
 	e.o.Start(context.Background())
 	e.waitNote("panic: kaboom")
 	e.waitStop()
+}
+
+func TestBusyManagerKeepsIssuesTodo(t *testing.T) {
+	e := newEnv(t, Config{Workers: 3}, issue(1, ""), issue(2, ""), issue(3, ""))
+	busy := fmt.Errorf("%w: run x is active", flow.ErrBusy)
+	e.r.startErr[1], e.r.startErr[2], e.r.startErr[3] = busy, busy, busy
+	e.start()
+	for _, n := range []int{1, 2, 3} {
+		if e.status(n) != StatusTodo {
+			t.Fatalf("#%d: %+v", n, e.o.Roadmap().Items)
+		}
+	}
+	if e.r.starts(2) != 0 || e.o.busy() != 0 {
+		t.Fatalf("starts(2)=%d busy=%d", e.r.starts(2), e.o.busy())
+	}
 }

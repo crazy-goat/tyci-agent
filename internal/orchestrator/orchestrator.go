@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
 )
 
@@ -53,6 +54,7 @@ type Orchestrator struct {
 	mu       sync.Mutex
 	roadmap  Roadmap
 	inFlight map[int]string // issue -> run id; only acquire, setRunID, release and busy touch it
+	saturated bool // the run manager refused the last start: it has no free slot
 	announce bool           // send "started #N" notices (false until the first fill is done)
 	stop     chan struct{}
 }
@@ -168,6 +170,9 @@ func (o *Orchestrator) planReady(started []int, special error) {
 	pr := PlanReady{Roadmap: copyRoadmap(o.roadmap), Total: o.cfg.Workers, Started: started, Special: special, Free: -1}
 	if o.cfg.Workers > 0 {
 		pr.Free = o.cfg.Workers - busy
+	}
+	if o.saturated {
+		pr.Free = 0
 	}
 	o.mu.Unlock()
 	o.h.PlanReady(pr)
@@ -340,6 +345,7 @@ func (o *Orchestrator) candidate(i int) (issue int, startable, ok bool) {
 func (o *Orchestrator) fill(ctx context.Context, finished chan<- finishedRun) []int {
 	var started []int
 	o.mu.Lock()
+	o.saturated = false
 	notes := o.markBlocked()
 	o.mu.Unlock()
 	for i := 0; ctx.Err() == nil; i++ {
@@ -352,6 +358,16 @@ func (o *Orchestrator) fill(ctx context.Context, finished chan<- finishedRun) []
 		}
 		o.setStatus(i, StatusWip)
 		h, err := o.r.Start(ctx, o.cfg.Workflow, map[string]string{"issue": strconv.Itoa(issue)})
+		if errors.Is(err, flow.ErrBusy) {
+			// The manager has no free slot. Not a failure of the issue: keep it
+			// todo and try again after a run ends.
+			o.release(issue)
+			o.mu.Lock()
+			o.roadmap.Items[i].Status = StatusTodo
+			o.saturated = true
+			o.mu.Unlock()
+			break
+		}
 		if err != nil {
 			o.release(issue)
 			o.mu.Lock()

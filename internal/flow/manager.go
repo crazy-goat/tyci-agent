@@ -92,12 +92,15 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 	return st.Run, warnings, nil
 }
 
+// ErrBusy is returned (wrapped) when a run is already active.
+var ErrBusy = errors.New("manager busy")
+
 // refuse returns an error when a run is active or the issue has a running or
 // paused run. A running state without an active goroutine is stale and does
 // not block. m.mu must be held.
 func (m *Manager) refuse(info RepoInfo, issue int) error {
 	for id := range m.active {
-		return fmt.Errorf("run %s is active", id)
+		return fmt.Errorf("%w: run %s is active", ErrBusy, id)
 	}
 	entries, _ := os.ReadDir(filepath.Dir(RunDir(info.Home, info.Name(), "x")))
 	for _, e := range entries {
@@ -229,7 +232,7 @@ func (m *Manager) Resume(runID, answer string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id := range m.active {
-		return fmt.Errorf("run %s is active", id)
+		return fmt.Errorf("%w: run %s is active", ErrBusy, id)
 	}
 	m.launch(info, wf, st, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
 	return nil
