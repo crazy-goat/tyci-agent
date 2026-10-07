@@ -171,3 +171,23 @@ func TestRegistry_PostThenDrain_ConcurrentSafe(t *testing.T) {
 		t.Fatalf("drained %d messages total, want %d", total, n)
 	}
 }
+
+func TestRegistry_ResolveByRoleAgentName(t *testing.T) {
+	r := NewRegistry()
+	release := make(chan struct{})
+	defer close(release)
+	fn := func(ctx context.Context, _ string) (string, bool, error) {
+		<-release
+		return "done", false, nil
+	}
+	r.Start(context.Background(), "run-1/worker", KindSubagent, "", fn)
+	time.Sleep(2 * time.Millisecond)
+	newer := r.Start(context.Background(), "run-1/worker", KindSubagent, "", fn)
+	got, ok := r.Resolve("run-1/worker")
+	if !ok || got != newer.ID {
+		t.Fatalf("Resolve = %q %v, want newest %q", got, ok, newer.ID)
+	}
+	if _, ok := r.Resolve("run-1/review"); ok {
+		t.Fatal("unknown role resolved")
+	}
+}

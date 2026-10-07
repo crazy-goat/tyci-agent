@@ -259,7 +259,7 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 		}
 		text += " paused: " + msg
 		if keys := answerKeys(wf, st.Current); len(keys) > 0 {
-			text += " (answer with workflow_resume: " + strings.Join(keys, "|") + ")"
+			text += " (answer with workflow_resume: " + strings.Join(keys, "|") + "|retry <note>|goto <state>)"
 		}
 	default:
 		text += " " + st.Status
@@ -312,7 +312,19 @@ func (m *Manager) Resume(runID, answer string) error {
 		return err
 	}
 	s := wf.States[st.Current]
-	if _, ok := s.On[answer]; !ok {
+	key, isGoto := answer, false
+	word, rest, _ := strings.Cut(strings.TrimSpace(answer), " ")
+	rest = strings.TrimSpace(rest)
+	switch {
+	case word == "goto" && rest != "":
+		if err := checkGoto(wf, rest); err != nil {
+			return err
+		}
+		isGoto = true
+	case word == "retry" && rest != "":
+		key = word
+	}
+	if _, ok := s.On[key]; !ok && !isGoto {
 		if _, ok := s.On["*"]; !ok && len(s.On) > 0 {
 			return fmt.Errorf("unknown answer %q, allowed: %s", answer, strings.Join(answerKeys(wf, st.Current), ", "))
 		}

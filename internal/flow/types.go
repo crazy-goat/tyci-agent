@@ -54,7 +54,10 @@ type RunState struct {
 	Reason   string `json:"reason,omitempty"`
 	Current  string `json:"current"`
 	Ask      *Ask   `json:"ask,omitempty"`
-	PR       int    `json:"pr,omitempty"`
+	// Note is the text of an ask answer "retry <note>". The next worker
+	// prompt carries it, then it is cleared.
+	Note string `json:"note,omitempty"`
+	PR   int    `json:"pr,omitempty"`
 	// LastCommentID and LastReviewCommentID are the highest PR issue comment id and
 	// PR review comment id that fetch_comments.sh has handled (two separate id sequences).
 	LastCommentID       int64          `json:"last_comment_id,omitempty"`
@@ -80,6 +83,8 @@ type Step struct {
 	StderrTail string    `json:"stderr_tail,omitempty"`
 	Error      string    `json:"error,omitempty"`
 	Warnings   []string  `json:"warnings,omitempty"`
+	// Artifact is the step artifact dir name under <run dir>/artifacts.
+	Artifact string `json:"artifact,omitempty"`
 }
 
 // RunContext is the template fields of SDR 5.4 passed to agent states.
@@ -92,6 +97,8 @@ type RunContext struct {
 	Worktree      string
 	RunDir        string
 	Reason        string
+	Run           string // run id; names the agent job "<run>/<role>"
+	Note          string // orchestrator note for the worker
 	Input         string // text input of a RunText run
 	StateName     string
 	Issue         int
@@ -104,6 +111,7 @@ type CheckResult struct {
 	Exit       *int
 	StderrTail string
 	Stdout     string
+	Output     string // stdout and stderr as they arrive, for output.log
 }
 
 // CheckRunner executes a check state and resolves its transition key.

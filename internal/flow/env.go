@@ -13,7 +13,8 @@ import (
 //
 // The state name comes from st.Current and the visit count from
 // st.Visits[current] (the caller increments before running).
-// st.PR == 0 yields an empty TYCI_PR.
+// st.PR == 0 yields an empty TYCI_PR. The runner appends TYCI_ARTIFACT_DIR,
+// the artifact dir of the step (empty when the runner has no run dir).
 // TYCI_DEFAULT_BRANCH is the defaultBranch argument (Runner.DefaultBranch).
 // Nothing else from the parent env leaks in.
 func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string {

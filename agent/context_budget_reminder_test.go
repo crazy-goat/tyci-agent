@@ -50,6 +50,9 @@ func TestRun_ContextBudgetReminder_FiresOnceThenFinishes(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		SoftLimit:    100000,
+		Session:      newAutoCompactSession(t),
+		Compactor:    func(summary, focus string) (string, error) { return "", nil },
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -67,8 +70,8 @@ func TestRun_ContextBudgetReminder_FiresOnceThenFinishes(t *testing.T) {
 		if m.Role != "user" || len(m.Content) == 0 || !strings.Contains(m.Content[0].Text, "automated context budget reminder") {
 			continue
 		}
-		if !strings.Contains(m.Content[0].Text, "151000") || !strings.Contains(m.Content[0].Text, "200000") {
-			t.Fatalf("reminder text = %q, want the measured 151000/200000 figures", m.Content[0].Text)
+		if !strings.Contains(m.Content[0].Text, "151000") || !strings.Contains(m.Content[0].Text, "190000") {
+			t.Fatalf("reminder text = %q, want the measured 151000 and 190000 figures", m.Content[0].Text)
 		}
 	}
 }
@@ -98,6 +101,7 @@ func TestRun_ContextBudgetReminder_OmitsCompactMentionWithoutCompactor(t *testin
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		SoftLimit:    100000,
 		Compactor:    nil, // btwConfig's shape for a /btw/fork/resume child
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -135,6 +139,7 @@ func TestRun_ContextBudgetReminder_NoNudgeBelowThreshold(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		SoftLimit:    100000,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -196,10 +201,11 @@ func TestRun_ContextBudgetReminder_CountsCacheTokens(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		SoftLimit:    100000,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// Input(10)+Output(1000) alone is 1010, well under 50% of 200000 — the
+	// Input(10)+Output(1000) alone is 1010, well under the soft limit (100000) — the
 	// reminder must only fire once CacheRead/CacheWrite are added in too
 	// (total 151010).
 	if got := countReminderLines(msgs); got != 1 {
@@ -246,6 +252,7 @@ func TestRun_ContextBudgetReminder_UsagelessRoundDoesNotClearLastRoundUsage(t *t
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		SoftLimit:    100000,
 		Tools:        runner,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -286,6 +293,7 @@ func TestRun_ContextBudgetReminder_SurvivesFallback(t *testing.T) {
 	if _, err := Run(context.Background(), primary, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		SoftLimit:    100000,
 		Tools:        runner,
 		Fallbacks:    []connector.ModelClient{fallback},
 	}); err != nil {
@@ -320,7 +328,7 @@ func TestRun_ContextBudgetReminder_UsesContextLimitForOverStaticLimit(t *testing
 		ContextLimit: 200000, // would not trigger on its own
 		ContextLimitFor: func(provider, model string) int {
 			calls++
-			return 100 // the per-model lookup wins, and 70/100 crosses 50%
+			return 80 // the per-model lookup wins, and 70/80 crosses the automatic 80%
 		},
 	}); err != nil {
 		t.Fatalf("Run: %v", err)

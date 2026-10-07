@@ -12,7 +12,7 @@ import (
 // mergeGh answers gh from env vars: CI_BUCKET, MERGE_STATE, REMOTE_HEAD, MERGE_FAIL.
 const mergeGh = `
 case "$*" in
-  "pr checks"*) echo "[{\"name\":\"lint\",\"bucket\":\"fail\"},{\"name\":\"ci-ok\",\"bucket\":\"${CI_BUCKET:-pass}\"}]" | jq -r '[.[] | select(.name == "ci-ok")][0].bucket' ;;
+  "pr checks"*) [ -n "${NO_CHECKS:-}" ] && { echo "no checks reported on the 'x' branch" >&2; exit 1; }; echo "[{\"name\":\"lint\",\"bucket\":\"fail\"},{\"name\":\"ci-ok\",\"bucket\":\"${CI_BUCKET:-pass}\"}]" | jq -r '[.[] | select(.name == "ci-ok")][0].bucket' ;;
   "pr view"*mergeStateStatus*) echo "${MERGE_STATE:-CLEAN}" ;;
   "pr view"*headRefOid*) echo "$REMOTE_HEAD" ;;
   "pr merge"*) [ -n "${MERGE_FAIL:-}" ] && { echo "merge refused" >&2; exit 1; }; exit 0 ;;
@@ -70,6 +70,21 @@ func TestMerge_BehindPrintsBehindWithoutMerging(t *testing.T) {
 func TestMerge_CiNotGreenFails(t *testing.T) {
 	key, _, log, _ := runMerge(t, newPushEnv(t), "a.txt", map[string]string{"CI_BUCKET": "pending"})
 	if key != "fail" || strings.Contains(log, "pr merge") {
+		t.Fatalf("key=%q log=%s", key, log)
+	}
+}
+
+// Regression guard for the non-BEHIND path (not a test of the #326 fix).
+func TestMerge_NoChecksReportedFails(t *testing.T) {
+	key, stderr, log, _ := runMerge(t, newPushEnv(t), "a.txt", map[string]string{"NO_CHECKS": "1"})
+	if key != "fail" || strings.Contains(log, "pr merge") || !strings.Contains(stderr, "missing") {
+		t.Fatalf("key=%q stderr=%s log=%s", key, stderr, log)
+	}
+}
+
+func TestMerge_NoChecksReportedBehind(t *testing.T) {
+	key, _, log, _ := runMerge(t, newPushEnv(t), "a.txt", map[string]string{"NO_CHECKS": "1", "MERGE_STATE": "BEHIND"})
+	if key != "behind" || strings.Contains(log, "pr merge") {
 		t.Fatalf("key=%q log=%s", key, log)
 	}
 }

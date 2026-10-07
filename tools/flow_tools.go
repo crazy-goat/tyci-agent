@@ -137,7 +137,7 @@ func workflowToolsSchema() []map[string]any {
 			}, []string{"issue"}),
 		fn("workflow_status", "Show the state of a workflow run: status, current state, visits, last history entries, PR.",
 			map[string]any{"run": map[string]any{"type": "string", "description": "Run id (default: newest run)."}}, []string{}),
-		fn("workflow_resume", "Answer a paused workflow run. The answer must be one of the keys named in the pause notice.",
+		fn("workflow_resume", "Answer a paused workflow run. The answer is one of the keys named in the pause notice. Two more answers work at every ask: \"retry <note>\" (go back to the worker with the note) and \"goto <state>\" (continue at that state).",
 			map[string]any{
 				"run":    map[string]any{"type": "string", "description": "Run id."},
 				"answer": map[string]any{"type": "string", "description": "One of the allowed answers."},

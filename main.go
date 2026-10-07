@@ -520,8 +520,24 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		Fallbacks:     fallbacks,
 		Temperature:   opts.Temperature,
 		MaxTokens:     opts.MaxTokens,
+		SoftLimit:     opts.SoftLimit,
+		HardLimit:     opts.HardLimit,
 		NoPromptCache: !agent.PromptCacheEnabled(),
 		NextMessages:  tools.JobMailboxNextMessages(jobID),
+
+		ContextLimitFor:  pricingContextLimit,
+		InLoopCompaction: true,
+	}
+	if cfg.SoftLimit == 0 || cfg.HardLimit == 0 {
+		tc := agent.LoadTyciConfig()
+		if cfg.SoftLimit == 0 {
+			cfg.SoftLimit = tc.CompactSoftLimit
+		}
+		if cfg.HardLimit == 0 {
+			cfg.HardLimit = tc.CompactHardLimit
+			// The legacy key applies only when no hard limit is set.
+			cfg.AutoCompactPercent = tc.AutoCompactPercent
+		}
 	}
 
 	// Item 15: nudge this child, at most once per SubagentBackgroundAfter,
@@ -571,6 +587,14 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	kind := ledger.Subagent
 	if opts.ScoutMode {
 		kind = ledger.Scout
+	}
+	// A child that runs as a job gets its own session file. The file is
+	// closed (without session_end) when this run returns; a resume reopens it.
+	if jobID != "" {
+		if cs := openChildSession(msgs, mc.Model(), mc.Provider(), jobID); cs != nil {
+			cfg.Session = cs
+			defer func() { _ = cs.Close() }()
+		}
 	}
 	_, err = agent.Run(ctx, mc, ledger.Watch(sink, kind, mc.Provider(), mc.Model(), jobID), &msgs, cfg)
 	text := strings.TrimSpace(collectedText())

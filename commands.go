@@ -346,6 +346,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		Interactive:        interactive,
 		AutoCompactPercent: agent.GetAutoCompactPercent(),
 	}
+	cfg.SoftLimit, cfg.HardLimit = agent.CompactLimits(agentName)
 	ctx = connector.WithModelClient(ctx, provider.Client(modelName))
 
 	var sess *session.Session

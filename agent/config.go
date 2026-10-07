@@ -42,11 +42,16 @@ type TyciConfig struct {
 	// startup once the user has opened and kept it, which is when the TUI
 	// saves true.
 	SidebarVisible bool `json:"sidebar_visible,omitempty"`
-	// AutoCompactPercent overrides the fraction of the model's context
-	// window (see Config.AutoCompactPercent in agent.go) that triggers
-	// automatic compaction. 0/absent uses defaultAutoCompactPercent; a
-	// negative value disables auto-compaction entirely.
+	// AutoCompactPercent is the legacy hard limit as a percentage of the
+	// model's context window. 0/absent means automatic (95%); a negative
+	// value disables auto-compaction. compact_hard_limit wins over it.
 	AutoCompactPercent int `json:"auto_compact_percent,omitempty"`
+	// CompactSoftLimit and CompactHardLimit are the default soft and hard
+	// context limits in tokens (0/absent = computed from the model window).
+	// An agent (agents.json, agent definition) or a flow role may override
+	// them.
+	CompactSoftLimit int `json:"compact_soft_limit,omitempty"`
+	CompactHardLimit int `json:"compact_hard_limit,omitempty"`
 	// FirstByteTimeoutSec is how long a provider has to start answering a
 	// request; StreamIdleTimeoutSec is the silence allowed in a running
 	// stream. 0 or absent means 30. On expiry the request is retried.
@@ -110,6 +115,12 @@ func mergeTyciConfig(global, local TyciConfig) TyciConfig {
 	}
 	if local.AutoCompactPercent != 0 {
 		merged.AutoCompactPercent = local.AutoCompactPercent
+	}
+	if local.CompactSoftLimit != 0 {
+		merged.CompactSoftLimit = local.CompactSoftLimit
+	}
+	if local.CompactHardLimit != 0 {
+		merged.CompactHardLimit = local.CompactHardLimit
 	}
 	if local.FirstByteTimeoutSec != 0 {
 		merged.FirstByteTimeoutSec = local.FirstByteTimeoutSec
@@ -228,9 +239,24 @@ func GetMaxTokens() int {
 	return LoadTyciConfig().MaxTokens
 }
 
-// GetAutoCompactPercent returns the configured auto-compact threshold, or 0
-// when unset (meaning Config.AutoCompactPercent should fall back to
-// defaultAutoCompactPercent).
+// CompactLimits returns the soft and hard context limits for the named agent:
+// its agents.json entry first, then the global config. 0 means unset.
+func CompactLimits(agentName string) (soft, hard int) {
+	cfg := LoadTyciConfig()
+	soft, hard = cfg.CompactSoftLimit, cfg.CompactHardLimit
+	if e, ok := GetAgentEntry(agentName); ok {
+		if e.CompactSoftLimit > 0 {
+			soft = e.CompactSoftLimit
+		}
+		if e.CompactHardLimit > 0 {
+			hard = e.CompactHardLimit
+		}
+	}
+	return soft, hard
+}
+
+// GetAutoCompactPercent returns the configured legacy auto-compact
+// percentage, or 0 when unset (automatic limits apply).
 func GetAutoCompactPercent() int {
 	return LoadTyciConfig().AutoCompactPercent
 }

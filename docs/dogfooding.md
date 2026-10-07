@@ -87,6 +87,14 @@ When the run reaches the state `ask`, `status` is `paused`. Tell the assistant t
 resume with `retry` (go back to `code`) or `stop` (end the run). The assistant calls
 `workflow_resume`. The pause notice names the allowed answers.
 
+Two more answers work at every `ask`. `retry <note>` goes back to `code` and puts the
+note into the next worker prompt. `goto <state>` continues the run at that state, for
+example `goto rebase`; an unknown state, an ask state or an end state is rejected.
+
+Each role agent of a run is a job named `<run-id>/<role>`, for example
+`20261007-102102-527/worker`. Use the `message` tool on a live agent. If a role runs
+twice, the name points to the newest job. The `resume` tool does not accept this name.
+
 The loop limits its retries with `max_visits`: `code` runs at most 3 times and `ci`
 at most 3 times. At the limit the run pauses at `ask`.
 
@@ -141,7 +149,29 @@ The file is `~/.tyci/runs/<repo>/<run>/state.json`.
 | `pr` | The pull request number, when known |
 | `last_comment_id` | Highest PR issue comment id handled (`last_review_comment_id`: the same for PR review comments; the two id sequences differ) |
 | `visits` | Visit count per state |
-| `history` | One entry per step: `seq`, `state`, `kind`, `key`, `to`, `exit`, `stderr_tail`, `warnings`, `error` (agent error text, masked) |
+| `history` | One entry per step: `seq`, `state`, `kind`, `key`, `to`, `exit`, `stderr_tail`, `warnings`, `error` (agent error text, masked), `artifact` (artifact dir name) |
+
+Every check and agent step gets its own artifact dir, in execution order:
+
+```
+~/.tyci/runs/<repo>/<run>/artifacts/
+  001-check_done/output.log
+  002-code/
+  003-review/
+  004-ci/output.log
+  004-ci/ci-failed.log
+```
+
+- `NNN` is the step `seq`; the history entry names the dir in `artifact`. An `ask` answer has a
+  `seq` but no dir. Resume continues the numbering.
+- The runner creates the dir before the step and does not write to it after the step. A leftover
+  dir of an aborted step with the same `seq` is removed when the step starts.
+- A check gets the path in `TYCI_ARTIFACT_DIR`. The runner writes the script stdout and stderr to
+  `output.log` (`stderr_tail` in `state.json` keeps only the last 2 KiB).
+- `ci_wait.sh` writes the failed job log of the CI run (`gh run view <id> --log-failed`) to
+  `ci-failed.log` when it returns `red`. A `gh` failure there does not change the key.
+- After the step, every file in the dir has its secrets masked and is cut to 64 KiB: the tail stays,
+  after a truncation line. Files are mode 0600, dirs 0700.
 
 New PR comments from team members (write or admin permission) go to `comments.md` in the run directory; the next `code` visit reads it. `fetch_comments.sh` also writes `last_comment_id` and `last_review_comment_id` there, and the runner copies them to `state.json`.
 

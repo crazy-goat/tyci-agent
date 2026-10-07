@@ -60,6 +60,12 @@ type SubagentOptions struct {
 	// `max_tokens` frontmatter.
 	MaxTokens int
 
+	// SoftLimit and HardLimit are the child's context limits in tokens
+	// (0 = unset: the global defaults apply). From the agent definition or
+	// the flow role.
+	SoftLimit int
+	HardLimit int
+
 	// Fallbacks are "provider/model" specs, NOT resolved clients: the tools
 	// package is a leaf and must not reach into the provider catalog. The
 	// composition root (main.go) resolves them, exactly as it already does
