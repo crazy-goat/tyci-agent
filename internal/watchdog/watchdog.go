@@ -139,5 +139,13 @@ func message(j jobs.Job, idle time.Duration) string {
 	return fmt.Sprintf("[watchdog] Agent %s (%s) has shown no activity for %s.\n"+
 		"Last progress note: %q.\n"+
 		"You may: send it a message (message), or cancel it (kill_job).",
-		j.ID, j.Description, fmt.Sprintf("%dm", int(idle/time.Minute)), note)
+		j.ID, j.Description, formatIdle(idle), note)
+}
+
+// formatIdle shows whole seconds below one minute and rounded minutes above.
+func formatIdle(idle time.Duration) string {
+	if idle < time.Minute {
+		return idle.Round(time.Second).String()
+	}
+	return fmt.Sprintf("%dm", int((idle+30*time.Second)/time.Minute))
 }
