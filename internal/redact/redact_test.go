@@ -17,6 +17,11 @@ func TestRedact_Table(t *testing.T) {
 		{"bearer", "Authorization: Bearer abc.def-123", "Authorization: Bearer [REDACTED]"},
 		{"env", "OPENAI_API_KEY=sk-short", "OPENAI_API_KEY=[REDACTED]"},
 		{"env colon", "db_password: hunter2", "db_password: [REDACTED]"},
+		{"quoted shell", `export DB_PASSWORD="hunter2hunter2"`, `export DB_PASSWORD="[REDACTED]"`},
+		{"single quoted", `DB_PASSWORD='hunter2hunter2'`, `DB_PASSWORD='[REDACTED]'`},
+		{"yaml quoted", `  password: "hunter2hunter2"`, `  password: "[REDACTED]"`},
+		{"json key", `{"api_key": "abcdefabcdef"}`, `{"api_key": "[REDACTED]"}`},
+		{"escaped json", `{"cmd":"export DB_PASSWORD=\"hunter2hunter2\""}`, `{"cmd":"export DB_PASSWORD=\"[REDACTED]\""}`},
 		{"private key", "a\n-----BEGIN RSA PRIVATE KEY-----\nxx\nyy\n-----END RSA PRIVATE KEY-----\nb", "a\n[REDACTED]\nb"},
 	}
 	for _, r := range rows {

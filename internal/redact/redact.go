@@ -22,7 +22,7 @@ var (
 		`\bAKIA[0-9A-Z]{16}\b|` +
 		`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)
 	bearer = regexp.MustCompile(`(?i)(authorization:\s*bearer\s+)[A-Za-z0-9._\-]+`)
-	envVar = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_?KEY)[A-Z0-9_]*)(\s*[=:]\s*)[^\s"',;]{6,}`)
+	envVar = regexp.MustCompile(`(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_?KEY)[A-Z0-9_]*)(\\?"?\s*[=:]\s*)(\\?["']?)[^\s"',;\\]{6,}`)
 )
 
 // Add registers an exact secret. Values shorter than 8 bytes are ignored.
@@ -50,5 +50,5 @@ func Redact(s string) string {
 	mu.RUnlock()
 	s = pattern.ReplaceAllString(s, mask)
 	s = bearer.ReplaceAllString(s, "${1}"+mask)
-	return envVar.ReplaceAllString(s, "${1}${2}"+mask)
+	return envVar.ReplaceAllString(s, "${1}${2}${3}"+mask)
 }
