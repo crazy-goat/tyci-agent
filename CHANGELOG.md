@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `~/.tyci/config.json` with agent keys (`favorite_models`, `max_tokens`, `prompt_cache`, `sidebar_visible`, `auto_compact_percent`) now loads instead of failing with an unknown field error (#275)
+
 ## [0.3.0] - 2026-10-07
 
 ### Added
