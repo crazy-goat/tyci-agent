@@ -128,7 +128,7 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 			var warnings []string
 			if key == "fail" && filepath.Base(s.Check) == "post_review.sh" {
 				warnings = []string{"review_post_failed"}
-				r.notify("run " + st.Run + ": posting the review to the PR failed")
+				r.warn("run " + st.Run + ": posting the review to the PR failed")
 			}
 			st.History = append(st.History, Step{
 				Seq:        len(st.History) + 1,
@@ -439,4 +439,10 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		}
 	}
 	return r.Run(ctx, st)
+}
+
+func (r *Runner) warn(msg string) {
+	if r.Warn != nil {
+		r.Warn(msg)
+	}
 }

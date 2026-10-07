@@ -132,5 +132,7 @@ type Runner struct {
 	// DefaultBranch is TYCI_DEFAULT_BRANCH and RunContext.DefaultBranch.
 	DefaultBranch string
 	Notify        func(string)
-	OnSkip        func(*RunState)
+	// Warn receives warnings that the Manager does not send itself.
+	Warn   func(string)
+	OnSkip func(*RunState)
 }

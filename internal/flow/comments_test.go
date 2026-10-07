@@ -16,7 +16,7 @@ func TestRunner_PostReviewFailLeavesHistoryAndNotice(t *testing.T) {
 		WF:     builtinWF(t),
 		Checks: &fakeChecks{keys: map[string][]string{"checks/post_review.sh": {"fail"}, "checks/ci_wait.sh": {"green"}, "checks/fetch_comments.sh": {"none"}, "checks/merge.sh": {"merged"}}},
 		Agents: &fakeAgents{keys: map[string][]string{"findings": {"done"}}},
-		Notify: func(m string) { notices = append(notices, m) },
+		Warn:   func(m string) { notices = append(notices, m) },
 	}
 	st := newRun("post_review")
 	if err := r.Run(context.Background(), st); err != nil {
@@ -116,5 +116,24 @@ func TestReadLastCommentID_ReviewID(t *testing.T) {
 	env := buildCheckEnv(st, State{}, dir, "main")
 	if !slices.Contains(env, "TYCI_LAST_REVIEW_COMMENT_ID=9") {
 		t.Errorf("env = %v", env)
+	}
+}
+
+func TestManager_PostReviewFailReachesNotify(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "fail"})
+	prep := e.m.Prepare
+	e.m.Prepare = func(ctx context.Context, info RepoInfo, req StartRequest) (*RunState, *Workflow, []string, error) {
+		st, _, w, err := prep(ctx, info, req)
+		wf := &Workflow{Name: "demo", Start: "c", States: map[string]State{
+			"c":   {Check: "checks/post_review.sh", On: map[string]string{"fail": "end"}},
+			"end": {End: true},
+		}}
+		return st, wf, w, err
+	}
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.notice(t); !strings.Contains(n, "posting the review") {
+		t.Errorf("notice = %q", n)
 	}
 }

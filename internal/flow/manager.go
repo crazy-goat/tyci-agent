@@ -198,6 +198,9 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 	}
 	m.active[st.Run] = activeRun{cancel: cancel, issue: st.Issue}
 	r := m.NewRunner(info, wf, st)
+	if r.Warn == nil {
+		r.Warn = m.Notify
+	}
 	go func() {
 		defer func() {
 			cancel()
