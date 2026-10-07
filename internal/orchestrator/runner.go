@@ -23,9 +23,9 @@ type Adopter interface {
 	// Adoptable returns the issues of the existing runs not adopted yet.
 	Adoptable() []int
 	// Adopt returns the existing run of the issue, once. It never starts a run;
-	// ok is false when there is no such run. The handle of a paused run
-	// signals Asks at once.
-	Adopt(ctx context.Context, issue int) (h RunHandle, ok bool)
+	// ok is false when there is no such run. paused is true for a run that
+	// waits for the user's answer; its handle signals Asks at once.
+	Adopt(ctx context.Context, issue int) (h RunHandle, paused, ok bool)
 }
 
 // RunHandle is one started run. ONE final result arrives on Done; ask and
@@ -106,17 +106,17 @@ func (r *flowRunner) Adoptable() []int {
 // Adopt watches the resumed or paused run of the issue. It subscribes before it
 // adopts, so no event of the run after the adopt is lost. A paused run signals
 // Asks before any event, so a later "running" event clears it.
-func (r *flowRunner) Adopt(ctx context.Context, issue int) (RunHandle, bool) {
+func (r *flowRunner) Adopt(ctx context.Context, issue int) (RunHandle, bool, bool) {
 	a, ok := r.m.(flowAdopter)
 	if !ok {
-		return nil, false
+		return nil, false, false
 	}
 	h := newFlowHandle()
 	unsub := r.m.Subscribe(h.add)
 	id, paused, ok := a.Adopt(issue)
 	if !ok {
 		unsub()
-		return nil, false
+		return nil, false, false
 	}
 	h.id = id
 	if paused {
@@ -126,7 +126,7 @@ func (r *flowRunner) Adopt(ctx context.Context, issue int) (RunHandle, bool) {
 		defer unsub()
 		h.watch(ctx)
 	}()
-	return h, true
+	return h, paused, true
 }
 
 // startText runs the workflow in a goroutine and delivers the text.

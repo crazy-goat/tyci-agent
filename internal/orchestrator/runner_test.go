@@ -102,9 +102,9 @@ func (m *fakeAdoptManager) Adopt(issue int) (string, bool, bool) {
 func TestFlowRunnerAdoptPausedRunAsksAtOnce(t *testing.T) {
 	m := &fakeAdoptManager{paused: true}
 	a := NewRunner(m).(Adopter)
-	h, ok := a.Adopt(context.Background(), 7)
-	if !ok || h.ID() != "20260101-000000-7" {
-		t.Fatalf("ok=%v", ok)
+	h, paused, ok := a.Adopt(context.Background(), 7)
+	if !ok || !paused || h.ID() != "20260101-000000-7" {
+		t.Fatalf("ok=%v paused=%v", ok, paused)
 	}
 	select {
 	case <-h.Asks():
@@ -126,7 +126,7 @@ func TestFlowRunnerAdoptPausedRunAsksAtOnce(t *testing.T) {
 	case <-time.After(wait):
 		t.Fatal("no result")
 	}
-	if _, ok := a.Adopt(context.Background(), 7); ok {
+	if _, _, ok := a.Adopt(context.Background(), 7); ok {
 		t.Fatal("second adopt")
 	}
 }
