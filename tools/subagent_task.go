@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // TaskSpec describes one subagent run started from Go (the workflow engine),
@@ -27,6 +29,18 @@ type TaskSpec struct {
 	// then sent as a new user turn in that conversation; the other fields
 	// except Dir are ignored.
 	Resume string
+	// OnDone, when set, receives the usage of the run after it ends (also
+	// after an error). The workflow runner stores it in the run history.
+	OnDone func(TaskStats)
+}
+
+// TaskStats is what a finished subagent run reports: the model it used and
+// its usage summed over all turns.
+type TaskStats struct {
+	Model     string
+	Usage     stream.Usage
+	Turns     int
+	ToolCalls int
 }
 
 // RunSubagentTask runs spec through the registered subagent runner in
@@ -113,6 +127,9 @@ func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (st
 	}
 	id := hex.EncodeToString(b)
 	res := runSingleTask(WithWorkdir(ctx, s.Dir), runner, t, 0, false)
+	if s.OnDone != nil {
+		s.OnDone(TaskStats{Model: res.Model, Usage: res.Usage, Turns: res.Turns, ToolCalls: res.ToolCalls})
+	}
 	if !res.Success {
 		return res.Content, id, errors.New(res.Error)
 	}

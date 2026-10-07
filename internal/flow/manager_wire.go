@@ -176,17 +176,21 @@ func (c ChatTools) Status(run string) (any, error) {
 		hist = hist[len(hist)-5:]
 	}
 	type step struct {
-		State string `json:"state"`
-		Key   string `json:"key"`
-		To    string `json:"to"`
+		State   string     `json:"state"`
+		Key     string     `json:"key"`
+		To      string     `json:"to"`
+		Role    string     `json:"role,omitempty"`
+		Seconds int        `json:"seconds"`
+		Stats   *StepStats `json:"stats,omitempty"`
 	}
 	steps := make([]step, 0, len(hist))
 	for _, h := range hist {
-		steps = append(steps, step{h.State, h.Key, h.To})
+		steps = append(steps, step{h.State, h.Key, h.To, h.Role, int(h.EndedAt.Sub(h.StartedAt).Seconds()), h.Stats})
 	}
+	total, byRole := st.Totals()
 	out := map[string]any{
 		"run": st.Run, "status": st.Status, "state": st.Current, "issue": st.Issue,
-		"visits": st.Visits, "history": steps, "updated_at": st.UpdatedAt.Format(time.RFC3339),
+		"visits": st.Visits, "history": steps, "totals": total, "roles": byRole, "updated_at": st.UpdatedAt.Format(time.RFC3339),
 	}
 	if st.PR > 0 {
 		out["pr"] = st.PR

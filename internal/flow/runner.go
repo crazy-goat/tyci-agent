@@ -182,7 +182,9 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				return r.fail(ctx, st, artErr.Error(), artErr)
 			}
 			started := time.Now()
+			var stats StepStats
 			rc := RunContext{
+				Stats:         &stats,
 				Repo:          st.Repo,
 				Branch:        st.Branch,
 				Worktree:      st.Worktree,
@@ -224,6 +226,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 						StartedAt: started,
 						EndedAt:   ended,
 						Role:      s.Agent,
+						Stats:     agentStats(&stats),
 						Artifact:  art,
 					})
 					return r.fail(ctx, st, reason, runErr)
@@ -237,6 +240,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					StartedAt: started,
 					EndedAt:   ended,
 					Role:      s.Agent,
+					Stats:     agentStats(&stats),
 					Error:     runErr.Error(),
 					Artifact:  art,
 				})
@@ -262,6 +266,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				StartedAt: started,
 				EndedAt:   ended,
 				Role:      s.Agent,
+				Stats:     agentStats(&stats),
 				Session:   session,
 				Artifact:  art,
 			})
@@ -550,4 +555,13 @@ func (r *Runner) warn(msg string) {
 	if r.Warn != nil {
 		r.Warn(msg)
 	}
+}
+
+// agentStats returns s for the history, or nil when the agent reported no usage.
+func agentStats(s *StepStats) *StepStats {
+	if *s == (StepStats{}) {
+		return nil
+	}
+	c := *s
+	return &c
 }
