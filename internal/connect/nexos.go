@@ -80,6 +80,21 @@ func RefreshNexosModels(apiKey string) error {
 	if st, err := os.Stat(path); err == nil && time.Since(st.ModTime()) < nexosCacheTTL {
 		return nil
 	}
+	// A failed fetch leaves a marker, so it is retried at most once per TTL.
+	attempt := path + ".attempt"
+	if st, err := os.Stat(attempt); err == nil && time.Since(st.ModTime()) < nexosCacheTTL {
+		return nil
+	}
+	err := fetchNexosModels(apiKey, path)
+	if err != nil {
+		_ = os.WriteFile(attempt, nil, 0o600)
+	} else {
+		_ = os.Remove(attempt)
+	}
+	return err
+}
+
+func fetchNexosModels(apiKey, path string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nexosModelsURL, nil)

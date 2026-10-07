@@ -486,8 +486,10 @@ tyci compacts without asking. Set them in `~/.tyci/config.json`:
 ```
 
 Override them per agent with `compact_soft_limit` / `compact_hard_limit` in an
-`agents.json` entry or in the agent definition frontmatter, and per flow role in
-`roles.<name>`. A limit is capped by the model window. An unset limit is 80%
+`agents.json` entry or in the agent definition frontmatter. Automatic compaction
+runs only in the main conversation. Subagents and flow roles do not compact:
+for them the keys only set when the notice appears, and the notice does not
+promise compaction. A limit is capped by the model window. An unset limit is 80%
 (soft) or 95% (hard) of the window. The window and prices of nexos models come
 from `GET https://api.nexos.ai/v1/models`, cached in `~/.tyci/nexos_models.json`
 for 24 hours.

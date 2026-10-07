@@ -333,3 +333,30 @@ func TestRun_HardLimit_WithoutKnownWindow(t *testing.T) {
 		t.Fatalf("compactCalls = %d, want 1", compactCalls)
 	}
 }
+
+// A child without Compactor and Session must not be told about auto-compaction.
+func TestRun_SoftNotice_NoHardLimitClaimWithoutCompactor(t *testing.T) {
+	p := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		OnExhausted: []stream.Event{
+			stream.TextDelta{Text: "done"},
+			stream.Finish{Usage: stream.Usage{Input: 120001, Output: 1}},
+		},
+	}
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
+	}
+	_, _ = Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries: 1,
+		SoftLimit:  100000,
+		HardLimit:  150000,
+	})
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if strings.Contains(b.Text, "hard limit") {
+				t.Fatalf("notice names the hard limit: %q", b.Text)
+			}
+		}
+	}
+}

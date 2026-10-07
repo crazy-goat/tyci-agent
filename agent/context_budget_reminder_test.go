@@ -51,6 +51,8 @@ func TestRun_ContextBudgetReminder_FiresOnceThenFinishes(t *testing.T) {
 		MaxRetries:   1,
 		ContextLimit: 200000,
 		SoftLimit:    100000,
+		Session:      newAutoCompactSession(t),
+		Compactor:    func(summary, focus string) (string, error) { return "", nil },
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

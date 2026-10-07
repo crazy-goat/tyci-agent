@@ -530,7 +530,14 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 					// can still persist to memory/a file), so only the
 					// compact-specific instruction is conditional, not the
 					// whole reminder.
-					reminder := buildContextBudgetReminder(used, hardAt, cfg.Compactor != nil)
+					// Name the hard limit only when auto-compaction can fire
+					// for this agent (same gate as above); children without
+					// their own Compactor and Session would be told a lie.
+					noticeHardAt := 0
+					if cfg.Compactor != nil && cfg.Session != nil {
+						noticeHardAt = hardAt
+					}
+					reminder := buildContextBudgetReminder(used, noticeHardAt, cfg.Compactor != nil)
 					*msgs = append(*msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: reminder}}})
 					if cfg.Session != nil {
 						_ = cfg.Session.WriteMessage("user", []session.ContentBlock{{Type: "text", Text: reminder}}, nil)

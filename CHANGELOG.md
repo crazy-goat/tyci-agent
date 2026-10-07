@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Config keys `compact_soft_limit` and `compact_hard_limit` (config.json, agents.json, agent frontmatter, flow roles) set the context notice and auto-compaction limits in tokens; nexos models get window and prices from `~/.tyci/nexos_models.json` (#304).
 - Flow: the final review is posted as a PR review, and new PR comments from team members go back to the worker (#187).
 - TUI: new sidebar tab "Runs" shows recent flow runs with status, current state, role, time in state and last steps (#296).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
+
+### Changed
+- Context notice now starts at 80% of the window (was 50%) and auto-compaction at 95% (was 85%) when no limit is set (#304).
 
 ### Fixed
 - Orchestrator: the roadmap oracle role without `model` now uses `default_model` instead of the alias `opus` (#313).

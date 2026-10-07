@@ -2,8 +2,8 @@
 // costs, and how many of them fit.
 //
 // Both answers come from the models.dev catalog already cached at
-// ~/.tyci/providers.json, so this package adds no network calls and no second
-// source of truth. What it does add is tolerance for a catalog that cannot
+// ~/.tyci/providers.json, merged with the nexos model list cached at
+// ~/.tyci/nexos_models.json. This package adds no network calls. What it does add is tolerance for a catalog that cannot
 // answer: older tyci versions re-marshalled the catalog through a struct that
 // had no cost or limit fields, so an existing cache is likely to be silently
 // stripped of both. That case is reported as "unknown" rather than as zero —
@@ -48,7 +48,7 @@ var (
 	cat    map[string]connect.ModelsDevProvider
 )
 
-// catalog loads and caches ~/.tyci/providers.json. A missing or unparsable
+// catalog loads and caches ~/.tyci/providers.json and ~/.tyci/nexos_models.json. A missing or unparsable
 // catalog is a permanent empty answer for this process: the file does not
 // change under a running session, and retrying a failed read on every status
 // repaint would be the wrong trade.
