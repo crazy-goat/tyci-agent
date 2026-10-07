@@ -632,7 +632,7 @@ func TestUpdateSidebar_LeftAtFirstTabExitsFocus(t *testing.T) {
 
 func TestUpdateSidebar_RightAtLastTabExitsFocus(t *testing.T) {
 	m := newTestModelForSidebar()
-	m.openSidebar(sidebarTabTasks) // the last tab
+	m.openSidebar(sidebarTabRuns) // the last tab
 	m.sidebarFocused = true
 
 	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyRight})
@@ -640,7 +640,7 @@ func TestUpdateSidebar_RightAtLastTabExitsFocus(t *testing.T) {
 	if m2.sidebarFocused {
 		t.Fatalf("expected Right at the last tab to exit focus back to the conversation")
 	}
-	if m2.sidebarTab != sidebarTabTasks {
+	if m2.sidebarTab != sidebarTabRuns {
 		t.Fatalf("expected the tab selection to stay put on exit, got %d", m2.sidebarTab)
 	}
 }

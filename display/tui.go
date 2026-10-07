@@ -107,6 +107,11 @@ type tuiSetSessionListerMsg struct {
 	fn func() []TuiResumeEntry
 }
 
+// tuiSetRunListerMsg carries the callback of the sidebar Runs tab.
+type tuiSetRunListerMsg struct {
+	fn func() []TuiRunRow
+}
+
 // ProviderModels groups model names under a provider name.
 type ProviderModels struct {
 	Name   string
@@ -506,6 +511,10 @@ type TuiModel struct {
 	// "never wired" (e.g. a test model), rendered as an explicit hint
 	// rather than a crash or an empty list that looks like "no sessions".
 	sessionLister func() []TuiResumeEntry
+
+	// runLister returns the recent workflow runs for the sidebar Runs tab.
+	// nil means it was never wired.
+	runLister func() []TuiRunRow
 
 	// transcriptProvider, when set (via TUI.SetTranscriptProvider, called
 	// once from main()), returns the full conversation transcript for a

@@ -247,6 +247,37 @@ func (m *Manager) Status(runID string) (*RunState, error) {
 	return loadRun(info, runID)
 }
 
+// RunView is a saved run with the role of the agent in its current state.
+type RunView struct {
+	State *RunState
+	Role  string
+}
+
+// Recent returns the n newest runs of the current repo, newest first.
+func (m *Manager) Recent(n int) []RunView {
+	info, err := m.Info()
+	if err != nil {
+		return nil
+	}
+	var out []RunView
+	wfs := map[string]*Workflow{}
+	for _, st := range RecentRuns(info.Home, info.Name(), n) {
+		v := RunView{State: st}
+		if st.Status == "running" {
+			wf, ok := wfs[st.Workflow]
+			if !ok {
+				wf, _ = m.Workflow(info, st.Workflow)
+				wfs[st.Workflow] = wf
+			}
+			if wf != nil {
+				v.Role = wf.States[st.Current].Agent
+			}
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
 func loadRun(info RepoInfo, runID string) (*RunState, error) {
 	if runID == "" {
 		dir, err := LatestRun(info.Home, info.Name())

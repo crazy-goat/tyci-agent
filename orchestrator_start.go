@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
@@ -82,4 +83,22 @@ func orchestratorSystemPrompt() string {
 		}
 	}
 	return providers.BuildOrchestratorSystemPrompt(workers)
+}
+
+// runRows converts saved runs to sidebar rows with the last three steps.
+func runRows(views []flow.RunView) []display.TuiRunRow {
+	rows := make([]display.TuiRunRow, 0, len(views))
+	for _, v := range views {
+		st := v.State
+		r := display.TuiRunRow{ID: st.Run, Issue: st.Issue, Status: st.Status, State: st.Current, Role: v.Role, Since: st.UpdatedAt}
+		h := st.History
+		if len(h) > 3 {
+			h = h[len(h)-3:]
+		}
+		for _, s := range h {
+			r.Steps = append(r.Steps, s.State+" -> "+s.Key)
+		}
+		rows = append(rows, r)
+	}
+	return rows
 }

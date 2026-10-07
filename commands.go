@@ -654,6 +654,7 @@ var tuiCmd = &cobra.Command{
 		// — reusing session.ResumeEntries rather than the display package
 		// importing "session" itself (same layering rule as jobs/tools).
 		tuiDisp.SetTranscriptProvider(buildTranscriptProvider())
+		tuiDisp.SetRunLister(func() []display.TuiRunRow { return runRows(workflowManager.Recent(5)) })
 		tuiDisp.SetSessionLister(func() []display.TuiResumeEntry {
 			wd, _ := os.Getwd()
 			entries, err := session.ResumeEntries(wd)

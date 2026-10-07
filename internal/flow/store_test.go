@@ -202,3 +202,17 @@ func TestRunner_ReadsPRFile(t *testing.T) {
 		t.Fatalf("PR %d", st.PR)
 	}
 }
+
+func TestRecentRuns(t *testing.T) {
+	home := t.TempDir()
+	for _, id := range []string{"20260101-a", "20260103-c", "20260102-b"} {
+		st := &RunState{Version: 1, Run: id, Status: "done"}
+		if err := (&Store{Dir: RunDir(home, "r", id)}).Save(st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := RecentRuns(home, "r", 2)
+	if len(got) != 2 || got[0].Run != "20260103-c" || got[1].Run != "20260102-b" {
+		t.Fatalf("got %+v", got)
+	}
+}

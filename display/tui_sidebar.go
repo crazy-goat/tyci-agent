@@ -62,6 +62,7 @@ const (
 	sidebarTabTokens = iota
 	sidebarTabSessions
 	sidebarTabTasks
+	sidebarTabRuns
 	sidebarTabCount
 )
 
@@ -69,6 +70,7 @@ var sidebarTabNames = [sidebarTabCount]string{
 	sidebarTabTokens:   "Tokens",
 	sidebarTabSessions: "Sessions",
 	sidebarTabTasks:    "Tasks",
+	sidebarTabRuns:     "Runs",
 }
 
 // openSidebar opens the sidebar on the given tab, saving scroll state the
@@ -468,7 +470,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.sidebarSwitchTab(m.sidebarTab - 1)
-			return m, nil
+			return m, m.armStatusTick()
 
 		case tea.KeyRight:
 			// Symmetric exit at the rightmost tab.
@@ -477,7 +479,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.sidebarSwitchTab(m.sidebarTab + 1)
-			return m, nil
+			return m, m.armStatusTick()
 
 		case tea.KeyUp, tea.KeyCtrlUp:
 			m.sidebarMoveCursor(-1)

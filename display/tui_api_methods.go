@@ -41,6 +41,12 @@ func (t *TUI) SetSessionLister(fn func() []TuiResumeEntry) {
 	t.prog.Send(tuiSetSessionListerMsg{fn: fn})
 }
 
+// SetRunLister wires the sidebar Runs tab to fn, which returns the recent
+// workflow runs, newest first.
+func (t *TUI) SetRunLister(fn func() []TuiRunRow) {
+	t.prog.Send(tuiSetRunListerMsg{fn: fn})
+}
+
 // SetModel updates the model name displayed in the status bar.
 func (t *TUI) SetModel(name string) {
 	t.prog.Send(tuiMsgBlock{kind: "set-model", content: name})

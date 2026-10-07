@@ -381,6 +381,8 @@ func (m TuiModel) sidebarTabLines(width int) []string {
 		return m.renderSidebarSessions(width)
 	case sidebarTabTasks:
 		return m.renderSidebarTasks(width)
+	case sidebarTabRuns:
+		return m.renderSidebarRuns(width)
 	default:
 		return nil
 	}

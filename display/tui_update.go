@@ -27,7 +27,7 @@ const jobsOnlyTickInterval = 1 * time.Second
 // screen (item 57 — without this, a job's elapsed/quiet time freezes
 // between job.updated events once the turn that started it has ended).
 func (m TuiModel) wantsStatusTick() bool {
-	return !m.reading || m.hasLiveJobsToPaint()
+	return !m.reading || (m.sidebarActive && m.sidebarTab == sidebarTabRuns) || m.hasLiveJobsToPaint()
 }
 
 // hasLiveJobsToPaint reports whether some non-terminal backgroundJobs entry
@@ -142,6 +142,10 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// arrive at any point in startup, regardless of what's on screen.
 	if sl, ok := msg.(tuiSetSessionListerMsg); ok {
 		m.sessionLister = sl.fn
+		return m, nil
+	}
+	if rl, ok := msg.(tuiSetRunListerMsg); ok {
+		m.runLister = rl.fn
 		return m, nil
 	}
 	if tp, ok := msg.(tuiSetTranscriptProviderMsg); ok {

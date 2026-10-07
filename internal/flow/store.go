@@ -124,3 +124,30 @@ func LatestRun(home, repoName string) (string, error) {
 	sort.Strings(names)
 	return filepath.Join(base, names[len(names)-1]), nil
 }
+
+// RecentRuns returns the saved states of the n newest runs of a repo, newest
+// first. Runs with an unreadable state.json are skipped.
+func RecentRuns(home, repoName string, n int) []*RunState {
+	base := filepath.Join(home, ".tyci", "runs", repoName)
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	var out []*RunState
+	for _, name := range names {
+		if len(out) == n {
+			break
+		}
+		if st, err := Load(filepath.Join(base, name)); err == nil {
+			out = append(out, st)
+		}
+	}
+	return out
+}
