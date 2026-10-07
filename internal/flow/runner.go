@@ -252,18 +252,23 @@ func readPRFile(st *RunState, runDir string) {
 	}
 }
 
-// readLastCommentID copies the comment id from <runDir>/last_comment_id (written by fetch_comments.sh).
+// readLastCommentID copies the comment ids from <runDir>/last_comment_id and
+// <runDir>/last_review_comment_id (written by fetch_comments.sh). The ids only grow.
 func readLastCommentID(st *RunState, runDir string) {
 	if runDir == "" {
 		return
 	}
-	b, err := os.ReadFile(filepath.Join(runDir, "last_comment_id"))
-	if err != nil {
-		return
+	readID := func(name string, dst *int64) {
+		b, err := os.ReadFile(filepath.Join(runDir, name))
+		if err != nil {
+			return
+		}
+		if n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil && n > *dst {
+			*dst = n
+		}
 	}
-	if n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil && n > st.LastCommentID {
-		st.LastCommentID = n
-	}
+	readID("last_comment_id", &st.LastCommentID)
+	readID("last_review_comment_id", &st.LastReviewCommentID)
 }
 
 func route(s State, key string) (string, bool) {

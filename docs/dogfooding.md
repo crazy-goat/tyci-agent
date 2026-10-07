@@ -139,8 +139,11 @@ The file is `~/.tyci/runs/<repo>/<run>/state.json`.
 | `current` | The current state name |
 | `ask` | The question and allowed answers, when paused |
 | `pr` | The pull request number, when known |
+| `last_comment_id` | Highest PR issue comment id handled (`last_review_comment_id`: the same for PR review comments; the two id sequences differ) |
 | `visits` | Visit count per state |
 | `history` | One entry per step: `seq`, `state`, `kind`, `key`, `to`, `exit`, `stderr_tail`, `warnings`, `error` (agent error text, masked) |
+
+New PR comments from team members (write or admin permission) go to `comments.md` in the run directory; the next `code` visit reads it. `fetch_comments.sh` also writes `last_comment_id` and `last_review_comment_id` there, and the runner copies them to `state.json`.
 
 The reviewer writes `review.md` in the run directory (`$TYCI_RUN_DIR`). Its first line
 is `ACCEPT` or `CHANGES`.

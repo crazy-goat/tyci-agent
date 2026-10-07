@@ -18,6 +18,9 @@ if [ -z "$pr" ] || [ ! -s "$review" ]; then
     exit 0
 fi
 
+# The worker has handled the comments by now; do not hand them out again.
+rm -f "${TYCI_RUN_DIR:-}/comments.md"
+
 body=$(mktemp)
 trap 'rm -f "$body"' EXIT
 {

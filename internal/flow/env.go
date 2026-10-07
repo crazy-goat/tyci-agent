@@ -35,6 +35,7 @@ func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string
 	visit := 0
 	pr := ""
 	lastComment := "0"
+	lastReview := "0"
 	if st != nil {
 		issue = strconv.Itoa(st.Issue)
 		branch = st.Branch
@@ -45,6 +46,7 @@ func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string
 			visit = st.Visits[st.Current]
 		}
 		lastComment = strconv.FormatInt(st.LastCommentID, 10)
+		lastReview = strconv.FormatInt(st.LastReviewCommentID, 10)
 		if st.PR != 0 {
 			pr = strconv.Itoa(st.PR)
 		}
@@ -60,6 +62,7 @@ func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string
 		"TYCI_VISIT="+strconv.Itoa(visit),
 		"TYCI_PR="+pr,
 		"TYCI_LAST_COMMENT_ID="+lastComment,
+		"TYCI_LAST_REVIEW_COMMENT_ID="+lastReview,
 	)
 	return env
 }

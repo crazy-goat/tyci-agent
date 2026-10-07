@@ -18,7 +18,8 @@ case "$*" in
   "api user -q .login") echo "$ME" ;;
   "api repos/o/r/collaborators/"*)
     u=${2#repos/o/r/collaborators/}; u=${u%/permission}; v=PERM_$u
-    [ -n "${!v:-}" ] || exit 1
+    [ -z "${PERM_FAIL:-}" ] || { echo "gh: Server Error (HTTP 502)" >&2; exit 1; }
+    [ -n "${!v:-}" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
     echo "${!v}" ;;
   *) exit 2 ;;
 esac
@@ -130,10 +131,33 @@ func TestFetchComments_NoneWhenEmpty(t *testing.T) {
 func TestFetchComments_PrintsLastID(t *testing.T) {
 	// The highest id counts even when its comment is dropped.
 	f := runFetch(t, map[string]string{
-		"PULLS":      "[" + cmt(4, "alice", "keep") + "," + cmt(7, "bob", "drop") + "]",
+		"ISSUES":     "[" + cmt(4, "alice", "keep") + "," + cmt(7, "bob", "drop") + "]",
 		"PERM_alice": "write", "PERM_bob": "read",
 	})
 	if f.lastID != "7" {
 		t.Errorf("last id = %q", f.lastID)
+	}
+}
+
+func TestFetchComments_ReviewIDBelowIssueID(t *testing.T) {
+	// Separate id sequences: a review comment with a low id must survive a high issue comment id.
+	f := runFetch(t, map[string]string{
+		"TYCI_LAST_COMMENT_ID": "3000000000",
+		"PULLS":                "[" + cmt(2000000000, "alice", "diff comment") + "]",
+		"ISSUES":               "[" + cmt(3000000005, "alice", "issue comment") + "]",
+		"PERM_alice":           "write",
+	})
+	if f.key != "new" || !strings.Contains(f.comments, "diff comment") || !strings.Contains(f.comments, "issue comment") {
+		t.Errorf("%+v", f)
+	}
+}
+
+func TestFetchComments_PermissionErrorFailsAndKeepsMarks(t *testing.T) {
+	f := runFetch(t, map[string]string{
+		"PULLS":     "[" + cmt(5, "alice", "x") + "]",
+		"PERM_FAIL": "1",
+	})
+	if f.key != "fail" || f.lastID != "" {
+		t.Errorf("%+v", f)
 	}
 }

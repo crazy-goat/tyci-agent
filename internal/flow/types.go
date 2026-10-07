@@ -55,12 +55,14 @@ type RunState struct {
 	Current  string `json:"current"`
 	Ask      *Ask   `json:"ask,omitempty"`
 	PR       int    `json:"pr,omitempty"`
-	// LastCommentID is the highest PR comment id fetch_comments.sh has seen.
-	LastCommentID int64          `json:"last_comment_id,omitempty"`
-	StartedAt     time.Time      `json:"started_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	Visits        map[string]int `json:"visits"`
-	History       []Step         `json:"history"`
+	// LastCommentID and LastReviewCommentID are the highest PR issue comment id and
+	// PR review comment id that fetch_comments.sh has handled (two separate id sequences).
+	LastCommentID       int64          `json:"last_comment_id,omitempty"`
+	LastReviewCommentID int64          `json:"last_review_comment_id,omitempty"`
+	StartedAt           time.Time      `json:"started_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+	Visits              map[string]int `json:"visits"`
+	History             []Step         `json:"history"`
 }
 
 // Step is one executed transition.

@@ -102,3 +102,19 @@ func TestWorkerTask_IncludesCommentsFile(t *testing.T) {
 		t.Errorf("task = %q", got)
 	}
 }
+
+func TestReadLastCommentID_ReviewID(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "last_review_comment_id"), []byte("9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := &RunState{LastReviewCommentID: 4}
+	readLastCommentID(st, dir)
+	if st.LastReviewCommentID != 9 || st.LastCommentID != 0 {
+		t.Errorf("%+v", st)
+	}
+	env := buildCheckEnv(st, State{}, dir, "main")
+	if !slices.Contains(env, "TYCI_LAST_REVIEW_COMMENT_ID=9") {
+		t.Errorf("env = %v", env)
+	}
+}
