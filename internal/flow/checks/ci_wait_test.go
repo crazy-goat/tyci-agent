@@ -30,12 +30,12 @@ func runCI(t *testing.T, seq []string, env map[string]string) (key string, exit 
 	dir := t.TempDir()
 	for i, s := range seq {
 		name := filepath.Join(dir, string(rune('1'+i)))
-		if s == "err" {
+		if strings.HasPrefix(s, "err") {
 			name += ".err"
 		} else {
 			name += ".json"
 		}
-		if err := os.WriteFile(name, []byte(s), 0o644); err != nil {
+		if err := os.WriteFile(name, []byte(strings.TrimPrefix(s, "err:")), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -133,6 +133,22 @@ func TestCIWait_ConflictGoesToRebase(t *testing.T) {
 
 func TestCIWait_BehindWithoutCiOk(t *testing.T) {
 	key, _, _ := runCI(t, []string{`[]`}, map[string]string{"GH_VIEW": "MERGEABLE BEHIND"})
+	if key != "behind" {
+		t.Fatalf("key=%q", key)
+	}
+}
+
+func TestCIWait_NoChecksReportedIsMissing(t *testing.T) {
+	msg := "err:no checks reported on the 'x' branch"
+	seq := []string{msg, msg, msg, msg, ciJSON("pass")}
+	key, _, _ := runCI(t, seq, map[string]string{"TYCI_CI_APPEAR_SEC": "1000"})
+	if key != "green" {
+		t.Fatalf("key=%q", key)
+	}
+}
+
+func TestCIWait_NoChecksReportedBehind(t *testing.T) {
+	key, _, _ := runCI(t, []string{"err:no checks reported on the 'x' branch"}, map[string]string{"GH_VIEW": "MERGEABLE BEHIND"})
 	if key != "behind" {
 		t.Fatalf("key=%q", key)
 	}

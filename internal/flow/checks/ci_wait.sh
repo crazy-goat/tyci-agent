@@ -21,6 +21,8 @@ fi
 poll="${TYCI_CI_POLL_SEC:-20}"
 appear="${TYCI_CI_APPEAR_SEC:-300}"
 
+errf=$(mktemp)
+trap 'rm -f "$errf"' EXIT
 errors=0
 start=$SECONDS
 while :; do
@@ -31,9 +33,9 @@ while :; do
         exit 0
         ;;
     esac
-    out=$(gh pr checks "$pr" -R "${TYCI_REPO:-}" --json name,state,bucket 2>&1 || true)
+    out=$(gh pr checks "$pr" -R "${TYCI_REPO:-}" --json name,state,bucket 2>"$errf" || true)
     # gh exits 1 with this text when no check exists yet: that is "missing", not an API error.
-    case "$out" in *"no checks reported"*) out='[]' ;; esac
+    case "$(cat "$errf")" in *"no checks reported"*) out='[]' ;; esac
     if bucket=$(jq -er 'if type == "array" then [.[] | select(.name == "ci-ok")][0].bucket // "missing" else empty end' <<<"$out" 2>/dev/null); then
         errors=0
         case "$bucket" in
