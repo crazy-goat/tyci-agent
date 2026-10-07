@@ -126,7 +126,7 @@ func (t *CronTool) list() ToolResult {
 		return failf("%v", err)
 	}
 	if len(f.Jobs) == 0 {
-		return okf("no scheduled jobs. Add one with cron(action=\"add\", name=\"...\", schedule=\"every 30m\" or \"at 07:30\", prompt=\"...\") when something has to happen later or repeatedly — that is the only way it survives this session.")
+		return okf("no scheduled jobs. Add one with cron(action=\"add\", name=\"...\", schedule=\"every 30m\", \"at 07:30\" or \"in 5m\", prompt=\"...\") when something has to happen later or repeatedly — that is the only way it survives this session.")
 	}
 	now := time.Now()
 	var b strings.Builder
@@ -165,9 +165,13 @@ func (t *CronTool) add(ctx context.Context, input map[string]any, name string) T
 		return failf("prompt is required: it is what a fresh agent will be asked to do, with NO memory of this conversation, so write it as a standalone instruction — what to do, where, and what counts as done")
 	}
 	schedule := strings.TrimSpace(stringParam(input, "schedule", ""))
-	if _, err := cron.ParseSchedule(schedule); err != nil {
+	parsed, err := cron.ParseSchedule(schedule)
+	if err != nil {
 		return failf("%v", err)
 	}
+	// "in 5m" is stored as an absolute time, so it does not move on reload.
+	schedule = parsed.String()
+	caller, _ := ctx.Value(JobIDCtxKey{}).(string)
 
 	dir := strings.TrimSpace(stringParam(input, "dir", ""))
 	if dir == "" {
@@ -207,6 +211,7 @@ func (t *CronTool) add(ctx context.Context, input map[string]any, name string) T
 		Dir:      abs,
 		Model:    strings.TrimSpace(stringParam(input, "model", "")),
 		Schedule: schedule,
+		Caller:   caller,
 	}
 	if err := f.Add(job); err != nil {
 		return failf("%v", err)
@@ -219,7 +224,11 @@ func (t *CronTool) add(ctx context.Context, input map[string]any, name string) T
 	msg := fmt.Sprintf("scheduled %q (%s) in %s. A run is a fresh agent with only that prompt — no history from here. Its output goes to %s, readable with cron(action=\"logs\", name=%q).",
 		name, s, abs, cron.LogPath(cronConfigDir(), name), name)
 	if CronTickerRunning() {
-		msg += " This session is running the schedule, and a job that has never run is due at once, so expect it shortly."
+		if s.OneShot() {
+			msg += fmt.Sprintf(" This session is running the schedule; the job runs %s.", cronWhen(time.Now(), s.Once))
+		} else {
+			msg += " This session is running the schedule, and a job that has never run is due at once, so expect it shortly."
+		}
 	} else {
 		msg += " Nothing is running the schedule right now (that only happens in an interactive session), so tell whoever asked that it will fire the next time one is open — do not imply it happens on its own."
 	}
@@ -465,13 +474,14 @@ func StartCronTicker(ctx context.Context, interval time.Duration) {
 					// let the next one try again.
 					continue
 				}
-				_, err = runner.Tick(ctx)
-				release()
-				if err != nil {
-					// A broken or unreadable jobs file must not kill the
-					// scheduler: the next tick may find it fixed.
-					continue
-				}
+				// Off the ticker goroutine: a run takes minutes and must not
+				// hold anything up. The lock stays held until the runs end.
+				// A broken or unreadable jobs file must not kill the
+				// scheduler: the next tick may find it fixed.
+				go func() {
+					defer release()
+					_, _ = runner.Tick(ctx)
+				}()
 			}
 		}
 	}()
@@ -485,8 +495,44 @@ func cronNotify(j cron.Job, err error) {
 	if err != nil {
 		status = fmt.Sprintf("failed (%v)", err)
 	}
-	notify(fmt.Sprintf("[scheduled job] %q %s — it ran on its schedule, nobody asked for it just now. Read it with cron(action=\"logs\", name=%q) if it matters to what you are doing; otherwise carry on.", j.Name, status, j.Name))
+	msg := fmt.Sprintf("[scheduled job] %q %s — it ran in the background, nobody asked for it just now. Read more with cron(action=\"logs\", name=%q) if it matters to what you are doing; otherwise carry on.", j.Name, status, j.Name)
+	oneShot := false
+	if sched, perr := j.Parsed(); perr == nil {
+		oneShot = sched.OneShot()
+	}
+	callerLive := j.Caller != "" && getJobMailbox() != nil && getJobMailbox().IsLive(j.Caller)
+	quiet := !callerLive && !oneShot
+	if !quiet {
+		// A quiet notice stays short: a frequent job would pile up many log
+		// tails in the queue. The model reads the log with cron(action="logs").
+		if data, rerr := os.ReadFile(cron.LogPath(cronConfigDir(), j.Name)); rerr == nil {
+			const keep = 1500
+			tail := strings.TrimSpace(string(data))
+			if len(tail) > keep {
+				tail = "…" + tail[len(tail)-keep:]
+			}
+			msg += "\nEnd of its log:\n" + tail
+		}
+	}
+	if quiet {
+		// Main chat (no caller, or the caller ended): queue the notice
+		// without waking an idle chat. A wake would start a model turn for
+		// every run of a frequent job. A one-shot job wakes the chat,
+		// because the caller asked for that one result.
+		jobNotifierMu.RLock()
+		n := jobNotifier
+		jobNotifierMu.RUnlock()
+		if q, ok := n.(quietNotifier); ok {
+			q.NotifyQuiet(msg)
+			return
+		}
+	}
+	notifyToParent(j.Caller, msg)
 }
+
+// quietNotifier is a JobNotifier that can queue a notice without waking an
+// idle chat.
+type quietNotifier interface{ NotifyQuiet(text string) }
 
 // cronWhen phrases a timestamp relative to now, because "in 20 minutes" is the
 // thing the caller needs and a wall-clock time is not.

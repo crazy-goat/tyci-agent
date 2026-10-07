@@ -565,3 +565,59 @@ func TestRunnerTick_WithoutLocalDir_IgnoresLocalFile(t *testing.T) {
 		t.Errorf("ran %d jobs, want 0 — LocalDir is unset, so the local file must not be consulted", n)
 	}
 }
+
+func TestOneShotScheduleRunsOnceAndRoundTrips(t *testing.T) {
+	s, err := ParseSchedule("in 5m")
+	if err != nil || !s.OneShot() || s.Daily() {
+		t.Fatalf("in 5m: %+v, %v", s, err)
+	}
+	back, err := ParseSchedule(s.String())
+	if err != nil || !back.Once.Equal(s.Once.Truncate(time.Second)) {
+		t.Fatalf("round trip: %q -> %+v, %v", s.String(), back, err)
+	}
+	if s.Due(s.Once.Add(-time.Second), time.Time{}) {
+		t.Error("due before its time")
+	}
+	if !s.Due(s.Once, time.Time{}) {
+		t.Error("not due at its time")
+	}
+	if s.Due(s.Once.Add(time.Hour), s.Once) {
+		t.Error("due again after it ran")
+	}
+	if _, err := ParseSchedule("in 0s"); err == nil {
+		t.Error("in 0s must be rejected")
+	}
+	if _, err := ParseSchedule("every 1m"); err != nil {
+		t.Errorf("every 1m must stay allowed: %v", err)
+	}
+}
+
+func TestOneShotJobIsRemovedAfterItRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stand-in")
+	}
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "fake-tyci")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := Load(dir)
+	job := Job{Name: "once", Prompt: "p", Dir: t.TempDir(), Schedule: "once " + time.Now().Add(-time.Minute).Format(time.RFC3339)}
+	if err := f.Add(job); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(dir, f); err != nil {
+		t.Fatal(err)
+	}
+	r := &Runner{ConfigDir: dir, Exe: exe}
+	if n, err := r.Tick(context.Background()); err != nil || n != 1 {
+		t.Fatalf("tick: %d, %v", n, err)
+	}
+	after, _ := Load(dir)
+	if len(after.Jobs) != 0 {
+		t.Errorf("one-shot job still present: %+v", after.Jobs)
+	}
+	if data, _ := os.ReadFile(LogPath(dir, "once")); !strings.Contains(string(data), "done") {
+		t.Errorf("log lost the result: %q", data)
+	}
+}

@@ -30,6 +30,9 @@ type Schedule struct {
 	// Hour and Minute are the local time of day for a daily schedule, used
 	// only when Every is zero.
 	Hour, Minute int
+	// Once is the moment of a one-shot schedule ("in 5m"), or zero. The job
+	// runs once at or after it and is then removed.
+	Once time.Time
 }
 
 // ParseSchedule accepts "every <duration>" (e.g. "every 30m", "every 6h") or
@@ -43,6 +46,14 @@ func ParseSchedule(s string) (Schedule, error) {
 	switch {
 	case strings.HasPrefix(text, "every "):
 		return parseEvery(strings.TrimSpace(strings.TrimPrefix(text, "every ")))
+	case strings.HasPrefix(text, "in "):
+		return parseIn(strings.TrimSpace(strings.TrimPrefix(text, "in ")))
+	case strings.HasPrefix(text, "once "):
+		t, err := time.Parse(time.RFC3339, strings.ToUpper(strings.TrimSpace(strings.TrimPrefix(text, "once "))))
+		if err != nil {
+			return Schedule{}, fmt.Errorf("%q is not a one-shot time: use e.g. \"in 5m\"", text)
+		}
+		return Schedule{Once: t}, nil
 	case strings.HasPrefix(text, "at "):
 		return parseAt(strings.TrimSpace(strings.TrimPrefix(text, "at ")))
 	case strings.HasPrefix(text, "@daily "):
@@ -65,6 +76,16 @@ func parseEvery(text string) (Schedule, error) {
 	return Schedule{Every: d}, nil
 }
 
+// parseIn resolves "in 5m" to an absolute time now. The tool stores the
+// String() form ("once <RFC3339>"), so the moment does not move on reload.
+func parseIn(text string) (Schedule, error) {
+	d, err := time.ParseDuration(text)
+	if err != nil || d <= 0 {
+		return Schedule{}, fmt.Errorf("%q is not a duration: use e.g. \"in 5m\", \"in 2h\"", text)
+	}
+	return Schedule{Once: time.Now().Add(d)}, nil
+}
+
 func parseAt(text string) (Schedule, error) {
 	t, err := time.Parse("15:04", text)
 	if err != nil {
@@ -74,10 +95,16 @@ func parseAt(text string) (Schedule, error) {
 }
 
 // Daily reports whether this is a time-of-day schedule.
-func (s Schedule) Daily() bool { return s.Every == 0 }
+func (s Schedule) Daily() bool { return s.Every == 0 && s.Once.IsZero() }
+
+// OneShot reports whether this schedule runs once and is then removed.
+func (s Schedule) OneShot() bool { return !s.Once.IsZero() }
 
 // String round-trips through ParseSchedule.
 func (s Schedule) String() string {
+	if s.OneShot() {
+		return "once " + s.Once.Format(time.RFC3339)
+	}
 	if s.Daily() {
 		return fmt.Sprintf("at %02d:%02d", s.Hour, s.Minute)
 	}
@@ -90,6 +117,9 @@ func (s Schedule) String() string {
 // adding a nightly job and having no way to tell whether it works until
 // tomorrow.
 func (s Schedule) Due(now, last time.Time) bool {
+	if s.OneShot() {
+		return last.IsZero() && !now.Before(s.Once)
+	}
 	if !s.Daily() {
 		return last.IsZero() || !now.Before(last.Add(s.Every))
 	}
@@ -104,6 +134,9 @@ func (s Schedule) Due(now, last time.Time) bool {
 // Next returns when a job last run at last will run next. Used for listing, so
 // a person can see whether "at 07:30" means this morning or tomorrow.
 func (s Schedule) Next(now, last time.Time) time.Time {
+	if s.OneShot() {
+		return s.Once
+	}
 	if s.Due(now, last) {
 		return now
 	}

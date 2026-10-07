@@ -243,6 +243,16 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		// the re-stash below always stores THIS rebound copy, not entry.cfg.
 		runCfg := entry.cfg
 		runCfg.NextMessages = tools.JobMailboxNextMessages(newJobID)
+		// The child closed its session file when its run ended: copy it to
+		// a new file for this job, append the new task, and close it again
+		// when this run ends.
+		if cs := forkChildSession(runCfg.Session, entry.mc.Model(), entry.mc.Provider(), newJobID); cs != nil {
+			writeChildMessages(cs, forked[len(forked)-1:])
+			runCfg.Session = cs
+			defer func() { _ = cs.Close() }()
+		} else {
+			runCfg.Session = nil
+		}
 
 		c := &collector{}
 		// Record the resumed conversation's real spend in internal/ledger via

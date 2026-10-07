@@ -2,7 +2,7 @@ package jobs
 
 import "sync"
 
-// maxPendingNotices bounds the queue. A notice is a single short line, so 64
+// maxPendingNotices bounds the queue. A notice is a short message, so 64
 // is far above any realistic backlog; the cap only exists so a runaway
 // producer (a script spawning background commands in a loop) can't grow the
 // slice without bound while nobody drains it. Oldest notices are dropped
@@ -94,6 +94,22 @@ func (n *Notifier) Notify(text string) {
 	}
 	n.mu.Unlock()
 	n.wake()
+}
+
+// NotifyQuiet queues text like Notify but does not wake Signal. An idle chat
+// does not start a model turn for it: the text reaches the model with the
+// next turn, whoever starts it. Scheduled jobs use this so a frequent job
+// does not keep the chat busy.
+func (n *Notifier) NotifyQuiet(text string) {
+	if text == "" {
+		return
+	}
+	n.mu.Lock()
+	n.pending = append(n.pending, notice{text: text})
+	if len(n.pending) > maxPendingNotices {
+		n.pending = n.pending[len(n.pending)-maxPendingNotices:]
+	}
+	n.mu.Unlock()
 }
 
 // NotifyQuestion queues a "child jobID is blocked waiting for an answer to
