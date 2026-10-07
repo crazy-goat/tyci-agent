@@ -89,7 +89,7 @@ resume with `retry` (go back to `code`) or `stop` (end the run). The assistant c
 
 Two more answers work at every `ask`. `retry <note>` goes back to `code` and puts the
 note into the next worker prompt. `goto <state>` continues the run at that state, for
-example `goto rebase`; an unknown state or an ask state is rejected.
+example `goto rebase`; an unknown state, an ask state or an end state is rejected.
 
 Each role agent of a run is a job named `<run-id>/<role>`, for example
 `20261007-102102-527/worker`. Use the `message` tool on a live agent. If a role runs

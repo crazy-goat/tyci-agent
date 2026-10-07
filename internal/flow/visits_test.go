@@ -276,7 +276,7 @@ func TestResume_GotoState(t *testing.T) {
 
 func TestResume_GotoUnknownStateRejected(t *testing.T) {
 	r, st, _ := pausedRun(t, loopWF(1, 0, 0))
-	for _, a := range []string{"goto nowhere", "goto ask"} {
+	for _, a := range []string{"goto nowhere", "goto ask", "goto end"} {
 		if err := r.Resume(context.Background(), st, a); err == nil {
 			t.Fatalf("%q: want error", a)
 		}

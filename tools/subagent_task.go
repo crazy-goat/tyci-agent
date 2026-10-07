@@ -34,7 +34,7 @@ func RunSubagentTask(ctx context.Context, s TaskSpec) (result, sessionID string,
 		return runSubagentTask(ctx, runner, s)
 	}
 	var res, id string
-	var runErr error
+	runErr := errors.New("role agent ended without a result")
 	done := make(chan struct{})
 	starter.Start(ctx, s.Name, JobKindSubagent, "", func(jobCtx context.Context, jobID string) (string, bool, error) {
 		defer close(done)

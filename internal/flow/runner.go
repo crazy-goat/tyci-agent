@@ -390,9 +390,10 @@ func (r *Runner) pause(st *RunState, message, reason string) error {
 	return ErrPaused
 }
 
-// checkGoto rejects a goto target that is not a state of wf or is an ask state.
+// checkGoto rejects a goto target that is not a state of wf, is an ask state
+// or is an end state (a run ends only through its flow steps).
 func checkGoto(wf *Workflow, state string) error {
-	if s, known := wf.States[state]; !known || s.Ask != "" {
+	if s, known := wf.States[state]; !known || s.Ask != "" || s.End {
 		return fmt.Errorf("flow: unknown goto state %q", state)
 	}
 	return nil
@@ -426,9 +427,13 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		}
 		next, ok = rest, true
 	case word == "retry" && rest != "":
-		answer = word
-		st.Note = MaskSecrets(rest)
-		next, ok = s.On[answer]
+		next, ok = s.On[word]
+		if !ok {
+			next, ok = s.On["*"]
+		}
+		if ok {
+			st.Note = MaskSecrets(rest)
+		}
 	default:
 		next, ok = s.On[answer]
 	}

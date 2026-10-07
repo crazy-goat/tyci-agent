@@ -108,3 +108,28 @@ func TestRunSubagentTask_NamedJobIsAskUnroutable(t *testing.T) {
 		t.Errorf("unroutable=%v jobID=%v", unroutable, jobID)
 	}
 }
+
+type recoverJobStarter struct{}
+
+func (recoverJobStarter) Start(ctx context.Context, _, _, _ string, fn func(context.Context, string) (string, bool, error)) JobHandle {
+	func() {
+		defer func() { _ = recover() }()
+		_, _, _ = fn(ctx, "job1")
+	}()
+	return testJobHandle{"job1"}
+}
+
+func TestRunSubagentTask_NamedJobPanicIsError(t *testing.T) {
+	oldStarter := getJobStarter()
+	SetJobStarter(recoverJobStarter{})
+	oldInst := subagentToolInstance
+	t.Cleanup(func() {
+		SetJobStarter(oldStarter)
+		subagentToolInstance = oldInst
+	})
+	run := &ctxRunner{rec: &recordingRunner{}, fn: func(context.Context) { panic("boom") }}
+	subagentToolInstance = &SubagentTool{Runner: run}
+	if _, _, err := RunSubagentTask(context.Background(), TaskSpec{Task: "x", Name: "run/worker"}); err == nil {
+		t.Fatal("want an error after a panic in the role agent")
+	}
+}
