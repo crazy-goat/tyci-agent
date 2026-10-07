@@ -44,6 +44,7 @@ case "$*" in
       *) echo "[{\"name\":\"ci-ok\",\"state\":\"x\",\"bucket\":\"$b\"}]" ;;
     esac ;;
   "pr view"*headRefOid*) git ls-remote origin "refs/heads/$(git branch --show-current)" | cut -f1 ;;
+  "pr view"*mergeable*) echo "MERGEABLE CLEAN" ;;
   "pr view"*mergeStateStatus*)
     if [ -e "$CTL/behind_once" ]; then rm "$CTL/behind_once"; echo BEHIND; else echo CLEAN; fi ;;
   "pr merge"*)
