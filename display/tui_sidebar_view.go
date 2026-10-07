@@ -2,6 +2,7 @@ package display
 
 import (
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"time"
 
@@ -412,7 +413,13 @@ func (m TuiModel) renderSidebarTasks(width int) []string {
 			out = append(out, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245")).Width(width).Render(row.line))
 			continue
 		}
-		out = append(out, rowStyle(width, i == cursorLine).Render(truncateToWidth(row.line, width)))
+		line := row.line
+		if i == cursorLine {
+			// Inner styles (status icon) end with an ANSI reset that would clear
+			// the highlight background mid-line, so drop them on the selected row.
+			line = ansi.Strip(line)
+		}
+		out = append(out, rowStyle(width, i == cursorLine).Render(truncateToWidth(line, width)))
 	}
 	if len(out) == 0 {
 		return []string{"", "  No tasks recorded this session."}

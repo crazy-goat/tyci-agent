@@ -12,6 +12,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/muesli/termenv"
 )
 
 func newTestModelForSidebar() TuiModel {
@@ -1730,5 +1731,16 @@ func TestSidebarTasks_SubagentRUsesJobCursor(t *testing.T) {
 	got := model.(TuiModel)
 	if got.input.Value() == "" || !strings.Contains(got.input.Value(), "job 1") {
 		t.Fatalf("expected r to draft the selected subagent prompt, got %q", got.input.Value())
+	}
+}
+
+func TestSidebarSelectedTaskRowKeepsBackgroundAcrossLine(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	icon := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("●")
+	line := icon + " run/coder  56k tok  $0.019"
+	got := rowStyle(20, true).Render(truncateToWidth(ansi.Strip(line), 20))
+	if strings.Count(got, "\x1b[0m") != 1 || !strings.HasSuffix(got, "\x1b[0m") {
+		t.Fatalf("background reset in the middle of the row: %q", got)
 	}
 }
