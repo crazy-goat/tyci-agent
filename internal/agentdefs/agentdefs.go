@@ -30,9 +30,14 @@ type Def struct {
 	// connector's own default applies. Useful on an agent whose whole job is
 	// to produce something long (a report, a generated file), where the
 	// conservative default would truncate the answer mid-sentence.
-	MaxTokens    int
-	Fallback     []string // frontmatter `fallback`
-	SystemPrompt string   // markdown body, or frontmatter `system` if set (overrides body)
+	MaxTokens int
+	// CompactSoftLimit and CompactHardLimit are frontmatter
+	// `compact_soft_limit` / `compact_hard_limit`: context limits in tokens;
+	// 0 = unset (global defaults apply).
+	CompactSoftLimit int
+	CompactHardLimit int
+	Fallback         []string // frontmatter `fallback`
+	SystemPrompt     string   // markdown body, or frontmatter `system` if set (overrides body)
 	// SystemPromptMode is "append" (default) or "replace". In append mode the
 	// definition's body is a ROLE layered on top of the standard subagent
 	// system prompt, so the agent keeps the subagent contract, environment
@@ -71,6 +76,8 @@ type frontmatter struct {
 	MaxIterations    int      `yaml:"max_iterations"`
 	Temperature      *float64 `yaml:"temperature"`
 	MaxTokens        int      `yaml:"max_tokens"`
+	CompactSoftLimit int      `yaml:"compact_soft_limit"`
+	CompactHardLimit int      `yaml:"compact_hard_limit"`
 	System           string   `yaml:"system"`
 	Description      string   `yaml:"description"`
 	Fallback         []string `yaml:"fallback"`
@@ -197,6 +204,8 @@ func Parse(filename string, data []byte) (Def, error) {
 		MaxIterations:    fm.MaxIterations,
 		Temperature:      fm.Temperature,
 		MaxTokens:        fm.MaxTokens,
+		CompactSoftLimit: fm.CompactSoftLimit,
+		CompactHardLimit: fm.CompactHardLimit,
 		Fallback:         fm.Fallback,
 		SystemPrompt:     systemPrompt,
 		SystemPromptMode: systemPromptMode,

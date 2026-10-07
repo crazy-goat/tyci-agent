@@ -28,8 +28,13 @@ if [ -n "$protected" ]; then
 fi
 
 bucket=$(gh pr checks "$TYCI_PR" -R "$TYCI_REPO" --json name,bucket --jq '[.[] | select(.name == "ci-ok")][0].bucket // ""') || bucket=""
+# A gh failure (including "no checks reported") gives an empty bucket, which is "missing", as in ci_wait.sh.
 if [ "$bucket" != pass ]; then
     echo "merge.sh: ci-ok is '${bucket:-missing}'" >&2
+    if [ -z "$bucket" ] && [ "$(gh pr view "$TYCI_PR" -R "$TYCI_REPO" --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null || true)" = BEHIND ]; then
+        echo behind
+        exit 0
+    fi
     echo fail
     exit 0
 fi

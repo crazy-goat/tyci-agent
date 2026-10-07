@@ -388,6 +388,33 @@ func TestSaveTyciConfig_KeepsUnknownKeys(t *testing.T) {
 	}
 }
 
+func TestCompactLimits_AgentOverridesGlobal(t *testing.T) {
+	setupConfigTest(t)
+	if err := SaveTyciConfig(TyciConfig{CompactSoftLimit: 100000, CompactHardLimit: 150000}); err != nil {
+		t.Fatal(err)
+	}
+	if soft, hard := CompactLimits("x"); soft != 100000 || hard != 150000 {
+		t.Fatalf("global = %d, %d", soft, hard)
+	}
+	home, _ := os.UserHomeDir()
+	agents := `{"x":{"model":"a/b","compact_hard_limit":50000}}`
+	if err := os.WriteFile(filepath.Join(home, ".tyci", "agents.json"), []byte(agents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if soft, hard := CompactLimits("x"); soft != 100000 || hard != 50000 {
+		t.Fatalf("agent override = %d, %d", soft, hard)
+	}
+	// The new keys survive a save that does not touch them (#298).
+	cfg := LoadTyciConfig()
+	cfg.DefaultModel = "m"
+	if err := SaveTyciConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadTyciConfig(); got.CompactSoftLimit != 100000 || got.CompactHardLimit != 150000 {
+		t.Fatalf("after save: %+v", got)
+	}
+}
+
 func TestTimeoutKeys_SaveAndMerge(t *testing.T) {
 	setupConfigTest(t)
 
