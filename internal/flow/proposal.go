@@ -166,7 +166,8 @@ func ApplyProposal(ctx context.Context, info RepoInfo, st *RunState, dir string)
 	if _, err := git(wt, "apply", "--index", patch); err != nil {
 		return "", err
 	}
-	names, err := git(wt, "diff", "--cached", "--name-only")
+	// --no-renames: a rename into .tyci/ must also list its source path.
+	names, err := git(wt, "diff", "--cached", "--name-only", "--no-renames")
 	if err != nil {
 		return "", err
 	}

@@ -101,13 +101,15 @@ absolute path, no `..`, no symlink).
 When the workflow cannot handle a failure, or the same step failed with the same cause
 in an earlier run, the fixer writes `proposal.md` and `proposal.patch` (a diff of the
 repository's `.tyci/` files only) in its artifact dir. When the run pauses, the notice
-says so and `workflow_status` shows the summary and the patch under `proposal`. Answer
+says so and `workflow_status` shows the summary and the patch under `proposal` (a long
+patch is cut; `patch_file` is the path of the full patch that `apply` uses). Answer
 `apply` or `reject` with `workflow_resume`:
 
 - `apply`: tyci makes the branch `tyci/proposal-<run>-<hash>` from the default branch in a
   temporary worktree, ejects the missing files of the builtin workflow when the repository
   has no local copy (existing `.tyci/` files and role prompts stay), applies the patch,
-  pushes and opens a PR. A patch that changes a file outside `.tyci/` is refused. Your
+  pushes and opens a PR. A patch that changes a file outside `.tyci/` (also as the source
+  of a rename) is refused. Your
   checkout does not change. When the run used a workflow from `~/.tyci/workflows/`,
   `apply` is refused: a proposal changes only the repository's `.tyci/` files.
   When `gh pr create` fails, tyci deletes the pushed branch, so you can try again.

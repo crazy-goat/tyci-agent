@@ -211,7 +211,8 @@ func (c ChatTools) Status(run string) (any, error) {
 			md, _ := os.ReadFile(filepath.Join(d, "proposal.md"))
 			patch, _ := os.ReadFile(filepath.Join(d, "proposal.patch"))
 			out["proposal"] = map[string]any{"dir": d, "summary": clip(string(md), 4000), "patch": clip(string(patch), 8000),
-				"answers": "apply (open a PR with the change) or reject"}
+				"patch_file": filepath.Join(d, "proposal.patch"),
+				"answers":    "apply (open a PR with the full patch_file; patch may be cut) or reject"}
 		}
 	}
 	if info, err := c.M.Info(); err == nil {

@@ -28,6 +28,13 @@ new file mode 100644
 +package main
 `
 
+// renamePatch moves the repo file x (outside .tyci/) into .tyci/.
+const renamePatch = `diff --git a/x b/.tyci/x
+similarity index 100%
+rename from x
+rename to .tyci/x
+`
+
 // proposingFixer writes a proposal into its artifact dir and answers "failed".
 type proposingFixer struct{ patch string }
 
@@ -204,6 +211,19 @@ func TestProposal_ApplyRefusesFilesOutsideTyci(t *testing.T) {
 	}
 	if st, _ := e.m.Status(id); st.Ask.Proposal == "" {
 		t.Fatal("failed apply dropped the proposal")
+	}
+}
+
+func TestProposal_ApplyRefusesRenameFromOutsideTyci(t *testing.T) {
+	e := newProposalEnv(t, renamePatch)
+	id := e.start(t)
+	err := e.m.Resume(id, "apply")
+	if err == nil || !strings.Contains(err.Error(), "changes x, outside .tyci/") {
+		t.Fatalf("err = %v", err)
+	}
+	e.assertUntouched(t)
+	if b := e2eGit(t, e.origin, "branch", "--list", "tyci/*"); b != "" {
+		t.Fatalf("branch pushed: %s", b)
 	}
 }
 
