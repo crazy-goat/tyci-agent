@@ -16,6 +16,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/internal/watchdog"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/providers"
 	"github.com/crazy-goat/tyci-agent/session"
@@ -1039,7 +1040,26 @@ func main() {
 	// for. `tyci agent sync` (commands.go) is the one place this is loud.
 	_, _ = agentdefs.Sync(agentdefs.GlobalDir(), false)
 
-	if err := rootCmd.Execute(); err != nil {
+	idle, escalate, err := agent.LoadTyciConfigFrom("").WatchdogDurations()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		os.Exit(1)
+	}
+	wdCtx, stopWatchdog := context.WithCancel(context.Background())
+	go (&watchdog.Watchdog{
+		Reg: JobRegistry, IdleAfter: idle, EscalateAfter: escalate,
+		Notify: func(to, text string) bool {
+			if to == "" {
+				JobNotices.Notify(text)
+				return true
+			}
+			return JobRegistry.Post(to, text)
+		},
+	}).Run(wdCtx)
+
+	err = rootCmd.Execute()
+	stopWatchdog()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
