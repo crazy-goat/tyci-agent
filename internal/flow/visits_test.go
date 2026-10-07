@@ -237,3 +237,51 @@ func TestRunner_AgentErrorIsSavedAndShownInAsk(t *testing.T) {
 		t.Fatalf("ask message = %q", st.Ask.Message)
 	}
 }
+
+func TestResume_RetryWithNoteReachesWorker(t *testing.T) {
+	wf := loopWF(1, 0, 0)
+	wf.States["code"] = State{Agent: "worker", MaxVisits: 1, On: map[string]string{"done": "ci"}}
+	r, st, _ := pausedRun(t, wf)
+	r.Checks = &fakeChecks{keys: map[string][]string{"ci.sh": {"green"}, "merge.sh": {"merged"}}}
+	var note string
+	r.Agents = &noteAgents{note: &note}
+	if err := r.Resume(context.Background(), st, "retry resolve the CHANGELOG.md conflict"); err != nil {
+		t.Fatal(err)
+	}
+	if note != "resolve the CHANGELOG.md conflict" {
+		t.Fatalf("worker note = %q", note)
+	}
+	if st.Note != "" || st.Status != "done" {
+		t.Fatalf("note %q status %q", st.Note, st.Status)
+	}
+}
+
+type noteAgents struct{ note *string }
+
+func (n *noteAgents) Run(_ context.Context, _, _ string, rc RunContext) (string, string, error) {
+	*n.note = rc.Note
+	return "done", "", nil
+}
+
+func TestResume_GotoState(t *testing.T) {
+	r, st, _ := pausedRun(t, loopWF(1, 0, 0))
+	r.Checks = &fakeChecks{keys: map[string][]string{"ci.sh": {"green"}, "merge.sh": {"merged"}}}
+	if err := r.Resume(context.Background(), st, "goto ci"); err != nil {
+		t.Fatal(err)
+	}
+	if st.Status != "done" || st.Visits["code"] != 0 || st.Visits["ci"] != 1 {
+		t.Fatalf("status %q visits %v", st.Status, st.Visits)
+	}
+}
+
+func TestResume_GotoUnknownStateRejected(t *testing.T) {
+	r, st, _ := pausedRun(t, loopWF(1, 0, 0))
+	for _, a := range []string{"goto nowhere", "goto ask", "goto end"} {
+		if err := r.Resume(context.Background(), st, a); err == nil {
+			t.Fatalf("%q: want error", a)
+		}
+	}
+	if st.Status != "paused" {
+		t.Fatalf("status %q", st.Status)
+	}
+}

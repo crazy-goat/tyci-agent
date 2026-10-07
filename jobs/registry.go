@@ -1042,6 +1042,17 @@ func (r *Registry) Resolve(id string) (string, bool) {
 	if short == "" {
 		return "", false
 	}
+	// A flow role agent has a fixed name ("<run-id>/<role>") as its
+	// description. The newest job with that name wins.
+	var named *Job
+	for _, job := range r.jobs {
+		if job.Kind == KindSubagent && job.Description == id && (named == nil || job.StartedAt.After(named.StartedAt)) {
+			named = job
+		}
+	}
+	if named != nil {
+		return named.ID, true
+	}
 	for full, job := range r.jobs {
 		if ShortID(job.ID) == short {
 			return full, true

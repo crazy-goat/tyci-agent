@@ -161,6 +161,8 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 				RunDir:        r.RunDir,
 				DefaultBranch: r.DefaultBranch,
 				Reason:        MaskSecrets(st.Reason),
+				Run:           st.Run,
+				Note:          st.Note,
 				StateName:     cur,
 				Issue:         st.Issue,
 				PR:            st.PR,
@@ -170,6 +172,9 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 			ended := time.Now()
 			if ctx.Err() != nil {
 				return r.fail(ctx, st, "cancelled", ctx.Err())
+			}
+			if s.Agent == "worker" {
+				st.Note = ""
 			}
 			if runErr != nil {
 				key = "error"
@@ -385,8 +390,19 @@ func (r *Runner) pause(st *RunState, message, reason string) error {
 	return ErrPaused
 }
 
+// checkGoto rejects a goto target that is not a state of wf, is an ask state
+// or is an end state (a run ends only through its flow steps).
+func checkGoto(wf *Workflow, state string) error {
+	if s, known := wf.States[state]; !known || s.Ask != "" || s.End {
+		return fmt.Errorf("flow: unknown goto state %q", state)
+	}
+	return nil
+}
+
 // Resume answers a paused run. The answer only selects a key of the ask
-// state's on map (then "*"); it never runs anything. An unknown answer keeps
+// state's on map (then "*"); it never runs anything. Two forms add to this:
+// "retry <note>" keeps the retry route and stores the note for the next worker
+// prompt, and "goto <state>" continues at that state. An unknown answer keeps
 // the run paused and returns an error that lists the allowed keys.
 // Leaving the ask state for a state that is not an end state resets all
 // visit counters. An ask state without on ends the run done.
@@ -401,7 +417,26 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 	if !ok || s.Ask == "" {
 		return fmt.Errorf("flow: current state %q is not an ask state", st.Current)
 	}
-	next, ok := s.On[answer]
+	word, rest, _ := strings.Cut(strings.TrimSpace(answer), " ")
+	rest = strings.TrimSpace(rest)
+	var next string
+	switch {
+	case word == "goto" && rest != "":
+		if err := checkGoto(r.WF, rest); err != nil {
+			return err
+		}
+		next, ok = rest, true
+	case word == "retry" && rest != "":
+		next, ok = s.On[word]
+		if !ok {
+			next, ok = s.On["*"]
+		}
+		if ok {
+			st.Note = MaskSecrets(rest)
+		}
+	default:
+		next, ok = s.On[answer]
+	}
 	if !ok {
 		next, ok = s.On["*"]
 	}

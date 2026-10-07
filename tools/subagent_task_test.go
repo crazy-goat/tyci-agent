@@ -89,3 +89,58 @@ func TestSubagentTask_NoJSONFieldForWorkdir(t *testing.T) {
 		}
 	}
 }
+
+type inlineJobStarter struct{}
+
+func (inlineJobStarter) Start(ctx context.Context, _, _, _ string, fn func(context.Context, string) (string, bool, error)) JobHandle {
+	_, _, _ = fn(ctx, "job1")
+	return testJobHandle{"job1"}
+}
+
+func TestRunSubagentTask_NamedJobIsAskUnroutable(t *testing.T) {
+	oldStarter := getJobStarter()
+	SetJobStarter(inlineJobStarter{})
+	oldInst := subagentToolInstance
+	t.Cleanup(func() {
+		SetJobStarter(oldStarter)
+		subagentToolInstance = oldInst
+	})
+	var unroutable bool
+	var jobID any
+	run := &ctxRunner{rec: &recordingRunner{}, fn: func(ctx context.Context) {
+		unroutable, _ = ctx.Value(AskUnroutableCtxKey{}).(bool)
+		jobID = ctx.Value(JobIDCtxKey{})
+	}}
+	subagentToolInstance = &SubagentTool{Runner: run}
+	if _, _, err := RunSubagentTask(context.Background(), TaskSpec{Task: "x", Name: "run/worker"}); err != nil {
+		t.Fatal(err)
+	}
+	if !unroutable || jobID != "job1" {
+		t.Errorf("unroutable=%v jobID=%v", unroutable, jobID)
+	}
+}
+
+type recoverJobStarter struct{}
+
+func (recoverJobStarter) Start(ctx context.Context, _, _, _ string, fn func(context.Context, string) (string, bool, error)) JobHandle {
+	func() {
+		defer func() { _ = recover() }()
+		_, _, _ = fn(ctx, "job1")
+	}()
+	return testJobHandle{"job1"}
+}
+
+func TestRunSubagentTask_NamedJobPanicIsError(t *testing.T) {
+	oldStarter := getJobStarter()
+	SetJobStarter(recoverJobStarter{})
+	oldInst := subagentToolInstance
+	t.Cleanup(func() {
+		SetJobStarter(oldStarter)
+		subagentToolInstance = oldInst
+	})
+	run := &ctxRunner{rec: &recordingRunner{}, fn: func(context.Context) { panic("boom") }}
+	subagentToolInstance = &SubagentTool{Runner: run}
+	if _, _, err := RunSubagentTask(context.Background(), TaskSpec{Task: "x", Name: "run/worker"}); err == nil {
+		t.Fatal("want an error after a panic in the role agent")
+	}
+}

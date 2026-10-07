@@ -18,6 +18,9 @@ type TaskSpec struct {
 	// SoftLimit and HardLimit are context limits in tokens; 0 = global defaults.
 	SoftLimit int
 	HardLimit int
+	// Name, when set, registers the run as a job with this description, so
+	// the jobs list, "message" and "resume" can reach it by this name.
+	Name string
 }
 
 // RunSubagentTask runs spec through the registered subagent runner in
@@ -28,7 +31,25 @@ func RunSubagentTask(ctx context.Context, s TaskSpec) (result, sessionID string,
 	if subagentToolInstance == nil || subagentToolInstance.Runner == nil {
 		return "", "", errors.New("no subagent runner is set")
 	}
-	return runSubagentTask(ctx, subagentToolInstance.Runner, s)
+	runner := subagentToolInstance.Runner
+	starter := getJobStarter()
+	if s.Name == "" || starter == nil {
+		return runSubagentTask(ctx, runner, s)
+	}
+	var res, id string
+	runErr := errors.New("role agent ended without a result")
+	done := make(chan struct{})
+	starter.Start(ctx, s.Name, JobKindSubagent, "", func(jobCtx context.Context, jobID string) (string, bool, error) {
+		defer close(done)
+		// Nobody answers ask_parent for a role agent (parentID is empty), so
+		// mark the job as unroutable: ask_parent then fails at once.
+		jobCtx = context.WithValue(jobCtx, JobIDCtxKey{}, jobID)
+		jobCtx = context.WithValue(jobCtx, AskUnroutableCtxKey{}, true)
+		res, id, runErr = runSubagentTask(jobCtx, runner, s)
+		return res, false, runErr
+	})
+	<-done
+	return res, id, runErr
 }
 
 func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (string, string, error) {
