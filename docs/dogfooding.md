@@ -140,7 +140,7 @@ The file is `~/.tyci/runs/<repo>/<run>/state.json`.
 | `ask` | The question and allowed answers, when paused |
 | `pr` | The pull request number, when known |
 | `visits` | Visit count per state |
-| `history` | One entry per step: `seq`, `state`, `kind`, `key`, `to`, `exit`, `stderr_tail`, `warnings` |
+| `history` | One entry per step: `seq`, `state`, `kind`, `key`, `to`, `exit`, `stderr_tail`, `warnings`, `error` (agent error text, masked) |
 
 The reviewer writes `review.md` in the run directory (`$TYCI_RUN_DIR`). Its first line
 is `ACCEPT` or `CHANGES`.
