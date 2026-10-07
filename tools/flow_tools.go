@@ -130,14 +130,14 @@ func workflowToolsSchema() []map[string]any {
 		}}
 	}
 	return []map[string]any{
-		fn("workflow_start", "Start a workflow run for a GitHub issue of the current repository (for example \"work on #160\"). Returns at once; a notice arrives when the run finishes or pauses. Only one run is active at a time.",
+		fn("workflow_start", "Start a workflow run for a GitHub issue of the current repository (for example \"work on #160\"). Returns at once; a notice arrives when the run finishes or pauses.",
 			map[string]any{
 				"workflow": map[string]any{"type": "string", "description": "Workflow name (default: issue-to-merge)."},
 				"issue":    map[string]any{"type": "integer", "description": "Issue number."},
 			}, []string{"issue"}),
 		fn("workflow_status", "Show the state of a workflow run: status, current state, visits, last history entries, PR.",
 			map[string]any{"run": map[string]any{"type": "string", "description": "Run id (default: newest run)."}}, []string{}),
-		fn("workflow_resume", "Answer a paused workflow run. The answer is one of the keys named in the pause notice. Two more answers work at every ask: \"retry <note>\" (go back to the worker with the note) and \"goto <state>\" (continue at that state).",
+		fn("workflow_resume", "Answer a paused workflow run. Use one of the answers named in the pause notice: \"retry\" (back to the worker), \"stop\" (end the run), \"retry <note>\" (back to the worker with the note) or \"goto <state>\" (continue at that state).",
 			map[string]any{
 				"run":    map[string]any{"type": "string", "description": "Run id."},
 				"answer": map[string]any{"type": "string", "description": "One of the allowed answers."},

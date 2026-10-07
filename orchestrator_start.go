@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
@@ -146,6 +147,15 @@ func orchestratorSystemPrompt() string {
 		}
 	}
 	return providers.BuildOrchestratorSystemPrompt(workers)
+}
+
+// orchestratorChatConfig turns the chat config into the orchestrator config:
+// the orchestrator prompt and no "plan first" todo gate, so the first reply and
+// status answers are not blocked by a todo plan.
+func orchestratorChatConfig(cfg agent.Config) agent.Config {
+	cfg.System = orchestratorSystemPrompt()
+	cfg.HasTodos = nil
+	return cfg
 }
 
 // runRows converts saved runs to sidebar rows with the last three steps.

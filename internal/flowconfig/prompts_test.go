@@ -71,6 +71,11 @@ func TestPrompts_AllRequireReport(t *testing.T) {
 	requireAll(t, "worker", "If the run so far shows red CI, CHANGES, a conflict or new comments, fix that first.")
 }
 
+// #371: the shorter oracle prompt keeps the read-only rule.
+func TestPrompts_OracleReadOnly(t *testing.T) {
+	requireAll(t, "oracle", "You are read-only.", "Do not edit, create or delete files.", "Do not ask questions.")
+}
+
 func TestPrompts_MergeDecisionOneWord(t *testing.T) {
 	requireAll(t, "merge_decision", "`retry`", "`code`", "`ask`")
 }
