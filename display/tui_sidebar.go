@@ -521,7 +521,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if tab := sidebarTabAtX(layout, msg.X); tab >= 0 {
 					m.sidebarSwitchTab(tab)
 				}
-				return m, nil
+				return m, m.armStatusTick()
 			}
 			// Row click within content area — offset by the current scroll,
 			// since row 0 on screen is sidebarVisibleScroll in the

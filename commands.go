@@ -654,7 +654,17 @@ var tuiCmd = &cobra.Command{
 		// — reusing session.ResumeEntries rather than the display package
 		// importing "session" itself (same layering rule as jobs/tools).
 		tuiDisp.SetTranscriptProvider(buildTranscriptProvider())
-		tuiDisp.SetRunLister(func() []display.TuiRunRow { return runRows(workflowManager.Recent(5)) })
+		// Cache the rows: Recent runs git subprocesses and View() calls this
+		// on every frame. Only the Bubble Tea goroutine calls it, so no lock.
+		var runRowsCache []display.TuiRunRow
+		var runRowsAt time.Time
+		tuiDisp.SetRunLister(func() []display.TuiRunRow {
+			if runRowsAt.IsZero() || time.Since(runRowsAt) >= time.Second {
+				runRowsCache = runRows(workflowManager.Recent(5))
+				runRowsAt = time.Now()
+			}
+			return runRowsCache
+		})
 		tuiDisp.SetSessionLister(func() []display.TuiResumeEntry {
 			wd, _ := os.Getwd()
 			entries, err := session.ResumeEntries(wd)

@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- TUI: new sidebar tab "Runs" shows recent flow runs with status, current state, role, time in state and last steps (#296).
+
 ### Fixed
 - Flow configuration now accepts direct `provider/model` names in `default_model` and role `model` fields without requiring identity aliases.
 - Flow: a failed agent state now saves its error in the `error` field of the `state.json` history entry and shows it in the ask message (#300).
