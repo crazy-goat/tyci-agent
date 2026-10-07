@@ -82,8 +82,7 @@ func TestRun_AutoCompact_NoTriggerBelowThreshold(t *testing.T) {
 		ModelName:    "count-1",
 		OnExhausted: []stream.Event{
 			stream.TextDelta{Text: "done"},
-			// 60% of 200000 — over the reminder threshold (50%) but under
-			// the default auto-compact threshold (85%).
+			// 60% of 200000 — under the default soft (80%) and hard (95%) limits.
 			stream.Finish{Usage: stream.Usage{Input: 120000, Output: 0}},
 		},
 	}
@@ -162,7 +161,7 @@ func TestRun_AutoCompact_CustomPercent(t *testing.T) {
 		ModelName:    "count-1",
 		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "working"},
-			// 60% of 200000 — would not trigger the default (85%) threshold.
+			// 60% of 200000 — would not trigger the default hard limit (95%).
 			stream.Finish{Usage: stream.Usage{Input: 120000, Output: 0}},
 		}},
 		OnExhausted: []stream.Event{

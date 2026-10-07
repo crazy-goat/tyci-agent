@@ -598,6 +598,13 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	return totalUsage, nil
 }
 
+// Automatic limits used when the user sets no soft or hard limit: percent of
+// the model's context window.
+const (
+	autoSoftPercent = 80
+	autoHardPercent = 95
+)
+
 // buildLastStepWarning produces the harness-authored message injected right
 // before what the harness expects to be the model's final turn — see the
 // lastStepWarned block in Run for the two triggers (iteration cap, wall-clock
@@ -608,19 +615,14 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 // fire ends the loop the instant this turn completes, so a tool call here
 // would never have its result seen by the model — the only useful thing it
 // can do with this turn is write its summary as plain text right now.
-// Automatic limits used when the user sets no soft or hard limit: percent of
-// the model's context window.
-const (
-	autoSoftPercent = 80
-	autoHardPercent = 95
-)
-
 // compactThresholds returns the token counts at which the soft notice and the
 // automatic compaction fire. A user limit is capped by the window. An unset
 // soft limit is autoSoftPercent of the window; an unset hard limit is
 // hardPercent (legacy auto_compact_percent) or autoHardPercent of the
 // window. With an unknown window (0) only user limits apply. A 0 in the
-// result means that trigger is off.
+// result means that trigger is off. The two values are independent: a hard
+// limit below the automatic soft value means the compaction fires first and
+// the soft notice does not appear. Set a soft limit to get the notice.
 func compactThresholds(window, soft, hard, hardPercent int) (softAt, hardAt int) {
 	capped := func(v int) int {
 		if window > 0 {

@@ -205,7 +205,7 @@ func TestRun_ContextBudgetReminder_CountsCacheTokens(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// Input(10)+Output(1000) alone is 1010, well under 50% of 200000 — the
+	// Input(10)+Output(1000) alone is 1010, well under the soft limit (100000) — the
 	// reminder must only fire once CacheRead/CacheWrite are added in too
 	// (total 151010).
 	if got := countReminderLines(msgs); got != 1 {
