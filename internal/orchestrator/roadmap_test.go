@@ -164,7 +164,7 @@ func TestFallbackOrder_CycleDoesNotHang(t *testing.T) {
 }
 
 func oracleCfg() *flowconfig.Config {
-	return &flowconfig.Config{Models: map[string]string{"opus": "x://opus", "cheap": "x://cheap"}}
+	return &flowconfig.Config{Models: map[string]string{"opus": "x://opus", "cheap": "x://cheap"}, DefaultModel: "opus"}
 }
 
 func TestRoadmapWorkflowLoads(t *testing.T) {
@@ -216,10 +216,10 @@ func TestOracleHasOnlyReadTool(t *testing.T) {
 	t.Fatal("no oracle definition")
 }
 
-func TestOracleDefaultModel(t *testing.T) {
+func TestOracleModel(t *testing.T) {
 	cfg := oracleCfg()
 	r, err := cfg.Role("oracle")
-	if err != nil || r.Model != "opus" || r.Prompt == "" {
+	if err != nil || r.Model != "" || r.Prompt == "" {
 		t.Fatalf("%+v %v", r, err)
 	}
 	cfg.Roles = map[string]flowconfig.Role{"oracle": {Model: "cheap"}}

@@ -195,16 +195,10 @@ func (c *Config) hasModel(model string) bool {
 func (c *Config) Role(name string) (Role, error) {
 	r, ok := c.Roles[name]
 	if ok && r.Prompt != "" {
-		if name == "oracle" && r.Model == "" {
-			r.Model = "opus"
-		}
 		return r, nil
 	}
 	if p, found := defaultPrompt(name); found {
 		r.Prompt = p
-		if name == "oracle" && r.Model == "" {
-			r.Model = "opus"
-		}
 		return r, nil
 	}
 	if ok {

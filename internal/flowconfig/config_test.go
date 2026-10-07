@@ -228,3 +228,16 @@ func TestLoad_OrchestratorSectionIsAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRole_OracleWithoutModelUsesDefaultModel(t *testing.T) {
+	c := &Config{Models: map[string]string{"a": "uri"}, DefaultModel: "a"}
+	for _, cfg := range []*Config{c, {Models: c.Models, DefaultModel: "a", Roles: map[string]Role{"oracle": {Prompt: "p"}}}} {
+		r, err := cfg.Role("oracle")
+		if err != nil || r.Model != "" {
+			t.Fatalf("got %+v, %v", r, err)
+		}
+		if u, err := cfg.ResolveModel(r); err != nil || u != "uri" {
+			t.Fatalf("got %q %v", u, err)
+		}
+	}
+}
