@@ -551,10 +551,12 @@ var consoleCmd = &cobra.Command{
 
 		// requireConfigured: /model in the console refuses a provider
 		// without credentials and says how to add one.
-		cond := newConductor(provider, modelName, disp, cfg, sessionPath, catalogResolver{requireConfigured: true})
 		// Chat tools workflow_start/status/resume exist only in tui and console:
 		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
+		// Set them before the schema snapshot, or the model never sees them.
 		tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})
+		cfg.Schema = tools.GetTopLevelToolsSchemaJSON()
+		cond := newConductor(provider, modelName, disp, cfg, sessionPath, catalogResolver{requireConfigured: true})
 		workflowManager.SetBase(ctx)
 		defer workflowManager.Shutdown(3 * time.Second)
 		runInteractive(cond, disp, historyFile, ctx)
@@ -686,10 +688,12 @@ var tuiCmd = &cobra.Command{
 		// silently refusing a favorite would read as a dead key press.
 		// The TUI chat is the orchestrator of the session: its own short prompt.
 		cfg.System = orchestratorSystemPrompt()
-		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath, catalogResolver{})
 		// Chat tools workflow_start/status/resume exist only in tui and console:
 		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
+		// Set them before the schema snapshot, or the model never sees them.
 		tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})
+		cfg.Schema = tools.GetTopLevelToolsSchemaJSON()
+		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath, catalogResolver{})
 		workflowManager.SetBase(ctx)
 		defer workflowManager.Shutdown(3 * time.Second)
 		runTUI(cond, tuiDisp, ctx)

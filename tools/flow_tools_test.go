@@ -77,3 +77,14 @@ func TestWorkflowToolsAbsentFromSchemaWithoutManager(t *testing.T) {
 		t.Error("schema offers workflow_start without a manager")
 	}
 }
+
+func TestTopLevelSchemaJSONHasWorkflowToolsOnceManagerSet(t *testing.T) {
+	SetWorkflowManager(nil)
+	if strings.Contains(string(GetTopLevelToolsSchemaJSON()), `"workflow_start"`) {
+		t.Fatal("workflow_start must be absent before the manager is set")
+	}
+	withWorkflowManager(t, &fakeWorkflowManager{})
+	if !strings.Contains(string(GetTopLevelToolsSchemaJSON()), `"workflow_start"`) {
+		t.Fatal("workflow_start missing from the top-level schema after the manager is set")
+	}
+}
