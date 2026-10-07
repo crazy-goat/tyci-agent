@@ -150,11 +150,9 @@ func orchestratorSystemPrompt() string {
 }
 
 // orchestratorChatConfig turns the chat config into the orchestrator config:
-// the orchestrator prompt and no "plan first" todo gate, so the first reply and
-// status answers are not blocked by a todo plan.
+// the orchestrator prompt.
 func orchestratorChatConfig(cfg agent.Config) agent.Config {
 	cfg.System = orchestratorSystemPrompt()
-	cfg.HasTodos = nil
 	return cfg
 }
 
