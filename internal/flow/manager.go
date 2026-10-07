@@ -93,7 +93,8 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 }
 
 // refuse returns an error when a run is active or the issue has a running or
-// paused run. m.mu must be held.
+// paused run. A running state without an active goroutine is stale and does
+// not block. m.mu must be held.
 func (m *Manager) refuse(info RepoInfo, issue int) error {
 	for id := range m.active {
 		return fmt.Errorf("run %s is active", id)
@@ -104,7 +105,9 @@ func (m *Manager) refuse(info RepoInfo, issue int) error {
 		if err != nil || st.Issue != issue {
 			continue
 		}
-		if st.Status == "running" || st.Status == "paused" {
+		// "running" here is stale: refuse returned above when a run is active in
+		// this process, so no goroutine owns it. Only a paused run blocks.
+		if st.Status == "paused" {
 			return fmt.Errorf("issue %d already has run %s (%s)", issue, st.Run, st.Status)
 		}
 	}

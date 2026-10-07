@@ -119,6 +119,18 @@ func TestWorkflowStart_RefusesSecondRunForSameIssue(t *testing.T) {
 	}
 }
 
+func TestWorkflowStart_StaleRunningDoesNotBlock(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	old := &RunState{Version: 1, Run: "20260101-000000-5", Issue: 5, Status: "running", Visits: map[string]int{}}
+	if err := (&Store{Dir: RunDir(e.home, "r", old.Run)}).Save(old); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5}); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	e.notice(t)
+}
+
 func TestWorkflowStart_ReturnsImmediately(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
