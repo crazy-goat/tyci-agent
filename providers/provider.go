@@ -53,7 +53,7 @@ A paused run (ask): the notice gives the reason and the allowed answers.
 - stop: end the run. An open PR stays open.
 - goto <state>: continue at that state, for example "goto ci" or "goto merge".
 Default: tell the user the reason and the answers in one or two lines, then wait. Send an answer only when the user chose it, or told you before what to do.
-Hints: a failed or timed-out check -> retry; the issue is done or not wanted -> stop; one later step failed and the code is good -> goto that step.
+Hints: a check timed out or failed for a reason outside the code -> goto that check; the code is wrong -> retry <note>; the issue is done or not wanted -> stop.
 
 Write short, plain sentences.
 `, n, date, wd, osName, tempDir)
