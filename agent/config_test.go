@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -349,5 +350,39 @@ func TestResolveModel_ExplicitModelBeatsConfig(t *testing.T) {
 	got := ResolveModel("explicit/model", "")
 	if got != "explicit/model" {
 		t.Errorf("ResolveModel with an explicit model = %q, want it to win over config.json", got)
+	}
+}
+
+func TestSaveTyciConfig_KeepsUnknownKeys(t *testing.T) {
+	setupConfigTest(t)
+	if err := os.MkdirAll(globalConfigDir(), 0755); err != nil {
+		t.Fatal(err)
+	}
+	in := `{"models":{"a":"b"},"roles":{"x":1},"sidebar_visible":true,"default_model":"m"}`
+	if err := os.WriteFile(globalConfigFilePath(), []byte(in), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := LoadTyciConfig()
+	cfg.SidebarVisible = false
+	cfg.DefaultModel = "n"
+	if err := SaveTyciConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(globalConfigFilePath())
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	var m, r bytes.Buffer
+	_ = json.Compact(&m, got["models"])
+	_ = json.Compact(&r, got["roles"])
+	if m.String() != `{"a":"b"}` || r.String() != `{"x":1}` {
+		t.Errorf("unknown keys lost: %s", data)
+	}
+	if _, ok := got["sidebar_visible"]; ok {
+		t.Errorf("cleared key kept: %s", data)
+	}
+	if string(got["default_model"]) != `"n"` {
+		t.Errorf("default_model not saved: %s", data)
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -133,7 +135,25 @@ func SaveTyciConfig(cfg TyciConfig) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	// Keep keys this struct does not know (models, roles, orchestrator, forge).
+	rest := map[string]json.RawMessage{}
+	if old, err := os.ReadFile(globalConfigFilePath()); err == nil {
+		if json.Unmarshal(old, &rest) != nil || rest == nil {
+			rest = map[string]json.RawMessage{}
+		}
+	}
+	t := reflect.TypeOf(cfg)
+	for i := 0; i < t.NumField(); i++ {
+		delete(rest, strings.Split(t.Field(i).Tag.Get("json"), ",")[0])
+	}
+	own, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(own, &rest); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(rest, "", "  ")
 	if err != nil {
 		return err
 	}
