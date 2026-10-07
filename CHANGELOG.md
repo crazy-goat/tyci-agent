@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-07
+
 ### Added
 - Issue-to-merge workflow and runbook (`docs/dogfooding.md`). New on-disk formats: `~/.tyci/config.json` and `.tyci/config.json` (`models`, `default_model`, `roles`), `~/.tyci/worktrees/<repo>/issue-N`, `~/.tyci/runs/<repo>/<run>/state.json`, `.tyci/workflows/` and `.tyci/checks/`. New chat tools: `workflow_start`, `workflow_status`, `workflow_resume` (#175)
 - `internal/worktree.AddIssue` creates fixed-path issue worktrees at `~/.tyci/worktrees/<repo>/issue-N` on branch `issue-N` from `origin/<default branch>`; `Remove` deletes only the issue leaf so sibling worktrees survive (#158)
