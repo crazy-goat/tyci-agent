@@ -74,6 +74,7 @@ func TestMerge_CiNotGreenFails(t *testing.T) {
 	}
 }
 
+// Regression guard for the non-BEHIND path (not a test of the #326 fix).
 func TestMerge_NoChecksReportedFails(t *testing.T) {
 	key, stderr, log, _ := runMerge(t, newPushEnv(t), "a.txt", map[string]string{"NO_CHECKS": "1"})
 	if key != "fail" || strings.Contains(log, "pr merge") || !strings.Contains(stderr, "missing") {
