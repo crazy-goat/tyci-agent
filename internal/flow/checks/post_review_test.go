@@ -40,15 +40,21 @@ func runPostReview(t *testing.T, review string, env map[string]string) (key stri
 }
 
 func runPostReviewIn(t *testing.T, dir string, env map[string]string) (key string, exit int, body string) {
+	key, exit, body, _ = runPostReviewErr(t, dir, env)
+	return key, exit, body
+}
+
+// runPostReviewErr is runPostReviewIn that also returns stderr.
+func runPostReviewErr(t *testing.T, dir string, env map[string]string) (key string, exit int, body, stderr string) {
 	t.Helper()
 	logPath := testutil.StubGH(t, reviewGh)
 	base := map[string]string{"TYCI_REPO": "o/r", "TYCI_PR": "9", "TYCI_RUN_DIR": dir}
 	for k, v := range env {
 		base[k] = v
 	}
-	key, exit, _ = testutil.RunCheck(t, "post_review.sh", base)
+	key, exit, stderr = testutil.RunCheck(t, "post_review.sh", base)
 	b, _ := os.ReadFile(logPath + ".body")
-	return key, exit, string(b)
+	return key, exit, string(b), stderr
 }
 
 func TestPostReview_Body(t *testing.T) {
@@ -72,10 +78,11 @@ func TestPostReview_FailStillExitsZero(t *testing.T) {
 	} {
 		dir := t.TempDir()
 		writeArtifact(t, dir, "003-review", "report.md", tc.review)
-		key, exit, _ := runPostReviewIn(t, dir, tc.env)
+		key, exit, _, stderr := runPostReviewErr(t, dir, tc.env)
 		if key != "fail" || exit != 0 {
 			t.Errorf("%s: key=%q exit=%d", name, key, exit)
 		}
+		wantBlock(t, stderr, "fail", "goes on to ci")
 	}
 }
 

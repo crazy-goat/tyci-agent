@@ -8,12 +8,14 @@ import (
 var testTaskData = TaskData{
 	Repo: "o/r", Branch: "feat/b", DefaultBranch: "main", Worktree: "/wt/x",
 	RunDir: "/run/y", Reason: "boom-reason", Issue: 7, PR: 42, Visit: 3,
+	Failed: "upd", FailedKey: "fail", FailedDir: "/run/y/artifacts/005-upd",
 }
 
 func TestTasks_Render(t *testing.T) {
 	cases := map[string][]string{
 		"findings_to_issues": {"o/r", "/wt/x", "Run so far", "#42"},
-		"merge_decision":     {"feat/b", "main", "boom-reason", "#42"},
+		"fixer":              {"`upd`", "`fail`", "/run/y/artifacts/005-upd/output.log", "#42", "`ok`", "`failed`", "failed.log"},
+		"recover":            {"`upd`", "`fail`", "/run/y/artifacts/005-upd/output.log", "goto:<state>", "`stop`", "ask <reason>"},
 	}
 	for name, want := range cases {
 		out, err := RenderTask(name, testTaskData)
@@ -46,7 +48,7 @@ func TestTasks_NoFunctionsAllowed(t *testing.T) {
 			t.Errorf("%s: want error", s)
 		}
 	}
-	for _, n := range []string{"findings_to_issues", "merge_decision"} {
+	for _, n := range []string{"findings_to_issues", "fixer", "recover"} {
 		b, _ := embedded.ReadFile("tasks/" + n + ".md")
 		for _, f := range []string{"{{call", "{{printf", "{{env", "{{exec"} {
 			if strings.Contains(string(b), f) {
@@ -81,26 +83,10 @@ func TestFindingsTask_EndsWithDone(t *testing.T) {
 	}
 }
 
-func TestMergeDecisionTask_ContainsReason(t *testing.T) {
-	out, _ := RenderTask("merge_decision", testTaskData)
-	if !strings.Contains(out, "```\nboom-reason\n```") {
-		t.Error("reason not in fenced block")
-	}
-	for _, w := range []string{"retry", "code", "ask"} {
-		if !strings.Contains(out, w) {
-			t.Errorf("missing %q", w)
-		}
-	}
-}
-
-func TestMergeDecisionTask_ReasonIsMasked(t *testing.T) {
-	tok := "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
-	out, err := TaskTemplates{}.Render("merge_decision", RunContext{PR: 1, Reason: "fail " + tok})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(out, tok) {
-		t.Fatal("token leaked")
+func TestTaskTemplatesRenderPassesFailedStep(t *testing.T) {
+	out, err := TaskTemplates{}.Render("fixer", RunContext{Failed: "merge", FailedKey: "fail", FailedDir: "/r/artifacts/009-merge"})
+	if err != nil || !strings.Contains(out, "`merge` of the run") || !strings.Contains(out, "/r/artifacts/009-merge/output.log") {
+		t.Fatalf("out = %q, err = %v", out, err)
 	}
 }
 

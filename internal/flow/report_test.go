@@ -55,7 +55,7 @@ func TestWorkerTask_RunSoFarOnSecondVisit(t *testing.T) {
 	s := &reportSpawn{}
 	wf := &Workflow{Start: "code", States: map[string]State{
 		"code":   {Agent: "worker", MaxVisits: 2, On: map[string]string{"done": "review"}},
-		"review": {Agent: "merge_decision", On: map[string]string{"ask": "ci", "default": "ci"}},
+		"review": {Agent: "fixer", On: map[string]string{"failed": "ci", "default": "ci"}},
 		"ci":     {Check: "ci.sh", On: map[string]string{"red": "code"}},
 		"ask":    {Ask: "help"},
 	}}
@@ -79,7 +79,7 @@ func TestWorkerTask_RunSoFarOnSecondVisit(t *testing.T) {
 		t.Errorf("first task:\n%s", first)
 	}
 	for _, want := range []string{
-		"- 002 review: ask: " + filepath.Join(art, "002-review", "report.md"),
+		"- 002 review: failed: " + filepath.Join(art, "002-review", "report.md"),
 		"- 003 ci: red: " + filepath.Join(art, "003-ci", "output.log"),
 		"Your artifact dir: " + filepath.Join(art, "004-code"),
 	} {

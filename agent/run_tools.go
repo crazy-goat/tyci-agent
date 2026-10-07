@@ -25,33 +25,7 @@ func executeAndAppendToolResults(ctx context.Context, d Sink, msgs *[]connector.
 	showToolCalls(d, toolCalls, toolDeltas)
 	ctx = installToolStreaming(ctx, d)
 
-	// Enforce "plan first" policy: block non-todo tools when no plan exists.
-	toExecute, origIdx, guardResults := enforcePlanGuard(cfg, toolCalls)
-
-	var results []string
-	failed := make([]bool, len(toolCalls))
-	durations := make([]time.Duration, len(toolCalls))
-	if guardResults != nil {
-		// Guard is active — execute only the allowed (todo) calls and
-		// merge their results back into the pre-filled results array.
-		if len(toExecute) > 0 {
-			execResults, execDurations, execFailed := executeTools(ctx, cfg.Tools, toExecute)
-			for i, res := range execResults {
-				guardResults[origIdx[i]] = res
-				durations[origIdx[i]] = execDurations[i]
-				failed[origIdx[i]] = execFailed[i]
-			}
-		}
-		results = guardResults
-		for i, result := range results {
-			if result != "" {
-				failed[i] = failed[i] || strings.HasPrefix(result, "Error:")
-			}
-		}
-	} else {
-		// Guard not active — execute all calls normally.
-		results, durations, failed = executeTools(ctx, cfg.Tools, toolCalls)
-	}
+	results, durations, failed := executeTools(ctx, cfg.Tools, toolCalls)
 
 	appendToolResults(d, msgs, cfg, toolCalls, results, durations, failed)
 }

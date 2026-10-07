@@ -344,7 +344,7 @@ func (c *Conductor) Compact(summary, focus string) (string, error) {
 // the same reason as Client: a caller forking the conversation (e.g. /btw)
 // wants the same tool/schema/fallback behavior, minus the callbacks that are
 // specific to this conductor's own conversation (Session, NextMessages,
-// PendingTodos, HasTodos) — which it strips out itself, using this as the
+// PendingTodos) — which it strips out itself, using this as the
 // base.
 func (c *Conductor) Config() agent.Config { return c.cfg }
 

@@ -95,7 +95,6 @@ func TestBtwConfig_StripsMainThreadCallbacksButKeepsToolBehavior(t *testing.T) {
 		MaxIterations: 10,
 		NextMessages:  func() []string { return []string{"should never be called by a fork"} },
 		PendingTodos:  func() []string { return []string{"todo"} },
-		HasTodos:      func() bool { return true },
 		Compactor: func(summary, focus string) (string, error) {
 			t.Fatal("F10: a /btw/fork/resume child must never call the main conversation's Compactor")
 			return "", nil
@@ -121,9 +120,6 @@ func TestBtwConfig_StripsMainThreadCallbacksButKeepsToolBehavior(t *testing.T) {
 	}
 	if got.PendingTodos != nil {
 		t.Error("PendingTodos must be nil — that's the main thread's todo list")
-	}
-	if got.HasTodos != nil {
-		t.Error("HasTodos must be nil — that's the main thread's todo list")
 	}
 	// F10: a /btw child must never be able to compact the user's live main
 	// conversation. btwConfig is where that is decided, and the resumable path

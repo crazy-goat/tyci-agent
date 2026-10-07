@@ -27,7 +27,7 @@ func requireAll(t *testing.T, role string, phrases ...string) {
 }
 
 func TestPrompts_Embedded(t *testing.T) {
-	for _, r := range []string{"worker", "review", "merge_decision"} {
+	for _, r := range []string{"worker", "review", "fixer"} {
 		prompt(t, r)
 	}
 }
@@ -49,20 +49,20 @@ func TestPrompts_WorkerWritesFindings(t *testing.T) {
 }
 
 func TestPrompts_AllRequireProgressNote(t *testing.T) {
-	for _, r := range []string{"worker", "review", "merge_decision"} {
+	for _, r := range []string{"worker", "review", "fixer"} {
 		requireAll(t, r, progressNote)
 	}
 }
 
 func TestPrompts_AllForbidQuestions(t *testing.T) {
-	for _, r := range []string{"worker", "review", "merge_decision"} {
+	for _, r := range []string{"worker", "review", "fixer"} {
 		requireAll(t, r, "Do not ask questions.")
 	}
 }
 
 // #340: every role must leave report.md; no prompt names $TYCI_RUN_DIR.
 func TestPrompts_AllRequireReport(t *testing.T) {
-	for _, r := range []string{"worker", "review", "merge_decision", "oracle"} {
+	for _, r := range []string{"worker", "review", "fixer", "oracle"} {
 		requireAll(t, r, "MUST write `report.md`")
 		if strings.Contains(prompt(t, r), "TYCI_RUN_DIR") {
 			t.Errorf("%s prompt mentions TYCI_RUN_DIR", r)
@@ -71,13 +71,18 @@ func TestPrompts_AllRequireReport(t *testing.T) {
 	requireAll(t, "worker", "If the run so far shows red CI, CHANGES, a conflict or new comments, fix that first.")
 }
 
+// #369: the fixer answers ok or failed, writes failed.log and never force-pushes.
+func TestPrompts_FixerKeys(t *testing.T) {
+	requireAll(t, "fixer", "answer exactly `ok`", "answer exactly `failed`", "`failed.log`", "SUGGESTED", "Never force-push.")
+}
+
 // #371: the shorter oracle prompt keeps the read-only rule.
 func TestPrompts_OracleReadOnly(t *testing.T) {
 	requireAll(t, "oracle", "You are read-only.", "Do not edit, create or delete files.", "Do not ask questions.")
 }
 
-func TestPrompts_MergeDecisionOneWord(t *testing.T) {
-	requireAll(t, "merge_decision", "`retry`", "`code`", "`ask`")
+func TestPrompts_OracleFollowsTask(t *testing.T) {
+	requireAll(t, "oracle", "Answer only in the format the task describes.")
 }
 
 func TestRole_DefaultPromptUsedWhenConfigEmpty(t *testing.T) {

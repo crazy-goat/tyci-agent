@@ -96,7 +96,7 @@ func defaultPrompt(role string) (string, bool) {
 }
 
 func isBuiltinRole(name string) bool {
-	return name == "worker" || name == "review" || name == "merge_decision" || name == "oracle"
+	return name == "worker" || name == "review" || name == "fixer" || name == "oracle"
 }
 
 // Load reads the global file and, only when trusted, the project file, then merges and validates them.
@@ -252,7 +252,7 @@ func (c *Config) hasModel(model string) bool {
 	return strings.Contains(model, "/")
 }
 
-// Role returns the named role. Only worker, review, merge_decision and oracle fall back to embedded prompts.
+// Role returns the named role. Only worker, review, fixer and oracle fall back to embedded prompts.
 func (c *Config) Role(name string) (Role, error) {
 	r, ok := c.Roles[name]
 	if ok && r.Prompt != "" {

@@ -340,7 +340,6 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		PendingTodos:       tools.PendingTodos,
 		ActiveSubagents:    JobRegistry.HasActiveSubagents,
 		PendingJobs:        JobRegistry.PendingLines,
-		HasTodos:           tools.HasPendingTodos,
 		ContextLimit:       pricingContextLimit(provider.Name(), modelName),
 		ContextLimitFor:    pricingContextLimit,
 		Interactive:        interactive,

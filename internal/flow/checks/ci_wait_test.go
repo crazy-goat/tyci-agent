@@ -162,28 +162,26 @@ func TestCIWait_NoChecksReportedBehind(t *testing.T) {
 	}
 }
 
-// lastStderrLine is the line the flow runner shows in the ask message.
-func lastStderrLine(s string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	return lines[len(lines)-1]
-}
-
 func TestCIWait_ReasonOnStderr(t *testing.T) {
 	cases := []struct {
 		name, key, want string
 		seq             []string
 		env             map[string]string
 	}{
-		{"conflict", "conflict", "dirty", []string{"err"}, map[string]string{"GH_VIEW": "CONFLICTING DIRTY"}},
+		{"conflict", "conflict", "conflicts with the default branch", []string{"err"}, map[string]string{"GH_VIEW": "CONFLICTING DIRTY"}},
 		{"behind", "behind", "behind the default branch", []string{`[]`}, map[string]string{"GH_VIEW": "MERGEABLE BEHIND"}},
-		{"nochecks", "fail", "ci-ok did not appear", []string{`[]`}, map[string]string{"TYCI_CI_APPEAR_SEC": "0"}},
+		{"nochecks", "fail", "did not appear", []string{`[]`}, map[string]string{"TYCI_CI_APPEAR_SEC": "0"}},
+		{"red", "red", "ci-failed.log", []string{ciJSON("fail")}, nil},
+		{"nopr", "fail", "TYCI_PR is not set", []string{ciJSON("pass")}, map[string]string{"TYCI_PR": ""}},
+		{"gh errors", "fail", "failed 3 times", []string{"err", "err", "err"}, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			key, _, _, stderr := runCIErr(t, c.seq, c.env)
-			if key != c.key || !strings.Contains(lastStderrLine(stderr), c.want) {
+			if key != c.key {
 				t.Fatalf("key=%q stderr=%q", key, stderr)
 			}
+			wantBlock(t, stderr, c.key, c.want)
 		})
 	}
 }

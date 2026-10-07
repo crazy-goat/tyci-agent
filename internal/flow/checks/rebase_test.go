@@ -75,8 +75,9 @@ func TestRebase_ConflictAborts(t *testing.T) {
 	if key != "conflict" || exit != 0 {
 		t.Fatalf("key=%q exit=%d", key, exit)
 	}
-	if !strings.Contains(stderr, "conflicts in: f.txt.") || !strings.Contains(stderr, "git merge origin/main") {
-		t.Errorf("stderr does not name the file and the fix: %s", stderr)
+	wantBlock(t, stderr, "conflict", "conflicts in: f.txt.")
+	if !strings.Contains(stderr, "SUGGESTED: run 'git merge origin/main'") {
+		t.Errorf("stderr does not name the fix: %s", stderr)
 	}
 	if s := git(t, e.work, "status", "--porcelain"); s != "" {
 		t.Fatalf("dirty: %s", s)
@@ -92,10 +93,11 @@ func TestRebase_ConflictAborts(t *testing.T) {
 func TestRebase_FetchFailureFails(t *testing.T) {
 	e := newPushEnv(t)
 	git(t, e.work, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing.git"))
-	key, exit, _, _, _ := e.runRebase(t, "rebase.sh", nil)
+	key, exit, _, stderr, _ := e.runRebase(t, "rebase.sh", nil)
 	if key != "fail" || exit != 0 {
 		t.Fatalf("key=%q exit=%d", key, exit)
 	}
+	wantBlock(t, stderr, "fail", "git fetch origin main failed")
 }
 
 func TestRebase_PushRejectedFails(t *testing.T) {
@@ -110,9 +112,10 @@ func TestRebase_PushRejectedFails(t *testing.T) {
 	if key != "fail" || exit != 0 {
 		t.Fatalf("key=%q exit=%d", key, exit)
 	}
-	if !strings.Contains(stderr, "the branches diverged") {
+	if !strings.Contains(stderr, "the branches diverged") || !strings.Contains(stderr, "SUGGESTED: compare 'git log HEAD..origin/issue-7'") {
 		t.Errorf("stderr does not explain the divergence: %s", stderr)
 	}
+	wantBlock(t, stderr, "fail", "git push to origin/issue-7 was rejected (non-fast-forward)")
 }
 
 func TestRebase_MissingPushShFails(t *testing.T) {
@@ -126,7 +129,7 @@ func TestRebase_MissingPushShFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	key, exit, _, stderr, _ := e.runRebase(t, filepath.Join(dir, "rebase.sh"), nil)
-	if key != "fail" || exit != 0 || !strings.Contains(stderr, "push.sh not found") {
+	if key != "fail" || exit != 0 || !strings.Contains(stderr, "push.sh was not found") {
 		t.Fatalf("key=%q exit=%d stderr=%q", key, exit, stderr)
 	}
 }

@@ -221,7 +221,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "todo",
-				"description": "The run's plan, and a gate: every other tool is refused until at least one item exists. todo(action=\"add_batch\", items=[...]) creates the whole plan in one call. Keep items at the granularity of something you can finish and verify. Mark done when done and blocked (with a reason) when it cannot proceed — the turn will not end quietly with items still open. actions: add/add_batch/update/doing/blocked/done/remove/list/clear.",
+				"description": "Optional task list for long work; skip it for short tasks. todo(action=\"add_batch\", items=[...]) creates the whole list in one call. Keep items at the granularity of something you can finish and verify. Mark done when done and blocked (with a reason) when it cannot proceed — the turn will not end quietly with items still open. actions: add/add_batch/update/doing/blocked/done/remove/list/clear.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{

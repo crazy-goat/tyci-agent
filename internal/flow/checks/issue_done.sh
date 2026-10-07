@@ -6,9 +6,14 @@
 # Env in:  TYCI_REPO (owner/name), TYCI_ISSUE, optional TYCI_ACCEPT_LABEL (default: accepted).
 # Keys:    go    work on the issue
 #          skip  do not work on the issue
-# Errors:  any gh failure other than HTTP 404 exits non-zero WITHOUT a key.
+# Errors:  any gh failure other than HTTP 404 exits non-zero WITHOUT a key; stderr then has a
+#          describe.sh block (RESULT: error) that says what failed.
 # Idempotent, read-only. Never prints tokens.
 set -euo pipefail
+# describe.sh prints the failure block (see there). A copy of this script without it still works.
+describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
 
 label="${TYCI_ACCEPT_LABEL:-accepted}"
 
@@ -46,6 +51,9 @@ case "$status" in
     ;;
 *)
     echo "issue_done: unexpected response from permission API: ${status:-none}" >&2
+    describe error "the GitHub permission API returned HTTP ${status:-none} for issue author '$author' of #$TYCI_ISSUE" \
+        "a GitHub outage, a rate limit, or gh is not logged in" \
+        "check 'gh auth status' and 'gh api repos/$TYCI_REPO/collaborators/$author/permission'; when it answers 200 or 404, return ok so the gate runs again"
     exit 1
     ;;
 esac

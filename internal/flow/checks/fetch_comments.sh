@@ -14,6 +14,10 @@
 # Writes the highest ids seen (dropped ones too) to $TYCI_RUN_DIR/last_comment_id (issue comments)
 # and last_review_comment_id (PR review comments), only when no lookup failed.
 set -euo pipefail
+# describe.sh prints the failure block (see there). A copy of this script without it still works.
+describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
 
 pr="${TYCI_PR:-}"
 repo="${TYCI_REPO:-}"
@@ -24,14 +28,18 @@ last_review="${TYCI_LAST_REVIEW_COMMENT_ID:-0}"
 case "$last" in '' | *[!0-9]*) last=0 ;; esac
 case "$last_review" in '' | *[!0-9]*) last_review=0 ;; esac
 if [ -z "$pr" ] || [ -z "$run" ] || [ -z "$art" ]; then
-    echo "fetch_comments.sh: TYCI_PR, TYCI_RUN_DIR or TYCI_ARTIFACT_DIR is not set" >&2
+    describe fail "TYCI_PR, TYCI_RUN_DIR or TYCI_ARTIFACT_DIR is not set (PR '$pr')" \
+        "the run lost its PR number" \
+        "nothing to fix in the worktree; return failed"
     echo fail
     exit 0
 fi
 marker='<!-- tyci-agent -->'
 
 fail() {
-    echo "fetch_comments.sh: $1" >&2
+    describe fail "$1 while reading the comments of PR #$pr" \
+        "no network, gh is not logged in, a rate limit, or a GitHub outage" \
+        "run 'gh auth status' and 'gh api repos/$repo/issues/$pr/comments'; when gh works again, return ok so the step runs again"
     echo fail
     exit 0
 }

@@ -41,7 +41,7 @@ func itoa(n int) string {
 }
 
 type fetched struct {
-	key, comments, lastID, log string
+	key, comments, lastID, log, stderr string
 }
 
 func runFetch(t *testing.T, env map[string]string) fetched {
@@ -52,13 +52,13 @@ func runFetch(t *testing.T, env map[string]string) fetched {
 	for k, v := range env {
 		base[k] = v
 	}
-	key, exit, _ := testutil.RunCheck(t, "fetch_comments.sh", base)
+	key, exit, stderr := testutil.RunCheck(t, "fetch_comments.sh", base)
 	if exit != 0 {
 		t.Fatalf("exit %d", exit)
 	}
 	read := func(d, n string) string { b, _ := os.ReadFile(filepath.Join(d, n)); return string(b) }
 	log, _ := os.ReadFile(logPath)
-	return fetched{key, read(art, "comments.md"), strings.TrimSpace(read(dir, "last_comment_id")), string(log)}
+	return fetched{key, read(art, "comments.md"), strings.TrimSpace(read(dir, "last_comment_id")), string(log), stderr}
 }
 
 func TestFetchComments_FiltersNonTeam(t *testing.T) {
@@ -160,4 +160,5 @@ func TestFetchComments_PermissionErrorFailsAndKeepsMarks(t *testing.T) {
 	if f.key != "fail" || f.lastID != "" {
 		t.Errorf("%+v", f)
 	}
+	wantBlock(t, f.stderr, "fail", "permission lookup failed for alice")
 }

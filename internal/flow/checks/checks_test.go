@@ -108,17 +108,19 @@ func TestIssueDone_WeirdAuthorSkips(t *testing.T) {
 }
 
 func TestIssueDone_GhFailureExitsNonZero(t *testing.T) {
-	key, exit, _, _, _ := run(t, map[string]string{"GH_FAIL": "1"})
+	key, exit, _, stderr, _ := run(t, map[string]string{"GH_FAIL": "1"})
 	if exit == 0 || key != "" {
 		t.Fatalf("key=%q exit=%d", key, exit)
 	}
+	wantBlock(t, stderr, "error", "gh issue view")
 }
 
 func TestIssueDone_PermissionAPI500ExitsNonZero(t *testing.T) {
-	key, exit, stdout, _, _ := run(t, map[string]string{"ISSUE_JSON": issueJSON("OPEN", "alice", "accepted"), "PERM_RESP": perm500})
+	key, exit, stdout, stderr, _ := run(t, map[string]string{"ISSUE_JSON": issueJSON("OPEN", "alice", "accepted"), "PERM_RESP": perm500})
 	if exit == 0 || key != "" || stdout != "" {
 		t.Fatalf("key=%q exit=%d stdout=%q", key, exit, stdout)
 	}
+	wantBlock(t, stderr, "error", "HTTP 500")
 }
 
 func TestIssueDone_CustomLabelEnv(t *testing.T) {

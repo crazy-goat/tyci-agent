@@ -60,7 +60,7 @@ func validateStructure(wf *Workflow) []error {
 		}
 		for _, key := range sortedKeys(s.On) {
 			target := s.On[key]
-			if _, ok := wf.States[target]; !ok {
+			if _, ok := wf.States[target]; !ok && target != FailedTarget {
 				errs = append(errs, fmt.Errorf("state %q: on %q -> %q is not a state", name, key, target))
 			}
 		}

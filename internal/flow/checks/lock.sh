@@ -13,10 +13,14 @@
 # Keys:    ok  the lock is held by this run
 # The wait is unbounded: the state timeout_sec stops it (key timeout).
 set -euo pipefail
+# describe.sh prints the failure block (see there). A copy of this script without it still works.
+describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
 
 dir="$HOME/.tyci/locks/$(printf '%s' "${TYCI_REPO:-}" | tr '/' '_').merge"
 poll="${TYCI_LOCK_POLL_SEC:-5}"
-phase=" lock update post_review ci comments merge rebase merge_decision "
+phase=" lock update post_review ci comments merge rebase fixer oracle "
 
 stale() {
     local pid run cur

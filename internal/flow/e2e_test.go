@@ -470,25 +470,66 @@ func TestE2E_RebaseConflict_GoesToCode(t *testing.T) {
 	}
 }
 
-func TestE2E_MergeFail_MergeDecisionRetry(t *testing.T) {
+const toMerge = "check_done, open_pr, code, review, lock, update, post_review, ci, comments, merge"
+
+// #369: a failed merge goes to the fixer; "ok" runs the same step again.
+func TestE2E_MergeFail_FixerOkRunsMergeAgain(t *testing.T) {
 	s := happy()
-	s["merge_decision"] = []string{"retry"}
+	s["fixer"] = []string{"ok"}
 	e := newE2E(t, s)
 	e.ctlSet("merge_fail_once", "")
 	e.mustFinish()
-	e.wantStates("check_done, open_pr, code, review, lock, update, post_review, ci, comments, merge, merge_decision, merge, findings")
+	e.wantStates(toMerge + ", fixer, merge, findings")
 	e.wantMerged()
+	if h := e.st.History[10]; h.Role != "fixer" || h.To != "merge" {
+		t.Errorf("fixer step = %+v", h)
+	}
 }
 
-func TestE2E_MergeFail_MergeDecisionAsk(t *testing.T) {
+// #369: the fixer fails, the oracle sends the run to ci with a note.
+func TestE2E_FixerFailed_OracleGotoCI(t *testing.T) {
 	s := happy()
-	s["merge_decision"] = []string{"ask"}
+	s["fixer"] = []string{"failed"}
+	s["oracle"] = []string{"goto:ci the PR head moved, wait for CI again"}
+	e := newE2E(t, s)
+	e.ctlSet("merge_fail_once", "")
+	e.mustFinish()
+	e.wantStates(toMerge + ", fixer, oracle, ci, comments, merge, findings")
+	e.wantMerged()
+	if h := e.st.History[11]; h.Key != "goto:ci" || h.To != "ci" || h.Note != "the PR head moved, wait for CI again" {
+		t.Errorf("oracle step = %+v", h)
+	}
+}
+
+// #369: the oracle answers ask; the run pauses with the oracle's reason.
+func TestE2E_OracleAsk_PausesWithReason(t *testing.T) {
+	s := happy()
+	s["fixer"] = []string{"failed"}
+	s["oracle"] = []string{"ask branch protection rejects the merge; a human must check the ruleset"}
 	e := newE2E(t, s)
 	e.ctlSet("merge_fail", "")
 	e.mustPause()
-	e.wantStates("check_done, open_pr, code, review, lock, update, post_review, ci, comments, merge, merge_decision")
-	if e.st.Current != "ask" {
-		t.Errorf("current = %q", e.st.Current)
+	e.wantStates(toMerge + ", fixer, oracle")
+	reason := "branch protection rejects the merge; a human must check the ruleset"
+	if e.st.Current != "ask" || e.st.Ask == nil || e.st.Ask.Reason != reason || !strings.Contains(e.st.Ask.Message, "(oracle: "+reason+")") {
+		t.Errorf("current %q, ask %+v", e.st.Current, e.st.Ask)
+	}
+}
+
+// #369: a step that keeps failing gets the fixer twice, then the oracle (once), then a human.
+func TestE2E_StepKeepsFailing_FixerTwiceOracleOnceThenAsk(t *testing.T) {
+	s := happy()
+	s["fixer"] = []string{"ok", "ok"}
+	s["oracle"] = []string{"goto:merge try once more"}
+	e := newE2E(t, s)
+	e.ctlSet("merge_fail", "")
+	e.mustPause()
+	e.wantStates(toMerge + ", fixer, merge, fixer, merge, fixer, oracle, merge, fixer, oracle")
+	if e.agents.calls != 2+2+1 { // code, review, two fixer runs, one oracle run
+		t.Errorf("agent calls = %d, want 5", e.agents.calls)
+	}
+	if e.st.Ask == nil || !strings.Contains(e.st.Ask.Reason, "oracle already ran 1 time(s) for the failed step merge") {
+		t.Errorf("ask = %+v", e.st.Ask)
 	}
 }
 
@@ -503,22 +544,33 @@ func TestE2E_ProtectedPath_StopsBeforeMerge(t *testing.T) {
 	e.wantNoMerge()
 }
 
-func TestE2E_PushFail_GoesToAsk(t *testing.T) {
-	e := newE2E(t, map[string][]string{"code": {"done"}, "review": {"ACCEPT"}})
+// #369: update is rejected (non-fast-forward: an earlier run pushed the branch). The
+// fixer follows the SUGGESTED line of the block: it resets to the PR branch and merges
+// main. update runs again and the run merges.
+func TestE2E_PushFail_FixerResetsToPRBranch(t *testing.T) {
+	s := happy()
+	s["fixer"] = []string{"ok"}
+	e := newE2E(t, s)
 	// Another clone already pushed a different commit to the issue branch.
 	other := filepath.Join(t.TempDir(), "other")
 	e2eGit(t, filepath.Dir(other), "clone", "-q", e.origin, other)
 	e2eGit(t, other, "checkout", "-q", "-b", e.st.Branch)
 	e2eCommit(t, other, "other.txt", "o")
 	e2eGit(t, other, "push", "-q", "origin", e.st.Branch)
-	e.mustPause()
-	e.wantStates("check_done, open_pr, code, review, lock, update")
-	if h := e.st.History[5]; h.Key != "fail" || h.To != "ask" {
-		t.Errorf("push step = %+v", h)
+	e.agents.OnRun["fixer"] = func(wt string) {
+		out, _ := os.ReadFile(filepath.Join(e.runDir, "artifacts", "006-update", "output.log"))
+		if !strings.Contains(string(out), "SUGGESTED: compare") || !strings.Contains(string(out), "git reset --hard origin/"+e.st.Branch) {
+			t.Errorf("update output.log has no SUGGESTED line:\n%s", out)
+		}
+		e2eGit(t, wt, "fetch", "-q", "origin", e.st.Branch)
+		e2eGit(t, wt, "reset", "-q", "--hard", "FETCH_HEAD")
+		e2eGit(t, wt, "merge", "-q", "origin/main")
 	}
-	// #368: the pause message says why, so a human or an LLM knows what to decide.
-	if e.st.Ask == nil || !strings.Contains(e.st.Ask.Message, "the branches diverged") {
-		t.Errorf("ask = %+v, want the divergence reason", e.st.Ask)
+	e.mustFinish()
+	e.wantStates("check_done, open_pr, code, review, lock, update, fixer, update, post_review, ci, comments, merge, findings")
+	e.wantMerged()
+	if h := e.st.History[5]; h.Key != "fail" || h.To != "fixer" {
+		t.Errorf("update step = %+v", h)
 	}
 }
 
@@ -536,12 +588,12 @@ func TestE2E_CITimeout_GoesToAsk(t *testing.T) {
 	}
 }
 
-func TestE2E_GhDown_AtGate_GoesToAsk(t *testing.T) {
-	e := newE2E(t, nil)
+func TestE2E_GhDown_AtGate_FixerThenAsk(t *testing.T) {
+	e := newE2E(t, map[string][]string{"fixer": {"failed"}, "oracle": {"ask gh is down"}})
 	e.ctlSet("down", "")
 	e.mustPause()
-	e.wantStates("check_done")
-	if e.st.History[0].To != "ask" || e.agents.calls != 0 {
+	e.wantStates("check_done, fixer, oracle")
+	if e.st.History[0].To != "fixer" || e.agents.calls != 2 {
 		t.Errorf("to = %q, agent calls = %d", e.st.History[0].To, e.agents.calls)
 	}
 	if _, err := os.Stat(e.st.Worktree); err != nil {

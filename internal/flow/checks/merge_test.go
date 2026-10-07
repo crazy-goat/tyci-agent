@@ -76,10 +76,11 @@ func TestMerge_BehindPrintsBehindWithoutMerging(t *testing.T) {
 }
 
 func TestMerge_CiNotGreenFails(t *testing.T) {
-	key, _, log, _ := runMerge(t, newPushEnv(t), "a.txt", map[string]string{"CI_BUCKET": "pending"})
+	key, stderr, log, _ := runMerge(t, newPushEnv(t), "a.txt", map[string]string{"CI_BUCKET": "pending"})
 	if key != "fail" || strings.Contains(log, "pr merge") {
 		t.Fatalf("key=%q log=%s", key, log)
 	}
+	wantBlock(t, stderr, "fail", "ci-ok of PR #171 is 'pending'")
 }
 
 // Regression guard for the non-BEHIND path (not a test of the #326 fix).
@@ -100,10 +101,11 @@ func TestMerge_NoChecksReportedBehind(t *testing.T) {
 func TestMerge_ProtectedPath(t *testing.T) {
 	for _, f := range []string{".github/workflows/x.yml", ".tyci/workflows/a.json", ".tyci/checks/c.sh", "internal/flow/checks/push.sh"} {
 		t.Run(f, func(t *testing.T) {
-			key, _, log, _ := runMerge(t, newPushEnv(t), f, nil)
+			key, stderr, log, _ := runMerge(t, newPushEnv(t), f, nil)
 			if key != "protected" || log != "" {
 				t.Fatalf("key=%q log=%q", key, log)
 			}
+			wantBlock(t, stderr, "protected", f)
 		})
 	}
 }
@@ -125,10 +127,11 @@ func TestMerge_FetchFailureFails(t *testing.T) {
 }
 
 func TestMerge_HeadMismatchFails(t *testing.T) {
-	key, _, log, _ := runMerge(t, newPushEnv(t), "a.txt", map[string]string{"REMOTE_HEAD": "deadbeef"})
+	key, stderr, log, _ := runMerge(t, newPushEnv(t), "a.txt", map[string]string{"REMOTE_HEAD": "deadbeef"})
 	if key != "fail" || strings.Contains(log, "pr merge") {
 		t.Fatalf("key=%q log=%s", key, log)
 	}
+	wantBlock(t, stderr, "fail", "differs from the PR head 'deadbeef'")
 }
 
 func TestMerge_MergeCommandFailsPrintsFail(t *testing.T) {
@@ -136,6 +139,7 @@ func TestMerge_MergeCommandFailsPrintsFail(t *testing.T) {
 	if key != "fail" || !strings.Contains(stderr, "merge refused") {
 		t.Fatalf("key=%q stderr=%s", key, stderr)
 	}
+	wantBlock(t, stderr, "fail", "gh pr merge 171 --squash failed")
 }
 
 func TestMerge_NeverUsesForbiddenFlags(t *testing.T) {
