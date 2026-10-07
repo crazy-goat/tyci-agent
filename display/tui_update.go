@@ -118,7 +118,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.invalidateTotalLines()
 		// No need to touch statusTickArmed here even if a job-only chain is
 		// currently ticking: backgroundJobs is now empty, so the pending
-		// tick's own wantsStatusTick() check (statusTickMsg, above) will
+		// tick's own wantsStatusTick() check (statusTickMsg, below) will
 		// find nothing left to paint and clear the flag itself on its next
 		// fire — same as a job finishing normally. Nothing left stuck.
 		return m, nil
