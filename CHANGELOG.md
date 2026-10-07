@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
 
 ### Fixed
+- Orchestrator: the roadmap oracle role without `model` now uses `default_model` instead of the alias `opus` (#313).
 - Flow configuration now accepts direct `provider/model` names in `default_model` and role `model` fields without requiring identity aliases.
 - Flow: a failed agent state now saves its error in the `error` field of the `state.json` history entry and shows it in the ask message (#300).
 - Flow: a merged issue-to-merge run now removes its worktree and branch; the run dir with `state.json` stays (#299).
