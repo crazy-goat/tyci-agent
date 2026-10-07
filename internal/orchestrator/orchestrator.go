@@ -217,11 +217,11 @@ func (o *Orchestrator) plan(ctx context.Context) (Roadmap, error) {
 	if err != nil {
 		return rm, err
 	}
-	o.notify(fmt.Sprintf("Read %d open issues of milestone %s.", rm.Counts.MilestoneOpen, rm.Milestone))
+	o.notify(fmt.Sprintf("Read %d open issues of milestone %s.", rm.Counts.MilestoneOpen, sanitize(rm.Milestone, maxTitle)))
 	o.notify("Planning the order (oracle)...")
 	rm.Items, rm.FromOracle, rm.FallbackWhy = o.order(ctx, in)
 	if !rm.FromOracle {
-		o.notify("Fallback order: " + rm.FallbackWhy)
+		o.notify("Fallback order: " + sanitize(rm.FallbackWhy, maxReason))
 	}
 	return rm, nil
 }
