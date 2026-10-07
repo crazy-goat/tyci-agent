@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
 
 ### Fixed
+- Flow: the ask message shows the last step, its key and the last stderr line of a check, and `ci_wait.sh` prints why it returns `conflict`, `behind` or `fail` (#321).
 - Flow: `ci` sends a conflicting or behind PR to `rebase` instead of `ask`, and a PR without checks no longer fails after 3 polls (#320).
 - API: a provider that sends no first byte or stalls mid-stream now ends with a retryable error after `first_byte_timeout_sec` or `stream_idle_timeout_sec` (default 30 s) and the agent retries (#317).
 - Orchestrator: the roadmap oracle role without `model` now uses `default_model` instead of the alias `opus` (#313).
