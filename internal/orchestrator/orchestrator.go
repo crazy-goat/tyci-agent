@@ -51,12 +51,12 @@ type Orchestrator struct {
 	r   Runner
 	h   Hooks
 
-	mu       sync.Mutex
-	roadmap  Roadmap
-	inFlight map[int]string // issue -> run id; only acquire, setRunID, release and busy touch it
-	saturated bool // the run manager refused the last start: it has no free slot
-	announce bool           // send "started #N" notices (false until the first fill is done)
-	stop     chan struct{}
+	mu        sync.Mutex
+	roadmap   Roadmap
+	inFlight  map[int]string // issue -> run id; only acquire, setRunID, release and busy touch it
+	saturated bool           // the run manager refused the last start: it has no free slot
+	announce  bool           // send "started #N" notices (false until the first fill is done)
+	stop      chan struct{}
 }
 
 // New returns an Orchestrator. Workers is not defaulted: 0 means unlimited.
