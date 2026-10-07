@@ -276,7 +276,8 @@ func (e *e2e) wantStates(want string) {
 
 func (e *e2e) wantMerged() {
 	e.t.Helper()
-	want := fmt.Sprintf("pr merge %d -R %s --squash --delete-branch --match-head-commit ", e2ePR, e2eRepo)
+	sha := strings.TrimSpace(e2eGit(e.t, e.origin, "rev-parse", "refs/heads/"+e.st.Branch))
+	want := fmt.Sprintf("pr merge %d -R %s --squash --delete-branch --match-head-commit %s", e2ePR, e2eRepo, sha)
 	if !strings.Contains(e.ghLog(), want) {
 		e.t.Errorf("gh log lacks %q:\n%s", want, e.ghLog())
 	}
@@ -395,6 +396,9 @@ func TestE2E_Behind_RebasesThenCIThenMerge(t *testing.T) {
 	e.wantMerged()
 	if k := e.st.History[6].Key; k != "ok" {
 		t.Errorf("rebase key = %q, want ok", k)
+	}
+	if m := strings.TrimSpace(e2eGit(t, e.origin, "log", "--format=%s", "-1", "--merges", "refs/heads/"+e.st.Branch)); m == "" {
+		t.Error("origin issue branch has no merge commit of origin/main")
 	}
 }
 

@@ -28,7 +28,8 @@ var ErrPaused = errors.New("flow: run paused")
 // neither route the run fails. A check-runner error fails the run directly.
 // Context cancellation fails the run with Reason "cancelled".
 // When the run reaches end with no agent step ever recorded, or after a
-// merge state returned "merged", OnSkip is called if set. A panic in the loop is recovered into a failed run.
+// merge state returned "merged", OnSkip is called if set.
+// A panic in the loop is recovered into a failed run.
 func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
