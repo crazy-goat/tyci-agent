@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Watchdog: a running subagent with no activity for `watchdog.idle_after` (default 3m) gets a notice sent to its parent; after each further `watchdog.escalate_after` (default 3m) the notice goes one level up, ending at the human, once. It never kills or nudges a job. Global `config.json` only; invalid durations fail at start (#185).
 - Flow: every check and agent step of a run gets an artifact dir `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (new `state.json` history field `artifact`, new check env `TYCI_ARTIFACT_DIR`); checks save their full stdout and stderr to `output.log`, and `ci_wait.sh` saves the failed CI job log on `red` (#339).
 - Config keys `compact_soft_limit` and `compact_hard_limit` (config.json, agents.json, agent frontmatter, flow roles) set the context notice and auto-compaction limits in tokens. Subagents and flow roles now compact automatically past the hard limit (#304).
 - Flow: role agents of a run are jobs named `<run-id>/<role>` (the `message` tool reaches them), and an `ask` answer can be `retry <note>` (the note goes into the next worker prompt) or `goto <state>` (#327).
