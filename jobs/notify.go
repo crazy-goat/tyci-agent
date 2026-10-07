@@ -96,6 +96,22 @@ func (n *Notifier) Notify(text string) {
 	n.wake()
 }
 
+// NotifyQuiet queues text like Notify but does not wake Signal. An idle chat
+// does not start a model turn for it: the text reaches the model with the
+// next turn, whoever starts it. Scheduled jobs use this so a frequent job
+// does not keep the chat busy.
+func (n *Notifier) NotifyQuiet(text string) {
+	if text == "" {
+		return
+	}
+	n.mu.Lock()
+	n.pending = append(n.pending, notice{text: text})
+	if len(n.pending) > maxPendingNotices {
+		n.pending = n.pending[len(n.pending)-maxPendingNotices:]
+	}
+	n.mu.Unlock()
+}
+
 // NotifyQuestion queues a "child jobID is blocked waiting for an answer to
 // question" notice — unless MarkQuestionShown has already recorded that this
 // exact jobID/seq was just delivered another way (a handoff message), in

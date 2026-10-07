@@ -390,6 +390,8 @@ tyci cron run_now <name>       # Alias for `run`
 tyci cron tick                 # Run every job that is currently due, then exit
 ```
 
+Schedules are `every 30m`, `at 07:30` and the one-shot `in 5m`; a one-shot job is removed after it runs.
+
 Normally, jobs only fire while some tyci session (console or TUI) is open — that
 session runs a scheduler that ticks every minute in the background. `tyci cron tick`
 is the standalone alternative: a single check-and-dispatch that needs no session at

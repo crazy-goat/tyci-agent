@@ -159,6 +159,12 @@ func (r *Runner) RunJob(ctx context.Context, j Job) error {
 			if err := Save(markDir, f); err != nil {
 				return err
 			}
+			return runErr
+		}
+		// Not removed (unreadable file, or the job is already gone): record
+		// the run so Due does not start the job again on every tick.
+		if err := MarkRun(markDir, j.Name, end, status); err != nil {
+			return err
 		}
 		return runErr
 	}

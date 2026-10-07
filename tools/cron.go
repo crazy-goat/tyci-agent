@@ -126,7 +126,7 @@ func (t *CronTool) list() ToolResult {
 		return failf("%v", err)
 	}
 	if len(f.Jobs) == 0 {
-		return okf("no scheduled jobs. Add one with cron(action=\"add\", name=\"...\", schedule=\"every 30m\" or \"at 07:30\", prompt=\"...\") when something has to happen later or repeatedly — that is the only way it survives this session.")
+		return okf("no scheduled jobs. Add one with cron(action=\"add\", name=\"...\", schedule=\"every 30m\", \"at 07:30\" or \"in 5m\", prompt=\"...\") when something has to happen later or repeatedly — that is the only way it survives this session.")
 	}
 	now := time.Now()
 	var b strings.Builder
@@ -500,8 +500,23 @@ func cronNotify(j cron.Job, err error) {
 		}
 		msg += "\nEnd of its log:\n" + tail
 	}
+	if j.Caller == "" {
+		// Main chat: queue the notice without waking an idle chat. A wake
+		// would start a model turn for every run of a frequent job.
+		jobNotifierMu.RLock()
+		n := jobNotifier
+		jobNotifierMu.RUnlock()
+		if q, ok := n.(quietNotifier); ok {
+			q.NotifyQuiet(msg)
+			return
+		}
+	}
 	notifyToParent(j.Caller, msg)
 }
+
+// quietNotifier is a JobNotifier that can queue a notice without waking an
+// idle chat.
+type quietNotifier interface{ NotifyQuiet(text string) }
 
 // cronWhen phrases a timestamp relative to now, because "in 20 minutes" is the
 // thing the caller needs and a wall-clock time is not.

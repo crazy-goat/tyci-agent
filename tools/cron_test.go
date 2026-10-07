@@ -327,3 +327,63 @@ func TestCronDisable_ActsOnTheProjectLocalJob(t *testing.T) {
 		t.Errorf("expected local-only to be disabled in the project-local file, got %+v", f.Jobs)
 	}
 }
+
+type cronTestMailbox struct{ posted map[string][]string }
+
+func (m *cronTestMailbox) Resolve(id string) (string, bool) { return id, true }
+func (m *cronTestMailbox) Post(id, text string) bool {
+	m.posted[id] = append(m.posted[id], text)
+	return true
+}
+func (m *cronTestMailbox) IsLive(string) bool    { return true }
+func (m *cronTestMailbox) Drain(string) []string { return nil }
+
+type cronTestNotifier struct{ loud, quiet []string }
+
+func (n *cronTestNotifier) Notify(s string)               { n.loud = append(n.loud, s) }
+func (n *cronTestNotifier) NotifyQuiet(s string)          { n.quiet = append(n.quiet, s) }
+func (n *cronTestNotifier) MarkQuestionShown(string, int) {}
+
+func TestCronAddStoresCallerAndNotifyGoesToItsMailbox(t *testing.T) {
+	withCronHome(t)
+	mb := &cronTestMailbox{posted: map[string][]string{}}
+	SetJobMailbox(mb)
+	t.Cleanup(func() { SetJobMailbox(nil) })
+
+	ctx := context.WithValue(WithWorkdir(context.Background(), t.TempDir()), JobIDCtxKey{}, "job-1")
+	res := (&CronTool{}).Run(ctx, map[string]any{"action": "add", "name": "j1", "prompt": "p", "schedule": "in 5m"})
+	if !res.Success {
+		t.Fatalf("add failed: %s", res.Error)
+	}
+	f, err := cron.Load(cronConfigDir())
+	if err != nil || len(f.Jobs) != 1 {
+		t.Fatalf("load: %v %v", f, err)
+	}
+	if f.Jobs[0].Caller != "job-1" {
+		t.Fatalf("Caller = %q, want job-1", f.Jobs[0].Caller)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cron.LogPath(cronConfigDir(), "j1")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cron.LogPath(cronConfigDir(), "j1"), []byte("all green"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cronNotify(f.Jobs[0], nil)
+	got := mb.posted["job-1"]
+	if len(got) != 1 || !strings.Contains(got[0], "all green") {
+		t.Fatalf("mailbox got %v, want one notice with the log tail", got)
+	}
+}
+
+func TestCronNotifyForMainChatDoesNotWakeIt(t *testing.T) {
+	withCronHome(t)
+	n := &cronTestNotifier{}
+	SetJobNotifier(n)
+	t.Cleanup(func() { SetJobNotifier(nil) })
+
+	cronNotify(cron.Job{Name: "j2"}, nil)
+	if len(n.loud) != 0 || len(n.quiet) != 1 {
+		t.Fatalf("loud=%v quiet=%v, want one quiet notice only", n.loud, n.quiet)
+	}
+}
