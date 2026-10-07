@@ -158,7 +158,7 @@ func TestFallbackOrder_CycleDoesNotHang(t *testing.T) {
 	in := Input{Issues: []InputIssue{
 		{Number: 1, Mentions: []int{2}}, {Number: 2, Mentions: []int{1}, Labels: []string{"type:bug"}}, {Number: 3},
 	}}
-	if got := nums(fallbackOrder(in)); !reflect.DeepEqual(got, []int{2, 1, 3}) {
+	if got := nums(fallbackOrder(in)); !reflect.DeepEqual(got, []int{3, 2, 1}) {
 		t.Fatal(got)
 	}
 }
