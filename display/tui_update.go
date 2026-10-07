@@ -123,6 +123,20 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// fire — same as a job finishing normally. Nothing left stuck.
 		return m, nil
 	}
+	// Handled first and unconditionally, like the job messages: when an overlay
+	// (picker, modal, sidebar, ...) was open the tick used to reach the overlay's
+	// handler and die there. The chain stopped while statusTickArmed stayed true,
+	// so the elapsed time froze for the rest of the turn (issue #319).
+	if _, ok := msg.(statusTickMsg); ok {
+		// Keep ticking while a turn is in flight OR a live job still needs
+		// painting somewhere (item 57); stop otherwise, and clear the armed
+		// flag so the next thing that needs a chain is free to start a new one.
+		if m.wantsStatusTick() {
+			return m, statusTickCmd(m.tickInterval())
+		}
+		m.statusTickArmed = false
+		return m, nil
+	}
 	if upd, ok := msg.(tuiMsgJobUpdate); ok {
 		m.applyJobUpdate(upd.Job)
 		// A job update can be the only thing keeping a live job's time on
@@ -235,17 +249,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.copySelection()
 			return m, copyFeedbackCmd(m)
 		}
-		return m, nil
-	case statusTickMsg:
-		// Keep ticking while a turn is in flight OR a live job still needs
-		// painting somewhere (item 57); stop otherwise, and clear the armed
-		// flag so the next thing that needs a chain (turn-start, job
-		// update, sidebar/jobs-modal open) is free to start a fresh one
-		// instead of finding one "armed" that has actually already died.
-		if m.wantsStatusTick() {
-			return m, statusTickCmd(m.tickInterval())
-		}
-		m.statusTickArmed = false
 		return m, nil
 	case statusMessageClearMsg:
 		if m.statusMessage == msg.message {
