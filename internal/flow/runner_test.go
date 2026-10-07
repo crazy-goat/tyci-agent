@@ -336,6 +336,28 @@ func TestRunner_SkipHookCalledOnlyWhenNoAgentRan(t *testing.T) {
 	}
 }
 
+func TestRunner_SkipHookCalledAfterMerge(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "merge", States: map[string]State{
+		"merge": {Check: "m.sh", On: map[string]string{"merged": "f", "ask": "end"}},
+		"f":     {Agent: "worker", On: map[string]string{"done": "end"}},
+		"end":   {End: true},
+	}}
+	called := 0
+	r := &Runner{
+		WF:     wf,
+		Checks: &fakeChecks{keys: map[string][]string{"m.sh": {"merged"}}},
+		Agents: &fakeAgents{keys: map[string][]string{"f": {"done"}}},
+		Store:  &memStore{},
+		OnSkip: func(*RunState) { called++ },
+	}
+	if err := r.Run(context.Background(), newRun("merge")); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("hook calls = %d, want 1 after merged", called)
+	}
+}
+
 func TestRunner_BuiltinWorkflowRunsToEnd(t *testing.T) {
 	data := []byte(`{"name":"issue-to-merge","start":"check_done","defaults":{"max_visits":0},"states":{
 		"check_done":{"check":"checks/issue_done.sh","on":{"go":"code","skip":"end"}},

@@ -27,8 +27,8 @@ var ErrPaused = errors.New("flow: run paused")
 // An agent error routes through the "error" key (then "default"); with
 // neither route the run fails. A check-runner error fails the run directly.
 // Context cancellation fails the run with Reason "cancelled".
-// When the run reaches end with no agent step ever recorded, OnSkip is
-// called if set. A panic in the loop is recovered into a failed run.
+// When the run reaches end with no agent step ever recorded, or after a
+// merge state returned "merged", OnSkip is called if set. A panic in the loop is recovered into a failed run.
 func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -78,7 +78,7 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 					return saveErr
 				}
 			}
-			if !ranAgent(st) && r.OnSkip != nil {
+			if (!ranAgent(st) || wasMerged(st)) && r.OnSkip != nil {
 				r.OnSkip(st)
 			}
 			r.notify("run " + st.Run + " done")
@@ -297,6 +297,16 @@ func kindOf(s State) string {
 		return "agent"
 	}
 	return "check"
+}
+
+// wasMerged reports whether the merge check returned "merged".
+func wasMerged(st *RunState) bool {
+	for _, h := range st.History {
+		if h.Kind == "check" && h.State == "merge" && h.Key == "merged" {
+			return true
+		}
+	}
+	return false
 }
 
 func ranAgent(st *RunState) bool {

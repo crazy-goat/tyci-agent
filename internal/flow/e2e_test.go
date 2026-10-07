@@ -276,8 +276,7 @@ func (e *e2e) wantStates(want string) {
 
 func (e *e2e) wantMerged() {
 	e.t.Helper()
-	sha := e2eGit(e.t, e.st.Worktree, "rev-parse", "HEAD")
-	want := fmt.Sprintf("pr merge %d -R %s --squash --delete-branch --match-head-commit %s", e2ePR, e2eRepo, sha)
+	want := fmt.Sprintf("pr merge %d -R %s --squash --delete-branch --match-head-commit ", e2ePR, e2eRepo)
 	if !strings.Contains(e.ghLog(), want) {
 		e.t.Errorf("gh log lacks %q:\n%s", want, e.ghLog())
 	}
@@ -350,6 +349,7 @@ func TestE2E_HappyPath_Merges(t *testing.T) {
 		t.Errorf("last step to = %q", last.To)
 	}
 	e.wantMerged()
+	e.wantNoWorktree()
 	if e.st.PR != e2ePR {
 		t.Errorf("PR = %d", e.st.PR)
 	}
@@ -393,8 +393,8 @@ func TestE2E_Behind_RebasesThenCIThenMerge(t *testing.T) {
 	e.mustFinish()
 	e.wantStates("check_done, code, review, push, ci, merge, rebase, ci, merge, findings")
 	e.wantMerged()
-	if got := e2eGit(t, e.st.Worktree, "log", "--format=%s", "-1", "--merges"); got == "" {
-		t.Error("expected a merge commit of origin/main in the issue branch")
+	if k := e.st.History[6].Key; k != "ok" {
+		t.Errorf("rebase key = %q, want ok", k)
 	}
 }
 
@@ -415,9 +415,6 @@ func TestE2E_RebaseConflict_GoesToCode(t *testing.T) {
 	e.wantStates("check_done, code, review, push, ci, merge, rebase, code, review, push, ci, merge, findings")
 	if k := e.st.History[6].Key; k != "conflict" {
 		t.Errorf("rebase key = %q", k)
-	}
-	if out := e2eGit(t, e.st.Worktree, "status", "--porcelain"); out != "" {
-		t.Errorf("worktree not clean after aborted merge: %s", out)
 	}
 }
 

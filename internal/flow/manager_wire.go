@@ -187,7 +187,7 @@ func (c ChatTools) Status(run string) (any, error) {
 	return out, nil
 }
 
-// removeWorktreeHook returns the OnSkip hook: it removes the issue worktree
+// removeWorktreeHook returns the OnSkip hook (skipped or merged run): it removes the issue worktree
 // and its branch. The run dir with state.json stays.
 func removeWorktreeHook(root string) func(*RunState) {
 	return func(st *RunState) {
