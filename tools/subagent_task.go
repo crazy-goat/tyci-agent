@@ -21,7 +21,13 @@ type TaskSpec struct {
 	// Name, when set, registers the run as a job with this description, so
 	// the jobs list, "message" and "resume" can reach it by this name.
 	Name string
+	// Transcript, when set, is the path of the run transcript of this agent
+	// visit (see internal/runlog). The child writes its redacted messages there.
+	Transcript string
 }
+
+// TranscriptCtxKey carries TaskSpec.Transcript to the subagent runner.
+type TranscriptCtxKey struct{}
 
 // RunSubagentTask runs spec through the registered subagent runner in
 // spec.Dir, without creating a worktree. It returns the final answer and a
@@ -53,6 +59,9 @@ func RunSubagentTask(ctx context.Context, s TaskSpec) (result, sessionID string,
 }
 
 func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (string, string, error) {
+	if s.Transcript != "" {
+		ctx = context.WithValue(ctx, TranscriptCtxKey{}, s.Transcript)
+	}
 	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: s.SystemPrompt, softLimit: s.SoftLimit, hardLimit: s.HardLimit}
 	if s.MaxIterations > 0 {
 		t.MaxIterations = &s.MaxIterations

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Flow: every agent visit of a run writes a redacted transcript `~/.tyci/runs/<repo>/<run>/agents/NNN-<role>.jsonl` (`NNN` is `agent_seq`). Finished runs older than `logs.retention_days` (default 30, `0` keeps all) are deleted at start and every 24 h (#183).
 - Watchdog: a running subagent with no activity for `watchdog.idle_after` (default 3m) gets a notice sent to its parent; after each further `watchdog.escalate_after` (default 3m) the notice goes one level up, ending at the human, once. It never kills or nudges a job. Global `config.json` only; invalid durations fail at start (#185).
 - Flow: `tyci` resumes runs from `state.json` after a crash or kill, at the saved state and without a new visit; `state.json` gets `pid`, `resumed` and `agent_seq`, and `merge.sh` returns `merged` for a PR that is already merged (#182).
 - Cron: new one-shot schedule `in 5m` (stored as `once <RFC3339>` in `~/.tyci/cron.json`); the job is removed after its run and the log stays. New `caller` field in a job records who scheduled it (#316).

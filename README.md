@@ -158,6 +158,24 @@ tyci tui --model my-provider/my-model
 tyci run --agent my-agent --prompt "Hello"
 ```
 
+## Run transcripts
+
+Every agent visit of a flow run writes its messages to
+`~/.tyci/runs/<repo>/<run>/agents/NNN-<role>.jsonl` (session JSONL format,
+file mode 0600). `NNN` is `agent_seq` from `state.json`. A resumed run starts a
+new file; old files are never appended to.
+
+Secrets are removed before the bytes reach the disk: provider keys from
+`auth.json` and the environment, and common token shapes (GitHub, `sk-`, AWS,
+bearer headers, `*_TOKEN=`/`*_PASSWORD=` style values, private keys). They show
+as `[REDACTED]`. Redaction is best effort; do not rely on it for secrets of
+other shapes.
+
+Runs with status `done` or `failed` whose `state.json` is older than
+`logs.retention_days` are deleted at start and every 24 hours. The default is
+30. Set `{"logs": {"retention_days": 0}}` in `~/.tyci/config.json` to keep all
+runs. A negative value is a config error.
+
 ## Directory Layout
 
 ```

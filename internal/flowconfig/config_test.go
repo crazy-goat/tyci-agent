@@ -257,3 +257,19 @@ func TestLoad_RoleCompactLimits(t *testing.T) {
 		t.Fatalf("role limits = %d, %d", r.CompactSoftLimit, r.CompactHardLimit)
 	}
 }
+
+func TestLoad_LogsRetentionDays(t *testing.T) {
+	home := t.TempDir()
+	c, err := Load(home, t.TempDir(), true)
+	if err != nil || c.RetentionDays() != 30 {
+		t.Fatalf("default: %v %v", c, err)
+	}
+	write(t, home, ".tyci/config.json", `{"logs":{"retention_days":0}}`)
+	if c, err = Load(home, t.TempDir(), true); err != nil || c.RetentionDays() != 0 {
+		t.Fatalf("zero: %v %v", c, err)
+	}
+	write(t, home, ".tyci/config.json", `{"logs":{"retention_days":-1}}`)
+	if _, err = Load(home, t.TempDir(), true); err == nil || !strings.Contains(err.Error(), "logs.retention_days") {
+		t.Fatalf("negative: %v", err)
+	}
+}

@@ -149,6 +149,10 @@ type Session struct {
 	// Resume state
 	isResume bool
 
+	// filter, when set, rewrites the content blocks of every message before
+	// they are encoded (used to redact secrets).
+	filter func([]ContentBlock) []ContentBlock
+
 	// Incremental markdown dump state (F9, item 10 inbox). dumpNextIndex is
 	// the number of JSONL lines already accounted for in the dump — the
 	// next event written will be at 1-based line number dumpNextIndex+1,
@@ -263,6 +267,9 @@ func newID() (string, error) {
 // WriteMessage writes a message event (user, assistant, or tool result).
 func (s *Session) WriteMessage(role string, blocks []ContentBlock, opts *MessageOptions) error {
 	s.mu.Lock()
+	if s.filter != nil {
+		blocks = s.filter(blocks)
+	}
 	if s.closed {
 		s.mu.Unlock()
 		return fmt.Errorf("session closed")
@@ -316,6 +323,14 @@ func (s *Session) WriteMessage(role string, blocks []ContentBlock, opts *Message
 		return err
 	}
 	return s.recordDumpEvent(raw)
+}
+
+// SetBlockFilter sets a function that rewrites the content blocks of every
+// message before it is written. The function must not modify its input.
+func (s *Session) SetBlockFilter(f func([]ContentBlock) []ContentBlock) {
+	s.mu.Lock()
+	s.filter = f
+	s.mu.Unlock()
 }
 
 // MessageOptions holds optional metadata for assistant messages.

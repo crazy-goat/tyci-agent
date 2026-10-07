@@ -109,6 +109,7 @@ type RunContext struct {
 	Issue         int
 	PR            int
 	Visit         int
+	AgentSeq      int // run-wide agent counter; names the transcript file
 }
 
 // CheckResult is the outcome of one check-script execution.

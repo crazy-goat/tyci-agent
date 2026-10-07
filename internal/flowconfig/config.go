@@ -25,6 +25,7 @@ type Config struct {
 	CheckTimeoutSec int               `json:"check_timeout_sec"`      // 0 means 1800
 	Forge           Forge             `json:"forge"`                  // where the orchestrator reads issues
 	Orchestrator    json.RawMessage   `json:"orchestrator,omitempty"` // read by orchestrator.LoadConfig
+	Logs            Logs              `json:"logs"`                   // run transcripts
 
 	// Keys owned by the agent config (agent.TyciConfig) in the same file.
 	// They are accepted so the file loads, and ignored here.
@@ -39,6 +40,23 @@ type Config struct {
 	FirstByteTimeoutSec  json.RawMessage `json:"first_byte_timeout_sec,omitempty"`
 	StreamIdleTimeoutSec json.RawMessage `json:"stream_idle_timeout_sec,omitempty"`
 	Watchdog             json.RawMessage `json:"watchdog,omitempty"`
+}
+
+// Logs configures the run transcripts under ~/.tyci/runs.
+type Logs struct {
+	// RetentionDays: finished runs older than this are deleted. Nil means 30, 0 keeps all.
+	RetentionDays *int `json:"retention_days,omitempty"`
+}
+
+// DefaultRetentionDays is the retention when logs.retention_days is not set.
+const DefaultRetentionDays = 30
+
+// RetentionDays returns logs.retention_days or the default.
+func (c *Config) RetentionDays() int {
+	if c.Logs.RetentionDays == nil {
+		return DefaultRetentionDays
+	}
+	return *c.Logs.RetentionDays
 }
 
 // Forge selects the forge of the orchestrator.
@@ -176,6 +194,9 @@ func readPromptFile(dir, rel string) (string, error) {
 }
 
 func (c *Config) validate() error {
+	if d := c.Logs.RetentionDays; d != nil && *d < 0 {
+		return fmt.Errorf("logs.retention_days: %d is negative", *d)
+	}
 	if k := c.Forge.Kind; k != "" && k != "github" {
 		return fmt.Errorf("forge.kind: unknown kind %q (only \"github\" is supported)", k)
 	}

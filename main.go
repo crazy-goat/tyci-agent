@@ -591,7 +591,13 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	}
 	// A child that runs as a job gets its own session file. The file is
 	// closed (without session_end) when this run returns; a resume reopens it.
-	if jobID != "" {
+	if tp, _ := ctx.Value(tools.TranscriptCtxKey{}).(string); tp != "" {
+		// A workflow agent visit writes its redacted transcript into the run dir.
+		if w := openRunTranscript(tp, msgs, mc.Model(), mc.Provider()); w != nil {
+			cfg.Session = w.Session()
+			defer func() { _ = w.Close() }()
+		}
+	} else if jobID != "" {
 		if cs := openChildSession(msgs, mc.Model(), mc.Provider(), jobID); cs != nil {
 			cfg.Session = cs
 			defer func() { _ = cs.Close() }()

@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
+	"github.com/crazy-goat/tyci-agent/internal/runlog"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
@@ -100,7 +101,16 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Run != "" {
 		name = rc.Run + "/" + role
 	}
-	return r.Spawn(ctx, tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit})
+	return r.Spawn(ctx, tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit})
+}
+
+// transcriptPath is the transcript file of this agent visit, or "" when the
+// run has no run dir or no agent counter (a text run).
+func transcriptPath(rc RunContext, role string) string {
+	if rc.RunDir == "" || rc.AgentSeq <= 0 {
+		return ""
+	}
+	return runlog.Path(rc.RunDir, role, rc.AgentSeq)
 }
 
 func (r *SubagentRunner) warn(msg string) {
