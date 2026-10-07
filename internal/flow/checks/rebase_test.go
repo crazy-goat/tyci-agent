@@ -71,9 +71,12 @@ func TestRebase_ConflictAborts(t *testing.T) {
 	writeCommit(t, e.work, "f.txt", "mine\n", "issue change")
 	advanceMain(t, e, "f.txt", "theirs\n")
 	head := git(t, e.work, "rev-parse", "HEAD")
-	key, exit, _, _, _ := e.runRebase(t, "rebase.sh", nil)
+	key, exit, _, stderr, _ := e.runRebase(t, "rebase.sh", nil)
 	if key != "conflict" || exit != 0 {
 		t.Fatalf("key=%q exit=%d", key, exit)
+	}
+	if !strings.Contains(stderr, "conflicts in: f.txt.") || !strings.Contains(stderr, "git merge origin/main") {
+		t.Errorf("stderr does not name the file and the fix: %s", stderr)
 	}
 	if s := git(t, e.work, "status", "--porcelain"); s != "" {
 		t.Fatalf("dirty: %s", s)
@@ -103,9 +106,12 @@ func TestRebase_PushRejectedFails(t *testing.T) {
 	git(t, other, "commit", "-q", "--allow-empty", "-m", "remote work")
 	git(t, other, "push", "-q", "origin", "issue-7")
 	advanceMain(t, e, "other.txt", "x\n")
-	key, exit, _, _, _ := e.runRebase(t, "rebase.sh", nil)
+	key, exit, _, stderr, _ := e.runRebase(t, "rebase.sh", nil)
 	if key != "fail" || exit != 0 {
 		t.Fatalf("key=%q exit=%d", key, exit)
+	}
+	if !strings.Contains(stderr, "the branches diverged") {
+		t.Errorf("stderr does not explain the divergence: %s", stderr)
 	}
 }
 

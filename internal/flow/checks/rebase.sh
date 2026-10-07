@@ -6,11 +6,16 @@
 #
 # Env in:  TYCI_DEFAULT_BRANCH, TYCI_BRANCH, plus what push.sh needs. cwd = the run worktree.
 # Keys:    ok        branch is up to date and pushed
-#          conflict  merge conflicted; the merge was aborted, the worktree is clean
+#          conflict  merge conflicted; the merge was aborted, the worktree is clean, and stderr
+#                    names the files and tells the coder how to resolve them
 #          fail      fetch, merge or push failed
 set -euo pipefail
 
-git fetch origin "$TYCI_DEFAULT_BRANCH" >&2 || { echo fail; exit 0; }
+if ! git fetch origin "$TYCI_DEFAULT_BRANCH" >&2; then
+    echo "rebase.sh: git fetch origin $TYCI_DEFAULT_BRANCH failed (see the git output above)" >&2
+    echo fail
+    exit 0
+fi
 
 # A conflict only in CHANGELOG.md keeps both sides (parallel runs all add an entry at the
 # top). Returns 0 when the merge is committed. Any other conflict stays for the caller.
@@ -29,10 +34,16 @@ resolve_changelog() {
 
 if ! git merge --no-edit "origin/$TYCI_DEFAULT_BRANCH" >&2 && ! resolve_changelog; then
     if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+        files=$(git diff --name-only --diff-filter=U | paste -sd ' ' -)
         git merge --abort
+        echo "rebase.sh: merging origin/$TYCI_DEFAULT_BRANCH into $TYCI_BRANCH conflicts in: $files." \
+            "The merge was aborted and the worktree is clean. To fix it: run" \
+            "'git merge origin/$TYCI_DEFAULT_BRANCH', resolve the conflicts in these files" \
+            "(keep the changes of both sides), run the checks and commit the merge. Do not push." >&2
         echo conflict
     else
         git merge --abort 2>/dev/null || true
+        echo "rebase.sh: git merge origin/$TYCI_DEFAULT_BRANCH failed without a conflict (see the git output above)" >&2
         echo fail
     fi
     exit 0

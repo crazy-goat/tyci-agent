@@ -6,7 +6,8 @@
 # Env in:  TYCI_BRANCH, TYCI_DEFAULT_BRANCH, TYCI_RUN_DIR, TYCI_REPO, TYCI_ISSUE.
 #          cwd = the run worktree.
 # Keys:    ok    pushed, PR number written to $TYCI_RUN_DIR/pr
-#          fail  empty or default branch, or the push was rejected
+#          fail  empty or default branch, or the push was rejected; on a diverged branch the
+#                last stderr line says so and what a human must decide
 # Errors:  any gh failure (list or create) exits non-zero WITHOUT a key.
 # Idempotent: a second run pushes nothing new and finds the PR.
 set -euo pipefail
@@ -19,6 +20,14 @@ if [ -z "$branch" ] || [ "$branch" = "${TYCI_DEFAULT_BRANCH:-}" ]; then
 fi
 
 if ! git push origin "refs/heads/$branch:refs/heads/$branch" >&2; then
+    if git fetch -q origin "refs/heads/$branch" 2>/dev/null &&
+        ! git merge-base --is-ancestor FETCH_HEAD HEAD; then
+        echo "push.sh: push rejected: origin/$branch has commits that the local $branch does not have" \
+            "(the branches diverged). tyci never force-pushes. A human decides: merge origin/$branch" \
+            "into the local branch, or drop one side, then answer 'goto update'." >&2
+    else
+        echo "push.sh: git push of $branch was rejected (see the git output above)" >&2
+    fi
     echo fail
     exit 0
 fi

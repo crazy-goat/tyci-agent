@@ -129,15 +129,15 @@ func TestE2E_NoReport_RemindsThenPauses(t *testing.T) {
 	s := &reportSpawn{write: func(tools.TaskSpec) bool { return false }}
 	e.agentRunner = reportRunner(s)
 	e.mustPause()
-	e.wantStates("check_done, code")
+	e.wantStates("check_done, open_pr, code")
 	if e.st.Current != "ask" || e.st.Ask == nil || e.st.Ask.Reason != "no artifact from worker" {
 		t.Fatalf("current %q ask %+v", e.st.Current, e.st.Ask)
 	}
 	if len(s.specs) != 3 || !strings.HasPrefix(s.specs[1].Task, "You did not leave your artifact at ") {
 		t.Fatalf("specs = %+v", s.specs)
 	}
-	h := e.st.History[1]
-	if h.Artifact != "002-code" || h.Error != "no artifact from worker" || h.To != "ask" {
+	h := e.st.History[2]
+	if h.Artifact != "003-code" || h.Error != "no artifact from worker" || h.To != "ask" {
 		t.Errorf("step = %+v", h)
 	}
 }

@@ -111,7 +111,7 @@ func TestBuiltin_RunsToEndWithFakes(t *testing.T) {
 	wf := builtinWF(t)
 	r := &Runner{WF: wf, Store: &memStore{},
 		Checks: &fakeChecks{keys: map[string][]string{
-			"checks/issue_done.sh": {"go"}, "checks/lock.sh": {"ok"}, "checks/rebase.sh": {"ok"}, "checks/post_review.sh": {"ok"}, "checks/fetch_comments.sh": {"none"},
+			"checks/issue_done.sh": {"go"}, "checks/open_pr.sh": {"none"}, "checks/lock.sh": {"ok"}, "checks/rebase.sh": {"ok"}, "checks/post_review.sh": {"ok"}, "checks/fetch_comments.sh": {"none"},
 			"checks/ci_wait.sh": {"green"}, "checks/merge.sh": {"merged"},
 		}},
 		Agents: &fakeAgents{keys: map[string][]string{
