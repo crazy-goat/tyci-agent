@@ -217,3 +217,23 @@ func TestResume_WildcardKey(t *testing.T) {
 		t.Fatalf("status %q", st.Status)
 	}
 }
+
+func TestRunner_AgentErrorIsSavedAndShownInAsk(t *testing.T) {
+	wf := loopWF(0, 0, 0)
+	s := wf.States["code"]
+	s.On = map[string]string{"done": "ci", "error": "ask"}
+	wf.States["code"] = s
+	store := &memStore{}
+	r := &Runner{WF: wf, Store: store,
+		Agents: &fakeAgents{errs: map[string]error{"code": errors.New("model not in catalog")}}}
+	st := newRun("")
+	if err := r.Run(context.Background(), st); !errors.Is(err, ErrPaused) {
+		t.Fatalf("err = %v, want ErrPaused", err)
+	}
+	if got := st.History[0].Error; got != "model not in catalog" {
+		t.Fatalf("history error = %q", got)
+	}
+	if !strings.Contains(st.Ask.Message, "code failed: model not in catalog") {
+		t.Fatalf("ask message = %q", st.Ask.Message)
+	}
+}

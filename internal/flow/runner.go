@@ -189,6 +189,7 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 					StartedAt: started,
 					EndedAt:   ended,
 					Role:      s.Agent,
+					Error:     runErr.Error(),
 				})
 				st.Current = next
 				st.UpdatedAt = time.Now()
@@ -325,6 +326,10 @@ func (r *Runner) effectiveLimit(s State) int {
 // pause saves the run as paused and returns ErrPaused.
 func (r *Runner) pause(st *RunState, message, reason string) error {
 	st.Status = "paused"
+	if n := len(st.History); n > 0 && st.History[n-1].Error != "" {
+		h := st.History[n-1]
+		message += fmt.Sprintf(" (%s failed: %s)", h.State, h.Error)
+	}
 	st.Ask = &Ask{Message: message, Reason: reason}
 	st.UpdatedAt = time.Now()
 	if r.Store != nil {

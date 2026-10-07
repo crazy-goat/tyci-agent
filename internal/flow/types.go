@@ -74,6 +74,7 @@ type Step struct {
 	Role       string    `json:"role,omitempty"`
 	Session    string    `json:"session,omitempty"`
 	StderrTail string    `json:"stderr_tail,omitempty"`
+	Error      string    `json:"error,omitempty"`
 	Warnings   []string  `json:"warnings,omitempty"`
 }
 
