@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
@@ -163,5 +164,15 @@ func TestStepLine(t *testing.T) {
 	}
 	if got := stepLine(flow.Step{State: "code", Key: "fail", Role: "worker", StartedAt: t0, EndedAt: t0.Add(5 * time.Second)}); got != "code -> fail: worker · 5s" {
 		t.Fatalf("agent without stats: got %q", got)
+	}
+}
+
+func TestOrchestratorChatConfigHasNoPlanGate(t *testing.T) {
+	cfg := orchestratorChatConfig(agent.Config{System: "old", HasTodos: func() bool { return false }})
+	if cfg.HasTodos != nil {
+		t.Error("orchestrator chat keeps the plan-first todo gate")
+	}
+	if !strings.Contains(cfg.System, "workflow_status") {
+		t.Errorf("System is not the orchestrator prompt: %q", cfg.System)
 	}
 }

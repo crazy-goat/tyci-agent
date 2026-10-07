@@ -39,3 +39,22 @@ func TestOrchestratorPromptHasNoImplementInstruction(t *testing.T) {
 		}
 	}
 }
+
+func TestOrchestratorPromptToolList(t *testing.T) {
+	mustContain(t, BuildOrchestratorSystemPrompt(3),
+		"- workflow_status(run?):", "- workflow_start(issue, workflow?):", "- workflow_resume(run, answer):", "- read, help:")
+}
+
+func TestOrchestratorPromptAskChoices(t *testing.T) {
+	mustContain(t, BuildOrchestratorSystemPrompt(3),
+		"- retry: send the run back to the worker.",
+		"- retry <note>:",
+		"- stop: end the run.",
+		"- goto <state>: continue at that state",
+		"Default: tell the user the reason and the answers",
+		"then wait")
+}
+
+func TestOrchestratorPromptNeedsNoPlan(t *testing.T) {
+	mustContain(t, BuildOrchestratorSystemPrompt(3), "You need no todo plan. Act at once.")
+}
