@@ -462,3 +462,27 @@ func TestConfig_WatchdogInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestPingIntervalConfig(t *testing.T) {
+	d, err := TyciConfig{}.PingIntervalDuration()
+	if err != nil || d != 5*time.Minute {
+		t.Fatalf("default: got %v %v", d, err)
+	}
+	d, err = TyciConfig{PingInterval: "30s"}.PingIntervalDuration()
+	if err != nil || d != 30*time.Second {
+		t.Fatalf("30s: got %v %v", d, err)
+	}
+	for _, bad := range []string{"abc", "0s", "-1m"} {
+		_, err := TyciConfig{PingInterval: bad}.PingIntervalDuration()
+		if err == nil || !strings.Contains(err.Error(), "ping_interval") {
+			t.Fatalf("%q: expected error naming ping_interval, got %v", bad, err)
+		}
+	}
+}
+
+func TestPingIntervalIgnoredInProjectFile(t *testing.T) {
+	merged := mergeTyciConfig(TyciConfig{PingInterval: "10m"}, TyciConfig{PingInterval: "1s"})
+	if merged.PingInterval != "10m" {
+		t.Fatalf("project value leaked: %q", merged.PingInterval)
+	}
+}

@@ -37,12 +37,12 @@ func TestJobProgressHeartbeatCheck_NilWithoutWiringOrJobID(t *testing.T) {
 	SetJobProgressHeartbeat(nil)
 	t.Cleanup(func() { SetJobProgressHeartbeat(old) })
 
-	if check := JobProgressHeartbeatCheck("job-1-1"); check != nil {
+	if check := JobProgressHeartbeatCheck("job-1-1", time.Minute); check != nil {
 		t.Fatal("expected nil callback when no JobProgressHeartbeat is wired")
 	}
 
 	withFakeProgressHeartbeat(t, &fakeJobProgressHeartbeat{})
-	if check := JobProgressHeartbeatCheck(""); check != nil {
+	if check := JobProgressHeartbeatCheck("", time.Minute); check != nil {
 		t.Fatal("expected nil callback for an empty job id")
 	}
 }
@@ -50,15 +50,12 @@ func TestJobProgressHeartbeatCheck_NilWithoutWiringOrJobID(t *testing.T) {
 // TestJobProgressHeartbeatCheck_DelegatesToWiredHeartbeat pins the happy
 // path: the returned closure calls through to the wired
 // JobProgressHeartbeat with exactly the bound job id and the current
-// SubagentBackgroundAfter threshold, and returns whatever it reports.
+// given threshold, and returns whatever it reports.
 func TestJobProgressHeartbeatCheck_DelegatesToWiredHeartbeat(t *testing.T) {
-	restore := SetSubagentBackgroundAfterForTests(5 * time.Second)
-	defer restore()
-
 	fake := &fakeJobProgressHeartbeat{result: true}
 	withFakeProgressHeartbeat(t, fake)
 
-	check := JobProgressHeartbeatCheck("job-42-1")
+	check := JobProgressHeartbeatCheck("job-42-1", 5*time.Second)
 	if check == nil {
 		t.Fatal("expected a non-nil callback once a JobProgressHeartbeat is wired")
 	}
@@ -72,7 +69,7 @@ func TestJobProgressHeartbeatCheck_DelegatesToWiredHeartbeat(t *testing.T) {
 		t.Fatalf("expected job id %q, got %q", "job-42-1", fake.calls[0].id)
 	}
 	if fake.calls[0].after != 5*time.Second {
-		t.Fatalf("expected the current SubagentBackgroundAfter (5s), got %s", fake.calls[0].after)
+		t.Fatalf("expected the given threshold (5s), got %s", fake.calls[0].after)
 	}
 
 	fake.result = false

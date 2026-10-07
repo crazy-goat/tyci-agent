@@ -176,6 +176,13 @@ type Config struct {
 	// crowding out the real conversation, per item 15's decided design
 	// (time-based, not step-based, reusing SubagentBackgroundAfter).
 	ProgressHeartbeat func() bool
+
+	// AutoPing, if set, is called once per loop iteration after a
+	// ProgressHeartbeat nudge was sent. last describes the last tool call
+	// ("bash: go test ./..."). The callback owns the timing (see
+	// jobs.Registry.AutoProgress): it posts only when a full ping interval
+	// passed without a note, so calling it every iteration is cheap.
+	AutoPing func(last string)
 }
 
 // maxTodoReminders bounds how many times, within a single turn, the agent
@@ -254,6 +261,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	// Track fallback state across iterations
 	fs := fallbackState{idx: -1, mc: mc}
 
+	nudged := false
 	for iter := 0; cfg.MaxIterations <= 0 || iter < cfg.MaxIterations; iter++ {
 		// Warn the model, one turn ahead, when an explicit iteration cap or
 		// caller deadline is about to stop this run. Ordinary subagent runs
@@ -296,6 +304,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 		// sticky state — only gated on NOT sharing a turn with the last-step
 		// warning above (which forbids tool calls; report_progress is one).
 		if !warnedThisIteration && cfg.ProgressHeartbeat != nil && cfg.ProgressHeartbeat() {
+			nudged = true
 			reminder := buildProgressHeartbeatReminder()
 			*msgs = append(*msgs, connector.Message{
 				Role:    "user",
@@ -305,6 +314,9 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				blocks := []session.ContentBlock{{Type: "text", Text: reminder}}
 				_ = cfg.Session.WriteMessage("user", blocks, nil)
 			}
+		}
+		if nudged && cfg.AutoPing != nil {
+			cfg.AutoPing(lastToolSummary(*msgs))
 		}
 		// runOnce accumulates usage into totalUsage and emits d.Total
 		// only when it reaches the Summary line. totalEmitted reports

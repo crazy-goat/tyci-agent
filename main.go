@@ -542,26 +542,15 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		}
 	}
 
-	// Item 15: nudge this child, at most once per SubagentBackgroundAfter,
-	// to post a report_progress note when it has gone quiet. Only wired when
-	// report_progress is actually reachable for this agent — report_progress
-	// is NOT in alwaysAllowedTools (tools/toolgate.go), so a non-empty
-	// tools: whitelist that omits it (e.g. builtin "reviewer": find, read,
-	// bash, or "locator": find, read) leaves the child with no way to ever
-	// satisfy this nudge: LastProgressAt would never advance, and the
-	// reminder would re-fire roughly every SubagentBackgroundAfter for
-	// the rest of the run — exactly the "crowd out the real conversation"
-	// outcome item 15 exists to avoid. Same hasAskParent-shaped check as
-	// RunTaskWithSystem above (opts.Tools empty/nil means unrestricted).
-	hasReportProgress := len(opts.Tools) == 0
-	for _, name := range opts.Tools {
-		if name == "report_progress" {
-			hasReportProgress = true
-			break
-		}
-	}
-	if hasReportProgress {
-		cfg.ProgressHeartbeat = tools.JobProgressHeartbeatCheck(jobID)
+	// Every agent posts a progress note at least every ping_interval: the
+	// model is nudged at half of it, and when it stays silent the harness
+	// posts "[auto] <last tool call>" at the full interval. report_progress
+	// is always allowed (tools.alwaysAllowedTools), so the nudge can always
+	// be answered. An invalid ping_interval is rejected at startup.
+	if jobID != "" {
+		ping, _ := agent.LoadTyciConfigFrom("").PingIntervalDuration()
+		cfg.ProgressHeartbeat = tools.JobProgressHeartbeatCheck(jobID, ping/2)
+		cfg.AutoPing = func(last string) { JobRegistry.AutoProgress(jobID, ping, last) }
 	}
 
 	// Children spend the parent's money, so they record against the same
@@ -1050,6 +1039,10 @@ func main() {
 
 	idle, escalate, err := agent.LoadTyciConfigFrom("").WatchdogDurations()
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		os.Exit(1)
+	}
+	if _, err := agent.LoadTyciConfigFrom("").PingIntervalDuration(); err != nil {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		os.Exit(1)
 	}

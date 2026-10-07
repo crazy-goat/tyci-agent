@@ -134,6 +134,14 @@ type Job struct {
 	// data race to one reading it directly off a live *Job.
 	lastProgressAt time.Time
 
+	// LastProgressAt is the snapshot copy of lastProgressAt (see Snapshot):
+	// when the job last posted a real progress note, or its start time.
+	LastProgressAt time.Time
+
+	// lastAutoAt is when Registry.AutoProgress last posted an "[auto]" note.
+	// Guarded by Registry.mu.
+	lastAutoAt time.Time
+
 	// EventSeq orders the snapshots handed to Registry's onEvent hook. It is
 	// set under Registry.mu (see eventSnapshotLocked) and only ever grows for
 	// the life of the job. onEvent runs after the lock is released, so two
@@ -343,6 +351,7 @@ func (j *Job) Snapshot() Job {
 		// SetProgress on the live job.
 		ProgressHistory:          append([]string(nil), j.ProgressHistory...),
 		ProgressHistoryTruncated: j.ProgressHistoryTruncated,
+		LastProgressAt:           j.lastProgressAt,
 		// append([]string(nil), ...) copies the backing array — a plain
 		// slice-header copy would leave every snapshot (including every
 		// element List() returns) aliasing the SAME array the live Job

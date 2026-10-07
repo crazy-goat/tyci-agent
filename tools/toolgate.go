@@ -155,7 +155,9 @@ func newAllowGate(names []string) ToolGate {
 //     script is restricted identically. What it does grant is the ability to
 //     do twenty greps in one round trip instead of twenty — and a narrow
 //     agent like "locator" is exactly the one that needs that most.
-var alwaysAllowedTools = []string{"help", "lua"}
+//   - report_progress, because the harness nudges every agent to call it
+//     (ping_interval) and a whitelist must not make that nudge unanswerable.
+var alwaysAllowedTools = []string{"help", "lua", "report_progress"}
 
 // subagentDeniedTools names tools that are never available to a subagent,
 // whatever its own tools: whitelist says:

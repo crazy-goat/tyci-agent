@@ -9,10 +9,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/internal/redact"
 )
 
 type Registry struct {
 	mu      sync.Mutex
+	now     func() time.Time // clock; tests replace it before use
 	jobs    map[string]*Job
 	onEvent func(Job)
 
@@ -27,7 +30,15 @@ type Registry struct {
 }
 
 func NewRegistry() *Registry {
-	return &Registry{jobs: make(map[string]*Job), tombstones: make(map[string]Job)}
+	return &Registry{jobs: make(map[string]*Job), tombstones: make(map[string]Job), now: time.Now}
+}
+
+// SetClockForTests replaces the clock used for the progress timers. Call it
+// before Start.
+func (r *Registry) SetClockForTests(now func() time.Time) {
+	r.mu.Lock()
+	r.now = now
+	r.mu.Unlock()
 }
 
 // SetOnEvent registers fn to be called (outside any internal lock, so fn
@@ -102,7 +113,7 @@ func panicError(value any) (err error) {
 // cancelable ctx keep working unchanged; this only adds one more link on top
 // of whatever they supplied.
 func (r *Registry) Start(ctx context.Context, description string, kind Kind, parentID string, fn func(ctx context.Context, jobID string) (result string, truncated bool, err error)) *Job {
-	now := time.Now()
+	now := r.now()
 	jobCtx := ctx
 	var cancel context.CancelFunc
 	var extensionCtx *resettableDeadlineContext
@@ -880,7 +891,7 @@ func (r *Registry) SetProgress(id, text string) bool {
 	}
 	entry := truncateProgressEntry(text)
 	job.Progress = entry
-	job.lastProgressAt = time.Now()
+	job.lastProgressAt = r.now()
 	job.ProgressHistory = append(job.ProgressHistory, entry)
 	if len(job.ProgressHistory) > progressHistoryCap {
 		// Drop the oldest and record that we did — see
@@ -946,10 +957,53 @@ func (r *Registry) NeedsProgressHeartbeat(id string, after time.Duration) bool {
 	if job.lastHeartbeatNudgeAt.After(reference) {
 		reference = job.lastHeartbeatNudgeAt
 	}
-	if time.Since(reference) < after {
+	now := r.now()
+	if now.Sub(reference) < after {
 		return false
 	}
-	job.lastHeartbeatNudgeAt = time.Now()
+	job.lastHeartbeatNudgeAt = now
+	return true
+}
+
+// AutoProgress posts "[auto] "+text (redacted) as a progress note when the
+// RUNNING job id has had no note for at least `after`: neither a real one
+// (SetProgress) nor an earlier automatic one. Check and set happen under
+// r.mu, like NeedsProgressHeartbeat. A real SetProgress resets this clock too.
+// Returns true when a note was written; false for an unknown or non-running
+// job, or after <= 0.
+func (r *Registry) AutoProgress(id string, after time.Duration, text string) bool {
+	if after <= 0 {
+		return false
+	}
+	r.mu.Lock()
+	job, ok := r.jobs[id]
+	if !ok || job.Status != StatusRunning {
+		r.mu.Unlock()
+		return false
+	}
+	now := r.now()
+	reference := job.lastProgressAt
+	if job.lastAutoAt.After(reference) {
+		reference = job.lastAutoAt
+	}
+	if now.Sub(reference) < after {
+		r.mu.Unlock()
+		return false
+	}
+	job.lastAutoAt = now
+	entry := truncateProgressEntry("[auto] " + redact.Redact(text))
+	job.Progress = entry
+	job.ProgressHistory = append(job.ProgressHistory, entry)
+	if len(job.ProgressHistory) > progressHistoryCap {
+		job.ProgressHistory = job.ProgressHistory[len(job.ProgressHistory)-progressHistoryCap:]
+		job.ProgressHistoryTruncated = true
+	}
+	onEvent := r.onEvent
+	snapshot := eventSnapshotLocked(job)
+	r.mu.Unlock()
+	if onEvent != nil {
+		onEvent(snapshot)
+	}
 	return true
 }
 

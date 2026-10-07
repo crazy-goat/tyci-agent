@@ -62,6 +62,27 @@ type TyciConfig struct {
 	// Watchdog tunes idle detection of running subagents. Global config only:
 	// a project-local value is ignored (see mergeTyciConfig).
 	Watchdog *WatchdogConfig `json:"watchdog,omitempty"`
+	// PingInterval is a Go duration string, for example "5m": every agent
+	// posts a progress note at least this often (the model is nudged at half
+	// of it, the harness posts "[auto]" at the full interval). Global config
+	// only: a project-local value is ignored (see mergeTyciConfig).
+	PingInterval string `json:"ping_interval,omitempty"`
+}
+
+// DefaultPingInterval is the ping interval when ping_interval is not set.
+const DefaultPingInterval = 5 * time.Minute
+
+// PingIntervalDuration returns ping_interval, default 5m. An unparsable or
+// non-positive value is an error naming the key.
+func (c TyciConfig) PingIntervalDuration() (time.Duration, error) {
+	if c.PingInterval == "" {
+		return DefaultPingInterval, nil
+	}
+	d, err := time.ParseDuration(c.PingInterval)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("ping_interval: %q is not a positive duration (example: \"5m\")", c.PingInterval)
+	}
+	return d, nil
 }
 
 // WatchdogConfig holds Go duration strings, for example "3m".

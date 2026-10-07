@@ -526,6 +526,14 @@ human (once). It never kills a job. Global `~/.tyci/config.json` only; defaults 
 { "watchdog": { "idle_after": "3m", "escalate_after": "3m" } }
 ```
 
+Every agent posts a progress line at least every `ping_interval` (default `5m`, global
+`~/.tyci/config.json` only). At half of it the model gets a nudge to call `report_progress`;
+if it stays silent, the harness posts `[auto] <last tool call>` itself.
+
+```json
+{ "ping_interval": "5m" }
+```
+
 Anthropic **prompt caching** is on by default, with cache breakpoints after the
 tool schemas, after the system prompt, and at the end of the conversation — the
 parts that are identical on every turn. The cache read/write counts already
