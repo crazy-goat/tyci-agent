@@ -21,11 +21,12 @@ func goldenPrompt(t *testing.T, build func() string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, date, _, _ := envContext()
+	_, date, osName, tempDir := envContext()
 	out := build()
 	out = strings.ReplaceAll(out, real, "<WD>")
 	out = strings.ReplaceAll(out, wd, "<WD>")
-	return strings.ReplaceAll(out, date, "<DATE>")
+	out = strings.ReplaceAll(out, date, "<DATE>")
+	return strings.ReplaceAll(out, "OS "+osName+" · temp dir "+tempDir, "OS <OS> · temp dir <TMP>")
 }
 
 func checkPromptGolden(t *testing.T, name, got string) {
