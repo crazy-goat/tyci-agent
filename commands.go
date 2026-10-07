@@ -340,7 +340,6 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		PendingTodos:       tools.PendingTodos,
 		ActiveSubagents:    JobRegistry.HasActiveSubagents,
 		PendingJobs:        JobRegistry.PendingLines,
-		HasTodos:           tools.HasPendingTodos,
 		ContextLimit:       pricingContextLimit(provider.Name(), modelName),
 		ContextLimitFor:    pricingContextLimit,
 		Interactive:        interactive,
@@ -703,7 +702,7 @@ var tuiCmd = &cobra.Command{
 		// providers that are already in auth.json (see authSet above), and
 		// silently refusing a favorite would read as a dead key press.
 		// The TUI chat is the orchestrator of the session: its own short prompt.
-		cfg.System = orchestratorSystemPrompt()
+		cfg = orchestratorChatConfig(cfg)
 		// Chat tools workflow_start/status/resume exist only in tui and console:
 		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
 		// Set them before the schema snapshot, or the model never sees them.

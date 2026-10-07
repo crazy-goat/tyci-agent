@@ -39,3 +39,34 @@ func TestOrchestratorPromptHasNoImplementInstruction(t *testing.T) {
 		}
 	}
 }
+
+func TestOrchestratorPromptToolList(t *testing.T) {
+	mustContain(t, BuildOrchestratorSystemPrompt(3),
+		"- workflow_status(run?):", "- workflow_start(issue, workflow?):", "- workflow_resume(run, answer):", "- read, help:")
+}
+
+func TestOrchestratorPromptAskChoices(t *testing.T) {
+	mustContain(t, BuildOrchestratorSystemPrompt(3),
+		"- retry: send the run back to the worker.",
+		"- retry <note>:",
+		"- stop: end the run.",
+		"- goto <state>: continue at that state",
+		"Default: tell the user the reason and the answers",
+		"then wait")
+}
+
+func TestOrchestratorPromptNeedsNoPlan(t *testing.T) {
+	mustContain(t, BuildOrchestratorSystemPrompt(3), "You need no todo plan. Act at once.")
+}
+
+// #371: the hints must not overlap; a timeout goes to the check, not to retry.
+func TestOrchestratorPromptAskHintsExclusive(t *testing.T) {
+	p := BuildOrchestratorSystemPrompt(3)
+	mustContain(t, p,
+		"a check timed out or failed for a reason outside the code -> goto that check",
+		"the code is wrong -> retry <note>",
+		"the issue is done or not wanted -> stop")
+	if strings.Contains(p, "timed-out check -> retry") {
+		t.Error("prompt still sends a timed-out check to retry")
+	}
+}

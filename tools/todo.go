@@ -35,11 +35,11 @@ type todoItem struct {
 // never handed out by nextTodoAgentID (see subagent.go) and never a real
 // job id (see JobIDCtxKey), so no child can ever collide into it.
 //
-// AllTodoItems, TodoCounts, PendingTodos, HasPendingTodos and
+// AllTodoItems, TodoCounts, PendingTodos and
 // ClearTodoList all read/write this id explicitly — a named constant
 // rather than a magic "empty context" — because callers without a ctx
 // (the display package) or that specifically mean the main conversation
-// (the /new handlers, the top-level plan guard wired in commands.go) must
+// (the /new handlers) must
 // keep seeing the main list no matter what any child is doing.
 const mainAgentTodoID = ""
 
@@ -511,30 +511,6 @@ func PendingTodos() []string {
 		out = append(out, formatTodoLine(item))
 	}
 	return out
-}
-
-// HasPendingTodos returns true when the MAIN conversation's todo list
-// contains at least one item with status "todo" or "doing". Used by the
-// agent loop to enforce the "plan first" policy — non-todo tools are
-// blocked unless the agent has active (uncompleted) work in its plan.
-// Once all items are "done" or "blocked", the guard re-engages and the LLM
-// must add a new plan or reopen an existing item before using other tools.
-//
-// Scoped to the main list on purpose: a subagent's cfg does not wire this
-// guard at all today (see main.go's agentRunner.run), so this only ever
-// gates the top-level conversation — and even if a child's cfg wired an
-// analogous check in the future, it must resolve its own agent's list via
-// todoAgentIDFromCtx(ctx), not this one.
-func HasPendingTodos() bool {
-	todoStore.Lock()
-	defer todoStore.Unlock()
-	l := getOrCreateLocked(mainAgentTodoID)
-	for _, it := range l.items {
-		if it.Status == "todo" || it.Status == "doing" {
-			return true
-		}
-	}
-	return false
 }
 
 // TodoCounts returns the number of done items and the total number of items

@@ -76,6 +76,11 @@ func TestPrompts_FixerKeys(t *testing.T) {
 	requireAll(t, "fixer", "answer exactly `ok`", "answer exactly `failed`", "`failed.log`", "SUGGESTED", "Never force-push.")
 }
 
+// #371: the shorter oracle prompt keeps the read-only rule.
+func TestPrompts_OracleReadOnly(t *testing.T) {
+	requireAll(t, "oracle", "You are read-only.", "Do not edit, create or delete files.", "Do not ask questions.")
+}
+
 func TestPrompts_OracleFollowsTask(t *testing.T) {
 	requireAll(t, "oracle", "Answer only in the format the task describes.")
 }

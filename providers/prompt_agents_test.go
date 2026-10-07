@@ -210,13 +210,19 @@ func TestPromptStatesTheEnforcedContracts(t *testing.T) {
 	prompt := BuildSystemPrompt()
 
 	for _, want := range []string{
-		"first tool call must be todo",
 		"write refuses to modify a file you have not read",
 		"moves to the background after 30s",
 		"Hooks may veto",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the contracts section is missing %q", want)
+		}
+	}
+
+	// No plan is required before the first tool call (#377).
+	for _, bad := range []string{"first tool call must be todo", "refused until a plan exists", "Required first"} {
+		if strings.Contains(prompt, bad) {
+			t.Errorf("the prompt must not require a plan: found %q", bad)
 		}
 	}
 }

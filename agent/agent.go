@@ -105,14 +105,6 @@ type Config struct {
 	// answer_job() call from a turn that has already ended.
 	PendingJobs func() []string
 
-	// HasTodos, if set, is called before executing tool calls to enforce
-	// the "plan first" policy. It returns true when at least one todo
-	// item exists (regardless of status). Non-todo tools are blocked with
-	// an actionable error until the model creates a plan via the todo
-	// tool. This ensures the model thinks through its approach before
-	// acting.
-	HasTodos func() bool
-
 	// Compactor is called by the model-facing compact tool at a safe turn
 	// boundary. It appends an event and updates the live conversation.
 	Compactor func(summary, focus string) (string, error)
