@@ -195,7 +195,7 @@ func (c *Config) validate() error {
 		return err
 	}
 	for name, r := range c.Roles {
-		if err := checkEffort(fmt.Sprintf("role %q: effort", name), r.Effort); err != nil {
+		if err := checkEffort(fmt.Sprintf("roles.%s.effort", name), r.Effort); err != nil {
 			return err
 		}
 		if r.Model != "" && !c.hasModel(r.Model) {

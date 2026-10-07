@@ -134,6 +134,9 @@ func stepLine(s flow.Step) string {
 		if _, name, ok := strings.Cut(model, "/"); ok {
 			model = name
 		}
+		if s.Stats.Effort != "" {
+			model += " (" + s.Stats.Effort + ")"
+		}
 		parts = append(parts, model, fmtTok(s.Stats.Tokens())+" tok", fmt.Sprintf("$%.2f", s.Stats.CostUSD))
 	}
 	if !s.EndedAt.IsZero() && !s.StartedAt.IsZero() {

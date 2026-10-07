@@ -274,7 +274,7 @@ func TestResolveEffort(t *testing.T) {
 func TestLoad_UnknownEffortIsError(t *testing.T) {
 	home := t.TempDir()
 	write(t, home, ".tyci/config.json", `{"roles":{"worker":{"effort":"huge"}}}`)
-	if _, err := Load(home, t.TempDir(), true); err == nil || !strings.Contains(err.Error(), "huge") {
+	if _, err := Load(home, t.TempDir(), true); err == nil || !strings.Contains(err.Error(), "roles.worker.effort") || !strings.Contains(err.Error(), "huge") {
 		t.Fatalf("got %v", err)
 	}
 	write(t, home, ".tyci/config.json", `{"default_effort":"huge"}`)

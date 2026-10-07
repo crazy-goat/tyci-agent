@@ -16,6 +16,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/internal/pricing"
+	"github.com/crazy-goat/tyci-agent/providers"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
@@ -27,7 +28,7 @@ type TaskRenderer interface {
 
 // NewSubagentRunner returns a runner that renders the embedded task templates.
 func NewSubagentRunner(cfg *flowconfig.Config, spawn func(ctx context.Context, s tools.TaskSpec) (string, string, error)) *SubagentRunner {
-	return &SubagentRunner{Cfg: cfg, Render: TaskTemplates{}, Spawn: spawn}
+	return &SubagentRunner{Cfg: cfg, Render: TaskTemplates{}, Spawn: spawn, URIEffort: providers.URIReasoningEffort}
 }
 
 // SubagentRunner runs an agent state as a subagent in the run worktree.
@@ -40,6 +41,9 @@ type SubagentRunner struct {
 	// IssueContext fetches the issue text for the worker. Nil means a gh fetch
 	// that caches collaborator permissions for the life of this runner.
 	IssueContext func(ctx context.Context, repo string, issue int) (string, error)
+	// URIEffort returns the ?reasoning= effort of a model URI. It wins over the
+	// role effort, as in the connector. Optional.
+	URIEffort func(model string) string
 
 	once    sync.Once
 	fetcher *issueFetcher
@@ -111,8 +115,14 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 		name = rc.Run + "/" + role
 	}
 	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl)}
+	effective := spec.Effort
+	if r.URIEffort != nil {
+		if v := r.URIEffort(model); v != "" {
+			effective = v
+		}
+	}
 	if rc.Stats != nil {
-		spec.OnDone = func(ts tools.TaskStats) { *rc.Stats = stepStats(model, spec.Effort, ts) }
+		spec.OnDone = func(ts tools.TaskStats) { *rc.Stats = stepStats(model, effective, ts) }
 	}
 	return r.Spawn(ctx, spec)
 }

@@ -151,6 +151,10 @@ func TestStepLine(t *testing.T) {
 	if got := stepLine(s); got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
+	s.Stats.Effort = "high"
+	if got := stepLine(s); got != "code -> done: worker · opus (high) · 1.5k tok · $1.23 · 1m30s" {
+		t.Fatalf("with effort: %q", got)
+	}
 	if got := stepLine(flow.Step{State: "ci", Key: "ok"}); got != "ci -> ok" {
 		t.Fatalf("got %q", got)
 	}

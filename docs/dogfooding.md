@@ -37,8 +37,9 @@ The file accepts only the keys shown here and `check_timeout_sec`.
     "strong": "my-provider/my-strong-model"
   },
   "default_model": "fast",
+  "default_effort": "medium",
   "roles": {
-    "worker": {"model": "strong"},
+    "worker": {"model": "strong", "effort": "high"},
     "review": {"model": "strong"}
   }
 }

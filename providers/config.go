@@ -504,6 +504,24 @@ func (p *dynamicProvider) kindFor(apiType string) (string, error) {
 	return "", fmt.Errorf("unsupported api_type %q", apiType)
 }
 
+// URIReasoningEffort returns the ?reasoning=<effort> option of the registered
+// model URI, or "" when the model is unknown or the URI has no effort.
+func URIReasoningEffort(model string) string {
+	p, name, ok := FindModel(model)
+	if !ok {
+		return ""
+	}
+	dp, ok := p.(*dynamicProvider)
+	if !ok {
+		return ""
+	}
+	entry := dp.findEntry(name)
+	if entry == nil {
+		return ""
+	}
+	return uriOptions(entry.URI)[connector.OptReasoningEffort]
+}
+
 // uriOptions extracts the connector options encoded in the URI query string.
 // Returns nil when there is nothing to pass.
 func uriOptions(uri string) map[string]string {
