@@ -392,3 +392,74 @@ func TestResumedRunsCountTowardWorkers(t *testing.T) {
 		t.Fatalf("max in flight %d", peak)
 	}
 }
+
+func TestPausedRunsAreAdoptedNotRestarted(t *testing.T) {
+	// Runs of #1 and #2 were paused at start-up and wait for the user's answer.
+	e := newEnv(t, Config{Workers: 3}, five()...)
+	e.r.paused = []int{1, 2}
+	p := e.start()
+	if len(p.Started) != 1 || p.Started[0] != 3 || p.Free != 0 {
+		t.Fatalf("%+v", p)
+	}
+	// The start-up question already asked the user: no extra "waits" note.
+	if e.status(1) != StatusAsk || e.status(2) != StatusAsk {
+		t.Fatalf("%+v", e.o.Roadmap().Items)
+	}
+	// The user answers "stop" for #1: the run ends; the issue is done, not started again.
+	e.r.handle(1).finish("ended")
+	if n := e.waitStart(); n != 4 {
+		t.Fatalf("got %d", n)
+	}
+	if e.status(1) != StatusDone {
+		t.Fatalf("%+v", e.o.Roadmap().Items)
+	}
+	// The user answers "resume" for #2 and the run fails: no second run.
+	e.r.handle(2).finish("failed")
+	if n := e.waitStart(); n != 5 {
+		t.Fatalf("got %d", n)
+	}
+	if e.status(2) != StatusFailed || e.r.starts(1) != 0 || e.r.starts(2) != 0 {
+		t.Fatalf("starts(1)=%d starts(2)=%d %+v", e.r.starts(1), e.r.starts(2), e.o.Roadmap().Items)
+	}
+	for len(e.notes) > 0 {
+		if l := <-e.notes; strings.Contains(l, "waits for your answer") {
+			t.Fatalf("extra note: %q", l)
+		}
+	}
+}
+
+func TestPausedRunStoppedDuringPlanIsNotStarted(t *testing.T) {
+	// The run of #1 was paused at start-up. The user answers "stop" while the
+	// oracle plans: the run ends before the plan is ready.
+	e := newEnv(t, Config{Workers: 3}, five()...)
+	e.r.paused = []int{1}
+	e.r.oracle = func(string) RunResult {
+		h := e.r.handle(1)
+		if h == nil {
+			t.Error("paused run not adopted before the plan")
+			return RunResult{Outcome: "failed"}
+		}
+		h.finish("ended")
+		return RunResult{Outcome: "failed"} // fallback order
+	}
+	p := e.start()
+	if len(p.Started) != 2 || p.Started[0] != 2 || p.Started[1] != 3 {
+		t.Fatalf("%+v", p)
+	}
+	e.waitNote("#1 ended")
+	if e.r.starts(1) != 0 || e.status(1) != StatusDone {
+		t.Fatalf("starts(1)=%d %+v", e.r.starts(1), e.o.Roadmap().Items)
+	}
+	// The freed slot goes to the next issue, not to #1 (start() may have
+	// read that start already, so poll the count).
+	deadline := time.Now().Add(wait)
+	for e.r.starts(4) != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("#4 not started")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if e.r.starts(1) != 0 {
+		t.Fatalf("starts(1)=%d", e.r.starts(1))
+	}
+}

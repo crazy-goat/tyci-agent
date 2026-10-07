@@ -64,13 +64,15 @@ type Manager struct {
 	active map[string]activeRun
 	subs   map[int]func(RunEvent)
 	nsub   int
+	// adopted: runs that Adopt or Start returned to the orchestrator.
+	adopted map[string]bool
 }
 
 // activeRun is a run with a goroutine in this process.
 type activeRun struct {
 	cancel context.CancelFunc
 	issue  int
-	// adoptable: resumed by ResumeAll; the next Start of the issue returns it.
+	// adoptable: resumed with the answer "resume"; the next Start of the issue returns it.
 	adoptable bool
 }
 
@@ -138,7 +140,7 @@ func (m *Manager) SetBase(ctx context.Context) {
 }
 
 // Start prepares a run and starts it in a goroutine. It returns at once.
-// A run of the issue resumed by ResumeAll is returned instead of a new one,
+// A run of the issue resumed with the answer "resume" is returned instead of a new one,
 // and a run of the issue whose owner process is gone is resumed.
 func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string, error) {
 	if req.Workflow == "" {
@@ -173,7 +175,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 // ErrBusy is returned (wrapped) when a run is already active.
 var ErrBusy = errors.New("manager busy")
 
-// refuse returns an error when the issue has an active or paused run. A running
+// refuse returns an ErrBusy error when the issue has an active or paused run. A running
 // state without an active goroutine is stale and does not block. m.mu must be held.
 func (m *Manager) refuse(info RepoInfo, issue int) error {
 	for id, a := range m.active {
@@ -190,7 +192,7 @@ func (m *Manager) refuse(info RepoInfo, issue int) error {
 		// "running" here is stale: the loop above found no active run of this
 		// issue, so no goroutine owns it. Only a paused run blocks.
 		if st.Status == "paused" {
-			return fmt.Errorf("issue %d already has run %s (%s)", issue, st.Run, st.Status)
+			return fmt.Errorf("%w: issue %d already has run %s (%s)", ErrBusy, issue, st.Run, st.Status)
 		}
 	}
 	return nil
@@ -321,6 +323,11 @@ func (m *Manager) Resume(runID, answer string) error {
 	if err != nil {
 		return err
 	}
+	// "resume" continues a run paused at start-up at its saved state.
+	saved := resumeState(st)
+	if strings.TrimSpace(answer) == "resume" && saved != "" {
+		answer = "goto " + saved
+	}
 	s := wf.States[st.Current]
 	key, isGoto := answer, false
 	word, rest, _ := strings.Cut(strings.TrimSpace(answer), " ")
@@ -345,6 +352,9 @@ func (m *Manager) Resume(runID, answer string) error {
 		return fmt.Errorf("%w: run %s is active", ErrBusy, st.Run)
 	}
 	m.launch(info, wf, st, true, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
+	if saved != "" && answer == "goto "+saved {
+		m.markAdoptable(st.Run)
+	}
 	m.mu.Unlock()
 	return nil
 }

@@ -70,3 +70,7 @@ func TestOrchestratorPromptAskHintsExclusive(t *testing.T) {
 		t.Error("prompt still sends a timed-out check to retry")
 	}
 }
+
+func TestOrchestratorPromptStartupQuestion(t *testing.T) {
+	mustContain(t, BuildOrchestratorSystemPrompt(3), "At start-up a notice may list unfinished runs", `workflow_resume(run, "resume")`, "Wait for the answer.")
+}

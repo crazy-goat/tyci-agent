@@ -68,13 +68,17 @@ make install
 - Overrides: `.tyci/workflows/` and `.tyci/checks/`
 
 A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
-resumes (`resumed`). When `tyci` or `tyci console` starts, it resumes every `running` run
-of the current repository whose owner process is gone, at its saved state (the agent of
-that state starts again in the same worktree, and the visit is not counted again). At most
-`orchestrator.workers` runs are resumed; a later start of the issue resumes the others.
-The orchestrator counts the resumed runs as workers before it starts new runs.
-A run resumed 3 times, or one whose worktree is gone, pauses for an answer. Paused runs
-stay paused and their notice is shown again.
+resumes (`resumed`). When `tyci` or `tyci console` starts, it resumes nothing by itself.
+It pauses every `running` run of the current repository whose owner process is gone (state
+`ask`, reason `resume:<state>`). Then the chat shows one question that lists all paused runs
+(run id, issue, last step and key, PR) with their answers. Answer `resume` (continue at the
+saved state in the same worktree), `stop`, or nothing: a run without an answer stays paused.
+A paused run blocks a new run for its issue. The orchestrator watches the paused runs (they
+count as workers) and sees how each one ends after the answer, so it never starts a second run
+for the issue. A run that cannot pause (its workflow has no `ask` state) fails, and the chat
+shows a notice for it. With no unfinished runs, start-up does not ask. A `workflow_start` of an issue whose `running` run has
+a dead owner (another tyci process stopped) still resumes it; such a run resumed 3 times, or
+one whose worktree is gone, pauses for an answer.
 
 A failed check script prints a `RESULT`/`STEP`/`WHAT`/`STATE`/`LIKELY CAUSE`/`SUGGESTED`
 block to its `output.log`. The run then goes to the `fixer` role, which fixes small problems

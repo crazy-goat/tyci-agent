@@ -56,6 +56,8 @@ A paused run (ask): the notice gives the reason and the allowed answers.
 Default: tell the user the reason and the answers in one or two lines, then wait. Send an answer only when the user chose it, or told you before what to do.
 Hints: a check timed out or failed for a reason outside the code -> goto that check; the code is wrong -> retry <note>; the issue is done or not wanted -> stop.
 
+At start-up a notice may list unfinished runs that tyci paused after a restart. Show the list to the user in one message and ask: resume, stop or leave paused, for each run or for all. Wait for the answer. Then call workflow_resume(run, "resume") or workflow_resume(run, "stop") for each run the user chose. Do nothing for the runs the user leaves paused.
+
 Write short, plain sentences.
 `, n, date, wd, osName, tempDir)
 	return prompt + projectContextTail(wd)

@@ -106,15 +106,18 @@ func TestScanAsk_ReturnsOnlyAsk(t *testing.T) {
 	}
 }
 
-func TestResumeAll_ReshowsAskNotice(t *testing.T) {
+func TestAskUnfinished_ListsPausedRunUnchanged(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, func(st *RunState) {
 		st.Status, st.Current, st.Ask = "paused", "ask", &Ask{Message: "Need a decision."}
 	})
 	before := loadRunState(t, e.home, st.Run)
-	e.m.ResumeAll(0)
-	if got := e.notice(t); !strings.Contains(got, st.Run+" paused: Need a decision.") {
-		t.Fatalf("notice = %q", got)
+	e.m.AskUnfinished()
+	got := e.notice(t)
+	for _, want := range []string{"run " + st.Run + ", issue #1", "reason: Need a decision.", "answers: retry, stop\n", "Nothing resumes until the user answers"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("notice = %q, want %q", got, want)
+		}
 	}
 	after := loadRunState(t, e.home, st.Run)
 	if after.Status != "paused" || !after.UpdatedAt.Equal(before.UpdatedAt) || len(e.m.active) != 0 {
@@ -125,9 +128,8 @@ func TestResumeAll_ReshowsAskNotice(t *testing.T) {
 func TestResume_DoesNotIncrementVisits(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, nil)
-	e.m.ResumeAll(0)
-	if got := e.notice(t); got != "resumed run "+st.Run+" at state c" {
-		t.Fatalf("notice = %q", got)
+	if id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err != nil || id != st.Run {
+		t.Fatalf("id = %q, err = %v", id, err)
 	}
 	if got := e.notice(t); !strings.HasPrefix(got, "workflow run "+st.Run) {
 		t.Fatalf("notice = %q", got)
@@ -144,7 +146,9 @@ func TestResume_DoesNotIncrementVisits(t *testing.T) {
 func TestResume_CapAtThree(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, func(st *RunState) { st.Resumed = maxResumes })
-	e.m.ResumeAll(0)
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err == nil {
+		t.Fatal("start: want an error")
+	}
 	if got := e.notice(t); !strings.Contains(got, "paused: resumed 3 times, please check") {
 		t.Fatalf("notice = %q", got)
 	}
@@ -160,7 +164,9 @@ func TestResume_CapAtThree(t *testing.T) {
 func TestResume_MissingWorktreeGoesToAsk(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, func(st *RunState) { st.Worktree = filepath.Join(e.home, "gone") })
-	e.m.ResumeAll(0)
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err == nil {
+		t.Fatal("start: want an error")
+	}
 	if got := e.notice(t); !strings.Contains(got, "is missing") {
 		t.Fatalf("notice = %q", got)
 	}
@@ -216,8 +222,11 @@ func TestManager_StartAdoptsResumedRun(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
 	st := saveRun(t, e.home, 5, nil)
-	e.m.ResumeAll(0)
+	e.m.AskUnfinished()
 	e.notice(t)
+	if err := e.m.Resume(st.Run, "resume"); err != nil {
+		t.Fatal(err)
+	}
 	id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5})
 	if err != nil || id != st.Run {
 		t.Fatalf("id = %q, err = %v", id, err)
@@ -229,31 +238,87 @@ func TestManager_StartAdoptsResumedRun(t *testing.T) {
 	e.notice(t)
 }
 
-func TestResumeAll_LimitLeavesRunsForStart(t *testing.T) {
+func TestAskUnfinished_TwoRunsOneQuestion(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
-	first := saveRun(t, e.home, 1, nil)
+	first := saveRun(t, e.home, 1, func(st *RunState) {
+		st.PR = 12
+		st.History = []Step{{Seq: 1, State: "c", Kind: "check", Key: "ok"}}
+	})
 	second := saveRun(t, e.home, 2, nil)
-	e.m.ResumeAll(1)
-	if got := e.notice(t); got != "resumed run "+first.Run+" at state c" {
+	e.m.AskUnfinished()
+	got := e.notice(t)
+	for _, want := range []string{
+		"2 workflow run(s) of o/r",
+		"run " + first.Run + ", issue #1, last step c -> ok, PR #12",
+		"run " + second.Run + ", issue #2",
+		"answers: resume, retry, stop",
+		"workflow_resume",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("notice = %q, want %q", got, want)
+		}
+	}
+	select {
+	case s := <-e.notices:
+		t.Fatalf("second notice %q", s)
+	default:
+	}
+	for _, st := range []*RunState{first, second} {
+		after := loadRunState(t, e.home, st.Run)
+		if after.Status != "paused" || after.Current != "ask" || after.Ask.Reason != "resume:c" || after.Resumed != 0 {
+			t.Fatalf("after = %+v ask %+v", after, after.Ask)
+		}
+	}
+	if len(e.m.active) != 0 {
+		t.Fatal("a run resumed before the answer")
+	}
+	// The scheduler cannot start a new run while the answer is open.
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 2}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("start: err = %v", err)
+	}
+
+	if err := e.m.Resume(first.Run, "resume"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Resume(second.Run, "stop"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.notice(t); !strings.Contains(got, second.Run) {
 		t.Fatalf("notice = %q", got)
 	}
-	if got := e.notice(t); got != "run "+second.Run+" not resumed: worker limit 1 reached; start issue #2 again to resume it" {
-		t.Fatalf("notice = %q", got)
-	}
-	if loadRunState(t, e.home, second.Run).Resumed != 0 {
-		t.Fatal("run over the limit was claimed")
-	}
-	id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 2})
-	if err != nil || id != second.Run {
-		t.Fatalf("id = %q, err = %v", id, err)
-	}
-	if got := loadRunState(t, e.home, second.Run); got.Resumed != 1 || !hasResumedStep(got) {
-		t.Fatalf("second = %+v", got)
+	if got := loadRunState(t, e.home, second.Run); got.Status != "done" {
+		t.Fatalf("stopped run = %+v", got)
 	}
 	close(c.release)
-	e.notice(t)
-	e.notice(t)
+	if got := e.notice(t); !strings.Contains(got, first.Run) {
+		t.Fatalf("notice = %q", got)
+	}
+	after := loadRunState(t, e.home, first.Run)
+	if after.Status != "done" || after.History[len(after.History)-2].Key != "goto c" {
+		t.Fatalf("resumed run = %+v", after)
+	}
+}
+
+func TestAskUnfinished_NothingUnfinished(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	saveRun(t, e.home, 1, func(st *RunState) { st.Status = "done" })
+	e.m.AskUnfinished()
+	select {
+	case s := <-e.notices:
+		t.Fatalf("notice %q", s)
+	default:
+	}
+}
+
+func TestResume_ResumeOnlyForRestartPause(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	st := saveRun(t, e.home, 1, func(st *RunState) {
+		st.Status, st.Current, st.Ask = "paused", "ask", &Ask{Message: "Need a decision."}
+	})
+	if err := e.m.Resume(st.Run, "resume"); err == nil || !strings.Contains(err.Error(), "unknown answer") {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 // freezeStore stops writing once the run is inside state ci and cancels the
@@ -308,8 +373,10 @@ func TestResume_EndToEnd_StubScripts(t *testing.T) {
 		},
 		Notify: func(s string) { notices <- s },
 	}
-	m.ResumeAll(0)
-	for _, want := range []string{"resumed run " + st.Run + " at state ci", " done: merged "} {
+	if id, _, err := m.Start(context.Background(), StartRequest{Issue: st.Issue}); err != nil || id != st.Run {
+		t.Fatalf("start: id = %q, err = %v", id, err)
+	}
+	for _, want := range []string{" done: merged "} {
 		select {
 		case got := <-notices:
 			if !strings.Contains(got, want) {
@@ -336,20 +403,87 @@ func TestManager_AdoptReturnsResumedRunOnce(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
 	st := saveRun(t, e.home, 5, nil)
-	e.m.ResumeAll(0)
+	e.m.AskUnfinished()
 	e.notice(t)
+	if err := e.m.Resume(st.Run, "resume"); err != nil {
+		t.Fatal(err)
+	}
 	if got := e.m.Adoptable(); len(got) != 1 || got[0] != 5 {
 		t.Fatalf("adoptable = %v", got)
 	}
-	if id, ok := e.m.Adopt(5); !ok || id != st.Run {
-		t.Fatalf("adopt = %q, %v", id, ok)
+	if id, paused, ok := e.m.Adopt(5); !ok || paused || id != st.Run {
+		t.Fatalf("adopt = %q, %v, %v", id, paused, ok)
 	}
 	if got := e.m.Adoptable(); len(got) != 0 {
 		t.Fatalf("adoptable after adopt = %v", got)
 	}
-	if _, ok := e.m.Adopt(5); ok {
+	if _, _, ok := e.m.Adopt(5); ok {
 		t.Fatal("second adopt returned the run")
 	}
 	close(c.release)
 	e.notice(t)
+}
+
+// The orchestrator adopts a run paused at start-up before the answer, so a
+// later answer ("resume" or "stop") never lets it start a second run.
+func TestManager_AdoptReturnsPausedRunOnce(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	st := saveRun(t, e.home, 5, nil)
+	saveRun(t, e.home, 6, func(st *RunState) { st.Status = "done" })
+	e.m.AskUnfinished()
+	e.notice(t)
+	if got := e.m.Adoptable(); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("adoptable = %v", got)
+	}
+	if id, paused, ok := e.m.Adopt(5); !ok || !paused || id != st.Run {
+		t.Fatalf("adopt = %q, %v, %v", id, paused, ok)
+	}
+	if got := e.m.Adoptable(); len(got) != 0 {
+		t.Fatalf("adoptable after adopt = %v", got)
+	}
+	if _, _, ok := e.m.Adopt(5); ok {
+		t.Fatal("second adopt returned the run")
+	}
+	if err := e.m.Resume(st.Run, "resume"); err != nil {
+		t.Fatal(err)
+	}
+	// The adopted run is not offered again after the answer.
+	if got := e.m.Adoptable(); len(got) != 0 {
+		t.Fatalf("adoptable after resume = %v", got)
+	}
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("start: err = %v", err)
+	}
+	close(c.release)
+	e.notice(t)
+}
+
+// A workflow without an ask state cannot pause a run at start-up: the run
+// fails, and the user gets a notice for it.
+func TestAskUnfinished_NoAskStateNotifiesFail(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	wf := e.m.Workflow
+	e.m.Workflow = func(info RepoInfo, name string) (*Workflow, error) {
+		w, err := wf(info, name)
+		if err != nil {
+			return nil, err
+		}
+		cp := *w
+		cp.States = map[string]State{}
+		for k, v := range w.States {
+			if k != "ask" {
+				cp.States[k] = v
+			}
+		}
+		return &cp, nil
+	}
+	st := saveRun(t, e.home, 1, nil)
+	e.m.AskUnfinished()
+	if got := e.notice(t); !strings.Contains(got, st.Run) || !strings.Contains(got, "failed: tyci restarted") {
+		t.Fatalf("notice = %q", got)
+	}
+	if got := loadRunState(t, e.home, st.Run); got.Status != "failed" {
+		t.Fatalf("run = %+v", got)
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -99,7 +100,7 @@ func (m *Manager) resumeRun(info RepoInfo, st *RunState) (bool, error) {
 		return false, err
 	}
 	if st.Resumed >= maxResumes {
-		m.pauseStale(dir, wf, st, fmt.Sprintf("resumed %d times, please check", maxResumes))
+		m.pauseStale(dir, wf, st, fmt.Sprintf("resumed %d times, please check", maxResumes), true)
 		return false, nil
 	}
 	self := os.Getpid()
@@ -110,7 +111,7 @@ func (m *Manager) resumeRun(info RepoInfo, st *RunState) (bool, error) {
 		return false, nil
 	}
 	if _, err := os.Stat(st.Worktree); err != nil {
-		m.pauseStale(dir, wf, st, "worktree "+st.Worktree+" is missing")
+		m.pauseStale(dir, wf, st, "worktree "+st.Worktree+" is missing", true)
 		return false, nil
 	}
 	m.launch(info, wf, st, false, func(ctx context.Context, r *Runner) error { return r.Continue(ctx, st) })
@@ -120,7 +121,9 @@ func (m *Manager) resumeRun(info RepoInfo, st *RunState) (bool, error) {
 // pauseStale pauses a run that cannot be resumed in the "ask" state of its
 // workflow; without an ask state the run fails. Reason names the saved state,
 // so the user can answer "goto <state>".
-func (m *Manager) pauseStale(dir string, wf *Workflow, st *RunState, msg string) {
+// With notify false it sends no notice for a paused run; a failed run always
+// gets its notice.
+func (m *Manager) pauseStale(dir string, wf *Workflow, st *RunState, msg string, notify bool) {
 	r := &Runner{WF: wf, Store: &Store{Dir: dir}}
 	if s, ok := wf.States["ask"]; ok && s.Ask != "" {
 		reason := "resume:" + st.Current
@@ -128,45 +131,40 @@ func (m *Manager) pauseStale(dir string, wf *Workflow, st *RunState, msg string)
 		_ = r.pause(st, msg, reason)
 	} else {
 		_ = r.fail(context.Background(), st, msg, nil)
+		// A failed run is not in the start-up question: always tell the user.
+		notify = true
 	}
-	m.notify(st, wf)
+	if notify {
+		m.notify(st, wf)
+	}
 }
 
-// ResumeAll is the start-up routine. It shows the notice of every paused run
-// of the current repo again, then resumes up to limit (0 = no limit) runs
-// whose owner process is gone. Runs over the limit stay as they are; a later
-// Start of their issue resumes them.
-func (m *Manager) ResumeAll(limit int) {
+// AskUnfinished is the start-up routine. It resumes nothing. It pauses every
+// running run of the current repo whose owner process is gone (in the "ask"
+// state, reason "resume:<state>"), then sends one notice that lists all paused
+// runs and asks the user what to do: resume, stop or leave paused. A paused run
+// blocks a new run of its issue, so nothing starts for it before the answer.
+// With no unfinished runs it sends nothing.
+func (m *Manager) AskUnfinished() {
 	info, err := m.Info()
 	if err != nil {
 		return
 	}
 	runs := RunsDir(info.Home)
-	paused, _ := ScanAsk(runs, info.Repo)
-	for _, st := range paused {
-		wf, _ := m.Workflow(info, st.Workflow)
-		m.notify(st, wf)
-	}
-	stale, _ := ScanResumable(runs, info.Repo)
 	var notes []string
-	m.mu.Lock()
-	n := 0
+	stale, _ := ScanResumable(runs, info.Repo)
 	for _, st := range stale {
-		if limit > 0 && n >= limit {
-			notes = append(notes, fmt.Sprintf("run %s not resumed: worker limit %d reached; start issue #%d again to resume it", st.Run, limit, st.Issue))
+		wf, err := m.Workflow(info, st.Workflow)
+		if err != nil {
+			notes = append(notes, "cannot pause run "+st.Run+": "+err.Error())
 			continue
 		}
-		ok, err := m.resumeRun(info, st)
-		switch {
-		case err != nil:
-			notes = append(notes, "cannot resume run "+st.Run+": "+err.Error())
-		case ok:
-			n++
-			m.markAdoptable(st.Run)
-			notes = append(notes, "resumed run "+st.Run+" at state "+st.Current)
-		}
+		m.pauseStale(RunDir(info.Home, info.Name(), st.Run), wf, st, "tyci restarted", false)
 	}
-	m.mu.Unlock()
+	paused, _ := ScanAsk(runs, info.Repo)
+	if len(paused) > 0 {
+		notes = append(notes, m.startupQuestion(info, paused))
+	}
 	if m.Notify != nil {
 		for _, s := range notes {
 			m.Notify(s)
@@ -174,30 +172,101 @@ func (m *Manager) ResumeAll(limit int) {
 	}
 }
 
+// startupQuestion is the one start-up notice for the paused runs. It is
+// written for the chat model: it says what to ask and which tool to call.
+func (m *Manager) startupQuestion(info RepoInfo, paused []*RunState) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "tyci started. %d workflow run(s) of %s are not finished and are paused. Nothing resumes until the user answers.\n", len(paused), info.Repo)
+	for _, st := range paused {
+		fmt.Fprintf(&b, "- run %s, issue #%d", st.Run, st.Issue)
+		if n := len(st.History); n > 0 {
+			h := st.History[n-1]
+			fmt.Fprintf(&b, ", last step %s -> %s", h.State, h.Key)
+		}
+		if st.PR > 0 {
+			fmt.Fprintf(&b, ", PR #%d", st.PR)
+		}
+		answers := []string{}
+		if resumeState(st) != "" {
+			answers = append(answers, "resume")
+		}
+		wf, _ := m.Workflow(info, st.Workflow)
+		answers = append(answers, answerKeys(wf, st.Current)...)
+		if st.Ask != nil && st.Ask.Message != "" {
+			b.WriteString(", reason: " + st.Ask.Message)
+		}
+		b.WriteString("; answers: " + strings.Join(answers, ", ") + "\n")
+	}
+	b.WriteString("Ask the user now, in one message: resume, stop or leave paused, for each run or for all. " +
+		"Then call workflow_resume(run, answer) once for each run the user chose (\"resume\" or \"stop\"). " +
+		"Do not call workflow_resume before the user answers. Without an answer the runs stay paused.")
+	return b.String()
+}
+
+// resumeState returns the saved state of a run that AskUnfinished (or the
+// resume limit) paused, or "" for any other pause.
+func resumeState(st *RunState) string {
+	if st.Ask == nil {
+		return ""
+	}
+	s, _ := strings.CutPrefix(st.Ask.Reason, "resume:")
+	if s == st.Ask.Reason {
+		return ""
+	}
+	return s
+}
+
 // markAdoptable lets the next Start of the run's issue return the run, so the
-// orchestrator watches it and counts it as a worker. m.mu must be held.
+// orchestrator watches it and counts it as a worker. Resume calls it for a
+// "resume" answer, unless an Adopt returned the run already. m.mu must be held.
 func (m *Manager) markAdoptable(run string) {
+	if m.adopted[run] {
+		return
+	}
 	if a, ok := m.active[run]; ok {
 		a.adoptable = true
 		m.active[run] = a
 	}
 }
 
-// adopt returns an active run of the issue resumed by ResumeAll and not
+// adopt returns an active run of the issue resumed with the answer "resume" and not
 // returned by Start yet. m.mu must be held.
 func (m *Manager) adopt(issue int) (string, bool) {
 	for id, a := range m.active {
 		if a.issue == issue && a.adoptable {
 			a.adoptable = false
 			m.active[id] = a
+			if m.adopted == nil {
+				m.adopted = map[string]bool{}
+			}
+			m.adopted[id] = true
 			return id, true
 		}
 	}
 	return "", false
 }
 
-// Adoptable returns the issues of the runs resumed by ResumeAll that no Start
-// or Adopt returned yet, in issue order.
+// pausedRuns returns the paused runs of the current repo that have no
+// goroutine and that no Adopt returned yet. m.mu must be held.
+func (m *Manager) pausedRuns() []*RunState {
+	info, err := m.Info()
+	if err != nil {
+		return nil
+	}
+	paused, _ := ScanAsk(RunsDir(info.Home), info.Repo)
+	var out []*RunState
+	for _, st := range paused {
+		if _, ok := m.active[st.Run]; !ok && !m.adopted[st.Run] {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// Adoptable returns the issues of the runs that the orchestrator must watch
+// before it starts new runs: runs resumed with the answer "resume" and paused
+// runs (for example the runs that AskUnfinished paused). No Start or Adopt
+// returned them yet. The issues are sorted.
 func (m *Manager) Adoptable() []int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -207,17 +276,34 @@ func (m *Manager) Adoptable() []int {
 			out = append(out, a.issue)
 		}
 	}
+	for _, st := range m.pausedRuns() {
+		out = append(out, st.Issue)
+	}
 	sort.Ints(out)
 	return out
 }
 
-// Adopt returns the run of the issue resumed by ResumeAll, once. Unlike Start
-// it never starts a new run: ok is false when there is no such run (for
-// example, it ended already).
-func (m *Manager) Adopt(issue int) (string, bool) {
+// Adopt returns the run of the issue resumed with the answer "resume", or else
+// its paused run, once. paused is true for a paused run: it waits for the
+// user's answer. Unlike Start it never starts a run: ok is false when there is
+// no such run (for example, it ended already). An answer to an adopted paused
+// run continues it as usual, and the caller sees its events.
+func (m *Manager) Adopt(issue int) (id string, paused, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.adopt(issue)
+	if id, ok := m.adopt(issue); ok {
+		return id, false, true
+	}
+	for _, st := range m.pausedRuns() {
+		if st.Issue == issue {
+			if m.adopted == nil {
+				m.adopted = map[string]bool{}
+			}
+			m.adopted[st.Run] = true
+			return st.Run, true, true
+		}
+	}
+	return "", false, false
 }
 
 // resumeStale resumes a run of the issue whose owner process is gone. found is
