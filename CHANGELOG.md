@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
 
 ### Changed
+- Subagents that run as jobs write their own session file to `~/.tyci/sessions/<project>/agents/<time>_<id>_<job-id>.jsonl` plus a `.md` dump. `tyci session list` does not show them, and nothing deletes them yet (#121).
 - Context notice now starts at 80% of the window (was 50%) and auto-compaction at 95% (was 85%) when no limit is set (#304).
 
 ### Fixed

@@ -591,7 +591,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// A child that runs as a job gets its own session file. The file is
 	// closed (without session_end) when this run returns; a resume reopens it.
 	if jobID != "" {
-		if cs := openChildSession(msgs, mc.Model(), mc.Provider()); cs != nil {
+		if cs := openChildSession(msgs, mc.Model(), mc.Provider(), jobID); cs != nil {
 			cfg.Session = cs
 			defer func() { _ = cs.Close() }()
 		}
