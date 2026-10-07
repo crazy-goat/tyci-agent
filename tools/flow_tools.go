@@ -136,7 +136,7 @@ func workflowToolsSchema() []map[string]any {
 				"issue":    map[string]any{"type": "integer", "description": "Issue number."},
 			}, []string{"issue"}),
 		fn("workflow_status", "Show the state of a workflow run: status, current state, visits, last history entries, PR.",
-			map[string]any{"run": map[string]any{"type": "string", "description": "Run id (default: newest run)."}}, nil),
+			map[string]any{"run": map[string]any{"type": "string", "description": "Run id (default: newest run)."}}, []string{}),
 		fn("workflow_resume", "Answer a paused workflow run. The answer must be one of the keys named in the pause notice.",
 			map[string]any{
 				"run":    map[string]any{"type": "string", "description": "Run id."},

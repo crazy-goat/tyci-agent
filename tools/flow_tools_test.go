@@ -88,3 +88,11 @@ func TestTopLevelSchemaJSONHasWorkflowToolsOnceManagerSet(t *testing.T) {
 		t.Fatal("workflow_start missing from the top-level schema after the manager is set")
 	}
 }
+
+// Strict providers (nexos) reject a tool schema with "required": null.
+func TestTopLevelSchemaJSONHasNoNullRequired(t *testing.T) {
+	withWorkflowManager(t, &fakeWorkflowManager{})
+	if strings.Contains(string(GetTopLevelToolsSchemaJSON()), `"required":null`) {
+		t.Fatal(`top-level schema contains "required":null`)
+	}
+}
