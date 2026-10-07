@@ -136,4 +136,6 @@ func TestManager_PostReviewFailReachesNotify(t *testing.T) {
 	if n := e.notice(t); !strings.Contains(n, "posting the review") {
 		t.Errorf("notice = %q", n)
 	}
+	// Wait for the run to end so the run goroutine stops writing to TempDir.
+	e.notice(t)
 }
