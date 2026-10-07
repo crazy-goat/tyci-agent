@@ -88,3 +88,24 @@ func TestTakeTranscriptPath_ClearsKeyForGrandchildren(t *testing.T) {
 		t.Fatalf("grandchild sees %q", again)
 	}
 }
+
+func TestAgentRunnerRun_RunTranscriptReplacesChildSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	tp := filepath.Join(t.TempDir(), "agents", "001-worker.jsonl")
+	ctx := connector.WithModelClient(context.Background(), connectortest.Text("reply ghp_abcdefghijklmnopqrstuvwxyz0123456789"))
+	ctx = context.WithValue(ctx, tools.JobIDCtxKey{}, "job-rt-1")
+	ctx = context.WithValue(ctx, tools.TranscriptCtxKey{}, tp)
+	if _, err := (&agentRunner{}).run(ctx, "task", "", "", tools.SubagentOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(childFiles(t)); n != 0 {
+		t.Fatalf("sessions dir has %d child files", n)
+	}
+	b, err := os.ReadFile(tp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "ghp_abcdefghij") || !strings.Contains(string(b), "reply") {
+		t.Fatalf("transcript not redacted or empty: %s", b)
+	}
+}
