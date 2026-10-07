@@ -358,3 +358,11 @@ func TestBusyIssueKeepsTodoAndOthersStart(t *testing.T) {
 		t.Fatalf("starts(2)=%d starts(3)=%d busy=%d", e.r.starts(2), e.r.starts(3), e.o.busy())
 	}
 }
+
+func TestStartupStageNotices(t *testing.T) {
+	e := newEnv(t, Config{Workers: 1}, issue(1, ""))
+	e.start()
+	e.waitNote("Reading milestones and issues")
+	e.waitNote("Read 1 open issues of milestone v0.4.0")
+	e.waitNote("Planning the order")
+}
