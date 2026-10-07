@@ -242,9 +242,13 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 	text := "workflow run " + st.Run
 	switch st.Status {
 	case "done":
-		text += " done"
-		if st.PR > 0 {
-			text += ": merged " + prURL(st)
+		switch {
+		case wasMerged(st):
+			text += " done: merged " + prURL(st)
+		case st.PR > 0:
+			text += " stopped: PR " + prURL(st) + " is still open"
+		default:
+			text += " stopped: no PR"
 		}
 	case "paused":
 		msg := ""
