@@ -152,6 +152,22 @@ func (r *Runner) RunJob(ctx context.Context, j Job) error {
 	if dir, ok := FindJobDir(r.dirs(), j.Name); ok {
 		markDir = dir
 	}
+	// A one-shot job has done its work: remove it, whatever the outcome.
+	// The log keeps the result.
+	if sched, perr := j.Parsed(); perr == nil && sched.OneShot() {
+		if f, err := Load(markDir); err == nil && f.Remove(j.Name) {
+			if err := Save(markDir, f); err != nil {
+				return err
+			}
+			return runErr
+		}
+		// Not removed (unreadable file, or the job is already gone): record
+		// the run so Due does not start the job again on every tick.
+		if err := MarkRun(markDir, j.Name, end, status); err != nil {
+			return err
+		}
+		return runErr
+	}
 	if err := MarkRun(markDir, j.Name, end, status); err != nil {
 		return err
 	}

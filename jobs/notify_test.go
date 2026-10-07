@@ -326,3 +326,19 @@ func TestPendingLinesIsEmptyWhenNothingIsOutstanding(t *testing.T) {
 		t.Fatalf("expected nothing outstanding, got %v", lines)
 	}
 }
+
+// A quiet notice reaches the next drain but never wakes an idle chat.
+func TestNotifierNotifyQuietDoesNotSignal(t *testing.T) {
+	n := NewNotifier()
+	n.NotifyQuiet("scheduled job ran")
+
+	select {
+	case <-n.Signal():
+		t.Fatal("quiet notice woke the idle chat")
+	default:
+	}
+	got := n.Drain()
+	if len(got) != 1 || got[0] != "scheduled job ran" {
+		t.Fatalf("Drain = %v, want the quiet notice", got)
+	}
+}

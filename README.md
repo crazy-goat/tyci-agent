@@ -66,6 +66,15 @@ make install
 - Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`)
 - Overrides: `.tyci/workflows/` and `.tyci/checks/`
 
+A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
+resumes (`resumed`). When `tyci` or `tyci console` starts, it resumes every `running` run
+of the current repository whose owner process is gone, at its saved state (the agent of
+that state starts again in the same worktree, and the visit is not counted again). At most
+`orchestrator.workers` runs are resumed; a later start of the issue resumes the others.
+The orchestrator counts the resumed runs as workers before it starts new runs.
+A run resumed 3 times, or one whose worktree is gone, pauses for an answer. Paused runs
+stay paused and their notice is shown again.
+
 See [docs/dogfooding.md](docs/dogfooding.md) for the full runbook.
 
 Orchestrator keys (section `orchestrator`; the project file wins key by key):
@@ -390,6 +399,8 @@ tyci cron run <name>           # Run one job immediately, regardless of its sche
 tyci cron run_now <name>       # Alias for `run`
 tyci cron tick                 # Run every job that is currently due, then exit
 ```
+
+Schedules are `every 30m`, `at 07:30` and the one-shot `in 5m`; a one-shot job is removed after it runs. The tool stores a one-shot job in `cron.json` as `once <RFC3339>`; write that form if you edit the file by hand, because `in 5m` there would move on every load.
 
 Normally, jobs only fire while some tyci session (console or TUI) is open — that
 session runs a scheduler that ticks every minute in the background. `tyci cron tick`

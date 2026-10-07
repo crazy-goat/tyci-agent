@@ -30,7 +30,18 @@ var ErrPaused = errors.New("flow: run paused")
 // When the run reaches end with no agent step ever recorded, or after a
 // merge state returned "merged", OnSkip is called if set.
 // A panic in the loop is recovered into a failed run.
-func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
+func (r *Runner) Run(ctx context.Context, st *RunState) error {
+	return r.run(ctx, st, false)
+}
+
+// Continue runs st again from its saved state after a restart. The saved state
+// is entered without a new visit, so a crash loop does not use up max_visits.
+func (r *Runner) Continue(ctx context.Context, st *RunState) error {
+	return r.run(ctx, st, true)
+}
+
+// run is Run; again skips the visit count of the first state.
+func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			st.Status = "failed"
@@ -60,6 +71,7 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 		st.StartedAt = time.Now()
 	}
 	st.Status = "running"
+	st.PID = os.Getpid()
 	st.UpdatedAt = time.Now()
 
 	for {
@@ -88,16 +100,19 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 		if s.Ask != "" {
 			return r.pause(st, s.Ask, "")
 		}
-		if limit := r.effectiveLimit(s); limit > 0 && st.Visits[cur]+1 > limit {
-			askState, ok := r.WF.States["ask"]
-			if !ok || askState.Ask == "" {
-				return r.fail(ctx, st, `max_visits needs an "ask" state`, errors.New(`max_visits needs an "ask" state`))
+		if again {
+			again = false
+		} else {
+			if limit := r.effectiveLimit(s); limit > 0 && st.Visits[cur]+1 > limit {
+				askState, ok := r.WF.States["ask"]
+				if !ok || askState.Ask == "" {
+					return r.fail(ctx, st, `max_visits needs an "ask" state`, errors.New(`max_visits needs an "ask" state`))
+				}
+				st.Current = "ask"
+				return r.pause(st, askState.Ask, "max_visits:"+cur)
 			}
-			st.Current = "ask"
-			return r.pause(st, askState.Ask, "max_visits:"+cur)
+			st.Visits[cur]++
 		}
-
-		st.Visits[cur]++
 		if r.Store != nil {
 			if saveErr := r.Store.Save(st); saveErr != nil {
 				return saveErr
@@ -493,6 +508,7 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 	}
 	st.Current = next
 	st.Status = "running"
+	st.PID = os.Getpid()
 	if r.Store != nil {
 		if err := r.Store.Save(st); err != nil {
 			return err

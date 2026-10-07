@@ -3,6 +3,7 @@ package flow
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
@@ -59,6 +60,7 @@ func PrepareRun(ctx context.Context, d PrepareDeps, req PrepareReq) (*RunState, 
 		Branch:    wt.Branch,
 		Worktree:  wt.Dir,
 		Status:    "running",
+		PID:       os.Getpid(),
 		Current:   wf.Start,
 		StartedAt: now,
 		Visits:    map[string]int{},
