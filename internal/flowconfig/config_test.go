@@ -241,3 +241,19 @@ func TestRole_OracleWithoutModelUsesDefaultModel(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_RoleCompactLimits(t *testing.T) {
+	home := t.TempDir()
+	write(t, home, ".tyci/config.json", `{"compact_soft_limit":1,"compact_hard_limit":2,"roles":{"worker":{"prompt":"P","compact_soft_limit":100000,"compact_hard_limit":150000}}}`)
+	c, err := Load(home, t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := c.Role("worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.CompactSoftLimit != 100000 || r.CompactHardLimit != 150000 {
+		t.Fatalf("role limits = %d, %d", r.CompactSoftLimit, r.CompactHardLimit)
+	}
+}

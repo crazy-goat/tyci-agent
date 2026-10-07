@@ -1313,11 +1313,10 @@ func TestBuildContextBudgetReminderStatesFact(t *testing.T) {
 
 // The reminder must read as a measured fact ("you are at 120k of 200k"),
 // never a diagnosis of the model's own state — see item 10's design point
-// (b). It is scoped to the current model, whose context window differs by
-// model and provider.
+// (b).
 func TestBuildContextBudgetReminderIsFactualForCurrentModel(t *testing.T) {
 	msg := buildContextBudgetReminder(120000, 200000, true)
-	for _, want := range []string{"current model", "120000", "200000"} {
+	for _, want := range []string{"120000", "200000"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("reminder %q missing %q", msg, want)
 		}

@@ -303,6 +303,10 @@ type subagentTask struct {
 	// Go-only like the fields above: no json tag, never set by parseTasks.
 	// RunSubagentTask (subagent_task.go) is its only writer.
 	systemPrompt string
+	// softLimit/hardLimit override the agent definition's context limits
+	// (flow role). Go-only, like systemPrompt.
+	softLimit int
+	hardLimit int
 }
 
 // subagentResult holds the outcome of one subagent execution.
@@ -1469,8 +1473,16 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		Tools:            def.Tools,
 		Temperature:      def.Temperature,
 		MaxTokens:        def.MaxTokens,
+		SoftLimit:        def.CompactSoftLimit,
+		HardLimit:        def.CompactHardLimit,
 		Fallbacks:        def.Fallback,
 		SystemPromptMode: def.SystemPromptMode,
+	}
+	if task.softLimit > 0 {
+		opts.SoftLimit = task.softLimit
+	}
+	if task.hardLimit > 0 {
+		opts.HardLimit = task.hardLimit
 	}
 	if task.InheritHistory {
 		opts.History = connector.ConversationFromContext(ctx)

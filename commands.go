@@ -97,6 +97,8 @@ func registerProviders() {
 		fmt.Fprintf(os.Stderr, "Warning: providers.json: %v\n", err)
 	}
 	_ = providers.RegisterProvidersFromProvidersJSON(connect.ProvidersJSONPath())
+	// Context windows and prices of nexos models (cached for 24 hours).
+	_ = connect.RefreshNexosModels(connect.NexosAPIKey())
 	providers.RegisterProvidersFromConfigMerged(connect.ModelJSONPath(), localModelJSONPath())
 }
 
@@ -344,6 +346,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		Interactive:        interactive,
 		AutoCompactPercent: agent.GetAutoCompactPercent(),
 	}
+	cfg.SoftLimit, cfg.HardLimit = agent.CompactLimits(agentName)
 	ctx = connector.WithModelClient(ctx, provider.Client(modelName))
 
 	var sess *session.Session

@@ -520,8 +520,18 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		Fallbacks:     fallbacks,
 		Temperature:   opts.Temperature,
 		MaxTokens:     opts.MaxTokens,
+		SoftLimit:     opts.SoftLimit,
+		HardLimit:     opts.HardLimit,
 		NoPromptCache: !agent.PromptCacheEnabled(),
 		NextMessages:  tools.JobMailboxNextMessages(jobID),
+	}
+	if tc := agent.LoadTyciConfig(); cfg.SoftLimit == 0 || cfg.HardLimit == 0 {
+		if cfg.SoftLimit == 0 {
+			cfg.SoftLimit = tc.CompactSoftLimit
+		}
+		if cfg.HardLimit == 0 {
+			cfg.HardLimit = tc.CompactHardLimit
+		}
 	}
 
 	// Item 15: nudge this child, at most once per SubagentBackgroundAfter,

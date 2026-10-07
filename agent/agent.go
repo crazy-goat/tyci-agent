@@ -121,12 +121,17 @@ type Config struct {
 	// the budget reminder when the catalog has no known limit.
 	ContextLimit int
 
-	// AutoCompactPercent is the fraction (as a percentage, matching
-	// contextBudgetReminderPercent) of the model's context window that
-	// triggers an automatic compaction — the same Compactor above invokes,
-	// not just the reminder text. Zero uses defaultAutoCompactPercent. A
-	// negative value disables auto-compaction, leaving only the reminder
-	// (item 10's spec called for both; F5 in the inbox is this trigger).
+	// SoftLimit and HardLimit are user-set context sizes in tokens (0 =
+	// unset). Past SoftLimit the agent gets a notice and may call compact;
+	// past HardLimit the harness compacts without asking. Each is capped
+	// by the model window; unset ones are computed from the window (see
+	// compactThresholds).
+	SoftLimit int
+	HardLimit int
+
+	// AutoCompactPercent is the legacy way to set the hard limit as a
+	// percentage of the window. It only applies when HardLimit is 0. A
+	// negative value disables auto-compaction, leaving only the notice.
 	AutoCompactPercent int
 
 	// Interactive reports whether a human is present to answer a blocked
@@ -452,7 +457,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			if cfg.ContextLimitFor != nil {
 				limit = cfg.ContextLimitFor(fs.mc.Provider(), fs.mc.Model())
 			}
-			if limit > 0 {
+			if limit > 0 || cfg.SoftLimit > 0 || cfg.HardLimit > 0 {
 				// Input+Output alone undercounts on providers that report a
 				// cached prompt prefix separately (Anthropic: CacheRead/
 				// CacheWrite, see api/anthropic.go — prompt caching is on by
@@ -460,10 +465,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				// occupy the context window even though they were not
 				// re-billed at full price, so they must count here.
 				used := lastRoundUsage.Input + lastRoundUsage.CacheRead + lastRoundUsage.CacheWrite + lastRoundUsage.Output
-				autoCompactPercent := cfg.AutoCompactPercent
-				if autoCompactPercent == 0 {
-					autoCompactPercent = defaultAutoCompactPercent
-				}
+				softAt, hardAt := compactThresholds(limit, cfg.SoftLimit, cfg.HardLimit, cfg.AutoCompactPercent)
 				justAutoCompacted := false
 				// cfg.Session != nil (review, F5 HIGH-3): a /btw or
 				// fork/resume child keeps the PARENT's Compactor (it closes
@@ -473,14 +475,14 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				// main conversation on the harness's own initiative, no
 				// model or user action involved — the automatic version of
 				// the hole F10 closed for the model-driven path.
-				if !autoCompacted && autoCompactPercent > 0 && cfg.Compactor != nil && cfg.Session != nil &&
-					used > 0 && used*100 >= limit*autoCompactPercent {
+				if !autoCompacted && hardAt > 0 && cfg.Compactor != nil && cfg.Session != nil &&
+					used > 0 && used >= hardAt {
 					autoCompacted = true
 					dumpPath := ""
 					if cfg.Session != nil {
 						dumpPath = session.DumpPathFor(cfg.Session.Path())
 					}
-					summary := buildAutoCompactSummary(used, limit, dumpPath)
+					summary := buildAutoCompactSummary(used, hardAt, dumpPath)
 					_, compactErr := cfg.Compactor(summary, "")
 					// Whether or not compaction succeeded, do NOT `continue`
 					// here (review of F5): the model has already finished
@@ -513,7 +515,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 					// fact in front of the model even though the harness
 					// could not act on it itself, same as before this fix.
 				}
-				if !justAutoCompacted && !contextReminded && used > 0 && used*100 >= limit*contextBudgetReminderPercent {
+				if !justAutoCompacted && !contextReminded && used > 0 && softAt > 0 && used >= softAt {
 					contextReminded = true
 					// cfg.Compactor != nil (F10 review follow-up, deferred
 					// until package B's agent.go rewrite landed): unlike a
@@ -528,7 +530,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 					// can still persist to memory/a file), so only the
 					// compact-specific instruction is conditional, not the
 					// whole reminder.
-					reminder := buildContextBudgetReminder(used, limit, cfg.Compactor != nil)
+					reminder := buildContextBudgetReminder(used, hardAt, cfg.Compactor != nil)
 					*msgs = append(*msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: reminder}}})
 					if cfg.Session != nil {
 						_ = cfg.Session.WriteMessage("user", []session.ContentBlock{{Type: "text", Text: reminder}}, nil)
@@ -599,27 +601,57 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 // fire ends the loop the instant this turn completes, so a tool call here
 // would never have its result seen by the model — the only useful thing it
 // can do with this turn is write its summary as plain text right now.
-// contextBudgetReminderPercent is the fraction of the model's published
-// context window (as a percentage) that triggers one budget reminder per
-// turn. Half the window still leaves comfortable room to persist state and
-// call compact before the next request grows further.
-const contextBudgetReminderPercent = 50
+// Automatic limits used when the user sets no soft or hard limit: percent of
+// the model's context window.
+const (
+	autoSoftPercent = 80
+	autoHardPercent = 95
+)
 
-func buildContextBudgetReminder(used, limit int, canCompact bool) string {
-	if canCompact {
-		return fmt.Sprintf("[automated context budget reminder, not the user] You are at %d of %d context tokens for the current model (last request's measured usage). Persist anything important, then use compact(summary=\"...\", focus=\"...\") if continuing would crowd out useful history.", used, limit)
+// compactThresholds returns the token counts at which the soft notice and the
+// automatic compaction fire. A user limit is capped by the window. An unset
+// soft limit is autoSoftPercent of the window; an unset hard limit is
+// hardPercent (legacy auto_compact_percent) or autoHardPercent of the
+// window. With an unknown window (0) only user limits apply. A 0 in the
+// result means that trigger is off.
+func compactThresholds(window, soft, hard, hardPercent int) (softAt, hardAt int) {
+	capped := func(v int) int {
+		if window > 0 {
+			return min(v, window)
+		}
+		return v
 	}
-	return fmt.Sprintf("[automated context budget reminder, not the user] You are at %d of %d context tokens for the current model (last request's measured usage). Persist anything important now if continuing would crowd out useful history — compact is not available in this conversation.", used, limit)
+	switch {
+	case soft > 0:
+		softAt = capped(soft)
+	default:
+		softAt = window * autoSoftPercent / 100
+	}
+	switch {
+	case hard > 0:
+		hardAt = capped(hard)
+	case hardPercent < 0:
+		hardAt = 0
+	case hardPercent > 0:
+		hardAt = window * hardPercent / 100
+	default:
+		hardAt = window * autoHardPercent / 100
+	}
+	return softAt, hardAt
 }
 
-// defaultAutoCompactPercent is the fraction of the model's published context
-// window that triggers automatic compaction when cfg.AutoCompactPercent is
-// left at zero. Higher than contextBudgetReminderPercent deliberately: the
-// reminder gives the model room to compact itself with a summary tailored to
-// what it is doing; auto-compaction is the backstop for when it does not,
-// so it should not fire so early that it routinely preempts a model that was
-// about to comply on its own.
-const defaultAutoCompactPercent = 85
+// buildContextBudgetReminder is the soft-limit notice. hardAt is the token
+// count of the automatic compaction, 0 when it is off.
+func buildContextBudgetReminder(used, hardAt int, canCompact bool) string {
+	msg := fmt.Sprintf("[automated context budget reminder, not the user] Your context is now %d tokens.", used)
+	if hardAt > 0 {
+		msg += fmt.Sprintf(" At %d tokens (hard limit) it will be compacted automatically.", hardAt)
+	}
+	if canCompact {
+		return msg + " Do you want to compact now? If yes, persist anything important, then call compact(summary=\"...\", focus=\"...\")."
+	}
+	return msg + " Persist anything important now if continuing would crowd out useful history — compact is not available in this conversation."
+}
 
 // buildAutoCompactSummary produces the lead message for a compaction the
 // harness triggered, not the model. There is no model-authored summary to
@@ -629,7 +661,7 @@ const defaultAutoCompactPercent = 85
 // full record lives costs nothing and lets the model recover context on
 // request. Mirrors commands.go's manualCompactSummary for /compact.
 func buildAutoCompactSummary(used, limit int, dumpPath string) string {
-	return fmt.Sprintf("Automatic compaction triggered at %d of %d context tokens (no model or user request). Earlier turns are not repeated here — the raw session file and its markdown dump at %s hold the full record.", used, limit, dumpPath)
+	return fmt.Sprintf("Automatic compaction triggered at %d context tokens (hard limit %d; no model or user request). Earlier turns are not repeated here — the raw session file and its markdown dump at %s hold the full record.", used, limit, dumpPath)
 }
 
 // buildProgressHeartbeatReminder produces the harness-authored nudge

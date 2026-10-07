@@ -120,3 +120,21 @@ func TestProviderNeedsPrices(t *testing.T) {
 		t.Fatal("a provider absent from the catalog should report false")
 	}
 }
+
+func TestLookup_MergesNexosModels(t *testing.T) {
+	withCatalog(t, testCatalog)
+	home, _ := os.UserHomeDir()
+	nexos := `{"nexos":{"id":"nexos","models":{"GPT 6 Luna":{"id":"GPT 6 Luna","cost":{"input":0.12,"output":0.6},"limit":{"context":922000}}}}}`
+	if err := os.WriteFile(filepath.Join(home, ".tyci", "nexos_models.json"), []byte(nexos), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	Reset()
+	r, l := Lookup("nexos", "GPT 6 Luna")
+	if l.Context != 922000 || r.Output != 0.6 {
+		t.Fatalf("rates = %+v, limits = %+v", r, l)
+	}
+	// The models.dev entries stay.
+	if _, l := Lookup("anthropic", "claude-sonnet-5"); l.Context != 200000 {
+		t.Fatalf("limits = %+v", l)
+	}
+}

@@ -31,6 +31,10 @@ const GlobalConfigFile = "agents.json"
 type AgentEntry struct {
 	Model    string   `json:"model"`
 	Fallback []string `json:"fallback,omitempty"`
+	// CompactSoftLimit and CompactHardLimit override the global context
+	// limits (tokens) for this agent. 0 = unset.
+	CompactSoftLimit int `json:"compact_soft_limit,omitempty"`
+	CompactHardLimit int `json:"compact_hard_limit,omitempty"`
 }
 
 // MarkdownAgentFrontmatter holds YAML frontmatter from a markdown agent file.
@@ -61,7 +65,7 @@ func AgentsDirPath() string {
 
 // MarshalJSON writes as plain string if no fallback, object otherwise.
 func (e AgentEntry) MarshalJSON() ([]byte, error) {
-	if len(e.Fallback) == 0 {
+	if len(e.Fallback) == 0 && e.CompactSoftLimit == 0 && e.CompactHardLimit == 0 {
 		return json.Marshal(e.Model)
 	}
 	// Use alias to avoid infinite recursion
@@ -86,6 +90,8 @@ func (e *AgentEntry) UnmarshalJSON(data []byte) error {
 	}
 	e.Model = a.Model
 	e.Fallback = a.Fallback
+	e.CompactSoftLimit = a.CompactSoftLimit
+	e.CompactHardLimit = a.CompactHardLimit
 	return nil
 }
 

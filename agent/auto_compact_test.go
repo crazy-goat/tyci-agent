@@ -35,7 +35,7 @@ func TestRun_AutoCompact_TriggersPastThreshold(t *testing.T) {
 		ModelName:    "count-1",
 		Turns: [][]stream.Event{{
 			stream.TextDelta{Text: "working"},
-			// 90% of 200000 — past defaultAutoCompactPercent (85).
+			// past HardLimit (170000).
 			stream.Finish{Usage: stream.Usage{Input: 180000, Output: 1000}},
 		}},
 		OnExhausted: []stream.Event{
@@ -56,6 +56,7 @@ func TestRun_AutoCompact_TriggersPastThreshold(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		HardLimit:    170000,
 		Session:      sess,
 		Compactor:    compactor,
 	}); err != nil {
@@ -69,8 +70,8 @@ func TestRun_AutoCompact_TriggersPastThreshold(t *testing.T) {
 	if len(msgs) == 0 || !strings.Contains(msgs[0].Content[0].Text, "Automatic compaction triggered") {
 		t.Fatalf("msgs[0] = %#v, want the auto-compact summary as the lead message", msgs)
 	}
-	if !strings.Contains(msgs[0].Content[0].Text, "181000") || !strings.Contains(msgs[0].Content[0].Text, "200000") {
-		t.Fatalf("summary = %q, want the measured 181000/200000 figures", msgs[0].Content[0].Text)
+	if !strings.Contains(msgs[0].Content[0].Text, "181000") || !strings.Contains(msgs[0].Content[0].Text, "170000") {
+		t.Fatalf("summary = %q, want the measured 181000 and 170000 figures", msgs[0].Content[0].Text)
 	}
 }
 
@@ -99,6 +100,7 @@ func TestRun_AutoCompact_NoTriggerBelowThreshold(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		SoftLimit:    100000,
 		Session:      sess,
 		Compactor:    compactor,
 	}); err != nil {
@@ -227,6 +229,7 @@ func TestRun_AutoCompact_DoesNotReinvokeProviderAfterCompacting(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		HardLimit:    170000,
 		Session:      sess,
 		Compactor:    compactor,
 	}); err != nil {
@@ -264,6 +267,7 @@ func TestRun_AutoCompact_SkipsWhenNoOwnSession(t *testing.T) {
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
+		HardLimit:    170000,
 		Session:      nil, // btwConfig's shape: parent's Compactor, no own Session
 		Compactor:    compactor,
 	}); err != nil {
@@ -271,5 +275,61 @@ func TestRun_AutoCompact_SkipsWhenNoOwnSession(t *testing.T) {
 	}
 	if compactCalls != 0 {
 		t.Fatalf("compactCalls = %d, want 0 (must not compact the parent's conversation from a child with no session of its own)", compactCalls)
+	}
+}
+
+func TestCompactThresholds(t *testing.T) {
+	tests := []struct {
+		name                    string
+		window, soft, hard, pct int
+		wantSoft, wantHard      int
+	}{
+		{"automatic", 1000000, 0, 0, 0, 800000, 950000},
+		{"user limits", 1000000, 100000, 150000, 0, 100000, 150000},
+		{"user limits capped by window", 1000, 5000, 9000, 0, 1000, 1000},
+		{"legacy percent", 1000000, 0, 0, 50, 800000, 500000},
+		{"hard wins over legacy percent", 1000000, 0, 150000, 50, 800000, 150000},
+		{"negative percent disables hard", 1000000, 0, 0, -1, 800000, 0},
+		{"unknown window, user limits only", 0, 100, 200, 0, 100, 200},
+		{"unknown window, nothing set", 0, 0, 0, 0, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, h := compactThresholds(tt.window, tt.soft, tt.hard, tt.pct)
+			if s != tt.wantSoft || h != tt.wantHard {
+				t.Fatalf("got (%d, %d), want (%d, %d)", s, h, tt.wantSoft, tt.wantHard)
+			}
+		})
+	}
+}
+
+// User limits work when the catalog knows no window (a custom model).
+func TestRun_HardLimit_WithoutKnownWindow(t *testing.T) {
+	sess := newAutoCompactSession(t)
+	p := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		OnExhausted: []stream.Event{
+			stream.TextDelta{Text: "done"},
+			stream.Finish{Usage: stream.Usage{Input: 150001, Output: 1}},
+		},
+	}
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
+	}
+	var compactCalls int
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries: 1,
+		HardLimit:  150000,
+		Session:    sess,
+		Compactor: func(summary, focus string) (string, error) {
+			compactCalls++
+			return "", nil
+		},
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if compactCalls != 1 {
+		t.Fatalf("compactCalls = %d, want 1", compactCalls)
 	}
 }

@@ -477,6 +477,21 @@ parts that are identical on every turn. The cache read/write counts already
 appear in the usage line. Turn it off with `{"prompt_cache": false}` in
 `~/.tyci/config.json` if your endpoint rejects the `cache_control` field.
 
+**Context limits.** Two limits, in tokens, control compaction. Past the soft
+limit the agent gets a notice and may call `compact`. Past the hard limit
+tyci compacts without asking. Set them in `~/.tyci/config.json`:
+
+```json
+{ "compact_soft_limit": 100000, "compact_hard_limit": 150000 }
+```
+
+Override them per agent with `compact_soft_limit` / `compact_hard_limit` in an
+`agents.json` entry or in the agent definition frontmatter, and per flow role in
+`roles.<name>`. A limit is capped by the model window. An unset limit is 80%
+(soft) or 95% (hard) of the window. The window and prices of nexos models come
+from `GET https://api.nexos.ai/v1/models`, cached in `~/.tyci/nexos_models.json`
+for 24 hours.
+
 ## Long subagents
 
 A blocking `subagent` call waits 60s. After that its children move to the

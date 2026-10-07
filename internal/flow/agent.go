@@ -93,7 +93,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 			text += "\n\n## New comments from team members on the PR\n\n" + string(b)
 		}
 	}
-	return r.Spawn(ctx, tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree})
+	return r.Spawn(ctx, tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit})
 }
 
 func (r *SubagentRunner) warn(msg string) {

@@ -33,6 +33,8 @@ type Config struct {
 	PromptCache        json.RawMessage `json:"prompt_cache,omitempty"`
 	SidebarVisible     json.RawMessage `json:"sidebar_visible,omitempty"`
 	AutoCompactPercent json.RawMessage `json:"auto_compact_percent,omitempty"`
+	CompactSoftLimit   json.RawMessage `json:"compact_soft_limit,omitempty"`
+	CompactHardLimit   json.RawMessage `json:"compact_hard_limit,omitempty"`
 }
 
 // Forge selects the forge of the orchestrator.
@@ -47,6 +49,9 @@ var forgeRepoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 type Role struct {
 	Model  string `json:"model"`  // alias or provider/model name; empty -> DefaultModel
 	Prompt string `json:"prompt"` // system prompt; "@file.md" = file relative to the config file
+	// Context limits in tokens for this role; 0 = use the global defaults.
+	CompactSoftLimit int `json:"compact_soft_limit,omitempty"`
+	CompactHardLimit int `json:"compact_hard_limit,omitempty"`
 }
 
 //go:embed prompts/*.md

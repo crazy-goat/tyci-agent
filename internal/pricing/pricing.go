@@ -59,12 +59,34 @@ func catalog() map[string]connect.ModelsDevProvider {
 		return cat
 	}
 	loaded = true
-	data, err := os.ReadFile(connect.ProvidersJSONPath())
-	if err != nil {
-		return nil
-	}
 	var parsed map[string]connect.ModelsDevProvider
-	if err := json.Unmarshal(data, &parsed); err != nil {
+	if data, err := os.ReadFile(connect.ProvidersJSONPath()); err == nil {
+		if json.Unmarshal(data, &parsed) != nil {
+			return nil
+		}
+	}
+	// The nexos list (context_length, prices) is cached separately and wins
+	// over models.dev entries of the same id.
+	if data, err := os.ReadFile(connect.NexosModelsPath()); err == nil {
+		var extra map[string]connect.ModelsDevProvider
+		if json.Unmarshal(data, &extra) == nil {
+			if parsed == nil {
+				parsed = map[string]connect.ModelsDevProvider{}
+			}
+			for id, p := range extra {
+				merged := parsed[id]
+				if merged.Models == nil {
+					merged = p
+				} else {
+					for mid, m := range p.Models {
+						merged.Models[mid] = m
+					}
+				}
+				parsed[id] = merged
+			}
+		}
+	}
+	if parsed == nil {
 		return nil
 	}
 	cat = parsed
