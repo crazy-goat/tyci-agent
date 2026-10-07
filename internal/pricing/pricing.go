@@ -76,6 +76,9 @@ func Reset() {
 	mu.Lock()
 	loaded, cat = false, nil
 	mu.Unlock()
+	nexosMu.Lock()
+	nexosLoaded, nexosModels = false, nil
+	nexosMu.Unlock()
 }
 
 // Lookup returns the rates and limits for a model. provider may be empty, in
@@ -86,8 +89,21 @@ func Reset() {
 // catalog's display name, because the name shown in the status bar comes from
 // the user's model.json and need not be the catalog's id.
 func Lookup(provider, model string) (Rates, Limits) {
+	if model == "" {
+		return Rates{}, Limits{}
+	}
+	r, l := lookupCatalog(provider, model)
+	// Nexos prices and limits come from the nexos API. Without a provider the
+	// API is only asked when the catalog knows nothing about the model.
+	if provider == nexosProvider || (provider == "" && !r.Known()) {
+		r, l = overlayNexos(model, r, l)
+	}
+	return r, l
+}
+
+func lookupCatalog(provider, model string) (Rates, Limits) {
 	c := catalog()
-	if c == nil || model == "" {
+	if c == nil {
 		return Rates{}, Limits{}
 	}
 	if provider != "" {
