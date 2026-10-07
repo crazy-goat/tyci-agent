@@ -70,4 +70,12 @@ type AnthropicRequest struct {
 	// a nil pointer, never a pointer to 0. See connector.Request.Temperature
 	// for why this layer never validates or clamps the value.
 	Temperature *float64 `json:"temperature,omitempty"`
+	// Thinking enables extended thinking. Nil omits the key.
+	Thinking *AnthropicThinking `json:"thinking,omitempty"`
+}
+
+// AnthropicThinking is the extended-thinking switch of a Messages request.
+type AnthropicThinking struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens"`
 }

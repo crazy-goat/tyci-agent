@@ -71,4 +71,11 @@ type GeminiGenerationConfig struct {
 	// MaxOutputTokens is Gemini's name for max_tokens. Omitted when zero,
 	// leaving the provider's default in charge.
 	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
+	// ThinkingConfig sets the thinking budget. Nil omits the key.
+	ThinkingConfig *GeminiThinkingConfig `json:"thinkingConfig,omitempty"`
+}
+
+// GeminiThinkingConfig holds the thinking budget in tokens.
+type GeminiThinkingConfig struct {
+	ThinkingBudget int `json:"thinkingBudget"`
 }

@@ -254,3 +254,20 @@ func TestAnthropicStream_Temperature(t *testing.T) {
 		})
 	}
 }
+
+func TestAnthropicThinkingEffort(t *testing.T) {
+	body := reasoningBody(t, NewAnthropic, "medium")
+	th, _ := body["thinking"].(map[string]any)
+	if th["type"] != "enabled" || th["budget_tokens"] != float64(4096) {
+		t.Fatalf("thinking = %v", body["thinking"])
+	}
+	if body["max_tokens"].(float64) <= 4096 {
+		t.Fatalf("max_tokens = %v, must exceed budget", body["max_tokens"])
+	}
+	if _, ok := body["temperature"]; ok {
+		t.Fatal("temperature must be dropped with thinking")
+	}
+	if _, ok := reasoningBody(t, NewAnthropic, "")["thinking"]; ok {
+		t.Fatal("thinking sent without option")
+	}
+}

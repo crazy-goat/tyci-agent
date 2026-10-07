@@ -38,6 +38,8 @@ type ChatRequest struct {
 	Messages  []ChatMessage   `json:"messages"`
 	Tools     json.RawMessage `json:"tools,omitempty"`
 	Reasoning bool            `json:"reasoning,omitempty"`
+	// ReasoningEffort is the OpenAI-style effort level ("low", "high", ...).
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// Temperature is a pointer so the zero value (fully deterministic
 	// sampling) can be sent explicitly; omitempty on a *float64 only omits
 	// a nil pointer, never a pointer to 0. See connector.Request.Temperature

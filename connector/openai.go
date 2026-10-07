@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/crazy-goat/tyci-agent/api"
@@ -57,6 +58,7 @@ func (c *openAI) Stream(ctx context.Context, req Request, emit func(stream.Event
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
 	}
+	body.ReasoningEffort = c.ep.option(OptReasoningEffort)
 	// Only send the reasoning field when ?reasoning=true was in the URI.
 	if c.reasoning {
 		body.Reasoning = true
@@ -163,4 +165,23 @@ func messagesToChat(msgs []Message, system string) []api.ChatMessage {
 		result = append(result, msg)
 	}
 	return result
+}
+
+// thinkingBudget maps a reasoning effort to a token budget for protocols that
+// take a budget (Anthropic, Gemini). A number is used as is. Unknown values
+// give 0, which means "do not enable thinking".
+func thinkingBudget(effort string) int {
+	switch effort {
+	case "low":
+		return 1024
+	case "medium":
+		return 4096
+	case "high":
+		return 16384
+	}
+	n, err := strconv.Atoi(effort)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
