@@ -591,7 +591,8 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	}
 	// A child that runs as a job gets its own session file. The file is
 	// closed (without session_end) when this run returns; a resume reopens it.
-	if tp, _ := ctx.Value(tools.TranscriptCtxKey{}).(string); tp != "" {
+	tp, ctx := takeTranscriptPath(ctx)
+	if tp != "" {
 		// A workflow agent visit writes its redacted transcript into the run dir.
 		if w := openRunTranscript(tp, msgs, mc.Model(), mc.Provider()); w != nil {
 			cfg.Session = w.Session()
@@ -1069,4 +1070,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// takeTranscriptPath returns the run transcript path of this child and a ctx
+// without it, so a grandchild does not reuse the path.
+func takeTranscriptPath(ctx context.Context) (string, context.Context) {
+	tp, _ := ctx.Value(tools.TranscriptCtxKey{}).(string)
+	return tp, context.WithValue(ctx, tools.TranscriptCtxKey{}, "")
 }

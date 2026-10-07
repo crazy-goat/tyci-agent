@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -83,22 +84,26 @@ func startRunLogHousekeeping(ctx context.Context) {
 	for _, p := range providers.ListProviders() {
 		redact.Add(providers.DefaultAuth().Key(p.Name()))
 	}
-	info, err := flow.DetectRepo()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return
 	}
-	fc, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
+	fc, err := flowconfig.Load(home, "", false)
 	if err != nil {
+		if l := debug.FromContext(ctx); l != nil {
+			fmt.Fprintf(l, "runlog prune: config: %v\n", err)
+		}
 		return
 	}
-	days, dir := fc.RetentionDays(), flow.RunsDir(info.Home)
+	days, dir := fc.RetentionDays(), flow.RunsDir(home)
 	prune := func() {
 		n, err := runlog.Prune(dir, days, time.Now())
-		if l := debug.FromContext(ctx); l == nil {
-		} else if err != nil {
-			fmt.Fprintf(l, "runlog prune: %v\n", err)
-		} else {
-			fmt.Fprintf(l, "runlog prune: removed %d runs\n", n)
+		if l := debug.FromContext(ctx); l != nil {
+			if err != nil {
+				fmt.Fprintf(l, "runlog prune: %v\n", err)
+			} else {
+				fmt.Fprintf(l, "runlog prune: removed %d runs\n", n)
+			}
 		}
 	}
 	prune()

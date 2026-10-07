@@ -77,3 +77,14 @@ func TestAgentRunnerRun_WritesChildSessionForJobOnly(t *testing.T) {
 		t.Fatal("fork lacks source history")
 	}
 }
+
+func TestTakeTranscriptPath_ClearsKeyForGrandchildren(t *testing.T) {
+	ctx := context.WithValue(context.Background(), tools.TranscriptCtxKey{}, "/x/t.jsonl")
+	tp, inner := takeTranscriptPath(ctx)
+	if tp != "/x/t.jsonl" {
+		t.Fatalf("tp = %q", tp)
+	}
+	if again, _ := takeTranscriptPath(inner); again != "" {
+		t.Fatalf("grandchild sees %q", again)
+	}
+}
