@@ -93,7 +93,7 @@ type flowAdopter interface {
 
 var _ flowAdopter = (*flow.Manager)(nil)
 
-// Adoptable returns the issues of the runs resumed by flow.Manager.ResumeAll.
+// Adoptable returns the issues of the runs resumed with the answer "resume".
 func (r *flowRunner) Adoptable() []int {
 	if a, ok := r.m.(flowAdopter); ok {
 		return a.Adoptable()

@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
 
 ### Changed
+- Flow: at start-up `tyci` no longer resumes unfinished runs by itself. It pauses the `running` runs whose owner process is gone (reason `resume:<state>`) and asks in the chat, in one message, whether to resume, stop or leave paused each paused run. The new `workflow_resume` answer `resume` continues such a run at its saved state. A paused run blocks a new run for its issue; the orchestrator now skips that issue instead of marking it failed (#370).
 - Subagents that run as jobs write their own session file to `~/.tyci/sessions/<project>/agents/<time>_<id>_<job-id>.jsonl` plus a `.md` dump. `tyci session list` does not show them, and nothing deletes them yet (#121).
 - Context notice now starts at 80% of the window (was 50%) and auto-compaction at 95% (was 85%) when no limit is set (#304).
 
@@ -70,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `eventbus.Bus.SubscribeCoalesced`: a subscription that keeps only the latest event per key, so a slow consumer never loses the newest state (#113). The optional `eventbus.WithReplaces` decides which of two events with the same key is kept (#131)
 
 ### Changed
+- Flow: at start-up `tyci` no longer resumes unfinished runs by itself. It pauses the `running` runs whose owner process is gone (reason `resume:<state>`) and asks in the chat, in one message, whether to resume, stop or leave paused each paused run. The new `workflow_resume` answer `resume` continues such a run at its saved state. A paused run blocks a new run for its issue; the orchestrator now skips that issue instead of marking it failed (#370).
 - `golangci-lint` now enforces the staticcheck style/quickfix checks ST1005, ST1011, QF1001, QF1003, QF1008, QF1011 and QF1012; the unknown-command error in TUI and interactive mode is now lowercase (#116)
 - Three exported Go symbols were renamed for the ST1011 cleanup: `jobs.Job.ExtensionSeconds` → `jobs.Job.ExtensionDuration`, `tools.SubagentBackgroundAfterSec()` → `tools.SubagentBackgroundAfter()`, and `tools.SetSubagentBackgroundAfterSecForTests()` → `tools.SetSubagentBackgroundAfterForTests()`. Go callers must use the new names; no compatibility aliases were kept (#116)
 - A failure to close the debug log now prints `Warning: debug log: close: ...` to stderr instead of being silently discarded; the command still succeeds, and a second close on a nil file returns nil (#118)
@@ -96,6 +98,7 @@ First release: a CLI that runs LLM agents with a multi-turn agent loop, tool exe
 - A pull request template
 
 ### Changed
+- Flow: at start-up `tyci` no longer resumes unfinished runs by itself. It pauses the `running` runs whose owner process is gone (reason `resume:<state>`) and asks in the chat, in one message, whether to resume, stop or leave paused each paused run. The new `workflow_resume` answer `resume` continues such a run at its saved state. A paused run blocks a new run for its issue; the orchestrator now skips that issue instead of marking it failed (#370).
 - `WORKFLOW.md` is replaced by `docs/workflow.md`
 - Documentation under `docs/` and `TODO.md` is translated to English; Polish remains only as test data in the subagent test plans
 - The CI workflow `ci.yml` is now `tests.yaml` and reads the Go version from `go.mod`
