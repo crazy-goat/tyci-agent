@@ -9,6 +9,7 @@ import (
 // TaskData is the only data a task template can read.
 type TaskData struct {
 	Repo, Branch, DefaultBranch, Worktree, RunDir, Reason string
+	Input                                                 string // roadmap oracle input JSON
 	Issue, PR, Visit                                      int
 }
 

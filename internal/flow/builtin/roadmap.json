@@ -1,0 +1,8 @@
+{
+  "name": "roadmap",
+  "start": "plan",
+  "states": {
+    "plan": {"agent": "oracle", "task": "roadmap", "on": {"done": "end"}},
+    "end":  {"end": true}
+  }
+}

@@ -11,7 +11,7 @@ import (
 // find embedded. Keeping it in one place means a change to
 // internal/agentdefs/builtin/*.md shows up as a single, obvious diff here
 // instead of a dozen unrelated-looking assertions.
-var builtinNames = []string{"implementer", "locator", "reviewer"}
+var builtinNames = []string{"implementer", "locator", "oracle", "reviewer"}
 
 func mustSync(t *testing.T, dir string, force bool) SyncResult {
 	t.Helper()
