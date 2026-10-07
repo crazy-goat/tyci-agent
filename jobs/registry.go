@@ -892,15 +892,7 @@ func (r *Registry) SetProgress(id, text string) bool {
 	entry := truncateProgressEntry(text)
 	job.Progress = entry
 	job.lastProgressAt = r.now()
-	job.ProgressHistory = append(job.ProgressHistory, entry)
-	if len(job.ProgressHistory) > progressHistoryCap {
-		// Drop the oldest and record that we did — see
-		// Job.ProgressHistoryTruncated's doc comment for why this bit has
-		// to exist: a bounded history that silently drops entries is
-		// indistinguishable from a complete one otherwise.
-		job.ProgressHistory = job.ProgressHistory[len(job.ProgressHistory)-progressHistoryCap:]
-		job.ProgressHistoryTruncated = true
-	}
+	appendProgressLocked(job, entry)
 	onEvent := r.onEvent
 	snapshot := eventSnapshotLocked(job)
 	r.mu.Unlock()
@@ -993,11 +985,7 @@ func (r *Registry) AutoProgress(id string, after time.Duration, text string) boo
 	job.lastAutoAt = now
 	entry := truncateProgressEntry("[auto] " + redact.Redact(text))
 	job.Progress = entry
-	job.ProgressHistory = append(job.ProgressHistory, entry)
-	if len(job.ProgressHistory) > progressHistoryCap {
-		job.ProgressHistory = job.ProgressHistory[len(job.ProgressHistory)-progressHistoryCap:]
-		job.ProgressHistoryTruncated = true
-	}
+	appendProgressLocked(job, entry)
 	onEvent := r.onEvent
 	snapshot := eventSnapshotLocked(job)
 	r.mu.Unlock()
@@ -1336,4 +1324,15 @@ func (r *Registry) PendingLines() []string {
 		}
 	}
 	return append(blocked, running...)
+}
+
+// appendProgressLocked appends entry to the job's bounded progress history.
+// When the cap drops the oldest entry it sets ProgressHistoryTruncated (see
+// that field's doc comment). The caller must hold r.mu.
+func appendProgressLocked(job *Job, entry string) {
+	job.ProgressHistory = append(job.ProgressHistory, entry)
+	if len(job.ProgressHistory) > progressHistoryCap {
+		job.ProgressHistory = job.ProgressHistory[len(job.ProgressHistory)-progressHistoryCap:]
+		job.ProgressHistoryTruncated = true
+	}
 }

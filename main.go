@@ -792,7 +792,7 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 	// tools.AllowOnlySubagent is the single source of truth for what a
 	// whitelisted child may call: it mirrors
 	// tools.GetSubagentToolsSchemaJSONFor tool for tool — same
-	// alwaysAllowedTools (help, lua) folded in, same subagentDeniedTools
+	// alwaysAllowedTools (help, lua, report_progress) folded in, same subagentDeniedTools
 	// ("subagent", "agents") dropped even when explicitly listed — so a
 	// call permitted here is always one the schema offered the model, and a
 	// call the schema never offered is always refused here.

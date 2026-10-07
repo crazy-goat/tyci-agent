@@ -174,7 +174,7 @@ type Config struct {
 	// maxProgressHeartbeats counter next to maxTodoReminders/
 	// maxJobReminders — the time gate itself is what keeps this from
 	// crowding out the real conversation, per item 15's decided design
-	// (time-based, not step-based, reusing SubagentBackgroundAfter).
+	// (time-based, not step-based; the threshold is ping_interval/2, see main.go and tools.JobProgressHeartbeatCheck).
 	ProgressHeartbeat func() bool
 
 	// AutoPing, if set, is called once per loop iteration after a
@@ -729,7 +729,7 @@ func buildAutoCompactSummary(used, limit int, dumpPath string) string {
 
 // buildProgressHeartbeatReminder produces the harness-authored nudge
 // injected into a subagent's own loop when it has gone quiet — no
-// report_progress note — for longer than SubagentBackgroundAfter (see
+// report_progress note — for longer than ping_interval/2 (see
 // tools.JobProgressHeartbeatCheck and jobs.Registry.NeedsProgressHeartbeat).
 // Fire-and-forget by design (item 15): nothing requires the model to answer
 // in any particular shape or even acknowledge this message, only to call
