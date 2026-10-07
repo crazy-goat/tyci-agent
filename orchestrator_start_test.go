@@ -51,6 +51,16 @@ func (p *poster) wait(t *testing.T) string {
 	return ""
 }
 
+// waitNot returns the next post that does not start with the progress prefix.
+func (p *poster) waitNot(t *testing.T, prefix string) string {
+	t.Helper()
+	for {
+		if s := p.wait(t); !strings.HasPrefix(s, prefix) {
+			return s
+		}
+	}
+}
+
 func TestStartOrchestratorOnce(t *testing.T) {
 	f := &fake.Fake{RepoName: "o/r", Ms: []forge.Milestone{{Number: 1, Title: "v0.4.0", OpenCount: 0}}}
 	p := newPoster()
@@ -61,7 +71,7 @@ func TestStartOrchestratorOnce(t *testing.T) {
 	if o == nil || time.Since(begin) > time.Second {
 		t.Fatal("did not return at once")
 	}
-	if got := p.wait(t); !strings.Contains(got, "has no issues") {
+	if got := p.waitNot(t, "Reading milestones"); !strings.Contains(got, "has no issues") {
 		t.Fatal(got)
 	}
 }
@@ -122,7 +132,7 @@ func TestMissingGhOneLine(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	startOrchestrator(ctx, false, orchestrator.Config{Workers: 3}, g, r, p.post)
-	got := p.wait(t)
+	got := p.waitNot(t, "Reading milestones")
 	if !strings.HasPrefix(got, "forge error:") || strings.Contains(got, "\n") {
 		t.Fatalf("%q", got)
 	}
