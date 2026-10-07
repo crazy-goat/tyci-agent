@@ -5,11 +5,13 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 const globalConfigName = "config.json"
@@ -57,6 +59,42 @@ type TyciConfig struct {
 	// stream. 0 or absent means 30. On expiry the request is retried.
 	FirstByteTimeoutSec  int `json:"first_byte_timeout_sec,omitempty"`
 	StreamIdleTimeoutSec int `json:"stream_idle_timeout_sec,omitempty"`
+	// Watchdog tunes idle detection of running subagents. Global config only:
+	// a project-local value is ignored (see mergeTyciConfig).
+	Watchdog *WatchdogConfig `json:"watchdog,omitempty"`
+}
+
+// WatchdogConfig holds Go duration strings, for example "3m".
+type WatchdogConfig struct {
+	IdleAfter     string `json:"idle_after,omitempty"`
+	EscalateAfter string `json:"escalate_after,omitempty"`
+}
+
+// WatchdogDurations returns the idle and escalation delays. Missing values
+// default to 3m. An unparsable or non-positive value is an error naming the key.
+func (c TyciConfig) WatchdogDurations() (idle, escalate time.Duration, err error) {
+	idle, escalate = 3*time.Minute, 3*time.Minute
+	if c.Watchdog == nil {
+		return idle, escalate, nil
+	}
+	for _, f := range []struct {
+		key string
+		in  string
+		out *time.Duration
+	}{
+		{"watchdog.idle_after", c.Watchdog.IdleAfter, &idle},
+		{"watchdog.escalate_after", c.Watchdog.EscalateAfter, &escalate},
+	} {
+		if f.in == "" {
+			continue
+		}
+		d, perr := time.ParseDuration(f.in)
+		if perr != nil || d <= 0 {
+			return 0, 0, fmt.Errorf("%s: %q is not a positive duration (example: \"3m\")", f.key, f.in)
+		}
+		*f.out = d
+	}
+	return idle, escalate, nil
 }
 
 // globalConfigDir returns the path to ~/.tyci.

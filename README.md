@@ -494,6 +494,14 @@ stream. Both default to 30 (0 or absent) in `~/.tyci/config.json`:
 { "first_byte_timeout_sec": 30, "stream_idle_timeout_sec": 30 }
 ```
 
+A watchdog reports a running subagent that shows no activity. After `idle_after` it
+messages the parent, after each further `escalate_after` the next ancestor, and last the
+human (once). It never kills a job. Global `~/.tyci/config.json` only; defaults are 3m.
+
+```json
+{ "watchdog": { "idle_after": "3m", "escalate_after": "3m" } }
+```
+
 Anthropic **prompt caching** is on by default, with cache breakpoints after the
 tool schemas, after the system prompt, and at the end of the conversation — the
 parts that are identical on every turn. The cache read/write counts already

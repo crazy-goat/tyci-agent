@@ -38,6 +38,7 @@ type Config struct {
 
 	FirstByteTimeoutSec  json.RawMessage `json:"first_byte_timeout_sec,omitempty"`
 	StreamIdleTimeoutSec json.RawMessage `json:"stream_idle_timeout_sec,omitempty"`
+	Watchdog             json.RawMessage `json:"watchdog,omitempty"`
 }
 
 // Forge selects the forge of the orchestrator.

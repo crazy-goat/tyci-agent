@@ -213,11 +213,17 @@ func (o *Orchestrator) gather(ctx context.Context, skip map[int]bool) (Roadmap, 
 // plan reads the forge and orders the issues. It returns an error only for forge errors; an oracle failure uses the
 // fallback order.
 func (o *Orchestrator) plan(ctx context.Context) (Roadmap, error) {
+	o.notify("Reading milestones and issues from GitHub...")
 	rm, in, err := o.gather(ctx, nil)
 	if err != nil {
 		return rm, err
 	}
+	o.notify(fmt.Sprintf("Read %d open issues of milestone %s.", rm.Counts.MilestoneOpen, sanitize(rm.Milestone, maxTitle)))
+	o.notify("Planning the order (oracle)...")
 	rm.Items, rm.FromOracle, rm.FallbackWhy = o.order(ctx, in)
+	if !rm.FromOracle {
+		o.notify("Fallback order: " + sanitize(rm.FallbackWhy, maxReason))
+	}
 	return rm, nil
 }
 
