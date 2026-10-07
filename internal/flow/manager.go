@@ -247,6 +247,8 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 			text += " done: merged " + prURL(st)
 		case st.PR > 0:
 			text += " stopped: PR " + prURL(st) + " is still open"
+		case !ranAgent(st) && !endedByAsk(st):
+			text += " skipped"
 		default:
 			text += " stopped: no PR"
 		}
@@ -266,6 +268,12 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 		}
 	}
 	m.Notify(text)
+}
+
+// endedByAsk reports whether the last history step is an answered ask.
+func endedByAsk(st *RunState) bool {
+	n := len(st.History)
+	return n > 0 && st.History[n-1].Kind == "ask"
 }
 
 func prURL(st *RunState) string {

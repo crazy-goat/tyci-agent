@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
 
 ### Fixed
+- Flow: the run-finished notice says merged only after the merge step merged the PR; a stopped run says stopped, with the open PR if there is one; a skipped run says skipped (#323).
 - Cost: prices and context windows of all nexos models now come from the nexos API, cached in `~/.tyci/nexos-models.json` for 6 hours and refreshed in the background (#329).
 - Flow: the ask message shows the last step, its key and the last stderr line of a check, and `ci_wait.sh` prints why it returns `conflict`, `behind` or `fail` (#321).
 - Flow: `ci` sends a conflicting or behind PR to `rebase` instead of `ask`, and a PR without checks no longer fails after 3 polls (#320).

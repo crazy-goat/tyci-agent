@@ -223,7 +223,8 @@ func TestFinishedRun_NoticeFollowsEndState(t *testing.T) {
 	}{
 		{"merged", 171, merged, "workflow run r1 done: merged https://github.com/o/r/pull/171"},
 		{"stopped with open PR", 171, stop, "workflow run r1 stopped: PR https://github.com/o/r/pull/171 is still open"},
-		{"stopped without PR", 0, stop, "workflow run r1 stopped: no PR"},
+		{"skipped", 0, []Step{{Kind: "check", State: "check_done", Key: "skip"}}, "workflow run r1 skipped"},
+		{"stopped without PR", 0, append([]Step{{Kind: "agent", State: "work"}}, stop...), "workflow run r1 stopped: no PR"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
