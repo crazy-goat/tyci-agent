@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -22,6 +23,7 @@ type Config struct {
 	DefaultModel    string            `json:"default_model"`     // alias, used when a role has no model
 	Roles           map[string]Role   `json:"roles"`             //
 	CheckTimeoutSec int               `json:"check_timeout_sec"` // 0 means 1800
+	Forge           Forge             `json:"forge"`             // where the orchestrator reads issues
 
 	// Keys owned by the agent config (agent.TyciConfig) in the same file.
 	// They are accepted so the file loads, and ignored here.
@@ -31,6 +33,14 @@ type Config struct {
 	SidebarVisible     json.RawMessage `json:"sidebar_visible,omitempty"`
 	AutoCompactPercent json.RawMessage `json:"auto_compact_percent,omitempty"`
 }
+
+// Forge selects the forge of the orchestrator.
+type Forge struct {
+	Kind string `json:"kind"` // "" or "github"
+	Repo string `json:"repo"` // "owner/name"; "" or "auto" reads the git remote
+}
+
+var forgeRepoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 // Role holds the model alias and system prompt of one workflow role.
 type Role struct {
@@ -76,6 +86,12 @@ func Load(home, projectDir string, trusted bool) (*Config, error) {
 		}
 		if proj.DefaultModel != "" {
 			merged.DefaultModel = proj.DefaultModel
+		}
+		if proj.Forge.Kind != "" {
+			merged.Forge.Kind = proj.Forge.Kind
+		}
+		if proj.Forge.Repo != "" {
+			merged.Forge.Repo = proj.Forge.Repo
 		}
 		if proj.CheckTimeoutSec != 0 {
 			merged.CheckTimeoutSec = proj.CheckTimeoutSec
@@ -150,6 +166,12 @@ func readPromptFile(dir, rel string) (string, error) {
 }
 
 func (c *Config) validate() error {
+	if k := c.Forge.Kind; k != "" && k != "github" {
+		return fmt.Errorf("forge.kind: unknown kind %q (only \"github\" is supported)", k)
+	}
+	if r := c.Forge.Repo; r != "" && r != "auto" && !forgeRepoRe.MatchString(r) {
+		return fmt.Errorf("forge.repo: %q is not \"auto\" or \"owner/name\"", r)
+	}
 	if c.DefaultModel != "" {
 		if _, ok := c.Models[c.DefaultModel]; !ok {
 			return fmt.Errorf("default_model: unknown model alias %q", c.DefaultModel)

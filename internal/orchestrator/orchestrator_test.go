@@ -248,7 +248,9 @@ func TestDrainReleaseNeeded(t *testing.T) {
 	e.start()
 	e.f.Ms[0] = forge.Milestone{Number: 1, Title: "v0.4.0", ClosedCount: 1}
 	e.r.handle(1).finish("merged")
-	e.waitNote("Milestone v0.4.0 has no open issues left. Release needed")
+	if p := e.waitReady(); !errors.Is(p.Special, forge.ErrReleaseNeeded) {
+		t.Fatalf("%+v", p)
+	}
 	e.waitStop()
 }
 
@@ -312,7 +314,6 @@ func TestForgeErrorAtStart(t *testing.T) {
 	if p.Special == nil || len(e.r.started) != 0 || time.Since(begin) > wait {
 		t.Fatalf("%+v", p)
 	}
-	e.waitNote("forge error: gh down")
 	e.waitStop()
 }
 

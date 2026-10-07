@@ -135,7 +135,9 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 	// renderErrorOrBlock (no glamour) keeps cachedLines deterministic,
 	// and per-message blocks let the existing scroll heuristics handle
 	// pagination correctly.
+	resumed := false
 	if sess := cond.Session(); sess != nil && sess.IsResume() && cond.SessionPath() != "" {
+		resumed = true
 		parsedLines := sess.Messages()
 		rebuiltMsgs, _ := session.RebuildMessages(parsedLines)
 		if len(rebuiltMsgs) > 0 {
@@ -146,6 +148,10 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 	if cond.SystemPromptDrift() {
 		fmt.Fprintln(os.Stderr, "Note: this session's system prompt has changed since it last ran (tools or prompt updated).")
 	}
+
+	// The start-up greeting and the orchestrator: display only, never in the
+	// model history. Posting from the orchestrator goroutine is safe.
+	startTUIOrchestrator(baseCtx, resumed, func(line string) { tuiDisp.Text(line + "\n") })
 
 	// A person typing must not have to wait for whatever is running. Tools that
 	// can hand their work to the background check this and do so at once; the

@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- TUI start-up greeting with counts, plan and worker slots; starts the orchestrator on a new session; config keys `forge.kind` and `forge.repo` (#180)
+
 ### Fixed
 - `~/.tyci/config.json` with agent keys (`favorite_models`, `max_tokens`, `prompt_cache`, `sidebar_visible`, `auto_compact_percent`) now loads instead of failing with an unknown field error (#275)
 
