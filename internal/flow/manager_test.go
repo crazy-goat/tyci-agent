@@ -212,22 +212,36 @@ func TestWorkflowStart_InvalidWorkflowCreatesNothing(t *testing.T) {
 	}
 }
 
-func TestFinishedRun_PushesNotice(t *testing.T) {
-	e := newMgrEnv(t, &gatedChecks{key: "ok", pr: "171"})
-	id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 160})
-	if err != nil {
-		t.Fatal(err)
+func TestFinishedRun_NoticeFollowsEndState(t *testing.T) {
+	merged := []Step{{Kind: "check", State: "merge", Key: "merged"}}
+	stop := []Step{{Kind: "ask", State: "ask", Key: "stop"}}
+	cases := []struct {
+		name string
+		pr   int
+		hist []Step
+		want string
+	}{
+		{"merged", 171, merged, "workflow run r1 done: merged https://github.com/o/r/pull/171"},
+		{"stopped with open PR", 171, stop, "workflow run r1 stopped: PR https://github.com/o/r/pull/171 is still open"},
+		{"skipped", 0, []Step{{Kind: "check", State: "check_done", Key: "skip"}}, "workflow run r1 skipped"},
+		{"stopped without PR", 0, append([]Step{{Kind: "agent", State: "work"}}, stop...), "workflow run r1 stopped: no PR"},
 	}
-	want := "workflow run " + id + " done: merged https://github.com/o/r/pull/171"
-	if got := e.notice(t); got != want {
-		t.Fatalf("notice = %q, want %q", got, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got string
+			m := &Manager{Notify: func(s string) { got = s }}
+			m.notify(&RunState{Run: "r1", Repo: "o/r", Status: "done", PR: c.pr, History: c.hist}, nil)
+			if got != c.want {
+				t.Fatalf("notice = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 
 func TestPausedRun_PushesNotice(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "bad"})
 	id, _, _ := e.m.Start(context.Background(), StartRequest{Issue: 1})
-	want := "workflow run " + id + " paused: Need a decision. (answer with workflow_resume: retry|stop)"
+	want := "workflow run " + id + " paused: Need a decision. (last step: c, key bad) (answer with workflow_resume: retry|stop)"
 	if got := e.notice(t); got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
 	}
@@ -270,7 +284,7 @@ func TestWorkflowResume_PassesAnswer(t *testing.T) {
 	if err := e.m.Resume(id, "stop"); err != nil {
 		t.Fatal(err)
 	}
-	if got := e.notice(t); !strings.Contains(got, id+" done") {
+	if got := e.notice(t); !strings.Contains(got, id+" stopped") {
 		t.Fatalf("notice = %q", got)
 	}
 }

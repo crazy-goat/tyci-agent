@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -145,4 +147,74 @@ func CalcBackoff(attempt int, err error, config RetryConfig) time.Duration {
 		dur = maxDur
 	}
 	return dur
+}
+
+// DefaultResponseTimeout is the default for both the time to the first
+// response and the silence allowed between two reads of the stream.
+const DefaultResponseTimeout = 30 * time.Second
+
+var firstByteTimeout, streamIdleTimeout atomic.Int64
+
+// SetTimeouts sets the time a provider has to start answering and the
+// silence allowed in a running stream. A value <= 0 selects the default.
+func SetTimeouts(firstByte, idle time.Duration) {
+	firstByteTimeout.Store(int64(firstByte))
+	streamIdleTimeout.Store(int64(idle))
+}
+
+func timeoutOrDefault(v *atomic.Int64) time.Duration {
+	if d := time.Duration(v.Load()); d > 0 {
+		return d
+	}
+	return DefaultResponseTimeout
+}
+
+// stallBody turns a stalled read into a RetryableError.
+type stallBody struct {
+	io.ReadCloser
+	timer   *time.Timer
+	idle    time.Duration
+	stalled *atomic.Bool
+	err     error
+	cancel  context.CancelFunc
+}
+
+func (b *stallBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil && b.stalled.Load() {
+		return n, b.err
+	}
+	b.timer.Reset(b.idle)
+	return n, err
+}
+
+func (b *stallBody) Close() error {
+	b.timer.Stop()
+	defer b.cancel()
+	return b.ReadCloser.Close()
+}
+
+// doWithTimeouts sends req. If the provider sends no response headers within
+// the first byte timeout, or later no data within the stream idle timeout,
+// the request is cancelled and a RetryableError is returned.
+func doWithTimeouts(h HTTPDoer, req *http.Request) (*http.Response, error) {
+	first, idle := timeoutOrDefault(&firstByteTimeout), timeoutOrDefault(&streamIdleTimeout)
+	ctx, cancel := context.WithCancel(req.Context())
+	var stalled atomic.Bool
+	timer := time.AfterFunc(first, func() { stalled.Store(true); cancel() })
+	stallErr := func(d time.Duration) error {
+		return &RetryableError{Message: fmt.Sprintf("no answer from %s after %ds, retrying", req.URL.Host, int(d.Seconds()))}
+	}
+	resp, err := doer(h).Do(req.WithContext(ctx))
+	if err != nil {
+		timer.Stop()
+		cancel()
+		if stalled.Load() {
+			return nil, stallErr(first)
+		}
+		return nil, err
+	}
+	timer.Reset(idle)
+	resp.Body = &stallBody{ReadCloser: resp.Body, timer: timer, idle: idle, stalled: &stalled, err: stallErr(idle), cancel: cancel}
+	return resp, nil
 }

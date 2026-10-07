@@ -149,7 +149,7 @@ func (s ResponsesStreamer) Stream(ctx context.Context, apiKey, endpoint string, 
 	req.Header.Set("Accept", "text/event-stream")
 	applyExtraHeaders(req, s.Headers)
 
-	resp, err := doer(s.HTTP).Do(req)
+	resp, err := doWithTimeouts(s.HTTP, req)
 	// The httptrace hooks race Do() returning (net/http gives no
 	// ordering guarantee between them), so stop the trace right here,
 	// before touching resp or err, to guarantee every phase emit has

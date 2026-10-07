@@ -36,9 +36,9 @@ func TestRunner_CommentsGoBackToCode(t *testing.T) {
 		WF: builtinWF(t),
 		Checks: &fakeChecks{keys: map[string][]string{
 			"checks/fetch_comments.sh": {"new", "new", "new", "new"},
-			"checks/push.sh":           {"ok", "ok", "ok"},
-			"checks/post_review.sh":    {"ok", "ok", "ok"},
-			"checks/ci_wait.sh":        {"green", "green", "green"},
+			"checks/lock.sh":           {"ok", "ok", "ok"}, "checks/rebase.sh": {"ok", "ok", "ok"},
+			"checks/post_review.sh": {"ok", "ok", "ok"},
+			"checks/ci_wait.sh":     {"green", "green", "green"},
 		}},
 		Agents: &fakeAgents{keys: map[string][]string{
 			"code": {"done", "done", "done"}, "review": {"ACCEPT", "ACCEPT", "ACCEPT"},

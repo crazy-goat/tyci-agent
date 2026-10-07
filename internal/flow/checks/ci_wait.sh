@@ -6,6 +6,8 @@
 #          TYCI_CI_APPEAR_SEC (default 300).
 # Keys:    green  ci-ok passed
 #          red    ci-ok failed or was cancelled
+#          conflict  the PR conflicts with the default branch (no CI runs for it)
+#          behind    ci-ok is missing and the PR is behind the default branch
 #          fail   no PR number, ci-ok never appeared, or 3 consecutive gh failures
 # The loop is otherwise unbounded: the state timeout_sec stops it. Progress goes to stderr.
 set -euo pipefail
@@ -19,10 +21,22 @@ fi
 poll="${TYCI_CI_POLL_SEC:-20}"
 appear="${TYCI_CI_APPEAR_SEC:-300}"
 
+errf=$(mktemp)
+trap 'rm -f "$errf"' EXIT
 errors=0
 start=$SECONDS
 while :; do
-    out=$(gh pr checks "$pr" -R "${TYCI_REPO:-}" --json name,state,bucket 2>/dev/null || true)
+    view=$(gh pr view "$pr" -R "${TYCI_REPO:-}" --json mergeable,mergeStateStatus --jq '.mergeable + " " + .mergeStateStatus' 2>/dev/null || true)
+    case "$view" in
+    CONFLICTING* | *DIRTY)
+        echo "ci_wait.sh: PR $pr is dirty: it conflicts with the default branch" >&2
+        echo conflict
+        exit 0
+        ;;
+    esac
+    out=$(gh pr checks "$pr" -R "${TYCI_REPO:-}" --json name,state,bucket 2>"$errf" || true)
+    # gh exits 1 with this text when no check exists yet: that is "missing", not an API error.
+    case "$(cat "$errf")" in *"no checks reported"*) out='[]' ;; esac
     if bucket=$(jq -er 'if type == "array" then [.[] | select(.name == "ci-ok")][0].bucket // "missing" else empty end' <<<"$out" 2>/dev/null); then
         errors=0
         case "$bucket" in
@@ -36,8 +50,13 @@ while :; do
             ;;
         esac
         echo "ci_wait.sh: ci-ok is $bucket" >&2
+        if [ "$bucket" = missing ] && [ "${view##* }" = BEHIND ]; then
+            echo "ci_wait.sh: no ci-ok check and PR $pr is behind the default branch" >&2
+            echo behind
+            exit 0
+        fi
         if [ "$bucket" = missing ] && [ $((SECONDS - start)) -ge "$appear" ]; then
-            echo "ci_wait.sh: ci-ok did not appear" >&2
+            echo "ci_wait.sh: no checks: ci-ok did not appear" >&2
             echo fail
             exit 0
         fi

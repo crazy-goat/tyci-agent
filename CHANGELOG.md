@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Context notice now starts at 80% of the window (was 50%) and auto-compaction at 95% (was 85%) when no limit is set (#304).
 
 ### Fixed
+- Flow: parallel runs of one repository now merge one at a time (new `lock` state after review, then an `update` state merges the default branch and pushes, held through CI and merge), and `rebase` keeps both sides of a `CHANGELOG.md`-only conflict (#324).
+- Flow: the run-finished notice says merged only after the merge step merged the PR; a stopped run says stopped, with the open PR if there is one; a skipped run says skipped (#323).
+- Cost: prices and context windows of all nexos models now come from the nexos API, cached in `~/.tyci/nexos-models.json` for 6 hours and refreshed in the background (#329).
+- Flow: the ask message shows the last step, its key and the last stderr line of a check, and `ci_wait.sh` prints why it returns `conflict`, `behind` or `fail` (#321).
+- Flow: `ci` sends a conflicting or behind PR to `rebase` instead of `ask`, and a PR without checks no longer fails after 3 polls (#320).
+- API: a provider that sends no first byte or stalls mid-stream now ends with a retryable error after `first_byte_timeout_sec` or `stream_idle_timeout_sec` (default 30 s) and the agent retries (#317).
 - Orchestrator: the roadmap oracle role without `model` now uses `default_model` instead of the alias `opus` (#313).
 - Flow configuration now accepts direct `provider/model` names in `default_model` and role `model` fields without requiring identity aliases.
 - Flow: a failed agent state now saves its error in the `error` field of the `state.json` history entry and shows it in the ask message (#300).

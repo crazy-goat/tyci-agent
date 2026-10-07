@@ -13,9 +13,10 @@ import (
 // seqGh prints $GH_SEQ_DIR/<n>.json for call n (1-based), or exits 8 for <n>.err.
 // The last file repeats when calls run past it.
 const seqGh = `
+if [ "$1 $2" = "pr view" ]; then echo "${GH_VIEW:-MERGEABLE CLEAN}"; exit 0; fi
 n=$(cat "$GH_SEQ_DIR/n" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$GH_SEQ_DIR/n"
 while [ "$n" -gt 1 ] && [ ! -e "$GH_SEQ_DIR/$n.json" ] && [ ! -e "$GH_SEQ_DIR/$n.err" ]; do n=$((n-1)); done
-[ -e "$GH_SEQ_DIR/$n.err" ] && exit 8
+[ -e "$GH_SEQ_DIR/$n.err" ] && { cat "$GH_SEQ_DIR/$n.err" >&2; exit 8; }
 cat "$GH_SEQ_DIR/$n.json"
 `
 
@@ -26,15 +27,22 @@ func ciJSON(bucket string) string {
 // runCI writes the sequence ("err" for a failing call) and runs ci_wait.sh.
 func runCI(t *testing.T, seq []string, env map[string]string) (key string, exit int, calls int) {
 	t.Helper()
+	key, exit, calls, _ = runCIErr(t, seq, env)
+	return key, exit, calls
+}
+
+// runCIErr is runCI that also returns stderr.
+func runCIErr(t *testing.T, seq []string, env map[string]string) (key string, exit int, calls int, stderr string) {
+	t.Helper()
 	dir := t.TempDir()
 	for i, s := range seq {
 		name := filepath.Join(dir, string(rune('1'+i)))
-		if s == "err" {
+		if strings.HasPrefix(s, "err") {
 			name += ".err"
 		} else {
 			name += ".json"
 		}
-		if err := os.WriteFile(name, []byte(s), 0o644); err != nil {
+		if err := os.WriteFile(name, []byte(strings.TrimPrefix(s, "err:")), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -44,9 +52,9 @@ func runCI(t *testing.T, seq []string, env map[string]string) (key string, exit 
 	for k, v := range env {
 		base[k] = v
 	}
-	key, exit, _ = testutil.RunCheck(t, "ci_wait.sh", base)
+	key, exit, stderr = testutil.RunCheck(t, "ci_wait.sh", base)
 	b, _ := os.ReadFile(filepath.Join(dir, "n"))
-	return key, exit, callsOf(string(b))
+	return key, exit, callsOf(string(b)), stderr
 }
 
 func callsOf(s string) int {
@@ -120,5 +128,61 @@ func TestCIWait_PrintsKeyAsLastLine(t *testing.T) {
 	_, _, stdout, _ := testutil.RunCheckOut(t, "ci_wait.sh", map[string]string{"TYCI_REPO": "o/r", "TYCI_PR": "5", "TYCI_CI_POLL_SEC": "0", "GH_SEQ_DIR": dir})
 	if stdout != "green\n" {
 		t.Fatalf("stdout=%q", stdout)
+	}
+}
+
+func TestCIWait_ConflictGoesToRebase(t *testing.T) {
+	key, _, _ := runCI(t, []string{"err"}, map[string]string{"GH_VIEW": "CONFLICTING DIRTY"})
+	if key != "conflict" {
+		t.Fatalf("key=%q", key)
+	}
+}
+
+func TestCIWait_BehindWithoutCiOk(t *testing.T) {
+	key, _, _ := runCI(t, []string{`[]`}, map[string]string{"GH_VIEW": "MERGEABLE BEHIND"})
+	if key != "behind" {
+		t.Fatalf("key=%q", key)
+	}
+}
+
+func TestCIWait_NoChecksReportedIsMissing(t *testing.T) {
+	msg := "err:no checks reported on the 'x' branch"
+	seq := []string{msg, msg, msg, msg, ciJSON("pass")}
+	key, _, _ := runCI(t, seq, map[string]string{"TYCI_CI_APPEAR_SEC": "1000"})
+	if key != "green" {
+		t.Fatalf("key=%q", key)
+	}
+}
+
+func TestCIWait_NoChecksReportedBehind(t *testing.T) {
+	key, _, _ := runCI(t, []string{"err:no checks reported on the 'x' branch"}, map[string]string{"GH_VIEW": "MERGEABLE BEHIND"})
+	if key != "behind" {
+		t.Fatalf("key=%q", key)
+	}
+}
+
+// lastStderrLine is the line the flow runner shows in the ask message.
+func lastStderrLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return lines[len(lines)-1]
+}
+
+func TestCIWait_ReasonOnStderr(t *testing.T) {
+	cases := []struct {
+		name, key, want string
+		seq             []string
+		env             map[string]string
+	}{
+		{"conflict", "conflict", "dirty", []string{"err"}, map[string]string{"GH_VIEW": "CONFLICTING DIRTY"}},
+		{"behind", "behind", "behind the default branch", []string{`[]`}, map[string]string{"GH_VIEW": "MERGEABLE BEHIND"}},
+		{"nochecks", "fail", "ci-ok did not appear", []string{`[]`}, map[string]string{"TYCI_CI_APPEAR_SEC": "0"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			key, _, _, stderr := runCIErr(t, c.seq, c.env)
+			if key != c.key || !strings.Contains(lastStderrLine(stderr), c.want) {
+				t.Fatalf("key=%q stderr=%q", key, stderr)
+			}
+		})
 	}
 }

@@ -12,7 +12,22 @@ set -euo pipefail
 
 git fetch origin "$TYCI_DEFAULT_BRANCH" >&2 || { echo fail; exit 0; }
 
-if ! git merge --no-edit "origin/$TYCI_DEFAULT_BRANCH" >&2; then
+# A conflict only in CHANGELOG.md keeps both sides (parallel runs all add an entry at the
+# top). Returns 0 when the merge is committed. Any other conflict stays for the caller.
+resolve_changelog() {
+    [ "$(git diff --name-only --diff-filter=U)" = CHANGELOG.md ] || return 1
+    local tmp rc=1
+    tmp=$(mktemp -d)
+    if git show :2:CHANGELOG.md >"$tmp/ours" && git show :1:CHANGELOG.md >"$tmp/base" &&
+        git show :3:CHANGELOG.md >"$tmp/theirs" && git merge-file --union "$tmp/ours" "$tmp/base" "$tmp/theirs" &&
+        cp "$tmp/ours" CHANGELOG.md && git add CHANGELOG.md && git commit --no-edit -q >&2; then
+        rc=0
+    fi
+    rm -rf "$tmp"
+    return $rc
+}
+
+if ! git merge --no-edit "origin/$TYCI_DEFAULT_BRANCH" >&2 && ! resolve_changelog; then
     if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
         git merge --abort
         echo conflict

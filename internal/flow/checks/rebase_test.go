@@ -137,3 +137,40 @@ func TestRebase_UsesExplicitRefOnPush(t *testing.T) {
 		t.Fatal("issue-7 missing")
 	}
 }
+
+func TestRebase_ChangelogOnlyConflictKeepsBoth(t *testing.T) {
+	e := newPushEnv(t)
+	writeCommit(t, e.work, "CHANGELOG.md", "# Changelog\n\nold\n", "base")
+	git(t, e.work, "push", "-q", "origin", "issue-7:main")
+	writeCommit(t, e.work, "CHANGELOG.md", "# Changelog\nmine\n\nold\n", "issue change")
+	advanceMain(t, e, "CHANGELOG.md", "# Changelog\ntheirs\n\nold\n")
+	key, exit, _, _, _ := e.runRebase(t, "rebase.sh", map[string]string{"PR_NUM": "171"})
+	if key != "ok" || exit != 0 {
+		t.Fatalf("key=%q exit=%d", key, exit)
+	}
+	b, _ := os.ReadFile(filepath.Join(e.work, "CHANGELOG.md"))
+	if !strings.Contains(string(b), "mine") || !strings.Contains(string(b), "theirs") || strings.Contains(string(b), "<<<<") {
+		t.Fatalf("changelog = %q", b)
+	}
+}
+
+func TestRebase_ChangelogAndCodeConflictStaysConflict(t *testing.T) {
+	e := newPushEnv(t)
+	writeCommit(t, e.work, "CHANGELOG.md", "old\n", "base")
+	writeCommit(t, e.work, "f.txt", "old\n", "base f")
+	git(t, e.work, "push", "-q", "origin", "issue-7:main")
+	writeCommit(t, e.work, "CHANGELOG.md", "mine\n", "issue change")
+	writeCommit(t, e.work, "f.txt", "mine\n", "code")
+	advanceMain(t, e, "CHANGELOG.md", "theirs\n")
+	other := filepath.Join(t.TempDir(), "o2")
+	git(t, filepath.Dir(other), "clone", "-q", e.origin, other)
+	writeCommit(t, other, "f.txt", "theirs\n", "code too")
+	git(t, other, "push", "-q", "origin", "main")
+	key, _, _, _, _ := e.runRebase(t, "rebase.sh", nil)
+	if key != "conflict" {
+		t.Fatalf("key=%q", key)
+	}
+	if s := git(t, e.work, "status", "--porcelain"); s != "" {
+		t.Fatalf("dirty: %s", s)
+	}
+}

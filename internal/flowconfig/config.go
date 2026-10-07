@@ -35,6 +35,9 @@ type Config struct {
 	AutoCompactPercent json.RawMessage `json:"auto_compact_percent,omitempty"`
 	CompactSoftLimit   json.RawMessage `json:"compact_soft_limit,omitempty"`
 	CompactHardLimit   json.RawMessage `json:"compact_hard_limit,omitempty"`
+
+	FirstByteTimeoutSec  json.RawMessage `json:"first_byte_timeout_sec,omitempty"`
+	StreamIdleTimeoutSec json.RawMessage `json:"stream_idle_timeout_sec,omitempty"`
 }
 
 // Forge selects the forge of the orchestrator.

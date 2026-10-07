@@ -101,7 +101,7 @@ func TestLoad_UnknownKeyIsError(t *testing.T) {
 
 func TestLoad_AgentConfigKeysAreAccepted(t *testing.T) {
 	home := t.TempDir()
-	write(t, home, ".tyci/config.json", `{"favorite_models":["a/b"],"max_tokens":8000,"prompt_cache":false,"sidebar_visible":true,"auto_compact_percent":80,"default_model":"m","models":{"m":"x"}}`)
+	write(t, home, ".tyci/config.json", `{"favorite_models":["a/b"],"max_tokens":8000,"prompt_cache":false,"sidebar_visible":true,"auto_compact_percent":80,"first_byte_timeout_sec":30,"stream_idle_timeout_sec":30,"default_model":"m","models":{"m":"x"}}`)
 	c, err := Load(home, t.TempDir(), true)
 	if err != nil {
 		t.Fatal(err)

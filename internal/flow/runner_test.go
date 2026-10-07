@@ -400,3 +400,15 @@ func TestRunner_BuiltinWorkflowRunsToEnd(t *testing.T) {
 		t.Fatalf("status = %q current = %q, want done/end", st.Status, st.Current)
 	}
 }
+
+func TestRunner_PauseShowsLastStepAndStderr(t *testing.T) {
+	st := &RunState{Run: "r", History: []Step{{State: "ci_wait", Key: "fail", StderrTail: "a\nci_wait.sh: PR 5 is dirty\n"}}}
+	r := &Runner{}
+	if err := r.pause(st, "The run needs a human decision.", ""); !errors.Is(err, ErrPaused) {
+		t.Fatal(err)
+	}
+	want := "The run needs a human decision. (last step: ci_wait, key fail: ci_wait.sh: PR 5 is dirty)"
+	if st.Ask.Message != want {
+		t.Fatalf("got %q", st.Ask.Message)
+	}
+}
