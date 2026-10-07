@@ -2,11 +2,11 @@ package display
 
 import (
 	"fmt"
-	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
@@ -418,6 +418,10 @@ func (m TuiModel) renderSidebarTasks(width int) []string {
 			// Inner styles (status icon) end with an ANSI reset that would clear
 			// the highlight background mid-line, so drop them on the selected row.
 			line = ansi.Strip(line)
+		} else {
+			// A full reset would also clear the panel background after the icon;
+			// reset only the foreground instead.
+			line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[39m")
 		}
 		out = append(out, rowStyle(width, i == cursorLine).Render(truncateToWidth(line, width)))
 	}

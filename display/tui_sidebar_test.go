@@ -1734,13 +1734,34 @@ func TestSidebarTasks_SubagentRUsesJobCursor(t *testing.T) {
 	}
 }
 
-func TestSidebarSelectedTaskRowKeepsBackgroundAcrossLine(t *testing.T) {
+func TestSidebarTaskRowsKeepBackgroundAcrossLine(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.ANSI256)
 	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
-	icon := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("●")
-	line := icon + " run/coder  56k tok  $0.019"
-	got := rowStyle(20, true).Render(truncateToWidth(ansi.Strip(line), 20))
-	if strings.Count(got, "\x1b[0m") != 1 || !strings.HasSuffix(got, "\x1b[0m") {
-		t.Fatalf("background reset in the middle of the row: %q", got)
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusRunning, Description: "run/coder", StartedAt: time.Now()})
+	m.applyJobUpdate(jobs.Job{ID: "job-2", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "done/coder", StartedAt: time.Now()})
+	m.openSidebar(sidebarTabTasks)
+	m.sidebarCursor = 0
+	lines := m.renderSidebarTasks(40)
+	checked := 0
+	for _, l := range lines {
+		if !strings.Contains(l, "/coder") {
+			continue
+		}
+		checked++
+		// Every reset must be the last code or be followed by a background again.
+		for rest := l; ; {
+			i := strings.Index(rest, "\x1b[0m")
+			if i < 0 {
+				break
+			}
+			rest = rest[i+len("\x1b[0m"):]
+			if rest != "" && !strings.HasPrefix(rest, "\x1b[48;5;") {
+				t.Fatalf("background reset in the middle of the row: %q", l)
+			}
+		}
+	}
+	if checked != 2 {
+		t.Fatalf("expected 2 job rows, got %d: %q", checked, lines)
 	}
 }
