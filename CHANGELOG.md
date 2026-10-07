@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- Flow: role agents of a run are jobs named `<run-id>/<role>` (the `message` and `resume` tools reach them), and an `ask` answer can be `retry <note>` (the note goes into the next worker prompt) or `goto <state>` (#327).
+- Flow: role agents of a run are jobs named `<run-id>/<role>` (the `message` tool reaches them), and an `ask` answer can be `retry <note>` (the note goes into the next worker prompt) or `goto <state>` (#327).
 - Flow: the final review is posted as a PR review, and new PR comments from team members go back to the worker (#187).
 - TUI: new sidebar tab "Runs" shows recent flow runs with status, current state, role, time in state and last steps (#296).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).

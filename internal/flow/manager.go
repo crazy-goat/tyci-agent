@@ -259,7 +259,7 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 		}
 		text += " paused: " + msg
 		if keys := answerKeys(wf, st.Current); len(keys) > 0 {
-			text += " (answer with workflow_resume: " + strings.Join(keys, "|") + ")"
+			text += " (answer with workflow_resume: " + strings.Join(keys, "|") + "|retry <note>|goto <state>)"
 		}
 	default:
 		text += " " + st.Status

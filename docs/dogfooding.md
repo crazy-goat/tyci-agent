@@ -92,8 +92,8 @@ note into the next worker prompt. `goto <state>` continues the run at that state
 example `goto rebase`; an unknown state or an ask state is rejected.
 
 Each role agent of a run is a job named `<run-id>/<role>`, for example
-`20261007-102102-527/worker`. Use the `message` tool on a live agent and the `resume`
-tool on a finished one. If a role runs twice, the name points to the newest job.
+`20261007-102102-527/worker`. Use the `message` tool on a live agent. If a role runs
+twice, the name points to the newest job. The `resume` tool does not accept this name.
 
 The loop limits its retries with `max_visits`: `code` runs at most 3 times and `ci`
 at most 3 times. At the limit the run pauses at `ask`.

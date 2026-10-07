@@ -241,7 +241,7 @@ func TestFinishedRun_NoticeFollowsEndState(t *testing.T) {
 func TestPausedRun_PushesNotice(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "bad"})
 	id, _, _ := e.m.Start(context.Background(), StartRequest{Issue: 1})
-	want := "workflow run " + id + " paused: Need a decision. (last step: c, key bad) (answer with workflow_resume: retry|stop)"
+	want := "workflow run " + id + " paused: Need a decision. (last step: c, key bad) (answer with workflow_resume: retry|stop|retry <note>|goto <state>)"
 	if got := e.notice(t); got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
 	}

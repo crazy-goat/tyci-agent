@@ -38,7 +38,11 @@ func RunSubagentTask(ctx context.Context, s TaskSpec) (result, sessionID string,
 	done := make(chan struct{})
 	starter.Start(ctx, s.Name, JobKindSubagent, "", func(jobCtx context.Context, jobID string) (string, bool, error) {
 		defer close(done)
-		res, id, runErr = runSubagentTask(context.WithValue(jobCtx, JobIDCtxKey{}, jobID), runner, s)
+		// Nobody answers ask_parent for a role agent (parentID is empty), so
+		// mark the job as unroutable: ask_parent then fails at once.
+		jobCtx = context.WithValue(jobCtx, JobIDCtxKey{}, jobID)
+		jobCtx = context.WithValue(jobCtx, AskUnroutableCtxKey{}, true)
+		res, id, runErr = runSubagentTask(jobCtx, runner, s)
 		return res, false, runErr
 	})
 	<-done
