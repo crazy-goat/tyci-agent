@@ -80,9 +80,9 @@ func TestFetchComments_Collaborator404Dropped(t *testing.T) {
 
 func TestFetchComments_NewerThanLastID(t *testing.T) {
 	f := runFetch(t, map[string]string{
-		"TYCI_LAST_COMMENT_ID": "10",
-		"PULLS":                "[" + cmt(9, "alice", "old") + "," + cmt(11, "alice", "newer") + "]",
-		"PERM_alice":           "admin",
+		"TYCI_LAST_REVIEW_COMMENT_ID": "10",
+		"PULLS":                       "[" + cmt(9, "alice", "old") + "," + cmt(11, "alice", "newer") + "]",
+		"PERM_alice":                  "admin",
 	})
 	if f.key != "new" || strings.Contains(f.comments, "old") || !strings.Contains(f.comments, "newer") {
 		t.Errorf("%+v", f)
