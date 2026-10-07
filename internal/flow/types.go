@@ -165,6 +165,7 @@ type RunContext struct {
 	Issue         int
 	PR            int
 	Visit         int
+	AgentSeq      int // run-wide agent counter; names the transcript file
 	// ArtifactDir is the absolute artifact dir of this step; the agent must
 	// write report.md there. Empty when the runner has no run dir.
 	ArtifactDir string

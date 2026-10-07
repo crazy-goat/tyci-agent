@@ -3,15 +3,19 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/display"
+	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
 	"github.com/crazy-goat/tyci-agent/internal/orchestrator"
+	"github.com/crazy-goat/tyci-agent/internal/redact"
+	"github.com/crazy-goat/tyci-agent/internal/runlog"
 	"github.com/crazy-goat/tyci-agent/providers"
 )
 
@@ -72,6 +76,50 @@ func loadOrchestratorConfig(info flow.RepoInfo) (orchestrator.Config, error) {
 		projectCfg = filepath.Join(info.Root, ".tyci", "config.json")
 	}
 	return orchestrator.LoadConfig(filepath.Join(info.Home, ".tyci", "config.json"), projectCfg)
+}
+
+// startRunLogHousekeeping registers the provider keys with the redactor and
+// removes old finished runs, now and every 24 hours until ctx ends. It runs
+// before any agent starts. A config error leaves the runs alone.
+func startRunLogHousekeeping(ctx context.Context) {
+	for _, p := range providers.ListProviders() {
+		redact.Add(providers.DefaultAuth().Key(p.Name()))
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	fc, err := flowconfig.Load(home, "", false)
+	if err != nil {
+		if l := debug.FromContext(ctx); l != nil {
+			fmt.Fprintf(l, "runlog prune: config: %v\n", err)
+		}
+		return
+	}
+	days, dir := fc.RetentionDays(), flow.RunsDir(home)
+	prune := func() {
+		n, err := runlog.Prune(dir, days, time.Now())
+		if l := debug.FromContext(ctx); l != nil {
+			if err != nil {
+				fmt.Fprintf(l, "runlog prune: %v\n", err)
+			} else {
+				fmt.Fprintf(l, "runlog prune: removed %d runs\n", n)
+			}
+		}
+	}
+	prune()
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				prune()
+			}
+		}
+	}()
 }
 
 // resumeWorkflowRuns is the start-up resume of runs that a crashed or killed

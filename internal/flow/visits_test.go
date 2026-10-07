@@ -312,3 +312,34 @@ func TestResume_SavesCurrentPID(t *testing.T) {
 		t.Fatalf("first save = %+v, want running with pid %d", fs.first, os.Getpid())
 	}
 }
+
+type seqAgents struct{ seqs []int }
+
+func (a *seqAgents) Run(_ context.Context, _, _ string, rc RunContext) (string, string, error) {
+	a.seqs = append(a.seqs, rc.AgentSeq)
+	return "done", "", nil
+}
+
+func TestRunner_AgentSeqIncrementsPerVisit(t *testing.T) {
+	wf := loopWF(0, 0, 0)
+	checks := &fakeChecks{keys: map[string][]string{"ci.sh": {"red", "green"}, "merge.sh": {"merged"}}}
+	agents := &seqAgents{}
+	r := &Runner{WF: wf, Checks: checks, Agents: agents, Store: &memStore{}}
+	st := newRun("")
+	st.AgentSeq = 4 // a resumed run continues the counter
+	if err := r.Run(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if len(agents.seqs) != 2 || agents.seqs[0] != 5 || agents.seqs[1] != 6 || st.AgentSeq != 6 {
+		t.Fatalf("seqs %v, state %d", agents.seqs, st.AgentSeq)
+	}
+}
+
+func TestTranscriptPath(t *testing.T) {
+	if p := transcriptPath(RunContext{RunDir: "/r", AgentSeq: 3}, "worker"); p != "/r/agents/003-worker.jsonl" {
+		t.Errorf("got %q", p)
+	}
+	if p := transcriptPath(RunContext{RunDir: "/r"}, "worker"); p != "" {
+		t.Errorf("text run got %q", p)
+	}
+}

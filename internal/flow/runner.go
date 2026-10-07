@@ -182,8 +182,17 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				return r.fail(ctx, st, artErr.Error(), artErr)
 			}
 			started := time.Now()
+			// Save the counter before the agent starts: after a crash the resume
+			// must get the next number, never reuse a transcript file.
+			st.AgentSeq++
+			if r.Store != nil {
+				if saveErr := r.Store.Save(st); saveErr != nil {
+					return saveErr
+				}
+			}
 			var stats StepStats
 			rc := RunContext{
+				AgentSeq:      st.AgentSeq,
 				Stats:         &stats,
 				Repo:          st.Repo,
 				Branch:        st.Branch,

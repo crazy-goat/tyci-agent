@@ -562,6 +562,7 @@ var consoleCmd = &cobra.Command{
 		cond := newConductor(provider, modelName, disp, cfg, sessionPath, catalogResolver{requireConfigured: true})
 		workflowManager.SetBase(ctx)
 		defer workflowManager.Shutdown(3 * time.Second)
+		startRunLogHousekeeping(ctx)
 		resumeWorkflowRuns()
 		runInteractive(cond, disp, historyFile, ctx)
 		return nil
@@ -711,6 +712,7 @@ var tuiCmd = &cobra.Command{
 		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath, catalogResolver{})
 		workflowManager.SetBase(ctx)
 		defer workflowManager.Shutdown(3 * time.Second)
+		startRunLogHousekeeping(ctx)
 		resumeWorkflowRuns()
 		runTUI(cond, tuiDisp, ctx)
 		return nil

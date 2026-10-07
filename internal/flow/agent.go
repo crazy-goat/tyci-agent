@@ -16,6 +16,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/internal/pricing"
+	"github.com/crazy-goat/tyci-agent/internal/runlog"
 	"github.com/crazy-goat/tyci-agent/providers"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
@@ -114,7 +115,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Run != "" {
 		name = rc.Run + "/" + role
 	}
-	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl)}
+	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl)}
 	effective := spec.Effort
 	if r.URIEffort != nil {
 		if v := r.URIEffort(model); v != "" {
@@ -125,6 +126,15 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 		spec.OnDone = func(ts tools.TaskStats) { *rc.Stats = stepStats(model, effective, ts) }
 	}
 	return r.Spawn(ctx, spec)
+}
+
+// transcriptPath is the transcript file of this agent visit, or "" when the
+// run has no run dir or no agent counter (a text run).
+func transcriptPath(rc RunContext, role string) string {
+	if rc.RunDir == "" || rc.AgentSeq <= 0 {
+		return ""
+	}
+	return runlog.Path(rc.RunDir, role, rc.AgentSeq)
 }
 
 // stepStats converts the usage of a subagent run, priced with the model catalog.

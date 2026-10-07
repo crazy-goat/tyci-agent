@@ -164,6 +164,24 @@ tyci tui --model my-provider/my-model
 tyci run --agent my-agent --prompt "Hello"
 ```
 
+## Run transcripts
+
+Every agent visit of a flow run writes its messages to
+`~/.tyci/runs/<repo>/<run>/agents/NNN-<role>.jsonl` (session JSONL format,
+file mode 0600) and a `.md` dump with the same base name (mode 0644, built from the redacted events). `NNN` is `agent_seq` from `state.json`. A resumed run starts a
+new file; old files are never appended to.
+
+Secrets are removed before the bytes reach the disk: provider keys from
+`auth.json` and the environment, and common token shapes (GitHub, `sk-`, AWS,
+bearer headers, `*_TOKEN=`/`*_PASSWORD=` style values, private keys). They show
+as `[REDACTED]`. Redaction is best effort; do not rely on it for secrets of
+other shapes.
+
+Runs with status `done` or `failed` whose `state.json` is older than
+`logs.retention_days` are deleted at start and every 24 hours. The default is
+30. Set `{"logs": {"retention_days": 0}}` in `~/.tyci/config.json` to keep all
+runs. A negative value is a config error.
+
 ## Directory Layout
 
 ```
@@ -705,7 +723,7 @@ file and `range: "append"` need no prior read.
 ## Session Management
 
 Sessions are automatically saved to `~/.tyci/sessions/` as JSONL files.
-Subagents that run as jobs write their own files to `~/.tyci/sessions/<project>/agents/`. The file name ends with the job id. `tyci session list` does not show these files, and nothing deletes them yet.
+Subagents that run as jobs write their own files to `~/.tyci/sessions/<project>/agents/`. The file name ends with the job id. `tyci session list` does not show these files, and nothing deletes them yet. Agents of a workflow run write to the run dir instead (see Run transcripts).
 Each line is a complete event (message, tool call, result, usage).
 
 - Re-run with `--session <path>` to resume a previous session

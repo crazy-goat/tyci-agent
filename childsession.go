@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/internal/runlog"
 	"github.com/crazy-goat/tyci-agent/session"
 )
 
@@ -80,4 +81,22 @@ func writeChildMessages(s *session.Session, msgs []connector.Message) {
 	for _, m := range msgs {
 		_ = s.WriteMessage(m.Role, session.ContentBlocksFromConnector(m.Content), nil)
 	}
+}
+
+// openRunTranscript opens the redacted transcript at path (runlog.Path) and
+// writes msgs to it. It returns nil on error: a child must never fail because
+// its transcript could not be written.
+func openRunTranscript(path string, msgs []connector.Message, model, provider string) *runlog.Writer {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	w, err := runlog.OpenPath(path, cwd, model, provider)
+	if err != nil {
+		return nil
+	}
+	for _, m := range msgs {
+		_ = w.Write(m.Role, session.ContentBlocksFromConnector(m.Content))
+	}
+	return w
 }
