@@ -257,3 +257,32 @@ func TestLoad_RoleCompactLimits(t *testing.T) {
 		t.Fatalf("role limits = %d, %d", r.CompactSoftLimit, r.CompactHardLimit)
 	}
 }
+
+func TestResolveEffort(t *testing.T) {
+	c := &Config{DefaultEffort: "medium"}
+	if got := c.ResolveEffort(Role{Effort: "high"}); got != "high" {
+		t.Fatalf("role effort: %q", got)
+	}
+	if got := c.ResolveEffort(Role{}); got != "medium" {
+		t.Fatalf("default effort: %q", got)
+	}
+	if got := (&Config{}).ResolveEffort(Role{}); got != "" {
+		t.Fatalf("unset effort: %q", got)
+	}
+}
+
+func TestLoad_UnknownEffortIsError(t *testing.T) {
+	home := t.TempDir()
+	write(t, home, ".tyci/config.json", `{"roles":{"worker":{"effort":"huge"}}}`)
+	if _, err := Load(home, t.TempDir(), true); err == nil || !strings.Contains(err.Error(), "huge") {
+		t.Fatalf("got %v", err)
+	}
+	write(t, home, ".tyci/config.json", `{"default_effort":"huge"}`)
+	if _, err := Load(home, t.TempDir(), true); err == nil || !strings.Contains(err.Error(), "default_effort") {
+		t.Fatalf("got %v", err)
+	}
+	write(t, home, ".tyci/config.json", `{"default_effort":"low","roles":{"worker":{"effort":"max"}}}`)
+	if _, err := Load(home, t.TempDir(), true); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -21,6 +22,7 @@ const defaultCheckTimeout = 1800 * time.Second
 type Config struct {
 	Models          map[string]string `json:"models"`                 // alias -> provider URI
 	DefaultModel    string            `json:"default_model"`          // alias or provider/model name, used when a role has no model
+	DefaultEffort   string            `json:"default_effort"`         // reasoning effort, used when a role has no effort
 	Roles           map[string]Role   `json:"roles"`                  //
 	CheckTimeoutSec int               `json:"check_timeout_sec"`      // 0 means 1800
 	Forge           Forge             `json:"forge"`                  // where the orchestrator reads issues
@@ -51,8 +53,9 @@ var forgeRepoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 // Role holds the model alias or provider/model name and system prompt of one workflow role.
 type Role struct {
-	Model  string `json:"model"`  // alias or provider/model name; empty -> DefaultModel
-	Prompt string `json:"prompt"` // system prompt; "@file.md" = file relative to the config file
+	Model  string `json:"model"`            // alias or provider/model name; empty -> DefaultModel
+	Prompt string `json:"prompt"`           // system prompt; "@file.md" = file relative to the config file
+	Effort string `json:"effort,omitempty"` // reasoning effort; empty -> DefaultEffort
 	// Context limits in tokens for this role; 0 = use the global defaults.
 	CompactSoftLimit int `json:"compact_soft_limit,omitempty"`
 	CompactHardLimit int `json:"compact_hard_limit,omitempty"`
@@ -96,6 +99,9 @@ func Load(home, projectDir string, trusted bool) (*Config, error) {
 		}
 		if proj.DefaultModel != "" {
 			merged.DefaultModel = proj.DefaultModel
+		}
+		if proj.DefaultEffort != "" {
+			merged.DefaultEffort = proj.DefaultEffort
 		}
 		if proj.Forge.Kind != "" {
 			merged.Forge.Kind = proj.Forge.Kind
@@ -185,12 +191,36 @@ func (c *Config) validate() error {
 	if c.DefaultModel != "" && !c.hasModel(c.DefaultModel) {
 		return fmt.Errorf("default_model: unknown model alias %q", c.DefaultModel)
 	}
+	if err := checkEffort("default_effort", c.DefaultEffort); err != nil {
+		return err
+	}
 	for name, r := range c.Roles {
+		if err := checkEffort(fmt.Sprintf("role %q: effort", name), r.Effort); err != nil {
+			return err
+		}
 		if r.Model != "" && !c.hasModel(r.Model) {
 			return fmt.Errorf("role %q: unknown model alias %q", name, r.Model)
 		}
 	}
 	return nil
+}
+
+// efforts are the accepted reasoning effort levels.
+var efforts = []string{"low", "medium", "high", "xhigh", "max"}
+
+func checkEffort(key, v string) error {
+	if v == "" || slices.Contains(efforts, v) {
+		return nil
+	}
+	return fmt.Errorf("%s: unknown effort %q (use one of %s)", key, v, strings.Join(efforts, ", "))
+}
+
+// ResolveEffort returns the effort of the role, else default_effort, else "".
+func (c *Config) ResolveEffort(r Role) string {
+	if r.Effort != "" {
+		return r.Effort
+	}
+	return c.DefaultEffort
 }
 
 func (c *Config) hasModel(model string) bool {

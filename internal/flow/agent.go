@@ -110,7 +110,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Run != "" {
 		name = rc.Run + "/" + role
 	}
-	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit}
+	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl)}
 	if rc.Stats != nil {
 		spec.OnDone = func(ts tools.TaskStats) { *rc.Stats = stepStats(model, ts) }
 	}

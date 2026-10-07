@@ -22,6 +22,8 @@ type TaskSpec struct {
 	// SoftLimit and HardLimit are context limits in tokens; 0 = global defaults.
 	SoftLimit int
 	HardLimit int
+	// Effort is the reasoning effort of the run; empty = unset.
+	Effort string
 	// Name, when set, registers the run as a job with this description, so
 	// the jobs list, "message" and "resume" can reach it by this name.
 	Name string
@@ -117,7 +119,7 @@ func resumeSubagentTask(ctx context.Context, s TaskSpec) (string, string, error)
 }
 
 func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (string, string, error) {
-	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: s.SystemPrompt, softLimit: s.SoftLimit, hardLimit: s.HardLimit}
+	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: s.SystemPrompt, softLimit: s.SoftLimit, hardLimit: s.HardLimit, effort: s.Effort}
 	if s.MaxIterations > 0 {
 		t.MaxIterations = &s.MaxIterations
 	}

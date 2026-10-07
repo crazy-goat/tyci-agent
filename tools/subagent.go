@@ -307,6 +307,7 @@ type subagentTask struct {
 	// (flow role). Go-only, like systemPrompt.
 	softLimit int
 	hardLimit int
+	effort    string
 }
 
 // subagentResult holds the outcome of one subagent execution.
@@ -1485,6 +1486,7 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	if task.softLimit > 0 {
 		opts.SoftLimit = task.softLimit
 	}
+	opts.Effort = task.effort
 	if task.hardLimit > 0 {
 		opts.HardLimit = task.hardLimit
 	}

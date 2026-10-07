@@ -67,6 +67,7 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 		Debug:         cfg.Debug,
 		Temperature:   cfg.Temperature,
 		MaxTokens:     cfg.MaxTokens,
+		Effort:        cfg.Effort,
 		NoPromptCache: cfg.NoPromptCache,
 	})
 	if streamErr != nil {

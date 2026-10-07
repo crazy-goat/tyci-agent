@@ -59,7 +59,7 @@ func (c *openAI) Stream(ctx context.Context, req Request, emit func(stream.Event
 		MaxTokens:   req.MaxTokens,
 	}
 	// A number is a token budget (Anthropic, Gemini); effort-style APIs reject it.
-	if e := c.ep.option(OptReasoningEffort); e != "" {
+	if e := c.ep.effort(req); e != "" {
 		if _, err := strconv.Atoi(e); err != nil {
 			body.ReasoningEffort = e
 		}

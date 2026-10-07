@@ -48,3 +48,13 @@ func TestOpenAIReasoningEffort(t *testing.T) {
 		t.Fatal("reasoning_effort sent without option")
 	}
 }
+
+func TestEndpointEffort_RequestOverridesOption(t *testing.T) {
+	ep := Endpoint{Options: map[string]string{OptReasoningEffort: "low"}}
+	if got := ep.effort(Request{Effort: "high"}); got != "high" {
+		t.Fatalf("got %q", got)
+	}
+	if got := ep.effort(Request{}); got != "low" {
+		t.Fatalf("got %q", got)
+	}
+}

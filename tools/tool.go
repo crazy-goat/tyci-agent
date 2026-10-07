@@ -66,6 +66,9 @@ type SubagentOptions struct {
 	SoftLimit int
 	HardLimit int
 
+	// Effort is the reasoning effort for the child (empty = unset). From the flow role.
+	Effort string
+
 	// Fallbacks are "provider/model" specs, NOT resolved clients: the tools
 	// package is a leaf and must not reach into the provider catalog. The
 	// composition root (main.go) resolves them, exactly as it already does

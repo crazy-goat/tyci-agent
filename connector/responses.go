@@ -34,7 +34,7 @@ func (c *responses) Stream(ctx context.Context, req Request, emit func(stream.Ev
 		Temperature:     req.Temperature,
 		MaxOutputTokens: req.MaxTokens,
 	}
-	if effort := c.ep.option(OptReasoningEffort); effort != "" {
+	if effort := c.ep.effort(req); effort != "" {
 		body.Reasoning = &api.ResponsesReasoning{Effort: effort}
 	}
 	url := c.ep.URL()

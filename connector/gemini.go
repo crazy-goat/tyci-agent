@@ -47,7 +47,7 @@ func (c *gemini) Stream(ctx context.Context, req Request, emit func(stream.Event
 			MaxOutputTokens: req.MaxTokens,
 		}
 	}
-	if budget := thinkingBudget(c.ep.option(OptReasoningEffort)); budget > 0 {
+	if budget := thinkingBudget(c.ep.effort(req)); budget > 0 {
 		if body.GenerationConfig == nil {
 			body.GenerationConfig = &api.GeminiGenerationConfig{}
 		}

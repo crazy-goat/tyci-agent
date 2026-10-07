@@ -523,6 +523,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		MaxTokens:     opts.MaxTokens,
 		SoftLimit:     opts.SoftLimit,
 		HardLimit:     opts.HardLimit,
+		Effort:        opts.Effort,
 		NoPromptCache: !agent.PromptCacheEnabled(),
 		NextMessages:  tools.JobMailboxNextMessages(jobID),
 

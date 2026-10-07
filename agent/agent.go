@@ -52,6 +52,10 @@ type Config struct {
 	// substitutes a default, while OpenAI and Gemini simply omit it.
 	MaxTokens int
 
+	// Effort is the reasoning effort sent on every request of this run.
+	// Empty means the provider URI option or the provider default.
+	Effort string
+
 	// NoPromptCache disables provider-side prompt caching for this run. See
 	// connector.Request.NoPromptCache for why it is phrased as a negative.
 	NoPromptCache bool
