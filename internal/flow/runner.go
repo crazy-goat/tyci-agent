@@ -366,6 +366,13 @@ func (r *Runner) pause(st *RunState, message, reason string) error {
 	if n := len(st.History); n > 0 && st.History[n-1].Error != "" {
 		h := st.History[n-1]
 		message += fmt.Sprintf(" (%s failed: %s)", h.State, h.Error)
+	} else if n > 0 {
+		h := st.History[n-1]
+		message += fmt.Sprintf(" (last step: %s, key %s", h.State, h.Key)
+		if line := MaskSecrets(lastLine(h.StderrTail)); line != "" {
+			message += ": " + line
+		}
+		message += ")"
 	}
 	st.Ask = &Ask{Message: message, Reason: reason}
 	st.UpdatedAt = time.Now()

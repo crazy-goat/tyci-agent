@@ -29,6 +29,7 @@ while :; do
     view=$(gh pr view "$pr" -R "${TYCI_REPO:-}" --json mergeable,mergeStateStatus --jq '.mergeable + " " + .mergeStateStatus' 2>/dev/null || true)
     case "$view" in
     CONFLICTING* | *DIRTY)
+        echo "ci_wait.sh: PR $pr is dirty: it conflicts with the default branch" >&2
         echo conflict
         exit 0
         ;;
@@ -50,11 +51,12 @@ while :; do
         esac
         echo "ci_wait.sh: ci-ok is $bucket" >&2
         if [ "$bucket" = missing ] && [ "${view##* }" = BEHIND ]; then
+            echo "ci_wait.sh: no ci-ok check and PR $pr is behind the default branch" >&2
             echo behind
             exit 0
         fi
         if [ "$bucket" = missing ] && [ $((SECONDS - start)) -ge "$appear" ]; then
-            echo "ci_wait.sh: ci-ok did not appear" >&2
+            echo "ci_wait.sh: no checks: ci-ok did not appear" >&2
             echo fail
             exit 0
         fi
