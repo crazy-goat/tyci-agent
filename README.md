@@ -153,6 +153,7 @@ tyci run --agent my-agent --prompt "Hello"
 ```
 ~/.tyci/
 ├── providers.json      # Cached models.dev provider catalog (auto-downloaded)
+├── nexos-models.json   # Cached nexos API prices and limits (refreshed every 6 h)
 ├── model.json          # Custom provider / model definitions (from `provider add`)
 ├── auth.json           # API keys per provider (permissions 0600)
 ├── agents.json         # Named agent configurations (name -> model + fallback)

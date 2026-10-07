@@ -2,8 +2,10 @@
 // costs, and how many of them fit.
 //
 // Both answers come from the models.dev catalog already cached at
-// ~/.tyci/providers.json, so this package adds no network calls and no second
-// source of truth. What it does add is tolerance for a catalog that cannot
+// ~/.tyci/providers.json. The one exception is the nexos provider: its prices
+// and limits come from the nexos API, cached at ~/.tyci/nexos-models.json and
+// refreshed in the background, so a slow API never blocks the caller. What
+// this package also adds is tolerance for a catalog that cannot
 // answer: older tyci versions re-marshalled the catalog through a struct that
 // had no cost or limit fields, so an existing cache is likely to be silently
 // stripped of both. That case is reported as "unknown" rather than as zero —
@@ -78,6 +80,7 @@ func Reset() {
 	mu.Unlock()
 	nexosMu.Lock()
 	nexosLoaded, nexosModels = false, nil
+	nexosGen++
 	nexosMu.Unlock()
 }
 

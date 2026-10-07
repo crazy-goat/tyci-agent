@@ -39,6 +39,8 @@ var (
 	nexosMu     sync.Mutex
 	nexosLoaded bool
 	nexosModels map[string]nexosEntry
+	nexosGen    int // bumped by Reset so an old refresh drops its result
+	nexosWG     sync.WaitGroup
 )
 
 func nexosCachePath() string {
@@ -62,10 +64,11 @@ func nexosKey() string {
 	return os.Getenv("NEXOS_API_KEY")
 }
 
-// nexosCatalog returns the nexos models, from a fresh disk cache or from the
-// API. It runs at most once per process. Any failure gives a stale cache or
-// nil, never an error: cost then stays unknown, as before. The key is only
-// sent in the request header and never appears in an error.
+// nexosCatalog returns the nexos models from the disk cache at once, even
+// when it is stale or missing. A stale or missing cache starts one background
+// refresh per process, so a slow or dead API never blocks the caller. Any
+// failure keeps the old value or nil: cost then stays unknown, as before. The
+// key is only sent in the request header and never appears in an error.
 func nexosCatalog() map[string]nexosEntry {
 	nexosMu.Lock()
 	defer nexosMu.Unlock()
@@ -77,23 +80,32 @@ func nexosCatalog() map[string]nexosEntry {
 	if data, err := os.ReadFile(nexosCachePath()); err == nil {
 		_ = json.Unmarshal(data, &cached)
 	}
+	nexosModels = cached.Models
 	if cached.Models != nil && time.Since(time.Unix(cached.Fetched, 0)) < nexosTTL {
-		nexosModels = cached.Models
 		return nexosModels
 	}
-	nexosModels = cached.Models // stale fallback
 	key := nexosKey()
 	if key == "" {
 		return nexosModels
 	}
-	fresh, err := fetchNexos(nexosAPIURL(), key)
-	if err != nil || len(fresh) == 0 {
-		return nexosModels
-	}
-	nexosModels = fresh
-	if data, err := json.Marshal(nexosCache{Fetched: time.Now().Unix(), Models: fresh}); err == nil {
-		_ = os.WriteFile(nexosCachePath(), data, 0o600)
-	}
+	gen, url, path := nexosGen, nexosAPIURL(), nexosCachePath()
+	nexosWG.Add(1)
+	go func() {
+		defer nexosWG.Done()
+		fresh, err := fetchNexos(url, key)
+		if err != nil || len(fresh) == 0 {
+			return
+		}
+		nexosMu.Lock()
+		defer nexosMu.Unlock()
+		if gen != nexosGen {
+			return
+		}
+		nexosModels = fresh
+		if data, err := json.Marshal(nexosCache{Fetched: time.Now().Unix(), Models: fresh}); err == nil {
+			_ = os.WriteFile(path, data, 0o600)
+		}
+	}()
 	return nexosModels
 }
 

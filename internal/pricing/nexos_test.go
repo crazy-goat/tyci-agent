@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const nexosBody = `{"data":[
@@ -38,6 +39,8 @@ func withNexos(t *testing.T, catalogBody string) *int32 {
 func TestLookup_NexosAPIWinsAndFillsUnlisted(t *testing.T) {
 	hits := withNexos(t, `{"nexos":{"id":"nexos","models":{"Claude Sonnet 5":{"id":"Claude Sonnet 5",
 	  "cost":{"input":1,"output":9,"cache_read":0.5},"limit":{"context":200000,"output":64000}}}}}`)
+	Lookup("nexos", "DeepSeek V4.1 Flash")
+	nexosWG.Wait()
 	r, l := Lookup("nexos", "DeepSeek V4.1 Flash")
 	if r.Input != 0.3 || r.Output != 1.2 || r.CacheRead != 0.03 || l.Context != 128000 {
 		t.Fatalf("unlisted model: %+v %+v", r, l)
@@ -57,6 +60,7 @@ func TestLookup_NexosAPIWinsAndFillsUnlisted(t *testing.T) {
 func TestLookup_NexosUsesDiskCache(t *testing.T) {
 	hits := withNexos(t, "")
 	Lookup("nexos", "DeepSeek V4.1 Flash")
+	nexosWG.Wait()
 	Reset()
 	r, _ := Lookup("nexos", "DeepSeek V4.1 Flash")
 	if !r.Known() || *hits != 1 {
@@ -67,6 +71,8 @@ func TestLookup_NexosUsesDiskCache(t *testing.T) {
 func TestLookup_NexosFailureKeepsCostUnknownAndHidesKey(t *testing.T) {
 	withNexos(t, "")
 	t.Setenv("NEXOS_API_KEY", "wrong")
+	Lookup("nexos", "DeepSeek V4.1 Flash")
+	nexosWG.Wait()
 	r, _ := Lookup("nexos", "DeepSeek V4.1 Flash")
 	if r.Known() {
 		t.Fatal("failed API must leave cost unknown")
@@ -84,5 +90,24 @@ func TestLookup_NexosNoKeyNoRequest(t *testing.T) {
 	}
 	if _, err := os.Stat(nexosCachePath()); err == nil {
 		t.Fatal("no cache expected")
+	}
+}
+
+func TestLookup_NexosSlowAPIDoesNotBlock(t *testing.T) {
+	withCatalog(t, "")
+	t.Setenv("NEXOS_API_KEY", "secret-key")
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release); nexosWG.Wait() })
+	old := nexosAPIURL
+	nexosAPIURL = func() string { return srv.URL }
+	t.Cleanup(func() { nexosAPIURL = old })
+	start := time.Now()
+	r, _ := Lookup("nexos", "DeepSeek V4.1 Flash")
+	if time.Since(start) > time.Second || r.Known() {
+		t.Fatalf("Lookup blocked or invented a price: %v %+v", time.Since(start), r)
 	}
 }
