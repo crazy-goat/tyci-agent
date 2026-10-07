@@ -30,11 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
 
 ### Changed
-<<<<<<< HEAD
 - Flow: at start-up `tyci` no longer resumes unfinished runs by itself. It pauses the `running` runs whose owner process is gone (reason `resume:<state>`) and asks in the chat, in one message, whether to resume, stop or leave paused each paused run. The new `workflow_resume` answer `resume` continues such a run at its saved state. A paused run blocks a new run for its issue; the orchestrator watches the paused runs as workers and sees how they end after the answer, so it never starts a second run for the issue. A run whose workflow has no `ask` state fails with a notice (#370).
-=======
 - Flow: the `merge_decision` role and state are removed; a failed merge goes to the fixer. A run paused in `merge_decision` cannot resume; start the issue again (#369).
->>>>>>> origin/main
 - Subagents that run as jobs write their own session file to `~/.tyci/sessions/<project>/agents/<time>_<id>_<job-id>.jsonl` plus a `.md` dump. `tyci session list` does not show them, and nothing deletes them yet (#121).
 - Context notice now starts at 80% of the window (was 50%) and auto-compaction at 95% (was 85%) when no limit is set (#304).
 
