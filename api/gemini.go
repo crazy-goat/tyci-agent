@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -113,9 +114,11 @@ func (s GeminiStreamer) Stream(ctx context.Context, apiKey, endpoint string, bod
 	}
 	var toolCalls []*pendingTool
 
+	var readErr error
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
+			readErr = err
 			break
 		}
 
@@ -192,6 +195,10 @@ func (s GeminiStreamer) Stream(ctx context.Context, apiKey, endpoint string, bod
 			inputTokens = chunk.UsageMetadata.PromptTokenCount
 			outputTokens = chunk.UsageMetadata.CandidatesTokenCount
 		}
+	}
+
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return readErr
 	}
 
 	if finishReason == "" {

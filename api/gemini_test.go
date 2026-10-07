@@ -4,9 +4,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/stream"
 )
@@ -272,5 +274,25 @@ func TestStreamGemini_Error400(t *testing.T) {
 	var re *RetryableError
 	if as(err, &re) {
 		t.Error("400 should not be RetryableError")
+	}
+}
+
+func TestStreamGemini_IdleTimeoutIsRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}\n"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	SetTimeouts(time.Second, 50*time.Millisecond)
+	defer SetTimeouts(0, 0)
+
+	body := GeminiRequest{Contents: []GeminiContent{{Parts: []GeminiPart{{Text: "hi"}}}}, Stream: true}
+	err := GeminiStreamer{}.Stream(testCtx(), "test-key", server.URL, body, func(stream.Event) error { return nil })
+	var re *RetryableError
+	if !errors.As(err, &re) {
+		t.Fatalf("want RetryableError, got %v", err)
 	}
 }

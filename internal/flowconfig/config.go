@@ -33,6 +33,9 @@ type Config struct {
 	PromptCache        json.RawMessage `json:"prompt_cache,omitempty"`
 	SidebarVisible     json.RawMessage `json:"sidebar_visible,omitempty"`
 	AutoCompactPercent json.RawMessage `json:"auto_compact_percent,omitempty"`
+
+	FirstByteTimeoutSec  json.RawMessage `json:"first_byte_timeout_sec,omitempty"`
+	StreamIdleTimeoutSec json.RawMessage `json:"stream_idle_timeout_sec,omitempty"`
 }
 
 // Forge selects the forge of the orchestrator.
