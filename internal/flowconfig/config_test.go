@@ -99,6 +99,18 @@ func TestLoad_UnknownKeyIsError(t *testing.T) {
 	}
 }
 
+func TestLoad_AgentConfigKeysAreAccepted(t *testing.T) {
+	home := t.TempDir()
+	write(t, home, ".tyci/config.json", `{"favorite_models":["a/b"],"max_tokens":8000,"prompt_cache":false,"sidebar_visible":true,"auto_compact_percent":80,"default_model":"m","models":{"m":"x"}}`)
+	c, err := Load(home, t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DefaultModel != "m" {
+		t.Fatalf("got %q", c.DefaultModel)
+	}
+}
+
 func TestLoad_RoleWithUnknownModelIsError(t *testing.T) {
 	home := t.TempDir()
 	write(t, home, ".tyci/config.json", `{"models":{"a":"u"},"roles":{"worker":{"model":"typo"}}}`)

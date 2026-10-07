@@ -22,6 +22,14 @@ type Config struct {
 	DefaultModel    string            `json:"default_model"`     // alias, used when a role has no model
 	Roles           map[string]Role   `json:"roles"`             //
 	CheckTimeoutSec int               `json:"check_timeout_sec"` // 0 means 1800
+
+	// Keys owned by the agent config (agent.TyciConfig) in the same file.
+	// They are accepted so the file loads, and ignored here.
+	FavoriteModels     json.RawMessage `json:"favorite_models,omitempty"`
+	MaxTokens          json.RawMessage `json:"max_tokens,omitempty"`
+	PromptCache        json.RawMessage `json:"prompt_cache,omitempty"`
+	SidebarVisible     json.RawMessage `json:"sidebar_visible,omitempty"`
+	AutoCompactPercent json.RawMessage `json:"auto_compact_percent,omitempty"`
 }
 
 // Role holds the model alias and system prompt of one workflow role.
