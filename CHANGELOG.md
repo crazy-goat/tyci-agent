@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow configuration now accepts direct `provider/model` names in `default_model` and role `model` fields without requiring identity aliases.
 - Flow: a failed agent state now saves its error in the `error` field of the `state.json` history entry and shows it in the ask message (#300).
 - Flow: a merged issue-to-merge run now removes its worktree and branch; the run dir with `state.json` stays (#299).
+- Saving TUI settings (sidebar, default model, favorites) no longer drops unknown keys (`models`, `roles`, `orchestrator`, `forge`) from `~/.tyci/config.json` (#298).
 
 ## [0.4.0] - 2026-10-07
 
