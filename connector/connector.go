@@ -112,12 +112,13 @@ func (e Endpoint) URLWithQuery(params map[string]string) string {
 	return u.String()
 }
 
-// effort returns the request effort, else the ?reasoning= URI option.
+// effort returns the ?reasoning= URI option, else the request effort. The URI
+// option wins: the model URI is the more specific setting.
 func (e Endpoint) effort(req Request) string {
-	if req.Effort != "" {
-		return req.Effort
+	if v := e.option(OptReasoningEffort); v != "" {
+		return v
 	}
-	return e.option(OptReasoningEffort)
+	return req.Effort
 }
 
 // option returns the value of a connector option, or "" when unset.

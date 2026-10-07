@@ -528,6 +528,10 @@ frontmatter. The main conversation started with `--agent <name>` ignores
 frontmatter limits. Flow roles use `roles.<name>.compact_soft_limit` and
 `roles.<name>.compact_hard_limit` in the flow config.
 
+Flow roles also take `roles.<name>.effort` (`low`, `medium`, `high`, `xhigh` or
+`max`) and the flow config takes `default_effort` for roles without one. A
+`?reasoning=` option in the model URI wins over both.
+
 A limit is capped by the model window. An unset soft limit is 80% and an unset
 hard limit is 95% of the window. The legacy `auto_compact_percent` sets the
 hard limit only when no hard limit is set; a negative value disables it. The

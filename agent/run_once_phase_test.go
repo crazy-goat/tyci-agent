@@ -95,3 +95,17 @@ func TestRunOnce_PhaseSink_OptionalForOtherSinks(t *testing.T) {
 		t.Fatalf("runOnce: %v", err)
 	}
 }
+
+func TestRunOnce_PassesEffortToRequest(t *testing.T) {
+	for _, effort := range []string{"high", ""} {
+		fake := connectortest.Text("hi")
+		msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "hi"}}}}
+		var total stream.Usage
+		if _, _, _, err := runOnce(context.Background(), fake, &silentDisplay{}, &msgs, Config{Effort: effort}, &total); err != nil {
+			t.Fatal(err)
+		}
+		if got := fake.Requests(); len(got) != 1 || got[0].Effort != effort {
+			t.Fatalf("effort %q: requests = %#v", effort, got)
+		}
+	}
+}

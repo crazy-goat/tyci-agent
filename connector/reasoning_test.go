@@ -49,12 +49,39 @@ func TestOpenAIReasoningEffort(t *testing.T) {
 	}
 }
 
-func TestEndpointEffort_RequestOverridesOption(t *testing.T) {
+func TestEndpointEffort_OptionWinsOverRequest(t *testing.T) {
 	ep := Endpoint{Options: map[string]string{OptReasoningEffort: "low"}}
-	if got := ep.effort(Request{Effort: "high"}); got != "high" {
+	if got := ep.effort(Request{Effort: "high"}); got != "low" {
 		t.Fatalf("got %q", got)
 	}
 	if got := ep.effort(Request{}); got != "low" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestRequestEffortReachesBody(t *testing.T) {
+	for name, tc := range map[string]struct {
+		newC func(Endpoint) (Connector, error)
+		get  func(map[string]any) any
+	}{
+		"openai":    {NewOpenAI, func(m map[string]any) any { return m["reasoning_effort"] }},
+		"responses": {NewResponses, func(m map[string]any) any { r, _ := m["reasoning"].(map[string]any); return r["effort"] }},
+	} {
+		doer := &responsesRequestDoer{}
+		c, err := tc.newC(Endpoint{BaseURL: "https://x.invalid", Path: "/p", HTTP: doer})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = c.Stream(context.Background(), Request{Model: "m", MaxTokens: 100, Effort: "high",
+			Messages: []Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "hi"}}}}},
+			func(stream.Event) error { return nil })
+		raw, _ := io.ReadAll(doer.request.Body)
+		var out map[string]any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatal(err)
+		}
+		if got := tc.get(out); got != "high" {
+			t.Errorf("%s: effort = %v", name, got)
+		}
 	}
 }

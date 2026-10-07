@@ -98,6 +98,7 @@ type Step struct {
 // Model is "provider/model". CostUSD is 0 when the model has no known price.
 type StepStats struct {
 	Model      string  `json:"model"`
+	Effort     string  `json:"effort,omitempty"`
 	Input      int     `json:"input"`
 	Output     int     `json:"output"`
 	CacheRead  int     `json:"cache_read"`

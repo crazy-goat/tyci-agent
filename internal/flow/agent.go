@@ -112,17 +112,17 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	}
 	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl)}
 	if rc.Stats != nil {
-		spec.OnDone = func(ts tools.TaskStats) { *rc.Stats = stepStats(model, ts) }
+		spec.OnDone = func(ts tools.TaskStats) { *rc.Stats = stepStats(model, spec.Effort, ts) }
 	}
 	return r.Spawn(ctx, spec)
 }
 
 // stepStats converts the usage of a subagent run, priced with the model catalog.
-func stepStats(model string, ts tools.TaskStats) StepStats {
+func stepStats(model, effort string, ts tools.TaskStats) StepStats {
 	provider, name, _ := strings.Cut(model, "/")
 	rates, _ := pricing.Lookup(provider, name)
 	return StepStats{
-		Model: model, Input: ts.Usage.Input, Output: ts.Usage.Output,
+		Model: model, Effort: effort, Input: ts.Usage.Input, Output: ts.Usage.Output,
 		CacheRead: ts.Usage.CacheRead, CacheWrite: ts.Usage.CacheWrite,
 		CostUSD: ledger.Cost(rates, ts.Usage), Turns: ts.Turns, ToolCalls: ts.ToolCalls,
 	}

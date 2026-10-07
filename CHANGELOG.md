@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Flow: roles get `effort` and the flow config gets `default_effort` (`low`, `medium`, `high`, `xhigh`, `max`); the effort goes to the model request, and a `?reasoning=` option in the model URI wins. Step `stats` in `state.json` and `workflow_status` show the `effort` (#186).
 - Models: `?reasoning=<effort>` now also sets `reasoning_effort` (Chat Completions) and the Gemini `thinkingConfig` budget; the catalog keeps `reasoning`, `reasoning_options` and `tool_call` (#120).
 - Flow: every agent must write `report.md` in its artifact dir; the runner reminds it twice in the same session, then pauses the run with the reason `no artifact from <role>`. Every agent task lists the run so far (steps since its last visit with their artifact files). The review verdict now comes from the review `report.md`, which `post_review.sh` posts, and `fetch_comments.sh` writes `comments.md` into its artifact dir; the run dir has no `review.md` or `comments.md` any more (#340).
 - Flow: every agent step in `state.json` history gets `stats` (model, input, output, cache read/write tokens, `cost_usd`, `turns`, `tool_calls`). `workflow_status` returns it per step plus `totals` and per-role `roles`; the Runs tab shows one line per step and a total line per run (#314).

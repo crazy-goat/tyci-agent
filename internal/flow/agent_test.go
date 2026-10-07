@@ -249,3 +249,9 @@ func TestSubagentRunner_PassesRoleEffort(t *testing.T) {
 		t.Fatalf("efforts = %q, %q", s.specs[0].Effort, s.specs[1].Effort)
 	}
 }
+
+func TestStepStats_HasEffort(t *testing.T) {
+	if got := stepStats("p/m", "low", tools.TaskStats{}); got.Effort != "low" {
+		t.Fatalf("effort = %q", got.Effort)
+	}
+}
