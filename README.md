@@ -390,7 +390,7 @@ tyci cron run_now <name>       # Alias for `run`
 tyci cron tick                 # Run every job that is currently due, then exit
 ```
 
-Schedules are `every 30m`, `at 07:30` and the one-shot `in 5m`; a one-shot job is removed after it runs.
+Schedules are `every 30m`, `at 07:30` and the one-shot `in 5m`; a one-shot job is removed after it runs. The tool stores a one-shot job in `cron.json` as `once <RFC3339>`; write that form if you edit the file by hand, because `in 5m` there would move on every load.
 
 Normally, jobs only fire while some tyci session (console or TUI) is open — that
 session runs a scheduler that ticks every minute in the background. `tyci cron tick`

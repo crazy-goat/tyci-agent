@@ -224,7 +224,11 @@ func (t *CronTool) add(ctx context.Context, input map[string]any, name string) T
 	msg := fmt.Sprintf("scheduled %q (%s) in %s. A run is a fresh agent with only that prompt — no history from here. Its output goes to %s, readable with cron(action=\"logs\", name=%q).",
 		name, s, abs, cron.LogPath(cronConfigDir(), name), name)
 	if CronTickerRunning() {
-		msg += " This session is running the schedule, and a job that has never run is due at once, so expect it shortly."
+		if s.OneShot() {
+			msg += fmt.Sprintf(" This session is running the schedule; the job runs %s.", cronWhen(time.Now(), s.Once))
+		} else {
+			msg += " This session is running the schedule, and a job that has never run is due at once, so expect it shortly."
+		}
 	} else {
 		msg += " Nothing is running the schedule right now (that only happens in an interactive session), so tell whoever asked that it will fire the next time one is open — do not imply it happens on its own."
 	}
@@ -500,9 +504,16 @@ func cronNotify(j cron.Job, err error) {
 		}
 		msg += "\nEnd of its log:\n" + tail
 	}
-	if j.Caller == "" {
-		// Main chat: queue the notice without waking an idle chat. A wake
-		// would start a model turn for every run of a frequent job.
+	oneShot := false
+	if sched, perr := j.Parsed(); perr == nil {
+		oneShot = sched.OneShot()
+	}
+	callerLive := j.Caller != "" && getJobMailbox() != nil && getJobMailbox().IsLive(j.Caller)
+	if !callerLive && !oneShot {
+		// Main chat (no caller, or the caller ended): queue the notice
+		// without waking an idle chat. A wake would start a model turn for
+		// every run of a frequent job. A one-shot job wakes the chat,
+		// because the caller asked for that one result.
 		jobNotifierMu.RLock()
 		n := jobNotifier
 		jobNotifierMu.RUnlock()
