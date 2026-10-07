@@ -144,4 +144,10 @@ func TestStepLine(t *testing.T) {
 	if got := stepLine(flow.Step{State: "ci", Key: "ok"}); got != "ci -> ok" {
 		t.Fatalf("got %q", got)
 	}
+	if got := stepLine(flow.Step{State: "ci", Key: "ok", StartedAt: t0, EndedAt: t0.Add(42 * time.Second)}); got != "ci -> ok: 42s" {
+		t.Fatalf("check step: got %q", got)
+	}
+	if got := stepLine(flow.Step{State: "code", Key: "fail", Role: "worker", StartedAt: t0, EndedAt: t0.Add(5 * time.Second)}); got != "code -> fail: worker · 5s" {
+		t.Fatalf("agent without stats: got %q", got)
+	}
 }

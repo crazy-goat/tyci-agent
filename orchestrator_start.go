@@ -121,18 +121,28 @@ func runRows(views []flow.RunView) []display.TuiRunRow {
 	return rows
 }
 
-// stepLine is one Runs tab line: "state -> key", and for an agent step with
-// usage "role · model · tokens · $ · time".
+// stepLine is one Runs tab line: "state -> key", then role, model, tokens, cost
+// and time when known. A check step shows only its duration.
 func stepLine(s flow.Step) string {
 	line := s.State + " -> " + s.Key
-	if s.Stats == nil {
+	var parts []string
+	if s.Role != "" {
+		parts = append(parts, s.Role)
+	}
+	if s.Stats != nil {
+		model := s.Stats.Model
+		if _, name, ok := strings.Cut(model, "/"); ok {
+			model = name
+		}
+		parts = append(parts, model, fmtTok(s.Stats.Tokens())+" tok", fmt.Sprintf("$%.2f", s.Stats.CostUSD))
+	}
+	if !s.EndedAt.IsZero() && !s.StartedAt.IsZero() {
+		parts = append(parts, s.EndedAt.Sub(s.StartedAt).Round(time.Second).String())
+	}
+	if len(parts) == 0 {
 		return line
 	}
-	model := s.Stats.Model
-	if _, name, ok := strings.Cut(model, "/"); ok {
-		model = name
-	}
-	return fmt.Sprintf("%s: %s · %s · %s tok · $%.2f · %s", line, s.Role, model, fmtTok(s.Stats.Tokens()), s.Stats.CostUSD, s.EndedAt.Sub(s.StartedAt).Round(time.Second))
+	return line + ": " + strings.Join(parts, " · ")
 }
 
 func fmtTok(n int) string {
