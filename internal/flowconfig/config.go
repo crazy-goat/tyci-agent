@@ -20,7 +20,7 @@ const defaultCheckTimeout = 1800 * time.Second
 // Config is the merged workflow config.
 type Config struct {
 	Models          map[string]string `json:"models"`                 // alias -> provider URI
-	DefaultModel    string            `json:"default_model"`          // alias, used when a role has no model
+	DefaultModel    string            `json:"default_model"`          // alias or provider/model name, used when a role has no model
 	Roles           map[string]Role   `json:"roles"`                  //
 	CheckTimeoutSec int               `json:"check_timeout_sec"`      // 0 means 1800
 	Forge           Forge             `json:"forge"`                  // where the orchestrator reads issues
@@ -43,9 +43,9 @@ type Forge struct {
 
 var forgeRepoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-// Role holds the model alias and system prompt of one workflow role.
+// Role holds the model alias or provider/model name and system prompt of one workflow role.
 type Role struct {
-	Model  string `json:"model"`  // alias from Models; empty -> DefaultModel
+	Model  string `json:"model"`  // alias or provider/model name; empty -> DefaultModel
 	Prompt string `json:"prompt"` // system prompt; "@file.md" = file relative to the config file
 }
 
@@ -173,20 +173,22 @@ func (c *Config) validate() error {
 	if r := c.Forge.Repo; r != "" && r != "auto" && !forgeRepoRe.MatchString(r) {
 		return fmt.Errorf("forge.repo: %q is not \"auto\" or \"owner/name\"", r)
 	}
-	if c.DefaultModel != "" {
-		if _, ok := c.Models[c.DefaultModel]; !ok {
-			return fmt.Errorf("default_model: unknown model alias %q", c.DefaultModel)
-		}
+	if c.DefaultModel != "" && !c.hasModel(c.DefaultModel) {
+		return fmt.Errorf("default_model: unknown model alias %q", c.DefaultModel)
 	}
 	for name, r := range c.Roles {
-		if r.Model == "" {
-			continue
-		}
-		if _, ok := c.Models[r.Model]; !ok {
+		if r.Model != "" && !c.hasModel(r.Model) {
 			return fmt.Errorf("role %q: unknown model alias %q", name, r.Model)
 		}
 	}
 	return nil
+}
+
+func (c *Config) hasModel(model string) bool {
+	if _, ok := c.Models[model]; ok {
+		return true
+	}
+	return strings.Contains(model, "/")
 }
 
 // Role returns the named role. Only worker, review, merge_decision and oracle fall back to embedded prompts.
@@ -220,11 +222,13 @@ func (c *Config) ResolveModel(r Role) (string, error) {
 	if alias == "" {
 		return "", errors.New("no model set for the role and no default_model")
 	}
-	uri, ok := c.Models[alias]
-	if !ok {
-		return "", fmt.Errorf("unknown model alias %q", alias)
+	if uri, ok := c.Models[alias]; ok {
+		return uri, nil
 	}
-	return uri, nil
+	if strings.Contains(alias, "/") {
+		return alias, nil
+	}
+	return "", fmt.Errorf("unknown model alias %q", alias)
 }
 
 // CheckTimeout returns the CI check timeout (30 minutes by default).

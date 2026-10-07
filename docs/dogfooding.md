@@ -44,7 +44,7 @@ The file accepts only the keys shown here and `check_timeout_sec`.
 }
 ```
 
-- `models` maps an alias to a `provider/model` name.
+- `models` maps an alias to a `provider/model` name. Aliases are optional: `default_model` and a role's `model` may also be a direct `provider/model` name (for example, `nexos/GPT 5.6 Luna`).
 - `default_model` is used by a role that has no `model`.
 - `roles` is optional. The roles are `worker`, `review` and `merge_decision`.
   A role may set `prompt`; `"@file.md"` reads a file next to the config file.

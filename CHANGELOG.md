@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Flow configuration now accepts direct `provider/model` names in `default_model` and role `model` fields without requiring identity aliases.
+
 ## [0.4.0] - 2026-10-07
 
 ### Added

@@ -111,6 +111,21 @@ func TestLoad_AgentConfigKeysAreAccepted(t *testing.T) {
 	}
 }
 
+func TestLoad_DirectProviderModelNamesAreAccepted(t *testing.T) {
+	home := t.TempDir()
+	write(t, home, ".tyci/config.json", `{"default_model":"nexos/GPT 5.6 Luna","roles":{"worker":{"model":"other/provider-model"}}}`)
+	c, err := Load(home, t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.ResolveModel(Role{}); err != nil || got != "nexos/GPT 5.6 Luna" {
+		t.Fatalf("default model: %q %v", got, err)
+	}
+	if got, err := c.ResolveModel(Role{Model: "other/provider-model"}); err != nil || got != "other/provider-model" {
+		t.Fatalf("role model: %q %v", got, err)
+	}
+}
+
 func TestLoad_RoleWithUnknownModelIsError(t *testing.T) {
 	home := t.TempDir()
 	write(t, home, ".tyci/config.json", `{"models":{"a":"u"},"roles":{"worker":{"model":"typo"}}}`)
@@ -173,6 +188,13 @@ func TestResolveModel_FallsBackToDefault(t *testing.T) {
 	c := &Config{Models: map[string]string{"a": "uri"}, DefaultModel: "a"}
 	if u, err := c.ResolveModel(Role{}); err != nil || u != "uri" {
 		t.Fatalf("got %q %v", u, err)
+	}
+}
+
+func TestResolveModel_DirectProviderModelName(t *testing.T) {
+	c := &Config{Models: map[string]string{}}
+	if got, err := c.ResolveModel(Role{Model: "provider/model"}); err != nil || got != "provider/model" {
+		t.Fatalf("got %q %v", got, err)
 	}
 }
 
