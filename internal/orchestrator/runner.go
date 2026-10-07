@@ -6,24 +6,26 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 )
 
-// Runner starts workflow runs. NewRunner adapts the v0.3.0 flow.Manager.
+// Runner starts workflow runs. NewRunner adapts flow.Manager.
 type Runner interface {
 	Start(ctx context.Context, workflow string, inputs map[string]string) (RunHandle, error)
 }
 
-// RunHandle is one started run. ONE final result arrives on Done; ask is a
-// separate event stream.
+// RunHandle is one started run. ONE final result arrives on Done; ask and
+// resume are separate event streams.
 type RunHandle interface {
 	ID() string
 	// Done delivers exactly once: the final result, then closes.
 	Done() <-chan RunResult
 	// Asks signals each time the run waits for a human answer.
 	Asks() <-chan struct{}
+	// Resumed signals each time a waiting run gets its answer and runs again.
+	Resumed() <-chan struct{}
 }
 
 // RunResult is the final result of a run.
@@ -36,86 +38,141 @@ type RunResult struct {
 // FlowManager is the part of flow.Manager the adapter uses.
 type FlowManager interface {
 	Start(ctx context.Context, req flow.StartRequest) (string, []string, error)
-	Status(runID string) (*flow.RunState, error)
+	RunText(ctx context.Context, workflow, input string) (string, error)
+	Subscribe(fn func(flow.RunEvent)) func()
 }
 
-// flowRunner adapts a FlowManager. The v0.3.0 Manager has no end event, so
-// the handle reads the saved run state every poll interval. The input key for
-// "work on #N" is "issue" (flow.StartRequest.Issue).
+// flowRunner adapts a FlowManager. The input key for "work on #N" is "issue"
+// (flow.StartRequest.Issue). The input key "input" runs a one-agent workflow
+// on a text and returns the final agent text.
 type flowRunner struct {
-	m    FlowManager
-	poll time.Duration
+	m FlowManager
 }
 
-// NewRunner returns a Runner over the v0.3.0 flow.Manager.
-func NewRunner(m FlowManager) Runner { return &flowRunner{m: m, poll: 500 * time.Millisecond} }
+// NewRunner returns a Runner over flow.Manager.
+func NewRunner(m FlowManager) Runner { return &flowRunner{m: m} }
 
 func (r *flowRunner) Start(ctx context.Context, workflow string, inputs map[string]string) (RunHandle, error) {
+	if text, ok := inputs["input"]; ok && len(inputs) == 1 {
+		return r.startText(ctx, workflow, text), nil
+	}
 	n, err := strconv.Atoi(inputs["issue"])
 	if err != nil || len(inputs) != 1 {
-		// v0.3.0 starts a run from an issue number only; the roadmap run needs
-		// a JSON input and returns its text, which the Manager cannot do yet.
-		return nil, fmt.Errorf("workflow %q: the flow manager supports only the \"issue\" input", workflow)
+		return nil, fmt.Errorf("workflow %q: use exactly one input, \"issue\" or \"input\"", workflow)
 	}
+	h := newFlowHandle()
+	unsub := r.m.Subscribe(h.add)
 	id, _, err := r.m.Start(ctx, flow.StartRequest{Workflow: workflow, Issue: n})
 	if err != nil {
+		unsub()
 		return nil, err
 	}
-	h := &flowHandle{id: id, done: make(chan RunResult, 1), asks: make(chan struct{}, 1)}
-	go h.watch(ctx, r.m, r.poll)
+	h.id = id
+	go func() {
+		defer unsub()
+		h.watch(ctx)
+	}()
 	return h, nil
 }
 
-type flowHandle struct {
-	id   string
-	done chan RunResult
-	asks chan struct{}
+// startText runs the workflow in a goroutine and delivers the text.
+func (r *flowRunner) startText(ctx context.Context, workflow, text string) RunHandle {
+	h := newFlowHandle()
+	h.id = workflow
+	go func() {
+		defer close(h.done)
+		out, err := r.m.RunText(ctx, workflow, text)
+		switch {
+		case ctx.Err() != nil:
+			h.done <- RunResult{Outcome: "cancelled", Err: ctx.Err()}
+		case err != nil:
+			h.done <- RunResult{Outcome: "failed", Err: err}
+		default:
+			h.done <- RunResult{Outcome: "ended", Output: out}
+		}
+	}()
+	return h
 }
 
-func (h *flowHandle) ID() string             { return h.id }
-func (h *flowHandle) Done() <-chan RunResult { return h.done }
-func (h *flowHandle) Asks() <-chan struct{}  { return h.asks }
+type flowHandle struct {
+	id      string
+	done    chan RunResult
+	asks    chan struct{}
+	resumed chan struct{}
 
-func (h *flowHandle) watch(ctx context.Context, m FlowManager, poll time.Duration) {
+	mu   sync.Mutex
+	q    []flow.RunEvent
+	wake chan struct{}
+}
+
+func newFlowHandle() *flowHandle {
+	return &flowHandle{
+		done: make(chan RunResult, 1), asks: make(chan struct{}, 1), resumed: make(chan struct{}, 1),
+		wake: make(chan struct{}, 1),
+	}
+}
+
+func (h *flowHandle) ID() string               { return h.id }
+func (h *flowHandle) Done() <-chan RunResult   { return h.done }
+func (h *flowHandle) Asks() <-chan struct{}    { return h.asks }
+func (h *flowHandle) Resumed() <-chan struct{} { return h.resumed }
+
+// add queues an event. It never blocks. The queue keeps events of other runs
+// until watch filters them by id, because the id is known only after Start.
+func (h *flowHandle) add(ev flow.RunEvent) {
+	h.mu.Lock()
+	h.q = append(h.q, ev)
+	h.mu.Unlock()
+	select {
+	case h.wake <- struct{}{}:
+	default:
+	}
+}
+
+func signal(c chan struct{}) {
+	select {
+	case c <- struct{}{}:
+	default:
+	}
+}
+
+func (h *flowHandle) watch(ctx context.Context) {
 	defer close(h.done)
-	t := time.NewTicker(poll)
-	defer t.Stop()
-	var lastAsk time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			h.done <- RunResult{Outcome: "cancelled", Err: ctx.Err()}
 			return
-		case <-t.C:
+		case <-h.wake:
 		}
-		st, err := m.Status(h.id)
-		if err != nil {
-			h.done <- RunResult{Outcome: "failed", Err: err}
-			return
-		}
-		switch st.Status {
-		case "paused":
-			if !st.UpdatedAt.Equal(lastAsk) {
-				lastAsk = st.UpdatedAt
-				select {
-				case h.asks <- struct{}{}:
-				default:
+		h.mu.Lock()
+		q := h.q
+		h.q = nil
+		h.mu.Unlock()
+		for _, ev := range q {
+			if ev.Run != h.id {
+				continue
+			}
+			switch ev.Status {
+			case "running":
+				signal(h.resumed)
+			case "paused":
+				signal(h.asks)
+			case "done":
+				if ev.PR > 0 {
+					h.done <- RunResult{Outcome: "merged"}
+				} else {
+					h.done <- RunResult{Outcome: "ended"}
 				}
+				return
+			case "failed":
+				out := "failed"
+				if strings.Contains(strings.ToLower(ev.Reason), "cancel") {
+					out = "cancelled"
+				}
+				h.done <- RunResult{Outcome: out, Err: errors.New(ev.Reason)}
+				return
 			}
-		case "done":
-			if st.PR > 0 {
-				h.done <- RunResult{Outcome: "merged"}
-			} else {
-				h.done <- RunResult{Outcome: "ended"}
-			}
-			return
-		case "failed":
-			out := "failed"
-			if strings.Contains(strings.ToLower(st.Reason), "cancel") {
-				out = "cancelled"
-			}
-			h.done <- RunResult{Outcome: out, Err: errors.New(st.Reason)}
-			return
 		}
 	}
 }

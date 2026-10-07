@@ -103,3 +103,10 @@ func TestMergeDecisionTask_ReasonIsMasked(t *testing.T) {
 		t.Fatal("token leaked")
 	}
 }
+
+func TestTaskTemplatesRenderPassesInput(t *testing.T) {
+	out, err := TaskTemplates{}.Render("roadmap", RunContext{Input: `{"issues":[]}`})
+	if err != nil || !strings.Contains(out, `{"issues":[]}`) {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+}

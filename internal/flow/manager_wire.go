@@ -131,6 +131,20 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 		r.Agents = NewSubagentRunner(cfg, spawn)
 		return r
 	}
+	m.Text = func(ctx context.Context, info RepoInfo, wf *Workflow, input string) (string, error) {
+		s, ok := wf.States[wf.Start]
+		if !ok || s.Agent == "" {
+			return "", fmt.Errorf("workflow %q must start with an agent state", wf.Name)
+		}
+		cfg, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
+		if err != nil {
+			return "", err
+		}
+		out, _, err := NewSubagentRunner(cfg, spawn).Text(ctx, s.Agent, s.Task, RunContext{
+			Repo: info.Repo, DefaultBranch: info.DefaultBranch, Worktree: info.Root, Input: input,
+		})
+		return out, err
+	}
 	return m
 }
 

@@ -46,6 +46,21 @@ type SubagentRunner struct {
 // Run implements AgentRunner. The key depends on the role and the task,
 // not on the state name.
 func (r *SubagentRunner) Run(ctx context.Context, role, task string, rc RunContext) (string, string, error) {
+	out, session, err := r.Text(ctx, role, task, rc)
+	if err != nil {
+		return "", session, err
+	}
+	switch {
+	case role == "review" && task == "":
+		return r.verdict(ctx, rc), session, nil
+	case role == "merge_decision":
+		return mergeKey(out), session, nil
+	}
+	return "done", session, nil
+}
+
+// Text runs the agent and returns its final text.
+func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunContext) (string, string, error) {
 	rl, err := r.Cfg.Role(role)
 	if err != nil {
 		return "", "", err
@@ -75,17 +90,7 @@ func (r *SubagentRunner) Run(ctx context.Context, role, task string, rc RunConte
 		}
 		text += "\n\n" + issueText
 	}
-	out, session, err := r.Spawn(ctx, tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree})
-	if err != nil {
-		return "", session, err
-	}
-	switch {
-	case role == "review" && task == "":
-		return r.verdict(ctx, rc), session, nil
-	case role == "merge_decision":
-		return mergeKey(out), session, nil
-	}
-	return "done", session, nil
+	return r.Spawn(ctx, tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree})
 }
 
 func (r *SubagentRunner) warn(msg string) {

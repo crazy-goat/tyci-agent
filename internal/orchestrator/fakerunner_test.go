@@ -15,10 +15,11 @@ type fakeHandle struct {
 	owner *fakeRunner
 }
 
-func (h *fakeHandle) ID() string             { return h.id }
-func (h *fakeHandle) Done() <-chan RunResult { return h.done }
-func (h *fakeHandle) Asks() <-chan struct{}  { return h.asks }
-func (h *fakeHandle) ask()                   { h.asks <- struct{}{} }
+func (h *fakeHandle) ID() string               { return h.id }
+func (h *fakeHandle) Done() <-chan RunResult   { return h.done }
+func (h *fakeHandle) Asks() <-chan struct{}    { return h.asks }
+func (h *fakeHandle) Resumed() <-chan struct{} { return nil }
+func (h *fakeHandle) ask()                     { h.asks <- struct{}{} }
 func (h *fakeHandle) finish(outcome string) {
 	h.owner.mu.Lock()
 	h.owner.inFlight--

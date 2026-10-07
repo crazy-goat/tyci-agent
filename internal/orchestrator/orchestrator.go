@@ -38,9 +38,10 @@ type Hooks struct {
 }
 
 type finishedRun struct {
-	issue int
-	ask   bool
-	res   RunResult
+	issue   int
+	ask     bool
+	resumed bool
+	res     RunResult
 }
 
 // Orchestrator plans a milestone and runs one workflow run per issue. It uses
@@ -445,6 +446,10 @@ func (o *Orchestrator) watch(issue int, h RunHandle, finished chan<- finishedRun
 			if !send(finishedRun{issue: issue, ask: true}) {
 				return
 			}
+		case <-h.Resumed():
+			if !send(finishedRun{issue: issue, resumed: true}) {
+				return
+			}
 		case res := <-h.Done():
 			send(finishedRun{issue: issue, res: res})
 			return
@@ -456,7 +461,7 @@ func (o *Orchestrator) watch(issue int, h RunHandle, finished chan<- finishedRun
 func (o *Orchestrator) stopped() <-chan struct{} { return o.stop }
 
 func (o *Orchestrator) finish(f finishedRun) {
-	if !f.ask {
+	if !f.ask && !f.resumed {
 		o.release(f.issue)
 	}
 	o.mu.Lock()
@@ -464,6 +469,10 @@ func (o *Orchestrator) finish(f finishedRun) {
 	var notes []string
 	switch {
 	case it == nil:
+	case f.resumed:
+		if it.Status == StatusAsk {
+			it.Status = StatusWip
+		}
 	case f.ask:
 		// The run is alive and keeps its worktree and its slot.
 		it.Status = StatusAsk

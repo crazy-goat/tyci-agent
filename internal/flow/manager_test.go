@@ -92,19 +92,71 @@ func (e *mgrEnv) notice(t *testing.T) string {
 	}
 }
 
-func TestWorkflowStart_RefusesSecondActiveRun(t *testing.T) {
+func TestWorkflowStart_AllowsSeveralActiveRuns(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
-	id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1})
+	id1, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
+	id2, _, err := e.m.Start(context.Background(), StartRequest{Issue: 2})
+	if err != nil || id1 == id2 {
+		t.Fatalf("id2 = %q, err = %v", id2, err)
+	}
 	_, _, err = e.m.Start(context.Background(), StartRequest{Issue: 2})
-	if err == nil || !strings.Contains(err.Error(), "run "+id+" is active") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "issue 2") {
+		t.Fatalf("same issue: err = %v", err)
 	}
 	close(c.release)
 	e.notice(t)
+	e.notice(t)
+}
+
+func TestManager_SubscribeGetsEndAndResume(t *testing.T) {
+	c := &gatedChecks{key: "default"}
+	e := newMgrEnv(t, c)
+	events := make(chan RunEvent, 8)
+	unsub := e.m.Subscribe(func(ev RunEvent) { events <- ev })
+	defer unsub()
+	id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func() RunEvent {
+		select {
+		case ev := <-events:
+			return ev
+		case <-time.After(5 * time.Second):
+			t.Fatal("no event")
+			return RunEvent{}
+		}
+	}
+	if ev := get(); ev.Run != id || ev.Status != "paused" {
+		t.Fatalf("ev = %+v", ev)
+	}
+	if err := e.m.Resume(id, "stop"); err != nil {
+		t.Fatal(err)
+	}
+	if ev := get(); ev.Status != "running" {
+		t.Fatalf("ev = %+v", ev)
+	}
+	if ev := get(); ev.Status != "done" {
+		t.Fatalf("ev = %+v", ev)
+	}
+}
+
+func TestManager_RunText(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	if _, err := e.m.RunText(context.Background(), "roadmap", "{}"); err == nil {
+		t.Fatal("want error without Text")
+	}
+	e.m.Text = func(_ context.Context, _ RepoInfo, wf *Workflow, in string) (string, error) {
+		return wf.Name + ":" + in, nil
+	}
+	out, err := e.m.RunText(context.Background(), "roadmap", "{}")
+	if err != nil || out != "demo:{}" {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
 }
 
 func TestWorkflowStart_RefusesSecondRunForSameIssue(t *testing.T) {

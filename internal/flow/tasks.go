@@ -43,6 +43,6 @@ func (TaskTemplates) Render(name string, rc RunContext) (string, error) {
 	return RenderTask(name, TaskData{
 		Repo: rc.Repo, Branch: rc.Branch, DefaultBranch: rc.DefaultBranch,
 		Worktree: rc.Worktree, RunDir: rc.RunDir, Reason: MaskSecrets(rc.Reason),
-		Issue: rc.Issue, PR: rc.PR, Visit: rc.Visit,
+		Issue: rc.Issue, PR: rc.PR, Visit: rc.Visit, Input: rc.Input,
 	})
 }

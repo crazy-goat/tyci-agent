@@ -88,6 +88,7 @@ type RunContext struct {
 	Worktree      string
 	RunDir        string
 	Reason        string
+	Input         string // text input of a RunText run
 	StateName     string
 	Issue         int
 	PR            int
