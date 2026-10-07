@@ -41,10 +41,13 @@ type ModelsDevModel struct {
 
 // ModelsDevReasoningOpt is one way a model accepts reasoning settings. Type is
 // "toggle", "effort" or "budget_tokens"; Values lists the allowed effort
-// values of an "effort" option.
+// values of an "effort" option. Min and Max are the token bounds of a
+// "budget_tokens" option; they are pointers because min 0 is a real value.
 type ModelsDevReasoningOpt struct {
 	Type   string   `json:"type"`
 	Values []string `json:"values,omitempty"`
+	Min    *int     `json:"min,omitempty"`
+	Max    *int     `json:"max,omitempty"`
 }
 
 // ModelsDevCost is USD per million tokens, as models.dev publishes it.

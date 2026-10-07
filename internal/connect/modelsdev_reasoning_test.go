@@ -7,7 +7,7 @@ import (
 
 func TestModelsDevModelKeepsReasoningAndToolCall(t *testing.T) {
 	in := `{"id":"m","reasoning":true,"tool_call":false,` +
-		`"reasoning_options":[{"type":"effort","values":["low","high"]},{"type":"toggle"}]}`
+		`"reasoning_options":[{"type":"effort","values":["low","high"]},{"type":"toggle"},{"type":"budget_tokens","min":0,"max":31999}]}`
 	var m ModelsDevModel
 	if err := json.Unmarshal([]byte(in), &m); err != nil {
 		t.Fatal(err)
@@ -23,7 +23,11 @@ func TestModelsDevModelKeepsReasoningAndToolCall(t *testing.T) {
 	if !back.Reasoning || back.ToolCall == nil || *back.ToolCall {
 		t.Fatalf("lost reasoning/tool_call: %s", out)
 	}
-	if len(back.ReasoningOptions) != 2 || back.ReasoningOptions[0].Values[1] != "high" {
+	if len(back.ReasoningOptions) != 3 || back.ReasoningOptions[0].Values[1] != "high" {
 		t.Fatalf("lost reasoning_options: %s", out)
+	}
+	b := back.ReasoningOptions[2]
+	if b.Min == nil || *b.Min != 0 || b.Max == nil || *b.Max != 31999 {
+		t.Fatalf("lost budget_tokens bounds: %s", out)
 	}
 }
