@@ -218,6 +218,13 @@ func TestPromptStatesTheEnforcedContracts(t *testing.T) {
 			t.Errorf("the contracts section is missing %q", want)
 		}
 	}
+
+	// No plan is required before the first tool call (#377).
+	for _, bad := range []string{"first tool call must be todo", "refused until a plan exists", "Required first"} {
+		if strings.Contains(prompt, bad) {
+			t.Errorf("the prompt must not require a plan: found %q", bad)
+		}
+	}
 }
 
 // TestPromptListsEveryToolTheModelHas. Half this environment used to be

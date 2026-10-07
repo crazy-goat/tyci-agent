@@ -170,8 +170,8 @@ Format: `F<n> | what, file:line | why it matters | found by`.
   the cost of delegation is welcome** (that is the merged `Scout` kind), but
   nothing should BLOCK a call based on cost. Delegation cost is limited today
   only by the depth cap, the scout semaphore and the deadline chain.
-- **Plan mode.** Same reason. The model-facing plan guard and `tools.AllowOnly`
-  stay — those are not user approval prompts.
+- **Plan mode.** Same reason. `tools.AllowOnly` stays — it is not a user approval
+  prompt. The model-facing plan guard was removed in #377.
 
 ## Undecided (from the competitor comparison)
 

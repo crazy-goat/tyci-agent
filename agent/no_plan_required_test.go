@@ -10,8 +10,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/stream"
 )
 
-// TestRun_FirstNonTodoToolCallRunsWithoutPlan checks that no plan is required:
-// a bash call in the first turn runs and its result is not a refusal.
+// TestRun_FirstNonTodoToolCallRunsWithoutPlan is a smoke test of the loop: a bash call in the first turn runs and its result is not a refusal.
 func TestRun_FirstNonTodoToolCallRunsWithoutPlan(t *testing.T) {
 	p := &connectortest.Fake{
 		ProviderName: "np",
