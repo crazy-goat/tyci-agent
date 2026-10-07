@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Context notice now starts at 80% of the window (was 50%) and auto-compaction at 95% (was 85%) when no limit is set (#304).
 
 ### Fixed
+- Chat: the "Release needed" greeting no longer invites you to ask tyci for a release; it says to release outside tyci (docs/release-workflow.md) (#289).
 - Cron: a scheduled run no longer blocks the next tick, a repeating job's notice does not start a model turn in an idle chat (and carries no log tail), and a notice goes to the job that scheduled it (with the end of the log) (#316).
 - Flow: `merge.sh` returns `behind` (rebase) when `ci-ok` is missing and the PR is behind the default branch, like `ci_wait.sh` (#326).
 - TUI: the status line elapsed time ("bash 3.2s", "waiting for response 12.0s") keeps ticking while a picker, modal or other overlay is open (#319).
