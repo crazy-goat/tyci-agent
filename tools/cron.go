@@ -496,20 +496,25 @@ func cronNotify(j cron.Job, err error) {
 		status = fmt.Sprintf("failed (%v)", err)
 	}
 	msg := fmt.Sprintf("[scheduled job] %q %s — it ran in the background, nobody asked for it just now. Read more with cron(action=\"logs\", name=%q) if it matters to what you are doing; otherwise carry on.", j.Name, status, j.Name)
-	if data, rerr := os.ReadFile(cron.LogPath(cronConfigDir(), j.Name)); rerr == nil {
-		const keep = 1500
-		tail := strings.TrimSpace(string(data))
-		if len(tail) > keep {
-			tail = "…" + tail[len(tail)-keep:]
-		}
-		msg += "\nEnd of its log:\n" + tail
-	}
 	oneShot := false
 	if sched, perr := j.Parsed(); perr == nil {
 		oneShot = sched.OneShot()
 	}
 	callerLive := j.Caller != "" && getJobMailbox() != nil && getJobMailbox().IsLive(j.Caller)
-	if !callerLive && !oneShot {
+	quiet := !callerLive && !oneShot
+	if !quiet {
+		// A quiet notice stays short: a frequent job would pile up many log
+		// tails in the queue. The model reads the log with cron(action="logs").
+		if data, rerr := os.ReadFile(cron.LogPath(cronConfigDir(), j.Name)); rerr == nil {
+			const keep = 1500
+			tail := strings.TrimSpace(string(data))
+			if len(tail) > keep {
+				tail = "…" + tail[len(tail)-keep:]
+			}
+			msg += "\nEnd of its log:\n" + tail
+		}
+	}
+	if quiet {
 		// Main chat (no caller, or the caller ended): queue the notice
 		// without waking an idle chat. A wake would start a model turn for
 		// every run of a frequent job. A one-shot job wakes the chat,

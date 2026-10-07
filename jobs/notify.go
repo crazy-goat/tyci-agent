@@ -2,7 +2,7 @@ package jobs
 
 import "sync"
 
-// maxPendingNotices bounds the queue. A notice is a single short line, so 64
+// maxPendingNotices bounds the queue. A notice is a short message, so 64
 // is far above any realistic backlog; the cap only exists so a runaway
 // producer (a script spawning background commands in a loop) can't grow the
 // slice without bound while nobody drains it. Oldest notices are dropped

@@ -328,14 +328,17 @@ func TestCronDisable_ActsOnTheProjectLocalJob(t *testing.T) {
 	}
 }
 
-type cronTestMailbox struct{ posted map[string][]string }
+type cronTestMailbox struct {
+	posted map[string][]string
+	dead   bool
+}
 
 func (m *cronTestMailbox) Resolve(id string) (string, bool) { return id, true }
 func (m *cronTestMailbox) Post(id, text string) bool {
 	m.posted[id] = append(m.posted[id], text)
 	return true
 }
-func (m *cronTestMailbox) IsLive(string) bool    { return true }
+func (m *cronTestMailbox) IsLive(string) bool    { return !m.dead }
 func (m *cronTestMailbox) Drain(string) []string { return nil }
 
 type cronTestNotifier struct{ loud, quiet []string }
@@ -385,5 +388,39 @@ func TestCronNotifyForMainChatDoesNotWakeIt(t *testing.T) {
 	cronNotify(cron.Job{Name: "j2"}, nil)
 	if len(n.loud) != 0 || len(n.quiet) != 1 {
 		t.Fatalf("loud=%v quiet=%v, want one quiet notice only", n.loud, n.quiet)
+	}
+}
+
+func TestCronNotifyOneShotForMainChatWakesIt(t *testing.T) {
+	withCronHome(t)
+	n := &cronTestNotifier{}
+	SetJobNotifier(n)
+	t.Cleanup(func() { SetJobNotifier(nil) })
+
+	cronNotify(cron.Job{Name: "j3", Schedule: "once 2030-01-02T03:04:05Z"}, nil)
+	if len(n.loud) != 1 || len(n.quiet) != 0 {
+		t.Fatalf("loud=%v quiet=%v, want one loud notice only", n.loud, n.quiet)
+	}
+}
+
+func TestCronNotifyEndedCallerUsesQuietPathWithoutLogTail(t *testing.T) {
+	withCronHome(t)
+	n := &cronTestNotifier{}
+	SetJobNotifier(n)
+	SetJobMailbox(&cronTestMailbox{posted: map[string][]string{}, dead: true})
+	t.Cleanup(func() { SetJobNotifier(nil); SetJobMailbox(nil) })
+	if err := os.MkdirAll(filepath.Dir(cron.LogPath(cronConfigDir(), "j4")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cron.LogPath(cronConfigDir(), "j4"), []byte("all green"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cronNotify(cron.Job{Name: "j4", Schedule: "every 1m", Caller: "gone"}, nil)
+	if len(n.loud) != 0 || len(n.quiet) != 1 {
+		t.Fatalf("loud=%v quiet=%v, want one quiet notice only", n.loud, n.quiet)
+	}
+	if strings.Contains(n.quiet[0], "all green") {
+		t.Fatalf("quiet notice carries the log tail: %q", n.quiet[0])
 	}
 }
