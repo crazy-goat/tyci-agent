@@ -92,7 +92,7 @@ func TestFormatSpecial(t *testing.T) {
 		{ForgeError, "gh down\nsecond", "forge error: gh down"},
 		{ForgeError, long, "forge error: " + strings.Repeat("x", 120)},
 		{NoMilestone, "", "No open vX.Y.Z milestone. Create one or work on an issue by hand."},
-		{ReleaseNeeded, "v0.4.0", "Milestone v0.4.0 has no open issues left. Release needed (ask me, I do not release yet)."},
+		{ReleaseNeeded, "v0.4.0", "Milestone v0.4.0 has no open issues left. Release needed: release outside tyci, see docs/release-workflow.md."},
 		{MilestoneEmpty, "v0.4.0", "Milestone v0.4.0 has no issues. Add issues or work on an issue by hand."},
 		{NoAccepted, "v0.4.0", "Milestone v0.4.0 has open issues, but none has the accepted label from an author with write access."},
 	}

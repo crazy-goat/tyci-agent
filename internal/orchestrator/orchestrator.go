@@ -155,7 +155,7 @@ func (o *Orchestrator) reportForgeError(err error, pr PlanReady) {
 		return
 	}
 	if errors.Is(err, forge.ErrReleaseNeeded) {
-		o.notify(fmt.Sprintf("Milestone %s has no open issues left. Release needed (ask me, I do not release yet).", pr.Roadmap.Milestone))
+		o.notify(fmt.Sprintf("Milestone %s has no open issues left. Release needed: release outside tyci, see docs/release-workflow.md.", pr.Roadmap.Milestone))
 	} else {
 		o.notify("forge error: " + err.Error())
 	}
