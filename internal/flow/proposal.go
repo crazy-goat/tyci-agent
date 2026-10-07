@@ -116,7 +116,8 @@ func firstLine(s string) string {
 // ApplyProposal applies the proposal in dir to the repository in a new branch
 // tyci/proposal-<run>-<patch hash>, made from origin/<default branch> in a temporary
 // worktree, pushes it and opens a PR. When the repository has no local copy
-// of the workflow yet, the builtin one is ejected first. A patch that touches
+// of the workflow yet, the missing files of the builtin one are ejected first
+// (existing .tyci/ files and role prompts are kept). A patch that touches
 // a file outside .tyci/ is refused. The checkout of the user is not touched.
 // It returns the PR URL.
 func ApplyProposal(ctx context.Context, info RepoInfo, st *RunState, dir string) (string, error) {
@@ -155,7 +156,7 @@ func ApplyProposal(ctx context.Context, info RepoInfo, st *RunState, dir string)
 		_, _ = git(info.Root, "branch", "-D", branch)
 	}()
 	if _, err := os.Stat(filepath.Join(wt, ".tyci", "workflows", st.Workflow+".json")); err != nil {
-		if _, err := Eject(st.Workflow, wt, false); err != nil {
+		if _, err := EjectMissing(st.Workflow, wt); err != nil {
 			return "", fmt.Errorf("eject %s: %w", st.Workflow, err)
 		}
 		if _, err := git(wt, "add", "-A", ".tyci"); err != nil {
@@ -189,6 +190,8 @@ func ApplyProposal(ctx context.Context, info RepoInfo, st *RunState, dir string)
 	cmd.Dir = wt
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		// Remove the pushed branch, so a later apply can push it again.
+		_, _ = git(wt, "push", "origin", "--delete", "refs/heads/"+branch)
 		return "", fmt.Errorf("gh pr create: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return lastLine(string(out)), nil

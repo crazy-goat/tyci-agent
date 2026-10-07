@@ -2,6 +2,7 @@ package flow
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,5 +204,93 @@ func TestProposal_ApplyRefusesFilesOutsideTyci(t *testing.T) {
 	}
 	if st, _ := e.m.Status(id); st.Ask.Proposal == "" {
 		t.Fatal("failed apply dropped the proposal")
+	}
+}
+
+func TestProposal_ApplyKeepsLocalOverrides(t *testing.T) {
+	e := newProposalEnv(t, goodPatch)
+	e2eCommit(t, e.info.Root, ".tyci/checks/merge.sh", "mine\n")
+	e2eWrite(t, filepath.Join(e.info.Root, ".tyci", "config.json"), `{"roles":{"worker":{"prompt":"custom"}}}`)
+	e2eGit(t, e.info.Root, "add", "-A")
+	e2eGit(t, e.info.Root, "commit", "-q", "-m", "overrides")
+	e2eGit(t, e.info.Root, "push", "-q", "origin", "main")
+	id := e.start(t)
+	if err := e.m.Resume(id, "apply"); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.notice(t); !strings.Contains(got, "Workflow proposal applied") {
+		t.Fatalf("notice = %q", got)
+	}
+	branch := strings.TrimSpace(e2eGit(t, e.origin, "branch", "--list", "tyci/proposal-*"))
+	if got := e2eGit(t, e.origin, "show", branch+":.tyci/checks/merge.sh"); got != "mine" {
+		t.Fatalf("merge.sh = %q", got)
+	}
+	if got := e2eGit(t, e.origin, "show", branch+":.tyci/config.json"); !strings.Contains(got, `"custom"`) {
+		t.Fatalf("config.json = %s", got)
+	}
+	names := e2eGit(t, e.origin, "diff", "--name-only", "main", branch)
+	if !strings.Contains(names, ".tyci/workflows/issue-to-merge.json") || strings.Contains(names, "merge.sh") {
+		t.Fatalf("branch changes = %s", names)
+	}
+}
+
+func TestProposal_GHFailureRemovesPushedBranch(t *testing.T) {
+	e := newProposalEnv(t, goodPatch)
+	testutil.StubGH(t, `exit 1`)
+	id := e.start(t)
+	if err := e.m.Resume(id, "apply"); err == nil || !strings.Contains(err.Error(), "gh pr create") {
+		t.Fatalf("err = %v", err)
+	}
+	if b := e2eGit(t, e.origin, "branch", "--list", "tyci/*"); b != "" {
+		t.Fatalf("branch left on origin: %s", b)
+	}
+}
+
+func TestProposal_ApplyRefusesHomeWorkflow(t *testing.T) {
+	e := newProposalEnv(t, goodPatch)
+	id := e.start(t)
+	e.m.Workflow = func(RepoInfo, string) (*Workflow, error) {
+		wf := proposalWF()
+		wf.Source = filepath.Join(e.info.Home, ".tyci", "workflows", "issue-to-merge.json")
+		return wf, nil
+	}
+	if err := e.m.Resume(id, "apply"); err == nil || !strings.Contains(err.Error(), "outside the repository") {
+		t.Fatalf("err = %v", err)
+	}
+	if b := e2eGit(t, e.origin, "branch", "--list", "tyci/*"); b != "" {
+		t.Fatalf("branch pushed: %s", b)
+	}
+}
+
+func TestProposal_ApplyReservesTheRun(t *testing.T) {
+	e := newProposalEnv(t, goodPatch)
+	gate := filepath.Join(t.TempDir(), "go")
+	testutil.StubGH(t, `while [ ! -e "`+gate+`" ]; do sleep 0.05; done; echo https://example/pull/9`)
+	id := e.start(t)
+	done := make(chan error, 1)
+	go func() { done <- e.m.Resume(id, "apply") }()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		e.m.mu.Lock()
+		_, busy := e.m.active[id]
+		e.m.mu.Unlock()
+		if busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("apply did not reserve the run")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := e.m.Resume(id, "retry"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("retry during apply: %v", err)
+	}
+	e2eWrite(t, gate, "")
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, e.m)
+	if st, _ := e.m.Status(id); st.Status != "paused" || st.Ask.Proposal != "" {
+		t.Fatalf("state = %s, proposal %q", st.Status, st.Ask.Proposal)
 	}
 }

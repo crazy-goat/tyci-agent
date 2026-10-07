@@ -105,9 +105,12 @@ says so and `workflow_status` shows the summary and the patch under `proposal`. 
 `apply` or `reject` with `workflow_resume`:
 
 - `apply`: tyci makes the branch `tyci/proposal-<run>-<hash>` from the default branch in a
-  temporary worktree, ejects the builtin workflow when the repository has no local copy,
-  applies the patch, pushes and opens a PR. A patch that changes a file outside `.tyci/`
-  is refused. Your checkout does not change.
+  temporary worktree, ejects the missing files of the builtin workflow when the repository
+  has no local copy (existing `.tyci/` files and role prompts stay), applies the patch,
+  pushes and opens a PR. A patch that changes a file outside `.tyci/` is refused. Your
+  checkout does not change. When the run used a workflow from `~/.tyci/workflows/`,
+  `apply` is refused: a proposal changes only the repository's `.tyci/` files.
+  When `gh pr create` fails, tyci deletes the pushed branch, so you can try again.
 - `reject`: nothing changes; the proposal is recorded in
   `~/.tyci/runs/<repo>/rejected-proposals` and is not shown again.
 

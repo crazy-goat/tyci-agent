@@ -26,6 +26,16 @@ type ejectFile struct {
 // nothing when a file or a different role prompt exists. It returns the
 // written paths.
 func Eject(name, dir string, force bool) ([]string, error) {
+	return eject(name, dir, force, false)
+}
+
+// EjectMissing is Eject that writes only the missing files and sets only the
+// role prompts that are not set yet. Existing files and role prompts are kept.
+func EjectMissing(name, dir string) ([]string, error) {
+	return eject(name, dir, false, true)
+}
+
+func eject(name, dir string, force, keep bool) ([]string, error) {
 	if !workflowName.MatchString(name) {
 		return nil, fmt.Errorf("bad workflow name %q: use a-z, 0-9 and -", name)
 	}
@@ -75,13 +85,19 @@ func Eject(name, dir string, force bool) ([]string, error) {
 
 	tyci := filepath.Join(dir, ".tyci")
 	var conflicts []string
+	kept := files[:0]
 	for _, f := range files {
 		if _, err := os.Lstat(filepath.Join(tyci, filepath.FromSlash(f.rel))); err == nil {
+			if keep {
+				continue
+			}
 			conflicts = append(conflicts, f.rel)
 		}
+		kept = append(kept, f)
 	}
+	files = kept
 	cfgPath := filepath.Join(tyci, "config.json")
-	cfg, roleConflicts, err := ejectConfig(cfgPath, prompted)
+	cfg, roleConflicts, err := ejectConfig(cfgPath, prompted, keep)
 	if err != nil {
 		return nil, err
 	}
@@ -109,8 +125,9 @@ func Eject(name, dir string, force bool) ([]string, error) {
 
 // ejectConfig returns the new config.json with roles.<role>.prompt set to
 // "@prompts/<role>.md" (nil when nothing changes) and the roles whose prompt
-// is set to something else.
-func ejectConfig(p string, roles []string) (out []byte, conflicts []string, err error) {
+// is set to something else. With keep, a role prompt that is set stays as it
+// is and is no conflict.
+func ejectConfig(p string, roles []string, keep bool) (out []byte, conflicts []string, err error) {
 	top := map[string]json.RawMessage{}
 	b, err := os.ReadFile(p)
 	switch {
@@ -140,6 +157,9 @@ func ejectConfig(p string, roles []string) (out []byte, conflicts []string, err 
 			_ = json.Unmarshal(raw, &cur)
 		}
 		if cur == ref {
+			continue
+		}
+		if cur != "" && keep {
 			continue
 		}
 		if cur != "" {

@@ -22,6 +22,6 @@ Earlier runs of this repository are in the directories next to {{.RunDir}}. If t
 - `proposal.md`: a title line, then what failed, why, and what to change in the workflow.
 - `proposal.patch`: a unified diff (`git diff` format, paths `a/.tyci/...` and `b/.tyci/...`) of the repository's `.tyci/` files only: the workflow JSON, check scripts, task templates or role prompts. Never change other files.
 
-If the repository has no `.tyci/workflows/{{.Workflow}}.json`, tyci ejects the builtin workflow before it applies the patch. To see these files, run `tyci workflow eject {{.Workflow}} --dir <a new temp dir>` and diff against them.
+Diff against the repository's own `.tyci/` files first. If the repository has no `.tyci/workflows/{{.Workflow}}.json`, tyci ejects only the missing files of the builtin workflow before it applies the patch; existing `.tyci/` files and role prompts stay. To see the builtin files, run `tyci workflow eject {{.Workflow}} --dir <a new temp dir>`. A proposal cannot change a workflow from `~/.tyci/workflows/`.
 
 Nothing changes until the user accepts the proposal. Do not apply it yourself.

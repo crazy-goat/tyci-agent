@@ -170,3 +170,28 @@ func TestRun_UsesLocalTaskAndStatePrompt(t *testing.T) {
 		t.Fatal("findings state lost the review role prompt")
 	}
 }
+
+func TestEjectMissing_KeepsExistingFilesAndPrompts(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, ".tyci", "config.json")
+	e2eWrite(t, cfg, `{"roles":{"worker":{"prompt":"custom"}}}`)
+	merge := filepath.Join(dir, ".tyci", "checks", "merge.sh")
+	e2eWrite(t, merge, "mine")
+	written, err := EjectMissing("issue-to-merge", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(written, "\n"), merge) {
+		t.Fatal("existing merge.sh in the written list")
+	}
+	if b, _ := os.ReadFile(merge); string(b) != "mine" {
+		t.Fatalf("merge.sh overwritten: %s", b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".tyci", "workflows", "issue-to-merge.json")); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(cfg)
+	if !strings.Contains(string(b), `"custom"`) || !strings.Contains(string(b), "@prompts/oracle.md") {
+		t.Fatalf("config = %s", b)
+	}
+}

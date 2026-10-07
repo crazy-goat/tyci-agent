@@ -358,17 +358,44 @@ func (m *Manager) Resume(runID, answer string) error {
 // answerProposal applies or rejects the workflow proposal of a paused run.
 // The run stays paused and waits for its normal answer; a new notice says so.
 func (m *Manager) answerProposal(info RepoInfo, wf *Workflow, st *RunState, answer string) error {
+	if answer == "apply" && wf.Source != "" && wf.Source != "builtin" && !strings.HasPrefix(wf.Source, info.Root+string(filepath.Separator)) {
+		return fmt.Errorf("the run uses %s, outside the repository: a proposal can change only the repository's .tyci/ files or the builtin workflow", wf.Source)
+	}
+	// Reserve the run, so no other answer runs or saves it at the same time.
+	parent := m.base
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
+	defer cancel()
 	m.mu.Lock()
-	_, active := m.active[st.Run]
-	m.mu.Unlock()
-	if active {
+	if _, ok := m.active[st.Run]; ok {
+		m.mu.Unlock()
 		return fmt.Errorf("%w: run %s is active", ErrBusy, st.Run)
 	}
+	if m.active == nil {
+		m.active = map[string]activeRun{}
+	}
+	m.active[st.Run] = activeRun{cancel: cancel, issue: st.Issue}
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.active, st.Run)
+		m.mu.Unlock()
+	}()
+	// Another answer can have changed the run before the reservation.
+	proposal := st.Ask.Proposal
+	cur, err := loadRun(info, st.Run)
+	if err != nil {
+		return err
+	}
+	if cur.Status != "paused" || cur.Ask == nil || cur.Ask.Proposal != proposal {
+		return fmt.Errorf("run %s changed, its proposal is no longer open", st.Run)
+	}
+	st = cur
 	runDir := RunDir(info.Home, info.Name(), st.Run)
 	note := " Workflow proposal rejected."
 	if answer == "apply" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
 		url, err := ApplyProposal(ctx, info, st, st.Ask.Proposal)
 		if err != nil {
 			return fmt.Errorf("apply the workflow proposal: %w", err)
