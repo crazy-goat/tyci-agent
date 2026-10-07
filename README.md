@@ -63,7 +63,8 @@ make install
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
 - Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
 - Run state: `~/.tyci/runs/<repo>/<run>/state.json`
-- Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`)
+- Run usage: agent steps in `state.json` carry `stats` (tokens, cost, turns); `workflow_status` and the Runs tab show it
+- Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`, agents must write `report.md`)
 - Overrides: `.tyci/workflows/` and `.tyci/checks/`
 
 A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of

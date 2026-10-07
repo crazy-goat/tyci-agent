@@ -12,7 +12,7 @@ var testTaskData = TaskData{
 
 func TestTasks_Render(t *testing.T) {
 	cases := map[string][]string{
-		"findings_to_issues": {"o/r", "/wt/x", "/run/y", "#42"},
+		"findings_to_issues": {"o/r", "/wt/x", "Run so far", "#42"},
 		"merge_decision":     {"feat/b", "main", "boom-reason", "#42"},
 	}
 	for name, want := range cases {

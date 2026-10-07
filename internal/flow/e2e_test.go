@@ -32,7 +32,7 @@ if [ -e "$CTL/down" ]; then echo "gh down, token $GH_TOKEN" >&2; exit 1; fi
 case "$*" in
   "issue view"*) cat "$CTL/issue.json" ;;
   "api -i"*) printf 'HTTP/2.0 200 OK\r\n\r\n{"permission":"%%s"}\n' "$(cat "$CTL/perm")" ;;
-  "pr review"*) exit 0 ;;
+  "pr review"*) cat "${@: -1}" > "$CTL/review_body" ;;
   "api user"*) echo bot ;;
   "api --paginate"*) if [ -e "$CTL/comments.json" ]; then cat "$CTL/comments.json"; else echo '[]'; fi ;;
   "pr list"*) if [ -e "$CTL/pr" ]; then echo 42; fi ;;
@@ -118,8 +118,8 @@ func (f *FakeAgents) Run(_ context.Context, _, _ string, rc RunContext) (string,
 	if hook := f.OnRun[rc.StateName]; hook != nil {
 		hook(rc.Worktree)
 	}
-	if rc.StateName == "review" {
-		e2eWrite(f.T, filepath.Join(f.RunDir, "review.md"), q[0]+"\n")
+	if rc.ArtifactDir != "" {
+		e2eWrite(f.T, filepath.Join(rc.ArtifactDir, "report.md"), q[0]+"\n")
 	}
 	return q[0], fmt.Sprintf("sess-%s-%d", rc.StateName, f.calls), nil
 }
@@ -141,6 +141,7 @@ type e2e struct {
 	st            *RunState
 	wf            *Workflow
 	agents        *FakeAgents
+	agentRunner   AgentRunner // replaces agents when set
 	runner        *Runner
 	extraCheckEnv []string
 	commitCounter int
@@ -230,8 +231,12 @@ func (e *e2e) newRunner() *Runner {
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
 		"TYCI_CI_POLL_SEC=0", "TYCI_CI_APPEAR_SEC=2",
 	}, e.extraCheckEnv...)
+	var agents AgentRunner = e.agents
+	if e.agentRunner != nil {
+		agents = e.agentRunner
+	}
 	return &Runner{
-		WF: e.wf, Checks: e2eChecker{checks, extra}, Agents: e.agents,
+		WF: e.wf, Checks: e2eChecker{checks, extra}, Agents: agents,
 		Store: &Store{Dir: runDir}, RunDir: runDir, DefaultBranch: "main",
 		OnSkip: removeWorktreeHook(e.work),
 	}
@@ -391,6 +396,11 @@ func TestE2E_ReviewChangesThenAccept(t *testing.T) {
 	e.mustFinish()
 	e.wantStates("check_done, code, review, code, review, lock, update, post_review, ci, comments, merge, findings")
 	e.wantMerged()
+	// #340: post_review.sh posts the newest review report.
+	body, _ := os.ReadFile(filepath.Join(e.ctl, "review_body"))
+	if !strings.Contains(string(body), "ACCEPT") || strings.Contains(string(body), "CHANGES") {
+		t.Errorf("posted review = %q", body)
+	}
 }
 
 func TestE2E_RedCIThreeTimes_EndsInAsk(t *testing.T) {

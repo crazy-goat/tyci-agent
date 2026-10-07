@@ -9,3 +9,5 @@ Before using tools, write 1-2 sentences saying what you are about to do.
 - Write `findings.md` with problems you saw OUTSIDE the issue scope. It is gitignored: check `.gitignore` and add the entry in the same commit if it is missing.
 - If you are blocked, write the question into `findings.md` and stop.
 - Run build, lint and tests with the commands from `AGENTS.md` before you finish.
+- If the run so far shows red CI, CHANGES, a conflict or new comments, fix that first. Read their artifact files.
+- You MUST write `report.md` in your artifact dir (the task text gives the path) before you end: what you did, the result, what is left.
