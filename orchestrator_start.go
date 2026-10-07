@@ -72,6 +72,19 @@ func loadOrchestratorConfig(info flow.RepoInfo) (orchestrator.Config, error) {
 	return orchestrator.LoadConfig(filepath.Join(info.Home, ".tyci", "config.json"), projectCfg)
 }
 
+// resumeWorkflowRuns is the start-up resume of runs that a crashed or killed
+// tyci left running. At most the orchestrator worker limit is resumed. It runs
+// before the greeting, so the orchestrator adopts the resumed runs.
+func resumeWorkflowRuns() {
+	limit := 0
+	if info, err := flow.DetectRepo(); err == nil {
+		if oc, err := loadOrchestratorConfig(info); err == nil {
+			limit = oc.Workers
+		}
+	}
+	workflowManager.ResumeAll(limit)
+}
+
 // orchestratorSystemPrompt is the TUI chat prompt. The worker limit comes from
 // the orchestrator config; outside a repository or on a config error it is the
 // default, 3 (startTUIOrchestrator reports the error to the user).

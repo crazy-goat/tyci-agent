@@ -8,7 +8,7 @@
 # (.github/, .tyci/, internal/flow/checks/) is never merged unattended.
 #
 # Env in:  TYCI_PR, TYCI_REPO, TYCI_DEFAULT_BRANCH. cwd = the run worktree.
-# Keys:    merged     the PR was squash merged
+# Keys:    merged     the PR was squash merged, or was already merged (a resumed run)
 #          behind     the PR is behind the default branch (rebase it first)
 #          protected  the diff touches a protected path; no gh call was made
 #          fail       fetch, CI re-check, head match or merge failed
@@ -24,6 +24,14 @@ if [ -n "$protected" ]; then
     echo "protected paths:" >&2
     echo "$protected" >&2
     echo protected
+    exit 0
+fi
+
+# Idempotent after a crash between the merge and the state write: the resumed run
+# finds the PR already merged.
+if [ "$(gh pr view "$TYCI_PR" -R "$TYCI_REPO" --json state --jq .state 2>/dev/null || true)" = MERGED ]; then
+    echo "merge.sh: PR $TYCI_PR is already merged" >&2
+    echo merged
     exit 0
 fi
 

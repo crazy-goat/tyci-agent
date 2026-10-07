@@ -66,6 +66,15 @@ make install
 - Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`)
 - Overrides: `.tyci/workflows/` and `.tyci/checks/`
 
+A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
+resumes (`resumed`). When `tyci` or `tyci console` starts, it resumes every `running` run
+of the current repository whose owner process is gone, at its saved state (the agent of
+that state starts again in the same worktree, and the visit is not counted again). At most
+`orchestrator.workers` runs are resumed; a later start of the issue resumes the others.
+The orchestrator counts the resumed runs as workers before it starts new runs.
+A run resumed 3 times, or one whose worktree is gone, pauses for an answer. Paused runs
+stay paused and their notice is shown again.
+
 See [docs/dogfooding.md](docs/dogfooding.md) for the full runbook.
 
 Orchestrator keys (section `orchestrator`; the project file wins key by key):
@@ -483,6 +492,14 @@ stream. Both default to 30 (0 or absent) in `~/.tyci/config.json`:
 
 ```json
 { "first_byte_timeout_sec": 30, "stream_idle_timeout_sec": 30 }
+```
+
+A watchdog reports a running subagent that shows no activity. After `idle_after` it
+messages the parent, after each further `escalate_after` the next ancestor, and last the
+human (once). It never kills a job. Global `~/.tyci/config.json` only; defaults are 3m.
+
+```json
+{ "watchdog": { "idle_after": "3m", "escalate_after": "3m" } }
 ```
 
 Anthropic **prompt caching** is on by default, with cache breakpoints after the

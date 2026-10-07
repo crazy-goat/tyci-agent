@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestMain redirects HOME to a throwaway dir for the whole package so that a
@@ -431,5 +433,32 @@ func TestTimeoutKeys_SaveAndMerge(t *testing.T) {
 	m := mergeTyciConfig(got, TyciConfig{FirstByteTimeoutSec: 5})
 	if m.FirstByteTimeoutSec != 5 || m.StreamIdleTimeoutSec != 20 {
 		t.Fatalf("bad merge: %+v", m)
+	}
+}
+
+func TestConfig_WatchdogDefaults(t *testing.T) {
+	idle, esc, err := TyciConfig{}.WatchdogDurations()
+	if err != nil || idle != 3*time.Minute || esc != 3*time.Minute {
+		t.Fatalf("got %v %v %v", idle, esc, err)
+	}
+	idle, esc, err = TyciConfig{Watchdog: &WatchdogConfig{IdleAfter: "20s"}}.WatchdogDurations()
+	if err != nil || idle != 20*time.Second || esc != 3*time.Minute {
+		t.Fatalf("got %v %v %v", idle, esc, err)
+	}
+}
+
+func TestConfig_WatchdogInvalid(t *testing.T) {
+	for _, c := range []struct {
+		cfg WatchdogConfig
+		key string
+	}{
+		{WatchdogConfig{IdleAfter: "abc"}, "watchdog.idle_after"},
+		{WatchdogConfig{IdleAfter: "0s"}, "watchdog.idle_after"},
+		{WatchdogConfig{EscalateAfter: "-1m"}, "watchdog.escalate_after"},
+	} {
+		_, _, err := TyciConfig{Watchdog: &c.cfg}.WatchdogDurations()
+		if err == nil || !strings.Contains(err.Error(), c.key) {
+			t.Fatalf("%+v: got %v", c.cfg, err)
+		}
 	}
 }

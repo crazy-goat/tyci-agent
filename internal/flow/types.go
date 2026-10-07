@@ -60,19 +60,24 @@ type RunState struct {
 	PR   int    `json:"pr,omitempty"`
 	// LastCommentID and LastReviewCommentID are the highest PR issue comment id and
 	// PR review comment id that fetch_comments.sh has handled (two separate id sequences).
-	LastCommentID       int64          `json:"last_comment_id,omitempty"`
-	LastReviewCommentID int64          `json:"last_review_comment_id,omitempty"`
-	StartedAt           time.Time      `json:"started_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	Visits              map[string]int `json:"visits"`
-	History             []Step         `json:"history"`
+	LastCommentID       int64 `json:"last_comment_id,omitempty"`
+	LastReviewCommentID int64 `json:"last_review_comment_id,omitempty"`
+	// PID is the owner process of a running run. Resumed counts the restarts
+	// of the run (at most maxResumes). AgentSeq is the run-wide agent counter.
+	PID       int            `json:"pid,omitempty"`
+	Resumed   int            `json:"resumed,omitempty"`
+	AgentSeq  int            `json:"agent_seq,omitempty"`
+	StartedAt time.Time      `json:"started_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	Visits    map[string]int `json:"visits"`
+	History   []Step         `json:"history"`
 }
 
 // Step is one executed transition.
 type Step struct {
 	Seq        int       `json:"seq"`
 	State      string    `json:"state"`
-	Kind       string    `json:"kind"` // check|agent|ask
+	Kind       string    `json:"kind"` // check|agent|ask|resume
 	Key        string    `json:"key"`
 	To         string    `json:"to"`
 	StartedAt  time.Time `json:"started_at"`

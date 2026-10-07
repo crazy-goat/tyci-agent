@@ -41,6 +41,7 @@ type fakeRunner struct {
 	entered     chan struct{} // gets a value when Start for gateIssue reaches the gate
 	oracle      func(input string) RunResult
 	started     chan int // issue numbers in start order
+	resumed     []int    // issues of runs resumed after a restart (Adopter)
 }
 
 func newFakeRunner() *fakeRunner {
@@ -92,4 +93,29 @@ func (r *fakeRunner) starts(n int) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.count[n]
+}
+
+func (r *fakeRunner) Adoptable() []int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]int(nil), r.resumed...)
+}
+
+func (r *fakeRunner) Adopt(_ context.Context, n int) (RunHandle, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, m := range r.resumed {
+		if m != n {
+			continue
+		}
+		r.resumed = append(r.resumed[:i], r.resumed[i+1:]...)
+		r.inFlight++
+		if r.inFlight > r.maxInFlight {
+			r.maxInFlight = r.inFlight
+		}
+		h := &fakeHandle{id: "resumed-" + strconv.Itoa(n), done: make(chan RunResult, 1), asks: make(chan struct{}, 4), owner: r}
+		r.handles[n] = h
+		return h, true
+	}
+	return nil, false
 }
