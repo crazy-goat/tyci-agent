@@ -83,6 +83,8 @@ type Step struct {
 	StderrTail string    `json:"stderr_tail,omitempty"`
 	Error      string    `json:"error,omitempty"`
 	Warnings   []string  `json:"warnings,omitempty"`
+	// Artifact is the step artifact dir name under <run dir>/artifacts.
+	Artifact string `json:"artifact,omitempty"`
 }
 
 // RunContext is the template fields of SDR 5.4 passed to agent states.
@@ -109,6 +111,7 @@ type CheckResult struct {
 	Exit       *int
 	StderrTail string
 	Stdout     string
+	Output     string // stdout and stderr as they arrive, for output.log
 }
 
 // CheckRunner executes a check state and resolves its transition key.

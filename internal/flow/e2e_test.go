@@ -361,6 +361,20 @@ func TestE2E_HappyPath_Merges(t *testing.T) {
 	if w, r := e.session("code"), e.session("review"); w == "" || w == r {
 		t.Errorf("worker session %q and review session %q must differ", w, r)
 	}
+	var want []string
+	for _, h := range e.st.History {
+		if h.Kind == "ask" {
+			continue
+		}
+		name := fmt.Sprintf("%03d-%s", h.Seq, h.State)
+		if h.Artifact != name {
+			t.Errorf("step %d artifact = %q, want %q", h.Seq, h.Artifact, name)
+		}
+		want = append(want, name)
+	}
+	if got := artifactDirs(t, e.runDir); strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("artifact dirs = %v, want %v", got, want)
+	}
 }
 
 func TestE2E_ReviewChangesThenAccept(t *testing.T) {
