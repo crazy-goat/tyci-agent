@@ -4,8 +4,9 @@
 # by itself: it counts as free when its holder process is dead, or when the state.json of the
 # holder run is not running or no longer in a merge-phase state (for example failed, ask, code,
 # findings or end).
-# Known limit: the steal (rm -rf) is not atomic. With 3 or more waiters two of them can take the
-# lock in the same few milliseconds. The ci and rebase states handle that case.
+# A lock dir without an owner file is held for a few seconds (the winner of mkdir is writing the
+# owner). Known limit: the steal (rm -rf) of a stale lock is not atomic. Two waiters can take a
+# stale lock in the same few milliseconds. The ci and rebase states handle that case.
 # The same run takes its own lock again without waiting.
 #
 # Env in:  TYCI_REPO, TYCI_RUN_DIR, HOME, TYCI_LOCK_POLL_SEC (default 5).
@@ -15,11 +16,15 @@ set -euo pipefail
 
 dir="$HOME/.tyci/locks/$(printf '%s' "${TYCI_REPO:-}" | tr '/' '_').merge"
 poll="${TYCI_LOCK_POLL_SEC:-5}"
-phase=" lock push post_review ci comments merge rebase merge_decision "
+phase=" lock update post_review ci comments merge rebase merge_decision "
 
 stale() {
     local pid run cur
-    { read -r pid && read -r run; } <"$dir/owner" 2>/dev/null || return 0
+    if ! { read -r pid && read -r run; } <"$dir/owner" 2>/dev/null; then
+        # No owner yet: the winner of mkdir may still be writing it. Wait a few seconds.
+        [ -d "$dir" ] && [ -z "$(find "$dir" -maxdepth 0 -mmin +1 2>/dev/null)" ] && return 1
+        return 0
+    fi
     kill -0 "$pid" 2>/dev/null || return 0
     [ "$run" = "$TYCI_RUN_DIR" ] && return 0
     cur=$(jq -r 'if .status == "running" then .current // "" else "" end' "$run/state.json" 2>/dev/null) || return 0
