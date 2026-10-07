@@ -63,8 +63,10 @@ func (r *SubagentRunner) Run(ctx context.Context, role, task string, rc RunConte
 	switch {
 	case role == "review" && task == "":
 		return r.verdict(ctx, rc), session, nil
-	case role == "merge_decision":
-		return mergeKey(out), session, nil
+	case role == "fixer":
+		return fixerKey(out, rc), session, nil
+	case role == "oracle" && task == "recover":
+		return oracleKey(out), session, nil
 	}
 	return "done", session, nil
 }
@@ -230,17 +232,42 @@ func readVerdict(path string) (verdict, warning string) {
 	return "CHANGES", fmt.Sprintf("review report first line %q is not ACCEPT or CHANGES", first)
 }
 
-// mergeKey maps the first word of the final answer to retry, code or ask.
-func mergeKey(answer string) string {
-	f := strings.Fields(strings.ToLower(answer))
-	if len(f) == 0 {
+// fixerKey is "failed" when the fixer wrote failed.log in its artifact dir or
+// its answer does not start with "ok"; else "ok".
+func fixerKey(answer string, rc RunContext) string {
+	if rc.ArtifactDir != "" {
+		if b, err := os.ReadFile(filepath.Join(rc.ArtifactDir, "failed.log")); err == nil && len(bytes.TrimSpace(b)) > 0 {
+			return "failed"
+		}
+	}
+	if f := strings.Fields(strings.ToLower(answer)); len(f) > 0 && strings.Trim(f[0], ".,;:!?\"'`*") == "ok" {
+		return "ok"
+	}
+	return "failed"
+}
+
+// oracleKey reads the first non-empty line of the oracle answer: "goto:<state> [note]",
+// "stop" or "ask [reason]". Anything else is an ask with the line as the reason.
+func oracleKey(answer string) string {
+	line := ""
+	for _, l := range strings.Split(answer, "\n") {
+		if line = strings.TrimSpace(strings.Trim(strings.TrimSpace(l), "`*")); line != "" {
+			break
+		}
+	}
+	word, rest, _ := strings.Cut(line, " ")
+	rest = strings.TrimSpace(rest)
+	switch w := strings.ToLower(strings.TrimRight(word, ".,;:!?")); {
+	case w == "stop":
+		return "stop"
+	case w == "ask" && rest != "":
+		return "ask " + rest
+	case w == "ask":
 		return "ask"
+	case strings.HasPrefix(w, "goto:") && len(w) > len("goto:"):
+		return strings.TrimSpace(w + " " + rest)
 	}
-	switch w := strings.Trim(f[0], ".,;:!?\"'`*"); w {
-	case "retry", "code", "ask":
-		return w
-	}
-	return "ask"
+	return "ask the oracle answer is not goto:<state>, stop or ask: " + line
 }
 
 // fetchIssueContext returns the issue text. Text from authors without write

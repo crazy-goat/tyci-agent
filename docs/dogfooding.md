@@ -48,7 +48,7 @@ The file accepts only the keys shown here and `check_timeout_sec`.
 - `models` maps an alias to a `provider/model` name. Aliases are optional: `default_model` and a role's `model` may also be a direct `provider/model` name (for example, `nexos/GPT 5.6 Luna`).
 - `default_model` is used by a role that has no `model`.
 - `effort` on a role sets the reasoning effort (`low`, `medium`, `high`, `xhigh` or `max`). `default_effort` is used by a role that has no `effort`. A `?reasoning=` option in the model URI wins over both. If none is set, the provider default applies.
-- `roles` is optional. The roles are `worker`, `review` and `merge_decision`.
+- `roles` is optional. The roles are `worker`, `review`, `fixer` and `oracle`.
   A role may set `prompt`; `"@file.md"` reads a file next to the config file.
 
 Add the provider first, see "Quick Start" in the [README](../README.md).
@@ -103,7 +103,33 @@ worktree to the head of the pull request and the run goes to `lock`, `update` an
 It does not code the issue again. Red CI or a merge conflict goes to `code` as usual. A
 conflict only in `CHANGELOG.md` is resolved without an agent (both entries stay). If the
 worktree has its own commits that are not on the pull request, or a push finds that the
-branch diverged, the run pauses at `ask` and the pause message says what to decide.
+branch diverged, the step fails and the fixer handles it (see below).
+
+### Failed steps: fixer and oracle
+
+When a check script fails (key `fail`, an unknown key or an error), it prints a block to
+stderr, so the block is in `output.log` of the step:
+
+```
+RESULT: fail
+STEP: update
+WHAT: git push to origin/issue-527 was rejected (non-fast-forward) ...
+STATE: local issue-527 = 905f169; origin/main = 1f383ad; origin/issue-527 = 8f1ee26; worktree clean; PR #677
+LIKELY CAUSE: ...
+SUGGESTED: ... then return ok
+```
+
+The run goes to the `fixer` agent. The fixer reads the block and fixes small problems only
+(fetch, reset to the PR branch, merge the default branch, a missing push). It never
+force-pushes. It answers `ok`, and the failed step runs again. If it cannot fix the problem,
+it writes `failed.log` in its artifact dir and answers `failed`, and the run goes to the
+`oracle` agent. The oracle reads the run and answers `goto:<state> <note>` (the run
+continues at that state), `stop` (the run ends) or `ask <reason>` (the run pauses and the
+pause message shows the reason).
+
+The fixer runs at most 2 times for the same failed step, and the oracle once. After that
+the run pauses at `ask`. In a workflow file, the on target `$failed` means "the last check
+step"; the built-in workflow uses it for the fixer answer `ok`.
 
 The loop limits its retries with `max_visits`: `code` runs at most 3 times and `ci`
 at most 3 times. At the limit the run pauses at `ask`.
@@ -117,6 +143,7 @@ Run these once to see that the safety model works.
 | Issue without the label `accepted` | `check_done` goes to `end`. No worktree is created. |
 | Issue by an author without write access | The run is skipped. |
 | Red CI three times | The run pauses at `ask`. No merge happens. |
+| A check fails again after 2 fixer runs | The oracle decides once, then the run pauses at `ask`. |
 
 ## 8. Protected paths
 
@@ -191,7 +218,7 @@ Every check and agent step gets its own artifact dir, in execution order:
 - After the step, every file in the dir has its secrets masked and is cut to 64 KiB: the tail stays,
   after a truncation line. Files are mode 0600, dirs 0700.
 
-Every agent (worker, review, merge_decision, findings) must write `report.md` in its artifact dir
+Every agent (worker, review, fixer, oracle, findings) must write `report.md` in its artifact dir
 before it ends: what it did, the result, what is left.
 
 - The task text of every agent has a "Run so far" section: the steps since the last visit of

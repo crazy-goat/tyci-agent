@@ -22,7 +22,7 @@ func testCfg() *flowconfig.Config {
 		Models:       map[string]string{"m": "prov/model"},
 		DefaultModel: "m",
 		Roles: map[string]flowconfig.Role{
-			"worker": {Prompt: "W"}, "review": {Prompt: "R"}, "merge_decision": {Prompt: "M"},
+			"worker": {Prompt: "W"}, "review": {Prompt: "R"}, "fixer": {Prompt: "F"}, "oracle": {Prompt: "O"},
 		},
 	}
 }
@@ -179,13 +179,43 @@ func TestVerdict_DirtyCheckOnlyForReviewState(t *testing.T) {
 	}
 }
 
-func TestMergeDecision_ParsesFirstWord(t *testing.T) {
-	for in, want := range map[string]string{"Retry.": "retry", "code please": "code", "banana": "ask", "": "ask"} {
+// #369: the fixer key is ok only for an "ok" answer without failed.log.
+func TestFixer_Key(t *testing.T) {
+	for in, want := range map[string]string{"ok": "ok", "OK.": "ok", "failed": "failed", "banana": "failed", "": "failed"} {
 		s := &spawnRec{result: in}
-		key, _, _ := newRunner(s).Run(context.Background(), "merge_decision", "", RunContext{})
+		key, _, _ := newRunner(s).Run(context.Background(), "fixer", "fixer", RunContext{})
 		if key != want {
 			t.Errorf("%q -> %q, want %q", in, key, want)
 		}
+	}
+	art := t.TempDir()
+	if err := os.WriteFile(filepath.Join(art, "failed.log"), []byte("tried a fetch, origin is gone\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if k := fixerKey("ok", RunContext{ArtifactDir: art}); k != "failed" {
+		t.Errorf("ok with failed.log -> %q, want failed", k)
+	}
+}
+
+// #369: the oracle answer gives goto:<state> with a note, stop, or ask with a reason.
+func TestOracle_Key(t *testing.T) {
+	for in, want := range map[string]string{
+		"goto:ci the fixer pushed, wait for CI": "goto:ci the fixer pushed, wait for CI",
+		"`goto:code`\nmore text":                "goto:code",
+		"stop.":                                 "stop",
+		"ask origin is gone\nsecond line":       "ask origin is gone",
+		"ASK":                                   "ask",
+		"\n\nbanana split":                      "ask the oracle answer is not goto:<state>, stop or ask: banana split",
+		"goto:":                                 "ask the oracle answer is not goto:<state>, stop or ask: goto:",
+	} {
+		s := &spawnRec{result: in}
+		key, _, _ := newRunner(s).Run(context.Background(), "oracle", "recover", RunContext{})
+		if key != want {
+			t.Errorf("%q -> %q, want %q", in, key, want)
+		}
+	}
+	if key, _, _ := newRunner(&spawnRec{result: "{}"}).Run(context.Background(), "oracle", "roadmap", RunContext{}); key != "done" {
+		t.Errorf("roadmap oracle key = %q, want done", key)
 	}
 }
 

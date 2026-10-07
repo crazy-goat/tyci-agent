@@ -92,10 +92,11 @@ func TestPush_PushesExplicitRef(t *testing.T) {
 func TestPush_RefusesDefaultBranch(t *testing.T) {
 	e := newPushEnv(t)
 	mainBefore := e.remote(t, "refs/heads/main")
-	key, exit, _, _, _ := e.run(t, map[string]string{"TYCI_BRANCH": "main"})
+	key, exit, _, stderr, _ := e.run(t, map[string]string{"TYCI_BRANCH": "main"})
 	if key != "fail" || exit != 0 || e.remote(t, "refs/heads/main") != mainBefore {
 		t.Fatalf("key=%q exit=%d", key, exit)
 	}
+	wantBlock(t, stderr, "fail", "refuses to push branch 'main'")
 }
 
 func TestPush_RefusesEmptyBranch(t *testing.T) {
@@ -177,9 +178,10 @@ func TestPush_BodyClosesIssue(t *testing.T) {
 func TestPush_GhErrorExitsNonZero(t *testing.T) {
 	for _, f := range []string{"list", "create"} {
 		e := newPushEnv(t)
-		key, exit, stdout, _, _ := e.run(t, map[string]string{"GH_FAIL": f})
+		key, exit, stdout, stderr, _ := e.run(t, map[string]string{"GH_FAIL": f})
 		if exit == 0 || key != "" || stdout != "" {
 			t.Fatalf("%s: key=%q exit=%d stdout=%q", f, key, exit, stdout)
 		}
+		wantBlock(t, stderr, "error", "failed with exit code")
 	}
 }

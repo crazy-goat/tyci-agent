@@ -90,6 +90,9 @@ type Step struct {
 	Warnings   []string  `json:"warnings,omitempty"`
 	// Artifact is the step artifact dir name under <run dir>/artifacts.
 	Artifact string `json:"artifact,omitempty"`
+	// Note is the text after the key word of an agent answer, for example the
+	// reason of an oracle "ask <reason>" (#369). A pause shows it.
+	Note string `json:"note,omitempty"`
 	// Stats is the usage of an agent step. Its duration is EndedAt - StartedAt.
 	Stats *StepStats `json:"stats,omitempty"`
 }
@@ -172,6 +175,9 @@ type RunContext struct {
 	// RunSoFar lists the steps since the last visit of this state (all steps
 	// on the first visit) with their artifact files.
 	RunSoFar string
+	// Failed, FailedKey and FailedDir name the last check step, its key and its
+	// absolute artifact dir. Set only for the fixer and oracle roles (#369).
+	Failed, FailedKey, FailedDir string
 	// Stats is filled by the agent runner when the agent ends. Nil: not wanted.
 	Stats *StepStats
 }

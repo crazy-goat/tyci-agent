@@ -81,9 +81,7 @@ func TestOpenPR_OwnWorkIsKept(t *testing.T) {
 	if git(t, e.work, "rev-parse", "HEAD") != head {
 		t.Fatal("own commit was dropped")
 	}
-	if !strings.Contains(stderr, "A human decides") {
-		t.Errorf("stderr does not say what to do: %s", stderr)
-	}
+	wantBlock(t, stderr, "fail", "git reset --hard origin/issue-7")
 }
 
 func TestOpenPR_DirtyWorktreeFails(t *testing.T) {
@@ -99,16 +97,18 @@ func TestOpenPR_DirtyWorktreeFails(t *testing.T) {
 
 func TestOpenPR_GhFailureHasNoKey(t *testing.T) {
 	e, _ := newOpenPREnv(t)
-	key, exit, _ := e.runOpenPR(t, map[string]string{"GH_FAIL": "list"})
+	key, exit, stderr := e.runOpenPR(t, map[string]string{"GH_FAIL": "list"})
 	if key != "" || exit == 0 {
 		t.Fatalf("key=%q exit=%d", key, exit)
 	}
+	wantBlock(t, stderr, "error", "gh pr list")
 }
 
 func TestOpenPR_DefaultBranchRefused(t *testing.T) {
 	e, _ := newOpenPREnv(t)
-	key, exit, _ := e.runOpenPR(t, map[string]string{"TYCI_BRANCH": "main", "PR_NUM": "171"})
+	key, exit, stderr := e.runOpenPR(t, map[string]string{"TYCI_BRANCH": "main", "PR_NUM": "171"})
 	if key != "fail" || exit != 0 {
 		t.Fatalf("key=%q exit=%d", key, exit)
 	}
+	wantBlock(t, stderr, "fail", "default branch")
 }

@@ -10,6 +10,7 @@ import (
 type TaskData struct {
 	Repo, Branch, DefaultBranch, Worktree, RunDir, Reason string
 	Input                                                 string // roadmap oracle input JSON
+	Failed, FailedKey, FailedDir                          string // the failed check step (fixer, recover)
 	Issue, PR, Visit                                      int
 }
 
@@ -44,5 +45,6 @@ func (TaskTemplates) Render(name string, rc RunContext) (string, error) {
 		Repo: rc.Repo, Branch: rc.Branch, DefaultBranch: rc.DefaultBranch,
 		Worktree: rc.Worktree, RunDir: rc.RunDir, Reason: MaskSecrets(rc.Reason),
 		Issue: rc.Issue, PR: rc.PR, Visit: rc.Visit, Input: rc.Input,
+		Failed: rc.Failed, FailedKey: rc.FailedKey, FailedDir: rc.FailedDir,
 	})
 }

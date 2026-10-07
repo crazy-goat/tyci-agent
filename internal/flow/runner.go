@@ -15,6 +15,18 @@ import (
 // ErrPaused is returned when the run enters an ask state.
 var ErrPaused = errors.New("flow: run paused")
 
+// FailedTarget is the on target "the last check step": the fixer returns "ok"
+// and the step that failed runs again (#369).
+const FailedTarget = "$failed"
+
+// recoveryCaps limits the recovery roles per failed check step (#369): the
+// fixer runs at most twice for the same failed step, the oracle once. Over the
+// cap the state is skipped as if the agent had answered key.
+var recoveryCaps = map[string]struct {
+	max int
+	key string
+}{"fixer": {2, "failed"}, "oracle": {1, "ask"}}
+
 // Run walks the workflow until it reaches end (status done), ask
 // (status paused, ErrPaused), or a failure (status failed).
 //
@@ -24,6 +36,10 @@ var ErrPaused = errors.New("flow: run paused")
 // Transition rules: the check or agent key picks the next state from on;
 // "default" is the fallback; no entry and no default fails the run with
 // Reason unknown transition key "<k>" in state "<s>".
+// An agent answer is "<key> [note]": the note goes to Step.Note, and for a
+// "goto:<state>" key also to the next worker prompt. "goto:<state>" continues at
+// that state unless on maps the key itself. The target FailedTarget is the last
+// check step. The fixer and oracle roles are capped per failed step (recoveryCaps).
 // An agent error routes through the "error" key (then "default"); with
 // neither route the run fails. A check-runner error fails the run directly.
 // Context cancellation fails the run with Reason "cancelled".
@@ -100,6 +116,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 		if s.Ask != "" {
 			return r.pause(st, s.Ask, "")
 		}
+		newVisit := !again
 		if again {
 			again = false
 		} else {
@@ -177,6 +194,17 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			if r.Agents == nil {
 				return r.fail(ctx, st, fmt.Sprintf("no agent runner for state %q", cur), fmt.Errorf("no agent runner for state %q", cur))
 			}
+			failed := lastCheck(st)
+			if c, capped := recoveryCaps[s.Agent]; capped && newVisit {
+				capKey := cur + "@" + failed.State
+				if st.Visits[capKey] >= c.max {
+					if err := r.skipCapped(st, s, cur, c.key, fmt.Sprintf("%s already ran %d time(s) for the failed step %s", s.Agent, c.max, failed.State)); err != nil {
+						return err
+					}
+					continue
+				}
+				st.Visits[capKey]++
+			}
 			art, artDir, artErr := startArtifact(r.RunDir, len(st.History)+1, cur)
 			if artErr != nil {
 				return r.fail(ctx, st, artErr.Error(), artErr)
@@ -208,6 +236,12 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Visit:         st.Visits[cur],
 				ArtifactDir:   artDir,
 				RunSoFar:      runSoFar(st, cur, r.RunDir),
+			}
+			if _, capped := recoveryCaps[s.Agent]; capped {
+				rc.Failed, rc.FailedKey = failed.State, failed.Key
+				if failed.Artifact != "" && r.RunDir != "" {
+					rc.FailedDir = filepath.Join(r.RunDir, "artifacts", failed.Artifact)
+				}
 			}
 			key, session, runErr := r.Agents.Run(ctx, s.Agent, s.Task, rc)
 			ended := time.Now()
@@ -262,9 +296,14 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				}
 				continue
 			}
-			next, ok := route(s, key)
+			key, note, _ := strings.Cut(strings.TrimSpace(key), " ")
+			note = MaskSecrets(strings.TrimSpace(note))
+			next, ok := r.agentRoute(st, s, key)
 			if !ok {
 				return r.failUnknownKey(st, cur, key, art)
+			}
+			if strings.HasPrefix(key, "goto:") && note != "" {
+				st.Note = note
 			}
 			st.History = append(st.History, Step{
 				Seq:       len(st.History) + 1,
@@ -278,6 +317,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Stats:     agentStats(&stats),
 				Session:   session,
 				Artifact:  art,
+				Note:      note,
 			})
 			st.Current = next
 			st.UpdatedAt = time.Now()
@@ -292,6 +332,51 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				fmt.Errorf("state %q has no check, agent, ask or end", cur))
 		}
 	}
+}
+
+// agentRoute is route for an agent key, plus "goto:<state>" and FailedTarget.
+func (r *Runner) agentRoute(st *RunState, s State, key string) (string, bool) {
+	next, ok := route(s, key)
+	if target, isGoto := strings.CutPrefix(key, "goto:"); isGoto {
+		if _, mapped := s.On[key]; !mapped && checkGoto(r.WF, target) == nil {
+			next, ok = target, true
+		}
+	}
+	if ok && next == FailedTarget {
+		next = lastCheck(st).State
+		ok = next != ""
+	}
+	return next, ok
+}
+
+// lastCheck returns the last check step of the run (zero Step when none).
+func lastCheck(st *RunState) Step {
+	for i := len(st.History) - 1; i >= 0; i-- {
+		if st.History[i].Kind == "check" {
+			return st.History[i]
+		}
+	}
+	return Step{}
+}
+
+// skipCapped records a recovery state that is over its cap and moves on as if
+// the agent had answered key. note says why; a pause shows it.
+func (r *Runner) skipCapped(st *RunState, s State, cur, key, note string) error {
+	next, ok := r.agentRoute(st, s, key)
+	if !ok {
+		return r.failUnknownKey(st, cur, key, "")
+	}
+	now := time.Now()
+	st.History = append(st.History, Step{
+		Seq: len(st.History) + 1, State: cur, Kind: "agent", Key: key, To: next,
+		StartedAt: now, EndedAt: now, Role: s.Agent, Note: note,
+	})
+	st.Current = next
+	st.UpdatedAt = now
+	if r.Store != nil {
+		return r.Store.Save(st)
+	}
+	return nil
 }
 
 // pauseNoArtifact records the agent step and pauses the run in the "ask"
@@ -447,6 +532,12 @@ func (r *Runner) pause(st *RunState, message, reason string) error {
 	if n := len(st.History); n > 0 && st.History[n-1].Error != "" {
 		h := st.History[n-1]
 		message += fmt.Sprintf(" (%s failed: %s)", h.State, h.Error)
+	} else if n > 0 && st.History[n-1].Note != "" {
+		h := st.History[n-1]
+		message += fmt.Sprintf(" (%s: %s)", h.State, h.Note)
+		if reason == "" {
+			reason = h.Note
+		}
 	} else if n > 0 {
 		h := st.History[n-1]
 		message += fmt.Sprintf(" (last step: %s, key %s", h.State, h.Key)

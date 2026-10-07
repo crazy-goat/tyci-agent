@@ -11,6 +11,10 @@
 #          fail  no PR, an empty review report, or gh failed (the runner records it, the run goes on)
 # Always exits 0.
 set -euo pipefail
+# describe.sh prints the failure block (see there). A copy of this script without it still works.
+describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
 
 pr="${TYCI_PR:-}"
 review=""
@@ -30,7 +34,9 @@ if [ -z "$review" ]; then
     exit 0
 fi
 if [ -z "$pr" ] || [ ! -s "$review" ]; then
-    echo "post_review.sh: no PR number or an empty review report" >&2
+    describe fail "no PR number (TYCI_PR='$pr') or an empty review report ($review)" \
+        "the reviewer wrote an empty report.md, or the run lost its PR number" \
+        "nothing to do: the run records a warning and goes on to ci"
     echo fail
     exit 0
 fi
@@ -45,5 +51,8 @@ trap 'rm -f "$body"' EXIT
 if gh pr review "$pr" -R "${TYCI_REPO:-}" --comment --body-file "$body" >&2; then
     echo ok
 else
+    describe fail "gh pr review $pr --comment failed (see the gh output above); the review was not posted" \
+        "no network, gh is not logged in, or no permission to comment" \
+        "nothing to do: the run records a warning and goes on to ci"
     echo fail
 fi

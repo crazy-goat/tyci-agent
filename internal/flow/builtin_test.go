@@ -29,7 +29,7 @@ func TestBuiltin_ParsesAndValidates(t *testing.T) {
 	cfg := func(w, r string) *flowconfig.Config {
 		return &flowconfig.Config{
 			Models: map[string]string{"a": "x://" + w, "b": "x://" + r},
-			Roles:  map[string]flowconfig.Role{"worker": {Model: "a"}, "review": {Model: "b"}, "merge_decision": {Model: "a"}},
+			Roles:  map[string]flowconfig.Role{"worker": {Model: "a"}, "review": {Model: "b"}, "fixer": {Model: "a"}, "oracle": {Model: "b"}},
 		}
 	}
 	warn, err := Validate(wf, cfg("1", "2"), embeddedResolver(t))

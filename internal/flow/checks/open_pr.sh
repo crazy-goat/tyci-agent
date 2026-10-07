@@ -14,11 +14,17 @@
 # Errors:  a gh failure exits non-zero WITHOUT a key.
 # Idempotent: a second run finds the worktree already on the PR head.
 set -euo pipefail
+# describe.sh prints the failure block (see there). A copy of this script without it still works.
+describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
 
 branch="${TYCI_BRANCH:-}"
 default="${TYCI_DEFAULT_BRANCH:-}"
 if [ -z "$branch" ] || [ "$branch" = "$default" ]; then
-    echo "open_pr.sh: TYCI_BRANCH '$branch' is empty or the default branch; cannot look for its PR" >&2
+    describe fail "TYCI_BRANCH '$branch' is empty or the default branch, so open_pr.sh cannot look for the PR of the issue" \
+        "the run was started with a wrong branch (a setup problem, not a code problem)" \
+        "nothing to fix in the worktree; return failed so the oracle asks a human to restart the run on branch issue-<N>"
     echo fail
     exit 0
 fi
@@ -31,8 +37,10 @@ if [ -z "$pr" ]; then
 fi
 
 if ! git fetch origin "refs/heads/$branch" >&2; then
-    echo "open_pr.sh: PR #$pr is open, but 'git fetch origin $branch' failed." \
-        "Check that the branch exists on origin, then answer 'goto open_pr'." >&2
+    describe fail "PR #$pr is open from $branch, but 'git fetch origin $branch' failed (see the git output above)" \
+        "a network or auth problem, or the branch was deleted on origin while the PR stays open" \
+        "run 'git ls-remote origin refs/heads/$branch'; if the branch exists, fetch it again and return ok; if it is gone, return failed (a human must close the PR or push the branch)" \
+        "open PR #$pr"
     echo fail
     exit 0
 fi
@@ -42,10 +50,10 @@ pr_head=$(git rev-parse FETCH_HEAD)
 if [ -n "$(git status --porcelain)" ] ||
     ! { git merge-base --is-ancestor "$head" "$pr_head" ||
         git merge-base --is-ancestor "$head" "origin/$default"; }; then
-    echo "open_pr.sh: PR #$pr is open from $branch, but the worktree has changes or commits" \
-        "that are on neither origin/$branch nor origin/$default. Nothing was changed." \
-        "A human decides: keep the local work (merge origin/$branch into it by hand) or drop it" \
-        "(git reset --hard origin/$branch), then answer 'goto open_pr'." >&2
+    describe fail "PR #$pr is open from $branch, but the worktree has changes or commits that are on neither origin/$branch nor origin/$default; nothing was changed" \
+        "an earlier run or a person left work in this worktree that was never pushed" \
+        "look at 'git status' and 'git log origin/$branch..HEAD'; if the local work is a leftover, run 'git reset --hard origin/$branch' and return ok; if it has real work, return failed (a human decides)" \
+        "open PR #$pr; PR head = $(git rev-parse --short "$pr_head")"
     echo fail
     exit 0
 fi

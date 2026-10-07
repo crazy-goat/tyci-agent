@@ -13,6 +13,10 @@
 # On red, the failed job log of the ci-ok workflow run (gh run view --log-failed) goes to
 # $TYCI_ARTIFACT_DIR/ci-failed.log. A failure there never changes the key.
 set -euo pipefail
+# describe.sh prints the failure block (see there). A copy of this script without it still works.
+describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
 
 # save_failed_log <checks json>: best effort, never fails.
 save_failed_log() {
@@ -32,7 +36,9 @@ save_failed_log() {
 
 pr="${TYCI_PR:-}"
 if [ -z "$pr" ]; then
-    echo "ci_wait.sh: TYCI_PR is not set" >&2
+    describe fail "TYCI_PR is not set: the run has no PR number, so there is no CI to wait for" \
+        "push.sh did not write \$TYCI_RUN_DIR/pr, or the run state lost the PR" \
+        "run 'gh pr list --head ${TYCI_BRANCH:-<branch>} --state open'; if a PR exists, return failed with its number (the oracle sends the run back to update); if none exists, return failed"
     echo fail
     exit 0
 fi
@@ -47,7 +53,9 @@ while :; do
     view=$(gh pr view "$pr" -R "${TYCI_REPO:-}" --json mergeable,mergeStateStatus --jq '.mergeable + " " + .mergeStateStatus' 2>/dev/null || true)
     case "$view" in
     CONFLICTING* | *DIRTY)
-        echo "ci_wait.sh: PR $pr is dirty: it conflicts with the default branch" >&2
+        describe conflict "PR #$pr conflicts with the default branch (GitHub state: $view); CI does not run for it" \
+            "the default branch changed the same lines as this PR" \
+            "the run goes to rebase: it merges origin/${TYCI_DEFAULT_BRANCH:-<default>} and a coder resolves the conflicts"
         echo conflict
         exit 0
         ;;
@@ -64,25 +72,35 @@ while :; do
             ;;
         fail | cancel)
             save_failed_log "$out"
+            describe red "the required check ci-ok of PR #$pr is $bucket" \
+                "a test, lint or build job failed (or the run was cancelled)" \
+                "read ${TYCI_ARTIFACT_DIR:-the artifact dir}/ci-failed.log (the failed job log), fix the code, run the checks from AGENTS.md and commit"
             echo red
             exit 0
             ;;
         esac
         echo "ci_wait.sh: ci-ok is $bucket" >&2
         if [ "$bucket" = missing ] && [ "${view##* }" = BEHIND ]; then
-            echo "ci_wait.sh: no ci-ok check and PR $pr is behind the default branch" >&2
+            describe behind "PR #$pr has no ci-ok check and is behind the default branch" \
+                "the ruleset needs an up-to-date branch before CI counts" \
+                "the run goes to rebase: it merges origin/${TYCI_DEFAULT_BRANCH:-<default>} and pushes, then CI runs again"
             echo behind
             exit 0
         fi
         if [ "$bucket" = missing ] && [ $((SECONDS - start)) -ge "$appear" ]; then
-            echo "ci_wait.sh: no checks: ci-ok did not appear" >&2
+            describe fail "the check ci-ok of PR #$pr did not appear within ${appear}s" \
+                "the workflow did not start: the head commit was not pushed, a workflow needs approval, or GitHub Actions is slow or down" \
+                "run 'gh pr checks $pr' and 'gh run list --branch ${TYCI_BRANCH:-<branch>}'; if a run is queued or was just started again ('gh run rerun'), return ok so the step waits again; else return failed"
             echo fail
             exit 0
         fi
     else
         errors=$((errors + 1))
-        echo "ci_wait.sh: gh failure $errors" >&2
+        echo "ci_wait.sh: gh failure $errors: $(tail -n 1 "$errf")" >&2
         if [ "$errors" -ge 3 ]; then
+            describe fail "'gh pr checks $pr' failed 3 times in a row (last error: $(tail -n 1 "$errf"))" \
+                "no network, gh is not logged in, a rate limit, or a GitHub outage" \
+                "run 'gh auth status' and 'gh pr checks $pr'; when gh works again, return ok so the step waits again"
             echo fail
             exit 0
         fi

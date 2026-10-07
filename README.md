@@ -76,6 +76,12 @@ The orchestrator counts the resumed runs as workers before it starts new runs.
 A run resumed 3 times, or one whose worktree is gone, pauses for an answer. Paused runs
 stay paused and their notice is shown again.
 
+A failed check script prints a `RESULT`/`STEP`/`WHAT`/`STATE`/`LIKELY CAUSE`/`SUGGESTED`
+block to its `output.log`. The run then goes to the `fixer` role, which fixes small problems
+and answers `ok` (the step runs again) or `failed`. On `failed` the `oracle` answers
+`goto:<state>`, `stop` or `ask <reason>`. After 2 fixer runs and 1 oracle run for the same
+step, the run pauses.
+
 See [docs/dogfooding.md](docs/dogfooding.md) for the full runbook.
 
 Orchestrator keys (section `orchestrator`; the project file wins key by key):

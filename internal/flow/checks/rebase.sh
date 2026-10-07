@@ -10,9 +10,15 @@
 #                    names the files and tells the coder how to resolve them
 #          fail      fetch, merge or push failed
 set -euo pipefail
+# describe.sh prints the failure block (see there). A copy of this script without it still works.
+describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
 
 if ! git fetch origin "$TYCI_DEFAULT_BRANCH" >&2; then
-    echo "rebase.sh: git fetch origin $TYCI_DEFAULT_BRANCH failed (see the git output above)" >&2
+    describe fail "git fetch origin $TYCI_DEFAULT_BRANCH failed (see the git output above)" \
+        "no network, git is not authenticated, or a temporary GitHub problem" \
+        "run 'git fetch origin $TYCI_DEFAULT_BRANCH'; when it works, return ok so the step runs again"
     echo fail
     exit 0
 fi
@@ -36,14 +42,15 @@ if ! git merge --no-edit "origin/$TYCI_DEFAULT_BRANCH" >&2 && ! resolve_changelo
     if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
         files=$(git diff --name-only --diff-filter=U | paste -sd ' ' -)
         git merge --abort
-        echo "rebase.sh: merging origin/$TYCI_DEFAULT_BRANCH into $TYCI_BRANCH conflicts in: $files." \
-            "The merge was aborted and the worktree is clean. To fix it: run" \
-            "'git merge origin/$TYCI_DEFAULT_BRANCH', resolve the conflicts in these files" \
-            "(keep the changes of both sides), run the checks and commit the merge. Do not push." >&2
+        describe conflict "merging origin/$TYCI_DEFAULT_BRANCH into $TYCI_BRANCH conflicts in: $files. The merge was aborted and the worktree is clean" \
+            "$TYCI_DEFAULT_BRANCH changed the same lines as this branch" \
+            "run 'git merge origin/$TYCI_DEFAULT_BRANCH', resolve the conflicts in these files (keep the changes of both sides), run the checks and commit the merge. Do not push"
         echo conflict
     else
         git merge --abort 2>/dev/null || true
-        echo "rebase.sh: git merge origin/$TYCI_DEFAULT_BRANCH failed without a conflict (see the git output above)" >&2
+        describe fail "git merge origin/$TYCI_DEFAULT_BRANCH into $TYCI_BRANCH failed without a conflict (see the git output above); the merge was aborted" \
+            "uncommitted changes or untracked files in the worktree that the merge would overwrite, or a broken git state" \
+            "run 'git status'; commit or remove the files that block the merge (never drop committed work), then return ok so the step runs again"
         echo fail
     fi
     exit 0
@@ -51,9 +58,12 @@ fi
 
 push="$(dirname "${BASH_SOURCE[0]}")/push.sh"
 if [ ! -f "$push" ]; then
-    echo "rebase.sh: push.sh not found next to me" >&2
+    describe fail "push.sh was not found next to rebase.sh in $(dirname "${BASH_SOURCE[0]}")" \
+        "a custom check directory that has rebase.sh but not push.sh" \
+        "nothing to fix in the worktree; return failed so a human installs push.sh next to rebase.sh"
     echo fail
     exit 0
 fi
 last="$(bash "$push" | awk 'NF{l=$0} END{print l}')" || last=fail
+# A failed push.sh already printed its describe block (stderr passes through).
 if [ "$last" = ok ]; then echo ok; else echo fail; fi

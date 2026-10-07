@@ -49,6 +49,7 @@ func (s *Store) Save(st *RunState) error {
 	for i, h := range st.History {
 		h.StderrTail = MaskSecrets(h.StderrTail)
 		h.Error = MaskSecrets(h.Error)
+		h.Note = MaskSecrets(h.Note)
 		if h.Warnings != nil {
 			w := make([]string, len(h.Warnings))
 			for j, x := range h.Warnings {

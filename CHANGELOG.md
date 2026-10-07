@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Flow: every check script prints a block on a failure (`RESULT`, `STEP`, `WHAT`, `STATE`, `LIKELY CAUSE`, `SUGGESTED`) to its `output.log`, also when a command stops the script without a key. Failed checks go to the new `fixer` role: it fixes small problems and answers `ok` (the failed step runs again, on target `$failed`) or writes `failed.log` and answers `failed`. Then the `oracle` (new task `recover`) answers `goto:<state> <note>`, `stop` or `ask <reason>`; the reason is in the pause message. The fixer runs at most 2 times and the oracle once per failed step, then the run pauses (#369).
 - Flow: roles get `effort` and the flow config gets `default_effort` (`low`, `medium`, `high`, `xhigh`, `max`); the effort goes to the model request, and a `?reasoning=` option in the model URI wins. Step `stats` in `state.json` and `workflow_status` show the `effort` (#186).
 - Flow: every agent visit of a run writes a redacted transcript `~/.tyci/runs/<repo>/<run>/agents/NNN-<role>.jsonl` (`NNN` is `agent_seq`) plus a `.md` dump; these agents write no file to `~/.tyci/sessions/<project>/agents/`. Finished runs older than `logs.retention_days` (default 30, `0` keeps all) are deleted at start and every 24 h (#183).
 - Models: `?reasoning=<effort>` now also sets `reasoning_effort` (Chat Completions) and the Gemini `thinkingConfig` budget; the catalog keeps `reasoning`, `reasoning_options` and `tool_call` (#120).
@@ -25,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
 
 ### Changed
+- Flow: the `merge_decision` role and state are removed; a failed merge goes to the fixer. A run paused in `merge_decision` cannot resume; start the issue again (#369).
 - Subagents that run as jobs write their own session file to `~/.tyci/sessions/<project>/agents/<time>_<id>_<job-id>.jsonl` plus a `.md` dump. `tyci session list` does not show them, and nothing deletes them yet (#121).
 - Context notice now starts at 80% of the window (was 50%) and auto-compaction at 95% (was 85%) when no limit is set (#304).
 
