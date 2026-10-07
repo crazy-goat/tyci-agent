@@ -9,6 +9,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
 	"github.com/crazy-goat/tyci-agent/internal/orchestrator"
+	"github.com/crazy-goat/tyci-agent/providers"
 )
 
 // startOrchestrator starts one orchestrator whose notices and plan go to post.
@@ -49,11 +50,7 @@ func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string)) 
 		post("orchestrator config: " + err.Error())
 		return nil
 	}
-	projectCfg := ""
-	if info.Trusted {
-		projectCfg = filepath.Join(info.Root, ".tyci", "config.json")
-	}
-	oc, err := orchestrator.LoadConfig(filepath.Join(info.Home, ".tyci", "config.json"), projectCfg)
+	oc, err := loadOrchestratorConfig(info)
 	if err != nil {
 		post("orchestrator config: " + err.Error())
 		return nil
@@ -64,4 +61,25 @@ func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string)) 
 		return nil
 	}
 	return startOrchestrator(ctx, false, oc, f, orchestrator.NewRunner(workflowManager), post)
+}
+
+func loadOrchestratorConfig(info flow.RepoInfo) (orchestrator.Config, error) {
+	projectCfg := ""
+	if info.Trusted {
+		projectCfg = filepath.Join(info.Root, ".tyci", "config.json")
+	}
+	return orchestrator.LoadConfig(filepath.Join(info.Home, ".tyci", "config.json"), projectCfg)
+}
+
+// orchestratorSystemPrompt is the TUI chat prompt. The worker limit comes from
+// the orchestrator config; outside a repository or on a config error it is the
+// default, 3 (startTUIOrchestrator reports the error to the user).
+func orchestratorSystemPrompt() string {
+	workers := 3
+	if info, err := flow.DetectRepo(); err == nil {
+		if oc, err := loadOrchestratorConfig(info); err == nil {
+			workers = oc.Workers
+		}
+	}
+	return providers.BuildOrchestratorSystemPrompt(workers)
 }

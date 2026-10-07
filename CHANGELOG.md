@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Config section `orchestrator` in `~/.tyci/config.json` and `.tyci/config.json`: `workers` (default 3, 0 = unlimited), `plan_timeout_sec` (default 0), `accepted_label` (default `accepted`); the project file wins key by key; invalid values stop the orchestrator start with a message naming key and file (#179)
 - TUI start-up greeting with counts, plan and worker slots; starts the orchestrator on a new session; config keys `forge.kind` and `forge.repo` (#180)
+- TUI chat uses its own orchestrator system prompt: only workflows, never ad-hoc process work (#181)
 
 ### Fixed
 - `~/.tyci/config.json` with agent keys (`favorite_models`, `max_tokens`, `prompt_cache`, `sidebar_visible`, `auto_compact_percent`) now loads instead of failing with an unknown field error (#275)

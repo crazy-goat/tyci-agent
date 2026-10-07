@@ -684,6 +684,8 @@ var tuiCmd = &cobra.Command{
 		// No requireConfigured: the Tab-cycle and the picker only offer
 		// providers that are already in auth.json (see authSet above), and
 		// silently refusing a favorite would read as a dead key press.
+		// The TUI chat is the orchestrator of the session: its own short prompt.
+		cfg.System = orchestratorSystemPrompt()
 		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath, catalogResolver{})
 		// Chat tools workflow_start/status/resume exist only in tui and console:
 		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
