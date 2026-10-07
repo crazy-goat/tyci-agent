@@ -16,13 +16,15 @@ type Runner interface {
 	Start(ctx context.Context, workflow string, inputs map[string]string) (RunHandle, error)
 }
 
-// Adopter is an optional part of a Runner. It returns the runs resumed after a
-// restart, so the orchestrator counts them as workers before it starts new runs.
+// Adopter is an optional part of a Runner. It returns the runs that exist
+// before the orchestrator starts (resumed or paused after a restart), so the
+// orchestrator watches them and counts them as workers before it starts new runs.
 type Adopter interface {
-	// Adoptable returns the issues of the resumed runs not adopted yet.
+	// Adoptable returns the issues of the existing runs not adopted yet.
 	Adoptable() []int
-	// Adopt returns the resumed run of the issue, once. It never starts a run;
-	// ok is false when there is no such run.
+	// Adopt returns the existing run of the issue, once. It never starts a run;
+	// ok is false when there is no such run. The handle of a paused run
+	// signals Asks at once.
 	Adopt(ctx context.Context, issue int) (h RunHandle, ok bool)
 }
 
@@ -88,12 +90,12 @@ func (r *flowRunner) Start(ctx context.Context, workflow string, inputs map[stri
 // flowAdopter is the part of flow.Manager that returns resumed runs.
 type flowAdopter interface {
 	Adoptable() []int
-	Adopt(issue int) (string, bool)
+	Adopt(issue int) (id string, paused, ok bool)
 }
 
 var _ flowAdopter = (*flow.Manager)(nil)
 
-// Adoptable returns the issues of the runs resumed with the answer "resume".
+// Adoptable returns the issues of the runs resumed with the answer "resume" and of the paused runs.
 func (r *flowRunner) Adoptable() []int {
 	if a, ok := r.m.(flowAdopter); ok {
 		return a.Adoptable()
@@ -101,8 +103,9 @@ func (r *flowRunner) Adoptable() []int {
 	return nil
 }
 
-// Adopt watches the resumed run of the issue. It subscribes before it adopts,
-// so no event of the run after the adopt is lost.
+// Adopt watches the resumed or paused run of the issue. It subscribes before it
+// adopts, so no event of the run after the adopt is lost. A paused run signals
+// Asks before any event, so a later "running" event clears it.
 func (r *flowRunner) Adopt(ctx context.Context, issue int) (RunHandle, bool) {
 	a, ok := r.m.(flowAdopter)
 	if !ok {
@@ -110,12 +113,15 @@ func (r *flowRunner) Adopt(ctx context.Context, issue int) (RunHandle, bool) {
 	}
 	h := newFlowHandle()
 	unsub := r.m.Subscribe(h.add)
-	id, ok := a.Adopt(issue)
+	id, paused, ok := a.Adopt(issue)
 	if !ok {
 		unsub()
 		return nil, false
 	}
 	h.id = id
+	if paused {
+		signal(h.asks)
+	}
 	go func() {
 		defer unsub()
 		h.watch(ctx)

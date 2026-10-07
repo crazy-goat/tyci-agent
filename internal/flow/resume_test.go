@@ -411,15 +411,79 @@ func TestManager_AdoptReturnsResumedRunOnce(t *testing.T) {
 	if got := e.m.Adoptable(); len(got) != 1 || got[0] != 5 {
 		t.Fatalf("adoptable = %v", got)
 	}
-	if id, ok := e.m.Adopt(5); !ok || id != st.Run {
-		t.Fatalf("adopt = %q, %v", id, ok)
+	if id, paused, ok := e.m.Adopt(5); !ok || paused || id != st.Run {
+		t.Fatalf("adopt = %q, %v, %v", id, paused, ok)
 	}
 	if got := e.m.Adoptable(); len(got) != 0 {
 		t.Fatalf("adoptable after adopt = %v", got)
 	}
-	if _, ok := e.m.Adopt(5); ok {
+	if _, _, ok := e.m.Adopt(5); ok {
 		t.Fatal("second adopt returned the run")
 	}
 	close(c.release)
 	e.notice(t)
+}
+
+// The orchestrator adopts a run paused at start-up before the answer, so a
+// later answer ("resume" or "stop") never lets it start a second run.
+func TestManager_AdoptReturnsPausedRunOnce(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	st := saveRun(t, e.home, 5, nil)
+	saveRun(t, e.home, 6, func(st *RunState) { st.Status = "done" })
+	e.m.AskUnfinished()
+	e.notice(t)
+	if got := e.m.Adoptable(); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("adoptable = %v", got)
+	}
+	if id, paused, ok := e.m.Adopt(5); !ok || !paused || id != st.Run {
+		t.Fatalf("adopt = %q, %v, %v", id, paused, ok)
+	}
+	if got := e.m.Adoptable(); len(got) != 0 {
+		t.Fatalf("adoptable after adopt = %v", got)
+	}
+	if _, _, ok := e.m.Adopt(5); ok {
+		t.Fatal("second adopt returned the run")
+	}
+	if err := e.m.Resume(st.Run, "resume"); err != nil {
+		t.Fatal(err)
+	}
+	// The adopted run is not offered again after the answer.
+	if got := e.m.Adoptable(); len(got) != 0 {
+		t.Fatalf("adoptable after resume = %v", got)
+	}
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("start: err = %v", err)
+	}
+	close(c.release)
+	e.notice(t)
+}
+
+// A workflow without an ask state cannot pause a run at start-up: the run
+// fails, and the user gets a notice for it.
+func TestAskUnfinished_NoAskStateNotifiesFail(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	wf := e.m.Workflow
+	e.m.Workflow = func(info RepoInfo, name string) (*Workflow, error) {
+		w, err := wf(info, name)
+		if err != nil {
+			return nil, err
+		}
+		cp := *w
+		cp.States = map[string]State{}
+		for k, v := range w.States {
+			if k != "ask" {
+				cp.States[k] = v
+			}
+		}
+		return &cp, nil
+	}
+	st := saveRun(t, e.home, 1, nil)
+	e.m.AskUnfinished()
+	if got := e.notice(t); !strings.Contains(got, st.Run) || !strings.Contains(got, "failed: tyci restarted") {
+		t.Fatalf("notice = %q", got)
+	}
+	if got := loadRunState(t, e.home, st.Run); got.Status != "failed" {
+		t.Fatalf("run = %+v", got)
+	}
 }

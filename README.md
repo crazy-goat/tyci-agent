@@ -73,8 +73,10 @@ It pauses every `running` run of the current repository whose owner process is g
 `ask`, reason `resume:<state>`). Then the chat shows one question that lists all paused runs
 (run id, issue, last step and key, PR) with their answers. Answer `resume` (continue at the
 saved state in the same worktree), `stop`, or nothing: a run without an answer stays paused.
-A paused run blocks a new run for its issue, so the orchestrator does not start one. With no
-unfinished runs, start-up does not ask. A `workflow_start` of an issue whose `running` run has
+A paused run blocks a new run for its issue. The orchestrator watches the paused runs (they
+count as workers) and sees how each one ends after the answer, so it never starts a second run
+for the issue. A run that cannot pause (its workflow has no `ask` state) fails, and the chat
+shows a notice for it. With no unfinished runs, start-up does not ask. A `workflow_start` of an issue whose `running` run has
 a dead owner (another tyci process stopped) still resumes it; such a run resumed 3 times, or
 one whose worktree is gone, pauses for an answer.
 

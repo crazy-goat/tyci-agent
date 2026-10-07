@@ -297,9 +297,12 @@ func (o *Orchestrator) depState(issue int) ItemStatus {
 	return StatusDone
 }
 
-// adoptResumed takes a slot for every run resumed after a restart, before the
-// first fill, so resumed runs count toward the worker limit. A resumed run
-// takes its slot even when its issue is not in the plan or cannot start yet.
+// adoptResumed takes a slot for every run that exists before the first fill:
+// runs resumed after a restart and paused runs that wait for the user's answer
+// (the start-up question). They count toward the worker limit, and the
+// orchestrator sees how they end, so an answer never leads to a second run of
+// the issue. Such a run takes its slot even when its issue is not in the plan
+// or cannot start yet. A paused run signals an ask at once (status ask).
 func (o *Orchestrator) adoptResumed(ctx context.Context, finished chan<- finishedRun) {
 	a, ok := o.r.(Adopter)
 	if !ok {

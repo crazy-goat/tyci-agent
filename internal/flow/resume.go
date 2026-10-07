@@ -121,7 +121,8 @@ func (m *Manager) resumeRun(info RepoInfo, st *RunState) (bool, error) {
 // pauseStale pauses a run that cannot be resumed in the "ask" state of its
 // workflow; without an ask state the run fails. Reason names the saved state,
 // so the user can answer "goto <state>".
-// With notify false it sends no notice.
+// With notify false it sends no notice for a paused run; a failed run always
+// gets its notice.
 func (m *Manager) pauseStale(dir string, wf *Workflow, st *RunState, msg string, notify bool) {
 	r := &Runner{WF: wf, Store: &Store{Dir: dir}}
 	if s, ok := wf.States["ask"]; ok && s.Ask != "" {
@@ -130,6 +131,8 @@ func (m *Manager) pauseStale(dir string, wf *Workflow, st *RunState, msg string,
 		_ = r.pause(st, msg, reason)
 	} else {
 		_ = r.fail(context.Background(), st, msg, nil)
+		// A failed run is not in the start-up question: always tell the user.
+		notify = true
 	}
 	if notify {
 		m.notify(st, wf)
@@ -215,8 +218,11 @@ func resumeState(st *RunState) string {
 
 // markAdoptable lets the next Start of the run's issue return the run, so the
 // orchestrator watches it and counts it as a worker. Resume calls it for a
-// "resume" answer. m.mu must be held.
+// "resume" answer, unless an Adopt returned the run already. m.mu must be held.
 func (m *Manager) markAdoptable(run string) {
+	if m.adopted[run] {
+		return
+	}
 	if a, ok := m.active[run]; ok {
 		a.adoptable = true
 		m.active[run] = a
@@ -230,14 +236,37 @@ func (m *Manager) adopt(issue int) (string, bool) {
 		if a.issue == issue && a.adoptable {
 			a.adoptable = false
 			m.active[id] = a
+			if m.adopted == nil {
+				m.adopted = map[string]bool{}
+			}
+			m.adopted[id] = true
 			return id, true
 		}
 	}
 	return "", false
 }
 
-// Adoptable returns the issues of the runs resumed with the answer "resume" that no Start
-// or Adopt returned yet, in issue order.
+// pausedRuns returns the paused runs of the current repo that have no
+// goroutine and that no Adopt returned yet. m.mu must be held.
+func (m *Manager) pausedRuns() []*RunState {
+	info, err := m.Info()
+	if err != nil {
+		return nil
+	}
+	paused, _ := ScanAsk(RunsDir(info.Home), info.Repo)
+	var out []*RunState
+	for _, st := range paused {
+		if _, ok := m.active[st.Run]; !ok && !m.adopted[st.Run] {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// Adoptable returns the issues of the runs that the orchestrator must watch
+// before it starts new runs: runs resumed with the answer "resume" and paused
+// runs (for example the runs that AskUnfinished paused). No Start or Adopt
+// returned them yet. The issues are sorted.
 func (m *Manager) Adoptable() []int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -247,17 +276,34 @@ func (m *Manager) Adoptable() []int {
 			out = append(out, a.issue)
 		}
 	}
+	for _, st := range m.pausedRuns() {
+		out = append(out, st.Issue)
+	}
 	sort.Ints(out)
 	return out
 }
 
-// Adopt returns the run of the issue resumed with the answer "resume", once. Unlike Start
-// it never starts a new run: ok is false when there is no such run (for
-// example, it ended already).
-func (m *Manager) Adopt(issue int) (string, bool) {
+// Adopt returns the run of the issue resumed with the answer "resume", or else
+// its paused run, once. paused is true for a paused run: it waits for the
+// user's answer. Unlike Start it never starts a run: ok is false when there is
+// no such run (for example, it ended already). An answer to an adopted paused
+// run continues it as usual, and the caller sees its events.
+func (m *Manager) Adopt(issue int) (id string, paused, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.adopt(issue)
+	if id, ok := m.adopt(issue); ok {
+		return id, false, true
+	}
+	for _, st := range m.pausedRuns() {
+		if st.Issue == issue {
+			if m.adopted == nil {
+				m.adopted = map[string]bool{}
+			}
+			m.adopted[st.Run] = true
+			return st.Run, true, true
+		}
+	}
+	return "", false, false
 }
 
 // resumeStale resumes a run of the issue whose owner process is gone. found is

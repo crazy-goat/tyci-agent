@@ -392,3 +392,35 @@ func TestResumedRunsCountTowardWorkers(t *testing.T) {
 		t.Fatalf("max in flight %d", peak)
 	}
 }
+
+func TestPausedRunsAreAdoptedNotRestarted(t *testing.T) {
+	// Runs of #1 and #2 were paused at start-up and wait for the user's answer.
+	e := newEnv(t, Config{Workers: 3}, five()...)
+	e.r.paused = []int{1, 2}
+	p := e.start()
+	if len(p.Started) != 1 || p.Started[0] != 3 || p.Free != 0 {
+		t.Fatalf("%+v", p)
+	}
+	e.waitNote("#1 waits for your answer")
+	for _, n := range []int{1, 2} {
+		for e.status(n) != StatusAsk {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	// The user answers "stop" for #1: the run ends; the issue is done, not started again.
+	e.r.handle(1).finish("ended")
+	if n := e.waitStart(); n != 4 {
+		t.Fatalf("got %d", n)
+	}
+	if e.status(1) != StatusDone {
+		t.Fatalf("%+v", e.o.Roadmap().Items)
+	}
+	// The user answers "resume" for #2 and the run fails: no second run.
+	e.r.handle(2).finish("failed")
+	if n := e.waitStart(); n != 5 {
+		t.Fatalf("got %d", n)
+	}
+	if e.status(2) != StatusFailed || e.r.starts(1) != 0 || e.r.starts(2) != 0 {
+		t.Fatalf("starts(1)=%d starts(2)=%d %+v", e.r.starts(1), e.r.starts(2), e.o.Roadmap().Items)
+	}
+}

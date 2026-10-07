@@ -64,6 +64,8 @@ type Manager struct {
 	active map[string]activeRun
 	subs   map[int]func(RunEvent)
 	nsub   int
+	// adopted: runs that Adopt or Start returned to the orchestrator.
+	adopted map[string]bool
 }
 
 // activeRun is a run with a goroutine in this process.
