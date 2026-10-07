@@ -101,7 +101,7 @@ func FormatSpecial(kind Special, detail string) string {
 	case NoMilestone:
 		return "No open vX.Y.Z milestone. Create one or work on an issue by hand."
 	case ReleaseNeeded:
-		return fmt.Sprintf("Milestone %s has no open issues left. Release needed (ask me, I do not release yet).", sanitize(detail, maxTitle))
+		return fmt.Sprintf("Milestone %s has no open issues left. Release needed: release outside tyci, see docs/release-workflow.md.", sanitize(detail, maxTitle))
 	case MilestoneEmpty:
 		return fmt.Sprintf("Milestone %s has no issues. Add issues or work on an issue by hand.", sanitize(detail, maxTitle))
 	case NoAccepted:

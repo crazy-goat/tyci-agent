@@ -63,6 +63,7 @@ make install
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
 - Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
 - Run state: `~/.tyci/runs/<repo>/<run>/state.json`
+- Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`)
 - Overrides: `.tyci/workflows/` and `.tyci/checks/`
 
 A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
@@ -399,6 +400,8 @@ tyci cron run_now <name>       # Alias for `run`
 tyci cron tick                 # Run every job that is currently due, then exit
 ```
 
+Schedules are `every 30m`, `at 07:30` and the one-shot `in 5m`; a one-shot job is removed after it runs. The tool stores a one-shot job in `cron.json` as `once <RFC3339>`; write that form if you edit the file by hand, because `in 5m` there would move on every load.
+
 Normally, jobs only fire while some tyci session (console or TUI) is open — that
 session runs a scheduler that ticks every minute in the background. `tyci cron tick`
 is the standalone alternative: a single check-and-dispatch that needs no session at
@@ -684,6 +687,7 @@ file and `range: "append"` need no prior read.
 ## Session Management
 
 Sessions are automatically saved to `~/.tyci/sessions/` as JSONL files.
+Subagents that run as jobs write their own files to `~/.tyci/sessions/<project>/agents/`. The file name ends with the job id. `tyci session list` does not show these files, and nothing deletes them yet.
 Each line is a complete event (message, tool call, result, usage).
 
 - Re-run with `--session <path>` to resume a previous session

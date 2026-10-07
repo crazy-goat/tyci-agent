@@ -14,6 +14,7 @@ import (
 // The last file repeats when calls run past it.
 const seqGh = `
 if [ "$1 $2" = "pr view" ]; then echo "${GH_VIEW:-MERGEABLE CLEAN}"; exit 0; fi
+if [ "$1 $2" = "run view" ]; then echo "$*" > "$GH_SEQ_DIR/run_args"; echo "job log"; exit "${GH_RUN_EXIT:-0}"; fi
 n=$(cat "$GH_SEQ_DIR/n" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$GH_SEQ_DIR/n"
 while [ "$n" -gt 1 ] && [ ! -e "$GH_SEQ_DIR/$n.json" ] && [ ! -e "$GH_SEQ_DIR/$n.err" ]; do n=$((n-1)); done
 [ -e "$GH_SEQ_DIR/$n.err" ] && { cat "$GH_SEQ_DIR/$n.err" >&2; exit 8; }
@@ -21,7 +22,7 @@ cat "$GH_SEQ_DIR/$n.json"
 `
 
 func ciJSON(bucket string) string {
-	return `[{"name":"lint","state":"FAILURE","bucket":"fail"},{"name":"ci-ok","state":"X","bucket":"` + bucket + `"}]`
+	return `[{"name":"lint","state":"FAILURE","bucket":"fail"},{"name":"ci-ok","state":"X","bucket":"` + bucket + `","link":"https://github.com/o/r/actions/runs/777/job/9"}]`
 }
 
 // runCI writes the sequence ("err" for a failing call) and runs ci_wait.sh.
@@ -184,5 +185,25 @@ func TestCIWait_ReasonOnStderr(t *testing.T) {
 				t.Fatalf("key=%q stderr=%q", key, stderr)
 			}
 		})
+	}
+}
+
+func TestCIWait_RedSavesFailedLog(t *testing.T) {
+	art := t.TempDir()
+	key, _, _ := runCI(t, []string{ciJSON("fail")}, map[string]string{"TYCI_ARTIFACT_DIR": art})
+	if key != "red" {
+		t.Fatalf("key=%q", key)
+	}
+	b, err := os.ReadFile(filepath.Join(art, "ci-failed.log"))
+	if err != nil || string(b) != "job log\n" {
+		t.Fatalf("ci-failed.log=%q err=%v", b, err)
+	}
+}
+
+func TestCIWait_RedRunViewFailsStillRed(t *testing.T) {
+	art := t.TempDir()
+	key, exit, _, stderr := runCIErr(t, []string{ciJSON("fail")}, map[string]string{"TYCI_ARTIFACT_DIR": art, "GH_RUN_EXIT": "1"})
+	if key != "red" || exit != 0 || !strings.Contains(stderr, "--log-failed failed") {
+		t.Fatalf("key=%q exit=%d stderr=%q", key, exit, stderr)
 	}
 }

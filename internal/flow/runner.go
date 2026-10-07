@@ -124,10 +124,18 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			if r.Checks == nil {
 				return r.fail(ctx, st, fmt.Sprintf("no check runner for state %q", cur), fmt.Errorf("no check runner for state %q", cur))
 			}
+			art, artDir, artErr := startArtifact(r.RunDir, len(st.History)+1, cur)
+			if artErr != nil {
+				return r.fail(ctx, st, artErr.Error(), artErr)
+			}
 			started := time.Now()
-			env := buildCheckEnv(st, s, r.RunDir, r.DefaultBranch)
+			env := append(buildCheckEnv(st, s, r.RunDir, r.DefaultBranch), "TYCI_ARTIFACT_DIR="+artDir)
 			key, res, runErr := r.Checks.Run(ctx, s, env, st.Worktree)
 			ended := time.Now()
+			if artDir != "" {
+				_ = os.WriteFile(filepath.Join(artDir, "output.log"), []byte(res.Output), 0o600)
+				sealArtifact(artDir)
+			}
 			if ctx.Err() != nil {
 				return r.fail(ctx, st, "cancelled", ctx.Err())
 			}
@@ -136,7 +144,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			}
 			next, ok := route(s, key)
 			if !ok {
-				return r.failUnknownKey(st, cur, key)
+				return r.failUnknownKey(st, cur, key, art)
 			}
 			readPRFile(st, r.RunDir)
 			readLastCommentID(st, r.RunDir)
@@ -156,6 +164,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Exit:       res.Exit,
 				StderrTail: res.StderrTail,
 				Warnings:   warnings,
+				Artifact:   art,
 			})
 			st.Current = next
 			st.UpdatedAt = time.Now()
@@ -167,6 +176,10 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 		case s.Agent != "":
 			if r.Agents == nil {
 				return r.fail(ctx, st, fmt.Sprintf("no agent runner for state %q", cur), fmt.Errorf("no agent runner for state %q", cur))
+			}
+			art, artDir, artErr := startArtifact(r.RunDir, len(st.History)+1, cur)
+			if artErr != nil {
+				return r.fail(ctx, st, artErr.Error(), artErr)
 			}
 			started := time.Now()
 			rc := RunContext{
@@ -185,6 +198,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			}
 			key, session, runErr := r.Agents.Run(ctx, s.Agent, s.Task, rc)
 			ended := time.Now()
+			sealArtifact(artDir)
 			if ctx.Err() != nil {
 				return r.fail(ctx, st, "cancelled", ctx.Err())
 			}
@@ -205,6 +219,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 						StartedAt: started,
 						EndedAt:   ended,
 						Role:      s.Agent,
+						Artifact:  art,
 					})
 					return r.fail(ctx, st, reason, runErr)
 				}
@@ -218,6 +233,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					EndedAt:   ended,
 					Role:      s.Agent,
 					Error:     runErr.Error(),
+					Artifact:  art,
 				})
 				st.Current = next
 				st.UpdatedAt = time.Now()
@@ -230,7 +246,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			}
 			next, ok := route(s, key)
 			if !ok {
-				return r.failUnknownKey(st, cur, key)
+				return r.failUnknownKey(st, cur, key, art)
 			}
 			st.History = append(st.History, Step{
 				Seq:       len(st.History) + 1,
@@ -242,6 +258,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				EndedAt:   ended,
 				Role:      s.Agent,
 				Session:   session,
+				Artifact:  art,
 			})
 			st.Current = next
 			st.UpdatedAt = time.Now()
@@ -315,7 +332,7 @@ func (r *Runner) fail(_ context.Context, st *RunState, reason string, err error)
 	return err
 }
 
-func (r *Runner) failUnknownKey(st *RunState, cur, key string) error {
+func (r *Runner) failUnknownKey(st *RunState, cur, key, art string) error {
 	reason := fmt.Sprintf("unknown transition key %q in state %q", key, cur)
 	st.History = append(st.History, Step{
 		Seq:       len(st.History) + 1,
@@ -325,6 +342,7 @@ func (r *Runner) failUnknownKey(st *RunState, cur, key string) error {
 		To:        "",
 		StartedAt: time.Now(),
 		EndedAt:   time.Now(),
+		Artifact:  art,
 	})
 	st.Status = "failed"
 	st.Reason = reason

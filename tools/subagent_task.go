@@ -25,8 +25,8 @@ type TaskSpec struct {
 
 // RunSubagentTask runs spec through the registered subagent runner in
 // spec.Dir, without creating a worktree. It returns the final answer and a
-// fresh id for this run. Child runs have no persisted session today, so the
-// id is only a unique label for the run history.
+// fresh id for this run. Child runs that run as jobs write a session file
+// under the "agents" directory; the id is only a unique label for the run history.
 func RunSubagentTask(ctx context.Context, s TaskSpec) (result, sessionID string, err error) {
 	if subagentToolInstance == nil || subagentToolInstance.Runner == nil {
 		return "", "", errors.New("no subagent runner is set")

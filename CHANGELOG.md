@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Flow: `tyci` resumes runs from `state.json` after a crash or kill, at the saved state and without a new visit; `state.json` gets `pid`, `resumed` and `agent_seq`, and `merge.sh` returns `merged` for a PR that is already merged (#182).
+- Cron: new one-shot schedule `in 5m` (stored as `once <RFC3339>` in `~/.tyci/cron.json`); the job is removed after its run and the log stays. New `caller` field in a job records who scheduled it (#316).
+- Flow: every check and agent step of a run gets an artifact dir `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (new `state.json` history field `artifact`, new check env `TYCI_ARTIFACT_DIR`); checks save their full stdout and stderr to `output.log`, and `ci_wait.sh` saves the failed CI job log on `red` (#339).
 - Config keys `compact_soft_limit` and `compact_hard_limit` (config.json, agents.json, agent frontmatter, flow roles) set the context notice and auto-compaction limits in tokens. Subagents and flow roles now compact automatically past the hard limit (#304).
 - Flow: role agents of a run are jobs named `<run-id>/<role>` (the `message` tool reaches them), and an `ask` answer can be `retry <note>` (the note goes into the next worker prompt) or `goto <state>` (#327).
 - Flow: the final review is posted as a PR review, and new PR comments from team members go back to the worker (#187).
@@ -15,9 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
 
 ### Changed
+- Subagents that run as jobs write their own session file to `~/.tyci/sessions/<project>/agents/<time>_<id>_<job-id>.jsonl` plus a `.md` dump. `tyci session list` does not show them, and nothing deletes them yet (#121).
 - Context notice now starts at 80% of the window (was 50%) and auto-compaction at 95% (was 85%) when no limit is set (#304).
 
 ### Fixed
+- Chat: the "Release needed" greeting no longer invites you to ask tyci for a release; it says to release outside tyci (docs/release-workflow.md) (#289).
+- Cron: a scheduled run no longer blocks the next tick, a repeating job's notice does not start a model turn in an idle chat (and carries no log tail), and a notice goes to the job that scheduled it (with the end of the log) (#316).
 - Flow: `merge.sh` returns `behind` (rebase) when `ci-ok` is missing and the PR is behind the default branch, like `ci_wait.sh` (#326).
 - TUI: the status line elapsed time ("bash 3.2s", "waiting for response 12.0s") keeps ticking while a picker, modal or other overlay is open (#319).
 - Flow: parallel runs of one repository now merge one at a time (new `lock` state after review, then an `update` state merges the default branch and pushes, held through CI and merge), and `rebase` keeps both sides of a `CHANGELOG.md`-only conflict (#324).

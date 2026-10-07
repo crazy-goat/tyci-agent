@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -26,6 +28,8 @@ import (
 //   - Key: when the exit code is 0 and the last non-empty trimmed stdout line
 //     is non-empty, that line; else the exit code as a decimal string.
 //   - stdout keeps the last 64 KiB; stderr keeps the last 2 KiB.
+//   - Output holds stdout and stderr as they arrive (the last 128 KiB); the
+//     runner saves it as output.log in the step artifact dir (64 KiB limit).
 //
 // Builtin scripts start with `set -euo pipefail` (documented, not enforced).
 const (
@@ -62,6 +66,24 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 
 func (t *tailBuffer) String() string { return string(t.buf) }
 
+// lockedTail is a tailBuffer that stdout and stderr copy goroutines share.
+type lockedTail struct {
+	mu sync.Mutex
+	tailBuffer
+}
+
+func (l *lockedTail) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.tailBuffer.Write(p)
+}
+
+func (l *lockedTail) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.tailBuffer.String()
+}
+
 // Run implements CheckRunner.
 func (c *ExecChecker) Run(ctx context.Context, s State, env []string, dir string) (string, CheckResult, error) {
 	var res CheckResult
@@ -90,11 +112,12 @@ func (c *ExecChecker) Run(ctx context.Context, s State, env []string, dir string
 	}
 	stdout := &tailBuffer{max: stdoutCap}
 	stderr := &tailBuffer{max: stderrCap}
+	output := &lockedTail{tailBuffer: tailBuffer{max: 2 * artifactCap}}
 	cmd := exec.CommandContext(ctx, "bash", script)
 	cmd.Dir = dir
 	cmd.Env = env
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	cmd.Stdout = io.MultiWriter(stdout, output)
+	cmd.Stderr = io.MultiWriter(stderr, output)
 	cmd.SysProcAttr = procAttr()
 	cmd.Cancel = func() error {
 		pid := cmd.Process.Pid
@@ -107,6 +130,7 @@ func (c *ExecChecker) Run(ctx context.Context, s State, env []string, dir string
 	runErr := cmd.Run()
 	res.Stdout = stdout.String()
 	res.StderrTail = stderr.String()
+	res.Output = output.String()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return "timeout", res, nil
 	}

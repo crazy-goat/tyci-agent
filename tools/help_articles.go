@@ -320,7 +320,8 @@ immediately instead of stalling for nothing.`,
 
 Schedules. "every 30m", "every 6h" — measured from the END of the last run, so
 a job cannot overlap itself; the shortest is a minute. Or "at 07:30" — local
-time, once a day. Nothing else parses, on purpose: a crontab expression that is
+time, once a day. Or "in 5m" — runs once, then the job is removed. Runs happen in
+the background; the result comes back to you as a notice. Nothing else parses, on purpose: a crontab expression that is
 subtly wrong simply never fires, and nobody notices.
 
 The prompt is the whole job. A run is a FRESH agent with only that text: no

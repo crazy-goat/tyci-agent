@@ -32,6 +32,9 @@ type Job struct {
 	Model    string `json:"model,omitempty"`
 	Schedule string `json:"schedule"`
 	Disabled bool   `json:"disabled,omitempty"`
+	// Caller is the id of the job (subagent) that scheduled this one, or "".
+	// Its run notice goes back there instead of to the main conversation.
+	Caller string `json:"caller,omitempty"`
 
 	// LastRun/LastStatus are written back after each run, which is what makes
 	// the schedule survive a restart instead of firing again immediately.

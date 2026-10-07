@@ -143,15 +143,6 @@ func SetJobNotifier(n JobNotifier) {
 	jobNotifierMu.Unlock()
 }
 
-// notify sends text to the main queue. Equivalent to notifyToParent("",
-// text) — use that instead wherever the notice belongs to a job with a
-// known spawner (see notifyToParent's doc comment); this remains for the
-// genuinely top-level cases (a scheduled cron tick nobody asked for, a
-// command backgrounded straight from the main conversation).
-func notify(text string) {
-	notifyToParent("", text)
-}
-
 // notifyToParent routes text to the queue belonging to parentID — the job
 // that spawned whatever produced this notice (see jobs.Job.ParentID) —
 // instead of unconditionally to the main, process-wide queue.
