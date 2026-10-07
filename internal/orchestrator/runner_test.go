@@ -82,3 +82,51 @@ func TestFlowRunnerRejectsOtherInputs(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+type fakeAdoptManager struct {
+	fakeManager
+	paused bool
+	taken  bool
+}
+
+func (m *fakeAdoptManager) Adoptable() []int { return []int{7} }
+
+func (m *fakeAdoptManager) Adopt(issue int) (string, bool, bool) {
+	if issue != 7 || m.taken {
+		return "", false, false
+	}
+	m.taken = true
+	return "20260101-000000-7", m.paused, true
+}
+
+func TestFlowRunnerAdoptPausedRunAsksAtOnce(t *testing.T) {
+	m := &fakeAdoptManager{paused: true}
+	a := NewRunner(m).(Adopter)
+	h, paused, ok := a.Adopt(context.Background(), 7)
+	if !ok || !paused || h.ID() != "20260101-000000-7" {
+		t.Fatalf("ok=%v paused=%v", ok, paused)
+	}
+	select {
+	case <-h.Asks():
+	case <-time.After(wait):
+		t.Fatal("no ask")
+	}
+	m.sub(flow.RunEvent{Run: h.ID(), Status: "running"})
+	select {
+	case <-h.Resumed():
+	case <-time.After(wait):
+		t.Fatal("no resume")
+	}
+	m.sub(flow.RunEvent{Run: h.ID(), Status: "done"})
+	select {
+	case res := <-h.Done():
+		if res.Outcome != "ended" {
+			t.Fatalf("%+v", res)
+		}
+	case <-time.After(wait):
+		t.Fatal("no result")
+	}
+	if _, _, ok := a.Adopt(context.Background(), 7); ok {
+		t.Fatal("second adopt")
+	}
+}

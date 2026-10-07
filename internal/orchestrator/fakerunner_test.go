@@ -42,6 +42,7 @@ type fakeRunner struct {
 	oracle      func(input string) RunResult
 	started     chan int // issue numbers in start order
 	resumed     []int    // issues of runs resumed after a restart (Adopter)
+	paused      []int    // issues of paused runs (Adopter); their handles ask at once
 }
 
 func newFakeRunner() *fakeRunner {
@@ -98,10 +99,10 @@ func (r *fakeRunner) starts(n int) int {
 func (r *fakeRunner) Adoptable() []int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]int(nil), r.resumed...)
+	return append(append([]int(nil), r.resumed...), r.paused...)
 }
 
-func (r *fakeRunner) Adopt(_ context.Context, n int) (RunHandle, bool) {
+func (r *fakeRunner) Adopt(_ context.Context, n int) (RunHandle, bool, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i, m := range r.resumed {
@@ -115,7 +116,18 @@ func (r *fakeRunner) Adopt(_ context.Context, n int) (RunHandle, bool) {
 		}
 		h := &fakeHandle{id: "resumed-" + strconv.Itoa(n), done: make(chan RunResult, 1), asks: make(chan struct{}, 4), owner: r}
 		r.handles[n] = h
-		return h, true
+		return h, false, true
 	}
-	return nil, false
+	for i, m := range r.paused {
+		if m != n {
+			continue
+		}
+		r.paused = append(r.paused[:i], r.paused[i+1:]...)
+		r.inFlight++
+		h := &fakeHandle{id: "paused-" + strconv.Itoa(n), done: make(chan RunResult, 1), asks: make(chan struct{}, 4), owner: r}
+		h.asks <- struct{}{}
+		r.handles[n] = h
+		return h, true, true
+	}
+	return nil, false, false
 }

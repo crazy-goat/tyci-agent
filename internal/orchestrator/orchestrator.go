@@ -110,6 +110,11 @@ func (o *Orchestrator) notify(lines ...string) {
 }
 
 func (o *Orchestrator) loop(ctx context.Context) {
+	// Adopt before the plan: planning runs the oracle (an LLM run) and the
+	// user can answer the start-up question meanwhile. An adopted run that
+	// ends in this time reports its end after the plan, so no second run starts.
+	finished := make(chan finishedRun)
+	adopted := o.adoptResumed(ctx, finished)
 	rm, err := o.plan(ctx)
 	if err != nil {
 		o.reportForgeError(err, PlanReady{Roadmap: rm, Total: o.cfg.Workers, Special: err})
@@ -117,9 +122,8 @@ func (o *Orchestrator) loop(ctx context.Context) {
 	}
 	o.mu.Lock()
 	o.roadmap = rm
+	o.markAdopted(adopted)
 	o.mu.Unlock()
-	finished := make(chan finishedRun)
-	o.adoptResumed(ctx, finished)
 	replanned := false
 	ready := true
 	for {
@@ -297,27 +301,53 @@ func (o *Orchestrator) depState(issue int) ItemStatus {
 	return StatusDone
 }
 
-// adoptResumed takes a slot for every run resumed after a restart, before the
-// first fill, so resumed runs count toward the worker limit. A resumed run
-// takes its slot even when its issue is not in the plan or cannot start yet.
-func (o *Orchestrator) adoptResumed(ctx context.Context, finished chan<- finishedRun) {
+// adoptedRun is a run that existed before the orchestrator started.
+type adoptedRun struct {
+	issue  int
+	id     string
+	paused bool
+}
+
+// adoptResumed takes a slot for every run that exists before the plan:
+// runs resumed after a restart and paused runs that wait for the user's answer
+// (the start-up question). They count toward the worker limit, and the
+// orchestrator sees how they end, so an answer never leads to a second run of
+// the issue. Such a run takes its slot even when its issue is not in the plan
+// or cannot start yet. The caller marks the plan items with markAdopted.
+func (o *Orchestrator) adoptResumed(ctx context.Context, finished chan<- finishedRun) []adoptedRun {
 	a, ok := o.r.(Adopter)
 	if !ok {
-		return
+		return nil
 	}
+	var out []adoptedRun
 	for _, issue := range a.Adoptable() {
-		h, ok := a.Adopt(ctx, issue)
+		h, paused, ok := a.Adopt(ctx, issue)
 		if !ok {
 			continue
 		}
 		o.mu.Lock()
 		o.inFlight[issue] = h.ID()
-		if it := o.item(issue); it != nil && it.Status == StatusTodo {
-			it.Status = StatusWip
-			it.RunID = h.ID()
-		}
 		o.mu.Unlock()
+		out = append(out, adoptedRun{issue: issue, id: h.ID(), paused: paused})
 		go o.watch(issue, h, finished)
+	}
+	return out
+}
+
+// markAdopted marks the plan items of the adopted runs: wip, or ask for a
+// paused run (the start-up question already asked the user, so its first ask
+// posts no extra note). o.mu must be held.
+func (o *Orchestrator) markAdopted(runs []adoptedRun) {
+	for _, r := range runs {
+		it := o.item(r.issue)
+		if it == nil || it.Status != StatusTodo {
+			continue
+		}
+		it.Status = StatusWip
+		if r.paused {
+			it.Status = StatusAsk
+		}
+		it.RunID = r.id
 	}
 }
 
@@ -501,9 +531,12 @@ func (o *Orchestrator) finish(f finishedRun) {
 			it.Status = StatusWip
 		}
 	case f.ask:
-		// The run is alive and keeps its worktree and its slot.
+		// The run is alive and keeps its worktree and its slot. An item that
+		// already asks (an adopted paused run) gets no second note.
+		if it.Status != StatusAsk {
+			notes = append(notes, fmt.Sprintf("#%d waits for your answer", f.issue))
+		}
 		it.Status = StatusAsk
-		notes = append(notes, fmt.Sprintf("#%d waits for your answer", f.issue))
 	default:
 		switch f.res.Outcome {
 		case "merged":

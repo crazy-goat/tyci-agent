@@ -123,17 +123,11 @@ func startRunLogHousekeeping(ctx context.Context) {
 	}()
 }
 
-// resumeWorkflowRuns is the start-up resume of runs that a crashed or killed
-// tyci left running. At most the orchestrator worker limit is resumed. It runs
-// before the greeting, so the orchestrator adopts the resumed runs.
+// resumeWorkflowRuns is the start-up check of unfinished runs. It resumes
+// nothing: it pauses the runs that a crashed or killed tyci left running and
+// asks the user in the chat whether to resume or stop the paused runs.
 func resumeWorkflowRuns() {
-	limit := 0
-	if info, err := flow.DetectRepo(); err == nil {
-		if oc, err := loadOrchestratorConfig(info); err == nil {
-			limit = oc.Workers
-		}
-	}
-	workflowManager.ResumeAll(limit)
+	workflowManager.AskUnfinished()
 }
 
 // orchestratorSystemPrompt is the TUI chat prompt. The worker limit comes from

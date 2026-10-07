@@ -12,6 +12,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/muesli/termenv"
 )
 
 func newTestModelForSidebar() TuiModel {
@@ -1730,5 +1731,37 @@ func TestSidebarTasks_SubagentRUsesJobCursor(t *testing.T) {
 	got := model.(TuiModel)
 	if got.input.Value() == "" || !strings.Contains(got.input.Value(), "job 1") {
 		t.Fatalf("expected r to draft the selected subagent prompt, got %q", got.input.Value())
+	}
+}
+
+func TestSidebarTaskRowsKeepBackgroundAcrossLine(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusRunning, Description: "run/coder", StartedAt: time.Now()})
+	m.applyJobUpdate(jobs.Job{ID: "job-2", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "done/coder", StartedAt: time.Now()})
+	m.openSidebar(sidebarTabTasks)
+	m.sidebarCursor = 0
+	lines := m.renderSidebarTasks(40)
+	checked := 0
+	for _, l := range lines {
+		if !strings.Contains(l, "/coder") {
+			continue
+		}
+		checked++
+		// Every reset must be the last code or be followed by a background again.
+		for rest := l; ; {
+			i := strings.Index(rest, "\x1b[0m")
+			if i < 0 {
+				break
+			}
+			rest = rest[i+len("\x1b[0m"):]
+			if rest != "" && !strings.HasPrefix(rest, "\x1b[48;5;") {
+				t.Fatalf("background reset in the middle of the row: %q", l)
+			}
+		}
+	}
+	if checked != 2 {
+		t.Fatalf("expected 2 job rows, got %d: %q", checked, lines)
 	}
 }
