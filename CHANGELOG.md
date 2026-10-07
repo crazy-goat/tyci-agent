@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
 
 ### Fixed
+- TUI: the status line elapsed time ("bash 3.2s", "waiting for response 12.0s") keeps ticking while a picker, modal or other overlay is open (#319).
 - Flow: parallel runs of one repository now merge one at a time (new `lock` state after review, then an `update` state merges the default branch and pushes, held through CI and merge), and `rebase` keeps both sides of a `CHANGELOG.md`-only conflict (#324).
 - Flow: the run-finished notice says merged only after the merge step merged the PR; a stopped run says stopped, with the open PR if there is one; a skipped run says skipped (#323).
 - Cost: prices and context windows of all nexos models now come from the nexos API, cached in `~/.tyci/nexos-models.json` for 6 hours and refreshed in the background (#329).
