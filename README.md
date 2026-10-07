@@ -63,7 +63,7 @@ make install
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
 - Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
 - Run state: `~/.tyci/runs/<repo>/<run>/state.json`
-- Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`)
+- Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`, agents must write `report.md`)
 - Overrides: `.tyci/workflows/` and `.tyci/checks/`
 
 See [docs/dogfooding.md](docs/dogfooding.md) for the full runbook.

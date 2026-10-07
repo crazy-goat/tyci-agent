@@ -33,7 +33,7 @@ func TestPrompts_Embedded(t *testing.T) {
 }
 
 func TestPrompts_ReviewMentionsVerdictFormat(t *testing.T) {
-	requireAll(t, "review", "ACCEPT", "CHANGES", "review.md")
+	requireAll(t, "review", "ACCEPT", "CHANGES", "report.md")
 }
 
 func TestPrompts_ReviewAllowsTaskCommands(t *testing.T) {
@@ -58,6 +58,17 @@ func TestPrompts_AllForbidQuestions(t *testing.T) {
 	for _, r := range []string{"worker", "review", "merge_decision"} {
 		requireAll(t, r, "Do not ask questions.")
 	}
+}
+
+// #340: every role must leave report.md; no prompt names $TYCI_RUN_DIR.
+func TestPrompts_AllRequireReport(t *testing.T) {
+	for _, r := range []string{"worker", "review", "merge_decision", "oracle"} {
+		requireAll(t, r, "MUST write `report.md`")
+		if strings.Contains(prompt(t, r), "TYCI_RUN_DIR") {
+			t.Errorf("%s prompt mentions TYCI_RUN_DIR", r)
+		}
+	}
+	requireAll(t, "worker", "If the run so far shows red CI, CHANGES, a conflict or new comments, fix that first.")
 }
 
 func TestPrompts_MergeDecisionOneWord(t *testing.T) {

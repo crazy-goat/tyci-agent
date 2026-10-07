@@ -6,9 +6,10 @@
 # A comment of the authenticated user is dropped only when it starts with the
 # marker of post_review.sh, because tyci may run under a real person's account.
 #
-# Env in:  TYCI_PR, TYCI_REPO, TYCI_RUN_DIR, TYCI_LAST_COMMENT_ID, TYCI_LAST_REVIEW_COMMENT_ID (default 0).
+# Env in:  TYCI_PR, TYCI_REPO, TYCI_RUN_DIR, TYCI_ARTIFACT_DIR, TYCI_LAST_COMMENT_ID,
+#          TYCI_LAST_REVIEW_COMMENT_ID (default 0).
 # Keys:    none  nothing new for an agent
-#          new   kept comments are in $TYCI_RUN_DIR/comments.md
+#          new   kept comments are in $TYCI_ARTIFACT_DIR/comments.md
 #          fail  no PR, or a gh failure
 # Writes the highest ids seen (dropped ones too) to $TYCI_RUN_DIR/last_comment_id (issue comments)
 # and last_review_comment_id (PR review comments), only when no lookup failed.
@@ -17,17 +18,17 @@ set -euo pipefail
 pr="${TYCI_PR:-}"
 repo="${TYCI_REPO:-}"
 run="${TYCI_RUN_DIR:-}"
+art="${TYCI_ARTIFACT_DIR:-}"
 last="${TYCI_LAST_COMMENT_ID:-0}"
 last_review="${TYCI_LAST_REVIEW_COMMENT_ID:-0}"
 case "$last" in '' | *[!0-9]*) last=0 ;; esac
 case "$last_review" in '' | *[!0-9]*) last_review=0 ;; esac
-if [ -z "$pr" ] || [ -z "$run" ]; then
-    echo "fetch_comments.sh: TYCI_PR or TYCI_RUN_DIR is not set" >&2
+if [ -z "$pr" ] || [ -z "$run" ] || [ -z "$art" ]; then
+    echo "fetch_comments.sh: TYCI_PR, TYCI_RUN_DIR or TYCI_ARTIFACT_DIR is not set" >&2
     echo fail
     exit 0
 fi
 marker='<!-- tyci-agent -->'
-rm -f "$run/comments.md"
 
 fail() {
     echo "fetch_comments.sh: $1" >&2
@@ -78,5 +79,5 @@ if [ "$(jq length <<<"$kept")" -eq 0 ]; then
     echo none
     exit 0
 fi
-jq -r 'to_entries[] | "## Comment \(.key + 1) by \(.value.user) (\(.value.url))\n\(.value.body)\n"' <<<"$kept" >"$run/comments.md"
+jq -r 'to_entries[] | "## Comment \(.key + 1) by \(.value.user) (\(.value.url))\n\(.value.body)\n"' <<<"$kept" >"$art/comments.md"
 echo new

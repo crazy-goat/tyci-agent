@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // artifactCap is the size limit of one artifact file. A longer file keeps its
@@ -86,4 +87,34 @@ func capArtifact(s string) string {
 		return s
 	}
 	return fmt.Sprintf("[tyci: truncated, kept the last %d bytes]\n", artifactCap) + s[len(s)-artifactCap:]
+}
+
+// runSoFar lists the steps since the last visit of state (all steps on the
+// first visit), one line each: seq, state, key and the artifact files.
+func runSoFar(st *RunState, state, runDir string) string {
+	from := 0
+	for i, h := range st.History {
+		if h.State == state {
+			from = i + 1
+		}
+	}
+	var b strings.Builder
+	for _, h := range st.History[from:] {
+		fmt.Fprintf(&b, "- %03d %s: %s", h.Seq, h.State, h.Key)
+		if h.Artifact != "" && runDir != "" {
+			dir := filepath.Join(runDir, "artifacts", h.Artifact)
+			entries, _ := os.ReadDir(dir)
+			var files []string
+			for _, e := range entries {
+				if e.Type().IsRegular() {
+					files = append(files, filepath.Join(dir, e.Name()))
+				}
+			}
+			if len(files) > 0 {
+				b.WriteString(": " + strings.Join(files, ", "))
+			}
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }

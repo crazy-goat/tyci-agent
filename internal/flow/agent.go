@@ -50,6 +50,9 @@ func (r *SubagentRunner) Run(ctx context.Context, role, task string, rc RunConte
 	if err != nil {
 		return "", session, err
 	}
+	if session, err = r.ensureReport(ctx, role, session, rc); err != nil {
+		return "", session, err
+	}
 	switch {
 	case role == "review" && task == "":
 		return r.verdict(ctx, rc), session, nil
@@ -92,9 +95,14 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 		if rc.Note != "" {
 			text += "\n\n## Note from the orchestrator\n\n" + rc.Note + "\n"
 		}
-		if b, err := os.ReadFile(filepath.Join(rc.RunDir, "comments.md")); err == nil && len(bytes.TrimSpace(b)) > 0 {
-			text += "\n\n## New comments from team members on the PR\n\n" + string(b)
+	}
+	if rc.ArtifactDir != "" {
+		text += "\n\n## Run so far\n\n"
+		if rc.RunSoFar != "" {
+			text += "Steps since your last visit, with their artifact files (read them with the read tool):\n\n" + rc.RunSoFar + "\n"
 		}
+		text += "Your artifact dir: " + rc.ArtifactDir + "\n" +
+			"Before you end, you MUST write " + reportPath(rc) + ": what you did, the result, what is left.\n"
 	}
 	name := ""
 	if rc.Run != "" {
@@ -103,15 +111,56 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	return r.Spawn(ctx, tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit})
 }
 
+// ErrNoArtifact means the agent did not write report.md, also after the reminders.
+var ErrNoArtifact = errors.New("no artifact")
+
+// maxReminders is how many times an agent is reminded to write report.md.
+const maxReminders = 2
+
+func reportPath(rc RunContext) string { return filepath.Join(rc.ArtifactDir, "report.md") }
+
+func hasReport(rc RunContext) bool {
+	b, err := os.ReadFile(reportPath(rc))
+	return err == nil && len(bytes.TrimSpace(b)) > 0
+}
+
+// ensureReport checks that the agent wrote a non-empty report.md. If not, it
+// sends a reminder in the same session, at most maxReminders times. It
+// returns the session id of the last message.
+func (r *SubagentRunner) ensureReport(ctx context.Context, role, session string, rc RunContext) (string, error) {
+	if rc.ArtifactDir == "" {
+		return session, nil
+	}
+	for i := 0; ; i++ {
+		if hasReport(rc) {
+			return session, nil
+		}
+		if i == maxReminders || session == "" {
+			return session, fmt.Errorf("%w from %s", ErrNoArtifact, role)
+		}
+		msg := "You did not leave your artifact at " + reportPath(rc) + ". Write it now."
+		_, next, err := r.Spawn(ctx, tools.TaskSpec{Task: msg, Resume: session, Dir: rc.Worktree})
+		if err != nil {
+			return session, err
+		}
+		if next != "" {
+			session = next
+		}
+	}
+}
+
 func (r *SubagentRunner) warn(msg string) {
 	if r.Warn != nil {
 		r.Warn(msg)
 	}
 }
 
-// verdict reads review.md, then forces CHANGES when the reviewer left the worktree dirty.
+// verdict reads the review report.md, then forces CHANGES when the reviewer left the worktree dirty.
 func (r *SubagentRunner) verdict(ctx context.Context, rc RunContext) string {
-	v, warning := readVerdict(rc.RunDir)
+	v, warning := "CHANGES", "review has no artifact dir"
+	if rc.ArtifactDir != "" {
+		v, warning = readVerdict(reportPath(rc))
+	}
 	if warning != "" {
 		r.warn(warning)
 	}
@@ -129,19 +178,19 @@ func (r *SubagentRunner) verdict(ctx context.Context, rc RunContext) string {
 	return v
 }
 
-// readVerdict reads the first line of review.md in runDir: exactly ACCEPT or CHANGES.
+// readVerdict reads the first line of the review report: exactly ACCEPT or CHANGES.
 // Anything else gives CHANGES and a warning.
-func readVerdict(runDir string) (verdict, warning string) {
-	b, err := os.ReadFile(filepath.Join(runDir, "review.md"))
+func readVerdict(path string) (verdict, warning string) {
+	b, err := os.ReadFile(path)
 	if err != nil {
-		return "CHANGES", "review.md not readable: " + err.Error()
+		return "CHANGES", "review report not readable: " + err.Error()
 	}
 	first, _, _ := strings.Cut(string(b), "\n")
 	switch first = strings.TrimSpace(first); first {
 	case "ACCEPT", "CHANGES":
 		return first, ""
 	}
-	return "CHANGES", fmt.Sprintf("review.md first line %q is not ACCEPT or CHANGES", first)
+	return "CHANGES", fmt.Sprintf("review report first line %q is not ACCEPT or CHANGES", first)
 }
 
 // mergeKey maps the first word of the final answer to retry, code or ask.

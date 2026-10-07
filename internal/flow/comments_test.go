@@ -89,20 +89,6 @@ func TestRunner_LastCommentIDSurvivesResume(t *testing.T) {
 	}
 }
 
-func TestWorkerTask_IncludesCommentsFile(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "comments.md"), []byte("## Comment 1 by alice (u)\nrename X\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := &spawnRec{result: "ok"}
-	if _, _, err := newRunner(s).Run(context.Background(), "worker", "", RunContext{RunDir: dir, Worktree: dir}); err != nil {
-		t.Fatal(err)
-	}
-	if got := s.specs[0].Task; !strings.Contains(got, "rename X") {
-		t.Errorf("task = %q", got)
-	}
-}
-
 func TestReadLastCommentID_ReviewID(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "last_review_comment_id"), []byte("9\n"), 0o644); err != nil {

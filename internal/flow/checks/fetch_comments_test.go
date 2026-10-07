@@ -47,8 +47,8 @@ type fetched struct {
 func runFetch(t *testing.T, env map[string]string) fetched {
 	t.Helper()
 	logPath := testutil.StubGH(t, commentsGh)
-	dir := t.TempDir()
-	base := map[string]string{"TYCI_REPO": "o/r", "TYCI_PR": "5", "TYCI_RUN_DIR": dir, "PULLS": "[]", "ISSUES": "[]", "ME": "me"}
+	dir, art := t.TempDir(), t.TempDir()
+	base := map[string]string{"TYCI_REPO": "o/r", "TYCI_PR": "5", "TYCI_RUN_DIR": dir, "TYCI_ARTIFACT_DIR": art, "PULLS": "[]", "ISSUES": "[]", "ME": "me"}
 	for k, v := range env {
 		base[k] = v
 	}
@@ -56,9 +56,9 @@ func runFetch(t *testing.T, env map[string]string) fetched {
 	if exit != 0 {
 		t.Fatalf("exit %d", exit)
 	}
-	read := func(n string) string { b, _ := os.ReadFile(filepath.Join(dir, n)); return string(b) }
+	read := func(d, n string) string { b, _ := os.ReadFile(filepath.Join(d, n)); return string(b) }
 	log, _ := os.ReadFile(logPath)
-	return fetched{key, read("comments.md"), strings.TrimSpace(read("last_comment_id")), string(log)}
+	return fetched{key, read(art, "comments.md"), strings.TrimSpace(read(dir, "last_comment_id")), string(log)}
 }
 
 func TestFetchComments_FiltersNonTeam(t *testing.T) {

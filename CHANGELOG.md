@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Flow: every agent must write `report.md` in its artifact dir; the runner reminds it twice in the same session, then pauses the run with the reason `no artifact from <role>`. Every agent task lists the run so far (steps since its last visit with their artifact files). The review verdict now comes from the review `report.md`, which `post_review.sh` posts, and `fetch_comments.sh` writes `comments.md` into its artifact dir; the run dir has no `review.md` or `comments.md` any more (#340).
 - Flow: every check and agent step of a run gets an artifact dir `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (new `state.json` history field `artifact`, new check env `TYCI_ARTIFACT_DIR`); checks save their full stdout and stderr to `output.log`, and `ci_wait.sh` saves the failed CI job log on `red` (#339).
 - Config keys `compact_soft_limit` and `compact_hard_limit` (config.json, agents.json, agent frontmatter, flow roles) set the context notice and auto-compaction limits in tokens. Subagents and flow roles now compact automatically past the hard limit (#304).
 - Flow: role agents of a run are jobs named `<run-id>/<role>` (the `message` tool reaches them), and an `ask` answer can be `retry <note>` (the note goes into the next worker prompt) or `goto <state>` (#327).
