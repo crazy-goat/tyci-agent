@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
@@ -109,9 +111,33 @@ func runRows(views []flow.RunView) []display.TuiRunRow {
 			h = h[len(h)-3:]
 		}
 		for _, s := range h {
-			r.Steps = append(r.Steps, s.State+" -> "+s.Key)
+			r.Steps = append(r.Steps, stepLine(s))
+		}
+		if total, _ := st.Totals(); total.Tokens > 0 {
+			r.Totals = fmt.Sprintf("%s tok · $%.2f · %s", fmtTok(total.Tokens), total.CostUSD, total.Duration.Round(time.Second))
 		}
 		rows = append(rows, r)
 	}
 	return rows
+}
+
+// stepLine is one Runs tab line: "state -> key", and for an agent step with
+// usage "role · model · tokens · $ · time".
+func stepLine(s flow.Step) string {
+	line := s.State + " -> " + s.Key
+	if s.Stats == nil {
+		return line
+	}
+	model := s.Stats.Model
+	if _, name, ok := strings.Cut(model, "/"); ok {
+		model = name
+	}
+	return fmt.Sprintf("%s: %s · %s · %s tok · $%.2f · %s", line, s.Role, model, fmtTok(s.Stats.Tokens()), s.Stats.CostUSD, s.EndedAt.Sub(s.StartedAt).Round(time.Second))
+}
+
+func fmtTok(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprint(n)
 }

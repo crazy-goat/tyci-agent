@@ -14,6 +14,8 @@ import (
 	"sync"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/internal/pricing"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
@@ -100,7 +102,22 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Run != "" {
 		name = rc.Run + "/" + role
 	}
-	return r.Spawn(ctx, tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit})
+	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit}
+	if rc.Stats != nil {
+		spec.OnDone = func(ts tools.TaskStats) { *rc.Stats = stepStats(model, ts) }
+	}
+	return r.Spawn(ctx, spec)
+}
+
+// stepStats converts the usage of a subagent run, priced with the model catalog.
+func stepStats(model string, ts tools.TaskStats) StepStats {
+	provider, name, _ := strings.Cut(model, "/")
+	rates, _ := pricing.Lookup(provider, name)
+	return StepStats{
+		Model: model, Input: ts.Usage.Input, Output: ts.Usage.Output,
+		CacheRead: ts.Usage.CacheRead, CacheWrite: ts.Usage.CacheWrite,
+		CostUSD: ledger.Cost(rates, ts.Usage), Turns: ts.Turns, ToolCalls: ts.ToolCalls,
+	}
 }
 
 func (r *SubagentRunner) warn(msg string) {

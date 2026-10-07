@@ -63,6 +63,7 @@ make install
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
 - Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
 - Run state: `~/.tyci/runs/<repo>/<run>/state.json`
+- Run usage: agent steps in `state.json` carry `stats` (tokens, cost, turns); `workflow_status` and the Runs tab show it
 - Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`)
 - Overrides: `.tyci/workflows/` and `.tyci/checks/`
 

@@ -1734,3 +1734,13 @@ func TestSubagentCompletionNoticeIncludesPreviewAndWaitInstruction(t *testing.T)
 		t.Fatal("long preview was not truncated")
 	}
 }
+
+func TestCollector_UsageSumsTurns(t *testing.T) {
+	c := newCollector()
+	c.Summary(stream.Usage{Input: 100, Output: 50}, stream.Stats{})
+	c.Summary(stream.Usage{Input: 10, Output: 5}, stream.Stats{})
+	res := c.Result()
+	if res.Usage.Input != 110 || res.Usage.Output != 55 || res.Turns != 2 {
+		t.Errorf("usage = %+v turns = %d", res.Usage, res.Turns)
+	}
+}

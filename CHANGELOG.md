@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Flow: every agent step in `state.json` history gets `stats` (model, input, output, cache read/write tokens, `cost_usd`, `turns`, `tool_calls`). `workflow_status` returns it per step plus `totals` and per-role `roles`; the Runs tab shows one line per step and a total line per run (#314).
 - Flow: `tyci` resumes runs from `state.json` after a crash or kill, at the saved state and without a new visit; `state.json` gets `pid`, `resumed` and `agent_seq`, and `merge.sh` returns `merged` for a PR that is already merged (#182).
 - Cron: new one-shot schedule `in 5m` (stored as `once <RFC3339>` in `~/.tyci/cron.json`); the job is removed after its run and the log stays. New `caller` field in a job records who scheduled it (#316).
 - Flow: every check and agent step of a run gets an artifact dir `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (new `state.json` history field `artifact`, new check env `TYCI_ARTIFACT_DIR`); checks save their full stdout and stderr to `output.log`, and `ci_wait.sh` saves the failed CI job log on `red` (#339).

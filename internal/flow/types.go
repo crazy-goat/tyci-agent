@@ -90,6 +90,61 @@ type Step struct {
 	Warnings   []string  `json:"warnings,omitempty"`
 	// Artifact is the step artifact dir name under <run dir>/artifacts.
 	Artifact string `json:"artifact,omitempty"`
+	// Stats is the usage of an agent step. Its duration is EndedAt - StartedAt.
+	Stats *StepStats `json:"stats,omitempty"`
+}
+
+// StepStats is the usage of one agent step, summed over its model turns.
+// Model is "provider/model". CostUSD is 0 when the model has no known price.
+type StepStats struct {
+	Model      string  `json:"model"`
+	Input      int     `json:"input"`
+	Output     int     `json:"output"`
+	CacheRead  int     `json:"cache_read"`
+	CacheWrite int     `json:"cache_write"`
+	CostUSD    float64 `json:"cost_usd"`
+	Turns      int     `json:"turns"`
+	ToolCalls  int     `json:"tool_calls"`
+}
+
+// Tokens returns all tokens of the step.
+func (s StepStats) Tokens() int { return s.Input + s.Output + s.CacheRead + s.CacheWrite }
+
+// Totals is the usage of a whole run or of one role.
+type Totals struct {
+	Tokens   int           `json:"tokens"`
+	CostUSD  float64       `json:"cost_usd"`
+	Duration time.Duration `json:"-"`
+	Seconds  int           `json:"seconds"`
+}
+
+// Totals sums the history: for the whole run, and per agent role.
+func (st *RunState) Totals() (Totals, map[string]Totals) {
+	var all Totals
+	roles := map[string]Totals{}
+	for _, h := range st.History {
+		d := h.EndedAt.Sub(h.StartedAt)
+		all.Duration += d
+		t := roles[h.Role]
+		if h.Role != "" {
+			t.Duration += d
+		}
+		if h.Stats != nil {
+			all.Tokens += h.Stats.Tokens()
+			all.CostUSD += h.Stats.CostUSD
+			t.Tokens += h.Stats.Tokens()
+			t.CostUSD += h.Stats.CostUSD
+		}
+		if h.Role != "" {
+			roles[h.Role] = t
+		}
+	}
+	all.Seconds = int(all.Duration.Seconds())
+	for r, t := range roles {
+		t.Seconds = int(t.Duration.Seconds())
+		roles[r] = t
+	}
+	return all, roles
 }
 
 // RunContext is the template fields of SDR 5.4 passed to agent states.
@@ -109,6 +164,8 @@ type RunContext struct {
 	Issue         int
 	PR            int
 	Visit         int
+	// Stats is filled by the agent runner when the agent ends. Nil: not wanted.
+	Stats *StepStats
 }
 
 // CheckResult is the outcome of one check-script execution.
