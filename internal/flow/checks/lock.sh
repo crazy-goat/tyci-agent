@@ -2,7 +2,10 @@
 # lock.sh: takes the merge lock of the repository (state lock). Only one run per repository
 # goes through push, CI and merge at a time; the other runs wait here. The lock is released
 # by itself: it counts as free when its holder process is dead, or when the state.json of the
-# holder run is no longer in a merge-phase state (for example ask, code, findings or end).
+# holder run is not running or no longer in a merge-phase state (for example failed, ask, code,
+# findings or end).
+# Known limit: the steal (rm -rf) is not atomic. With 3 or more waiters two of them can take the
+# lock in the same few milliseconds. The ci and rebase states handle that case.
 # The same run takes its own lock again without waiting.
 #
 # Env in:  TYCI_REPO, TYCI_RUN_DIR, HOME, TYCI_LOCK_POLL_SEC (default 5).
@@ -19,7 +22,7 @@ stale() {
     { read -r pid && read -r run; } <"$dir/owner" 2>/dev/null || return 0
     kill -0 "$pid" 2>/dev/null || return 0
     [ "$run" = "$TYCI_RUN_DIR" ] && return 0
-    cur=$(jq -r '.current // ""' "$run/state.json" 2>/dev/null) || return 0
+    cur=$(jq -r 'if .status == "running" then .current // "" else "" end' "$run/state.json" 2>/dev/null) || return 0
     case "$phase" in *" $cur "*) return 1 ;; esac
     return 0
 }

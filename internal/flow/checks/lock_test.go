@@ -23,7 +23,7 @@ func holder(t *testing.T, home, runDir, state string, pid string) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(d, "owner"), []byte(pid+"\n"+runDir+"\n"), 0o644)
-	os.WriteFile(filepath.Join(runDir, "state.json"), []byte(`{"current":"`+state+`"}`), 0o644)
+	os.WriteFile(filepath.Join(runDir, "state.json"), []byte(`{"status":"running","current":"`+state+`"}`), 0o644)
 }
 
 func TestLock_FreeTakes(t *testing.T) {
@@ -53,7 +53,7 @@ func TestLock_WaitsForActiveHolder(t *testing.T) {
 	holder(t, home, other, "ci", itoa(os.Getpid()))
 	go func() {
 		time.Sleep(600 * time.Millisecond)
-		os.WriteFile(filepath.Join(other, "state.json"), []byte(`{"current":"findings"}`), 0o644)
+		os.WriteFile(filepath.Join(other, "state.json"), []byte(`{"status":"running","current":"findings"}`), 0o644)
 	}()
 	start := time.Now()
 	if key := runLock(t, home, t.TempDir()); key != "ok" {
@@ -61,5 +61,14 @@ func TestLock_WaitsForActiveHolder(t *testing.T) {
 	}
 	if time.Since(start) < 500*time.Millisecond {
 		t.Fatal("did not wait for the holder")
+	}
+}
+
+func TestLock_FailedHolderIsTaken(t *testing.T) {
+	home, other := t.TempDir(), t.TempDir()
+	holder(t, home, other, "ci", itoa(os.Getpid()))
+	os.WriteFile(filepath.Join(other, "state.json"), []byte(`{"status":"failed","current":"ci"}`), 0o644)
+	if key := runLock(t, home, t.TempDir()); key != "ok" {
+		t.Fatalf("key=%q", key)
 	}
 }
