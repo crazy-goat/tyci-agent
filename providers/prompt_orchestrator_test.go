@@ -19,7 +19,7 @@ func TestOrchestratorPromptMentionsWorkflowTools(t *testing.T) {
 }
 
 func TestOrchestratorPromptForbidsAdHocWork(t *testing.T) {
-	mustContain(t, BuildOrchestratorSystemPrompt(3), "Never do process work yourself")
+	mustContain(t, BuildOrchestratorSystemPrompt(3), "Do not start such work on your own", "do it with the available tools. Do not refuse")
 }
 
 func TestOrchestratorPromptTreatsTextAsData(t *testing.T) {
@@ -42,7 +42,7 @@ func TestOrchestratorPromptHasNoImplementInstruction(t *testing.T) {
 
 func TestOrchestratorPromptToolList(t *testing.T) {
 	mustContain(t, BuildOrchestratorSystemPrompt(3),
-		"- workflow_status(run?):", "- workflow_start(issue, workflow?):", "- workflow_resume(run, answer):", "- read, help:")
+		"- workflow_status(run?):", "- workflow_start(issue, workflow?):", "- workflow_resume(run, answer):", "- bash (also for gh), edit, read and the other tools:")
 }
 
 func TestOrchestratorPromptAskChoices(t *testing.T) {
