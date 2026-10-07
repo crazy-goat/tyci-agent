@@ -93,6 +93,8 @@ func init() {
 // os.Getwd() rather than threaded a wd, the same posture as
 // agent.LoadTyciConfig and agent.LoadAgents.
 func registerProviders() {
+	cfg := agent.LoadTyciConfig()
+	api.SetTimeouts(time.Duration(cfg.FirstByteTimeoutSec)*time.Second, time.Duration(cfg.StreamIdleTimeoutSec)*time.Second)
 	if err := connect.EnsureProvidersJSON(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: providers.json: %v\n", err)
 	}

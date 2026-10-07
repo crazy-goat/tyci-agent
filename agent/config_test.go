@@ -387,3 +387,22 @@ func TestSaveTyciConfig_KeepsUnknownKeys(t *testing.T) {
 		t.Errorf("default_model not saved: %s", data)
 	}
 }
+
+func TestTimeoutKeys_SaveAndMerge(t *testing.T) {
+	setupConfigTest(t)
+
+	if err := SaveTyciConfig(TyciConfig{FirstByteTimeoutSec: 10, StreamIdleTimeoutSec: 20}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetDefaultModel("x/y"); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadTyciConfig()
+	if got.FirstByteTimeoutSec != 10 || got.StreamIdleTimeoutSec != 20 {
+		t.Fatalf("timeouts lost on save: %+v", got)
+	}
+	m := mergeTyciConfig(got, TyciConfig{FirstByteTimeoutSec: 5})
+	if m.FirstByteTimeoutSec != 5 || m.StreamIdleTimeoutSec != 20 {
+		t.Fatalf("bad merge: %+v", m)
+	}
+}

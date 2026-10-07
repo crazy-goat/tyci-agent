@@ -47,6 +47,11 @@ type TyciConfig struct {
 	// automatic compaction. 0/absent uses defaultAutoCompactPercent; a
 	// negative value disables auto-compaction entirely.
 	AutoCompactPercent int `json:"auto_compact_percent,omitempty"`
+	// FirstByteTimeoutSec is how long a provider has to start answering a
+	// request; StreamIdleTimeoutSec is the silence allowed in a running
+	// stream. 0 or absent means 30. On expiry the request is retried.
+	FirstByteTimeoutSec  int `json:"first_byte_timeout_sec,omitempty"`
+	StreamIdleTimeoutSec int `json:"stream_idle_timeout_sec,omitempty"`
 }
 
 // globalConfigDir returns the path to ~/.tyci.
@@ -105,6 +110,12 @@ func mergeTyciConfig(global, local TyciConfig) TyciConfig {
 	}
 	if local.AutoCompactPercent != 0 {
 		merged.AutoCompactPercent = local.AutoCompactPercent
+	}
+	if local.FirstByteTimeoutSec != 0 {
+		merged.FirstByteTimeoutSec = local.FirstByteTimeoutSec
+	}
+	if local.StreamIdleTimeoutSec != 0 {
+		merged.StreamIdleTimeoutSec = local.StreamIdleTimeoutSec
 	}
 	return merged
 }

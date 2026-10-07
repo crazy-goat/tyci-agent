@@ -471,6 +471,16 @@ differs per model — so raise it for the models you use, either with
 
 An agent definition can set its own with `max_tokens:` in the frontmatter.
 
+## Provider timeouts
+
+A provider that does not answer is retried. `first_byte_timeout_sec` limits the
+wait for the response, `stream_idle_timeout_sec` limits the silence in a running
+stream. Both default to 30 (0 or absent) in `~/.tyci/config.json`:
+
+```json
+{ "first_byte_timeout_sec": 30, "stream_idle_timeout_sec": 30 }
+```
+
 Anthropic **prompt caching** is on by default, with cache breakpoints after the
 tool schemas, after the system prompt, and at the end of the conversation — the
 parts that are identical on every turn. The cache read/write counts already
