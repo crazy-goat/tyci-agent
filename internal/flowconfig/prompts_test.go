@@ -9,7 +9,7 @@ const progressNote = "Before using tools, write 1-2 sentences saying what you ar
 
 func prompt(t *testing.T, role string) string {
 	t.Helper()
-	p, ok := defaultPrompt(role)
+	p, ok := DefaultPrompt(role)
 	if !ok || p == "" {
 		t.Fatalf("no embedded prompt for %q", role)
 	}

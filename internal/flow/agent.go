@@ -27,7 +27,8 @@ type TaskRenderer interface {
 	Render(name string, rc RunContext) (string, error)
 }
 
-// NewSubagentRunner returns a runner that renders the embedded task templates.
+// NewSubagentRunner returns a runner that renders the embedded task templates
+// (set Render to TaskTemplates with Dirs for local templates).
 func NewSubagentRunner(cfg *flowconfig.Config, spawn func(ctx context.Context, s tools.TaskSpec) (string, string, error)) *SubagentRunner {
 	return &SubagentRunner{Cfg: cfg, Render: TaskTemplates{}, Spawn: spawn, URIEffort: providers.URIReasoningEffort}
 }
@@ -80,6 +81,9 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	model, err := r.Cfg.ResolveModel(rl)
 	if err != nil {
 		return "", "", err
+	}
+	if rc.Prompt != "" {
+		rl.Prompt = rc.Prompt
 	}
 	text := rl.Prompt
 	if task != "" {

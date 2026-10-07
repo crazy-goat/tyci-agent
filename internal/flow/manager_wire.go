@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -128,7 +129,9 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 			return r
 		}
 		r.Checks = &ExecChecker{DefaultTimeout: cfg.CheckTimeout(), Resolve: resolve}
-		r.Agents = NewSubagentRunner(cfg, spawn)
+		agents := NewSubagentRunner(cfg, spawn)
+		agents.Render = TaskTemplates{Dirs: []string{projectDir(info), info.Home}}
+		r.Agents = agents
 		return r
 	}
 	m.Text = func(ctx context.Context, info RepoInfo, wf *Workflow, input string) (string, error) {
@@ -140,8 +143,11 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 		if err != nil {
 			return "", err
 		}
-		out, _, err := NewSubagentRunner(cfg, spawn).Text(ctx, s.Agent, s.Task, RunContext{
+		agents := NewSubagentRunner(cfg, spawn)
+		agents.Render = TaskTemplates{Dirs: []string{projectDir(info), info.Home}}
+		out, _, err := agents.Text(ctx, s.Agent, s.Task, RunContext{
 			Repo: info.Repo, DefaultBranch: info.DefaultBranch, Worktree: info.Root, Input: input,
+			Workflow: wf.Name, Prompt: s.Prompt,
 		})
 		return out, err
 	}
@@ -201,6 +207,17 @@ func (c ChatTools) Status(run string) (any, error) {
 	}
 	if st.Ask != nil {
 		out["ask"] = st.Ask.Message
+		if d := st.Ask.Proposal; d != "" {
+			md, _ := os.ReadFile(filepath.Join(d, "proposal.md"))
+			patch, _ := os.ReadFile(filepath.Join(d, "proposal.patch"))
+			out["proposal"] = map[string]any{"dir": d, "summary": clip(string(md), 4000), "patch": clip(string(patch), 8000),
+				"answers": "apply (open a PR with the change) or reject"}
+		}
+	}
+	if info, err := c.M.Info(); err == nil {
+		if wf, err := c.M.Workflow(info, st.Workflow); err == nil && wf.Source != "" {
+			out["workflow_source"] = wf.Source
+		}
 	}
 	return out, nil
 }
@@ -211,4 +228,12 @@ func removeWorktreeHook(root string) func(*RunState) {
 	return func(st *RunState) {
 		_ = worktree.ForIssue(root, st.Worktree, st.Branch).Remove(context.Background())
 	}
+}
+
+// clip cuts s to n bytes and says so.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + "\n[cut]"
 }

@@ -117,6 +117,12 @@ func (t *WorkflowResumeTool) Run(_ context.Context, input map[string]any) ToolRe
 	if err := m.Resume(run, answer); err != nil {
 		return workflowFail(err)
 	}
+	if answer == "apply" || answer == "reject" {
+		// A proposal answer keeps the run paused; the status says what happened.
+		if st, err := m.Status(run); err == nil {
+			return workflowJSON(st)
+		}
+	}
 	return workflowJSON(map[string]any{"run": run, "status": "running"})
 }
 
@@ -137,7 +143,7 @@ func workflowToolsSchema() []map[string]any {
 			}, []string{"issue"}),
 		fn("workflow_status", "Show the state of a workflow run: status, current state, visits, last history entries, PR.",
 			map[string]any{"run": map[string]any{"type": "string", "description": "Run id (default: newest run)."}}, []string{}),
-		fn("workflow_resume", "Answer a paused workflow run. Use one of the answers named in the pause notice: \"retry\" (back to the worker), \"stop\" (end the run), \"retry <note>\" (back to the worker with the note) or \"goto <state>\" (continue at that state).",
+		fn("workflow_resume", "Answer a paused workflow run. Use one of the answers named in the pause notice: \"retry\" (back to the worker), \"stop\" (end the run), \"retry <note>\" (back to the worker with the note) or \"goto <state>\" (continue at that state). When the pause has a workflow proposal, first show its summary and patch from workflow_status to the user, then answer \"apply\" (opens a PR with the .tyci/ change) or \"reject\" only as the user says; the run stays paused for its normal answer.",
 			map[string]any{
 				"run":    map[string]any{"type": "string", "description": "Run id."},
 				"answer": map[string]any{"type": "string", "description": "One of the allowed answers."},

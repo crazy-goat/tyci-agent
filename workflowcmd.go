@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
+	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/internal/trust"
 	"github.com/crazy-goat/tyci-agent/internal/workflow"
@@ -133,6 +135,36 @@ connect, same as for "tyci run".`,
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), result)
 		return nil
+	},
+}
+
+var workflowEjectForce bool
+
+var workflowEjectCmd = &cobra.Command{
+	Use:   "eject <name>",
+	Short: "Copy a builtin workflow into the project's .tyci/ to change it",
+	Long: `Copy the builtin workflow <name> (for example issue-to-merge) into
+.tyci/ of the project: workflows/<name>.json, the check scripts in checks/,
+the task templates in tasks/ and the role prompts in prompts/. It sets
+roles.<role>.prompt to "@prompts/<role>.md" in .tyci/config.json.
+
+The project is the git repository of --dir (default: the current directory).
+tyci uses these files only in a trusted project. Existing files are not
+overwritten unless --force is given.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dir := workflowDir
+		if dir == "" {
+			dir, _ = os.Getwd()
+		}
+		if out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
+			dir = strings.TrimSpace(string(out))
+		}
+		written, err := flow.Eject(args[0], dir, workflowEjectForce)
+		for _, p := range written {
+			fmt.Fprintln(cmd.OutOrStdout(), "wrote", p)
+		}
+		return err
 	},
 }
 
@@ -272,6 +304,8 @@ func init() {
 	workflowRunCmd.Flags().StringVar(&workflowPrompt, "prompt", "", "Prompt made available to the script as the global `prompt`")
 	workflowRunCmd.Flags().StringVar(&workflowDir, "dir", "", "project directory to resolve project-local .tyci/agents from (default: current directory)")
 	workflowListCmd.Flags().StringVar(&workflowDir, "dir", "", "project directory to resolve project-local .tyci/agents from (default: current directory)")
-	workflowCmd.AddCommand(workflowRunCmd, workflowListCmd)
+	workflowEjectCmd.Flags().StringVar(&workflowDir, "dir", "", "project directory (default: current directory)")
+	workflowEjectCmd.Flags().BoolVar(&workflowEjectForce, "force", false, "overwrite existing files and role prompts")
+	workflowCmd.AddCommand(workflowRunCmd, workflowListCmd, workflowEjectCmd)
 	rootCmd.AddCommand(workflowCmd)
 }

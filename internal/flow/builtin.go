@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+
+	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 )
 
 // embedded holds the builtin workflows, check scripts and task templates.
@@ -45,6 +48,10 @@ func Lookup(name, home, projectDir string, trusted bool) (wf *Workflow, source s
 		if wf, err = Parse(data); err != nil {
 			return nil, "", fmt.Errorf("%s: %w", p, err)
 		}
+		if err = readStatePrompts(wf, filepath.Join(d, ".tyci")); err != nil {
+			return nil, "", fmt.Errorf("%s: %w", p, err)
+		}
+		wf.Source = p
 		return wf, p, nil
 	}
 	data, rerr := embedded.ReadFile("builtin/" + name + ".json")
@@ -54,5 +61,24 @@ func Lookup(name, home, projectDir string, trusted bool) (wf *Workflow, source s
 	if wf, err = Parse(data); err != nil {
 		return nil, "", err
 	}
+	wf.Source = "builtin"
 	return wf, "builtin", nil
+}
+
+// readStatePrompts replaces every state prompt "@<file>" with the text of
+// <tyciDir>/<file>, with the rules of a role prompt file.
+func readStatePrompts(wf *Workflow, tyciDir string) error {
+	for name, s := range wf.States {
+		rel, ok := strings.CutPrefix(s.Prompt, "@")
+		if !ok {
+			continue
+		}
+		text, err := flowconfig.ReadPromptFile(tyciDir, rel)
+		if err != nil {
+			return fmt.Errorf("state %q: %w", name, err)
+		}
+		s.Prompt = text
+		wf.States[name] = s
+	}
+	return nil
 }

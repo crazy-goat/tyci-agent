@@ -55,6 +55,9 @@ func validateStructure(wf *Workflow) []error {
 			kinds++
 			hasEnd = true
 		}
+		if s.Prompt != "" && s.Agent == "" {
+			errs = append(errs, fmt.Errorf("state %q: prompt is only allowed in an agent state", name))
+		}
 		if kinds != 1 {
 			errs = append(errs, fmt.Errorf("state %q must have exactly one of check, agent, ask, end, got %d", name, kinds))
 		}

@@ -65,7 +65,7 @@ make install
 - Run state: `~/.tyci/runs/<repo>/<run>/state.json`
 - Run usage: agent steps in `state.json` carry `stats` (tokens, cost, turns); `workflow_status` and the Runs tab show it
 - Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`, agents must write `report.md`)
-- Overrides: `.tyci/workflows/` and `.tyci/checks/`
+- Overrides (trusted projects first, then `~/.tyci/`, then the builtin copy): `.tyci/workflows/`, `.tyci/checks/` and `.tyci/tasks/<name>.md` (task templates)
 
 A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
 resumes (`resumed`). When `tyci` or `tyci console` starts, it resumes every `running` run
@@ -81,6 +81,37 @@ block to its `output.log`. The run then goes to the `fixer` role, which fixes sm
 and answers `ok` (the step runs again) or `failed`. On `failed` the `oracle` answers
 `goto:<state>`, `stop` or `ask <reason>`. After 2 fixer runs and 1 oracle run for the same
 step, the run pauses.
+
+### Change a workflow for one repository
+
+`tyci workflow eject issue-to-merge` copies the builtin workflow into `.tyci/` of the
+repository: `workflows/issue-to-merge.json`, all check scripts in `checks/`, the task
+templates in `tasks/` and the role prompts in `prompts/`. It sets
+`roles.<role>.prompt` to `"@prompts/<role>.md"` in `.tyci/config.json` and prints every
+file it wrote. It does not overwrite a file (or another role prompt) without `--force`.
+`--dir <path>` selects the repository. A run in a trusted project then uses the local
+copy; `workflow_source` in `workflow_status` shows the file.
+
+An agent state can set its own prompt for that state only:
+`"prompt": "@prompts/<file>.md"` (relative to the `.tyci/` dir of the workflow; no
+absolute path, no `..`, no symlink).
+
+### Workflow proposals
+
+When the workflow cannot handle a failure, or the same step failed with the same cause
+in an earlier run, the fixer writes `proposal.md` and `proposal.patch` (a diff of the
+repository's `.tyci/` files only) in its artifact dir. When the run pauses, the notice
+says so and `workflow_status` shows the summary and the patch under `proposal`. Answer
+`apply` or `reject` with `workflow_resume`:
+
+- `apply`: tyci makes the branch `tyci/proposal-<run>-<hash>` from the default branch in a
+  temporary worktree, ejects the builtin workflow when the repository has no local copy,
+  applies the patch, pushes and opens a PR. A patch that changes a file outside `.tyci/`
+  is refused. Your checkout does not change.
+- `reject`: nothing changes; the proposal is recorded in
+  `~/.tyci/runs/<repo>/rejected-proposals` and is not shown again.
+
+The run stays paused after either answer and waits for its normal answer.
 
 See [docs/dogfooding.md](docs/dogfooding.md) for the full runbook.
 

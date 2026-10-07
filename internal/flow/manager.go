@@ -269,6 +269,9 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 		}
 		text += " paused: " + msg
 		if keys := answerKeys(wf, st.Current); len(keys) > 0 {
+			if st.Ask != nil && st.Ask.Proposal != "" {
+				keys = append([]string{"apply", "reject"}, keys...)
+			}
 			text += " (answer with workflow_resume: " + strings.Join(keys, "|") + "|retry <note>|goto <state>)"
 		}
 	default:
@@ -321,6 +324,9 @@ func (m *Manager) Resume(runID, answer string) error {
 	if err != nil {
 		return err
 	}
+	if (answer == "apply" || answer == "reject") && st.Ask != nil && st.Ask.Proposal != "" {
+		return m.answerProposal(info, wf, st, answer)
+	}
 	s := wf.States[st.Current]
 	key, isGoto := answer, false
 	word, rest, _ := strings.Cut(strings.TrimSpace(answer), " ")
@@ -346,6 +352,39 @@ func (m *Manager) Resume(runID, answer string) error {
 	}
 	m.launch(info, wf, st, true, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
 	m.mu.Unlock()
+	return nil
+}
+
+// answerProposal applies or rejects the workflow proposal of a paused run.
+// The run stays paused and waits for its normal answer; a new notice says so.
+func (m *Manager) answerProposal(info RepoInfo, wf *Workflow, st *RunState, answer string) error {
+	m.mu.Lock()
+	_, active := m.active[st.Run]
+	m.mu.Unlock()
+	if active {
+		return fmt.Errorf("%w: run %s is active", ErrBusy, st.Run)
+	}
+	runDir := RunDir(info.Home, info.Name(), st.Run)
+	note := " Workflow proposal rejected."
+	if answer == "apply" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		url, err := ApplyProposal(ctx, info, st, st.Ask.Proposal)
+		if err != nil {
+			return fmt.Errorf("apply the workflow proposal: %w", err)
+		}
+		note = " Workflow proposal applied: " + url
+	} else if err := RejectProposal(runDir, st.Ask.Proposal); err != nil {
+		return fmt.Errorf("reject the workflow proposal: %w", err)
+	}
+	st.Ask.Message, _, _ = strings.Cut(st.Ask.Message, proposalWaits)
+	st.Ask.Message += note
+	st.Ask.Proposal = ""
+	st.UpdatedAt = time.Now()
+	if err := (&Store{Dir: runDir}).Save(st); err != nil {
+		return err
+	}
+	m.notify(st, wf)
 	return nil
 }
 

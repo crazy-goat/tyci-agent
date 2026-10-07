@@ -20,3 +20,5 @@ Answer with exactly one line, in one of these forms:
 - `ask <reason>`: a human must decide. Say why in one sentence, and what the human must decide.
 
 When you are unsure, answer `ask` with the reason.
+
+If a fixer step in "Run so far" wrote `proposal.md` and `proposal.patch`, answer `ask` with the reason, so the user sees the workflow proposal.

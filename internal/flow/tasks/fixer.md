@@ -14,3 +14,14 @@ Answer exactly one word:
 
 - `ok`: the cause is fixed; run `{{.Failed}}` again.
 - `failed`: you cannot fix it. Write `failed.log` in your artifact dir first (what you tried, what happened, why you cannot fix it). The oracle decides the next step.
+
+## Workflow proposal
+
+Earlier runs of this repository are in the directories next to {{.RunDir}}. If the workflow `{{.Workflow}}` cannot handle this failure (no state or check covers it), or the same step failed with the same cause in an earlier run, also write a proposal in your artifact dir:
+
+- `proposal.md`: a title line, then what failed, why, and what to change in the workflow.
+- `proposal.patch`: a unified diff (`git diff` format, paths `a/.tyci/...` and `b/.tyci/...`) of the repository's `.tyci/` files only: the workflow JSON, check scripts, task templates or role prompts. Never change other files.
+
+If the repository has no `.tyci/workflows/{{.Workflow}}.json`, tyci ejects the builtin workflow before it applies the patch. To see these files, run `tyci workflow eject {{.Workflow}} --dir <a new temp dir>` and diff against them.
+
+Nothing changes until the user accepts the proposal. Do not apply it yourself.

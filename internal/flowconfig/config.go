@@ -83,8 +83,8 @@ type Role struct {
 //go:embed prompts/*.md
 var promptFS embed.FS
 
-// defaultPrompt returns the embedded prompt of a builtin role.
-func defaultPrompt(role string) (string, bool) {
+// DefaultPrompt returns the embedded prompt of a builtin role.
+func DefaultPrompt(role string) (string, bool) {
 	if !isBuiltinRole(role) {
 		return "", false
 	}
@@ -162,7 +162,7 @@ func readFile(path string) (*Config, error) {
 	dir := filepath.Dir(path)
 	for name, r := range c.Roles {
 		if rel, ok := strings.CutPrefix(r.Prompt, "@"); ok {
-			text, err := readPromptFile(dir, rel)
+			text, err := ReadPromptFile(dir, rel)
 			if err != nil {
 				return nil, fmt.Errorf("%s: role %q: %w", path, name, err)
 			}
@@ -173,7 +173,9 @@ func readFile(path string) (*Config, error) {
 	return c, nil
 }
 
-func readPromptFile(dir, rel string) (string, error) {
+// ReadPromptFile reads the prompt file rel, relative to dir. rel must be
+// relative, without "..", not a symlink and not empty.
+func ReadPromptFile(dir, rel string) (string, error) {
 	if filepath.IsAbs(rel) {
 		return "", fmt.Errorf("prompt file %q must be relative", rel)
 	}
@@ -258,7 +260,7 @@ func (c *Config) Role(name string) (Role, error) {
 	if ok && r.Prompt != "" {
 		return r, nil
 	}
-	if p, found := defaultPrompt(name); found {
+	if p, found := DefaultPrompt(name); found {
 		r.Prompt = p
 		return r, nil
 	}

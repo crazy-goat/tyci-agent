@@ -13,6 +13,8 @@ type Workflow struct {
 	Start    string           `json:"start"`
 	Defaults Defaults         `json:"defaults"`
 	States   map[string]State `json:"states"`
+	// Source is the file the workflow was read from, or "builtin". Set by Lookup.
+	Source string `json:"-"`
 }
 
 // Defaults holds workflow-wide defaults.
@@ -24,9 +26,13 @@ type Defaults struct {
 // Exactly one of Check, Agent, Ask, End must be set. Task names the task
 // template for an agent state and does not count as a kind by itself.
 type State struct {
-	Check      string            `json:"check,omitempty"`
-	Agent      string            `json:"agent,omitempty"`
-	Task       string            `json:"task,omitempty"`
+	Check string `json:"check,omitempty"`
+	Agent string `json:"agent,omitempty"`
+	Task  string `json:"task,omitempty"`
+	// Prompt overrides the role prompt for this agent state only. Lookup
+	// replaces "@<file>" (relative to the .tyci dir of the workflow) with the
+	// file text.
+	Prompt     string            `json:"prompt,omitempty"`
 	Ask        string            `json:"ask,omitempty"`
 	End        bool              `json:"end,omitempty"`
 	On         map[string]string `json:"on,omitempty"`
@@ -38,6 +44,9 @@ type State struct {
 type Ask struct {
 	Message string `json:"message"`
 	Reason  string `json:"reason,omitempty"`
+	// Proposal is the artifact dir with proposal.md and proposal.patch of a
+	// workflow change that waits for "apply" or "reject" (#372).
+	Proposal string `json:"proposal,omitempty"`
 }
 
 // RunState is the persisted run state (state.json, version 1).
@@ -165,10 +174,13 @@ type RunContext struct {
 	Note          string // orchestrator note for the worker
 	Input         string // text input of a RunText run
 	StateName     string
-	Issue         int
-	PR            int
-	Visit         int
-	AgentSeq      int // run-wide agent counter; names the transcript file
+	Workflow      string // workflow name
+	// Prompt overrides the role prompt (the state "prompt"). Empty: the role prompt.
+	Prompt   string
+	Issue    int
+	PR       int
+	Visit    int
+	AgentSeq int // run-wide agent counter; names the transcript file
 	// ArtifactDir is the absolute artifact dir of this step; the agent must
 	// write report.md there. Empty when the runner has no run dir.
 	ArtifactDir string

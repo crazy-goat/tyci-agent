@@ -231,6 +231,8 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Run:           st.Run,
 				Note:          st.Note,
 				StateName:     cur,
+				Workflow:      st.Workflow,
+				Prompt:        s.Prompt,
 				Issue:         st.Issue,
 				PR:            st.PR,
 				Visit:         st.Visits[cur],
@@ -547,13 +549,18 @@ func (r *Runner) pause(st *RunState, message, reason string) error {
 		message += ")"
 	}
 	st.Ask = &Ask{Message: message, Reason: reason}
+	if dir := findProposal(st, r.RunDir); dir != "" {
+		st.Ask.Proposal = dir
+		st.Ask.Message += proposalWaits + proposalSummary(dir) +
+			" (workflow_status shows it; answer apply or reject)"
+	}
 	st.UpdatedAt = time.Now()
 	if r.Store != nil {
 		if err := r.Store.Save(st); err != nil {
 			return err
 		}
 	}
-	r.notify("run " + st.Run + " paused: " + message)
+	r.notify("run " + st.Run + " paused: " + st.Ask.Message)
 	return ErrPaused
 }
 
