@@ -165,9 +165,13 @@ func (t *CronTool) add(ctx context.Context, input map[string]any, name string) T
 		return failf("prompt is required: it is what a fresh agent will be asked to do, with NO memory of this conversation, so write it as a standalone instruction — what to do, where, and what counts as done")
 	}
 	schedule := strings.TrimSpace(stringParam(input, "schedule", ""))
-	if _, err := cron.ParseSchedule(schedule); err != nil {
+	parsed, err := cron.ParseSchedule(schedule)
+	if err != nil {
 		return failf("%v", err)
 	}
+	// "in 5m" is stored as an absolute time, so it does not move on reload.
+	schedule = parsed.String()
+	caller, _ := ctx.Value(JobIDCtxKey{}).(string)
 
 	dir := strings.TrimSpace(stringParam(input, "dir", ""))
 	if dir == "" {
@@ -207,6 +211,7 @@ func (t *CronTool) add(ctx context.Context, input map[string]any, name string) T
 		Dir:      abs,
 		Model:    strings.TrimSpace(stringParam(input, "model", "")),
 		Schedule: schedule,
+		Caller:   caller,
 	}
 	if err := f.Add(job); err != nil {
 		return failf("%v", err)
@@ -465,13 +470,14 @@ func StartCronTicker(ctx context.Context, interval time.Duration) {
 					// let the next one try again.
 					continue
 				}
-				_, err = runner.Tick(ctx)
-				release()
-				if err != nil {
-					// A broken or unreadable jobs file must not kill the
-					// scheduler: the next tick may find it fixed.
-					continue
-				}
+				// Off the ticker goroutine: a run takes minutes and must not
+				// hold anything up. The lock stays held until the runs end.
+				// A broken or unreadable jobs file must not kill the
+				// scheduler: the next tick may find it fixed.
+				go func() {
+					defer release()
+					_, _ = runner.Tick(ctx)
+				}()
 			}
 		}
 	}()
@@ -485,7 +491,16 @@ func cronNotify(j cron.Job, err error) {
 	if err != nil {
 		status = fmt.Sprintf("failed (%v)", err)
 	}
-	notify(fmt.Sprintf("[scheduled job] %q %s — it ran on its schedule, nobody asked for it just now. Read it with cron(action=\"logs\", name=%q) if it matters to what you are doing; otherwise carry on.", j.Name, status, j.Name))
+	msg := fmt.Sprintf("[scheduled job] %q %s — it ran in the background, nobody asked for it just now. Read more with cron(action=\"logs\", name=%q) if it matters to what you are doing; otherwise carry on.", j.Name, status, j.Name)
+	if data, rerr := os.ReadFile(cron.LogPath(cronConfigDir(), j.Name)); rerr == nil {
+		const keep = 1500
+		tail := strings.TrimSpace(string(data))
+		if len(tail) > keep {
+			tail = "…" + tail[len(tail)-keep:]
+		}
+		msg += "\nEnd of its log:\n" + tail
+	}
+	notifyToParent(j.Caller, msg)
 }
 
 // cronWhen phrases a timestamp relative to now, because "in 20 minutes" is the
