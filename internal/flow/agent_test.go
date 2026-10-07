@@ -84,6 +84,19 @@ func TestSubagentRunner_UsesRunWorktree(t *testing.T) {
 	}
 }
 
+// #304: the role limits reach the child.
+func TestSubagentRunner_PassesRoleCompactLimits(t *testing.T) {
+	s := &spawnRec{}
+	r := newRunner(s)
+	r.Cfg.Roles["worker"] = flowconfig.Role{Prompt: "W", CompactSoftLimit: 100000, CompactHardLimit: 150000}
+	if _, _, err := r.Run(context.Background(), "worker", "", RunContext{Worktree: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	if sp := s.specs[0]; sp.SoftLimit != 100000 || sp.HardLimit != 150000 {
+		t.Fatalf("spec limits = %d, %d", sp.SoftLimit, sp.HardLimit)
+	}
+}
+
 func TestSubagentRunner_ErrorGivesErrorKey(t *testing.T) {
 	s := &spawnRec{err: errors.New("boom")}
 	_, _, err := newRunner(s).Run(context.Background(), "worker", "", RunContext{})

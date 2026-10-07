@@ -38,6 +38,17 @@ func TestRunSubagentTask_UsesDirAndSystemPrompt(t *testing.T) {
 	}
 }
 
+// #304: the flow role limits in TaskSpec reach the child options.
+func TestRunSubagentTask_PassesCompactLimits(t *testing.T) {
+	r := &recordingRunner{}
+	if _, _, err := runSubagentTask(context.Background(), r, TaskSpec{Task: "x", SoftLimit: 100000, HardLimit: 150000}); err != nil {
+		t.Fatal(err)
+	}
+	if r.gotOpts.SoftLimit != 100000 || r.gotOpts.HardLimit != 150000 {
+		t.Fatalf("opts limits = %d, %d", r.gotOpts.SoftLimit, r.gotOpts.HardLimit)
+	}
+}
+
 func TestRunSubagentTask_ErrorIsReturned(t *testing.T) {
 	r := &recordingRunner{returnErr: os.ErrInvalid}
 	_, _, err := runSubagentTask(context.Background(), r, TaskSpec{Task: "x"})

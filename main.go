@@ -525,7 +525,8 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		NoPromptCache: !agent.PromptCacheEnabled(),
 		NextMessages:  tools.JobMailboxNextMessages(jobID),
 
-		ContextLimitFor: pricingContextLimit,
+		ContextLimitFor:  pricingContextLimit,
+		InLoopCompaction: true,
 	}
 	if cfg.SoftLimit == 0 || cfg.HardLimit == 0 {
 		tc := agent.LoadTyciConfig()

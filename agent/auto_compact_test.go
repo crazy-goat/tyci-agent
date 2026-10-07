@@ -359,3 +359,97 @@ func TestRun_SoftNotice_NoHardLimitClaimWithoutCompactor(t *testing.T) {
 		}
 	}
 }
+
+// toolRound is one model round that calls read and reports usage.
+func toolRound(id string, input int) []stream.Event {
+	return []stream.Event{
+		stream.ToolCallStart{ID: id, Name: "read"},
+		stream.ToolCall{ID: id, Name: "read", Arguments: `{}`},
+		stream.Finish{Usage: stream.Usage{Input: input}, Reason: "tool_calls"},
+	}
+}
+
+// #304: an agent without a session (subagent, flow role) compacts in memory
+// after a tool round past the hard limit, and keeps its task.
+func TestRun_InLoopCompaction_HardLimitKeepsTask(t *testing.T) {
+	runner := newMockToolRunner()
+	runner.SetResult("read", "file content")
+	p := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		Turns: [][]stream.Event{
+			toolRound("t1", 1000), toolRound("t2", 1000), toolRound("t3", 1000),
+			toolRound("t4", 1000), toolRound("t5", 180000),
+		},
+		OnExhausted: []stream.Event{
+			stream.TextDelta{Text: "done"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+	}
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "the task"}}},
+	}
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries:       1,
+		ContextLimit:     1000000,
+		SoftLimit:        150000,
+		HardLimit:        170000,
+		Tools:            runner,
+		InLoopCompaction: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if msgs[0].Content[0].Text != "the task" {
+		t.Fatalf("msgs[0] = %q, want the task", msgs[0].Content[0].Text)
+	}
+	if !strings.Contains(msgs[1].Content[0].Text, "automated context compaction") ||
+		!strings.Contains(msgs[1].Content[0].Text, "180000") {
+		t.Fatalf("msgs[1] = %q, want the compaction note", msgs[1].Content[0].Text)
+	}
+	// task + note + 8 kept messages + the final answer.
+	if len(msgs) != 11 {
+		t.Fatalf("len(msgs) = %d, want 11", len(msgs))
+	}
+	if got := countReminderLines(msgs); got != 0 {
+		t.Fatalf("reminder count = %d, want 0 (the compaction replaces the notice)", got)
+	}
+	if last := msgs[len(msgs)-1]; last.Role != "assistant" || last.Content[0].Text != "done" {
+		t.Fatalf("last = %#v, want the final answer", last)
+	}
+}
+
+// #304: the soft notice of a session-less agent comes after a tool round,
+// not after its final answer (which would force one more round).
+func TestRun_InLoopCompaction_SoftNoticeMidTurn(t *testing.T) {
+	runner := newMockToolRunner()
+	runner.SetResult("read", "file content")
+	p := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		Turns:        [][]stream.Event{toolRound("t1", 120000)},
+		OnExhausted: []stream.Event{
+			stream.TextDelta{Text: "done"},
+			// Past the soft limit again: no notice after the final answer.
+			stream.Finish{Usage: stream.Usage{Input: 130000}},
+		},
+	}
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
+	}
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries:       1,
+		ContextLimit:     200000,
+		SoftLimit:        100000,
+		Tools:            runner,
+		InLoopCompaction: true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countReminderLines(msgs); got != 1 {
+		t.Fatalf("reminder count = %d, want 1", got)
+	}
+	// go, tool call, tool result, notice, final answer.
+	if len(msgs) != 5 || !strings.Contains(msgs[3].Content[0].Text, "190000 tokens (hard limit)") {
+		t.Fatalf("msgs = %#v", msgs)
+	}
+}

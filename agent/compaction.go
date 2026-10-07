@@ -46,6 +46,24 @@ func CompactSession(sess *session.Session, msgs *[]connector.Message, summary, f
 	return path, nil
 }
 
+// compactInMemory replaces msgs with task, a user message with note, and
+// the tail of msgs. It is the compaction of an agent without a session
+// (Config.InLoopCompaction). task may be nil. It returns false and changes
+// nothing when there is nothing to drop.
+func compactInMemory(msgs *[]connector.Message, task *connector.Message, note string) bool {
+	tail := compactTail(*msgs)
+	if len(tail) == len(*msgs) {
+		return false
+	}
+	var head []connector.Message
+	if task != nil {
+		head = append(head, *task)
+	}
+	head = append(head, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: note}}})
+	*msgs = session.SanitizeMessageSequence(append(head, tail...))
+	return true
+}
+
 func compactTail(msgs []connector.Message) []connector.Message {
 	const keepMessages = 8
 	if len(msgs) <= keepMessages {

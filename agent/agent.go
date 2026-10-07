@@ -134,6 +134,14 @@ type Config struct {
 	// negative value disables auto-compaction, leaving only the notice.
 	AutoCompactPercent int
 
+	// InLoopCompaction is for agents without a session of their own
+	// (subagents, flow roles): the soft notice and the hard-limit
+	// compaction run after each tool round instead of at the end of the
+	// turn, because the end of such a run is the end of its work. The
+	// compaction is in memory: it keeps the task (the last message on
+	// entry to Run), a note and the last messages (compactInMemory).
+	InLoopCompaction bool
+
 	// Interactive reports whether a human is present to answer a blocked
 	// job's question — true for the console REPL and the TUI, false for
 	// `tyci run` (and anything shelling out to it, e.g. cron: see
@@ -207,6 +215,13 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	}
 
 	var totalUsage stream.Usage
+
+	// task is the message Run was started with; in-loop compaction keeps it.
+	var task *connector.Message
+	if cfg.InLoopCompaction && len(*msgs) > 0 {
+		m := (*msgs)[len(*msgs)-1]
+		task = &m
+	}
 
 	// lastRoundUsage is the most recent single model call's raw usage — not
 	// totalUsage, which sums every iteration's full resent context and so
@@ -452,12 +467,29 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			todoReminders = 0
 			jobReminders = 0
 		}
-		if !more && !drained {
-			limit := cfg.ContextLimit
+		contextLimit := func() int {
 			if cfg.ContextLimitFor != nil {
-				limit = cfg.ContextLimitFor(fs.mc.Provider(), fs.mc.Model())
+				return cfg.ContextLimitFor(fs.mc.Provider(), fs.mc.Model())
 			}
-			if limit > 0 || cfg.SoftLimit > 0 || cfg.HardLimit > 0 {
+			return cfg.ContextLimit
+		}
+		if cfg.InLoopCompaction && (more || drained) {
+			used := lastRoundUsage.Input + lastRoundUsage.CacheRead + lastRoundUsage.CacheWrite + lastRoundUsage.Output
+			softAt, hardAt := compactThresholds(contextLimit(), cfg.SoftLimit, cfg.HardLimit, cfg.AutoCompactPercent)
+			switch {
+			case used > 0 && hardAt > 0 && used >= hardAt:
+				if compactInMemory(msgs, task, buildInLoopCompactNote(used, hardAt)) {
+					contextReminded = false
+				}
+			case used > 0 && softAt > 0 && used >= softAt && !contextReminded:
+				contextReminded = true
+				reminder := buildContextBudgetReminder(used, hardAt, false)
+				*msgs = append(*msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: reminder}}})
+			}
+		}
+		if !more && !drained {
+			limit := contextLimit()
+			if !cfg.InLoopCompaction && (limit > 0 || cfg.SoftLimit > 0 || cfg.HardLimit > 0) {
 				// Input+Output alone undercounts on providers that report a
 				// cached prompt prefix separately (Anthropic: CacheRead/
 				// CacheWrite, see api/anthropic.go — prompt caching is on by
@@ -660,6 +692,12 @@ func buildContextBudgetReminder(used, hardAt int, canCompact bool) string {
 		return msg + " Do you want to compact now? If yes, persist anything important, then call compact(summary=\"...\", focus=\"...\")."
 	}
 	return msg + " Persist anything important now if continuing would crowd out useful history — compact is not available in this conversation."
+}
+
+// buildInLoopCompactNote is the note that replaces the removed history in an
+// in-loop compaction (Config.InLoopCompaction).
+func buildInLoopCompactNote(used, hardAt int) string {
+	return fmt.Sprintf("[automated context compaction, not the user] Your context reached %d tokens (hard limit %d), so the harness removed the older messages. Your task and the last messages remain. Read again any file you still need, then continue the task.", used, hardAt)
 }
 
 // buildAutoCompactSummary produces the lead message for a compaction the
