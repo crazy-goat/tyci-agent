@@ -362,6 +362,10 @@ func firstLine(s string) string {
 // turn the TUI into a redraw loop for output nobody is reading line by line.
 const bgProgressInterval = time.Second
 
+// bashPipeGrace is how long output pipes may stay open after the shell exited
+// or was killed, before they are closed by force.
+const bashPipeGrace = 2 * time.Second
+
 // bashRun owns one running shell command: the process, the capped output
 // buffer both the foreground and the background path read from, and the
 // single exit signal that decides which of them gets the result.
@@ -369,6 +373,11 @@ type bashRun struct {
 	cmd  *exec.Cmd
 	out  *cappedBuffer
 	exit chan error // exactly one send, after all output has been drained
+
+	// killed is closed by kill, so the pipe pump can stop waiting for a pipe
+	// that a surviving process keeps open.
+	killed     chan struct{}
+	killedOnce sync.Once
 
 	// handed flips to true when the command is moved to the background. The
 	// output pump reads it to decide where a line goes: the live tool block
@@ -414,6 +423,7 @@ func (r *bashRun) setProgress(line string) {
 // makes this reach the command's children too — killing only the bash pid
 // would leave an orphaned compiler or test runner behind.
 func (r *bashRun) kill() {
+	r.killedOnce.Do(func() { close(r.killed) })
 	if r.cmd.Process != nil {
 		_ = syscall.Kill(-r.cmd.Process.Pid, syscall.SIGKILL)
 	}
@@ -436,6 +446,10 @@ func startBash(ctx context.Context, cmdVal string) (*bashRun, error) {
 	// Empty means the process directory, which is exec's default anyway. See
 	// tools/workdir.go.
 	c.Dir = Workdir(ctx)
+	// A process that left the killed group (its own setsid or job control)
+	// can keep our output pipes open for as long as it lives. Without a bound
+	// c.Wait then blocks on the pipe copy and the job never ends (#276).
+	c.WaitDelay = bashPipeGrace
 
 	stdin, _ := c.StdinPipe()
 	if stdin != nil {
@@ -446,6 +460,8 @@ func startBash(ctx context.Context, cmdVal string) (*bashRun, error) {
 		cmd:  c,
 		out:  newCappedBuffer(bashHeadMax, bashTailMax),
 		exit: make(chan error, 1),
+
+		killed: make(chan struct{}),
 	}
 
 	onLine := stream.Output(ctx)
@@ -495,7 +511,21 @@ func startBash(ctx context.Context, cmdVal string) (*bashRun, error) {
 	go pump(stdoutPipe)
 	go pump(stderrPipe)
 	go func() {
-		wg.Wait() // both pipes drained into run.out before we report the exit
+		// Both pipes drained into run.out before we report the exit. Once the
+		// shell is gone, a pipe that stays open is closed after the grace.
+		waitDone := make(chan struct{})
+		go func() { wg.Wait(); close(waitDone) }()
+		select {
+		case <-waitDone:
+		case <-run.killed:
+			select {
+			case <-waitDone:
+			case <-time.After(bashPipeGrace):
+				_ = stdoutPipe.Close()
+				_ = stderrPipe.Close()
+				<-waitDone
+			}
+		}
 		run.exit <- c.Wait()
 	}()
 

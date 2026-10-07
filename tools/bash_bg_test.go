@@ -562,3 +562,25 @@ func TestBashBackgroundFailureNoticeCarriesExitCode(t *testing.T) {
 		t.Fatalf("notice should carry the exit code and its hint: %q", notices[0])
 	}
 }
+
+// TestKillJobWithSurvivorHoldingPipe guards #276: a process that left the
+// killed group keeps the output pipe open, and the job must still end.
+func TestKillJobWithSurvivorHoldingPipe(t *testing.T) {
+	reg, _ := bgTestEnv(t)
+
+	// setsid puts the background python in its own session, so the group kill
+	// misses it. It holds stdout for 20s.
+	res := (&BashTool{}).Run(context.Background(), map[string]any{
+		"command":           `python3 -c "import os,time;os.setsid();time.sleep(20)" & ` + bgSleeper,
+		"run_in_background": true,
+	})
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+	id := jobIDFromResult(t, res.Content)
+	time.Sleep(time.Second) // let python reach setsid before the kill
+	if !(&KillJobTool{}).Run(context.Background(), map[string]any{"job_id": id}).Success {
+		t.Fatal("kill_job failed")
+	}
+	waitForJob(t, reg, id, 10*time.Second)
+}
