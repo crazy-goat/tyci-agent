@@ -9,12 +9,13 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/flow/internal/testutil"
 )
 
-// mergeGh answers gh from env vars: CI_BUCKET, MERGE_STATE, REMOTE_HEAD, MERGE_FAIL.
+// mergeGh answers gh from env vars: CI_BUCKET, MERGE_STATE, REMOTE_HEAD, MERGE_FAIL, PR_STATE.
 const mergeGh = `
 case "$*" in
   "pr checks"*) [ -n "${NO_CHECKS:-}" ] && { echo "no checks reported on the 'x' branch" >&2; exit 1; }; echo "[{\"name\":\"lint\",\"bucket\":\"fail\"},{\"name\":\"ci-ok\",\"bucket\":\"${CI_BUCKET:-pass}\"}]" | jq -r '[.[] | select(.name == "ci-ok")][0].bucket' ;;
   "pr view"*mergeStateStatus*) echo "${MERGE_STATE:-CLEAN}" ;;
   "pr view"*headRefOid*) echo "$REMOTE_HEAD" ;;
+  "pr view"*"--json state "*) echo "${PR_STATE:-OPEN}" ;;
   "pr merge"*) [ -n "${MERGE_FAIL:-}" ] && { echo "merge refused" >&2; exit 1; }; exit 0 ;;
   *) exit 2 ;;
 esac
@@ -57,6 +58,13 @@ func TestMerge_Merged(t *testing.T) {
 	want := "pr merge 171 -R o/r --squash --delete-branch --match-head-commit " + head
 	if !strings.Contains(log, want) {
 		t.Fatalf("log lacks %q:\n%s", want, log)
+	}
+}
+
+func TestMerge_AlreadyMergedPrintsMergedWithoutMerging(t *testing.T) {
+	key, _, log, _ := runMerge(t, newPushEnv(t), "a.txt", map[string]string{"PR_STATE": "MERGED", "CI_BUCKET": "pending"})
+	if key != "merged" || strings.Contains(log, "pr merge") {
+		t.Fatalf("key=%q log=%s", key, log)
 	}
 }
 

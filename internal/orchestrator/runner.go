@@ -16,6 +16,16 @@ type Runner interface {
 	Start(ctx context.Context, workflow string, inputs map[string]string) (RunHandle, error)
 }
 
+// Adopter is an optional part of a Runner. It returns the runs resumed after a
+// restart, so the orchestrator counts them as workers before it starts new runs.
+type Adopter interface {
+	// Adoptable returns the issues of the resumed runs not adopted yet.
+	Adoptable() []int
+	// Adopt returns the resumed run of the issue, once. It never starts a run;
+	// ok is false when there is no such run.
+	Adopt(ctx context.Context, issue int) (h RunHandle, ok bool)
+}
+
 // RunHandle is one started run. ONE final result arrives on Done; ask and
 // resume are separate event streams.
 type RunHandle interface {
@@ -73,6 +83,44 @@ func (r *flowRunner) Start(ctx context.Context, workflow string, inputs map[stri
 		h.watch(ctx)
 	}()
 	return h, nil
+}
+
+// flowAdopter is the part of flow.Manager that returns resumed runs.
+type flowAdopter interface {
+	Adoptable() []int
+	Adopt(issue int) (string, bool)
+}
+
+var _ flowAdopter = (*flow.Manager)(nil)
+
+// Adoptable returns the issues of the runs resumed by flow.Manager.ResumeAll.
+func (r *flowRunner) Adoptable() []int {
+	if a, ok := r.m.(flowAdopter); ok {
+		return a.Adoptable()
+	}
+	return nil
+}
+
+// Adopt watches the resumed run of the issue. It subscribes before it adopts,
+// so no event of the run after the adopt is lost.
+func (r *flowRunner) Adopt(ctx context.Context, issue int) (RunHandle, bool) {
+	a, ok := r.m.(flowAdopter)
+	if !ok {
+		return nil, false
+	}
+	h := newFlowHandle()
+	unsub := r.m.Subscribe(h.add)
+	id, ok := a.Adopt(issue)
+	if !ok {
+		unsub()
+		return nil, false
+	}
+	h.id = id
+	go func() {
+		defer unsub()
+		h.watch(ctx)
+	}()
+	return h, true
 }
 
 // startText runs the workflow in a goroutine and delivers the text.

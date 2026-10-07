@@ -211,6 +211,14 @@ func (e *e2e) ghLog() string {
 // run builds the runner (so tests can edit e.wf and e.extraCheckEnv first) and runs it.
 func (e *e2e) run() error {
 	e.t.Helper()
+	e.runner = e.newRunner()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	return e.runner.Run(ctx, e.st)
+}
+
+// newRunner builds a runner with the real checks and the fake agents.
+func (e *e2e) newRunner() *Runner {
 	runDir := e.runDir
 	checks := &ExecChecker{
 		DefaultTimeout: 60 * time.Second,
@@ -227,14 +235,11 @@ func (e *e2e) run() error {
 	if e.agentRunner != nil {
 		agents = e.agentRunner
 	}
-	e.runner = &Runner{
+	return &Runner{
 		WF: e.wf, Checks: e2eChecker{checks, extra}, Agents: agents,
 		Store: &Store{Dir: runDir}, RunDir: runDir, DefaultBranch: "main",
 		OnSkip: removeWorktreeHook(e.work),
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	return e.runner.Run(ctx, e.st)
 }
 
 // mustFinish runs and requires a clean end (status done).

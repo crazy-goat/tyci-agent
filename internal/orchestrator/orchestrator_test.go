@@ -358,3 +358,29 @@ func TestBusyIssueKeepsTodoAndOthersStart(t *testing.T) {
 		t.Fatalf("starts(2)=%d starts(3)=%d busy=%d", e.r.starts(2), e.r.starts(3), e.o.busy())
 	}
 }
+
+func TestResumedRunsCountTowardWorkers(t *testing.T) {
+	// Runs of #4 and #9 were resumed after a restart; #9 is not in the plan.
+	e := newEnv(t, Config{Workers: 3}, five()...)
+	e.r.resumed = []int{4, 9}
+	p := e.start()
+	if len(p.Started) != 1 || p.Started[0] != 1 || p.Free != 0 {
+		t.Fatalf("%+v", p)
+	}
+	if e.status(4) != StatusWip || e.status(2) != StatusTodo {
+		t.Fatalf("%+v", e.o.Roadmap().Items)
+	}
+	if e.r.starts(4) != 0 {
+		t.Fatalf("resumed #4 started again: %d", e.r.starts(4))
+	}
+	e.r.handle(9).finish("merged")
+	if n := e.waitStart(); n != 2 {
+		t.Fatalf("got %d", n)
+	}
+	e.r.mu.Lock()
+	peak := e.r.maxInFlight
+	e.r.mu.Unlock()
+	if peak != 3 {
+		t.Fatalf("max in flight %d", peak)
+	}
+}
