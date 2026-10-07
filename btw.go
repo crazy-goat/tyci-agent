@@ -452,7 +452,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 // fallbacks, retries) but detaches everything that ties the config to the
 // main thread's own state: Session (a side conversation writes no session
 // log), NextMessages (the main TUI's pending-input queue), and
-// PendingTodos/HasTodos (the main thread's todo list). None of those belong
+// PendingTodos (the main thread's todo list). None of those belong
 // to an independent fork that must never touch the main conversation.
 func btwConfig(base agent.Config) agent.Config {
 	cfg := base
@@ -462,7 +462,6 @@ func btwConfig(base agent.Config) agent.Config {
 	cfg.Session = nil
 	cfg.NextMessages = nil
 	cfg.PendingTodos = nil
-	cfg.HasTodos = nil
 	// F10, history: base (cond.Config()) carries the MAIN conversation's
 	// Compactor, and an earlier revision left it set here while calling
 	// GetAllToolsSchemaJSON, which put "compact" back in a /btw child's schema

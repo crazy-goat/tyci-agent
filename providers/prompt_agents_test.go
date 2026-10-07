@@ -210,7 +210,6 @@ func TestPromptStatesTheEnforcedContracts(t *testing.T) {
 	prompt := BuildSystemPrompt()
 
 	for _, want := range []string{
-		"first tool call must be todo",
 		"write refuses to modify a file you have not read",
 		"moves to the background after 30s",
 		"Hooks may veto",

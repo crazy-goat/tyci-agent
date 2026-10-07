@@ -345,8 +345,7 @@ run, a periodic check on a queue, a summary before someone starts their day. It
 is not a reminder to yourself inside this conversation, and it is not somewhere
 to park work you were asked to do now.`,
 
-	"todo": `The run's task list, and a gate: non-todo tool calls are refused until at
-least one item exists. Plan first, then act.
+	"todo": `The run's task list. Optional: use it for long work, skip it for short tasks.
 
   todo(action="add", content="...")            one item
   todo(action="add_batch", items=[...])        several at once

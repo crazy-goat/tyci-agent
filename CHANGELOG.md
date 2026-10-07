@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Agent: the `todo` tool is optional. The plan guard is removed: a model can call any tool in its first turn, and the prompts no longer demand a plan first (#377).
+
 ### Added
 - Flow: roles get `effort` and the flow config gets `default_effort` (`low`, `medium`, `high`, `xhigh`, `max`); the effort goes to the model request, and a `?reasoning=` option in the model URI wins. Step `stats` in `state.json` and `workflow_status` show the `effort` (#186).
 - Flow: every agent visit of a run writes a redacted transcript `~/.tyci/runs/<repo>/<run>/agents/NNN-<role>.jsonl` (`NNN` is `agent_seq`) plus a `.md` dump; these agents write no file to `~/.tyci/sessions/<project>/agents/`. Finished runs older than `logs.retention_days` (default 30, `0` keeps all) are deleted at start and every 24 h (#183).

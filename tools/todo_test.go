@@ -205,119 +205,6 @@ func TestMaxParallelFor(t *testing.T) {
 	}
 }
 
-// HasPendingTodos tests verify that the plan-guard only considers items
-// with status "todo" or "doing" as active work. Once all items are
-// "done" or "blocked", the guard re-engages and blocks non-todo tools.
-
-func TestHasPendingTodos_EmptyList(t *testing.T) {
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "clear"})
-
-	if HasPendingTodos() {
-		t.Error("empty list: expected false")
-	}
-}
-
-func TestHasPendingTodos_AllTodo(t *testing.T) {
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "clear"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 1"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 2"})
-
-	if !HasPendingTodos() {
-		t.Error("all items todo: expected true")
-	}
-}
-
-func TestHasPendingTodos_AllDoing(t *testing.T) {
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "clear"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "wip"})
-	tool.Run(context.Background(), map[string]any{"action": "doing", "id": 1})
-
-	if !HasPendingTodos() {
-		t.Error("single doing item: expected true")
-	}
-}
-
-func TestHasPendingTodos_AllDone(t *testing.T) {
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "clear"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 1"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 2"})
-	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
-	tool.Run(context.Background(), map[string]any{"action": "done", "id": 2})
-
-	if HasPendingTodos() {
-		t.Error("all items done: expected false")
-	}
-}
-
-func TestHasPendingTodos_AllBlocked(t *testing.T) {
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "clear"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "blocked step"})
-	tool.Run(context.Background(), map[string]any{"action": "blocked", "id": 1})
-
-	if HasPendingTodos() {
-		t.Error("all items blocked: expected false")
-	}
-}
-
-func TestHasPendingTodos_MixedDoneAndTodo(t *testing.T) {
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "clear"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "done step"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "pending step"})
-	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
-
-	if !HasPendingTodos() {
-		t.Error("one done + one todo: expected true")
-	}
-}
-
-func TestHasPendingTodos_MixedDoneAndDoing(t *testing.T) {
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "clear"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "done step"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "wip step"})
-	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
-	tool.Run(context.Background(), map[string]any{"action": "doing", "id": 2})
-
-	if !HasPendingTodos() {
-		t.Error("one done + one doing: expected true")
-	}
-}
-
-func TestHasPendingTodos_MixedDoneAndBlocked(t *testing.T) {
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "clear"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "done step"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "blocked step"})
-	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
-	tool.Run(context.Background(), map[string]any{"action": "blocked", "id": 2})
-
-	if HasPendingTodos() {
-		t.Error("one done + one blocked: expected false")
-	}
-}
-
-func TestHasPendingTodos_LastItemDone(t *testing.T) {
-	// Simulates the exact scenario the user described: LLM had a plan,
-	// completed everything, guard should re-engage.
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "clear"})
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "investigate bug"})
-	tool.Run(context.Background(), map[string]any{"action": "doing", "id": 1})
-	if !HasPendingTodos() {
-		t.Fatal("doing: expected true")
-	}
-	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
-	if HasPendingTodos() {
-		t.Error("last item done: expected false — guard should re-engage")
-	}
-}
-
 // TestTodoAcceptsTheStatusNamesModelsActuallyUse. Models arrive with
 // "in_progress", "pending" and "completed" trained into them by other
 // harnesses. Rejecting those bought nothing — the intent is unambiguous every
@@ -502,26 +389,6 @@ func TestIds_DoNotCollideAcrossAgents(t *testing.T) {
 	}
 }
 
-// TestChild_DoesNotInheritParentPendingTodosForPlanGuard reverts to: a
-// freshly-spawned child sees the parent's already-open todos as its own,
-// so a plan guard wired against a child's own list (todoAgentIDFromCtx)
-// would wrongly conclude the child already has a plan.
-func TestChild_DoesNotInheritParentPendingTodosForPlanGuard(t *testing.T) {
-	resetTodoStoreForTest()
-	t.Cleanup(resetTodoStoreForTest)
-
-	tool := &TodoTool{}
-	tool.Run(context.Background(), map[string]any{"action": "add", "content": "main open work"})
-	if !HasPendingTodos() {
-		t.Fatal("setup: main should have pending work")
-	}
-
-	res := tool.Run(childTodoCtx("child-4"), map[string]any{"action": "list"})
-	if !strings.Contains(res.Content, "Todo list is empty") {
-		t.Fatalf("a brand-new child should start with no plan, inherited or otherwise; got: %q", res.Content)
-	}
-}
-
 // TestTodoCounts_FollowMainWhileChildWrites reverts to: TodoCounts() (the
 // TUI top bar) reads whichever list was written last, instead of always
 // the main conversation's.
@@ -589,29 +456,6 @@ func TestTodoAgentCtxKey_TakesPriorityOverJobIDCtxKey(t *testing.T) {
 
 	if got := todoAgentIDFromCtx(ctx); got != "subagent-1" {
 		t.Fatalf("todoAgentIDFromCtx = %q, want %q", got, "subagent-1")
-	}
-}
-
-// TestChildPendingTodos_DoNotLeakIntoMainPlanGuard is the child→parent
-// direction TestChild_DoesNotInheritParentPendingTodosForPlanGuard does not
-// cover: it only checked that a fresh child starts with no plan of its
-// own. This checks the actual leak the TODO.md item was filed for — a
-// child's own todo(add) making the MAIN plan guard (HasPendingTodos, wired
-// at commands.go:173) believe the main conversation has an open plan when
-// it never touched the todo tool itself.
-func TestChildPendingTodos_DoNotLeakIntoMainPlanGuard(t *testing.T) {
-	resetTodoStoreForTest()
-	t.Cleanup(resetTodoStoreForTest)
-
-	if HasPendingTodos() {
-		t.Fatal("setup: main should start with no pending todos")
-	}
-
-	tool := &TodoTool{}
-	tool.Run(childTodoCtx("child-7"), map[string]any{"action": "add", "content": "child work"})
-
-	if HasPendingTodos() {
-		t.Error("a child's pending todo leaked into the main conversation's plan guard")
 	}
 }
 
