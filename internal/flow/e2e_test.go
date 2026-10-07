@@ -32,6 +32,9 @@ if [ -e "$CTL/down" ]; then echo "gh down, token $GH_TOKEN" >&2; exit 1; fi
 case "$*" in
   "issue view"*) cat "$CTL/issue.json" ;;
   "api -i"*) printf 'HTTP/2.0 200 OK\r\n\r\n{"permission":"%%s"}\n' "$(cat "$CTL/perm")" ;;
+  "pr review"*) exit 0 ;;
+  "api user"*) echo bot ;;
+  "api --paginate"*) if [ -e "$CTL/comments.json" ]; then cat "$CTL/comments.json"; else echo '[]'; fi ;;
   "pr list"*) if [ -e "$CTL/pr" ]; then echo 42; fi ;;
   "pr create"*) touch "$CTL/pr"; echo https://example/pull/42 ;;
   "pr checks"*)
@@ -318,7 +321,7 @@ func happy() map[string][]string {
 	}
 }
 
-const happyStates = "check_done, code, review, push, ci, merge, findings"
+const happyStates = "check_done, code, review, push, post_review, ci, comments, merge, findings"
 
 func TestE2E_Gate_NoLabel_NoAgentStarted(t *testing.T) {
 	e := newE2E(t, nil)
@@ -366,7 +369,7 @@ func TestE2E_ReviewChangesThenAccept(t *testing.T) {
 		"findings": {"done"},
 	})
 	e.mustFinish()
-	e.wantStates("check_done, code, review, code, review, push, ci, merge, findings")
+	e.wantStates("check_done, code, review, code, review, push, post_review, ci, comments, merge, findings")
 	e.wantMerged()
 }
 
@@ -392,9 +395,9 @@ func TestE2E_Behind_RebasesThenCIThenMerge(t *testing.T) {
 	e2eCommit(t, e.work, "main2.txt", "m")
 	e2eGit(t, e.work, "push", "-q", "origin", "main")
 	e.mustFinish()
-	e.wantStates("check_done, code, review, push, ci, merge, rebase, ci, merge, findings")
+	e.wantStates("check_done, code, review, push, post_review, ci, comments, merge, rebase, ci, comments, merge, findings")
 	e.wantMerged()
-	if k := e.st.History[6].Key; k != "ok" {
+	if k := e.st.History[8].Key; k != "ok" {
 		t.Errorf("rebase key = %q, want ok", k)
 	}
 	if m := strings.TrimSpace(e2eGit(t, e.origin, "log", "--format=%s", "-1", "--merges", "refs/heads/"+e.st.Branch)); m == "" {
@@ -416,8 +419,8 @@ func TestE2E_RebaseConflict_GoesToCode(t *testing.T) {
 	e2eCommit(t, e.work, "clash.txt", "main\n")
 	e2eGit(t, e.work, "push", "-q", "origin", "main")
 	e.mustFinish()
-	e.wantStates("check_done, code, review, push, ci, merge, rebase, code, review, push, ci, merge, findings")
-	if k := e.st.History[6].Key; k != "conflict" {
+	e.wantStates("check_done, code, review, push, post_review, ci, comments, merge, rebase, code, review, push, post_review, ci, comments, merge, findings")
+	if k := e.st.History[8].Key; k != "conflict" {
 		t.Errorf("rebase key = %q", k)
 	}
 }
@@ -428,7 +431,7 @@ func TestE2E_MergeFail_MergeDecisionRetry(t *testing.T) {
 	e := newE2E(t, s)
 	e.ctlSet("merge_fail_once", "")
 	e.mustFinish()
-	e.wantStates("check_done, code, review, push, ci, merge, merge_decision, merge, findings")
+	e.wantStates("check_done, code, review, push, post_review, ci, comments, merge, merge_decision, merge, findings")
 	e.wantMerged()
 }
 
@@ -438,7 +441,7 @@ func TestE2E_MergeFail_MergeDecisionAsk(t *testing.T) {
 	e := newE2E(t, s)
 	e.ctlSet("merge_fail", "")
 	e.mustPause()
-	e.wantStates("check_done, code, review, push, ci, merge, merge_decision")
+	e.wantStates("check_done, code, review, push, post_review, ci, comments, merge, merge_decision")
 	if e.st.Current != "ask" {
 		t.Errorf("current = %q", e.st.Current)
 	}
@@ -448,8 +451,8 @@ func TestE2E_ProtectedPath_StopsBeforeMerge(t *testing.T) {
 	e := newE2E(t, happy())
 	e.agents.OnRun["code"] = func(wt string) { e2eCommit(t, wt, ".github/workflows/ci.yml", "on: push\n") }
 	e.mustPause()
-	e.wantStates("check_done, code, review, push, ci, merge")
-	if k := e.st.History[5].Key; k != "protected" {
+	e.wantStates("check_done, code, review, push, post_review, ci, comments, merge")
+	if k := e.st.History[7].Key; k != "protected" {
 		t.Errorf("merge key = %q", k)
 	}
 	e.wantNoMerge()
@@ -478,8 +481,8 @@ func TestE2E_CITimeout_GoesToAsk(t *testing.T) {
 	ci.TimeoutSec = 1
 	e.wf.States["ci"] = ci
 	e.mustPause()
-	e.wantStates("check_done, code, review, push, ci")
-	if h := e.st.History[4]; h.Key != "timeout" || h.To != "ask" {
+	e.wantStates("check_done, code, review, push, post_review, ci")
+	if h := e.st.History[5]; h.Key != "timeout" || h.To != "ask" {
 		t.Errorf("ci step = %+v", h)
 	}
 }

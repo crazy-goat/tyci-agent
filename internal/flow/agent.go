@@ -89,6 +89,9 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 			return "", "", err
 		}
 		text += "\n\n" + issueText
+		if b, err := os.ReadFile(filepath.Join(rc.RunDir, "comments.md")); err == nil && len(bytes.TrimSpace(b)) > 0 {
+			text += "\n\n## New comments from team members on the PR\n\n" + string(b)
+		}
 	}
 	return r.Spawn(ctx, tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree})
 }

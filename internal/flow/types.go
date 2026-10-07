@@ -43,22 +43,24 @@ type Ask struct {
 // RunState is the persisted run state (state.json, version 1).
 // Reason is an addition to SDR 5.7: why the run failed.
 type RunState struct {
-	Version   int            `json:"version"` // 1
-	Run       string         `json:"run"`
-	Workflow  string         `json:"workflow"`
-	Repo      string         `json:"repo"`
-	Issue     int            `json:"issue"`
-	Branch    string         `json:"branch"`
-	Worktree  string         `json:"worktree"`
-	Status    string         `json:"status"` // running|paused|done|failed
-	Reason    string         `json:"reason,omitempty"`
-	Current   string         `json:"current"`
-	Ask       *Ask           `json:"ask,omitempty"`
-	PR        int            `json:"pr,omitempty"`
-	StartedAt time.Time      `json:"started_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	Visits    map[string]int `json:"visits"`
-	History   []Step         `json:"history"`
+	Version  int    `json:"version"` // 1
+	Run      string `json:"run"`
+	Workflow string `json:"workflow"`
+	Repo     string `json:"repo"`
+	Issue    int    `json:"issue"`
+	Branch   string `json:"branch"`
+	Worktree string `json:"worktree"`
+	Status   string `json:"status"` // running|paused|done|failed
+	Reason   string `json:"reason,omitempty"`
+	Current  string `json:"current"`
+	Ask      *Ask   `json:"ask,omitempty"`
+	PR       int    `json:"pr,omitempty"`
+	// LastCommentID is the highest PR comment id fetch_comments.sh has seen.
+	LastCommentID int64          `json:"last_comment_id,omitempty"`
+	StartedAt     time.Time      `json:"started_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	Visits        map[string]int `json:"visits"`
+	History       []Step         `json:"history"`
 }
 
 // Step is one executed transition.

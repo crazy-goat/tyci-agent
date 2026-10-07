@@ -124,6 +124,12 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 				return r.failUnknownKey(st, cur, key)
 			}
 			readPRFile(st, r.RunDir)
+			readLastCommentID(st, r.RunDir)
+			var warnings []string
+			if key == "fail" && filepath.Base(s.Check) == "post_review.sh" {
+				warnings = []string{"review_post_failed"}
+				r.notify("run " + st.Run + ": posting the review to the PR failed")
+			}
 			st.History = append(st.History, Step{
 				Seq:        len(st.History) + 1,
 				State:      cur,
@@ -134,6 +140,7 @@ func (r *Runner) Run(ctx context.Context, st *RunState) (err error) {
 				EndedAt:    ended,
 				Exit:       res.Exit,
 				StderrTail: res.StderrTail,
+				Warnings:   warnings,
 			})
 			st.Current = next
 			st.UpdatedAt = time.Now()
@@ -242,6 +249,20 @@ func readPRFile(st *RunState, runDir string) {
 	}
 	if n, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && n > 0 {
 		st.PR = n
+	}
+}
+
+// readLastCommentID copies the comment id from <runDir>/last_comment_id (written by fetch_comments.sh).
+func readLastCommentID(st *RunState, runDir string) {
+	if runDir == "" {
+		return
+	}
+	b, err := os.ReadFile(filepath.Join(runDir, "last_comment_id"))
+	if err != nil {
+		return
+	}
+	if n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil && n > st.LastCommentID {
+		st.LastCommentID = n
 	}
 }
 

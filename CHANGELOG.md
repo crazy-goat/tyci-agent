@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Flow: the final review is posted as a PR review, and new PR comments from team members go back to the worker (#187).
 - TUI: new sidebar tab "Runs" shows recent flow runs with status, current state, role, time in state and last steps (#296).
 - Orchestrator: `workers > 1` now runs several issues at the same time, and the roadmap oracle order replaces `fallbackOrder` (#283).
 
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [0.4.0] - 2026-10-07
 
 ### Added
+- Flow: the final review is posted as a PR review, and new PR comments from team members go back to the worker (#187).
 - Config section `orchestrator` in `~/.tyci/config.json` and `.tyci/config.json`: `workers` (default 3, 0 = unlimited), `plan_timeout_sec` (default 0), `accepted_label` (default `accepted`); the project file wins key by key; invalid values stop the orchestrator start with a message naming key and file (#179)
 - TUI start-up greeting with counts, plan and worker slots; starts the orchestrator on a new session; config keys `forge.kind` and `forge.repo` (#180)
 - TUI chat uses its own orchestrator system prompt: only workflows, never ad-hoc process work (#181)
@@ -29,12 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [0.3.0] - 2026-10-07
 
 ### Added
+- Flow: the final review is posted as a PR review, and new PR comments from team members go back to the worker (#187).
 - Issue-to-merge workflow and runbook (`docs/dogfooding.md`). New on-disk formats: `~/.tyci/config.json` and `.tyci/config.json` (`models`, `default_model`, `roles`), `~/.tyci/worktrees/<repo>/issue-N`, `~/.tyci/runs/<repo>/<run>/state.json`, `.tyci/workflows/` and `.tyci/checks/`. New chat tools: `workflow_start`, `workflow_status`, `workflow_resume` (#175)
 - `internal/worktree.AddIssue` creates fixed-path issue worktrees at `~/.tyci/worktrees/<repo>/issue-N` on branch `issue-N` from `origin/<default branch>`; `Remove` deletes only the issue leaf so sibling worktrees survive (#158)
 
 ## [0.2.0] - 2026-10-05
 
 ### Added
+- Flow: the final review is posted as a PR review, and new PR comments from team members go back to the worker (#187).
 - `tyci --version` prints the build version: release binaries stamp the release tag, Makefile builds stamp `git describe` output (or `dev` without Git, overridable with `VERSION=`), an unstamped binary reports the main-module version the Go toolchain recorded, and a build with no version information reports `dev` (#117)
 - `eventbus.Bus.SubscribeCoalesced`: a subscription that keeps only the latest event per key, so a slow consumer never loses the newest state (#113). The optional `eventbus.WithReplaces` decides which of two events with the same key is kept (#131)
 
@@ -56,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 First release: a CLI that runs LLM agents with a multi-turn agent loop, tool execution, session persistence, streaming responses and a TUI, configured through a JSON model registry.
 
 ### Added
+- Flow: the final review is posted as a PR review, and new PR comments from team members go back to the worker (#187).
 - `bin/lint.sh` runs `golangci-lint fmt --diff`, `golangci-lint run`, `go vet` and shellcheck; `--fix` applies `golangci-lint fmt` first. `make lint` calls it and the CI `lint` job runs only this script with pinned golangci-lint and shellcheck (#102)
 - `docs/workflow.md` and `docs/release-workflow.md` follow the shared crazy-goat templates; project commands live in the new `AGENTS.md`
 - `bin/` has the shared issue and worktree helper scripts, plus `worktree-setup.sh` and `worktree-teardown.sh`
