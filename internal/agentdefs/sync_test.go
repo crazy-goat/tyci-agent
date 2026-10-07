@@ -356,8 +356,8 @@ func TestBuiltin_ParsesAllWithoutError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Builtin() returned error: %v", err)
 	}
-	if len(defs) != 3 {
-		t.Fatalf("Builtin() returned %d defs, want 3: %+v", len(defs), defs)
+	if len(defs) != len(builtinNames) {
+		t.Fatalf("Builtin() returned %d defs, want %d: %+v", len(defs), len(builtinNames), defs)
 	}
 	got := make([]string, len(defs))
 	for i, d := range defs {
