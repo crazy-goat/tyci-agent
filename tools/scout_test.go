@@ -308,15 +308,15 @@ func TestScoutTool_ConcurrencyCapRejectsExtraCallFromSameCaller(t *testing.T) {
 }
 
 // TestScoutTool_DistinctExternalCallersGetDistinctBuckets pins the fix for
-// the residual A-round bug: btw.go's promoted /btw job, its resumed-job
-// path, and internal/workflow/engine.go's named-agent session all reach
-// scout-eligible depth without going through runSingleTask, so before
-// WithScoutCaller existed they all fell back to scoutCallerIDFromContext
-// returning "" and shared ONE 2-slot bucket — an unrelated third caller's
-// scout got refused by a cap that was never meant to apply to it. Here two
-// distinct ids stamped via WithScoutCaller (standing in for two such
-// external callers, e.g. one resumed /btw job and one promoted /btw job)
-// each fill their own maxScoutsPerCaller slots concurrently; both must
+// the residual A-round bug: btw.go's promoted /btw job and its resumed-job
+// path both reach scout-eligible depth without going through runSingleTask,
+// so before WithScoutCaller existed they both fell back to
+// scoutCallerIDFromContext returning "" and shared ONE 2-slot bucket — an
+// unrelated third caller's scout got refused by a cap that was never meant
+// to apply to it. Here two distinct ids stamped via WithScoutCaller
+// (standing in for two such external callers, e.g. one resumed /btw job and
+// one promoted /btw job) each fill their own maxScoutsPerCaller slots
+// concurrently; both must
 // succeed, proving they landed in separate buckets rather than fighting
 // over a shared one.
 func TestScoutTool_DistinctExternalCallersGetDistinctBuckets(t *testing.T) {
