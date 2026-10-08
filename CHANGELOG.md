@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - TUI: the sidebar key line is on the last row on every tab. On the Tasks tab, the history note is now above the key line. A long line in a sidebar tab is cut at the sidebar width with "…" and no longer wraps onto an extra row (#514).
+- TUI: while an agent view is open, the status bar shows the viewed subagent: its model, its state (or `done`, `failed` or `truncated` when it ended), its tokens and its cost. The session total stays on the right. Before, the bar showed the main conversation's model, state and context figure. Esc shows the main status again (#528).
 
 ## [0.6.0] - 2026-10-08
 
