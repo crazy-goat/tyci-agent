@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: the roadmap oracle is no longer told to write `report.md`, because the roadmap run has no artifact dir. The start-up plan does not wait for an extra model turn. The `recover` step still writes `report.md` (#379).
 - Flow: the failed run notice names the step where the run stopped. A run that fails after a fixer answers `ok` also names the pending workflow proposal (#333).
 - Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
+- Cost: a model id that several providers list gets the same rates and limits on each lookup without a provider. The status bar context percentage and the step cost do not change between calls (#419).
 
 ## [0.5.0] - 2026-10-08
 
