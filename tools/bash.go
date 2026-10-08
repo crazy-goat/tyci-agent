@@ -62,18 +62,22 @@ func formatExitError(err error, output string) string {
 	return fmt.Sprintf("❌ exit code %d:\n%s", exitCode, output)
 }
 
-type BashTool struct{}
+type BashTool struct {
+	// handoffSec replaces BashBackgroundAfterSec when set. Tests use it to
+	// move the handoff in a second instead of thirty; production leaves it zero.
+	handoffSec int
+}
 
 func (t *BashTool) Name() string {
 	return "bash"
 }
 
-// Run executes a shell command. It normally blocks until the command exits,
-// exactly as it always has. What is new is the escape hatch for commands that
-// outlive the agent's patience: after BashBackgroundAfterSec (or immediately,
-// with run_in_background) the still-running command is handed to the job
-// registry and Run returns a job_id instead of waiting. See handoff for why
-// that requires the tool — not the dispatcher — to own the process lifetime.
+// Run executes a shell command. A call blocks for at most BashBackgroundAfterSec.
+// A command that still runs then is handed to the job registry (or immediately,
+// with run_in_background), and Run returns a job_id instead of waiting. A
+// command is stopped instead only when no background slot is free. See handoff
+// for why that requires the tool — not the dispatcher — to own the process
+// lifetime.
 func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	cmdVal, ok := input["command"].(string)
 	if !ok {
@@ -88,23 +92,18 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		timeoutSec = BashDefaultTimeoutSec
 	}
 
-	// How long to wait before moving the command to the background.
-	//
-	// An earlier version treated an explicit "timeout" as the caller saying
-	// how long it was willing to block, and disabled the handoff. That was
-	// wrong in practice: models fill in optional parameters as a matter of
-	// habit — a real session showed "timeout": 600 on every single bash call
-	// — so the handoff was switched off almost every time and the feature
-	// effectively did not exist.
-	//
-	// A large timeout now means only what it says: the command is allowed to
-	// run that long. It still moves to the background at the threshold,
-	// which costs the caller nothing — the command keeps running and it can
-	// block on wait(job_id) for as long as it likes. Insisting on the
-	// foreground is what background_after=0 is for, which says so plainly
-	// instead of being inferred.
-	bgAfterSec := intParam(input, "background_after", -1)
-	if bgAfterSec < 0 {
+	// timeout is the total run limit of the command, also after the handoff.
+	// The job that owns a backgrounded command enforces it, capped by
+	// BashBackgroundLimitSec.
+	limitSec := min(timeoutSec, BashBackgroundLimitSec)
+
+	// A call blocks for at most the handoff delay, whatever the timeout says.
+	// A large timeout only means that the command may run that long: it still
+	// moves to the background at the delay, and the caller can wait(job_id)
+	// for it. A timeout that ends the command before the delay has passed
+	// kills it at the timeout, with no handoff.
+	bgAfterSec := t.handoffSec
+	if bgAfterSec <= 0 {
 		bgAfterSec = BashBackgroundAfterSec
 	}
 	if bgAfterSec >= timeoutSec {
@@ -134,7 +133,7 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	}
 
 	if runInBg {
-		if res, ok := t.handoff(ctx, run, label, 0); ok {
+		if res, ok := t.handoff(ctx, run, label, 0, limitSec); ok {
 			return res
 		}
 		// Every background slot is busy. Falling back to the foreground is
@@ -180,18 +179,26 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			if !UserPending() {
 				continue
 			}
-			if res, ok := t.handoff(ctx, run, label, int(time.Since(startedAt).Seconds())); ok {
+			if res, ok := t.handoff(ctx, run, label, int(time.Since(startedAt).Seconds()), limitSec); ok {
 				return res
 			}
 			// No slot free: stop asking, and let the normal timers decide.
 			pollC = nil
 
 		case <-bgC:
-			// One shot: if the handoff is refused (no free slot) we keep
-			// waiting in the foreground rather than retrying in a loop.
-			bgC = nil
-			if res, ok := t.handoff(ctx, run, label, bgAfterSec); ok {
+			// This fires once, and every path out of it returns. A refused
+			// handoff means every background slot is busy. The command cannot
+			// move, so it is stopped now, and the agent is not blocked until
+			// its timeout.
+			if res, ok := t.handoff(ctx, run, label, bgAfterSec, limitSec); ok {
 				return res
+			}
+			run.kill()
+			<-run.exit
+			return ToolResult{
+				Type:    "result",
+				Success: false,
+				Error:   fmt.Sprintf("bash tool stopped after %ds: no free background slot; wait for a running job or kill one, then retry. Partial output:\n%s", bgAfterSec, strings.TrimRight(run.out.result(), "\n")),
 			}
 
 		case <-deadline.C:
@@ -218,16 +225,18 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 // job that owns the rest of the command's life, and returns the message the
 // model gets in place of the command's output. ok is false when the handoff
 // could not happen (no JobStarter wired, or every background slot busy), in
-// which case nothing has changed and the caller keeps waiting.
+// which case nothing has changed and the caller decides what to do next.
+// waited is how many seconds the command has already run. limitSec is its
+// total run limit, counted from its start.
 //
 // The context surgery here is the crux of the whole feature. The ctx passed
 // to a tool call is cancelled the moment the call returns (see
 // agent/tools_exec.go), and the bash tool kills its process group on
 // cancellation — so returning early on the caller's context would kill the
 // very command we are trying to keep alive. context.WithoutCancel severs
-// that link and WithTimeout puts back a backstop the job itself owns; the
+// that link and WithTimeout puts the run limit back, owned by the job; the
 // same detach-and-backstop pattern the async subagent spawn path uses.
-func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, waited int) (ToolResult, bool) {
+func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, waited, limitSec int) (ToolResult, bool) {
 	starter := getJobStarter()
 	if starter == nil {
 		return ToolResult{}, false
@@ -236,7 +245,7 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 		return ToolResult{}, false
 	}
 
-	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), BashBackgroundLimitSec*time.Second)
+	jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(limitSec-waited)*time.Second)
 
 	// Stop streaming into the tool block before anyone can observe the
 	// handoff: the block belongs to a tool call that is about to return, and
@@ -276,7 +285,7 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 
 		switch {
 		case killed:
-			return output, false, fmt.Errorf("background command was stopped before it finished (kill_job, the %ds background limit, or its parent job ended). Partial output:\n%s", BashBackgroundLimitSec, output)
+			return output, false, fmt.Errorf("background command was stopped before it finished (kill_job, its time limit, or its parent job ended). Partial output:\n%s", output)
 		case waitErr != nil:
 			return output, false, errors.New(formatExitError(waitErr, output))
 		default:
@@ -285,9 +294,8 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 	})
 
 	// cancel() is the kill switch for both paths that can stop this command
-	// early — the BashBackgroundLimitSec backstop and an explicit kill_job —
-	// because the select in the job goroutine turns a done context into an
-	// actual process-group kill.
+	// early — the time limit and an explicit kill_job — because the select in
+	// the job goroutine turns a done context into an actual process-group kill.
 	registerBackgroundBash(handle.ID(), cancel)
 	close(registered)
 
@@ -562,7 +570,7 @@ func startBash(ctx context.Context, cmdVal string) (*bashRun, error) {
 // error and whether it was killed, exactly as the plain select it replaced.
 func watchBackgroundRun(jobCtx context.Context, run *bashRun, jobID, label string, started time.Time, first, every time.Duration, parentID string) (error, bool) {
 	// A command that was already older than the first interval when it got
-	// here (a long background_after, say) is due for its notice immediately
+	// here (a handoff late in the run, say) is due for its notice immediately
 	// rather than skipping it.
 	due := first - time.Since(started)
 	if due < 0 {

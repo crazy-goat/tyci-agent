@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: the `main` row in the sidebar Tasks tab can be selected. Enter or a click on a subagent row shows that agent's conversation in the main window, and it updates live. The header names the viewed agent. Enter on `main`, or Esc, shows the main conversation again with its scroll position. Input still goes to the main conversation. Resumed jobs, promoted /btw jobs and /btw evaluations show their conversation the same way (#453).
 
 ### Changed
+- Bash: a call blocks for at most 30s. A command that still runs after 30s moves to the background, and it keeps running there. `timeout` (default 120s) is the total run limit, also in the background. A larger timeout is limited to 3600s. A command with the default timeout stops 120s after it starts, also in the background. Before this change, a backgrounded command could run up to 3600s. Use a larger `timeout` for long builds. If every background slot is busy, the command stops at 30s with an error (#436).
 - Subagents: a bash command that runs longer than 30s moves to the background inside a subagent too. The completion notice goes to the subagent that started the command (#435).
 - Subagents: a subagent that lists `bash` in its `tools:` also gets `wait` and `kill_job`. It can wait for or stop only the jobs it started (#435).
 - TUI: the Runs tab shows one line per run, for example `#472 done (merged) 12m3s`, with the total cost at the end. Active runs come first, newest start first. Finished runs follow, newest end first. Enter or a click expands a run and shows every step visit with its duration and cost. The tab row is as wide as its labels, not split evenly over the sidebar (#310).
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: the Tokens tab lists the main session model first, then the subagent and scout rows. The `of that delegated` line is renamed `subsession`, and `total` is the last line (#455).
 
 ### Removed
+- Bash: the `background_after` parameter is removed. The move to the background always starts at 30s. An old call that sends `background_after` still runs, and the parameter has no effect (#436).
 - Lua workflows: the `.tyci/agents/*.lua` scripts and the `tyci workflow run` and `tyci workflow list` commands are removed. Use JSON workflows (v0.3.0) instead. `tyci workflow eject` stays.
 - `tyci console` and the `minimal`, `normal` and `interactive` display modes. Use `tyci tui` (interactive) or `tyci run --prompt` (one-shot) (#189).
 - TUI: the `/model` command, the model picker and the favorite models are removed. Tab, Shift+Tab and Ctrl+P no longer open a model picker. `/model` is handled like any unknown slash command (#190).

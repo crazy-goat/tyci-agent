@@ -164,11 +164,10 @@ with kill_job(job_id=...).
   run_in_background=true starts something you already know is long (a build, a
   test suite, a watcher) and returns immediately, so you can work meanwhile.
 
-  timeout raises the total wall-clock limit (default 120s). It is a limit, not
-  a promise to block — the handoff at 30s still happens.
-
-  background_after=0 is the explicit opt-out: stay in the foreground until the
-  command finishes or hits its timeout.
+  timeout sets the total wall-clock limit (default 120s), also after the command
+  moved to the background. A call never blocks for more than 30s. If every
+  background slot is busy, the command is stopped at 30s with an error: wait for
+  a running job or kill one, then retry.
 
 Backgrounding is only available in an interactive session. A command you
 background stops when your run ends, so collect its result before you return

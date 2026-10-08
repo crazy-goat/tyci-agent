@@ -20,17 +20,19 @@ const (
 	// any command we just handed to the background.
 	BashDefaultTimeoutSec = 120
 
-	// BashBackgroundAfterSec is how long we wait before deciding a command
-	// is "taking longer than expected" and moving it to the background. Set
-	// above the runtime of an ordinary build or test run: below that, the
-	// handoff would cost the model an extra polling turn for commands that
-	// were about to finish anyway.
+	// BashBackgroundAfterSec is the most a bash call blocks. A command still
+	// running then is moved to the background, and the agent gets its turn
+	// back. The command is not killed at this point, unless no background slot
+	// is free (see Run). Set above the runtime of an ordinary build or test
+	// run: below that, the handoff would cost the model an extra polling turn
+	// for commands that were about to finish anyway.
 	BashBackgroundAfterSec = 30
 
-	// BashBackgroundLimitSec is the wall-clock backstop for a command that
-	// has been moved to the background. Nothing else bounds it once it is
-	// detached from the tool call's context, so without this a wedged
-	// process would live until tyci exits.
+	// BashBackgroundLimitSec caps the total run time of a command, also after
+	// it has been moved to the background. A larger timeout is capped to it.
+	// Nothing else bounds a backgrounded command once it is detached from the
+	// tool call's context, so without this a wedged process would live until
+	// tyci exits.
 	BashBackgroundLimitSec = 3600
 
 	// BashFirstProgressNoticeSec is when the first "still running" heads-up

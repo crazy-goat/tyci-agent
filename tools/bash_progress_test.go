@@ -3,8 +3,8 @@ package tools
 // The "still running" heads-up for a backgrounded command.
 //
 // The case it exists for: a typo turns a five-second command into a hang, the
-// model has already moved on, and nothing says anything until the 3600s
-// backstop. A slow build looks identical from the outside, so the notice
+// model has already moved on, and nothing says anything until the command's
+// time limit. A slow build looks identical from the outside, so the notice
 // reports the age and asks for nothing — only the model knows which of the two
 // it wrote.
 

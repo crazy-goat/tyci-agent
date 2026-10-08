@@ -268,9 +268,8 @@ func TestBashAutoBackgroundAfterThreshold(t *testing.T) {
 	reg, _ := bgTestEnv(t)
 
 	start := time.Now()
-	res := (&BashTool{}).Run(context.Background(), map[string]any{
-		"command":          "sleep 2; echo eventually",
-		"background_after": 1,
+	res := (&BashTool{handoffSec: 1}).Run(context.Background(), map[string]any{
+		"command": "sleep 2; echo eventually",
 	})
 	elapsed := time.Since(start)
 
@@ -296,9 +295,8 @@ func TestBashAutoBackgroundAfterThreshold(t *testing.T) {
 func TestBashNoAutoBackgroundBeforeThreshold(t *testing.T) {
 	bgTestEnv(t)
 
-	res := (&BashTool{}).Run(context.Background(), map[string]any{
-		"command":          "echo quick",
-		"background_after": 5,
+	res := (&BashTool{handoffSec: 5}).Run(context.Background(), map[string]any{
+		"command": "echo quick",
 	})
 	if !res.Success || res.Content != "quick" {
 		t.Fatalf("expected inline output %q, got success=%v content=%q err=%q", "quick", res.Success, res.Content, res.Error)
@@ -314,10 +312,9 @@ func TestBashExplicitTimeoutStillBackgrounds(t *testing.T) {
 	bgTestEnv(t)
 
 	start := time.Now()
-	res := (&BashTool{}).Run(context.Background(), map[string]any{
-		"command":          bgSleeper,
-		"timeout":          600,
-		"background_after": 1,
+	res := (&BashTool{handoffSec: 1}).Run(context.Background(), map[string]any{
+		"command": bgSleeper,
+		"timeout": 600,
 	})
 	if !res.Success {
 		t.Fatalf("expected a handoff, got error: %s", res.Error)
@@ -330,18 +327,81 @@ func TestBashExplicitTimeoutStillBackgrounds(t *testing.T) {
 	}
 }
 
-// TestBashBackgroundAfterZeroKeepsForeground is the explicit opt-out that
-// replaced the inference above: a caller that really wants to block says so.
-func TestBashBackgroundAfterZeroKeepsForeground(t *testing.T) {
+// TestBashBackgroundAfterParamIsIgnored: background_after is gone. An old call
+// that still sends it, with 0 or with a large value, gets the same handoff as
+// any other call.
+func TestBashBackgroundAfterParamIsIgnored(t *testing.T) {
+	reg, _ := bgTestEnv(t)
+
+	for _, value := range []int{0, 300} {
+		res := (&BashTool{handoffSec: 1}).Run(context.Background(), map[string]any{
+			"command":          "sleep 2; echo late",
+			"timeout":          600,
+			"background_after": value,
+		})
+		if !res.Success || !strings.Contains(res.Content, "still running after 1s") {
+			t.Fatalf("background_after=%d: expected a handoff at 1s, got success=%v content=%q err=%q", value, res.Success, res.Content, res.Error)
+		}
+		job := waitForJob(t, reg, jobIDFromResult(t, res.Content), bgFinishCap)
+		if job.Result != "late" {
+			t.Fatalf("background_after=%d: expected the job result %q, got %q", value, "late", job.Result)
+		}
+	}
+}
+
+// TestBashTimeoutIsTotalAfterHandoff: the timeout limits the whole run, also
+// once the command is in the background. The handoff happens at the delay, and
+// the command is stopped when the timeout passes.
+func TestBashTimeoutIsTotalAfterHandoff(t *testing.T) {
+	reg, _ := bgTestEnv(t)
+
+	res := (&BashTool{handoffSec: 1}).Run(context.Background(), map[string]any{
+		"command": bgSleeper,
+		"timeout": 2,
+	})
+	if !res.Success || !strings.Contains(res.Content, "job_id") {
+		t.Fatalf("expected a handoff, got success=%v content=%q err=%q", res.Success, res.Content, res.Error)
+	}
+	job := waitForJob(t, reg, jobIDFromResult(t, res.Content), bgFinishCap)
+	if job.Status != jobs.StatusFailed {
+		t.Fatalf("expected the command to be stopped at its timeout, got status %s", job.Status)
+	}
+	if !strings.Contains(job.Err, "stopped before it finished") {
+		t.Fatalf("expected the error to say it was stopped, got %q", job.Err)
+	}
+}
+
+// TestBashNoFreeSlotStopsAtDelay: when every background slot is busy, a command
+// still running at the delay cannot move. It is stopped there, with an error
+// that says what to do, and the agent is not blocked until the timeout.
+func TestBashNoFreeSlotStopsAtDelay(t *testing.T) {
 	bgTestEnv(t)
 
-	res := (&BashTool{}).Run(context.Background(), map[string]any{
-		"command":          "echo waited",
-		"timeout":          60,
-		"background_after": 0,
+	for i := 0; i < maxBackgroundBash; i++ {
+		res := (&BashTool{}).Run(context.Background(), map[string]any{
+			"command":           bgSleeper,
+			"run_in_background": true,
+		})
+		if !res.Success || !strings.Contains(res.Content, "job_id") {
+			t.Fatalf("handoff %d should have succeeded: success=%v content=%q err=%q", i, res.Success, res.Content, res.Error)
+		}
+	}
+
+	start := time.Now()
+	res := (&BashTool{handoffSec: 1}).Run(context.Background(), map[string]any{
+		"command": bgSleeper,
+		"timeout": 600,
 	})
-	if !res.Success || res.Content != "waited" {
-		t.Fatalf("expected inline output, got success=%v content=%q err=%q", res.Success, res.Content, res.Error)
+	elapsed := time.Since(start)
+
+	if res.Success {
+		t.Fatalf("expected the command to be stopped, got success with %q", res.Content)
+	}
+	if !strings.Contains(res.Error, "no free background slot") {
+		t.Fatalf("expected a no-free-slot error, got %q", res.Error)
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("blocked for %v; it should have been stopped at the delay", elapsed)
 	}
 }
 

@@ -289,15 +289,14 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "bash",
-				"description": "Run a shell command; use it only when no other tool fits — find, read and write are cheaper and bounded. It blocks, and after 30s the command is moved to the background and you are NOTIFIED when it finishes: do other work, and never re-run a backgrounded command, because a second copy races the first. run_in_background=true for work you already know is long; background_after=0 to stay blocked; timeout (default 120s) is the total limit, not a promise to block.",
+				"description": "Run a shell command; use it only when no other tool fits — find, read and write are cheaper and bounded. A call blocks for at most 30s. A command still running then is moved to the background and you are NOTIFIED when it finishes: do other work, and never re-run a backgrounded command, because a second copy races the first. Use wait(job_id=...) to block on it. run_in_background=true for work you already know is long. timeout (default 120s) is the total run limit, also in the background.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"description":       map[string]any{"type": "string", "description": "Short description of what this command does. Also used as the label for a background job, so keep it recognisable."},
 						"command":           map[string]any{"type": "string", "description": "Command to execute"},
-						"timeout":           map[string]any{"type": "integer", "description": "How long the command may run in total, in seconds (default: 120). This is a limit, not a promise to block: the command still moves to the background after 30s and keeps running, and you can then wait(job_id=...) on it. To stay in the foreground instead, set background_after=0."},
+						"timeout":           map[string]any{"type": "integer", "description": "How long the command may run in total, in seconds (default: 120), also after it moved to the background. A call still blocks for at most 30s. If every background slot is busy, the command is stopped at 30s instead."},
 						"run_in_background": map[string]any{"type": "boolean", "description": "Start the command in the background immediately and return a job_id without waiting for any output. Use for long builds, test suites or watchers when you have other work to get on with."},
-						"background_after":  map[string]any{"type": "integer", "description": "Seconds to wait before moving the command to the background (default: 30). 0 disables the move, so the command runs in the foreground until it finishes or hits its timeout."},
 					},
 					"required": []string{"command"},
 				},

@@ -624,9 +624,12 @@ the ones that are done, job ids for the rest.
 
 ## Long background commands
 
-A command still running after 30s is moved to the background. At the one-minute
-mark it sends one line back — how long it has been running and nothing else —
-and repeats every five minutes after that.
+A bash call never blocks for more than 30s. A command that still runs after 30s
+moves to the background, and it keeps running there. Its `timeout` (default 120s)
+is the total run limit, also in the background. A larger timeout is limited to
+3600s. If every background slot is busy, the command stops at 30s with an error.
+At the one-minute mark the agent gets one line back: the time since the command
+started, and nothing else. It repeats every five minutes after that.
 
 It asks for nothing on purpose. A typo that turns a five-second command into a
 hang looks exactly like a legitimately slow build from the outside, and only
