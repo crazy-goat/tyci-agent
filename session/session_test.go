@@ -780,7 +780,7 @@ func TestRebuildMessages_DropsOrphanToolResults(t *testing.T) {
 }
 
 // F8 (item 10 inbox): LoadForReplay is what feeds the model on /resume
-// (tui_mode.go, interactive.go), but unlike RebuildMessages it never called
+// (tui_mode.go), but unlike RebuildMessages it never called
 // SanitizeMessageSequence. A JSONL truncated mid tool-call/result pair —
 // here, a header directly followed by an orphan toolResult whose matching
 // assistant toolCall was never written (e.g. the process died right after
