@@ -169,7 +169,7 @@ func StdioPrompt(root string) (bool, error) {
 // project ever (see the re-ask policy in the package doc comment).
 //
 // interactive distinguishes the two modes this must support:
-//   - interactive (console, tui): an unrecorded project blocks once on
+//   - interactive (tui): an unrecorded project blocks once on
 //     prompt (StdioPrompt unless prompt overrides it), and the answer is
 //     persisted so this project is never asked again.
 //   - non-interactive (`tyci run`, cron): must never block. An unrecorded

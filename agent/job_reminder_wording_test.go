@@ -33,7 +33,7 @@ func TestBuildJobReminder_TellsModelToRelayNotInvent(t *testing.T) {
 
 // TestBuildJobReminder_NonInteractiveDoesNotPromiseAnswerCommand guards the
 // item-27 round-3 fix: `tyci run` (and cron, which shells out to it) wires
-// PendingJobs the same as console/TUI, but has no human present to reply at
+// PendingJobs the same as the TUI, but has no human present to reply at
 // all. Telling the model to "relay to the user...wait for their reply" there
 // describes someone who isn't there, and would make the model wait for a
 // reply that will never come. The non-interactive wording must not tell the
@@ -53,5 +53,26 @@ func TestBuildJobReminder_NonInteractiveDoesNotPromiseAnswerCommand(t *testing.T
 	}
 	if !strings.Contains(got, "unanswered") {
 		t.Fatalf("expected the reminder to tell the model it may finish without an answer, got %q", got)
+	}
+}
+
+// TestBuildJobReminder_InteractiveListsOnlyBlockedJobs guards the fix that a
+// running job does not get a reminder in an interactive session, even when a
+// blocked job makes the reminder fire: the running job sends its own notice,
+// so the reminder must not ask the model to wait for it.
+func TestBuildJobReminder_InteractiveListsOnlyBlockedJobs(t *testing.T) {
+	got := buildJobReminder([]string{
+		"WAITING FOR ANSWER: some job (job_id=job-1-1) asks: \"which way?\"",
+		"running: tyci workflow (job_id=job-2-1)",
+	}, true)
+
+	if !strings.Contains(got, "job_id=job-1-1") {
+		t.Fatalf("expected the blocked job to be listed, got %q", got)
+	}
+	if strings.Contains(got, "job-2-1") || strings.Contains(got, "running:") {
+		t.Fatalf("expected the running job not to be listed in an interactive session, got %q", got)
+	}
+	if strings.Contains(got, "wait(job_id=") {
+		t.Fatalf("expected no instruction to wait for a running job in an interactive session, got %q", got)
 	}
 }

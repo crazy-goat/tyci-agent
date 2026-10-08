@@ -32,7 +32,7 @@ const jobEventBusSize = 32
 // subscriber today, wired in commands.go's tuiCmd via TUI.SetJobEventBus —
 // see jobs.Registry.SetOnEvent). Package-level so both wiring sites share
 // the exact same instance without threading it through function
-// signatures; every other mode (console, --print, etc.) simply never
+// signatures; every other mode (run, etc.) simply never
 // subscribes, so this costs them nothing.
 var jobEventBus = eventbus.New(jobEventBusSize)
 
@@ -508,8 +508,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	}
 
 	cfg := agent.Config{
-		System:     system,
-		MaxRetries: 1,
+		System: system,
 		// opts.MaxIterationsCap is 0 (unlimited) for every ordinary
 		// subagent — only tools/scout.go ever sets it, to 15. Plain
 		// MaxIterations stays deliberately unpopulated; see its doc

@@ -221,19 +221,47 @@ func (r *SubagentRunner) verdict(ctx context.Context, rc RunContext) string {
 	return v
 }
 
-// readVerdict reads the first line of the review report: exactly ACCEPT or CHANGES.
-// Anything else gives CHANGES and a warning.
+// readVerdict reads the review report. The first line wins when it is exactly ACCEPT or
+// CHANGES. Otherwise the report must hold one verdict line anywhere (see verdictLine).
+// Both verdicts or none give CHANGES and a warning.
 func readVerdict(path string) (verdict, warning string) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return "CHANGES", "review report not readable: " + err.Error()
 	}
-	first, _, _ := strings.Cut(string(b), "\n")
-	switch first = strings.TrimSpace(first); first {
-	case "ACCEPT", "CHANGES":
+	text := string(b)
+	first, _, _ := strings.Cut(text, "\n")
+	if first = strings.TrimSpace(first); first == "ACCEPT" || first == "CHANGES" {
 		return first, ""
 	}
-	return "CHANGES", fmt.Sprintf("review report first line %q is not ACCEPT or CHANGES", first)
+	accept, changes := false, false
+	for _, line := range strings.Split(text, "\n") {
+		switch verdictLine(line) {
+		case "ACCEPT":
+			accept = true
+		case "CHANGES":
+			changes = true
+		}
+	}
+	switch {
+	case accept && !changes:
+		return "ACCEPT", ""
+	case changes && !accept:
+		return "CHANGES", ""
+	}
+	return "CHANGES", "review report has no single ACCEPT or CHANGES line"
+}
+
+// verdictLine returns ACCEPT or CHANGES when the line is a verdict line, else "".
+// The word may have a "Verdict:" prefix and Markdown markers (#, *) around it.
+func verdictLine(line string) string {
+	const marks = "#* \t\r"
+	s := strings.Trim(line, marks)
+	s = strings.Trim(strings.TrimPrefix(s, "Verdict:"), marks)
+	if s == "ACCEPT" || s == "CHANGES" {
+		return s
+	}
+	return ""
 }
 
 // fixerKey is "failed" when the fixer wrote failed.log in its artifact dir or

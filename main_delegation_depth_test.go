@@ -45,8 +45,8 @@ func schemaToolNames(t *testing.T, data []byte) map[string]bool {
 // lockstep: the schema a depth is actually offered
 // (tools.GetTopLevelToolsSchemaJSON for depth 0, tools.
 // GetSubagentToolsSchemaJSONForAtDepth for depth >= 1) and what the real
-// runtime dispatch (tools.RunTool directly for depth 0 — cmd_interactive.
-// go's toolsAdapter.Run, the production top-level path, is a bare
+// runtime dispatch (tools.RunTool directly for depth 0 — commands.go's
+// toolsAdapter.Run, the production top-level path, is a bare
 // passthrough to RunTool with no depth check of its own, so calling
 // RunTool here exercises exactly the same enforcement; subagentToolRunner.
 // Run for depth >= 1, the real per-child gate) actually permits for the

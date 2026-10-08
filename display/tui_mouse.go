@@ -113,7 +113,12 @@ func (m *TuiModel) openToolModalAt(y int) {
 	}
 	// The header of a group toggles the group. Its steps open one by one.
 	if line.SourceKind == "group" {
-		m.toggleGroup(line.BlockIndex)
+		m.shownModel().toggleGroup(line.BlockIndex)
+		return
+	}
+	// The tool modal reads the main conversation's blocks, so it does not
+	// open while an agent view is on screen.
+	if m.agentView != nil {
 		return
 	}
 	idx := line.BlockIndex

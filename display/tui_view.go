@@ -23,7 +23,7 @@ func (m TuiModel) View() string {
 // normal transcript view, and 0 (disabled) for full-screen overlays and states
 // that never scroll a stream, where a plain line diff is correct and cheaper.
 func (m TuiModel) paintScrollBottom() int {
-	if !m.ready || m.quitting || m.todoModalActive || m.subagentModalActive || m.pickerActive || m.historySearchActive || m.resumePickerActive || m.btwModalActive || m.btwListActive || m.jobsModalActive || m.transcriptViewerActive || m.sidebarActive {
+	if !m.ready || m.quitting || m.todoModalActive || m.subagentModalActive || m.pickerActive || m.historySearchActive || m.resumePickerActive || m.btwModalActive || m.btwListActive || m.jobsModalActive || m.sidebarActive {
 		return 0
 	}
 	return m.messageRegionHeight()
@@ -55,11 +55,6 @@ func (m TuiModel) renderFrame() string {
 	// ── Background jobs modal overlay mode (Ctrl+B) ──
 	if m.jobsModalActive {
 		return m.renderJobsModalView()
-	}
-
-	// ── Transcript viewer overlay mode (item 49) ──
-	if m.transcriptViewerActive {
-		return m.renderTranscriptViewerView()
 	}
 
 	// ── Subagent modal overlay mode ──
@@ -149,7 +144,12 @@ func (m TuiModel) renderMainColumn() string {
 	// line, and builds the renderBuffer. During long tool execution the only
 	// thing firing is the 250ms status tick — the message region is unchanged.
 	// Cache it and reuse the string until something invalidates it.
-	region := m.buildMessageRegionCached(msgHeight)
+	var region string
+	if m.agentView != nil {
+		region = m.agentViewRegion(msgHeight)
+	} else {
+		region = m.buildMessageRegionCached(msgHeight)
+	}
 	b.WriteString(region)
 	b.WriteString("\n")
 
