@@ -22,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [0.6.0] - 2026-10-08
 
-
 ### Added
 - CLI: `tyci workflow run <name> <issue>`, `tyci workflow validate <name>` and `tyci workflow status <run-id>` run and check workflows without the chat or the TUI. Each command has `--json`. `run` and `validate` have `--dir`. A run that pauses at an ask state has the status `paused` and exits with code 0 (#191).
 - TUI: the `main` row in the sidebar Tasks tab can be selected. Enter or a click on a subagent row shows that agent's conversation in the main window, and it updates live. The header names the viewed agent. Enter on `main`, or Esc, shows the main conversation again with its scroll position. Input still goes to the main conversation. Resumed jobs, promoted /btw jobs and /btw evaluations show their conversation the same way (#453).
@@ -88,7 +87,6 @@ Existing agents.json, .tyci.json and .tyci/model.json files are ignored (not del
 - Orchestrator: the TUI chat now does direct user requests (run a command, edit a file, add a label, comment) with its tools instead of refusing; issue work still goes through workflows (#381).
 - Agent: the `todo` tool is optional. The plan guard is removed: a model can call any tool in its first turn, and the prompts no longer demand a plan first (#377).
 
-
 ### Added
 - Flow: `tyci workflow eject <name> [--force] [--dir]` copies a builtin workflow, its check scripts, task templates and role prompts into `.tyci/` and points `roles.<role>.prompt` to `@prompts/<role>.md`. Task templates now resolve from `<repo>/.tyci/tasks/<name>.md` (trusted), then `~/.tyci/tasks/<name>.md`, then the builtin copy. An agent state can set `"prompt": "@prompts/<file>.md"`. `workflow_status` shows `workflow_source`. The fixer can write a workflow proposal (`proposal.md`, `proposal.patch` for `.tyci/` only; a change or rename source outside `.tyci/` is refused); a pause shows it and `workflow_status` gives `patch_file` (the full patch), and the answer `apply` opens a PR from a new branch (it ejects only the missing builtin files and keeps existing `.tyci/` files; refused for a workflow from `~/.tyci/workflows/`), `reject` hides it for good. `state.json` `ask` gets `proposal` (#372).
 - Flow: every check script prints a block on a failure (`RESULT`, `STEP`, `WHAT`, `STATE`, `LIKELY CAUSE`, `SUGGESTED`) to its `output.log`, also when a command stops the script without a key. Failed checks go to the new `fixer` role: it fixes small problems and answers `ok` (the failed step runs again, on target `$failed`) or writes `failed.log` and answers `failed`. Then the `oracle` (new task `recover`) answers `goto:<state> <note>`, `stop` or `ask <reason>`; the reason is in the pause message. The fixer runs at most 2 times and the oracle once per failed step, then the run pauses (#369).
@@ -137,7 +135,6 @@ Existing agents.json, .tyci.json and .tyci/model.json files are ignored (not del
 
 ## [0.4.0] - 2026-10-07
 
-
 ### Added
 - Config section `orchestrator` in `~/.tyci/config.json` and `.tyci/config.json`: `workers` (default 3, 0 = unlimited), `plan_timeout_sec` (default 0), `accepted_label` (default `accepted`); the project file wins key by key; invalid values stop the orchestrator start with a message naming key and file (#179)
 - TUI start-up greeting with counts, plan and worker slots; starts the orchestrator on a new session; config keys `forge.kind` and `forge.repo` (#180)
@@ -148,13 +145,11 @@ Existing agents.json, .tyci.json and .tyci/model.json files are ignored (not del
 
 ## [0.3.0] - 2026-10-07
 
-
 ### Added
 - Issue-to-merge workflow and runbook (`docs/dogfooding.md`). New on-disk formats: `~/.tyci/config.json` and `.tyci/config.json` (`models`, `default_model`, `roles`), `~/.tyci/worktrees/<repo>/issue-N`, `~/.tyci/runs/<repo>/<run>/state.json`, `.tyci/workflows/` and `.tyci/checks/`. New chat tools: `workflow_start`, `workflow_status`, `workflow_resume` (#175)
 - `internal/worktree.AddIssue` creates fixed-path issue worktrees at `~/.tyci/worktrees/<repo>/issue-N` on branch `issue-N` from `origin/<default branch>`; `Remove` deletes only the issue leaf so sibling worktrees survive (#158)
 
 ## [0.2.0] - 2026-10-05
-
 
 ### Added
 - `tyci --version` prints the build version: release binaries stamp the release tag, Makefile builds stamp `git describe` output (or `dev` without Git, overridable with `VERSION=`), an unstamped binary reports the main-module version the Go toolchain recorded, and a build with no version information reports `dev` (#117)
@@ -176,7 +171,6 @@ Existing agents.json, .tyci.json and .tyci/model.json files are ignored (not del
 ## [0.1.0] - 2026-10-02
 
 First release: a CLI that runs LLM agents with a multi-turn agent loop, tool execution, session persistence, streaming responses and a TUI, configured through a JSON model registry.
-
 
 ### Added
 - `bin/lint.sh` runs `golangci-lint fmt --diff`, `golangci-lint run`, `go vet` and shellcheck; `--fix` applies `golangci-lint fmt` first. `make lint` calls it and the CI `lint` job runs only this script with pinned golangci-lint and shellcheck (#102)
