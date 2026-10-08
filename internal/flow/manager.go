@@ -471,6 +471,12 @@ func (m *Manager) Recent(n int) []RunView {
 	if err != nil {
 		return nil
 	}
+	return m.RecentIn(info, n)
+}
+
+// RecentIn is Recent for a repo whose info the caller already has. It does not
+// call m.Info, so a caller that polls can detect the repo once.
+func (m *Manager) RecentIn(info RepoInfo, n int) []RunView {
 	var out []RunView
 	wfs := map[string]*Workflow{}
 	for _, st := range RecentRuns(info.Home, info.Name(), n) {

@@ -627,13 +627,24 @@ var tuiCmd = &cobra.Command{
 		// — reusing session.ResumeEntries rather than the display package
 		// importing "session" itself (same layering rule as jobs/tools).
 		tuiDisp.SetTranscriptProvider(buildTranscriptProvider())
-		// Cache the rows: Recent runs git subprocesses and View() calls this
-		// on every frame. Only the Bubble Tea goroutine calls it, so no lock.
+		// Cache the rows: View() calls this on every frame. Only the Bubble Tea
+		// goroutine calls it, so no lock. Detecting the repo runs git
+		// subprocesses, and the repo does not change during a session, so it
+		// is detected once, when the first load succeeds.
 		var runRowsCache []display.TuiRunRow
 		var runRowsAt time.Time
+		var runsRepo *flow.RepoInfo
 		tuiDisp.SetRunLister(func() []display.TuiRunRow {
 			if runRowsAt.IsZero() || time.Since(runRowsAt) >= time.Second {
-				runRowsCache = runRows(workflowManager.Recent(5))
+				if runsRepo == nil {
+					if info, err := workflowManager.Info(); err == nil {
+						runsRepo = &info
+					}
+				}
+				runRowsCache = nil
+				if runsRepo != nil {
+					runRowsCache = runRows(workflowManager.RecentIn(*runsRepo, 5))
+				}
 				runRowsAt = time.Now()
 			}
 			return runRowsCache
