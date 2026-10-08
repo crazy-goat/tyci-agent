@@ -79,9 +79,12 @@ fi
 head=$(git rev-parse HEAD)
 remote_head=$(gh pr view "$TYCI_PR" -R "$TYCI_REPO" --json headRefOid --jq .headRefOid) || remote_head=""
 if [ "$head" != "$remote_head" ]; then
+    # The PR head branch: open_pr.sh may have continued a PR from another branch (#374).
+    pr_branch="${TYCI_BRANCH:-<branch>}"
+    if [ -s "${TYCI_RUN_DIR:-}/pr_branch" ]; then pr_branch="$(<"$TYCI_RUN_DIR/pr_branch")"; fi
     describe fail "the local HEAD $head differs from the PR head '$remote_head', so merge.sh did not merge (--match-head-commit protects against a merge of unseen code)" \
         "the local branch has commits that were not pushed, or someone pushed to the PR branch" \
-        "compare 'git log --oneline -3' with 'git ls-remote origin refs/heads/${TYCI_BRANCH:-<branch>}'. If the local branch is ahead, push it (git push origin refs/heads/<b>:refs/heads/<b>) and return failed (CI must run again: the oracle sends the run to ci); if origin is ahead, return failed"
+        "compare 'git log --oneline -3' with 'git ls-remote origin refs/heads/$pr_branch'. If the local branch is ahead, push it (git push origin HEAD:refs/heads/$pr_branch) and return failed (CI must run again: the oracle sends the run to ci); if origin is ahead, return failed"
     echo fail
     exit 0
 fi

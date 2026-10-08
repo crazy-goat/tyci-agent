@@ -14,7 +14,9 @@ package pricing
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -104,6 +106,24 @@ func Lookup(provider, model string) (Rates, Limits) {
 	return r, l
 }
 
+// LookupIn is Lookup for a model that the named provider must list itself. It
+// never borrows the entry of another provider with the same model id, so an
+// unknown provider name gives no limit. The exception is nexos: Lookup falls
+// back to every provider when the nexos catalog does not list the model, so
+// another provider's entry can be used. When the nexos API lists the model,
+// its values still win over that entry, field by field.
+func LookupIn(provider, model string) (Rates, Limits) {
+	if provider == nexosProvider {
+		return Lookup(provider, model)
+	}
+	if p, ok := catalog()[provider]; ok {
+		if m, ok := findModel(p, model); ok {
+			return rates(m), limits(m)
+		}
+	}
+	return Rates{}, Limits{}
+}
+
 func lookupCatalog(provider, model string) (Rates, Limits) {
 	c := catalog()
 	if c == nil {
@@ -118,8 +138,10 @@ func lookupCatalog(provider, model string) (Rates, Limits) {
 		// Fall through: a mismatched provider name is not a reason to give up
 		// on a model id that is unique across the catalog anyway.
 	}
-	for _, p := range c {
-		if m, ok := findModel(p, model); ok {
+	// Map order is random. Walk the providers in a fixed order, so that a model
+	// id listed by several providers gives the same entry on every call.
+	for _, name := range slices.Sorted(maps.Keys(c)) {
+		if m, ok := findModel(c[name], model); ok {
 			return rates(m), limits(m)
 		}
 	}

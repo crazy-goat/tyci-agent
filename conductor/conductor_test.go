@@ -635,7 +635,7 @@ func TestConductor_EndSessionWritesSessionEndOnce(t *testing.T) {
 	}
 }
 
-// TestConductor_ClearHistoryKeepsSession pins the console's /new semantics:
+// TestConductor_ClearHistoryKeepsSession pins the ClearHistory semantics:
 // the conversation is dropped, the log keeps recording into the same file.
 func TestConductor_ClearHistoryKeepsSession(t *testing.T) {
 	dir := t.TempDir()

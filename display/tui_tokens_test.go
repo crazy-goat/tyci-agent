@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
@@ -140,6 +141,66 @@ func TestBuildContextCost_NoLimitShowsAbsolute(t *testing.T) {
 	}
 	if strings.Contains(got, "%") {
 		t.Fatalf("buildContextCost = %q, should not show a percentage without a limit", got)
+	}
+}
+
+// The status bar shows the model as "provider/model". The context limit
+// must come from that provider, also when the model id contains a slash.
+func TestBuildContextCost_LimitFromProviderPrefixedModel(t *testing.T) {
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{
+		"acme":{"id":"acme","models":{"big":{"id":"big","name":"Big","limit":{"context":100000,"output":8000}}}},
+		"other":{"id":"other","models":{"ox-alpha":{"id":"ox-alpha","name":"Other","limit":{"context":50000,"output":8000}}}},
+		"openrouter":{"id":"openrouter","models":{"stealth/ox-alpha":{"id":"stealth/ox-alpha","name":"Ox","limit":{"context":200000,"output":8000}}}},
+		"anthropic":{"id":"anthropic","models":{"claude-sonnet-4-5":{"id":"claude-sonnet-4-5","name":"Claude Sonnet 4.5","limit":{"context":1000000,"output":64000}}}},
+		"gw":{"id":"gw","models":{"anthropic/claude-sonnet-4-5":{"id":"anthropic/claude-sonnet-4-5","name":"Gateway Sonnet","limit":{"context":200000,"output":64000}}}}
+	}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	for _, c := range []struct{ model, want string }{
+		{"acme/big", "ctx 10k (10%)"},
+		{"openrouter/stealth/ox-alpha", "ctx 10k (5%)"},
+		// A gateway lists the same id with its own limit. The named
+		// provider's limit wins, so the share is 1%, not 5%.
+		{"anthropic/claude-sonnet-4-5", "ctx 10k (1%)"},
+		// A bare model id may contain a slash. Its own limit wins over the
+		// limit of another provider's model with the same tail, "ox-alpha".
+		{"stealth/ox-alpha", "ctx 10k (5%)"},
+		// A provider the catalog does not know must not borrow the limit of
+		// another provider's model with the same id.
+		{"local/ox-alpha", "ctx 10k"},
+	} {
+		m := TuiModel{modelName: c.model, lastUsage: stream.Usage{Input: 10000}}
+		if got := m.buildContextCost(); got != c.want {
+			t.Errorf("%s: buildContextCost = %q, want %q", c.model, got, c.want)
+		}
+	}
+}
+
+// Nexos limits come from the nexos API cache. The lookup must name the
+// nexos provider, or the cached limit is never found.
+func TestBuildContextCost_NexosLimitFromAPICache(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(dir+"/.tyci", 0755); err != nil {
+		t.Fatal(err)
+	}
+	cache := fmt.Sprintf(`{"fetched":%d,"models":{"Claude Sonnet 5":{"rates":{},"limits":{"Context":100000,"Output":8000}}}}`, time.Now().Unix())
+	if err := os.WriteFile(dir+"/.tyci/nexos-models.json", []byte(cache), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+
+	m := TuiModel{modelName: "nexos/Claude Sonnet 5", lastUsage: stream.Usage{Input: 10000}}
+	if got := m.buildContextCost(); got != "ctx 10k (10%)" {
+		t.Fatalf("buildContextCost = %q, want the API limit shown as a percentage", got)
 	}
 }
 

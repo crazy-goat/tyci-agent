@@ -950,9 +950,8 @@ func GetSubagentToolsSchemaJSONForAtDepth(allowed []string, depth int) json.RawM
 	// while the runtime gate (subagentToolRunner.Run's unconditional
 	// DenySubagentRecursion) would still refuse it. That is exactly the
 	// schema-offers/gate-denies mismatch this whole file's other builders
-	// exist to prevent. Round 1 of item 21 added two callers that compute
-	// their depth as callerDepth+1 (btw.go's Promote,
-	// internal/workflow/engine.go's sessionAwait) — a future caller doing
+	// exist to prevent. Round 1 of item 21 added callers that compute
+	// their depth as callerDepth+1 (btw.go's Promote) — a future caller doing
 	// that arithmetic wrong is exactly the scenario this guard closes,
 	// rather than relying on every caller getting it right forever.
 	if depth >= 1 {

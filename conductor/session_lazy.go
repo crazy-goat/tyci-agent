@@ -9,7 +9,7 @@ import (
 
 // ensureLazySession opens a session file at sessionPath if it isn't already
 // open, returning the (possibly freshly-opened) *session.Session and the path
-// for downstream writes. It is the single entry point used by console, TUI
+// for downstream writes. It is the single entry point used by the TUI
 // and one-shot run to optionally recreate their session the moment we have a
 // user prompt to write — rather than at startup, which would otherwise litter
 // ~/.tyci/sessions/ with empty JSONL files for every repl a user opens
