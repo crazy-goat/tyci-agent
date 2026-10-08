@@ -315,23 +315,19 @@ func (m TuiModel) renderSidebarColumn() string {
 	return box
 }
 
-// renderSidebarTabs renders the tab row, highlighting the active one.
+// renderSidebarTabs renders the tab row, highlighting the active one. Each
+// tab is only as wide as its label; the row is cut at width.
 // sidebarTabAtX (tui_sidebar.go) maps a click on this row back to a tab
-// index, so it must stay in sync with how this splits width evenly.
+// index, so it must stay in sync with sidebarTabLabel.
 func (m TuiModel) renderSidebarTabs(width int) string {
-	cell := width / sidebarTabCount
-	if cell < 1 {
-		cell = 1
-	}
-	active := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("45")).Width(cell)
-	inactive := lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Width(cell)
+	active := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("45"))
+	inactive := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 	var b strings.Builder
-	for i, name := range sidebarTabNames {
-		label := truncateToWidth(name, cell)
+	for i := range sidebarTabNames {
 		if i == m.sidebarTab {
-			b.WriteString(active.Render(label))
+			b.WriteString(active.Render(sidebarTabLabel(i)))
 		} else {
-			b.WriteString(inactive.Render(label))
+			b.WriteString(inactive.Render(sidebarTabLabel(i)))
 		}
 	}
 	return truncateToWidth(b.String(), width)
@@ -351,6 +347,8 @@ func (m TuiModel) sidebarFooter() string {
 		return "↑↓ browse  Enter: open resume picker  " + nav + "  Esc close"
 	case sidebarTabTasks:
 		return "↑↓ select  Enter view  r resume  " + nav + "  Esc close"
+	case sidebarTabRuns:
+		return "↑↓ select  Enter expand/collapse  " + nav + "  Esc close"
 	default:
 		return nav + "  Esc close"
 	}

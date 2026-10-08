@@ -513,6 +513,10 @@ type TuiModel struct {
 	// row is always on screen.
 	sidebarScroll int
 
+	// sidebarRunsExpanded holds the run ids the Runs tab shows expanded
+	// (every step). A run is collapsed unless its id is true here.
+	sidebarRunsExpanded map[string]bool
+
 	// sessionLister, when set (via TUI.SetSessionLister, called once from
 	// main()), fetches this project's resumable sessions for the Sidebar's
 	// Sessions tab — the same session.ResumeEntries call bare "/resume"
