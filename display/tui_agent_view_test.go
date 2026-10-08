@@ -85,7 +85,7 @@ func TestAgentView_HeaderNamesTheViewedAgent(t *testing.T) {
 	model, _ := m.sidebarActivateRow()
 	m2 := model.(TuiModel)
 	header := m2.buildTopBar()
-	if !strings.Contains(header, "viewing: agent-header") || !strings.Contains(header, "Enter on main to go back") {
+	if !strings.Contains(header, "viewing: agent-header/worker task") || !strings.Contains(header, "Enter on main to go back") {
 		t.Fatalf("header = %q, want the viewed agent and the way back", header)
 	}
 }

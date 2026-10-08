@@ -16,6 +16,9 @@ import (
 // part of the view: typed text and new messages go to the main model.
 type agentView struct {
 	jobID string
+	// label is the job's description (for a workflow worker, its role name).
+	// The header shows it after the job id.
+	label string
 	// model holds the blocks and caches of the viewed conversation. Its
 	// render buffer is the main model's, so mouse hit-testing and copy act on
 	// the rows on screen.
@@ -51,14 +54,15 @@ func newAgentViewModel() *TuiModel {
 }
 
 // openAgentView switches the main window to the live conversation of jobID.
-// It returns false, and changes nothing, when the job has no transcript.
-// Opening a second agent while one is shown replaces the first view; the main
-// conversation's saved position is kept.
-func (m *TuiModel) openAgentView(jobID string) bool {
+// label is the job's description, shown in the header. It returns false, and
+// changes nothing, when the job has no transcript. Opening a second agent
+// while one is shown replaces the first view; the main conversation's saved
+// position is kept.
+func (m *TuiModel) openAgentView(jobID, label string) bool {
 	if !tools.HasLiveTranscript(jobID) {
 		return false
 	}
-	av := &agentView{jobID: jobID, model: newAgentViewModel()}
+	av := &agentView{jobID: jobID, label: label, model: newAgentViewModel()}
 	if old := m.agentView; old != nil {
 		av.mainScroll, av.mainAtBottom = old.mainScroll, old.mainAtBottom
 		old.model.scrollback.close()
@@ -144,6 +148,10 @@ func (m *TuiModel) agentViewRegion(msgHeight int) string {
 // agentViewHeader is the top line while an agent view is open. It names the
 // viewed job, so the human knows the main window shows another conversation.
 func (m TuiModel) agentViewHeader() string {
-	text := "viewing: " + m.agentView.jobID + " — Enter on main to go back"
+	name := m.agentView.jobID
+	if label := m.agentView.label; label != "" {
+		name += "/" + truncateString(label, 40)
+	}
+	text := "viewing: " + name + " — Enter on main to go back"
 	return lipgloss.NewStyle().MaxWidth(m.width).Render(text)
 }

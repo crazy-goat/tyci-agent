@@ -630,7 +630,7 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 			switch {
 			case row.isMain:
 				m.closeAgentView()
-			case row.subagent && m.openAgentView(row.job.ID):
+			case row.subagent && m.openAgentView(row.job.ID, row.job.Description):
 				// The sidebar stays open, so Enter on main can bring the
 				// main conversation back. The view follows the agent on the
 				// status tick, so the tick chain must run from here on.

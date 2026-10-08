@@ -396,18 +396,7 @@ func (c *collector) Result() subagentResult {
 // agent.Sink's method set) so this package never has to import agent (see
 // ErrSubagentTruncated's comment on layering).
 type SubagentSink interface {
-	Request(content string)
-	Thinking(text string)
-	Text(text string)
-	ToolCallStart(name string)
-	ToolCallDelta(delta string)
-	ToolCallEnd(name string, result string)
-	ToolFinish()
-	ToolBlock(msg string)
-	Summary(usage stream.Usage, stats stream.Stats)
-	Total(usage stream.Usage)
-	Error(err error)
-	End()
+	EventSink
 	// CollectedText returns the text accumulated so far via Text calls, so
 	// the runner can read back the final answer after agent.Run completes.
 	CollectedText() string
