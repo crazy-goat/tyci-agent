@@ -97,10 +97,13 @@ Each role agent of a run is a job named `<run-id>/<role>`, for example
 `20261007-102102-527/worker`. Use the `message` tool on a live agent. If a role runs
 twice, the name points to the newest job. The `resume` tool does not accept this name.
 
-If an earlier run of the same issue stopped and left its pull request open (branch
-`issue-N`), the new run continues that pull request. The state `open_pr` moves the
-worktree to the head of the pull request and the run goes to `lock`, `update` and `ci`.
-It does not code the issue again. Red CI or a merge conflict goes to `code` as usual. A
+If an earlier run of the same issue stopped and left its pull request open, the new run
+continues that pull request. The pull request is open from the branch `issue-N`, or from
+another branch and GitHub links it as closing the issue (for example `Closes #N`). A pull
+request from a fork is never used. The state `open_pr` moves the
+worktree to the head of the pull request, and the run goes to `lock`, `update` and `ci`.
+The run pushes to the head branch of the pull request. It does not code the issue again.
+Red CI or a merge conflict goes to `code` as usual. A
 conflict only in `CHANGELOG.md` is resolved without an agent (both entries stay). If the
 worktree has its own commits that are not on the pull request, or a push finds that the
 branch diverged, the step fails and the fixer handles it (see below).
@@ -232,7 +235,9 @@ roadmap run has no artifact dir and writes no report.
   now." After 2 reminders without a report, the run pauses in `ask` with the reason
   `no artifact from <role>`.
 - The reviewer's `report.md` is the review. Its first line is `ACCEPT` or `CHANGES`.
-  `post_review.sh` posts the newest `NNN-review/report.md` (highest `NNN`).
+  `post_review.sh` posts the `report.md` of the newest review step. A review step is an agent state
+  with agent `review` and no task, whatever its name. The runner gives the artifact dir in
+  `TYCI_REVIEW_DIR`.
 
 New PR comments from team members (write or admin permission) go to `comments.md` in the artifact
 dir of the `comments` step; the next `code` visit sees the file in "Run so far".

@@ -126,6 +126,9 @@ When a fixer answers `ok`, the run does not pause. If the run then ends, tyci se
 notice that names the proposal. The run is done, so you cannot answer the proposal.
 Its files stay in the artifact dir.
 
+When a run fails, the notice names the step where it stopped. If a fixer answered `ok`
+before the failure, the notice also names its proposal.
+
 See [docs/dogfooding.md](docs/dogfooding.md) for the full runbook.
 
 Orchestrator keys (section `orchestrator`; the project file wins key by key):

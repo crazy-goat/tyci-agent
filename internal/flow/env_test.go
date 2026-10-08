@@ -2,6 +2,7 @@ package flow
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -94,6 +95,41 @@ func TestBuildCheckEnv_TokensAbsentWhenUnset(t *testing.T) {
 	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
 		if _, ok := env[k]; ok {
 			t.Errorf("%s present although unset in parent", k)
+		}
+	}
+}
+
+// #356: TYCI_REVIEW_DIR is the artifact dir of the newest review step, whatever
+// its state is called. A task of the review role (findings) is not a review.
+func TestReviewDir(t *testing.T) {
+	r := &Runner{
+		WF: &Workflow{States: map[string]State{
+			"judge":    {Agent: "review", On: map[string]string{"ACCEPT": "end"}},
+			"code":     {Agent: "worker"},
+			"findings": {Agent: "review", Task: "findings_to_issues"},
+		}},
+		RunDir: "/tmp/run",
+	}
+	art := func(name string) string { return filepath.Join("/tmp/run", "artifacts", name) }
+	steps := []Step{
+		{State: "judge", Artifact: "002-judge"},
+		{State: "code", Artifact: "003-code"},
+		{State: "judge", Artifact: "004-judge"},
+		{State: "findings", Artifact: "005-findings"},
+	}
+	for name, tc := range map[string]struct {
+		history []Step
+		want    string
+	}{
+		"newest review wins":    {steps, art("004-judge")},
+		"earlier review":        {steps[:2], art("002-judge")},
+		"findings is no review": {steps[3:], ""},
+		"no review":             {steps[1:2], ""},
+		"review without dir":    {[]Step{{State: "judge"}}, ""},
+		"no history":            {nil, ""},
+	} {
+		if got := r.reviewDir(&RunState{History: tc.history}); got != tc.want {
+			t.Errorf("%s: reviewDir = %q, want %q", name, got, tc.want)
 		}
 	}
 }

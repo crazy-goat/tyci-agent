@@ -260,6 +260,16 @@ func TestRunPanic_MarksFailedAndNotifies(t *testing.T) {
 	}
 }
 
+// The failed notice names the step where the run stopped.
+func TestFailedNotice_NamesStep(t *testing.T) {
+	var got string
+	m := &Manager{Notify: func(s string) { got = s }}
+	m.notify(&RunState{Run: "r1", Repo: "o/r", Status: "failed", Current: "build", Reason: "boom"}, nil)
+	if want := "workflow run r1 failed: boom (step build)"; got != want {
+		t.Fatalf("notice = %q, want %q", got, want)
+	}
+}
+
 func TestWorkflowStatus_ReportsCurrentState(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "bad"})
 	id, _, _ := e.m.Start(context.Background(), StartRequest{Issue: 1})
