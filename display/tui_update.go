@@ -27,7 +27,7 @@ const jobsOnlyTickInterval = 1 * time.Second
 // screen (item 57 — without this, a job's elapsed/quiet time freezes
 // between job.updated events once the turn that started it has ended).
 func (m TuiModel) wantsStatusTick() bool {
-	return !m.reading || (m.sidebarActive && m.sidebarTab == sidebarTabRuns) || m.hasLiveJobsToPaint()
+	return !m.reading || m.agentView != nil || (m.sidebarActive && m.sidebarTab == sidebarTabRuns) || m.hasLiveJobsToPaint()
 }
 
 // hasLiveJobsToPaint reports whether some non-terminal backgroundJobs entry
@@ -55,7 +55,7 @@ func (m TuiModel) hasLiveJobsToPaint() bool {
 	// replace the main view" doc comment — so it's deliberately absent
 	// from this list.
 	return !m.historySearchActive && !m.resumePickerActive && !m.todoModalActive &&
-		!m.transcriptViewerActive && !m.subagentModalActive && !m.btwListActive &&
+		!m.subagentModalActive && !m.btwListActive &&
 		!m.btwModalActive
 }
 
@@ -93,7 +93,7 @@ func (m *TuiModel) armStatusTick() tea.Cmd {
 // chain is alive only to repaint a background job's second-granular
 // duration.
 func (m TuiModel) tickInterval() time.Duration {
-	if !m.reading {
+	if !m.reading || m.agentView != nil {
 		return statusTickInterval
 	}
 	return jobsOnlyTickInterval
@@ -103,7 +103,19 @@ func (m TuiModel) Init() tea.Cmd {
 	return textarea.Blink
 }
 
+// Update runs update, then starts a load of the Sessions tab list if the tab
+// is on screen and its list is stale. Checking after every message covers
+// opening the tab, switching to it and a list that ages while it stays open.
 func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	next := model.(TuiModel)
+	if load := next.sidebarSessionsCmd(); load != nil {
+		return next, tea.Batch(cmd, load)
+	}
+	return next, cmd
+}
+
+func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Last guard against mouse wheel fragments typed into the input. The
 	// input filter (tui_input_filter.go) drops most of them first.
 	if isStrayMouseText(msg) {
@@ -133,6 +145,8 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// handler and die there. The chain stopped while statusTickArmed stayed true,
 	// so the elapsed time froze for the rest of the turn (issue #319).
 	if _, ok := msg.(statusTickMsg); ok {
+		// The agent view replays the viewed job's new events on each tick.
+		m.pullAgentView()
 		// Keep ticking while a turn is in flight OR a live job still needs
 		// painting somewhere (item 57); stop otherwise, and clear the armed
 		// flag so the next thing that needs a chain is free to start a new one.
@@ -163,12 +177,16 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionLister = sl.fn
 		return m, nil
 	}
-	if rl, ok := msg.(tuiSetRunListerMsg); ok {
-		m.runLister = rl.fn
+	// A finished load of the Sessions tab list (see sidebarSessionsCmd). It
+	// lands whatever overlay is open, like the other background results.
+	if sm, ok := msg.(sidebarSessionsMsg); ok {
+		m.sessionEntries = sm.entries
+		m.sessionsLoading = false
+		m.sessionsLoadedAt = time.Now()
 		return m, nil
 	}
-	if tp, ok := msg.(tuiSetTranscriptProviderMsg); ok {
-		m.transcriptProvider = tp.fn
+	if rl, ok := msg.(tuiSetRunListerMsg); ok {
+		m.runLister = rl.fn
 		return m, nil
 	}
 	// Same delivery pattern, same "can arrive at any point in startup"
@@ -212,9 +230,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// wait for the next job.updated to start repainting (item 57).
 		next := model.(TuiModel)
 		return next, tea.Batch(cmd, next.armStatusTick())
-	}
-	if m.transcriptViewerActive {
-		return m.updateTranscriptViewer(msg)
 	}
 	if m.sidebarActive {
 		if handled, model, cmd := m.routeSidebarMsg(msg); handled {

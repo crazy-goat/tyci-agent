@@ -133,6 +133,9 @@ func (m *TuiModel) openSidebar(tab int) {
 // openSidebar's doc comment for why the effective transcript width changing
 // back to full-screen needs the same explicit block-line-cache invalidation.
 func (m *TuiModel) closeSidebar() {
+	// The agent view needs the sidebar for its way back (Enter on main), so
+	// closing the sidebar always ends the view.
+	m.closeAgentView()
 	m.sidebarActive = false
 	m.sidebarFocused = false
 	m.sidebarCursor = 0
@@ -429,6 +432,10 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyEscape:
+			if m.agentView != nil {
+				m.closeAgentView()
+				return m, nil
+			}
 			m.closeSidebarPersisted()
 			return m, nil
 
@@ -539,12 +546,6 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					jobRows := m.sidebarTaskJobRows(width)
-					rows := m.sidebarTaskRows(width)
-					// Root row (job==nil) is the synthetic "main" entry — clicking
-					// it is a no-op (you are already in the main conversation).
-					if line >= 0 && line < len(rows) && rows[line].job == nil && !rows[line].isHeading {
-						return m, nil
-					}
 					selected := -1
 					for i, jobRow := range jobRows {
 						if jobRow >= line {
@@ -612,17 +613,19 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 		rows := m.sidebarTaskRows(m.sidebarLayout().contentWidth)
 		jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
 		if m.sidebarCursor >= 0 && m.sidebarCursor < len(jobRows) {
-			idx := jobRows[m.sidebarCursor]
-			if job := rows[idx].job; job != nil {
-				isSubagent := rows[idx].subagent
+			row := rows[jobRows[m.sidebarCursor]]
+			switch {
+			case row.isMain:
+				m.closeAgentView()
+			case row.subagent && m.openAgentView(row.job.ID, row.job.Description):
+				// The sidebar stays open, so Enter on main can bring the
+				// main conversation back. The view follows the agent on the
+				// status tick, so the tick chain must run from here on.
+				cmd := m.armStatusTick()
+				return m, cmd
+			case row.job != nil:
 				m.closeSidebar()
-				if isSubagent && m.transcriptProvider != nil {
-					if title, lines, ok := m.transcriptProvider(job.ID); ok {
-						m.openTranscriptViewer(title, lines)
-						return m, nil
-					}
-				}
-				m.openJobResultModal(*job)
+				m.openJobResultModal(*row.job)
 			}
 		}
 		return m, nil
@@ -700,20 +703,45 @@ func (m TuiModel) sidebarResumeSubagentRow() (tea.Model, tea.Cmd) {
 
 // ─── Data sources ───────────────────────────────────────────────────────────
 
-// sidebarSessionEntries returns this project's resumable sessions,
-// newest-first, or nil if no lister was ever wired (see TUI.SetSessionLister)
-// or it returned nothing.
-func (m TuiModel) sidebarSessionEntries() []TuiResumeEntry {
-	if m.sessionLister == nil {
+// sidebarSessionsTTL is how old the Sessions tab list may get before the next
+// message starts a new load (see sidebarSessionsCmd).
+const sidebarSessionsTTL = 5 * time.Second
+
+// sidebarSessionsMsg carries one finished load of the Sessions tab list,
+// newest-first.
+type sidebarSessionsMsg struct {
+	entries []TuiResumeEntry
+}
+
+// sidebarSessionsCmd starts a load of the Sessions tab list when that tab is
+// on screen, the list is older than sidebarSessionsTTL and no load is in
+// flight. The lister reads the session files, so the load runs in the
+// returned command, off the Bubble Tea goroutine; View reads only the cached
+// list. Update calls this on the model it returns.
+func (m *TuiModel) sidebarSessionsCmd() tea.Cmd {
+	if m.sessionLister == nil || m.sessionsLoading || !m.sidebarActive || m.sidebarTab != sidebarTabSessions {
 		return nil
 	}
-	entries := m.sessionLister()
-	sorted := make([]TuiResumeEntry, len(entries))
-	copy(sorted, entries)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].ModTime.After(sorted[j].ModTime)
-	})
-	return sorted
+	if !m.sessionsLoadedAt.IsZero() && time.Since(m.sessionsLoadedAt) < sidebarSessionsTTL {
+		return nil
+	}
+	m.sessionsLoading = true
+	lister := m.sessionLister
+	return func() tea.Msg {
+		entries := lister()
+		sorted := make([]TuiResumeEntry, len(entries))
+		copy(sorted, entries)
+		sort.SliceStable(sorted, func(i, j int) bool {
+			return sorted[i].ModTime.After(sorted[j].ModTime)
+		})
+		return sidebarSessionsMsg{entries: sorted}
+	}
+}
+
+// sidebarSessionEntries returns the cached Sessions tab list, newest-first.
+// It is empty until the first load arrives (see sidebarSessionsCmd).
+func (m TuiModel) sidebarSessionEntries() []TuiResumeEntry {
+	return m.sessionEntries
 }
 
 // sidebarBashJobs returns backgrounded bash jobs (jobs.KindBash), newest
@@ -736,6 +764,9 @@ type sidebarTaskRow struct {
 	job       *jobs.Job
 	isHeading bool
 	subagent  bool
+	// isMain marks the synthetic "main" row: the main conversation, which
+	// is selectable but is not a job.
+	isMain bool
 }
 
 // sidebarTaskRows keeps the three source groups separate and stable. Jobs and
@@ -743,7 +774,7 @@ type sidebarTaskRow struct {
 func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 	rows := []sidebarTaskRow{{group: "Subagents", line: "Subagents", isHeading: true}}
 	for _, treeRow := range m.buildSubagentTree() {
-		row := sidebarTaskRow{group: "Subagents", line: m.formatSubagentRow(treeRow, width)}
+		row := sidebarTaskRow{group: "Subagents", line: m.formatSubagentRow(treeRow, width), isMain: treeRow.isRoot}
 		if !treeRow.isRoot {
 			job := treeRow.job
 			row.job = &job
@@ -776,7 +807,7 @@ func (m TuiModel) sidebarTaskJobRows(width int) []int {
 	rows := m.sidebarTaskRows(width)
 	indices := make([]int, 0)
 	for i, row := range rows {
-		if row.job != nil {
+		if row.job != nil || row.isMain {
 			indices = append(indices, i)
 		}
 	}

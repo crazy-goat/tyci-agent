@@ -227,6 +227,9 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		// resumableEntry.todoAgentID's doc comment) — using jobID here would
 		// silently no-op for exactly that (the common) case.
 		tools.CopyTodoListForResume(entry.todoAgentID, newJobID)
+		// The agent view of this job keeps the turns of the job it continues
+		// (see tools.CopyLiveTranscript) and records the new turns on top.
+		tools.CopyLiveTranscript(jobID, newJobID)
 
 		// entry.cfg was stashed bound to whatever job id was actually
 		// running when it was recorded (agentRunner.run's own stash, or a
@@ -259,7 +262,7 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		// ledger.Watch: without it the spend never reaches the ledger and the
 		// Subagents tree would render this conversation as free. Every child
 		// conversation (resume, /btw) must do the same.
-		_, err := agent.Run(runCtx, entry.mc, ledger.Watch(c, ledger.Subagent, entry.mc.Provider(), entry.mc.Model(), newJobID), &forked, runCfg)
+		_, err := agent.Run(runCtx, entry.mc, ledger.Watch(tools.NewLiveSink(newJobID, c), ledger.Subagent, entry.mc.Provider(), entry.mc.Model(), newJobID), &forked, runCfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		deadlineExceeded := errors.Is(err, context.DeadlineExceeded)
 		stopped := errors.Is(err, context.Canceled)
@@ -414,6 +417,9 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 	job := JobRegistry.Start(jobCtx, question, jobs.KindSubagent, parentID, func(runCtx context.Context, jobID string) (string, bool, error) {
 		defer cancel()
 		defer tools.MarkTodoAgentDone(jobID)
+		// The promoted job continues the evaluation, so its agent view starts
+		// with the evaluation's transcript (see tools.CopyLiveTranscript).
+		tools.CopyLiveTranscript(evaluationID, jobID)
 		c := &collector{}
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, jobID)
 		runCtx = connector.WithModelClient(runCtx, client)
@@ -429,7 +435,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
 		runCtx = tools.WithToolGate(runCtx, tools.DenySubagentRecursion())
 		msgs = session.ForkMessagesWithTurn(msgs, btwPromotionTask)
-		_, err := agent.Run(runCtx, client, ledger.Watch(c, ledger.Subagent, client.Provider(), client.Model(), jobID), &msgs, cfg)
+		_, err := agent.Run(runCtx, client, ledger.Watch(tools.NewLiveSink(jobID, c), ledger.Subagent, client.Provider(), client.Model(), jobID), &msgs, cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		deadlineExceeded := errors.Is(err, context.DeadlineExceeded)
 		stopped := errors.Is(err, context.Canceled)
@@ -555,7 +561,7 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		// Same ledger accounting as Resume: a /btw side-conversation spends the
 		// parent's money and must record against the same ledger, or it renders
 		// as free in the Subagents tree.
-		_, err := agent.Run(jobCtx, client, ledger.Watch(sink, ledger.Subagent, client.Provider(), client.Model(), jobID), &forked, cfg)
+		_, err := agent.Run(jobCtx, client, ledger.Watch(tools.NewLiveSink(jobID, sink), ledger.Subagent, client.Provider(), client.Model(), jobID), &forked, cfg)
 		truncated := errors.Is(err, agent.ErrMaxIterations)
 		if truncated {
 			err = nil

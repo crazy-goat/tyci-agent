@@ -359,6 +359,9 @@ func (m TuiModel) topBarPath() string {
 // counters are dropped in order: mcp first, then tools, then skills (the
 // path is never dropped). A single leading and trailing space is included.
 func (m TuiModel) buildTopBar() string {
+	if m.agentView != nil {
+		return m.agentViewHeader()
+	}
 	path := m.topBarPath()
 
 	// ── Counter definitions ─────────────────────────────────────────────

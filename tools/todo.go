@@ -185,8 +185,7 @@ func AllTodoItems() []TodoItem {
 
 // AllTodoItemsForAgent returns a snapshot of the todo list for agentID,
 // sorted by id. Unknown/evicted agentID yields an empty slice (never
-// panics). Used by the transcript viewer to resolve a child's own todo
-// ids without creating a list as a side effect — see buildTranscriptProvider.
+// panics) and creates no list as a side effect.
 func AllTodoItemsForAgent(agentID string) []TodoItem {
 	todoStore.Lock()
 	defer todoStore.Unlock()

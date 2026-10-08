@@ -36,9 +36,9 @@ type tuiMsgBlock struct {
 // tuiResumeRequestMsg is sent by TUI.OpenResumePicker to activate the
 // /resume popup. The bubbletea event loop captures it inside Update() and
 // activates the picker state (cursor at 0 = newest); on Enter/Esc, the
-// key handler writes back to m.resumeCh — an unbuffered channel shared
-// with the outer TUI so the caller's select on SelectedResume() can drive
-// the resume flow in lock step with the user's key press.
+// key handler writes back to m.resumeCh — a channel of one value shared
+// with the outer TUI, so the caller's select on SelectedResume() can drive
+// the resume flow after the user's key press.
 type tuiResumeRequestMsg struct {
 	entries []TuiResumeEntry // caller-supplied; sorted newest-first on the model side
 }
@@ -237,12 +237,12 @@ type TuiModel struct {
 	// Resume picker (/resume command): shown as a full-screen popup with
 	// arrow-key navigation, Enter loads, Esc closes without action. Entries
 	// are pre-resolved (cwd-derived) by the caller so the picker only
-	// renders a sorted list and a chosen path
-	// flows back over resumeCh — the model stays unaware of the on-disk
-	// session dir layout. resumeCh is an unbuffered channel shared with the
-	// outer TUI: a successful Enter sends the chosen path, an Esc sends "".
-	// The channel header survives bubbletea's value-copy of the model on
-	// every Update, so it's safe to read from this struct in the key handler.
+	// renders a sorted list and a chosen path flows back over resumeCh — the
+	// model stays unaware of the on-disk session dir layout. resumeCh is a
+	// channel of one value shared with the outer TUI: a successful Enter
+	// sends the chosen path, an Esc sends "". The channel header survives
+	// bubbletea's value-copy of the model on every Update, so it's safe to
+	// read from this struct in the key handler.
 	resumePickerActive  bool             // true while the popup is open
 	resumePickerEntries []TuiResumeEntry // sorted (newest first) entries to list
 	resumePickerCursor  int              // index into resumePickerEntries
@@ -483,33 +483,28 @@ type TuiModel struct {
 	sidebarScroll int
 
 	// sessionLister, when set (via TUI.SetSessionLister, called once from
-	// main()), fetches this project's resumable sessions on demand for the
-	// Sidebar's Sessions tab — the same session.ResumeEntries call bare
-	// "/resume" already makes (tui_mode.go), just reachable from inside the
-	// display package without it importing "session" directly. nil means
-	// "never wired" (e.g. a test model), rendered as an explicit hint
-	// rather than a crash or an empty list that looks like "no sessions".
+	// main()), fetches this project's resumable sessions for the Sidebar's
+	// Sessions tab — the same session.ResumeEntries call bare "/resume"
+	// already makes (tui_mode.go), just reachable from inside the display
+	// package without it importing "session" directly. nil means "never
+	// wired" (e.g. a test model), rendered as an explicit hint rather than a
+	// crash or an empty list that looks like "no sessions". It reads the disk,
+	// so it never runs on the Bubble Tea goroutine: see sidebarSessionsCmd.
 	sessionLister func() []TuiResumeEntry
+	// sessionEntries is the cached result of sessionLister. sessionsLoadedAt
+	// is zero until the first load arrives; sessionsLoading is true while a
+	// load is in flight.
+	sessionEntries   []TuiResumeEntry
+	sessionsLoadedAt time.Time
+	sessionsLoading  bool
 
 	// runLister returns the recent workflow runs for the sidebar Runs tab.
 	// nil means it was never wired.
 	runLister func() []TuiRunRow
 
-	// transcriptProvider, when set (via TUI.SetTranscriptProvider, called
-	// once from main()), returns the full conversation transcript for a
-	// finished subagent job id. The provider copies under resumableMu and
-	// converts to display lines off the lock, so the viewer never imports
-	// connector.Message. nil means "never wired" (tests); the viewer
-	// falls back to the job result modal.
-	transcriptProvider TranscriptProvider
-
-	// transcriptViewer is a read-only viewer for a finished subagent's
-	// transcript (item 49). Separate from subagentModal* so an open result
-	// modal is never clobbered. Read-only: never touches m.blocks or m.reading.
-	transcriptViewerActive bool
-	transcriptViewerTitle  string
-	transcriptViewerLines  []string
-	transcriptViewerScroll int
+	// agentView is non-nil while the main window shows a subagent's live
+	// conversation instead of the main one (see tui_agent_view.go).
+	agentView *agentView
 }
 
 func newModel(submitResult chan<- string, modelName string, historyPath string, cancelCh chan<- struct{}, toolCount int, skillCount int, mcpCount int) TuiModel {
