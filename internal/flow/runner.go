@@ -149,7 +149,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				return r.fail(ctx, st, artErr.Error(), artErr)
 			}
 			started := time.Now()
-			env := append(buildCheckEnv(st, s, r.RunDir, r.DefaultBranch), "TYCI_ARTIFACT_DIR="+artDir)
+			env := append(buildCheckEnv(st, s, r.RunDir, r.DefaultBranch), "TYCI_ARTIFACT_DIR="+artDir, "TYCI_REVIEW_DIR="+r.reviewDir(st))
 			key, res, runErr := r.Checks.Run(ctx, s, env, st.Worktree)
 			ended := time.Now()
 			if artDir != "" {

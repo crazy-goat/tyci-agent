@@ -231,7 +231,9 @@ before it ends: what it did, the result, what is left.
   now." After 2 reminders without a report, the run pauses in `ask` with the reason
   `no artifact from <role>`.
 - The reviewer's `report.md` is the review. Its first line is `ACCEPT` or `CHANGES`.
-  `post_review.sh` posts the newest `NNN-review/report.md` (highest `NNN`).
+  `post_review.sh` posts the `report.md` of the newest review step. A review step is an agent state
+  with agent `review` and no task, whatever its name. The runner gives the artifact dir in
+  `TYCI_REVIEW_DIR`.
 
 New PR comments from team members (write or admin permission) go to `comments.md` in the artifact
 dir of the `comments` step; the next `code` visit sees the file in "Run so far".
