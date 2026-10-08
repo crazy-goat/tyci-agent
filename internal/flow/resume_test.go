@@ -160,6 +160,23 @@ func TestResume_StartupAnswerKeepsVisits(t *testing.T) {
 	}
 }
 
+// Only the goto to the saved state restarts. A start-up "retry" leaves the
+// ask state for a new visit of c, so the visit counts reset as before.
+func TestResume_StartupRetryResetsVisits(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	st := saveRun(t, e.home, 1, nil)
+	e.m.AskUnfinished()
+	e.notice(t)
+	if err := e.m.Resume(st.Run, "retry"); err != nil {
+		t.Fatal(err)
+	}
+	e.notice(t)
+	after := loadRunState(t, e.home, st.Run)
+	if after.Status != "done" || after.Visits["c"] != 1 {
+		t.Fatalf("after = %+v", after)
+	}
+}
+
 func TestResume_CapAtThree(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, func(st *RunState) { st.Resumed = maxResumes })

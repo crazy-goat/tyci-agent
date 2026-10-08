@@ -582,7 +582,8 @@ func checkGoto(wf *Workflow, state string) error {
 // prompt, and "goto <state>" continues at that state. An unknown answer keeps
 // the run paused and returns an error that lists the allowed keys.
 // Leaving the ask state for a state that is not an end state resets all
-// visit counters. An ask state without on ends the run done.
+// visit counters, except for a goto to the state saved at start-up, which
+// continues like Continue. An ask state without on ends the run done.
 func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error {
 	if st == nil || r.WF == nil {
 		return errors.New("flow: run state or workflow is nil")
@@ -597,12 +598,16 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 	word, rest, _ := strings.Cut(strings.TrimSpace(answer), " ")
 	rest = strings.TrimSpace(rest)
 	var next string
+	restart := false
 	switch {
 	case word == "goto" && rest != "":
 		if err := checkGoto(r.WF, rest); err != nil {
 			return err
 		}
 		next, ok = rest, true
+		// A goto to the state saved at start-up restarts the run like
+		// Continue: no new visit and the visit counts stay.
+		restart = next == resumeState(st)
 	case word == "retry" && rest != "":
 		next, ok = s.On[word]
 		if !ok {
@@ -625,9 +630,6 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		sort.Strings(keys)
 		return fmt.Errorf("flow: unknown answer %q, allowed: %s", answer, strings.Join(keys, ", "))
 	}
-	// A run paused at start-up that continues at its saved state is restarted
-	// like Continue: no new visit and the visit counts stay.
-	restart := ok && resumeState(st) != "" && next == resumeState(st)
 	now := time.Now()
 	st.History = append(st.History, Step{
 		Seq:       len(st.History) + 1,
