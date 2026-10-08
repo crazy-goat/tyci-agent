@@ -60,7 +60,7 @@ func Execute() error {
 }
 
 func init() {
-	// Persistent flags shared by run / console / tui
+	// Persistent flags shared by run / tui
 	rootCmd.PersistentFlags().String("model", "", "Model to use (format: provider/model)")
 	rootCmd.PersistentFlags().String("agent", "", "Agent name to use for default model (from agents config)")
 	rootCmd.PersistentFlags().Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
@@ -74,7 +74,6 @@ func init() {
 	rootCmd.PersistentFlags().Bool("no-mcp", false, "Don't connect configured MCP servers (~/.tyci/mcp.json)")
 
 	rootCmd.AddCommand(runCmd)
-	rootCmd.AddCommand(consoleCmd)
 	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(providerCmd)
@@ -118,7 +117,7 @@ func warnProjectUntrusted() {
 	msg := "tyci: this project is not trusted — project-local hooks (.tyci/hooks.json), " +
 		"Lua tools (.tyci/tools/*.lua), the local cron dir, and mcp.json are skipped this session"
 	msg += ". Global ~/.tyci/ content still loads as usual. Run tyci in an interactive mode " +
-		"(console/tui) in this directory to be asked, or edit ~/.tyci/trust.json directly."
+		"(tui) in this directory to be asked, or edit ~/.tyci/trust.json directly."
 	fmt.Fprintln(os.Stderr, msg)
 }
 
@@ -204,6 +203,28 @@ func setupProjectLocalEnv(ctx context.Context, wd string, trusted, connectMCP, n
 	return ctx, shutdown
 }
 
+// toolsAdapter implements the tools.Runner interface by delegating to tools.RunTool.
+type toolsAdapter struct{}
+
+func (toolsAdapter) Run(ctx context.Context, name string, args map[string]any) (string, error) {
+	res := tools.RunTool(ctx, name, args)
+	if res.Success {
+		// Surface res.Truncated to the calling LLM as a stable, parseable
+		// suffix marker. Without this, a parent that invokes the subagent
+		// tool in single-task mode (the most common case) only sees the
+		// "may be incomplete" wording inline and must guess at it. The
+		// parallel-array path already encodes truncated per-item via
+		// json.Marshal, so this only closes the single-task gap. The
+		// marker literal is exported (tools.TruncatedMarker) so a test
+		// in tools/ can lock the format down and drift is caught.
+		if res.Truncated {
+			return res.Content + "\n\n" + tools.TruncatedMarker, nil
+		}
+		return res.Content, nil
+	}
+	return "", fmt.Errorf("%s", res.Error)
+}
+
 // initCommon wires up everything a command needs to run the agent loop:
 // provider/model resolution, debug logging, session, history file, and the
 // tool schema handed to the model.
@@ -211,7 +232,7 @@ func setupProjectLocalEnv(ctx context.Context, wd string, trusted, connectMCP, n
 // connectMCP decides whether this invocation connects configured MCP
 // servers (tools.InitMCP) before building the schema, subject to the
 // --no-mcp flag (which always wins, whatever connectMCP says — see below).
-// console and tui pass true. run also passes true — a scheduled `tyci cron`
+// tui passes true. run also passes true — a scheduled `tyci cron`
 // job shells out to `tyci run` (internal/cron/run.go), so leaving run's
 // default at false would silently give every cron job a different, smaller
 // tool set than an interactive session gets, which is a hard failure mode
@@ -225,7 +246,7 @@ func setupProjectLocalEnv(ctx context.Context, wd string, trusted, connectMCP, n
 // deferred by the caller so a stdio server's child process never outlives
 // this process; it is a no-op when MCP was never connected.
 // interactive tells initCommon whether a human is present in the
-// conversation at all — true for console and tui, false for run (and cron,
+// conversation at all — true for tui, false for run (and cron,
 // which shells out to `tyci run`: see this func's doc comment on
 // connectMCP). Threaded onto cfg.Interactive, which buildJobReminder
 // (agent/agent.go) reads to decide whether it is honest to tell the model
@@ -237,8 +258,8 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	// its own project-local hooks/Lua tools/mcp.json? Resolved before any of
 	// that project-local content is loaded below, and before the TUI (if
 	// this is a `tui` invocation) takes the terminal — interactive is only
-	// ever true for console/tui, both of which call initCommon before
-	// touching the screen (see tuiCmd/consoleCmd), so trust.Decide's blocking
+	// ever true for tui, which calls initCommon before
+	// touching the screen (see tuiCmd), so trust.Decide's blocking
 	// stdio prompt is safe to run here. `run` (and therefore cron, which
 	// shells out to `tyci run`) passes interactive=false, so an unknown
 	// project there defaults to untrusted without ever blocking.
@@ -498,12 +519,10 @@ var runCmd = &cobra.Command{
 			shutdown()
 		}
 		defer cleanup()
-		// `tyci run` is a one-shot CLI invocation. Use the
-		// bracket-prefix Minimal display so output is plain, one line
-		// per event, and easy to grep / pipe. For the rich REPL or
-		// full-screen experience, use `tyci console` or
-		// `tyci tui` instead.
-		disp := display.NewMinimal()
+		// `tyci run` is a one-shot CLI invocation. plainSink prints only
+		// the answer on stdout and errors on stderr, so the output is easy
+		// to pipe. For the full-screen experience, use `tyci tui`.
+		disp := &plainSink{out: cmd.OutOrStdout(), err: cmd.ErrOrStderr()}
 		// No resolver: a one-shot run has nowhere to type /model, so
 		// SwitchModel is not reachable and does not need a catalog.
 		cond := newConductor(provider, modelName, disp, cfg, sessionPath, nil)
@@ -516,59 +535,6 @@ func init() {
 	runCmd.Flags().String("prompt", "", "Prompt for response (required)")
 	_ = runCmd.RegisterFlagCompletionFunc("model", completeProviderModels)
 	_ = runCmd.RegisterFlagCompletionFunc("agent", completeAgents)
-}
-
-// ---------------------------------------------------------------------------
-// console
-// ---------------------------------------------------------------------------
-
-var consoleCmd = &cobra.Command{
-	Use:   "console",
-	Short: "Start an interactive console session",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		// interactive: true — a human is at the readline prompt (see
-		// agent.Config.Interactive's doc comment).
-		provider, modelName, cfg, ctx, _, sessionPath, historyFile, dl, shutdown, err := initCommon(cmd, true, true)
-		if err != nil {
-			return err
-		}
-		defer shutdown()
-		if dl != nil {
-			defer func() {
-				if err := dl.Close(); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
-				}
-			}()
-		}
-		disp := display.NewTerminal()
-
-		// The console can background shell commands too, but its input is a
-		// blocking readline, so it cannot wake itself: a completion notice
-		// waits in the queue and is delivered with the user's next message
-		// (or picked up mid-turn by the drain below, if a turn is running).
-		cfg.NextMessages = mergeNextMessages(cfg.NextMessages, JobNotices.Drain)
-		tools.SetBackgroundBashEnabled(true)
-		defer tools.KillAllBackgroundBash()
-		// Saved prompts only fire while something is ticking the schedule, and
-		// an interactive session is the one place where a run finishing has
-		// somewhere to be reported. See tools.StartCronTicker.
-		tools.StartCronTicker(ctx, time.Minute)
-
-		// requireConfigured: /model in the console refuses a provider
-		// without credentials and says how to add one.
-		// Chat tools workflow_start/status/resume exist only in tui and console:
-		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
-		// Set them before the schema snapshot, or the model never sees them.
-		tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})
-		cfg.Schema = tools.GetTopLevelToolsSchemaJSON()
-		cond := newConductor(provider, modelName, disp, cfg, sessionPath, catalogResolver{requireConfigured: true})
-		workflowManager.SetBase(ctx)
-		defer workflowManager.Shutdown(3 * time.Second)
-		startRunLogHousekeeping(ctx)
-		resumeWorkflowRuns()
-		runInteractive(cond, disp, historyFile, ctx)
-		return nil
-	},
 }
 
 // ---------------------------------------------------------------------------
@@ -706,7 +672,7 @@ var tuiCmd = &cobra.Command{
 		// silently refusing a favorite would read as a dead key press.
 		// The TUI chat is the orchestrator of the session: its own short prompt.
 		cfg = orchestratorChatConfig(cfg)
-		// Chat tools workflow_start/status/resume exist only in tui and console:
+		// Chat tools workflow_start/status/resume exist only in tui:
 		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
 		// Set them before the schema snapshot, or the model never sees them.
 		tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})

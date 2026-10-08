@@ -32,7 +32,7 @@ const jobEventBusSize = 32
 // subscriber today, wired in commands.go's tuiCmd via TUI.SetJobEventBus —
 // see jobs.Registry.SetOnEvent). Package-level so both wiring sites share
 // the exact same instance without threading it through function
-// signatures; every other mode (console, --print, etc.) simply never
+// signatures; every other mode (run, etc.) simply never
 // subscribes, so this costs them nothing.
 var jobEventBus = eventbus.New(jobEventBusSize)
 

@@ -33,7 +33,7 @@ func TestBuildJobReminder_TellsModelToRelayNotInvent(t *testing.T) {
 
 // TestBuildJobReminder_NonInteractiveDoesNotPromiseAnswerCommand guards the
 // item-27 round-3 fix: `tyci run` (and cron, which shells out to it) wires
-// PendingJobs the same as console/TUI, but has no human present to reply at
+// PendingJobs the same as the TUI, but has no human present to reply at
 // all. Telling the model to "relay to the user...wait for their reply" there
 // describes someone who isn't there, and would make the model wait for a
 // reply that will never come. The non-interactive wording must not tell the
