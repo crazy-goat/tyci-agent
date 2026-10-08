@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `tyci console` and the `minimal`, `normal` and `interactive` display modes. Use `tyci tui` (interactive) or `tyci run --prompt` (one-shot) (#189).
 
 ### Fixed
+- Flow: the review verdict is also read from a `report.md` that starts with a heading. Before, a report whose first line was not exactly `ACCEPT` or `CHANGES` gave `CHANGES`, so a run paused on `max_visits` after three rounds although every review accepted. The verdict is now the only line that reads `ACCEPT` or `CHANGES`, with an optional `Verdict:` prefix and Markdown markers. Both verdicts, or none, still give `CHANGES` (#470).
 - TUI: mouse wheel events no longer appear as text in the input box. A fast burst of wheel events could split an escape sequence at the read buffer end, and the input box then received it as text. A lone Esc key is released after 50 ms. Pasted text that looks like a mouse event is inserted (#426).
 - Flow: two `tyci` processes that resume the same run at the same time take a lock in the run dir (`claim.lock`). Only one process claims the run (#350).
 - Flow: a `workflow_start` of an issue refuses a run that another live `tyci` process owns. It returns a busy error and does not create a second run (#350).
@@ -37,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
 - Flow: a resumed run posts its review when the workflow renamed the review state. Each agent step in the `state.json` history has a new field, `task`. The run finds the review by the role of the step. Before, `post_review.sh` skipped the review (#403).
 - Cost: a model id that several providers list gets the same rates and limits on each lookup without a provider. The status bar context percentage and the step cost do not change between calls (#419).
+- Agent: a role agent (subagent) retries a provider that does not answer up to 5 times, as the main agent does. Before, it retried only once (#447).
+- Agent: the error for a provider that does not answer does not say "retrying" any more. The retry line already shows the retry count (#447).
 - Watchdog: a role agent and a backgrounded subagent that stream output count as active. Before, their streamed text did not reset the job's activity time, so the watchdog reported a busy agent as idle after 3 minutes (#437).
 
 ## [0.5.0] - 2026-10-08

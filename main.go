@@ -508,8 +508,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	}
 
 	cfg := agent.Config{
-		System:     system,
-		MaxRetries: 1,
+		System: system,
 		// opts.MaxIterationsCap is 0 (unlimited) for every ordinary
 		// subagent — only tools/scout.go ever sets it, to 15. Plain
 		// MaxIterations stays deliberately unpopulated; see its doc
