@@ -229,6 +229,67 @@ func TestNoJobsMeansNoReminder(t *testing.T) {
 	}
 }
 
+// TestRunningJobDoesNotStopTheTurnEnding: in an interactive session a running
+// job, such as a workflow run or a background command, sends its own completion
+// notice. The model may end its turn while it runs, so no reminder is injected
+// for it.
+func TestRunningJobDoesNotStopTheTurnEnding(t *testing.T) {
+	sink := &blockRecordingSink{}
+	mc := &connectortest.Fake{ProviderName: "p", ModelName: "m", Turns: [][]stream.Event{
+		{stream.TextDelta{Text: "started, I will report when it ends"}, stream.Finish{Reason: "stop"}},
+	}}
+
+	cfg := Config{
+		MaxRetries:  1,
+		Interactive: true,
+		PendingJobs: func() []string { return []string{"running: tyci workflow (job_id=job-3)"} },
+	}
+	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}}}
+	if _, err := Run(context.Background(), mc, sink, &msgs, cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if strings.Contains(b.Text, "automated check") {
+				t.Fatalf("a reminder was injected for a running job: %q", b.Text)
+			}
+		}
+	}
+}
+
+// TestRunningJobStillReminderedWhenNotInteractive: a non-interactive run such as
+// `tyci run` never drains job notices and exits when the turn ends, so a running
+// job, for example an async subagent, must still get the reminder.
+func TestRunningJobStillReminderedWhenNotInteractive(t *testing.T) {
+	sink := &blockRecordingSink{}
+	turns := make([][]stream.Event, 0, 8)
+	for i := 0; i < 8; i++ {
+		turns = append(turns, []stream.Event{stream.TextDelta{Text: "started, I will report when it ends"}, stream.Finish{Reason: "stop"}})
+	}
+	mc := &connectortest.Fake{ProviderName: "p", ModelName: "m", Turns: turns}
+
+	cfg := Config{
+		MaxRetries:  1,
+		Interactive: false,
+		PendingJobs: func() []string { return []string{"running: subagent (job_id=job-4)"} },
+	}
+	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}}}
+	if _, err := Run(context.Background(), mc, sink, &msgs, cfg); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if strings.Contains(b.Text, "automated check") {
+				count++
+			}
+		}
+	}
+	if count == 0 {
+		t.Fatal("no reminder was injected for a running job in a non-interactive run")
+	}
+}
+
 // TestJobReminderIsBounded: a model that ignores the nudge must not be nagged
 // in a loop.
 func TestJobReminderIsBounded(t *testing.T) {
@@ -240,8 +301,10 @@ func TestJobReminderIsBounded(t *testing.T) {
 	mc := &connectortest.Fake{ProviderName: "p", ModelName: "m", Turns: turns}
 
 	cfg := Config{
-		MaxRetries:  1,
-		PendingJobs: func() []string { return []string{"running: forever (job_id=job-1)"} },
+		MaxRetries: 1,
+		PendingJobs: func() []string {
+			return []string{`WAITING FOR ANSWER: forever (job_id=job-1) asks: "still there?"`}
+		},
 	}
 	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}}}
 	if _, err := Run(context.Background(), mc, sink, &msgs, cfg); err != nil {
