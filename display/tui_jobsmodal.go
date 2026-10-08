@@ -69,9 +69,7 @@ func (m TuiModel) jobsModalLayout() modalLayout {
 }
 
 // renderJobsModalView renders the background-jobs list as a centered popup,
-// selectable with Up/Down and opened with Enter — same shape as the model
-// picker's cursor + windowing (tui_picker_view.go), applied to jobs instead
-// of models.
+// selectable with Up/Down and opened with Enter.
 func (m TuiModel) renderJobsModalView() string {
 	layout := m.jobsModalLayout()
 	popupWidth := layout.popupWidth

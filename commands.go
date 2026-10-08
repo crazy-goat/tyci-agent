@@ -13,7 +13,6 @@ import (
 	"github.com/crazy-goat/tyci-agent/api"
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/display"
-	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 	"github.com/crazy-goat/tyci-agent/internal/connect"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
@@ -61,8 +60,6 @@ func Execute() error {
 
 func init() {
 	// Persistent flags shared by run / tui
-	rootCmd.PersistentFlags().String("model", "", "Model to use (format: provider/model)")
-	rootCmd.PersistentFlags().String("agent", "", "Agent name to use for default model (from agents config)")
 	rootCmd.PersistentFlags().Int("max-retries", 5, "Max retries on transient errors (0 to disable)")
 	rootCmd.PersistentFlags().Int("max-iterations", -1, "Max tool-call iterations (-1 = unlimited)")
 	rootCmd.PersistentFlags().Int("max-tokens", 0, "Max tokens in one model reply (0 = value from ~/.tyci/config.json, else the provider default)")
@@ -75,7 +72,6 @@ func init() {
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(tuiCmd)
-	rootCmd.AddCommand(agentCmd)
 	rootCmd.AddCommand(providerCmd)
 	rootCmd.AddCommand(sessionCmd)
 	rootCmd.AddCommand(completionCmd)
@@ -85,12 +81,8 @@ func init() {
 // Shared setup
 // ---------------------------------------------------------------------------
 
-// registerProviders reads the global provider catalogs and, for model.json
-// (TODO.md item 22), a project-local <wd>/.tyci/model.json too — unioned
-// with the global one, local winning on a (group, model name) collision
-// (see providers.RegisterProvidersFromConfigMerged). Self-contained on
-// os.Getwd() rather than threaded a wd, the same posture as
-// agent.LoadTyciConfig and agent.LoadAgents.
+// registerProviders reads the global provider catalogs. The project-local
+// model.json is not read: only ~/.tyci/model.json counts.
 func registerProviders() {
 	cfg := agent.LoadTyciConfig()
 	api.SetTimeouts(time.Duration(cfg.FirstByteTimeoutSec)*time.Second, time.Duration(cfg.StreamIdleTimeoutSec)*time.Second)
@@ -98,17 +90,7 @@ func registerProviders() {
 		fmt.Fprintf(os.Stderr, "Warning: providers.json: %v\n", err)
 	}
 	_ = providers.RegisterProvidersFromProvidersJSON(connect.ProvidersJSONPath())
-	providers.RegisterProvidersFromConfigMerged(connect.ModelJSONPath(), localModelJSONPath())
-}
-
-// localModelJSONPath returns <cwd>/.tyci/model.json, or "" when cwd cannot
-// be determined.
-func localModelJSONPath() string {
-	wd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(wd, ".tyci", "model.json")
+	providers.RegisterProvidersFromConfig(connect.ModelJSONPath())
 }
 
 // warnProjectUntrusted prints the one untrusted-project warning. It names
@@ -276,15 +258,11 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: maxRetries, BaseBackoff: 4, MaxBackoff: 128}
 
-	model, _ := cmd.Flags().GetString("model")
-	agentName, _ := cmd.Flags().GetString("agent")
-	explicitModel := model != ""
-	explicitAgent := agentName != ""
+	// The model comes from "default_model" in ~/.tyci/config.json. A project
+	// file <wd>/.tyci/config.json can set it too (see agent.LoadTyciConfig).
+	model := agent.GetDefaultModel()
 	if model == "" {
-		model = agent.ResolveModel("", agentName)
-	}
-	if model == "" {
-		return nil, "", agent.Config{}, nil, nil, "", "", nil, nil, fmt.Errorf("no model specified. Use --model, --agent, or configure a default agent")
+		return nil, "", agent.Config{}, nil, nil, "", "", nil, nil, fmt.Errorf("no model configured. Set \"default_model\" in ~/.tyci/config.json")
 	}
 
 	provider, modelName, ok := providers.FindModel(model)
@@ -304,21 +282,6 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		fmt.Fprintln(os.Stderr, "  If it's a hand-maintained/local provider (models.dev doesn't carry it),"+
 			" refresh can't fetch its prices — add them yourself under this provider's models in "+
 			connect.ProvidersJSONPath()+", as USD-per-million-tokens \"cost\": {\"input\":..., \"output\":...}.")
-	}
-
-	if agentName == "" {
-		agentName = "default"
-	}
-	var fallbacks []connector.ModelClient
-	// An explicit --model must not silently inherit the default agent's
-	// fallback list. Otherwise selecting an expensive model still allows a
-	// stale/default fallback (for example another paid model) to run after a
-	// transient setup error. An explicitly supplied --agent opts into that
-	// agent's fallback policy even when --model also overrides its primary.
-	if !explicitModel || explicitAgent {
-		if fb := agent.GetFallbackModels(agentName); len(fb) > 0 {
-			fallbacks = resolveFallbacks(fb)
-		}
 	}
 
 	var ctx context.Context
@@ -358,7 +321,6 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		Debug:              debugFlag,
 		Tools:              toolsAdapter{},
 		Schema:             tools.GetTopLevelToolsSchemaJSON(),
-		Fallbacks:          fallbacks,
 		MaxTokens:          maxTokens,
 		NoPromptCache:      !agent.PromptCacheEnabled(),
 		PendingTodos:       tools.PendingTodos,
@@ -369,7 +331,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		Interactive:        interactive,
 		AutoCompactPercent: agent.GetAutoCompactPercent(),
 	}
-	cfg.SoftLimit, cfg.HardLimit = agent.CompactLimits(agentName)
+	cfg.SoftLimit, cfg.HardLimit = agent.CompactLimits()
 	ctx = connector.WithModelClient(ctx, provider.Client(modelName))
 
 	var sess *session.Session
@@ -443,13 +405,10 @@ func manualCompactSummary(dumpPath string) string {
 // connector.ModelClient and reports nothing itself: it returns the resolved
 // clients alongside the specs that could not be resolved, leaving it to the
 // caller to decide how (or whether) to surface those. This split exists
-// because "resolve" and "report" have different constraints depending on who
-// is calling: the top-level CLI setup path (resolveFallbacks below) can
-// freely write to stderr before the TUI takes over the screen, but a subagent
-// resolving ITS OWN fallback list runs mid-session, often under the Bubble
-// Tea TUI, where an unguarded stderr write would corrupt the display (see
-// agentRunner.run in main.go, which logs unresolved specs to the debug log
-// instead).
+// because a subagent resolving ITS OWN fallback list runs mid-session, often
+// under the Bubble Tea TUI, where an unguarded stderr write would corrupt the
+// display (see agentRunner.run in main.go, which logs unresolved specs to the
+// debug log instead).
 func resolveFallbacksQuiet(specs []string) (clients []connector.ModelClient, unresolved []string) {
 	for _, spec := range specs {
 		p, m, ok := providers.FindModel(spec)
@@ -460,22 +419,6 @@ func resolveFallbacksQuiet(specs []string) (clients []connector.ModelClient, unr
 		clients = append(clients, p.Client(m))
 	}
 	return clients, unresolved
-}
-
-// resolveFallbacks resolves each "provider/model" fallback spec to a
-// connector.ModelClient at setup time — the agent no longer resolves
-// fallback specs itself (see agent.Config.Fallbacks). A spec that fails to
-// resolve is reported here and skipped, which is a deliberate relocation:
-// agent.Run used to discover this lazily, mid-run, and report it via a
-// ToolBlock on the display; now it is reported once, at startup, on stderr.
-// This is the top-level-agent path only; a subagent's own fallback list goes
-// through resolveFallbacksQuiet instead (see its comment for why).
-func resolveFallbacks(specs []string) []connector.ModelClient {
-	clients, unresolved := resolveFallbacksQuiet(specs)
-	for _, spec := range unresolved {
-		fmt.Fprintf(os.Stderr, "Warning: fallback model %q not found, skipping\n", spec)
-	}
-	return clients
 }
 
 // ---------------------------------------------------------------------------
@@ -523,9 +466,7 @@ var runCmd = &cobra.Command{
 		// the answer on stdout and errors on stderr, so the output is easy
 		// to pipe. For the full-screen experience, use `tyci tui`.
 		disp := &plainSink{out: cmd.OutOrStdout(), err: cmd.ErrOrStderr()}
-		// No resolver: a one-shot run has nowhere to type /model, so
-		// SwitchModel is not reachable and does not need a catalog.
-		cond := newConductor(provider, modelName, disp, cfg, sessionPath, nil)
+		cond := newConductor(provider, modelName, disp, cfg, sessionPath)
 		runPrompt(cond, disp, prompt, ctx, cleanup)
 		return nil
 	},
@@ -533,8 +474,6 @@ var runCmd = &cobra.Command{
 
 func init() {
 	runCmd.Flags().String("prompt", "", "Prompt for response (required)")
-	_ = runCmd.RegisterFlagCompletionFunc("model", completeProviderModels)
-	_ = runCmd.RegisterFlagCompletionFunc("agent", completeAgents)
 }
 
 // ---------------------------------------------------------------------------
@@ -560,40 +499,6 @@ var tuiCmd = &cobra.Command{
 			}()
 		}
 
-		authKeys, err := connect.ListKeys()
-		authSet := make(map[string]bool)
-		if err == nil {
-			for _, k := range authKeys {
-				authSet[k] = true
-			}
-		}
-
-		var allModels []string
-		var allProviderModels []display.ProviderModels
-		for _, p := range providers.ListProviders() {
-			if !authSet[p.Name()] {
-				continue
-			}
-			pm := display.ProviderModels{Name: p.Name()}
-			for _, m := range p.Models() {
-				allModels = append(allModels, p.Name()+"/"+m)
-				pm.Models = append(pm.Models, m)
-			}
-			if len(pm.Models) > 0 {
-				allProviderModels = append(allProviderModels, pm)
-			}
-		}
-		model, _ := cmd.Flags().GetString("model")
-		if model == "" {
-			agentName, _ := cmd.Flags().GetString("agent")
-			model = agent.ResolveModel("", agentName)
-		}
-
-		// Load favorite models from config. The current model is added to the
-		// Tab-cycle by the TUI at runtime (see switchModel); it is intentionally
-		// NOT persisted here so toggling favorites can't silently save it.
-		favorites := agent.GetFavoriteModels()
-
 		// Compute context counts for the top status bar.
 		toolsCount := len(tools.GetAllToolsSchema())
 		skillsFound, _ := skills.ListSkillsMerged("")
@@ -603,15 +508,7 @@ var tuiCmd = &cobra.Command{
 			mcpCount = len(mcpRunner.MCPToolsSchema())
 		}
 
-		tuiDisp := display.NewTUI(model, historyFile, allModels, allProviderModels, favorites, func(mdl string, favorite bool) {
-			if favorite {
-				_ = agent.AddFavoriteModel(mdl)
-			} else {
-				_ = agent.RemoveFavoriteModel(mdl)
-			}
-		}, agent.GetDefaultModel(), func(newDefault string) {
-			_ = agent.SetDefaultModel(newDefault)
-		}, toolsCount, skillsCount, mcpCount, agent.GetSidebarVisible())
+		tuiDisp := display.NewTUI(provider.Name()+"/"+modelName, historyFile, toolsCount, skillsCount, mcpCount, agent.GetSidebarVisible())
 
 		// Persist the sidebar's visibility across restarts: NewTUI above read
 		// the startup state (agent.GetSidebarVisible), this persister is
@@ -677,9 +574,6 @@ var tuiCmd = &cobra.Command{
 		// somewhere to be reported. See tools.StartCronTicker.
 		tools.StartCronTicker(ctx, time.Minute)
 
-		// No requireConfigured: the Tab-cycle and the picker only offer
-		// providers that are already in auth.json (see authSet above), and
-		// silently refusing a favorite would read as a dead key press.
 		// The TUI chat is the orchestrator of the session: its own short prompt.
 		cfg = orchestratorChatConfig(cfg)
 		// Chat tools workflow_start/status/resume exist only in tui:
@@ -687,7 +581,7 @@ var tuiCmd = &cobra.Command{
 		// Set them before the schema snapshot, or the model never sees them.
 		tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})
 		cfg.Schema = tools.GetTopLevelToolsSchemaJSON()
-		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath, catalogResolver{})
+		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath)
 		workflowManager.SetBase(ctx)
 		defer workflowManager.Shutdown(3 * time.Second)
 		startRunLogHousekeeping(ctx)
@@ -837,236 +731,6 @@ var providerListCmd = &cobra.Command{
 	},
 }
 
-// ---------------------------------------------------------------------------
-// agent
-// ---------------------------------------------------------------------------
-
-var agentCmd = &cobra.Command{
-	Use:   "agent",
-	Short: "Manage agent configurations",
-}
-
-var agentListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List configured agents",
-	Run: func(cmd *cobra.Command, args []string) {
-		_ = agent.DisplayAgents()
-	},
-}
-
-var agentGetCmd = &cobra.Command{
-	Use:   "get <name>",
-	Short: "Show agent configuration",
-	Args:  cobra.MaximumNArgs(1),
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		names, _ := agent.ListAgents()
-		return names, cobra.ShellCompDirectiveNoFileComp
-	},
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			_ = cmd.Help()
-			return nil
-		}
-		name := args[0]
-		entry, ok := agent.GetAgentEntry(name)
-		if !ok {
-			return fmt.Errorf("agent %q not found", name)
-		}
-		if entry.Model != "" {
-			fmt.Printf("%s = %s\n", name, entry.Model)
-		} else {
-			fmt.Printf("%s = (no model set)\n", name)
-		}
-		if len(entry.Fallback) > 0 {
-			fmt.Printf("  fallback: %s\n", strings.Join(entry.Fallback, ", "))
-		}
-		return nil
-	},
-}
-
-var agentSetCmd = &cobra.Command{
-	Use:               "set <name> [model]",
-	Short:             "Set agent model",
-	Args:              cobra.MaximumNArgs(2),
-	ValidArgsFunction: agentSetValidArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			_ = cmd.Help()
-			return nil
-		}
-		if len(args) < 2 {
-			return fmt.Errorf("missing model argument (format: provider/model)")
-		}
-		name, model := args[0], args[1]
-		if !strings.Contains(model, "/") || strings.HasPrefix(model, "/") || strings.HasSuffix(model, "/") {
-			return fmt.Errorf("invalid model %q (expected provider/model)", model)
-		}
-		if err := agent.SetAgent(name, model); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "Agent %q set to %s (config: %s)\n", name, model, agent.ConfigPath())
-		return nil
-	},
-}
-
-var agentDeleteCmd = &cobra.Command{
-	Use:   "delete <name>",
-	Short: "Delete an agent",
-	Args:  cobra.MaximumNArgs(1),
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		names, _ := agent.ListAgents()
-		return names, cobra.ShellCompDirectiveNoFileComp
-	},
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			_ = cmd.Help()
-			return nil
-		}
-		name := args[0]
-		if err := agent.DeleteAgent(name); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "Agent %q deleted (config: %s)\n", name, agent.ConfigPath())
-		return nil
-	},
-}
-
-var agentSetFallbackCmd = &cobra.Command{
-	Use:               "set-fallback <name> [model...]",
-	Short:             "Set fallback models for an agent",
-	Args:              cobra.MinimumNArgs(1),
-	ValidArgsFunction: agentSetFallbackValidArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			_ = cmd.Help()
-			return nil
-		}
-		name := args[0]
-		models := args[1:]
-		for _, m := range models {
-			if !strings.Contains(m, "/") || strings.HasPrefix(m, "/") || strings.HasSuffix(m, "/") {
-				return fmt.Errorf("invalid fallback model %q (expected provider/model)", m)
-			}
-		}
-		if err := agent.SetFallback(name, models); err != nil {
-			return err
-		}
-		if len(models) == 0 {
-			fmt.Fprintf(os.Stderr, "Fallback models removed for agent %q (config: %s)\n", name, agent.ConfigPath())
-		} else {
-			fmt.Fprintf(os.Stderr, "Agent %q fallback set to [%s] (config: %s)\n", name, strings.Join(models, ", "), agent.ConfigPath())
-		}
-		return nil
-	},
-}
-
-var agentSyncForce bool
-
-var agentSyncCmd = &cobra.Command{
-	Use:   "sync",
-	Short: "Unpack/update tyci's builtin agent definitions in ~/.tyci/agents/",
-	Long: `Unpack tyci's builtin agent definitions (locator, reviewer, implementer) into
-~/.tyci/agents/, and update the ones already there — but only when they are
-still exactly what tyci last wrote. A file you edited, or a name you deleted
-on purpose, is left alone.
-
-This runs automatically (and silently) on every tyci startup; this command
-exists to run it on demand and, unlike the automatic pass, report what it did.
-
---force overwrites everything unconditionally, INCLUDING your local edits to
-builtin agent files and any builtin file you deleted (it comes back). Use it
-to deliberately reset to tyci's stock versions.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		dir := agentdefs.GlobalDir()
-		res, err := agentdefs.Sync(dir, agentSyncForce)
-		if err != nil {
-			return fmt.Errorf("sync agent definitions: %w", err)
-		}
-
-		printed := false
-		report := func(label string, names []string) {
-			if len(names) == 0 {
-				return
-			}
-			printed = true
-			fmt.Printf("%s: %s\n", label, strings.Join(names, ", "))
-		}
-		report("Installed", res.Installed)
-		report("Updated", res.Updated)
-		report("Skipped (locally modified)", res.SkippedModified)
-		report("Skipped (deleted)", res.SkippedDeleted)
-		if !printed {
-			fmt.Printf("Everything up to date in %s\n", dir)
-		}
-		return nil
-	},
-}
-
-func init() {
-	agentCmd.AddCommand(agentListCmd)
-	agentCmd.AddCommand(agentGetCmd)
-	agentCmd.AddCommand(agentSetCmd)
-	agentCmd.AddCommand(agentDeleteCmd)
-	agentCmd.AddCommand(agentSetFallbackCmd)
-	agentSyncCmd.Flags().BoolVar(&agentSyncForce, "force", false, "overwrite all builtin agent files unconditionally, including local edits and deleted files")
-	agentCmd.AddCommand(agentSyncCmd)
-}
-
-// listModels returns known models in the format provider/model.
-// When toComplete is empty it returns provider prefixes (e.g. "openai/") so
-// the completion list stays small and fast; otherwise it filters models by the
-// typed prefix.
-func listModels(toComplete string) []string {
-	registerProviders()
-	toComplete = strings.ToLower(toComplete)
-
-	// Build set of providers that have auth.json entries
-	authKeys, err := connect.ListKeys()
-	authSet := make(map[string]bool)
-	if err == nil {
-		for _, k := range authKeys {
-			authSet[k] = true
-		}
-	}
-
-	// Empty prefix: suggest provider namespaces to keep the list short and fast.
-	if toComplete == "" {
-		seen := make(map[string]struct{})
-		for _, p := range providers.ListProviders() {
-			if !authSet[p.Name()] {
-				continue
-			}
-			seen[p.Name()+"/"] = struct{}{}
-		}
-		prefixes := make([]string, 0, len(seen))
-		for p := range seen {
-			prefixes = append(prefixes, p)
-		}
-		sort.Strings(prefixes)
-		return prefixes
-	}
-
-	seen := make(map[string]struct{})
-	for _, p := range providers.ListProviders() {
-		if !authSet[p.Name()] {
-			continue
-		}
-		prefix := p.Name() + "/"
-		for _, m := range p.Models() {
-			full := prefix + m
-			if strings.Contains(strings.ToLower(full), toComplete) {
-				seen[full] = struct{}{}
-			}
-		}
-	}
-	models := make([]string, 0, len(seen))
-	for m := range seen {
-		models = append(models, m)
-	}
-	sort.Strings(models)
-	return models
-}
-
 // listProviderNames returns all provider names known to tyci:
 // registered in providers.json (models.dev), model.json (legacy/custom),
 // and auth.json (providers with stored keys).
@@ -1083,13 +747,6 @@ func listProviderNames() []string {
 			names[name] = struct{}{}
 		}
 	}
-	if local := localModelJSONPath(); local != "" {
-		if entries, err := providers.LoadConfig(local); err == nil {
-			for name := range entries {
-				names[name] = struct{}{}
-			}
-		}
-	}
 	if keys, err := connect.ListKeys(); err == nil {
 		for _, name := range keys {
 			names[name] = struct{}{}
@@ -1102,30 +759,6 @@ func listProviderNames() []string {
 	}
 	sort.Strings(result)
 	return result
-}
-
-// agentSetValidArgs completes positional args for `agent set <name> [model]`.
-// First arg is an agent name, second is a model in `provider/model` format.
-func agentSetValidArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	switch len(args) {
-	case 0:
-		names, _ := agent.ListAgents()
-		return names, cobra.ShellCompDirectiveNoFileComp
-	case 1:
-		return listModels(toComplete), cobra.ShellCompDirectiveNoFileComp
-	}
-	return nil, cobra.ShellCompDirectiveNoFileComp
-}
-
-// agentSetFallbackValidArgs completes positional args for
-// `agent set-fallback <name> [model...]`. First arg is the agent name,
-// every subsequent arg is a model.
-func agentSetFallbackValidArgs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) == 0 {
-		names, _ := agent.ListAgents()
-		return names, cobra.ShellCompDirectiveNoFileComp
-	}
-	return listModels(toComplete), cobra.ShellCompDirectiveNoFileComp
 }
 
 // ---------------------------------------------------------------------------

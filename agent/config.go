@@ -1,4 +1,4 @@
-// Package agent provides named agent configurations.
+// Package agent provides tyci's agent configuration.
 // This file manages tyci's config.json: global (~/.tyci/config.json) merged
 // with an optional project-local override (<wd>/.tyci/config.json).
 package agent
@@ -25,8 +25,7 @@ const localConfigName = "config.json"
 
 // TyciConfig holds global tyci settings stored in ~/.tyci/config.json.
 type TyciConfig struct {
-	DefaultModel   string   `json:"default_model,omitempty"`
-	FavoriteModels []string `json:"favorite_models,omitempty"`
+	DefaultModel string `json:"default_model,omitempty"`
 	// MaxTokens caps the model's reply length. 0 (or absent) leaves it to the
 	// connector, which for Anthropic means a conservative default that is
 	// safe on every model but short for the current ones. Set it once here to
@@ -50,8 +49,7 @@ type TyciConfig struct {
 	AutoCompactPercent int `json:"auto_compact_percent,omitempty"`
 	// CompactSoftLimit and CompactHardLimit are the default soft and hard
 	// context limits in tokens (0/absent = computed from the model window).
-	// An agent (agents.json, agent definition) or a flow role may override
-	// them.
+	// A flow role may override them.
 	CompactSoftLimit int `json:"compact_soft_limit,omitempty"`
 	CompactHardLimit int `json:"compact_hard_limit,omitempty"`
 	// FirstByteTimeoutSec is how long a provider has to start answering a
@@ -154,14 +152,11 @@ func readTyciConfigFile(path string) TyciConfig {
 // local value wins for the fields it sets, and every field the local file
 // leaves unset falls back to the global value. This is deliberately NOT a
 // whole-file replace — a local config.json naming only default_model must
-// not wipe the global file's favorite_models, max_tokens or prompt_cache.
+// not wipe the global file's max_tokens or prompt_cache.
 func mergeTyciConfig(global, local TyciConfig) TyciConfig {
 	merged := global
 	if local.DefaultModel != "" {
 		merged.DefaultModel = local.DefaultModel
-	}
-	if local.FavoriteModels != nil {
-		merged.FavoriteModels = local.FavoriteModels
 	}
 	if local.MaxTokens != 0 {
 		merged.MaxTokens = local.MaxTokens
@@ -246,72 +241,16 @@ func GetDefaultModel() string {
 	return LoadTyciConfig().DefaultModel
 }
 
-// SetDefaultModel saves the default model to config.
-func SetDefaultModel(model string) error {
-	cfg := LoadTyciConfig()
-	cfg.DefaultModel = model
-	return SaveTyciConfig(cfg)
-}
-
-// GetFavoriteModels returns the list of favorite models from config.
-func GetFavoriteModels() []string {
-	return LoadTyciConfig().FavoriteModels
-}
-
-// SetFavoriteModels saves the list of favorite models to config.
-func SetFavoriteModels(models []string) error {
-	cfg := LoadTyciConfig()
-	cfg.FavoriteModels = models
-	return SaveTyciConfig(cfg)
-}
-
-// AddFavoriteModel adds a single model to the favorites, reloading the config
-// first so concurrent tyci sessions don't clobber each other's favorites.
-// No-op if the model is already a favorite.
-func AddFavoriteModel(model string) error {
-	cfg := LoadTyciConfig()
-	for _, f := range cfg.FavoriteModels {
-		if f == model {
-			return nil
-		}
-	}
-	cfg.FavoriteModels = append(cfg.FavoriteModels, model)
-	return SaveTyciConfig(cfg)
-}
-
-// RemoveFavoriteModel removes a single model from the favorites, reloading the
-// config first so concurrent sessions only ever conflict on the same model.
-func RemoveFavoriteModel(model string) error {
-	cfg := LoadTyciConfig()
-	out := cfg.FavoriteModels[:0]
-	for _, f := range cfg.FavoriteModels {
-		if f != model {
-			out = append(out, f)
-		}
-	}
-	cfg.FavoriteModels = out
-	return SaveTyciConfig(cfg)
-}
-
 // GetMaxTokens returns the configured reply cap, or 0 when unset.
 func GetMaxTokens() int {
 	return LoadTyciConfig().MaxTokens
 }
 
-// CompactLimits returns the soft and hard context limits for the named agent:
-// its agents.json entry first, then the global config. 0 means unset.
-func CompactLimits(agentName string) (soft, hard int) {
+// CompactLimits returns the global soft and hard context limits in tokens.
+// 0 means unset.
+func CompactLimits() (soft, hard int) {
 	cfg := LoadTyciConfig()
-	soft, hard = cfg.CompactSoftLimit, cfg.CompactHardLimit
-	if e, ok := GetAgentEntry(agentName); ok {
-		if e.CompactSoftLimit > 0 {
-			soft = e.CompactSoftLimit
-		}
-		if e.CompactHardLimit > 0 {
-			hard = e.CompactHardLimit
-		}
-	}
-	return soft, hard
+	return cfg.CompactSoftLimit, cfg.CompactHardLimit
 }
 
 // GetAutoCompactPercent returns the configured legacy auto-compact

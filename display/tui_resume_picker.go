@@ -15,8 +15,7 @@ import (
 // of tuiResumeRequestMsg. Newest-first ordering is enforced by sorting
 // ModTime desc — the caller is allowed to pass entries in any order so it can
 // pull straight from session.ListEntries or any other source without a
-// second pass. Cursor starts at 0 (newest session), like the model picker's
-// convention.
+// second pass. Cursor starts at 0 (newest session).
 func (m *TuiModel) openResumePicker(entries []TuiResumeEntry) {
 	sorted := make([]TuiResumeEntry, len(entries))
 	copy(sorted, entries)
@@ -63,7 +62,7 @@ func (m TuiModel) updateResumePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Match the model picker keymap: Up/Down (1 step), PgUp/PgDn (10),
+		// Keymap: Up/Down (1 step), PgUp/PgDn (10),
 		// Home/End (jump), Enter (select), Esc (cancel). Filter is NOT
 		// supported on the resume picker — sessions don't have a useful
 		// short-name filtering property from the caller's POV (the file
@@ -146,9 +145,7 @@ func (m TuiModel) updateResumePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // pickCurrentResumeEntry calls closeResumePicker with the path of whichever
-// row is currently highlighted. No-op if the picker has no entries — keeps
-// the bubbletea key handler symmetric with the model picker (which also
-// early-returns when nothing is selectable after a filter narrows to zero).
+// row is currently highlighted. No-op if the picker has no entries.
 func (m TuiModel) pickCurrentResumeEntry() TuiModel {
 	if len(m.resumePickerEntries) == 0 {
 		return m
@@ -165,9 +162,9 @@ func (m TuiModel) pickCurrentResumeEntry() TuiModel {
 // ─── Rendering ───────────────────────────────────────────────────────────
 
 // renderResumePickerView is the only View() while the /resume popup is open.
-// It's a centered rounded-border box styled like the model picker but with
-// two columns: column 1 = date+time of last modification (newest top), column
-// 2 = first user prompt preview with a one-line ellipsis-truncated preview.
+// It's a centered rounded-border box with two columns: column 1 = date+time
+// of last modification (newest top), column 2 = first user prompt preview
+// with a one-line ellipsis-truncated preview.
 // Wrapping is necessary because last prompts can be longer than the box;
 // hiding them entirely would defeat the picker's purpose.
 func (m TuiModel) renderResumePickerView() string {

@@ -16,7 +16,7 @@ import (
 // TestThinkingBlockCollapsesToOneLine: the whole point of this change. A
 // thinking block must render as a single line, not the full reasoning text.
 func TestThinkingBlockCollapsesToOneLine(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "Find all usages of validateOptions across the codebase and check each call site"})
@@ -34,7 +34,7 @@ func TestThinkingBlockCollapsesToOneLine(t *testing.T) {
 // TestThinkingBlockNamesASummary: the collapsed line must name a summary
 // drawn from the block's opening words, the way a tool line names its args.
 func TestThinkingBlockNamesASummary(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "Find all usages of validateOptions"})
@@ -53,7 +53,7 @@ func TestThinkingBlockNamesASummary(t *testing.T) {
 // tool-end, so the TUI has to time a thinking block itself. Once the block
 // finishes (here: the turn ends), a duration must appear on the line.
 func TestThinkingBlockShowsDuration(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "reasoning about the fix"})
@@ -76,7 +76,7 @@ func TestThinkingBlockShowsDuration(t *testing.T) {
 // finished, there is no duration yet — it should read like a running tool
 // (spinner, "click for progress"), not claim a duration it doesn't have.
 func TestThinkingBlockWhileStreamingShowsProgress(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "still working through this"})
@@ -94,7 +94,7 @@ func TestThinkingBlockWhileStreamingShowsProgress(t *testing.T) {
 // summary, but nothing may be dropped from the block's content — the full
 // text must still be reachable through the same modal a tool block uses.
 func TestThinkingBlockFullTextSurvivesForModal(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 
 	full := "Find all usages of validateOptions across the codebase.\nThen check each call site for the old three-argument form."
@@ -117,7 +117,7 @@ func TestThinkingBlockFullTextSurvivesForModal(t *testing.T) {
 // TestClickOnThinkingBlockOpensModal: a thinking block must reuse the exact
 // modal a tool block opens, not a new widget.
 func TestClickOnThinkingBlockOpensModal(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "reasoning about the approach"})
@@ -145,7 +145,7 @@ func TestClickOnThinkingBlockOpensModal(t *testing.T) {
 // deltas must not change it — otherwise the collapsed line flickers as the
 // model keeps thinking.
 func TestThinkingBlockSummaryStableAcrossDeltas(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 
 	// Send enough text in the first delta to cross the freeze threshold.
@@ -176,7 +176,7 @@ func TestThinkingBlockSummaryStableAcrossDeltas(t *testing.T) {
 // reaches the freeze threshold must still get a summary once it finishes,
 // using whatever text it has.
 func TestThinkingBlockShortContentFreezesOnFinish(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "short thought"})
@@ -196,7 +196,7 @@ func TestThinkingBlockShortContentFreezesOnFinish(t *testing.T) {
 // count, scrolling and mouse hit-testing silently land on the wrong row —
 // exactly the failure mode a width-keyed, per-block cache invites.
 func TestThinkingBlockLineCountMatchesLayout(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 
 	// Multi-paragraph content that would have wrapped to many lines under
@@ -224,7 +224,7 @@ func TestThinkingBlockLineCountMatchesLayout(t *testing.T) {
 // row, and a click on either row must land on the right block. The two
 // blocks form a group, so the group is opened first: its header is row 0.
 func TestThinkingBlockAdjacentToToolBlock_HitTestingLandsCorrectly(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width, m.height = 80, 24
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "deciding which file to open first"})
@@ -271,7 +271,7 @@ func TestThinkingBlockAdjacentToToolBlock_HitTestingLandsCorrectly(t *testing.T)
 // simulate that directly here rather than the full resize plumbing, which
 // isn't specific to thinking blocks.
 func TestThinkingBlockRetruncatesAfterWidthChange(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 120
 
 	content := "this summary is long enough that a narrow terminal will have to cut it down substantially to fit"
@@ -304,7 +304,7 @@ func TestThinkingBlockRetruncatesAfterWidthChange(t *testing.T) {
 // short forever. Each of these characters is 3 bytes in UTF-8 but 1 rune, so
 // a byte-based threshold would freeze at a third of the intended length.
 func TestThinkingBlockCJKSummary_FreezesByRunesNotBytes(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 200 // wide enough that display-time truncation isn't also in play
 
 	cjkWord := "思考" // 2 runes, 6 bytes
@@ -335,7 +335,7 @@ func TestThinkingBlockCJKSummary_FreezesByRunesNotBytes(t *testing.T) {
 // display columns. renderThinkingBlock's own truncation must budget by
 // lipgloss.Width, not rune count, or the line overflows m.width.
 func TestThinkingBlockCJKSummary_DisplayTruncationByWidthNotRunes(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 40
 
 	// 21 CJK runes, well under thinkingSummaryMaxLen (60), but ~42 display
@@ -358,7 +358,7 @@ func TestThinkingBlockCJKSummary_DisplayTruncationByWidthNotRunes(t *testing.T) 
 // The modal must wrap instead, and the wrapped line count (not the raw
 // newline count) must drive how far the modal can scroll.
 func TestClickOnThinkingBlockModal_FullTextReachableViaWrapping(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// A short terminal, so the wrapped content doesn't fit in one screen and
 	// scrolling is actually exercised, not just wrapping.
 	m.width, m.height = 100, 12

@@ -27,7 +27,7 @@ func taskLineOfFirstJob(m TuiModel) int {
 }
 
 func newTestModelForSidebar() TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 30
@@ -591,19 +591,13 @@ func TestUpdateSidebar_LeftRightCycleTabsWhileFocused(t *testing.T) {
 	}
 }
 
-// TestUpdateSidebar_TabAndShiftTabSwitchModelNotTab covers the reversed
-// decision (TODO item 1): Tab/ShiftTab must never switch sidebar tabs —
-// they fall through to the same model-switching behavior
-// (TuiModel.switchModel) the normal keymap's Tab/Shift+Tab has
-// (tui_keys.go), regardless of sidebar focus or which tab is selected. This
-// mirrors the assertion style tui_picker_test.go's switchModel tests use
-// (read modelName/favIdx directly) rather than asserting on sidebarTab,
-// since sidebarTab is exactly what must NOT change.
-func TestUpdateSidebar_TabAndShiftTabSwitchModelNotTab(t *testing.T) {
-	m := newPickerTestModel(testProviders, []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"}, "")
+// TestUpdateSidebar_TabAndShiftTabDoNotChangeModel covers the sidebar keys:
+// Tab/ShiftTab never switch the sidebar tab, and they never change the model
+// either. The TUI has no model switch.
+func TestUpdateSidebar_TabAndShiftTabDoNotChangeModel(t *testing.T) {
+	m := newTestModel()
 	m.reading = true
 	m.modelName = "openai/gpt-4o"
-	m.favIdx = 0
 	m.openSidebar(sidebarTabSessions)
 	m.sidebarFocused = true
 
@@ -615,8 +609,8 @@ func TestUpdateSidebar_TabAndShiftTabSwitchModelNotTab(t *testing.T) {
 	if !m2.sidebarActive || !m2.sidebarFocused {
 		t.Fatalf("expected Tab to leave the sidebar open and focused")
 	}
-	if m2.modelName != "anthropic/claude-sonnet-4-20250514" {
-		t.Fatalf("expected Tab to switch the model like the normal keymap, got %q", m2.modelName)
+	if m2.modelName != "openai/gpt-4o" {
+		t.Fatalf("expected Tab to leave the model unchanged, got %q", m2.modelName)
 	}
 
 	model, _ = m2.updateSidebar(tea.KeyMsg{Type: tea.KeyShiftTab})
@@ -625,7 +619,7 @@ func TestUpdateSidebar_TabAndShiftTabSwitchModelNotTab(t *testing.T) {
 		t.Fatalf("expected Shift+Tab to leave the sidebar tab unchanged, got %d", m3.sidebarTab)
 	}
 	if m3.modelName != "openai/gpt-4o" {
-		t.Fatalf("expected Shift+Tab to switch the model back, got %q", m3.modelName)
+		t.Fatalf("expected Shift+Tab to leave the model unchanged, got %q", m3.modelName)
 	}
 }
 
@@ -780,21 +774,18 @@ func TestSidebarFocus_TypingWhileFocusedDoesNotReachInput(t *testing.T) {
 	}
 }
 
-// TestSidebarFocus_TabStillSwitchesModelWhenUnfocused covers the other half
-// of the reversed decision: Tab/ShiftTab fall through to switchModel
-// whether or not the sidebar currently has focus, since routeSidebarMsg
-// deliberately never claims them.
-func TestSidebarFocus_TabStillSwitchesModelWhenUnfocused(t *testing.T) {
-	m := newPickerTestModel(testProviders, []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"}, "")
+// TestSidebarFocus_TabDoesNotChangeModelWhenUnfocused: Tab leaves the model
+// and the sidebar tab unchanged, whether or not the sidebar has focus.
+func TestSidebarFocus_TabDoesNotChangeModelWhenUnfocused(t *testing.T) {
+	m := newTestModel()
 	m.reading = true
 	m.modelName = "openai/gpt-4o"
-	m.favIdx = 0
 	m.openSidebar(sidebarTabTokens) // sidebarFocused defaults to false
 
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m2 := model.(TuiModel)
-	if m2.modelName != "anthropic/claude-sonnet-4-20250514" {
-		t.Fatalf("expected Tab to switch the model even while unfocused, got %q", m2.modelName)
+	if m2.modelName != "openai/gpt-4o" {
+		t.Fatalf("expected Tab to leave the model unchanged while unfocused, got %q", m2.modelName)
 	}
 	if m2.sidebarTab != sidebarTabTokens {
 		t.Fatalf("expected the sidebar tab to stay put, got %d", m2.sidebarTab)

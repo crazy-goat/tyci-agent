@@ -27,7 +27,7 @@ import (
 // through the exact same m.statusMessage field buildStatus reads, so one
 // fix here covers both.
 func TestBuildStatus_LongStatusMessageIsTruncatedNotWrapped(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 106
 	m.reading = true // idle: no spinner/elapsed suffix competing for room
 	// A long, realistic echo of a job's question — comfortably longer than
@@ -47,7 +47,7 @@ func TestBuildStatus_LongStatusMessageIsTruncatedNotWrapped(t *testing.T) {
 // in the fix above — through the same buildStatus path, at the narrow width
 // where it was originally observed to overflow.
 func TestBuildStatus_NewRefusalMessageFitsWidth(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 60
 	m.reading = true
 	m.statusMessage = "/new has to wait — it changes the conversation this turn is writing to. Esc stops the turn, then press Enter."
@@ -140,7 +140,7 @@ func TestBuildStatus_NarrowTerminalNeverWraps(t *testing.T) {
 			t.Cleanup(ledger.Reset)
 			tc.record()
 
-			m := newModel(nil, "p/m", "", []string{"p/m"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+			m := newModel(nil, "p/m", "", nil, 0, 0, 0)
 			m.reading = true
 			m.modelName = "m"
 			m.lastUsage = stream.Usage{Input: 198_000, Output: 100}
@@ -231,7 +231,7 @@ func statusBarCostModel(t *testing.T, record func()) TuiModel {
 	t.Cleanup(ledger.Reset)
 	record()
 
-	m := newModel(nil, "p/m", "", []string{"p/m"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "p/m", "", nil, 0, 0, 0)
 	m.reading = true // idle: no spinner/elapsed suffix competing for room
 	m.modelName = "m"
 	m.lastUsage = stream.Usage{Input: 198_000, Output: 100}

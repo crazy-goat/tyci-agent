@@ -11,7 +11,7 @@ import (
 // ─── renderQueuePanel ────────────────────────────────────────────────────
 
 func TestRenderQueuePanel_EmptyRendersNothing(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 	got := m.renderQueuePanel(80)
 	if got != "" {
@@ -20,7 +20,7 @@ func TestRenderQueuePanel_EmptyRendersNothing(t *testing.T) {
 }
 
 func TestRenderQueuePanel_OneLine(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"hello"}
 	panel := m.renderQueuePanel(80)
 	// One rendered line plus trailing newline.
@@ -37,7 +37,7 @@ func TestRenderQueuePanel_OneLine(t *testing.T) {
 }
 
 func TestRenderQueuePanel_FourLines(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"a", "b", "c", "d"}
 	panel := m.renderQueuePanel(80)
 	lines := strings.Split(strings.TrimRight(panel, "\n"), "\n")
@@ -47,7 +47,7 @@ func TestRenderQueuePanel_FourLines(t *testing.T) {
 }
 
 func TestRenderQueuePanel_FiveLinesShowsOverflow(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"a", "b", "c", "d", "e"}
 	panel := m.renderQueuePanel(80)
 	lines := strings.Split(strings.TrimRight(panel, "\n"), "\n")
@@ -61,7 +61,7 @@ func TestRenderQueuePanel_FiveLinesShowsOverflow(t *testing.T) {
 }
 
 func TestRenderQueuePanel_SevenLinesShowsOverflow(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"a", "b", "c", "d", "e", "f", "g"}
 	panel := m.renderQueuePanel(80)
 	lines := strings.Split(strings.TrimRight(panel, "\n"), "\n")
@@ -74,7 +74,7 @@ func TestRenderQueuePanel_SevenLinesShowsOverflow(t *testing.T) {
 }
 
 func TestRenderQueuePanel_NarrowTerminalTruncates(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"a very long queued user message that does not fit"}
 	panel := m.renderQueuePanel(10)
 	lines := strings.Split(strings.TrimRight(panel, "\n"), "\n")
@@ -87,7 +87,7 @@ func TestRenderQueuePanel_NarrowTerminalTruncates(t *testing.T) {
 }
 
 func TestRenderQueuePanel_ExactlyMaxWidthNoTruncation(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// "▸ " (2 cols) + 4 runes = 6 cols total — fits exactly at width 6.
 	m.queueItems = []string{"abcd"}
 	panel := m.renderQueuePanel(6)
@@ -101,7 +101,7 @@ func TestRenderQueuePanel_ExactlyMaxWidthNoTruncation(t *testing.T) {
 }
 
 func TestRenderQueuePanel_ZeroWidthHidesPanel(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"hello"}
 	// Width 0 is degenerate — renderQueuePanel still produces an "…" line
 	// (the only glyph that fits). The acceptance criterion is that an
@@ -113,14 +113,14 @@ func TestRenderQueuePanel_ZeroWidthHidesPanel(t *testing.T) {
 // ─── queuePanelHeight ────────────────────────────────────────────────────
 
 func TestQueuePanelHeight_Empty(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	if h := m.queuePanelHeight(); h != 0 {
 		t.Errorf("queuePanelHeight on empty = %d, want 0", h)
 	}
 }
 
 func TestQueuePanelHeight_OneLine(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"a"}
 	if h := m.queuePanelHeight(); h != 1 {
 		t.Errorf("queuePanelHeight with 1 item = %d, want 1", h)
@@ -128,7 +128,7 @@ func TestQueuePanelHeight_OneLine(t *testing.T) {
 }
 
 func TestQueuePanelHeight_FourLines(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"a", "b", "c", "d"}
 	if h := m.queuePanelHeight(); h != 4 {
 		t.Errorf("queuePanelHeight with 4 items = %d, want 4", h)
@@ -136,7 +136,7 @@ func TestQueuePanelHeight_FourLines(t *testing.T) {
 }
 
 func TestQueuePanelHeight_FiveLinesAddsOverflow(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"a", "b", "c", "d", "e"}
 	if h := m.queuePanelHeight(); h != 5 {
 		t.Errorf("queuePanelHeight with 5 items = %d, want 5 (4 + overflow)", h)
@@ -146,7 +146,7 @@ func TestQueuePanelHeight_FiveLinesAddsOverflow(t *testing.T) {
 // ─── renderFrame integration ────────────────────────────────────────────
 
 func TestRenderFrame_QueuePanelAppearsBetweenStatusAndInput(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 30
@@ -164,7 +164,7 @@ func TestRenderFrame_QueuePanelAppearsBetweenStatusAndInput(t *testing.T) {
 }
 
 func TestRenderFrame_EmptyQueueHidesPanel(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 30
@@ -181,7 +181,7 @@ func TestRenderFrame_QueueShrinksMessageViewport(t *testing.T) {
 	// 1 (top) + msgHeight + 1 (status) + 3 (queue) + 1 (input) - 1 (no
 	// trailing newline on input) = msgHeight + 5 newlines. With
 	// height=30, visibleLines()=27, msgHeight=24, so 24+5 = 29.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 30
@@ -201,7 +201,7 @@ func TestRenderFrame_QueueShrinksMessageViewport(t *testing.T) {
 }
 
 func TestRenderFrame_QueueOverflowLineAppears(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 30
@@ -217,7 +217,7 @@ func TestRenderFrame_QueueOverflowLineAppears(t *testing.T) {
 
 func TestSubmit_WhileBusyEnqueuesAndDoesNotAppendBlock(t *testing.T) {
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 16)
 	m.ready = true
 	m.width = 80
@@ -266,7 +266,7 @@ func TestSubmit_WhileBusyEnqueuesAndDoesNotAppendBlock(t *testing.T) {
 
 func TestSubmit_WhileIdleExistingBehaviorUnchanged(t *testing.T) {
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 16)
 	m.ready = true
 	m.width = 80
@@ -308,7 +308,7 @@ func TestSubmit_WhileIdleExistingBehaviorUnchanged(t *testing.T) {
 
 func TestSubmit_QueueFullDropsWithStatusMessage(t *testing.T) {
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 2) // small for the test
 	m.ready = true
 	m.width = 80
@@ -347,7 +347,7 @@ func TestSubmit_QueueFullDropsWithStatusMessage(t *testing.T) {
 
 func TestSubmit_QueueFullPreservesEarlierItems(t *testing.T) {
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 2)
 	m.ready = true
 	m.width = 80
@@ -378,7 +378,7 @@ func TestSubmit_QueueFullPreservesEarlierItems(t *testing.T) {
 
 func TestSubmit_EmptyLineNotEnqueued(t *testing.T) {
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 16)
 	m.ready = true
 	m.width = 80
@@ -404,7 +404,7 @@ func TestSubmit_EmptyLineNotEnqueued(t *testing.T) {
 // ─── clearMessageQueue ──────────────────────────────────────────────────
 
 func TestClearMessageQueue_DropsSnapshotAndChannel(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	m.queueItems = []string{"a", "b", "c"}
 	m.queue <- "a"
@@ -430,7 +430,7 @@ func TestClearMessageQueue_DropsSnapshotAndChannel(t *testing.T) {
 }
 
 func TestClearMessageQueue_NilChannelSafe(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"a"}
 	// m.queue is nil — must not panic.
 	m.clearMessageQueue()
@@ -440,7 +440,7 @@ func TestClearMessageQueue_NilChannelSafe(t *testing.T) {
 }
 
 func TestClearMessageQueue_EmptyNoOp(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// Already empty — must not crash, must not invalidate anything weird.
 	before := m.cachedTotalLines
 	m.clearMessageQueue()
@@ -455,7 +455,7 @@ func TestClearMessageQueue_EmptyNoOp(t *testing.T) {
 
 func TestHandleKeyWhileBusy_ESCClearsQueue(t *testing.T) {
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	cancelCh := make(chan struct{}, 1)
 	m.cancelCh = cancelCh
@@ -498,7 +498,7 @@ drain:
 
 func TestHandleKeyWhileBusy_OtherKeysDoNotClearQueue(t *testing.T) {
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	cancelCh := make(chan struct{}, 1)
 	m.cancelCh = cancelCh
@@ -525,7 +525,7 @@ func TestHandleKeyWhileBusy_EnterEnqueuesToQueue(t *testing.T) {
 	// delivered to the model. handleKeyWhileBusy must now intercept Enter
 	// and route to submit() (issue #88).
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	cancelCh := make(chan struct{}, 1)
 	m.cancelCh = cancelCh
@@ -578,7 +578,7 @@ func TestHandleKeyWhileBusy_AltEnterInsertsNewline(t *testing.T) {
 	// Alt+Enter must still insert a newline in the textarea while busy
 	// (matches the idle-mode keyboard semantics).
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	cancelCh := make(chan struct{}, 1)
 	m.cancelCh = cancelCh
@@ -606,7 +606,7 @@ func TestHandleKeyWhileBusy_AltEnterInsertsNewline(t *testing.T) {
 // ─── /new (reset) clears queue ──────────────────────────────────────────
 
 func TestReset_ClearsQueue(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	m.ready = true
 	m.width = 80
@@ -646,7 +646,7 @@ func TestQueueDrained_ClearsSnapshot(t *testing.T) {
 	// Simulates the agent's drain landing on the event loop: the channel
 	// is empty, queueItems has the previous snapshot, and the handler
 	// must clear the snapshot so the panel disappears.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	m.queueItems = []string{"a", "b", "c"}
 	// Channel is empty (agent already drained it).
@@ -660,7 +660,7 @@ func TestQueueDrained_AppendsYouBlocksInFIFOOrder(t *testing.T) {
 	// The drained lines arrive on the queue-drained message and must
 	// become "You: …" blocks in the transcript, in FIFO order, at the
 	// moment the model actually receives them.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	m.ready = true
 	m.width = 80
@@ -694,7 +694,7 @@ func TestQueueDrained_AppendsYouBlocksInFIFOOrder(t *testing.T) {
 func TestQueueDrained_NoQueuedLinesLeavesTranscriptAlone(t *testing.T) {
 	// An empty queuedLines slice (shouldn't happen in practice, but
 	// defensive) must not append any block — just clear the panel.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	m.queueItems = []string{"a"}
 	m.blocks = []block{{kind: "user", content: "You: prior"}}
@@ -713,7 +713,7 @@ func TestQueueDrained_PreservesItemsTypedDuringDrain(t *testing.T) {
 	// The user types a new line between the agent's drain and the
 	// handler running. The handler must pick up the new line and keep
 	// it in the panel.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	m.queueItems = []string{"old"} // will be cleared
 	// Channel has a new message typed during the drain.
@@ -725,7 +725,7 @@ func TestQueueDrained_PreservesItemsTypedDuringDrain(t *testing.T) {
 }
 
 func TestQueueDrained_NilChannelSafe(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queueItems = []string{"a"}
 	// m.queue is nil — must not panic.
 	m.handleBlockMsg(tuiMsgBlock{kind: "queue-drained"})
@@ -786,7 +786,7 @@ func TestQueuePanel_EndToEnd_ClearsOnDrain(t *testing.T) {
 	//     was already drained)
 	//  4. panel is now empty, but the "You: m1" and "You: m2" blocks
 	//     remain in the transcript
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	m.ready = true
 	m.width = 80

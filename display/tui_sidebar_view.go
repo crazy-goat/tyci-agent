@@ -339,7 +339,7 @@ func (m TuiModel) renderSidebarTabs(width int) string {
 // keyboard (m.sidebarFocused — see tui_sidebar.go's updateSidebar).
 func (m TuiModel) sidebarFooter() string {
 	if !m.sidebarFocused {
-		return "Right: focus sidebar  Tab/Shift+Tab switch model  Esc close"
+		return "Right: focus sidebar  Esc close"
 	}
 	nav := "←→ switch tab (← at first/→ at last exits to conversation)"
 	switch m.sidebarTab {

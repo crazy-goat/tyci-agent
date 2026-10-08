@@ -77,7 +77,7 @@ func TestDisplayPath_HomePrefixMustBeSepBoundary(t *testing.T) {
 // ─── buildTopBar ──────────────────────────────────────────────────────────
 
 func TestBuildTopBar_WidthMatchesTerminal(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -92,7 +92,7 @@ func TestBuildTopBar_WidthMatchesTerminal(t *testing.T) {
 }
 
 func TestBuildTopBar_ShortPath(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -106,7 +106,7 @@ func TestBuildTopBar_ShortPath(t *testing.T) {
 }
 
 func TestBuildTopBar_LongPathTruncated(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 50 // narrow terminal
 	m.height = 24
@@ -128,7 +128,7 @@ func TestBuildTopBar_LongPathTruncated(t *testing.T) {
 }
 
 func TestBuildTopBar_ShowsPath(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -142,7 +142,7 @@ func TestBuildTopBar_ShowsPath(t *testing.T) {
 }
 
 func TestBuildTopBar_HomeDirShownAsTilde(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -162,7 +162,7 @@ func TestBuildTopBar_HomeDirShownAsTilde(t *testing.T) {
 // ─── renderFrame integration ──────────────────────────────────────────────
 
 func TestRenderFrame_TopBarIsFirstLine(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -182,7 +182,7 @@ func TestRenderFrame_TopBarIsFirstLine(t *testing.T) {
 }
 
 func TestRenderFrame_TopBarNotInModal(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -202,23 +202,11 @@ func TestRenderFrame_TopBarNotInModal(t *testing.T) {
 	}
 }
 
-func TestRenderFrame_TopBarNotInPicker(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
-	m.cwd = "/home/user/projects/tyci"
-	m.home = "/home/user"
-	m.openModelPicker()
-
-	frame := m.renderFrame()
-	if strings.Contains(frame, "~/projects/tyci") {
-		t.Fatal("model picker view should not contain the top bar")
-	}
-}
-
 func TestRenderFrame_MsgHeightReducedByOne(t *testing.T) {
 	// With top bar, visibleLines should be height - input.Height() - 2
 	// (was -1 before).  We verify indirectly: render a model with many blocks
 	// and confirm the transcript area is one line shorter.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 30
@@ -234,7 +222,7 @@ func TestRenderFrame_MsgHeightReducedByOne(t *testing.T) {
 // ─── paintScrollBottom ────────────────────────────────────────────────────
 
 func TestPaintScrollBottom_ReturnsVisibleLines(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 30
@@ -247,7 +235,7 @@ func TestPaintScrollBottom_ReturnsVisibleLines(t *testing.T) {
 }
 
 func TestBuildTopBar_VeryNarrowTerminal(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 5 // extremely narrow
 	m.height = 10
@@ -262,7 +250,7 @@ func TestBuildTopBar_VeryNarrowTerminal(t *testing.T) {
 }
 
 func TestPaintScrollBottom_ZeroForModal(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 30
@@ -277,7 +265,7 @@ func TestPaintScrollBottom_ZeroForModal(t *testing.T) {
 // ─── buildTopBar counts ───────────────────────────────────────────────────
 
 func TestBuildTopBar_ShowsCounts(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -303,7 +291,7 @@ func TestBuildTopBar_ShowsCounts(t *testing.T) {
 }
 
 func TestBuildTopBar_ShowsZeroCounts(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -329,7 +317,7 @@ func TestBuildTopBar_ShowsZeroCounts(t *testing.T) {
 }
 
 func TestBuildTopBar_CountsUseDistinctColors(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -362,7 +350,7 @@ func TestBuildTopBar_CountsUseDistinctColors(t *testing.T) {
 }
 
 func TestBuildTopBar_ZeroCountsUseDimmedColor(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -387,7 +375,7 @@ func TestBuildTopBar_ZeroCountsUseDimmedColor(t *testing.T) {
 }
 
 func TestBuildTopBar_LongPathTruncatedPreservesCounts(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 60 // wide enough to fit truncated path + all counters
 	m.height = 24
@@ -422,7 +410,7 @@ func TestBuildTopBar_LongPathTruncatedPreservesCounts(t *testing.T) {
 }
 
 func TestBuildTopBar_DropsMcpAndToolsFirst(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 25 // very narrow — must drop mcp and tools counters
 	m.height = 24
@@ -455,7 +443,7 @@ func TestBuildTopBar_DropsMcpAndToolsFirst(t *testing.T) {
 }
 
 func TestBuildTopBar_DropsToolsAndTodosSecond(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 20 // extremely narrow — must drop mcp, tools, and todos
 	m.height = 24
@@ -488,7 +476,7 @@ func TestBuildTopBar_DropsToolsAndTodosSecond(t *testing.T) {
 }
 
 func TestBuildTopBar_KeepsSkillsAfterDroppingOthers(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 18 // barely enough for "skills: 12" + separator + short path
 	m.height = 24
@@ -519,7 +507,7 @@ func TestBuildTopBar_KeepsSkillsAfterDroppingOthers(t *testing.T) {
 }
 
 func TestNewModel_StoresCountFields(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 7, 3, 1)
+	m := newModel(nil, "test/model", "", nil, 7, 3, 1)
 	if m.toolCount != 7 {
 		t.Fatalf("toolCount = %d, want 7", m.toolCount)
 	}
@@ -537,7 +525,7 @@ func TestBuildTopBar_TodosNoItems(t *testing.T) {
 	// Clear any leftover todos from other tests.
 	tools.ClearTodoList()
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -557,7 +545,7 @@ func TestBuildTopBar_TodosAllTodo(t *testing.T) {
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 2"})
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 3"})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -579,7 +567,7 @@ func TestBuildTopBar_TodosAllDone(t *testing.T) {
 	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
 	tool.Run(context.Background(), map[string]any{"action": "done", "id": 2})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -603,7 +591,7 @@ func TestBuildTopBar_TodosPartialDone(t *testing.T) {
 	tool.Run(context.Background(), map[string]any{"action": "doing", "id": 3})
 	tool.Run(context.Background(), map[string]any{"action": "blocked", "id": 4})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -622,7 +610,7 @@ func TestBuildTopBar_TodosSingleItem(t *testing.T) {
 	tools.ClearTodoList()
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "single task"})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -652,7 +640,7 @@ func TestBuildTopBar_TodosWithCountsPreserved(t *testing.T) {
 	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
 	tool.Run(context.Background(), map[string]any{"action": "done", "id": 2})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 5, 7, 2)
+	m := newModel(nil, "test/model", "", nil, 5, 7, 2)
 	m.ready = true
 	m.width = 80
 	m.height = 24

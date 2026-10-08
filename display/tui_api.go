@@ -12,9 +12,8 @@ import (
 )
 
 type TUI struct {
-	prog         *tea.Program
-	results      chan string
-	modelChanges chan string
+	prog    *tea.Program
+	results chan string
 	// pendingToolDuration and pendingToolFailed carry per-call status from the
 	// optional agent sinks to the ToolCallEnd that immediately follows them.
 	// Only ever touched from the dispatcher's goroutine.
@@ -52,13 +51,12 @@ type TUI struct {
 // NewTUI creates the TUI. sidebarVisible restores the persisted sidebar
 // state: pass true to start with the right-side sidebar already open
 // (production main() passes agent.GetSidebarVisible; tests pass false).
-func NewTUI(modelName string, historyPath string, models []string, allProviders []ProviderModels, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int, sidebarVisible bool) *TUI {
+func NewTUI(modelName string, historyPath string, toolCount int, skillCount int, mcpCount int, sidebarVisible bool) *TUI {
 	results := make(chan string, 8)
-	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
 	queue := make(chan string, 16)
 	resumeCh := make(chan string, 1) // one slot: the picker's send never blocks the event loop
-	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel, favoriteModels, onFavoriteToggled, defaultModel, onDefaultChanged, toolCount, skillCount, mcpCount)
+	m := newModel(results, modelName, historyPath, cancel, toolCount, skillCount, mcpCount)
 	// Restore the persisted sidebar visibility (sidebar_visible in
 	// ~/.tyci/config.json): the sidebar starts open when the previous session
 	// closed with it open. Set directly on the fresh model — no goroutines
@@ -97,16 +95,15 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	p := tea.NewProgram(m, opts...)
 
 	t := &TUI{
-		prog:         p,
-		results:      results,
-		modelChanges: modelChanges,
-		cancel:       cancel,
-		queue:        queue,
-		resumeCh:     resumeCh,
-		commands:     commands,
-		done:         make(chan struct{}),
-		flushWake:    make(chan struct{}, 1),
-		flushDone:    make(chan struct{}),
+		prog:      p,
+		results:   results,
+		cancel:    cancel,
+		queue:     queue,
+		resumeCh:  resumeCh,
+		commands:  commands,
+		done:      make(chan struct{}),
+		flushWake: make(chan struct{}, 1),
+		flushDone: make(chan struct{}),
 	}
 
 	go t.flushLoop()
@@ -257,6 +254,3 @@ func (t *TUI) flushNow() {
 		t.post(tuiMsgBlock{kind: kind, content: content})
 	}
 }
-
-// ModelChanges returns a channel that receives new model names when the user
-// switches model via Tab/Shift+Tab.

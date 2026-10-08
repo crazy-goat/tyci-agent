@@ -124,9 +124,7 @@ func TestInitCommon_UntrustedProject_SkipsLocalHooksAndLua_KeepsGlobal(t *testin
 	providers.Register(prov)
 
 	cmd := newInitCommonTestCmd(t)
-	if err := cmd.Flags().Set("model", "trust-wiring-prov-1/m1"); err != nil {
-		t.Fatalf("set model flag: %v", err)
-	}
+	setDefaultModel(t, "trust-wiring-prov-1/m1")
 	if err := cmd.Flags().Set("no-mcp", "true"); err != nil {
 		t.Fatalf("set no-mcp flag: %v", err)
 	}
@@ -186,9 +184,7 @@ func TestInitCommon_TrustedProject_LoadsLocalHooksAndLuaToo(t *testing.T) {
 	providers.Register(prov)
 
 	cmd := newInitCommonTestCmd(t)
-	if err := cmd.Flags().Set("model", "trust-wiring-prov-2/m1"); err != nil {
-		t.Fatalf("set model flag: %v", err)
-	}
+	setDefaultModel(t, "trust-wiring-prov-2/m1")
 	if err := cmd.Flags().Set("no-mcp", "true"); err != nil {
 		t.Fatalf("set no-mcp flag: %v", err)
 	}
@@ -230,9 +226,7 @@ func TestInitCommon_UntrustedProject_CronLocalDirUnset(t *testing.T) {
 	providers.Register(prov)
 
 	cmd := newInitCommonTestCmd(t)
-	if err := cmd.Flags().Set("model", "trust-wiring-cron-prov-1/m1"); err != nil {
-		t.Fatalf("set model flag: %v", err)
-	}
+	setDefaultModel(t, "trust-wiring-cron-prov-1/m1")
 	if err := cmd.Flags().Set("no-mcp", "true"); err != nil {
 		t.Fatalf("set no-mcp flag: %v", err)
 	}
@@ -276,9 +270,7 @@ func TestInitCommon_TrustedProject_CronLocalDirSet(t *testing.T) {
 	providers.Register(prov)
 
 	cmd := newInitCommonTestCmd(t)
-	if err := cmd.Flags().Set("model", "trust-wiring-cron-prov-2/m1"); err != nil {
-		t.Fatalf("set model flag: %v", err)
-	}
+	setDefaultModel(t, "trust-wiring-cron-prov-2/m1")
 	if err := cmd.Flags().Set("no-mcp", "true"); err != nil {
 		t.Fatalf("set no-mcp flag: %v", err)
 	}

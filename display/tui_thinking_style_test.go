@@ -10,7 +10,7 @@ import (
 )
 
 func thinkingModel() TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 60
 	m.height = 30
 	m.ready = true

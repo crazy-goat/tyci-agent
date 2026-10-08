@@ -152,5 +152,3 @@ func (m TuiModel) renderSubagentModalView() string {
 
 	return placed
 }
-
-// renderModelPickerContent renders the model picker content without outer positioning.

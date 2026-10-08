@@ -624,7 +624,7 @@ func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 // Problem: IsConfigured checks the URI token RAW (see the comment on
 // dynamicProvider.IsConfigured) — an entry carrying an unresolvable "$FOO"
 // still counts as configured, so `provider list` shows ✓, the TUI offers the
-// model, and catalogResolver{requireConfigured:true} lets it through. The
+// model, and the catalog lets it through. The
 // failure then surfaces only at request time, from resolveAPIKey, with a
 // message that never mentions "$FOO" — the user has a key, it just didn't
 // resolve, but the error reads as if there is no key at all.
@@ -635,7 +635,7 @@ func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 // Pins the decision NOT to make IsConfigured resolve the URI token: an
 // unresolvable "$FOO" in a URI must keep reporting true. Flipping this would
 // make such a provider silently vanish from `provider list`, from
-// Catalog.FindModel's bare-name search, and from catalogResolver — a silent
+// Catalog.FindModel's bare-name search, and from the CLI model resolver — a silent
 // disappearance is worse than the delayed, now-informative error.
 func TestDynamicProviderIsConfigured_uriEnvRefUnresolved_staysConfigured(t *testing.T) {
 	_ = os.Unsetenv("TYCI_TEST_CONFIGWARN_UNSET")

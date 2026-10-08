@@ -30,8 +30,9 @@ type Config struct {
 	Logs            Logs              `json:"logs"`                   // run transcripts
 
 	// Keys owned by the agent config (agent.TyciConfig) in the same file.
-	// They are accepted so the file loads, and ignored here.
-	FavoriteModels     json.RawMessage `json:"favorite_models,omitempty"`
+	// They are accepted so the file loads, and ignored here. favorite_models
+	// was removed in v0.6.0; it stays accepted so an old file still loads.
+	LegacyFavorites    json.RawMessage `json:"favorite_models,omitempty"`
 	MaxTokens          json.RawMessage `json:"max_tokens,omitempty"`
 	PromptCache        json.RawMessage `json:"prompt_cache,omitempty"`
 	SidebarVisible     json.RawMessage `json:"sidebar_visible,omitempty"`

@@ -14,7 +14,7 @@ import (
 const tuiMaxHistory = 500
 
 type tuiMsgBlock struct {
-	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block","set-model","reset","queue-drained"
+	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block","reset","queue-drained"
 	content  string
 	toolName string
 	failed   bool // for tool-end: the result represents a failed tool call
@@ -100,9 +100,9 @@ type tuiMsgJobsReset struct {
 // tuiSetSessionListerMsg carries the callback the Sidebar's Sessions tab
 // (TODO item 1) uses to fetch this project's resumable sessions on demand.
 // Delivered as a message (same pattern as every other cross-goroutine
-// mutation here — see tuiMsgBlock's "set-model" kind) rather than written
-// directly onto the model, since TUI.SetSessionLister is called from main(),
-// outside the bubbletea event-loop goroutine.
+// mutation here) rather than written directly onto the model, since
+// TUI.SetSessionLister is called from main(), outside the bubbletea
+// event-loop goroutine.
 type tuiSetSessionListerMsg struct {
 	fn func() []TuiResumeEntry
 }
@@ -110,19 +110,6 @@ type tuiSetSessionListerMsg struct {
 // tuiSetRunListerMsg carries the callback of the sidebar Runs tab.
 type tuiSetRunListerMsg struct {
 	fn func() []TuiRunRow
-}
-
-// ProviderModels groups model names under a provider name.
-type ProviderModels struct {
-	Name   string
-	Models []string
-}
-
-// pickerItem represents a single row in the model picker popup.
-type pickerItem struct {
-	isHeader bool
-	label    string // display text
-	value    string // "provider/model" for model items, empty for headers
 }
 
 // TuiResumeEntry is the data shape the resume picker renders. Defined in
@@ -247,33 +234,15 @@ type TuiModel struct {
 	roundBytes        int       // bytes delivered via Thinking/Text deltas so far this round
 	roundFirstDeltaAt time.Time // when the round's first delta arrived; zero until then
 
-	// Model switching (Tab/Shift+Tab) — uses favoriteModels when available.
-	models            []string                          // all available models (format: "provider/model")
-	favoriteModels    []string                          // favorite models for quick Tab/Shift+Tab cycling
-	favoriteSet       map[string]bool                   // set lookup for favorites (for picker rendering)
-	onFavoriteToggled func(model string, favorite bool) // called when a favorite is toggled (persist to config)
-	defaultModel      string                            // default model (one, highlighted in picker)
-	onDefaultChanged  func(string)                      // called when default model changes (persist to config)
-	favIdx            int                               // index of current model in favoriteModels slice
-	modelIdx          int                               // index of current model in models slice (for picker)
-	modelChanges      chan<- string                     // channel to notify outer TUI of model changes
-
-	// Model picker (/model command)
-	pickerActive bool
-	pickerFilter string
-	pickerCursor int              // index into pickerItems (only model entries)
-	pickerItems  []pickerItem     // filtered list for display
-	allProviders []ProviderModels // grouped provider->models for the picker
-
-	// Resume picker (/resume command). Similar shape to the model picker:
-	// shown as a full-screen popup with arrow-key navigation, Enter loads,
-	// Esc closes without action. Entries are pre-resolved (cwd-derived) by
-	// the caller so the picker only renders a sorted list and a chosen path
-	// flows back over resumeCh — the model stays unaware of the on-disk
-	// session dir layout. resumeCh is a channel of one value shared with the
-	// outer TUI: a successful Enter sends the chosen path, an Esc sends "".
-	// The channel header survives bubbletea's value-copy of the model on
-	// every Update, so it's safe to read from this struct in the key handler.
+	// Resume picker (/resume command): shown as a full-screen popup with
+	// arrow-key navigation, Enter loads, Esc closes without action. Entries
+	// are pre-resolved (cwd-derived) by the caller so the picker only
+	// renders a sorted list and a chosen path flows back over resumeCh — the
+	// model stays unaware of the on-disk session dir layout. resumeCh is a
+	// channel of one value shared with the outer TUI: a successful Enter
+	// sends the chosen path, an Esc sends "". The channel header survives
+	// bubbletea's value-copy of the model on every Update, so it's safe to
+	// read from this struct in the key handler.
 	resumePickerActive  bool             // true while the popup is open
 	resumePickerEntries []TuiResumeEntry // sorted (newest first) entries to list
 	resumePickerCursor  int              // index into resumePickerEntries
@@ -542,7 +511,7 @@ type TuiModel struct {
 	agentView *agentView
 }
 
-func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int) TuiModel {
+func newModel(submitResult chan<- string, modelName string, historyPath string, cancelCh chan<- struct{}, toolCount int, skillCount int, mcpCount int) TuiModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type message (Enter send, Alt+Enter / Ctrl+N newline)"
 	ta.CharLimit = 0
@@ -560,25 +529,6 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 	// Blinking causes the renderer to re-render View() every ~530ms.
 	ta.Cursor.SetMode(cursor.CursorStatic)
 
-	modelIdx := 0
-	for i, m := range models {
-		if m == modelName {
-			modelIdx = i
-			break
-		}
-	}
-	favIdx := 0
-	for i, m := range favoriteModels {
-		if m == modelName {
-			favIdx = i
-			break
-		}
-	}
-	favoriteSet := make(map[string]bool, len(favoriteModels))
-	for _, m := range favoriteModels {
-		favoriteSet[m] = true
-	}
-
 	return TuiModel{
 		blocks:                make([]block, 0, 1024),
 		input:                 ta,
@@ -587,16 +537,6 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		reading:               true,
 		toolQueue:             make([]int, 0, 16),
 		modelName:             modelName,
-		models:                models,
-		favoriteModels:        favoriteModels,
-		favoriteSet:           favoriteSet,
-		onFavoriteToggled:     onFavoriteToggled,
-		defaultModel:          defaultModel,
-		onDefaultChanged:      onDefaultChanged,
-		favIdx:                favIdx,
-		modelIdx:              modelIdx,
-		modelChanges:          modelChanges,
-		allProviders:          allProviders,
 		cancelCh:              cancelCh,
 		atBottom:              true,
 		savedAtBottom:         true,

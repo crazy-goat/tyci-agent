@@ -95,7 +95,7 @@ func TestStreamWrapRecoversFromContentShrink(t *testing.T) {
 // whose glamour render is cached.
 func newTestModelWithRenderedBlock(t *testing.T) TuiModel {
 	t.Helper()
-	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 	m.width = 80
 	m.height = 24
 	m.status = "idle"
@@ -146,7 +146,7 @@ func TestResizeStillInvalidatesRenderCaches(t *testing.T) {
 // ─── tool-delta cheap path ───────────────────────────────────────────────
 
 func TestToolDeltaSkipsInvalidationForPartialJSON(t *testing.T) {
-	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 	m.width = 80
 	m.height = 24
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "write"})
@@ -222,7 +222,7 @@ func TestNextCoalesce(t *testing.T) {
 // ─── viewport pins to exact bottom while the agent streams ────────────────
 
 func TestStreamingPinsToExactBottom(t *testing.T) {
-	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 	m.width = 80
 	m.height = 24
 	for i := 0; i < 40; i++ {
@@ -327,7 +327,7 @@ func markdownHeavyMessage(targetBytes int) string {
 func benchmarkStreamProgressiveMarkdown(b *testing.B, content string) {
 	b.ReportAllocs()
 	for b.Loop() {
-		m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+		m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 		m.width = 100
 		m.height = 24
 		m.status = "responding"

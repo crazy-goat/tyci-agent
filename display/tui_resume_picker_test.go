@@ -11,12 +11,12 @@ import (
 // ─── helpers ─────────────────────────────────────────────────────────────
 
 // newResumePickerTestModel builds a TuiModel with the resumeCh channel
-// plumbed in, mirroring the helper used by tui_picker_test.go. The model
+// plumbed in. The model
 // is sized large enough that the viewport doesn't clip rows below the
 // cursor in the simple list-rendering tests.
 func newResumePickerTestModel(entries []TuiResumeEntry) (TuiModel, <-chan string) {
 	resumeCh := make(chan string, 1)
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 120
 	m.height = 40
 	m.ready = true
@@ -41,7 +41,7 @@ func mkEntries(n int) []TuiResumeEntry {
 
 // runKey is a tiny helper that drives updateResumePicker and returns the
 // updated model so tests don't have to type-assert the bubbletea interface
-// return at every step. Mirrors the convention in tui_picker_test.go.
+// return at every step.
 func runKey(m TuiModel, key tea.KeyType) TuiModel {
 	out, _ := m.updateResumePicker(tea.KeyMsg{Type: key})
 	return out.(TuiModel)

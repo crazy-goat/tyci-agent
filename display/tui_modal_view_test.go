@@ -8,7 +8,7 @@ import (
 )
 
 func TestSubagentModalView_RightBorderVisible(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -42,7 +42,7 @@ func TestSubagentModalView_RightBorderVisible(t *testing.T) {
 }
 
 func TestSubagentModal_SmallTerminalUsesLayoutContentHeight(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width, m.height = 80, 10
 	seedModalBlock(&m, "bash", "one\ntwo\nthree\nfour")
 

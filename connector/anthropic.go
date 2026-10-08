@@ -20,8 +20,8 @@ import (
 // current ones — while the provider catalog this project reads (models.dev)
 // carries no output limits to check against. A too-small default truncates a
 // long reply; a too-large one makes the request fail outright on an older
-// model, which is worse. Raise it for the models you actually use: agents.json
-// "max_tokens", or "max_tokens" in an agent definition's frontmatter.
+// model, which is worse. Raise it for the models you actually use: "max_tokens"
+// in ~/.tyci/config.json, or "max_tokens" in an agent definition's frontmatter.
 const anthropicDefaultMaxTokens = 4096
 
 // anthropic speaks the Anthropic Messages protocol.

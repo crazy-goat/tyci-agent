@@ -23,7 +23,7 @@ func (m TuiModel) View() string {
 // normal transcript view, and 0 (disabled) for full-screen overlays and states
 // that never scroll a stream, where a plain line diff is correct and cheaper.
 func (m TuiModel) paintScrollBottom() int {
-	if !m.ready || m.quitting || m.todoModalActive || m.subagentModalActive || m.pickerActive || m.historySearchActive || m.resumePickerActive || m.btwModalActive || m.btwListActive || m.jobsModalActive || m.sidebarActive {
+	if !m.ready || m.quitting || m.todoModalActive || m.subagentModalActive || m.historySearchActive || m.resumePickerActive || m.btwModalActive || m.btwListActive || m.jobsModalActive || m.sidebarActive {
 		return 0
 	}
 	return m.messageRegionHeight()
@@ -70,11 +70,6 @@ func (m TuiModel) renderFrame() string {
 	// ── /btw live/preview modal overlay mode ──
 	if m.btwModalActive {
 		return m.renderBtwModalView()
-	}
-
-	// ── Model picker popup mode ──
-	if m.pickerActive {
-		return m.renderModelPickerView()
 	}
 
 	// ── Sidebar side-by-side column mode (Ctrl+T, or clicking the status
@@ -242,7 +237,7 @@ func (m *TuiModel) buildMessageRegion(msgHeight int) string {
 		w := max(10, m.width-2)
 		msg := lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
 			Foreground(lipgloss.Color("240")).
-			Render("tyci TUI\nType a message, Enter to send\nCtrl+C to quit\nTab/Shift+Tab: switch model\n/model: pick model\n/btw <question>: side conversation without derailing this one\nClick tool block to expand/collapse\nDrag to select and copy text\nSet TYCI_TUI_MOUSE=0 for native terminal selection")
+			Render("tyci TUI\nType a message, Enter to send\nCtrl+C to quit\n/btw <question>: side conversation without derailing this one\nClick tool block to expand/collapse\nDrag to select and copy text\nSet TYCI_TUI_MOUSE=0 for native terminal selection")
 		b.WriteString(msg)
 		b.WriteString("\n")
 		msgHeight -= lipgloss.Height(msg)
@@ -274,5 +269,3 @@ func (m *TuiModel) buildMessageRegion(msgHeight int) string {
 	// separator newline between the region and the status bar.
 	return strings.TrimSuffix(b.String(), "\n")
 }
-
-// renderModelPickerView renders just the model picker popup on a blank background.

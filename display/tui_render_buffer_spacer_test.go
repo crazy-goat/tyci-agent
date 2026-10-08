@@ -40,7 +40,7 @@ func TestSpacerAfter_LastBlockNeverHasOne(t *testing.T) {
 // the closing prose gets separated. Built through the real message path so the
 // render caches exist, the way the other render tests do.
 func TestBuildAllFlatRenderLines_NoSpacersInAThinkingToolRun(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width, m.height = 80, 24
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "weighing options"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})

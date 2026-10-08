@@ -124,7 +124,7 @@ func TestCollapseIsTheSameOnEveryRenderPath(t *testing.T) {
 	content := strings.Repeat("</invoke>\n", 30) + "tail"
 
 	viaRenderBlock := func() string {
-		m := newPickerTestModel(testProviders, nil, "")
+		m := newTestModel()
 		m.width = 80
 		m.appendOrAppend("text", content)
 		m.status = "idle"
@@ -132,7 +132,7 @@ func TestCollapseIsTheSameOnEveryRenderPath(t *testing.T) {
 	}()
 
 	viaForce := func() string {
-		m := newPickerTestModel(testProviders, nil, "")
+		m := newTestModel()
 		m.width = 80
 		m.appendOrAppend("text", content)
 		m.forceRenderDirtyBlocks()

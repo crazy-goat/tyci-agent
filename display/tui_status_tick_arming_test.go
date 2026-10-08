@@ -19,7 +19,7 @@ import (
 // ─── dead chain revived by request-start ───────────────────────────────
 
 func TestStatusTick_DeadChainRearmedByRequestStart(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 100
 	m.height = 40
 	m.ready = true
@@ -57,7 +57,7 @@ func TestStatusTick_DeadChainRearmedByRequestStart(t *testing.T) {
 // ─── no second chain while already armed ───────────────────────────────
 
 func TestStatusTick_NoSecondChainWhileArmed(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 100
 	m.height = 40
 	m.ready = true
@@ -81,7 +81,7 @@ func TestStatusTick_NoSecondChainWhileArmed(t *testing.T) {
 // (agent.PhaseSink's sending/waiting/thinking transitions), the other
 // handler item 56 calls out alongside request-start.
 func TestStatusTick_PhaseAlsoArms(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 100
 	m.height = 40
 	m.ready = true
@@ -105,7 +105,7 @@ func TestStatusTick_PhaseAlsoArms(t *testing.T) {
 
 func TestHandleKeyWhileBusy_EnterArmsStatusTick(t *testing.T) {
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.queue = make(chan string, 4)
 	cancelCh := make(chan struct{}, 1)
 	m.cancelCh = cancelCh
@@ -125,7 +125,7 @@ func TestHandleKeyWhileBusy_EnterArmsStatusTick(t *testing.T) {
 // ─── the sidebar's /resume submit (tui_sidebar.go:705) arms the tick ───
 
 func TestSidebarSubmitResume_ArmsStatusTick(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 	m.height = 30
 	m.ready = true
@@ -141,7 +141,7 @@ func TestSidebarSubmitResume_ArmsStatusTick(t *testing.T) {
 
 func TestHandleKeyMsg_IdleEnterArmsStatusTick(t *testing.T) {
 	results := make(chan string, 1)
-	m := newModel(results, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 30
@@ -157,7 +157,7 @@ func TestHandleKeyMsg_IdleEnterArmsStatusTick(t *testing.T) {
 // ─── token-count formatting (item 56, part 2) ──────────────────────────
 
 func TestThroughputSuffix_ShowsTokenCountFromFirstDelta(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// A delta just landed — too soon for the rate's 0.5s floor, but the
 	// count is shown immediately (item 56: "the count ... appears from
 	// the first delta").
@@ -175,7 +175,7 @@ func TestThroughputSuffix_ShowsTokenCountFromFirstDelta(t *testing.T) {
 }
 
 func TestThroughputSuffix_ShowsCountAndRateTogether(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.roundFirstDeltaAt = time.Now().Add(-2 * time.Second)
 	m.roundBytes = 800 // 200 tok over 2s = 100 tok/s
 
@@ -190,7 +190,7 @@ func TestThroughputSuffix_ShowsCountAndRateTogether(t *testing.T) {
 }
 
 func TestThroughputSuffix_EmptyBeforeFirstDelta(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// roundFirstDeltaAt left zero: no delta has arrived yet.
 
 	result := m.throughputSuffix()
@@ -203,7 +203,7 @@ func TestThroughputSuffix_EmptyBeforeFirstDelta(t *testing.T) {
 // TestBuildStatus_RespondingIncludesTokenCount is the wire-format lock from
 // item 56: "⟳ responding... 4.1s · ~340 tok · ~85 tok/s".
 func TestBuildStatus_RespondingIncludesTokenCount(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "responding"
 	m.requestStartTime = time.Now().Add(-4100 * time.Millisecond)
@@ -222,7 +222,7 @@ func TestBuildStatus_RespondingIncludesTokenCount(t *testing.T) {
 // "thinking" status, which item 56 calls out explicitly alongside
 // "responding".
 func TestBuildStatus_ThinkingIncludesTokenCount(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "thinking"
 	m.requestStartTime = time.Now().Add(-1 * time.Second)

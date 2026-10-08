@@ -15,7 +15,7 @@ import (
 )
 
 func TestBuildStatus_ShowsSendingPhase(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "sending"
 	m.requestStartTime = time.Now().Add(-300 * time.Millisecond)
@@ -29,7 +29,7 @@ func TestBuildStatus_ShowsSendingPhase(t *testing.T) {
 }
 
 func TestBuildStatus_ShowsWaitingPhase(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "waiting"
 	m.requestStartTime = time.Now().Add(-12300 * time.Millisecond)
@@ -47,7 +47,7 @@ func TestBuildStatus_ShowsWaitingPhase(t *testing.T) {
 // AND the elapsed clock must both flip at the boundary — same as the
 // existing "tool" state already does with its own per-block timer.
 func TestHandleBlockMsg_PhaseSetsStatusAndRestartsClock(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.requestStartTime = time.Now().Add(-30 * time.Second) // stale, from a previous phase
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "phase", content: "waiting"})
@@ -64,7 +64,7 @@ func TestHandleBlockMsg_PhaseSetsStatusAndRestartsClock(t *testing.T) {
 // SAME phase (e.g. a retried request re-emitting stream.RequestSent) must
 // not rewind the clock mid-phase.
 func TestHandleBlockMsg_PhaseNoOpWhenUnchanged(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.status = "waiting"
 	old := time.Now().Add(-5 * time.Second)
 	m.requestStartTime = old
@@ -83,7 +83,7 @@ func TestHandleBlockMsg_PhaseNoOpWhenUnchanged(t *testing.T) {
 // (from WroteRequest). The late "waiting" must be dropped rather than
 // rewinding the bar backwards.
 func TestHandleBlockMsg_PhaseIgnoresInvertedOrder(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.status = "sending"
 
 	// ResponseStarted fires first (out of order).
@@ -107,7 +107,7 @@ func TestHandleBlockMsg_PhaseIgnoresInvertedOrder(t *testing.T) {
 // inherit the previous round's byte count, or a fast first round's tail
 // would inflate a slow second round's early rate.
 func TestHandleBlockMsg_RequestStartResetsThroughput(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.roundBytes = 4000
 	m.roundFirstDeltaAt = time.Now().Add(-10 * time.Second)
 
@@ -125,7 +125,7 @@ func TestHandleBlockMsg_RequestStartResetsThroughput(t *testing.T) {
 // from a single delta and a few milliseconds would be wild ("~4000 tok/s"),
 // so the suffix only appears once enough wall time has passed.
 func TestBuildStatus_ThroughputSuffix_AppearsAfterEnoughTime(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "responding"
 	m.requestStartTime = time.Now().Add(-2 * time.Second)
@@ -144,7 +144,7 @@ func TestBuildStatus_ThroughputSuffix_AppearsAfterEnoughTime(t *testing.T) {
 }
 
 func TestBuildStatus_ThroughputSuffix_AbsentBeforeFirstDelta(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "thinking"
 	m.requestStartTime = time.Now().Add(-1 * time.Second)
@@ -159,7 +159,7 @@ func TestBuildStatus_ThroughputSuffix_AbsentBeforeFirstDelta(t *testing.T) {
 }
 
 func TestBuildStatus_ThroughputSuffix_AbsentTooSoonAfterFirstDelta(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "responding"
 	m.requestStartTime = time.Now()
@@ -178,7 +178,7 @@ func TestBuildStatus_ThroughputSuffix_AbsentTooSoonAfterFirstDelta(t *testing.T)
 // "text" kind messages (what TUI.Text posts) must feed trackDeltaBytes, not
 // just a hand-set field.
 func TestHandleBlockMsg_TextTracksThroughputBytes(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "hello"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: " world"})
@@ -192,7 +192,7 @@ func TestHandleBlockMsg_TextTracksThroughputBytes(t *testing.T) {
 }
 
 func TestHandleBlockMsg_ThinkingTracksThroughputBytes(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "reasoning"})
 
@@ -214,7 +214,7 @@ func TestBuildStatus_AllSpinnerTypes_IncludesNewPhases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {
-			m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+			m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 			m.reading = false
 			m.status = tt.status
 			m.requestStartTime = time.Now().Add(-1000 * time.Millisecond)
