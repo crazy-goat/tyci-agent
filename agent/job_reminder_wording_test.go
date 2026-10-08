@@ -55,3 +55,24 @@ func TestBuildJobReminder_NonInteractiveDoesNotPromiseAnswerCommand(t *testing.T
 		t.Fatalf("expected the reminder to tell the model it may finish without an answer, got %q", got)
 	}
 }
+
+// TestBuildJobReminder_InteractiveListsOnlyBlockedJobs guards the fix that a
+// running job does not get a reminder in an interactive session, even when a
+// blocked job makes the reminder fire: the running job sends its own notice,
+// so the reminder must not ask the model to wait for it.
+func TestBuildJobReminder_InteractiveListsOnlyBlockedJobs(t *testing.T) {
+	got := buildJobReminder([]string{
+		"WAITING FOR ANSWER: some job (job_id=job-1-1) asks: \"which way?\"",
+		"running: tyci workflow (job_id=job-2-1)",
+	}, true)
+
+	if !strings.Contains(got, "job_id=job-1-1") {
+		t.Fatalf("expected the blocked job to be listed, got %q", got)
+	}
+	if strings.Contains(got, "job-2-1") || strings.Contains(got, "running:") {
+		t.Fatalf("expected the running job not to be listed in an interactive session, got %q", got)
+	}
+	if strings.Contains(got, "wait(job_id=") {
+		t.Fatalf("expected no instruction to wait for a running job in an interactive session, got %q", got)
+	}
+}

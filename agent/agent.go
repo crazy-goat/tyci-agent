@@ -94,9 +94,12 @@ type Config struct {
 
 	// PendingJobs, if set, is called when the agent would otherwise finish the
 	// turn and returns one line per background job that is still running or —
-	// worse — blocked waiting for an answer. When non-empty the agent injects
-	// a harness-authored reminder and runs one more iteration, the same shape
-	// as PendingTodos above.
+	// worse — blocked waiting for an answer. When a line describes a blocked
+	// job the agent injects a harness-authored reminder and runs one more
+	// iteration, the same shape as PendingTodos above. In an interactive
+	// session (console and TUI) a running job alone does not: it sends its
+	// own completion notice. A non-interactive run (`tyci run`) never drains
+	// those notices, so there a running job is reminded about too.
 	//
 	// This exists because a forgotten blocked child is the most expensive
 	// mistake this environment makes possible. It sits there making no
@@ -607,9 +610,13 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			}
 			// Same idea one level out: a background job left running is
 			// usually fine, but a job blocked on a question is a dead end
-			// only this turn can open.
+			// only this turn can open. In an interactive session a running
+			// job sends its own completion notice, so only a blocked one is
+			// worth a reminder there. A non-interactive run never drains
+			// notices and exits when the turn ends, so it reminds about
+			// running jobs too.
 			if cfg.PendingJobs != nil && jobReminders < maxJobReminders {
-				if pending := cfg.PendingJobs(); len(pending) > 0 {
+				if pending := cfg.PendingJobs(); hasBlockedJob(pending) || (!cfg.Interactive && len(pending) > 0) {
 					jobReminders++
 					reminder := buildJobReminder(pending, cfg.Interactive)
 					*msgs = append(*msgs, connector.Message{
@@ -772,6 +779,23 @@ func buildTodoReminder(pending []string) string {
 	return b.String()
 }
 
+// isBlockedJobLine reports whether one PendingJobs line describes a job that
+// waits for an answer. The line format is the one of jobs.Registry.PendingLines.
+func isBlockedJobLine(line string) bool {
+	return strings.HasPrefix(line, "WAITING FOR ANSWER:")
+}
+
+// hasBlockedJob reports whether one of the PendingJobs lines describes a job
+// that waits for an answer.
+func hasBlockedJob(lines []string) bool {
+	for _, line := range lines {
+		if isBlockedJobLine(line) {
+			return true
+		}
+	}
+	return false
+}
+
 // buildJobReminder produces the harness-authored reminder injected when the
 // agent tries to finish with background jobs outstanding.
 //
@@ -791,19 +815,26 @@ func buildTodoReminder(pending []string) string {
 // job's own timeout discards its work, so the model is told instead to
 // either answer it itself if it genuinely knows the answer, or explicitly
 // accept that it will go unanswered and finish without it.
+//
+// In an interactive session only the blocked lines are listed and no running
+// job is mentioned: a running job sends its own completion notice there, so
+// a reminder about it would only make the model wait for it.
 func buildJobReminder(pending []string, interactive bool) string {
 	var b strings.Builder
 	b.WriteString("[automated check, not the user] Background jobs are still outstanding:\n")
 	for _, line := range pending {
+		if interactive && !isBlockedJobLine(line) {
+			continue
+		}
 		b.WriteString("- ")
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
 	if interactive {
-		b.WriteString("\nFor anything marked WAITING FOR ANSWER: relay the question to the user in your reply, wait for their answer in the conversation, then call answer_job(job_id=..., text=\"...\") with what they said — do not invent an answer on their behalf. Only call answer_job yourself right away if you already genuinely know the answer. Left unanswered it is making no progress and its work is discarded when it times out. ")
-	} else {
-		b.WriteString("\nFor anything marked WAITING FOR ANSWER: there is no user present in this run to answer it — only call answer_job(job_id=..., text=\"...\") yourself if you already genuinely know the answer from the context you have. Otherwise say plainly that it will go unanswered and finish without it; it will time out and its work will be discarded either way, so waiting for a reply that will never come only wastes the run. ")
+		b.WriteString("\nFor anything marked WAITING FOR ANSWER: relay the question to the user in your reply, wait for their answer in the conversation, then call answer_job(job_id=..., text=\"...\") with what they said — do not invent an answer on their behalf. Only call answer_job yourself right away if you already genuinely know the answer. Left unanswered it is making no progress and its work is discarded when it times out.")
+		return b.String()
 	}
+	b.WriteString("\nFor anything marked WAITING FOR ANSWER: there is no user present in this run to answer it — only call answer_job(job_id=..., text=\"...\") yourself if you already genuinely know the answer from the context you have. Otherwise say plainly that it will go unanswered and finish without it; it will time out and its work will be discarded either way, so waiting for a reply that will never come only wastes the run. ")
 	b.WriteString("For a job still running, either read it with wait(job_id=...) if you need the result, or say plainly in your reply that you are leaving it running — do not silently end the turn on it.")
 	return b.String()
 }
