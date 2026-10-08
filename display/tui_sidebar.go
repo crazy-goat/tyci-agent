@@ -578,7 +578,10 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch m.sidebarTab {
 				case sidebarTabTasks:
 					width := layout.contentWidth // already computed above, same layout
-					if line < 0 || line >= len(m.sidebarTaskRows(width)) {
+					rows := m.sidebarTaskRows(width)
+					// A separator selects nothing. Unlike a heading, it does not
+					// fall through to the next job row.
+					if line < 0 || line >= len(rows) || rows[line].isSeparator {
 						return m, nil
 					}
 					jobRows := m.sidebarTaskJobRows(width)
@@ -825,6 +828,9 @@ type sidebarTaskRow struct {
 	// isMain marks the synthetic "main" row: the main conversation, which
 	// is selectable but is not a job.
 	isMain bool
+	// isSeparator marks the line between the active and the finished
+	// subagents of a sibling group. Like a heading, it is not selectable.
+	isSeparator bool
 }
 
 // sidebarTaskRows keeps the three source groups separate and stable. The Bash
@@ -834,6 +840,10 @@ func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 	tree := m.buildSubagentTree()
 	tokW, costW := subagentColumnWidths(tree)
 	for _, treeRow := range tree {
+		if treeRow.separatorBefore {
+			line := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(strings.Repeat("─", width))
+			rows = append(rows, sidebarTaskRow{group: "Subagents", line: line, isSeparator: true})
+		}
 		row := sidebarTaskRow{group: "Subagents", line: m.formatSubagentRow(treeRow, width, tokW, costW), isMain: treeRow.isRoot}
 		if !treeRow.isRoot {
 			job := treeRow.job
@@ -896,6 +906,41 @@ func (m TuiModel) sidebarTaskJobRows(width int) []int {
 	return indices
 }
 
+// sidebarCursorJobID returns the ID of the job under the Tasks cursor. It
+// returns "" when the Tasks tab is not open, or when the cursor is on the
+// main row, which is not a job.
+func (m TuiModel) sidebarCursorJobID() string {
+	if !m.sidebarActive || m.sidebarTab != sidebarTabTasks {
+		return ""
+	}
+	width := m.sidebarLayout().contentWidth
+	rows := m.sidebarTaskRows(width)
+	jobRows := m.sidebarTaskJobRows(width)
+	if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) || rows[jobRows[m.sidebarCursor]].job == nil {
+		return ""
+	}
+	return rows[jobRows[m.sidebarCursor]].job.ID
+}
+
+// sidebarFollowJob moves the Tasks cursor to the row of job id after the list
+// changed, so the selection stays on the same job. A job can move down into
+// the finished part, or a new job can start above it. An empty id, or a job
+// that is no longer listed, leaves the cursor where it is.
+func (m *TuiModel) sidebarFollowJob(id string) {
+	if id == "" {
+		return
+	}
+	layout := m.sidebarLayout()
+	rows := m.sidebarTaskRows(layout.contentWidth)
+	for i, line := range m.sidebarTaskJobRows(layout.contentWidth) {
+		if rows[line].job != nil && rows[line].job.ID == id {
+			m.sidebarCursor = i
+			m.sidebarClampScrollToCursor(layout.contentHeight)
+			return
+		}
+	}
+}
+
 // subagentTreeRow is one line of the Subagents tab's tree — either the
 // synthetic root ("main", the top-level conversation, which is not itself a
 // job) or a real job.Job at some depth.
@@ -914,14 +959,20 @@ type subagentTreeRow struct {
 	// since 2026-08-23 the UI renders a plain dollar figure instead of
 	// decorating it with the old "+?" convention.
 	rollupUnpriced bool
+	// separatorBefore is true when a separator line sits above this row: it is
+	// the first finished row of a sibling group that has active rows above it.
+	separatorBefore bool
 }
 
 // buildSubagentTree walks jobs.Job.ParentID to build the Subagents tab's
 // tree, generically to whatever depth the registry actually has (today: one
 // level, since a child cannot itself spawn a subagent — see
-// subagentDeniedTools — but nothing here assumes that depth). Waiting-answer
-// children sort to the top of their sibling group, undimmed at render time;
-// everything else keeps sortedBackgroundJobs' newest-first order.
+// subagentDeniedTools — but nothing here assumes that depth). Within each
+// sibling group the active children come first, newest start first. A
+// finished child (done, failed or truncated) follows, most recent end first.
+// A child counts as active when it is running, waiting for an answer, or has
+// an active child itself. A separator sits between the two parts when both
+// are non-empty. Dimming at render time is unchanged.
 //
 // A subagent whose ParentID does not point at another tracked subagent — its
 // parent was a non-subagent job (e.g. a cron run), or its parent has since
@@ -939,8 +990,9 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 		}
 		byParent[j.ParentID] = append(byParent[j.ParentID], j)
 	}
+	active := subagentActiveSet(byParent)
 	for parent, kids := range byParent {
-		byParent[parent] = sortSubagentSiblings(kids)
+		byParent[parent] = sortSubagentSiblings(kids, active)
 	}
 
 	usage := ledger.UsageByJob()
@@ -973,15 +1025,17 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 			return
 		}
 		visited[parentID] = true
-		for _, j := range byParent[parentID] {
+		kids := byParent[parentID]
+		for i, j := range kids {
 			own := usage[j.ID]
 			cost, unpriced := rollupJobCost(j.ID, byParent, usage)
 			rows = append(rows, subagentTreeRow{
-				depth:          depth,
-				job:            j,
-				ownTokens:      own.Usage.Input + own.Usage.Output,
-				rollupUSD:      cost,
-				rollupUnpriced: unpriced,
+				depth:           depth,
+				job:             j,
+				ownTokens:       own.Usage.Input + own.Usage.Output,
+				rollupUSD:       cost,
+				rollupUnpriced:  unpriced,
+				separatorBefore: i > 0 && !active[j.ID] && active[kids[i-1].ID],
 			})
 			walk(j.ID, depth+1)
 		}
@@ -1039,16 +1093,66 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 	return rows
 }
 
-// sortSubagentSiblings puts any waiting-on-answer job first (it must never
-// read as inert history — see TODO item 1) and otherwise preserves the
-// newest-first order sortedBackgroundJobs already produced.
-func sortSubagentSiblings(kids []jobs.Job) []jobs.Job {
+// subagentLive reports whether a subagent is still active. Done, failed and
+// truncated are the finished states; every other status is active.
+func subagentLive(status jobs.Status) bool {
+	switch status {
+	case jobs.StatusDone, jobs.StatusFailed, jobs.StatusTruncated:
+		return false
+	default:
+		return true
+	}
+}
+
+// subagentActiveSet returns, for every job in byParent, whether it is active:
+// live itself, or with an active child. The walk is memoized, and visited
+// guards a ParentID cycle, the same hazard buildSubagentTree's walk guards.
+func subagentActiveSet(byParent map[string][]jobs.Job) map[string]bool {
+	active := map[string]bool{}
+	visited := map[string]bool{}
+	var isActive func(j jobs.Job) bool
+	isActive = func(j jobs.Job) bool {
+		if v, ok := active[j.ID]; ok {
+			return v
+		}
+		if visited[j.ID] {
+			return false
+		}
+		visited[j.ID] = true
+		v := subagentLive(j.Status)
+		for _, kid := range byParent[j.ID] {
+			if isActive(kid) {
+				v = true
+			}
+		}
+		active[j.ID] = v
+		return v
+	}
+	for _, kids := range byParent {
+		for _, j := range kids {
+			isActive(j)
+		}
+	}
+	return active
+}
+
+// sortSubagentSiblings puts the active siblings first, newest start first.
+// The finished siblings follow, most recent end first. Ties fall back to the
+// newer start and then to the ID, so the order is stable between calls.
+func sortSubagentSiblings(kids []jobs.Job, active map[string]bool) []jobs.Job {
 	sorted := append([]jobs.Job(nil), kids...)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		if sorted[i].StartedAt.Equal(sorted[j].StartedAt) {
-			return sorted[i].ID > sorted[j].ID
+		a, b := sorted[i], sorted[j]
+		if active[a.ID] != active[b.ID] {
+			return active[a.ID]
 		}
-		return sorted[i].StartedAt.After(sorted[j].StartedAt)
+		if !active[a.ID] && !a.FinishedAt.Equal(b.FinishedAt) {
+			return a.FinishedAt.After(b.FinishedAt)
+		}
+		if !a.StartedAt.Equal(b.StartedAt) {
+			return a.StartedAt.After(b.StartedAt)
+		}
+		return a.ID > b.ID
 	})
 	return sorted
 }

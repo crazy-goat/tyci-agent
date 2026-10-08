@@ -1197,9 +1197,9 @@ func TestBuildSubagentTree_UnpricedDescendantPropagates(t *testing.T) {
 	}
 }
 
-// TestBuildSubagentTree_NewestFirst ignores status and keeps the newest job
-// first within each sibling group.
-func TestBuildSubagentTree_NewestFirst(t *testing.T) {
+// TestBuildSubagentTree_ActiveFirst: an active job (waiting for an answer, even
+// an older one) comes before a finished job in the same sibling group.
+func TestBuildSubagentTree_ActiveFirst(t *testing.T) {
 	ledger.Reset()
 	t.Cleanup(ledger.Reset)
 
@@ -1213,8 +1213,8 @@ func TestBuildSubagentTree_NewestFirst(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("expected root + 2 children, got %d", len(rows))
 	}
-	if rows[1].job.ID != "job-2" || rows[2].job.ID != "job-1" {
-		t.Fatalf("expected newest-first regardless of status, got %+v", rows[1:])
+	if rows[1].job.ID != "job-1" || rows[2].job.ID != "job-2" {
+		t.Fatalf("expected the waiting job before the finished one, got %+v", rows[1:])
 	}
 }
 

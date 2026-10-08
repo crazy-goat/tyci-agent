@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- TUI: the Subagents list on the sidebar Tasks tab shows the active subagents first, newest start first. A separator line follows them, then the finished subagents, most recently finished first. The cursor stays on the same subagent when it moves to the finished part (#526).
+
 ### Added
 - TUI: Shift+Tab moves focus between the prompt and the sidebar. With the sidebar closed, it opens the sidebar and focuses it (#511).
 
