@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Flow: the answer `resume` for a run paused at start-up keeps the visit counts of its saved state; it no longer counts a new visit. A run adopted by the orchestrator is forgotten when it ends (#388).
+- Orchestrator: the paused runs are adopted when `Start` returns, before the plan, so an answer given before the plan cannot start a second run of the same issue (#388).
+
 ## [0.5.0] - 2026-10-08
 
 ### Changed

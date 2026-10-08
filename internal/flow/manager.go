@@ -218,6 +218,10 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 			cancel()
 			m.mu.Lock()
 			delete(m.active, st.Run)
+			// A paused run stays adopted: the orchestrator still watches it.
+			if st.Status != "paused" {
+				delete(m.adopted, st.Run)
+			}
 			m.mu.Unlock()
 			m.emit(RunEvent{Run: st.Run, Status: st.Status, PR: st.PR, Reason: st.Reason})
 		}()

@@ -622,6 +622,9 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		sort.Strings(keys)
 		return fmt.Errorf("flow: unknown answer %q, allowed: %s", answer, strings.Join(keys, ", "))
 	}
+	// A run paused at start-up that continues at its saved state is restarted
+	// like Continue: no new visit and the visit counts stay.
+	restart := ok && resumeState(st) != "" && next == resumeState(st)
 	now := time.Now()
 	st.History = append(st.History, Step{
 		Seq:       len(st.History) + 1,
@@ -644,7 +647,7 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		r.notify("run " + st.Run + " done")
 		return nil
 	}
-	if !r.WF.States[next].End {
+	if !r.WF.States[next].End && !restart {
 		st.Visits = map[string]int{}
 	}
 	st.Current = next
@@ -654,6 +657,9 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		if err := r.Store.Save(st); err != nil {
 			return err
 		}
+	}
+	if restart {
+		return r.Continue(ctx, st)
 	}
 	return r.Run(ctx, st)
 }
