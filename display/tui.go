@@ -14,7 +14,7 @@ import (
 const tuiMaxHistory = 500
 
 type tuiMsgBlock struct {
-	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block","set-model","reset","queue-drained"
+	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block","reset","queue-drained"
 	content  string
 	toolName string
 	failed   bool // for tool-end: the result represents a failed tool call
@@ -100,9 +100,9 @@ type tuiMsgJobsReset struct {
 // tuiSetSessionListerMsg carries the callback the Sidebar's Sessions tab
 // (TODO item 1) uses to fetch this project's resumable sessions on demand.
 // Delivered as a message (same pattern as every other cross-goroutine
-// mutation here — see tuiMsgBlock's "set-model" kind) rather than written
-// directly onto the model, since TUI.SetSessionLister is called from main(),
-// outside the bubbletea event-loop goroutine.
+// mutation here) rather than written directly onto the model, since
+// TUI.SetSessionLister is called from main(), outside the bubbletea
+// event-loop goroutine.
 type tuiSetSessionListerMsg struct {
 	fn func() []TuiResumeEntry
 }
@@ -234,9 +234,10 @@ type TuiModel struct {
 	roundBytes        int       // bytes delivered via Thinking/Text deltas so far this round
 	roundFirstDeltaAt time.Time // when the round's first delta arrived; zero until then
 
-	// Resume picker (/resume command): shown as a full-screen popup with arrow-key navigation, Enter loads,
-	// Esc closes without action. Entries are pre-resolved (cwd-derived) by
-	// the caller so the picker only renders a sorted list and a chosen path
+	// Resume picker (/resume command): shown as a full-screen popup with
+	// arrow-key navigation, Enter loads, Esc closes without action. Entries
+	// are pre-resolved (cwd-derived) by the caller so the picker only
+	// renders a sorted list and a chosen path
 	// flows back over resumeCh — the model stays unaware of the on-disk
 	// session dir layout. resumeCh is an unbuffered channel shared with the
 	// outer TUI: a successful Enter sends the chosen path, an Esc sends "".

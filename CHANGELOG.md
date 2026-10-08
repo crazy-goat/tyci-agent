@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: the `/model` command, the model picker and the favorite models are removed. Tab, Shift+Tab and Ctrl+P no longer open a model picker. `/model` is handled like any unknown slash command (#190).
 - CLI: the `--model` and `--agent` flags, the `tyci agent` command and the agent presets in `agents.json` are removed. Set the model with `default_model` in `~/.tyci/config.json` (#190).
 - Config: the project file `.tyci/model.json` is no longer merged into the provider list. Only `~/.tyci/model.json` counts (#190).
+- Cron: the job `model` field and the `model` argument of the cron tool are removed. Jobs run on `default_model`. An old `model` key in `cron.json` is ignored and dropped on the next save (#190).
 
 Existing agents.json, .tyci.json and .tyci/model.json files are ignored (not deleted, not migrated).
 

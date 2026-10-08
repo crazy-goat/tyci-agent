@@ -482,7 +482,3 @@ func TestPackageLevelHelpersUseDefault(t *testing.T) {
 		t.Error("ListProviders() did not read from Default")
 	}
 }
-
-// =============================================================================
-// model.json project-local merge (TODO.md item 22)
-// =============================================================================

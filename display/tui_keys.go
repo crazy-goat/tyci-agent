@@ -8,8 +8,8 @@ import (
 
 func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The "@" file-path popup claims Up/Down/Tab/Enter/Esc while it is open,
-	// and it has to be asked first: Tab below switches model, and the global
-	// handler binds the arrows to history. See tui_filecomplete.go.
+	// and it has to be asked first: the global handler binds the arrows to
+	// history. See tui_filecomplete.go.
 	if m.handleFileCompleteKey(msg) {
 		return m, nil
 	}
@@ -87,8 +87,9 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // Shared by both Enter paths on purpose. The busy handler used to fall
 // straight through to submit(), which meant a slash command typed while the
 // agent was thinking was queued and later delivered to the model as a prompt.
-// The model was asked to interpret a command meant for the interface. Its own comment claimed it mirrored the idle handler; it
-// did not, and one shared function is the only way to keep that claim true.
+// The model was asked to interpret a command meant for the interface. Its own
+// comment claimed it mirrored the idle handler; it did not, and one shared
+// function is the only way to keep that claim true.
 //
 // Only commands with no effect on the conversation are handled here outright.
 // The rest (/new, /resume, /btw, /exit) belong to the main loop, which owns the

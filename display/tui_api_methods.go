@@ -43,11 +43,6 @@ func (t *TUI) SetRunLister(fn func() []TuiRunRow) {
 	t.prog.Send(tuiSetRunListerMsg{fn: fn})
 }
 
-// SetModel updates the model name displayed in the status bar.
-func (t *TUI) SetModel(name string) {
-	t.prog.Send(tuiMsgBlock{kind: "set-model", content: name})
-}
-
 // Results returns the channel that receives submitted lines from the TUI.
 func (t *TUI) Results() <-chan string {
 	return t.results

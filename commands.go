@@ -258,7 +258,8 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
 	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: maxRetries, BaseBackoff: 4, MaxBackoff: 128}
 
-	// The model comes from "default_model" in ~/.tyci/config.json only.
+	// The model comes from "default_model" in ~/.tyci/config.json. A project
+	// file <wd>/.tyci/config.json can set it too (see agent.LoadTyciConfig).
 	model := agent.GetDefaultModel()
 	if model == "" {
 		return nil, "", agent.Config{}, nil, nil, "", "", nil, nil, fmt.Errorf("no model configured. Set \"default_model\" in ~/.tyci/config.json")

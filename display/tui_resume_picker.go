@@ -158,8 +158,9 @@ func (m TuiModel) pickCurrentResumeEntry() TuiModel {
 // ─── Rendering ───────────────────────────────────────────────────────────
 
 // renderResumePickerView is the only View() while the /resume popup is open.
-// It's a centered rounded-border box with two columns: column 1 = date+time of last modification (newest top), column
-// 2 = first user prompt preview with a one-line ellipsis-truncated preview.
+// It's a centered rounded-border box with two columns: column 1 = date+time
+// of last modification (newest top), column 2 = first user prompt preview
+// with a one-line ellipsis-truncated preview.
 // Wrapping is necessary because last prompts can be longer than the box;
 // hiding them entirely would defeat the picker's purpose.
 func (m TuiModel) renderResumePickerView() string {
