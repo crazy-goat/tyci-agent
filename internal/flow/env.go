@@ -2,6 +2,7 @@ package flow
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -14,7 +15,8 @@ import (
 // The state name comes from st.Current and the visit count from
 // st.Visits[current] (the caller increments before running).
 // st.PR == 0 yields an empty TYCI_PR. The runner appends TYCI_ARTIFACT_DIR,
-// the artifact dir of the step (empty when the runner has no run dir).
+// the artifact dir of the step, and TYCI_REVIEW_DIR (see reviewDir), both
+// empty when the runner has no run dir.
 // TYCI_DEFAULT_BRANCH is the defaultBranch argument (Runner.DefaultBranch).
 // Nothing else from the parent env leaks in.
 func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string {
@@ -66,4 +68,19 @@ func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string
 		"TYCI_LAST_REVIEW_COMMENT_ID="+lastReview,
 	)
 	return env
+}
+
+// reviewDir returns the artifact dir of the newest review step of the run: an
+// agent state with agent "review" and no task (the verdict). The state name
+// does not matter. Empty when the run has no such step, for example a run that
+// continued an open PR. A task of the review role (findings) is not a review.
+func (r *Runner) reviewDir(st *RunState) string {
+	for i := len(st.History) - 1; i >= 0; i-- {
+		h := st.History[i]
+		s := r.WF.States[h.State]
+		if s.Agent == "review" && s.Task == "" && h.Artifact != "" {
+			return filepath.Join(r.RunDir, "artifacts", h.Artifact)
+		}
+	}
+	return ""
 }

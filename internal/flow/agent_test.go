@@ -219,6 +219,31 @@ func TestOracle_Key(t *testing.T) {
 	}
 }
 
+// #379: the roadmap run has no artifact dir, so its task text asks for no report.
+func TestRoadmapOracle_TaskAsksForNoReport(t *testing.T) {
+	s := &spawnRec{result: "{}"}
+	r := newRunner(s)
+	r.Render = TaskTemplates{}
+	if _, _, err := r.Text(context.Background(), "oracle", "roadmap", RunContext{Input: `{"issues":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.specs) != 1 || !strings.Contains(s.specs[0].Task, `{"issues":[]}`) || strings.Contains(s.specs[0].Task, "report.md") {
+		t.Errorf("specs = %+v", s.specs)
+	}
+}
+
+// #379: a recover step has an artifact dir, so its task text still asks the oracle for report.md.
+func TestRecoverOracle_TaskAsksForReport(t *testing.T) {
+	s := &spawnRec{result: "goto:ci"}
+	art := t.TempDir()
+	if _, _, err := newRunner(s).Text(context.Background(), "oracle", "recover", RunContext{Worktree: t.TempDir(), ArtifactDir: art}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.specs) != 1 || !strings.Contains(s.specs[0].Task, "MUST write "+filepath.Join(art, "report.md")) {
+		t.Errorf("specs = %+v", s.specs)
+	}
+}
+
 func stubGh(t *testing.T, script string) {
 	t.Helper()
 	d := t.TempDir()
