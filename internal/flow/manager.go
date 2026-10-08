@@ -16,6 +16,10 @@ import (
 // DefaultWorkflow is the workflow a start request uses when none is named.
 const DefaultWorkflow = "issue-to-merge"
 
+// preparingPrefix starts the m.active key of an issue whose run is being
+// prepared. The rest of the key is the issue number, not a run ID.
+const preparingPrefix = "preparing:"
+
 var runIDPattern = regexp.MustCompile(`^\d{8}-\d{6}-\d+$`)
 
 // RepoInfo describes the repository a run works in.
@@ -151,9 +155,13 @@ func (m *Manager) SetWorkers(n int) {
 	m.mu.Unlock()
 }
 
-// Start prepares a run and starts it in a goroutine. It returns at once.
-// A run of the issue resumed with the answer "resume" is returned instead of a new one,
-// and a run of the issue whose owner process is gone is resumed.
+// Start prepares a run and starts it in a goroutine. A run of the issue resumed
+// with the answer "resume" is returned instead of a new one, and a run of the
+// issue whose owner process is gone is resumed.
+//
+// Prepare runs the repository's setup script, which can take minutes. Start
+// does not hold m.mu meanwhile. The issue is reserved in m.active while it is
+// prepared, so Shutdown cancels the preparation like an active run.
 func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string, error) {
 	if req.Workflow == "" {
 		req.Workflow = DefaultWorkflow
@@ -165,18 +173,33 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 	if err != nil {
 		return "", nil, err
 	}
+	prepCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	key := fmt.Sprintf("%s%d", preparingPrefix, req.Issue)
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if id, ok := m.adopt(req.Issue); ok {
+		m.mu.Unlock()
 		return id, nil, nil
 	}
 	if err := m.refuse(info, req.Issue); err != nil {
+		m.mu.Unlock()
 		return "", nil, err
 	}
 	if id, found, err := m.resumeStale(info, req.Issue); found {
+		m.mu.Unlock()
 		return id, nil, err
 	}
-	st, wf, warnings, err := m.Prepare(ctx, info, req)
+	if m.active == nil {
+		m.active = map[string]activeRun{}
+	}
+	m.active[key] = activeRun{cancel: cancel, issue: req.Issue}
+	m.mu.Unlock()
+
+	st, wf, warnings, err := m.Prepare(prepCtx, info, req)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.active, key)
 	if err != nil {
 		return "", warnings, err
 	}
@@ -187,14 +210,18 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 // ErrBusy is returned (wrapped) when a run is already active.
 var ErrBusy = errors.New("manager busy")
 
-// refuse returns an ErrBusy error when the issue has an active or paused run, or a
-// running run owned by another live process (another tyci). A running state with a
-// dead owner is stale and does not block: resumeStale takes it. m.mu must be held.
+// refuse returns an ErrBusy error when the issue has an active, preparing or paused
+// run, or a running run owned by another live process (another tyci). A running state
+// with a dead owner is stale and does not block: resumeStale takes it. m.mu must be held.
 func (m *Manager) refuse(info RepoInfo, issue int) error {
 	for id, a := range m.active {
-		if a.issue == issue {
-			return fmt.Errorf("%w: run %s is active for issue %d", ErrBusy, id, issue)
+		if a.issue != issue {
+			continue
 		}
+		if strings.HasPrefix(id, preparingPrefix) {
+			return fmt.Errorf("%w: issue %d is being prepared", ErrBusy, issue)
+		}
+		return fmt.Errorf("%w: run %s is active for issue %d", ErrBusy, id, issue)
 	}
 	entries, _ := os.ReadDir(filepath.Dir(RunDir(info.Home, info.Name(), "x")))
 	for _, e := range entries {
