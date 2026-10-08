@@ -33,6 +33,11 @@ func NewBtwSink(t *TUI, id string) *BtwSink {
 }
 
 func (s *BtwSink) post(kind, content string) {
+	// A sink without a running program (a sink built outside the TUI, as in
+	// the tests of startBtw) has nowhere to stream. It still collects the text.
+	if s.t == nil || s.t.prog == nil {
+		return
+	}
 	s.t.prog.Send(tuiBtwStreamMsg{id: s.id, kind: kind, content: content})
 }
 
