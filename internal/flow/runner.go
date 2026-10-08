@@ -582,7 +582,8 @@ func checkGoto(wf *Workflow, state string) error {
 // prompt, and "goto <state>" continues at that state. An unknown answer keeps
 // the run paused and returns an error that lists the allowed keys.
 // Leaving the ask state for a state that is not an end state resets all
-// visit counters. An ask state without on ends the run done.
+// visit counters, except for a goto to the state saved at start-up, which
+// continues like Continue. An ask state without on ends the run done.
 func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error {
 	if st == nil || r.WF == nil {
 		return errors.New("flow: run state or workflow is nil")
@@ -597,12 +598,16 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 	word, rest, _ := strings.Cut(strings.TrimSpace(answer), " ")
 	rest = strings.TrimSpace(rest)
 	var next string
+	restart := false
 	switch {
 	case word == "goto" && rest != "":
 		if err := checkGoto(r.WF, rest); err != nil {
 			return err
 		}
 		next, ok = rest, true
+		// A goto to the state saved at start-up restarts the run like
+		// Continue: no new visit and the visit counts stay.
+		restart = next == resumeState(st)
 	case word == "retry" && rest != "":
 		next, ok = s.On[word]
 		if !ok {
@@ -647,7 +652,7 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		r.notify("run " + st.Run + " done")
 		return nil
 	}
-	if !r.WF.States[next].End {
+	if !r.WF.States[next].End && !restart {
 		st.Visits = map[string]int{}
 	}
 	st.Current = next
@@ -657,6 +662,9 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		if err := r.Store.Save(st); err != nil {
 			return err
 		}
+	}
+	if restart {
+		return r.Continue(ctx, st)
 	}
 	return r.Run(ctx, st)
 }

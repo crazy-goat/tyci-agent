@@ -73,6 +73,11 @@ func New(cfg Config, f forge.Forge, r Runner, h Hooks) *Orchestrator {
 // Start runs the orchestrator in a goroutine and returns at once. Cancel ctx
 // to stop starting new runs; started runs continue.
 func (o *Orchestrator) Start(ctx context.Context) {
+	// Adopt before the goroutine: when Start returns, the paused and resumed
+	// runs hold their slots, so an answer that comes before the plan cannot
+	// let the orchestrator start a second run of the issue.
+	finished := make(chan finishedRun)
+	adopted := o.adoptResumed(ctx, finished)
 	go func() {
 		defer close(o.stop)
 		defer func() {
@@ -80,7 +85,7 @@ func (o *Orchestrator) Start(ctx context.Context) {
 				o.notify(fmt.Sprintf("orchestrator stopped: panic: %v", p))
 			}
 		}()
-		o.loop(ctx)
+		o.loop(ctx, finished, adopted)
 	}()
 }
 
@@ -109,12 +114,11 @@ func (o *Orchestrator) notify(lines ...string) {
 	}
 }
 
-func (o *Orchestrator) loop(ctx context.Context) {
-	// Adopt before the plan: planning runs the oracle (an LLM run) and the
-	// user can answer the start-up question meanwhile. An adopted run that
-	// ends in this time reports its end after the plan, so no second run starts.
-	finished := make(chan finishedRun)
-	adopted := o.adoptResumed(ctx, finished)
+// loop plans and starts runs. The runs in adopted were adopted by Start; their
+// ends reach the loop through finished. The plan runs the oracle (an LLM run)
+// and the user can answer the start-up question meanwhile. An adopted run that
+// ends in this time reports its end after the plan, so no second run starts.
+func (o *Orchestrator) loop(ctx context.Context, finished chan finishedRun, adopted []adoptedRun) {
 	rm, err := o.plan(ctx)
 	if err != nil {
 		o.reportForgeError(err, PlanReady{Roadmap: rm, Total: o.cfg.Workers, Special: err})

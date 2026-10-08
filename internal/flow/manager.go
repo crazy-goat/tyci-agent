@@ -66,6 +66,8 @@ type Manager struct {
 	nsub   int
 	// adopted: runs that Adopt or Start returned to the orchestrator.
 	adopted map[string]bool
+	// workers: the limit of active runs for a start-up "resume". 0 = unlimited.
+	workers int
 }
 
 // activeRun is a run with a goroutine in this process.
@@ -136,6 +138,14 @@ func (m *Manager) RunText(ctx context.Context, workflow, input string) (string, 
 func (m *Manager) SetBase(ctx context.Context) {
 	m.mu.Lock()
 	m.base = ctx
+	m.mu.Unlock()
+}
+
+// SetWorkers sets the limit of active runs: a start-up "resume" is refused while
+// that many runs are active (production: orchestrator.workers). 0 means unlimited.
+func (m *Manager) SetWorkers(n int) {
+	m.mu.Lock()
+	m.workers = n
 	m.mu.Unlock()
 }
 
@@ -218,6 +228,10 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 			cancel()
 			m.mu.Lock()
 			delete(m.active, st.Run)
+			// A paused run stays adopted: the orchestrator still watches it.
+			if st.Status != "paused" {
+				delete(m.adopted, st.Run)
+			}
 			m.mu.Unlock()
 			m.emit(RunEvent{Run: st.Run, Status: st.Status, PR: st.PR, Reason: st.Reason})
 		}()
@@ -360,8 +374,14 @@ func (m *Manager) Resume(runID, answer string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("%w: run %s is active", ErrBusy, st.Run)
 	}
+	startup := saved != "" && answer == "goto "+saved
+	if startup && m.workers > 0 && len(m.active) >= m.workers {
+		m.mu.Unlock()
+		return fmt.Errorf("run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active; answer resume again when one ends",
+			st.Run, st.Issue, m.workers, len(m.active))
+	}
 	m.launch(info, wf, st, true, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
-	if saved != "" && answer == "goto "+saved {
+	if startup {
 		m.markAdoptable(st.Run)
 	}
 	m.mu.Unlock()

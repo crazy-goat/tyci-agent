@@ -8,8 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Flow: a resumed agent job redacts the messages it writes after the resume, as its run transcript does. Before, these messages were written without redaction (#363).
+- Flow: the answer `resume` for a run paused at start-up keeps the visit counts of its saved state; it no longer counts a new visit. A run adopted by the orchestrator is forgotten when it ends (#388).
+- Flow: the answer `resume` for a run paused at start-up is refused while `orchestrator.workers` runs are active. The run stays paused. The refusal names the limit (#388).
+- Orchestrator: the paused runs are adopted when `Start` returns, before the plan, so an answer given before the plan cannot start a second run of the same issue (#388).
 - Flow: `open_pr.sh` also finds the open pull request of the issue when it is open from another branch and GitHub links it as closing the issue (for example `Closes #N`). The run continues that pull request and does not code the issue again. `push.sh` pushes to the head branch of that pull request. A pull request from a fork is never used (#374).
 - Flow: when a fixer answers `ok` and the run ends, tyci names the workflow proposal in a notice. Before, a run that did not pause never showed it. A done run cannot answer the proposal (#392).
+- TUI: the status bar shows the context percentage for a model with a known context limit. The lookup did not get the provider, so a `provider/model` name never found its limit (#331).
 - Orchestrator: the roadmap oracle is no longer told to write `report.md`, because the roadmap run has no artifact dir. The start-up plan does not wait for an extra model turn. The `recover` step still writes `report.md` (#379).
 - Flow: the failed run notice names the step where the run stopped. A run that fails after a fixer answers `ok` also names the pending workflow proposal (#333).
 - Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
