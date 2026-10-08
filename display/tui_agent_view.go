@@ -1,9 +1,13 @@
 package display
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
@@ -79,6 +83,11 @@ func (m *TuiModel) openAgentView(jobID, label string) bool {
 	m.selectionFlash = false
 	m.invalidateMessageRegion()
 	m.pullAgentView()
+	// The catch-up replay arrives in one go. Counting it would show the
+	// throughput of the whole transcript over a fraction of a second, so only
+	// the deltas that arrive after the view opened count as this round's.
+	av.model.roundBytes = 0
+	av.model.roundFirstDeltaAt = time.Time{}
 	return true
 }
 
@@ -158,4 +167,78 @@ func (m TuiModel) agentViewHeader() string {
 	}
 	text := "viewing: " + name + " — Enter on main to go back"
 	return lipgloss.NewStyle().MaxWidth(m.width).Render(text)
+}
+
+// viewedAgentRow returns the Subagents row of the job the agent view shows.
+// The row is built by buildSubagentTree, the same source as the Tasks tab, so
+// its figures agree with the row. ok is false when the job is not tracked.
+func (m TuiModel) viewedAgentRow() (subagentTreeRow, bool) {
+	for _, row := range m.buildSubagentTree() {
+		if !row.isRoot && row.job.ID == m.agentView.jobID {
+			return row, true
+		}
+	}
+	return subagentTreeRow{}, false
+}
+
+// viewedAgentModel returns "provider/model" of the viewed subagent. The job
+// does not record its model, so the ledger is the source. It is empty until
+// the job has made its first call. When the job fell back to another model,
+// the row seen last is the one it moved to.
+func viewedAgentModel(jobID string) string {
+	name := ""
+	for _, r := range ledger.Get().Rows {
+		if r.JobID == jobID && r.Kind == ledger.Subagent {
+			name = r.Provider + "/" + r.Model
+		}
+	}
+	return name
+}
+
+// viewedAgentState is the state part of the status bar while an agent view is
+// open. A running agent shows the state its transcript has reached. An agent
+// that ended shows how it ended. An agent that is no longer tracked shows
+// nothing, because its transcript cannot tell whether it still runs.
+func (m TuiModel) viewedAgentState() string {
+	row, ok := m.viewedAgentRow()
+	if !ok {
+		return ""
+	}
+	switch row.job.Status {
+	case jobs.StatusRunning:
+		// The replayed transcript has no request-start event, so the view
+		// may have no start time yet. The job's own start stands in for it.
+		v := *m.agentView.model
+		if v.requestStartTime.IsZero() {
+			v.requestStartTime = row.job.StartedAt
+		}
+		// A tool that ended leaves the status at "tool". The replay has no event
+		// for the next request, so the agent waits for its response.
+		if v.status == "tool" && len(v.toolQueue) == 0 {
+			v.status = "waiting"
+		}
+		return v.liveStatus()
+	case jobs.StatusWaitingAnswer:
+		return "waiting for answer"
+	case jobs.StatusDone:
+		return "done"
+	case jobs.StatusFailed:
+		return "failed"
+	case jobs.StatusTruncated:
+		return "truncated"
+	}
+	return ""
+}
+
+// buildAgentViewRight is the right-hand side of the status bar while an agent
+// view is open. It shows the viewed agent's tokens and cost, as its row in the
+// Subagents list shows them, and then the session total. The total is the
+// first item, so fitStatusRight keeps it when the bar is narrow. The agent's
+// figures are left out until it has used tokens.
+func (m TuiModel) buildAgentViewRight() string {
+	parts := []string{"total " + fmtUSD(ledger.Get().TotalUSD()) + "$"}
+	if row, ok := m.viewedAgentRow(); ok && row.ownTokens > 0 {
+		parts = append(parts, fmt.Sprintf("%s tok, %s$", fmtTokens(row.ownTokens), fmtUSD(row.rollupUSD)))
+	}
+	return fitStatusRight(strings.Join(parts, statusSep), statusRightBudget(m.width))
 }
