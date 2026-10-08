@@ -11,7 +11,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/stream"
 )
 
-// TaskSpec describes one subagent run started from Go (the workflow engine),
+// TaskSpec describes one subagent run started from Go (the flow runner),
 // not by a model. None of these fields are visible to a model.
 type TaskSpec struct {
 	Task          string

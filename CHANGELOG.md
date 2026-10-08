@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- Lua workflows: the `.tyci/agents/*.lua` scripts and the `tyci workflow run` and `tyci workflow list` commands are removed. Use JSON workflows (v0.3.0) instead. `tyci workflow eject` stays.
+
 ### Fixed
 - Flow: the answer `resume` for a run paused at start-up keeps the visit counts of its saved state; it no longer counts a new visit. A run adopted by the orchestrator is forgotten when it ends (#388).
 - Flow: the answer `resume` for a run paused at start-up is refused while `orchestrator.workers` runs are active. The run stays paused. The refusal names the limit (#388).
