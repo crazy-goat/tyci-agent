@@ -42,6 +42,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/stream"
@@ -791,13 +792,14 @@ func (m TuiModel) sidebarSessionEntries() []TuiResumeEntry {
 	return m.sessionEntries
 }
 
-// sidebarBashJobs returns backgrounded bash jobs (jobs.KindBash), newest
+// sidebarBashJobs returns backgrounded bash jobs (jobs.KindBash), oldest
 // first, for the Bash tab.
 func (m TuiModel) sidebarBashJobs() []jobs.Job {
+	newestFirst := m.sortedBackgroundJobs()
 	var out []jobs.Job
-	for _, j := range m.sortedBackgroundJobs() {
-		if j.Kind == jobs.KindBash {
-			out = append(out, j)
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		if newestFirst[i].Kind == jobs.KindBash {
+			out = append(out, newestFirst[i])
 		}
 	}
 	return out
@@ -816,8 +818,8 @@ type sidebarTaskRow struct {
 	isMain bool
 }
 
-// sidebarTaskRows keeps the three source groups separate and stable. Jobs and
-// Lua history are each already sorted newest-first at the point they are read.
+// sidebarTaskRows keeps the three source groups separate and stable. The Bash
+// jobs and the Lua runs are each oldest first at the point they are read.
 func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 	rows := []sidebarTaskRow{{group: "Subagents", line: "Subagents", isHeading: true}}
 	for _, treeRow := range m.buildSubagentTree() {
@@ -831,21 +833,43 @@ func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 	}
 
 	rows = append(rows, sidebarTaskRow{group: "Bash", line: "Bash", isHeading: true})
-	for _, job := range m.sidebarBashJobs() {
+	bash := m.sidebarBashJobs()
+	idWidth := 0
+	for _, job := range bash {
+		idWidth = max(idWidth, lipgloss.Width(shortJobID(job.ID)))
+	}
+	for _, job := range bash {
 		job := job
-		rows = append(rows, sidebarTaskRow{group: "Bash", line: " " + formatJobLine(job, max(1, width-1)), job: &job})
+		rows = append(rows, sidebarTaskRow{group: "Bash", line: " " + sidebarJobLine(job, max(1, width-1), idWidth), job: &job})
 	}
 
-	history := tools.LuaRunHistory()
 	rows = append(rows, sidebarTaskRow{group: "Lua", line: "Lua", isHeading: true})
-	for i := len(history) - 1; i >= 0; i-- {
-		r := history[i]
+	rows = append(rows, sidebarLuaRows(tools.LuaRunHistory(), width)...)
+	return rows
+}
+
+// sidebarLuaRows returns one Tasks row per Lua run in history, which is
+// oldest first. The duration sits at the right edge. The name is cut first
+// when the sidebar is narrow.
+func sidebarLuaRows(history []tools.LuaRun, width int) []sidebarTaskRow {
+	// The duration column is as wide as the widest duration in history, so
+	// the age column lines up on every row.
+	durW := 0
+	for _, r := range history {
+		durW = max(durW, lipgloss.Width(r.Duration.Round(time.Millisecond).String()))
+	}
+	// The name takes at most 20 cells. The cells around it are " ✓ " (3),
+	// a space (1), the age (6), " ago" (4) and the gap before the duration (1).
+	nameW := min(20, max(1, width-15-durW))
+	var rows []sidebarTaskRow
+	for _, r := range history {
 		icon := "✓"
 		if !r.Success {
 			icon = "✗"
 		}
-		rows = append(rows, sidebarTaskRow{group: "Lua", line: fmt.Sprintf(" %s %-20s %6s ago  %s", icon,
-			truncateString(r.Name, 20), formatDurationShort(time.Since(r.StartedAt)), r.Duration.Round(time.Millisecond))})
+		left := fmt.Sprintf(" %s %-*s %6s ago", icon,
+			nameW, truncateString(r.Name, nameW), formatDurationShort(time.Since(r.StartedAt)))
+		rows = append(rows, sidebarTaskRow{group: "Lua", line: lineWithRight(left, r.Duration.Round(time.Millisecond).String(), width)})
 	}
 	return rows
 }
