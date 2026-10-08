@@ -413,7 +413,8 @@ func (m TuiModel) renderSidebarTasks(width int) []string {
 	}
 	for i, row := range rows {
 		if row.isHeading {
-			out = append(out, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245")).Width(width).Render(row.line))
+			// Pad before styling, so the padding keeps the sidebar background (see fillWidth).
+			out = append(out, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("245")).Render(fillWidth(row.line, width)))
 			continue
 		}
 		line := row.line

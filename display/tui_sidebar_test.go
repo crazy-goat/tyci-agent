@@ -1777,3 +1777,36 @@ func TestSidebarTaskRowsKeepBackgroundAcrossLine(t *testing.T) {
 		t.Fatalf("expected 2 job rows, got %d: %q", checked, lines)
 	}
 }
+
+// TestSidebarTasks_HeadingRowsKeepSidebarBackground checks that the heading rows
+// of the Tasks tab (Subagents, Bash, Lua) keep the sidebar background up to the
+// right edge, as the Runs rows do. The heading style ends with a reset, so
+// padding added by the style itself would have no background.
+func TestSidebarTasks_HeadingRowsKeepSidebarBackground(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "done/coder", StartedAt: time.Now()})
+	m.openSidebar(sidebarTabTasks)
+	m.sidebarCursor = -1
+	column := strings.Split(m.renderSidebarColumn(), "\n")
+	for _, heading := range []string{"Subagents", "Bash", "Lua"} {
+		row := ""
+		for _, l := range column {
+			if strings.Contains(ansi.Strip(l), heading) {
+				row = l
+				break
+			}
+		}
+		if row == "" {
+			t.Fatalf("no %q heading in the sidebar: %q", heading, column)
+		}
+		cells := cellBackgrounds(row)
+		for x, bg := range cells[1:] {
+			if bg != "235" {
+				t.Errorf("%q heading: cell %d has background %q, want 235: %q", heading, x+1, bg, row)
+				break
+			}
+		}
+	}
+}

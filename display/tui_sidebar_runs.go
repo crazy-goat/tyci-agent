@@ -112,12 +112,12 @@ func (m TuiModel) runsTab(width int) runsView {
 		if !m.sidebarRunsExpanded[r.ID] {
 			continue
 		}
-		v.add(dim.Render(truncateToWidth("   "+r.ID, width)), i)
+		v.add(dim.Render(fillWidth("   "+r.ID, width)), i)
 		for _, s := range r.Steps {
 			v.add(dim.Render(lineWithRight("   "+s.Text, s.Cost, width)), i)
 		}
 		if !runFinished(r) && !r.Since.IsZero() {
-			v.add(truncateToWidth("   "+runStepText(r, now), width), i)
+			v.add(fillWidth("   "+runStepText(r, now), width), i)
 		}
 	}
 	return v
@@ -196,14 +196,24 @@ func fmtRunDuration(d time.Duration) string {
 }
 
 // lineWithRight puts right at the end of a line width columns wide. left is
-// cut first when both do not fit. right is dropped when no gap is left.
+// cut first when both do not fit. right is dropped when no gap is left. The
+// line is always exactly width columns wide, see fillWidth.
 func lineWithRight(left, right string, width int) string {
 	rw := lipgloss.Width(right)
 	if right == "" || width <= rw+1 {
-		return truncateToWidth(left, width)
+		return fillWidth(left, width)
 	}
 	left = truncateToWidth(left, width-rw-1)
 	return left + strings.Repeat(" ", width-lipgloss.Width(left)-rw) + right
+}
+
+// fillWidth cuts s to width columns and pads it with spaces to exactly width.
+// A row must be padded before its style renders it: the reset at the end of a
+// styled string clears the sidebar background, so padding added after the
+// reset is drawn without that background.
+func fillWidth(s string, width int) string {
+	s = truncateToWidth(s, width)
+	return s + strings.Repeat(" ", max(0, width-lipgloss.Width(s)))
 }
 
 // runRowLine lays out a run row: left, then the duration and the cost, both
@@ -224,7 +234,7 @@ func runRowLine(left, dur, cost string, width, durW, costW int) string {
 		}
 		cells = cells[1:]
 	}
-	return truncateToWidth(left, width)
+	return fillWidth(left, width)
 }
 
 // padLeft right-aligns s in width columns.
