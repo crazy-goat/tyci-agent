@@ -101,21 +101,15 @@ func TestBuildCheckEnv_TokensAbsentWhenUnset(t *testing.T) {
 
 // #356: TYCI_REVIEW_DIR is the artifact dir of the newest review step, whatever
 // its state is called. A task of the review role (findings) is not a review.
+// #403: the step role decides, so a state renamed after the run started still counts.
 func TestReviewDir(t *testing.T) {
-	r := &Runner{
-		WF: &Workflow{States: map[string]State{
-			"judge":    {Agent: "review", On: map[string]string{"ACCEPT": "end"}},
-			"code":     {Agent: "worker"},
-			"findings": {Agent: "review", Task: "findings_to_issues"},
-		}},
-		RunDir: "/tmp/run",
-	}
+	r := &Runner{RunDir: "/tmp/run"}
 	art := func(name string) string { return filepath.Join("/tmp/run", "artifacts", name) }
 	steps := []Step{
-		{State: "judge", Artifact: "002-judge"},
-		{State: "code", Artifact: "003-code"},
-		{State: "judge", Artifact: "004-judge"},
-		{State: "findings", Artifact: "005-findings"},
+		{State: "judge", Role: "review", Artifact: "002-judge"},
+		{State: "code", Role: "worker", Artifact: "003-code"},
+		{State: "judge", Role: "review", Artifact: "004-judge"},
+		{State: "findings", Role: "review", Task: "findings_to_issues", Artifact: "005-findings"},
 	}
 	for name, tc := range map[string]struct {
 		history []Step
@@ -125,8 +119,9 @@ func TestReviewDir(t *testing.T) {
 		"earlier review":        {steps[:2], art("002-judge")},
 		"findings is no review": {steps[3:], ""},
 		"no review":             {steps[1:2], ""},
-		"review without dir":    {[]Step{{State: "judge"}}, ""},
+		"review without dir":    {[]Step{{State: "judge", Role: "review"}}, ""},
 		"no history":            {nil, ""},
+		"renamed review state":  {[]Step{{State: "review", Role: "review", Artifact: "001-review"}}, art("001-review")},
 	} {
 		if got := r.reviewDir(&RunState{History: tc.history}); got != tc.want {
 			t.Errorf("%s: reviewDir = %q, want %q", name, got, tc.want)

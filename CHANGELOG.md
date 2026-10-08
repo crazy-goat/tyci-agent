@@ -9,14 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - Subagents: a bash command that runs longer than 30s moves to the background inside a subagent too. The completion notice goes to the subagent that started the command (#435).
 - Subagents: a subagent that lists `bash` in its `tools:` also gets `wait` and `kill_job`. It can wait for or stop only the jobs it started (#435).
-
-### Fixed
-- Subagents: when a subagent ends, the background commands it started are stopped. No process stays after the subagent ends (#435).
+- TUI: consecutive tool and thinking steps in the chat form one group line. The group is collapsed by default (#399).
+- TUI: while a step runs, the group line shows the step count and the latest step. When all steps finish, it shows the counts and the total time.
+- TUI: a click on the group line, or Ctrl+O, expands or collapses the group. A single step is not grouped.
+- Flow: the fixer and oracle caps apply to the workflow states named `fixer` and `oracle`. Before, they applied to the agent role names, so a custom workflow with other role names had no caps. The caps do not change: the fixer runs at most 2 times, the oracle once per failed step (#385).
 
 ### Removed
 - Lua workflows: the `.tyci/agents/*.lua` scripts and the `tyci workflow run` and `tyci workflow list` commands are removed. Use JSON workflows (v0.3.0) instead. `tyci workflow eject` stays.
 
 ### Fixed
+- Subagents: when a subagent ends, the background commands it started are stopped. No process stays after the subagent ends (#435).
+- TUI: mouse wheel events no longer appear as text in the input box. A fast burst of wheel events could split an escape sequence at the read buffer end, and the input box then received it as text. A lone Esc key is released after 50 ms. Pasted text that looks like a mouse event is inserted (#426).
 - Flow: two `tyci` processes that resume the same run at the same time take a lock in the run dir (`claim.lock`). Only one process claims the run (#350).
 - Flow: a `workflow_start` of an issue refuses a run that another live `tyci` process owns. It returns a busy error and does not create a second run (#350).
 - Flow: a resumed run counts a visit of a state when the crash came after the state change and before the visit was saved. This applies to the first entry and to a later entry of the state. No visit is lost. The file `state.json` has the new field `entry_pending` for this check (#350).
@@ -31,7 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: the roadmap oracle is no longer told to write `report.md`, because the roadmap run has no artifact dir. The start-up plan does not wait for an extra model turn. The `recover` step still writes `report.md` (#379).
 - Flow: the failed run notice names the step where the run stopped. A run that fails after a fixer answers `ok` also names the pending workflow proposal (#333).
 - Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
+- Flow: a resumed run posts its review when the workflow renamed the review state. Each agent step in the `state.json` history has a new field, `task`. The run finds the review by the role of the step. Before, `post_review.sh` skipped the review (#403).
 - Cost: a model id that several providers list gets the same rates and limits on each lookup without a provider. The status bar context percentage and the step cost do not change between calls (#419).
+- Watchdog: a role agent and a backgrounded subagent that stream output count as active. Before, their streamed text did not reset the job's activity time, so the watchdog reported a busy agent as idle after 3 minutes (#437).
 
 ## [0.5.0] - 2026-10-08
 

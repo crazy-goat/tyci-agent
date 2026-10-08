@@ -2,10 +2,12 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
@@ -190,4 +192,96 @@ func TestRealRegistry_SatisfiesJobActivityToucher(t *testing.T) {
 	if !after.After(before) {
 		t.Fatalf("expected LastActivity to advance through the real registry, before=%s after=%s", before, after)
 	}
+}
+
+// assertJobActivityAfterStart fails unless the job's LastActivity moved past
+// its StartedAt, i.e. something touched the job after it started.
+func assertJobActivityAfterStart(t *testing.T, reg *jobs.Registry, id string) {
+	t.Helper()
+	job, ok := reg.Get(id)
+	if !ok {
+		t.Fatalf("job %q not found in registry", id)
+	}
+	snap := job.Snapshot()
+	if !snap.LastActivity.After(snap.StartedAt) {
+		t.Fatalf("expected LastActivity to move past StartedAt, got last=%s started=%s", snap.LastActivity, snap.StartedAt)
+	}
+}
+
+// TestRunSubagentTask_RoleAgentStreamTouchesJobActivity guards #437: a role
+// agent (a named run through RunSubagentTask) does not stream to its parent,
+// but each streamed token must still move its job's LastActivity. Otherwise
+// the watchdog reports a busy role agent as idle after IdleAfter.
+func TestRunSubagentTask_RoleAgentStreamTouchesJobActivity(t *testing.T) {
+	reg := jobs.NewRegistry()
+	oldStarter := getJobStarter()
+	SetJobStarter(testJobStarter{reg})
+	withActivityToucher(t, reg)
+	oldInst := subagentToolInstance
+	t.Cleanup(func() {
+		SetJobStarter(oldStarter)
+		subagentToolInstance = oldInst
+	})
+
+	run := &ctxRunner{rec: &recordingRunner{}, fn: func(ctx context.Context) {
+		time.Sleep(5 * time.Millisecond)
+		if sink, ok := ctx.Value(SubagentSinkCtxKey{}).(SubagentSink); ok {
+			sink.Text("streamed token")
+		}
+	}}
+	subagentToolInstance = &SubagentTool{Runner: run}
+
+	_, id, err := RunSubagentTask(context.Background(), TaskSpec{Task: "x", Name: "run/worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJobActivityAfterStart(t, reg, id)
+}
+
+// TestSubagentAsync_StreamTouchesJobActivity guards #437 on the async path: a
+// backgrounded subagent job does not stream to its parent, but its streamed
+// tokens must still move the job's LastActivity.
+func TestSubagentAsync_StreamTouchesJobActivity(t *testing.T) {
+	t.Cleanup(func() {
+		unregisterTool("subagent")
+		subagentToolInstance = nil
+		SetJobStarter(nil)
+	})
+	reg := jobs.NewRegistry()
+	SetJobStarter(testJobStarter{reg})
+	withActivityToucher(t, reg)
+
+	release := make(chan struct{})
+	SetSubAgentRunner(&mockRunner{
+		RunTaskFunc: func(ctx context.Context, _, _ string, _ SubagentOptions) (string, error) {
+			time.Sleep(5 * time.Millisecond)
+			if sink, ok := ctx.Value(SubagentSinkCtxKey{}).(SubagentSink); ok {
+				sink.Text("streamed token")
+			}
+			<-release
+			return "async result", nil
+		},
+	})
+
+	ctx := connector.WithModelClient(context.Background(), fakeModelClient("test/model"))
+	res := RunTool(ctx, "subagent", map[string]any{"task": "slow thing", "async": true})
+	if !res.Success {
+		t.Fatalf("expected success, got error: %q", res.Error)
+	}
+	var spawned []struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal([]byte(spawnedJobsJSON(res.Content)), &spawned); err != nil {
+		t.Fatalf("unmarshal spawned jobs: %v (content: %q)", err, res.Content)
+	}
+	if len(spawned) != 1 || spawned[0].JobID == "" {
+		t.Fatalf("expected one spawned job with a job_id, got %+v", spawned)
+	}
+
+	close(release)
+	status, ok := testJobWaiter{reg}.Wait(context.Background(), spawned[0].JobID, 2*time.Second)
+	if !ok || !status.Done {
+		t.Fatalf("job did not finish: ok=%v status=%+v", ok, status)
+	}
+	assertJobActivityAfterStart(t, reg, spawned[0].JobID)
 }
