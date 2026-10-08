@@ -14,7 +14,9 @@ package pricing
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -136,8 +138,10 @@ func lookupCatalog(provider, model string) (Rates, Limits) {
 		// Fall through: a mismatched provider name is not a reason to give up
 		// on a model id that is unique across the catalog anyway.
 	}
-	for _, p := range c {
-		if m, ok := findModel(p, model); ok {
+	// Map order is random. Walk the providers in a fixed order, so that a model
+	// id listed by several providers gives the same entry on every call.
+	for _, name := range slices.Sorted(maps.Keys(c)) {
+		if m, ok := findModel(c[name], model); ok {
 			return rates(m), limits(m)
 		}
 	}
