@@ -35,10 +35,12 @@ type fakeAgents struct {
 	keys  map[string][]string
 	errs  map[string]error
 	calls []string
+	rcs   []RunContext
 }
 
 func (f *fakeAgents) Run(_ context.Context, role, _ string, rc RunContext) (string, string, error) {
 	f.calls = append(f.calls, rc.StateName)
+	f.rcs = append(f.rcs, rc)
 	if err, ok := f.errs[rc.StateName]; ok && err != nil {
 		return "", "", err
 	}
@@ -410,5 +412,53 @@ func TestRunner_PauseShowsLastStepAndStderr(t *testing.T) {
 	want := "The run needs a human decision. (last step: ci_wait, key fail: ci_wait.sh: PR 5 is dirty)"
 	if st.Ask.Message != want {
 		t.Fatalf("got %q", st.Ask.Message)
+	}
+}
+
+// #385: the recovery caps follow the state name. A state named fixer is capped
+// even when its agent has another role name: the fixer runs twice, then ask.
+func TestRunner_RecoveryCapFollowsStateName(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "check", States: map[string]State{
+		"check": {Check: "x.sh", On: map[string]string{"fail": "fixer", "go": "end"}},
+		"fixer": {Agent: "repair", On: map[string]string{"ok": FailedTarget, "failed": "ask"}},
+		"ask":   {Ask: "help"},
+		"end":   {End: true},
+	}}
+	checks := &fakeChecks{keys: map[string][]string{"x.sh": {"fail", "fail", "fail", "go"}}}
+	agents := &fakeAgents{keys: map[string][]string{"fixer": {"ok", "ok"}}}
+	r := &Runner{WF: wf, Checks: checks, Agents: agents, Store: &memStore{}}
+	st := newRun("check")
+	if err := r.Run(context.Background(), st); !errors.Is(err, ErrPaused) {
+		t.Fatalf("err = %v, want ErrPaused", err)
+	}
+	if len(agents.calls) != 2 || st.Current != "ask" {
+		t.Fatalf("agent calls = %v, current %q, want 2 calls and ask", agents.calls, st.Current)
+	}
+	if rc := agents.rcs[0]; rc.Failed != "check" || rc.FailedKey != "fail" {
+		t.Fatalf("state fixer got Failed %q key %q, want check and fail", rc.Failed, rc.FailedKey)
+	}
+}
+
+// #385: a role name alone gives no cap. A state named repair runs its agent
+// fixer once for each failed check.
+func TestRunner_RecoveryCapNotGivenByRoleName(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "check", States: map[string]State{
+		"check":  {Check: "x.sh", On: map[string]string{"fail": "repair", "go": "end"}},
+		"repair": {Agent: "fixer", On: map[string]string{"ok": FailedTarget, "failed": "ask"}},
+		"ask":    {Ask: "help"},
+		"end":    {End: true},
+	}}
+	checks := &fakeChecks{keys: map[string][]string{"x.sh": {"fail", "fail", "fail", "go"}}}
+	agents := &fakeAgents{keys: map[string][]string{"repair": {"ok", "ok", "ok"}}}
+	r := &Runner{WF: wf, Checks: checks, Agents: agents, Store: &memStore{}}
+	st := newRun("check")
+	if err := r.Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st.Status != "done" || len(agents.calls) != 3 {
+		t.Fatalf("status %q, agent calls = %v, want done and 3 calls", st.Status, agents.calls)
+	}
+	if rc := agents.rcs[0]; rc.Failed != "check" || rc.FailedKey != "fail" {
+		t.Fatalf("role fixer got Failed %q key %q, want check and fail", rc.Failed, rc.FailedKey)
 	}
 }

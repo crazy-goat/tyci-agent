@@ -171,6 +171,24 @@ func TestWorkflowStart_RefusesSecondRunForSameIssue(t *testing.T) {
 	}
 }
 
+// A running run owned by another live process (another tyci) refuses the start
+// with ErrBusy. No new run is created and the run is not taken over.
+func TestWorkflowStart_RefusesRunOwnedByOtherLiveProcess(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	old := saveRun(t, e.home, 5, func(st *RunState) { st.PID = os.Getppid() })
+	_, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5})
+	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "already has run "+old.Run) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := loadRunState(t, e.home, old.Run); got.PID != os.Getppid() || got.Resumed != 0 || got.Status != "running" {
+		t.Fatalf("run changed: %+v", got)
+	}
+	entries, err := os.ReadDir(filepath.Dir(RunDir(e.home, "r", old.Run)))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("runs = %d, err = %v", len(entries), err)
+	}
+}
+
 func TestWorkflowStart_StaleRunningDoesNotBlock(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	old := &RunState{Version: 1, Run: "20260101-000000-5", Issue: 5, Status: "running", Visits: map[string]int{}}

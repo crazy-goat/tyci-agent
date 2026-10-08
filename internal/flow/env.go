@@ -71,14 +71,14 @@ func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string
 }
 
 // reviewDir returns the artifact dir of the newest review step of the run: an
-// agent state with agent "review" and no task (the verdict). The state name
-// does not matter. Empty when the run has no such step, for example a run that
-// continued an open PR. A task of the review role (findings) is not a review.
+// agent step of the review role with no task (the verdict). The state name does
+// not matter, and the history keeps the role even when the workflow renamed the
+// state. Empty when the run has no such step, for example a run that continued
+// an open PR. A task of the review role (findings) is not a review.
 func (r *Runner) reviewDir(st *RunState) string {
 	for i := len(st.History) - 1; i >= 0; i-- {
 		h := st.History[i]
-		s := r.WF.States[h.State]
-		if s.Agent == "review" && s.Task == "" && h.Artifact != "" {
+		if h.Role == "review" && h.Task == "" && h.Artifact != "" {
 			return filepath.Join(r.RunDir, "artifacts", h.Artifact)
 		}
 	}

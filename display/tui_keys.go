@@ -215,6 +215,13 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		// Tasks tab needs the chain armed immediately, not on the next
 		// job.updated.
 		return true, m, m.armStatusTick()
+	case tea.KeyCtrlO:
+		// Expands or collapses the latest group of tool and thinking steps.
+		// A click on the header line of any group does the same.
+		if first := m.latestGroup(); first >= 0 {
+			m.toggleGroup(first)
+		}
+		return true, m, nil
 	}
 	return false, m, nil
 }
