@@ -268,7 +268,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				st.Note = ""
 			}
 			if errors.Is(runErr, ErrNoArtifact) {
-				return r.pauseNoArtifact(ctx, st, cur, s.Agent, art, started, ended, session, runErr)
+				return r.pauseNoArtifact(ctx, st, cur, s, art, started, ended, session, runErr)
 			}
 			if runErr != nil {
 				key = "error"
@@ -284,6 +284,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 						StartedAt: started,
 						EndedAt:   ended,
 						Role:      s.Agent,
+						Task:      s.Task,
 						Stats:     agentStats(&stats),
 						Artifact:  art,
 					})
@@ -298,6 +299,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					StartedAt: started,
 					EndedAt:   ended,
 					Role:      s.Agent,
+					Task:      s.Task,
 					Stats:     agentStats(&stats),
 					Error:     runErr.Error(),
 					Artifact:  art,
@@ -330,6 +332,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				StartedAt: started,
 				EndedAt:   ended,
 				Role:      s.Agent,
+				Task:      s.Task,
 				Stats:     agentStats(&stats),
 				Session:   session,
 				Artifact:  art,
@@ -386,7 +389,7 @@ func (r *Runner) skipCapped(st *RunState, s State, cur, key, note string) error 
 	now := time.Now()
 	st.History = append(st.History, Step{
 		Seq: len(st.History) + 1, State: cur, Kind: "agent", Key: key, To: next,
-		StartedAt: now, EndedAt: now, Role: s.Agent, Note: note,
+		StartedAt: now, EndedAt: now, Role: s.Agent, Task: s.Task, Note: note,
 	})
 	st.Current = next
 	st.EntryPending = true
@@ -399,7 +402,7 @@ func (r *Runner) skipCapped(st *RunState, s State, cur, key, note string) error 
 
 // pauseNoArtifact records the agent step and pauses the run in the "ask"
 // state with the reason "no artifact from <role>".
-func (r *Runner) pauseNoArtifact(ctx context.Context, st *RunState, cur, role, art string, started, ended time.Time, session string, runErr error) error {
+func (r *Runner) pauseNoArtifact(ctx context.Context, st *RunState, cur string, s State, art string, started, ended time.Time, session string, runErr error) error {
 	askState, ok := r.WF.States["ask"]
 	if !ok || askState.Ask == "" {
 		return r.fail(ctx, st, runErr.Error(), runErr)
@@ -412,7 +415,8 @@ func (r *Runner) pauseNoArtifact(ctx context.Context, st *RunState, cur, role, a
 		To:        "ask",
 		StartedAt: started,
 		EndedAt:   ended,
-		Role:      role,
+		Role:      s.Agent,
+		Task:      s.Task,
 		Session:   session,
 		Error:     runErr.Error(),
 		Artifact:  art,
