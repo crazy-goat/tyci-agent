@@ -151,6 +151,11 @@ type block struct {
 	output    string        // full tool output (for modal), capped to tuiMaxToolOutput
 	startTime time.Time     // when the tool (or thinking block) started, for duration display
 	duration  time.Duration // frozen duration when tool/thinking finished (0 = still running)
+	// endTime is when the TUI learned that the tool (or thinking block)
+	// finished. Zero while it runs. Tool results arrive after their whole batch
+	// has run, so this is the batch end for a tool, not its own end. The group
+	// total time takes the latest endTime (see groupSpan).
+	endTime time.Time
 
 	// thinkingSummary is the frozen one-line summary shown in a thinking
 	// block's collapsed render. Empty until freezeThinkingSummary decides it
@@ -356,7 +361,7 @@ type TuiModel struct {
 	// itself is a value receiver, per bubbletea's Model interface) — so
 	// like messageRegion/scrollback above, this must be a pointer or every
 	// write is discarded when that copy goes out of scope, leaving
-	// blockAtVisibleLine's fast path permanently empty and click handling
+	// visibleLine's fast path permanently empty and click handling
 	// silently falling back to a second, independently recomputed mapping
 	// that can disagree with what was actually drawn (wrong tool block
 	// opens on click).

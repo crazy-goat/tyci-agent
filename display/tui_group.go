@@ -2,6 +2,7 @@ package display
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -12,9 +13,9 @@ import (
 // thinking block is not grouped and draws as before.
 //
 // The transcript is laid out in units: one block, or one group from its first
-// block to its last. The line counts (totalRenderedLines, blockAtVisibleLine)
-// and the flat-line builders all walk the units through the helpers below, so
-// they agree on what is drawn.
+// block to its last. The line counts (totalRenderedLines, visibleLine) and the
+// flat-line builders all walk the units through the helpers below, so they
+// agree on what is drawn.
 
 // unitEnd returns the index of the last block of the layout unit that starts
 // at block first. Consecutive tool and thinking blocks form one unit; any other
@@ -124,8 +125,7 @@ func (m *TuiModel) groupHeaderLine(first, last int) string {
 	if active {
 		text = fmt.Sprintf("⟳ %d steps · %s", len(steps), stepLabel(m.blocks[last]))
 	} else {
-		span := m.blocks[last].startTime.Add(m.blocks[last].duration).Sub(m.blocks[first].startTime)
-		text = fmt.Sprintf("✓ %d steps (%d tool, %d thinking) · %s", len(steps), tools, thinking, formatDuration(span))
+		text = fmt.Sprintf("✓ %d steps (%d tool, %d thinking) · %s", len(steps), tools, thinking, formatDuration(m.groupSpan(first, last)))
 	}
 
 	hint := "▸ expand"
@@ -140,6 +140,20 @@ func (m *TuiModel) groupHeaderLine(first, last int) string {
 	avail := m.renderWidth() - lipgloss.Width("┃ ") - lipgloss.Width("  "+hint)
 	text = truncateToWidth(text, avail)
 	return bar + " " + textStyle.Render(text) + "  " + hintStyle.Render(hint)
+}
+
+// groupSpan returns the total time of the group first..last: from the start of
+// its first step to the latest finish of any step. Steps do not end in block
+// order. A batch of parallel calls ends with its slowest call, which can be an
+// early block.
+func (m *TuiModel) groupSpan(first, last int) time.Duration {
+	var end time.Time
+	for _, b := range m.blocks[first : last+1] {
+		if b.endTime.After(end) {
+			end = b.endTime
+		}
+	}
+	return end.Sub(m.blocks[first].startTime)
 }
 
 // stepLabel names one step of a group the way the step's own line does. The

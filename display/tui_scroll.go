@@ -190,15 +190,6 @@ func (m TuiModel) messageRegionHeight() int {
 	return max(1, m.visibleLines()-m.queuePanelHeight()-m.jobsPanelHeight()-m.fileCompleteHeight())
 }
 
-// blockAtVisibleLine returns the index of the block drawn on screen row visY
-// (0 = first message row), or -1 for a spacer or a row outside the transcript.
-func (m *TuiModel) blockAtVisibleLine(visY int) int {
-	if line, ok := m.visibleLine(visY); ok {
-		return line.BlockIndex
-	}
-	return -1
-}
-
 // visibleLine returns the transcript line drawn on screen row visY (0 = first
 // message row). ok is false for a row outside the transcript.
 func (m *TuiModel) visibleLine(visY int) (flatRenderLine, bool) {

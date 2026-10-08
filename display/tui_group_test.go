@@ -3,6 +3,7 @@ package display
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -285,5 +286,46 @@ func TestGroup_LineCountsAgreeWithFlatLines(t *testing.T) {
 				t.Fatalf("open=%v: blockAtVisibleLine(%d) = %d, flat row says %d", open, y, got, line.BlockIndex)
 			}
 		}
+	}
+}
+
+func TestGroup_TotalTimeEndsWithTheLastStepToFinish(t *testing.T) {
+	// A parallel batch: bash runs for 10s and read for 1s. Both steps start
+	// with the batch. The results arrive in block order after the batch ends,
+	// so the last block (read) is not the one that ends last.
+	m := newGroupTestModel()
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
+	batchStart := time.Now().Add(-10 * time.Second)
+	m.blocks[0].startTime = batchStart
+	m.blocks[1].startTime = batchStart
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "ok", duration: 10 * time.Second})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "ok", duration: time.Second})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+
+	if span := m.groupSpan(0, 1); span < 10*time.Second || span > 11*time.Second {
+		t.Fatalf("group total = %v, want about 10s: the slow call ends the batch", span)
+	}
+	header := stripANSI(m.buildAllFlatRenderLines()[0].Text)
+	if !strings.Contains(header, "✓ 2 steps (2 tool, 0 thinking)") {
+		t.Errorf("finished header should name the counts, got %q", header)
+	}
+}
+
+func TestGroup_TotalTimeAddsSerialCalls(t *testing.T) {
+	// Two bash calls of 10s run one after the other. Both started with the
+	// batch, so the total is 20s, not the 10s of a single call.
+	m := newGroupTestModel()
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
+	batchStart := time.Now().Add(-20 * time.Second)
+	m.blocks[0].startTime = batchStart
+	m.blocks[1].startTime = batchStart
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "ok", duration: 10 * time.Second})
+	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "ok", duration: 10 * time.Second})
+	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+
+	if span := m.groupSpan(0, 1); span < 20*time.Second || span > 21*time.Second {
+		t.Fatalf("group total = %v, want about 20s for two serial calls", span)
 	}
 }
