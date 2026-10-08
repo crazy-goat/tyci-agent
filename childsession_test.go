@@ -89,6 +89,38 @@ func TestTakeTranscriptPath_ClearsKeyForGrandchildren(t *testing.T) {
 	}
 }
 
+// A resumed flow agent job forks its redacted run transcript. Messages written
+// after the resume must be redacted too.
+func TestForkChildSession_RedactsNewMessagesOfRunTranscript(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	tp := filepath.Join(t.TempDir(), "agents", "001-worker.jsonl")
+	task := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "task"}}}}
+	run := openRunTranscript(tp, task, "m", "p")
+	if run == nil {
+		t.Fatal("run transcript not opened")
+	}
+	_ = run.Close()
+
+	fork := forkChildSession(run.Session(), "m", "p", "job-fork-redact-1")
+	if fork == nil {
+		t.Fatal("fork failed")
+	}
+	resume := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "resume " + secret}}}}
+	writeChildMessages(fork, resume)
+	_ = fork.Close()
+	b, err := os.ReadFile(fork.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), secret) || !strings.Contains(string(b), "[REDACTED]") {
+		t.Fatalf("resumed transcript not redacted: %s", b)
+	}
+	if !strings.Contains(string(b), "task") {
+		t.Fatalf("fork lacks source history: %s", b)
+	}
+}
+
 func TestAgentRunnerRun_RunTranscriptReplacesChildSession(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	tp := filepath.Join(t.TempDir(), "agents", "001-worker.jsonl")
