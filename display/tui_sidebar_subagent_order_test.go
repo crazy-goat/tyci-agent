@@ -207,3 +207,34 @@ func TestSidebarTasks_SelectionFollowsJobIntoFinishedPart(t *testing.T) {
 		t.Fatalf("expected the cursor at row 1 after a1 moved up, got %d", m.sidebarCursor)
 	}
 }
+
+// TestSidebarTasks_SelectionFollowsSelectedJobIntoFinishedPart: the cursor is
+// on b1 and b1 finishes. b1 moves into the finished part, and the cursor stays
+// on b1 in its new row.
+func TestSidebarTasks_SelectionFollowsSelectedJobIntoFinishedPart(t *testing.T) {
+	now := time.Now()
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(subagentOrderJob("f1", "", jobs.StatusDone, now.Add(-20*time.Minute), now.Add(-15*time.Minute)))
+	m.applyJobUpdate(subagentOrderJob("a1", "", jobs.StatusRunning, now.Add(-10*time.Minute), time.Time{}))
+	m.applyJobUpdate(subagentOrderJob("b1", "", jobs.StatusRunning, now.Add(-5*time.Minute), time.Time{}))
+	m.openSidebar(sidebarTabTasks)
+
+	// Task rows: main, b1, a1, f1. The cursor is on b1.
+	m.sidebarCursor = 1
+	if got := m.sidebarCursorJobID(); got != "b1" {
+		t.Fatalf("setup: expected the cursor on b1, got %q", got)
+	}
+
+	// b1 finishes. It moves into the finished part, below a1.
+	done := subagentOrderJob("b1", "", jobs.StatusDone, now.Add(-5*time.Minute), now)
+	done.EventSeq = 2
+	m.applyJobUpdate(done)
+
+	// Task rows: main, a1, b1, f1. The cursor follows b1 to row 2.
+	if got := m.sidebarCursorJobID(); got != "b1" {
+		t.Fatalf("expected the cursor to follow b1, got %q", got)
+	}
+	if m.sidebarCursor != 2 {
+		t.Fatalf("expected the cursor at row 2 after b1 moved down, got %d", m.sidebarCursor)
+	}
+}
