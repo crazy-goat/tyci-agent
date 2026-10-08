@@ -60,6 +60,31 @@ func TestDescribe_StateFromGit(t *testing.T) {
 	}
 }
 
+// After open_pr.sh continued a PR from another branch, STATE shows the PR head branch on origin,
+// not the run branch name (#374).
+func TestDescribe_StateShowsPRBranch(t *testing.T) {
+	e := newPushEnv(t)
+	git(t, e.work, "push", "-q", "origin", "HEAD:refs/heads/feat/issue-7-slug")
+	if err := os.WriteFile(filepath.Join(e.runDir, "pr_branch"), []byte("feat/issue-7-slug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := libScript(t, `describe fail "it broke" "a cause" "do this"; echo fail`+"\n")
+	_, _, _, stderr := testutil.RunCheckIn(t, e.work, script, map[string]string{
+		"TYCI_STATE": "update", "TYCI_BRANCH": "issue-7", "TYCI_DEFAULT_BRANCH": "main", "TYCI_RUN_DIR": e.runDir,
+	})
+	wantBlock(t, stderr, "fail", "WHAT: it broke\n")
+	head := git(t, e.work, "rev-parse", "--short", "HEAD")
+	if !strings.Contains(stderr, "STATE: local issue-7 = "+head+"; origin/main = ") {
+		t.Errorf("stderr lacks the local run branch:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "origin/feat/issue-7-slug = "+head) {
+		t.Errorf("stderr lacks the PR head branch on origin:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "origin/issue-7") {
+		t.Errorf("stderr names the run branch on origin:\n%s", stderr)
+	}
+}
+
 // A failed command stops the script without a key; the ERR trap prints one block, also when the
 // command ran in a command substitution (a subshell).
 func TestDescribe_ErrTrapPrintsOneBlock(t *testing.T) {

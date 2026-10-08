@@ -3,10 +3,10 @@
 # A run starts on a fresh branch issue-<N> from origin/<default branch>. When an open PR for
 # the issue already exists (an earlier run stopped before the merge), this run takes over
 # that PR: the worktree moves to the PR head. The PR is the one whose head is the run branch,
-# or else one whose body closes the issue (a PR from another branch, #374). So the run does
-# not code the issue again, and its later push is a fast-forward to the PR head branch
-# (push.sh reads $TYCI_RUN_DIR/pr_branch). The next states take the merge lock, merge
-# origin/<default branch> into the branch (update) and wait for CI.
+# or else one that GitHub links as closing the issue (a PR from another branch, #374). A PR
+# from a fork is never used. So the run does not code the issue again, and its later push is
+# a fast-forward to the PR head branch (push.sh reads $TYCI_RUN_DIR/pr_branch). The next states
+# take the merge lock, merge origin/<default branch> into the branch (update) and wait for CI.
 #
 # Env in:  TYCI_REPO, TYCI_ISSUE, TYCI_BRANCH, TYCI_DEFAULT_BRANCH, TYCI_RUN_DIR. cwd = the run worktree.
 # Keys:    none   no open PR for the issue: code the issue from origin/<default branch>
@@ -33,13 +33,22 @@ if [ -z "$branch" ] || [ "$branch" = "$default" ]; then
     exit 0
 fi
 
-# The open PR of the issue: its head is the run branch, or its body closes #N (close, fixes,
-# resolve and their forms). The run branch wins when both match.
-found=$(gh pr list -R "$TYCI_REPO" --state open --limit 200 --json number,headRefName,body |
+# The open PR of the issue: its head is the run branch, or GitHub links it as closing the issue
+# (closingIssuesReferences: close, fix, resolve and their forms). The run branch wins when both
+# match. A fork PR is never used: its head branch is not on origin.
+# The run branch PR is looked up first on the server (--head), so it is found in a repo with more
+# than 200 open PRs. The second lookup lists at most 200 open PRs.
+pick_pr() {
     jq -r --arg b "$branch" --arg n "$issue" '
-        [.[] | select(.headRefName == $b or
-            ($n != "" and ((.body // "") | test("(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s+#\($n)\\b"; "i"))))]
-        | sort_by(.headRefName != $b) | .[0] // empty | "\(.number) \(.headRefName)"')
+        [.[] | select(.isCrossRepository | not) |
+            select(.headRefName == $b or ((.closingIssuesReferences // []) | any((.number | tostring) == $n)))]
+        | sort_by(.headRefName != $b) | .[0] // empty | "\(.number) \(.headRefName)"'
+}
+fields=number,headRefName,isCrossRepository,closingIssuesReferences
+found=$(gh pr list -R "$TYCI_REPO" --head "$branch" --state open --json "$fields" | pick_pr)
+if [ -z "$found" ]; then
+    found=$(gh pr list -R "$TYCI_REPO" --state open --limit 200 --json "$fields" | pick_pr)
+fi
 if [ -z "$found" ]; then
     echo "open_pr.sh: no open PR for issue #$issue or from $branch; the run codes the issue from origin/$default" >&2
     echo none

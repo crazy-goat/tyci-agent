@@ -38,7 +38,7 @@ case "$*" in
   "pr list"*)
     case "$*" in
       *--jq*) if [ -e "$CTL/pr" ]; then echo 42; fi ;;
-      *) if [ -e "$CTL/pr" ]; then echo '[{"number":42,"headRefName":"issue-7","body":"Closes #7"}]'; else echo '[]'; fi ;;
+      *) if [ -e "$CTL/pr" ]; then echo '[{"number":42,"headRefName":"issue-7","isCrossRepository":false,"closingIssuesReferences":[{"number":7}]}]'; else echo '[]'; fi ;;
     esac ;;
   "pr create"*) touch "$CTL/pr"; echo https://example/pull/42 ;;
   "pr checks"*)

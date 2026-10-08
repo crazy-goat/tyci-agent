@@ -19,8 +19,8 @@ esac
 `
 
 const (
-	prOnRunBranch = `[{"number":171,"headRefName":"issue-7","body":"Closes #7"}]`
-	prOtherBranch = `[{"number":171,"headRefName":"feat/issue-7-slug","body":"Closes #7"}]`
+	prOnRunBranch = `[{"number":171,"headRefName":"issue-7","isCrossRepository":false,"closingIssuesReferences":[{"number":7}]}]`
+	prOtherBranch = `[{"number":171,"headRefName":"feat/issue-7-slug","isCrossRepository":false,"closingIssuesReferences":[{"number":7}]}]`
 )
 
 // newOpenPREnv is a fresh run worktree: local issue-7 at origin/main, and an issue-7 on
@@ -88,10 +88,17 @@ func TestOpenPR_FoundMovesToPRHead(t *testing.T) {
 }
 
 func TestOpenPR_FoundFromOtherBranch(t *testing.T) {
-	e, _ := newOpenPREnv(t)
-	// The PR of the earlier run is open from feat/issue-7-slug, not from issue-7.
-	git(t, e.work, "push", "-q", "origin", "refs/remotes/origin/issue-7:refs/heads/feat/issue-7-slug")
+	e, issue := newOpenPREnv(t)
+	// The PR of the earlier run is open from feat/issue-7-slug, which has a commit of its own,
+	// so HEAD shows whether the script fetched the PR branch and not issue-7.
+	git(t, e.work, "checkout", "-q", "-b", "feat", "origin/issue-7")
+	writeCommit(t, e.work, "feat.txt", "f\n", "feat work")
+	git(t, e.work, "push", "-q", "origin", "feat:refs/heads/feat/issue-7-slug")
+	git(t, e.work, "checkout", "-q", "issue-7")
 	feat := e.remote(t, "refs/heads/feat/issue-7-slug")
+	if feat == issue {
+		t.Fatal("the test needs the PR branch to differ from issue-7")
+	}
 	key, exit, stderr := e.runOpenPR(t, map[string]string{"PR_JSON": prOtherBranch})
 	if key != "found" || exit != 0 {
 		t.Fatalf("key=%q exit=%d stderr=%s", key, exit, stderr)
@@ -109,8 +116,8 @@ func TestOpenPR_FoundFromOtherBranch(t *testing.T) {
 
 func TestOpenPR_RunBranchPRWins(t *testing.T) {
 	e, remote := newOpenPREnv(t)
-	both := `[{"number":170,"headRefName":"feat/issue-7-slug","body":"Closes #7"},` +
-		`{"number":171,"headRefName":"issue-7","body":"Closes #7"}]`
+	both := `[{"number":170,"headRefName":"feat/issue-7-slug","isCrossRepository":false,"closingIssuesReferences":[{"number":7}]},` +
+		`{"number":171,"headRefName":"issue-7","isCrossRepository":false,"closingIssuesReferences":[{"number":7}]}]`
 	key, exit, stderr := e.runOpenPR(t, map[string]string{"PR_JSON": both})
 	if key != "found" || exit != 0 {
 		t.Fatalf("key=%q exit=%d stderr=%s", key, exit, stderr)
@@ -123,17 +130,50 @@ func TestOpenPR_RunBranchPRWins(t *testing.T) {
 	}
 }
 
-func TestOpenPR_BodyMustCloseIssue(t *testing.T) {
+func TestOpenPR_MustCloseIssue(t *testing.T) {
 	e, _ := newOpenPREnv(t)
-	// A reference is not a closing reference, and #70 is another issue.
-	notClosing := `[{"number":170,"headRefName":"feat/a","body":"Refs #7"},` +
-		`{"number":171,"headRefName":"feat/b","body":"Closes #70"}]`
+	// Neither PR closes #7: one closes #70 and the other closes nothing.
+	notClosing := `[{"number":170,"headRefName":"feat/a","isCrossRepository":false,"closingIssuesReferences":[]},` +
+		`{"number":171,"headRefName":"feat/b","isCrossRepository":false,"closingIssuesReferences":[{"number":70}]}]`
 	key, exit, stderr := e.runOpenPR(t, map[string]string{"PR_JSON": notClosing})
 	if key != "none" || exit != 0 {
 		t.Fatalf("key=%q exit=%d stderr=%s", key, exit, stderr)
 	}
 	if _, err := os.Stat(filepath.Join(e.runDir, "pr")); err == nil {
 		t.Fatal("pr file written for a PR that does not close the issue")
+	}
+}
+
+// A PR from a fork is never used: its head branch is not on origin. One fork PR closes #7
+// from main, and the other has the run branch name.
+func TestOpenPR_ForkPRIsNotUsed(t *testing.T) {
+	e, _ := newOpenPREnv(t)
+	head := git(t, e.work, "rev-parse", "HEAD")
+	forks := `[{"number":172,"headRefName":"main","isCrossRepository":true,"closingIssuesReferences":[{"number":7}]},` +
+		`{"number":173,"headRefName":"issue-7","isCrossRepository":true,"closingIssuesReferences":[]}]`
+	key, exit, stderr := e.runOpenPR(t, map[string]string{"PR_JSON": forks})
+	if key != "none" || exit != 0 {
+		t.Fatalf("key=%q exit=%d stderr=%s", key, exit, stderr)
+	}
+	if git(t, e.work, "rev-parse", "HEAD") != head {
+		t.Fatal("HEAD moved for a fork PR")
+	}
+	if _, err := os.Stat(filepath.Join(e.runDir, "pr")); err == nil {
+		t.Fatal("pr file written for a fork PR")
+	}
+}
+
+// The run branch PR is asked for by its head name first, so a repo with many open PRs still
+// finds it.
+func TestOpenPR_LooksUpRunBranchFirst(t *testing.T) {
+	e, _ := newOpenPREnv(t)
+	e.runOpenPR(t, nil)
+	log, err := os.ReadFile(os.Getenv("GH_LOG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(log), "pr list -R o/r --head issue-7 --state open") {
+		t.Fatalf("the first gh call does not look up the run branch:\n%s", log)
 	}
 }
 

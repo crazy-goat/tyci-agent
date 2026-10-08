@@ -99,7 +99,8 @@ twice, the name points to the newest job. The `resume` tool does not accept this
 
 If an earlier run of the same issue stopped and left its pull request open, the new run
 continues that pull request. The pull request is open from the branch `issue-N`, or from
-another branch and its body closes the issue (`Closes #N`). The state `open_pr` moves the
+another branch and GitHub links it as closing the issue (for example `Closes #N`). A pull
+request from a fork is never used. The state `open_pr` moves the
 worktree to the head of the pull request, and the run goes to `lock`, `update` and `ci`.
 The run pushes to the head branch of the pull request. It does not code the issue again.
 Red CI or a merge conflict goes to `code` as usual. A
