@@ -18,6 +18,10 @@ import (
 var workflowCmd = &cobra.Command{
 	Use:   "workflow",
 	Short: "Manage the project's workflows",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return cmd.Help()
+	},
 }
 
 var workflowDir string
