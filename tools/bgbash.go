@@ -178,6 +178,16 @@ func notifyToParent(parentID, text string) {
 	}
 }
 
+// parentEnded reports whether parentID names a job that can no longer receive
+// a message. The registry marks a job terminal before it stops the background
+// commands that job started, so a command stopped by its parent's end sees
+// true here. With no mailbox wired the answer is unknown, and this reports
+// false.
+func parentEnded(parentID string) bool {
+	mb := getJobMailbox()
+	return parentID != "" && mb != nil && !mb.IsLive(parentID)
+}
+
 // markQuestionsShown tells the wired JobNotifier that each jobID/seq pair in
 // questions was just delivered via a handoff message, so a "child is
 // blocked on a question" notice already queued for that exact ask is left

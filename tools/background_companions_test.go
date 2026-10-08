@@ -77,6 +77,33 @@ func TestWaitInsideSubagentAllowsOwnSubJob(t *testing.T) {
 	}
 }
 
+// TestWaitInsideSubagentUnknownIDIsNotRefused: an id the registry does not
+// know gets the unknown-id error, not a subtree refusal, and never reaches
+// the waiter. With no lister wired the child fails closed the same way.
+func TestWaitInsideSubagentUnknownIDIsNotRefused(t *testing.T) {
+	lister := &fakeLister{jobs: []JobKindSource{
+		fakeJob{id: "job-me", parentID: "job-root"},
+	}}
+	for name, l := range map[string]JobLister{"with lister": lister, "without lister": nil} {
+		t.Run(name, func(t *testing.T) {
+			withKillWiring(t, nil, l)
+			waiter := &countingWaiter{}
+			tool := &WaitTool{Waiter: waiter}
+
+			res := tool.Run(childCtx("job-me"), map[string]any{"job_id": "job-typo", "seconds": 60})
+			if res.Success {
+				t.Fatalf("expected a failure for an unknown id, got success %q", res.Content)
+			}
+			if res.Error != unknownJobIDError {
+				t.Fatalf("expected the unknown-id error, got %q", res.Error)
+			}
+			if waiter.count() != 0 {
+				t.Fatalf("unknown id must not reach the waiter, got calls %v", waiter.ids)
+			}
+		})
+	}
+}
+
 // TestWaitMainAgentMayWaitAnyJob: the main agent (no subagent sink) keeps
 // the old behaviour and may wait on any registered job.
 func TestWaitMainAgentMayWaitAnyJob(t *testing.T) {

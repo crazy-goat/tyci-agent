@@ -268,7 +268,11 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 			BashFirstProgressNoticeSec*time.Second, BashProgressNoticeEverySec*time.Second, parentID)
 
 		output := strings.TrimRight(run.out.result(), "\n")
-		notifyToParent(parentID, bashNotice(jobID, label, waitErr, killed, run.out.total()))
+		// A command that its parent's end stopped has no reader left. Its
+		// notice would go to the main queue, which never started the command.
+		if !killed || !parentEnded(parentID) {
+			notifyToParent(parentID, bashNotice(jobID, label, waitErr, killed, run.out.total()))
+		}
 
 		switch {
 		case killed:
@@ -290,6 +294,23 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 	waitedNote := "moved to the background"
 	if waited > 0 {
 		waitedNote = fmt.Sprintf("still running after %ds, so it was moved to the background", waited)
+	}
+	if ctx.Value(SubagentSinkCtxKey{}) != nil {
+		// A subagent gets no notice unless it makes another tool call, and its
+		// background commands stop when it returns its answer. So it must
+		// collect the result itself before it answers.
+		return ToolResult{
+			Type:    "result",
+			Success: true,
+			Content: fmt.Sprintf(
+				"Command %s as job_id=%q (%s).\n\n"+
+					"Do NOT run this command again — it is still running, and a second copy would race with the first. "+
+					"Your background commands stop when you return your answer. Do other work that does not depend on "+
+					"this result. Then call wait(job_id=%q) to read the output before you return your answer, or stop "+
+					"it early with kill_job(job_id=%q).",
+				waitedNote, handle.ID(), label, handle.ID(), handle.ID(),
+			),
+		}, true
 	}
 	return ToolResult{
 		Type:    "result",

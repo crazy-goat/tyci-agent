@@ -433,12 +433,54 @@ func TestBashBackgroundInsideSubagent(t *testing.T) {
 	}
 }
 
+// TestBashHandoffInsideSubagentTellsItToCollect: a subagent does not get a
+// completion notice unless it makes another tool call, and its background
+// commands stop when it returns its answer. So its handoff must name wait,
+// and must not tell it to skip wait the way the main agent's handoff does.
+func TestBashHandoffInsideSubagentTellsItToCollect(t *testing.T) {
+	reg, _ := bgTestEnv(t)
+	SetJobMailbox(regMailbox{reg})
+	t.Cleanup(func() { SetJobMailbox(nil) })
+
+	release := make(chan struct{})
+	defer close(release)
+	parent := reg.Start(context.Background(), "subagent", jobs.KindSubagent, "", func(context.Context, string) (string, bool, error) {
+		<-release
+		return "", false, nil
+	})
+
+	ctx := context.WithValue(context.Background(), JobIDCtxKey{}, parent.ID)
+	ctx = context.WithValue(ctx, SubagentSinkCtxKey{}, &streamingCollector{collector: newCollector()})
+	res := (&BashTool{}).Run(ctx, map[string]any{
+		"command":           "echo child",
+		"run_in_background": true,
+	})
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+	id := jobIDFromResult(t, res.Content)
+	for _, want := range []string{"stop when you return your answer", fmt.Sprintf("call wait(job_id=%q)", id)} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("subagent handoff should contain %q, got %q", want, res.Content)
+		}
+	}
+	for _, banned := range []string{"Do NOT call wait", "a notice reaches you"} {
+		if strings.Contains(res.Content, banned) {
+			t.Errorf("subagent handoff must not contain %q, got %q", banned, res.Content)
+		}
+	}
+	waitForJob(t, reg, id, bgFinishCap)
+}
+
 // TestSubagentEndStopsItsBackgroundCommand: a subagent ends while its
 // background command still runs. The command is stopped with the subagent, so
 // no process outlives it. bgSleeper outlives bgFinishCap, so a lost kill fails
-// the test instead of passing on the command's own exit.
+// the test instead of passing on the command's own exit. The stopped command
+// must not send a notice to the main queue: the main agent never started it.
 func TestSubagentEndStopsItsBackgroundCommand(t *testing.T) {
-	reg, _ := bgTestEnv(t)
+	reg, notifier := bgTestEnv(t)
+	SetJobMailbox(regMailbox{reg})
+	t.Cleanup(func() { SetJobMailbox(nil) })
 
 	child := reg.Start(context.Background(), "subagent", jobs.KindSubagent, "", func(ctx context.Context, jobID string) (string, bool, error) {
 		ctx = context.WithValue(ctx, JobIDCtxKey{}, jobID)
@@ -457,6 +499,13 @@ func TestSubagentEndStopsItsBackgroundCommand(t *testing.T) {
 	}
 	if !strings.Contains(cmd.Err, "stopped before it finished") {
 		t.Fatalf("expected the error to say it was stopped, got %q", cmd.Err)
+	}
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	for _, n := range notifier.seen {
+		if strings.Contains(n, "[background command]") {
+			t.Fatalf("notice of a command stopped by its subagent's end reached the main queue: %q", n)
+		}
 	}
 }
 
