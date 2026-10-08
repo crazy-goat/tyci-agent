@@ -83,7 +83,7 @@ func TestFilterStrayMouse_PartialPattern(t *testing.T) {
 	if string(cleaned) != in {
 		t.Fatalf("filterStrayMouse should pass partial pattern through, got %q", string(cleaned))
 	}
-	_, deferTail := filterStrayMouseWithDefer([]byte(in), sgrMouseMaxLen)
+	_, deferTail, _ := filterStrayMouseWithDefer([]byte(in), sgrMouseMaxLen, false)
 	if string(deferTail) != in {
 		t.Fatalf("filterStrayMouseWithDefer should defer trailing partial pattern, got %q", string(deferTail))
 	}
