@@ -64,8 +64,26 @@ func ownerGone(st *RunState) bool {
 	return errors.Is(syscall.Kill(st.PID, 0), syscall.ESRCH)
 }
 
+// lockRun takes an exclusive lock on the run dir and returns the function that
+// releases it. Two tyci processes that resume the same run take it one after the
+// other. The kernel drops the lock when the process ends.
+func lockRun(dir string) (func(), error) {
+	f, err := os.OpenFile(filepath.Join(dir, "claim.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
 // claim writes self as the owner of the run in dir, counts the resume and adds
-// a "resumed" history step.
+// a "resumed" history step. The caller holds the run lock.
 func claim(dir string, st *RunState, self int) error {
 	now := time.Now()
 	st.PID = self
@@ -82,13 +100,6 @@ func claim(dir string, st *RunState, self int) error {
 	return (&Store{Dir: dir}).Save(st)
 }
 
-// owns re-reads the state in dir and reports whether self still owns the run.
-// When two instances claim at the same time, the last writer wins.
-func owns(dir string, self int) bool {
-	st, err := Load(dir)
-	return err == nil && st.PID == self
-}
-
 // resumeRun continues a run whose owner process is gone at its saved state,
 // without a new visit. After maxResumes resumes, or when the worktree is gone,
 // it pauses the run instead. It returns false when the run did not start: it
@@ -99,16 +110,27 @@ func (m *Manager) resumeRun(info RepoInfo, st *RunState) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// The lock covers the re-read and the claim: a second instance that scanned
+	// the same dead owner waits here and then sees the live owner.
+	unlock, err := lockRun(dir)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	cur, err := Load(dir)
+	if err != nil {
+		return false, err
+	}
+	if !ownerGone(cur) {
+		return false, nil
+	}
+	st = cur
 	if st.Resumed >= maxResumes {
 		m.pauseStale(dir, wf, st, fmt.Sprintf("resumed %d times, please check", maxResumes), true)
 		return false, nil
 	}
-	self := os.Getpid()
-	if err := claim(dir, st, self); err != nil {
+	if err := claim(dir, st, os.Getpid()); err != nil {
 		return false, err
-	}
-	if !owns(dir, self) {
-		return false, nil
 	}
 	if _, err := os.Stat(st.Worktree); err != nil {
 		m.pauseStale(dir, wf, st, "worktree "+st.Worktree+" is missing", true)

@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -179,20 +181,46 @@ func TestResume_MissingWorktreeGoesToAsk(t *testing.T) {
 	}
 }
 
-func TestResume_ClaimRace(t *testing.T) {
-	home := t.TempDir()
-	st := saveRun(t, home, 1, nil)
-	dir := RunDir(home, "r", st.Run)
-	a, b := loadRunState(t, home, st.Run), loadRunState(t, home, st.Run)
-	// Both instances write their claim before either re-reads.
-	if err := claim(dir, a, 1001); err != nil {
+// Several instances scan the same run with a dead owner and resume it at once.
+// The run lock lets only one of them claim it; the others see the live owner.
+func TestResume_TwoInstancesClaimOnce(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	st := saveRun(t, e.home, 1, nil)
+	info, err := e.m.Info()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := claim(dir, b, 1002); err != nil {
-		t.Fatal(err)
+	const instances = 6
+	var claims atomic.Int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for range instances {
+		m := &Manager{Info: e.m.Info, Workflow: e.m.Workflow, NewRunner: e.m.NewRunner, Notify: e.m.Notify}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			m.mu.Lock()
+			ok, err := m.resumeRun(info, st)
+			m.mu.Unlock()
+			if err != nil {
+				t.Errorf("resume: %v", err)
+			}
+			if ok {
+				claims.Add(1)
+			}
+		}()
 	}
-	if owns(dir, 1001) || !owns(dir, 1002) {
-		t.Fatal("want exactly the last writer to continue")
+	close(start)
+	wg.Wait()
+	if n := claims.Load(); n != 1 {
+		t.Fatalf("claims = %d, want 1", n)
+	}
+	close(c.release)
+	e.notice(t)
+	if after := loadRunState(t, e.home, st.Run); after.Resumed != 1 {
+		t.Fatalf("resumed = %d, want 1", after.Resumed)
 	}
 }
 
@@ -321,11 +349,13 @@ func TestResume_ResumeOnlyForRestartPause(t *testing.T) {
 	}
 }
 
-// freezeStore stops writing once the run is inside state ci and cancels the
-// run: the file on disk then looks like tyci was killed during ci.
+// freezeStore stops writing once the run is inside state ci with the given
+// visit count of ci, and cancels the run: the file on disk then looks like tyci
+// was killed at that point.
 type freezeStore struct {
 	*Store
 	cancel context.CancelFunc
+	visits int
 	frozen bool
 }
 
@@ -336,7 +366,7 @@ func (f *freezeStore) Save(st *RunState) error {
 	if err := f.Store.Save(st); err != nil {
 		return err
 	}
-	if st.Current == "ci" && st.Visits["ci"] == 1 {
+	if st.Current == "ci" && st.Visits["ci"] == f.visits {
 		f.frozen = true
 		f.cancel()
 	}
@@ -344,11 +374,22 @@ func (f *freezeStore) Save(st *RunState) error {
 }
 
 func TestResume_EndToEnd_StubScripts(t *testing.T) {
+	// Killed in ci after the visit of ci was saved.
+	resumeKilledInCI(t, 1)
+}
+
+// Killed between the transition into ci and the visit save: the file has no
+// counted visit of ci. The resumed run counts it, so ci has one visit.
+func TestResume_EndToEnd_LostVisitCounted(t *testing.T) {
+	resumeKilledInCI(t, 0)
+}
+
+func resumeKilledInCI(t *testing.T, visits int) {
 	e := newE2E(t, happy())
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	r := e.newRunner()
-	r.Store = &freezeStore{Store: &Store{Dir: e.runDir}, cancel: cancel}
+	r.Store = &freezeStore{Store: &Store{Dir: e.runDir}, cancel: cancel, visits: visits}
 	_ = r.Run(ctx, e.st)
 
 	// The killed process: state ci, status running, owner gone.

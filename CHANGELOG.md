@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Flow: two `tyci` processes that resume the same run at the same time take a lock in the run dir (`claim.lock`). Only one process claims the run (#350).
+- Flow: a `workflow_start` of an issue refuses a run that another live `tyci` process owns. It returns a busy error and does not create a second run (#350).
+- Flow: a resumed run counts the first visit of a state when the crash came before the visit was saved. No visit is lost (#350).
+
 ## [0.5.0] - 2026-10-08
 
 ### Changed

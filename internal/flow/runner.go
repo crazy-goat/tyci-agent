@@ -116,10 +116,12 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 		if s.Ask != "" {
 			return r.pause(st, s.Ask, "")
 		}
-		newVisit := !again
-		if again {
-			again = false
-		} else {
+		// A restart enters the saved state without a new visit. A state with no
+		// counted visit (the crash came between the transition save and the visit
+		// save) counts its first visit now, so no visit is lost.
+		newVisit := !again || st.Visits[cur] == 0
+		again = false
+		if newVisit {
 			if limit := r.effectiveLimit(s); limit > 0 && st.Visits[cur]+1 > limit {
 				askState, ok := r.WF.States["ask"]
 				if !ok || askState.Ask == "" {
