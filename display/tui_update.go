@@ -104,6 +104,11 @@ func (m TuiModel) Init() tea.Cmd {
 }
 
 func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Last guard against mouse wheel fragments typed into the input. The
+	// input filter (tui_input_filter.go) drops most of them first.
+	if isStrayMouseText(msg) {
+		return m, nil
+	}
 	// Handled first and unconditionally: a background job can finish while
 	// any overlay (subagent modal, picker, …) is active, and backgroundJobs
 	// must stay current regardless of what's on screen.
