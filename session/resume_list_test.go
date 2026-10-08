@@ -12,6 +12,9 @@ import (
 // encoded session dir and verifies ResumeEntries returns both, newest
 // first, with the first user prompt decoded.
 func TestResumeEntries_BasicList(t *testing.T) {
+	// The session dir is under $HOME. A private home keeps parallel test
+	// runs from removing each other's files in the shared dir.
+	isolatedHome(t)
 	cwd := "/tmp/tyci-test"
 	dir, err := SessionDir(cwd)
 	if err != nil {
