@@ -523,7 +523,7 @@ func TestResume_ReviewStateRenamed_StillPostsReview(t *testing.T) {
 	if err := e.newRunner().Continue(ctx2, st); err != nil {
 		t.Fatalf("continue: %v (status %s, reason %q)", err, st.Status, st.Reason)
 	}
-	if st.Status != "done" || !wasMerged(st) {
+	if st.Status != "done" || !WasMerged(st) {
 		t.Fatalf("status %s, reason %q", st.Status, st.Reason)
 	}
 	for _, h := range st.History {

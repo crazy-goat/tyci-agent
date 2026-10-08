@@ -192,12 +192,12 @@ func (m *TuiModel) closeSidebarPersisted() {
 
 // sidebarSelectable reports whether the active tab has actionable rows
 // (Enter/click does something row-specific) as opposed to a plain
-// scrollable listing. Tokens and Lua are the latter today — Lua's rows have
-// no action (no live view, no resume), so a moving cursor over them would
-// just be a highlight with nothing behind it (see sidebarRowCount).
+// scrollable listing. Tokens is the latter today — its rows have no action,
+// so a moving cursor over them would just be a highlight with nothing behind
+// it (see sidebarRowCount).
 func (m TuiModel) sidebarSelectable() bool {
 	switch m.sidebarTab {
-	case sidebarTabSessions, sidebarTabTasks:
+	case sidebarTabSessions, sidebarTabTasks, sidebarTabRuns:
 		return true
 	default:
 		return false
@@ -213,6 +213,8 @@ func (m TuiModel) sidebarRowCount() int {
 		return len(m.sidebarSessionEntries())
 	case sidebarTabTasks:
 		return len(m.sidebarTaskJobRows(m.sidebarLayout().contentWidth))
+	case sidebarTabRuns:
+		return len(m.sidebarRunRows())
 	default:
 		return 0
 	}
@@ -271,12 +273,20 @@ func (m *TuiModel) sidebarClampScrollToCursor(contentHeight int) {
 		contentHeight = 1
 	}
 	cursorLine := m.sidebarCursor
-	if m.sidebarTab == sidebarTabTasks {
+	switch m.sidebarTab {
+	case sidebarTabTasks:
 		jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
 		if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) {
 			return
 		}
 		cursorLine = jobRows[m.sidebarCursor]
+	case sidebarTabRuns:
+		// A run takes one line or more; the cursor follows its first line.
+		starts := m.runsTab(m.sidebarLayout().contentWidth).start
+		if m.sidebarCursor < 0 || m.sidebarCursor >= len(starts) {
+			return
+		}
+		cursorLine = starts[m.sidebarCursor]
 	}
 	if cursorLine < m.sidebarScroll {
 		m.sidebarScroll = cursorLine
@@ -585,6 +595,14 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.sidebarCursor = selected
 						return m.sidebarActivateRow()
 					}
+				case sidebarTabRuns:
+					// A run has one line or more; a click on any of them
+					// toggles that run. The separator belongs to no run.
+					owner := m.runsTab(layout.contentWidth).owner
+					if line >= 0 && line < len(owner) && owner[line] >= 0 {
+						m.sidebarCursor = owner[line]
+						return m.sidebarActivateRow()
+					}
 				default:
 					if line >= 0 && line < m.sidebarRowCount() {
 						m.sidebarCursor = line
@@ -652,9 +670,25 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case sidebarTabRuns:
+		return m.sidebarToggleRun(), nil
 	default:
 		return m, nil
 	}
+}
+
+// sidebarToggleRun expands or collapses the run under the cursor.
+func (m TuiModel) sidebarToggleRun() TuiModel {
+	rows := m.sidebarRunRows()
+	if m.sidebarCursor < 0 || m.sidebarCursor >= len(rows) {
+		return m
+	}
+	id := rows[m.sidebarCursor].ID
+	if m.sidebarRunsExpanded == nil {
+		m.sidebarRunsExpanded = map[string]bool{}
+	}
+	m.sidebarRunsExpanded[id] = !m.sidebarRunsExpanded[id]
+	return m
 }
 
 // sidebarSubmitResume re-enters a session exactly the way a person typing

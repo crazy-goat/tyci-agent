@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
-- TUI: the Runs tab shows a finished run on one line, for example `#472 done (merged)`; its run id and steps are hidden. The tab row is as wide as its labels, not split evenly over the sidebar (#310).
+- TUI: the Runs tab shows one line per run, for example `#472 done (merged) 12m3s`, with the total cost at the end. Active runs come first, newest start first. Finished runs follow, newest end first. Enter or a click expands a run and shows every step visit with its duration and cost. The tab row is as wide as its labels, not split evenly over the sidebar (#310).
 - TUI: consecutive tool and thinking steps in the chat form one group line. The group is collapsed by default (#399).
 - TUI: while a step runs, the group line shows the step count and the latest step. When all steps finish, it shows the counts and the total time.
 - TUI: a click on the group line, or Ctrl+O, expands or collapses the group. A single step is not grouped.

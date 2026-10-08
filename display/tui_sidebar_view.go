@@ -347,6 +347,8 @@ func (m TuiModel) sidebarFooter() string {
 		return "↑↓ browse  Enter: open resume picker  " + nav + "  Esc close"
 	case sidebarTabTasks:
 		return "↑↓ select  Enter view  r resume  " + nav + "  Esc close"
+	case sidebarTabRuns:
+		return "↑↓ select  Enter expand/collapse  " + nav + "  Esc close"
 	default:
 		return nav + "  Esc close"
 	}
