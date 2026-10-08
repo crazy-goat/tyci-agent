@@ -131,7 +131,8 @@ continues at that state), `stop` (the run ends) or `ask <reason>` (the run pause
 pause message shows the reason).
 
 The fixer runs at most 2 times for the same failed step, and the oracle once. After that
-the run pauses at `ask`. In a workflow file, the on target `$failed` means "the last check
+the run pauses at `ask`. The limits apply to the states named `fixer` and `oracle`, not to
+the agent role of a state. In a workflow file, the on target `$failed` means "the last check
 step"; the built-in workflow uses it for the fixer answer `ok`.
 
 The loop limits its retries with `max_visits`: `code` runs at most 3 times and `ci`
