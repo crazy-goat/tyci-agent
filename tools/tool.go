@@ -875,8 +875,8 @@ func subagentToolsSchemaFor(allowed []string) []map[string]any {
 	if len(allowed) == 0 {
 		return GetSubagentToolsSchema()
 	}
-	want := make(map[string]bool, len(allowed)+len(alwaysAllowedTools))
-	for _, name := range allowed {
+	want := make(map[string]bool, len(allowed)+len(alwaysAllowedTools)+len(backgroundCompanionTools))
+	for _, name := range withBackgroundCompanions(allowed) {
 		if IsSubagentDenied(name) {
 			continue
 		}

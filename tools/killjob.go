@@ -113,33 +113,49 @@ func parentIDOf(jobID string) string {
 	return ""
 }
 
-// subtreeRoot walks parent links up from id and returns the chain's root's
-// job id. parents maps child id → parent id ("" when the spawning context
-// was not itself a job). A cycle terminates at its first repeat — the entry
-// already in seen — so malformed links can only ever shorten the walk, never
-// hang it.
-func subtreeRoot(parents map[string]string, id string) string {
+// isInSubtreeOf reports whether ancestor is a strict ancestor of id: walking
+// parent links up from id reaches ancestor. parents maps child id → parent id
+// ("" when the spawning context was not itself a job). A cycle ends the walk
+// at its first repeat — the entry already in seen — so malformed links can
+// only ever shorten the walk, never hang it.
+func isInSubtreeOf(parents map[string]string, id, ancestor string) bool {
 	seen := make(map[string]bool)
 	for {
 		parent, ok := parents[id]
-		if !ok || parent == "" {
-			return id
+		if !ok || parent == "" || seen[id] {
+			return false
 		}
-		if seen[id] {
-			return id
+		if parent == ancestor {
+			return true
 		}
 		seen[id] = true
 		id = parent
 	}
 }
 
-// killAllowedInsideChild enforces item 26's safety rule for a kill_job call
-// made from inside a running child agent (SubagentSinkCtxKey present): it
-// may stop ONLY jobs rooted in its own subtree — including itself. The main
-// agent (no sink key) may stop anything: everything in the registry is its
+// resolveListedJob maps jobID, a full id or the "#N" short form the jobs panel
+// prints, to the full id of a job the lister knows. known is false when no
+// lister is wired or no job matches; fullID is then jobID unchanged.
+func resolveListedJob(lister JobLister, jobID string) (fullID string, known bool) {
+	if lister == nil {
+		return jobID, false
+	}
+	short := strings.TrimPrefix(jobID, "#")
+	for _, j := range lister.ListJobs() {
+		if j.ID() == jobID || shortID(j.ID()) == short {
+			return j.ID(), true
+		}
+	}
+	return jobID, false
+}
+
+// inOwnSubtree enforces item 26's safety rule for kill_job and wait called
+// from inside a running child agent (SubagentSinkCtxKey present): the child
+// may act ONLY on jobs rooted in its own subtree — including itself. The main
+// agent (no sink key) may act on anything: everything in the registry is its
 // own or its descendants' work. callerJobID is this call site's own job
-// (JobIDCtxKey); targetID the resolved victim.
-func killAllowedInsideChild(ctx context.Context, callerJobID, targetID string, lister JobLister) bool {
+// (JobIDCtxKey); targetID the resolved job.
+func inOwnSubtree(ctx context.Context, callerJobID, targetID string, lister JobLister) bool {
 	if ctx.Value(SubagentSinkCtxKey{}) == nil {
 		return true
 	}
@@ -153,7 +169,7 @@ func killAllowedInsideChild(ctx context.Context, callerJobID, targetID string, l
 	for _, j := range lister.ListJobs() {
 		parents[j.ID()] = j.ParentID()
 	}
-	return subtreeRoot(parents, targetID) == callerJobID
+	return isInSubtreeOf(parents, targetID, callerJobID)
 }
 
 // Run dispatches one kill_job call. Order matters and is deliberate:
@@ -182,30 +198,17 @@ func (t *KillJobTool) Run(ctx context.Context, input map[string]any) ToolResult 
 	// degrades when its adapter is unset.
 	//
 	// Read once into a local: the lister is also passed to
-	// killAllowedInsideChild below, and two separate reads of the global
+	// inOwnSubtree below, and two separate reads of the global
 	// could straddle a concurrent SetJobLister and see different values.
 	lister := getJobLister()
-	fullID, known := jobID, false
-	if lister != nil {
-		for _, j := range lister.ListJobs() {
-			if j.ID() == jobID {
-				fullID, known = j.ID(), true
-				break
-			}
-			short := strings.TrimPrefix(jobID, "#")
-			if shortID(j.ID()) == short {
-				fullID, known = j.ID(), true
-				break
-			}
-		}
-	}
+	fullID, known := resolveListedJob(lister, jobID)
 
 	callerJobID, _ := ctx.Value(JobIDCtxKey{}).(string)
 
 	// Inside a child agent only its own subtree is fair game. The refusal
 	// names the boundary so the model can self-correct instead of retrying
 	// blindly.
-	if !killAllowedInsideChild(ctx, callerJobID, fullID, lister) {
+	if !inOwnSubtree(ctx, callerJobID, fullID, lister) {
 		return ToolResult{
 			Type:    "result",
 			Success: false,

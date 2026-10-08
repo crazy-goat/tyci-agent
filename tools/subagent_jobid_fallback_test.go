@@ -26,7 +26,7 @@ import (
 )
 
 // printModeEnv wires a real job registry the same way main() does, but
-// deliberately leaves background bash (and therefore backgroundAllowed)
+// deliberately leaves background bash (and therefore BackgroundBashEnabled)
 // off — the one flag `tyci run` / `--print` never turns on. jobs.Registry
 // itself satisfies JobAsker/JobAnswerer/JobProgressReporter structurally
 // (same shapes, no adapter needed), same as testJobStarter wraps it for
@@ -54,7 +54,7 @@ func printModeEnv(t *testing.T) (*jobs.Registry, *recordingNotifier) {
 
 // TestPrintModeChildIsStillRegisteredAsAJob is the core of item 17: a
 // blocking subagent call in a mode with no handoff (jobStarter wired,
-// backgroundAllowed false) must still register its child through
+// BackgroundBashEnabled false) must still register its child through
 // jobStarter — not silently fall back to the old no-job-id runTasks path —
 // even though it never hands the child to the background.
 func TestPrintModeChildIsStillRegisteredAsAJob(t *testing.T) {

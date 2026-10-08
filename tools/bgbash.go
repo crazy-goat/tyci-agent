@@ -78,24 +78,6 @@ func SetBackgroundBashEnabled(v bool) { backgroundBashEnabled.Store(v) }
 // registry there would be nowhere to record the result.
 func BackgroundBashEnabled() bool { return backgroundBashEnabled.Load() && getJobStarter() != nil }
 
-// backgroundAllowed reports whether the call site behind ctx may move a
-// command to the background. Two conditions, both necessary:
-//
-//   - the mode opted in (BackgroundBashEnabled), i.e. something will consume
-//     the completion notice and can act on it;
-//   - we are not inside a child agent. A subagent's run ends when it returns
-//     its answer, so a command it backgrounded would have nobody left to
-//     collect the result, and the completion notice would surface in the
-//     PARENT's conversation, which never issued the command. A child that
-//     needs a long command should block on it — it has its own wall-clock
-//     budget for exactly that.
-func backgroundAllowed(ctx context.Context) bool {
-	if !BackgroundBashEnabled() {
-		return false
-	}
-	return ctx.Value(SubagentSinkCtxKey{}) == nil
-}
-
 // JobNotifier receives one short, model-facing line when a background
 // command finishes. Deliberately a plain string rather than a job struct:
 // this package must not import "jobs" (same import-cycle rule as JobWaiter

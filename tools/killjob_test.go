@@ -162,7 +162,7 @@ func TestKillJob_InsideChildRefusesUnrelatedTarget(t *testing.T) {
 
 // TestKillJob_InsideChildAllowsOwnSubtree: a child may stop a job inside
 // its own subtree, deep or at any middle node. Revert check: make
-// killAllowedInsideChild fail closed for everyone and the allowance half of
+// inOwnSubtree fail closed for everyone and the allowance half of
 // this test errors.
 func TestKillJob_InsideChildAllowsOwnSubtree(t *testing.T) {
 	c := &fakeCanceler{}

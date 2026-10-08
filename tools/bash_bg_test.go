@@ -384,13 +384,32 @@ func TestBashBackgroundDisabledRunsInForeground(t *testing.T) {
 	}
 }
 
-// TestBashNoBackgroundInsideSubagent: a child agent's run ends with its
-// answer, so it must never hand a command off to a job whose notice would
-// surface in the parent's conversation.
-func TestBashNoBackgroundInsideSubagent(t *testing.T) {
-	bgTestEnv(t)
+// regMailbox is the test twin of main's jobMailboxAdapter (btw.go): it wires
+// a real jobs.Registry in as the JobMailbox.
+type regMailbox struct{ reg *jobs.Registry }
 
-	ctx := context.WithValue(context.Background(), SubagentSinkCtxKey{}, &streamingCollector{collector: newCollector()})
+func (m regMailbox) Resolve(id string) (string, bool) { return m.reg.Resolve(id) }
+func (m regMailbox) Post(id, text string) bool        { return m.reg.Post(id, text) }
+func (m regMailbox) IsLive(id string) bool            { return m.reg.IsLive(id) }
+func (m regMailbox) Drain(id string) []string         { return m.reg.DrainMessages(id) }
+
+// TestBashBackgroundInsideSubagent: a child agent hands a command to the
+// background like the main agent does. Its completion notice goes to the
+// child's own mailbox, never to the main queue.
+func TestBashBackgroundInsideSubagent(t *testing.T) {
+	reg, notifier := bgTestEnv(t)
+	SetJobMailbox(regMailbox{reg})
+	t.Cleanup(func() { SetJobMailbox(nil) })
+
+	release := make(chan struct{})
+	defer close(release)
+	parent := reg.Start(context.Background(), "subagent", jobs.KindSubagent, "", func(context.Context, string) (string, bool, error) {
+		<-release
+		return "", false, nil
+	})
+
+	ctx := context.WithValue(context.Background(), JobIDCtxKey{}, parent.ID)
+	ctx = context.WithValue(ctx, SubagentSinkCtxKey{}, &streamingCollector{collector: newCollector()})
 	res := (&BashTool{}).Run(ctx, map[string]any{
 		"command":           "echo child",
 		"run_in_background": true,
@@ -398,8 +417,46 @@ func TestBashNoBackgroundInsideSubagent(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected success, got error: %s", res.Error)
 	}
-	if !strings.HasPrefix(res.Content, "child") {
-		t.Fatalf("subagent bash should have run in the foreground, got %q", res.Content)
+	id := jobIDFromResult(t, res.Content)
+	waitForJob(t, reg, id, bgFinishCap)
+
+	mail := reg.DrainMessages(parent.ID)
+	if len(mail) != 1 || !strings.Contains(mail[0], "[background command]") {
+		t.Fatalf("expected the completion notice in the subagent mailbox, got %q", mail)
+	}
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	for _, n := range notifier.seen {
+		if strings.Contains(n, "[background command]") {
+			t.Fatalf("subagent notice leaked to the main queue: %q", n)
+		}
+	}
+}
+
+// TestSubagentEndStopsItsBackgroundCommand: a subagent ends while its
+// background command still runs. The command is stopped with the subagent, so
+// no process outlives it. bgSleeper outlives bgFinishCap, so a lost kill fails
+// the test instead of passing on the command's own exit.
+func TestSubagentEndStopsItsBackgroundCommand(t *testing.T) {
+	reg, _ := bgTestEnv(t)
+
+	child := reg.Start(context.Background(), "subagent", jobs.KindSubagent, "", func(ctx context.Context, jobID string) (string, bool, error) {
+		ctx = context.WithValue(ctx, JobIDCtxKey{}, jobID)
+		ctx = context.WithValue(ctx, SubagentSinkCtxKey{}, &streamingCollector{collector: newCollector()})
+		res := (&BashTool{}).Run(ctx, map[string]any{
+			"command":           bgSleeper,
+			"run_in_background": true,
+		})
+		return res.Content, false, nil
+	})
+	ended := waitForJob(t, reg, child.ID, bgFinishCap)
+
+	cmd := waitForJob(t, reg, jobIDFromResult(t, ended.Result), bgFinishCap)
+	if cmd.Status != jobs.StatusFailed {
+		t.Fatalf("expected the command of an ended subagent to be stopped, got status %s", cmd.Status)
+	}
+	if !strings.Contains(cmd.Err, "stopped before it finished") {
+		t.Fatalf("expected the error to say it was stopped, got %q", cmd.Err)
 	}
 }
 

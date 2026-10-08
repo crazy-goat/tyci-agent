@@ -58,7 +58,7 @@ func getJobAsker() JobAsker {
 // question — or a person at a REPL — has a turn in which to call "answer_job").
 // That happens for an async spawn (the call returns immediately) and for a
 // blocking spawn that CAN hand its children to the background
-// (runWithHandoff with handoff=true, gated on backgroundAllowed) — but not
+// (runWithHandoff with handoff=true, gated on BackgroundBashEnabled) — but not
 // for a blocking spawn with no handoff available: that tool call does not
 // return until the child itself finishes, so a child blocked in "ask_parent" there
 // can never be unblocked no matter how long it waits. runWithHandoff sets

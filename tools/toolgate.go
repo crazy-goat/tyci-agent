@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -95,7 +96,7 @@ func AllowOnlySubagent(allowed []string) ToolGate {
 	if len(allowed) == 0 {
 		return nil
 	}
-	return newAllowGate(FilterSubagentDenied(allowed))
+	return newAllowGate(withBackgroundCompanions(FilterSubagentDenied(allowed)))
 }
 
 // newAllowGate builds a gate permitting names plus alwaysAllowedTools, plus
@@ -158,6 +159,23 @@ func newAllowGate(names []string) ToolGate {
 //   - report_progress, because the harness nudges every agent to call it
 //     (ping_interval) and a whitelist must not make that nudge unanswerable.
 var alwaysAllowedTools = []string{"help", "lua", "report_progress"}
+
+// backgroundCompanionTools are granted to a child that is allowed bash. A
+// command the child moves to the background is read with wait and stopped
+// with kill_job; without them the child could start a job it can never
+// collect. Both stay inside the child's own subtree (see inOwnSubtree).
+var backgroundCompanionTools = []string{"wait", "kill_job"}
+
+// withBackgroundCompanions returns names plus backgroundCompanionTools when
+// names allows bash. Both subagent builders (AllowOnlySubagent here and
+// subagentToolsSchemaFor in tool.go) apply it, so the schema and the runtime
+// gate stay in step.
+func withBackgroundCompanions(names []string) []string {
+	if !slices.Contains(names, "bash") {
+		return names
+	}
+	return append(append([]string(nil), names...), backgroundCompanionTools...)
+}
 
 // subagentDeniedTools names tools that are never available to a subagent,
 // whatever its own tools: whitelist says:

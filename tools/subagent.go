@@ -600,18 +600,16 @@ func (t *SubagentTool) Run(ctx context.Context, input map[string]any) ToolResult
 	// does not gate whether the result is usable. Falling through to runTasks
 	// here used to re-run every task from scratch on the common "finished in
 	// time" path, paying the model and side effects twice.
-	if getJobStarter() != nil && backgroundAllowed(ctx) {
+	if getJobStarter() != nil && BackgroundBashEnabled() {
 		res, _ := t.runWithHandoff(ctx, tasks, true)
 		return res
 	}
 
 	// Reached when backgrounding is disabled for this mode — in practice
 	// `tyci run` / `--print` (main.go never calls SetBackgroundBashEnabled
-	// there; see commands.go). backgroundAllowed also returns false when ctx
-	// carries SubagentSinkCtxKey, but that combination can never actually
-	// reach here: subagentDeniedTools (toolgate.go) removes the "subagent"
-	// tool itself from a child's schema and its runtime gate, so a child
-	// can never make this call in the first place.
+	// there; see commands.go). A child can never make this call: subagentDeniedTools
+	// (toolgate.go) removes the "subagent" tool itself from a child's schema
+	// and its runtime gate.
 	//
 	// A job registry is still available here in every real invocation
 	// (jobStarter is wired unconditionally in main.go). So the children
@@ -1106,7 +1104,7 @@ func watchForWaiting(ctx context.Context, observer JobObserver, jobID string, wa
 // for them — up to SubagentBackgroundAfter when handoff is true, or until
 // every child finishes (or the parent ctx is cancelled) when it is false.
 //
-// handoff is true exactly when backgroundAllowed(ctx) held at the call site
+// handoff is true exactly when BackgroundBashEnabled() held at the call site
 // (Run): there is somewhere to hand a still-running child off TO, so a
 // person or the model gets a turn back instead of waiting on it. It is false
 // for the one other case that still has a job registry to register through

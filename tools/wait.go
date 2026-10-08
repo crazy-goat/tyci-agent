@@ -142,6 +142,11 @@ func (t *WaitTool) setWaiter(w JobWaiter) {
 func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	jobID, _ := input["job_id"].(string)
 
+	// A wait blocks without streaming, so the watchdog would read the caller
+	// as idle. Its return counts as activity for the caller's own job.
+	callerJobID, _ := ctx.Value(JobIDCtxKey{}).(string)
+	defer touchJobActivity(callerJobID)
+
 	secRaw, hasSeconds := input["seconds"]
 	if !hasSeconds && jobID == "" {
 		return validationResult("seconds is required for a plain wait (or pass job_id to wait for a job)")
@@ -187,6 +192,12 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		waiter := t.waiter()
 		if waiter == nil {
 			return ToolResult{Type: "result", Success: false, Error: "job registry unavailable; omit job_id to just wait N seconds"}
+		}
+		// Inside a child agent, wait follows the same subtree rule as kill_job.
+		lister := getJobLister()
+		fullID, _ := resolveListedJob(lister, jobID)
+		if !inOwnSubtree(ctx, callerJobID, fullID, lister) {
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("refused: job %q is not within your own subtree — inside a subagent you may wait only on jobs you started (your job id is %q)", jobID, callerJobID)}
 		}
 		status, ok, interrupted := t.waitForJob(ctx, waiter, jobID, time.Duration(seconds)*time.Second)
 		if !ok {

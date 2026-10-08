@@ -170,9 +170,9 @@ with kill_job(job_id=...).
   background_after=0 is the explicit opt-out: stay in the foreground until the
   command finishes or hits its timeout.
 
-Backgrounding is only available to the top-level agent in an interactive
-session. A subagent's run ends when it returns, so it must block on its long
-commands instead.`,
+Backgrounding is only available in an interactive session. A command you
+background stops when your run ends, so collect its result before you return
+your answer.`,
 
 	"find": `Two searches in one tool, chosen by method.
 

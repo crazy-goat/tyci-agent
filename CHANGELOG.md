@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Subagents: a bash command that runs longer than 30s moves to the background inside a subagent too. The completion notice goes to the subagent that started the command (#435).
+- Subagents: a subagent that lists `bash` in its `tools:` also gets `wait` and `kill_job`. It can wait for or stop only the jobs it started (#435).
+
+### Fixed
+- Subagents: when a subagent ends, the background commands it started are stopped. No process stays after the subagent ends (#435).
+
 ### Removed
 - Lua workflows: the `.tyci/agents/*.lua` scripts and the `tyci workflow run` and `tyci workflow list` commands are removed. Use JSON workflows (v0.3.0) instead. `tyci workflow eject` stays.
 

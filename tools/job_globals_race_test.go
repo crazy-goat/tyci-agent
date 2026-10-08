@@ -587,7 +587,7 @@ func TestCronRunNow_ConcurrentSetJobStarterAndRealSpawn_RaceFree(t *testing.T) {
 // SetJobLister against parentIDOf (killjob.go) — the second, easy-to-miss
 // read site for jobLister: it reads the global directly rather than going
 // through kill_job's Run, so a fix that only guarded the Run/
-// killAllowedInsideChild path (via getJobLister there) would still leave
+// inOwnSubtree path (via getJobLister there) would still leave
 // this one racy.
 func TestParentIDOf_ConcurrentSetJobListerAndRealCall_RaceFree(t *testing.T) {
 	// F26: snapshot-and-restore, not SetJobLister(nil) — see the identical

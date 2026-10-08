@@ -1033,8 +1033,10 @@ func TestGetSubagentToolsSchemaJSONFor_FiltersToAllowed(t *testing.T) {
 	}
 	// help and lua are always present — see alwaysAllowedTools for why
 	// withholding them cannot make an agent safer, only worse at its job.
-	if len(names) != 2+len(alwaysAllowedTools) {
-		t.Errorf("expected the two allowed tools plus %v, got %v", alwaysAllowedTools, names)
+	// bash brings its background companions (wait, kill_job) — see
+	// backgroundCompanionTools.
+	if len(names) != 2+len(alwaysAllowedTools)+len(backgroundCompanionTools) {
+		t.Errorf("expected the two allowed tools plus %v and %v, got %v", alwaysAllowedTools, backgroundCompanionTools, names)
 	}
 }
 

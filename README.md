@@ -647,6 +647,10 @@ the model knows which one it wrote; telling it to stop and re-check would
 interrupt real work most of the time the notice fired. The age is the useful
 part, so that is all the notice carries.
 
+A subagent uses the same hand-off. Its notice goes to the subagent that
+started the command. When the subagent ends, its background commands are
+stopped.
+
 ## Stream guards
 
 Two things are watched on every OpenAI-compatible stream, because neither the

@@ -115,11 +115,11 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 
 	runInBg := boolParam(input, "run_in_background", false)
 	note := ""
-	if !backgroundAllowed(ctx) {
+	if !BackgroundBashEnabled() {
 		bgAfterSec = 0
 		if runInBg {
 			runInBg = false
-			note = "\n\n[note: run_in_background was requested, but background commands are unavailable here (one-shot run, or inside a subagent) — ran in the foreground instead]"
+			note = "\n\n[note: run_in_background was requested, but background commands are unavailable here (one-shot run) — ran in the foreground instead]"
 		}
 	}
 
