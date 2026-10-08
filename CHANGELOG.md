@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- TUI: the Tasks tab shows the tokens and the cost of each row, `main` and the subagents, in two right-aligned columns at the right edge of the sidebar. The columns line up in all rows. In a narrow row, the label is cut first. Then the tokens are dropped, then the cost (#527).
 - TUI: the Runs tab shows the duration of a run in its own right-aligned column, just left of the cost. Durations and costs line up in all rows. In a narrow row, the label is cut first. Then the duration is dropped, then the cost (#525).
 - TUI: the sidebar key line is on the last row on every tab. On the Tasks tab, the history note is now above the key line. A long line in a sidebar tab is cut at the sidebar width with "…" and no longer wraps onto an extra row (#514).
 - TUI: while an agent view is open, the status bar shows the viewed subagent: its model, its state (or `done`, `failed` or `truncated` when it ended), its tokens and its cost. The session total stays on the right. Before, the bar showed the main conversation's model, state and context figure. Esc shows the main status again (#528).

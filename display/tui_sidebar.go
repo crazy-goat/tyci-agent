@@ -822,8 +822,10 @@ type sidebarTaskRow struct {
 // jobs and the Lua runs are each oldest first at the point they are read.
 func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 	rows := []sidebarTaskRow{{group: "Subagents", line: "Subagents", isHeading: true}}
-	for _, treeRow := range m.buildSubagentTree() {
-		row := sidebarTaskRow{group: "Subagents", line: m.formatSubagentRow(treeRow, width), isMain: treeRow.isRoot}
+	tree := m.buildSubagentTree()
+	tokW, costW := subagentColumnWidths(tree)
+	for _, treeRow := range tree {
+		row := sidebarTaskRow{group: "Subagents", line: m.formatSubagentRow(treeRow, width, tokW, costW), isMain: treeRow.isRoot}
 		if !treeRow.isRoot {
 			job := treeRow.job
 			row.job = &job
