@@ -62,7 +62,10 @@ type RunState struct {
 	Status   string `json:"status"` // running|paused|done|failed
 	Reason   string `json:"reason,omitempty"`
 	Current  string `json:"current"`
-	Ask      *Ask   `json:"ask,omitempty"`
+	// EntryPending is true after a transition into Current, until the visit of
+	// that entry is saved. A restart counts the visit when it is still pending.
+	EntryPending bool `json:"entry_pending,omitempty"`
+	Ask          *Ask `json:"ask,omitempty"`
 	// Note is the text of an ask answer "retry <note>". The next worker
 	// prompt carries it, then it is cleared.
 	Note string `json:"note,omitempty"`
