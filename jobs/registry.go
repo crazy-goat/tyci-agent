@@ -1050,7 +1050,22 @@ func (r *Registry) Post(id, text string) bool {
 		return false
 	}
 	job.mailbox = append(job.mailbox, text)
+	job.posted++
 	return true
+}
+
+// Posted returns how many messages Post has accepted for id, drained or not,
+// and 0 for an unknown id. It only grows, so a caller that remembers the value
+// can tell whether a new message arrived since, without taking it away from
+// DrainMessages.
+func (r *Registry) Posted(id string) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok {
+		return 0
+	}
+	return job.posted
 }
 
 // IsLive reports whether id identifies a job that can still receive a

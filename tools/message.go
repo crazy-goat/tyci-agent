@@ -29,6 +29,10 @@ type JobMailbox interface {
 	// Drain pops and returns everything queued for job id via Post, FIFO,
 	// clearing the mailbox. nil for an unknown id or an empty mailbox.
 	Drain(id string) []string
+	// Posted returns how many messages Post accepted for job id, drained or
+	// not. wait compares it between two calls to see whether a new message
+	// arrived. 0 for an unknown id.
+	Posted(id string) uint64
 }
 
 // jobMailbox is nil until SetJobMailbox is called; the "message" tool fails

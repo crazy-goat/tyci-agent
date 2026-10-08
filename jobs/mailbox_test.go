@@ -191,3 +191,36 @@ func TestRegistry_ResolveByRoleAgentName(t *testing.T) {
 		t.Fatal("unknown role resolved")
 	}
 }
+
+// TestPostedCountsAcceptedPostsOnly: Posted counts the messages Post accepted.
+// The count survives DrainMessages, and a refused post or an unknown id does
+// not change it.
+func TestPostedCountsAcceptedPostsOnly(t *testing.T) {
+	r := NewRegistry()
+	if got := r.Posted("missing"); got != 0 {
+		t.Fatalf("Posted for an unknown id = %d, want 0", got)
+	}
+
+	release := make(chan struct{})
+	job := r.Start(context.Background(), "demo", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
+		<-release
+		return "done", false, nil
+	})
+	r.Post(job.ID, "one")
+	r.Post(job.ID, "two")
+	r.DrainMessages(job.ID)
+	if got := r.Posted(job.ID); got != 2 {
+		t.Fatalf("Posted after two posts and a drain = %d, want 2", got)
+	}
+
+	close(release)
+	if _, ok := r.Wait(context.Background(), job.ID, 5*time.Second); !ok {
+		t.Fatalf("Wait on the finished job reported unknown")
+	}
+	if r.Post(job.ID, "too late") {
+		t.Fatalf("Post on a finished job should be refused")
+	}
+	if got := r.Posted(job.ID); got != 2 {
+		t.Fatalf("Posted after a refused post = %d, want 2", got)
+	}
+}

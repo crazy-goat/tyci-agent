@@ -381,12 +381,12 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "wait",
-				"description": "Wait for a background job (job_id) or pause deliberately (seconds alone). With a job_id it waits until that job finishes or blocks on a question and returns the result — not a status snapshot — so one call gets you the answer; seconds is optional and defaults to 30 minutes, and the wait ends early if someone types. You do not need it to find out that a job finished, because you are notified; use it when you have nothing else to do, or to read a result once you are told.",
+				"description": "Wait for a background job (job_id) or pause deliberately (seconds alone). With a job_id it waits until that job finishes or blocks on a question and returns the result — not a status snapshot — so one call gets you the answer; seconds is optional and defaults to 30 minutes, and the wait ends early if someone types or a new notice arrives. You do not need it to find out that a job finished, because you are notified; use it when you have nothing else to do, or to read a result once you are told.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"seconds": map[string]any{"type": "integer", "description": fmt.Sprintf("How long to wait, in seconds. Clamped to [%d, %d].", MinWaitSeconds, MaxWaitSeconds)},
-						"job_id":  map[string]any{"type": "string", "description": "Id of a background job. The call waits until that job actually finishes (or blocks on a question), so it returns the result rather than a status — seconds is optional here and defaults to 30 minutes. It ends early if someone types. Omit for a plain sleep."},
+						"job_id":  map[string]any{"type": "string", "description": "Id of a background job. The call waits until that job actually finishes (or blocks on a question), so it returns the result rather than a status — seconds is optional here and defaults to 30 minutes. It ends early if someone types or a new notice arrives. Omit for a plain sleep."},
 						"note":    map[string]any{"type": "string", "description": "Optional note describing what you're waiting for, echoed back for context."},
 					},
 					"required": []string{"seconds"},

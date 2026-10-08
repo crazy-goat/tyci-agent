@@ -27,6 +27,7 @@ func (m realJobMailbox) Resolve(id string) (string, bool) { return m.reg.Resolve
 func (m realJobMailbox) Post(id, text string) bool        { return m.reg.Post(id, text) }
 func (m realJobMailbox) IsLive(id string) bool            { return m.reg.IsLive(id) }
 func (m realJobMailbox) Drain(id string) []string         { return m.reg.DrainMessages(id) }
+func (m realJobMailbox) Posted(id string) uint64          { return m.reg.Posted(id) }
 
 // noticeRoutingEnv wires a fresh registry, mailbox, starter and main
 // notifier, and restores everything on cleanup.

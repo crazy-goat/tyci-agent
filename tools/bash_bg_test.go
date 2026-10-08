@@ -32,6 +32,12 @@ func (n *recordingNotifier) Notify(text string) {
 	n.mu.Unlock()
 }
 
+func (n *recordingNotifier) Queued() uint64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return uint64(len(n.seen))
+}
+
 func (n *recordingNotifier) MarkQuestionShown(jobID string, seq int) {
 	n.mu.Lock()
 	if n.shown == nil {
@@ -452,6 +458,7 @@ func (m regMailbox) Resolve(id string) (string, bool) { return m.reg.Resolve(id)
 func (m regMailbox) Post(id, text string) bool        { return m.reg.Post(id, text) }
 func (m regMailbox) IsLive(id string) bool            { return m.reg.IsLive(id) }
 func (m regMailbox) Drain(id string) []string         { return m.reg.DrainMessages(id) }
+func (m regMailbox) Posted(id string) uint64          { return m.reg.Posted(id) }
 
 // TestBashBackgroundInsideSubagent: a child agent hands a command to the
 // background like the main agent does. Its completion notice goes to the

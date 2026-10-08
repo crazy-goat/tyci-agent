@@ -342,3 +342,38 @@ func TestNotifierNotifyQuietDoesNotSignal(t *testing.T) {
 		t.Fatalf("Drain = %v, want the quiet notice", got)
 	}
 }
+
+// TestNotifierQueuedCountsEveryQueuedNotice: Queued counts each notice that
+// reaches the queue, from all three producers. Draining or clearing the queue
+// does not reset it. A question notice that MarkQuestionShown already covered
+// is dropped, and it is not counted.
+func TestNotifierQueuedCountsEveryQueuedNotice(t *testing.T) {
+	n := NewNotifier()
+	if got := n.Queued(); got != 0 {
+		t.Fatalf("Queued on a new notifier = %d, want 0", got)
+	}
+
+	n.Notify("finished")
+	n.NotifyQuiet("scheduled job ran")
+	n.NotifyQuestion("job-1", 1, "job-1 is blocked")
+	n.Notify("") // empty text is never queued
+	if got := n.Queued(); got != 3 {
+		t.Fatalf("Queued = %d, want 3", got)
+	}
+
+	n.Drain()
+	if got := n.Queued(); got != 3 {
+		t.Fatalf("Queued after Drain = %d, want 3", got)
+	}
+
+	n.MarkQuestionShown("job-2", 5)
+	n.NotifyQuestion("job-2", 5, "job-2 is blocked") // dropped, already shown
+	if got := n.Queued(); got != 3 {
+		t.Fatalf("Queued after a suppressed question = %d, want 3", got)
+	}
+
+	n.Clear()
+	if got := n.Queued(); got != 3 {
+		t.Fatalf("Queued after Clear = %d, want 3", got)
+	}
+}

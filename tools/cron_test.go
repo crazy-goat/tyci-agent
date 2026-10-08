@@ -340,12 +340,18 @@ func (m *cronTestMailbox) Post(id, text string) bool {
 }
 func (m *cronTestMailbox) IsLive(string) bool    { return !m.dead }
 func (m *cronTestMailbox) Drain(string) []string { return nil }
+func (m *cronTestMailbox) Posted(id string) uint64 {
+	return uint64(len(m.posted[id]))
+}
 
 type cronTestNotifier struct{ loud, quiet []string }
 
 func (n *cronTestNotifier) Notify(s string)               { n.loud = append(n.loud, s) }
 func (n *cronTestNotifier) NotifyQuiet(s string)          { n.quiet = append(n.quiet, s) }
 func (n *cronTestNotifier) MarkQuestionShown(string, int) {}
+func (n *cronTestNotifier) Queued() uint64 {
+	return uint64(len(n.loud) + len(n.quiet))
+}
 
 func TestCronAddStoresCallerAndNotifyGoesToItsMailbox(t *testing.T) {
 	withCronHome(t)

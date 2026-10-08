@@ -165,6 +165,7 @@ func (a jobMailboxAdapter) Resolve(id string) (string, bool) { return a.reg.Reso
 func (a jobMailboxAdapter) Post(id, text string) bool        { return a.reg.Post(id, text) }
 func (a jobMailboxAdapter) IsLive(id string) bool            { return a.reg.IsLive(id) }
 func (a jobMailboxAdapter) Drain(id string) []string         { return a.reg.DrainMessages(id) }
+func (a jobMailboxAdapter) Posted(id string) uint64          { return a.reg.Posted(id) }
 
 // jobResumerAdapter satisfies tools.JobResumer over JobRegistry and the
 // package-level resumable map (main.go): it forks a previously-recorded

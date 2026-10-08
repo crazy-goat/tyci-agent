@@ -31,10 +31,10 @@ const MinWaitSeconds = 1
 const DefaultJobWaitSeconds = MaxWaitSeconds
 const JobMinWaitSeconds = 30
 
-// jobPollInterval is how finely a job wait is sliced. The slices exist so the
-// wait can end early for the three things that matter: the job finished, the
-// job blocked on a question (and only the caller can unblock it), or a person
-// typed.
+// jobPollInterval is how finely a wait is sliced. The slices exist so the wait
+// can end early for the things that matter: the job finished, the job blocked
+// on a question (and only the caller can unblock it), a person typed, or a new
+// notice reached the waiting agent.
 const jobPollInterval = 250 * time.Millisecond
 
 // JobStatus and JobWaiter are a LOCAL contract owned by the tools package.
@@ -185,6 +185,7 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	}
 
 	note, _ := input["note"].(string)
+	arrived := newNoticeWatch(callerJobID)
 
 	if jobID != "" {
 		// Copy the interface value out under RLock once, then use this
@@ -209,7 +210,7 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		if !inOwnSubtree(ctx, callerJobID, fullID, lister) {
 			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("refused: job %q is not within your own subtree — inside a subagent you may wait only on jobs you started (your job id is %q)", jobID, callerJobID)}
 		}
-		status, ok, interrupted := t.waitForJob(ctx, waiter, jobID, time.Duration(seconds)*time.Second)
+		status, ok, interrupted, noticed := t.waitForJob(ctx, waiter, jobID, time.Duration(seconds)*time.Second, arrived)
 		if !ok {
 			return ToolResult{Type: "result", Success: false, Error: unknownJobIDError}
 		}
@@ -218,6 +219,13 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 				Type:    "result",
 				Success: true,
 				Content: fmt.Sprintf("stopped waiting on job %s because someone typed — read what they said and answer them. The job was not touched and is still running; you will be notified when it finishes.", jobID),
+			}
+		}
+		if noticed {
+			return ToolResult{
+				Type:    "result",
+				Success: true,
+				Content: fmt.Sprintf("stopped waiting on job %s because a new notice arrived; read it. The job was not touched.", jobID),
 			}
 		}
 		if status.Done {
@@ -301,12 +309,19 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	// Sliced for the same reason a job wait is: a person typing must not have
 	// to sit out someone else's sleep. A plain wait of ten minutes would
 	// otherwise be ten minutes in which nothing they type is read.
-	completed, interrupted := sleepInterruptibly(ctx, sleep, time.Duration(seconds)*time.Second)
+	completed, interrupted, noticed := sleepInterruptibly(ctx, sleep, time.Duration(seconds)*time.Second, arrived)
 	if interrupted {
 		return ToolResult{
 			Type:    "result",
 			Success: true,
 			Content: fmt.Sprintf("stopped waiting after ~%ds because someone typed — read what they said and answer them.%s", int(time.Since(start).Seconds()), clampedNote),
+		}
+	}
+	if noticed {
+		return ToolResult{
+			Type:    "result",
+			Success: true,
+			Content: fmt.Sprintf("stopped waiting after ~%ds because a new notice arrived; read it.%s", int(time.Since(start).Seconds()), clampedNote),
 		}
 	}
 	if !completed {
@@ -417,17 +432,46 @@ func defaultSleep(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// waitForJob waits for a job, in slices, so it can end early for the three
-// things that matter more than the remaining time:
+// newNoticeWatch records how many notices have reached the agent that calls
+// wait, and returns a function that reports whether any new one has arrived
+// since. Only notices after this call count: a notice that is already queued
+// is delivered at the next iteration boundary, and must not end the wait
+// before it starts.
+func newNoticeWatch(callerJobID string) func() bool {
+	since := noticeCount(callerJobID)
+	return func() bool { return noticeCount(callerJobID) > since }
+}
+
+// noticeCount returns the number of notices addressed to the agent that calls
+// wait. A subagent (callerJobID set) gets notices in its own job mailbox. The
+// main agent gets them in the shared notice queue. 0 when nothing is wired.
+func noticeCount(callerJobID string) uint64 {
+	if callerJobID != "" {
+		if mb := getJobMailbox(); mb != nil {
+			return mb.Posted(callerJobID)
+		}
+		return 0
+	}
+	if n := getJobNotifier(); n != nil {
+		return n.Queued()
+	}
+	return 0
+}
+
+// waitForJob waits for a job, in slices, so it can end early for the things
+// that matter more than the remaining time:
 //
 //   - the job finished, which is what the caller asked for;
 //   - the job blocked on a question, which only the caller can answer — and it
 //     cannot answer while sitting in here, so waiting on would deadlock both
 //     until the timeout;
-//   - a person typed, which outranks everything.
+//   - a person typed, which outranks the rest;
+//   - a new notice reached the waiting agent (a watchdog alarm, another job
+//     finished). The notice itself is read later, from the queue.
 //
-// interrupted reports the last of those. ok is false for an unknown id.
-func (t *WaitTool) waitForJob(ctx context.Context, waiter JobWaiter, jobID string, total time.Duration) (status JobStatus, ok, interrupted bool) {
+// interrupted reports that a person typed, noticed reports a new notice. ok is
+// false for an unknown id.
+func (t *WaitTool) waitForJob(ctx context.Context, waiter JobWaiter, jobID string, total time.Duration, arrived func() bool) (status JobStatus, ok, interrupted, noticed bool) {
 	deadline := time.Now().Add(total)
 	for {
 		slice := jobPollInterval
@@ -435,29 +479,33 @@ func (t *WaitTool) waitForJob(ctx context.Context, waiter JobWaiter, jobID strin
 			slice = remaining
 		}
 		if slice <= 0 {
-			return status, true, false
+			return status, true, false, false
 		}
 
 		status, ok = waiter.Wait(ctx, jobID, slice)
 		if !ok {
-			return status, false, false
+			return status, false, false, false
 		}
 		if status.Done || status.Waiting {
-			return status, true, false
+			return status, true, false, false
 		}
 		if ctx.Err() != nil {
-			return status, true, false
+			return status, true, false, false
 		}
 		if UserPending() {
-			return status, true, true
+			return status, true, true, false
+		}
+		if arrived() {
+			return status, true, false, true
 		}
 	}
 }
 
 // sleepInterruptibly runs a plain wait in slices so it can end the moment
-// someone types. completed reports that the full duration elapsed; interrupted
-// reports that a person is waiting for attention.
-func sleepInterruptibly(ctx context.Context, sleep func(context.Context, time.Duration) bool, total time.Duration) (completed, interrupted bool) {
+// someone types or a new notice arrives. completed reports that the full
+// duration elapsed; interrupted reports that a person is waiting for attention;
+// noticed reports a new notice.
+func sleepInterruptibly(ctx context.Context, sleep func(context.Context, time.Duration) bool, total time.Duration, arrived func() bool) (completed, interrupted, noticed bool) {
 	// Progress is counted in the slices asked for, not off the wall clock: the
 	// sleep function is injectable, and a test one that returns without
 	// actually sleeping would leave a wall-clock deadline unreachable — an
@@ -469,12 +517,15 @@ func sleepInterruptibly(ctx context.Context, sleep func(context.Context, time.Du
 			slice = remaining
 		}
 		if !sleep(ctx, slice) {
-			return false, false
+			return false, false, false
 		}
 		slept += slice
 		if UserPending() {
-			return false, true
+			return false, true, false
+		}
+		if arrived() {
+			return false, false, true
 		}
 	}
-	return true, false
+	return true, false, false
 }

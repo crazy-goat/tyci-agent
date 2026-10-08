@@ -41,6 +41,16 @@ func (f *fakeJobMailbox) Drain(id string) []string {
 	return f.drainOut[id]
 }
 
+func (f *fakeJobMailbox) Posted(id string) uint64 {
+	var n uint64
+	for _, p := range f.posts {
+		if p.id == id {
+			n++
+		}
+	}
+	return n
+}
+
 func withFakeMailbox(t *testing.T, f *fakeJobMailbox) {
 	old := getJobMailbox()
 	t.Cleanup(func() { SetJobMailbox(old) })

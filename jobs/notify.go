@@ -69,6 +69,8 @@ type Notifier struct {
 	pending []notice
 	shown   []shownKey
 	signal  chan struct{}
+	// queued counts every notice ever queued, drained or not. See Queued.
+	queued uint64
 }
 
 func NewNotifier() *Notifier {
@@ -89,6 +91,7 @@ func (n *Notifier) Notify(text string) {
 	}
 	n.mu.Lock()
 	n.pending = append(n.pending, notice{text: text})
+	n.queued++
 	if len(n.pending) > maxPendingNotices {
 		n.pending = n.pending[len(n.pending)-maxPendingNotices:]
 	}
@@ -106,6 +109,7 @@ func (n *Notifier) NotifyQuiet(text string) {
 	}
 	n.mu.Lock()
 	n.pending = append(n.pending, notice{text: text})
+	n.queued++
 	if len(n.pending) > maxPendingNotices {
 		n.pending = n.pending[len(n.pending)-maxPendingNotices:]
 	}
@@ -138,6 +142,7 @@ func (n *Notifier) NotifyQuestion(jobID string, seq int, text string) {
 		return
 	}
 	n.pending = append(n.pending, notice{jobID: jobID, seq: seq, text: text})
+	n.queued++
 	if len(n.pending) > maxPendingNotices {
 		n.pending = n.pending[len(n.pending)-maxPendingNotices:]
 	}
@@ -291,3 +296,14 @@ func (n *Notifier) Clear() {
 // an empty result, since another consumer (NextMessages during an in-flight
 // turn) may have taken the notices first.
 func (n *Notifier) Signal() <-chan struct{} { return n.signal }
+
+// Queued returns how many notices have ever been queued, whether or not they
+// were drained since. It only grows (Clear does not reset it), so a caller
+// that remembers the value can tell whether a new notice arrived since, without
+// taking the notice away from Drain. A notice dropped by NotifyQuestion because
+// MarkQuestionShown already covered it is not counted.
+func (n *Notifier) Queued() uint64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.queued
+}

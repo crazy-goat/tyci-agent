@@ -101,6 +101,9 @@ func BackgroundBashEnabled() bool { return backgroundBashEnabled.Load() && getJo
 type JobNotifier interface {
 	Notify(text string)
 	MarkQuestionShown(jobID string, seq int)
+	// Queued returns how many notices were ever queued. wait compares it
+	// between two calls to see whether a new notice arrived.
+	Queued() uint64
 }
 
 // jobNotifier is nil until SetJobNotifier is called. Unlike the other job
@@ -125,6 +128,15 @@ func SetJobNotifier(n JobNotifier) {
 	jobNotifierMu.Lock()
 	jobNotifier = n
 	jobNotifierMu.Unlock()
+}
+
+// getJobNotifier copies the current JobNotifier out under RLock — see
+// getJobMailbox's doc comment (message.go) for why callers never hold the lock
+// while calling into the interface.
+func getJobNotifier() JobNotifier {
+	jobNotifierMu.RLock()
+	defer jobNotifierMu.RUnlock()
+	return jobNotifier
 }
 
 // notifyToParent routes text to the queue belonging to parentID — the job

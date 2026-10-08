@@ -250,9 +250,10 @@ out of date.
   notice: finished  -> wait(job_id = "...") reads the result.
 
 wait(job_id) is a wait for the RESULT, not a sleep: it stays there until the job
-finishes or blocks on a question, and ends early if someone types. So one call
-gets you the answer. It is still not a substitute for the notice — calling it
-before you are told just means standing in a queue you were never in.
+finishes or blocks on a question, and ends early if someone types or a new
+notice arrives (for example a watchdog alarm). So one call gets you the answer.
+It is still not a substitute for the notice — calling it before you are told
+just means standing in a queue you were never in.
   notice: waiting   -> relay it (to the user, or genuinely-known info) unless
                        you truly know the answer, via
                        answer_job(job_id = "...", text = "...") NOW.

@@ -253,6 +253,9 @@ type Job struct {
 	// rare, deliberate act, not something fired on every streamed token), so
 	// a plain slice under the registry lock is simplest.
 	mailbox []string
+	// posted counts every message accepted by Registry.Post for this job,
+	// drained or not. See Registry.Posted.
+	posted uint64
 
 	// lastHeartbeatNudgeAt is when Registry.NeedsProgressHeartbeat last
 	// returned true for this job — i.e. when the harness last injected a
