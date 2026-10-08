@@ -262,7 +262,7 @@ func TestBuildUsageDetail_TotalRowSumsTokensAcrossModels(t *testing.T) {
 		if strings.HasPrefix(strings.TrimSpace(l), "total") {
 			total = l
 		}
-		if strings.HasPrefix(strings.TrimSpace(l), "of that delegated") {
+		if strings.HasPrefix(strings.TrimSpace(l), "subsession") {
 			delegated = l
 		}
 	}
@@ -275,7 +275,7 @@ func TestBuildUsageDetail_TotalRowSumsTokensAcrossModels(t *testing.T) {
 }
 
 // A scout row must render with its own "↳scout" label (distinct from an
-// ordinary subagent's "↳"), and "of that delegated"/"of that scout" must
+// ordinary subagent's "↳"), and "subsession"/"of that scout" must
 // both include it — the per-model breakdown is where a burst of scout
 // calls would otherwise hide inside what looks like an ordinary subagent
 // line.
@@ -298,7 +298,7 @@ func TestBuildUsageDetail_ScoutRowLabeledSeparatelyFromSubagent(t *testing.T) {
 	m := TuiModel{modelName: "m1"}
 	lines := strings.Join(m.buildUsageDetail(40), "\n")
 
-	for _, want := range []string{"↳scout m3", "of that delegated", "of that scout"} {
+	for _, want := range []string{"↳scout m3", "subsession", "of that scout"} {
 		if !strings.Contains(lines, want) {
 			t.Errorf("detail missing %q:\n%s", want, lines)
 		}
@@ -307,6 +307,51 @@ func TestBuildUsageDetail_ScoutRowLabeledSeparatelyFromSubagent(t *testing.T) {
 	// scout one, or the two kinds would be indistinguishable again.
 	if strings.Contains(lines, "↳scout m2") {
 		t.Errorf("subagent row m2 must not carry the scout label:\n%s", lines)
+	}
+}
+
+// The main model row comes first, then the subagent and scout rows, whatever
+// order they were recorded in. The subsession line sits above the scout line,
+// and the total is the last line of the session block.
+func TestBuildUsageDetail_MainModelFirstTotalLast(t *testing.T) {
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"p":{"id":"p","models":{
+		"m1":{"id":"m1","name":"m1","cost":{"input":1,"output":1}},
+		"m2":{"id":"m2","name":"m2","cost":{"input":1,"output":1}},
+		"m3":{"id":"m3","name":"m3","cost":{"input":1,"output":1}}
+	}}}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+	ledger.Record(ledger.Scout, "p", "m3", "", stream.Usage{Input: 2000, Output: 300})
+	ledger.Record(ledger.Subagent, "p", "m2", "", stream.Usage{Input: 5000, Output: 200})
+	ledger.Record(ledger.Main, "p", "m1", "", stream.Usage{Input: 1000, Output: 100})
+
+	m := TuiModel{modelName: "m1"}
+	lines := m.buildUsageDetail(40)
+
+	index := func(prefix string) int {
+		for i, l := range lines {
+			if strings.HasPrefix(strings.TrimSpace(l), prefix) {
+				return i
+			}
+		}
+		t.Fatalf("no line starts with %q:\n%s", prefix, strings.Join(lines, "\n"))
+		return -1
+	}
+	mainRow := index("m1")
+	subRow := index("↳ m2")
+	scoutRow := index("↳scout m3")
+	subsession := index("subsession")
+	scoutLine := index("of that scout")
+	total := index("total")
+	if mainRow >= subRow || subRow >= scoutRow || scoutRow >= subsession || subsession >= scoutLine || scoutLine >= total {
+		t.Errorf("rows in the wrong order:\n%s", strings.Join(lines, "\n"))
+	}
+	if total != len(lines)-1 {
+		t.Errorf("total must be the last line (%d), got line %d:\n%s", len(lines)-1, total, strings.Join(lines, "\n"))
 	}
 }
 
