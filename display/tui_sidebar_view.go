@@ -436,6 +436,9 @@ func (m TuiModel) renderSidebarSessions(width int) []string {
 	if m.sessionLister == nil {
 		return []string{"", "  Sessions aren't wired up in this build."}
 	}
+	if m.sessionsLoadedAt.IsZero() {
+		return []string{"", "  Loading sessions..."}
+	}
 	if len(entries) == 0 {
 		return []string{"", "  No sessions recorded for this project yet."}
 	}

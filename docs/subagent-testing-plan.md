@@ -6,7 +6,7 @@ subagent spawn (`subagent(async: true)`), the background jobs panel in the TUI
 (`Ctrl+B`) and `/btw`. Each scenario: steps, expected result, where to look
 for the problem if the result does not match.
 
-Run `tyci` in TUI mode (not `--print`/console) for scenarios involving
+Run `tyci tui` (not `tyci run`) for scenarios involving
 panels/modals — those modes have no UI to observe.
 
 ## 0. Baseline — nothing should break
@@ -126,7 +126,7 @@ did before this whole round of changes.
       btw from 4.1 is still running — the process should exit without hanging
       (the goroutine is detached from the session context, but should not block
       shutdown).
-- [ ] **5.3** `--print`/console mode (non-TUI): `subagent(async: true)`
+- [ ] **5.3** `tyci run` mode (non-TUI): `subagent(async: true)`
       still returns `job_id` correctly despite there being no panel to show it
       (the panel exists only in the TUI — check that this does not crash in the mode without
       TUI).

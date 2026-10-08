@@ -713,20 +713,45 @@ func (m TuiModel) sidebarResumeSubagentRow() (tea.Model, tea.Cmd) {
 
 // ─── Data sources ───────────────────────────────────────────────────────────
 
-// sidebarSessionEntries returns this project's resumable sessions,
-// newest-first, or nil if no lister was ever wired (see TUI.SetSessionLister)
-// or it returned nothing.
-func (m TuiModel) sidebarSessionEntries() []TuiResumeEntry {
-	if m.sessionLister == nil {
+// sidebarSessionsTTL is how old the Sessions tab list may get before the next
+// message starts a new load (see sidebarSessionsCmd).
+const sidebarSessionsTTL = 5 * time.Second
+
+// sidebarSessionsMsg carries one finished load of the Sessions tab list,
+// newest-first.
+type sidebarSessionsMsg struct {
+	entries []TuiResumeEntry
+}
+
+// sidebarSessionsCmd starts a load of the Sessions tab list when that tab is
+// on screen, the list is older than sidebarSessionsTTL and no load is in
+// flight. The lister reads the session files, so the load runs in the
+// returned command, off the Bubble Tea goroutine; View reads only the cached
+// list. Update calls this on the model it returns.
+func (m *TuiModel) sidebarSessionsCmd() tea.Cmd {
+	if m.sessionLister == nil || m.sessionsLoading || !m.sidebarActive || m.sidebarTab != sidebarTabSessions {
 		return nil
 	}
-	entries := m.sessionLister()
-	sorted := make([]TuiResumeEntry, len(entries))
-	copy(sorted, entries)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].ModTime.After(sorted[j].ModTime)
-	})
-	return sorted
+	if !m.sessionsLoadedAt.IsZero() && time.Since(m.sessionsLoadedAt) < sidebarSessionsTTL {
+		return nil
+	}
+	m.sessionsLoading = true
+	lister := m.sessionLister
+	return func() tea.Msg {
+		entries := lister()
+		sorted := make([]TuiResumeEntry, len(entries))
+		copy(sorted, entries)
+		sort.SliceStable(sorted, func(i, j int) bool {
+			return sorted[i].ModTime.After(sorted[j].ModTime)
+		})
+		return sidebarSessionsMsg{entries: sorted}
+	}
+}
+
+// sidebarSessionEntries returns the cached Sessions tab list, newest-first.
+// It is empty until the first load arrives (see sidebarSessionsCmd).
+func (m TuiModel) sidebarSessionEntries() []TuiResumeEntry {
+	return m.sessionEntries
 }
 
 // sidebarBashJobs returns backgrounded bash jobs (jobs.KindBash), newest

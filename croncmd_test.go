@@ -72,7 +72,7 @@ func TestCronTickRunsWithNoInteractiveSessionAndSkipsWhatIsNotDue(t *testing.T) 
 	}
 
 	// tick is a plain one-shot invocation of the binary — nothing else of
-	// tyci's is running, no console/TUI session, which is the whole point:
+	// tyci's is running, no TUI session, which is the whole point:
 	// it must work exactly like this so an OS scheduler can call it.
 	cmd := exec.Command(binPath, "cron", "tick")
 	cmd.Dir = temp
