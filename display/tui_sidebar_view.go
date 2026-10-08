@@ -464,28 +464,54 @@ func formatDurationShort(d time.Duration) string {
 	return fmt.Sprintf("%dm", int(d.Minutes()))
 }
 
-func (m TuiModel) formatSubagentRow(row subagentTreeRow, width int) string {
+// taskColumnGap is the number of spaces between the token and the cost column
+// of a Tasks row.
+const taskColumnGap = 2
+
+// subagentTokens is the token column of a Tasks row, for example "148k tok".
+func subagentTokens(row subagentTreeRow) string {
+	return fmtTokens(row.ownTokens) + " tok"
+}
+
+// subagentCost is the cost column of a Tasks row, for example "$0.053".
+func subagentCost(row subagentTreeRow) string {
+	return "$" + fmtUSD(row.rollupUSD)
+}
+
+// subagentColumnWidths returns the widths of the token and the cost column: the
+// widest value of each over all rows. Every row uses the same widths, so the
+// columns line up.
+func subagentColumnWidths(rows []subagentTreeRow) (tokW, costW int) {
+	for _, row := range rows {
+		tokW = max(tokW, lipgloss.Width(subagentTokens(row)))
+		costW = max(costW, lipgloss.Width(subagentCost(row)))
+	}
+	return tokW, costW
+}
+
+// formatSubagentRow lays out a Tasks row: the label on the left, then the token
+// and the cost columns, right-aligned in tokW and costW columns. When the row is
+// too narrow, the label is cut first, then the token column, then the cost column.
+func (m TuiModel) formatSubagentRow(row subagentTreeRow, width, tokW, costW int) string {
 	indent := strings.Repeat("  ", row.depth)
-	tokens := fmtTokens(row.ownTokens)
-	cost := "$" + fmtUSD(row.rollupUSD)
+	right := fitCells([]string{padLeft(subagentTokens(row), tokW), padLeft(subagentCost(row), costW)}, taskColumnGap, width)
 
 	if row.isRoot {
-		return fmt.Sprintf("%smain  %s tok  %s", indent, tokens, cost)
+		return lineWithRight(indent+"main", right, width)
 	}
 
 	icon, color := jobStatusIcon(row.job.Status)
-	iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
 	label := row.job.Description
 	if row.job.Status == jobs.StatusWaitingAnswer && row.job.Question != "" {
 		label = "asks: " + row.job.Question
 	}
-	avail := width - len(indent) - 4 /* icon+space */ - len(tokens) - len(cost) - 8
-	if avail < 4 {
-		avail = 4
+	// Cut the row while it is plain text, so no escape sequence is split. The
+	// icon is colored afterwards. It is the first character after the indent.
+	line := lineWithRight(indent+icon+" "+label, right, width)
+	if strings.HasPrefix(line, indent+icon) {
+		iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
+		line = indent + iconStyled + line[len(indent+icon):]
 	}
-	label = truncateString(label, avail)
-
-	line := fmt.Sprintf("%s%s %s  %s tok  %s", indent, iconStyled, label, tokens, cost)
 
 	// Dim a finished row so a live one stands out — except waiting_answer,
 	// which must never read as history (TODO item 1's explicit requirement).

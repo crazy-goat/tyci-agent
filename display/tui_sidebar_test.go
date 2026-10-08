@@ -1733,6 +1733,130 @@ func TestSidebarTaskRows_UsesRenderWidth(t *testing.T) {
 	}
 }
 
+// subagentColumnsModel returns a model with the main conversation, a top-level
+// subagent and a nested one, with different label lengths and token counts.
+func subagentColumnsModel() TuiModel {
+	ledger.Reset()
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "20261008-125037-606/review", StartedAt: time.Now().Add(-2 * time.Minute)})
+	m.applyJobUpdate(jobs.Job{ID: "job-2", Kind: jobs.KindSubagent, ParentID: "job-1", Status: jobs.StatusRunning, Description: "20261008-125037-606/worker/a/much/longer/label", StartedAt: time.Now().Add(-time.Minute)})
+	// An unpriced model keeps the cost at $0.00 in every row.
+	ledger.Record(ledger.Main, "p", "no-such-model", "", stream.Usage{Input: 1_200_000})
+	ledger.Record(ledger.Subagent, "p", "no-such-model", "job-1", stream.Usage{Input: 148_000})
+	ledger.Record(ledger.Subagent, "p", "no-such-model", "job-2", stream.Usage{Input: 6_900_000})
+	return m
+}
+
+// TestSidebarTasks_TokenAndCostColumnsLineUp checks that the token and the cost
+// columns end at the same offsets in the main row and in both subagent rows,
+// and that every row is exactly as wide as the sidebar.
+func TestSidebarTasks_TokenAndCostColumnsLineUp(t *testing.T) {
+	t.Cleanup(ledger.Reset)
+	m := subagentColumnsModel()
+	const width = 60
+	var lines []string
+	for _, row := range m.sidebarTaskRows(width) {
+		if row.isMain || row.subagent {
+			lines = append(lines, ansi.Strip(row.line))
+		}
+	}
+	if len(lines) != 3 {
+		t.Fatalf("want the main row and two subagent rows, got %d: %q", len(lines), lines)
+	}
+	wantTokens := []string{"1.2M tok", "148k tok", "6.9M tok"}
+	wantPrefix := []string{"main", "  ✓ 20261008-125037-606/review", "    ⟳ "}
+	want := -1
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w != width {
+			t.Errorf("line %q: width %d, want %d", line, w, width)
+		}
+		if !strings.HasPrefix(line, wantPrefix[i]) {
+			t.Errorf("line %q: want prefix %q", line, wantPrefix[i])
+		}
+		if !strings.HasSuffix(line, "$0.00") {
+			t.Errorf("line %q: want the cost at the end", line)
+		}
+		if !strings.Contains(line, wantTokens[i]) {
+			t.Errorf("line %q: want tokens %q", line, wantTokens[i])
+		}
+		// The text before the cost ends with the token column. Its width does
+		// not depend on the label, so it is the same in every row.
+		end := lipgloss.Width(strings.TrimRight(strings.TrimSuffix(line, "$0.00"), " "))
+		if want < 0 {
+			want = end
+		} else if end != want {
+			t.Errorf("line %q: tokens end at column %d, want column %d", line, end, want)
+		}
+	}
+}
+
+// TestSidebarTasks_NarrowRowCutsLabelThenTokensThenCost checks the order in
+// which a narrow Tasks row gives up its parts: the label first, then the
+// token column, then the cost column.
+func TestSidebarTasks_NarrowRowCutsLabelThenTokensThenCost(t *testing.T) {
+	t.Cleanup(ledger.Reset)
+	m := subagentColumnsModel()
+	tests := []struct {
+		width            int
+		wantTokens, want bool
+	}{
+		{width: 60, wantTokens: true, want: true},
+		{width: 17, wantTokens: true, want: true},
+		{width: 16, wantTokens: false, want: true},
+		{width: 6, wantTokens: false, want: false},
+	}
+	for _, tt := range tests {
+		var line string
+		for _, row := range m.sidebarTaskRows(tt.width) {
+			if row.subagent && row.job.ID == "job-1" {
+				line = ansi.Strip(row.line)
+			}
+		}
+		if w := lipgloss.Width(line); w != tt.width {
+			t.Errorf("width %d: line %q has width %d", tt.width, line, w)
+		}
+		if got := strings.Contains(line, "148k tok"); got != tt.wantTokens {
+			t.Errorf("width %d: tokens shown = %v, want %v: %q", tt.width, got, tt.wantTokens, line)
+		}
+		if got := strings.HasSuffix(line, "$0.00"); got != tt.want {
+			t.Errorf("width %d: cost shown = %v, want %v: %q", tt.width, got, tt.want, line)
+		}
+	}
+}
+
+// TestSubagentRows_SharedColumnWidthsLineUp checks that rows whose token and
+// cost values differ in width still end their columns at the same offsets,
+// because every row is padded to the widest value of its column.
+func TestSubagentRows_SharedColumnWidthsLineUp(t *testing.T) {
+	m := newTestModelForSidebar()
+	rows := []subagentTreeRow{
+		{isRoot: true, ownTokens: 1_200_000, rollupUSD: 1.06},
+		{depth: 1, job: jobs.Job{ID: "job-1", Status: jobs.StatusDone, Description: "review"}, ownTokens: 500, rollupUSD: 0.053},
+		{depth: 2, job: jobs.Job{ID: "job-2", Status: jobs.StatusRunning, Description: "worker"}, ownTokens: 148_000, rollupUSD: 12.34},
+	}
+	tokW, costW := subagentColumnWidths(rows)
+	const width = 60
+	want := -1
+	for _, row := range rows {
+		line := ansi.Strip(m.formatSubagentRow(row, width, tokW, costW))
+		cost := subagentCost(row)
+		if w := lipgloss.Width(line); w != width {
+			t.Errorf("line %q: width %d, want %d", line, w, width)
+		}
+		if !strings.HasSuffix(line, cost) {
+			t.Errorf("line %q: want the cost %q at the end", line, cost)
+		}
+		// The text before the cost ends with the token column. That column must
+		// end at the same offset in every row.
+		end := lipgloss.Width(strings.TrimRight(strings.TrimSuffix(line, cost), " "))
+		if want < 0 {
+			want = end
+		} else if end != want {
+			t.Errorf("line %q: tokens end at column %d, want column %d", line, end, want)
+		}
+	}
+}
+
 func TestSidebarTasks_SubagentRUsesJobCursor(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.input.SetValue("")
