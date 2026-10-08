@@ -97,6 +97,7 @@ func (m TuiModel) runsTab(width int) runsView {
 	}
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	now := time.Now()
+	durW, costW := runsColumnWidths(rows, now)
 	for i, r := range rows {
 		if i > 0 && runFinished(r) && !runFinished(rows[i-1]) {
 			v.add(dim.Render(strings.Repeat("─", width)), -1)
@@ -107,7 +108,7 @@ func (m TuiModel) runsTab(width int) runsView {
 		if !selected && runFinished(r) {
 			style = dim
 		}
-		v.add(style.Render(lineWithRight(" "+runHeader(r, now), r.Cost, width)), i)
+		v.add(style.Render(runRowLine(" "+runHeader(r), runDuration(r, now), r.Cost, width, durW, costW)), i)
 		if !m.sidebarRunsExpanded[r.ID] {
 			continue
 		}
@@ -122,40 +123,68 @@ func (m TuiModel) runsTab(width int) runsView {
 	return v
 }
 
-// runHeader is the one-line view of a run without its cost: "#472 done
-// (merged) 12m3s" for a finished run, "#632 code (worker) 19s" for an active one.
-func runHeader(r TuiRunRow, now time.Time) string {
+// runColumnGap is the number of spaces between the duration and the cost of a run row.
+const runColumnGap = 3
+
+// runsColumnWidths returns the widths of the duration column and the cost column
+// of the run rows. Every row uses the same widths, so the columns line up.
+func runsColumnWidths(rows []TuiRunRow, now time.Time) (durW, costW int) {
+	for _, r := range rows {
+		durW = max(durW, lipgloss.Width(runDuration(r, now)))
+		costW = max(costW, lipgloss.Width(r.Cost))
+	}
+	return durW, costW
+}
+
+// runHeader is the label of a run without its time and cost: "#472 done
+// (merged)" for a finished run, "#632 code (worker)" for an active one.
+func runHeader(r TuiRunRow) string {
 	head := fmt.Sprintf("#%d", r.Issue)
 	if !runFinished(r) {
-		return head + " " + runStepText(r, now)
+		return head + " " + runStep(r)
 	}
 	head += " " + r.Status
 	if r.Result != "" {
 		head += " (" + r.Result + ")"
 	}
-	if r.Took > 0 {
-		head += " " + fmtRunDuration(r.Took)
-	}
 	return head
 }
 
-// runStepText is the current step of an active run: "code (worker) 19s", or
-// "ask: code 19s" when the run is paused. A check step has no role: "script".
-// The time is how long the step runs so far.
-func runStepText(r TuiRunRow, now time.Time) string {
-	text := r.State
+// runDuration is the time column of a run row: how long the current step, or
+// the pause, of an active run runs so far, or the time of the finished steps of
+// a finished run. Empty when there is no time to show.
+func runDuration(r TuiRunRow, now time.Time) string {
+	if runFinished(r) {
+		if r.Took > 0 {
+			return fmtRunDuration(r.Took)
+		}
+		return ""
+	}
+	if r.Since.IsZero() {
+		return ""
+	}
+	return fmtRunDuration(now.Sub(r.Since))
+}
+
+// runStep is the current step of an active run without its time: "code (worker)",
+// or "ask: code" when the run is paused. A check step has no role: "ci_wait (script)".
+func runStep(r TuiRunRow) string {
 	switch {
 	case r.Status == "paused":
-		text = "ask: " + text
+		return "ask: " + r.State
 	case r.Role != "":
-		text += " (" + r.Role + ")"
+		return r.State + " (" + r.Role + ")"
 	default:
-		text += " (script)"
+		return r.State + " (script)"
 	}
-	if !r.Since.IsZero() {
-		text += " " + fmtRunDuration(now.Sub(r.Since))
+}
+
+// runStepText is the current step of an active run with its time: "code (worker) 19s".
+func runStepText(r TuiRunRow, now time.Time) string {
+	if dur := runDuration(r, now); dur != "" {
+		return runStep(r) + " " + dur
 	}
-	return text
+	return runStep(r)
 }
 
 // fmtRunDuration rounds a duration to the second: "19s", "1m52s".
@@ -175,4 +204,30 @@ func lineWithRight(left, right string, width int) string {
 	}
 	left = truncateToWidth(left, width-rw-1)
 	return left + strings.Repeat(" ", width-lipgloss.Width(left)-rw) + right
+}
+
+// runRowLine lays out a run row: left, then the duration and the cost, both
+// right-aligned in columns durW and costW wide. When the row is too narrow, left
+// is cut first, then the duration column is dropped, then the cost column.
+func runRowLine(left, dur, cost string, width, durW, costW int) string {
+	var cells []string
+	if durW > 0 {
+		cells = append(cells, padLeft(dur, durW))
+	}
+	if costW > 0 {
+		cells = append(cells, padLeft(cost, costW))
+	}
+	for len(cells) > 0 {
+		right := strings.Join(cells, strings.Repeat(" ", runColumnGap))
+		if width > lipgloss.Width(right)+1 {
+			return lineWithRight(left, right, width)
+		}
+		cells = cells[1:]
+	}
+	return truncateToWidth(left, width)
+}
+
+// padLeft right-aligns s in width columns.
+func padLeft(s string, width int) string {
+	return strings.Repeat(" ", max(0, width-lipgloss.Width(s))) + s
 }
