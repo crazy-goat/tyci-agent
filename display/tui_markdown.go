@@ -132,6 +132,7 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				}
 				freezeThinkingSummary(&m.blocks[idx], true)
 				m.blocks[idx].toolState = "done"
+				m.blocks[idx].endTime = time.Now()
 				// Drop the stale cache so the next render picks up the
 				// now-final duration/summary; getBlockLines will recompute
 				// and cache the (always one) line on demand, exactly as it
