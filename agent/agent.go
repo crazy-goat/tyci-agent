@@ -94,9 +94,10 @@ type Config struct {
 
 	// PendingJobs, if set, is called when the agent would otherwise finish the
 	// turn and returns one line per background job that is still running or —
-	// worse — blocked waiting for an answer. When non-empty the agent injects
-	// a harness-authored reminder and runs one more iteration, the same shape
-	// as PendingTodos above.
+	// worse — blocked waiting for an answer. When a line describes a blocked
+	// job the agent injects a harness-authored reminder and runs one more
+	// iteration, the same shape as PendingTodos above. A running job alone
+	// does not: it sends its own completion notice.
 	//
 	// This exists because a forgotten blocked child is the most expensive
 	// mistake this environment makes possible. It sits there making no
@@ -607,9 +608,10 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			}
 			// Same idea one level out: a background job left running is
 			// usually fine, but a job blocked on a question is a dead end
-			// only this turn can open.
+			// only this turn can open. A running job sends its own
+			// completion notice, so only a blocked one is worth a reminder.
 			if cfg.PendingJobs != nil && jobReminders < maxJobReminders {
-				if pending := cfg.PendingJobs(); len(pending) > 0 {
+				if pending := cfg.PendingJobs(); hasBlockedJob(pending) {
 					jobReminders++
 					reminder := buildJobReminder(pending, cfg.Interactive)
 					*msgs = append(*msgs, connector.Message{
@@ -770,6 +772,18 @@ func buildTodoReminder(pending []string) string {
 	b.WriteString("todo/doing without explanation, and do not mark anything done that you did not actually complete.\n")
 	b.WriteString("</system-reminder>")
 	return b.String()
+}
+
+// hasBlockedJob reports whether one of the PendingJobs lines describes a job
+// that waits for an answer. The line format is the one of
+// jobs.Registry.PendingLines.
+func hasBlockedJob(lines []string) bool {
+	for _, line := range lines {
+		if strings.HasPrefix(line, "WAITING FOR ANSWER:") {
+			return true
+		}
+	}
+	return false
 }
 
 // buildJobReminder produces the harness-authored reminder injected when the
