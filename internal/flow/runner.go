@@ -111,7 +111,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				}
 			}
 			r.warnPendingProposal(st)
-			if (!ranAgent(st) || wasMerged(st)) && r.OnSkip != nil {
+			if (!ranAgent(st) || WasMerged(st)) && r.OnSkip != nil {
 				r.OnSkip(st)
 			}
 			r.notify("run " + st.Run + " done")
@@ -516,8 +516,8 @@ func kindOf(s State) string {
 	return "check"
 }
 
-// wasMerged reports whether the merge check returned "merged".
-func wasMerged(st *RunState) bool {
+// WasMerged reports whether the merge check returned "merged".
+func WasMerged(st *RunState) bool {
 	for _, h := range st.History {
 		if h.Kind == "check" && h.State == "merge" && h.Key == "merged" {
 			return true

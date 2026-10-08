@@ -271,7 +271,7 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 	switch st.Status {
 	case "done":
 		switch {
-		case wasMerged(st):
+		case WasMerged(st):
 			text += " done: merged " + prURL(st)
 		case st.PR > 0:
 			text += " stopped: PR " + prURL(st) + " is still open"

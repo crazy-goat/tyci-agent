@@ -488,7 +488,7 @@ func resumeKilledInCI(t *testing.T, script map[string][]string, setup func(*e2e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.st.Status != "done" || !wasMerged(e.st) || !hasResumedStep(e.st) || e.st.Resumed != 1 {
+	if e.st.Status != "done" || !WasMerged(e.st) || !hasResumedStep(e.st) || e.st.Resumed != 1 {
 		t.Fatalf("status %s, resumed %d, history %v", e.st.Status, e.st.Resumed, e.trail())
 	}
 	if got := e.st.Visits["ci"]; got != wantVisits {
@@ -523,7 +523,7 @@ func TestResume_ReviewStateRenamed_StillPostsReview(t *testing.T) {
 	if err := e.newRunner().Continue(ctx2, st); err != nil {
 		t.Fatalf("continue: %v (status %s, reason %q)", err, st.Status, st.Reason)
 	}
-	if st.Status != "done" || !wasMerged(st) {
+	if st.Status != "done" || !WasMerged(st) {
 		t.Fatalf("status %s, reason %q", st.Status, st.Reason)
 	}
 	for _, h := range st.History {
