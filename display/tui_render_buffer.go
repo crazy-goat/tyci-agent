@@ -208,22 +208,15 @@ func compactKind(kind string) bool { return kind == "tool" || kind == "thinking"
 // buildAllFlatRenderLines builds the flat line array for ALL blocks.
 func (m *TuiModel) buildAllFlatRenderLines() []flatRenderLine {
 	var all []flatRenderLine
-	for i := range m.blocks {
-		lines := m.getBlockLines(i, false)
-		if len(lines) == 0 {
-			continue
+	for first := 0; first < len(m.blocks); {
+		last := m.unitEnd(first)
+		if lines := m.unitFlatLines(first, last); len(lines) > 0 {
+			all = append(all, lines...)
+			if m.spacerAfter(last) {
+				all = append(all, flatRenderLine{Text: "", SourceKind: "spacer", BlockIndex: -1, SourceLine: -1})
+			}
 		}
-		for j, line := range lines {
-			all = append(all, flatRenderLine{
-				Text:       line,
-				SourceKind: m.blocks[i].kind,
-				BlockIndex: i,
-				SourceLine: j,
-			})
-		}
-		if m.spacerAfter(i) {
-			all = append(all, flatRenderLine{Text: "", SourceKind: "spacer", BlockIndex: -1, SourceLine: -1})
-		}
+		first = last + 1
 	}
 	if len(all) > 0 && all[len(all)-1].Text == "" {
 		all = all[:len(all)-1]
@@ -231,43 +224,33 @@ func (m *TuiModel) buildAllFlatRenderLines() []flatRenderLine {
 	return all
 }
 
-// buildFlatRenderLinesInRange returns flat lines for blocks that overlap with
-// the inclusive line range [startLine, endLine] in the total line space.
+// buildFlatRenderLinesInRange returns flat lines for the layout units that
+// overlap with the inclusive line range [startLine, endLine] in the total line
+// space.
 func (m *TuiModel) buildFlatRenderLinesInRange(startLine, endLine int) []flatRenderLine {
 	var visible []flatRenderLine
 	acc := 0 // accumulated line count so far
 
-	for i := range m.blocks {
-		lines := m.getBlockLines(i, false)
-		blockLines := len(lines)
-		if blockLines == 0 {
-			continue
-		}
-
-		hasSpacer := m.spacerAfter(i)
-		blockEnd := acc + blockLines
+	for first := 0; first < len(m.blocks); {
+		last := m.unitEnd(first)
+		count := m.unitLineCount(first, last)
+		hasSpacer := count > 0 && m.spacerAfter(last)
+		end := acc + count
 		if hasSpacer {
-			blockEnd++ // spacer line
+			end++ // spacer line
 		}
 
-		// Does this block overlap with the visible range?
-		if blockEnd > startLine && acc <= endLine {
-			// Include lines from this block
-			for j, line := range lines {
-				lineIdx := acc + j
-				if lineIdx >= startLine && lineIdx <= endLine {
-					visible = append(visible, flatRenderLine{
-						Text:       line,
-						SourceKind: m.blocks[i].kind,
-						BlockIndex: i,
-						SourceLine: j,
-					})
+		// Does this unit overlap with the visible range?
+		if count > 0 && end > startLine && acc <= endLine {
+			// Include lines from this unit
+			for j, line := range m.unitFlatLines(first, last) {
+				if lineIdx := acc + j; lineIdx >= startLine && lineIdx <= endLine {
+					visible = append(visible, line)
 				}
 			}
 			// Include spacer if it's in range
 			if hasSpacer {
-				spacerIdx := acc + blockLines
-				if spacerIdx >= startLine && spacerIdx <= endLine {
+				if spacerIdx := acc + count; spacerIdx >= startLine && spacerIdx <= endLine {
 					visible = append(visible, flatRenderLine{
 						Text: "", SourceKind: "spacer", BlockIndex: -1, SourceLine: -1,
 					})
@@ -276,12 +259,13 @@ func (m *TuiModel) buildFlatRenderLinesInRange(startLine, endLine int) []flatRen
 		}
 
 		// Advance accumulator
-		acc = blockEnd
+		acc = end
 
 		// Stop once we've passed the viewport
 		if acc > endLine {
 			break
 		}
+		first = last + 1
 	}
 	return visible
 }

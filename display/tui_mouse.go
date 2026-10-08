@@ -107,7 +107,16 @@ func (m *TuiModel) openToolModalAt(y int) {
 	if y < 0 || y >= m.messageRegionHeight() {
 		return
 	}
-	idx := m.blockAtVisibleLine(y)
+	line, ok := m.visibleLine(y)
+	if !ok {
+		return
+	}
+	// The header of a group toggles the group. Its steps open one by one.
+	if line.SourceKind == "group" {
+		m.toggleGroup(line.BlockIndex)
+		return
+	}
+	idx := line.BlockIndex
 	if idx < 0 || (m.blocks[idx].kind != "tool" && m.blocks[idx].kind != "thinking") {
 		return
 	}

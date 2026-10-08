@@ -159,6 +159,11 @@ type block struct {
 	// deltas stream in.
 	thinkingSummary string
 
+	// groupOpen shows the blocks of the group that starts at this block as
+	// individual lines below the group's header. Read on the first block of a
+	// group only (see tui_group.go).
+	groupOpen bool
+
 	// Markdown rendering cache (for "thinking" and "text" blocks)
 	dirty bool // content changed since last render
 

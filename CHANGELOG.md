@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- TUI: consecutive tool and thinking steps in the chat form one group line. The group is collapsed by default (#399).
+- TUI: while a step runs, the group line shows the step count and the latest step. When all steps finish, it shows the counts and the total time.
+- TUI: a click on the group line, or Ctrl+O, expands or collapses the group. A single step is not grouped.
+
 ### Fixed
 - Flow: a resumed agent job redacts the messages it writes after the resume, as its run transcript does. Before, these messages were written without redaction (#363).
 - Flow: the answer `resume` for a run paused at start-up keeps the visit counts of its saved state; it no longer counts a new visit. A run adopted by the orchestrator is forgotten when it ends (#388).

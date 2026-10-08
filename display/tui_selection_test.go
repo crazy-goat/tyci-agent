@@ -350,12 +350,15 @@ func TestBlockAtVisibleLine_ConsecutiveToolsNoSpacer(t *testing.T) {
 	}
 	m.cachedTotalLines = -1
 
-	// No spacer between consecutive tools: visY 0 → tool1, visY 1 → tool2
-	if idx := m.blockAtVisibleLine(0); idx != 0 {
-		t.Fatalf("blockAtVisibleLine(0) = %d, want 0 (tool1)", idx)
-	}
-	if idx := m.blockAtVisibleLine(1); idx != 1 {
-		t.Fatalf("blockAtVisibleLine(1) = %d, want 1 (tool2)", idx)
+	// The two tools are a group. Open it, so each tool draws its own line:
+	// visY 0 → group header (block 0), visY 1 → tool1 (block 0), visY 2 →
+	// tool2 (block 1). No blank line sits between the tools.
+	m.blocks[0].groupOpen = true
+	want := []int{0, 0, 1}
+	for visY, wantIdx := range want {
+		if idx := m.blockAtVisibleLine(visY); idx != wantIdx {
+			t.Fatalf("blockAtVisibleLine(%d) = %d, want %d", visY, idx, wantIdx)
+		}
 	}
 }
 
