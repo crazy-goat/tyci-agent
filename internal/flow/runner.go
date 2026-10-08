@@ -107,6 +107,9 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					return saveErr
 				}
 			}
+			if note := doneProposalNote(st, r.RunDir); note != "" {
+				r.warn(note)
+			}
 			if (!ranAgent(st) || wasMerged(st)) && r.OnSkip != nil {
 				r.OnSkip(st)
 			}

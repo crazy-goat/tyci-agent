@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Flow: when a fixer answers `ok` and the run ends, tyci names the workflow proposal in a notice. Before, a run that did not pause never showed it. A done run cannot answer the proposal (#392).
+
 ## [0.5.0] - 2026-10-08
 
 ### Changed

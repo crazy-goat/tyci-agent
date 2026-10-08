@@ -49,6 +49,17 @@ func findProposal(st *RunState, runDir string) string {
 	return ""
 }
 
+// doneProposalNote returns the notice for a proposal that a run never showed
+// because it ended without a pause (a fixer answered "ok"), or "". The run is
+// done, so the proposal cannot be answered; its files stay in the artifact dir.
+func doneProposalNote(st *RunState, runDir string) string {
+	dir := findProposal(st, runDir)
+	if dir == "" {
+		return ""
+	}
+	return "workflow run " + st.Run + " ended, a workflow proposal was not answered: " + proposalSummary(dir) + " (" + dir + ")"
+}
+
 // proposalKey is the sha256 of proposal.patch. An empty patch is an error.
 func proposalKey(dir string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(dir, "proposal.patch"))

@@ -122,6 +122,10 @@ patch is cut; `patch_file` is the path of the full patch that `apply` uses). Ans
 
 The run stays paused after either answer and waits for its normal answer.
 
+When a fixer answers `ok`, the run does not pause. If the run then ends, tyci sends a
+notice that names the proposal. The run is done, so you cannot answer the proposal.
+Its files stay in the artifact dir.
+
 See [docs/dogfooding.md](docs/dogfooding.md) for the full runbook.
 
 Orchestrator keys (section `orchestrator`; the project file wins key by key):
