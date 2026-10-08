@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -213,20 +215,46 @@ func TestResume_MissingWorktreeGoesToAsk(t *testing.T) {
 	}
 }
 
-func TestResume_ClaimRace(t *testing.T) {
-	home := t.TempDir()
-	st := saveRun(t, home, 1, nil)
-	dir := RunDir(home, "r", st.Run)
-	a, b := loadRunState(t, home, st.Run), loadRunState(t, home, st.Run)
-	// Both instances write their claim before either re-reads.
-	if err := claim(dir, a, 1001); err != nil {
+// Several instances scan the same run with a dead owner and resume it at once.
+// The run lock lets only one of them claim it; the others see the live owner.
+func TestResume_TwoInstancesClaimOnce(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	st := saveRun(t, e.home, 1, nil)
+	info, err := e.m.Info()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := claim(dir, b, 1002); err != nil {
-		t.Fatal(err)
+	const instances = 6
+	var claims atomic.Int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for range instances {
+		m := &Manager{Info: e.m.Info, Workflow: e.m.Workflow, NewRunner: e.m.NewRunner, Notify: e.m.Notify}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			m.mu.Lock()
+			ok, err := m.resumeRun(info, st)
+			m.mu.Unlock()
+			if err != nil {
+				t.Errorf("resume: %v", err)
+			}
+			if ok {
+				claims.Add(1)
+			}
+		}()
 	}
-	if owns(dir, 1001) || !owns(dir, 1002) {
-		t.Fatal("want exactly the last writer to continue")
+	close(start)
+	wg.Wait()
+	if n := claims.Load(); n != 1 {
+		t.Fatalf("claims = %d, want 1", n)
+	}
+	close(c.release)
+	e.notice(t)
+	if after := loadRunState(t, e.home, st.Run); after.Resumed != 1 {
+		t.Fatalf("resumed = %d, want 1", after.Resumed)
 	}
 }
 
@@ -355,11 +383,15 @@ func TestResume_ResumeOnlyForRestartPause(t *testing.T) {
 	}
 }
 
-// freezeStore stops writing once the run is inside state ci and cancels the
-// run: the file on disk then looks like tyci was killed during ci.
+// freezeStore stops writing at the nth save whose state is ci with the visit
+// count visits, and cancels the run: the file on disk then looks like tyci was
+// killed at that point.
 type freezeStore struct {
 	*Store
 	cancel context.CancelFunc
+	visits int
+	nth    int
+	seen   int
 	frozen bool
 }
 
@@ -370,19 +402,50 @@ func (f *freezeStore) Save(st *RunState) error {
 	if err := f.Store.Save(st); err != nil {
 		return err
 	}
-	if st.Current == "ci" && st.Visits["ci"] == 1 {
-		f.frozen = true
-		f.cancel()
+	if st.Current == "ci" && st.Visits["ci"] == f.visits {
+		f.seen++
+		if f.seen == f.nth {
+			f.frozen = true
+			f.cancel()
+		}
 	}
 	return nil
 }
 
 func TestResume_EndToEnd_StubScripts(t *testing.T) {
-	e := newE2E(t, happy())
+	// Killed in ci after the visit of ci was saved.
+	resumeKilledInCI(t, happy(), nil, freezeStore{visits: 1, nth: 1}, 1)
+}
+
+// Killed between the transition into ci and the visit save: the file has no
+// counted visit of ci. The resumed run counts it, so ci has one visit.
+func TestResume_EndToEnd_LostVisitCounted(t *testing.T) {
+	resumeKilledInCI(t, happy(), nil, freezeStore{visits: 0, nth: 1}, 1)
+}
+
+// Killed between the second transition into ci (oracle goto:ci) and its visit
+// save. The file has one counted visit of ci; the resumed run counts the second.
+func TestResume_EndToEnd_LostVisitCountedSecondEntry(t *testing.T) {
+	s := happy()
+	s["fixer"] = []string{"failed"}
+	s["oracle"] = []string{"goto:ci the PR head moved, wait for CI again"}
+	setup := func(e *e2e) { e.ctlSet("merge_fail_once", "") }
+	resumeKilledInCI(t, s, setup, freezeStore{visits: 1, nth: 2}, 2)
+}
+
+// resumeKilledInCI runs the e2e workflow with script until fz freezes it in ci,
+// then resumes the run through Manager.Start and checks the final visit count
+// of ci. setup, when set, prepares the stub gh before the run.
+func resumeKilledInCI(t *testing.T, script map[string][]string, setup func(*e2e), fz freezeStore, wantVisits int) {
+	e := newE2E(t, script)
+	if setup != nil {
+		setup(e)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	r := e.newRunner()
-	r.Store = &freezeStore{Store: &Store{Dir: e.runDir}, cancel: cancel}
+	fz.Store, fz.cancel = &Store{Dir: e.runDir}, cancel
+	r.Store = &fz
 	_ = r.Run(ctx, e.st)
 
 	// The killed process: state ci, status running, owner gone.
@@ -427,8 +490,8 @@ func TestResume_EndToEnd_StubScripts(t *testing.T) {
 	if e.st.Status != "done" || !wasMerged(e.st) || !hasResumedStep(e.st) || e.st.Resumed != 1 {
 		t.Fatalf("status %s, resumed %d, history %v", e.st.Status, e.st.Resumed, e.trail())
 	}
-	if got := e.st.Visits["ci"]; got != 1 {
-		t.Fatalf("visits ci = %d (before %s)", got, visitsBefore)
+	if got := e.st.Visits["ci"]; got != wantVisits {
+		t.Fatalf("visits ci = %d, want %d (before %s)", got, wantVisits, visitsBefore)
 	}
 	e.wantMerged()
 }
@@ -600,4 +663,64 @@ func TestAskUnfinished_NoAskStateNotifiesFail(t *testing.T) {
 	if got := loadRunState(t, e.home, st.Run); got.Status != "failed" {
 		t.Fatalf("run = %+v", got)
 	}
+}
+
+// A run resumed by a later Start takes a worker slot. With no free slot the
+// resume is refused and the stale run keeps its saved state.
+func TestWorkflowStart_ResumeRefusedAtWorkersLimit(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	e.m.SetWorkers(1)
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err != nil {
+		t.Fatal(err)
+	}
+	st := saveRun(t, e.home, 6, nil)
+	_, _, err := e.m.Start(context.Background(), StartRequest{Issue: 6})
+	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "orchestrator.workers is 1") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := loadRunState(t, e.home, st.Run); got.Resumed != 0 || got.Status != "running" {
+		t.Fatalf("refused run changed: %+v", got)
+	}
+	close(c.release)
+	e.notice(t)
+}
+
+// A paused run is adoptable at start-up, but a later fill takes only the runs a
+// resume made active (AdoptableResumed), so a paused run of a manual start does
+// not take a worker slot.
+func TestAdoptableResumed_SkipsPausedRuns(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	saveRun(t, e.home, 5, func(st *RunState) {
+		st.Status, st.Current, st.Ask = "paused", "ask", &Ask{Message: "Need a decision."}
+	})
+	if got := e.m.Adoptable(); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("adoptable = %v", got)
+	}
+	if got := e.m.AdoptableResumed(); len(got) != 0 {
+		t.Fatalf("adoptable resumed = %v", got)
+	}
+}
+
+// A run resumed by hand through Start is adoptable, so the orchestrator takes
+// its slot at the next fill.
+func TestWorkflowStart_ResumedByHandIsAdoptable(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	st := saveRun(t, e.home, 5, nil)
+	id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5})
+	if err != nil || id != st.Run {
+		t.Fatalf("id = %q, err = %v", id, err)
+	}
+	if got := e.m.Adoptable(); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("adoptable = %v", got)
+	}
+	if got := e.m.AdoptableResumed(); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("adoptable resumed = %v", got)
+	}
+	if id, paused, ok := e.m.Adopt(5); !ok || paused || id != st.Run {
+		t.Fatalf("adopt = %q, %v, %v", id, paused, ok)
+	}
+	close(c.release)
+	e.notice(t)
 }

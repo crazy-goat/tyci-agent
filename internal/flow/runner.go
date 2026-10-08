@@ -52,11 +52,13 @@ func (r *Runner) Run(ctx context.Context, st *RunState) error {
 
 // Continue runs st again from its saved state after a restart. The saved state
 // is entered without a new visit, so a crash loop does not use up max_visits.
+// A visit that the saved file does not count yet (EntryPending) is counted.
 func (r *Runner) Continue(ctx context.Context, st *RunState) error {
 	return r.run(ctx, st, true)
 }
 
-// run is Run; again skips the visit count of the first state.
+// run is Run; again skips the visit count of the first state unless that visit
+// is not counted in the saved state.
 func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -117,10 +119,13 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 		if s.Ask != "" {
 			return r.pause(st, s.Ask, "")
 		}
-		newVisit := !again
-		if again {
-			again = false
-		} else {
+		// A restart enters the saved state without a new visit. The visit is
+		// counted now when the saved file shows it was not counted: the crash
+		// came after the transition save and before the visit save (EntryPending),
+		// or the state has no counted visit at all. No visit is lost.
+		newVisit := !again || st.Visits[cur] == 0 || st.EntryPending
+		again = false
+		if newVisit {
 			if limit := r.effectiveLimit(s); limit > 0 && st.Visits[cur]+1 > limit {
 				askState, ok := r.WF.States["ask"]
 				if !ok || askState.Ask == "" {
@@ -130,6 +135,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				return r.pause(st, askState.Ask, "max_visits:"+cur)
 			}
 			st.Visits[cur]++
+			st.EntryPending = false
 		}
 		if r.Store != nil {
 			if saveErr := r.Store.Save(st); saveErr != nil {
@@ -185,6 +191,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Artifact:   art,
 			})
 			st.Current = next
+			st.EntryPending = true
 			st.UpdatedAt = time.Now()
 			if r.Store != nil {
 				if saveErr := r.Store.Save(st); saveErr != nil {
@@ -291,6 +298,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					Artifact:  art,
 				})
 				st.Current = next
+				st.EntryPending = true
 				st.UpdatedAt = time.Now()
 				if r.Store != nil {
 					if saveErr := r.Store.Save(st); saveErr != nil {
@@ -323,6 +331,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Note:      note,
 			})
 			st.Current = next
+			st.EntryPending = true
 			st.UpdatedAt = time.Now()
 			if r.Store != nil {
 				if saveErr := r.Store.Save(st); saveErr != nil {
@@ -375,6 +384,7 @@ func (r *Runner) skipCapped(st *RunState, s State, cur, key, note string) error 
 		StartedAt: now, EndedAt: now, Role: s.Agent, Note: note,
 	})
 	st.Current = next
+	st.EntryPending = true
 	st.UpdatedAt = now
 	if r.Store != nil {
 		return r.Store.Save(st)

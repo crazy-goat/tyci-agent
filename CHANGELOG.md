@@ -6,8 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- Lua workflows: the `.tyci/agents/*.lua` scripts and the `tyci workflow run` and `tyci workflow list` commands are removed. Use JSON workflows (v0.3.0) instead. `tyci workflow eject` stays.
+
 ### Fixed
 - Flow: the README states the keys that the `post_review` check state of a custom workflow needs: a `default` key, or one key for each answer of `post_review.sh` (`ok`, `skip` and `fail`). The runner does not change (#402).
+- Flow: two `tyci` processes that resume the same run at the same time take a lock in the run dir (`claim.lock`). Only one process claims the run (#350).
+- Flow: a `workflow_start` of an issue refuses a run that another live `tyci` process owns. It returns a busy error and does not create a second run (#350).
+- Flow: a resumed run counts a visit of a state when the crash came after the state change and before the visit was saved. This applies to the first entry and to a later entry of the state. No visit is lost. The file `state.json` has the new field `entry_pending` for this check (#350).
+- Flow: a `workflow_start` that resumes a run counts the run as a worker. When `orchestrator.workers` runs are active, the resume is refused and the run stays stale. The orchestrator takes the slot of the resumed run at its next fill (#350).
 - Flow: a resumed agent job redacts the messages it writes after the resume, as its run transcript does. Before, these messages were written without redaction (#363).
 - Flow: the answer `resume` for a run paused at start-up keeps the visit counts of its saved state; it no longer counts a new visit. A run adopted by the orchestrator is forgotten when it ends (#388).
 - Flow: the answer `resume` for a run paused at start-up is refused while `orchestrator.workers` runs are active. The run stays paused. The refusal names the limit (#388).
@@ -18,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Orchestrator: the roadmap oracle is no longer told to write `report.md`, because the roadmap run has no artifact dir. The start-up plan does not wait for an extra model turn. The `recover` step still writes `report.md` (#379).
 - Flow: the failed run notice names the step where the run stopped. A run that fails after a fixer answers `ok` also names the pending workflow proposal (#333).
 - Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
+- Cost: a model id that several providers list gets the same rates and limits on each lookup without a provider. The status bar context percentage and the step cost do not change between calls (#419).
 
 ## [0.5.0] - 2026-10-08
 

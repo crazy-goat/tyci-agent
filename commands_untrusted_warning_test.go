@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -24,7 +25,31 @@ func TestRunUntrustedWarningNamesAllSkippedContent(t *testing.T) {
 	if n := strings.Count(got, "this project is not trusted"); n != 1 {
 		t.Errorf("want one warning, got %d: %s", n, got)
 	}
-	if strings.Contains(got, "not discoverable by name") {
-		t.Errorf("run must not warn about workflow discovery: %s", got)
+}
+
+func TestUntrustedWarningDoesNotMentionLuaWorkflows(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	warnProjectUntrusted()
+	os.Stderr = orig
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	for _, item := range []string{"hooks", "Lua tools", "cron", "mcp.json"} {
+		if !strings.Contains(got, item) {
+			t.Errorf("warning missing %q: %s", item, got)
+		}
+	}
+	if strings.Contains(got, ".tyci/agents") {
+		t.Errorf("warning must not mention the removed .tyci/agents Lua workflows: %s", got)
 	}
 }

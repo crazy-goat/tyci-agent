@@ -77,7 +77,7 @@ func (o *Orchestrator) Start(ctx context.Context) {
 	// runs hold their slots, so an answer that comes before the plan cannot
 	// let the orchestrator start a second run of the issue.
 	finished := make(chan finishedRun)
-	adopted := o.adoptResumed(ctx, finished)
+	adopted := o.adoptResumed(ctx, finished, true)
 	go func() {
 		defer close(o.stop)
 		defer func() {
@@ -318,13 +318,26 @@ type adoptedRun struct {
 // orchestrator sees how they end, so an answer never leads to a second run of
 // the issue. Such a run takes its slot even when its issue is not in the plan
 // or cannot start yet. The caller marks the plan items with markAdopted.
-func (o *Orchestrator) adoptResumed(ctx context.Context, finished chan<- finishedRun) []adoptedRun {
+// With includePaused false, only the resumed runs are taken: fill uses that, so
+// a run resumed later by hand takes its slot, and a paused run of a manual start
+// does not. An issue that already holds a slot is skipped.
+func (o *Orchestrator) adoptResumed(ctx context.Context, finished chan<- finishedRun, includePaused bool) []adoptedRun {
 	a, ok := o.r.(Adopter)
 	if !ok {
 		return nil
 	}
+	issues := a.AdoptableResumed()
+	if includePaused {
+		issues = a.Adoptable()
+	}
 	var out []adoptedRun
-	for _, issue := range a.Adoptable() {
+	for _, issue := range issues {
+		o.mu.Lock()
+		_, held := o.inFlight[issue]
+		o.mu.Unlock()
+		if held {
+			continue
+		}
 		h, paused, ok := a.Adopt(ctx, issue)
 		if !ok {
 			continue
@@ -408,7 +421,11 @@ func (o *Orchestrator) candidate(i int) (issue int, startable, ok bool) {
 // fill starts every ready item while a slot is free. It returns the started issues.
 func (o *Orchestrator) fill(ctx context.Context, finished chan<- finishedRun) []int {
 	var started []int
+	// Take the slots of runs that were resumed by hand since the last fill, so
+	// they are counted before a free slot is given to a new run.
+	adopted := o.adoptResumed(ctx, finished, false)
 	o.mu.Lock()
+	o.markAdopted(adopted)
 	notes := o.markBlocked()
 	o.mu.Unlock()
 	for i := 0; ctx.Err() == nil; i++ {
