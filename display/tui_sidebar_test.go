@@ -12,6 +12,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 	"github.com/muesli/termenv"
 )
 
@@ -279,13 +280,12 @@ func TestSidebarResize_ReclampsStaleScrollAndClickMapping(t *testing.T) {
 		t.Fatalf("expected sidebarScroll to be re-clamped to 0 once everything fits, got %d", m2.sidebarScroll)
 	}
 
-	// A click on the first content row must open row 0's job (the newest —
-	// sortedBackgroundJobs is newest-first — "job-9"), not some row offset
-	// by the stale, pre-resize scroll (9), which would either open the
-	// wrong job or hit nothing at all. sidebarActivateRow closes the
-	// sidebar and resets sidebarCursor to 0 unconditionally on success, so
-	// the modal's own title (not the cursor field) is what proves which row
-	// was actually picked.
+	// A click on the first content row must open row 0's job (the oldest —
+	// the Bash rows are oldest first — "job-0"), not some row offset by the
+	// stale, pre-resize scroll (9), which would either open the wrong job or
+	// hit nothing at all. sidebarActivateRow closes the sidebar and resets
+	// sidebarCursor to 0 unconditionally on success, so the modal's own title
+	// (not the cursor field) is what proves which row was actually picked.
 	model, _ = m2.updateSidebar(tea.MouseMsg{
 		X: bigLayout.contentLeft, Y: bigLayout.contentTop + taskLineOfFirstJob(m2),
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
@@ -294,7 +294,7 @@ func TestSidebarResize_ReclampsStaleScrollAndClickMapping(t *testing.T) {
 	if !m3.subagentModalActive {
 		t.Fatalf("expected the click to open a job result modal")
 	}
-	if want := "job-9 desc"; m3.subagentModalTitle != want {
+	if want := "job-0 desc"; m3.subagentModalTitle != want {
 		t.Fatalf("expected the click to open %q (row 0 post-resize), got %q", want, m3.subagentModalTitle)
 	}
 }
@@ -1899,5 +1899,139 @@ func TestSidebarTaskRowsKeepBackgroundAcrossLine(t *testing.T) {
 	}
 	if checked != 2 {
 		t.Fatalf("expected 2 job rows, got %d: %q", checked, lines)
+	}
+}
+
+// sidebarTestBashJob returns a Bash job that started at base and ran for d.
+func sidebarTestBashJob(id, desc string, status jobs.Status, base time.Time, d time.Duration) jobs.Job {
+	return jobs.Job{ID: id, Kind: jobs.KindBash, Status: status, Description: desc, StartedAt: base, FinishedAt: base.Add(d)}
+}
+
+// sidebarTestBashRows returns the Bash job rows of the Tasks tab at width.
+func sidebarTestBashRows(m TuiModel, width int) []sidebarTaskRow {
+	var out []sidebarTaskRow
+	for _, row := range m.sidebarTaskRows(width) {
+		if row.group == "Bash" && row.job != nil {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// TestSidebarTasks_BashRowsOldestFirst: the Bash rows follow the order the
+// jobs started, so the newest job is at the bottom, like a log.
+func TestSidebarTasks_BashRowsOldestFirst(t *testing.T) {
+	base := time.Now()
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(sidebarTestBashJob("job-100-1", "first", jobs.StatusDone, base, time.Second))
+	m.applyJobUpdate(sidebarTestBashJob("job-100-2", "second", jobs.StatusDone, base.Add(time.Second), time.Second))
+	m.applyJobUpdate(sidebarTestBashJob("job-100-3", "third", jobs.StatusDone, base.Add(2*time.Second), time.Second))
+
+	var got []string
+	for _, row := range sidebarTestBashRows(m, 40) {
+		got = append(got, row.job.Description)
+	}
+	if want := "first second third"; strings.Join(got, " ") != want {
+		t.Fatalf("Bash rows in order %q, want %q", strings.Join(got, " "), want)
+	}
+}
+
+// TestSidebarTasks_BashStatusColumnAlignsIDs: the job ids #9 and #10 do not
+// move the status column.
+func TestSidebarTasks_BashStatusColumnAlignsIDs(t *testing.T) {
+	base := time.Now()
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(sidebarTestBashJob("job-100-9", "nine", jobs.StatusDone, base, time.Second))
+	m.applyJobUpdate(sidebarTestBashJob("job-100-10", "ten", jobs.StatusFailed, base.Add(time.Second), time.Second))
+
+	rows := sidebarTestBashRows(m, 40)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 Bash rows, got %d", len(rows))
+	}
+	var cols []int
+	for _, row := range rows {
+		line := ansi.Strip(row.line)
+		at := strings.Index(line, string(row.job.Status))
+		if at < 0 {
+			t.Fatalf("status %q is not in row %q", row.job.Status, line)
+		}
+		cols = append(cols, lipgloss.Width(line[:at]))
+	}
+	if cols[0] != cols[1] {
+		t.Fatalf("status column at %d and %d, want the same column", cols[0], cols[1])
+	}
+}
+
+// TestSidebarTasks_BashDurationEndsAtRightEdge: each Bash row is exactly as
+// wide as the sidebar, and its duration is the last text, for any length of
+// description.
+func TestSidebarTasks_BashDurationEndsAtRightEdge(t *testing.T) {
+	base := time.Now()
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(sidebarTestBashJob("job-100-1", "short", jobs.StatusDone, base, 54*time.Second))
+	m.applyJobUpdate(sidebarTestBashJob("job-100-2", strings.Repeat("long description ", 6), jobs.StatusDone, base.Add(time.Second), 49*time.Second))
+
+	for _, width := range []int{36, 30} {
+		rows := sidebarTestBashRows(m, width)
+		if len(rows) != 2 {
+			t.Fatalf("expected 2 Bash rows, got %d", len(rows))
+		}
+		for _, row := range rows {
+			line := ansi.Strip(row.line)
+			if got := lipgloss.Width(line); got != width {
+				t.Fatalf("width %d: row is %d cells wide: %q", width, got, line)
+			}
+			want := fmt.Sprintf("(%s)", row.job.FinishedAt.Sub(row.job.StartedAt))
+			if !strings.HasSuffix(line, want) {
+				t.Fatalf("width %d: row does not end with the duration %q: %q", width, want, line)
+			}
+		}
+	}
+}
+
+// TestSidebarTasks_LuaRowsOldestFirst: the Lua rows follow the run order,
+// newest at the bottom.
+func TestSidebarTasks_LuaRowsOldestFirst(t *testing.T) {
+	now := time.Now()
+	history := []tools.LuaRun{
+		{Name: "first-run", StartedAt: now, Duration: 1200 * time.Millisecond, Success: true},
+		{Name: "second-run", StartedAt: now, Duration: 300 * time.Millisecond, Success: true},
+	}
+	rows := sidebarLuaRows(history, 40)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 Lua rows, got %d", len(rows))
+	}
+	if !strings.Contains(ansi.Strip(rows[0].line), "first-run") || !strings.Contains(ansi.Strip(rows[1].line), "second-run") {
+		t.Fatalf("Lua rows not in run order: %q, %q", rows[0].line, rows[1].line)
+	}
+}
+
+// TestSidebarTasks_LuaDurationEndsAtRightEdge: each Lua row is exactly as
+// wide as the sidebar and ends with its duration. In a narrow sidebar the
+// name is shortened first, and the age column stays visible.
+func TestSidebarTasks_LuaDurationEndsAtRightEdge(t *testing.T) {
+	now := time.Now()
+	history := []tools.LuaRun{
+		{Name: "short", StartedAt: now, Duration: 1234 * time.Millisecond, Success: true},
+		{Name: strings.Repeat("long-name-", 4), StartedAt: now, Duration: 2 * time.Second, Success: false},
+	}
+	wantDur := []string{"1.234s", "2s"}
+	for _, width := range []int{40, 24} {
+		rows := sidebarLuaRows(history, width)
+		if len(rows) != 2 {
+			t.Fatalf("expected 2 Lua rows, got %d", len(rows))
+		}
+		for i, row := range rows {
+			line := ansi.Strip(row.line)
+			if got := lipgloss.Width(line); got != width {
+				t.Fatalf("width %d: row is %d cells wide: %q", width, got, line)
+			}
+			if !strings.HasSuffix(line, wantDur[i]) {
+				t.Fatalf("width %d: row does not end with the duration %q: %q", width, wantDur[i], line)
+			}
+			if !strings.Contains(line, " ago") {
+				t.Fatalf("width %d: the age column is cut: %q", width, line)
+			}
+		}
 	}
 }
