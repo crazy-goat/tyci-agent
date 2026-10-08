@@ -89,6 +89,27 @@ func TestLookup_PresentButUnpriced(t *testing.T) {
 	}
 }
 
+// Two providers list the same model id with different limits and rates. The
+// catalog is a map, so without a provider the entry must still be the same on
+// every call.
+func TestLookup_EmptyProviderIsStableWhenProvidersAgree(t *testing.T) {
+	withCatalog(t, `{
+  "alpha": {"id":"alpha","name":"Alpha","models":{
+    "shared-model":{"id":"shared-model","name":"Shared","cost":{"input":1,"output":2},
+      "limit":{"context":100000,"output":1000}}}},
+  "beta": {"id":"beta","name":"Beta","models":{
+    "shared-model":{"id":"shared-model","name":"Shared","cost":{"input":5,"output":6},
+      "limit":{"context":200000,"output":2000}}}}
+}`)
+	wantRates, wantLimits := Lookup("", "shared-model")
+	for i := range 100 {
+		r, l := Lookup("", "shared-model")
+		if r != wantRates || l != wantLimits {
+			t.Fatalf("call %d: got %+v %+v, want %+v %+v", i, r, l, wantRates, wantLimits)
+		}
+	}
+}
+
 func TestMissingCatalogIsSilent(t *testing.T) {
 	withCatalog(t, "")
 	if r, l := Lookup("anthropic", "claude-sonnet-5"); r.Known() || l.Context != 0 {

@@ -112,19 +112,26 @@ func localModelJSONPath() string {
 	return filepath.Join(wd, ".tyci", "model.json")
 }
 
+// warnProjectUntrusted prints the one untrusted-project warning. It names
+// the four pieces setupProjectLocalEnv skips for an untrusted project.
+func warnProjectUntrusted() {
+	msg := "tyci: this project is not trusted — project-local hooks (.tyci/hooks.json), " +
+		"Lua tools (.tyci/tools/*.lua), the local cron dir, and mcp.json are skipped this session"
+	msg += ". Global ~/.tyci/ content still loads as usual. Run tyci in an interactive mode " +
+		"(console/tui) in this directory to be asked, or edit ~/.tyci/trust.json directly."
+	fmt.Fprintln(os.Stderr, msg)
+}
+
 // setupProjectLocalEnv wires up the project-local environment every
 // agent-running entry point needs and none may silently skip (TODO.md item
 // F28): hook config (.tyci/hooks.json), Lua tools (.tyci/tools/*.lua), the
 // local cron dir, and — subject to connectMCP and the --no-mcp opt-out —
 // MCP servers (.tyci/mcp.json). All four are gated on `trusted`, which the
 // caller decides (via trust.Decide) and passes in rather than this func
-// deciding it again: initCommon and workflowcmd.go's RunE each make their
-// own trust decision and use the shared warnProjectUntrusted warning, which
-// names this func's four skipped pieces plus, when relevant, workflow-script
-// discovery, and threading the same bool through here guarantees both ever
-// act on exactly one answer instead of risking two different ones from two
-// separate trust.Decide calls, and guarantees this func itself never prints
-// a second, redundant untrusted warning.
+// deciding it again. initCommon makes that decision and prints the
+// warnProjectUntrusted warning. Threading the same bool through here
+// guarantees this func never acts on a second answer and never prints a
+// second, redundant untrusted warning.
 //
 // ctx is wrapped with a cancel only when MCP actually connects (see
 // tools.InitMCP below); the returned context is what the caller must use
@@ -242,7 +249,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		fmt.Fprintf(os.Stderr, "Warning: trust: %v\n", err)
 	}
 	if !trusted {
-		warnProjectUntrusted(false)
+		warnProjectUntrusted()
 	}
 
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
@@ -312,10 +319,6 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	// Project-local environment: hooks (.tyci/hooks.json), Lua tools
 	// (.tyci/tools/*.lua), the local cron dir, and (subject to connectMCP
 	// and --no-mcp) mcp.json — all gated on `trusted`, decided once above.
-	// Shared with `tyci workflow run` (workflowcmd.go), which has its own
-	// trust decision and its own untrusted warning (warnWorkflowUntrusted)
-	// and must not decide trust a second time here nor print a second
-	// warning.
 	noMCP, _ := cmd.Flags().GetBool("no-mcp")
 	ctx, shutdown := setupProjectLocalEnv(ctx, wd, trusted, connectMCP, noMCP)
 

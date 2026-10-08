@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/connector"
@@ -159,13 +158,13 @@ func ScoutSchemaJSONForDepth(depth int) json.RawMessage {
 // never carries a job id itself), into a single shared bucket instead of
 // one per actual caller.
 //
-// runSingleTask is not the only stamper, though: btw.go's promoted /btw job,
-// its resumed-job path, and internal/workflow/engine.go's named-agent
-// session all reach scout-eligible depth (>=1) without ever going through
-// runSingleTask, so each stamps its own id via WithScoutCaller below instead
-// (see that func's doc comment). scoutCallerIDFromContext returning "" means
-// none of these ever ran — not "every caller shares one bucket", which used
-// to be this comment's (wrong) claim before those three sites existed.
+// runSingleTask is not the only stamper, though: btw.go's promoted /btw job
+// and its resumed-job path both reach scout-eligible depth (>=1) without
+// ever going through runSingleTask, so each stamps its own id via
+// WithScoutCaller below instead (see that func's doc comment).
+// scoutCallerIDFromContext returning "" means none of these ever ran — not
+// "every caller shares one bucket", which used to be this comment's (wrong)
+// claim before those sites existed.
 type scoutCallerCtxKey struct{}
 
 func scoutCallerIDFromContext(ctx context.Context) string {
@@ -178,34 +177,11 @@ func scoutCallerIDFromContext(ctx context.Context) string {
 // through runSingleTask (tools/subagent.go), which is otherwise the only
 // stamper of scoutCallerCtxKey: btw.go's promoted /btw job and its
 // resumed-job path (each already has a process-unique job id in hand, so
-// they pass that directly) and internal/workflow/engine.go's named-agent
-// workflow session (which has no job id at all, so it mints one via
-// NewScoutCallerID instead). Without this, all three would land on
+// they pass that directly). Without this, both would land on
 // scoutCallerIDFromContext returning "" and share one 2-slot bucket —
 // unrelated callers refusing each other's scout calls.
 func WithScoutCaller(ctx context.Context, callerID string) context.Context {
 	return context.WithValue(ctx, scoutCallerCtxKey{}, callerID)
-}
-
-// scoutExternalCallerCounter backs NewScoutCallerID, mirroring
-// todoAgentIDCounter (tools/subagent.go) — a second counter rather than
-// exporting that one because it is simpler to give this handful of
-// non-runSingleTask callers their own numbering than to export
-// subagent.go's private counter for one narrow use.
-var scoutExternalCallerCounter uint64
-
-// NewScoutCallerID mints a fresh, process-unique id for WithScoutCaller, for
-// a caller with no natural unique identity of its own to reuse (unlike
-// btw.go's two sites, which already have a job id in hand — see
-// WithScoutCaller's doc comment). label is folded into the id purely for
-// readability in logs/debugging; bucket separation comes entirely from the
-// counter, not from label being distinct.
-func NewScoutCallerID(label string) string {
-	n := atomic.AddUint64(&scoutExternalCallerCounter, 1)
-	if label == "" {
-		return fmt.Sprintf("scout-caller-%d", n)
-	}
-	return fmt.Sprintf("%s-%d", label, n)
 }
 
 // Concurrency semaphore — item 21's primary safety control once depth
@@ -365,13 +341,12 @@ func (t *ScoutTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	// the common one is runSingleTask (tools/subagent.go), which
 	// unconditionally stamps scoutCallerCtxKey before any caller could
 	// dispatch a nested scout call. But it is NOT the only one — btw.go's
-	// promoted /btw job, its resumed-job path, and
-	// internal/workflow/engine.go's named-agent session all set depth >= 1
+	// promoted /btw job and its resumed-job path both set depth >= 1
 	// directly (they run the same restricted-child tool gate runSingleTask's
 	// children do, just outside runSingleTask itself), and each of those
-	// three now stamps scoutCallerCtxKey explicitly via WithScoutCaller
+	// two now stamps scoutCallerCtxKey explicitly via WithScoutCaller
 	// (see its doc comment) for exactly this reason. If a future path ever
-	// sets depth >= 1 without going through one of those four stampers,
+	// sets depth >= 1 without going through one of those three stampers,
 	// every such caller would silently share one 2-slot bucket instead of
 	// getting its own, which would look like unrelated scouts randomly
 	// refusing each other rather than a caller hitting its own cap.
