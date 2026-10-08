@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/crazy-goat/tyci-agent/internal/connect"
 )
 
 // withCatalog points the package at a temporary providers.json. HOME is what
@@ -139,5 +141,34 @@ func TestProviderNeedsPrices(t *testing.T) {
 	}
 	if ProviderNeedsPrices("no-such-provider") {
 		t.Fatal("a provider absent from the catalog should report false")
+	}
+}
+
+// Two models in one provider match the same lower-case query (id or display
+// name) but not the exact key. Map iteration must not pick a different one
+// on each call; the walk is sorted by model id.
+func TestFindModel_CaseFallbackIsStable(t *testing.T) {
+	p := connect.ModelsDevProvider{Models: map[string]connect.ModelsDevModel{
+		"Model-A": {ID: "Model-A", Name: "Shared Name", Cost: connect.ModelsDevCost{Input: 1}},
+		"model-a": {ID: "model-a", Name: "Other", Cost: connect.ModelsDevCost{Input: 9}},
+		"zebra":   {ID: "zebra", Name: "shared name", Cost: connect.ModelsDevCost{Input: 4}},
+	}}
+	first, ok := findModel(p, "MODEL-A")
+	if !ok {
+		t.Fatal("expected a case-insensitive match")
+	}
+	// "Model-A" sorts before "model-a".
+	if first.ID != "Model-A" || first.Cost.Input != 1 {
+		t.Fatalf("tie-break = %+v, want Model-A", first)
+	}
+	for i := range 50 {
+		got, ok := findModel(p, "MODEL-A")
+		if !ok || got.ID != first.ID || got.Cost != first.Cost {
+			t.Fatalf("call %d: got %+v ok=%v, want id %s", i, got, ok, first.ID)
+		}
+	}
+	byName, ok := findModel(p, "SHARED NAME")
+	if !ok || byName.ID != "Model-A" {
+		t.Fatalf("display-name tie-break = %+v ok=%v, want Model-A", byName, ok)
 	}
 }

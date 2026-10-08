@@ -111,3 +111,34 @@ func TestLookup_NexosSlowAPIDoesNotBlock(t *testing.T) {
 		t.Fatalf("Lookup blocked or invented a price: %v %+v", time.Since(start), r)
 	}
 }
+
+// Two nexos ids differ only by case. The fallback must not depend on map order.
+func TestNexosFind_CaseFallbackIsStable(t *testing.T) {
+	t.Cleanup(Reset)
+	nexosMu.Lock()
+	nexosLoaded = true
+	nexosModels = map[string]nexosEntry{
+		"Foo": {Rates: Rates{Input: 1}},
+		"foo": {Rates: Rates{Input: 9}},
+	}
+	nexosMu.Unlock()
+
+	first, ok := nexosFind("FOO")
+	if !ok {
+		t.Fatal("expected a case-insensitive match")
+	}
+	// "Foo" sorts before "foo".
+	if first.Rates.Input != 1 {
+		t.Fatalf("tie-break input = %v, want 1", first.Rates.Input)
+	}
+	for i := range 50 {
+		got, ok := nexosFind("FOO")
+		if !ok || got != first {
+			t.Fatalf("call %d: got %+v ok=%v, want %+v", i, got, ok, first)
+		}
+	}
+	exact, ok := nexosFind("foo")
+	if !ok || exact.Rates.Input != 9 {
+		t.Fatalf("exact key should win, got %+v ok=%v", exact, ok)
+	}
+}

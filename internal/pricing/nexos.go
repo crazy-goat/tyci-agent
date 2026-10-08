@@ -2,9 +2,11 @@ package pricing
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -176,9 +178,11 @@ func nexosFind(model string) (nexosEntry, bool) {
 		return e, true
 	}
 	want := strings.ToLower(model)
-	for id, e := range c {
+	// Map order is random. Walk ids in a fixed order so two nexos ids that
+	// differ only by case resolve to the same entry on every call.
+	for _, id := range slices.Sorted(maps.Keys(c)) {
 		if strings.ToLower(id) == want {
-			return e, true
+			return c[id], true
 		}
 	}
 	return nexosEntry{}, false

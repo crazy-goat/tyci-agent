@@ -153,7 +153,10 @@ func findModel(p connect.ModelsDevProvider, model string) (connect.ModelsDevMode
 		return m, true
 	}
 	want := strings.ToLower(model)
-	for id, m := range p.Models {
+	// Map order is random. Walk model ids in a fixed order so a case-insensitive
+	// or display-name match that hits more than one entry is stable.
+	for _, id := range slices.Sorted(maps.Keys(p.Models)) {
+		m := p.Models[id]
 		if strings.ToLower(id) == want || strings.ToLower(m.ID) == want || strings.ToLower(m.Name) == want {
 			return m, true
 		}

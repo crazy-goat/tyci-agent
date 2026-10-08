@@ -59,6 +59,7 @@ Existing agents.json, .tyci.json and .tyci/model.json files are ignored (not del
 - Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
 - Flow: a resumed run posts its review when the workflow renamed the review state. Each agent step in the `state.json` history has a new field, `task`. The run finds the review by the role of the step. Before, `post_review.sh` skipped the review (#403).
 - Cost: a model id that several providers list gets the same rates and limits on each lookup without a provider. The status bar context percentage and the step cost do not change between calls (#419).
+- Cost: a case-insensitive model match returns the same catalog entry on every call when several models share that lower-case id, display name or nexos id (#425).
 - Agent: in the console and the TUI, the reminder about background jobs at the end of a turn is sent only for a job that waits for an answer. A running job, such as a workflow run, sends its own notice when it ends, so it no longer makes the model nag while it runs. `tyci run` still reminds about running jobs, because nothing reads their notices there (#448).
 - Agent: a role agent (subagent) retries a provider that does not answer up to 5 times, as the main agent does. Before, it retried only once (#447).
 - Agent: the error for a provider that does not answer does not say "retrying" any more. The retry line already shows the retry count (#447).
