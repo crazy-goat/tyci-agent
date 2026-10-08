@@ -77,7 +77,7 @@ saved state in the same worktree), `stop`, or nothing: a run without an answer s
 A paused run blocks a new run for its issue. The orchestrator watches the paused runs (they
 count as workers) and sees how each one ends after the answer, so it never starts a second run
 for the issue. An answer `resume` is refused while `orchestrator.workers` runs are active. The notice
-names the limit. The run stays paused until you answer again. A run that cannot pause (its workflow has no `ask` state) fails, and the chat
+names the limit. An apply or reject of a workflow proposal counts as an active run, so it takes a worker slot too. The run stays paused until you answer again. A run that cannot pause (its workflow has no `ask` state) fails, and the chat
 shows a notice for it. With no unfinished runs, start-up does not ask. A `workflow_start` of an issue whose `running` run has
 a dead owner (another tyci process stopped) still resumes it. The resumed run counts as a worker. When `orchestrator.workers` runs are active, the start is refused and the run stays stale. A `workflow_start` of an issue whose `running` run has a live owner (another tyci process) is refused. A run resumed 3 times, or a run whose worktree is gone, pauses for an answer.
 

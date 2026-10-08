@@ -302,19 +302,7 @@ func TestProposal_ApplyReservesTheRun(t *testing.T) {
 	id := e.start(t)
 	done := make(chan error, 1)
 	go func() { done <- e.m.Resume(id, "apply") }()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		e.m.mu.Lock()
-		_, busy := e.m.active[id]
-		e.m.mu.Unlock()
-		if busy {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("apply did not reserve the run")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitReserved(t, e.m, id)
 	if err := e.m.Resume(id, "retry"); !errors.Is(err, ErrBusy) {
 		t.Fatalf("retry during apply: %v", err)
 	}
@@ -325,6 +313,52 @@ func TestProposal_ApplyReservesTheRun(t *testing.T) {
 	waitIdle(t, e.m)
 	if st, _ := e.m.Status(id); st.Status != "paused" || st.Ask.Proposal != "" {
 		t.Fatalf("state = %s, proposal %q", st.Status, st.Ask.Proposal)
+	}
+}
+
+// waitReserved waits until the run is in m.active, so the next answer finds it busy.
+func waitReserved(t *testing.T, m *Manager, run string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		m.mu.Lock()
+		_, busy := m.active[run]
+		m.mu.Unlock()
+		if busy {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("run was not reserved")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// An apply keeps its worker slot: with orchestrator.workers set to 1, a start-up
+// resume of another paused run is refused while the apply runs.
+func TestProposal_ApplyKeepsWorkerSlot(t *testing.T) {
+	e := newProposalEnv(t, goodPatch)
+	e.m.SetWorkers(1)
+	gate := filepath.Join(t.TempDir(), "go")
+	testutil.StubGH(t, `while [ ! -e "`+gate+`" ]; do sleep 0.05; done; echo https://example/pull/9`)
+	id := e.start(t)
+	other := saveRun(t, e.info.Home, 7, func(st *RunState) {
+		st.Status, st.Current = "paused", "ask"
+		st.Ask = &Ask{Message: "Need a decision.", Reason: "resume:fixer"}
+	})
+	done := make(chan error, 1)
+	go func() { done <- e.m.Resume(id, "apply") }()
+	waitReserved(t, e.m, id)
+	err := e.m.Resume(other.Run, "resume")
+	if err == nil || !strings.Contains(err.Error(), "orchestrator.workers is 1") || !strings.Contains(err.Error(), "workflow proposal") {
+		t.Fatalf("resume during apply: err = %v", err)
+	}
+	if st := loadRunState(t, e.info.Home, other.Run); st.Status != "paused" {
+		t.Fatalf("refused run: status %q", st.Status)
+	}
+	e2eWrite(t, gate, "")
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 
