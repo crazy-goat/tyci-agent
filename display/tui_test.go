@@ -367,6 +367,8 @@ func TestTuiModel_View_NoBlankLineBetweenConsecutiveTools(t *testing.T) {
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"description": "check"}`})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "ok"})
+	// The two tools are a group, closed by default. Open it to see both lines.
+	m.toggleGroup(0)
 
 	view := m.View()
 	lines := strings.Split(view, "\n")
@@ -874,6 +876,8 @@ func TestToolBlock_TwoConsecutiveTools(t *testing.T) {
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"description": "build"}`})
 	time.Sleep(1 * time.Millisecond)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "ok"})
+	// The two tools are a group, closed by default. Open it to see both lines.
+	m.toggleGroup(0)
 
 	view := stripANSI(m.View())
 

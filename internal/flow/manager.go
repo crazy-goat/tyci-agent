@@ -66,7 +66,8 @@ type Manager struct {
 	nsub   int
 	// adopted: runs that Adopt or Start returned to the orchestrator.
 	adopted map[string]bool
-	// workers: the limit of active runs for a start-up "resume". 0 = unlimited.
+	// workers: the limit of active runs for a "resume": the answer resume of a
+	// start-up pause, and a workflow_start that resumes a stale run. 0 = unlimited.
 	workers int
 }
 
@@ -141,7 +142,8 @@ func (m *Manager) SetBase(ctx context.Context) {
 	m.mu.Unlock()
 }
 
-// SetWorkers sets the limit of active runs: a start-up "resume" is refused while
+// SetWorkers sets the limit of active runs: a "resume" (the answer resume of a
+// start-up pause, or a workflow_start that resumes a stale run) is refused while
 // that many runs are active (production: orchestrator.workers). 0 means unlimited.
 func (m *Manager) SetWorkers(n int) {
 	m.mu.Lock()
@@ -185,8 +187,9 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 // ErrBusy is returned (wrapped) when a run is already active.
 var ErrBusy = errors.New("manager busy")
 
-// refuse returns an ErrBusy error when the issue has an active or paused run. A running
-// state without an active goroutine is stale and does not block. m.mu must be held.
+// refuse returns an ErrBusy error when the issue has an active or paused run, or a
+// running run owned by another live process (another tyci). A running state with a
+// dead owner is stale and does not block: resumeStale takes it. m.mu must be held.
 func (m *Manager) refuse(info RepoInfo, issue int) error {
 	for id, a := range m.active {
 		if a.issue == issue {
@@ -199,9 +202,8 @@ func (m *Manager) refuse(info RepoInfo, issue int) error {
 		if err != nil || st.Issue != issue {
 			continue
 		}
-		// "running" here is stale: the loop above found no active run of this
-		// issue, so no goroutine owns it. Only a paused run blocks.
-		if st.Status == "paused" {
+		owned := st.Status == "running" && st.PID != os.Getpid() && !ownerGone(st)
+		if st.Status == "paused" || owned {
 			return fmt.Errorf("%w: issue %d already has run %s (%s)", ErrBusy, issue, st.Run, st.Status)
 		}
 	}
