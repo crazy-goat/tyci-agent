@@ -222,8 +222,9 @@ Every check and agent step gets its own artifact dir, in execution order:
 - After the step, every file in the dir has its secrets masked and is cut to 64 KiB: the tail stays,
   after a truncation line. Files are mode 0600, dirs 0700.
 
-Every agent (worker, review, fixer, oracle, findings) must write `report.md` in its artifact dir
-before it ends: what it did, the result, what is left.
+Every agent step (worker, review, fixer, findings, and oracle in a `recover` step) must write
+`report.md` in its artifact dir before it ends: what it did, the result, what is left. The
+roadmap run has no artifact dir and writes no report.
 
 - The task text of every agent has a "Run so far" section: the steps since the last visit of
   its state (all steps on the first visit), each with `seq`, state, key and the absolute paths
