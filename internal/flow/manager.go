@@ -66,7 +66,8 @@ type Manager struct {
 	nsub   int
 	// adopted: runs that Adopt or Start returned to the orchestrator.
 	adopted map[string]bool
-	// workers: the limit of active runs for a start-up "resume". 0 = unlimited.
+	// workers: the limit of active runs for a "resume": the answer resume of a
+	// start-up pause, and a workflow_start that resumes a stale run. 0 = unlimited.
 	workers int
 }
 
@@ -141,7 +142,8 @@ func (m *Manager) SetBase(ctx context.Context) {
 	m.mu.Unlock()
 }
 
-// SetWorkers sets the limit of active runs: a start-up "resume" is refused while
+// SetWorkers sets the limit of active runs: a "resume" (the answer resume of a
+// start-up pause, or a workflow_start that resumes a stale run) is refused while
 // that many runs are active (production: orchestrator.workers). 0 means unlimited.
 func (m *Manager) SetWorkers(n int) {
 	m.mu.Lock()

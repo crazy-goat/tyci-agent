@@ -383,13 +383,15 @@ func TestResume_ResumeOnlyForRestartPause(t *testing.T) {
 	}
 }
 
-// freezeStore stops writing once the run is inside state ci with the given
-// visit count of ci, and cancels the run: the file on disk then looks like tyci
-// was killed at that point.
+// freezeStore stops writing at the nth save whose state is ci with the visit
+// count visits, and cancels the run: the file on disk then looks like tyci was
+// killed at that point.
 type freezeStore struct {
 	*Store
 	cancel context.CancelFunc
 	visits int
+	nth    int
+	seen   int
 	frozen bool
 }
 
@@ -401,29 +403,49 @@ func (f *freezeStore) Save(st *RunState) error {
 		return err
 	}
 	if st.Current == "ci" && st.Visits["ci"] == f.visits {
-		f.frozen = true
-		f.cancel()
+		f.seen++
+		if f.seen == f.nth {
+			f.frozen = true
+			f.cancel()
+		}
 	}
 	return nil
 }
 
 func TestResume_EndToEnd_StubScripts(t *testing.T) {
 	// Killed in ci after the visit of ci was saved.
-	resumeKilledInCI(t, 1)
+	resumeKilledInCI(t, happy(), nil, freezeStore{visits: 1, nth: 1}, 1)
 }
 
 // Killed between the transition into ci and the visit save: the file has no
 // counted visit of ci. The resumed run counts it, so ci has one visit.
 func TestResume_EndToEnd_LostVisitCounted(t *testing.T) {
-	resumeKilledInCI(t, 0)
+	resumeKilledInCI(t, happy(), nil, freezeStore{visits: 0, nth: 1}, 1)
 }
 
-func resumeKilledInCI(t *testing.T, visits int) {
-	e := newE2E(t, happy())
+// Killed between the second transition into ci (oracle goto:ci) and its visit
+// save. The file has one counted visit of ci; the resumed run counts the second.
+func TestResume_EndToEnd_LostVisitCountedSecondEntry(t *testing.T) {
+	s := happy()
+	s["fixer"] = []string{"failed"}
+	s["oracle"] = []string{"goto:ci the PR head moved, wait for CI again"}
+	setup := func(e *e2e) { e.ctlSet("merge_fail_once", "") }
+	resumeKilledInCI(t, s, setup, freezeStore{visits: 1, nth: 2}, 2)
+}
+
+// resumeKilledInCI runs the e2e workflow with script until fz freezes it in ci,
+// then resumes the run through Manager.Start and checks the final visit count
+// of ci. setup, when set, prepares the stub gh before the run.
+func resumeKilledInCI(t *testing.T, script map[string][]string, setup func(*e2e), fz freezeStore, wantVisits int) {
+	e := newE2E(t, script)
+	if setup != nil {
+		setup(e)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	r := e.newRunner()
-	r.Store = &freezeStore{Store: &Store{Dir: e.runDir}, cancel: cancel, visits: visits}
+	fz.Store, fz.cancel = &Store{Dir: e.runDir}, cancel
+	r.Store = &fz
 	_ = r.Run(ctx, e.st)
 
 	// The killed process: state ci, status running, owner gone.
@@ -468,8 +490,8 @@ func resumeKilledInCI(t *testing.T, visits int) {
 	if e.st.Status != "done" || !wasMerged(e.st) || !hasResumedStep(e.st) || e.st.Resumed != 1 {
 		t.Fatalf("status %s, resumed %d, history %v", e.st.Status, e.st.Resumed, e.trail())
 	}
-	if got := e.st.Visits["ci"]; got != 1 {
-		t.Fatalf("visits ci = %d (before %s)", got, visitsBefore)
+	if got := e.st.Visits["ci"]; got != wantVisits {
+		t.Fatalf("visits ci = %d, want %d (before %s)", got, wantVisits, visitsBefore)
 	}
 	e.wantMerged()
 }
@@ -664,6 +686,22 @@ func TestWorkflowStart_ResumeRefusedAtWorkersLimit(t *testing.T) {
 	e.notice(t)
 }
 
+// A paused run is adoptable at start-up, but a later fill takes only the runs a
+// resume made active (AdoptableResumed), so a paused run of a manual start does
+// not take a worker slot.
+func TestAdoptableResumed_SkipsPausedRuns(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	saveRun(t, e.home, 5, func(st *RunState) {
+		st.Status, st.Current, st.Ask = "paused", "ask", &Ask{Message: "Need a decision."}
+	})
+	if got := e.m.Adoptable(); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("adoptable = %v", got)
+	}
+	if got := e.m.AdoptableResumed(); len(got) != 0 {
+		t.Fatalf("adoptable resumed = %v", got)
+	}
+}
+
 // A run resumed by hand through Start is adoptable, so the orchestrator takes
 // its slot at the next fill.
 func TestWorkflowStart_ResumedByHandIsAdoptable(t *testing.T) {
@@ -676,6 +714,9 @@ func TestWorkflowStart_ResumedByHandIsAdoptable(t *testing.T) {
 	}
 	if got := e.m.Adoptable(); len(got) != 1 || got[0] != 5 {
 		t.Fatalf("adoptable = %v", got)
+	}
+	if got := e.m.AdoptableResumed(); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("adoptable resumed = %v", got)
 	}
 	if id, paused, ok := e.m.Adopt(5); !ok || paused || id != st.Run {
 		t.Fatalf("adopt = %q, %v, %v", id, paused, ok)

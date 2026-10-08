@@ -292,16 +292,35 @@ func (m *Manager) pausedRuns() []*RunState {
 func (m *Manager) Adoptable() []int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	out := m.resumedIssues()
+	for _, st := range m.pausedRuns() {
+		out = append(out, st.Issue)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// AdoptableResumed is Adoptable without the paused runs: it returns only the
+// runs that a resume made active and that no Start or Adopt returned yet. The
+// issues are sorted. The orchestrator uses it after the plan, so a paused run
+// of a manual start does not take a worker slot.
+func (m *Manager) AdoptableResumed() []int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := m.resumedIssues()
+	sort.Ints(out)
+	return out
+}
+
+// resumedIssues returns the issues of the active runs that markAdoptable marked
+// and that no Adopt returned yet. m.mu must be held.
+func (m *Manager) resumedIssues() []int {
 	var out []int
 	for _, a := range m.active {
 		if a.adoptable {
 			out = append(out, a.issue)
 		}
 	}
-	for _, st := range m.pausedRuns() {
-		out = append(out, st.Issue)
-	}
-	sort.Ints(out)
 	return out
 }
 

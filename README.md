@@ -68,7 +68,7 @@ make install
 - Overrides (trusted projects first, then `~/.tyci/`, then the builtin copy): `.tyci/workflows/`, `.tyci/checks/` and `.tyci/tasks/<name>.md` (task templates)
 
 A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
-resumes (`resumed`). When `tyci` or `tyci console` starts, it resumes nothing by itself.
+resumes (`resumed`). It also keeps `entry_pending`. This is `true` after a change to a new state, until the visit of that state is saved. A resumed run counts that visit. When `tyci` or `tyci console` starts, it resumes nothing by itself.
 It pauses every `running` run of the current repository whose owner process is gone (state
 `ask`, reason `resume:<state>`). Then the chat shows one question that lists all paused runs
 (run id, issue, last step and key, PR) with their answers. Answer `resume` (continue at the
