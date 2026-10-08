@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -77,7 +78,8 @@ func Add(ctx context.Context, repo, label string) (*Worktree, error) {
 
 // AddIssue creates <home>/.tyci/worktrees/<repoName>/issue-<n> on branch
 // issue-<n> from origin/<defaultBranch>. It fails if the directory or the
-// branch already exists.
+// branch already exists. Then it runs bin/worktree-setup.sh in the new
+// worktree when the repository has one, and fails if that script fails.
 //
 // home is a parameter so tests can pass t.TempDir(); callers pass the result
 // of os.UserHomeDir. The branch starts from origin/<defaultBranch>, not HEAD,
@@ -127,15 +129,68 @@ func AddIssue(ctx context.Context, home, repo string, issue int, defaultBranch s
 
 	base, err := git(ctx, root, "rev-parse", "origin/"+defaultBranch)
 	if err != nil {
-		// The worktree, its branch and its git registration already exist
-		// at this point, but the caller gets no handle to Remove them with,
-		// so clean up here and leave no state behind for a retry.
-		_, _ = git(ctx, root, "worktree", "remove", "--force", target)
-		_, _ = git(ctx, root, "branch", "-D", branch)
-		_ = os.RemoveAll(target)
+		discard(ctx, root, target, branch)
 		return nil, fmt.Errorf("worktree: git rev-parse origin/%s: %w: %s", defaultBranch, err, base)
 	}
+	if err := runSetup(ctx, target); err != nil {
+		discard(ctx, root, target, branch)
+		return nil, err
+	}
 	return &Worktree{Dir: target, Branch: branch, Repo: root, BaseCommit: strings.TrimSpace(base), keepParent: true}, nil
+}
+
+// discard removes a worktree that AddIssue created but cannot return. The
+// worktree, its branch and its git registration already exist at this point,
+// but the caller gets no handle to Remove them with, so clean up here and
+// leave no state behind for a retry.
+//
+// The caller's ctx may already be cancelled, which is the usual reason for
+// discard: a run cancelled during the setup script. The cleanup must still
+// run, so it uses a context that keeps the values but not the cancel. git
+// keeps its own timeout.
+func discard(ctx context.Context, root, target, branch string) {
+	ctx = context.WithoutCancel(ctx)
+	_, _ = git(ctx, root, "worktree", "remove", "--force", target)
+	_, _ = git(ctx, root, "branch", "-D", branch)
+	_ = os.RemoveAll(target)
+}
+
+// setupScript is the optional script that prepares a new worktree. It is the
+// same script that bin/worktree.sh runs.
+const setupScript = "bin/worktree-setup.sh"
+
+// setupWaitDelay bounds how long runSetup waits for the script's output pipes
+// to close after the script ends or is cancelled. A child that outlives the
+// script, or that left the process group, would otherwise hold the pipes open.
+const setupWaitDelay = 5 * time.Second
+
+// runSetup runs setupScript in dir when the repository has an executable one.
+// A missing or non-executable script means no setup. A failing script fails
+// the call, and its output is part of the error. A cancelled ctx kills the
+// script's whole process group, so its children (go, composer, sleep) stop too.
+func runSetup(ctx context.Context, dir string) error {
+	info, err := os.Stat(filepath.Join(dir, setupScript))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("worktree: stat %s: %w", setupScript, err)
+	}
+	if info.Mode()&0o111 == 0 {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, setupScript)
+	cmd.Dir = dir
+	// Own process group, so that a cancel signals the children as well as the shell.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = setupWaitDelay
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("worktree: %s failed: %w: %s", setupScript, err, out)
+	}
+	return nil
 }
 
 // Changed reports whether anything was actually modified in the worktree —
