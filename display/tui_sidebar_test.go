@@ -1810,3 +1810,20 @@ func TestSidebarTasks_HeadingRowsKeepSidebarBackground(t *testing.T) {
 		}
 	}
 }
+
+// TestSidebarChrome_KeepSidebarBackgroundOnEveryTab checks the tab row, the hint
+// row and the key line on every tab, with the sidebar focused and not focused.
+// The tab row and the footer are shared by all tabs, and a tab with a hint
+// text differs from a tab without one.
+func TestSidebarChrome_KeepSidebarBackgroundOnEveryTab(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	for tab := range sidebarTabNames {
+		for _, focused := range []bool{false, true} {
+			m := newTestModelForSidebar()
+			m.openSidebar(tab)
+			m.sidebarFocused = focused
+			checkSidebarChrome(t, m)
+		}
+	}
+}

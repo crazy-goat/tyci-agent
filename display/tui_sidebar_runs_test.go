@@ -394,5 +394,56 @@ func TestSidebarRunsTab_RowsKeepSidebarBackground(t *testing.T) {
 					cursor, highlighted, layout.contentWidth)
 			}
 		}
+		checkSidebarChrome(t, m)
+	}
+}
+
+// checkSidebarChrome checks the tab row, the hint row and the key line of the
+// sidebar. Every cell after the border must have the sidebar background, except
+// the active tab label, which is highlighted. The rows are drawn on every tab,
+// so the caller picks the tab and the focus.
+func checkSidebarChrome(t *testing.T, m TuiModel) {
+	t.Helper()
+	layout := m.sidebarLayout()
+	column := strings.Split(m.renderSidebarColumn(), "\n")
+	// The separator comes after the content rows, then the hint row, then the key line.
+	hintRow := layout.contentTop + layout.contentHeight + 1
+	keyRow := hintRow + 1
+	// A focused key line is cut at the sidebar width, so only its first word is checked.
+	if got := ansi.Strip(column[keyRow]); !strings.Contains(got, strings.Fields(m.sidebarFooter())[0]) {
+		t.Fatalf("tab %d: row %d is not the key line: %q", m.sidebarTab, keyRow, got)
+	}
+	for _, c := range []struct {
+		name      string
+		row       int
+		highlight int
+	}{
+		{"tab row", 1, lipgloss.Width(sidebarTabLabel(m.sidebarTab))},
+		{"hint row", hintRow, 0},
+		{"key line", keyRow, 0},
+	} {
+		line := column[c.row]
+		cells := cellBackgrounds(line)
+		if len(cells) < 2 {
+			t.Fatalf("tab %d: %s has no cells: %q", m.sidebarTab, c.name, line)
+		}
+		wrong, highlighted := 0, 0
+		for _, bg := range cells[1:] {
+			switch bg {
+			case "235":
+			case "45":
+				highlighted++
+			default:
+				wrong++
+			}
+		}
+		if wrong > 0 {
+			t.Errorf("tab %d, focused %v, %s %q: %d cells without the sidebar background: %q",
+				m.sidebarTab, m.sidebarFocused, c.name, ansi.Strip(line), wrong, line)
+		}
+		if highlighted != c.highlight {
+			t.Errorf("tab %d, focused %v, %s: %d highlighted cells, want %d: %q",
+				m.sidebarTab, m.sidebarFocused, c.name, highlighted, c.highlight, line)
+		}
 	}
 }

@@ -10,6 +10,10 @@ import (
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
+// sidebarBackground is the background of every row of the sidebar box. A row
+// that is styled must set it again after each reset, see fillWidth.
+const sidebarBackground = lipgloss.Color("235")
+
 // sidebarLayoutT is the sidebar's own layout shape — a full-height column
 // docked to the right of the (narrower) main conversation column, unlike
 // modalLayout's centered popups.
@@ -293,11 +297,12 @@ func (m TuiModel) renderSidebarColumn() string {
 	b.WriteString("\n")
 
 	// The hint row comes first, so the key line is the last row on every
-	// tab, also on tabs where the hint is empty.
-	footerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Width(contentWidth)
-	b.WriteString(footerStyle.Render(truncateToWidth(m.sidebarHint(), contentWidth)))
+	// tab, also on tabs where the hint is empty. Both rows are padded before
+	// they are styled, so the padding keeps the sidebar background (see fillWidth).
+	footerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	b.WriteString(footerStyle.Render(fillWidth(m.sidebarHint(), contentWidth)))
 	b.WriteString("\n")
-	b.WriteString(footerStyle.Render(truncateToWidth(m.sidebarFooter(), contentWidth)))
+	b.WriteString(footerStyle.Render(fillWidth(m.sidebarFooter(), contentWidth)))
 
 	borderColor := lipgloss.Color("63")
 	if m.sidebarFocused {
@@ -310,7 +315,7 @@ func (m TuiModel) renderSidebarColumn() string {
 		Width(panelWidth).
 		Height(layout.height).
 		Padding(0, 1).
-		Background(lipgloss.Color("235")).
+		Background(sidebarBackground).
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderLeft(true).BorderRight(false).BorderTop(false).BorderBottom(false).
 		BorderForeground(borderColor).
@@ -320,12 +325,14 @@ func (m TuiModel) renderSidebarColumn() string {
 }
 
 // renderSidebarTabs renders the tab row, highlighting the active one. Each
-// tab is only as wide as its label; the row is cut at width.
-// sidebarTabAtX (tui_sidebar.go) maps a click on this row back to a tab
-// index, so it must stay in sync with sidebarTabLabel.
+// tab is only as wide as its label; the row is cut at width and padded to
+// width. sidebarTabAtX (tui_sidebar.go) maps a click on this row back to a
+// tab index, so it must stay in sync with sidebarTabLabel.
 func (m TuiModel) renderSidebarTabs(width int) string {
 	active := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("45"))
-	inactive := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	// Each label sets the sidebar background itself: its reset would clear the
+	// background of the box, and the padding after the labels is styled too.
+	inactive := lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(sidebarBackground)
 	var b strings.Builder
 	for i := range sidebarTabNames {
 		if i == m.sidebarTab {
@@ -334,7 +341,9 @@ func (m TuiModel) renderSidebarTabs(width int) string {
 			b.WriteString(inactive.Render(sidebarTabLabel(i)))
 		}
 	}
-	return truncateToWidth(b.String(), width)
+	row := truncateToWidth(b.String(), width)
+	pad := strings.Repeat(" ", max(0, width-lipgloss.Width(row)))
+	return row + lipgloss.NewStyle().Background(sidebarBackground).Render(pad)
 }
 
 // sidebarFooter is the keybinding hint line, tab-specific where an action
