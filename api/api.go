@@ -203,7 +203,7 @@ func doWithTimeouts(h HTTPDoer, req *http.Request) (*http.Response, error) {
 	var stalled atomic.Bool
 	timer := time.AfterFunc(first, func() { stalled.Store(true); cancel() })
 	stallErr := func(d time.Duration) error {
-		return &RetryableError{Message: fmt.Sprintf("no answer from %s after %ds, retrying", req.URL.Host, int(d.Seconds()))}
+		return &RetryableError{Message: fmt.Sprintf("no answer from %s after %ds", req.URL.Host, int(d.Seconds()))}
 	}
 	resp, err := doer(h).Do(req.WithContext(ctx))
 	if err != nil {
