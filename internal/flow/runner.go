@@ -53,11 +53,13 @@ func (r *Runner) Run(ctx context.Context, st *RunState) error {
 
 // Continue runs st again from its saved state after a restart. The saved state
 // is entered without a new visit, so a crash loop does not use up max_visits.
+// A visit that the saved file does not count yet (EntryPending) is counted.
 func (r *Runner) Continue(ctx context.Context, st *RunState) error {
 	return r.run(ctx, st, true)
 }
 
-// run is Run; again skips the visit count of the first state.
+// run is Run; again skips the visit count of the first state unless that visit
+// is not counted in the saved state.
 func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -118,10 +120,13 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 		if s.Ask != "" {
 			return r.pause(st, s.Ask, "")
 		}
-		newVisit := !again
-		if again {
-			again = false
-		} else {
+		// A restart enters the saved state without a new visit. The visit is
+		// counted now when the saved file shows it was not counted: the crash
+		// came after the transition save and before the visit save (EntryPending),
+		// or the state has no counted visit at all. No visit is lost.
+		newVisit := !again || st.Visits[cur] == 0 || st.EntryPending
+		again = false
+		if newVisit {
 			if limit := r.effectiveLimit(s); limit > 0 && st.Visits[cur]+1 > limit {
 				askState, ok := r.WF.States["ask"]
 				if !ok || askState.Ask == "" {
@@ -131,6 +136,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				return r.pause(st, askState.Ask, "max_visits:"+cur)
 			}
 			st.Visits[cur]++
+			st.EntryPending = false
 		}
 		if r.Store != nil {
 			if saveErr := r.Store.Save(st); saveErr != nil {
@@ -186,6 +192,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Artifact:   art,
 			})
 			st.Current = next
+			st.EntryPending = true
 			st.UpdatedAt = time.Now()
 			if r.Store != nil {
 				if saveErr := r.Store.Save(st); saveErr != nil {
@@ -296,6 +303,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					Artifact:  art,
 				})
 				st.Current = next
+				st.EntryPending = true
 				st.UpdatedAt = time.Now()
 				if r.Store != nil {
 					if saveErr := r.Store.Save(st); saveErr != nil {
@@ -328,6 +336,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Note:      note,
 			})
 			st.Current = next
+			st.EntryPending = true
 			st.UpdatedAt = time.Now()
 			if r.Store != nil {
 				if saveErr := r.Store.Save(st); saveErr != nil {
@@ -380,6 +389,7 @@ func (r *Runner) skipCapped(st *RunState, s State, cur, key, note string) error 
 		StartedAt: now, EndedAt: now, Role: s.Agent, Note: note,
 	})
 	st.Current = next
+	st.EntryPending = true
 	st.UpdatedAt = now
 	if r.Store != nil {
 		return r.Store.Save(st)
@@ -587,7 +597,8 @@ func checkGoto(wf *Workflow, state string) error {
 // prompt, and "goto <state>" continues at that state. An unknown answer keeps
 // the run paused and returns an error that lists the allowed keys.
 // Leaving the ask state for a state that is not an end state resets all
-// visit counters. An ask state without on ends the run done.
+// visit counters, except for a goto to the state saved at start-up, which
+// continues like Continue. An ask state without on ends the run done.
 func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error {
 	if st == nil || r.WF == nil {
 		return errors.New("flow: run state or workflow is nil")
@@ -602,12 +613,16 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 	word, rest, _ := strings.Cut(strings.TrimSpace(answer), " ")
 	rest = strings.TrimSpace(rest)
 	var next string
+	restart := false
 	switch {
 	case word == "goto" && rest != "":
 		if err := checkGoto(r.WF, rest); err != nil {
 			return err
 		}
 		next, ok = rest, true
+		// A goto to the state saved at start-up restarts the run like
+		// Continue: no new visit and the visit counts stay.
+		restart = next == resumeState(st)
 	case word == "retry" && rest != "":
 		next, ok = s.On[word]
 		if !ok {
@@ -652,7 +667,7 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		r.notify("run " + st.Run + " done")
 		return nil
 	}
-	if !r.WF.States[next].End {
+	if !r.WF.States[next].End && !restart {
 		st.Visits = map[string]int{}
 	}
 	st.Current = next
@@ -662,6 +677,9 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		if err := r.Store.Save(st); err != nil {
 			return err
 		}
+	}
+	if restart {
+		return r.Continue(ctx, st)
 	}
 	return r.Run(ctx, st)
 }

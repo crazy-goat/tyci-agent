@@ -22,6 +22,9 @@ type Runner interface {
 type Adopter interface {
 	// Adoptable returns the issues of the existing runs not adopted yet.
 	Adoptable() []int
+	// AdoptableResumed is Adoptable without the paused runs: the runs that a
+	// resume made active. The orchestrator takes their slots after the plan.
+	AdoptableResumed() []int
 	// Adopt returns the existing run of the issue, once. It never starts a run;
 	// ok is false when there is no such run. paused is true for a run that
 	// waits for the user's answer; its handle signals Asks at once.
@@ -90,6 +93,7 @@ func (r *flowRunner) Start(ctx context.Context, workflow string, inputs map[stri
 // flowAdopter is the part of flow.Manager that returns resumed runs.
 type flowAdopter interface {
 	Adoptable() []int
+	AdoptableResumed() []int
 	Adopt(issue int) (id string, paused, ok bool)
 }
 
@@ -99,6 +103,14 @@ var _ flowAdopter = (*flow.Manager)(nil)
 func (r *flowRunner) Adoptable() []int {
 	if a, ok := r.m.(flowAdopter); ok {
 		return a.Adoptable()
+	}
+	return nil
+}
+
+// AdoptableResumed returns the issues of the runs resumed with the answer "resume".
+func (r *flowRunner) AdoptableResumed() []int {
+	if a, ok := r.m.(flowAdopter); ok {
+		return a.AdoptableResumed()
 	}
 	return nil
 }

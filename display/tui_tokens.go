@@ -16,7 +16,17 @@ import (
 // not know the model's limit, since a percentage of an unknown is nonsense.
 func (m TuiModel) contextUsed() (used, limit int, ok bool) {
 	used = m.lastUsage.Input + m.lastUsage.Output
-	_, lim := pricing.Lookup("", m.modelName)
+	// The status bar shows "provider/model". The named provider is asked
+	// first, so a gateway that lists the same model id cannot shadow it.
+	// A model id may contain slashes, so when that provider does not list
+	// the model, the whole name is looked up in every provider.
+	var lim pricing.Limits
+	if provider, model, found := strings.Cut(m.modelName, "/"); found {
+		_, lim = pricing.LookupIn(provider, model)
+	}
+	if lim.Context <= 0 {
+		_, lim = pricing.Lookup("", m.modelName)
+	}
 	if lim.Context <= 0 {
 		return used, 0, false
 	}

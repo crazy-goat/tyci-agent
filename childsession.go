@@ -48,7 +48,9 @@ func childPath(p, jobID string) string {
 
 // forkChildSession starts the file of a resumed job. It copies the file of the
 // earlier child to a new path and opens the copy, so two resumes of one job
-// never share a file. The earlier file stays unchanged.
+// never share a file. The earlier file stays unchanged. The copy keeps the
+// block filter of the earlier session, so a redacted run transcript stays
+// redacted after the resume.
 func forkChildSession(old *session.Session, model, provider, jobID string) *session.Session {
 	if old == nil {
 		return nil
@@ -73,6 +75,7 @@ func forkChildSession(old *session.Session, model, provider, jobID string) *sess
 	if err != nil {
 		return nil
 	}
+	s.SetBlockFilter(old.BlockFilter())
 	return s
 }
 
