@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- `tyci run --prompt` prints only the final answer on stdout, with one trailing newline. Tool calls and progress are no longer printed; errors, retry and fallback notices go to stderr (#189).
 - TUI: consecutive tool and thinking steps in the chat form one group line. The group is collapsed by default (#399).
 - TUI: while a step runs, the group line shows the step count and the latest step. When all steps finish, it shows the counts and the total time.
 - TUI: a click on the group line, or Ctrl+O, expands or collapses the group. A single step is not grouped.
@@ -14,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Removed
 - Lua workflows: the `.tyci/agents/*.lua` scripts and the `tyci workflow run` and `tyci workflow list` commands are removed. Use JSON workflows (v0.3.0) instead. `tyci workflow eject` stays.
+- `tyci console` and the `minimal`, `normal` and `interactive` display modes. Use `tyci tui` (interactive) or `tyci run --prompt` (one-shot) (#189).
 
 ### Fixed
 - TUI: mouse wheel events no longer appear as text in the input box. A fast burst of wheel events could split an escape sequence at the read buffer end, and the input box then received it as text. A lone Esc key is released after 50 ms. Pasted text that looks like a mouse event is inserted (#426).

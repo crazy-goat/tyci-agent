@@ -103,7 +103,7 @@ const DefaultSubagentMaxIterations = -1
 // json.Marshal; single-task has no such structural path because the agent
 // runner turns tool results into a `(string, error)` at the package
 // boundary, so this marker is the only way to surface the flag. Exported
-// because the package-main caller (cmd_interactive.go toolsAdapter) needs
+// because the package-main caller (commands.go toolsAdapter) needs
 // to use the same literal.
 const TruncatedMarker = "[truncated=true]"
 
@@ -776,7 +776,7 @@ func GetTopLevelToolsSchema() []map[string]any {
 				// 1-3 schema filter below and subagentToolRunner.Run
 				// consult for a child; RunTool's own built-in depth check
 				// (below in this file) covers the top level, since
-				// cmd_interactive.go's toolsAdapter.Run is a bare
+				// commands.go's toolsAdapter.Run is a bare
 				// passthrough to RunTool with no depth check of its own —
 				// so this schema can never drift from what depth 0
 				// actually permits at runtime.
@@ -1148,7 +1148,7 @@ func RunTool(ctx context.Context, name string, arguments map[string]any) ToolRes
 	// function directly (see toolgate.go's package doc comment on why),
 	// bypassing whatever Go-level check a caller like main.go's
 	// subagentToolRunner.Run makes before ever dispatching here.
-	// cmd_interactive.go's toolsAdapter.Run, the top-level dispatcher, does
+	// commands.go's toolsAdapter.Run, the top-level dispatcher, does
 	// NOT make any such check of its own — it is a bare passthrough
 	// straight to this function — which is exactly why this check has to
 	// live here rather than only in subagentToolRunner.Run: it is the one

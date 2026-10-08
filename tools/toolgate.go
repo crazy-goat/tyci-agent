@@ -253,8 +253,8 @@ func DenySubagentRecursion() ToolGate {
 // This is the single place that decision is made; both the schema builders
 // (GetTopLevelToolsSchema, GetSubagentToolsSchemaJSONForAtDepth in tool.go)
 // and the runtime gates (main.go's subagentToolRunner.Run for a child, and
-// RunTool's own built-in check below for the top level — cmd_interactive.
-// go's toolsAdapter.Run is a bare passthrough to RunTool with no depth
+// RunTool's own built-in check below for the top level — commands.go's
+// toolsAdapter.Run is a bare passthrough to RunTool with no depth
 // check of its own) read from it, so a tool offered at some depth is
 // always one that depth's runtime permits, and vice versa — the same
 // invariant subagentDeniedTools already guarantees for the schema-vs-gate

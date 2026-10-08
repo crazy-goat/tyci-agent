@@ -157,7 +157,7 @@ the run stops at `ask` before the merge. Review and merge the pull request yours
 ## 9. Stop and clean up a stuck run
 
 A `running` run survives a crash or a kill (`kill <pid>`, `kill -9`). The next `tyci` or
-`tyci console` start in the same repository pauses it and asks in the chat: `resume`
+`tyci tui` start in the same repository pauses it and asks in the chat: `resume`
 (continue at its saved state), `stop`, or leave it paused. A normal quit does not leave a run
 to resume.
 

@@ -178,7 +178,7 @@ Additionally: `go test -race ./tools -run "TestLockTool|TestUnlockTool" -v`
 **is** package-level, so it should be shared between tool calls in the
 same process. So the culprit is more likely in a higher layer — either:
 
-- `agent/run_once.go` / `cmd_interactive.go` passes the tool call a
+- `agent/run_once.go` / `commands.go` passes the tool call a
   separate, short-lived `ctx` whose `Done()` triggers the cleanup goroutine
   from `registry.Acquire` (see line ~95 in `locks/registry.go`:
   `go func() { ... ctx.Done() }`).
@@ -190,7 +190,7 @@ immediately after the tool call returns because the `ctx` ends. Then even
 `seconds:120` does not protect, because the expiry is counted from acquire, and after
 `Registry.Acquire` returns, the listener on `ctx.Done()` removes the entry immediately.
 
-To check: in `cmd_interactive.go` and/or `agent/run_*.go`, how `Run(ctx, …)`
+To check: in `commands.go` and/or `agent/run_*.go`, how `Run(ctx, …)`
 is called for the tools — which `ctx`? Is it `context.Background()`, or
 `context.WithTimeout(...)`, or a parent ctx that dies after every tool call?
 

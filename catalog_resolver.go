@@ -54,7 +54,7 @@ func (e *providerNotConfiguredError) Error() string {
 
 // newConductor hands the pieces initCommon produced over to the object that
 // owns the conversation from here on. Every frontend goes through it, which
-// is what makes "the console and the TUI run the same conversation loop"
+// is what makes "the TUI and the run mode run the same conversation loop"
 // true by construction rather than by review.
 //
 // WorkDir is deliberately left empty: the conductor then calls os.Getwd() at

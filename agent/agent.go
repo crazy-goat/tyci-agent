@@ -139,7 +139,7 @@ type Config struct {
 	InLoopCompaction bool
 
 	// Interactive reports whether a human is present to answer a blocked
-	// job's question — true for the console REPL and the TUI, false for
+	// job's question — true for the TUI, false for
 	// `tyci run` (and anything shelling out to it, e.g. cron: see
 	// initCommon's doc comment in commands.go). PendingJobs is wired in
 	// every mode (see its own doc comment), but only an interactive mode
@@ -781,7 +781,7 @@ func buildTodoReminder(pending []string) string {
 // automated check, not as a user asking — the user did not say this.
 //
 // interactive selects which decision is available for a WAITING FOR ANSWER
-// job: in an interactive session (console/TUI) a human is present, so the
+// job: in an interactive session (TUI) a human is present, so the
 // model is told to relay the question in its reply, wait for the human's
 // plain-text answer in the conversation, and then call answer_job itself
 // with what they said — there is no dedicated slash command for a person
