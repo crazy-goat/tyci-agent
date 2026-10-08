@@ -13,7 +13,7 @@ import (
 
 func newScrollTestModel(t *testing.T, lines int) TuiModel {
 	t.Helper()
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	m.width = 80
 	m.height = 20
 	m.ready = true

@@ -215,7 +215,7 @@ func TestUpdate_DropsStrayMouseText(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+			m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 			next, _ := m.Update(c.msg)
 			if got := next.(TuiModel).input.Value(); got != c.want {
 				t.Errorf("input = %q, want %q", got, c.want)

@@ -449,7 +449,6 @@ func builtinToolsSchema() []map[string]any {
 						"prompt":   map[string]any{"type": "string", "description": "What the scheduled agent is asked to do. It gets NOTHING else: no conversation history, no earlier findings. State the task, the paths, and what to report."},
 						"schedule": map[string]any{"type": "string", "description": "When to run: \"every 30m\", \"every 6h\" (shortest interval is 1m, measured from the end of the last run) \"at 07:30\" (local time, once a day) or \"in 5m\" (runs once, then is removed)."},
 						"dir":      map[string]any{"type": "string", "description": "Directory to run in. Defaults to the current one, recorded now — so the job keeps meaning the same project later."},
-						"model":    map[string]any{"type": "string", "description": "Optional model override (format: provider/model). Omit to use the configured default; a cheap model is usually right for a recurring check."},
 					},
 				},
 			},

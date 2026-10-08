@@ -412,8 +412,8 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	}
 	// Resolve the named agent's fallback specs (opts.Fallbacks — "provider/
 	// model" strings from its frontmatter, threaded through SubagentOptions
-	// by tools/subagent.go). Unlike the top-level agent (see resolveFallbacks
-	// in commands.go), a subagent cannot report unresolved specs on stderr:
+	// by tools/subagent.go). Unlike the top-level agent, a subagent cannot
+	// report unresolved specs on stderr:
 	// it runs mid-session, frequently under the Bubble Tea TUI, and an
 	// unguarded stderr write there corrupts the screen instead of politely
 	// wrapping a line. resolveFallbacksQuiet reports nothing itself; any
@@ -1033,7 +1033,7 @@ func main() {
 	// stderr corrupts `--print`/piped output and the TUI, and there is no
 	// display object here yet to route it through — for a background
 	// convenience step whose failure never blocks anything the user asked
-	// for. `tyci agent sync` (commands.go) is the one place this is loud.
+	// for.
 	_, _ = agentdefs.Sync(agentdefs.GlobalDir(), false)
 
 	idle, escalate, err := agent.LoadTyciConfigFrom("").WatchdogDurations()

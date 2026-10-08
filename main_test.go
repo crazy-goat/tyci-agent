@@ -74,15 +74,10 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Create a default agent so ResolveModel finds a model without --model flag.
-	agentCfg := map[string]map[string]any{
-		"default": {
-			"model": "test-provider/test-model",
-		},
-	}
-	data2, _ := json.Marshal(agentCfg)
-	if err := os.WriteFile(filepath.Join(tyciDir, "agents.json"), data2, 0644); err != nil {
-		_, _ = os.Stderr.WriteString("write agents.json: " + err.Error())
+	// Set the default model so run finds one without a --model flag.
+	cfgJSON, _ := json.Marshal(map[string]string{"default_model": "test-provider/test-model"})
+	if err := os.WriteFile(filepath.Join(tyciDir, "config.json"), cfgJSON, 0644); err != nil {
+		_, _ = os.Stderr.WriteString("write config.json: " + err.Error())
 		os.Exit(1)
 	}
 
@@ -168,10 +163,30 @@ func TestConsoleCommandRemoved(t *testing.T) {
 	}
 }
 
+// writeHomeWithDefaultModel returns a fresh HOME whose config.json sets
+// default_model to spec. It holds a stub providers.json, so no catalog
+// download runs.
+func writeHomeWithDefaultModel(t *testing.T, spec string) string {
+	t.Helper()
+	home := t.TempDir()
+	tyciDir := filepath.Join(home, ".tyci")
+	if err := os.MkdirAll(tyciDir, 0755); err != nil {
+		t.Fatalf("mkdir .tyci: %v", err)
+	}
+	cfgJSON, _ := json.Marshal(map[string]string{"default_model": spec})
+	if err := os.WriteFile(filepath.Join(tyciDir, "config.json"), cfgJSON, 0600); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tyciDir, "providers.json"), []byte("{}"), 0600); err != nil {
+		t.Fatalf("write providers.json: %v", err)
+	}
+	return home
+}
+
 func TestRunModelNotExistError(t *testing.T) {
-	// Non-existent model should print error and exit
-	cmd := exec.Command(binPath, "run", "--prompt", "hi", "--model", "nonexistent/model")
-	cmd.Env = testEnv()
+	// A default model that does not exist should print error and exit
+	cmd := exec.Command(binPath, "run", "--prompt", "hi")
+	cmd.Env = append(os.Environ(), "HOME="+writeHomeWithDefaultModel(t, "nonexistent/model"))
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatal("expected error for non-existent model")

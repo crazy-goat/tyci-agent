@@ -30,7 +30,7 @@ import (
 // the new width, and the difference between them shows up as either missing
 // real content or bogus viewport-pad rows.
 func TestResizeAfterFlushKeepsTotalLinesConsistent(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 200
 	m.height = 40
@@ -144,7 +144,7 @@ func streamInChunks(m *TuiModel, kind, content string, chunkSize int) {
 // total-line bookkeeping never disagrees with the real render — including
 // once the transcript is long enough to require scrolling.
 func TestStreamedMarkdownFinalizationKeepsTotalLinesConsistent(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 60
 	m.height = 40
@@ -199,7 +199,7 @@ func TestStreamedMarkdownFinalizationKeepsTotalLinesConsistent(t *testing.T) {
 // shows up once a second streaming block starts after the first one's
 // glamour line count has already diverged from its raw streamed count.
 func TestStreamedMarkdownFinalizationAcrossMultipleTurns(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 60
 	m.height = 40

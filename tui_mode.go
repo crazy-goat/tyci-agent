@@ -170,32 +170,6 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		tuiDisp.Close()
 	}()
 
-	// updateModel resolves a new model string and points the conversation at
-	// it. This is in-memory only for the current TUI process. It does not
-	// write agents/config files, and /new must not reset it.
-	updateModel := func(newModel string) {
-		if err := cond.SwitchModel(newModel); err != nil {
-			tuiDisp.SetModel(cond.Model()) // revert TUI display to previous model
-		}
-	}
-
-	// drainModelChanges applies all queued model changes before running a prompt.
-	// This avoids a race where the user picks /model and immediately submits the
-	// next prompt while the model change is still buffered.
-	drainModelChanges := func() {
-		for {
-			select {
-			case newModel, ok := <-tuiDisp.ModelChanges():
-				if !ok {
-					return
-				}
-				updateModel(newModel)
-			default:
-				return
-			}
-		}
-	}
-
 	// resumeSession swaps the running session + conversation onto a previously-
 	// recorded JSONL file. Used both by the slash command (with an explicit path
 	// arg) and after a successful pick from the /resume popup. Errors surface
@@ -227,13 +201,6 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 			return fmt.Errorf("reopen: %w", err)
 		}
 
-		// model/provider may also be restored if the resumed session used a
-		// different one.
-		if summary.Provider != "" && summary.Model != "" {
-			if err := cond.SwitchModel(summary.Provider + "/" + summary.Model); err == nil {
-				tuiDisp.SetModel(cond.Model())
-			}
-		}
 		// Drop the in-flight iteration — its context is no longer relevant
 		// since the conversation it was going to write to just changed.
 		if cancellation != nil {
@@ -348,13 +315,6 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 			}
 			line = strings.Join(notices, "\n")
 
-		case newModel, ok := <-tuiDisp.ModelChanges():
-			iterCancel()
-			if ok {
-				updateModel(newModel)
-			}
-			continue
-
 		case l, ok := <-tuiDisp.Results():
 			if !ok {
 				iterCancel()
@@ -384,8 +344,6 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 			iterCancel()
 			return
 		}
-
-		drainModelChanges()
 
 		rawLine := line
 		trimmed := strings.TrimSpace(line)

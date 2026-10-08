@@ -17,7 +17,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 - **Display modes** — `tui` (Bubble Tea terminal UI) and `run` (plain text, one-shot)
 - **Session persistence** — automatic save/resume of conversations (JSONL)
 - **Streaming** — real-time thought, text, and tool output streaming
-- **Agent configuration** — named agent presets with model and fallback assignments
+- **Agent definitions** — markdown agent files with YAML frontmatter, plus three builtin agents
 - **Provider registration** — `tyci provider add` / `provider refresh` CLI to add or sync providers without editing JSON manually
 
 ## Installation
@@ -205,15 +205,20 @@ model to try next when a request fails) — those stay configured separately.
 
 ### 2. Run the agent
 
+Set the model in `~/.tyci/config.json`. The format is `provider/model`:
+
+```json
+{"default_model": "my-provider/my-model"}
+```
+
+Run a one-shot prompt, or start the TUI:
+
 ```bash
 # One-shot prompt
-tyci run --model my-provider/my-model --prompt "What is the capital of France?"
+tyci run --prompt "What is the capital of France?"
 
 # TUI mode (rich terminal UI)
-tyci tui --model my-provider/my-model
-
-# Use agent presets
-tyci run --agent my-agent --prompt "Hello"
+tyci tui
 ```
 
 ## Run transcripts
@@ -242,7 +247,6 @@ runs. A negative value is a config error.
 ├── nexos-models.json   # Cached nexos API prices and limits (refreshed every 6 h)
 ├── model.json          # Custom provider / model definitions (from `provider add`)
 ├── auth.json           # API keys per provider (permissions 0600)
-├── agents.json         # Named agent configurations (name -> model + fallback)
 ├── agents/             # Markdown agent definitions (<name>.md, global)
 │   └── .managed.json   # sha256 bookkeeping for the builtin definitions (see below)
 ├── history             # Readline history file
@@ -259,7 +263,6 @@ runs. A negative value is a config error.
 |---------|-------------|
 | `run` | One-shot prompt (requires `--prompt`) |
 | `tui` | Rich terminal UI (Bubble Tea) |
-| `agent` | Manage agent configurations |
 | `provider` | Manage provider settings |
 | `cron` | List and run scheduled prompts |
 | `completion` | Generate shell completion script |
@@ -293,8 +296,6 @@ These flags work with `run` and `tui`:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model` | `""` | Model to use (format: `provider/model`) |
-| `--agent` | `""` | Agent name for default model (from `~/.tyci/agents.json`) |
 | `--max-retries` | `5` | Max retries on transient errors (0 to disable) |
 | `--max-iterations` | `-1` | Max tool-call iterations (-1 = unlimited) |
 | `--history-file` | `""` | Path to history file (default: `~/.tyci/history`) |
@@ -368,28 +369,15 @@ tyci provider auth list
 tyci provider auth rm <provider>
 ```
 
-#### `tyci agent`
-
-Manage named agent configurations.
-
-```bash
-tyci agent list                          # List all agents
-tyci agent get <name>                    # Show agent model assignment
-tyci agent set <name> <provider>/<model> # Assign model to agent
-tyci agent delete <name>                 # Remove agent
-tyci agent set-fallback <name> <m1> [<m2> ...]  # Set fallback models (positional)
-tyci agent sync [--force]                # Unpack/update builtin agent definitions (see below)
-```
-
 #### Markdown agent definitions
 
-Beyond the model-only presets above, an agent can be declared as a markdown file with
+An agent can be declared as a markdown file with
 YAML frontmatter. The body becomes the agent's system prompt — by default *appended*
 as a role on top of the standard subagent prompt (see `system_prompt_mode` below), so
 you only need to describe what the agent specializes in, not restate its contract.
 
-Definitions are read from two locations, project overriding global on name collision —
-the same precedence `.tyci.json` has over `~/.tyci/agents.json`:
+tyci reads definitions from two locations. A project definition overrides a global
+definition with the same name:
 
 - `./.tyci/agents/<name>.md` — project-local, committed with the repo
 - `~/.tyci/agents/<name>.md` — global
@@ -456,8 +444,8 @@ tyci release, **but only for files it can prove it last wrote and you have not t
   upgrade. Copy it to `.tyci/agents/` (project-local) if you want your own version to
   win over a future global one instead.
 - Deleted it? That is respected as a deliberate choice, not resurrected on the next run.
-  Bring it back with `tyci agent sync --force`, which also overwrites any local edits —
-  see `tyci agent sync --help` for the full explanation.
+  To restore it, remove its entry from `~/.tyci/agents/.managed.json`. The next start of
+  tyci writes the stock file again.
 
 The builtin definitions deliberately omit `model`, so they inherit whatever model the
 parent agent is running on and work unmodified with every provider — nothing to
@@ -506,7 +494,7 @@ minutes:
 ### Display Modes
 
 - **run** — Plain text: only the final answer on stdout; errors, retry and fallback notices on stderr
-- **tui** — Bubble Tea TUI with split-pane, model picker, mouse support
+- **tui** — Bubble Tea TUI with split-pane layout and mouse support
 
 #### `tyci completion`
 
@@ -597,10 +585,8 @@ tyci compacts without asking. Set them in `~/.tyci/config.json`:
 { "compact_soft_limit": 100000, "compact_hard_limit": 150000 }
 ```
 
-Override them per agent with `compact_soft_limit` / `compact_hard_limit` in an
-`agents.json` entry. Subagents also read them from the agent definition
-frontmatter. The main conversation started with `--agent <name>` ignores
-frontmatter limits. Flow roles use `roles.<name>.compact_soft_limit` and
+Subagents read `compact_soft_limit` and `compact_hard_limit` from the agent definition
+frontmatter. Flow roles use `roles.<name>.compact_soft_limit` and
 `roles.<name>.compact_hard_limit` in the flow config.
 
 Flow roles also take `roles.<name>.effort` (`low`, `medium`, `high`, `xhigh` or

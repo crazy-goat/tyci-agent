@@ -170,7 +170,7 @@ func TestNoBoundaryMatchesPureStreamWrap(t *testing.T) {
 	width := 60
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
-			m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+			m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 			m.width = width
 			m.height = 24
 			m.status = "responding"
@@ -213,7 +213,7 @@ func TestNoBoundaryMatchesPureStreamWrap(t *testing.T) {
 // So "3. three" flushed as its own segment renders as "3. three", not
 // "1. three" — this is not a defect to fix, just documented behavior.
 func TestOrderedListNumberingAcrossFlush(t *testing.T) {
-	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 	m.width = 80
 	m.height = 24
 	m.status = "responding"
@@ -257,7 +257,7 @@ func TestCJKEmojiNoTruncationAtBoundary(t *testing.T) {
 		"第二段 continues 你好世界 🚀\n"
 
 	for _, chunkSize := range []int{1, 2, 3, 5} {
-		m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+		m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 		m.width = 40
 		m.height = 24
 		m.status = "responding"
@@ -401,7 +401,7 @@ func TestStreamWrapRender_CanReturnEmptyOutWithNonEmptyLines(t *testing.T) {
 // correctly rather than trust an invariant scan() doesn't actually
 // guarantee syntactically.
 func TestRenderStreamingMarkdown_NonEmptyPrefixSurvivesBlankTail(t *testing.T) {
-	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 	m.width = 80
 	m.height = 24
 	m.status = "responding"
@@ -462,7 +462,7 @@ func TestFinalRenderMatchesUnstreamed(t *testing.T) {
 	}
 
 	newStreamedModel := func() *TuiModel {
-		m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+		m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 		m.width = 70
 		m.height = 24
 		m.status = "responding"
@@ -514,7 +514,7 @@ func TestFlushKeepsBlankSeparatorBetweenParagraphs(t *testing.T) {
 	paragraphs := []string{"Paragraph one.", "Paragraph two.", "Paragraph three.", "Paragraph four."}
 	content := strings.Join(paragraphs, "\n\n") + "\n\n"
 
-	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 	m.width = 60
 	m.height = 24
 	m.status = "responding"
@@ -548,7 +548,7 @@ func TestFlushKeepsBlankSeparatorBetweenParagraphs(t *testing.T) {
 // the review's "worse than uniform" observation about the pre-fix state.
 func TestFlushSeparatorTableStillHasOwnPadding(t *testing.T) {
 	content := "| a | b |\n| - | - |\n| 1 | 2 |\n\nAfter the table.\n"
-	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 	m.width = 60
 	m.height = 24
 	m.status = "responding"
@@ -635,7 +635,7 @@ func TestWhitespaceOnlyAndCRLFLinesAreBlank(t *testing.T) {
 // (renderedUpto or scanPos would otherwise exceed len(content)), the state
 // must restart from scratch instead of panicking on a bad slice.
 func TestRenderStreamingMarkdownRecoversFromContentShrink(t *testing.T) {
-	m := newModel(make(chan string, 1), "test-model", "", nil, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(make(chan string, 1), "test-model", "", nil, 0, 0, 0)
 	m.width = 60
 	m.height = 24
 	m.status = "responding"

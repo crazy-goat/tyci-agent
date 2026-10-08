@@ -10,7 +10,7 @@ import (
 // prompt.
 func busyModel(t *testing.T, typed string) TuiModel {
 	t.Helper()
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.commands = make(chan string, 4)
 	m.input.SetValue(typed)

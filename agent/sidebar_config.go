@@ -10,7 +10,7 @@ func GetSidebarVisible() bool {
 
 // SetSidebarVisible persists the sidebar visibility to ~/.tyci/config.json,
 // reloading first so a concurrent tyci session's other fields aren't
-// clobbered — same reload-then-save posture as SetFavoriteModels.
+// clobbered.
 func SetSidebarVisible(visible bool) error {
 	cfg := LoadTyciConfig()
 	cfg.SidebarVisible = visible

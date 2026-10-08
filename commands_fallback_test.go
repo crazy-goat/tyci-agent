@@ -3,8 +3,6 @@ package main
 import (
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/crazy-goat/tyci-agent/connector"
@@ -40,36 +38,6 @@ func captureStderr(t *testing.T, fn func()) string {
 // =============================================================================
 // resolveFallbacksQuiet — resolves without reporting
 // =============================================================================
-
-func TestInitCommon_ExplicitModelDoesNotInheritDefaultAgentFallback(t *testing.T) {
-	writeWiringTestHome(t)
-	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".tyci", "agents.json"), []byte(`{"default":{"fallback":["explicit-fallback-prov/fallback-model"]}}`), 0600); err != nil {
-		t.Fatalf("write agents.json: %v", err)
-	}
-
-	providers.Register(&fakeProvider{name: "explicit-primary-prov", configured: true, models: []string{"primary-model"}})
-	providers.Register(&fakeProvider{name: "explicit-fallback-prov", configured: true, models: []string{"fallback-model"}})
-
-	cmd := newInitCommonTestCmd(t)
-	if err := cmd.Flags().Set("model", "explicit-primary-prov/primary-model"); err != nil {
-		t.Fatalf("set model: %v", err)
-	}
-	if err := cmd.Flags().Set("no-mcp", "true"); err != nil {
-		t.Fatalf("set no-mcp: %v", err)
-	}
-
-	_, _, cfg, _, _, _, _, dl, shutdown, err := initCommon(cmd, false, false)
-	if err != nil {
-		t.Fatalf("initCommon: %v", err)
-	}
-	defer shutdown()
-	if dl != nil {
-		defer dl.Close()
-	}
-	if len(cfg.Fallbacks) != 0 {
-		t.Fatalf("explicit --model inherited %d fallback(s): %v", len(cfg.Fallbacks), cfg.Fallbacks)
-	}
-}
 
 func TestResolveFallbacksQuiet_AllResolve(t *testing.T) {
 	prov := &fakeProvider{name: "quiet-ok-prov", configured: true, models: []string{"m1", "m2"}}
@@ -134,45 +102,5 @@ func TestResolveFallbacksQuiet_MixedValidAndInvalid(t *testing.T) {
 	}
 	if stderr != "" {
 		t.Errorf("resolveFallbacksQuiet wrote to stderr: %q", stderr)
-	}
-}
-
-// =============================================================================
-// resolveFallbacks — today's behavior, preserved: reports on stderr
-// =============================================================================
-
-func TestResolveFallbacks_AllResolveNoWarning(t *testing.T) {
-	prov := &fakeProvider{name: "loud-ok-prov", configured: true, models: []string{"m1"}}
-	providers.Register(prov)
-
-	var got []connector.ModelClient
-	stderr := captureStderr(t, func() {
-		clients := resolveFallbacks([]string{"loud-ok-prov/m1"})
-		if len(clients) != 1 {
-			t.Fatalf("expected 1 resolved client, got %d", len(clients))
-		}
-		got = clients
-	})
-	if stderr != "" {
-		t.Errorf("expected no warning for a fully-resolved list, got %q", stderr)
-	}
-	if len(got) != 1 || got[0].Provider() != "loud-ok-prov" {
-		t.Errorf("unexpected resolved provider: %v", got)
-	}
-}
-
-// This pins the exact behavior resolveFallbacks must keep after being
-// rewritten to call resolveFallbacksQuiet internally: an unresolved spec
-// still produces the same stderr warning it always did.
-func TestResolveFallbacks_UnresolvedSpecWarnsOnStderr(t *testing.T) {
-	var clients []connector.ModelClient
-	stderr := captureStderr(t, func() {
-		clients = resolveFallbacks([]string{"loud-ghost-prov/nope"})
-	})
-	if len(clients) != 0 {
-		t.Errorf("expected no resolved clients, got %d", len(clients))
-	}
-	if !strings.Contains(stderr, `Warning: fallback model "loud-ghost-prov/nope" not found, skipping`) {
-		t.Errorf("stderr = %q, want the unresolved-fallback warning", stderr)
 	}
 }

@@ -195,7 +195,7 @@ func TestScanProjectFilesReturnsRelativeSlashPaths(t *testing.T) {
 // newFileCompleteTestModel builds a bare TUI model the way the other display
 // tests do.
 func newFileCompleteTestModel() TuiModel {
-	return newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	return newModel(nil, "test/model", "", nil, 0, 0, 0)
 }
 
 func newFileCompleteModel(files []string) TuiModel {

@@ -182,7 +182,7 @@ func loadManagedState(path string) map[string]string {
 }
 
 // saveManagedState writes the sha256 bookkeeping map. Permissions match the
-// rest of tyci's config files (see agent.SaveGlobal): 0644, world-readable,
+// rest of tyci's config files: 0644, world-readable,
 // no secrets live here.
 func saveManagedState(path string, state map[string]string) error {
 	data, err := json.MarshalIndent(state, "", "  ")

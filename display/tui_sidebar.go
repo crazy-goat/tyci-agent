@@ -372,8 +372,8 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 //   - KeyMsg goes to the sidebar only while sidebarFocused; otherwise only
 //     Ctrl+Right is claimed here (entering focus) and everything else falls
 //     through to the normal keymap. Tab/ShiftTab are deliberately never
-//     claimed here at all — handleKeyMsg's normal case for them
-//     (switchModel) applies whether or not the sidebar is open.
+//     claimed here at all, because the terminal treats Tab as a focus-cycle
+//     key; the sidebar is driven by arrows only.
 //   - tuiMsgBlock never reaches this function: Update() dispatches it to
 //     handleBlockMsg before any sidebar routing, so streamed blocks keep
 //     flowing whether or not the sidebar has focus.
@@ -471,19 +471,6 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyCtrlT:
 			m.closeSidebarPersisted()
-			return m, nil
-
-		case tea.KeyTab:
-			// Tab/ShiftTab are never sidebar tab-switchers: the terminal
-			// itself treats Tab as a focus-cycle key, which is the root of
-			// the problem this arrows-only design avoids. They keep doing
-			// exactly what they do in the normal (non-sidebar) keymap —
-			// switch model — regardless of sidebar focus.
-			m.switchModel(1)
-			return m, nil
-
-		case tea.KeyShiftTab:
-			m.switchModel(-1)
 			return m, nil
 
 		case tea.KeyCtrlLeft, tea.KeyCtrlRight:

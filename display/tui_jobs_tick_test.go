@@ -15,7 +15,7 @@ import (
 // that drives it.
 
 func newIdleTestModelForJobsTick() TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 30

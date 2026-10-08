@@ -448,7 +448,7 @@ func TestFormatToolCall_UnknownToolFallsBack(t *testing.T) {
 }
 
 func TestTuiModel_RenderToolBlock_FailedIsRed(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	b := block{
 		kind:      "tool",
 		toolName:  "bash",
@@ -467,7 +467,7 @@ func TestTuiModel_RenderToolBlock_FailedIsRed(t *testing.T) {
 }
 
 func TestTuiModel_ToolEndUsesExplicitFailureStatus(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	for _, tc := range []struct {
 		name, result string
 		failed       bool

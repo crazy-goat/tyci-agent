@@ -16,7 +16,7 @@ import (
 // newGroupTestModel returns a ready model with a fixed size, so mouse rows
 // map to the message area as in a real terminal.
 func newGroupTestModel() TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width, m.height = 80, 24
 	return m

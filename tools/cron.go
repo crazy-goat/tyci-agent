@@ -209,7 +209,6 @@ func (t *CronTool) add(ctx context.Context, input map[string]any, name string) T
 		Name:     name,
 		Prompt:   prompt,
 		Dir:      abs,
-		Model:    strings.TrimSpace(stringParam(input, "model", "")),
 		Schedule: schedule,
 		Caller:   caller,
 	}

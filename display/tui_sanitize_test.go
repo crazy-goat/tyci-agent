@@ -89,7 +89,7 @@ func TestSanitizeReplacesInvalidUTF8(t *testing.T) {
 // function is no use if a kind of message bypasses it.
 func TestBlockContentIsSanitizedOnTheWayIn(t *testing.T) {
 	for _, kind := range []string{"text", "thinking", "block", "error"} {
-		m := newPickerTestModel(testProviders, nil, "")
+		m := newTestModel()
 		m.handleBlockMsg(tuiMsgBlock{kind: kind, content: "before\x1b[2J\rafter"})
 
 		region := m.buildMessageRegion(m.messageRegionHeight())
@@ -106,7 +106,7 @@ func TestBlockContentIsSanitizedOnTheWayIn(t *testing.T) {
 // Any command run with a colour flag emits escapes, and a progress bar emits
 // carriage returns.
 func TestToolOutputIsSanitized(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-progress", toolIdx: 0, content: "\x1b[32mpassed\x1b[0m\rredraw"})
 

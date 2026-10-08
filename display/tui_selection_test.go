@@ -21,7 +21,7 @@ func withClipboardStub(t *testing.T) *string {
 }
 
 func newSelectionTestModel() TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 80
 	m.height = 20
 	m.ready = true
@@ -221,7 +221,7 @@ func TestTuiSelection_ScreenYMapping(t *testing.T) {
 // that row's own text names, with a running background job panel visible
 // so the previously-diverging height math is actually exercised.
 func TestBlockAtVisibleLine_AfterView_MatchesWhatWasDrawn(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -260,7 +260,7 @@ func TestBlockAtVisibleLine_AfterView_MatchesWhatWasDrawn(t *testing.T) {
 // Before the fix, the spacer was attributed to the next block, so clicking
 // the blank line above a tool opened that tool's modal (issue #87).
 func TestBlockAtVisibleLine_SpacerReturnsMinusOne(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -300,7 +300,7 @@ func TestBlockAtVisibleLine_SpacerReturnsMinusOne(t *testing.T) {
 // blank spacer line between a text block and a tool block must NOT open the
 // tool modal. Before the fix, the spacer was mapped to the next block (issue #87).
 func TestClickSpacerLineDoesNotOpenToolModal(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40
@@ -337,7 +337,7 @@ func TestClickSpacerLineDoesNotOpenToolModal(t *testing.T) {
 // TestBlockAtVisibleLine_ConsecutiveToolsNoSpacer verifies that consecutive
 // tool blocks (no spacer between them) are mapped correctly — no off-by-one.
 func TestBlockAtVisibleLine_ConsecutiveToolsNoSpacer(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40

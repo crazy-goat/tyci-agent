@@ -240,8 +240,6 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 		m.dirtyBlocks[idx] = true
 		m.invalidateTotalLines()
 		m.maybeFlushOldBlocks()
-	case "set-model":
-		m.modelName = msg.content
 	case "reset":
 		m.blocks = nil
 		m.scrollLine = 0

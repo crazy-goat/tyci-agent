@@ -9,9 +9,9 @@ import (
 )
 
 func TestRunUntrustedWarningNamesAllSkippedContent(t *testing.T) {
-	cmd := exec.Command(binPath, "run", "--no-mcp", "--model", "missing-warning-provider/model", "--prompt", "hello")
+	cmd := exec.Command(binPath, "run", "--no-mcp", "--prompt", "hello")
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+testDir)
+	cmd.Env = append(os.Environ(), "HOME="+writeHomeWithDefaultModel(t, "missing-warning-provider/model"))
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatal("expected the intentionally missing provider to stop the run")

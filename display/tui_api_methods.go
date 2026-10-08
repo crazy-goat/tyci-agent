@@ -9,10 +9,6 @@ import (
 	"github.com/crazy-goat/tyci-agent/stream"
 )
 
-func (t *TUI) ModelChanges() <-chan string {
-	return t.modelChanges
-}
-
 // SelectedResume returns a channel that yields the chosen session file path
 // when the user presses Enter in the /resume picker. On Esc, "" is sent so the
 // caller can distinguish "user dismissed" from "no picker was open". The
@@ -45,11 +41,6 @@ func (t *TUI) SetSessionLister(fn func() []TuiResumeEntry) {
 // workflow runs, newest first.
 func (t *TUI) SetRunLister(fn func() []TuiRunRow) {
 	t.prog.Send(tuiSetRunListerMsg{fn: fn})
-}
-
-// SetModel updates the model name displayed in the status bar.
-func (t *TUI) SetModel(name string) {
-	t.prog.Send(tuiMsgBlock{kind: "set-model", content: name})
 }
 
 // Results returns the channel that receives submitted lines from the TUI.

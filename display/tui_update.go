@@ -56,7 +56,7 @@ func (m TuiModel) hasLiveJobsToPaint() bool {
 	// from this list.
 	return !m.historySearchActive && !m.resumePickerActive && !m.todoModalActive &&
 		!m.subagentModalActive && !m.btwListActive &&
-		!m.btwModalActive && !m.pickerActive
+		!m.btwModalActive
 }
 
 // statusTickCmd returns a command that fires once after interval, keeping
@@ -219,9 +219,6 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.resumePickerActive {
 		return m.updateResumePicker(msg)
 	}
-	if m.pickerActive {
-		return m.updatePicker(msg)
-	}
 	if m.todoModalActive {
 		return m.updateTodoModal(msg)
 	}
@@ -279,9 +276,7 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.openBtwList()
 		return m, nil
 	case tuiResumeRequestMsg:
-		// /resume opened (typically bubbles in while reading=true). Make
-		// sure no active model-picker is also active — the two popup
-		// modes are mutually exclusive for the centered overlay.
+		// /resume opened (typically bubbles in while reading=true).
 		m.openResumePicker(msg.entries)
 		return m, nil
 	case tea.KeyMsg:
@@ -363,38 +358,4 @@ func (m TuiModel) handleResizeFlush() (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
-}
-
-func (m *TuiModel) switchModel(delta int) {
-	list := m.favoriteModels
-	if len(list) == 0 {
-		list = m.models
-	}
-	if len(list) == 0 {
-		return
-	}
-	// Include the current model in the cycle even if it isn't a favorite, so
-	// Tab always starts from where you are — without persisting it as one.
-	inList := false
-	cur := 0
-	for i, mm := range list {
-		if mm == m.modelName {
-			inList = true
-			cur = i
-			break
-		}
-	}
-	if !inList {
-		list = append([]string{m.modelName}, list...)
-		cur = 0
-	}
-	m.favIdx = (cur + delta + len(list)) % len(list)
-	newModel := list[m.favIdx]
-	m.modelName = newModel
-	if m.modelChanges != nil {
-		select {
-		case m.modelChanges <- newModel:
-		default:
-		}
-	}
 }

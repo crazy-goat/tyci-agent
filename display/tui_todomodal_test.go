@@ -14,7 +14,7 @@ import (
 
 func TestTopBarCounterHit_TodosNoItems(t *testing.T) {
 	tools.ClearTodoList()
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -65,7 +65,7 @@ func TestTopBarCounterHit_TodosWithItems(t *testing.T) {
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 2"})
 	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 5, 7, 2)
+	m := newModel(nil, "test/model", "", nil, 5, 7, 2)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -93,7 +93,7 @@ func TestTopBarCounterHit_TodosWithItems(t *testing.T) {
 
 func TestTopBarCounterHit_NoHitOutsideCounters(t *testing.T) {
 	tools.ClearTodoList()
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -115,7 +115,7 @@ func TestTopBarCounterHit_TodosDroppedWhenNarrow(t *testing.T) {
 	tool := &tools.TodoTool{}
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "step 1"})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 18, 12, 3)
+	m := newModel(nil, "test/model", "", nil, 18, 12, 3)
 	m.ready = true
 	m.width = 18 // very narrow — todos should be dropped (dropOrder 3)
 	m.height = 24
@@ -134,7 +134,7 @@ func TestTopBarCounterHit_TodosDroppedWhenNarrow(t *testing.T) {
 
 func TestTodoModal_OpenClose(t *testing.T) {
 	tools.ClearTodoList()
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -162,7 +162,7 @@ func TestTodoModal_OpenClose(t *testing.T) {
 
 func TestTodoModal_OpenIdempotent(t *testing.T) {
 	tools.ClearTodoList()
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -184,7 +184,7 @@ func TestTodoModal_ClickOpensModal(t *testing.T) {
 	tools.ClearTodoList()
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "test task"})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -220,7 +220,7 @@ func TestTodoModal_ClickOpensModal(t *testing.T) {
 
 func TestTodoModal_ClickOutsideTodosDoesNotOpen(t *testing.T) {
 	tools.ClearTodoList()
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -246,7 +246,7 @@ func TestTodoModal_ClickOutsideTodosDoesNotOpen(t *testing.T) {
 
 func TestTodoModal_ESCCloses(t *testing.T) {
 	tools.ClearTodoList()
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -270,7 +270,7 @@ func TestTodoModal_ESCCloses(t *testing.T) {
 
 func TestTodoModal_EnterCloses(t *testing.T) {
 	tools.ClearTodoList()
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -290,7 +290,7 @@ func TestTodoModal_EnterCloses(t *testing.T) {
 
 func TestTodoModal_OutsideClickCloses(t *testing.T) {
 	tools.ClearTodoList()
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -324,7 +324,7 @@ func TestRenderTodoModal_ShowsItems(t *testing.T) {
 	tool.Run(context.Background(), map[string]any{"action": "done", "id": 1})
 	tool.Run(context.Background(), map[string]any{"action": "doing", "id": 2})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -360,7 +360,7 @@ func TestRenderTodoModal_ShowsItems(t *testing.T) {
 func TestRenderTodoModal_EmptyList(t *testing.T) {
 	tools.ClearTodoList()
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -383,7 +383,7 @@ func TestRenderTodoModal_WidthFitsTerminal(t *testing.T) {
 	tools.ClearTodoList()
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "task"})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 60
 	m.height = 20
@@ -410,7 +410,7 @@ func TestTodoModal_ScrollUpDown(t *testing.T) {
 		tool.Run(context.Background(), map[string]any{"action": "add", "content": "task"})
 	}
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 20 // small height to force scrolling
@@ -461,7 +461,7 @@ func TestTodoModal_HomeEnd(t *testing.T) {
 		tool.Run(context.Background(), map[string]any{"action": "add", "content": "task"})
 	}
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 15
@@ -493,7 +493,7 @@ func TestRenderFrame_TodoModalActive(t *testing.T) {
 	tools.ClearTodoList()
 	tool.Run(context.Background(), map[string]any{"action": "add", "content": "my task"})
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -516,7 +516,7 @@ func TestRenderFrame_TodoModalActive(t *testing.T) {
 func TestRenderFrame_TodoModalNotInNormalView(t *testing.T) {
 	tools.ClearTodoList()
 
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -534,7 +534,7 @@ func TestRenderFrame_TodoModalNotInNormalView(t *testing.T) {
 
 func TestUpdate_RoutesToTodoModal(t *testing.T) {
 	tools.ClearTodoList()
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 24

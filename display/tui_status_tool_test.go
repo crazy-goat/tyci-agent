@@ -12,7 +12,7 @@ import (
 )
 
 func TestStatusNamesTheRunningTool(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
 
 	got := m.runningToolsStatus(" 13.7s")
@@ -27,7 +27,7 @@ func TestStatusNamesTheRunningTool(t *testing.T) {
 // TestStatusNamesEveryToolInAParallelBatch: "3 tools" tells you nothing about
 // which one is slow, and a parallel batch is exactly when you want to know.
 func TestStatusNamesEveryToolInAParallelBatch(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	for _, name := range []string{"read", "bash", "find"} {
 		m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: name})
 	}
@@ -41,7 +41,7 @@ func TestStatusNamesEveryToolInAParallelBatch(t *testing.T) {
 }
 
 func TestStatusCapsAVeryWideBatch(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	for i := 0; i < 9; i++ {
 		m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
 	}
@@ -55,7 +55,7 @@ func TestStatusCapsAVeryWideBatch(t *testing.T) {
 // TestStatusTimesTheToolNotTheTurn is the point of the change: the number has
 // to be the age of the thing you are waiting for.
 func TestStatusTimesTheToolNotTheTurn(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 	// Pretend the tool started long before the turn's elapsed suffix suggests.
 	m.blocks[0].startTime = time.Now().Add(-90 * time.Second)
@@ -72,7 +72,7 @@ func TestStatusTimesTheToolNotTheTurn(t *testing.T) {
 // TestStatusFallsBackBeforeTheFirstBlock: the status flips to "tool" a moment
 // before the first tool-start block lands, and a bare "⟳" would look broken.
 func TestStatusFallsBackBeforeTheFirstBlock(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	if got := m.runningToolsStatus(" 0.3s"); !strings.Contains(got, "0.3s") {
 		t.Fatalf("expected the fallback, got %q", got)
 	}
@@ -81,7 +81,7 @@ func TestStatusFallsBackBeforeTheFirstBlock(t *testing.T) {
 // TestStatusIgnoresFinishedTools: a finished tool stays in the transcript, and
 // listing it as running would keep a stale name on screen.
 func TestStatusIgnoresFinishedTools(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "ok", duration: time.Millisecond})

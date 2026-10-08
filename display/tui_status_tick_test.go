@@ -11,7 +11,7 @@ import (
 func TestBuildStatus_ShowsElapsedTimeWhenReading(t *testing.T) {
 	// "reading" means busy/request-in-flight (confusing name, but !reading = idle).
 	// Here m.reading is true and we set requestStartTime to verify the suffix appears.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false // request in flight
 	m.status = "tool"
 	m.requestStartTime = time.Now().Add(-5300 * time.Millisecond) // 5.3s ago
@@ -31,7 +31,7 @@ func TestBuildStatus_ShowsElapsedTimeWhenReading(t *testing.T) {
 func TestBuildStatus_NoSuffixWhenIdle(t *testing.T) {
 	// When m.reading == true (idle), no suffix should appear even if
 	// requestStartTime is set (defensive: stale timestamp).
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = true // idle
 	m.status = "tool"
 	m.requestStartTime = time.Now().Add(-1000 * time.Millisecond)
@@ -49,7 +49,7 @@ func TestBuildStatus_NoSuffixWhenIdle(t *testing.T) {
 
 func TestBuildStatus_NoSuffixWhenRequestStartTimeIsZero(t *testing.T) {
 	// When requestStartTime is the zero value, no suffix even if reading.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false // request in flight (but start time is zero — edge case)
 	m.status = "responding"
 	m.requestStartTime = time.Time{} // zero value
@@ -63,7 +63,7 @@ func TestBuildStatus_NoSuffixWhenRequestStartTimeIsZero(t *testing.T) {
 }
 
 func TestBuildStatus_ShowsThinkingSuffix(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "thinking"
 	m.requestStartTime = time.Now().Add(-2400 * time.Millisecond)
@@ -77,7 +77,7 @@ func TestBuildStatus_ShowsThinkingSuffix(t *testing.T) {
 }
 
 func TestBuildStatus_ShowsRespondingSuffix(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "responding"
 	m.requestStartTime = time.Now().Add(-12700 * time.Millisecond)
@@ -91,7 +91,7 @@ func TestBuildStatus_ShowsRespondingSuffix(t *testing.T) {
 }
 
 func TestBuildStatus_ShowsWorkingSuffix(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "" // default → "working"
 	m.requestStartTime = time.Now().Add(-400 * time.Millisecond)
@@ -106,7 +106,7 @@ func TestBuildStatus_ShowsWorkingSuffix(t *testing.T) {
 
 func TestBuildStatus_ElapsedFormatPrecision(t *testing.T) {
 	// Verify exactly one decimal place with "s" suffix.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "tool"
 	m.requestStartTime = time.Now().Add(-12340 * time.Millisecond) // 12.34s → should round to 12.3s
@@ -123,7 +123,7 @@ func TestBuildStatus_ElapsedFormatPrecision(t *testing.T) {
 // ─── submit() sets requestStartTime ─────────────────────────────────────
 
 func TestSubmit_SetsRequestStartTime(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// Simulate a prompt
 	m.input.SetValue("hello")
 	m.width = 100
@@ -143,7 +143,7 @@ func TestSubmit_SetsRequestStartTime(t *testing.T) {
 }
 
 func TestSubmit_SetsRequestStartTimeWithModelName(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.input.SetValue("hello")
 	m.width = 100
 
@@ -159,7 +159,7 @@ func TestSubmit_SetsRequestStartTimeWithModelName(t *testing.T) {
 // ─── done/reset clear requestStartTime ──────────────────────────────────
 
 func TestHandleBlockMsg_DoneClearsRequestStartTime(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// Simulate request in flight
 	m.reading = false
 	m.requestStartTime = time.Now()
@@ -176,7 +176,7 @@ func TestHandleBlockMsg_DoneClearsRequestStartTime(t *testing.T) {
 }
 
 func TestHandleBlockMsg_ResetClearsRequestStartTime(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// Simulate request in flight
 	m.reading = false
 	m.requestStartTime = time.Now()
@@ -193,7 +193,7 @@ func TestHandleBlockMsg_ResetClearsRequestStartTime(t *testing.T) {
 }
 
 func TestHandleBlockMsg_DoneClearsAfterSubmit(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.input.SetValue("hello")
 	m.width = 100
 
@@ -215,7 +215,7 @@ func TestHandleBlockMsg_DoneClearsAfterSubmit(t *testing.T) {
 // ─── request-start resets requestStartTime ──────────────────────────────
 
 func TestHandleBlockMsg_RequestStartResetsTimer(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// Set a stale timer (e.g. from a previous submit)
 	m.requestStartTime = time.Now().Add(-30 * time.Second)
 
@@ -235,7 +235,7 @@ func TestHandleBlockMsg_RequestStartResetsTimer(t *testing.T) {
 }
 
 func TestHandleBlockMsg_RequestStartOverridesSubmitTime(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// Simulate submit (sets requestStartTime)
 	m.input.SetValue("hello")
 	m.width = 100
@@ -258,7 +258,7 @@ func TestHandleBlockMsg_RequestStartOverridesSubmitTime(t *testing.T) {
 }
 
 func TestHandleBlockMsg_RequestStartWhileIdleStillSetsTimer(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	// Idle state
 	m.reading = true
 	m.requestStartTime = time.Time{} // zero
@@ -274,7 +274,7 @@ func TestHandleBlockMsg_RequestStartWhileIdleStillSetsTimer(t *testing.T) {
 
 func TestUpdate_StatusTickMsg_ReturnsCmdWhenReading(t *testing.T) {
 	// "reading" = false means request in flight → should keep ticking
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.width = 100
 	m.height = 40
@@ -292,7 +292,7 @@ func TestUpdate_StatusTickMsg_ReturnsCmdWhenReading(t *testing.T) {
 
 func TestUpdate_StatusTickMsg_ReturnsNilCmdWhenIdle(t *testing.T) {
 	// "reading" = true means idle → should stop ticking
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = true
 	m.width = 100
 	m.height = 40
@@ -309,7 +309,7 @@ func TestUpdate_StatusTickMsg_ReturnsNilCmdWhenIdle(t *testing.T) {
 }
 
 func TestUpdate_StatusTickMsg_DoesNotMutateModel(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.width = 100
 	m.height = 40
@@ -354,7 +354,7 @@ func TestStatusTickCmd_IntervalIs250ms(t *testing.T) {
 
 func TestBuildStatus_FormatLock(t *testing.T) {
 	// Lock the exact wire format: "⟳ tool... 5.3s"
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.modelName = "test/model"
 	m.reading = false
 	m.status = "tool"
@@ -385,7 +385,7 @@ func TestBuildStatus_AllSpinnerTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {
-			m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+			m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 			m.reading = false
 			m.status = tt.status
 			m.requestStartTime = time.Now().Add(-1000 * time.Millisecond)
@@ -404,7 +404,7 @@ func TestBuildStatus_AllSpinnerTypes(t *testing.T) {
 // ─── buildStatus existing tests still pass ─────────────────────────────
 
 func TestBuildStatus_ModelNamePresent(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = true
 	m.width = 100
 
@@ -416,7 +416,7 @@ func TestBuildStatus_ModelNamePresent(t *testing.T) {
 }
 
 func TestBuildStatus_ReturnsEmptyWhenNoContent(t *testing.T) {
-	m := newModel(nil, "", "", []string{}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "", "", nil, 0, 0, 0)
 	m.reading = true
 	m.width = 100
 
@@ -432,7 +432,7 @@ func TestBuildStatus_ReturnsEmptyWhenNoContent(t *testing.T) {
 // ─── Integration-style: renderFrame contains the counter ───────────────
 
 func TestRenderFrame_StatusLineContainsElapsedTime(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40

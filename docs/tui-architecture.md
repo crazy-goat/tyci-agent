@@ -24,7 +24,7 @@ The TUI is a [bubbletea](https://github.com/charmbracelet/bubbletea) program
 
 The agent talks to the UI from another goroutine through channels; those are
 turned into `tea.Msg`s and fed to Update. The public surface is `TUI` in
-`tui_api.go` (`NewTUI`, streaming helpers, `ModelChanges`, …).
+`tui_api.go` (`NewTUI`, streaming helpers, …).
 
 ```
 agent goroutine ──chan──▶ TUI.post ──▶ p.Send(msg) ──▶ bubbletea event loop
@@ -61,7 +61,7 @@ renderer (see §4).
 2. **Status bar** — one row (`tui_status.go`).
 3. **Input** — the `textarea` (3 rows).
 
-Full-screen overlays (model picker, subagent modal) short-circuit and render
+Full-screen overlays (resume picker, subagent modal) short-circuit and render
 their own view instead.
 
 ### Virtual viewport — only render what's visible

@@ -8,8 +8,8 @@ import (
 
 func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The "@" file-path popup claims Up/Down/Tab/Enter/Esc while it is open,
-	// and it has to be asked first: Tab below switches model, and the global
-	// handler binds the arrows to history. See tui_filecomplete.go.
+	// and it has to be asked first: the global handler binds the arrows to
+	// history. See tui_filecomplete.go.
 	if m.handleFileCompleteKey(msg) {
 		return m, nil
 	}
@@ -18,15 +18,6 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// before the busy-turn handler, so it never cancels the main turn.
 	if msg.Type == tea.KeyEscape && m.agentView != nil {
 		m.closeAgentView()
-		return m, nil
-	}
-
-	switch msg.Type {
-	case tea.KeyTab:
-		m.switchModel(1)
-		return m, nil
-	case tea.KeyShiftTab:
-		m.switchModel(-1)
 		return m, nil
 	}
 
@@ -101,11 +92,11 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // the line is submitted or queued. Returns handled=false for anything else.
 //
 // Shared by both Enter paths on purpose. The busy handler used to fall
-// straight through to submit(), which meant a "/model" typed while the agent
-// was thinking was queued and later delivered to the model as a prompt — the
-// picker never opened, and the model was asked to interpret a command meant
-// for the interface. Its own comment claimed it mirrored the idle handler; it
-// did not, and one shared function is the only way to keep that claim true.
+// straight through to submit(), which meant a slash command typed while the
+// agent was thinking was queued and later delivered to the model as a prompt.
+// The model was asked to interpret a command meant for the interface. Its own
+// comment claimed it mirrored the idle handler; it did not, and one shared
+// function is the only way to keep that claim true.
 //
 // Only commands with no effect on the conversation are handled here outright.
 // The rest (/new, /resume, /btw, /exit) belong to the main loop, which owns the
@@ -116,14 +107,6 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // channel (safe to start mid-turn) or refused with the reason.
 func (m TuiModel) handleLocalSlashCommand() (bool, tea.Model) {
 	line := strings.TrimSpace(m.input.Value())
-	switch strings.ToLower(line) {
-	case "/model":
-		m.input.Reset()
-		m.input.SetHeight(1)
-		m.closeFileComplete()
-		m.openModelPicker()
-		return true, m
-	}
 	lower := strings.ToLower(line)
 	if m.reading || !strings.HasPrefix(line, "/") {
 		return false, m
@@ -207,9 +190,6 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			m.quitting = true
 			return true, m, tea.Quit
 		}
-	case tea.KeyCtrlP:
-		m.openModelPicker()
-		return true, m, nil
 	case tea.KeyCtrlB:
 		m.openJobsModal()
 		// Opening the modal can be the only reason the tick chain is
