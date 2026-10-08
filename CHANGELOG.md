@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Flow: `open_pr.sh` also finds the open pull request of the issue when it is open from another branch and GitHub links it as closing the issue (for example `Closes #N`). The run continues that pull request and does not code the issue again. `push.sh` pushes to the head branch of that pull request. A pull request from a fork is never used (#374).
+- Flow: when a fixer answers `ok` and the run ends, tyci names the workflow proposal in a notice. Before, a run that did not pause never showed it. A done run cannot answer the proposal (#392).
+- Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
 
 ## [0.5.0] - 2026-10-08
 
