@@ -235,7 +235,10 @@ roadmap run has no artifact dir and writes no report.
   sends one message in the same session: "You did not leave your artifact at <path>. Write it
   now." After 2 reminders without a report, the run pauses in `ask` with the reason
   `no artifact from <role>`.
-- The reviewer's `report.md` is the review. Its first line is `ACCEPT` or `CHANGES`.
+- The reviewer's `report.md` is the review. Its verdict is `ACCEPT` or `CHANGES`. The first line
+  gives the verdict when it is exactly one of these words. Otherwise the verdict is the only line
+  that is one of these words, with an optional `Verdict:` prefix and Markdown markers such as `#`
+  or `**`. A report with both words, or with neither, gives `CHANGES` and a warning.
   `post_review.sh` posts the `report.md` of the newest review step. A review step is an agent state
   with agent `review` and no task, whatever its name. The runner gives the artifact dir in
   `TYCI_REVIEW_DIR`.
