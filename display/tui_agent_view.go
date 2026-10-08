@@ -1,6 +1,8 @@
 package display
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
@@ -147,9 +149,11 @@ func (m *TuiModel) agentViewRegion(msgHeight int) string {
 
 // agentViewHeader is the top line while an agent view is open. It names the
 // viewed job, so the human knows the main window shows another conversation.
+// The header is one row of the frame, so the label is joined into one line
+// before it is cut.
 func (m TuiModel) agentViewHeader() string {
 	name := m.agentView.jobID
-	if label := m.agentView.label; label != "" {
+	if label := strings.Join(strings.Fields(m.agentView.label), " "); label != "" {
 		name += "/" + truncateString(label, 40)
 	}
 	text := "viewing: " + name + " — Enter on main to go back"

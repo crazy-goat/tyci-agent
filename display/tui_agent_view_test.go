@@ -90,6 +90,29 @@ func TestAgentView_HeaderNamesTheViewedAgent(t *testing.T) {
 	}
 }
 
+// A subagent's description is its full task text, and it can span several
+// lines. The header is one row of the frame, so it must stay one line.
+func TestAgentView_HeaderStaysOneLineForMultilineDescription(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 120
+	m.applyJobUpdate(jobs.Job{ID: "agent-nl", Kind: jobs.KindSubagent, Status: jobs.StatusRunning, Description: "Fix bug\n\nDetails here", StartedAt: time.Now()})
+	tools.RecordLiveEvent("agent-nl", tools.LiveEvent{Kind: "text", Content: "agent says hello"})
+	m.openSidebar(sidebarTabTasks)
+	selectTaskRow(t, &m, func(r sidebarTaskRow) bool { return r.subagent })
+	model, _ := m.sidebarActivateRow()
+	m2 := model.(TuiModel)
+	if m2.agentView == nil {
+		t.Fatal("expected the agent view to open")
+	}
+	header := m2.agentViewHeader()
+	if strings.Contains(header, "\n") {
+		t.Fatalf("header has %d lines, want one: %q", strings.Count(header, "\n")+1, header)
+	}
+	if !strings.Contains(header, "viewing: agent-nl/Fix bug Details here") {
+		t.Fatalf("header = %q, want the description with its words joined on one line", header)
+	}
+}
+
 func TestAgentView_EnterOnMainRestoresMainScroll(t *testing.T) {
 	m := newAgentViewTestModel(t, "agent-back")
 	m.scrollLine = 7
