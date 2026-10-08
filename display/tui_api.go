@@ -37,8 +37,8 @@ type TUI struct {
 
 	// Resume picker reply channel: written to by the bubbletea event loop
 	// (via closeResumePicker) with the chosen session file path on Enter,
-	// or "" on Esc. Unbuffered so the outer runTUI loop receives each
-	// picker session in lock-step with the key press that closes it.
+	// or "" on Esc. Buffered with one slot, so the send never blocks the
+	// event loop (see closeResumePicker). runTUI receives the value.
 	resumeCh chan string
 
 	// Streaming coalescing
@@ -57,7 +57,7 @@ func NewTUI(modelName string, historyPath string, models []string, allProviders 
 	modelChanges := make(chan string, 8)
 	cancel := make(chan struct{}, 1)
 	queue := make(chan string, 16)
-	resumeCh := make(chan string) // unbuffered: closes in lock-step with the picker commit
+	resumeCh := make(chan string, 1) // one slot: the picker's send never blocks the event loop
 	m := newModel(results, modelName, historyPath, models, modelChanges, allProviders, cancel, favoriteModels, onFavoriteToggled, defaultModel, onDefaultChanged, toolCount, skillCount, mcpCount)
 	// Restore the persisted sidebar visibility (sidebar_visible in
 	// ~/.tyci/config.json): the sidebar starts open when the previous session
