@@ -12,7 +12,10 @@ import (
 // encoded session dir and verifies ResumeEntries returns both, newest
 // first, with the first user prompt decoded.
 func TestResumeEntries_BasicList(t *testing.T) {
-	cwd := "/tmp/tyci-test"
+	// A private cwd keeps other test runs out of this directory. The
+	// projectRoot field marks the headers as new-format: a header without it
+	// is a legacy file, and migrateLegacyDirs in a concurrent run would move it.
+	cwd := t.TempDir()
 	dir, err := SessionDir(cwd)
 	if err != nil {
 		t.Fatal(err)
@@ -25,7 +28,7 @@ func TestResumeEntries_BasicList(t *testing.T) {
 	// Write first file (older ModTime).
 	old := filepath.Join(dir, "old.jsonl")
 	writeSession(t, old, []string{
-		`{"type":"session","id":"a"}`,
+		`{"type":"session","id":"a","projectRoot":"` + cwd + `"}`,
 		`{"type":"message","id":"x1","message":{"role":"user","content":[{"type":"text","text":"hello world"}]}}`,
 	})
 	// Use a future mtime to make "newer" deterministic, then "old" older.
@@ -38,7 +41,7 @@ func TestResumeEntries_BasicList(t *testing.T) {
 	_ = futureTS
 	newer := filepath.Join(dir, "newer.jsonl")
 	writeSession(t, newer, []string{
-		`{"type":"session","id":"b"}`,
+		`{"type":"session","id":"b","projectRoot":"` + cwd + `"}`,
 		`{"type":"message","id":"x2","message":{"role":"user","content":[{"type":"text","text":"second prompt"}]}}`,
 		`{"type":"message","id":"x3","message":{"role":"assistant","content":[{"type":"text","text":"x"}]}}`,
 	})
