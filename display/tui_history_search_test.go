@@ -9,7 +9,7 @@ import (
 
 // helper: build a TuiModel with history for history search tests.
 func newHistorySearchTestModel(history []string) TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 120
 	m.height = 40
 	m.ready = true
@@ -624,21 +624,5 @@ func TestHistorySearch_CtrlRNotPassedToTextarea(t *testing.T) {
 	// The textarea value should not change (Ctrl+R consumed before textarea)
 	if m2.input.Value() != "should not change" {
 		t.Fatalf("input value changed: %q", m2.input.Value())
-	}
-}
-
-// ─── Update routing priority: history search above picker ──────────────
-
-func TestHistorySearch_RoutedBeforePicker(t *testing.T) {
-	m := newHistorySearchTestModel(testHistory)
-	m.pickerActive = true // both active (shouldn't happen, but test priority)
-	m.openHistorySearch()
-
-	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	m2 := result.(TuiModel)
-
-	// History search should be handled (closed), not the picker
-	if m2.historySearchActive {
-		t.Fatal("history search should have been closed by Escape")
 	}
 }

@@ -11,7 +11,7 @@ import (
 // This guards the CPU fix (avoid O(total blocks) work per streamed token)
 // against silently drifting the line count and breaking scroll math.
 func TestIncrementalTotalMatchesFullRecompute(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 60
 	m.height = 40
@@ -45,7 +45,7 @@ func TestIncrementalTotalMatchesFullRecompute(t *testing.T) {
 // buildStreamModelWithHistory returns a model with nBlocks of cached history and
 // an active streaming text block, used by the regression benchmark below.
 func buildStreamModelWithHistory(nBlocks int) TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 100
 	m.height = 40

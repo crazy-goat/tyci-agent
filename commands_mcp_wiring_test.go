@@ -55,8 +55,6 @@ func newInitCommonTestCmd(t *testing.T) *cobra.Command {
 	t.Helper()
 	t.Cleanup(tools.SnapshotLuaToolsForTesting())
 	cmd := &cobra.Command{Use: "test"}
-	cmd.Flags().String("model", "", "")
-	cmd.Flags().String("agent", "", "")
 	cmd.Flags().Int("max-retries", 5, "")
 	cmd.Flags().Int("max-iterations", -1, "")
 	cmd.Flags().Int("max-tokens", 0, "")
@@ -67,6 +65,19 @@ func newInitCommonTestCmd(t *testing.T) *cobra.Command {
 	cmd.Flags().Bool("no-debug", true, "")
 	cmd.Flags().Bool("no-mcp", false, "")
 	return cmd
+}
+
+// setDefaultModel writes default_model into the global config.json of the
+// HOME that a wiring helper set up. initCommon takes its model from there.
+func setDefaultModel(t *testing.T, spec string) {
+	t.Helper()
+	data, err := json.Marshal(map[string]string{"default_model": spec})
+	if err != nil {
+		t.Fatalf("marshal config.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".tyci", "config.json"), data, 0o600); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
 }
 
 // mcpFakeServerScript is a minimal fake stdio MCP server: it answers
@@ -132,9 +143,7 @@ func TestInitCommon_ConnectMCPTrue_ConnectsAndAdvertisesServerTools(t *testing.T
 	})
 
 	cmd := newInitCommonTestCmd(t)
-	if err := cmd.Flags().Set("model", "wiretest-prov/m1"); err != nil {
-		t.Fatalf("set model flag: %v", err)
-	}
+	setDefaultModel(t, "wiretest-prov/m1")
 
 	_, _, cfg, _, _, _, _, dl, shutdown, err := initCommon(cmd, true, false)
 	if err != nil {
@@ -194,9 +203,7 @@ func TestInitCommon_ConnectMCPFalse_DoesNotConnect(t *testing.T) {
 	})
 
 	cmd := newInitCommonTestCmd(t)
-	if err := cmd.Flags().Set("model", "wiretest-prov-2/m1"); err != nil {
-		t.Fatalf("set model flag: %v", err)
-	}
+	setDefaultModel(t, "wiretest-prov-2/m1")
 
 	_, _, cfg, _, _, _, _, dl, shutdown, err := initCommon(cmd, false, false)
 	if err != nil {
@@ -236,9 +243,7 @@ func TestInitCommon_NoMCPFlag_OverridesConnectMCPTrue(t *testing.T) {
 	})
 
 	cmd := newInitCommonTestCmd(t)
-	if err := cmd.Flags().Set("model", "wiretest-prov-3/m1"); err != nil {
-		t.Fatalf("set model flag: %v", err)
-	}
+	setDefaultModel(t, "wiretest-prov-3/m1")
 	if err := cmd.Flags().Set("no-mcp", "true"); err != nil {
 		t.Fatalf("set no-mcp flag: %v", err)
 	}
@@ -317,9 +322,7 @@ func TestInitCommon_LocalMCPJSON_UntrustedProject_NotConnected(t *testing.T) {
 	})
 
 	cmd := newInitCommonTestCmd(t)
-	if err := cmd.Flags().Set("model", "wiretest-prov-untrusted/m1"); err != nil {
-		t.Fatalf("set model flag: %v", err)
-	}
+	setDefaultModel(t, "wiretest-prov-untrusted/m1")
 
 	_, _, _, _, _, _, _, dl, shutdown, err := initCommon(cmd, true, false)
 	if err != nil {
@@ -371,9 +374,7 @@ func TestInitCommon_LocalMCPJSON_TrustedProject_UnionsWithGlobal(t *testing.T) {
 	})
 
 	cmd := newInitCommonTestCmd(t)
-	if err := cmd.Flags().Set("model", "wiretest-prov-trusted/m1"); err != nil {
-		t.Fatalf("set model flag: %v", err)
-	}
+	setDefaultModel(t, "wiretest-prov-trusted/m1")
 
 	_, _, _, _, _, _, _, dl, shutdown, err := initCommon(cmd, true, false)
 	if err != nil {

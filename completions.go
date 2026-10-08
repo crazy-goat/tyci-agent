@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/internal/connect"
 	"github.com/crazy-goat/tyci-agent/providers"
 	"github.com/spf13/cobra"
@@ -24,49 +23,6 @@ func modelJSONPath() string {
 		return v
 	}
 	return filepath.Join(tyciHomeDir(), "model.json")
-}
-
-// completeProviderModels returns "provider/model" entries from the configured
-// model registry. Used for --model flag completion.
-func completeProviderModels(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	cfg, err := providers.LoadConfig(modelJSONPath())
-	if err != nil || cfg == nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	models := make([]string, 0)
-	for prov, entries := range cfg {
-		seen := map[string]struct{}{}
-		for _, m := range entries {
-			key := prov + "/" + m.Name
-			if _, dup := seen[key]; dup {
-				continue
-			}
-			seen[key] = struct{}{}
-			if toComplete == "" || strings.HasPrefix(key, toComplete) {
-				models = append(models, key)
-			}
-		}
-	}
-	sort.Strings(models)
-	return models, cobra.ShellCompDirectiveNoFileComp
-}
-
-// completeAgents returns agent names from the agents config.
-func completeAgents(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	_ = agent.ConfigPath()
-
-	names, err := agent.ListAgents()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-	out := make([]string, 0, len(names))
-	for _, n := range names {
-		if toComplete == "" || strings.HasPrefix(n, toComplete) {
-			out = append(out, n)
-		}
-	}
-	return out, cobra.ShellCompDirectiveNoFileComp
 }
 
 // completeProviderNames returns provider names known to the auth store

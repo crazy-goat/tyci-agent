@@ -9,7 +9,7 @@ import (
 
 func TestSubagentModal_Y_CopiesFullBuffer(t *testing.T) {
 	copied := withClipboardStub(t)
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -36,7 +36,7 @@ func TestSubagentModal_Y_CopiesFullBuffer(t *testing.T) {
 
 func TestSubagentModal_Y_TrimsTrailingNewline(t *testing.T) {
 	copied := withClipboardStub(t)
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -60,7 +60,7 @@ func TestSubagentModal_Y_TrimsTrailingNewline(t *testing.T) {
 
 func TestSubagentModal_Y_EmptyBuffer_ReportsNothingToCopy(t *testing.T) {
 	copied := withClipboardStub(t)
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -84,7 +84,7 @@ func TestSubagentModal_Y_EmptyBuffer_ReportsNothingToCopy(t *testing.T) {
 
 func TestSubagentModal_Y_WhitespaceOnlyBuffer_ReportsNothingToCopy(t *testing.T) {
 	copied := withClipboardStub(t)
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -108,7 +108,7 @@ func TestSubagentModal_Y_WhitespaceOnlyBuffer_ReportsNothingToCopy(t *testing.T)
 
 func TestSubagentModal_Y_DoesNotClearSelection(t *testing.T) {
 	copied := withClipboardStub(t)
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -133,7 +133,7 @@ func TestSubagentModal_Y_DoesNotClearSelection(t *testing.T) {
 
 func TestSubagentModal_Y_BufferWithMultipleTrailingNewlines(t *testing.T) {
 	copied := withClipboardStub(t)
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -157,7 +157,7 @@ func TestSubagentModal_Y_BufferWithMultipleTrailingNewlines(t *testing.T) {
 
 func TestSubagentModal_Y_ReportLineCount(t *testing.T) {
 	copied := withClipboardStub(t)
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -183,7 +183,7 @@ func TestSubagentModal_Y_NotActiveOnMainView(t *testing.T) {
 	// When modal is NOT active, pressing 'y' should NOT trigger modal copy.
 	// It should fall through to the main key handler.
 	copied := withClipboardStub(t)
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -205,7 +205,7 @@ func TestSubagentModal_Y_NotActiveOnMainView(t *testing.T) {
 
 func TestSubagentModal_Y_ModalStillStreaming(t *testing.T) {
 	copied := withClipboardStub(t)
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -228,7 +228,7 @@ func TestSubagentModal_Y_ModalStillStreaming(t *testing.T) {
 }
 
 func TestSubagentModal_FooterContainsYCopyAll(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -243,5 +243,24 @@ func TestSubagentModal_FooterContainsYCopyAll(t *testing.T) {
 
 	if !strings.Contains(stripped, "y copy all") {
 		t.Fatalf("modal footer should contain 'y copy all', got:\n%s", stripped)
+	}
+}
+
+// TestTUITabDoesNotOpenModelPicker: the TUI has no model picker. Tab,
+// Shift+Tab and Ctrl+P neither open one nor change the model.
+func TestTUITabDoesNotOpenModelPicker(t *testing.T) {
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyTab}, {Type: tea.KeyShiftTab}, {Type: tea.KeyCtrlP}} {
+		m := newTestModel()
+		m.modelName = "openai/gpt-4o"
+
+		result, _ := m.Update(key)
+		m2 := result.(TuiModel)
+
+		if m2.modelName != "openai/gpt-4o" {
+			t.Errorf("%s changed the model to %q", key.String(), m2.modelName)
+		}
+		if strings.Contains(m2.View(), "Select Model") {
+			t.Errorf("%s opened a model picker", key.String())
+		}
 	}
 }

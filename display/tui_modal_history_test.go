@@ -9,7 +9,7 @@ import (
 
 // newModalTestModel builds a model sized for a modal with a usable content area.
 func newModalTestModel() TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width, m.height = 100, 40
 	return m
 }

@@ -9,7 +9,7 @@ import "testing"
 // next to a tool block is the case that broke it: the builders learned that
 // the pair packs without a spacer, these two did not.
 func TestTotalRenderedLines_AgreesWithTheFlatLineBuilder(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width, m.height = 80, 24
 
 	// Six thinking/tool pairs — the shape a real turn produces.
@@ -32,7 +32,7 @@ func TestTotalRenderedLines_AgreesWithTheFlatLineBuilder(t *testing.T) {
 // blockAtVisibleLine walks the same accounting; a mismatch there sends a
 // click to the wrong block rather than blanking the screen.
 func TestBlockAtVisibleLine_LandsOnTheRightBlockAcrossACompactRun(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width, m.height = 80, 24
 	m.handleBlockMsg(tuiMsgBlock{kind: "thinking", content: "first thought"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "find"})
@@ -59,7 +59,7 @@ func TestBlockAtVisibleLine_LandsOnTheRightBlockAcrossACompactRun(t *testing.T) 
 // A single block must not be reported as occupying its lines plus a spacer:
 // there is nothing after it to separate from.
 func TestTotalRenderedLines_NoSpacerAfterTheLastBlock(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width, m.height = 80, 24
 	m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "one line"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "done"})

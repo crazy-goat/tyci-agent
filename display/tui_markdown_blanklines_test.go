@@ -70,7 +70,7 @@ func TestBlankRenderWhitespaceContent(t *testing.T) {
 // content, once force-rendered, must have cachedLines == []string{} (non-nil,
 // empty) and cachedLineCount == 0 — never [""] / 1.
 func TestBlankEmptyBlockCache(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
 	m.height = 40

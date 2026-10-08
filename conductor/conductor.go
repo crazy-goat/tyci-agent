@@ -9,7 +9,7 @@
 // logic spelled out again, and they had already drifted apart.
 //
 // A Conductor holds that state once. Frontends tell it what to do (Submit,
-// Interrupt, SwitchModel, Resume) and render whatever the agent loop pushes
+// Interrupt, Resume) and render whatever the agent loop pushes
 // into the agent.Sink they supplied. Everything a frontend decides — what an
 // error looks like on screen, whether to print a trailing newline, which key
 // means "stop" — stays in the frontend. The Conductor returns a result and an
@@ -19,10 +19,10 @@
 // runs a complete conversation with no frontend at all. See
 // TestConductor_HeadlessConversation.
 //
-// The package deliberately does NOT import providers. Changing the model goes
-// through ModelResolver, an interface declared here and implemented by the
-// caller, so the provider catalog stays on the CLI side of the boundary —
-// the same shape as agent.Sink and connector.HTTPDoer.
+// The package deliberately does NOT import providers. The caller builds the
+// model client and passes it in through Options.Client, so the provider
+// catalog stays on the CLI side of the boundary — the same shape as
+// agent.Sink and connector.HTTPDoer.
 package conductor
 
 import (
@@ -39,22 +39,6 @@ import (
 	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/stream"
 )
-
-// ModelResolver turns a user-supplied model spec into a ready-to-use client.
-//
-// It exists so the Conductor can switch models without knowing that a
-// provider catalog exists. The CLI implements it on top of
-// providers.FindModel; a test implements it with a map. Errors are passed
-// through to the caller untouched, so a frontend can match on its own error
-// types and render its own wording.
-type ModelResolver interface {
-	Resolve(spec string) (connector.ModelClient, error)
-}
-
-// ErrNoResolver is returned by SwitchModel when the Conductor was built
-// without a ModelResolver. A frontend that never offers model switching
-// (one-shot prompt mode) can leave Options.Resolver nil.
-var ErrNoResolver = errors.New("conductor: no model resolver configured")
 
 // ErrTurnInFlight is returned by a Submit that arrives while another Submit is
 // still running. One conversation runs one turn at a time.
@@ -82,9 +66,6 @@ type Options struct {
 	// pointer to it.
 	Config agent.Config
 
-	// Resolver backs SwitchModel. Optional.
-	Resolver ModelResolver
-
 	// History seeds the conversation, e.g. with a resumed transcript.
 	History []connector.Message
 
@@ -109,13 +90,12 @@ type Options struct {
 //   - Submit defends itself: a second, concurrent Submit is rejected with
 //     ErrTurnInFlight instead of corrupting the conversation. That is a
 //     diagnostic, not a license — everything else here (Messages, Usage,
-//     SetHistory, SwitchModel, the session calls) still belongs to the one
+//     SetHistory, the session calls) still belongs to the one
 //     goroutine driving the conversation.
 type Conductor struct {
-	client   connector.ModelClient
-	sink     agent.Sink
-	cfg      agent.Config
-	resolver ModelResolver
+	client connector.ModelClient
+	sink   agent.Sink
+	cfg    agent.Config
 
 	conversation []connector.Message
 	usage        stream.Usage
@@ -142,7 +122,6 @@ func New(opts Options) *Conductor {
 		client:       opts.Client,
 		sink:         opts.Sink,
 		cfg:          opts.Config,
-		resolver:     opts.Resolver,
 		conversation: opts.History,
 		sessionPath:  opts.SessionPath,
 		workDir:      opts.WorkDir,
@@ -282,27 +261,6 @@ func (c *Conductor) Interrupt() {
 	}
 }
 
-// SwitchModel points the conversation at a different model, resolved through
-// the ModelResolver the caller supplied. The conversation, the session log
-// and the accumulated usage are untouched — this is a mid-conversation model
-// change, not a new conversation.
-//
-// The resolver's error is returned verbatim so the frontend can match it.
-func (c *Conductor) SwitchModel(spec string) error {
-	if c.resolver == nil {
-		return ErrNoResolver
-	}
-	mc, err := c.resolver.Resolve(spec)
-	if err != nil {
-		return err
-	}
-	c.client = mc
-	if c.cfg.ContextLimitFor != nil {
-		c.cfg.ContextLimit = c.cfg.ContextLimitFor(mc.Provider(), mc.Model())
-	}
-	return nil
-}
-
 // Model is the bare model name currently in use.
 func (c *Conductor) Model() string { return c.client.Model() }
 
@@ -433,10 +391,7 @@ func (c *Conductor) EndSession(status string, exitCode int) {
 // Close, because WriteSessionEnd refuses to encode into a closed writer, and
 // a later EndSession on exit must find nothing left to do.
 //
-// The new log is opened under the model in use at the time of the call. A
-// caller that wants to follow the recorded session back to its original model
-// calls SwitchModel afterwards — that is a separate decision, and the two
-// frontends make it differently.
+// The new log is opened under the model in use at the time of the call.
 //
 // Resume renders nothing. Replaying the transcript, reporting corrupt lines
 // and announcing "Resumed session ..." are the frontend's business.

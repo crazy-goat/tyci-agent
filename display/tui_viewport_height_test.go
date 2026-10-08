@@ -11,7 +11,7 @@ import (
 // and a window sliced in unwrapped lines but drawn in screen rows.
 
 func viewportModel(height, width int) TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = width
 	m.height = height
 	m.ready = true

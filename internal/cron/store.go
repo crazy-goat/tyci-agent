@@ -29,7 +29,6 @@ type Job struct {
 	Name     string `json:"name"`
 	Prompt   string `json:"prompt"`
 	Dir      string `json:"dir"`
-	Model    string `json:"model,omitempty"`
 	Schedule string `json:"schedule"`
 	Disabled bool   `json:"disabled,omitempty"`
 	// Caller is the id of the job (subagent) that scheduled this one, or "".

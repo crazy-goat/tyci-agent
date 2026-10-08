@@ -186,7 +186,7 @@ func newlineKeyCases() []struct {
 func TestNewlineKeys_PreSetHeightUsesWrappedRows(t *testing.T) {
 	for _, c := range newlineKeyCases() {
 		t.Run(c.name, func(t *testing.T) {
-			m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+			m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 			m.ready = true
 			m.width = 100
 			m.height = 30
@@ -219,7 +219,7 @@ func TestNewlineKeys_PreSetHeightUsesWrappedRows(t *testing.T) {
 func TestNewlineKeys_BusyPathPreSetHeightUsesWrappedRows(t *testing.T) {
 	for _, c := range newlineKeyCases() {
 		t.Run(c.name, func(t *testing.T) {
-			m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+			m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 			m.ready = true
 			m.width = 100
 			m.height = 30

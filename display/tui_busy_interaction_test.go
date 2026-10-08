@@ -19,81 +19,34 @@ func typeAndEnter(m TuiModel, line string) TuiModel {
 	return next.(TuiModel)
 }
 
-// TestModelCommandOpensThePickerWhileBusy is the reported bug: while the agent
-// was thinking, the busy key handler fell straight through to submit(), so
-// "/model" was queued and later delivered to the MODEL as a prompt. The picker
-// never opened, and the model was asked to interpret a command meant for the
-// interface.
-func TestModelCommandOpensThePickerWhileBusy(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
-	m.reading = false // an agent turn is in flight
-	m.queue = make(chan string, 4)
+// TestModelCommandIsSentLikeAnyUnknownSlashCommand: the TUI has no /model.
+// The line takes the same path as any other slash command the TUI does not
+// know: it is queued while the agent is busy and submitted while idle.
+func TestModelCommandIsSentLikeAnyUnknownSlashCommand(t *testing.T) {
+	for _, line := range []string{"/model", "/no-such-command"} {
+		busy := newTestModel()
+		busy.reading = false
+		busy.queue = make(chan string, 4)
 
-	m = typeAndEnter(m, "/model")
+		busy = typeAndEnter(busy, line)
 
-	if !m.pickerActive {
-		t.Fatal("the picker did not open")
-	}
-	if len(m.queueItems) != 0 {
-		t.Fatalf("the command was queued as a prompt: %v", m.queueItems)
-	}
-	select {
-	case queued := <-m.queue:
-		t.Fatalf("the command reached the agent's message queue: %q", queued)
-	default:
-	}
-	if m.input.Value() != "" {
-		t.Errorf("the input should be cleared, got %q", m.input.Value())
-	}
-}
-
-// TestModelCommandStillOpensThePickerWhenIdle guards the path that already
-// worked, so the shared helper cannot fix one and break the other.
-func TestModelCommandStillOpensThePickerWhenIdle(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
-	m.reading = true
-
-	m = typeAndEnter(m, "/model")
-
-	if !m.pickerActive {
-		t.Fatal("the picker did not open when idle")
-	}
-	if len(m.blocks) != 0 {
-		t.Fatalf("the command was submitted as a prompt: %+v", m.blocks)
-	}
-}
-
-// TestPickingAModelWhileBusyReachesTheAgentLoop: opening the picker is only
-// half of it — the choice has to leave the TUI, or the model never changes.
-func TestPickingAModelWhileBusyReachesTheAgentLoop(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
-	m.reading = false
-	changes := make(chan string, 4)
-	m.modelChanges = changes
-
-	m = typeAndEnter(m, "/model")
-	m.pickerCursor = 2
-	want := m.pickerSelectedModel()
-	if want == "" {
-		t.Fatal("setup: nothing highlighted")
-	}
-
-	next, _ := m.updatePicker(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(TuiModel)
-
-	select {
-	case got := <-changes:
-		if got != want {
-			t.Fatalf("sent %q, highlighted %q", got, want)
+		select {
+		case got := <-busy.queue:
+			if got != line {
+				t.Errorf("queued %q, want %q", got, line)
+			}
+		default:
+			t.Errorf("%q was not queued while the agent was busy", line)
 		}
-	default:
-		t.Fatal("the choice never left the TUI, so the model would not change")
-	}
-	if m.pickerActive {
-		t.Error("the picker should close after a choice")
-	}
-	if m.modelName != want {
-		t.Errorf("the status bar still shows %q", m.modelName)
+
+		idle := newTestModel()
+		idle.reading = true
+
+		idle = typeAndEnter(idle, line)
+
+		if len(idle.blocks) == 0 || idle.blocks[len(idle.blocks)-1].content != "You: "+line {
+			t.Errorf("%q was not submitted as a prompt while idle: %+v", line, idle.blocks)
+		}
 	}
 }
 
@@ -104,16 +57,13 @@ func TestPickingAModelWhileBusyReachesTheAgentLoop(t *testing.T) {
 // point via the command channel; the rest are refused with a reason.
 func TestOtherSlashCommandsAreNotQueuedAsPromptsWhileBusy(t *testing.T) {
 	for _, cmd := range []string{"/new", "/resume", "/btw why", "/exit"} {
-		m := newPickerTestModel(testProviders, nil, "")
+		m := newTestModel()
 		m.reading = false
 		m.queue = make(chan string, 4)
 		m.commands = make(chan string, 4)
 
 		m = typeAndEnter(m, cmd)
 
-		if m.pickerActive {
-			t.Errorf("%q should not open the model picker", cmd)
-		}
 		select {
 		case got := <-m.queue:
 			t.Errorf("%q was queued as a prompt (%q) — the model was asked to interpret it", cmd, got)
@@ -126,7 +76,7 @@ func TestOtherSlashCommandsAreNotQueuedAsPromptsWhileBusy(t *testing.T) {
 // the block's own start, which for a batch is the whole batch's wall-clock —
 // four tools all showing 4.29s. The dispatcher's figure has to win.
 func TestToolEndUsesTheReportedDuration(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "todo"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
@@ -146,7 +96,7 @@ func TestToolEndUsesTheReportedDuration(t *testing.T) {
 // TestToolEndFallsBackToItsOwnClock keeps a display that is not told a
 // duration working: a single tool call is still timed, just less precisely.
 func TestToolEndFallsBackToItsOwnClock(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
 	time.Sleep(15 * time.Millisecond)
@@ -161,7 +111,7 @@ func TestToolEndFallsBackToItsOwnClock(t *testing.T) {
 // and finished tools opened. Clicking a bash command while it ran — the moment
 // you most want to see its output — did nothing.
 func TestClickOpensTheModalForARunningTool(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-progress", toolIdx: 0, content: "compiling…"})
 
@@ -185,7 +135,7 @@ func TestClickOpensTheModalForARunningTool(t *testing.T) {
 // TestModalForARunningToolShowsLiveOutput: opening it is only useful if what
 // arrives while it is open lands in the block it is showing.
 func TestModalForARunningToolShowsLiveOutput(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 	m.openToolModalAt(0)
 
@@ -207,7 +157,7 @@ func TestModalForARunningToolShowsLiveOutput(t *testing.T) {
 // TestRunningToolAdvertisesTheClick: a feature nobody can discover is not a
 // feature.
 func TestRunningToolAdvertisesTheClick(t *testing.T) {
-	m := newPickerTestModel(testProviders, nil, "")
+	m := newTestModel()
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 
 	rendered := m.renderToolBlock(0, m.blocks[0])

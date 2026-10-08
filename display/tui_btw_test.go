@@ -8,7 +8,7 @@ import (
 )
 
 func newBtwTestModel() TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.width = 100
 	m.height = 40
 	return m
@@ -112,19 +112,19 @@ func TestUpdateBtwMsg_DoneWithErrorRecordsMessage(t *testing.T) {
 // TestUpdateBtwMsg_StreamNeverDroppedWhileAnotherModalIsActive is the
 // requirement this dispatch order exists for: a background /btw job's
 // output must keep accumulating even if the user has some other popup open
-// (here, the model picker) — Update dispatches btw messages before any
+// (here, the history search) — Update dispatches btw messages before any
 // exclusivity check.
 func TestUpdateBtwMsg_StreamNeverDroppedWhileAnotherModalIsActive(t *testing.T) {
 	m := newBtwTestModel()
 	updated, _ := m.updateBtwMsg(tuiBtwOpenMsg{id: "btw-1", question: "q", createdAt: time.Now()})
 	m = updated.(TuiModel)
 	m.closeBtwModal()
-	m.pickerActive = true // simulate the user opening /model while btw runs
+	m.historySearchActive = true // simulate the user opening Ctrl+R while btw runs
 
 	newM, _ := m.Update(tuiBtwStreamMsg{id: "btw-1", kind: "text", content: "still streaming"})
 	tm := newM.(TuiModel)
 
-	if !tm.pickerActive {
+	if !tm.historySearchActive {
 		t.Error("the other popup should stay open — btw streaming must not steal focus")
 	}
 	if tm.findBtwEntry("btw-1").content.String() != "still streaming" {

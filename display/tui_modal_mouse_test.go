@@ -10,7 +10,7 @@ import (
 
 func TestSubagentModal_OutsideClick_ClosesModal(t *testing.T) {
 	// Set up a model with a tool block behind the modal.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -45,7 +45,7 @@ func TestSubagentModal_OutsideClick_ClosesModal(t *testing.T) {
 }
 
 func TestSubagentModal_InsideBodyClick_DoesNotClose(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -67,7 +67,7 @@ func TestSubagentModal_InsideBodyClick_DoesNotClose(t *testing.T) {
 }
 
 func TestSubagentModal_TitleBarClick_DoesNotClose(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -88,7 +88,7 @@ func TestSubagentModal_TitleBarClick_DoesNotClose(t *testing.T) {
 }
 
 func TestSubagentModal_MouseMotion_DoesNotClose(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -109,7 +109,7 @@ func TestSubagentModal_MouseMotion_DoesNotClose(t *testing.T) {
 }
 
 func TestSubagentModal_MouseRelease_DoesNotClose(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -132,7 +132,7 @@ func TestSubagentModal_MouseRelease_DoesNotClose(t *testing.T) {
 func TestSubagentModal_OutsideClick_NoLeakToBackgroundBlocks(t *testing.T) {
 	// Regression: clicking outside the modal must NOT leak to background
 	// tool block handlers (issue #75 property).
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -159,7 +159,7 @@ func TestSubagentModal_OutsideClick_NoLeakToBackgroundBlocks(t *testing.T) {
 }
 
 func TestSubagentModal_OutsideClick_ClearsSelection(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -181,7 +181,7 @@ func TestSubagentModal_OutsideClick_ClearsSelection(t *testing.T) {
 
 func TestSubagentModal_OutsideClick_Idempotent(t *testing.T) {
 	// Closing an already-closed modal should be a no-op.
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -199,7 +199,7 @@ func TestSubagentModal_OutsideClick_Idempotent(t *testing.T) {
 }
 
 func TestSubagentModal_StillStreaming_OutsideClickStillCloses(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -219,7 +219,7 @@ func TestSubagentModal_StillStreaming_OutsideClickStillCloses(t *testing.T) {
 }
 
 func TestSubagentModal_WheelUp_ScrollsContent(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -248,7 +248,7 @@ func TestSubagentModal_WheelUp_ScrollsContent(t *testing.T) {
 }
 
 func TestSubagentModal_WheelDown_ScrollsContent(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -273,7 +273,7 @@ func TestSubagentModal_WheelDown_ScrollsContent(t *testing.T) {
 }
 
 func TestSubagentModal_WheelDown_ClampsAtZero(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -294,7 +294,7 @@ func TestSubagentModal_WheelDown_ClampsAtZero(t *testing.T) {
 }
 
 func TestSubagentModal_WheelUp_ClampsAtMax(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -319,114 +319,11 @@ func TestSubagentModal_WheelUp_ClampsAtMax(t *testing.T) {
 	}
 }
 
-// ─── Model picker: mouse event blocking ──────────────────────────────────
-
-var testProvidersForMouse = []ProviderModels{
-	{Name: "openai", Models: []string{"gpt-4o", "gpt-4o-mini"}},
-	{Name: "anthropic", Models: []string{"claude-sonnet-4-20250514", "claude-haiku"}},
-}
-
-func TestPicker_MouseClick_DoesNotLeak(t *testing.T) {
-	m := newPickerTestModel(testProvidersForMouse, nil, "")
-	m.openModelPicker()
-
-	// Simulate a click — should be swallowed, picker stays open
-	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
-	result, _ := m.updatePicker(msg)
-	m2 := result.(TuiModel)
-
-	if !m2.pickerActive {
-		t.Fatal("picker should remain active after mouse click — click should be blocked")
-	}
-}
-
-func TestPicker_MouseRelease_DoesNotLeak(t *testing.T) {
-	m := newPickerTestModel(testProvidersForMouse, nil, "")
-	m.openModelPicker()
-
-	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease}
-	result, _ := m.updatePicker(msg)
-	m2 := result.(TuiModel)
-
-	if !m2.pickerActive {
-		t.Fatal("picker should remain active after mouse release")
-	}
-}
-
-func TestPicker_WheelUp_NavigatesUp(t *testing.T) {
-	m := newPickerTestModel(testProvidersForMouse, nil, "")
-	m.openModelPicker()
-	m.pickerCursor = 2 // start somewhere in the middle
-
-	msg := tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress}
-	result, _ := m.updatePicker(msg)
-	m2 := result.(TuiModel)
-
-	if m2.pickerCursor != 1 {
-		t.Fatalf("cursor = %d after wheel up, want 1", m2.pickerCursor)
-	}
-}
-
-func TestPicker_WheelDown_NavigatesDown(t *testing.T) {
-	m := newPickerTestModel(testProvidersForMouse, nil, "")
-	m.openModelPicker()
-	m.pickerCursor = 1
-
-	msg := tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress}
-	result, _ := m.updatePicker(msg)
-	m2 := result.(TuiModel)
-
-	if m2.pickerCursor != 2 {
-		t.Fatalf("cursor = %d after wheel down, want 2", m2.pickerCursor)
-	}
-}
-
-func TestPicker_WheelUp_ClampsAtZero(t *testing.T) {
-	m := newPickerTestModel(testProvidersForMouse, nil, "")
-	m.openModelPicker()
-	m.pickerCursor = 0
-
-	msg := tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress}
-	result, _ := m.updatePicker(msg)
-	m2 := result.(TuiModel)
-
-	if m2.pickerCursor != 0 {
-		t.Fatalf("cursor = %d, should clamp at 0", m2.pickerCursor)
-	}
-}
-
-func TestPicker_WheelDown_ClampsAtMax(t *testing.T) {
-	m := newPickerTestModel(testProvidersForMouse, nil, "")
-	m.openModelPicker()
-	m.pickerCursor = m.pickerModelCount() - 1 // last model
-
-	msg := tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress}
-	result, _ := m.updatePicker(msg)
-	m2 := result.(TuiModel)
-
-	if m2.pickerCursor != m2.pickerModelCount()-1 {
-		t.Fatalf("cursor = %d, should clamp at %d", m2.pickerCursor, m2.pickerModelCount()-1)
-	}
-}
-
-func TestPicker_WheelDown_StaysActive(t *testing.T) {
-	m := newPickerTestModel(testProvidersForMouse, nil, "")
-	m.openModelPicker()
-
-	msg := tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress}
-	result, _ := m.updatePicker(msg)
-	m2 := result.(TuiModel)
-
-	if !m2.pickerActive {
-		t.Fatal("picker should remain active after scroll wheel")
-	}
-}
-
 // ─── Subagent modal: Update routing blocks mouse ─────────────────────────
 // These tests go through the top-level Update() to verify the routing.
 
 func TestSubagentModal_Update_MouseClickBlocked(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -450,7 +347,7 @@ func TestSubagentModal_Update_MouseClickBlocked(t *testing.T) {
 }
 
 func TestSubagentModal_Update_OutsideClick_Closes(t *testing.T) {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -476,7 +373,7 @@ func TestSubagentModal_Update_OutsideClick_Closes(t *testing.T) {
 // ─── Subagent modal: text selection (issue #76) ─────────────────────────
 
 func newModalSelectionModel(content string) TuiModel {
-	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 120
 	m.height = 40
@@ -861,18 +758,5 @@ func TestModalMouse_SelectionPersistsAfterRelease(t *testing.T) {
 	}
 	if m.selection.Candidate {
 		t.Fatal("candidate flag should be cleared after release")
-	}
-}
-
-func TestPicker_Update_MouseClickBlocked(t *testing.T) {
-	m := newPickerTestModel(testProvidersForMouse, nil, "")
-	m.openModelPicker()
-
-	msg := tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
-	result, _ := m.Update(msg)
-	m2 := result.(TuiModel)
-
-	if !m2.pickerActive {
-		t.Fatal("picker should still be active after click through Update()")
 	}
 }

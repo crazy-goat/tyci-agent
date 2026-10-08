@@ -124,9 +124,6 @@ func (r *Runner) RunJob(ctx context.Context, j Job) error {
 	r.logf("running %s", j.Name)
 
 	args := []string{"run", "--prompt", j.Prompt}
-	if j.Model != "" {
-		args = append(args, "--model", j.Model)
-	}
 	cmd := exec.CommandContext(ctx, r.Exe, args...)
 	cmd.Dir = j.Dir
 	cmd.Stdout = f

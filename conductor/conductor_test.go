@@ -75,22 +75,6 @@ func (s *scriptedTools) Run(_ context.Context, name string, args map[string]any)
 	return "", fmt.Errorf("unknown tool: %s", name)
 }
 
-// mapResolver is a ModelResolver backed by a table instead of a catalog —
-// the whole point of the interface being declared on the consumer side.
-type mapResolver struct {
-	models map[string]connector.ModelClient
-}
-
-var errNoSuchModel = errors.New("no such model")
-
-func (m mapResolver) Resolve(spec string) (connector.ModelClient, error) {
-	mc, ok := m.models[spec]
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", errNoSuchModel, spec)
-	}
-	return mc, nil
-}
-
 // ---------------------------------------------------------------------------
 // The smoke test this whole stage exists for.
 // ---------------------------------------------------------------------------
@@ -357,12 +341,9 @@ func TestConductor_ConcurrentSubmitIsRejected(t *testing.T) {
 	// The winner hangs until interrupted, which is what keeps the turn in
 	// flight long enough for the loser to be turned away.
 	blocking := &connectortest.Fake{ProviderName: "p", ModelName: "m", BlockUntilCancel: true}
-	free := &connectortest.Fake{ProviderName: "p2", ModelName: "m2",
-		Turns: [][]stream.Event{{stream.TextDelta{Text: "done"}, stream.Finish{}}}}
 	c := New(Options{
-		Client:   blocking,
-		Sink:     &recorder{},
-		Resolver: mapResolver{models: map[string]connector.ModelClient{"p2/m2": free}},
+		Client: blocking,
+		Sink:   &recorder{},
 	})
 
 	results := make(chan outcome, 2)
@@ -418,15 +399,14 @@ func TestConductor_ConcurrentSubmitIsRejected(t *testing.T) {
 		t.Errorf("conversation holds %q, want the winner's prompt %q", got, winner.prompt)
 	}
 
-	// (c) The claim really was released: a later Submit runs normally.
-	if err := c.SwitchModel("p2/m2"); err != nil {
-		t.Fatalf("SwitchModel: %v", err)
-	}
+	// (c) The claim really was released: a later Submit runs normally. The
+	// winner has returned, so the fake no longer needs to hang.
+	blocking.BlockUntilCancel = false
 	if _, err := c.Submit(context.Background(), "after"); err != nil {
 		t.Fatalf("Submit after the contested turn: %v", err)
 	}
-	if free.Calls() != 1 {
-		t.Errorf("follow-up turn reached the model %d times, want 1", free.Calls())
+	if blocking.Calls() != 2 {
+		t.Errorf("follow-up turn reached the model %d times in total, want 2", blocking.Calls())
 	}
 }
 
@@ -454,98 +434,6 @@ func userText(t *testing.T, m connector.Message) string {
 		t.Fatalf("not a submitted user message: %+v", m)
 	}
 	return m.Content[0].Text
-}
-
-// ---------------------------------------------------------------------------
-// SwitchModel
-// ---------------------------------------------------------------------------
-
-// TestConductor_SwitchModelUsesResolver proves the boundary: the conductor
-// changes models through an interface it declares itself, with no provider
-// catalog anywhere in sight.
-func TestConductor_SwitchModelUsesResolver(t *testing.T) {
-	first := &connectortest.Fake{ProviderName: "p1", ModelName: "m1",
-		Turns: [][]stream.Event{{stream.Finish{}}}}
-	second := &connectortest.Fake{ProviderName: "p2", ModelName: "m2",
-		Turns: [][]stream.Event{{stream.Finish{}}}}
-	c := New(Options{
-		Client:   first,
-		Sink:     &recorder{},
-		Resolver: mapResolver{models: map[string]connector.ModelClient{"p2/m2": second}},
-	})
-
-	if c.Model() != "m1" || c.Provider() != "p1" {
-		t.Fatalf("start = %s/%s, want p1/m1", c.Provider(), c.Model())
-	}
-	if err := c.SwitchModel("p2/m2"); err != nil {
-		t.Fatalf("SwitchModel: %v", err)
-	}
-	if c.Model() != "m2" || c.Provider() != "p2" {
-		t.Errorf("after switch = %s/%s, want p2/m2", c.Provider(), c.Model())
-	}
-	if _, err := c.Submit(context.Background(), "hi"); err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	if first.Calls() != 0 || second.Calls() != 1 {
-		t.Errorf("calls: first=%d second=%d, want 0 and 1", first.Calls(), second.Calls())
-	}
-}
-
-// TestConductor_SwitchModelKeepsConversation locks the "mid-conversation model
-// change" contract: history and usage survive the switch.
-func TestConductor_SwitchModelKeepsConversation(t *testing.T) {
-	first := &connectortest.Fake{ProviderName: "p1", ModelName: "m1",
-		Turns: [][]stream.Event{{stream.TextDelta{Text: "a"}, stream.Finish{Usage: stream.Usage{Input: 5}}}}}
-	second := &connectortest.Fake{ProviderName: "p2", ModelName: "m2",
-		Turns: [][]stream.Event{{stream.Finish{}}}}
-	c := New(Options{
-		Client:   first,
-		Sink:     &recorder{},
-		Resolver: mapResolver{models: map[string]connector.ModelClient{"p2/m2": second}},
-	})
-
-	if _, err := c.Submit(context.Background(), "hello"); err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	before := len(c.Messages())
-	if err := c.SwitchModel("p2/m2"); err != nil {
-		t.Fatalf("SwitchModel: %v", err)
-	}
-	if got := len(c.Messages()); got != before {
-		t.Errorf("history length changed on model switch: %d then %d", before, got)
-	}
-	if c.Usage().Input != 5 {
-		t.Errorf("usage reset by model switch: %+v", c.Usage())
-	}
-}
-
-// TestConductor_SwitchModelResolverErrorKeepsClient verifies a failed switch
-// leaves the conversation on the model it was already using — the TUI shows
-// the old model again precisely because nothing changed underneath.
-func TestConductor_SwitchModelResolverErrorKeepsClient(t *testing.T) {
-	first := &connectortest.Fake{ProviderName: "p1", ModelName: "m1"}
-	c := New(Options{
-		Client:   first,
-		Sink:     &recorder{},
-		Resolver: mapResolver{models: map[string]connector.ModelClient{}},
-	})
-
-	err := c.SwitchModel("nope/nope")
-	if !errors.Is(err, errNoSuchModel) {
-		t.Fatalf("err = %v, want the resolver's own error passed through", err)
-	}
-	if c.Model() != "m1" {
-		t.Errorf("model changed despite the error: %s", c.Model())
-	}
-}
-
-// TestConductor_SwitchModelWithoutResolver documents what a frontend that
-// never offers model switching (one-shot prompt mode) gets back.
-func TestConductor_SwitchModelWithoutResolver(t *testing.T) {
-	c := New(Options{Client: &connectortest.Fake{ProviderName: "p", ModelName: "m"}, Sink: &recorder{}})
-	if err := c.SwitchModel("x/y"); !errors.Is(err, ErrNoResolver) {
-		t.Fatalf("err = %v, want ErrNoResolver", err)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -892,26 +780,6 @@ func TestConductor_MaxIterationsIsReturnedNotSwallowed(t *testing.T) {
 	_, err := c.Submit(context.Background(), "loop forever")
 	if !errors.Is(err, agent.ErrMaxIterations) {
 		t.Fatalf("err = %v, want agent.ErrMaxIterations", err)
-	}
-}
-
-func TestSwitchModelRefreshesContextLimit(t *testing.T) {
-	primary := &connectortest.Fake{ProviderName: "p1", ModelName: "m1"}
-	fallback := &connectortest.Fake{ProviderName: "p2", ModelName: "m2"}
-	c := New(Options{Client: primary, Config: agent.Config{
-		ContextLimit: 10,
-		ContextLimitFor: func(provider, model string) int {
-			if provider == "p2" && model == "m2" {
-				return 20
-			}
-			return 10
-		},
-	}, Resolver: mapResolver{models: map[string]connector.ModelClient{"p2/m2": fallback}}})
-	if err := c.SwitchModel("p2/m2"); err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Config().ContextLimit; got != 20 {
-		t.Fatalf("ContextLimit = %d, want 20", got)
 	}
 }
 

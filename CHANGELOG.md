@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Removed
 - Lua workflows: the `.tyci/agents/*.lua` scripts and the `tyci workflow run` and `tyci workflow list` commands are removed. Use JSON workflows (v0.3.0) instead. `tyci workflow eject` stays.
 - `tyci console` and the `minimal`, `normal` and `interactive` display modes. Use `tyci tui` (interactive) or `tyci run --prompt` (one-shot) (#189).
+- TUI: the `/model` command, the model picker and the favorite models are removed. Tab, Shift+Tab and Ctrl+P no longer open a model picker. `/model` is handled like any unknown slash command (#190).
+- CLI: the `--model` and `--agent` flags, the `tyci agent` command and the agent presets in `agents.json` are removed. Set the model with `default_model` in `~/.tyci/config.json` (#190).
+- Config: the project file `.tyci/model.json` is no longer merged into the provider list. Only `~/.tyci/model.json` counts (#190).
+
+Existing agents.json, .tyci.json and .tyci/model.json files are ignored (not deleted, not migrated).
 
 ### Fixed
 - TUI: mouse wheel events no longer appear as text in the input box. A fast burst of wheel events could split an escape sequence at the read buffer end, and the input box then received it as text. A lone Esc key is released after 50 ms. Pasted text that looks like a mouse event is inserted (#426).

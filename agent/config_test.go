@@ -36,10 +36,7 @@ func setupConfigTest(t *testing.T) {
 func TestTyciConfig_MarshalRoundTrip(t *testing.T) {
 	setupConfigTest(t)
 
-	cfg := TyciConfig{
-		DefaultModel:   "openai/gpt-4o",
-		FavoriteModels: []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"},
-	}
+	cfg := TyciConfig{DefaultModel: "openai/gpt-4o"}
 	if err := SaveTyciConfig(cfg); err != nil {
 		t.Fatalf("SaveTyciConfig: %v", err)
 	}
@@ -48,14 +45,6 @@ func TestTyciConfig_MarshalRoundTrip(t *testing.T) {
 	loaded := LoadTyciConfig()
 	if loaded.DefaultModel != cfg.DefaultModel {
 		t.Fatalf("DefaultModel = %q, want %q", loaded.DefaultModel, cfg.DefaultModel)
-	}
-	if len(loaded.FavoriteModels) != len(cfg.FavoriteModels) {
-		t.Fatalf("FavoriteModels len = %d, want %d", len(loaded.FavoriteModels), len(cfg.FavoriteModels))
-	}
-	for i, m := range cfg.FavoriteModels {
-		if loaded.FavoriteModels[i] != m {
-			t.Fatalf("FavoriteModels[%d] = %q, want %q", i, loaded.FavoriteModels[i], m)
-		}
 	}
 }
 
@@ -66,137 +55,18 @@ func TestLoadTyciConfig_MissingFile(t *testing.T) {
 	if cfg.DefaultModel != "" {
 		t.Fatalf("DefaultModel = %q, want empty for missing file", cfg.DefaultModel)
 	}
-	if len(cfg.FavoriteModels) != 0 {
-		t.Fatalf("FavoriteModels = %v, want empty for missing file", cfg.FavoriteModels)
-	}
 }
 
 func TestSaveAndLoad_DefaultModel(t *testing.T) {
 	setupConfigTest(t)
 
-	if err := SetDefaultModel("anthropic/claude-sonnet-4-20250514"); err != nil {
-		t.Fatalf("SetDefaultModel: %v", err)
+	if err := SaveTyciConfig(TyciConfig{DefaultModel: "anthropic/claude-sonnet-4-20250514"}); err != nil {
+		t.Fatalf("SaveTyciConfig: %v", err)
 	}
 
 	got := GetDefaultModel()
 	if got != "anthropic/claude-sonnet-4-20250514" {
 		t.Fatalf("GetDefaultModel = %q, want anthropic/claude-sonnet-4-20250514", got)
-	}
-}
-
-func TestSaveAndLoad_FavoriteModels(t *testing.T) {
-	setupConfigTest(t)
-
-	favs := []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"}
-	if err := SetFavoriteModels(favs); err != nil {
-		t.Fatalf("SetFavoriteModels: %v", err)
-	}
-
-	got := GetFavoriteModels()
-	if len(got) != 2 {
-		t.Fatalf("GetFavoriteModels len = %d, want 2", len(got))
-	}
-	if got[0] != "openai/gpt-4o" || got[1] != "anthropic/claude-sonnet-4-20250514" {
-		t.Fatalf("GetFavoriteModels = %v, want %v", got, favs)
-	}
-}
-
-func TestSetDefaultModel_Overwrites(t *testing.T) {
-	setupConfigTest(t)
-
-	if err := SetDefaultModel("openai/gpt-4o"); err != nil {
-		t.Fatalf("SetDefaultModel (first): %v", err)
-	}
-	if err := SetDefaultModel("anthropic/claude-sonnet-4-20250514"); err != nil {
-		t.Fatalf("SetDefaultModel (second): %v", err)
-	}
-
-	got := GetDefaultModel()
-	if got != "anthropic/claude-sonnet-4-20250514" {
-		t.Fatalf("GetDefaultModel = %q, want anthropic/claude-sonnet-4-20250514", got)
-	}
-}
-
-func TestSetFavoriteModels_AppendDoesNotAffectConfig(t *testing.T) {
-	setupConfigTest(t)
-
-	if err := SetFavoriteModels([]string{"openai/gpt-4o"}); err != nil {
-		t.Fatalf("SetFavoriteModels: %v", err)
-	}
-
-	// Verify save created the file
-	cfgPath := globalConfigFilePath()
-	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		t.Fatalf("config file not created at %s", cfgPath)
-	}
-}
-
-func TestDefaultModel_PersistsWithFavorites(t *testing.T) {
-	setupConfigTest(t)
-
-	SetDefaultModel("openai/gpt-4o")
-	SetFavoriteModels([]string{"anthropic/claude-sonnet-4-20250514", "openai/gpt-4o"})
-
-	cfg := LoadTyciConfig()
-	if cfg.DefaultModel != "openai/gpt-4o" {
-		t.Fatalf("DefaultModel = %q, want openai/gpt-4o", cfg.DefaultModel)
-	}
-	if len(cfg.FavoriteModels) != 2 {
-		t.Fatalf("FavoriteModels len = %d, want 2", len(cfg.FavoriteModels))
-	}
-}
-
-func TestAddFavoriteModel_AppendsAndDedupes(t *testing.T) {
-	setupConfigTest(t)
-
-	if err := AddFavoriteModel("openai/gpt-4o"); err != nil {
-		t.Fatalf("AddFavoriteModel: %v", err)
-	}
-	if err := AddFavoriteModel("anthropic/claude-sonnet-4-20250514"); err != nil {
-		t.Fatalf("AddFavoriteModel: %v", err)
-	}
-	// Duplicate should be a no-op.
-	if err := AddFavoriteModel("openai/gpt-4o"); err != nil {
-		t.Fatalf("AddFavoriteModel (dup): %v", err)
-	}
-
-	got := GetFavoriteModels()
-	if len(got) != 2 {
-		t.Fatalf("GetFavoriteModels = %v, want 2 entries", got)
-	}
-}
-
-func TestRemoveFavoriteModel(t *testing.T) {
-	setupConfigTest(t)
-
-	SetFavoriteModels([]string{"openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"})
-	if err := RemoveFavoriteModel("openai/gpt-4o"); err != nil {
-		t.Fatalf("RemoveFavoriteModel: %v", err)
-	}
-
-	got := GetFavoriteModels()
-	if len(got) != 1 || got[0] != "anthropic/claude-sonnet-4-20250514" {
-		t.Fatalf("GetFavoriteModels = %v, want [anthropic/claude-sonnet-4-20250514]", got)
-	}
-}
-
-// TestAddFavoriteModel_ReconcilesFromDisk simulates a second session adding a
-// favorite: the add reloads the on-disk config first, so a favorite written by
-// another session in the meantime is preserved rather than clobbered.
-func TestAddFavoriteModel_ReconcilesFromDisk(t *testing.T) {
-	setupConfigTest(t)
-
-	// Another session persisted this favorite.
-	SetFavoriteModels([]string{"anthropic/claude-sonnet-4-20250514"})
-
-	// This session adds a different one.
-	if err := AddFavoriteModel("openai/gpt-4o"); err != nil {
-		t.Fatalf("AddFavoriteModel: %v", err)
-	}
-
-	got := GetFavoriteModels()
-	if len(got) != 2 {
-		t.Fatalf("GetFavoriteModels = %v, want both favorites preserved", got)
 	}
 }
 
@@ -227,15 +97,6 @@ func TestGetDefaultModel_EmptyWhenNotSet(t *testing.T) {
 	}
 }
 
-func TestGetFavoriteModels_EmptyWhenNotSet(t *testing.T) {
-	setupConfigTest(t)
-
-	got := GetFavoriteModels()
-	if got != nil {
-		t.Fatalf("GetFavoriteModels = %v, want nil", got)
-	}
-}
-
 // writeLocalConfig writes wd/.tyci/config.json with the given body.
 func writeLocalConfig(t *testing.T, wd, body string) {
 	t.Helper()
@@ -250,18 +111,17 @@ func writeLocalConfig(t *testing.T, wd, body string) {
 
 // TestLoadTyciConfigFrom_LocalFieldOverridesWithoutWipingGlobal is the core
 // item-22 guarantee for config.json: a project-local file naming only
-// default_model must not reset the global file's favorite_models, max_tokens
-// or prompt_cache to zero values — the merge is per field, not a whole-file
+// default_model must not reset the global file's max_tokens or prompt_cache
+// to zero values — the merge is per field, not a whole-file
 // replace.
 func TestLoadTyciConfigFrom_LocalFieldOverridesWithoutWipingGlobal(t *testing.T) {
 	setupConfigTest(t)
 
 	falseVal := false
 	if err := SaveTyciConfig(TyciConfig{
-		DefaultModel:   "global/model",
-		FavoriteModels: []string{"global/fav-a", "global/fav-b"},
-		MaxTokens:      4096,
-		PromptCache:    &falseVal,
+		DefaultModel: "global/model",
+		MaxTokens:    4096,
+		PromptCache:  &falseVal,
 	}); err != nil {
 		t.Fatalf("SaveTyciConfig: %v", err)
 	}
@@ -272,9 +132,6 @@ func TestLoadTyciConfigFrom_LocalFieldOverridesWithoutWipingGlobal(t *testing.T)
 	got := LoadTyciConfigFrom(wd)
 	if got.DefaultModel != "local/model" {
 		t.Errorf("DefaultModel = %q, want local override %q", got.DefaultModel, "local/model")
-	}
-	if len(got.FavoriteModels) != 2 || got.FavoriteModels[0] != "global/fav-a" {
-		t.Errorf("FavoriteModels = %v, want the global list preserved, unset by the local file", got.FavoriteModels)
 	}
 	if got.MaxTokens != 4096 {
 		t.Errorf("MaxTokens = %d, want the global value preserved", got.MaxTokens)
@@ -292,10 +149,9 @@ func TestLoadTyciConfigFrom_LocalOverridesEachFieldItSets(t *testing.T) {
 
 	trueVal := true
 	if err := SaveTyciConfig(TyciConfig{
-		DefaultModel:   "global/model",
-		FavoriteModels: []string{"global/fav"},
-		MaxTokens:      1000,
-		PromptCache:    &trueVal,
+		DefaultModel: "global/model",
+		MaxTokens:    1000,
+		PromptCache:  &trueVal,
 	}); err != nil {
 		t.Fatalf("SaveTyciConfig: %v", err)
 	}
@@ -303,7 +159,6 @@ func TestLoadTyciConfigFrom_LocalOverridesEachFieldItSets(t *testing.T) {
 	wd := t.TempDir()
 	writeLocalConfig(t, wd, `{
 		"default_model": "local/model",
-		"favorite_models": ["local/fav-a", "local/fav-b"],
 		"max_tokens": 8192,
 		"prompt_cache": false
 	}`)
@@ -311,9 +166,6 @@ func TestLoadTyciConfigFrom_LocalOverridesEachFieldItSets(t *testing.T) {
 	got := LoadTyciConfigFrom(wd)
 	if got.DefaultModel != "local/model" {
 		t.Errorf("DefaultModel = %q, want %q", got.DefaultModel, "local/model")
-	}
-	if len(got.FavoriteModels) != 2 || got.FavoriteModels[1] != "local/fav-b" {
-		t.Errorf("FavoriteModels = %v, want local list", got.FavoriteModels)
 	}
 	if got.MaxTokens != 8192 {
 		t.Errorf("MaxTokens = %d, want 8192", got.MaxTokens)
@@ -336,23 +188,6 @@ func TestLoadTyciConfigFrom_NoLocalFile(t *testing.T) {
 	got := LoadTyciConfigFrom(wd)
 	if got.DefaultModel != "global/model" {
 		t.Errorf("DefaultModel = %q, want the global value with no local override", got.DefaultModel)
-	}
-}
-
-// TestLoadTyciConfig_CLIFlagWins is not a config-merge test by itself —
-// ResolveModel only ever consults config.json (global or local) when the
-// caller passes an empty model — but it is the guarantee item 22 depends on:
-// an explicit --model flag must still beat both local and global config
-// after this rework, since commands.go only calls ResolveModel when the
-// flag was not set.
-func TestResolveModel_ExplicitModelBeatsConfig(t *testing.T) {
-	setupConfigTest(t)
-	if err := SaveTyciConfig(TyciConfig{DefaultModel: "global/model"}); err != nil {
-		t.Fatalf("SaveTyciConfig: %v", err)
-	}
-	got := ResolveModel("explicit/model", "")
-	if got != "explicit/model" {
-		t.Errorf("ResolveModel with an explicit model = %q, want it to win over config.json", got)
 	}
 }
 
@@ -390,21 +225,13 @@ func TestSaveTyciConfig_KeepsUnknownKeys(t *testing.T) {
 	}
 }
 
-func TestCompactLimits_AgentOverridesGlobal(t *testing.T) {
+func TestCompactLimits_GlobalValues(t *testing.T) {
 	setupConfigTest(t)
 	if err := SaveTyciConfig(TyciConfig{CompactSoftLimit: 100000, CompactHardLimit: 150000}); err != nil {
 		t.Fatal(err)
 	}
-	if soft, hard := CompactLimits("x"); soft != 100000 || hard != 150000 {
+	if soft, hard := CompactLimits(); soft != 100000 || hard != 150000 {
 		t.Fatalf("global = %d, %d", soft, hard)
-	}
-	home, _ := os.UserHomeDir()
-	agents := `{"x":{"model":"a/b","compact_hard_limit":50000}}`
-	if err := os.WriteFile(filepath.Join(home, ".tyci", "agents.json"), []byte(agents), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if soft, hard := CompactLimits("x"); soft != 100000 || hard != 50000 {
-		t.Fatalf("agent override = %d, %d", soft, hard)
 	}
 	// The new keys survive a save that does not touch them (#298).
 	cfg := LoadTyciConfig()
@@ -417,16 +244,35 @@ func TestCompactLimits_AgentOverridesGlobal(t *testing.T) {
 	}
 }
 
+// TestFavoritesConfigRemoved: a config.json that still has favorite_models
+// loads, the other keys are read, and the removed key is ignored.
+func TestFavoritesConfigRemoved(t *testing.T) {
+	setupConfigTest(t)
+	if err := os.MkdirAll(globalConfigDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"favorite_models":["a/b"],"default_model":"x/y","max_tokens":8000}`
+	if err := os.WriteFile(globalConfigFilePath(), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := LoadTyciConfig()
+	if cfg.DefaultModel != "x/y" || cfg.MaxTokens != 8000 {
+		t.Fatalf("cfg = %+v, want default_model and max_tokens read", cfg)
+	}
+}
+
 func TestTimeoutKeys_SaveAndMerge(t *testing.T) {
 	setupConfigTest(t)
 
 	if err := SaveTyciConfig(TyciConfig{FirstByteTimeoutSec: 10, StreamIdleTimeoutSec: 20}); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetDefaultModel("x/y"); err != nil {
+	got := LoadTyciConfig()
+	got.DefaultModel = "x/y"
+	if err := SaveTyciConfig(got); err != nil {
 		t.Fatal(err)
 	}
-	got := LoadTyciConfig()
+	got = LoadTyciConfig()
 	if got.FirstByteTimeoutSec != 10 || got.StreamIdleTimeoutSec != 20 {
 		t.Fatalf("timeouts lost on save: %+v", got)
 	}

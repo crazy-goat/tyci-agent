@@ -405,16 +405,16 @@ type Provider interface {
 	Models() []string
 
 	// Client returns a ModelClient bound to model on this provider. The name
-	// is deliberately NOT validated: `--model provider/anything` has always
-	// passed an unlisted name straight through, and the "model not found in
-	// provider" error surfaces at request time.
+	// is deliberately NOT validated: an unlisted name has always passed
+	// straight through, and the "model not found in provider" error surfaces
+	// at request time.
 	Client(model string) connector.ModelClient
 
 	// ConfigWarnings reports credential problems that IsConfigured deliberately
 	// does NOT report as "not configured" — today, a URI token that looks like
 	// "$FOO" but does not resolve through the environment. A single bool
 	// cannot carry both "is there a usable credential" (what routing needs:
-	// FindModel, catalogResolver, `provider list`'s ✓/✗) and "is something
+	// FindModel, `provider list`'s ✓/✗) and "is something
 	// about this credential suspicious" (what a human needs to know to fix a
 	// silent 401) — collapsing the second into the first would make
 	// IsConfigured's verdict flip out from under callers that only asked the

@@ -9,10 +9,6 @@ import (
 	"github.com/crazy-goat/tyci-agent/stream"
 )
 
-func (t *TUI) ModelChanges() <-chan string {
-	return t.modelChanges
-}
-
 // SelectedResume returns a channel that yields the chosen session file path
 // when the user presses Enter in the /resume picker. On Esc, "" is sent so the
 // caller can distinguish "user dismissed" from "no picker was open". The

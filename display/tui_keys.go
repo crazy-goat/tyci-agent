@@ -14,15 +14,6 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch msg.Type {
-	case tea.KeyTab:
-		m.switchModel(1)
-		return m, nil
-	case tea.KeyShiftTab:
-		m.switchModel(-1)
-		return m, nil
-	}
-
 	if handled, model, cmd := m.handleGlobalKey(msg); handled {
 		return model, cmd
 	}
@@ -94,10 +85,9 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // the line is submitted or queued. Returns handled=false for anything else.
 //
 // Shared by both Enter paths on purpose. The busy handler used to fall
-// straight through to submit(), which meant a "/model" typed while the agent
-// was thinking was queued and later delivered to the model as a prompt — the
-// picker never opened, and the model was asked to interpret a command meant
-// for the interface. Its own comment claimed it mirrored the idle handler; it
+// straight through to submit(), which meant a slash command typed while the
+// agent was thinking was queued and later delivered to the model as a prompt.
+// The model was asked to interpret a command meant for the interface. Its own comment claimed it mirrored the idle handler; it
 // did not, and one shared function is the only way to keep that claim true.
 //
 // Only commands with no effect on the conversation are handled here outright.
@@ -109,14 +99,6 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // channel (safe to start mid-turn) or refused with the reason.
 func (m TuiModel) handleLocalSlashCommand() (bool, tea.Model) {
 	line := strings.TrimSpace(m.input.Value())
-	switch strings.ToLower(line) {
-	case "/model":
-		m.input.Reset()
-		m.input.SetHeight(1)
-		m.closeFileComplete()
-		m.openModelPicker()
-		return true, m
-	}
 	lower := strings.ToLower(line)
 	if m.reading || !strings.HasPrefix(line, "/") {
 		return false, m
@@ -200,9 +182,6 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			m.quitting = true
 			return true, m, tea.Quit
 		}
-	case tea.KeyCtrlP:
-		m.openModelPicker()
-		return true, m, nil
 	case tea.KeyCtrlB:
 		m.openJobsModal()
 		// Opening the modal can be the only reason the tick chain is
