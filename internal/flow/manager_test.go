@@ -278,6 +278,20 @@ func TestRunPanic_MarksFailedAndNotifies(t *testing.T) {
 	}
 }
 
+// A failed run sends one notice. Only the Manager sends run notices, so the
+// Runner adds no second one.
+func TestRunPanic_SendsOneNotice(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{panics: true})
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err != nil {
+		t.Fatal(err)
+	}
+	e.notice(t)
+	waitIdle(t, e.m)
+	if n := len(e.notices); n != 0 {
+		t.Fatalf("%d extra notices", n)
+	}
+}
+
 // The failed notice names the step where the run stopped.
 func TestFailedNotice_NamesStep(t *testing.T) {
 	var got string
