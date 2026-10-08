@@ -35,7 +35,11 @@ case "$*" in
   "pr review"*) cat "${@: -1}" > "$CTL/review_body" ;;
   "api user"*) echo bot ;;
   "api --paginate"*) if [ -e "$CTL/comments.json" ]; then cat "$CTL/comments.json"; else echo '[]'; fi ;;
-  "pr list"*) if [ -e "$CTL/pr" ]; then echo 42; fi ;;
+  "pr list"*)
+    case "$*" in
+      *--jq*) if [ -e "$CTL/pr" ]; then echo 42; fi ;;
+      *) if [ -e "$CTL/pr" ]; then echo '[{"number":42,"headRefName":"issue-7","isCrossRepository":false,"closingIssuesReferences":[{"number":7}]}]'; else echo '[]'; fi ;;
+    esac ;;
   "pr create"*) touch "$CTL/pr"; echo https://example/pull/42 ;;
   "pr checks"*)
     b=$(cat "$CTL/ci_bucket")
@@ -400,6 +404,41 @@ func TestE2E_ReviewChangesThenAccept(t *testing.T) {
 	body, _ := os.ReadFile(filepath.Join(e.ctl, "review_body"))
 	if !strings.Contains(string(body), "ACCEPT") || strings.Contains(string(body), "CHANGES") {
 		t.Errorf("posted review = %q", body)
+	}
+}
+
+// #356: the review state may have any name; post_review.sh posts the report of
+// the review step, not of a state called review.
+func TestE2E_ReviewStateWithOtherName_PostsReview(t *testing.T) {
+	e := newE2E(t, map[string][]string{
+		"code":     {"done"},
+		"judge":    {"ACCEPT"},
+		"findings": {"done"},
+	})
+	renameState(e.wf, "review", "judge")
+	e.mustFinish()
+	e.wantStates("check_done, open_pr, code, judge, lock, update, post_review, ci, comments, merge, findings")
+	e.wantMerged()
+	body, _ := os.ReadFile(filepath.Join(e.ctl, "review_body"))
+	if !strings.Contains(string(body), "ACCEPT") {
+		t.Errorf("posted review = %q", body)
+	}
+}
+
+// renameState renames a state of wf and every transition that points to it.
+func renameState(wf *Workflow, from, to string) {
+	wf.States[to] = wf.States[from]
+	delete(wf.States, from)
+	for name, s := range wf.States {
+		for key, next := range s.On {
+			if next == from {
+				s.On[key] = to
+			}
+		}
+		wf.States[name] = s
+	}
+	if wf.Start == from {
+		wf.Start = to
 	}
 }
 
