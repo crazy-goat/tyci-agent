@@ -11,15 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - TUI: Enter or a click on a subagent row in the Tasks tab no longer opens the read-only transcript modal. It shows the live conversation in the main window instead (#453).
+- `tyci run --prompt` prints only the final answer on stdout, with one trailing newline. Tool calls and progress are no longer printed; errors, retry and fallback notices go to stderr (#189).
 - TUI: consecutive tool and thinking steps in the chat form one group line. The group is collapsed by default (#399).
 - TUI: while a step runs, the group line shows the step count and the latest step. When all steps finish, it shows the counts and the total time.
 - TUI: a click on the group line, or Ctrl+O, expands or collapses the group. A single step is not grouped.
 - Flow: the fixer and oracle caps apply to the workflow states named `fixer` and `oracle`. Before, they applied to the agent role names, so a custom workflow with other role names had no caps. The caps do not change: the fixer runs at most 2 times, the oracle once per failed step (#385).
+- TUI: the Tokens tab lists the main session model first, then the subagent and scout rows. The `of that delegated` line is renamed `subsession`, and `total` is the last line (#455).
 
 ### Removed
 - Lua workflows: the `.tyci/agents/*.lua` scripts and the `tyci workflow run` and `tyci workflow list` commands are removed. Use JSON workflows (v0.3.0) instead. `tyci workflow eject` stays.
+- `tyci console` and the `minimal`, `normal` and `interactive` display modes. Use `tyci tui` (interactive) or `tyci run --prompt` (one-shot) (#189).
 
 ### Fixed
+- TUI: a click on the sidebar Sessions tab no longer freezes the UI. The session list loads in the background and is cached for 5 seconds. The Runs tab detects the repository once per session. Closing the resume picker during a turn no longer blocks the event loop (#462).
+- Flow: the review verdict is also read from a `report.md` that starts with a heading. Before, a report whose first line was not exactly `ACCEPT` or `CHANGES` gave `CHANGES`, so a run paused on `max_visits` after three rounds although every review accepted. The verdict is now the only line that reads `ACCEPT` or `CHANGES`, with an optional `Verdict:` prefix and Markdown markers. Both verdicts, or none, still give `CHANGES` (#470).
+- TUI: mouse wheel events no longer appear as text in the input box. A fast burst of wheel events could split an escape sequence at the read buffer end, and the input box then received it as text. A lone Esc key is released after 50 ms. Pasted text that looks like a mouse event is inserted (#426).
 - Flow: two `tyci` processes that resume the same run at the same time take a lock in the run dir (`claim.lock`). Only one process claims the run (#350).
 - Flow: a `workflow_start` of an issue refuses a run that another live `tyci` process owns. It returns a busy error and does not create a second run (#350).
 - Flow: a resumed run counts a visit of a state when the crash came after the state change and before the visit was saved. This applies to the first entry and to a later entry of the state. No visit is lost. The file `state.json` has the new field `entry_pending` for this check (#350).
@@ -36,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
 - Flow: a resumed run posts its review when the workflow renamed the review state. Each agent step in the `state.json` history has a new field, `task`. The run finds the review by the role of the step. Before, `post_review.sh` skipped the review (#403).
 - Cost: a model id that several providers list gets the same rates and limits on each lookup without a provider. The status bar context percentage and the step cost do not change between calls (#419).
+- Agent: a role agent (subagent) retries a provider that does not answer up to 5 times, as the main agent does. Before, it retried only once (#447).
+- Agent: the error for a provider that does not answer does not say "retrying" any more. The retry line already shows the retry count (#447).
+- Watchdog: a role agent and a backgrounded subagent that stream output count as active. Before, their streamed text did not reset the job's activity time, so the watchdog reported a busy agent as idle after 3 minutes (#437).
 
 ## [0.5.0] - 2026-10-08
 

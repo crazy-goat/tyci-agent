@@ -16,8 +16,8 @@ func (t *TUI) ModelChanges() <-chan string {
 // SelectedResume returns a channel that yields the chosen session file path
 // when the user presses Enter in the /resume picker. On Esc, "" is sent so the
 // caller can distinguish "user dismissed" from "no picker was open". The
-// channel is unbuffered and serves one picker session per openResumePicker
-// call: callers must always read exactly one value (or close the TUI).
+// channel holds one value and serves one picker session per openResumePicker
+// call: callers must read that value (or the TUI closes the channel).
 func (t *TUI) SelectedResume() <-chan string {
 	return t.resumeCh
 }

@@ -103,7 +103,24 @@ func (m TuiModel) Init() tea.Cmd {
 	return textarea.Blink
 }
 
+// Update runs update, then starts a load of the Sessions tab list if the tab
+// is on screen and its list is stale. Checking after every message covers
+// opening the tab, switching to it and a list that ages while it stays open.
 func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	next := model.(TuiModel)
+	if load := next.sidebarSessionsCmd(); load != nil {
+		return next, tea.Batch(cmd, load)
+	}
+	return next, cmd
+}
+
+func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Last guard against mouse wheel fragments typed into the input. The
+	// input filter (tui_input_filter.go) drops most of them first.
+	if isStrayMouseText(msg) {
+		return m, nil
+	}
 	// Handled first and unconditionally: a background job can finish while
 	// any overlay (subagent modal, picker, …) is active, and backgroundJobs
 	// must stay current regardless of what's on screen.
@@ -158,6 +175,14 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// arrive at any point in startup, regardless of what's on screen.
 	if sl, ok := msg.(tuiSetSessionListerMsg); ok {
 		m.sessionLister = sl.fn
+		return m, nil
+	}
+	// A finished load of the Sessions tab list (see sidebarSessionsCmd). It
+	// lands whatever overlay is open, like the other background results.
+	if sm, ok := msg.(sidebarSessionsMsg); ok {
+		m.sessionEntries = sm.entries
+		m.sessionsLoading = false
+		m.sessionsLoadedAt = time.Now()
 		return m, nil
 	}
 	if rl, ok := msg.(tuiSetRunListerMsg); ok {

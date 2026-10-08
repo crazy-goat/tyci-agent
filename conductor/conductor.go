@@ -5,7 +5,7 @@
 // connector.ModelClient in use, and the session log — plus its own copy of
 // the loop that ties them together: append the user line, lazily materialize
 // the session file, run the agent, accumulate usage, write a session_end on
-// the way out. The console, the TUI and one-shot prompt mode each had that
+// the way out. The TUI and one-shot prompt mode each had that
 // logic spelled out again, and they had already drifted apart.
 //
 // A Conductor holds that state once. Frontends tell it what to do (Submit,
@@ -272,7 +272,7 @@ func (c *Conductor) Submit(ctx context.Context, prompt string) (stream.Usage, er
 // is running, and safe from any goroutine.
 //
 // Which key or signal means "interrupt" is not the Conductor's business: the
-// console wires SIGINT and ESC to it, the TUI wires its own cancel channel.
+// TUI wires its own cancel channel.
 func (c *Conductor) Interrupt() {
 	c.mu.Lock()
 	cancel := c.cancel
@@ -369,14 +369,13 @@ func (c *Conductor) SetCompactor(fn func(summary, focus string) (string, error))
 func (c *Conductor) SetHistory(msgs []connector.Message) { c.conversation = msgs }
 
 // ClearHistory drops the conversation and leaves everything else alone —
-// notably the session log, which keeps recording into the same file. This is
-// the console's /new.
+// notably the session log, which keeps recording into the same file.
 func (c *Conductor) ClearHistory() { c.conversation = nil }
 
 // ResetUsage zeroes the running usage total. The TUI's /new does this
-// together with ClearHistory and EndSession; the console's /new does not,
-// because it keeps writing to the same session file and the session_end
-// event should still report everything that file recorded.
+// together with ClearHistory and EndSession. ClearHistory alone does not zero
+// it, because the session file keeps recording and the session_end event
+// should still report everything that file recorded.
 func (c *Conductor) ResetUsage() {
 	c.usage = stream.Usage{}
 	// The ledger tracks the same conversation, children included, so it has

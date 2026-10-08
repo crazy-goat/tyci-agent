@@ -296,3 +296,34 @@ func TestResumePicker_TruncatePrompt_HandlesNewlinesAndLong(t *testing.T) {
 		}
 	}
 }
+
+// closeResumePicker must not block the event loop. runTUI reads the channel
+// only while it is idle, so a blocking send would freeze the TUI during a turn.
+func TestResumePicker_CloseNeverBlocks(t *testing.T) {
+	m, _ := newResumePickerTestModel(mkEntries(2))
+	m.resumeCh = make(chan string) // no reader at all
+	done := make(chan struct{})
+	go func() {
+		m.closeResumePicker("/tmp/s1.jsonl")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("closeResumePicker blocked with no reader on resumeCh")
+	}
+}
+
+// The answer waits in the one-slot channel until runTUI reads it.
+func TestResumePicker_CloseKeepsAnswerForLaterRead(t *testing.T) {
+	m, resumeCh := newResumePickerTestModel(mkEntries(2))
+	m.closeResumePicker("/tmp/s1.jsonl")
+	select {
+	case got := <-resumeCh:
+		if got != "/tmp/s1.jsonl" {
+			t.Fatalf("answer = %q, want the chosen path", got)
+		}
+	default:
+		t.Fatal("answer was not kept in resumeCh")
+	}
+}
