@@ -47,7 +47,7 @@ func checkPromptGolden(t *testing.T, name, got string) {
 	}
 }
 
-func TestChatPromptUnchangedForConsole(t *testing.T) {
+func TestChatPromptUnchanged(t *testing.T) {
 	checkPromptGolden(t, "prompt_chat.golden.txt", goldenPrompt(t, BuildSystemPrompt))
 }
 

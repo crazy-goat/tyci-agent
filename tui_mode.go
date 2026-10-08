@@ -201,9 +201,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 	// arg) and after a successful pick from the /resume popup. Errors surface
 	// to the TUI as error blocks; the active iteration is cancelled after the
 	// swap so the next prompt writes to the *resumed* session rather than the
-	// abandoned one. Mirrors the console implementation so /resume behaves
-	// identically across modes — which is now true because both call the same
-	// conductor method rather than reimplementing it.
+	// abandoned one. The conductor owns this step, so /resume does not
+	// reimplement it.
 	resumeSession := func(resumePath string, cancellation context.CancelFunc) error {
 		summary, msgs, total, corrupt, err := session.LoadForReplay(resumePath)
 		if err != nil {
@@ -436,9 +435,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				tuiDisp.ResetJobs(oldJobIDs)
 				// Cleanly terminate the live session so /new doesn't leave
 				// the file open with no closing event. /resume rebuilds
-				// later, so we need a proper boundary here. Unlike the
-				// console, the TUI also zeroes the usage total, because the
-				// next prompt starts a fresh log.
+				// later, so we need a proper boundary here. The TUI also zeroes the
+				// usage total, because the next prompt starts a fresh log.
 				cond.EndSession("ok", 0)
 				cond.ClearHistory()
 				cond.ResetUsage()

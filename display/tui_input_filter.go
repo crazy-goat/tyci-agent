@@ -14,11 +14,25 @@
 // unchanged. Real SGR mouse events with their intact 0x1b prefix still
 // become MouseMsg and scroll/select still work.
 //
-// The reader holds back the trailing few bytes of a Read whenever they could
-// be the prefix of a stray SGR mouse that completes in the next chunk.
+// The reader holds back the trailing bytes of an input chunk whenever they
+// could be the start of a mouse escape that completes in the next chunk. A
+// held prefix is released after sanitizeHoldTime, so a lone Esc key still
+// reaches bubbletea. A Read never cuts a sequence in two: bubbletea parses
+// each read on its own, and a split sequence becomes ordinary text.
+//
+// Text inside a bracketed paste is passed through unchanged, so a pasted
+// "[<1;2;3M" is inserted. A mouse fragment that still reaches bubbletea as
+// typed text is dropped by isStrayMouseText in Update.
 package display
 
-import "io"
+import (
+	"bytes"
+	"io"
+	"regexp"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 // sanitizeInput wraps r with a Reader that drops stray SGR mouse escapes
 // (those missing the leading 0x1b byte) so they never reach bubbletea as
@@ -27,98 +41,121 @@ func sanitizeInput(r io.Reader) io.Reader {
 	return &sanitizeReader{inner: r}
 }
 
+// sanitizeChunkSize is the largest read from the input. bubbletea reads 256
+// bytes at a time. A chunk and the held prefix (at most sgrMouseMaxLen bytes)
+// then fit in one such Read, so no Read splits a sequence.
+const sanitizeChunkSize = 256 - sgrMouseMaxLen
+
+// sanitizeHoldTime is how long a held prefix waits for its rest. A terminal
+// writes a sequence at once, so the rest normally arrives at once.
+const sanitizeHoldTime = 50 * time.Millisecond
+
+const sgrMouseMaxLen = 24
+
+var (
+	pasteStart = []byte("\x1b[200~")
+	pasteEnd   = []byte("\x1b[201~")
+)
+
+type sanitizeChunk struct {
+	data []byte
+	err  error
+}
+
 type sanitizeReader struct {
 	inner io.Reader
+	// chunks carries the reads of inner from readLoop. It is nil until the
+	// first Read starts readLoop.
+	chunks chan sanitizeChunk
 	// pending is a trailing mouse prefix that may continue in the next chunk.
 	// It is kept separate from ready so an already-filtered real SGR escape is
 	// never inspected again after a small caller buffer splits its output.
 	pending []byte
 	ready   []byte
-	done    bool
-	err     error
+	// inPaste is true between a bracketed paste start and end marker.
+	inPaste bool
+	// err is the error of inner. It is returned after ready and pending.
+	err error
 }
 
-const sgrMouseMaxLen = 24
+// readLoop reads inner in the background, so Read can stop waiting for a held
+// prefix after sanitizeHoldTime.
+func (s *sanitizeReader) readLoop() {
+	for {
+		buf := make([]byte, sanitizeChunkSize)
+		n, err := s.inner.Read(buf)
+		s.chunks <- sanitizeChunk{data: buf[:n], err: err}
+		if err != nil {
+			return
+		}
+	}
+}
 
 func (s *sanitizeReader) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	if s.chunks == nil {
+		s.chunks = make(chan sanitizeChunk)
+		go s.readLoop()
+	}
 
-	for {
-		if len(s.ready) > 0 {
-			n := copy(p, s.ready)
-			s.ready = s.ready[n:]
-			return n, nil
-		}
-		if s.done {
-			if len(s.pending) > 0 {
-				n := copy(p, s.pending)
-				s.pending = s.pending[n:]
-				return n, nil
+	for len(s.ready) == 0 {
+		if s.err != nil {
+			if len(s.pending) == 0 {
+				return 0, s.err
 			}
-			return 0, s.err
-		}
-
-		maxSrc := len(p) + sgrMouseMaxLen
-		joined := append([]byte(nil), s.pending...)
-		s.pending = s.pending[:0]
-		if len(joined) > maxSrc {
-			// This should not happen with the bounded source reads below, but
-			// avoid passing a negative slice bound to an unusual caller.
-			maxSrc = len(joined)
-		}
-		src := make([]byte, maxSrc)
-		n, err := s.inner.Read(src[:maxSrc-len(joined)])
-		joined = append(joined, src[:n]...)
-		if err != nil {
-			s.done = true
-			s.err = err
-		}
-
-		out, deferTail := filterStrayMouseWithDefer(joined, sgrMouseMaxLen)
-		copied := copy(p, out)
-		// Output that did not fit must precede a deferred raw prefix. The
-		// latter is only safe to inspect after the next source chunk arrives.
-		s.ready = append(s.ready, out[copied:]...)
-		s.pending = append(s.pending, deferTail...)
-		if copied > 0 {
-			// Do not return EOF alongside bytes that are still queued: callers
-			// are allowed to stop at n>0, err==EOF and would lose those bytes.
-			return copied, nil
-		}
-		if len(s.pending) > 0 {
-			if s.done {
-				// There is no future chunk that could complete this prefix, so
-				// flush it verbatim as a best-effort EOF behavior.
-				continue
-			}
-			// The input chunk was entirely held back; read the next chunk.
+			// No more input can complete the held prefix: release it.
+			s.ready, s.pending = s.pending, nil
 			continue
 		}
-		if s.done {
-			return 0, s.err
+
+		var expired <-chan time.Time
+		var timer *time.Timer
+		if len(s.pending) > 0 {
+			timer = time.NewTimer(sanitizeHoldTime)
+			expired = timer.C
 		}
-		// A complete stray escape may consume the whole chunk without
-		// producing output. Return control to the caller rather than blocking
-		// for another source chunk in the same Read call.
-		if n > 0 {
-			return 0, nil
+		select {
+		case c := <-s.chunks:
+			if timer != nil {
+				timer.Stop()
+			}
+			s.err = c.err
+			s.filter(c.data)
+		case <-expired:
+			// No rest of the sequence came in time: it was not a split
+			// sequence, so release it (a lone Esc key, for example).
+			s.ready, s.pending = s.pending, nil
 		}
-		// Preserve an unusual inner Reader's (0, nil) result rather than
-		// spinning forever.
-		return 0, nil
 	}
+
+	n := copy(p, s.ready)
+	s.ready = s.ready[n:]
+	return n, nil
+}
+
+// filter filters a chunk after the held prefix, queues the output in ready
+// and holds back a new trailing prefix in pending.
+func (s *sanitizeReader) filter(data []byte) {
+	joined := append(s.pending, data...)
+	s.pending = nil
+	out, deferTail, inPaste := filterStrayMouseWithDefer(joined, sgrMouseMaxLen, s.inPaste)
+	s.ready = append(s.ready, out...)
+	s.pending = deferTail
+	s.inPaste = inPaste
 }
 
 // filterStrayMouseWithDefer filters complete stray mouse escapes and holds
 // back a trailing prefix that may continue in the next Read. A real SGR
 // prefix is deferred from its ESC; a stray prefix is deferred from its `[`.
 // Keeping the ESC with the real prefix is essential: otherwise the next Read
-// receives only `[<...` and bubbletea sees it as ordinary text.
-func filterStrayMouseWithDefer(src []byte, maxSpill int) (kept []byte, deferTail []byte) {
+// receives only `[<...` and bubbletea sees it as ordinary text. Inside a
+// bracketed paste nothing is dropped. paste is the paste state at the start of
+// deferTail, which the caller passes to the next call.
+func filterStrayMouseWithDefer(src []byte, maxSpill int, inPaste bool) (kept []byte, deferTail []byte, paste bool) {
 	if len(src) == 0 {
-		return nil, nil
+		return nil, nil, inPaste
 	}
 	if maxSpill <= 0 {
 		maxSpill = len(src)
@@ -131,6 +168,21 @@ func filterStrayMouseWithDefer(src []byte, maxSpill int) (kept []byte, deferTail
 	out := make([]byte, 0, len(src))
 	for i := 0; i < len(src); {
 		if src[i] == 0x1b {
+			if i >= lookback && (isPrefixOf(src[i:], pasteStart) || isPrefixOf(src[i:], pasteEnd)) {
+				return out, append([]byte(nil), src[i:]...), inPaste
+			}
+			if bytes.HasPrefix(src[i:], pasteStart) {
+				inPaste = true
+				out = append(out, pasteStart...)
+				i += len(pasteStart)
+				continue
+			}
+			if bytes.HasPrefix(src[i:], pasteEnd) {
+				inPaste = false
+				out = append(out, pasteEnd...)
+				i += len(pasteEnd)
+				continue
+			}
 			end, status := sgrMouseMatchAt(src, i)
 			switch status {
 			case strayMatchComplete:
@@ -139,11 +191,11 @@ func filterStrayMouseWithDefer(src []byte, maxSpill int) (kept []byte, deferTail
 				continue
 			case strayMatchSpills:
 				if i >= lookback {
-					return out, append([]byte(nil), src[i:]...)
+					return out, append([]byte(nil), src[i:]...), inPaste
 				}
 			}
 		}
-		if src[i] == '[' && (i == 0 || src[i-1] != 0x1b) {
+		if !inPaste && src[i] == '[' && (i == 0 || src[i-1] != 0x1b) {
 			end, status := strayMatchAt(src, i)
 			switch status {
 			case strayMatchComplete:
@@ -152,14 +204,33 @@ func filterStrayMouseWithDefer(src []byte, maxSpill int) (kept []byte, deferTail
 				continue
 			case strayMatchSpills:
 				if i >= lookback {
-					return out, append([]byte(nil), src[i:]...)
+					return out, append([]byte(nil), src[i:]...), inPaste
 				}
 			}
 		}
 		out = append(out, src[i])
 		i++
 	}
-	return out, nil
+	return out, nil, inPaste
+}
+
+// isPrefixOf reports whether a is a proper prefix of b.
+func isPrefixOf(a, b []byte) bool {
+	return len(a) < len(b) && bytes.HasPrefix(b, a)
+}
+
+// strayMouseText matches text made only of SGR mouse fragments: an optional
+// cut tail of an escape ("1;35M", the end of an escape split by a read) and
+// whole escapes without their ESC ("[<65;71;35M").
+var strayMouseText = regexp.MustCompile(`^(?:(?:\d+;)*\d+;\d+[Mm])?(?:\[<\d+;\d+;\d+[Mm])*$`)
+
+// isStrayMouseText reports whether a message is typed text made only of SGR
+// mouse fragments. A pasted message is never a stray mouse event, so it is
+// not matched.
+func isStrayMouseText(msg tea.Msg) bool {
+	key, ok := msg.(tea.KeyMsg)
+	return ok && key.Type == tea.KeyRunes && !key.Paste && len(key.Runes) > 0 &&
+		strayMouseText.MatchString(string(key.Runes))
 }
 
 type strayMatchStatus int

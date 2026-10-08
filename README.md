@@ -14,7 +14,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 - **Project instructions & memory** — `AGENTS.md` plus notes the agent writes for its own future sessions
 - **Prompt caching** — Anthropic cache breakpoints on the schemas, system prompt and conversation
 - **`@` file completion** — type `@` in the TUI to pick a path
-- **Display modes** — `minimal`, `normal`, `interactive`, `tui` (Bubble Tea terminal UI)
+- **Display modes** — `tui` (Bubble Tea terminal UI) and `run` (plain text, one-shot)
 - **Session persistence** — automatic save/resume of conversations (JSONL)
 - **Streaming** — real-time thought, text, and tool output streaming
 - **Agent configuration** — named agent presets with model and fallback assignments
@@ -68,7 +68,7 @@ make install
 - Overrides (trusted projects first, then `~/.tyci/`, then the builtin copy): `.tyci/workflows/`, `.tyci/checks/` and `.tyci/tasks/<name>.md` (task templates)
 
 A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
-resumes (`resumed`). It also keeps `entry_pending`. This is `true` after a change to a new state, until the visit of that state is saved. A resumed run counts that visit. When `tyci` or `tyci console` starts, it resumes nothing by itself.
+resumes (`resumed`). It also keeps `entry_pending`. This is `true` after a change to a new state, until the visit of that state is saved. A resumed run counts that visit. When `tyci` or `tyci tui` starts, it resumes nothing by itself.
 It pauses every `running` run of the current repository whose owner process is gone (state
 `ask`, reason `resume:<state>`). Then the chat shows one question that lists all paused runs
 (run id, issue, last step and key, PR) with their answers. Answer `resume` (continue at the
@@ -208,9 +208,6 @@ model to try next when a request fails) — those stay configured separately.
 # One-shot prompt
 tyci run --model my-provider/my-model --prompt "What is the capital of France?"
 
-# Interactive session
-tyci console --model my-provider/my-model
-
 # TUI mode (rich terminal UI)
 tyci tui --model my-provider/my-model
 
@@ -260,7 +257,6 @@ runs. A negative value is a config error.
 | Command | Description |
 |---------|-------------|
 | `run` | One-shot prompt (requires `--prompt`) |
-| `console` | Interactive console session |
 | `tui` | Rich terminal UI (Bubble Tea) |
 | `agent` | Manage agent configurations |
 | `provider` | Manage provider settings |
@@ -292,7 +288,7 @@ Please include the `tyci --version` output in bug reports.
 
 ### Common Flags
 
-These flags work with `run`, `console`, and `tui`:
+These flags work with `run` and `tui`:
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -480,7 +476,7 @@ tyci cron tick                 # Run every job that is currently due, then exit
 
 Schedules are `every 30m`, `at 07:30` and the one-shot `in 5m`; a one-shot job is removed after it runs. The tool stores a one-shot job in `cron.json` as `once <RFC3339>`; write that form if you edit the file by hand, because `in 5m` there would move on every load.
 
-Normally, jobs only fire while some tyci session (console or TUI) is open — that
+Normally, jobs only fire while some tyci session (the TUI) is open — that
 session runs a scheduler that ticks every minute in the background. `tyci cron tick`
 is the standalone alternative: a single check-and-dispatch that needs no session at
 all, meant to be invoked periodically by the OS's own scheduler (a `cron` entry, a
@@ -508,9 +504,7 @@ minutes:
 
 ### Display Modes
 
-- **minimal** — Plain text output, no decorations
-- **normal** — Colored terminal output with basic formatting
-- **interactive** — Full interactive readline session (line editing, history)
+- **run** — Plain text: only the final answer on stdout; errors, retry and fallback notices on stderr
 - **tui** — Bubble Tea TUI with split-pane, model picker, mouse support
 
 #### `tyci completion`
@@ -811,7 +805,7 @@ Each line is a complete event (message, tool call, result, usage).
 tyci/
 ├── agent/            # Agent loop, message management, iteration logic
 ├── api/              # HTTP client, retry logic, streaming helpers
-├── display/          # Display interfaces and implementations (terminal, TUI)
+├── display/          # Display interfaces and implementations (TUI)
 ├── docs/             # Planning documents and specifications
 ├── internal/
 │   ├── connect/      # Provider registration via CLI

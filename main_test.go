@@ -160,9 +160,17 @@ func TestHelpExitsZero(t *testing.T) {
 	}
 }
 
-func TestInteractiveModelNotExistError(t *testing.T) {
+func TestConsoleCommandRemoved(t *testing.T) {
+	for _, c := range rootCmd.Commands() {
+		if c.Name() == "console" {
+			t.Fatal("the console command must not be registered; use tui or run")
+		}
+	}
+}
+
+func TestRunModelNotExistError(t *testing.T) {
 	// Non-existent model should print error and exit
-	cmd := exec.Command(binPath, "console", "--model", "nonexistent/model")
+	cmd := exec.Command(binPath, "run", "--prompt", "hi", "--model", "nonexistent/model")
 	cmd.Env = testEnv()
 	out, err := cmd.CombinedOutput()
 	if err == nil {

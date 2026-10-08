@@ -18,7 +18,7 @@ macOS and Linux only; Windows is not a supported target (unix-only syscalls).
 | `agent/` | Agent loop, retries, fallback, tool execution |
 | `api/`, `connector/`, `providers/` | Wire protocols, model clients and the provider catalog |
 | `tools/` | Built-in tools (bash, read, write, edit, subagent, wait, lua, MCP, ...) |
-| `display/` | TUI, console and minimal frontends |
+| `display/` | TUI frontend |
 | `session/`, `jobs/`, `locks/`, `eventbus/`, `stream/` | Sessions, background jobs, locks, events, streaming |
 | `internal/` | MCP client, cron, hooks, skills, readline, workflow runner (`flow/`), config |
 | `internal/agentdefs/builtin/*.md` | Agent definitions embedded in the binary (code, not docs) |

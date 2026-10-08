@@ -315,9 +315,9 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 const progressHistoryPreviewRuneBudget = 800
 
 // flattenProgressLine collapses a single progress entry's internal
-// newlines to spaces, same idiom as session.cleanDumpText and
-// display.Minimal.singleLine use elsewhere in this codebase for the same
-// reason: report_progress's text is model-supplied and nothing upstream
+// newlines to spaces, same idiom as session.cleanDumpText uses elsewhere in
+// this codebase for the same reason: report_progress's text is model-supplied
+// and nothing upstream
 // rejects a note containing "\n" (see tools/progress.go's Run), so without
 // this a multi-line note would be indistinguishable, once several entries
 // are joined, from several separate notes.
