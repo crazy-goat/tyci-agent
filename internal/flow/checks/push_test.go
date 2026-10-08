@@ -89,6 +89,24 @@ func TestPush_PushesExplicitRef(t *testing.T) {
 	}
 }
 
+func TestPush_PushesToPRBranch(t *testing.T) {
+	e := newPushEnv(t)
+	// open_pr.sh continued a PR that is open from another branch.
+	if err := os.WriteFile(filepath.Join(e.runDir, "pr_branch"), []byte("feat/issue-7-slug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	key, _, _, _, log := e.run(t, map[string]string{"PR_NUM": "171"})
+	if key != "ok" || e.remote(t, "refs/heads/feat/issue-7-slug") != git(t, e.work, "rev-parse", "HEAD") {
+		t.Fatalf("key=%q: the PR branch does not have the worktree HEAD", key)
+	}
+	if e.remote(t, "refs/heads/issue-7") != "" {
+		t.Fatal("issue-7 was pushed although the PR is open from another branch")
+	}
+	if !strings.Contains(log, "--head feat/issue-7-slug") {
+		t.Fatalf("the PR lookup does not use the PR branch: %s", log)
+	}
+}
+
 func TestPush_RefusesDefaultBranch(t *testing.T) {
 	e := newPushEnv(t)
 	mainBefore := e.remote(t, "refs/heads/main")

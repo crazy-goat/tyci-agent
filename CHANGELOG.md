@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: two `tyci` processes that resume the same run at the same time take a lock in the run dir (`claim.lock`). Only one process claims the run (#350).
 - Flow: a `workflow_start` of an issue refuses a run that another live `tyci` process owns. It returns a busy error and does not create a second run (#350).
 - Flow: a resumed run counts the first visit of a state when the crash came before the visit was saved. No visit is lost (#350).
+- Flow: a `workflow_start` that resumes a run counts the run as a worker. When `orchestrator.workers` runs are active, the resume is refused and the run stays stale. The orchestrator takes the slot of the resumed run at its next fill (#350).
+- Flow: the answer `resume` for a run paused at start-up keeps the visit counts of its saved state; it no longer counts a new visit. A run adopted by the orchestrator is forgotten when it ends (#388).
+- Flow: the answer `resume` for a run paused at start-up is refused while `orchestrator.workers` runs are active. The run stays paused. The refusal names the limit (#388).
+- Orchestrator: the paused runs are adopted when `Start` returns, before the plan, so an answer given before the plan cannot start a second run of the same issue (#388).
+- Flow: `open_pr.sh` also finds the open pull request of the issue when it is open from another branch and GitHub links it as closing the issue (for example `Closes #N`). The run continues that pull request and does not code the issue again. `push.sh` pushes to the head branch of that pull request. A pull request from a fork is never used (#374).
+- Flow: when a fixer answers `ok` and the run ends, tyci names the workflow proposal in a notice. Before, a run that did not pause never showed it. A done run cannot answer the proposal (#392).
+- Orchestrator: the roadmap oracle is no longer told to write `report.md`, because the roadmap run has no artifact dir. The start-up plan does not wait for an extra model turn. The `recover` step still writes `report.md` (#379).
+- Flow: the failed run notice names the step where the run stopped. A run that fails after a fixer answers `ok` also names the pending workflow proposal (#333).
+- Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
 
 ## [0.5.0] - 2026-10-08
 

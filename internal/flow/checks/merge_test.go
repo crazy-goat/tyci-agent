@@ -134,6 +134,19 @@ func TestMerge_HeadMismatchFails(t *testing.T) {
 	wantBlock(t, stderr, "fail", "differs from the PR head 'deadbeef'")
 }
 
+// After open_pr.sh continued a PR from another branch, the hint names that PR head branch (#374).
+func TestMerge_HeadMismatchNamesPRBranch(t *testing.T) {
+	e := newPushEnv(t)
+	if err := os.WriteFile(filepath.Join(e.runDir, "pr_branch"), []byte("feat/issue-7-slug\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	key, stderr, log, _ := runMerge(t, e, "a.txt", map[string]string{"REMOTE_HEAD": "deadbeef", "TYCI_RUN_DIR": e.runDir})
+	if key != "fail" || strings.Contains(log, "pr merge") {
+		t.Fatalf("key=%q log=%s", key, log)
+	}
+	wantBlock(t, stderr, "fail", "git ls-remote origin refs/heads/feat/issue-7-slug")
+}
+
 func TestMerge_MergeCommandFailsPrintsFail(t *testing.T) {
 	key, stderr, _, _ := runMerge(t, newPushEnv(t), "a.txt", map[string]string{"MERGE_FAIL": "1"})
 	if key != "fail" || !strings.Contains(stderr, "merge refused") {

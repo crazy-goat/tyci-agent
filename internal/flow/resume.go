@@ -329,12 +329,17 @@ func (m *Manager) Adopt(issue int) (id string, paused, ok bool) {
 }
 
 // resumeStale resumes a run of the issue whose owner process is gone. found is
-// false when there is no such run. m.mu must be held.
+// false when there is no such run. A resume needs a free worker slot: when
+// orchestrator.workers runs are active, it is refused (no queue). m.mu must be held.
 func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool, err error) {
 	stale, _ := ScanResumable(RunsDir(info.Home), info.Repo)
 	for _, st := range stale {
 		if st.Issue != issue {
 			continue
+		}
+		if m.workers > 0 && len(m.active) >= m.workers {
+			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active",
+				ErrBusy, st.Run, issue, m.workers, len(m.active))
 		}
 		ok, err := m.resumeRun(info, st)
 		if err != nil {
@@ -343,6 +348,9 @@ func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool,
 		if !ok {
 			return "", true, fmt.Errorf("run %s of issue %d was not resumed (%s)", st.Run, issue, st.Status)
 		}
+		// The orchestrator adopts the run at its next fill, so the run counts as a
+		// worker even when the user resumed it by hand.
+		m.markAdoptable(st.Run)
 		return st.Run, true, nil
 	}
 	return "", false, nil

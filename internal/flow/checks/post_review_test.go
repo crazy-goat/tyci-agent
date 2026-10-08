@@ -19,36 +19,32 @@ case "$*" in
 esac
 `
 
-func writeArtifact(t *testing.T, runDir, art, name, text string) {
+// writeReview writes report.md into the artifact dir art and returns that dir,
+// the value of TYCI_REVIEW_DIR.
+func writeReview(t *testing.T, art, text string) string {
 	t.Helper()
-	d := filepath.Join(runDir, "artifacts", art)
+	d := filepath.Join(t.TempDir(), "artifacts", art)
 	if err := os.MkdirAll(d, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(d, name), []byte(text), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(d, "report.md"), []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return d
 }
 
-func runPostReview(t *testing.T, review string, env map[string]string) (key string, exit int, body string) {
+// runPostReview runs the check with TYCI_REVIEW_DIR set to reviewDir ("" for none).
+func runPostReview(t *testing.T, reviewDir string, env map[string]string) (key string, exit int, body string) {
 	t.Helper()
-	dir := t.TempDir()
-	if review != "" {
-		writeArtifact(t, dir, "003-review", "report.md", review)
-	}
-	return runPostReviewIn(t, dir, env)
-}
-
-func runPostReviewIn(t *testing.T, dir string, env map[string]string) (key string, exit int, body string) {
-	key, exit, body, _ = runPostReviewErr(t, dir, env)
+	key, exit, body, _ = runPostReviewErr(t, reviewDir, env)
 	return key, exit, body
 }
 
-// runPostReviewErr is runPostReviewIn that also returns stderr.
-func runPostReviewErr(t *testing.T, dir string, env map[string]string) (key string, exit int, body, stderr string) {
+// runPostReviewErr is runPostReview that also returns stderr.
+func runPostReviewErr(t *testing.T, reviewDir string, env map[string]string) (key string, exit int, body, stderr string) {
 	t.Helper()
 	logPath := testutil.StubGH(t, reviewGh)
-	base := map[string]string{"TYCI_REPO": "o/r", "TYCI_PR": "9", "TYCI_RUN_DIR": dir}
+	base := map[string]string{"TYCI_REPO": "o/r", "TYCI_PR": "9", "TYCI_REVIEW_DIR": reviewDir}
 	for k, v := range env {
 		base[k] = v
 	}
@@ -58,12 +54,20 @@ func runPostReviewErr(t *testing.T, dir string, env map[string]string) (key stri
 }
 
 func TestPostReview_Body(t *testing.T) {
-	key, exit, body := runPostReview(t, "ACCEPT\nlooks good\n", nil)
+	key, exit, body := runPostReview(t, writeReview(t, "003-review", "ACCEPT\nlooks good\n"), nil)
 	if key != "ok" || exit != 0 {
 		t.Fatalf("key=%q exit=%d", key, exit)
 	}
 	if !strings.HasPrefix(body, "<!-- tyci-agent -->\n") || !strings.Contains(body, "ACCEPT\nlooks good") {
 		t.Errorf("body = %q", body)
+	}
+}
+
+// #356: the review step may have any name; the report comes from TYCI_REVIEW_DIR.
+func TestPostReview_ReviewStateWithOtherName(t *testing.T) {
+	key, _, body := runPostReview(t, writeReview(t, "005-judge", "ACCEPT\nnewest\n"), nil)
+	if key != "ok" || !strings.Contains(body, "ACCEPT\nnewest") {
+		t.Fatalf("key=%q body=%q", key, body)
 	}
 }
 
@@ -76,9 +80,7 @@ func TestPostReview_FailStillExitsZero(t *testing.T) {
 		"empty review": {"", nil},
 		"no PR":        {"ACCEPT\n", map[string]string{"TYCI_PR": ""}},
 	} {
-		dir := t.TempDir()
-		writeArtifact(t, dir, "003-review", "report.md", tc.review)
-		key, exit, _, stderr := runPostReviewErr(t, dir, tc.env)
+		key, exit, _, stderr := runPostReviewErr(t, writeReview(t, "003-review", tc.review), tc.env)
 		if key != "fail" || exit != 0 {
 			t.Errorf("%s: key=%q exit=%d", name, key, exit)
 		}
@@ -86,23 +88,10 @@ func TestPostReview_FailStillExitsZero(t *testing.T) {
 	}
 }
 
-// #368: a run that continued an open PR has no review report; nothing is posted.
+// #368: a run that continued an open PR has no review step; nothing is posted.
 func TestPostReview_NoReviewSkips(t *testing.T) {
 	key, exit, body := runPostReview(t, "", nil)
 	if key != "skip" || exit != 0 || body != "" {
 		t.Errorf("key=%q exit=%d body=%q", key, exit, body)
-	}
-}
-
-// #340: the newest review report wins (numeric order, not text order).
-func TestPostReview_PostsNewestReviewReport(t *testing.T) {
-	dir := t.TempDir()
-	writeArtifact(t, dir, "003-review", "report.md", "CHANGES\nold\n")
-	writeArtifact(t, dir, "999-review", "report.md", "CHANGES\nolder\n")
-	writeArtifact(t, dir, "1000-review", "report.md", "ACCEPT\nnewest\n")
-	writeArtifact(t, dir, "1001-code", "report.md", "worker report\n")
-	key, _, body := runPostReviewIn(t, dir, nil)
-	if key != "ok" || !strings.Contains(body, "ACCEPT\nnewest") {
-		t.Fatalf("key=%q body=%q", key, body)
 	}
 }

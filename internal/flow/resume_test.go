@@ -145,6 +145,40 @@ func TestResume_DoesNotIncrementVisits(t *testing.T) {
 	}
 }
 
+// A run paused at start-up continues at its saved state like a restart: the
+// visit counts stay, so the answer "resume" does not count a new visit.
+func TestResume_StartupAnswerKeepsVisits(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	st := saveRun(t, e.home, 1, nil)
+	e.m.AskUnfinished()
+	e.notice(t)
+	if err := e.m.Resume(st.Run, "resume"); err != nil {
+		t.Fatal(err)
+	}
+	e.notice(t)
+	after := loadRunState(t, e.home, st.Run)
+	if after.Status != "done" || after.Visits["c"] != 2 {
+		t.Fatalf("after = %+v", after)
+	}
+}
+
+// Only the goto to the saved state restarts. A start-up "retry" leaves the
+// ask state for a new visit of c, so the visit counts reset as before.
+func TestResume_StartupRetryResetsVisits(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	st := saveRun(t, e.home, 1, nil)
+	e.m.AskUnfinished()
+	e.notice(t)
+	if err := e.m.Resume(st.Run, "retry"); err != nil {
+		t.Fatal(err)
+	}
+	e.notice(t)
+	after := loadRunState(t, e.home, st.Run)
+	if after.Status != "done" || after.Visits["c"] != 1 {
+		t.Fatalf("after = %+v", after)
+	}
+}
+
 func TestResume_CapAtThree(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, func(st *RunState) { st.Resumed = maxResumes })
@@ -500,6 +534,86 @@ func TestManager_AdoptReturnsPausedRunOnce(t *testing.T) {
 	e.notice(t)
 }
 
+// An adopted run that ends is forgotten by the Manager, so the adopted set
+// does not grow with every run.
+func TestManager_AdoptedRunForgottenWhenDone(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	st := saveRun(t, e.home, 5, nil)
+	e.m.AskUnfinished()
+	e.notice(t)
+	if _, paused, ok := e.m.Adopt(5); !ok || !paused {
+		t.Fatalf("adopt: paused %v, ok %v", paused, ok)
+	}
+	if err := e.m.Resume(st.Run, "resume"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan RunEvent, 8)
+	unsub := e.m.Subscribe(func(ev RunEvent) { done <- ev })
+	defer unsub()
+	close(c.release)
+	for {
+		select {
+		case ev := <-done:
+			if ev.Status == "done" {
+				e.m.mu.Lock()
+				n := len(e.m.adopted)
+				e.m.mu.Unlock()
+				if n != 0 {
+					t.Fatalf("adopted after the run ended: %d", n)
+				}
+				return
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("run did not end")
+		}
+	}
+}
+
+// A start-up "resume" is refused while orchestrator.workers runs are active. The
+// refused run stays paused, and its resume works once a run has ended.
+func TestResume_StartupRefusedAtWorkersLimit(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	e.m.SetWorkers(1)
+	first := saveRun(t, e.home, 5, nil)
+	second := saveRun(t, e.home, 6, nil)
+	e.m.AskUnfinished()
+	e.notice(t)
+	ended := make(chan RunEvent, 8)
+	unsub := e.m.Subscribe(func(ev RunEvent) { ended <- ev })
+	defer unsub()
+	waitDone := func() {
+		t.Helper()
+		for {
+			select {
+			case ev := <-ended:
+				if ev.Status == "done" {
+					return
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("run did not end")
+			}
+		}
+	}
+	if err := e.m.Resume(first.Run, "resume"); err != nil {
+		t.Fatal(err)
+	}
+	err := e.m.Resume(second.Run, "resume")
+	if err == nil || !strings.Contains(err.Error(), "orchestrator.workers is 1") {
+		t.Fatalf("second resume: err = %v", err)
+	}
+	if st := loadRunState(t, e.home, second.Run); st.Status != "paused" {
+		t.Fatalf("refused run: status %q", st.Status)
+	}
+	close(c.release)
+	waitDone()
+	if err := e.m.Resume(second.Run, "resume"); err != nil {
+		t.Fatalf("resume after a run ended: %v", err)
+	}
+	waitDone()
+}
+
 // A workflow without an ask state cannot pause a run at start-up: the run
 // fails, and the user gets a notice for it.
 func TestAskUnfinished_NoAskStateNotifiesFail(t *testing.T) {
@@ -527,4 +641,45 @@ func TestAskUnfinished_NoAskStateNotifiesFail(t *testing.T) {
 	if got := loadRunState(t, e.home, st.Run); got.Status != "failed" {
 		t.Fatalf("run = %+v", got)
 	}
+}
+
+// A run resumed by a later Start takes a worker slot. With no free slot the
+// resume is refused and the stale run keeps its saved state.
+func TestWorkflowStart_ResumeRefusedAtWorkersLimit(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	e.m.SetWorkers(1)
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err != nil {
+		t.Fatal(err)
+	}
+	st := saveRun(t, e.home, 6, nil)
+	_, _, err := e.m.Start(context.Background(), StartRequest{Issue: 6})
+	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "orchestrator.workers is 1") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := loadRunState(t, e.home, st.Run); got.Resumed != 0 || got.Status != "running" {
+		t.Fatalf("refused run changed: %+v", got)
+	}
+	close(c.release)
+	e.notice(t)
+}
+
+// A run resumed by hand through Start is adoptable, so the orchestrator takes
+// its slot at the next fill.
+func TestWorkflowStart_ResumedByHandIsAdoptable(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	st := saveRun(t, e.home, 5, nil)
+	id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5})
+	if err != nil || id != st.Run {
+		t.Fatalf("id = %q, err = %v", id, err)
+	}
+	if got := e.m.Adoptable(); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("adoptable = %v", got)
+	}
+	if id, paused, ok := e.m.Adopt(5); !ok || paused || id != st.Run {
+		t.Fatalf("adopt = %q, %v, %v", id, paused, ok)
+	}
+	close(c.release)
+	e.notice(t)
 }

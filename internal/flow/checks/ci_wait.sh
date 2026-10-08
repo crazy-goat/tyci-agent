@@ -36,9 +36,12 @@ save_failed_log() {
 
 pr="${TYCI_PR:-}"
 if [ -z "$pr" ]; then
+    # The PR head branch: open_pr.sh may have continued a PR from another branch (#374).
+    pr_branch="${TYCI_BRANCH:-<branch>}"
+    if [ -s "${TYCI_RUN_DIR:-}/pr_branch" ]; then pr_branch="$(<"$TYCI_RUN_DIR/pr_branch")"; fi
     describe fail "TYCI_PR is not set: the run has no PR number, so there is no CI to wait for" \
         "push.sh did not write \$TYCI_RUN_DIR/pr, or the run state lost the PR" \
-        "run 'gh pr list --head ${TYCI_BRANCH:-<branch>} --state open'; if a PR exists, return failed with its number (the oracle sends the run back to update); if none exists, return failed"
+        "run 'gh pr list --head $pr_branch --state open'; if a PR exists, return failed with its number (the oracle sends the run back to update); if none exists, return failed"
     echo fail
     exit 0
 fi

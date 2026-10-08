@@ -30,11 +30,14 @@ describe() {
 
 # describe_state prints the branch facts from local refs (as of the last fetch). Best effort.
 describe_state() {
-    local b="${TYCI_BRANCH:-}" d="${TYCI_DEFAULT_BRANCH:-}" s="" clean
+    local b="${TYCI_BRANCH:-}" d="${TYCI_DEFAULT_BRANCH:-}" pb="" s="" clean
+    # After open_pr.sh continued a PR from another branch, the push goes to that PR head (#374).
+    pb="$b"
+    if [ -s "${TYCI_RUN_DIR:-}/pr_branch" ]; then pb="$(<"$TYCI_RUN_DIR/pr_branch")"; fi
     if git rev-parse --git-dir >/dev/null 2>&1; then
         s="local ${b:-HEAD} = $(describe_rev HEAD)"
         [ -z "$d" ] || s+="; origin/$d = $(describe_rev "refs/remotes/origin/$d")"
-        [ -z "$b" ] || s+="; origin/$b = $(describe_rev "refs/remotes/origin/$b")"
+        [ -z "$pb" ] || s+="; origin/$pb = $(describe_rev "refs/remotes/origin/$pb")"
         clean=clean
         [ -z "$(git status --porcelain 2>/dev/null)" ] || clean="has uncommitted changes"
         s+="; worktree $clean"
