@@ -33,6 +33,7 @@ Existing agents.json, .tyci.json and .tyci/model.json files are ignored (not del
 
 ### Fixed
 - Subagents: when a subagent ends, the background commands it started are stopped. No process stays after the subagent ends (#435).
+- Flow: the README states the keys that the `post_review` check state of a custom workflow needs: a `default` key, or one key for each answer of `post_review.sh` (`ok`, `skip` and `fail`). The runner does not change (#402).
 - Flow: a new issue worktree runs the repository's executable `bin/worktree-setup.sh`. Unlike `bin/worktree.sh`, tyci does not write `.env.worktree` or set `COMPOSE_PROJECT_NAME` before the script runs. A failing or cancelled script stops the run before it starts. The run removes the worktree and its branch, so a retry works (#449).
 - TUI: a click on the sidebar Sessions tab no longer freezes the UI. The session list loads in the background and is cached for 5 seconds. The Runs tab detects the repository once per session. Closing the resume picker during a turn no longer blocks the event loop (#462).
 - Flow: the review verdict is also read from a `report.md` that starts with a heading. Before, a report whose first line was not exactly `ACCEPT` or `CHANGES` gave `CHANGES`, so a run paused on `max_visits` after three rounds although every review accepted. The verdict is now the only line that reads `ACCEPT` or `CHANGES`, with an optional `Verdict:` prefix and Markdown markers. Both verdicts, or none, still give `CHANGES` (#470).

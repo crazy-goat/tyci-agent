@@ -155,6 +155,28 @@ func TestRunner_UnknownKeyFailsRun(t *testing.T) {
 	}
 }
 
+// #402: post_review.sh answers skip when the run has no review step. A
+// workflow whose post_review state has no skip and no default key fails there.
+func TestRunner_PostReviewSkipWithoutKeyFailsRun(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "post_review", States: map[string]State{
+		"post_review": {Check: "checks/post_review.sh", On: map[string]string{"ok": "end"}},
+		"end":         {End: true},
+	}}
+	r := &Runner{WF: wf, Checks: &fakeChecks{keys: map[string][]string{"checks/post_review.sh": {"skip"}}}, Store: &memStore{}}
+	st := newRun("post_review")
+	err := r.Run(context.Background(), st)
+	if err == nil {
+		t.Fatal("expected error for skip without a skip or default key, got nil")
+	}
+	if st.Status != "failed" {
+		t.Fatalf("status = %q, want failed", st.Status)
+	}
+	want := `unknown transition key "skip" in state "post_review"`
+	if st.Reason != want {
+		t.Fatalf("Reason = %q, want %q", st.Reason, want)
+	}
+}
+
 func TestRunner_ReviewChangesLoopsToCode(t *testing.T) {
 	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
 		"code":   {Agent: "worker", On: map[string]string{"done": "review"}},

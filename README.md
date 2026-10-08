@@ -102,6 +102,11 @@ An agent state can set its own prompt for that state only:
 `"prompt": "@prompts/<file>.md"` (relative to the `.tyci/` dir of the workflow; no
 absolute path, no `..`, no symlink).
 
+The `post_review` check state of a custom workflow must have a `default` key, or one key for each answer of `post_review.sh`.
+The answers are `ok`, `skip` and `fail`.
+The script answers `skip` when the run has no review step, for example a run that continues an open PR.
+If a needed key is missing, the run fails with `unknown transition key "<key>" in state "post_review"`.
+
 ### Workflow proposals
 
 When the workflow cannot handle a failure, or the same step failed with the same cause
