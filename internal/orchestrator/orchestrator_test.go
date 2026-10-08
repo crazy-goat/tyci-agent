@@ -393,6 +393,55 @@ func TestResumedRunsCountTowardWorkers(t *testing.T) {
 	}
 }
 
+// A run resumed by hand after the plan (a later flow Start) takes its slot at
+// the next fill, so the freed slot does not go to a new run.
+func TestResumedByHandCountsTowardWorkersAfterPlan(t *testing.T) {
+	e := newEnv(t, Config{Workers: 2}, five()...)
+	if p := e.start(); len(p.Started) != 2 {
+		t.Fatalf("%+v", p)
+	}
+	e.r.mu.Lock()
+	e.r.resumed = append(e.r.resumed, 9) // #9 is not in the plan
+	e.r.mu.Unlock()
+	e.r.handle(1).finish("merged")
+	select {
+	case n := <-e.r.started:
+		t.Fatalf("started #%d while the resumed run holds a slot", n)
+	case <-time.After(200 * time.Millisecond):
+	}
+	e.r.handle(2).finish("merged")
+	if n := e.waitStart(); n != 3 {
+		t.Fatalf("got %d", n)
+	}
+	if e.r.starts(9) != 0 {
+		t.Fatalf("resumed #9 started again: %d", e.r.starts(9))
+	}
+}
+
+// A run paused by a manual start takes no slot at a later fill: only runs that a
+// resume made active do. The free slot goes to the next plan item.
+func TestPausedByHandDoesNotTakeSlotAfterPlan(t *testing.T) {
+	e := newEnv(t, Config{Workers: 2}, five()...)
+	if p := e.start(); len(p.Started) != 2 {
+		t.Fatalf("%+v", p)
+	}
+	e.r.mu.Lock()
+	e.r.paused = append(e.r.paused, 9) // #9 is not in the plan
+	e.r.mu.Unlock()
+	e.r.handle(1).finish("merged")
+	if n := e.waitStart(); n != 3 {
+		t.Fatalf("got %d, want the next plan item 3", n)
+	}
+	if e.r.starts(9) != 0 {
+		t.Fatalf("paused #9 started: %d", e.r.starts(9))
+	}
+	e.r.mu.Lock()
+	defer e.r.mu.Unlock()
+	if len(e.r.paused) != 1 {
+		t.Fatalf("paused #9 was adopted at the fill: %v", e.r.paused)
+	}
+}
+
 func TestPausedRunsAreAdoptedNotRestarted(t *testing.T) {
 	// Runs of #1 and #2 were paused at start-up and wait for the user's answer.
 	e := newEnv(t, Config{Workers: 3}, five()...)
