@@ -19,8 +19,9 @@ var ErrPaused = errors.New("flow: run paused")
 // and the step that failed runs again (#369).
 const FailedTarget = "$failed"
 
-// recoveryCaps limits the recovery roles per failed check step (#369): the
-// fixer runs at most twice for the same failed step, the oracle once. Over the
+// recoveryCaps limits the recovery states per failed check step (#369): the
+// fixer state runs at most twice for the same failed step, the oracle state
+// once. The map key is the state name, not the agent role (#385). Over the
 // cap the state is skipped as if the agent had answered key.
 var recoveryCaps = map[string]struct {
 	max int
@@ -39,7 +40,7 @@ var recoveryCaps = map[string]struct {
 // An agent answer is "<key> [note]": the note goes to Step.Note, and for a
 // "goto:<state>" key also to the next worker prompt. "goto:<state>" continues at
 // that state unless on maps the key itself. The target FailedTarget is the last
-// check step. The fixer and oracle roles are capped per failed step (recoveryCaps).
+// check step. The fixer and oracle states are capped per failed step (recoveryCaps).
 // An agent error routes through the "error" key (then "default"); with
 // neither route the run fails. A check-runner error fails the run directly.
 // Context cancellation fails the run with Reason "cancelled".
@@ -203,10 +204,10 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				return r.fail(ctx, st, fmt.Sprintf("no agent runner for state %q", cur), fmt.Errorf("no agent runner for state %q", cur))
 			}
 			failed := lastCheck(st)
-			if c, capped := recoveryCaps[s.Agent]; capped && newVisit {
+			if c, capped := recoveryCaps[cur]; capped && newVisit {
 				capKey := cur + "@" + failed.State
 				if st.Visits[capKey] >= c.max {
-					if err := r.skipCapped(st, s, cur, c.key, fmt.Sprintf("%s already ran %d time(s) for the failed step %s", s.Agent, c.max, failed.State)); err != nil {
+					if err := r.skipCapped(st, s, cur, c.key, fmt.Sprintf("%s already ran %d time(s) for the failed step %s", cur, c.max, failed.State)); err != nil {
 						return err
 					}
 					continue
@@ -247,7 +248,11 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				ArtifactDir:   artDir,
 				RunSoFar:      runSoFar(st, cur, r.RunDir),
 			}
-			if _, capped := recoveryCaps[s.Agent]; capped {
+			// The failed-step context goes to the recovery roles (as before #385)
+			// and to the recovery states. Both are looked up in recoveryCaps.
+			_, recoveryRole := recoveryCaps[s.Agent]
+			_, recoveryState := recoveryCaps[cur]
+			if recoveryRole || recoveryState {
 				rc.Failed, rc.FailedKey = failed.State, failed.Key
 				if failed.Artifact != "" && r.RunDir != "" {
 					rc.FailedDir = filepath.Join(r.RunDir, "artifacts", failed.Artifact)
