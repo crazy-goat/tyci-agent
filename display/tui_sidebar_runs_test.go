@@ -65,14 +65,14 @@ func TestSidebarRunsTab_CollapsedLines(t *testing.T) {
 	if len(lines) != 4 {
 		t.Fatalf("collapsed runs want one line each and a separator, got %d: %q", len(lines), lines)
 	}
-	checks := []struct{ line, text, cost string }{
-		{lines[0], " #632 code (worker) 19s", "$0.01"},
-		{lines[1], " #633 ci_wait (script) 5s", "$0.00"},
-		{lines[3], " #472 done (merged) 12m3s", "$0.52"},
+	checks := []struct{ line, label, dur, cost string }{
+		{lines[0], " #632 code (worker)", "19s", "$0.01"},
+		{lines[1], " #633 ci_wait (script)", "5s", "$0.00"},
+		{lines[3], " #472 done (merged)", "12m3s", "$0.52"},
 	}
 	for _, c := range checks {
-		if !strings.HasPrefix(c.line, c.text) || !strings.HasSuffix(c.line, c.cost) {
-			t.Errorf("line %q: want %q at the start and %q at the end", c.line, c.text, c.cost)
+		if !strings.HasPrefix(c.line, c.label) || !strings.HasSuffix(c.line, c.dur+"   "+c.cost) {
+			t.Errorf("line %q: want %q at the start and %q before the cost %q at the end", c.line, c.label, c.dur, c.cost)
 		}
 	}
 	if w := lipgloss.Width(lines[0]); w != 60 {
@@ -82,6 +82,76 @@ func TestSidebarRunsTab_CollapsedLines(t *testing.T) {
 	for _, hidden := range []string{"r1", "r3", "merge -> merged"} {
 		if strings.Contains(got, hidden) {
 			t.Errorf("collapsed run must not show %q: %q", hidden, got)
+		}
+	}
+}
+
+func TestSidebarRunsTab_DurationColumnLinesUp(t *testing.T) {
+	now := time.Now()
+	m := runsModel(
+		TuiRunRow{ID: "r1", Issue: 621, Status: "running", State: "code", Role: "worker",
+			Started: now.Add(-time.Hour), Since: now.Add(-(18*time.Minute + 36*time.Second)), Cost: "$0.00"},
+		TuiRunRow{ID: "r2", Issue: 584, Status: "running", State: "findings", Role: "reviewer",
+			Started: now.Add(-time.Hour), Since: now.Add(-6 * time.Second), Cost: "$12.34"},
+		TuiRunRow{ID: "r3", Issue: 638, Status: "done", State: "end", Result: "merged",
+			Started: now.Add(-2 * time.Hour), Ended: now.Add(-time.Minute),
+			Took: time.Hour + 5*time.Minute, Cost: "$0.96"},
+	)
+	lines := m.renderSidebarRuns(60)
+	if len(lines) != 4 {
+		t.Fatalf("want two active runs, a separator and a finished run: got %d: %q", len(lines), lines)
+	}
+	checks := []struct{ line, label, cost string }{
+		{lines[0], " #621 code (worker)", "$0.00"},
+		{lines[1], " #584 findings (reviewer)", "$12.34"},
+		{lines[3], " #638 done (merged)", "$0.96"},
+	}
+	// The text before the cost ends with the duration. Its width is the
+	// column where the duration ends, so it does not depend on the clock.
+	want := -1
+	for _, c := range checks {
+		if w := lipgloss.Width(c.line); w != 60 {
+			t.Errorf("line %q: width %d, want 60", c.line, w)
+		}
+		if !strings.HasPrefix(c.line, c.label) || !strings.HasSuffix(c.line, c.cost) {
+			t.Errorf("line %q: want %q at the start and %q at the end", c.line, c.label, c.cost)
+		}
+		end := lipgloss.Width(strings.TrimRight(strings.TrimSuffix(c.line, c.cost), " "))
+		if want < 0 {
+			want = end
+		} else if end != want {
+			t.Errorf("line %q: duration ends at column %d, want column %d", c.line, end, want)
+		}
+	}
+	if !strings.Contains(lines[3], "1h5m0s") {
+		t.Errorf("finished run: line %q, want its duration 1h5m0s", lines[3])
+	}
+}
+
+func TestSidebarRunsTab_NarrowRowDropsDurationThenCost(t *testing.T) {
+	m := runsModel(TuiRunRow{ID: "r1", Issue: 638, Status: "done", State: "end", Result: "merged",
+		Took: time.Hour + 5*time.Minute, Cost: "$0.96"})
+	// The header is " #638 done (merged)" and the columns are "1h5m0s   $0.96".
+	tests := []struct {
+		width    int
+		wantDur  bool
+		wantCost bool
+	}{
+		{width: 16, wantDur: true, wantCost: true},
+		{width: 15, wantDur: false, wantCost: true},
+		{width: 6, wantDur: false, wantCost: false},
+	}
+	for _, tt := range tests {
+		lines := m.renderSidebarRuns(tt.width)
+		line := lines[0]
+		if w := lipgloss.Width(line); w != tt.width {
+			t.Errorf("width %d: line %q has width %d", tt.width, line, w)
+		}
+		if got := strings.Contains(line, "1h5m0s"); got != tt.wantDur {
+			t.Errorf("width %d: duration shown = %v, want %v: %q", tt.width, got, tt.wantDur, line)
+		}
+		if got := strings.Contains(line, "$0.96"); got != tt.wantCost {
+			t.Errorf("width %d: cost shown = %v, want %v: %q", tt.width, got, tt.wantCost, line)
 		}
 	}
 }

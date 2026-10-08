@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- TUI: the Runs tab shows the duration of a run in its own right-aligned column, just left of the cost. Durations and costs line up in all rows. In a narrow row, the label is cut first. Then the duration is dropped, then the cost (#525).
+
 ## [0.6.0] - 2026-10-08
 
 ### Added
