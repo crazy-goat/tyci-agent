@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-08
+
 ### Changed
 - Orchestrator: the TUI chat now does direct user requests (run a command, edit a file, add a label, comment) with its tools instead of refusing; issue work still goes through workflows (#381).
 - Agent: the `todo` tool is optional. The plan guard is removed: a model can call any tool in its first turn, and the prompts no longer demand a plan first (#377).
