@@ -218,6 +218,85 @@ func TestAddIssue_FetchFailureIsError(t *testing.T) {
 	}
 }
 
+// commitSetup commits bin/worktree-setup.sh with the given content and mode to
+// main and pushes it, so that AddIssue finds it in origin/main.
+func commitSetup(t *testing.T, work, content string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(work, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(work, "bin", "worktree-setup.sh")
+	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, work, "add", "bin/worktree-setup.sh")
+	gitRun(t, work, "commit", "-qm", "add setup script")
+	gitRun(t, work, "push", "-q", "origin", "main")
+}
+
+func TestAddIssue_RunsSetupScriptOnceInWorktree(t *testing.T) {
+	work, _ := newRepoWithOrigin(t)
+	runs := filepath.Join(t.TempDir(), "runs")
+	commitSetup(t, work, "#!/bin/sh\npwd -P >> '"+runs+"'\n", 0o755)
+
+	wt, err := AddIssue(context.Background(), t.TempDir(), work, 8, "main")
+	if err != nil {
+		t.Fatalf("AddIssue: %v", err)
+	}
+	t.Cleanup(func() { _ = wt.Remove(context.Background()) })
+
+	got, err := os.ReadFile(runs)
+	if err != nil {
+		t.Fatalf("setup script did not run: %v", err)
+	}
+	want, err := filepath.EvalSymlinks(wt.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One line means one run; a second run would add a second line.
+	if strings.TrimSpace(string(got)) != want {
+		t.Fatalf("setup script output = %q, want one run in %s", got, want)
+	}
+}
+
+func TestAddIssue_SkipsNonExecutableSetupScript(t *testing.T) {
+	work, _ := newRepoWithOrigin(t)
+	runs := filepath.Join(t.TempDir(), "runs")
+	commitSetup(t, work, "#!/bin/sh\necho ran >> '"+runs+"'\n", 0o644)
+
+	wt, err := AddIssue(context.Background(), t.TempDir(), work, 13, "main")
+	if err != nil {
+		t.Fatalf("AddIssue: %v", err)
+	}
+	t.Cleanup(func() { _ = wt.Remove(context.Background()) })
+
+	if _, err := os.Stat(runs); !os.IsNotExist(err) {
+		t.Fatalf("non-executable setup script ran (err = %v)", err)
+	}
+}
+
+func TestAddIssue_FailingSetupScriptFailsAndLeavesNothing(t *testing.T) {
+	work, _ := newRepoWithOrigin(t)
+	commitSetup(t, work, "#!/bin/sh\necho 'setup broke here' >&2\nexit 1\n", 0o755)
+	home := t.TempDir()
+
+	_, err := AddIssue(context.Background(), home, work, 10, "main")
+	if err == nil {
+		t.Fatal("AddIssue with a failing setup script succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "setup broke here") {
+		t.Fatalf("error %q does not carry the script output", err)
+	}
+
+	target := filepath.Join(home, ".tyci", "worktrees", filepath.Base(work), "issue-10")
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("worktree %s is left behind after a failed setup (err = %v)", target, err)
+	}
+	if out, err := exec.Command("git", "-C", work, "rev-parse", "--verify", "--quiet", "refs/heads/issue-10").CombinedOutput(); err == nil {
+		t.Fatalf("branch issue-10 is left behind after a failed setup: %s", out)
+	}
+}
+
 func TestRemove_IssueWorktreeKeepsParent(t *testing.T) {
 	work, _ := newRepoWithOrigin(t)
 	home := t.TempDir()
