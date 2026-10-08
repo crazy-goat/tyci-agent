@@ -255,7 +255,7 @@ func (m TuiModel) renderSidebarColumn() string {
 		// finished-job rows use for "not what currently has your attention".
 		titleBg = lipgloss.Color("238")
 		titleFg = lipgloss.Color("245")
-		title = "Sidebar (Right to focus)"
+		title = "Sidebar (Shift+Tab to focus)"
 	}
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -352,7 +352,7 @@ func (m TuiModel) renderSidebarTabs(width int) string {
 // keyboard (m.sidebarFocused — see tui_sidebar.go's updateSidebar).
 func (m TuiModel) sidebarFooter() string {
 	if !m.sidebarFocused {
-		return "Right: focus sidebar  Esc close"
+		return "Shift+Tab: focus  Esc close"
 	}
 	nav := "←→ switch tab (← at first/→ at last exits to conversation)"
 	switch m.sidebarTab {
