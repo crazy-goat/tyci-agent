@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -35,6 +36,12 @@ func TestDoWithTimeouts_FirstByte(t *testing.T) {
 	var re *RetryableError
 	if !errors.As(err, &re) {
 		t.Fatalf("want RetryableError, got %v", err)
+	}
+	// #447: the agent loop already says "retry N/M" before it sleeps, so the
+	// stall message must not promise a retry itself. The error of the last
+	// attempt would otherwise say "retrying" when no retry follows.
+	if strings.Contains(re.Message, "retrying") {
+		t.Errorf("stall message promises a retry: %q", re.Message)
 	}
 }
 
