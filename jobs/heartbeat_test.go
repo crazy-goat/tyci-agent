@@ -26,18 +26,14 @@ func blockingJobFn(release <-chan struct{}) func(ctx context.Context, jobID stri
 // time gate: a job that has been running less than `after` is not nudged;
 // once `after` has elapsed with no report_progress call, it is.
 func TestNeedsProgressHeartbeat_FiresAfterThreshold_NotBefore(t *testing.T) {
-	r := NewRegistry()
-	release := make(chan struct{})
-	defer close(release)
-
-	job := r.Start(context.Background(), "quiet child", KindSubagent, "", blockingJobFn(release))
+	r, job, clock := newClockedJob(t)
 
 	const after = 30 * time.Millisecond
 	if r.NeedsProgressHeartbeat(job.ID, after) {
 		t.Fatal("expected no heartbeat nudge immediately after start")
 	}
 
-	time.Sleep(after + 10*time.Millisecond)
+	clock.Advance(after + 10*time.Millisecond)
 	if !r.NeedsProgressHeartbeat(job.ID, after) {
 		t.Fatal("expected a heartbeat nudge once the job has been quiet past the threshold")
 	}
@@ -51,14 +47,10 @@ func TestNeedsProgressHeartbeat_FiresAfterThreshold_NotBefore(t *testing.T) {
 // child that never calls report_progress would be nagged on every single
 // loop iteration forever.
 func TestNeedsProgressHeartbeat_DoesNotRepeatEveryCall(t *testing.T) {
-	r := NewRegistry()
-	release := make(chan struct{})
-	defer close(release)
-
-	job := r.Start(context.Background(), "quiet child", KindSubagent, "", blockingJobFn(release))
+	r, job, clock := newClockedJob(t)
 
 	const after = 30 * time.Millisecond
-	time.Sleep(after + 10*time.Millisecond)
+	clock.Advance(after + 10*time.Millisecond)
 
 	if !r.NeedsProgressHeartbeat(job.ID, after) {
 		t.Fatal("expected the first call past the threshold to fire")
@@ -73,7 +65,7 @@ func TestNeedsProgressHeartbeat_DoesNotRepeatEveryCall(t *testing.T) {
 
 	// After another full interval with still no report_progress call, it
 	// should be willing to nudge again.
-	time.Sleep(after + 10*time.Millisecond)
+	clock.Advance(after + 10*time.Millisecond)
 	if !r.NeedsProgressHeartbeat(job.ID, after) {
 		t.Fatal("expected a second nudge after another full interval elapsed")
 	}
@@ -83,26 +75,22 @@ func TestNeedsProgressHeartbeat_DoesNotRepeatEveryCall(t *testing.T) {
 // report_progress call (SetProgress) resets the quiet timer just like a
 // nudge does — a child that IS reporting must never be nagged.
 func TestNeedsProgressHeartbeat_RealProgressResetsTimer(t *testing.T) {
-	r := NewRegistry()
-	release := make(chan struct{})
-	defer close(release)
-
-	job := r.Start(context.Background(), "chatty child", KindSubagent, "", blockingJobFn(release))
+	r, job, clock := newClockedJob(t)
 
 	const after = 40 * time.Millisecond
-	time.Sleep(after / 2)
+	clock.Advance(after / 2)
 	if ok := r.SetProgress(job.ID, "halfway there"); !ok {
 		t.Fatal("expected SetProgress to succeed for a running job")
 	}
 
 	// Total elapsed since Start now exceeds `after`, but elapsed since the
 	// report_progress call above does not — must not fire yet.
-	time.Sleep(after/2 + 5*time.Millisecond)
+	clock.Advance(after/2 + 5*time.Millisecond)
 	if r.NeedsProgressHeartbeat(job.ID, after) {
 		t.Fatal("expected no nudge: report_progress reset the quiet timer more recently than `after` ago")
 	}
 
-	time.Sleep(after)
+	clock.Advance(after)
 	if !r.NeedsProgressHeartbeat(job.ID, after) {
 		t.Fatal("expected a nudge once the job has been quiet, since the report_progress call, past the threshold")
 	}

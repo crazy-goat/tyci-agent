@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: a `workflow_start` of an issue refuses a run that another live `tyci` process owns. It returns a busy error and does not create a second run (#350).
 - Flow: a resumed run counts a visit of a state when the crash came after the state change and before the visit was saved. This applies to the first entry and to a later entry of the state. No visit is lost. The file `state.json` has the new field `entry_pending` for this check (#350).
 - Flow: a `workflow_start` that resumes a run counts the run as a worker. When `orchestrator.workers` runs are active, the resume is refused and the run stays stale. The orchestrator takes the slot of the resumed run at its next fill (#350).
+- Flow: a resumed agent job redacts the messages it writes after the resume, as its run transcript does. Before, these messages were written without redaction (#363).
 - Flow: the answer `resume` for a run paused at start-up keeps the visit counts of its saved state; it no longer counts a new visit. A run adopted by the orchestrator is forgotten when it ends (#388).
 - Flow: the answer `resume` for a run paused at start-up is refused while `orchestrator.workers` runs are active. The run stays paused. The refusal names the limit (#388).
 - Orchestrator: the paused runs are adopted when `Start` returns, before the plan, so an answer given before the plan cannot start a second run of the same issue (#388).

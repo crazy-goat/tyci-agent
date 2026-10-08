@@ -333,6 +333,13 @@ func (s *Session) SetBlockFilter(f func([]ContentBlock) []ContentBlock) {
 	s.mu.Unlock()
 }
 
+// BlockFilter returns the function set by SetBlockFilter, or nil.
+func (s *Session) BlockFilter() func([]ContentBlock) []ContentBlock {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.filter
+}
+
 // MessageOptions holds optional metadata for assistant messages.
 type MessageOptions struct {
 	API        string
