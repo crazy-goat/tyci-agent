@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: the Runs tab shows the duration of a run in its own right-aligned column, just left of the cost. Durations and costs line up in all rows. In a narrow row, the label is cut first. Then the duration is dropped, then the cost (#525).
 - TUI: the sidebar key line is on the last row on every tab. On the Tasks tab, the history note is now above the key line. A long line in a sidebar tab is cut at the sidebar width with "…" and no longer wraps onto an extra row (#514).
 - TUI: while an agent view is open, the status bar shows the viewed subagent: its model, its state (or `done`, `failed` or `truncated` when it ended), its tokens and its cost. The session total stays on the right. Before, the bar showed the main conversation's model, state and context figure. Esc shows the main status again (#528).
+- TUI: the sidebar background covers the full width of each row. This applies to the tab row, the hint and key lines on every tab, all Runs rows (also the expanded rows) and the Tasks heading rows (Subagents, Bash, Lua). Before, some of these rows had a gap in the background (#529).
 - TUI: the Bash and Lua lists on the sidebar Tasks tab show the oldest row first, so the newest row is at the bottom. The status column of the Bash rows lines up when a job id grows from one digit to two. The duration of a Bash job or a Lua run is at the right edge of the sidebar. The description, or the Lua name, is cut first (#524).
 
 ## [0.6.0] - 2026-10-08

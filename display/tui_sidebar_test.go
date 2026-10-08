@@ -1989,6 +1989,39 @@ func TestSidebarTasks_BashDurationEndsAtRightEdge(t *testing.T) {
 	}
 }
 
+// TestSidebarTasks_HeadingRowsKeepSidebarBackground checks that the heading rows
+// of the Tasks tab (Subagents, Bash, Lua) keep the sidebar background up to the
+// right edge, as the Runs rows do. The heading style ends with a reset, so
+// padding added by the style itself would have no background.
+func TestSidebarTasks_HeadingRowsKeepSidebarBackground(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "done/coder", StartedAt: time.Now()})
+	m.openSidebar(sidebarTabTasks)
+	m.sidebarCursor = -1
+	column := strings.Split(m.renderSidebarColumn(), "\n")
+	for _, heading := range []string{"Subagents", "Bash", "Lua"} {
+		row := ""
+		for _, l := range column {
+			if strings.Contains(ansi.Strip(l), heading) {
+				row = l
+				break
+			}
+		}
+		if row == "" {
+			t.Fatalf("no %q heading in the sidebar: %q", heading, column)
+		}
+		cells := cellBackgrounds(row)
+		for x, bg := range cells[1:] {
+			if bg != "235" {
+				t.Errorf("%q heading: cell %d has background %q, want 235: %q", heading, x+1, bg, row)
+				break
+			}
+		}
+	}
+}
+
 // TestSidebarTasks_LuaRowsOldestFirst: the Lua rows follow the run order,
 // newest at the bottom.
 func TestSidebarTasks_LuaRowsOldestFirst(t *testing.T) {
@@ -2032,6 +2065,23 @@ func TestSidebarTasks_LuaDurationEndsAtRightEdge(t *testing.T) {
 			if !strings.Contains(line, " ago") {
 				t.Fatalf("width %d: the age column is cut: %q", width, line)
 			}
+		}
+	}
+}
+
+// TestSidebarChrome_KeepSidebarBackgroundOnEveryTab checks the tab row, the hint
+// row and the key line on every tab, with the sidebar focused and not focused.
+// The tab row and the footer are shared by all tabs, and a tab with a hint
+// text differs from a tab without one.
+func TestSidebarChrome_KeepSidebarBackgroundOnEveryTab(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	for tab := range sidebarTabNames {
+		for _, focused := range []bool{false, true} {
+			m := newTestModelForSidebar()
+			m.openSidebar(tab)
+			m.sidebarFocused = focused
+			checkSidebarChrome(t, m)
 		}
 	}
 }

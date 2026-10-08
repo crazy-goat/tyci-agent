@@ -4,9 +4,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 // runsModel returns a model whose Runs tab lists rows, in the given order.
@@ -256,5 +259,191 @@ func TestRunsTabWantsTick(t *testing.T) {
 	m.sidebarTab = sidebarTabTokens
 	if m.wantsStatusTick() {
 		t.Fatal("other tab must not tick")
+	}
+}
+
+// runsRowsForBackground returns a Runs tab with every kind of row: an active
+// run with a cost and steps with and without a cost, a finished run with a
+// duration and a cost, and a failed run with neither. All of them are expanded.
+func runsRowsForBackground() TuiModel {
+	now := time.Now()
+	m := runsModel(
+		TuiRunRow{ID: "r1", Issue: 632, Status: "running", State: "code", Role: "worker",
+			Started: now.Add(-time.Minute), Since: now.Add(-19 * time.Second), Cost: "$0.01",
+			Steps: []TuiRunStep{{Text: "lock -> ok: 0s"}, {Text: "update -> ok: 25s", Cost: "$0.02"}}},
+		TuiRunRow{ID: "r3", Issue: 472, Status: "done", State: "end", Result: "merged",
+			Started: now.Add(-time.Hour), Ended: now.Add(-time.Minute), Took: 12 * time.Minute,
+			Cost: "$0.52", Steps: []TuiRunStep{{Text: "check_done -> go: 1s"}}},
+		TuiRunRow{ID: "r4", Issue: 9, Status: "failed", State: "code",
+			Started: now.Add(-time.Hour), Ended: now.Add(-time.Minute)},
+	)
+	m.sidebarRunsExpanded = map[string]bool{"r1": true, "r3": true, "r4": true}
+	return m
+}
+
+// TestSidebarRunsTab_EveryLineFillsWidth checks that every row, also a row
+// without a cost or a duration, is exactly as wide as the tab. A shorter row
+// leaves its right end without the sidebar background.
+func TestSidebarRunsTab_EveryLineFillsWidth(t *testing.T) {
+	m := runsRowsForBackground()
+	for _, width := range []int{60, 14} {
+		lines := m.renderSidebarRuns(width)
+		if len(lines) != 11 {
+			t.Fatalf("width %d: want 11 lines, got %d: %q", width, len(lines), lines)
+		}
+		for i, l := range lines {
+			if w := lipgloss.Width(l); w != width {
+				t.Errorf("width %d: line %d has width %d: %q", width, i, w, l)
+			}
+		}
+	}
+}
+
+// cellBackgrounds returns the background of every visible cell of line. ""
+// is the terminal default. It reads the SGR codes that lipgloss emits here:
+// reset, 256-color background (48;5;N), default background (49).
+func cellBackgrounds(line string) []string {
+	var bgs []string
+	bg := ""
+	for line != "" {
+		if strings.HasPrefix(line, "\x1b[") {
+			end := strings.IndexByte(line, 'm')
+			if end < 0 {
+				break
+			}
+			bg = applySGRBackground(bg, line[2:end])
+			line = line[end+1:]
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(line)
+		bgs = append(bgs, bg)
+		line = line[size:]
+	}
+	return bgs
+}
+
+// applySGRBackground returns the background after the SGR parameters params.
+func applySGRBackground(bg, params string) string {
+	if params == "" {
+		return ""
+	}
+	p := strings.Split(params, ";")
+	for i := 0; i < len(p); i++ {
+		switch p[i] {
+		case "0", "49":
+			bg = ""
+		case "48":
+			if i+2 < len(p) && p[i+1] == "5" {
+				bg = p[i+2]
+				i += 2
+			}
+		case "38":
+			if i+1 < len(p) && p[i+1] == "5" {
+				i += 2
+			}
+		}
+	}
+	return bg
+}
+
+// TestSidebarRunsTab_RowsKeepSidebarBackground renders the sidebar and checks
+// the background of every cell of each Runs row. The sidebar paints
+// background 235. A full reset inside a row clears it, so the cells after
+// that reset get the terminal default: the band breaks at the reset.
+func TestSidebarRunsTab_RowsKeepSidebarBackground(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	// The title, the tab row and the separator come before the Runs rows.
+	const firstRunsRow = 3
+	for _, cursor := range []int{-1, 0} {
+		m := runsRowsForBackground()
+		m.sidebarCursor = cursor
+		layout := m.sidebarLayout()
+		view := m.runsTab(layout.contentWidth)
+		selectedLine := -1
+		if cursor >= 0 {
+			selectedLine = view.start[cursor]
+		}
+		column := strings.Split(m.renderSidebarColumn(), "\n")
+		if got := ansi.Strip(column[firstRunsRow]); !strings.Contains(got, "#632") {
+			t.Fatalf("cursor %d: row %d is not the first Runs row: %q", cursor, firstRunsRow, got)
+		}
+		for k := range view.lines {
+			row := column[firstRunsRow+k]
+			cells := cellBackgrounds(row)
+			if len(cells) < 2 {
+				t.Fatalf("cursor %d: row %d has no cells: %q", cursor, k, row)
+			}
+			// Cell 0 is the border. The other cells are the sidebar, or the
+			// highlight of the selected run header.
+			wrong, highlighted := 0, 0
+			for _, bg := range cells[1:] {
+				switch {
+				case k == selectedLine && bg == "45":
+					highlighted++
+				case bg != "235":
+					wrong++
+				}
+			}
+			if wrong > 0 {
+				t.Errorf("cursor %d: row %d %q: %d cells without the sidebar background: %q",
+					cursor, k, ansi.Strip(row), wrong, row)
+			}
+			if k == selectedLine && highlighted != layout.contentWidth {
+				t.Errorf("cursor %d: selected row has %d highlighted cells, want %d",
+					cursor, highlighted, layout.contentWidth)
+			}
+		}
+		checkSidebarChrome(t, m)
+	}
+}
+
+// checkSidebarChrome checks the tab row, the hint row and the key line of the
+// sidebar. Every cell after the border must have the sidebar background, except
+// the active tab label, which is highlighted. The rows are drawn on every tab,
+// so the caller picks the tab and the focus.
+func checkSidebarChrome(t *testing.T, m TuiModel) {
+	t.Helper()
+	layout := m.sidebarLayout()
+	column := strings.Split(m.renderSidebarColumn(), "\n")
+	// The separator comes after the content rows, then the hint row, then the key line.
+	hintRow := layout.contentTop + layout.contentHeight + 1
+	keyRow := hintRow + 1
+	// A focused key line is cut at the sidebar width, so only its first word is checked.
+	if got := ansi.Strip(column[keyRow]); !strings.Contains(got, strings.Fields(m.sidebarFooter())[0]) {
+		t.Fatalf("tab %d: row %d is not the key line: %q", m.sidebarTab, keyRow, got)
+	}
+	for _, c := range []struct {
+		name      string
+		row       int
+		highlight int
+	}{
+		{"tab row", 1, lipgloss.Width(sidebarTabLabel(m.sidebarTab))},
+		{"hint row", hintRow, 0},
+		{"key line", keyRow, 0},
+	} {
+		line := column[c.row]
+		cells := cellBackgrounds(line)
+		if len(cells) < 2 {
+			t.Fatalf("tab %d: %s has no cells: %q", m.sidebarTab, c.name, line)
+		}
+		wrong, highlighted := 0, 0
+		for _, bg := range cells[1:] {
+			switch bg {
+			case "235":
+			case "45":
+				highlighted++
+			default:
+				wrong++
+			}
+		}
+		if wrong > 0 {
+			t.Errorf("tab %d, focused %v, %s %q: %d cells without the sidebar background: %q",
+				m.sidebarTab, m.sidebarFocused, c.name, ansi.Strip(line), wrong, line)
+		}
+		if highlighted != c.highlight {
+			t.Errorf("tab %d, focused %v, %s: %d highlighted cells, want %d: %q",
+				m.sidebarTab, m.sidebarFocused, c.name, highlighted, c.highlight, line)
+		}
 	}
 }
