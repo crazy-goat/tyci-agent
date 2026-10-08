@@ -68,6 +68,8 @@ func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string)) 
 		post(orchestrator.FormatSpecial(orchestrator.ForgeError, err.Error()))
 		return nil
 	}
+	// A start-up resume counts as a worker: refuse it while the limit is reached.
+	workflowManager.SetWorkers(oc.Workers)
 	return startOrchestrator(ctx, false, oc, f, orchestrator.NewRunner(workflowManager), post)
 }
 

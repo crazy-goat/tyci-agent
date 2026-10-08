@@ -35,13 +35,26 @@ rename from x
 rename to .tyci/x
 `
 
+// writeProposal writes a proposal.md and a proposal.patch into dir.
+func writeProposal(dir, patch string) {
+	_ = os.WriteFile(filepath.Join(dir, "proposal.md"), []byte("# Handle non-fast-forward\n\nwhy\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "proposal.patch"), []byte(patch), 0o600)
+}
+
 // proposingFixer writes a proposal into its artifact dir and answers "failed".
 type proposingFixer struct{ patch string }
 
 func (f proposingFixer) Run(_ context.Context, _, _ string, rc RunContext) (string, string, error) {
-	_ = os.WriteFile(filepath.Join(rc.ArtifactDir, "proposal.md"), []byte("# Handle non-fast-forward\n\nwhy\n"), 0o600)
-	_ = os.WriteFile(filepath.Join(rc.ArtifactDir, "proposal.patch"), []byte(f.patch), 0o600)
+	writeProposal(rc.ArtifactDir, f.patch)
 	return "failed", "", nil
+}
+
+// okFixer writes a proposal and answers "ok": the run goes on without a pause.
+type okFixer struct{ patch string }
+
+func (f okFixer) Run(_ context.Context, _, _ string, rc RunContext) (string, string, error) {
+	writeProposal(rc.ArtifactDir, f.patch)
+	return "ok", "", nil
 }
 
 func proposalWF() *Workflow {
@@ -312,5 +325,44 @@ func TestProposal_ApplyReservesTheRun(t *testing.T) {
 	waitIdle(t, e.m)
 	if st, _ := e.m.Status(id); st.Status != "paused" || st.Ask.Proposal != "" {
 		t.Fatalf("state = %s, proposal %q", st.Status, st.Ask.Proposal)
+	}
+}
+
+// runDoneWithProposal runs a workflow whose fixer answers ok and then ends.
+func runDoneWithProposal(t *testing.T, runDir string) (*RunState, []string) {
+	t.Helper()
+	wf := &Workflow{Name: "issue-to-merge", Start: "fixer", States: map[string]State{
+		"fixer": {Agent: "fixer", On: map[string]string{"ok": "end"}},
+		"end":   {End: true},
+	}}
+	var notices []string
+	r := &Runner{WF: wf, Agents: okFixer{goodPatch}, Store: &Store{Dir: runDir}, RunDir: runDir,
+		Warn: func(s string) { notices = append(notices, s) }}
+	st := &RunState{Version: 1, Run: "r1", Workflow: wf.Name, Repo: "o/r", Issue: 3,
+		Status: "running", Current: "fixer", Visits: map[string]int{}, History: []Step{}}
+	if err := r.Run(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	return st, notices
+}
+
+// A fixer that answers ok ends the run without a pause; the done notice still
+// names its proposal.
+func TestProposal_DoneRunNamesPendingProposal(t *testing.T) {
+	st, notices := runDoneWithProposal(t, filepath.Join(t.TempDir(), "r1"))
+	if st.Status != "done" || len(notices) != 1 || !strings.Contains(notices[0], "Handle non-fast-forward") {
+		t.Fatalf("status = %s, notices = %q", st.Status, notices)
+	}
+}
+
+// A rejected proposal is not named when the run ends.
+func TestProposal_DoneRunSkipsRejectedProposal(t *testing.T) {
+	runDir := filepath.Join(t.TempDir(), "r1")
+	st, _ := runDoneWithProposal(t, runDir)
+	if err := RejectProposal(runDir, filepath.Join(runDir, "artifacts", st.History[0].Artifact)); err != nil {
+		t.Fatal(err)
+	}
+	if _, notices := runDoneWithProposal(t, runDir); len(notices) != 0 {
+		t.Fatalf("rejected proposal named: %q", notices)
 	}
 }

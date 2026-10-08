@@ -512,6 +512,50 @@ func TestManager_AdoptedRunForgottenWhenDone(t *testing.T) {
 	}
 }
 
+// A start-up "resume" is refused while orchestrator.workers runs are active. The
+// refused run stays paused, and its resume works once a run has ended.
+func TestResume_StartupRefusedAtWorkersLimit(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	e.m.SetWorkers(1)
+	first := saveRun(t, e.home, 5, nil)
+	second := saveRun(t, e.home, 6, nil)
+	e.m.AskUnfinished()
+	e.notice(t)
+	ended := make(chan RunEvent, 8)
+	unsub := e.m.Subscribe(func(ev RunEvent) { ended <- ev })
+	defer unsub()
+	waitDone := func() {
+		t.Helper()
+		for {
+			select {
+			case ev := <-ended:
+				if ev.Status == "done" {
+					return
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("run did not end")
+			}
+		}
+	}
+	if err := e.m.Resume(first.Run, "resume"); err != nil {
+		t.Fatal(err)
+	}
+	err := e.m.Resume(second.Run, "resume")
+	if err == nil || !strings.Contains(err.Error(), "orchestrator.workers is 1") {
+		t.Fatalf("second resume: err = %v", err)
+	}
+	if st := loadRunState(t, e.home, second.Run); st.Status != "paused" {
+		t.Fatalf("refused run: status %q", st.Status)
+	}
+	close(c.release)
+	waitDone()
+	if err := e.m.Resume(second.Run, "resume"); err != nil {
+		t.Fatalf("resume after a run ended: %v", err)
+	}
+	waitDone()
+}
+
 // A workflow without an ask state cannot pause a run at start-up: the run
 // fails, and the user gets a notice for it.
 func TestAskUnfinished_NoAskStateNotifiesFail(t *testing.T) {
