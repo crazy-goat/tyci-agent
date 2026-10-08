@@ -366,3 +366,36 @@ func TestProposal_DoneRunSkipsRejectedProposal(t *testing.T) {
 		t.Fatalf("rejected proposal named: %q", notices)
 	}
 }
+
+// A fixer that answers ok and then a failing step fails the run; the failed
+// run still names the proposal.
+func TestProposal_FailedRunNamesPendingProposal(t *testing.T) {
+	cases := []struct {
+		name   string
+		checks *fakeChecks
+	}{
+		{"unknown key", &fakeChecks{keys: map[string][]string{"c.sh": {"bad"}}}},
+		{"check error", &fakeChecks{errs: map[string]error{"c.sh": errors.New("exec failed")}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			runDir := filepath.Join(t.TempDir(), "r1")
+			wf := &Workflow{Name: "issue-to-merge", Start: "fixer", States: map[string]State{
+				"fixer": {Agent: "fixer", On: map[string]string{"ok": "check"}},
+				"check": {Check: "c.sh", On: map[string]string{"ok": "end"}},
+				"end":   {End: true},
+			}}
+			var notices []string
+			r := &Runner{WF: wf, Agents: okFixer{goodPatch}, Checks: c.checks, Store: &Store{Dir: runDir}, RunDir: runDir,
+				Warn: func(s string) { notices = append(notices, s) }}
+			st := &RunState{Version: 1, Run: "r1", Workflow: wf.Name, Repo: "o/r", Issue: 3,
+				Status: "running", Current: "fixer", Visits: map[string]int{}, History: []Step{}}
+			if err := r.Run(context.Background(), st); err == nil {
+				t.Fatal("run did not fail")
+			}
+			if st.Status != "failed" || len(notices) != 1 || !strings.Contains(notices[0], "Handle non-fast-forward") {
+				t.Fatalf("status = %s, notices = %q", st.Status, notices)
+			}
+		})
+	}
+}

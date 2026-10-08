@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# push.sh: pushes the issue branch and finds or creates its pull request (state push).
-# Pushing is a script, never an agent action. Only refs/heads/<b>:refs/heads/<b> is
-# pushed. The default branch is refused. No force option is ever used.
+# push.sh: pushes the run branch and finds or creates its pull request (state push).
+# The run branch is TYCI_BRANCH, unless open_pr.sh continued a PR from another branch: then it
+# is the head branch in $TYCI_RUN_DIR/pr_branch (#374). Pushing is a script, never an agent
+# action. Only the worktree HEAD is pushed, to refs/heads/<b> on origin. The default branch is
+# refused. No force option is ever used.
 #
 # Env in:  TYCI_BRANCH, TYCI_DEFAULT_BRANCH, TYCI_RUN_DIR, TYCI_REPO, TYCI_ISSUE.
 #          cwd = the run worktree.
@@ -17,6 +19,7 @@ describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
 
 branch="${TYCI_BRANCH:-}"
+if [ -s "${TYCI_RUN_DIR:-}/pr_branch" ]; then branch="$(<"$TYCI_RUN_DIR/pr_branch")"; fi
 if [ -z "$branch" ] || [ "$branch" = "${TYCI_DEFAULT_BRANCH:-}" ]; then
     describe fail "push.sh refuses to push branch '$branch': it is empty or the default branch" \
         "the run was started with a wrong branch (a setup problem, not a code problem)" \
@@ -25,7 +28,7 @@ if [ -z "$branch" ] || [ "$branch" = "${TYCI_DEFAULT_BRANCH:-}" ]; then
     exit 0
 fi
 
-if ! git push origin "refs/heads/$branch:refs/heads/$branch" >&2; then
+if ! git push origin "HEAD:refs/heads/$branch" >&2; then
     if git fetch -q origin "refs/heads/$branch" 2>/dev/null &&
         ! git merge-base --is-ancestor FETCH_HEAD HEAD; then
         describe fail "git push to origin/$branch was rejected (non-fast-forward): origin/$branch has commits that the local $branch does not have (the branches diverged). tyci never force-pushes" \
@@ -35,7 +38,7 @@ if ! git push origin "refs/heads/$branch:refs/heads/$branch" >&2; then
     else
         describe fail "git push of $branch was rejected (see the git output above)" \
             "no network, no push permission, or a branch protection rule" \
-            "run 'git push origin refs/heads/$branch:refs/heads/$branch' to see the error; fix a temporary cause and return ok, else return failed"
+            "run 'git push origin HEAD:refs/heads/$branch' to see the error; fix a temporary cause and return ok, else return failed"
     fi
     echo fail
     exit 0

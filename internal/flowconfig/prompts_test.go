@@ -60,15 +60,25 @@ func TestPrompts_AllForbidQuestions(t *testing.T) {
 	}
 }
 
-// #340: every role must leave report.md; no prompt names $TYCI_RUN_DIR.
+// #340: worker, review and fixer must leave report.md; no prompt names $TYCI_RUN_DIR.
 func TestPrompts_AllRequireReport(t *testing.T) {
-	for _, r := range []string{"worker", "review", "fixer", "oracle"} {
+	for _, r := range []string{"worker", "review", "fixer"} {
 		requireAll(t, r, "MUST write `report.md`")
+	}
+	for _, r := range []string{"worker", "review", "fixer", "oracle"} {
 		if strings.Contains(prompt(t, r), "TYCI_RUN_DIR") {
 			t.Errorf("%s prompt mentions TYCI_RUN_DIR", r)
 		}
 	}
 	requireAll(t, "worker", "If the run so far shows red CI, CHANGES, a conflict or new comments, fix that first.")
+}
+
+// #379: the oracle prompt does not ask for report.md. The recover task text
+// gives the path; the roadmap run has no artifact dir.
+func TestPrompts_OracleNoReport(t *testing.T) {
+	if strings.Contains(prompt(t, "oracle"), "report.md") {
+		t.Error("oracle prompt mentions report.md")
+	}
 }
 
 // #369: the fixer answers ok or failed, writes failed.log and never force-pushes.
@@ -78,7 +88,7 @@ func TestPrompts_FixerKeys(t *testing.T) {
 
 // #371: the shorter oracle prompt keeps the read-only rule.
 func TestPrompts_OracleReadOnly(t *testing.T) {
-	requireAll(t, "oracle", "You are read-only.", "Do not edit, create or delete files.", "Do not ask questions.")
+	requireAll(t, "oracle", "You are read-only.", "Do not edit, create or delete files, unless the task text asks you to write a file.", "Do not ask questions.")
 }
 
 func TestPrompts_OracleFollowsTask(t *testing.T) {

@@ -35,7 +35,11 @@ case "$*" in
   "pr review"*) cat "${@: -1}" > "$CTL/review_body" ;;
   "api user"*) echo bot ;;
   "api --paginate"*) if [ -e "$CTL/comments.json" ]; then cat "$CTL/comments.json"; else echo '[]'; fi ;;
-  "pr list"*) if [ -e "$CTL/pr" ]; then echo 42; fi ;;
+  "pr list"*)
+    case "$*" in
+      *--jq*) if [ -e "$CTL/pr" ]; then echo 42; fi ;;
+      *) if [ -e "$CTL/pr" ]; then echo '[{"number":42,"headRefName":"issue-7","isCrossRepository":false,"closingIssuesReferences":[{"number":7}]}]'; else echo '[]'; fi ;;
+    esac ;;
   "pr create"*) touch "$CTL/pr"; echo https://example/pull/42 ;;
   "pr checks"*)
     b=$(cat "$CTL/ci_bucket")
