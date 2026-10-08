@@ -355,10 +355,11 @@ func TestResume_ResumeOnlyForRestartPause(t *testing.T) {
 	}
 }
 
-// freezeStore stops writing once the run is inside state ci and cancels the
-// run: the file on disk then looks like tyci was killed during ci.
+// freezeStore stops writing once the run enters state at for the first time
+// and cancels the run: the file on disk then looks like tyci was killed there.
 type freezeStore struct {
 	*Store
+	at     string
 	cancel context.CancelFunc
 	frozen bool
 }
@@ -370,7 +371,7 @@ func (f *freezeStore) Save(st *RunState) error {
 	if err := f.Store.Save(st); err != nil {
 		return err
 	}
-	if st.Current == "ci" && st.Visits["ci"] == 1 {
+	if st.Current == f.at && st.Visits[f.at] == 1 {
 		f.frozen = true
 		f.cancel()
 	}
@@ -382,7 +383,7 @@ func TestResume_EndToEnd_StubScripts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	r := e.newRunner()
-	r.Store = &freezeStore{Store: &Store{Dir: e.runDir}, cancel: cancel}
+	r.Store = &freezeStore{Store: &Store{Dir: e.runDir}, at: "ci", cancel: cancel}
 	_ = r.Run(ctx, e.st)
 
 	// The killed process: state ci, status running, owner gone.
@@ -431,6 +432,46 @@ func TestResume_EndToEnd_StubScripts(t *testing.T) {
 		t.Fatalf("visits ci = %d (before %s)", got, visitsBefore)
 	}
 	e.wantMerged()
+}
+
+// #403: the run is killed in post_review after its review step. The workflow
+// file then renames the review state. The resumed run still posts the review,
+// because the history keeps the role of the review step.
+func TestResume_ReviewStateRenamed_StillPostsReview(t *testing.T) {
+	e := newE2E(t, happy())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	r := e.newRunner()
+	r.Store = &freezeStore{Store: &Store{Dir: e.runDir}, at: "post_review", cancel: cancel}
+	_ = r.Run(ctx, e.st)
+
+	st, err := Load(e.runDir)
+	if err != nil || st.Current != "post_review" || st.Status != "running" {
+		t.Fatalf("saved state = %+v, err %v", st, err)
+	}
+	st.PID = deadPID(t)
+	if err := (&Store{Dir: e.runDir}).Save(st); err != nil {
+		t.Fatal(err)
+	}
+	renameState(e.wf, "review", "judge")
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel2()
+	if err := e.newRunner().Continue(ctx2, st); err != nil {
+		t.Fatalf("continue: %v (status %s, reason %q)", err, st.Status, st.Reason)
+	}
+	if st.Status != "done" || !wasMerged(st) {
+		t.Fatalf("status %s, reason %q", st.Status, st.Reason)
+	}
+	for _, h := range st.History {
+		if h.State == "findings" && (h.Role != "review" || h.Task != "findings_to_issues") {
+			t.Errorf("findings step has role %q, task %q", h.Role, h.Task)
+		}
+	}
+	body, _ := os.ReadFile(filepath.Join(e.ctl, "review_body"))
+	if !strings.Contains(string(body), "ACCEPT") {
+		t.Errorf("posted review = %q", body)
+	}
 }
 
 func TestManager_AdoptReturnsResumedRunOnce(t *testing.T) {
