@@ -464,10 +464,11 @@ type TuiModel struct {
 	// the sidebar column is open: false means keyboard input still goes to
 	// the prompt/input box as normal (Left/Right do whatever they do in the
 	// main keymap); true means the sidebar has captured the keyboard
-	// (Left/Right move between tabs, Up/Down/Enter navigate its list). It
-	// only matters while sidebarActive is true; opening the sidebar always
-	// resets it to false (focus starts on the conversation), and closing it
-	// resets it too so the next open starts the same way. See
+	// (Left/Right move between tabs, Up/Down/Enter navigate its list;
+	// Shift+Tab gives the keyboard back to the prompt). It only matters
+	// while sidebarActive is true; opening the sidebar always resets it to
+	// false (focus starts on the conversation), and closing it resets it
+	// too so the next open starts the same way. See
 	// tui_update.go's Update() for the routing this gates and
 	// tui_sidebar.go's updateSidebar for the Left/Right boundary-exit logic.
 	sidebarFocused bool
