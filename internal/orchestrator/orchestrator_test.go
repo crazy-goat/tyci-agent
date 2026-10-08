@@ -428,6 +428,23 @@ func TestPausedRunsAreAdoptedNotRestarted(t *testing.T) {
 	}
 }
 
+func TestPausedRunAdoptedBeforeStartReturns(t *testing.T) {
+	// The run of #1 is adopted when Start returns, not later in the loop, so a
+	// slot is held before the plan and an answer cannot start a second run.
+	e := newEnv(t, Config{Workers: 1}, five()...)
+	e.r.paused = []int{1}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	e.o.Start(ctx)
+	if e.r.handle(1) == nil {
+		t.Fatal("paused run not adopted when Start returned")
+	}
+	p := e.waitReady()
+	if len(p.Started) != 0 || p.Free != 0 || e.r.starts(2) != 0 {
+		t.Fatalf("%+v", p)
+	}
+}
+
 func TestPausedRunStoppedDuringPlanIsNotStarted(t *testing.T) {
 	// The run of #1 was paused at start-up. The user answers "stop" while the
 	// oracle plans: the run ends before the plan is ready.

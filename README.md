@@ -75,7 +75,8 @@ It pauses every `running` run of the current repository whose owner process is g
 saved state in the same worktree), `stop`, or nothing: a run without an answer stays paused.
 A paused run blocks a new run for its issue. The orchestrator watches the paused runs (they
 count as workers) and sees how each one ends after the answer, so it never starts a second run
-for the issue. A run that cannot pause (its workflow has no `ask` state) fails, and the chat
+for the issue. An answer `resume` is refused while `orchestrator.workers` runs are active. The notice
+names the limit. The run stays paused until you answer again. A run that cannot pause (its workflow has no `ask` state) fails, and the chat
 shows a notice for it. With no unfinished runs, start-up does not ask. A `workflow_start` of an issue whose `running` run has
 a dead owner (another tyci process stopped) still resumes it; such a run resumed 3 times, or
 one whose worktree is gone, pauses for an answer.
