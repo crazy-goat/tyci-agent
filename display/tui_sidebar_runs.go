@@ -206,6 +206,20 @@ func lineWithRight(left, right string, width int) string {
 	return left + strings.Repeat(" ", width-lipgloss.Width(left)-rw) + right
 }
 
+// fitCells joins the right-hand cells of a row with gap spaces. When the row is
+// too narrow to leave a column for the left part, the first cell is dropped,
+// then the next, until the rest fits. It returns "" when no cell fits.
+func fitCells(cells []string, gap, width int) string {
+	for len(cells) > 0 {
+		right := strings.Join(cells, strings.Repeat(" ", gap))
+		if width > lipgloss.Width(right)+1 {
+			return right
+		}
+		cells = cells[1:]
+	}
+	return ""
+}
+
 // runRowLine lays out a run row: left, then the duration and the cost, both
 // right-aligned in columns durW and costW wide. When the row is too narrow, left
 // is cut first, then the duration column is dropped, then the cost column.
@@ -217,14 +231,7 @@ func runRowLine(left, dur, cost string, width, durW, costW int) string {
 	if costW > 0 {
 		cells = append(cells, padLeft(cost, costW))
 	}
-	for len(cells) > 0 {
-		right := strings.Join(cells, strings.Repeat(" ", runColumnGap))
-		if width > lipgloss.Width(right)+1 {
-			return lineWithRight(left, right, width)
-		}
-		cells = cells[1:]
-	}
-	return truncateToWidth(left, width)
+	return lineWithRight(left, fitCells(cells, runColumnGap, width), width)
 }
 
 // padLeft right-aligns s in width columns.
