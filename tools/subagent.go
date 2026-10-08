@@ -443,6 +443,11 @@ type streamingCollector struct {
 	// subagent call that was never handed a job id (e.g. a blocking call
 	// under a mode with backgrounding disabled).
 	jobID string
+
+	// live, when non-nil, records every Text/Thinking/tool event so the TUI's
+	// agent view can show this child's conversation while it runs. Nil for a
+	// child without a job id. See transcript_live.go.
+	live *liveTranscript
 }
 
 func newStreamingCollector(ctx context.Context, toolIdx int) *streamingCollector {
@@ -470,27 +475,32 @@ func (s *streamingCollector) touchActivity() {
 func (s *streamingCollector) Text(text string) {
 	s.collector.Text(text)
 	s.pushText(text)
+	s.live.add(LiveEvent{Kind: "text", Content: text})
 	s.touchActivity()
 }
 
 func (s *streamingCollector) Thinking(text string) {
 	s.collector.Thinking(text)
 	s.pushText(text)
+	s.live.add(LiveEvent{Kind: "thinking", Content: text})
 	s.touchActivity()
 }
 
 func (s *streamingCollector) ToolCallStart(name string) {
 	s.collector.ToolCallStart(name)
+	s.live.add(LiveEvent{Kind: "tool-start", ToolName: name})
 	s.touchActivity()
 }
 
 func (s *streamingCollector) ToolCallDelta(delta string) {
 	s.collector.ToolCallDelta(delta)
+	s.live.add(LiveEvent{Kind: "tool-delta", Content: delta})
 	s.touchActivity()
 }
 
 func (s *streamingCollector) ToolCallEnd(name, result string) {
 	s.collector.ToolCallEnd(name, result)
+	s.live.add(LiveEvent{Kind: "tool-end", Content: result})
 	s.touchActivity()
 }
 
@@ -1520,6 +1530,9 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		c = newStreamingCollector(ctx, toolIdx)
 	} else {
 		c = &streamingCollector{collector: newCollector()}
+	}
+	if jobID, _ := ctx.Value(JobIDCtxKey{}).(string); jobID != "" {
+		c.live = startLiveTranscript(jobID)
 	}
 
 	// Hand the runner our forwarding Sink via context (see SubagentSink's

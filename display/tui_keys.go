@@ -14,6 +14,13 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Esc in an agent view goes back to the main conversation. It returns
+	// before the busy-turn handler, so it never cancels the main turn.
+	if msg.Type == tea.KeyEscape && m.agentView != nil {
+		m.closeAgentView()
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyTab:
 		m.switchModel(1)
@@ -218,8 +225,9 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	case tea.KeyCtrlO:
 		// Expands or collapses the latest group of tool and thinking steps.
 		// A click on the header line of any group does the same.
-		if first := m.latestGroup(); first >= 0 {
-			m.toggleGroup(first)
+		s := m.shownModel()
+		if first := s.latestGroup(); first >= 0 {
+			s.toggleGroup(first)
 		}
 		return true, m, nil
 	}
