@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func gitRun(t *testing.T, dir string, args ...string) {
@@ -294,6 +295,56 @@ func TestAddIssue_FailingSetupScriptFailsAndLeavesNothing(t *testing.T) {
 	}
 	if out, err := exec.Command("git", "-C", work, "rev-parse", "--verify", "--quiet", "refs/heads/issue-10").CombinedOutput(); err == nil {
 		t.Fatalf("branch issue-10 is left behind after a failed setup: %s", out)
+	}
+}
+
+// TestAddIssue_CancelledDuringSetupLeavesNothing cancels the run while the
+// setup script is running. The script runs a child (sleep) that holds the
+// output pipe open. AddIssue must return soon after the cancel, and must
+// leave neither the worktree nor the branch behind.
+func TestAddIssue_CancelledDuringSetupLeavesNothing(t *testing.T) {
+	work, _ := newRepoWithOrigin(t)
+	started := filepath.Join(t.TempDir(), "started")
+	commitSetup(t, work, "#!/bin/sh\ntouch '"+started+"'\nsleep 30\n", 0o755)
+	home := t.TempDir()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Cancel only when the script has started, so the cancel always hits the setup.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+			if _, err := os.Stat(started); err == nil {
+				cancel()
+				return
+			}
+		}
+	}()
+
+	begin := time.Now()
+	_, err := AddIssue(ctx, home, work, 15, "main")
+	elapsed := time.Since(begin)
+
+	if _, statErr := os.Stat(started); statErr != nil {
+		t.Fatalf("setup script did not start, so the cancel did not reach it (err = %v, AddIssue err = %v)", statErr, err)
+	}
+	if err == nil {
+		t.Fatal("AddIssue with a cancelled setup succeeded, want an error")
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("AddIssue returned after %v; the script runs 30s, so the cancel did not stop it", elapsed)
+	}
+
+	target := filepath.Join(home, ".tyci", "worktrees", filepath.Base(work), "issue-15")
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("worktree %s is left behind after a cancelled setup (err = %v)", target, err)
+	}
+	if out, err := exec.Command("git", "-C", work, "rev-parse", "--verify", "--quiet", "refs/heads/issue-15").CombinedOutput(); err == nil {
+		t.Fatalf("branch issue-15 is left behind after a cancelled setup: %s", out)
 	}
 }
 
