@@ -172,6 +172,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 			m.blocks[frontIdx].toolState = "done"
 			m.blocks[frontIdx].failed = failed
 			m.blocks[frontIdx].duration = toolDuration(msg.duration, m.blocks[frontIdx].startTime)
+			m.blocks[frontIdx].endTime = time.Now()
 			m.blocks[frontIdx].cachedLines = nil
 			delete(m.toolDisplayCache, frontIdx)
 			m.invalidateTotalLines()

@@ -72,6 +72,7 @@ func (m *TuiModel) finishToolAt(result string, reported time.Duration, failed bo
 		m.blocks[idx].toolState = "done"
 		m.blocks[idx].failed = failed
 		m.blocks[idx].duration = toolDuration(reported, m.blocks[idx].startTime)
+		m.blocks[idx].endTime = time.Now()
 		m.blocks[idx].cachedLines = nil
 		m.blocks[idx].cachedLineCount = 0
 		delete(m.toolDisplayCache, idx)

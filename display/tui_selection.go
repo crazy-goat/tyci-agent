@@ -161,6 +161,12 @@ func gutterLen(sourceKind, plain string) int {
 			return 2
 		}
 		return 0
+	case "group":
+		// "┃ " (bar + space); the header text follows it.
+		if strings.HasPrefix(plain, "┃ ") {
+			return 2
+		}
+		return 0
 	default:
 		return 0
 	}

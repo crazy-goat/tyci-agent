@@ -221,7 +221,8 @@ func TestThinkingBlockLineCountMatchesLayout(t *testing.T) {
 // learned that rule — already fixed on main and covered there
 // (tui_scroll_spacer_test.go). This test covers the same adjacency from the
 // thinking block's own side: its collapsed line must still be exactly one
-// row, and a click on either row must land on the right block.
+// row, and a click on either row must land on the right block. The two
+// blocks form a group, so the group is opened first: its header is row 0.
 func TestThinkingBlockAdjacentToToolBlock_HitTestingLandsCorrectly(t *testing.T) {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.width, m.height = 80, 24
@@ -230,6 +231,7 @@ func TestThinkingBlockAdjacentToToolBlock_HitTestingLandsCorrectly(t *testing.T)
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "read"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", toolName: "read", content: "ok"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "done"})
+	m.toggleGroup(0)
 
 	thinkingLines := m.getBlockLines(0, false)
 	if len(thinkingLines) != 1 {
@@ -241,20 +243,23 @@ func TestThinkingBlockAdjacentToToolBlock_HitTestingLandsCorrectly(t *testing.T)
 	}
 
 	flat := m.buildAllFlatRenderLines()
-	if len(flat) != 2 {
-		t.Fatalf("expected no spacer between an adjacent thinking and tool block, got %d flat lines: %+v", len(flat), flat)
+	if len(flat) != 3 {
+		t.Fatalf("expected group header plus two rows with no spacer, got %d flat lines: %+v", len(flat), flat)
 	}
-	if flat[0].BlockIndex != 0 || flat[0].SourceKind != "thinking" {
-		t.Fatalf("row 0 should belong to the thinking block, got index=%d kind=%q", flat[0].BlockIndex, flat[0].SourceKind)
+	if flat[0].SourceKind != "group" {
+		t.Fatalf("row 0 should be the group header, got kind=%q", flat[0].SourceKind)
 	}
-	if flat[1].BlockIndex != 1 || flat[1].SourceKind != "tool" {
-		t.Fatalf("row 1 should belong to the tool block, got index=%d kind=%q", flat[1].BlockIndex, flat[1].SourceKind)
+	if flat[1].BlockIndex != 0 || flat[1].SourceKind != "thinking" {
+		t.Fatalf("row 1 should belong to the thinking block, got index=%d kind=%q", flat[1].BlockIndex, flat[1].SourceKind)
 	}
-	if got := m.blockAtVisibleLine(0); got != 0 {
-		t.Fatalf("blockAtVisibleLine(0) = %d, want 0 (the thinking block)", got)
+	if flat[2].BlockIndex != 1 || flat[2].SourceKind != "tool" {
+		t.Fatalf("row 2 should belong to the tool block, got index=%d kind=%q", flat[2].BlockIndex, flat[2].SourceKind)
 	}
-	if got := m.blockAtVisibleLine(1); got != 1 {
-		t.Fatalf("blockAtVisibleLine(1) = %d, want 1 (the tool block)", got)
+	if got := m.blockAtVisibleLine(1); got != 0 {
+		t.Fatalf("blockAtVisibleLine(1) = %d, want 0 (the thinking block)", got)
+	}
+	if got := m.blockAtVisibleLine(2); got != 1 {
+		t.Fatalf("blockAtVisibleLine(2) = %d, want 1 (the tool block)", got)
 	}
 }
 
