@@ -424,7 +424,7 @@ func TestResume_EndToEnd_StubScripts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.st.Status != "done" || !wasMerged(e.st) || !hasResumedStep(e.st) || e.st.Resumed != 1 {
+	if e.st.Status != "done" || !WasMerged(e.st) || !hasResumedStep(e.st) || e.st.Resumed != 1 {
 		t.Fatalf("status %s, resumed %d, history %v", e.st.Status, e.st.Resumed, e.trail())
 	}
 	if got := e.st.Visits["ci"]; got != 1 {

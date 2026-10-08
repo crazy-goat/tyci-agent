@@ -17,6 +17,7 @@ type TuiRunRow struct {
 	Since  time.Time
 	Steps  []string // last history steps, "state -> key"
 	Totals string   // tokens, cost and time of the whole run, may be empty
+	Result string   // outcome of a finished run, "merged" or empty
 }
 
 func (m TuiModel) renderSidebarRuns(width int) []string {
@@ -30,6 +31,14 @@ func (m TuiModel) renderSidebarRuns(width int) []string {
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	var out []string
 	for _, r := range rows {
+		if r.Status == "done" || r.Status == "failed" {
+			line := fmt.Sprintf(" #%d %s", r.Issue, r.Status)
+			if r.Result != "" {
+				line += " (" + r.Result + ")"
+			}
+			out = append(out, dim.Render(truncateToWidth(line, width)))
+			continue
+		}
 		cur := r.State
 		if r.Role != "" {
 			cur += " (" + r.Role + ")"

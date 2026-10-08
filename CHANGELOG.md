@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- TUI: the Runs tab shows a finished run on one line, for example `#472 done (merged)`; its run id and steps are hidden. The tab row is as wide as its labels, not split evenly over the sidebar (#310).
+
 ### Fixed
 - Flow: a resumed agent job redacts the messages it writes after the resume, as its run transcript does. Before, these messages were written without redaction (#363).
 - Flow: the answer `resume` for a run paused at start-up keeps the visit counts of its saved state; it no longer counts a new visit. A run adopted by the orchestrator is forgotten when it ends (#388).

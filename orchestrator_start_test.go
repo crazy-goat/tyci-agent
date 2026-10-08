@@ -165,3 +165,13 @@ func TestStepLine(t *testing.T) {
 		t.Fatalf("agent without stats: got %q", got)
 	}
 }
+
+func TestRunRowsResult(t *testing.T) {
+	merged := &flow.RunState{Run: "r1", Issue: 472, Status: "done",
+		History: []flow.Step{{State: "merge", Kind: "check", Key: "merged"}}}
+	stopped := &flow.RunState{Run: "r2", Issue: 473, Status: "done"}
+	rows := runRows([]flow.RunView{{State: merged}, {State: stopped}})
+	if len(rows) != 2 || rows[0].Result != "merged" || rows[1].Result != "" {
+		t.Fatalf("rows: %+v", rows)
+	}
+}

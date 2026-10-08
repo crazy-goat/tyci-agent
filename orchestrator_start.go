@@ -158,6 +158,9 @@ func runRows(views []flow.RunView) []display.TuiRunRow {
 	for _, v := range views {
 		st := v.State
 		r := display.TuiRunRow{ID: st.Run, Issue: st.Issue, Status: st.Status, State: st.Current, Role: v.Role, Since: st.UpdatedAt}
+		if flow.WasMerged(st) {
+			r.Result = "merged"
+		}
 		h := st.History
 		if len(h) > 3 {
 			h = h[len(h)-3:]

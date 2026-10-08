@@ -73,6 +73,22 @@ var sidebarTabNames = [sidebarTabCount]string{
 	sidebarTabRuns:     "Runs",
 }
 
+// sidebarTabLabel is the text of one tab in the tab row: its name with one
+// space of padding on each side. renderSidebarTabs and sidebarTabAtX both
+// read the width from here.
+func sidebarTabLabel(tab int) string {
+	return " " + sidebarTabNames[tab] + " "
+}
+
+// sidebarTabStart is the column offset of tab's label in the tab row.
+func sidebarTabStart(tab int) int {
+	start := 0
+	for i := 0; i < tab; i++ {
+		start += len(sidebarTabLabel(i))
+	}
+	return start
+}
+
 // openSidebar opens the sidebar on the given tab, saving scroll state the
 // same way every other full-screen overlay in this package does. Focus
 // always starts on the conversation (sidebarFocused = false), never
@@ -598,21 +614,18 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 // lay the tab row out — see sidebarLayoutT's doc comment for why both read
 // these two fields instead of each re-deriving its own offset. Returns -1
 // when x falls outside every tab (inside the border/padding margin, or past
-// the last tab's cell).
+// the last tab's label).
 func sidebarTabAtX(layout sidebarLayoutT, x int) int {
 	rel := x - layout.contentLeft
 	if rel < 0 || rel >= layout.contentWidth {
 		return -1
 	}
-	cell := layout.contentWidth / sidebarTabCount
-	if cell <= 0 {
-		return -1
+	for tab := 0; tab < sidebarTabCount; tab++ {
+		if rel < sidebarTabStart(tab)+len(sidebarTabLabel(tab)) {
+			return tab
+		}
 	}
-	idx := rel / cell
-	if idx < 0 || idx >= sidebarTabCount {
-		return -1
-	}
-	return idx
+	return -1
 }
 
 // sidebarActivateRow is Enter's (and a row click's) handler: what "open
