@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- TUI: the Subagents list on the sidebar Tasks tab shows the active subagents first, newest start first. A separator line follows them, then the finished subagents, most recently finished first. The cursor stays on the same subagent when it moves to the finished part (#526).
+
 ### Fixed
 - TUI: the Tasks tab shows the tokens and the cost of each row, `main` and the subagents, in two right-aligned columns at the right edge of the sidebar. The columns line up in all rows. In a narrow row, the label is cut first. Then the tokens are dropped, then the cost (#527).
 - TUI: the Runs tab shows the duration of a run in its own right-aligned column, just left of the cost. Durations and costs line up in all rows. In a narrow row, the label is cut first. Then the duration is dropped, then the cost (#525).
