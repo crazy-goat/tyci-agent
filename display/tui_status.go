@@ -16,8 +16,8 @@ func (m TuiModel) buildStatus() string {
 	leftParts := []string{}
 	rightParts := []string{}
 
-	if m.modelName != "" {
-		leftParts = append(leftParts, m.modelName)
+	if model := m.statusModelName(); model != "" {
+		leftParts = append(leftParts, model)
 	}
 
 	if m.scrollLine > 0 {
@@ -33,32 +33,8 @@ func (m TuiModel) buildStatus() string {
 		leftParts = append(leftParts, truncateStatusText(m.statusMessage, 60))
 	}
 
-	if !m.reading {
-		elapsed := time.Since(m.requestStartTime)
-		if elapsed < 0 {
-			elapsed = 0
-		}
-		elapsedSuffix := fmt.Sprintf(" %.1fs", elapsed.Seconds())
-
-		switch m.status {
-		case "sending":
-			leftParts = append(leftParts, "⟳ sending request..."+elapsedSuffix)
-		case "waiting":
-			leftParts = append(leftParts, "⟳ waiting for response..."+elapsedSuffix)
-		case "thinking":
-			leftParts = append(leftParts, "⟳ thinking..."+elapsedSuffix+m.throughputSuffix())
-		case "responding":
-			leftParts = append(leftParts, "⟳ responding..."+elapsedSuffix+m.throughputSuffix())
-		case "tool":
-			// Named, and timed from the tool's own start. "tool... 13.7s" was
-			// the one status that answered neither of the questions a person
-			// actually has while watching it: which tool, and how long has
-			// THAT been going. The 13.7s was the whole turn's elapsed, so a
-			// slow tool one second in looked identical to a wedged one.
-			leftParts = append(leftParts, m.runningToolsStatus(elapsedSuffix))
-		default:
-			leftParts = append(leftParts, "⟳ working..."+elapsedSuffix)
-		}
+	if state := m.statusState(); state != "" {
+		leftParts = append(leftParts, state)
 	}
 
 	// Two numbers, not twelve. The per-turn token breakdown, timings and
@@ -66,7 +42,7 @@ func (m TuiModel) buildStatus() string {
 	// status bar is glanced at, and the only two things worth a glance while
 	// working are how full the context is and what the session has cost so
 	// far. Clicking the context figure opens the tab with the rest.
-	if right := m.buildContextCost(); right != "" {
+	if right := m.buildStatusRight(); right != "" {
 		rightParts = append(rightParts, right)
 	}
 
@@ -75,6 +51,66 @@ func (m TuiModel) buildStatus() string {
 	}
 
 	return assembleStatusRow(strings.Join(leftParts, statusSep), strings.Join(rightParts, statusSep), m.width)
+}
+
+// statusModelName is the model part of the status bar: the main model, or the
+// viewed agent's model while an agent view is open.
+func (m TuiModel) statusModelName() string {
+	if m.agentView != nil {
+		return viewedAgentModel(m.agentView.jobID)
+	}
+	return m.modelName
+}
+
+// statusState is the state part of the status bar: what the conversation on
+// screen is doing. The main conversation shows nothing while it is idle.
+func (m TuiModel) statusState() string {
+	if m.agentView != nil {
+		return m.viewedAgentState()
+	}
+	if m.reading {
+		return ""
+	}
+	return m.liveStatus()
+}
+
+// liveStatus describes a busy model: the phase of its turn, how long the phase
+// has run, and the throughput of the current round.
+func (m TuiModel) liveStatus() string {
+	elapsed := time.Since(m.requestStartTime)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	elapsedSuffix := fmt.Sprintf(" %.1fs", elapsed.Seconds())
+
+	switch m.status {
+	case "sending":
+		return "⟳ sending request..." + elapsedSuffix
+	case "waiting":
+		return "⟳ waiting for response..." + elapsedSuffix
+	case "thinking":
+		return "⟳ thinking..." + elapsedSuffix + m.throughputSuffix()
+	case "responding":
+		return "⟳ responding..." + elapsedSuffix + m.throughputSuffix()
+	case "tool":
+		// Named, and timed from the tool's own start. "tool... 13.7s" was
+		// the one status that answered neither of the questions a person
+		// actually has while watching it: which tool, and how long has
+		// THAT been going. The 13.7s was the whole turn's elapsed, so a
+		// slow tool one second in looked identical to a wedged one.
+		return m.runningToolsStatus(elapsedSuffix)
+	default:
+		return "⟳ working..." + elapsedSuffix
+	}
+}
+
+// buildStatusRight is the right-hand side of the status bar. statusRightHit
+// measures the same string for its click target, so both use this function.
+func (m TuiModel) buildStatusRight() string {
+	if m.agentView != nil {
+		return m.buildAgentViewRight()
+	}
+	return m.buildContextCost()
 }
 
 // statusSep joins the items of both sides of the status bar. The right side
@@ -225,14 +261,14 @@ func (m TuiModel) statusBarY() int {
 }
 
 // statusRightHit reports whether screen column x falls within the status
-// bar's right-hand side (buildContextCost's rendered text plus its
+// bar's right-hand side (buildStatusRight's rendered text plus its
 // surrounding padding) — the "context figure" that opens the sidebar's
 // Tokens tab on click. Deliberately generous (the whole trailing run of
 // columns, not just the exact glyphs) rather than replicating buildStatus's
 // padding arithmetic pixel-for-pixel: a slightly wider click target is a
 // better trade than silently missing a click because of an off-by-one.
 func (m TuiModel) statusRightHit(x int) bool {
-	right := m.buildContextCost()
+	right := m.buildStatusRight()
 	if right == "" {
 		return false
 	}
