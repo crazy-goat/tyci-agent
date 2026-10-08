@@ -202,7 +202,7 @@ func (m TuiModel) sidebarLayout() sidebarLayoutT {
 	}
 
 	// Rows: title(1) + tabs(1) + separator(1) = 3 before content;
-	// separator(1) + footer(1) + hint(1) = 3 after it.
+	// separator(1) + hint(1) + key line(1) = 3 after it.
 	contentHeight := height - 6
 	if contentHeight < 1 {
 		contentHeight = 1
@@ -277,7 +277,9 @@ func (m TuiModel) renderSidebarColumn() string {
 	scroll := m.sidebarVisibleScrollForLineCount(layout, len(lines))
 	shown := 0
 	for i := scroll; i < len(lines) && shown < layout.contentHeight; i++ {
-		b.WriteString(lipgloss.NewStyle().Width(contentWidth).MaxWidth(contentWidth).Render(lines[i]))
+		// Cut the line before styling it. Width() alone wraps a long line
+		// onto a second row, which pushes the key line off the last row.
+		b.WriteString(lipgloss.NewStyle().Width(contentWidth).Render(ansi.Truncate(lines[i], contentWidth, "…")))
 		b.WriteString("\n")
 		shown++
 	}
@@ -290,10 +292,12 @@ func (m TuiModel) renderSidebarColumn() string {
 	b.WriteString(sepStyle.Render(strings.Repeat("─", contentWidth)))
 	b.WriteString("\n")
 
+	// The hint row comes first, so the key line is the last row on every
+	// tab, also on tabs where the hint is empty.
 	footerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Width(contentWidth)
-	b.WriteString(footerStyle.Render(truncateToWidth(m.sidebarFooter(), contentWidth)))
-	b.WriteString("\n")
 	b.WriteString(footerStyle.Render(truncateToWidth(m.sidebarHint(), contentWidth)))
+	b.WriteString("\n")
+	b.WriteString(footerStyle.Render(truncateToWidth(m.sidebarFooter(), contentWidth)))
 
 	borderColor := lipgloss.Color("63")
 	if m.sidebarFocused {
@@ -354,9 +358,10 @@ func (m TuiModel) sidebarFooter() string {
 	}
 }
 
-// sidebarHint is the second footer line: a standing note about the bounded,
-// process-local nature of job history (TODO item 1's "known limit"), shown
-// on the two tabs where it applies.
+// sidebarHint is the line above the key line (sidebarFooter): a standing note
+// about the bounded, process-local nature of job history (TODO item 1's
+// "known limit"), shown on the two tabs where it applies. It is empty on the
+// other tabs.
 func (m TuiModel) sidebarHint() string {
 	switch m.sidebarTab {
 	case sidebarTabTasks:
