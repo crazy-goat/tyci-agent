@@ -4,10 +4,10 @@
 # Every post starts with the marker line that fetch_comments.sh uses to
 # recognise the comments of the agent itself.
 #
-# Env in:  TYCI_PR, TYCI_REPO, TYCI_RUN_DIR. The report is report.md in the
-#          newest $TYCI_RUN_DIR/artifacts/NNN-review dir (highest NNN).
+# Env in:  TYCI_PR, TYCI_REPO, TYCI_REVIEW_DIR (the artifact dir of the newest review
+#          step, set by the runner). The review is report.md in that dir.
 # Keys:    ok    the review was posted
-#          skip  the run has no review report (it continued an open PR without a new review)
+#          skip  the run has no review step (it continued an open PR without a new review)
 #          fail  no PR, an empty review report, or gh failed (the runner records it, the run goes on)
 # Always exits 0.
 set -euo pipefail
@@ -17,22 +17,13 @@ describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
 
 pr="${TYCI_PR:-}"
-review=""
-best=-1
-for f in "${TYCI_RUN_DIR:-}"/artifacts/*-review/report.md; do
-    [ -e "$f" ] || continue
-    n=$(basename "$(dirname "$f")")
-    n=$((10#${n%%-*}))
-    if [ "$n" -gt "$best" ]; then
-        best=$n
-        review=$f
-    fi
-done
-if [ -z "$review" ]; then
-    echo "post_review.sh: this run has no review report (it continued an open PR of an earlier run); nothing to post" >&2
+review_dir="${TYCI_REVIEW_DIR:-}"
+if [ -z "$review_dir" ]; then
+    echo "post_review.sh: this run has no review step (it continued an open PR of an earlier run); nothing to post" >&2
     echo skip
     exit 0
 fi
+review="$review_dir/report.md"
 if [ -z "$pr" ] || [ ! -s "$review" ]; then
     describe fail "no PR number (TYCI_PR='$pr') or an empty review report ($review)" \
         "the reviewer wrote an empty report.md, or the run lost its PR number" \

@@ -107,9 +107,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					return saveErr
 				}
 			}
-			if note := doneProposalNote(st, r.RunDir); note != "" {
-				r.warn(note)
-			}
+			r.warnPendingProposal(st)
 			if (!ranAgent(st) || wasMerged(st)) && r.OnSkip != nil {
 				r.OnSkip(st)
 			}
@@ -149,7 +147,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				return r.fail(ctx, st, artErr.Error(), artErr)
 			}
 			started := time.Now()
-			env := append(buildCheckEnv(st, s, r.RunDir, r.DefaultBranch), "TYCI_ARTIFACT_DIR="+artDir)
+			env := append(buildCheckEnv(st, s, r.RunDir, r.DefaultBranch), "TYCI_ARTIFACT_DIR="+artDir, "TYCI_REVIEW_DIR="+r.reviewDir(st))
 			key, res, runErr := r.Checks.Run(ctx, s, env, st.Worktree)
 			ended := time.Now()
 			if artDir != "" {
@@ -459,6 +457,7 @@ func (r *Runner) fail(_ context.Context, st *RunState, reason string, err error)
 		_ = r.Store.Save(st)
 	}
 	r.notify("run " + st.Run + " failed: " + reason)
+	r.warnPendingProposal(st)
 	if err == nil {
 		return errors.New(reason)
 	}
@@ -484,6 +483,7 @@ func (r *Runner) failUnknownKey(st *RunState, cur, key, art string) error {
 		_ = r.Store.Save(st)
 	}
 	r.notify("run " + st.Run + " failed: " + reason)
+	r.warnPendingProposal(st)
 	return errors.New(reason)
 }
 
@@ -672,6 +672,14 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 func (r *Runner) warn(msg string) {
 	if r.Warn != nil {
 		r.Warn(msg)
+	}
+}
+
+// warnPendingProposal names a workflow proposal that the run never showed, when
+// the run ends without a pause.
+func (r *Runner) warnPendingProposal(st *RunState) {
+	if note := doneProposalNote(st, r.RunDir); note != "" {
+		r.warn(note)
 	}
 }
 
