@@ -69,7 +69,6 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			if r.Store != nil {
 				_ = r.Store.Save(st)
 			}
-			r.notify("run " + st.Run + " failed: " + st.Reason)
 			err = fmt.Errorf("%s", st.Reason)
 		}
 	}()
@@ -114,7 +113,6 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			if (!ranAgent(st) || WasMerged(st)) && r.OnSkip != nil {
 				r.OnSkip(st)
 			}
-			r.notify("run " + st.Run + " done")
 			return nil
 		}
 		if s.Ask != "" {
@@ -475,7 +473,6 @@ func (r *Runner) fail(_ context.Context, st *RunState, reason string, err error)
 	if r.Store != nil {
 		_ = r.Store.Save(st)
 	}
-	r.notify("run " + st.Run + " failed: " + reason)
 	r.warnPendingProposal(st)
 	if err == nil {
 		return errors.New(reason)
@@ -501,7 +498,6 @@ func (r *Runner) failUnknownKey(st *RunState, cur, key, art string) error {
 	if r.Store != nil {
 		_ = r.Store.Save(st)
 	}
-	r.notify("run " + st.Run + " failed: " + reason)
 	r.warnPendingProposal(st)
 	return errors.New(reason)
 }
@@ -533,12 +529,6 @@ func ranAgent(st *RunState) bool {
 		}
 	}
 	return false
-}
-
-func (r *Runner) notify(msg string) {
-	if r.Notify != nil {
-		r.Notify(msg)
-	}
 }
 
 // effectiveLimit returns the visit limit of a state: its own max_visits,
@@ -582,7 +572,6 @@ func (r *Runner) pause(st *RunState, message, reason string) error {
 			return err
 		}
 	}
-	r.notify("run " + st.Run + " paused: " + st.Ask.Message)
 	return ErrPaused
 }
 
@@ -668,7 +657,6 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 				return err
 			}
 		}
-		r.notify("run " + st.Run + " done")
 		return nil
 	}
 	if !r.WF.States[next].End && !restart {
