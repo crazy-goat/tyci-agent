@@ -134,6 +134,13 @@ func TestVerdict_AcceptChangesAndGarbage(t *testing.T) {
 		{"CHANGES", "CHANGES", false},
 		{"", "CHANGES", true},
 		{"accept\n", "CHANGES", true},
+		{"CHANGES\n# Verdict: ACCEPT\n", "CHANGES", false},
+		{"# Review report — issue #470\n\nVerdict: ACCEPT\n\n- nit\n", "ACCEPT", false},
+		{"# Review report\n\n**ACCEPT**\n", "ACCEPT", false},
+		{"## Review\n\n**Verdict:** CHANGES\n\n1. fix it\n", "CHANGES", false},
+		{"# Review\n\nACCEPT\n\nlater\n\nCHANGES\n", "CHANGES", true},
+		{"# Review\n\nACCEPT the change\n", "CHANGES", true},
+		{"# Review\n\nno verdict here\n", "CHANGES", true},
 	}
 	for _, c := range cases {
 		d := t.TempDir()
