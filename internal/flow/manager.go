@@ -281,6 +281,9 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 		if st.Reason != "" {
 			text += ": " + st.Reason
 		}
+		if st.Current != "" {
+			text += " (step " + st.Current + ")"
+		}
 	}
 	m.Notify(text)
 }
