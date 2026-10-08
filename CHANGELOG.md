@@ -6,8 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Flow: the fixer and oracle caps apply to the workflow states named `fixer` and `oracle`. Before, they applied to the agent role names, so a custom workflow with other role names had no caps. The caps do not change: the fixer runs at most 2 times, the oracle once per failed step (#385).
+
+### Removed
+- Lua workflows: the `.tyci/agents/*.lua` scripts and the `tyci workflow run` and `tyci workflow list` commands are removed. Use JSON workflows (v0.3.0) instead. `tyci workflow eject` stays.
+
 ### Fixed
 - TUI: mouse wheel events no longer appear as text in the input box. A fast burst of wheel events could split an escape sequence at the read buffer end, and the input box then received it as text. A lone Esc key is released after 50 ms. Pasted text that looks like a mouse event is inserted (#426).
+- Flow: two `tyci` processes that resume the same run at the same time take a lock in the run dir (`claim.lock`). Only one process claims the run (#350).
+- Flow: a `workflow_start` of an issue refuses a run that another live `tyci` process owns. It returns a busy error and does not create a second run (#350).
+- Flow: a resumed run counts a visit of a state when the crash came after the state change and before the visit was saved. This applies to the first entry and to a later entry of the state. No visit is lost. The file `state.json` has the new field `entry_pending` for this check (#350).
+- Flow: a `workflow_start` that resumes a run counts the run as a worker. When `orchestrator.workers` runs are active, the resume is refused and the run stays stale. The orchestrator takes the slot of the resumed run at its next fill (#350).
 - Flow: a resumed agent job redacts the messages it writes after the resume, as its run transcript does. Before, these messages were written without redaction (#363).
 - Flow: the answer `resume` for a run paused at start-up keeps the visit counts of its saved state; it no longer counts a new visit. A run adopted by the orchestrator is forgotten when it ends (#388).
 - Flow: the answer `resume` for a run paused at start-up is refused while `orchestrator.workers` runs are active. The run stays paused. The refusal names the limit (#388).

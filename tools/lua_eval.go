@@ -237,11 +237,10 @@ func restrictLuaStdlib(L *lua.LState, env *luaEnv) {
 //
 // Exported (unlike the "lua" tool's own restrictLuaStdlib wrapper above) so
 // every other Lua host in the codebase gets the identical restriction
-// instead of a hand-rolled, easily-drifting copy — currently
-// internal/workflow's orchestration engine, whose Lua VM used to be a bare
-// lua.NewState() with the full standard library open, letting a
-// project-local .tyci/agents/*.lua script call os.execute/io.open directly
-// and bypass every tool-layer protection (pre_tool/post_tool hooks, the
+// instead of a hand-rolled, easily-drifting copy — currently the check
+// runtime of internal/flow (check_lua.go). Without it, a Lua host with the
+// full standard library open could call os.execute/io.open directly and
+// bypass every tool-layer protection (pre_tool/post_tool hooks, the
 // write-freshness guard, tool gating) the same way a "lua" tool script would
 // have before this function existed. Callers that want their own print
 // binding (as this file's restrictLuaStdlib does, onto log()) set it

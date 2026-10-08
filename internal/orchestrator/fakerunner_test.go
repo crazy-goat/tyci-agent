@@ -102,6 +102,12 @@ func (r *fakeRunner) Adoptable() []int {
 	return append(append([]int(nil), r.resumed...), r.paused...)
 }
 
+func (r *fakeRunner) AdoptableResumed() []int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]int(nil), r.resumed...)
+}
+
 func (r *fakeRunner) Adopt(_ context.Context, n int) (RunHandle, bool, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

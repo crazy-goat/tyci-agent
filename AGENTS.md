@@ -20,7 +20,7 @@ macOS and Linux only; Windows is not a supported target (unix-only syscalls).
 | `tools/` | Built-in tools (bash, read, write, edit, subagent, wait, lua, MCP, ...) |
 | `display/` | TUI, console and minimal frontends |
 | `session/`, `jobs/`, `locks/`, `eventbus/`, `stream/` | Sessions, background jobs, locks, events, streaming |
-| `internal/` | MCP client, cron, hooks, skills, readline, workflow engine, config |
+| `internal/` | MCP client, cron, hooks, skills, readline, workflow runner (`flow/`), config |
 | `internal/agentdefs/builtin/*.md` | Agent definitions embedded in the binary (code, not docs) |
 | `docs/` | Design notes, test plans and process docs |
 | `TODO.md` | Backlog notes that source comments refer to |
