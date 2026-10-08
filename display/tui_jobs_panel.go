@@ -194,16 +194,42 @@ func quietSince(j jobs.Job) (d time.Duration, ok bool) {
 // "stuck": a legitimate multi-minute test run that produces no output is
 // silent and entirely fine, not a malfunction to flag alarmingly.
 func formatJobLine(j jobs.Job, width int) string {
+	prefix := jobLinePrefix(j, lipgloss.Width(shortJobID(j.ID)))
+	suffix := " " + jobLineDuration(j)
+	text := jobLineText(j)
+	// Reserve room for prefix/suffix (measured without ANSI codes via
+	// lipgloss.Width, which strips styling) before truncating the
+	// description into what's left.
+	avail := width - lipgloss.Width(prefix) - lipgloss.Width(suffix)
+	if avail < 1 {
+		avail = 1
+	}
+	desc := truncateString(text, avail)
+	return truncateToWidth(prefix+desc+suffix, width)
+}
+
+// sidebarJobLine renders one Bash job for the sidebar Tasks tab, fitted to
+// width cells. idWidth is the width of the widest id in the list (see
+// jobLinePrefix). The duration sits at the right edge. The description fills
+// the space between, and it is cut first.
+func sidebarJobLine(j jobs.Job, width, idWidth int) string {
+	return lineWithRight(jobLinePrefix(j, idWidth)+jobLineText(j), jobLineDuration(j), width)
+}
+
+// jobLinePrefix returns the status column of a job line: the icon, the short
+// id, and the status. The id is right-aligned in idWidth cells, so the status
+// starts in the same column for every id of one list.
+func jobLinePrefix(j jobs.Job, idWidth int) string {
 	icon, color := jobStatusIcon(j.Status)
 	iconStyled := lipgloss.NewStyle().Foreground(color).Render(icon)
 	// %-14s: "waiting_answer" (14 chars) is the longest Status value: a
 	// narrower field left this column ragged for exactly the status the
 	// jobs panel most needs to read cleanly at a glance.
-	prefix := fmt.Sprintf("%s #%s %-14s ", iconStyled, shortJobID(j.ID), j.Status)
-	suffix := fmt.Sprintf(" (%s)", jobDuration(j))
-	if quiet, ok := quietSince(j); ok && quiet >= quietActivityThreshold {
-		suffix = fmt.Sprintf(" (%s · quiet %s)", jobDuration(j), quiet)
-	}
+	return fmt.Sprintf("%s #%s %-14s ", iconStyled, padLeft(shortJobID(j.ID), idWidth), j.Status)
+}
+
+// jobLineText returns the description of a job line, with the progress note.
+func jobLineText(j jobs.Job) string {
 	text := j.Description
 	if j.Status == jobs.StatusWaitingAnswer && j.Question != "" {
 		text = fmt.Sprintf("asks: %q", j.Question)
@@ -217,15 +243,16 @@ func formatJobLine(j jobs.Job, width int) string {
 		}
 		text += "progress: " + j.Progress
 	}
-	// Reserve room for prefix/suffix (measured without ANSI codes via
-	// lipgloss.Width, which strips styling) before truncating the
-	// description into what's left.
-	avail := width - lipgloss.Width(prefix) - lipgloss.Width(suffix)
-	if avail < 1 {
-		avail = 1
+	return text
+}
+
+// jobLineDuration returns the duration note of a job line, for example
+// "(54s)" or "(49s · quiet 49s)".
+func jobLineDuration(j jobs.Job) string {
+	if quiet, ok := quietSince(j); ok && quiet >= quietActivityThreshold {
+		return fmt.Sprintf("(%s · quiet %s)", jobDuration(j), quiet)
 	}
-	desc := truncateString(text, avail)
-	return truncateToWidth(prefix+desc+suffix, width)
+	return fmt.Sprintf("(%s)", jobDuration(j))
 }
 
 // renderJobsPanel renders the inline background-jobs panel that appears
