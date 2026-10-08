@@ -19,42 +19,20 @@ func (m *TuiModel) totalRenderedLines() int {
 		return m.cachedTotalLines
 	}
 	total := 0
-	for i, b := range m.blocks {
-		lc := b.cachedLineCount
-		// A flushed block's cachedLineCount was computed for the width it was
-		// flushed at (b.flushedWidth), not necessarily the width the
-		// transcript renders at now (renderWidth: full m.width, or the
-		// narrowed main column while the sidebar is open). On resize — or a
-		// sidebar open/close, which changes renderWidth too —
-		// invalidateAllBlockLineCounts deliberately leaves flushed blocks'
-		// counts untouched (they're re-wrapped lazily, only when actually
-		// scrolled into view) — but that means a nonzero cachedLineCount here
-		// can be stale. getBlockLines pages the block back in via
-		// ensureBlockResident, which re-wraps for renderWidth and fixes up
-		// cachedLineCount, so route through it instead of trusting the cached
-		// count directly. Without this, this total silently disagrees with
-		// what buildAllFlatRenderLines/buildFlatRenderLinesInRange actually
-		// produce (they always call getBlockLines), which shows up as bogus
-		// viewport-pad rows hiding real scrollback content.
-		stale := b.flushed && b.flushedWidth != 0 && b.flushedWidth != m.renderWidth()
-		if lc == 0 || stale {
-			// Try to get lines (renders if needed)
-			lines := m.getBlockLines(i, false)
-			if lines == nil {
-				continue
+	for first := 0; first < len(m.blocks); {
+		last := m.unitEnd(first)
+		// Counts and flat lines must agree exactly (see unitLineCount): an
+		// over-count here scrolls past the end of the transcript and every
+		// viewport row comes back as padding, i.e. a blank screen.
+		if n := m.unitLineCount(first, last); n > 0 {
+			total += n
+			// Separator blank line after the unit — the same rule the flat-line
+			// builders use, via the same helper (see spacerAfter).
+			if m.spacerAfter(last) {
+				total++
 			}
-			lc = len(lines)
 		}
-		total += lc
-		// Separator blank line between blocks — the same rule the flat-line
-		// builders use, via the same helper. These counts and those lines
-		// must agree exactly: an over-count here scrolls past the end of the
-		// transcript and every viewport row comes back as padding, i.e. a
-		// blank screen.
-		if !m.spacerAfter(i) {
-			continue
-		}
-		total++
+		first = last + 1
 	}
 	// No trailing adjustment: spacerAfter already reports false for the last
 	// block, so nothing was added past the end. Subtracting one here — as
@@ -212,55 +190,35 @@ func (m TuiModel) messageRegionHeight() int {
 	return max(1, m.visibleLines()-m.queuePanelHeight()-m.jobsPanelHeight()-m.fileCompleteHeight())
 }
 
-func (m *TuiModel) blockAtVisibleLine(visY int) int {
+// visibleLine returns the transcript line drawn on screen row visY (0 = first
+// message row). ok is false for a row outside the transcript.
+func (m *TuiModel) visibleLine(visY int) (flatRenderLine, bool) {
 	// Use the cached render buffer from the last View() call for fast lookup.
-	// The buffer is rebuilt on every render and maps screen Y → block index.
+	// The buffer is rebuilt on every render and maps screen Y → source line.
 	if visY >= 0 && visY < len(m.renderBuffer.Lines) {
-		return m.renderBuffer.Lines[visY].BlockIndex
+		rl := m.renderBuffer.Lines[visY]
+		return flatRenderLine{Text: rl.Text, SourceKind: rl.SourceKind, BlockIndex: rl.BlockIndex, SourceLine: rl.SourceLine}, true
 	}
-	// Fallback when View() hasn't been called yet (e.g., in tests):
-	// compute the block index by iterating with accumulated line counts.
+	// Fallback when View() hasn't been called yet (e.g., in tests): work the
+	// window out from the line counts, the same way the renderer does.
 	if visY < 0 {
-		return -1
+		return flatRenderLine{}, false
 	}
 	msgHeight := m.messageRegionHeight()
 	totalLines := m.totalRenderedLines()
 	var startLine int
 	if totalLines > msgHeight {
-		startLine = totalLines - msgHeight - m.scrollLine
-		if startLine < 0 {
-			startLine = 0
-		}
+		startLine = max(0, totalLines-msgHeight-m.scrollLine)
 	}
 	targetLine := startLine + visY
 	if targetLine < 0 || targetLine >= totalLines {
-		return -1
+		return flatRenderLine{}, false
 	}
-	acc := 0
-	for i, b := range m.blocks {
-		lc := b.cachedLineCount
-		if lc == 0 {
-			lines := m.getBlockLines(i, false)
-			if lines == nil {
-				continue
-			}
-			lc = len(lines)
-		}
-		blockEnd := acc + lc
-		if targetLine < blockEnd {
-			return i
-		}
-		// Account for the spacer, by the shared rule (see spacerAfter).
-		if m.spacerAfter(i) {
-			// Spacer occupies exactly one line at blockEnd.
-			if targetLine == blockEnd {
-				return -1 // spacer line — not part of any block
-			}
-			blockEnd++
-		}
-		acc = blockEnd
+	lines := m.buildFlatRenderLinesInRange(targetLine, targetLine)
+	if len(lines) == 0 {
+		return flatRenderLine{}, false
 	}
-	return -1
+	return lines[0], true
 }
 
 // ─── View ─────────────────────────────────────────────────────────────────

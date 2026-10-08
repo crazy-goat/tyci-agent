@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- TUI: consecutive tool and thinking steps in the chat form one group line. The group is collapsed by default (#399).
+- TUI: while a step runs, the group line shows the step count and the latest step. When all steps finish, it shows the counts and the total time.
+- TUI: a click on the group line, or Ctrl+O, expands or collapses the group. A single step is not grouped.
 - Flow: the fixer and oracle caps apply to the workflow states named `fixer` and `oracle`. Before, they applied to the agent role names, so a custom workflow with other role names had no caps. The caps do not change: the fixer runs at most 2 times, the oracle once per failed step (#385).
 
 ### Removed
