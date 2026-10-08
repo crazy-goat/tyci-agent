@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Flow: when a fixer answers `ok` and the run ends, tyci names the workflow proposal in a notice. Before, a run that did not pause never showed it. A done run cannot answer the proposal (#392).
+- TUI: the status bar shows the context percentage for a model with a known context limit. The lookup did not get the provider, so a `provider/model` name never found its limit (#331).
 
 ## [0.5.0] - 2026-10-08
 

@@ -16,7 +16,13 @@ import (
 // not know the model's limit, since a percentage of an unknown is nonsense.
 func (m TuiModel) contextUsed() (used, limit int, ok bool) {
 	used = m.lastUsage.Input + m.lastUsage.Output
-	_, lim := pricing.Lookup("", m.modelName)
+	// The status bar shows "provider/model". Only the first slash separates
+	// the provider, since a model id may contain slashes itself.
+	provider, model, found := strings.Cut(m.modelName, "/")
+	if !found {
+		provider, model = "", m.modelName
+	}
+	_, lim := pricing.Lookup(provider, model)
 	if lim.Context <= 0 {
 		return used, 0, false
 	}
