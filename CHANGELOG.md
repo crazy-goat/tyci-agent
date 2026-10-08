@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: the failed run notice names the step where the run stopped. A run that fails after a fixer answers `ok` also names the pending workflow proposal (#333).
 - Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
 - Cost: a model id that several providers list gets the same rates and limits on each lookup without a provider. The status bar context percentage and the step cost do not change between calls (#419).
+- Watchdog: a role agent and a backgrounded subagent that stream output count as active. Before, their streamed text did not reset the job's activity time, so the watchdog reported a busy agent as idle after 3 minutes (#437).
 
 ## [0.5.0] - 2026-10-08
 

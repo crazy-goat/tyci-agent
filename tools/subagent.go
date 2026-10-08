@@ -1519,7 +1519,10 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		}
 		c = newStreamingCollector(ctx, toolIdx)
 	} else {
-		c = &streamingCollector{collector: newCollector()}
+		// Not forwarded to the parent, but the tokens still show that the
+		// job is alive, so the job id is kept (see streamingCollector.jobID).
+		jobID, _ := ctx.Value(JobIDCtxKey{}).(string)
+		c = &streamingCollector{collector: newCollector(), jobID: jobID}
 	}
 
 	// Hand the runner our forwarding Sink via context (see SubagentSink's
