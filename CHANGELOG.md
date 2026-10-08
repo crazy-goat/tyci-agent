@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `tyci console` and the `minimal`, `normal` and `interactive` display modes. Use `tyci tui` (interactive) or `tyci run --prompt` (one-shot) (#189).
 
 ### Fixed
+- Flow: the review verdict is also read from a `report.md` that starts with a heading. Before, a report whose first line was not exactly `ACCEPT` or `CHANGES` gave `CHANGES`, so a run paused on `max_visits` after three rounds although every review accepted. The verdict is now the only line that reads `ACCEPT` or `CHANGES`, with an optional `Verdict:` prefix and Markdown markers. Both verdicts, or none, still give `CHANGES` (#470).
 - TUI: mouse wheel events no longer appear as text in the input box. A fast burst of wheel events could split an escape sequence at the read buffer end, and the input box then received it as text. A lone Esc key is released after 50 ms. Pasted text that looks like a mouse event is inserted (#426).
 - Flow: two `tyci` processes that resume the same run at the same time take a lock in the run dir (`claim.lock`). Only one process claims the run (#350).
 - Flow: a `workflow_start` of an issue refuses a run that another live `tyci` process owns. It returns a busy error and does not create a second run (#350).
