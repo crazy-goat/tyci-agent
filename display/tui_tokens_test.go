@@ -151,7 +151,9 @@ func TestBuildContextCost_LimitFromProviderPrefixedModel(t *testing.T) {
 	writeTestCatalog(t, dir, `{
 		"acme":{"id":"acme","models":{"big":{"id":"big","name":"Big","limit":{"context":100000,"output":8000}}}},
 		"other":{"id":"other","models":{"ox-alpha":{"id":"ox-alpha","name":"Other","limit":{"context":50000,"output":8000}}}},
-		"openrouter":{"id":"openrouter","models":{"stealth/ox-alpha":{"id":"stealth/ox-alpha","name":"Ox","limit":{"context":200000,"output":8000}}}}
+		"openrouter":{"id":"openrouter","models":{"stealth/ox-alpha":{"id":"stealth/ox-alpha","name":"Ox","limit":{"context":200000,"output":8000}}}},
+		"anthropic":{"id":"anthropic","models":{"claude-sonnet-4-5":{"id":"claude-sonnet-4-5","name":"Claude Sonnet 4.5","limit":{"context":1000000,"output":64000}}}},
+		"gw":{"id":"gw","models":{"anthropic/claude-sonnet-4-5":{"id":"anthropic/claude-sonnet-4-5","name":"Gateway Sonnet","limit":{"context":200000,"output":64000}}}}
 	}`)
 	t.Setenv("HOME", dir)
 	pricing.Reset()
@@ -162,6 +164,9 @@ func TestBuildContextCost_LimitFromProviderPrefixedModel(t *testing.T) {
 	for _, c := range []struct{ model, want string }{
 		{"acme/big", "ctx 10k (10%)"},
 		{"openrouter/stealth/ox-alpha", "ctx 10k (5%)"},
+		// A gateway lists the same id with its own limit. The named
+		// provider's limit wins, so the share is 1%, not 5%.
+		{"anthropic/claude-sonnet-4-5", "ctx 10k (1%)"},
 		// A bare model id may contain a slash. Its own limit wins over the
 		// limit of another provider's model with the same tail, "ox-alpha".
 		{"stealth/ox-alpha", "ctx 10k (5%)"},
