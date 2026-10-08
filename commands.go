@@ -622,11 +622,6 @@ var tuiCmd = &cobra.Command{
 		// in the TUI's background-jobs panel/modal (Ctrl+B).
 		tuiDisp.SetJobEventBus(jobEventBus)
 
-		// Wire the sidebar's Sessions tab (TODO item 1) to the same
-		// cwd-scoped session listing bare "/resume" already uses (tui_mode.go)
-		// — reusing session.ResumeEntries rather than the display package
-		// importing "session" itself (same layering rule as jobs/tools).
-		tuiDisp.SetTranscriptProvider(buildTranscriptProvider())
 		// Cache the rows: View() calls this on every frame. Only the Bubble Tea
 		// goroutine calls it, so no lock. Detecting the repo runs git
 		// subprocesses, and the repo does not change during a session, so it
@@ -649,6 +644,10 @@ var tuiCmd = &cobra.Command{
 			}
 			return runRowsCache
 		})
+		// Wire the sidebar's Sessions tab (TODO item 1) to the same
+		// cwd-scoped session listing bare "/resume" already uses (tui_mode.go)
+		// — reusing session.ResumeEntries rather than the display package
+		// importing "session" itself (same layering rule as jobs/tools).
 		tuiDisp.SetSessionLister(func() []display.TuiResumeEntry {
 			wd, _ := os.Getwd()
 			entries, err := session.ResumeEntries(wd)

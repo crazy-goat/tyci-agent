@@ -6,7 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- TUI: the `main` row in the sidebar Tasks tab can be selected. Enter or a click on a subagent row shows that agent's conversation in the main window, and it updates live. The header names the viewed agent. Enter on `main`, or Esc, shows the main conversation again with its scroll position. Input still goes to the main conversation. Resumed jobs, promoted /btw jobs and /btw evaluations show their conversation the same way (#453).
+
 ### Changed
+- TUI: Enter or a click on a subagent row in the Tasks tab no longer opens the read-only transcript modal. It shows the live conversation in the main window instead (#453).
 - `tyci run --prompt` prints only the final answer on stdout, with one trailing newline. Tool calls and progress are no longer printed; errors, retry and fallback notices go to stderr (#189).
 - TUI: consecutive tool and thinking steps in the chat form one group line. The group is collapsed by default (#399).
 - TUI: while a step runs, the group line shows the step count and the latest step. When all steps finish, it shows the counts and the total time.

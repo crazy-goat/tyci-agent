@@ -357,6 +357,8 @@ func TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread(t *testin
 		delete(btwEvaluations, evaluationID)
 		btwEvaluationsMu.Unlock()
 	}()
+	// The evaluation's own streamed answer, as its live transcript holds it.
+	tools.RecordLiveEvent(evaluationID, tools.LiveEvent{Kind: "text", Content: "side analysis"})
 
 	before := len(reg.List())
 	handle, err := (btwPromotionAdapter{}).Promote(context.Background(), evaluationID)
@@ -376,6 +378,12 @@ func TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread(t *testin
 	}
 	if !strings.Contains(job.Result, "promoted result") {
 		t.Fatalf("unexpected promoted result %q", job.Result)
+	}
+	// The agent view of the promoted job starts with the evaluation's answer
+	// and then shows the promoted run, so Enter on its row has a conversation.
+	live, ok := tools.LiveTranscriptSince(handle.ID(), 0)
+	if !ok || len(live) < 2 || live[0].Content != "side analysis" || !strings.Contains(liveTextOf(live), "promoted result") {
+		t.Fatalf("promoted job live transcript = %+v (ok=%v), want the evaluation answer then the promoted result", live, ok)
 	}
 	requests := fake.Requests()
 	if len(requests) != 1 {

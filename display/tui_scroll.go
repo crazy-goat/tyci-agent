@@ -15,6 +15,9 @@ func truncateString(s string, maxLen int) string {
 // occupy when rendered, including separator blank lines between blocks.
 // Uses cached value when available; call invalidateTotalLines() to force recompute.
 func (m *TuiModel) totalRenderedLines() int {
+	if m.agentView != nil {
+		return m.agentView.model.totalRenderedLines()
+	}
 	if m.cachedTotalLines >= 0 {
 		return m.cachedTotalLines
 	}

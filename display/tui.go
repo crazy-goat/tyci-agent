@@ -533,21 +533,9 @@ type TuiModel struct {
 	// nil means it was never wired.
 	runLister func() []TuiRunRow
 
-	// transcriptProvider, when set (via TUI.SetTranscriptProvider, called
-	// once from main()), returns the full conversation transcript for a
-	// finished subagent job id. The provider copies under resumableMu and
-	// converts to display lines off the lock, so the viewer never imports
-	// connector.Message. nil means "never wired" (tests); the viewer
-	// falls back to the job result modal.
-	transcriptProvider TranscriptProvider
-
-	// transcriptViewer is a read-only viewer for a finished subagent's
-	// transcript (item 49). Separate from subagentModal* so an open result
-	// modal is never clobbered. Read-only: never touches m.blocks or m.reading.
-	transcriptViewerActive bool
-	transcriptViewerTitle  string
-	transcriptViewerLines  []string
-	transcriptViewerScroll int
+	// agentView is non-nil while the main window shows a subagent's live
+	// conversation instead of the main one (see tui_agent_view.go).
+	agentView *agentView
 }
 
 func newModel(submitResult chan<- string, modelName string, historyPath string, models []string, modelChanges chan<- string, allProviders []ProviderModels, cancelCh chan<- struct{}, favoriteModels []string, onFavoriteToggled func(model string, favorite bool), defaultModel string, onDefaultChanged func(string), toolCount int, skillCount int, mcpCount int) TuiModel {
