@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- TUI: the sidebar key line is on the last row on every tab. On the Tasks tab, the history note is now above the key line. A long line in a sidebar tab is cut at the sidebar width with "…" and no longer wraps onto an extra row (#514).
+
 ## [0.6.0] - 2026-10-08
 
 ### Added
