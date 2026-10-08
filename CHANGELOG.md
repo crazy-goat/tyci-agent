@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: `post_review.sh` posts the review of a workflow whose review state has another name. Before, it looked only for a state named `review`, so the review was not posted (#356).
 - Flow: a resumed run posts its review when the workflow renamed the review state. Each agent step in the `state.json` history has a new field, `task`. The run finds the review by the role of the step. Before, `post_review.sh` skipped the review (#403).
 - Cost: a model id that several providers list gets the same rates and limits on each lookup without a provider. The status bar context percentage and the step cost do not change between calls (#419).
-- Agent: the reminder about background jobs at the end of a turn is sent only for a job that waits for an answer. A running job, such as a workflow run, sends its own notice when it ends, so it no longer makes the model nag while it runs (#448).
+- Agent: in the console and the TUI, the reminder about background jobs at the end of a turn is sent only for a job that waits for an answer. A running job, such as a workflow run, sends its own notice when it ends, so it no longer makes the model nag while it runs. `tyci run` still reminds about running jobs, because nothing reads their notices there (#448).
 
 ## [0.5.0] - 2026-10-08
 
