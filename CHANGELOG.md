@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `tyci console` and the `minimal`, `normal` and `interactive` display modes. Use `tyci tui` (interactive) or `tyci run --prompt` (one-shot) (#189).
 
 ### Fixed
+- Flow: a new issue worktree runs the repository's executable `bin/worktree-setup.sh`. Unlike `bin/worktree.sh`, tyci does not write `.env.worktree` or set `COMPOSE_PROJECT_NAME` before the script runs. A failing or cancelled script stops the run before it starts. The run removes the worktree and its branch, so a retry works (#449).
 - TUI: a click on the sidebar Sessions tab no longer freezes the UI. The session list loads in the background and is cached for 5 seconds. The Runs tab detects the repository once per session. Closing the resume picker during a turn no longer blocks the event loop (#462).
 - Flow: the review verdict is also read from a `report.md` that starts with a heading. Before, a report whose first line was not exactly `ACCEPT` or `CHANGES` gave `CHANGES`, so a run paused on `max_visits` after three rounds although every review accepted. The verdict is now the only line that reads `ACCEPT` or `CHANGES`, with an optional `Verdict:` prefix and Markdown markers. Both verdicts, or none, still give `CHANGES` (#470).
 - TUI: mouse wheel events no longer appear as text in the input box. A fast burst of wheel events could split an escape sequence at the read buffer end, and the input box then received it as text. A lone Esc key is released after 50 ms. Pasted text that looks like a mouse event is inserted (#426).
