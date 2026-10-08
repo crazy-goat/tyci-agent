@@ -179,6 +179,8 @@ A failed run adds the field `error` with the reason. `validate` prints the list 
 
 If the project is not trusted, tyci skips the workflows in `.tyci/workflows/` and prints a note on stderr. Run `tyci tui` in the directory to get the trust question. Or edit `~/.tyci/trust.json`.
 
+The agents of a run use the same providers, hooks, Lua tools and MCP servers as `tyci run`. In a project that is not trusted, tyci does not load the project-local hooks, Lua tools and MCP servers.
+
 `validate` checks the workflow the same way a run checks it. It does not start a run or change a file.
 
 `status` searches the runs of every repository under `~/.tyci/runs/`, so it needs no `--dir`. If more than one repository has the run id, the command fails and lists the state files.

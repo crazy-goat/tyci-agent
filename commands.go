@@ -93,6 +93,11 @@ func registerProviders() {
 	providers.RegisterProvidersFromConfig(connect.ModelJSONPath())
 }
 
+// setRetryConfig sets the retry policy of the providers from --max-retries.
+func setRetryConfig(maxRetries int) {
+	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: maxRetries, BaseBackoff: 4, MaxBackoff: 128}
+}
+
 // warnProjectUntrusted prints the one untrusted-project warning. It names
 // the four pieces setupProjectLocalEnv skips for an untrusted project.
 func warnProjectUntrusted() {
@@ -256,7 +261,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	}
 
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
-	providers.DefaultRetryConfig = api.RetryConfig{MaxRetries: maxRetries, BaseBackoff: 4, MaxBackoff: 128}
+	setRetryConfig(maxRetries)
 
 	// The model comes from "default_model" in ~/.tyci/config.json. A project
 	// file <wd>/.tyci/config.json can set it too (see agent.LoadTyciConfig).

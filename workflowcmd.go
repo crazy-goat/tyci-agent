@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,6 +76,9 @@ var (
 // because a real run needs a GitHub origin.
 var workflowRepoInfo = flow.DetectRepoAt
 
+// workflowSpawn runs one agent of a workflow run. Tests replace it with a stub.
+var workflowSpawn = tools.RunSubagentTask
+
 // workflowResult is the one JSON object that the headless workflow commands
 // print on stdout with --json.
 type workflowResult struct {
@@ -121,7 +125,9 @@ stderr. Exit code 0 means done or paused. Exit code 1 means failed or invalid.`,
 
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 		defer stop()
-		m := flow.NewManager(func(text string) { fmt.Fprintln(cmd.ErrOrStderr(), text) }, tools.RunSubagentTask)
+		ctx, shutdown := setupWorkflowAgents(ctx, cmd, info)
+		defer shutdown()
+		m := flow.NewManager(func(text string) { fmt.Fprintln(cmd.ErrOrStderr(), text) }, workflowSpawn)
 		m.Info = func() (flow.RepoInfo, error) { return info, nil }
 		m.SetBase(ctx)
 		events := make(chan flow.RunEvent, 16)
@@ -132,7 +138,11 @@ stderr. Exit code 0 means done or paused. Exit code 1 means failed or invalid.`,
 		if err != nil {
 			return fail(cmd, jsonOut, err)
 		}
-		awaitRun(events, runID)
+		// The command context, not ctx: Ctrl+C must let the runner save its
+		// final state first. Only a deadline (set by tests) ends the wait early.
+		if err = awaitRun(cmd.Context(), events, runID); err != nil {
+			return fail(cmd, jsonOut, fmt.Errorf("run %s did not report its end: %w", runID, err))
+		}
 		runDir := flow.RunDir(info.Home, info.Name(), runID)
 		st, err := flow.Load(runDir)
 		if err != nil {
@@ -200,13 +210,32 @@ means failed, unknown or ambiguous.`,
 }
 
 // awaitRun returns when run id reports its final status (done, failed or paused).
-func awaitRun(events <-chan flow.RunEvent, id string) {
+// It returns the error of ctx when ctx ends first, so a run that never reports
+// does not block the command.
+func awaitRun(ctx context.Context, events <-chan flow.RunEvent, id string) error {
 	for {
-		ev := <-events
-		if ev.Run == id && ev.Status != "running" {
-			return
+		select {
+		case ev := <-events:
+			if ev.Run == id && ev.Status != "running" {
+				return nil
+			}
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
+}
+
+// setupWorkflowAgents gives the agents of a run the environment that tyci run
+// gives its agent: the providers, the retry and timeout settings, and the
+// project-local hooks, Lua tools, cron dir and MCP servers. info.Trusted decides
+// the project-local parts. MCP servers are connected, as in tyci run, so an agent
+// has the same tools in every mode. The returned shutdown must be deferred.
+func setupWorkflowAgents(ctx context.Context, cmd *cobra.Command, info flow.RepoInfo) (context.Context, func()) {
+	registerProviders()
+	maxRetries, _ := cmd.Flags().GetInt("max-retries")
+	setRetryConfig(maxRetries)
+	noMCP, _ := cmd.Flags().GetBool("no-mcp")
+	return setupProjectLocalEnv(ctx, info.Root, info.Trusted, true, noMCP)
 }
 
 // runResult maps a saved run state to the result object. A failed run carries

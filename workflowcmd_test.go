@@ -2,26 +2,38 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/flow"
+	"github.com/crazy-goat/tyci-agent/internal/hooks"
 	"github.com/crazy-goat/tyci-agent/internal/trust"
 	"github.com/crazy-goat/tyci-agent/session"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 const wfOKScript = "#!/bin/sh\nexit 0\n"
 
+// wfCommandTimeout ends a workflow command that does not report its end, so a
+// broken run fails the test instead of hanging until the test timeout.
+const wfCommandTimeout = time.Minute
+
 // wfHome isolates HOME, so the roles, runs and trust of a developer do not leak in.
+// The empty providers.json stops a run from fetching the models.dev catalog.
 func wfHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	wfWrite(t, filepath.Join(home, ".tyci", "providers.json"), "{}")
 	return home
 }
 
@@ -94,9 +106,17 @@ func oneCheckFlow(name string) string {
 }
 
 // runWorkflowCLI runs tyci with args and returns stdout, stderr and the error.
+// The command context has the deadline wfCommandTimeout. Cobra keeps the context
+// of a subcommand after its first run, so the workflow commands get this call's
+// context each time.
 func runWorkflowCLI(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	resetWorkflowFlags()
+	ctx, cancel := context.WithTimeout(context.Background(), wfCommandTimeout)
+	t.Cleanup(cancel)
+	for _, c := range workflowCmd.Commands() {
+		c.SetContext(ctx)
+	}
 	var out, errOut bytes.Buffer
 	rootCmd.SetOut(&out)
 	rootCmd.SetErr(&errOut)
@@ -106,8 +126,19 @@ func runWorkflowCLI(t *testing.T, args ...string) (string, string, error) {
 		rootCmd.SetOut(nil)
 		rootCmd.SetErr(nil)
 	})
-	err := rootCmd.Execute()
+	err := rootCmd.ExecuteContext(ctx)
 	return out.String(), errOut.String(), err
+}
+
+// wfReportPath finds the report that an agent must write in its task text.
+var wfReportPath = regexp.MustCompile(`MUST write (\S+report\.md)`)
+
+// wfUseSpawn replaces the agent spawn of the workflow commands for the test.
+func wfUseSpawn(t *testing.T, spawn func(context.Context, tools.TaskSpec) (string, string, error)) {
+	t.Helper()
+	old := workflowSpawn
+	workflowSpawn = spawn
+	t.Cleanup(func() { workflowSpawn = old })
 }
 
 // resetWorkflowFlags sets the flag variables back to their defaults. Cobra keeps
@@ -244,6 +275,72 @@ func TestWorkflowRunStopsAtAsk(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "waiting at ask state wait") {
 		t.Errorf("stderr = %q, want the ask state notice", errOut)
+	}
+}
+
+func TestAwaitRunEndsOnFinalStatusOfItsRun(t *testing.T) {
+	events := make(chan flow.RunEvent, 4)
+	events <- flow.RunEvent{Run: "other", Status: "done"}
+	events <- flow.RunEvent{Run: "mine", Status: "running"}
+	events <- flow.RunEvent{Run: "mine", Status: "paused"}
+	if err := awaitRun(context.Background(), events, "mine"); err != nil {
+		t.Fatalf("awaitRun: %v", err)
+	}
+}
+
+func TestAwaitRunReturnsWhenContextEnds(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	events := make(chan flow.RunEvent)
+	if err := awaitRun(ctx, events, "mine"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("awaitRun = %v, want the deadline error", err)
+	}
+}
+
+// TestWorkflowRunAgentGetsProvidersAndHooks runs a workflow with an agent state.
+// The stub agent resolves the model the way the real agent runner does, so a
+// missing provider fails the run. It also records whether the global hooks loaded.
+func TestWorkflowRunAgentGetsProvidersAndHooks(t *testing.T) {
+	home := wfHome(t)
+	t.Cleanup(hooks.SetForTesting(nil))
+	wfUseRepo(t, wfRunRepo(t, home))
+	wfWrite(t, filepath.Join(home, ".tyci", "config.json"),
+		`{"default_model":"wfprov/wfmodel","roles":{"helper":{"prompt":"Do the task."}}}`)
+	wfWrite(t, filepath.Join(home, ".tyci", "model.json"),
+		`{"wfprov":{"wfmodel":{"uri":"openai://wfmodel@$KEY@example.com/v1"}}}`)
+	wfWrite(t, filepath.Join(home, ".tyci", "hooks.json"),
+		`{"hooks":[{"event":"pre_tool","command":"true"}]}`)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "agent-flow.json"),
+		`{"name":"agent-flow","start":"work","states":{`+
+			`"work":{"agent":"helper","on":{"done":"end"}},`+
+			`"end":{"end":true}}}`)
+
+	hookSeen := false
+	wfUseSpawn(t, func(ctx context.Context, spec tools.TaskSpec) (string, string, error) {
+		hookSeen = hooks.Any(hooks.EventPreTool)
+		if _, err := resolveModelClient(ctx, spec.Model); err != nil {
+			return "", "", err
+		}
+		m := wfReportPath.FindStringSubmatch(spec.Task)
+		if m == nil {
+			return "", "", errors.New("the task names no report")
+		}
+		if err := os.WriteFile(m[1], []byte("done\n"), 0o600); err != nil {
+			return "", "", err
+		}
+		return "done", "wf-session", nil
+	})
+
+	out, errOut, err := runWorkflowCLI(t, "workflow", "run", "agent-flow", "11", "--json")
+	if err != nil {
+		t.Fatalf("run: %v\nstderr: %s", err, errOut)
+	}
+	r := decodeWorkflowResult(t, out)
+	if r.Status != "done" {
+		t.Fatalf("result = %+v", r)
+	}
+	if !hookSeen {
+		t.Error("the global hooks.json was not loaded for the agent")
 	}
 }
 
