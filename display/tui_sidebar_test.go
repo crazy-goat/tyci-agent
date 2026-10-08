@@ -15,6 +15,17 @@ import (
 	"github.com/muesli/termenv"
 )
 
+// taskLineOfFirstJob returns the Tasks content line of the first real job row,
+// skipping the heading and the synthetic "main" row above it.
+func taskLineOfFirstJob(m TuiModel) int {
+	for i, row := range m.sidebarTaskRows(m.sidebarLayout().contentWidth) {
+		if row.job != nil {
+			return i
+		}
+	}
+	return -1
+}
+
 func newTestModelForSidebar() TuiModel {
 	m := newModel(nil, "test/model", "", []string{"test/model"}, nil, nil, nil, nil, nil, "", nil, 0, 0, 0)
 	m.ready = true
@@ -43,13 +54,8 @@ func TestSidebarTabAtX_MatchesRenderedTabPositions(t *testing.T) {
 	rows := strings.Split(rendered, "\n")
 	tabRow := ansi.Strip(rows[layout.top+1])
 
-	// Cells can be narrower than a tab's full name (renderSidebarTabs
-	// truncates with an ellipsis — e.g. "Sessions" -> "Sessio…" at this
-	// test's width), so search for whatever it actually rendered, exactly
-	// as it computes it, rather than the untruncated name.
-	cell := layout.contentWidth / sidebarTabCount
-	for tab, name := range sidebarTabNames {
-		label := truncateToWidth(name, cell)
+	for tab := range sidebarTabNames {
+		label := sidebarTabLabel(tab)
 		byteIdx := strings.Index(tabRow, label)
 		if byteIdx < 0 {
 			t.Fatalf("tab %d's rendered label %q not found in tab row: %q", tab, label, tabRow)
@@ -75,6 +81,18 @@ func TestSidebarTabAtX_MatchesRenderedTabPositions(t *testing.T) {
 	}
 }
 
+// TestSidebarTabAtX_PastLastLabelIsNoTab checks that a click right of the
+// last tab label is not a tab click, even though the row is wider.
+func TestSidebarTabAtX_PastLastLabelIsNoTab(t *testing.T) {
+	layout := sidebarLayoutT{contentLeft: 10, contentWidth: 60}
+	if got := sidebarTabAtX(layout, layout.contentLeft+sidebarTabStart(sidebarTabCount)); got != -1 {
+		t.Fatalf("click past the last label = tab %d, want -1", got)
+	}
+	if got := sidebarTabAtX(layout, layout.contentLeft+sidebarTabStart(sidebarTabCount)-1); got != sidebarTabRuns {
+		t.Fatalf("click on the last label = tab %d, want %d", got, sidebarTabRuns)
+	}
+}
+
 // TestSidebarMouse_TabClickAndBorderMargin exercises the same fix through
 // the actual mouse handler (not just the raw sidebarTabAtX function): a
 // click squarely inside a tab's cell selects it, a click on the panel's own
@@ -90,8 +108,7 @@ func TestSidebarMouse_TabClickAndBorderMargin(t *testing.T) {
 	layout := m.sidebarLayout()
 
 	// Click squarely inside the Subagents cell of the tab row.
-	cell := layout.contentWidth / sidebarTabCount
-	x := layout.contentLeft + sidebarTabTasks*cell + cell/2
+	x := layout.contentLeft + sidebarTabStart(sidebarTabTasks) + 1
 	model, _ := m.updateSidebar(tea.MouseMsg{
 		X: x, Y: layout.top + 1,
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
@@ -174,11 +191,11 @@ func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
 		t.Skip("terminal too tall for this test to exercise overflow")
 	}
 
-	for i := 0; i < 29; i++ {
+	for i := 0; i < 30; i++ {
 		m.sidebarMoveCursor(1)
 	}
-	if m.sidebarCursor != 29 {
-		t.Fatalf("expected cursor at the last Bash row (29), got %d", m.sidebarCursor)
+	if m.sidebarCursor != 30 {
+		t.Fatalf("expected cursor at the last Bash row (30, main is row 0), got %d", m.sidebarCursor)
 	}
 	if m.sidebarScroll+layout.contentHeight <= m.sidebarCursor {
 		t.Fatalf("expected sidebarScroll to keep the cursor in view: scroll=%d contentHeight=%d cursor=%d",
@@ -190,6 +207,7 @@ func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
 	rendered := m.renderSidebarColumn()
 	rows := strings.Split(rendered, "\n")
 	firstContentRow := ansi.Strip(rows[layout.contentTop])
+	taskRows := m.sidebarTaskRows(m.sidebarLayout().contentWidth)
 	jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
 	lineAtScroll := m.sidebarScroll
 	jobAtScroll := 0
@@ -202,12 +220,16 @@ func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
 	if jobAtScroll == 0 {
 		t.Fatal("expected a task job row at the scroll offset")
 	}
+	// Count only real jobs before the one at the scroll offset: the synthetic
+	// main row is selectable but is not a Bash job.
 	jobIndex := 0
 	for _, row := range jobRows {
 		if row == jobAtScroll {
 			break
 		}
-		jobIndex++
+		if taskRows[row].job != nil {
+			jobIndex++
+		}
 	}
 	lastJobShortID := jobs.ShortID(lines[jobIndex].ID)
 	if !strings.Contains(firstContentRow, "#"+lastJobShortID) {
@@ -265,7 +287,7 @@ func TestSidebarResize_ReclampsStaleScrollAndClickMapping(t *testing.T) {
 	// the modal's own title (not the cursor field) is what proves which row
 	// was actually picked.
 	model, _ = m2.updateSidebar(tea.MouseMsg{
-		X: bigLayout.contentLeft, Y: bigLayout.contentTop,
+		X: bigLayout.contentLeft, Y: bigLayout.contentTop + taskLineOfFirstJob(m2),
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
 	})
 	m3 := model.(TuiModel)
@@ -332,7 +354,7 @@ func TestSidebarJobsShrink_ReclampsStaleScrollAndClickMapping(t *testing.T) {
 	// ("job-9"), not some row offset by the stale, pre-shrink scroll, which
 	// would either open nothing or (with a taller list) the wrong job.
 	model, _ := m.updateSidebar(tea.MouseMsg{
-		X: layout.contentLeft, Y: layout.contentTop,
+		X: layout.contentLeft, Y: layout.contentTop + taskLineOfFirstJob(m),
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
 	})
 	m2 := model.(TuiModel)
@@ -377,16 +399,16 @@ func TestSidebarTasksSubagentRows_NonzeroScrollClickMapsToCorrectJob(t *testing.
 	width := layout.contentWidth
 	rows := m.sidebarTaskRows(width)
 	jobRows := m.sidebarTaskJobRows(width)
-	if len(jobRows) != 5 {
-		t.Fatalf("expected 5 job rows, got %d", len(jobRows))
+	if len(jobRows) != 6 {
+		t.Fatalf("expected 6 selectable rows (main + 5 jobs), got %d", len(jobRows))
 	}
-	// rows[0] is the "Subagents" heading, rows[1] is the synthetic root —
-	// neither has a job, so every real job row sits past index 1.
+	// rows[0] is the "Subagents" heading, rows[1] is the synthetic main row —
+	// selectable, but not a job, so every real job row sits past index 1.
 	if !rows[0].isHeading || rows[0].group != "Subagents" {
 		t.Fatalf("test setup didn't reproduce the shape: rows[0] = %+v", rows[0])
 	}
-	if rows[1].job != nil {
-		t.Fatalf("test setup didn't reproduce the shape: expected rows[1] to be the job-less root, got %+v", rows[1])
+	if !rows[1].isMain || rows[1].job != nil {
+		t.Fatalf("test setup didn't reproduce the shape: expected rows[1] to be the main row, got %+v", rows[1])
 	}
 	lastJobLine := jobRows[len(jobRows)-1]
 	if lastJobLine <= 1 {
@@ -451,12 +473,12 @@ func TestSidebarMouse_TaskClickPastJobCountBound(t *testing.T) {
 	width := layout.contentWidth
 	rows := m.sidebarTaskRows(width)
 	jobRows := m.sidebarTaskJobRows(width)
-	if len(jobRows) != 5 {
-		t.Fatalf("expected 5 job rows, got %d", len(jobRows))
+	if len(jobRows) != 6 {
+		t.Fatalf("expected 6 selectable rows (main + 5 jobs), got %d", len(jobRows))
 	}
-	// The last Bash job's line index (Subagents heading + root + Bash
-	// heading + 4 earlier jobs = index 7) exceeds sidebarRowCount()'s job
-	// count of 5, which is exactly the bound the old code used.
+	// The last Bash job's line index (Subagents heading + main + Bash
+	// heading + 4 earlier jobs = index 7) exceeds sidebarRowCount()'s
+	// selectable count of 6, which is exactly the bound the old code used.
 	lastJobLine := jobRows[len(jobRows)-1]
 	if lastJobLine < m.sidebarRowCount() {
 		t.Fatalf("test setup didn't reproduce the bug: last job line %d is not past the job-count bound %d", lastJobLine, m.sidebarRowCount())
@@ -924,8 +946,7 @@ func TestSidebarMouse_SidebarColumnClickFocusesSidebar(t *testing.T) {
 	m.openSidebar(sidebarTabTokens)
 	layout := m.sidebarLayout()
 
-	cell := layout.contentWidth / sidebarTabCount
-	x := layout.contentLeft + sidebarTabTasks*cell + cell/2
+	x := layout.contentLeft + sidebarTabStart(sidebarTabTasks) + 1
 	model, _ := m.Update(tea.MouseMsg{
 		X: x, Y: layout.top + 1,
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
@@ -1286,7 +1307,7 @@ func TestSidebarRefusalMessages_FitStatusBarTruncation(t *testing.T) {
 	m3.input.SetValue("x")
 	m3.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone})
 	m3.openSidebar(sidebarTabTasks)
-	m3.sidebarCursor = 0
+	m3.sidebarCursor = 1 // row 0 is main
 	model, _ = m3.sidebarResumeSubagentRow()
 	msg3 := model.(TuiModel).statusMessage
 
@@ -1726,7 +1747,7 @@ func TestSidebarTasks_SubagentRUsesJobCursor(t *testing.T) {
 	m.input.SetValue("")
 	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "resume me", StartedAt: time.Now()})
 	m.openSidebar(sidebarTabTasks)
-	m.sidebarCursor = 0
+	m.sidebarCursor = 1 // row 0 is main
 	model, _ := m.sidebarResumeSubagentRow()
 	got := model.(TuiModel)
 	if got.input.Value() == "" || !strings.Contains(got.input.Value(), "job 1") {

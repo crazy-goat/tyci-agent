@@ -2,6 +2,7 @@ package display
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -244,6 +245,10 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 	// comment.
 	byModel := ledger.ByModel()
 	if len(byModel) > 0 {
+		// Main-session rows come first, then subagent rows, then scout
+		// rows. Kind is ordered Main, Subagent, Scout. The sort is stable,
+		// so each group keeps ByModel's first-seen order.
+		sort.SliceStable(byModel, func(i, j int) bool { return byModel[i].Kind < byModel[j].Kind })
 		out = append(out, "", "session")
 		for _, r := range byModel {
 			// r.USD is already the known-priced sum only (Record/Cost give
@@ -281,21 +286,22 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 			}
 		}
 		snap := ledger.Get()
-		out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "total",
-			fmtTokens(totalTokens), fmtUSD(snap.TotalUSD())))
-		// "of that delegated" is subagents and scouts combined — the token
+		// "subsession" is subagents and scouts combined — the token
 		// figure above already sums both kinds, so the dollar figure next to
 		// it must too, or the two numbers on the same line would describe
 		// different populations. Scout gets its own separate line only when
 		// non-zero, mirroring formatCost's status-bar treatment above.
 		if delegated := snap.SubagentUSD + snap.ScoutUSD; delegated > 0 {
-			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "of that delegated",
+			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "subsession",
 				fmtTokens(delegatedTokens), fmtUSD(delegated)))
 		}
 		if snap.ScoutUSD > 0 {
 			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "  of that scout",
 				fmtTokens(scoutTokens), fmtUSD(snap.ScoutUSD)))
 		}
+		// The total row is the last line of the session block.
+		out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "total",
+			fmtTokens(totalTokens), fmtUSD(snap.TotalUSD())))
 	}
 
 	// Warn only about a model actually in this session, and only when its

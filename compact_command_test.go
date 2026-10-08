@@ -17,7 +17,7 @@ import (
 // for a human-typed /compact: the terminal used to print the dump path while
 // the conversation itself only ever got a placeholder summary with no path
 // in it, so the model had no way to ever find the record again on a later
-// turn. interactive.go and tui_mode.go both now compute the real path via
+// turn. tui_mode.go now computes the real path via
 // session.DumpPathFor before calling Compact and fold it into the summary
 // that becomes the compacted history's lead message — this test exercises
 // exactly that sequence, the way both call sites do it, and checks the path
@@ -40,7 +40,7 @@ func TestManualCompactSummary_CarriesRealDumpPathIntoConversation(t *testing.T) 
 		}
 	}
 
-	// Mirrors interactive.go/tui_mode.go's /compact handling exactly.
+	// Mirrors tui_mode.go's /compact handling exactly.
 	sess := cond.EnsureSession()
 	if sess == nil {
 		t.Fatal("expected a writable session")

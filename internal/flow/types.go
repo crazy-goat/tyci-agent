@@ -96,6 +96,7 @@ type Step struct {
 	EndedAt    time.Time `json:"ended_at"`
 	Exit       *int      `json:"exit,omitempty"`
 	Role       string    `json:"role,omitempty"`
+	Task       string    `json:"task,omitempty"`
 	Session    string    `json:"session,omitempty"`
 	StderrTail string    `json:"stderr_tail,omitempty"`
 	Error      string    `json:"error,omitempty"`
@@ -230,7 +231,6 @@ type Runner struct {
 	RunDir string // run directory: TYCI_RUN_DIR and RunContext.RunDir
 	// DefaultBranch is TYCI_DEFAULT_BRANCH and RunContext.DefaultBranch.
 	DefaultBranch string
-	Notify        func(string)
 	// Warn receives warnings that the Manager does not send itself.
 	Warn   func(string)
 	OnSkip func(*RunState)

@@ -79,7 +79,7 @@ var cronTickCmd = &cobra.Command{
 This is the one-shot entry point meant to be invoked by the OS's own
 scheduler (cron, launchd, systemd timers, Task Scheduler) rather than by a
 person: point it at a schedule of e.g. "every 5m" or "every 1m" and it does
-not need a tyci session — interactive, console, or TUI — open anywhere for
+not need a tyci session — the TUI — open anywhere for
 jobs to fire. Jobs not yet due are skipped silently; the command always
 exits 0 once the check has run, regardless of whether an individual job's
 prompt run failed (that failure is recorded in the job's own log and status,

@@ -33,15 +33,19 @@ func (m *TuiModel) openResumePicker(entries []TuiResumeEntry) {
 // closeResumePicker is the EQ-only escape path: Esc calls this with selected
 // = "" (cancel), Enter calls it with the chosen path. After writing to the
 // channel it always clears the picker state so the next /resume cycle starts
-// clean. The unbuffered channel write synchronizes with the reader, which
-// gives us a natural handshake: the outer goroutine resumes an active
-// iteration only after the bubbletea event loop finished the modal frame.
+// clean. The send never blocks the event loop. runTUI reads resumeCh only
+// while it is idle, so a blocking send would freeze the TUI until a running
+// turn ends. The channel holds one value, and runTUI reads it at its next
+// idle select. A second value while the first is unread is dropped.
 func (m *TuiModel) closeResumePicker(selected string) {
 	m.resumePickerActive = false
 	m.resumePickerEntries = nil
 	m.resumePickerCursor = 0
 	if m.resumeCh != nil {
-		m.resumeCh <- selected
+		select {
+		case m.resumeCh <- selected:
+		default:
+		}
 	}
 }
 

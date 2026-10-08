@@ -716,7 +716,7 @@ func TestBlockingCallHandsOffAtTimerExpiry(t *testing.T) {
 // TestAskAnswerRoundTripWhenHandoffIsAvailable is review finding 2: nothing
 // pinned AskUnroutableCtxKey to ONLY the no-handoff path. It must NOT be set
 // for a blocking call in a mode where handoff is available (background bash
-// enabled, as console/tui do) — a child asking a question there can
+// enabled, as the TUI does) — a child asking a question there can
 // genuinely be answered once the parent gets its turn back (via handoff, or
 // simply because the child finishes fast). This is that round trip: a child
 // blocks in "ask_parent", the test plays "the parent or the person watching" and

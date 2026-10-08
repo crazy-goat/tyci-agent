@@ -19,7 +19,7 @@ import (
 //
 // Optional rather than folded into Sink itself, matching toolDurationSink /
 // streamProgressDisplay (run_tools.go): only display.TUI shows phases, and
-// the other Sink implementations (Minimal, Terminal, BtwSink, the various
+// the other Sink implementations (plainSink, BtwSink, the various
 // collectors, the ledger watch wrapper) would gain a method they ignore.
 // Asserted once per round, right where the two phases it does not already
 // know about begin — see below.
@@ -283,7 +283,7 @@ func hasUsage(u stream.Usage) bool {
 // roundInputLabel returns a short label describing the input being sent
 // to the model for the current round: "user prompt" for the first round
 // and "return of tool" for subsequent rounds that feed tool results
-// back. The run-mode Minimal display uses this for the [ REQ] line.
+// back. Display.Request receives it; plainSink does not show it.
 func roundInputLabel(msgs []connector.Message) string {
 	if n := len(msgs); n > 0 {
 		switch msgs[n-1].Role {

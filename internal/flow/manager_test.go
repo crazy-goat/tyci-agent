@@ -278,6 +278,20 @@ func TestRunPanic_MarksFailedAndNotifies(t *testing.T) {
 	}
 }
 
+// A failed run sends one notice. Only the Manager sends run notices, so the
+// Runner adds no second one.
+func TestRunPanic_SendsOneNotice(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{panics: true})
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err != nil {
+		t.Fatal(err)
+	}
+	e.notice(t)
+	waitIdle(t, e.m)
+	if n := len(e.notices); n != 0 {
+		t.Fatalf("%d extra notices", n)
+	}
+}
+
 // The failed notice names the step where the run stopped.
 func TestFailedNotice_NamesStep(t *testing.T) {
 	var got string
@@ -353,6 +367,71 @@ func TestShutdown_CancelsRun(t *testing.T) {
 	st, _ := e.m.Status(id)
 	if st.Status != "failed" || st.Reason != "cancelled" {
 		t.Fatalf("state = %s/%s", st.Status, st.Reason)
+	}
+}
+
+// TestShutdown_CancelsPreparation stops a Start while Prepare (the setup
+// script) is still running. Shutdown must not wait for the setup, and the
+// Start must return an error.
+func TestShutdown_CancelsPreparation(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	entered := make(chan struct{})
+	e.m.Prepare = func(ctx context.Context, _ RepoInfo, _ StartRequest) (*RunState, *Workflow, []string, error) {
+		close(entered)
+		<-ctx.Done()
+		return nil, nil, nil, ctx.Err()
+	}
+	started := make(chan error, 1)
+	go func() {
+		_, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1})
+		started <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Prepare was not called")
+	}
+
+	shutdown := make(chan struct{})
+	go func() {
+		e.m.Shutdown(5 * time.Second)
+		close(shutdown)
+	}()
+	select {
+	case <-shutdown:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Shutdown waited for the preparation")
+	}
+	select {
+	case err := <-started:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Start err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return after Shutdown")
+	}
+	e.m.mu.Lock()
+	n := len(e.m.active)
+	e.m.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d entries left in active", n)
+	}
+}
+
+// A start of an issue that is being prepared is refused with a message that
+// names the issue, not the internal reservation key.
+func TestRefuse_NamesPreparingIssue(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	info := RepoInfo{Home: e.home, Root: e.home, Repo: "o/r", DefaultBranch: "main"}
+	e.m.mu.Lock()
+	e.m.active = map[string]activeRun{"preparing:7": {issue: 7}}
+	err := e.m.refuse(info, 7)
+	e.m.mu.Unlock()
+	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "issue 7 is being prepared") {
+		t.Fatalf("refuse = %v, want ErrBusy saying the issue is being prepared", err)
+	}
+	if strings.Contains(err.Error(), "preparing:7") {
+		t.Fatalf("refuse leaks the reservation key: %v", err)
 	}
 }
 
