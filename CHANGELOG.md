@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Flow: `open_pr.sh` also finds the open pull request of the issue when it is open from another branch and its body closes the issue (`Closes #N`). The run continues that pull request and does not code the issue again. `push.sh` pushes to the head branch of that pull request (#374).
+
 ## [0.5.0] - 2026-10-08
 
 ### Changed
