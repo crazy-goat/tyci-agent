@@ -150,6 +150,7 @@ func TestBuildContextCost_LimitFromProviderPrefixedModel(t *testing.T) {
 	dir := t.TempDir()
 	writeTestCatalog(t, dir, `{
 		"acme":{"id":"acme","models":{"big":{"id":"big","name":"Big","limit":{"context":100000,"output":8000}}}},
+		"other":{"id":"other","models":{"ox-alpha":{"id":"ox-alpha","name":"Other","limit":{"context":50000,"output":8000}}}},
 		"openrouter":{"id":"openrouter","models":{"stealth/ox-alpha":{"id":"stealth/ox-alpha","name":"Ox","limit":{"context":200000,"output":8000}}}}
 	}`)
 	t.Setenv("HOME", dir)
@@ -161,6 +162,12 @@ func TestBuildContextCost_LimitFromProviderPrefixedModel(t *testing.T) {
 	for _, c := range []struct{ model, want string }{
 		{"acme/big", "ctx 10k (10%)"},
 		{"openrouter/stealth/ox-alpha", "ctx 10k (5%)"},
+		// A bare model id may contain a slash. Its own limit wins over the
+		// limit of another provider's model with the same tail, "ox-alpha".
+		{"stealth/ox-alpha", "ctx 10k (5%)"},
+		// A provider the catalog does not know must not borrow the limit of
+		// another provider's model with the same id.
+		{"local/ox-alpha", "ctx 10k"},
 	} {
 		m := TuiModel{modelName: c.model, lastUsage: stream.Usage{Input: 10000}}
 		if got := m.buildContextCost(); got != c.want {

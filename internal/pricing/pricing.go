@@ -104,6 +104,21 @@ func Lookup(provider, model string) (Rates, Limits) {
 	return r, l
 }
 
+// LookupIn is Lookup for a model that the named provider must list itself. It
+// never borrows the entry of another provider with the same model id, so an
+// unknown provider name gives no limit.
+func LookupIn(provider, model string) (Rates, Limits) {
+	if provider == nexosProvider {
+		return Lookup(provider, model)
+	}
+	if p, ok := catalog()[provider]; ok {
+		if m, ok := findModel(p, model); ok {
+			return rates(m), limits(m)
+		}
+	}
+	return Rates{}, Limits{}
+}
+
 func lookupCatalog(provider, model string) (Rates, Limits) {
 	c := catalog()
 	if c == nil {

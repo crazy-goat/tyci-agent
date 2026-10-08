@@ -16,13 +16,13 @@ import (
 // not know the model's limit, since a percentage of an unknown is nonsense.
 func (m TuiModel) contextUsed() (used, limit int, ok bool) {
 	used = m.lastUsage.Input + m.lastUsage.Output
-	// The status bar shows "provider/model". Only the first slash separates
-	// the provider, since a model id may contain slashes itself.
-	provider, model, found := strings.Cut(m.modelName, "/")
-	if !found {
-		provider, model = "", m.modelName
+	// A model id may contain slashes, so the whole name is tried first. Only
+	// when the catalog does not know it, the status bar's "provider/model"
+	// is split on the first slash, and that provider must list the model.
+	_, lim := pricing.Lookup("", m.modelName)
+	if provider, model, found := strings.Cut(m.modelName, "/"); found && lim.Context <= 0 {
+		_, lim = pricing.LookupIn(provider, model)
 	}
-	_, lim := pricing.Lookup(provider, model)
 	if lim.Context <= 0 {
 		return used, 0, false
 	}
