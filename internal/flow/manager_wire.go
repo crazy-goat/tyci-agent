@@ -39,15 +39,24 @@ func gitOut(dir string, args ...string) (string, error) {
 // DetectRepo finds the repository of the current directory: owner/name from
 // origin and the default branch from refs/remotes/origin/HEAD.
 func DetectRepo() (RepoInfo, error) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return RepoInfo{}, err
+	return DetectRepoAt("")
+}
+
+// DetectRepoAt is DetectRepo for the repository that contains dir. An empty dir
+// means the current directory.
+func DetectRepoAt(dir string) (RepoInfo, error) {
+	if dir == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return RepoInfo{}, err
+		}
+		dir = wd
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return RepoInfo{}, err
 	}
-	root, err := gitOut(wd, "rev-parse", "--show-toplevel")
+	root, err := gitOut(dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return RepoInfo{}, errors.New("not in a git repository")
 	}

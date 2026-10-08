@@ -148,6 +148,41 @@ Orchestrator keys (section `orchestrator`; the project file wins key by key):
 
 An invalid value stops the orchestrator start and the message names the key and the file.
 
+### Headless CLI
+
+Use the `workflow` commands to run and check a workflow from a terminal or a script. These commands do not open the chat or the TUI. They never ask for an answer.
+
+| Command | Action | Exit code 0 | Exit code 1 |
+|---|---|---|---|
+| `tyci workflow run <name> <issue>` | Run a workflow for a GitHub issue | `done` or `paused` | `failed` or invalid |
+| `tyci workflow validate <name>` | Check a workflow. Do not start a run. | valid | invalid or unknown |
+| `tyci workflow status <run-id>` | Show the saved state of a run | `running`, `paused` or `done` | `failed`, unknown or ambiguous |
+
+- The second argument of `run` is the issue number. Example: `tyci workflow run issue-to-merge 191`.
+- `run` and `validate` take a workflow name, not a file path.
+- Use `--dir <path>` with `run` and `validate` to select the repository. The default is the current directory.
+- Use `--json` to print one JSON object on stdout. Progress and warnings go to stderr.
+
+The `run` command waits until the run ends or pauses at an ask state. A paused run is not an error. The command then prints `waiting at ask state <name>` on stderr. Answer the paused run with `workflow_resume` in the chat.
+
+This example shows the JSON output of a run that paused at an ask state:
+
+```bash
+tyci workflow run issue-to-merge 191 --json
+```
+
+```json
+{"run_id":"20261008-101500-191","workflow":"issue-to-merge","state":"ask","status":"paused","state_file":"/home/user/.tyci/runs/tyci-agent/20261008-101500-191/state.json"}
+```
+
+A failed run adds the field `error` with the reason. `validate` prints the list of problems in the field `errors`.
+
+If the project is not trusted, tyci skips the workflows in `.tyci/workflows/` and prints a note on stderr. Run `tyci tui` in the directory to get the trust question. Or edit `~/.tyci/trust.json`.
+
+`validate` checks the workflow the same way a run checks it. It does not start a run or change a file.
+
+`status` searches the runs of every repository under `~/.tyci/runs/`, so it needs no `--dir`. If more than one repository has the run id, the command fails and lists the state files.
+
 ## Quick Start
 
 ### 1. Configure a provider

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- CLI: `tyci workflow run <name> <issue>`, `tyci workflow validate <name>` and `tyci workflow status <run-id>` run and check workflows without the chat or the TUI. Each command has `--json`. `run` and `validate` have `--dir`. A run that pauses at an ask state has the status `paused` and exits with code 0 (#191).
 - TUI: the `main` row in the sidebar Tasks tab can be selected. Enter or a click on a subagent row shows that agent's conversation in the main window, and it updates live. The header names the viewed agent. Enter on `main`, or Esc, shows the main conversation again with its scroll position. Input still goes to the main conversation. Resumed jobs, promoted /btw jobs and /btw evaluations show their conversation the same way (#453).
 
 ### Changed

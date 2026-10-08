@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -24,6 +25,30 @@ func NewRunID(issue int, now time.Time) string {
 // RunDir returns <home>/.tyci/runs/<repo>/<run>.
 func RunDir(home, repoName, runID string) string {
 	return filepath.Join(home, ".tyci", "runs", repoName, runID)
+}
+
+// StatePath returns the state.json of a run dir.
+func StatePath(runDir string) string {
+	return filepath.Join(runDir, stateFile)
+}
+
+// FindRun returns the saved state of run runID and the path of its state.json.
+// It searches the runs of every repository under home. It fails when no
+// repository or more than one repository has the run.
+func FindRun(home, runID string) (*RunState, string, error) {
+	var matches []string
+	if runIDPattern.MatchString(runID) {
+		matches, _ = filepath.Glob(StatePath(RunDir(home, "*", runID)))
+	}
+	switch len(matches) {
+	case 0:
+		return nil, "", fmt.Errorf("run not found: %s", runID)
+	case 1:
+		st, err := Load(filepath.Dir(matches[0]))
+		return st, matches[0], err
+	default:
+		return nil, "", fmt.Errorf("run id is ambiguous: %s", strings.Join(matches, ", "))
+	}
 }
 
 var secretRe = regexp.MustCompile(`ghp_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]+|Bearer\s+\S+`)

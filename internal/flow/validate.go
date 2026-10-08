@@ -107,6 +107,46 @@ func sortedKeys(m map[string]string) []string {
 // Resolver maps a relative check path to an absolute script path.
 type Resolver func(rel string) (abs string, err error)
 
+// CheckWorkflow loads the named workflow for the repository of info and checks it
+// the way a run does (see PrepareRun). It returns the warnings and one message per
+// problem. The error is set only when the workflow or the config cannot be read.
+func CheckWorkflow(info RepoInfo, name string) (warnings, problems []string, err error) {
+	wf, _, err := Lookup(name, info.Home, info.Root, info.Trusted)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
+	if err != nil {
+		return nil, nil, err
+	}
+	tmp, err := os.MkdirTemp("", "tyci-validate-")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	resolve := func(rel string) (string, error) {
+		return ResolveCheck(rel, projectDir(info), info.Home, Embedded(), tmp)
+	}
+	warnings, verr := Validate(wf, cfg, resolve)
+	return warnings, errorMessages(verr), nil
+}
+
+// errorMessages returns the message of each error that errors.Join joined.
+func errorMessages(err error) []string {
+	if err == nil {
+		return nil
+	}
+	multi, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return []string{err.Error()}
+	}
+	var out []string
+	for _, e := range multi.Unwrap() {
+		out = append(out, e.Error())
+	}
+	return out
+}
+
 // Validate returns warnings and one joined error with ALL problems found.
 // It runs validateStructure first, then the rules that need the config and
 // the file system (SDR 5.1 rules 4, 5, 7, 8).
