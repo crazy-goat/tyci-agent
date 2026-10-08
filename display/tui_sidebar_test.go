@@ -54,13 +54,8 @@ func TestSidebarTabAtX_MatchesRenderedTabPositions(t *testing.T) {
 	rows := strings.Split(rendered, "\n")
 	tabRow := ansi.Strip(rows[layout.top+1])
 
-	// Cells can be narrower than a tab's full name (renderSidebarTabs
-	// truncates with an ellipsis — e.g. "Sessions" -> "Sessio…" at this
-	// test's width), so search for whatever it actually rendered, exactly
-	// as it computes it, rather than the untruncated name.
-	cell := layout.contentWidth / sidebarTabCount
-	for tab, name := range sidebarTabNames {
-		label := truncateToWidth(name, cell)
+	for tab := range sidebarTabNames {
+		label := sidebarTabLabel(tab)
 		byteIdx := strings.Index(tabRow, label)
 		if byteIdx < 0 {
 			t.Fatalf("tab %d's rendered label %q not found in tab row: %q", tab, label, tabRow)
@@ -86,6 +81,18 @@ func TestSidebarTabAtX_MatchesRenderedTabPositions(t *testing.T) {
 	}
 }
 
+// TestSidebarTabAtX_PastLastLabelIsNoTab checks that a click right of the
+// last tab label is not a tab click, even though the row is wider.
+func TestSidebarTabAtX_PastLastLabelIsNoTab(t *testing.T) {
+	layout := sidebarLayoutT{contentLeft: 10, contentWidth: 60}
+	if got := sidebarTabAtX(layout, layout.contentLeft+sidebarTabStart(sidebarTabCount)); got != -1 {
+		t.Fatalf("click past the last label = tab %d, want -1", got)
+	}
+	if got := sidebarTabAtX(layout, layout.contentLeft+sidebarTabStart(sidebarTabCount)-1); got != sidebarTabRuns {
+		t.Fatalf("click on the last label = tab %d, want %d", got, sidebarTabRuns)
+	}
+}
+
 // TestSidebarMouse_TabClickAndBorderMargin exercises the same fix through
 // the actual mouse handler (not just the raw sidebarTabAtX function): a
 // click squarely inside a tab's cell selects it, a click on the panel's own
@@ -101,8 +108,7 @@ func TestSidebarMouse_TabClickAndBorderMargin(t *testing.T) {
 	layout := m.sidebarLayout()
 
 	// Click squarely inside the Subagents cell of the tab row.
-	cell := layout.contentWidth / sidebarTabCount
-	x := layout.contentLeft + sidebarTabTasks*cell + cell/2
+	x := layout.contentLeft + sidebarTabStart(sidebarTabTasks) + 1
 	model, _ := m.updateSidebar(tea.MouseMsg{
 		X: x, Y: layout.top + 1,
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
@@ -940,8 +946,7 @@ func TestSidebarMouse_SidebarColumnClickFocusesSidebar(t *testing.T) {
 	m.openSidebar(sidebarTabTokens)
 	layout := m.sidebarLayout()
 
-	cell := layout.contentWidth / sidebarTabCount
-	x := layout.contentLeft + sidebarTabTasks*cell + cell/2
+	x := layout.contentLeft + sidebarTabStart(sidebarTabTasks) + 1
 	model, _ := m.Update(tea.MouseMsg{
 		X: x, Y: layout.top + 1,
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,

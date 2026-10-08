@@ -147,12 +147,12 @@ func TestStepLine(t *testing.T) {
 	t0 := time.Now()
 	s := flow.Step{State: "code", Key: "done", Role: "worker", StartedAt: t0, EndedAt: t0.Add(90 * time.Second),
 		Stats: &flow.StepStats{Model: "anthropic/opus", Input: 1500, CostUSD: 1.234}}
-	want := "code -> done: worker · opus · 1.5k tok · $1.23 · 1m30s"
+	want := "code -> done: worker · opus · 1m30s"
 	if got := stepLine(s); got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
 	s.Stats.Effort = "high"
-	if got := stepLine(s); got != "code -> done: worker · opus (high) · 1.5k tok · $1.23 · 1m30s" {
+	if got := stepLine(s); got != "code -> done: worker · opus (high) · 1m30s" {
 		t.Fatalf("with effort: %q", got)
 	}
 	if got := stepLine(flow.Step{State: "ci", Key: "ok"}); got != "ci -> ok" {
@@ -163,5 +163,34 @@ func TestStepLine(t *testing.T) {
 	}
 	if got := stepLine(flow.Step{State: "code", Key: "fail", Role: "worker", StartedAt: t0, EndedAt: t0.Add(5 * time.Second)}); got != "code -> fail: worker · 5s" {
 		t.Fatalf("agent without stats: got %q", got)
+	}
+}
+
+func TestRunRowsResult(t *testing.T) {
+	merged := &flow.RunState{Run: "r1", Issue: 472, Status: "done",
+		History: []flow.Step{{State: "merge", Kind: "check", Key: "merged"}}}
+	stopped := &flow.RunState{Run: "r2", Issue: 473, Status: "done"}
+	rows := runRows([]flow.RunView{{State: merged}, {State: stopped}})
+	if len(rows) != 2 || rows[0].Result != "merged" || rows[1].Result != "" {
+		t.Fatalf("rows: %+v", rows)
+	}
+}
+
+func TestRunRowsSteps(t *testing.T) {
+	t0 := time.Now()
+	st := &flow.RunState{Run: "r1", Issue: 632, Status: "running", Current: "review", StartedAt: t0,
+		History: []flow.Step{
+			{State: "code", Key: "done", Role: "worker", StartedAt: t0, EndedAt: t0.Add(90 * time.Second),
+				Stats: &flow.StepStats{Model: "anthropic/opus", CostUSD: 0.31}},
+			{State: "review", Key: "fail", Role: "reviewer", StartedAt: t0.Add(90 * time.Second), EndedAt: t0.Add(130 * time.Second),
+				Stats: &flow.StepStats{Model: "anthropic/opus", CostUSD: 0.08}},
+		}}
+	rows := runRows([]flow.RunView{{State: st, Role: "reviewer"}})
+	r := rows[0]
+	if len(r.Steps) != 2 || r.Steps[0].Cost != "$0.31" || r.Steps[1].Text != "review -> fail: reviewer · opus · 40s" {
+		t.Fatalf("steps: %+v", r.Steps)
+	}
+	if r.Cost != "$0.39" || r.Took != 130*time.Second || !r.Since.Equal(t0.Add(130*time.Second)) {
+		t.Fatalf("run: cost %q took %v since %v", r.Cost, r.Took, r.Since)
 	}
 }

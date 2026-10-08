@@ -152,29 +152,43 @@ func orchestratorChatConfig(cfg agent.Config) agent.Config {
 	return cfg
 }
 
-// runRows converts saved runs to sidebar rows with the last three steps.
+// runRows converts saved runs to sidebar rows. Each row keeps every finished
+// step, oldest first.
 func runRows(views []flow.RunView) []display.TuiRunRow {
 	rows := make([]display.TuiRunRow, 0, len(views))
 	for _, v := range views {
 		st := v.State
-		r := display.TuiRunRow{ID: st.Run, Issue: st.Issue, Status: st.Status, State: st.Current, Role: v.Role, Since: st.UpdatedAt}
-		h := st.History
-		if len(h) > 3 {
-			h = h[len(h)-3:]
+		total, _ := st.Totals()
+		r := display.TuiRunRow{ID: st.Run, Issue: st.Issue, Status: st.Status, State: st.Current, Role: v.Role,
+			Started: st.StartedAt, Since: stepSince(st), Ended: st.UpdatedAt, Took: total.Duration,
+			Cost: fmt.Sprintf("$%.2f", total.CostUSD)}
+		if flow.WasMerged(st) {
+			r.Result = "merged"
 		}
-		for _, s := range h {
-			r.Steps = append(r.Steps, stepLine(s))
-		}
-		if total, _ := st.Totals(); total.Tokens > 0 {
-			r.Totals = fmt.Sprintf("%s tok · $%.2f · %s", fmtTok(total.Tokens), total.CostUSD, total.Duration.Round(time.Second))
+		for _, s := range st.History {
+			step := display.TuiRunStep{Text: stepLine(s)}
+			if s.Stats != nil {
+				step.Cost = fmt.Sprintf("$%.2f", s.Stats.CostUSD)
+			}
+			r.Steps = append(r.Steps, step)
 		}
 		rows = append(rows, r)
 	}
 	return rows
 }
 
-// stepLine is one Runs tab line: "state -> key", then role, model, tokens, cost
-// and time when known. A check step shows only its duration.
+// stepSince is when the current step of a run began: the end of its last
+// finished step, or the start of the run when no step has finished yet.
+func stepSince(st *flow.RunState) time.Time {
+	if n := len(st.History); n > 0 {
+		return st.History[n-1].EndedAt
+	}
+	return st.StartedAt
+}
+
+// stepLine is one expanded Runs tab line: "state -> key", then the role, model
+// and effort of an agent step, then its duration. The cost is not in the text;
+// the sidebar shows it at the end of the line.
 func stepLine(s flow.Step) string {
 	line := s.State + " -> " + s.Key
 	var parts []string
@@ -189,7 +203,7 @@ func stepLine(s flow.Step) string {
 		if s.Stats.Effort != "" {
 			model += " (" + s.Stats.Effort + ")"
 		}
-		parts = append(parts, model, fmtTok(s.Stats.Tokens())+" tok", fmt.Sprintf("$%.2f", s.Stats.CostUSD))
+		parts = append(parts, model)
 	}
 	if !s.EndedAt.IsZero() && !s.StartedAt.IsZero() {
 		parts = append(parts, s.EndedAt.Sub(s.StartedAt).Round(time.Second).String())
@@ -198,11 +212,4 @@ func stepLine(s flow.Step) string {
 		return line
 	}
 	return line + ": " + strings.Join(parts, " · ")
-}
-
-func fmtTok(n int) string {
-	if n >= 1000 {
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprint(n)
 }
