@@ -276,7 +276,7 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 
 		switch {
 		case killed:
-			return output, false, fmt.Errorf("background command was stopped before it finished (kill_job, or the %ds background limit). Partial output:\n%s", BashBackgroundLimitSec, output)
+			return output, false, fmt.Errorf("background command was stopped before it finished (kill_job, the %ds background limit, or its parent job ended). Partial output:\n%s", BashBackgroundLimitSec, output)
 		case waitErr != nil:
 			return output, false, errors.New(formatExitError(waitErr, output))
 		default:
@@ -295,10 +295,11 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 	if waited > 0 {
 		waitedNote = fmt.Sprintf("still running after %ds, so it was moved to the background", waited)
 	}
-	if ctx.Value(SubagentSinkCtxKey{}) != nil {
-		// A subagent gets no notice unless it makes another tool call, and its
-		// background commands stop when it returns its answer. So it must
-		// collect the result itself before it answers.
+	// A command started inside a job stops when that job ends. The agent of
+	// such a job gets no notice unless it makes another tool call, so it must
+	// collect the result itself before it answers. parentID also covers a
+	// resumed subagent, which has no SubagentSinkCtxKey.
+	if parentID != "" || ctx.Value(SubagentSinkCtxKey{}) != nil {
 		return ToolResult{
 			Type:    "result",
 			Success: true,

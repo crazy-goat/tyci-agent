@@ -437,39 +437,54 @@ func TestBashBackgroundInsideSubagent(t *testing.T) {
 // completion notice unless it makes another tool call, and its background
 // commands stop when it returns its answer. So its handoff must name wait,
 // and must not tell it to skip wait the way the main agent's handoff does.
+// A resumed subagent carries JobIDCtxKey but no SubagentSinkCtxKey; its
+// commands stop with its job too, so it needs the same text.
 func TestBashHandoffInsideSubagentTellsItToCollect(t *testing.T) {
-	reg, _ := bgTestEnv(t)
-	SetJobMailbox(regMailbox{reg})
-	t.Cleanup(func() { SetJobMailbox(nil) })
+	cases := []struct {
+		name     string
+		withSink bool
+	}{
+		{name: "subagent with sink", withSink: true},
+		{name: "resumed subagent without sink", withSink: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg, _ := bgTestEnv(t)
+			SetJobMailbox(regMailbox{reg})
+			t.Cleanup(func() { SetJobMailbox(nil) })
 
-	release := make(chan struct{})
-	defer close(release)
-	parent := reg.Start(context.Background(), "subagent", jobs.KindSubagent, "", func(context.Context, string) (string, bool, error) {
-		<-release
-		return "", false, nil
-	})
+			release := make(chan struct{})
+			defer close(release)
+			parent := reg.Start(context.Background(), "subagent", jobs.KindSubagent, "", func(context.Context, string) (string, bool, error) {
+				<-release
+				return "", false, nil
+			})
 
-	ctx := context.WithValue(context.Background(), JobIDCtxKey{}, parent.ID)
-	ctx = context.WithValue(ctx, SubagentSinkCtxKey{}, &streamingCollector{collector: newCollector()})
-	res := (&BashTool{}).Run(ctx, map[string]any{
-		"command":           "echo child",
-		"run_in_background": true,
-	})
-	if !res.Success {
-		t.Fatalf("expected success, got error: %s", res.Error)
+			ctx := context.WithValue(context.Background(), JobIDCtxKey{}, parent.ID)
+			if tc.withSink {
+				ctx = context.WithValue(ctx, SubagentSinkCtxKey{}, &streamingCollector{collector: newCollector()})
+			}
+			res := (&BashTool{}).Run(ctx, map[string]any{
+				"command":           "echo child",
+				"run_in_background": true,
+			})
+			if !res.Success {
+				t.Fatalf("expected success, got error: %s", res.Error)
+			}
+			id := jobIDFromResult(t, res.Content)
+			for _, want := range []string{"stop when you return your answer", fmt.Sprintf("call wait(job_id=%q)", id)} {
+				if !strings.Contains(res.Content, want) {
+					t.Errorf("subagent handoff should contain %q, got %q", want, res.Content)
+				}
+			}
+			for _, banned := range []string{"Do NOT call wait", "a notice reaches you"} {
+				if strings.Contains(res.Content, banned) {
+					t.Errorf("subagent handoff must not contain %q, got %q", banned, res.Content)
+				}
+			}
+			waitForJob(t, reg, id, bgFinishCap)
+		})
 	}
-	id := jobIDFromResult(t, res.Content)
-	for _, want := range []string{"stop when you return your answer", fmt.Sprintf("call wait(job_id=%q)", id)} {
-		if !strings.Contains(res.Content, want) {
-			t.Errorf("subagent handoff should contain %q, got %q", want, res.Content)
-		}
-	}
-	for _, banned := range []string{"Do NOT call wait", "a notice reaches you"} {
-		if strings.Contains(res.Content, banned) {
-			t.Errorf("subagent handoff must not contain %q, got %q", banned, res.Content)
-		}
-	}
-	waitForJob(t, reg, id, bgFinishCap)
 }
 
 // TestSubagentEndStopsItsBackgroundCommand: a subagent ends while its
@@ -499,6 +514,9 @@ func TestSubagentEndStopsItsBackgroundCommand(t *testing.T) {
 	}
 	if !strings.Contains(cmd.Err, "stopped before it finished") {
 		t.Fatalf("expected the error to say it was stopped, got %q", cmd.Err)
+	}
+	if !strings.Contains(cmd.Err, "its parent job ended") {
+		t.Fatalf("expected the error to name the parent's end as a cause, got %q", cmd.Err)
 	}
 	notifier.mu.Lock()
 	defer notifier.mu.Unlock()
