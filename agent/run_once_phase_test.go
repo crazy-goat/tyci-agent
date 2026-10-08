@@ -76,7 +76,7 @@ func TestRunOnce_PhaseSink_ForwardsTransportEvents(t *testing.T) {
 
 // TestRunOnce_PhaseSink_OptionalForOtherSinks pins the "asserted at the call
 // site" design: a Sink that does not implement PhaseSink (silentDisplay,
-// like Minimal/Terminal/BtwSink in production) must not be affected by the
+// like plainSink/BtwSink in production) must not be affected by the
 // stream carrying RequestSent/ResponseStarted events — runOnce must not
 // panic on a failed type assertion, and the round must complete normally.
 func TestRunOnce_PhaseSink_OptionalForOtherSinks(t *testing.T) {

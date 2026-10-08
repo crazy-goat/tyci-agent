@@ -48,7 +48,6 @@ func finishPromptRun(cond *conductor.Conductor, disp display.Display, err error,
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			disp.End()
-			fmt.Fprint(os.Stdout, "\n")
 			cond.EndSession("canceled", 130)
 			printSessionPath(sessionPath)
 			runCleanup()
@@ -68,7 +67,6 @@ func finishPromptRun(cond *conductor.Conductor, disp display.Display, err error,
 		return
 	}
 	disp.End()
-	fmt.Fprintln(os.Stdout)
 	printSessionPath(sessionPath)
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/session"
+	"golang.org/x/term"
 )
 
 // runPrompt executes one non-interactive turn.
@@ -105,4 +106,63 @@ func resumeHistory(disp display.Display, sess *session.Session, sessionPath stri
 		fmt.Fprintf(os.Stderr, "Warning: cannot summarize session: %v\n", err)
 	}
 	return rebuiltMsgs
+}
+
+// watchESC watches for ESC key press to cancel the context.
+func watchESC(cancel context.CancelFunc) func() {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return func() {}
+	}
+
+	oldState, err := term.GetState(fd)
+	if err != nil {
+		return func() {}
+	}
+
+	// Set raw mode (non-canonical, no echo, etc.)
+	_, err = term.MakeRaw(fd)
+	if err != nil {
+		return func() {}
+	}
+
+	// Tweak: keep ISIG (for Ctrl+C signals) and OPOST (output processing),
+	// set VMIN=0 VTIME=1 so read() returns every 100ms instead of blocking forever.
+	if err := applyTerminalTweaks(fd); err != nil {
+		_ = term.Restore(fd, oldState)
+		return func() {}
+	}
+
+	stop := make(chan struct{})
+	go func() {
+		buf := make([]byte, 1)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			n, err := os.Stdin.Read(buf)
+			if err != nil || n == 0 {
+				// timeout or error — check if we should stop before retrying
+				select {
+				case <-stop:
+					return
+				default:
+					continue
+				}
+			}
+			if buf[0] == 0x1b { // ESC
+				cancel()
+				return
+			}
+			// Any other key is discarded
+		}
+	}()
+
+	return func() {
+		close(stop) // signal goroutine to stop
+		_ = term.Restore(fd, oldState)
+		// Don't wait for goroutine — it will exit on next timeout or stop signal
+	}
 }
