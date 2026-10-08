@@ -383,11 +383,12 @@ func TestResume_ResumeOnlyForRestartPause(t *testing.T) {
 	}
 }
 
-// freezeStore stops writing at the nth save whose state is ci with the visit
+// freezeStore stops writing at the nth save whose state is state with the visit
 // count visits, and cancels the run: the file on disk then looks like tyci was
 // killed at that point.
 type freezeStore struct {
 	*Store
+	state  string
 	cancel context.CancelFunc
 	visits int
 	nth    int
@@ -402,7 +403,7 @@ func (f *freezeStore) Save(st *RunState) error {
 	if err := f.Store.Save(st); err != nil {
 		return err
 	}
-	if st.Current == "ci" && st.Visits["ci"] == f.visits {
+	if st.Current == f.state && st.Visits[f.state] == f.visits {
 		f.seen++
 		if f.seen == f.nth {
 			f.frozen = true
@@ -414,13 +415,13 @@ func (f *freezeStore) Save(st *RunState) error {
 
 func TestResume_EndToEnd_StubScripts(t *testing.T) {
 	// Killed in ci after the visit of ci was saved.
-	resumeKilledInCI(t, happy(), nil, freezeStore{visits: 1, nth: 1}, 1)
+	resumeKilledInCI(t, happy(), nil, freezeStore{state: "ci", visits: 1, nth: 1}, 1)
 }
 
 // Killed between the transition into ci and the visit save: the file has no
 // counted visit of ci. The resumed run counts it, so ci has one visit.
 func TestResume_EndToEnd_LostVisitCounted(t *testing.T) {
-	resumeKilledInCI(t, happy(), nil, freezeStore{visits: 0, nth: 1}, 1)
+	resumeKilledInCI(t, happy(), nil, freezeStore{state: "ci", visits: 0, nth: 1}, 1)
 }
 
 // Killed between the second transition into ci (oracle goto:ci) and its visit
@@ -430,7 +431,7 @@ func TestResume_EndToEnd_LostVisitCountedSecondEntry(t *testing.T) {
 	s["fixer"] = []string{"failed"}
 	s["oracle"] = []string{"goto:ci the PR head moved, wait for CI again"}
 	setup := func(e *e2e) { e.ctlSet("merge_fail_once", "") }
-	resumeKilledInCI(t, s, setup, freezeStore{visits: 1, nth: 2}, 2)
+	resumeKilledInCI(t, s, setup, freezeStore{state: "ci", visits: 1, nth: 2}, 2)
 }
 
 // resumeKilledInCI runs the e2e workflow with script until fz freezes it in ci,
@@ -494,6 +495,46 @@ func resumeKilledInCI(t *testing.T, script map[string][]string, setup func(*e2e)
 		t.Fatalf("visits ci = %d, want %d (before %s)", got, wantVisits, visitsBefore)
 	}
 	e.wantMerged()
+}
+
+// #403: the run is killed in post_review after its review step. The workflow
+// file then renames the review state. The resumed run still posts the review,
+// because the history keeps the role of the review step.
+func TestResume_ReviewStateRenamed_StillPostsReview(t *testing.T) {
+	e := newE2E(t, happy())
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	r := e.newRunner()
+	r.Store = &freezeStore{Store: &Store{Dir: e.runDir}, state: "post_review", visits: 1, nth: 1, cancel: cancel}
+	_ = r.Run(ctx, e.st)
+
+	st, err := Load(e.runDir)
+	if err != nil || st.Current != "post_review" || st.Status != "running" {
+		t.Fatalf("saved state = %+v, err %v", st, err)
+	}
+	st.PID = deadPID(t)
+	if err := (&Store{Dir: e.runDir}).Save(st); err != nil {
+		t.Fatal(err)
+	}
+	renameState(e.wf, "review", "judge")
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel2()
+	if err := e.newRunner().Continue(ctx2, st); err != nil {
+		t.Fatalf("continue: %v (status %s, reason %q)", err, st.Status, st.Reason)
+	}
+	if st.Status != "done" || !wasMerged(st) {
+		t.Fatalf("status %s, reason %q", st.Status, st.Reason)
+	}
+	for _, h := range st.History {
+		if h.State == "findings" && (h.Role != "review" || h.Task != "findings_to_issues") {
+			t.Errorf("findings step has role %q, task %q", h.Role, h.Task)
+		}
+	}
+	body, _ := os.ReadFile(filepath.Join(e.ctl, "review_body"))
+	if !strings.Contains(string(body), "ACCEPT") {
+		t.Errorf("posted review = %q", body)
+	}
 }
 
 func TestManager_AdoptReturnsResumedRunOnce(t *testing.T) {
