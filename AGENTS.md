@@ -20,6 +20,7 @@ macOS and Linux only; Windows is not a supported target (unix-only syscalls).
 | `tools/` | Built-in tools (bash, read, write, edit, subagent, wait, lua, MCP, ...) |
 | `display/` | TUI frontend |
 | `session/`, `jobs/`, `locks/`, `eventbus/`, `stream/` | Sessions, background jobs, locks, events, streaming |
+| `bus/` | Message bus for typed JSON messages. It has direct and subtree routing, and Durable and Latest queues. No code uses it yet. |
 | `internal/` | MCP client, cron, hooks, skills, readline, workflow runner (`flow/`), config |
 | `internal/agentdefs/builtin/*.md` | Agent definitions embedded in the binary (code, not docs) |
 | `docs/` | Design notes, test plans and process docs |
@@ -66,7 +67,7 @@ run only for code changes. The required check is `ci-ok`. Pushing a `vX.Y.Z` tag
 
 - Commit scopes: `agent`, `api`, `connector`, `providers`, `tools`, `display`, `session`,
   `jobs`, `mcp`, `cron`, `cli`, `docs`, `ci`, `workflow`, `checks`, `roles`, `config`,
-  `chat`, `worktree`.
+  `chat`, `worktree`, `bus`.
   Example: `fix(tools): close the response body on cancel (#12)`.
 - Commands, flags and the on-disk formats under `~/.tyci/` are a public interface. Change them
   deliberately and document the change in `CHANGELOG.md` and `README.md`.
