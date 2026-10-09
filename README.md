@@ -60,6 +60,8 @@ make install
 `workflow_start`, `workflow_status` and `workflow_resume`. The issue needs the label
 `accepted`, and its author needs write access.
 
+`workflow_start` needs the workflow name, `workflow`, and the positional values of the workflow, `params`, a list of strings. For example: `{"workflow": "issue-to-merge", "params": ["160"]}`. The tool description lists the available workflows of the project and of `~/.tyci/workflows/` with their params. A missing required param makes the model ask you for it. When the model starts a run, the chat shows a line such as `model started /issue-to-merge 160`.
+
 `tyci` has no built-in workflow. Run `tyci workflow init issue-to-merge` in the repository before the first run. The orchestrator also needs the workflow `roadmap` for its oracle step. Run `tyci workflow init roadmap` too. See "Create or change a workflow" below.
 
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
@@ -137,7 +139,7 @@ A workflow declares its positional params in `workflow.json`, in the list `param
 
 The task templates read a value as `{{.Params.<name>}}`. The param `issue` is the issue number of the run. A workflow without an `issue` param has no issue. Its worktree and branch are named after the run id, `run-<run id>`. `tyci workflow status` shows the params of a run.
 
-Migration: a `workflow.json` without `params` cannot start with an issue. The CLI command `tyci workflow run`, the chat tool `workflow_start` and the orchestrator send one issue number, and they bind it to the param named `issue` only. To migrate, add `"params": [{"name": "issue", "description": "GitHub issue number", "required": true}]` to `workflow.json`. The start fails until the param exists.
+Migration: a `workflow.json` without `params` cannot start with an issue. The CLI command `tyci workflow run` and the orchestrator send one issue number, and they bind it to the param named `issue` only. The chat tool `workflow_start` sends the `params` that the model gives, in their order. To migrate, add `"params": [{"name": "issue", "description": "GitHub issue number", "required": true}]` to `workflow.json`. The start fails until the param exists.
 
 The `post_review` check state of a custom workflow must have a `default` key, or one key for each answer of `post_review.sh`.
 The answers are `ok`, `skip` and `fail`.
