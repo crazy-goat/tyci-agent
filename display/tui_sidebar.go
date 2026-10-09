@@ -343,7 +343,6 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 			if m.sidebarCursor >= jobCount {
 				m.sidebarCursor = jobCount - 1
 			}
-			m.sidebarFollowCursor()
 		} else {
 			last := m.sidebarRowCount() - 1
 			m.sidebarCursor += delta
@@ -598,7 +597,6 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					if selected >= 0 {
 						m.sidebarCursor = selected
-						m.sidebarFollowCursor()
 						return m.sidebarActivateRow()
 					}
 				case sidebarTabRuns:
@@ -653,7 +651,11 @@ func sidebarTabAtX(layout sidebarLayoutT, x int) int {
 }
 
 // sidebarActivateRow is Enter's (and a row click's) handler: what "open
-// this row" means depends on the active tab.
+// this row" means depends on the active tab. On the Tasks tab, a Subagents
+// row selects its agent, so the Bash and Lua rows list that agent's jobs. The
+// main row selects main. A Bash row keeps the selection. closeSidebar below
+// clears the selection again, so for a subagent without a live transcript the
+// Bash and Lua rows show main once the sidebar closes.
 func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 	switch m.sidebarTab {
 	case sidebarTabSessions:
@@ -663,6 +665,11 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 		jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
 		if m.sidebarCursor >= 0 && m.sidebarCursor < len(jobRows) {
 			row := rows[jobRows[m.sidebarCursor]]
+			if row.isMain {
+				m.sidebarTaskOwner = ""
+			} else if row.subagent {
+				m.sidebarTaskOwner = row.job.ID
+			}
 			switch {
 			case row.isMain:
 				m.closeAgentView()
@@ -813,13 +820,38 @@ func (m TuiModel) sidebarSessionEntries() []TuiResumeEntry {
 // agent sidebarTaskOwner started, oldest first, for the Bash tab.
 func (m TuiModel) sidebarBashJobs() []jobs.Job {
 	newestFirst := m.sortedBackgroundJobs()
+	subagents := sidebarSubagentIDs(newestFirst)
 	var out []jobs.Job
 	for i := len(newestFirst) - 1; i >= 0; i-- {
-		if newestFirst[i].Kind == jobs.KindBash && newestFirst[i].ParentID == m.sidebarTaskOwner {
+		if newestFirst[i].Kind == jobs.KindBash && sidebarOwnedBy(newestFirst[i].ParentID, m.sidebarTaskOwner, subagents) {
 			out = append(out, newestFirst[i])
 		}
 	}
 	return out
+}
+
+// sidebarSubagentIDs returns the job ids of the subagents in list. They are
+// the Subagents rows of the Tasks tab.
+func sidebarSubagentIDs(list []jobs.Job) map[string]bool {
+	ids := map[string]bool{}
+	for _, j := range list {
+		if j.Kind == jobs.KindSubagent {
+			ids[j.ID] = true
+		}
+	}
+	return ids
+}
+
+// sidebarOwnedBy reports whether owner, the job id of the agent that started
+// a Bash job or a Lua run, belongs to the selected agent. The main
+// conversation (selected "") also owns every owner that has no Subagents row.
+// Such an owner was evicted from the job list, but a job it started can still
+// run, and it must not vanish from the Tasks tab.
+func sidebarOwnedBy(owner, selected string, subagents map[string]bool) bool {
+	if selected == "" {
+		return !subagents[owner]
+	}
+	return owner == selected
 }
 
 // sidebarTaskRow is one rendered line in Tasks. Group headings are not
@@ -877,9 +909,10 @@ func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 // sidebarOwnedLuaRuns returns the Lua runs that the agent sidebarTaskOwner
 // ran, oldest first, for the Lua rows of the Tasks tab.
 func (m TuiModel) sidebarOwnedLuaRuns() []tools.LuaRun {
+	subagents := sidebarSubagentIDs(m.sortedBackgroundJobs())
 	var out []tools.LuaRun
 	for _, r := range tools.LuaRunHistory() {
-		if r.Owner == m.sidebarTaskOwner {
+		if sidebarOwnedBy(r.Owner, m.sidebarTaskOwner, subagents) {
 			out = append(out, r)
 		}
 	}
@@ -921,24 +954,6 @@ func (m TuiModel) sidebarTaskJobRows(width int) []int {
 		}
 	}
 	return indices
-}
-
-// sidebarFollowCursor sets sidebarTaskOwner to the agent of the Subagents row
-// under the cursor: "" for main, the job id for a subagent. A cursor on a Bash
-// row leaves it unchanged, so the Bash and Lua rows keep the agent selected
-// last.
-// The first len(buildSubagentTree()) selectable Tasks rows are the Subagents
-// rows, in tree order, so the cursor index selects the tree row directly.
-// Run it after every cursor move on the Tasks tab.
-func (m *TuiModel) sidebarFollowCursor() {
-	tree := m.buildSubagentTree()
-	if m.sidebarCursor < 0 || m.sidebarCursor >= len(tree) {
-		return
-	}
-	m.sidebarTaskOwner = ""
-	if !tree[m.sidebarCursor].isRoot {
-		m.sidebarTaskOwner = tree[m.sidebarCursor].job.ID
-	}
 }
 
 // sidebarCursorJobID returns the ID of the job under the Tasks cursor. It
