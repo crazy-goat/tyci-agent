@@ -23,9 +23,13 @@ const compactKeepMessages = 8
 const compactSummaryTimeout = 60 * time.Second
 
 // compactSummaryMaxTokens caps the reply of the summary call. It is sent as
-// MaxTokens, so a long summary is cut rather than running on. For a small
-// window the cap is window/10 (see summaryMaxTokensFor).
+// MaxTokens, so a long summary is cut rather than running on. A window with
+// less room gets a lower cap (see summaryBudget).
 const compactSummaryMaxTokens = 6144
+
+// compactSummaryMinTokens is the least reply the summary call asks for. With
+// less room than this, the call is not made and the fixed marker is used.
+const compactSummaryMinTokens = 1024
 
 // compactSummaryOverhead is the room kept for the summary instruction and the
 // transcript labels, which the summary call adds on top of the conversation.
@@ -38,23 +42,21 @@ const compactSummaryOverhead = 2048
 // shows for small windows.
 const compactSummaryReserve = 8192
 
-// summaryMaxTokensFor returns the reply cap of the summary call for a window.
-// An unknown window (0) keeps compactSummaryMaxTokens.
-func summaryMaxTokensFor(window int) int {
+// summaryBudget returns the reply cap of the summary call for a conversation
+// of used tokens in a window: the room left after the conversation and the
+// instruction overhead, at most compactSummaryMaxTokens.
+//
+// Assumption: used is the last input plus output count. It includes the
+// system prompt and the tool schemas, which the summary call does not send.
+// The call sends only the transcript and the instruction. Counting the
+// system prompt and the tools again makes the room smaller, so the estimate
+// is conservative and is not reduced further. An unknown window (0) keeps
+// compactSummaryMaxTokens, because the provider decides then.
+func summaryBudget(used, window int) int {
 	if window <= 0 {
 		return compactSummaryMaxTokens
 	}
-	return min(compactSummaryMaxTokens, window/10)
-}
-
-// summaryFits reports whether the summary call fits in the window: the
-// conversation (used tokens), the instruction overhead and the reply cap.
-// An unknown window (0) always fits, because the provider decides then.
-func summaryFits(used, window int) bool {
-	if window <= 0 {
-		return true
-	}
-	return used+compactSummaryOverhead+summaryMaxTokensFor(window) <= window
+	return min(compactSummaryMaxTokens, window-used-compactSummaryOverhead)
 }
 
 // compactSummaryInstruction is the fixed request sent with the conversation

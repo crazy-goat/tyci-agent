@@ -490,8 +490,9 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			switch {
 			case used > 0 && hardAt > 0 && used >= hardAt:
 				note := buildInLoopCompactNote(used, hardAt, "")
-				if len(*msgs) > compactKeepMessages && summaryFits(used, contextLimit()) {
-					res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout, summaryMaxTokensFor(contextLimit()))
+				budget := summaryBudget(used, contextLimit())
+				if len(*msgs) > compactKeepMessages && budget >= compactSummaryMinTokens {
+					res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout, budget)
 					accountSummary(d, &totalUsage, res)
 					if err == nil {
 						note = buildInLoopCompactNote(used, hardAt, res.text)
@@ -536,9 +537,11 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 					modelSummary := ""
 					// Nothing is dropped with 8 messages or fewer, so the
 					// call would only add cost (see compactTail). A call
-					// that does not fit in the window is not made either.
-					if len(*msgs) > compactKeepMessages && summaryFits(used, limit) {
-						res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout, summaryMaxTokensFor(limit))
+					// with less than compactSummaryMinTokens of room in the
+					// window is not made either.
+					budget := summaryBudget(used, limit)
+					if len(*msgs) > compactKeepMessages && budget >= compactSummaryMinTokens {
+						res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout, budget)
 						accountSummary(d, &totalUsage, res)
 						if err == nil {
 							modelSummary = res.text
@@ -713,12 +716,11 @@ func compactThresholds(window, soft, hard, hardPercent int) (softAt, hardAt int)
 		hardAt = window * autoHardPercent / 100
 	}
 	// The summary call needs room in the window after the hard limit. The
-	// reserve is a tenth of the window, at most compactSummaryReserve. The
-	// hard limit never drops below 70% of the window because of it. A
+	// reserve is a tenth of the window, at most compactSummaryReserve. A
 	// window of 163840 tokens or more is unaffected (95% leaves 8192).
 	if hardAt > 0 && window > 0 {
 		reserve := min(compactSummaryReserve, window/10)
-		hardAt = min(hardAt, max(window-reserve, window*70/100))
+		hardAt = min(hardAt, window-reserve)
 	}
 	return softAt, hardAt
 }
