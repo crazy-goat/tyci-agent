@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/conductor"
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/display"
@@ -162,10 +163,24 @@ func (a jobProgressHeartbeatAdapter) NeedsProgressHeartbeat(id string, after tim
 type jobMailboxAdapter struct{ reg *jobs.Registry }
 
 func (a jobMailboxAdapter) Resolve(id string) (string, bool) { return a.reg.Resolve(id) }
-func (a jobMailboxAdapter) Post(id, text string) bool        { return a.reg.Post(id, text) }
-func (a jobMailboxAdapter) IsLive(id string) bool            { return a.reg.IsLive(id) }
-func (a jobMailboxAdapter) Drain(id string) []string         { return a.reg.DrainMessages(id) }
-func (a jobMailboxAdapter) Posted(id string) uint64          { return a.reg.Posted(id) }
+
+// Post sends text to job id as an agent.message from the orchestrator. It
+// reports false when id is not live, so the caller does not report success
+// for a message that the bus would reroute.
+func (a jobMailboxAdapter) Post(id, text string) bool {
+	if !a.reg.IsLive(id) {
+		return false
+	}
+	publishAgentMessage(appBus, id, orchestratorAddr, bus.OriginAgent, text)
+	return true
+}
+func (a jobMailboxAdapter) IsLive(id string) bool { return a.reg.IsLive(id) }
+func (a jobMailboxAdapter) Drain(id string) []string {
+	return agentInboxes.drain(id)
+}
+func (a jobMailboxAdapter) Posted(id string) uint64 {
+	return agentInboxes.accepted(id)
+}
 
 // jobResumerAdapter satisfies tools.JobResumer over JobRegistry and the
 // package-level resumable map (main.go): it forks a previously-recorded
@@ -536,11 +551,11 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 
 	parentID, _ := ctx.Value(tools.JobIDCtxKey{}).(string)
 	// Captured as locals, not read from the package globals inside the
-	// closure below — same reasoning as wireTools's bus/notices capture
-	// (main.go): this closure can still be running long after JobRegistry/
-	// JobNotices get reassigned elsewhere (test isolation swaps them), and
-	// it must always report to the registry/queue it actually started on.
-	reg, notices := JobRegistry, JobNotices
+	// closure below — same reasoning as wireTools's bus capture (main.go):
+	// this closure can still be running long after JobRegistry/appBus get
+	// reassigned elsewhere (test isolation swaps them), and it must always
+	// report to the registry and bus it actually started on.
+	reg, b := JobRegistry, appBus
 	return reg.Start(ctx, question, jobs.KindSubagent, parentID, func(jobCtx context.Context, jobID string) (string, bool, error) {
 		defer cancelEvaluation()
 		defer func() { btwEvaluationsMu.Lock(); btwActive--; btwEvaluationsMu.Unlock() }()
@@ -570,16 +585,9 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		text := sink.CollectedText()
 		if err == nil || truncated {
 			retainBtwEvaluation(jobID, &btwEvaluation{msgs: session.ForkMessages(forked), mc: client, cfg: cfg, question: question})
-			noticeText := fmt.Sprintf("[btw] evaluation %q finished (job_id=%q): %s\nIf it is worth doing, call promote_btw(job_id=%q). Promotion creates one real subthread; wait for that job instead of doing the work in this thread.", question, jobID, strings.TrimSpace(text), jobID)
-			// B4: address this to whoever spawned this /btw job (parentID),
-			// not unconditionally to the main queue — see the identical
-			// routing/fallback choice in wireTools's onEvent hook (main.go).
-			if parentID == "" || !reg.Post(parentID, noticeText) {
-				if parentID != "" {
-					noticeText = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", parentID, noticeText)
-				}
-				notices.Notify(noticeText)
-			}
+			// The answer goes to the spawner of this job, or to the orchestrator
+			// when there is none. The bus reroutes it when that spawner finished.
+			publishBtwAnswer(b, parentID, jobID, question, strings.TrimSpace(text))
 		}
 		sink.MarkDone(err)
 		return text, truncated, err
@@ -611,4 +619,10 @@ func (a listJobsAdapter) ListJobs() []tools.JobKindSource {
 		out[i] = jobKindSource{j}
 	}
 	return out
+}
+
+// btwEvaluationNotice is the text that the model reads when a /btw evaluation
+// finishes. Its answer is already trimmed.
+func btwEvaluationNotice(question, jobID, answer string) string {
+	return fmt.Sprintf("[btw] evaluation %q finished (job_id=%q): %s\nIf it is worth doing, call promote_btw(job_id=%q). Promotion creates one real subthread; wait for that job instead of doing the work in this thread.", question, jobID, answer, jobID)
 }

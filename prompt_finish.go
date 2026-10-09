@@ -11,32 +11,17 @@ import (
 	"github.com/crazy-goat/tyci-agent/display"
 )
 
-// exitFunc is os.Exit, indirected so a test can observe an exit (and its
-// code) without actually terminating the test binary. Production code
-// never overrides it.
-var exitFunc = os.Exit
+// exitCodeError carries the exit code of a one-shot run up to main. main
+// exits with that code, after the defers of runCmd have run, and prints no
+// message for it.
+type exitCodeError int
+
+func (e exitCodeError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
 
 // finishPromptRun turns the outcome of a one-shot turn into what the user
-// sees and the process exits with. Deciding that is the frontend's half of
+// sees, and returns the exit code. Deciding that is the frontend's half of
 // the split: the conductor reports what happened, this decides how it looks.
-//
-// cleanup is called immediately before every exitFunc call below, and ONLY
-// there -- the final, no-error fallthrough at the bottom returns normally,
-// so runCmd's own `defer shutdown()` (commands.go) covers that path
-// already. os.Exit terminates the process before any deferred func gets to
-// run, so without this, a `tyci run` that errors or is interrupted (the
-// two cases that reach exitFunc here) would skip tools.ShutdownMCP()
-// entirely -- silently leaking a connected MCP server's process on every
-// failed or canceled run, cron's included, since cron just shells out to
-// `tyci run`. nil is fine: callers that never connected MCP pass nil (this
-// file has no import on "tools" to keep the two concerns separate; the
-// caller decides what cleanup means).
-func finishPromptRun(cond *conductor.Conductor, disp display.Display, err error, cleanup func()) {
-	runCleanup := func() {
-		if cleanup != nil {
-			cleanup()
-		}
-	}
+func finishPromptRun(cond *conductor.Conductor, disp display.Display, err error) int {
 	sessionPath := cond.SessionPath()
 	status := "ok"
 	exitCode := 0
@@ -50,9 +35,7 @@ func finishPromptRun(cond *conductor.Conductor, disp display.Display, err error,
 			disp.End()
 			cond.EndSession("canceled", 130)
 			printSessionPath(sessionPath)
-			runCleanup()
-			exitFunc(130)
-			return
+			return 130
 		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		status = "error"
@@ -62,12 +45,11 @@ func finishPromptRun(cond *conductor.Conductor, disp display.Display, err error,
 
 	if err != nil {
 		printSessionPath(sessionPath)
-		runCleanup()
-		exitFunc(exitCode)
-		return
+		return exitCode
 	}
 	disp.End()
 	printSessionPath(sessionPath)
+	return 0
 }
 
 func printSessionPath(sessionPath string) {

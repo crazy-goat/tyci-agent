@@ -173,7 +173,7 @@ func TestSetProgress_TruncatesEntryRuneSafely(t *testing.T) {
 // Snapshot's struct literal simply assigned j.ProgressHistory (a slice
 // header copy), which would leave the returned snapshot aliasing the exact
 // backing array SetProgress keeps mutating on the live job — the same
-// aliasing bug ResidualMailbox's own deep-copy fix (batch-2 review D4)
+// aliasing bug that the deep-copy fix (batch-2 review D4) closed
 // exists to avoid for that field.
 func TestJobSnapshot_ProgressHistoryIsDeepCopied(t *testing.T) {
 	j := &Job{

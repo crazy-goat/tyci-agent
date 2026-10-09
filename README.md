@@ -855,6 +855,7 @@ file and `range: "append"` need no prior read.
 
 Sessions are automatically saved to `~/.tyci/sessions/` as JSONL files.
 Subagents that run as jobs write their own files to `~/.tyci/sessions/<project>/agents/`. The file name ends with the job id. `tyci session list` does not show these files, and nothing deletes them yet. Agents of a workflow run write to the run dir instead (see Run transcripts).
+`bus.jsonl` is the message journal; it is not a session and the session list skips it.
 Each line is a complete event (message, tool call, result, usage).
 
 - Re-run with `--session <path>` to resume a previous session

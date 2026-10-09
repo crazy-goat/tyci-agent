@@ -18,17 +18,6 @@ import (
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
-// realJobMailbox mirrors main.go's jobMailboxAdapter (over a real
-// jobs.Registry) so these tests exercise notifyToParent's actual delivery
-// path instead of a hand-rolled stand-in.
-type realJobMailbox struct{ reg *jobs.Registry }
-
-func (m realJobMailbox) Resolve(id string) (string, bool) { return m.reg.Resolve(id) }
-func (m realJobMailbox) Post(id, text string) bool        { return m.reg.Post(id, text) }
-func (m realJobMailbox) IsLive(id string) bool            { return m.reg.IsLive(id) }
-func (m realJobMailbox) Drain(id string) []string         { return m.reg.DrainMessages(id) }
-func (m realJobMailbox) Posted(id string) uint64          { return m.reg.Posted(id) }
-
 // noticeRoutingEnv wires a fresh registry, mailbox, starter and main
 // notifier, and restores everything on cleanup.
 func noticeRoutingEnv(t *testing.T) (*jobs.Registry, *recordingNotifier) {
@@ -36,7 +25,7 @@ func noticeRoutingEnv(t *testing.T) (*jobs.Registry, *recordingNotifier) {
 	reg := jobs.NewRegistry()
 	notifier := &recordingNotifier{}
 	SetJobStarter(testJobStarter{reg})
-	SetJobMailbox(realJobMailbox{reg})
+	SetJobMailbox(newTestMailbox(reg))
 	SetJobNotifier(notifier)
 	SetBackgroundBashEnabled(true)
 	t.Cleanup(func() {
@@ -83,7 +72,7 @@ func TestNotifyToParent_RoutesToForkMailbox_NotMainQueue(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var forkMailbox []string
 	for time.Now().Before(deadline) {
-		forkMailbox = reg.DrainMessages(fork.ID)
+		forkMailbox = getJobMailbox().Drain(fork.ID)
 		if len(forkMailbox) > 0 {
 			break
 		}

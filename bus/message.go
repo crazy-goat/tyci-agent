@@ -81,6 +81,9 @@ type Message struct {
 	ReplyTo uint64 `json:"reply_to,omitempty"`
 	// Origin says what caused the message. Host code sets it.
 	Origin Origin `json:"origin"`
+	// OrigTo is the recipient that the sender chose. It is set only when the
+	// bus rerouted the message to the orchestrator because To was not live.
+	OrigTo *Addr `json:"orig_to,omitempty"`
 	// Payload is the JSON encoding of the payload that Decode reads.
 	Payload json.RawMessage `json:"payload"`
 }

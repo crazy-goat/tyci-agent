@@ -788,7 +788,7 @@ func TestAskAnswerRoundTripWhenHandoffIsAvailable(t *testing.T) {
 // --- Item 54: a child's question must not surface twice — once inline in
 // the handoff message's "question" field, once again as a separately queued
 // notice. handOff's markShown parameter controls whether it tells the wired
-// JobNotifier (markQuestionsShown, see bgbash.go) that a question it just
+// JobNotifier (MarkAskShown, see markAskShown in bus_wiring.go) that a question it just
 // put in the message was "shown" — these two tests pin both sides of that at
 // the handOff level, independent of the full onEvent wiring (which
 // wiring_ask_notice_dedup_test.go covers end to end).
@@ -796,7 +796,7 @@ func TestAskAnswerRoundTripWhenHandoffIsAvailable(t *testing.T) {
 // TestHandoffMarksShownQuestionsWhenTrue is case (a): the handoff message
 // carries a still-running child's question, and markShown=true must report
 // exactly that job/question pair to the notifier — the signal
-// jobs.Notifier.MarkQuestionShown uses to suppress the duplicate onEvent
+// noticeCounter.MarkAskShown uses to suppress the duplicate onEvent
 // notice at drain time.
 func TestHandoffMarksShownQuestionsWhenTrue(t *testing.T) {
 	reg := jobs.NewRegistry()
@@ -844,7 +844,7 @@ func TestHandoffMarksShownQuestionsWhenTrue(t *testing.T) {
 		t.Fatal("expected the job to still be known to the registry")
 	}
 	if seq, ok := notifier.shownFor(st.jobID); !ok || seq != wantSeq.QuestionSeq {
-		t.Fatalf("expected MarkQuestionShown(%q, %d), got shown=%v", st.jobID, wantSeq.QuestionSeq, notifier.shown)
+		t.Fatalf("expected MarkAskShown(%q, %d), got shown=%v", st.jobID, wantSeq.QuestionSeq, notifier.shown)
 	}
 
 	reg.Answer(st.jobID, "main", true)
@@ -897,7 +897,7 @@ func TestHandoffDoesNotMarkShownWhenFalse(t *testing.T) {
 		t.Fatalf("expected the handoff message to still carry the question: %s", res.Content)
 	}
 	if seq, ok := notifier.shownFor(st.jobID); ok {
-		t.Fatalf("expected no MarkQuestionShown call with markShown=false, got %d", seq)
+		t.Fatalf("expected no MarkAskShown call with markShown=false, got %d", seq)
 	}
 
 	reg.Answer(st.jobID, "main", true)

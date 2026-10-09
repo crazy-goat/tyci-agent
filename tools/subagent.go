@@ -998,7 +998,7 @@ func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolR
 // as pendingQuestions finds it. Seq is jobs.Job.QuestionSeq mirrored — an
 // unforgeable per-ask id, unlike Text, which is free text a job can pose
 // identically more than once across its lifetime (item 54 review finding
-// 1). markQuestionsShown keys on Seq, not Text, for exactly that reason.
+// 1). the ask mark in handOff keys on Seq, not Text, for exactly that reason.
 type pendingQuestion struct {
 	Text string
 	Seq  int
@@ -1227,7 +1227,7 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 				// already-queued ask-notice untouched costs at worst a
 				// duplicate on this path, never a silent loss, and that is
 				// the safer default to keep — see
-				// jobs.Notifier.MarkQuestionShown's doc comment for why.
+				// the JobNotifier.MarkAskShown doc comment for why.
 				return t.handOff(ctx, spawned, false), true
 			}
 			// No handoff is available in this mode, so there is nobody to
@@ -1260,7 +1260,7 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 //
 // markShown controls whether a job's question, once it ends up in the
 // returned message, is also reported to the wired JobNotifier via
-// markQuestionsShown — so a "child is blocked" notice already queued for the
+// MarkAskShown — so a "child is blocked" notice already queued for the
 // same job+ask (jobs.Registry.Ask's onEvent hook fires before Ask ever
 // blocks, so that notice is typically queued well before this runs) is left
 // out of the next drain instead of repeating what this message just said.
@@ -1268,7 +1268,7 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 // the queued notice untouched rather than suppress it — runWithHandoff's
 // ctx.Done() (Esc) branch, where duplicating it costs far less than risking
 // the only delivery the question ever gets. See
-// jobs.Notifier.MarkQuestionShown's doc comment.
+// the JobNotifier.MarkAskShown doc comment.
 func (t *SubagentTool) handOff(ctx context.Context, spawned []*spawnedTask, markShown bool) ToolResult {
 	var stillRunning []*spawnedTask
 	var finished []subagentResult
@@ -1294,7 +1294,11 @@ func (t *SubagentTool) handOff(ctx context.Context, spawned []*spawnedTask, mark
 	}
 	questions := pendingQuestions(ctx, stillRunning)
 	if markShown {
-		markQuestionsShown(questions)
+		if n := getJobNotifier(); n != nil {
+			for jobID, q := range questions {
+				n.MarkAskShown(jobID, q.Seq)
+			}
+		}
 	}
 	return ToolResult{Type: "result", Success: true, Content: spawnedJobsMessage(stillRunning, finished, questions)}
 }

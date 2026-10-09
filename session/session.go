@@ -1508,9 +1508,13 @@ func SessionDirFromPath(path string) string {
 	return filepath.Dir(path)
 }
 
+// JournalFileName is the message journal of the bus. It sits in the session
+// directory next to the sessions, but it is not a session.
+const JournalFileName = "bus.jsonl"
+
 // ListEntries returns session files in dir, newest first. Each entry includes
 // the path, file size, and modification time. Files with extension .jsonl are
-// listed; everything else (lockfiles, partials) is ignored.
+// listed, except bus.jsonl; everything else (lockfiles, partials) is ignored.
 func ListEntries(dir string) ([]SessionEntry, error) {
 	if dir == "" {
 		return nil, nil
@@ -1527,7 +1531,7 @@ func ListEntries(dir string) ([]SessionEntry, error) {
 		if e.IsDir() {
 			continue
 		}
-		if !strings.HasSuffix(e.Name(), ".jsonl") {
+		if !strings.HasSuffix(e.Name(), ".jsonl") || e.Name() == JournalFileName {
 			continue
 		}
 		info, err := e.Info()

@@ -2,14 +2,16 @@ package watchdog
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
-type sent struct{ to, text string }
+type sent struct {
+	to string
+	a  Alarm
+}
 
 type rig struct {
 	t     *testing.T
@@ -24,11 +26,11 @@ type rig struct {
 func newRig(t *testing.T) *rig {
 	r := &rig{t: t, reg: jobs.NewRegistry(), gone: map[string]bool{}, stop: make(chan struct{})}
 	r.w = &Watchdog{Reg: r.reg, IdleAfter: 3 * time.Minute, EscalateAfter: 3 * time.Minute,
-		Notify: func(to, text string) bool {
+		Notify: func(to string, a Alarm) bool {
 			if r.gone[to] {
 				return false
 			}
-			r.msgs = append(r.msgs, sent{to, text})
+			r.msgs = append(r.msgs, sent{to, a})
 			return true
 		}}
 	t.Cleanup(func() { close(r.stop) })
@@ -158,9 +160,9 @@ func TestTick_IgnoresNonSubagentAndTerminal(t *testing.T) {
 func TestTick_MessageUsesRealIdleTime(t *testing.T) {
 	r := newRig(t)
 	p := r.job(jobs.KindOther, "")
-	r.job(jobs.KindSubagent, p.ID)
+	sub := r.job(jobs.KindSubagent, p.ID)
 	r.tick(4*time.Minute + 20*time.Second)
-	if len(r.msgs) != 1 || !strings.Contains(r.msgs[0].text, "for 4m.") || !strings.Contains(r.msgs[0].text, "none") {
+	if want := (Alarm{Agent: sub.ID, Description: sub.Description, LastNote: sub.Progress, QuietFor: 4*time.Minute + 20*time.Second}); len(r.msgs) != 1 || r.msgs[0].a != want {
 		t.Fatalf("got %v", r.msgs)
 	}
 }
@@ -181,22 +183,10 @@ func TestTick_SubMinuteIdleShowsSeconds(t *testing.T) {
 	r := newRig(t)
 	r.w.IdleAfter = 20 * time.Second
 	p := r.job(jobs.KindOther, "")
-	r.job(jobs.KindSubagent, p.ID)
+	sub := r.job(jobs.KindSubagent, p.ID)
 	r.tick(20 * time.Second)
-	if len(r.msgs) != 1 || !strings.Contains(r.msgs[0].text, "for 20s.") {
+	if want := (Alarm{Agent: sub.ID, Description: sub.Description, LastNote: sub.Progress, QuietFor: 20 * time.Second}); len(r.msgs) != 1 || r.msgs[0].a != want {
 		t.Fatalf("got %v", r.msgs)
-	}
-}
-
-func TestFormatIdle(t *testing.T) {
-	for in, want := range map[time.Duration]string{
-		20 * time.Second:               "20s",
-		4*time.Minute + 50*time.Second: "5m",
-		4*time.Minute + 20*time.Second: "4m",
-	} {
-		if got := formatIdle(in); got != want {
-			t.Errorf("%v: got %q want %q", in, got, want)
-		}
 	}
 }
 

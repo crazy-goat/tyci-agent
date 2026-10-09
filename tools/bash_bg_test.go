@@ -13,13 +13,11 @@ import (
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
-// recordingNotifier captures the completion notices a background command
-// produces, standing in for the app's jobs.Notifier. It also records
-// MarkQuestionShown calls (jobID -> seq) so tests can assert whether handOff
-// told the notifier a question was already delivered via the handoff
-// message — see subagent_handoff_test.go's question-notice tests. Keyed on
-// seq (jobs.Job.QuestionSeq), not question text, matching the real
-// jobs.Notifier's key (item 54 review finding 1).
+// recordingNotifier is the test JobNotifier. It captures the notices that
+// reach the main conversation and records MarkAskShown calls (jobID -> seq),
+// so tests can assert whether handOff told the notifier a question was
+// already delivered via the handoff message — see subagent_handoff_test.go's
+// question-notice tests. Keyed on seq (jobs.Job.QuestionSeq), not question text.
 type recordingNotifier struct {
 	mu    sync.Mutex
 	seen  []string
@@ -38,7 +36,15 @@ func (n *recordingNotifier) Queued() uint64 {
 	return uint64(len(n.seen))
 }
 
-func (n *recordingNotifier) MarkQuestionShown(jobID string, seq int) {
+func (n *recordingNotifier) Drain() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := n.seen
+	n.seen = nil
+	return out
+}
+
+func (n *recordingNotifier) MarkAskShown(jobID string, seq int) {
 	n.mu.Lock()
 	if n.shown == nil {
 		n.shown = make(map[string]int)
@@ -450,22 +456,12 @@ func TestBashBackgroundDisabledRunsInForeground(t *testing.T) {
 	}
 }
 
-// regMailbox is the test twin of main's jobMailboxAdapter (btw.go): it wires
-// a real jobs.Registry in as the JobMailbox.
-type regMailbox struct{ reg *jobs.Registry }
-
-func (m regMailbox) Resolve(id string) (string, bool) { return m.reg.Resolve(id) }
-func (m regMailbox) Post(id, text string) bool        { return m.reg.Post(id, text) }
-func (m regMailbox) IsLive(id string) bool            { return m.reg.IsLive(id) }
-func (m regMailbox) Drain(id string) []string         { return m.reg.DrainMessages(id) }
-func (m regMailbox) Posted(id string) uint64          { return m.reg.Posted(id) }
-
 // TestBashBackgroundInsideSubagent: a child agent hands a command to the
 // background like the main agent does. Its completion notice goes to the
 // child's own mailbox, never to the main queue.
 func TestBashBackgroundInsideSubagent(t *testing.T) {
 	reg, notifier := bgTestEnv(t)
-	SetJobMailbox(regMailbox{reg})
+	SetJobMailbox(newTestMailbox(reg))
 	t.Cleanup(func() { SetJobMailbox(nil) })
 
 	release := make(chan struct{})
@@ -487,7 +483,7 @@ func TestBashBackgroundInsideSubagent(t *testing.T) {
 	id := jobIDFromResult(t, res.Content)
 	waitForJob(t, reg, id, bgFinishCap)
 
-	mail := reg.DrainMessages(parent.ID)
+	mail := getJobMailbox().Drain(parent.ID)
 	if len(mail) != 1 || !strings.Contains(mail[0], "[background command]") {
 		t.Fatalf("expected the completion notice in the subagent mailbox, got %q", mail)
 	}
@@ -517,7 +513,7 @@ func TestBashHandoffInsideSubagentTellsItToCollect(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			reg, _ := bgTestEnv(t)
-			SetJobMailbox(regMailbox{reg})
+			SetJobMailbox(newTestMailbox(reg))
 			t.Cleanup(func() { SetJobMailbox(nil) })
 
 			release := make(chan struct{})
@@ -561,7 +557,7 @@ func TestBashHandoffInsideSubagentTellsItToCollect(t *testing.T) {
 // must not send a notice to the main queue: the main agent never started it.
 func TestSubagentEndStopsItsBackgroundCommand(t *testing.T) {
 	reg, notifier := bgTestEnv(t)
-	SetJobMailbox(regMailbox{reg})
+	SetJobMailbox(newTestMailbox(reg))
 	t.Cleanup(func() { SetJobMailbox(nil) })
 
 	child := reg.Start(context.Background(), "subagent", jobs.KindSubagent, "", func(ctx context.Context, jobID string) (string, bool, error) {

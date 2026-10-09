@@ -230,7 +230,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 	// call sites below (busy-turn drain and the idle loop) just
 	// fire-and-forget it.
 	handleMsgCommand := func(arg string) {
-		if jobID, err := postMsgCommand(JobRegistry, arg); err != nil {
+		if jobID, err := postMsgCommand(appBus, JobRegistry, arg); err != nil {
 			tuiDisp.Error(err)
 		} else {
 			tuiDisp.ToolBlock(fmt.Sprintf("ℹ️  message queued for job %s", jobID))
@@ -278,17 +278,17 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		return nil
 	}
 	// Keep completion notices visible in the TUI as well as delivering them
-	// to the model. Previously JobNotices.Drain was wired only as a silent
+	// to the model. Previously the notice queue was wired only as a silent
 	// NextMessages source, so a child could finish successfully while the
 	// person saw no indication until they inferred it from model output.
-	drainJobNotices := func() []string {
-		notices := JobNotices.Drain()
+	drainOrchestratorNotices := func() []string {
+		notices := drainNotices()
 		for _, notice := range notices {
 			tuiDisp.ToolBlock(notice)
 		}
 		return notices
 	}
-	cond.SetNextMessages(mergeNextMessages(serviceCommands, cond.Config().NextMessages, drainJobNotices))
+	cond.SetNextMessages(mergeNextMessages(serviceCommands, cond.Config().NextMessages, drainOrchestratorNotices))
 
 	for {
 		iterCtx, iterCancel := context.WithCancel(baseCtx)
@@ -297,18 +297,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		// background command finishing.
 		var line string
 		select {
-		case <-JobNotices.Signal():
-			// A background shell command finished while nobody was running.
-			// Nothing will drain the notice queue until the next turn starts,
-			// so start one here: this is what turns "the command finished"
-			// into the agent actually reacting to it, rather than the user
-			// having to type something first.
-			//
-			// Drain can legitimately come back empty — the same notice may
-			// have been picked up by cfg.NextMessages during a turn that was
-			// still finishing when the signal fired. Starting a turn with an
-			// empty prompt would waste an API call, so we just loop.
-			notices := JobNotices.Drain()
+		case <-busOrchestratorNotices.Ready():
+			notices := wakeNotices()
 			if len(notices) == 0 {
 				iterCancel()
 				continue
@@ -389,7 +379,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// its UI. Waiting for completion prevents terminal events and
 				// notices from being delivered into the new conversation.
 				oldJobIDs := JobRegistry.CancelAll()
-				JobNotices.Clear()
+				clearNotices()
 				tuiDisp.ResetJobs(oldJobIDs)
 				// Cleanly terminate the live session so /new doesn't leave
 				// the file open with no closing event. /resume rebuilds

@@ -23,7 +23,6 @@ func (fixedToolRunner) Run(context.Context, string, map[string]any) (string, err
 // asks for a tool first, so the answer comes in the second round. Stdout must
 // hold the answer and one trailing newline. Stderr must stay empty.
 func TestRunPromptPrintsOnlyAnswerOnStdout(t *testing.T) {
-	exited, _, _ := withCapturedExit(t, nil)
 
 	client := &connectortest.Fake{
 		ProviderName: "run-test-prov",
@@ -48,10 +47,8 @@ func TestRunPromptPrintsOnlyAnswerOnStdout(t *testing.T) {
 		Config: agent.Config{Tools: fixedToolRunner{}},
 	})
 
-	runPrompt(cond, disp, "say the answer", context.Background(), nil)
-
-	if exited() {
-		t.Fatalf("did not expect exitFunc on a successful run")
+	if code := runPrompt(cond, disp, "say the answer", context.Background()); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
 	}
 	if got := out.String(); got != "the answer\n" {
 		t.Errorf("stdout = %q, want %q", got, "the answer\n")

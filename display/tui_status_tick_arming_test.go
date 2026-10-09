@@ -39,7 +39,7 @@ func TestStatusTick_DeadChainRearmedByRequestStart(t *testing.T) {
 	}
 
 	// Now a turn starts without ever calling submit() — e.g. the REPL
-	// driving itself from a job notice (tui_mode.go's JobNotices.Signal
+	// driving itself from a job notice (tui_mode.go's bus notice wake
 	// case). request-start is the one event guaranteed to fire regardless,
 	// so it must revive the dead chain with exactly one tick cmd.
 	cmd2 := m2.handleBlockMsg(tuiMsgBlock{kind: "request-start"})

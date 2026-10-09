@@ -397,3 +397,123 @@ func TestJSONRoundTrip(t *testing.T) {
 		t.Fatalf("Decode = %+v, want {k 7}", decoded)
 	}
 }
+
+func TestSubDone_ClosedBySubClose(t *testing.T) {
+	b := New()
+	s := b.Subscribe("s", Filter{To: agent("a")})
+	s.Close()
+	select {
+	case <-s.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Done is not closed after Sub.Close")
+	}
+	s.Close() // a second Close must not panic
+}
+
+func TestSubDone_ClosedByBusClose_WakesWaiter(t *testing.T) {
+	b := New()
+	s := b.Subscribe("s", Filter{To: agent("a")})
+	woke := make(chan struct{})
+	go func() {
+		select {
+		case <-s.Ready():
+		case <-s.Done():
+		}
+		close(woke)
+	}()
+
+	b.Close()
+	b.Close() // Close is idempotent
+	select {
+	case <-woke:
+	case <-time.After(time.Second):
+		t.Fatal("waiter did not return after Bus.Close")
+	}
+}
+
+func TestSubDone_OnClosedBusIsClosed(t *testing.T) {
+	b := New()
+	b.Close()
+	s := b.Subscribe("late", Filter{To: agent("a")})
+	select {
+	case <-s.Done():
+	default:
+		t.Fatal("Done of a subscription made on a closed bus is open")
+	}
+}
+
+func TestSubCloseAndDrain_ReturnsQueuedMessages(t *testing.T) {
+	b := New()
+	s := b.Subscribe("s", Filter{To: agent("a")})
+	mustPublishTo(t, b, agent("a"), item{ID: "1"})
+	mustPublishTo(t, b, agent("a"), item{ID: "2"})
+
+	got := decodeItems(t, s.CloseAndDrain())
+	if want := []item{{ID: "1"}, {ID: "2"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("CloseAndDrain = %v, want %v", got, want)
+	}
+	mustPublishTo(t, b, agent("a"), item{ID: "3"})
+	if msgs := s.Drain(); msgs != nil {
+		t.Fatalf("closed sub got %d messages after CloseAndDrain, want none", len(msgs))
+	}
+	select {
+	case <-s.Done():
+	default:
+		t.Fatal("Done is open after CloseAndDrain")
+	}
+}
+
+// mustPublishTo publishes item p to agent a from the orchestrator.
+func mustPublishTo(t *testing.T, b *Bus, to Addr, p item) {
+	t.Helper()
+	if _, err := Publish(b, kindDurable, orchestrator, to, OriginSystem, p); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+}
+
+func TestSubAccepted_CountsStoredMessages(t *testing.T) {
+	b := New()
+	s := b.Subscribe("s", Filter{To: agent("a")})
+	mustPublishTo(t, b, agent("a"), item{ID: "1"})
+	mustPublishTo(t, b, agent("a"), item{ID: "2"})
+	s.Drain()
+	if got := s.Accepted(); got != 2 {
+		t.Fatalf("Accepted = %d, want 2 after Drain", got)
+	}
+}
+
+func TestForward_ToOrchestratorKeepsOrigTo(t *testing.T) {
+	b := New()
+	orch := b.Subscribe("orch", Filter{To: orchestrator})
+	inbox := b.Subscribe("inbox", Filter{To: agent("a")})
+	mustPublishTo(t, b, agent("a"), item{ID: "left"})
+	msgs := inbox.CloseAndDrain()
+	if len(msgs) != 1 {
+		t.Fatalf("inbox held %d messages, want 1", len(msgs))
+	}
+	if _, err := b.Forward(msgs[0], orchestrator); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	got := orch.Drain()
+	if len(got) != 1 {
+		t.Fatalf("orchestrator got %d messages, want 1", len(got))
+	}
+	if got[0].OrigTo == nil || *got[0].OrigTo != agent("a") || got[0].Origin != OriginSystem {
+		t.Fatalf("forwarded message = OrigTo %+v Origin %q, want agent a and system", got[0].OrigTo, got[0].Origin)
+	}
+	if v, err := Decode[item](got[0]); err != nil || v.ID != "left" {
+		t.Fatalf("payload = %+v, %v; want ID left", v, err)
+	}
+}
+
+func TestForward_NonDurableRejected(t *testing.T) {
+	b := New()
+	_, err := Publish(b, kindLatest, orchestrator, agent("a"), OriginSystem, item{ID: "k"})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	m := Message{Kind: kindLatest, To: agent("a")}
+	if _, err := b.Forward(m, orchestrator); err == nil {
+		t.Fatal("Forward of a Latest kind succeeded, want error")
+	}
+}
