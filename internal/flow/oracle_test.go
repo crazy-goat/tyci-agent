@@ -202,6 +202,56 @@ func TestOracle_SubagentRunnerReturnsSpawnText(t *testing.T) {
 	}
 }
 
+// With an open PR, a goto to a state that ends the run, or to a state of the
+// oracle agent, goes to a human.
+func TestOracle_OpenPRGotoEndingStateNeedsHuman(t *testing.T) {
+	cases := []struct{ answer, state string }{
+		{"goto findings", "findings"},
+		{"goto recover", "recover"},
+	}
+	for _, c := range cases {
+		t.Run(c.answer, func(t *testing.T) {
+			wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
+				"code":     {Agent: "coder", MaxVisits: 1, On: map[string]string{"done": "code"}},
+				"findings": {Check: "findings.sh", On: map[string]string{"done": "end", "default": "end"}},
+				"recover":  {Agent: "oracle", Task: "recover", On: map[string]string{"stop": "end", "default": "ask"}},
+				"ask":      {Ask: "The run needs a human decision.", On: map[string]string{"retry": "code", "stop": "end"}},
+				"end":      {End: true},
+			}}
+			f := newOracleFixture(wf, c.answer+"\nthe work is finished")
+			f.st.PR = 7
+			if err := f.r.Run(context.Background(), f.st); !errors.Is(err, ErrPaused) {
+				t.Fatalf("err = %v, want ErrPaused", err)
+			}
+			if f.st.Status != "paused" || f.st.Current != "ask" {
+				t.Fatalf("status %q current %q, want paused at ask", f.st.Status, f.st.Current)
+			}
+			want := "The oracle proposes the state " + c.state + " while the PR is open, a human must confirm: the work is finished"
+			if !strings.Contains(f.st.Ask.Message, want) {
+				t.Fatalf("message %q", f.st.Ask.Message)
+			}
+		})
+	}
+}
+
+func TestOracle_GotoStatesLeaveOutBlockedStates(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
+		"code":     {Agent: "coder", On: map[string]string{"done": "merge"}},
+		"merge":    {Check: "merge.sh", On: map[string]string{"merged": "end", "default": "end"}},
+		"findings": {Check: "findings.sh", On: map[string]string{"done": "end", "default": "end"}},
+		"ask":      {Ask: "The run needs a human decision.", On: map[string]string{"retry": "code", "stop": "end"}},
+		"end":      {End: true},
+	}}
+	st := newRun("")
+	if got := gotoStates(wf, st); got != "code, findings" {
+		t.Fatalf("without a PR: %q, want \"code, findings\"", got)
+	}
+	st.PR = 7
+	if got := gotoStates(wf, st); got != "code" {
+		t.Fatalf("with an open PR: %q, want \"code\"", got)
+	}
+}
+
 func TestOracle_StopWithOpenPRNeedsHuman(t *testing.T) {
 	f := newOracleFixture(askWF(false), "stop\nall work is done")
 	f.st.PR = 7

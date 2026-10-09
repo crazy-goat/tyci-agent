@@ -104,7 +104,7 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 		StateName:     cur,
 		Workflow:      st.Workflow,
 		Pause:         MaskSecrets(st.Ask.Message),
-		Goto:          gotoStates(r.WF),
+		Goto:          gotoStates(r.WF, st),
 		Issue:         st.Issue,
 		PR:            st.PR,
 		ArtifactDir:   artDir,
@@ -138,6 +138,9 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 	}
 	if word, _, _ := strings.Cut(ans, " "); word == "stop" && st.PR > 0 && !WasMerged(st) {
 		return r.escalate(st, step, "The oracle proposes stop, a human must confirm: "+why)
+	}
+	if oracleBlocked(r.WF, st, next) {
+		return r.escalate(st, step, "The oracle proposes the state "+next+" while the PR is open, a human must confirm: "+why)
 	}
 	if note != "" {
 		st.Note = MaskSecrets(note)
@@ -206,11 +209,44 @@ func onTarget(s State, key string) (string, bool) {
 	return next, ok
 }
 
+// oracleBlocked reports whether an oracle answer that sends the run to the state
+// name must go to a human. The merge state always does. While the PR is open, a
+// state that ends the run does too, and so does a state of the oracle agent,
+// which can stop the run.
+func oracleBlocked(wf *Workflow, st *RunState, name string) bool {
+	if name == "merge" {
+		return true
+	}
+	if st.PR == 0 || WasMerged(st) {
+		return false
+	}
+	return wf.States[name].Agent == "oracle" || leavesRun(wf, name)
+}
+
+// leavesRun reports whether the state name ends the run, or whether every target
+// of its on map does. A state without targets counts as ending the run.
+func leavesRun(wf *Workflow, name string) bool {
+	s, ok := wf.States[name]
+	if !ok {
+		return false
+	}
+	if s.End {
+		return true
+	}
+	for _, next := range s.On {
+		if !wf.States[next].End {
+			return false
+		}
+	}
+	return true
+}
+
 // gotoStates lists the states that an oracle "goto" may name, for the task text.
-func gotoStates(wf *Workflow) string {
+// It leaves out the states that oracleBlocked sends to a human.
+func gotoStates(wf *Workflow, st *RunState) string {
 	var names []string
 	for name := range wf.States {
-		if checkGoto(wf, name) == nil {
+		if checkGoto(wf, name) == nil && !oracleBlocked(wf, st, name) {
 			names = append(names, name)
 		}
 	}

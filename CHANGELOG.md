@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - TUI: Shift+Tab moves focus between the prompt and the sidebar. With the sidebar closed, it opens the sidebar and focuses it (#511).
 - Flow: the `oracle` agent answers a pause at an `ask` state before a human sees it. It answers `retry`, `retry <note>`, `goto <state>` or `stop`, or it answers `ask` to pass the pause to a human. An answer that is not valid goes to a human. Each oracle answer is a history step and a notice. A run gets 2 oracle answers at most. Set `defaults.oracle_answers` to change the limit, and `0` to turn the oracle off (#531).
-- Flow: the oracle never answers a state with `"human": true`. It also never answers an apply or reject of a workflow proposal, a merge to a protected branch, a move to the `merge` state, or a stop of a run with an open pull request (#531).
+- Flow: the oracle never answers a state with `"human": true`. It also never answers an apply or reject of a workflow proposal, a merge to a protected branch, a move to the `merge` state, or a step that ends a run while its pull request is open (#531).
 
 ### Fixed
 - TUI: the Tasks tab shows the tokens and the cost of each row, `main` and the subagents, in two right-aligned columns at the right edge of the sidebar. The columns line up in all rows. In a narrow row, the label is cut first. Then the tokens are dropped, then the cost (#527).

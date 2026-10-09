@@ -544,8 +544,9 @@ func loadRun(info RepoInfo, runID string) (*RunState, error) {
 	return st, nil
 }
 
-// Shutdown cancels every active run (state failed, reason cancelled) and
-// waits up to wait for the goroutines to save it.
+// Shutdown cancels every active run and waits up to wait for the goroutines to
+// save them. A run ends as failed with the reason cancelled. A run whose oracle
+// answer was cancelled stays paused for a human.
 func (m *Manager) Shutdown(wait time.Duration) {
 	m.mu.Lock()
 	for _, a := range m.active {
