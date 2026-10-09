@@ -32,7 +32,7 @@ Tools — help(tool) for the manual:
 - resume(job_id, task): continue a finished async job — it keeps its whole conversation.
 - kill_job(job_id): stop a backgrounded shell command.
 - agents(name?): named agents usable as subagent(agent="name").
-- workflow_start(issue, workflow?) · workflow_status(run?) · workflow_resume(run, answer): runs for issues and PRs. A notice arrives when a run finishes or pauses.
+- workflow_start(workflow, params?) · workflow_status(run?) · workflow_resume(run, answer): runs of named workflows, for issues and PRs. A notice arrives when a run finishes or pauses.
 - help(tool?) · skills(name?): manuals and skills.
 - web(method, what): search, lookup or fetch a URL.
 
