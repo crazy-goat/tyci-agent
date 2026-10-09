@@ -2,9 +2,11 @@ package display
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/crazy-goat/tyci-agent/jobs"
@@ -46,17 +48,43 @@ type sidebarLayoutT struct {
 	contentHeight             int // rows available for the tab's own list/text
 }
 
-// sidebarColumnWidth is the sidebar's "normal" on-screen footprint (border
-// included) — the same panelWidth+1 formula sidebarLayout used to compute
-// inline before the sidebar became a side-by-side column. Factored out so
-// both sidebarLayout and mainColumnWidth derive from this one formula
-// instead of two copies that could drift apart.
+// Sidebar limits, in columns. sidebarMinPanel is the minimum of panelWidth
+// (content plus padding, see sidebarColumnWidth). chatMinColumns is the
+// minimum width of the main conversation column.
+const (
+	sidebarMinPanel = 36
+	chatMinColumns  = 40
+)
+
+// sidebarWidthSaveDelay is how long the sidebar width must stay unchanged
+// before it is saved. Each Shift+Left/Right press restarts the wait.
+const sidebarWidthSaveDelay = 500 * time.Millisecond
+
+// sidebarWidthSaveMsg fires sidebarWidthSaveDelay after a width key press. It
+// saves only when seq is still the newest press (see resizeSidebar).
+type sidebarWidthSaveMsg struct {
+	seq int
+}
+
+// sidebarColumnWidth is the sidebar's on-screen footprint (border included).
+// The content and padding width (panelWidth) is round(width * percent / 100),
+// where percent is sidebarWidthPercent. Then the limits apply: panelWidth is
+// at least sidebarMinPanel, and the chat keeps chatMinColumns. On a narrow
+// terminal both limits cannot hold; the sidebar minimum wins, as before.
+// Both sidebarLayout and mainColumnWidth derive from this one function.
 func (m TuiModel) sidebarColumnWidth() int {
-	// panelWidth is the Width() style parameter passed to the box below —
-	// content plus padding, NOT including the border column.
-	panelWidth := m.width * 2 / 5
-	if panelWidth < 36 {
-		panelWidth = 36
+	percent := m.sidebarWidthPercent
+	if percent <= 0 {
+		percent = defaultSidebarWidthPercent
+	}
+	panelWidth := int(math.Round(float64(m.width) * percent / 100))
+	// The +1 border column is on top of panelWidth, so the chat keeps
+	// chatMinColumns when panelWidth+1 <= m.width-chatMinColumns.
+	if panelWidth > m.width-1-chatMinColumns {
+		panelWidth = m.width - 1 - chatMinColumns
+	}
+	if panelWidth < sidebarMinPanel {
+		panelWidth = sidebarMinPanel
 	}
 	// Leave room for the +1 border column the box adds on top of panelWidth.
 	if panelWidth > m.width-2 {
@@ -66,6 +94,51 @@ func (m TuiModel) sidebarColumnWidth() int {
 		panelWidth = 10
 	}
 	return panelWidth + 1 // + the left border column
+}
+
+// resizeSidebar changes the sidebar width by one column: delta +1 is wider,
+// -1 is narrower. A press that would break a limit does nothing. The new width
+// is saved as a percentage of the terminal width, rounded to three decimals.
+// The save runs after sidebarWidthSaveDelay, through sidebarWidthSaveMsg.
+func (m TuiModel) resizeSidebar(delta int) (TuiModel, tea.Cmd) {
+	if m.width <= 0 {
+		return m, nil
+	}
+	footprint := m.sidebarColumnWidth() + delta
+	if footprint-1 < sidebarMinPanel || footprint > m.width-chatMinColumns {
+		return m, nil
+	}
+	m.sidebarWidthPercent = roundPercent(float64(footprint-1) * 100 / float64(m.width))
+	// The same relayout as a resize (handleResizeFlush), done here directly:
+	// the resize flush message would be dropped while the sidebar is focused.
+	m.input.SetWidth(max(10, m.mainColumnWidth()-2))
+	m.capInputHeight()
+	m.invalidateAllBlockLineCounts()
+	m.clampScroll()
+	if m.painter != nil {
+		m.painter.repaint()
+	}
+	m.sidebarScroll = m.sidebarVisibleScroll(m.sidebarLayout())
+	m.sidebarWidthSeq++
+	seq := m.sidebarWidthSeq
+	return m, tea.Tick(sidebarWidthSaveDelay, func(time.Time) tea.Msg {
+		return sidebarWidthSaveMsg{seq: seq}
+	})
+}
+
+// handleSidebarWidthSave runs when sidebarWidthSaveMsg arrives. Only the newest
+// press saves, so a run of presses gives one write.
+func (m TuiModel) handleSidebarWidthSave(msg sidebarWidthSaveMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.sidebarWidthSeq {
+		return m, nil
+	}
+	percent := m.sidebarWidthPercent
+	return m, func() tea.Msg {
+		// A failed write must not break the key press, like the sidebar
+		// visibility persister (persistSidebarVisible).
+		_ = saveSidebarWidthPercent(percent)
+		return nil
+	}
 }
 
 // mainColumnWidth is the width the main conversation column renders at:
@@ -351,19 +424,23 @@ func (m TuiModel) renderSidebarTabs(width int) string {
 // different things depending on whether the sidebar currently has the
 // keyboard (m.sidebarFocused — see tui_sidebar.go's updateSidebar).
 func (m TuiModel) sidebarFooter() string {
+	// The width keys come first on the line: it is cut at the sidebar width,
+	// and the tab keys at the end are the ones that get lost. Unfocused,
+	// only Shift+Left/Right works, so only that is named.
 	if !m.sidebarFocused {
-		return "Shift+Tab: focus  Esc close"
+		return "Shift+Tab: focus  Shift+←/→ width"
 	}
+	width := "Shift+←/→ or </>: width  "
 	nav := "←→ switch tab (← at first/→ at last exits to conversation)"
 	switch m.sidebarTab {
 	case sidebarTabSessions:
-		return "↑↓ browse  Enter: open resume picker  " + nav + "  Esc close"
+		return width + "↑↓ browse  Enter: open resume picker  " + nav + "  Esc close"
 	case sidebarTabTasks:
-		return "↑↓ select  Enter view  r resume  " + nav + "  Esc close"
+		return width + "↑↓ select  Enter view  r resume  " + nav + "  Esc close"
 	case sidebarTabRuns:
-		return "↑↓ select  Enter expand/collapse  " + nav + "  Esc close"
+		return width + "↑↓ select  Enter expand/collapse  " + nav + "  Esc close"
 	default:
-		return nav + "  Esc close"
+		return width + nav + "  Esc close"
 	}
 }
 
