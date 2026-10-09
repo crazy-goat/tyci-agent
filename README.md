@@ -56,6 +56,8 @@ make install
 
 ## Issue-to-merge workflow
 
+A run can be stopped. `tyci workflow stop <run-id>` stops a run that no live tyci process owns. The run gets the status `stopped`. It keeps its worktree and its pull request, and it cannot be resumed.
+
 `tyci` can take a GitHub issue to a merged pull request. The chat has three tools:
 `workflow_start`, `workflow_status` and `workflow_resume`. The issue needs the label
 `accepted`, and its author needs write access.
@@ -206,6 +208,7 @@ Use the `workflow` commands to run and check a workflow from a terminal or a scr
 | `tyci workflow run <name> <issue>` | Run a workflow for a GitHub issue | `done` or `paused` | `failed` or invalid |
 | `tyci workflow validate <name>` | Check a workflow. Do not start a run. | valid | invalid or unknown |
 | `tyci workflow status <run-id>` | Show the saved state of a run | `running`, `paused` or `done` | `failed`, unknown or ambiguous |
+| `tyci workflow stop <run-id>` | Stop a running run that no live tyci process owns | `stopped` | not running, owned by a live process, unknown or ambiguous |
 
 - The second argument of `run` is the issue number. Example: `tyci workflow run issue-to-merge 191`.
 - `run` and `validate` take a workflow name, not a file path.

@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Flow: a run can be stopped. A stopped run has the status `stopped`, keeps its worktree and its pull request, and cannot be resumed. `tyci workflow stop <run-id> [--reason text] [--json]` stops a running run that no live tyci process owns. The Runs tab and `tyci workflow status` show the status. `tyci workflow status` exits with code 0 for `stopped` (#582).
+
 ## [0.7.0] - 2026-10-09
 
 ### Changed

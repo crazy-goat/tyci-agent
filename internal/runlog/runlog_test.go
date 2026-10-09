@@ -108,12 +108,13 @@ func TestPrune(t *testing.T) {
 	running := mkRun(t, root, "c", "running", 90*day)
 	paused := mkRun(t, root, "d", "paused", 90*day)
 	doneNew := mkRun(t, root, "e", "done", 2*day)
+	stoppedOld := mkRun(t, root, "f", "stopped", 40*day)
 
 	n, err := Prune(root, 30, time.Now())
-	if err != nil || n != 2 {
+	if err != nil || n != 3 {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
-	if exists(doneOld) || exists(failedOld) {
+	if exists(doneOld) || exists(failedOld) || exists(stoppedOld) {
 		t.Error("old finished runs must go")
 	}
 	if !exists(running) || !exists(paused) || !exists(doneNew) {

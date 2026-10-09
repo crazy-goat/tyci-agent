@@ -64,6 +64,10 @@ func ownerGone(st *RunState) bool {
 	return errors.Is(syscall.Kill(st.PID, 0), syscall.ESRCH)
 }
 
+// OwnerGone is ownerGone for the CLI: it reports whether no live tyci process owns
+// the running run st.
+func OwnerGone(st *RunState) bool { return ownerGone(st) }
+
 // lockRun takes an exclusive lock on the run dir and returns the function that
 // releases it. Two tyci processes that resume the same run take it one after the
 // other. The kernel drops the lock when the process ends.

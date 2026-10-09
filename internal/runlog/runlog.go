@@ -87,8 +87,8 @@ func redactBlocks(blocks []session.ContentBlock) []session.ContentBlock {
 	return out
 }
 
-// Prune removes <runsDir>/<repo>/<run> directories whose state.json says done
-// or failed and whose mtime is older than days. Days 0 keeps everything. It
+// Prune removes <runsDir>/<repo>/<run> directories whose state.json says done,
+// failed or stopped and whose mtime is older than days. Days 0 keeps everything. It
 // returns the number of removed runs.
 func Prune(runsDir string, days int, now time.Time) (removed int, err error) {
 	if days < 0 {
@@ -114,7 +114,7 @@ func Prune(runsDir string, days int, now time.Time) (removed int, err error) {
 		var st struct {
 			Status string `json:"status"`
 		}
-		if json.Unmarshal(b, &st) != nil || (st.Status != "done" && st.Status != "failed") {
+		if json.Unmarshal(b, &st) != nil || (st.Status != "done" && st.Status != "failed" && st.Status != "stopped") {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Dir(p)); err != nil {

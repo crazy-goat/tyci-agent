@@ -13,7 +13,7 @@ import (
 type TuiRunRow struct {
 	ID     string
 	Issue  int
-	Status string // running|paused|done|failed
+	Status string // running|paused|done|failed|stopped
 	State  string // current state
 	Role   string // role of the running agent, empty for a check state
 	Result string // outcome of a finished run, "merged" or empty
@@ -52,7 +52,7 @@ func (v *runsView) add(line string, run int) {
 
 // runFinished reports whether a run is over. Every other run is active.
 func runFinished(r TuiRunRow) bool {
-	return r.Status == "done" || r.Status == "failed"
+	return r.Status == "done" || r.Status == "failed" || r.Status == "stopped"
 }
 
 // sidebarRunRows returns the runs in display order: the active runs by start,
