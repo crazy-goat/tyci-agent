@@ -56,11 +56,14 @@ func useFixtureCatalog(tb testing.TB) {
 // newWheelBenchModel returns a 120 x 40 model with `blocks` text blocks, using
 // the fixture catalog. Each block renders about 1 KiB, so the resident budget is
 // exceeded and the oldest blocks are flushed to the scrollback file, as in a
-// long session.
+// long session. The scrollback file is removed when tb ends. The benchmarks
+// also close it at the end of each iteration, because b.N iterations would
+// otherwise keep one file each until the benchmark ends.
 func newWheelBenchModel(tb testing.TB, blocks int) TuiModel {
 	tb.Helper()
 	useFixtureCatalog(tb)
 	m := newTestModel()
+	tb.Cleanup(m.scrollback.close)
 	body := strings.Repeat("lorem ipsum dolor sit amet consectetur ", 25)
 	for i := 0; i < blocks; i++ {
 		kind := "text"
@@ -87,6 +90,9 @@ func wheelDown(m TuiModel) TuiModel {
 	return next.(TuiModel)
 }
 
+// The setup of each benchmark runs once per iteration, outside the timer, so run
+// them with a fixed count, for example -benchtime 100x, to keep the run short.
+//
 // BenchmarkScrollWheel measures 100 wheel-up events followed by one View on a
 // 500-block session, with the oldest blocks flushed. Each iteration starts from
 // a fresh model, so every run pays the cold-scroll cost.
@@ -100,6 +106,8 @@ func BenchmarkScrollWheel(b *testing.B) {
 			m = wheelUp(m)
 		}
 		_ = m.View()
+		b.StopTimer()
+		m.scrollback.close()
 	}
 }
 
@@ -117,6 +125,8 @@ func BenchmarkScrollWheelStreaming(b *testing.B) {
 			m = wheelUp(m)
 		}
 		_ = m.View()
+		b.StopTimer()
+		m.scrollback.close()
 	}
 }
 
@@ -134,6 +144,8 @@ func BenchmarkScrollWheelInvalidated(b *testing.B) {
 			m = wheelUp(m)
 		}
 		_ = m.View()
+		b.StopTimer()
+		m.scrollback.close()
 	}
 }
 
