@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: a run can be stopped. A stopped run has the status `stopped`, keeps its worktree and its pull request, and cannot be resumed. `tyci workflow stop <run-id> [--reason text] [--json]` stops a running run that no live tyci process owns. The Runs tab and `tyci workflow status` show the status. `tyci workflow status` exits with code 0 for `stopped` (#582).
 
 ### Fixed
+- TUI: the sidebar Tasks tab uses less CPU. Each redraw, key press, click and job event built the Subagents, Bash and Lua rows several times; now a redraw builds them once, a key or click at most twice, and a job event twice (it was five times). The displayed text does not change (#545).
 - TUI: a redraw is cheaper when the model id is not in the pricing catalog. The status bar looked up the model's context limit with a full scan and sort of the catalog on every redraw, so each wheel event paid for it. The lookup is now remembered per provider and model. The freeze on fast scrolling reported in #595 was not reproduced. This change only lowers one measured per-redraw cost (#595).
 
 ## [0.7.0] - 2026-10-09

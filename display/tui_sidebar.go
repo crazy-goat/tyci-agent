@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -231,6 +232,11 @@ func (m TuiModel) sidebarRowCount() int {
 // now, at contentWidth — the bound sidebarScroll must never exceed (past
 // "the last line is at the top of the viewport").
 func (m TuiModel) sidebarLineCount(contentWidth int) int {
+	if m.sidebarTab == sidebarTabTasks {
+		// renderSidebarTasks emits one line per row, and the rows always start
+		// with a heading. Counting the rows skips the styling of every line.
+		return len(m.sidebarTaskRows(contentWidth))
+	}
 	return len(m.sidebarTabLines(contentWidth))
 }
 
@@ -278,13 +284,10 @@ func (m *TuiModel) sidebarSwitchTab(tab int) {
 // the minimum needed — the same "scroll just enough to reveal the cursor"
 // behavior list-style pickers elsewhere in this package use.
 func (m *TuiModel) sidebarClampScrollToCursor(contentHeight int) {
-	if contentHeight < 1 {
-		contentHeight = 1
-	}
 	cursorLine := m.sidebarCursor
 	switch m.sidebarTab {
 	case sidebarTabTasks:
-		jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
+		_, jobRows := m.sidebarTaskRowsAndJobs(m.sidebarLayout().contentWidth)
 		if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) {
 			return
 		}
@@ -296,6 +299,15 @@ func (m *TuiModel) sidebarClampScrollToCursor(contentHeight int) {
 			return
 		}
 		cursorLine = starts[m.sidebarCursor]
+	}
+	m.sidebarScrollToLine(cursorLine, contentHeight)
+}
+
+// sidebarScrollToLine moves sidebarScroll the minimum needed to keep the
+// content line cursorLine inside the window of contentHeight lines.
+func (m *TuiModel) sidebarScrollToLine(cursorLine, contentHeight int) {
+	if contentHeight < 1 {
+		contentHeight = 1
 	}
 	if cursorLine < m.sidebarScroll {
 		m.sidebarScroll = cursorLine
@@ -333,7 +345,8 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 	layout := m.sidebarLayout()
 	if m.sidebarSelectable() {
 		if m.sidebarTab == sidebarTabTasks {
-			jobCount := m.sidebarRowCount()
+			_, jobRows := m.sidebarTaskRowsAndJobs(layout.contentWidth)
+			jobCount := len(jobRows)
 			if jobCount == 0 {
 				return
 			}
@@ -344,6 +357,8 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 			if m.sidebarCursor >= jobCount {
 				m.sidebarCursor = jobCount - 1
 			}
+			m.sidebarScrollToLine(jobRows[m.sidebarCursor], layout.contentHeight)
+			return
 		} else {
 			last := m.sidebarRowCount() - 1
 			m.sidebarCursor += delta
@@ -615,17 +630,27 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// is what makes clicking a heading fall through to the next job
 			// below it instead of misfiring on an unrelated job or nothing.
 			if m.sidebarSelectable() && msg.Y >= layout.contentTop && msg.Y < layout.contentTop+layout.contentHeight {
-				line := msg.Y - layout.contentTop + m.sidebarVisibleScroll(layout)
+				// Tasks builds its rows once here, for the scroll bound and the
+				// row lookup below.
+				var taskRows []sidebarTaskRow
+				var taskJobRows []int
+				scroll := 0
+				if m.sidebarTab == sidebarTabTasks {
+					taskRows, taskJobRows = m.sidebarTaskRowsAndJobs(layout.contentWidth)
+					scroll = m.sidebarVisibleScrollForLineCount(layout, len(taskRows))
+				} else {
+					scroll = m.sidebarVisibleScroll(layout)
+				}
+				line := msg.Y - layout.contentTop + scroll
 				switch m.sidebarTab {
 				case sidebarTabTasks:
-					width := layout.contentWidth // already computed above, same layout
-					rows := m.sidebarTaskRows(width)
+					rows := taskRows
 					// A separator selects nothing. Unlike a heading, it does not
 					// fall through to the next job row.
 					if line < 0 || line >= len(rows) || rows[line].isSeparator {
 						return m, nil
 					}
-					jobRows := m.sidebarTaskJobRows(width)
+					jobRows := taskJobRows
 					selected := -1
 					for i, jobRow := range jobRows {
 						if jobRow >= line {
@@ -699,8 +724,7 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 	case sidebarTabSessions:
 		return m.sidebarSubmitResume()
 	case sidebarTabTasks:
-		rows := m.sidebarTaskRows(m.sidebarLayout().contentWidth)
-		jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
+		rows, jobRows := m.sidebarTaskRowsAndJobs(m.sidebarLayout().contentWidth)
 		if m.sidebarCursor >= 0 && m.sidebarCursor < len(jobRows) {
 			row := rows[jobRows[m.sidebarCursor]]
 			if row.isMain {
@@ -814,8 +838,7 @@ func (m TuiModel) sidebarSubmitResume() (tea.Model, tea.Cmd) {
 // — this only drafts text, so silently overwriting a half-written message
 // would be a pure loss with nothing gained.
 func (m TuiModel) sidebarResumeSubagentRow() (tea.Model, tea.Cmd) {
-	rows := m.sidebarTaskRows(m.sidebarLayout().contentWidth)
-	jobRows := m.sidebarTaskJobRows(m.sidebarLayout().contentWidth)
+	rows, jobRows := m.sidebarTaskRowsAndJobs(m.sidebarLayout().contentWidth)
 	if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) || rows[jobRows[m.sidebarCursor]].job == nil || !rows[jobRows[m.sidebarCursor]].subagent {
 		return m, nil
 	}
@@ -929,9 +952,14 @@ type sidebarTaskRow struct {
 	isSeparator bool
 }
 
+// sidebarTaskRowBuilds counts the calls of sidebarTaskRows. The tests read it
+// to check how many times one key, click or job event builds the Tasks rows.
+var sidebarTaskRowBuilds atomic.Int64
+
 // sidebarTaskRows keeps the three source groups separate and stable. The Bash
 // jobs and the Lua runs are each oldest first at the point they are read.
 func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
+	sidebarTaskRowBuilds.Add(1)
 	rows := []sidebarTaskRow{{group: "Subagents", line: "Subagents", isHeading: true}}
 	tree := m.buildSubagentTree()
 	tokW, costW := subagentColumnWidths(tree)
@@ -1005,7 +1033,20 @@ func sidebarLuaRows(history []tools.LuaRun, width int) []sidebarTaskRow {
 }
 
 func (m TuiModel) sidebarTaskJobRows(width int) []int {
+	return sidebarJobRowIndices(m.sidebarTaskRows(width))
+}
+
+// sidebarTaskRowsAndJobs builds the Tasks rows once and returns them with the
+// indices of their job rows. Handlers that need both use it instead of
+// calling sidebarTaskRows and sidebarTaskJobRows, which build the rows twice.
+func (m TuiModel) sidebarTaskRowsAndJobs(width int) ([]sidebarTaskRow, []int) {
 	rows := m.sidebarTaskRows(width)
+	return rows, sidebarJobRowIndices(rows)
+}
+
+// sidebarJobRowIndices returns the indices in rows of the selectable job rows:
+// the job rows and the main row.
+func sidebarJobRowIndices(rows []sidebarTaskRow) []int {
 	indices := make([]int, 0)
 	for i, row := range rows {
 		if row.job != nil || row.isMain {
@@ -1022,9 +1063,7 @@ func (m TuiModel) sidebarCursorJobID() string {
 	if !m.sidebarActive || m.sidebarTab != sidebarTabTasks {
 		return ""
 	}
-	width := m.sidebarLayout().contentWidth
-	rows := m.sidebarTaskRows(width)
-	jobRows := m.sidebarTaskJobRows(width)
+	rows, jobRows := m.sidebarTaskRowsAndJobs(m.sidebarLayout().contentWidth)
 	if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) || rows[jobRows[m.sidebarCursor]].job == nil {
 		return ""
 	}
@@ -1040,11 +1079,11 @@ func (m *TuiModel) sidebarFollowJob(id string) {
 		return
 	}
 	layout := m.sidebarLayout()
-	rows := m.sidebarTaskRows(layout.contentWidth)
-	for i, line := range m.sidebarTaskJobRows(layout.contentWidth) {
+	rows, jobRows := m.sidebarTaskRowsAndJobs(layout.contentWidth)
+	for i, line := range jobRows {
 		if rows[line].job != nil && rows[line].job.ID == id {
 			m.sidebarCursor = i
-			m.sidebarClampScrollToCursor(layout.contentHeight)
+			m.sidebarScrollToLine(line, layout.contentHeight)
 			return
 		}
 	}
