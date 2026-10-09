@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"slices"
 	"sync"
@@ -30,6 +31,20 @@ func WithTree(t Tree) Option {
 	return func(b *Bus) { b.tree = t }
 }
 
+// WithJournal writes every Durable message as one JSON line to the file at
+// path. The file is created with mode 0600. Seq continues from the messages
+// that the file already holds. If the file cannot be opened, the bus logs
+// the error to stderr and keeps running in memory.
+func WithJournal(path string) Option {
+	return func(b *Bus) { b.journalPath = path }
+}
+
+// WithRedactor sets the function that redacts each journal line before it
+// is written. It has no effect without WithJournal.
+func WithRedactor(redact func([]byte) []byte) Option {
+	return func(b *Bus) { b.redact = redact }
+}
+
 // Bus routes published messages to the matching subscriptions.
 type Bus struct {
 	mu     sync.Mutex
@@ -37,6 +52,10 @@ type Bus struct {
 	closed bool
 	tree   Tree
 	subs   []*Sub
+
+	journalPath string
+	redact      func([]byte) []byte
+	journal     *journal
 }
 
 // New returns an open bus with no subscriptions.
@@ -44,6 +63,15 @@ func New(opts ...Option) *Bus {
 	b := &Bus{}
 	for _, opt := range opts {
 		opt(b)
+	}
+	if b.journalPath != "" {
+		j, last, err := openJournal(b.journalPath, b.redact)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bus: journal %s is off: %v\n", b.journalPath, err)
+		} else {
+			b.journal = j
+			b.seq = last
+		}
 	}
 	return b
 }
@@ -62,12 +90,17 @@ func (b *Bus) Subscribe(name string, f Filter) *Sub {
 }
 
 // Close stops the bus. Publish returns ErrClosed afterwards. Subscriptions
-// can still Drain the messages they hold. Close can be called more than
-// once.
+// can still Drain the messages they hold. The journal file is closed. A
+// Publish that runs at the same time as Close can get a Seq and keep its
+// message in memory, but lose its journal line. Close can be called more
+// than once.
 func (b *Bus) Close() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.closed = true
+	b.mu.Unlock()
+	if b.journal != nil {
+		b.journal.close()
+	}
 }
 
 // unsubscribe removes s from the routing of the bus.
@@ -82,8 +115,9 @@ func (b *Bus) unsubscribe(s *Sub) {
 // be the type that kind was registered with.
 //
 // A message to an agent that is not live goes to the orchestrator with
-// OriginSystem. It is not dropped. Publish returns an error, and assigns no
-// Seq, when kind is not registered, when the payload type differs, when the
+// OriginSystem. It is not dropped. A Durable message is also written to the
+// journal, when one is set. Publish returns an error, and assigns no Seq,
+// when kind is not registered, when the payload type differs, when the
 // payload cannot be encoded, when a subtree broadcast is not allowed, or
 // when the bus is closed.
 func Publish[T any](b *Bus, kind Kind, from, to Addr, origin Origin, payload T) (uint64, error) {
@@ -107,6 +141,14 @@ func Publish[T any](b *Bus, kind Kind, from, to Addr, origin Origin, payload T) 
 	return b.send(m, info.class, key)
 }
 
+// inboxWarning is an inbox that reached warnDepth. The bus publishes the
+// warning after it releases bus.mu, because Publish takes that lock.
+type inboxWarning struct {
+	agent  string
+	parent Addr
+	depth  int
+}
+
 // send routes m. The checks that can fail run before Seq is assigned, so a
 // failed Publish uses no Seq. Seq, the recipient set and the queue appends
 // happen in one critical section. A subscription that is added during a
@@ -117,10 +159,29 @@ func (b *Bus) send(m Message, class Class, key string) (uint64, error) {
 		return 0, ErrBroadcastNotDown
 	}
 
+	m, warnings, err := b.deliver(m, class, key)
+	if err != nil {
+		return 0, err
+	}
+	if b.journal != nil && class == Durable {
+		b.journal.write(m)
+	}
+	for _, w := range warnings {
+		text := fmt.Sprintf("agent %s inbox has %d unread messages", w.agent, w.depth)
+		// The warning is best effort. It fails only when the bus is closed.
+		_, _ = Publish(b, KindNoticeCompletion, Addr{Type: AddrOrchestrator}, w.parent, OriginSystem,
+			Completion{Agent: w.agent, Text: text})
+	}
+	return m.Seq, nil
+}
+
+// deliver assigns Seq to m and appends it to the matching queues. It returns
+// the stored message and the agent inboxes that reached warnDepth.
+func (b *Bus) deliver(m Message, class Class, key string) (Message, []inboxWarning, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
-		return 0, ErrClosed
+		return m, nil, ErrClosed
 	}
 	if m.To.Type == AddrAgent && !b.isLive(m.To.ID) {
 		m.To = Addr{Type: AddrOrchestrator}
@@ -131,10 +192,25 @@ func (b *Bus) send(m Message, class Class, key string) (uint64, error) {
 	b.seq++
 	m.Seq = b.seq
 	m.At = time.Now()
+	var warnings []inboxWarning
 	for _, s := range targets {
-		s.q.put(m, class, key)
+		depth, crossed := s.q.put(m, class, key)
+		if crossed && s.filter.To.Type == AddrAgent {
+			warnings = append(warnings, inboxWarning{agent: s.filter.To.ID, parent: b.parentOf(s.filter.To.ID), depth: depth})
+		}
 	}
-	return m.Seq, nil
+	return m, warnings, nil
+}
+
+// parentOf returns the parent of agent id. The orchestrator is the parent of
+// an agent that has none, or whose parent the tree does not know.
+func (b *Bus) parentOf(id string) Addr {
+	if b.tree.ParentOf != nil {
+		if parent, ok := b.tree.ParentOf(id); ok && parent != "" {
+			return Addr{Type: AddrAgent, ID: parent}
+		}
+	}
+	return Addr{Type: AddrOrchestrator}
 }
 
 // Sub is a subscription. Its messages wait in a queue until Drain takes
