@@ -28,7 +28,7 @@ package display
 //     the exact same path a typed "/resume" would (see sidebarSubmitResume):
 //     no second resume mechanism.
 //   - Bash / Subagents: jobs.Job rows already mirrored into
-//     m.backgroundJobs by TUI.SetJobEventBus, filtered on the Kind field
+//     m.backgroundJobs by TUI.SetJobEvents, filtered on the Kind field
 //     item 1 added to jobs.Job.
 //   - Lua: tools.LuaRunHistory, a small new process-local ring buffer (Lua
 //     tools run synchronously to completion, so there is no "still running"

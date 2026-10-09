@@ -10,7 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/crazy-goat/tyci-agent/eventbus"
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
@@ -456,14 +456,14 @@ func TestUpdateJobsModal_EnterWithNoJobsDoesNothing(t *testing.T) {
 	}
 }
 
-// ─── SetJobEventBus ─────────────────────────────────────────────────────
+// ─── SetJobEvents ───────────────────────────────────────────────────────
 
-func TestSetJobEventBus_NilBusIsNoop(t *testing.T) {
-	// A *TUI with a nil prog would panic on prog.Send; SetJobEventBus(nil)
-	// must return before spawning the subscriber goroutine that would call
-	// it, so this must not panic even though tui.prog is never set.
+func TestSetJobEvents_NilSubIsNoop(t *testing.T) {
+	// A *TUI with a nil prog would panic on prog.Send; SetJobEvents(nil) must
+	// return before spawning the subscriber goroutine that would call it, so
+	// this must not panic even though tui.prog is never set.
 	tui := &TUI{done: make(chan struct{})}
-	tui.SetJobEventBus(nil)
+	tui.SetJobEvents(nil)
 }
 
 // ─── Ctrl+B opens the jobs modal ───────────────────────────────────────────
@@ -480,21 +480,33 @@ func TestHandleGlobalKey_CtrlBOpensJobsModal(t *testing.T) {
 	}
 }
 
-// TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates is the
-// regression test for #113: a burst of far more "job.updated" events than
-// the production bus's 32-slot buffer, published while the TUI consumer is
-// slow, must still leave every job in its terminal state in the model.
-func TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates(t *testing.T) {
-	bus := eventbus.New(32) // same size as main.go's jobEventBus
-	defer bus.Close()
+// jobStatusSub subscribes to the job.status messages of b, as the TUI does.
+func jobStatusSub(b *bus.Bus) *bus.Sub {
+	return b.Subscribe("tui-jobs", bus.Filter{To: bus.Addr{Type: bus.AddrTUI}, Kinds: []bus.Kind{bus.KindJobStatus}})
+}
 
-	sub, unsubscribe := subscribeJobUpdates(bus)
-	defer unsubscribe()
+// publishJobStatus publishes st as job.status to the TUI, as main does. The
+// bus stays open for the whole test, so the error is ignored; a missing
+// message fails the test that waits for it.
+func publishJobStatus(b *bus.Bus, st bus.JobStatus) {
+	_, _ = bus.Publish(b, bus.KindJobStatus, bus.Addr{Type: bus.AddrAgent, ID: st.ID}, bus.Addr{Type: bus.AddrTUI}, bus.OriginSystem, st)
+}
+
+// TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates is the
+// regression test for #113: a burst of far more job.status messages than the
+// consumer can take at once, published while the TUI consumer is slow, must
+// still leave every job in its terminal state in the model.
+func TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates(t *testing.T) {
+	b := bus.New()
+	defer b.Close()
+
+	sub := jobStatusSub(b)
+	defer sub.Close()
 
 	// The model is only touched by the consumer goroutine, like bubbletea's
 	// event loop; msgs counts how many updates actually reached it.
 	m := newTestModelForJobs()
-	var msgs atomic.Int64
+	var msgs, terminalMsgs atomic.Int64
 	consumerDone := make(chan struct{})
 	stop := make(chan struct{})
 	go func() {
@@ -504,6 +516,9 @@ func TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates(t *testing.T
 			model, _ := m.Update(msg)
 			m = model.(TuiModel)
 			msgs.Add(1)
+			if j := msg.(tuiMsgJobUpdate).Job; !subagentLive(j.Status) {
+				terminalMsgs.Add(1)
+			}
 		})
 	}()
 
@@ -515,27 +530,32 @@ func TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates(t *testing.T
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			j := jobs.Job{ID: fmt.Sprintf("job-%d", i), Description: "flood", Status: jobs.StatusRunning, StartedAt: time.Now()}
-			bus.Publish("job.updated", j)
+			st := bus.JobStatus{ID: fmt.Sprintf("job-%d", i), Name: "flood", Status: string(jobs.StatusRunning), Started: time.Now()}
+			publishJobStatus(b, st)
 			for p := 0; p < progressPerJob; p++ {
-				j.Progress = fmt.Sprintf("step %d", p)
-				bus.Publish("job.updated", j)
+				st.Progress = fmt.Sprintf("step %d", p)
+				publishJobStatus(b, st)
 			}
-			j.Status = terminal[i%len(terminal)]
-			j.FinishedAt = time.Now()
-			bus.Publish("job.updated", j)
+			st.Status = string(terminal[i%len(terminal)])
+			st.Ended = time.Now()
+			publishJobStatus(b, st)
 		}(i)
 	}
 	wg.Wait()
 
-	// All events are published; end the subscription so the consumer
-	// delivers what is still pending and returns.
-	unsubscribe()
-	select {
-	case <-consumerDone:
-	case <-time.After(10 * time.Second):
-		t.Fatal("consumer did not finish")
+	// Each job delivers its terminal snapshot exactly once, because it is the
+	// newest message of the job and no snapshot follows it. Wait for all of
+	// them, then stop the consumer. Closing sub first would drop the queue.
+	deadline := time.After(10 * time.Second)
+	for terminalMsgs.Load() < jobCount {
+		select {
+		case <-deadline:
+			t.Fatalf("only %d of %d terminal snapshots delivered", terminalMsgs.Load(), jobCount)
+		case <-time.After(time.Millisecond):
+		}
 	}
+	close(stop)
+	<-consumerDone
 
 	published := int64(jobCount * (progressPerJob + 2))
 	if got := msgs.Load(); got >= published {
@@ -553,45 +573,87 @@ func TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates(t *testing.T
 }
 
 // TestForwardJobUpdates_LateSnapshotDoesNotOverwriteTerminalState is the
-// regression test for #131: the registry publishes after releasing its lock, so
-// a "running" snapshot taken before the terminal one can reach the bus after it,
-// while the TUI is still busy and has not drained yet.
+// regression test for #131: a "running" snapshot taken before the terminal one
+// can reach the bus after it. The model must keep the terminal state.
 func TestForwardJobUpdates_LateSnapshotDoesNotOverwriteTerminalState(t *testing.T) {
-	bus := eventbus.New(32)
-	defer bus.Close()
+	b := bus.New()
+	defer b.Close()
 
-	sub, unsubscribe := subscribeJobUpdates(bus)
-	defer unsubscribe()
+	sub := jobStatusSub(b)
+	defer sub.Close()
+
+	// applyPending drains the subscription and applies each snapshot, as the
+	// TUI does for each job.status message it receives.
+	m := newTestModelForJobs()
+	applyPending := func() {
+		for _, msg := range sub.Drain() {
+			st, err := bus.Decode[bus.JobStatus](msg)
+			if err != nil {
+				t.Fatalf("decode job.status: %v", err)
+			}
+			m.applyJobUpdate(jobFromStatus(st, msg.Seq))
+		}
+	}
 
 	started := time.Now()
-	bus.Publish("job.updated", jobs.Job{ID: "job-1", Status: jobs.StatusRunning, StartedAt: started, EventSeq: 1})
-	// Drained and applied: the TUI holds "running" (seq 1).
+	publishJobStatus(b, bus.JobStatus{ID: "job-1", Name: "late", Status: string(jobs.StatusRunning), Started: started})
+	applyPending()
+	publishJobStatus(b, bus.JobStatus{ID: "job-1", Name: "late", Status: string(jobs.StatusDone), Started: started, Ended: time.Now()})
+	applyPending()
+	// The older progress snapshot arrives after the terminal one.
+	publishJobStatus(b, bus.JobStatus{ID: "job-1", Name: "late", Status: string(jobs.StatusRunning), Progress: "late", Started: started})
+	applyPending()
+
+	if got := m.backgroundJobs["job-1"].Status; got != jobs.StatusDone {
+		t.Fatalf("status = %s, want done", got)
+	}
+}
+
+// TestTUI_JobsPanel_ShowsRunningThenDone runs the jobs panel on a real bus:
+// a job shows as running, its progress text updates, and then it shows done.
+func TestTUI_JobsPanel_ShowsRunningThenDone(t *testing.T) {
+	b := bus.New()
+	defer b.Close()
+
+	sub := jobStatusSub(b)
+	defer sub.Close()
+
+	received := make(chan jobs.Job, 16)
+	go forwardJobUpdates(sub, make(chan struct{}), func(msg tea.Msg) {
+		received <- msg.(tuiMsgJobUpdate).Job
+	})
+
+	next := func(t *testing.T) jobs.Job {
+		t.Helper()
+		select {
+		case j := <-received:
+			return j
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for a job update")
+			return jobs.Job{}
+		}
+	}
+
 	m := newTestModelForJobs()
-	for _, evt := range sub.Drain() {
-		m.applyJobUpdate(evt.Payload.(jobs.Job))
+	started := time.Now()
+
+	publishJobStatus(b, bus.JobStatus{ID: "job-1", Name: "build", Status: string(jobs.StatusRunning), Started: started})
+	m.applyJobUpdate(next(t))
+	if got := m.backgroundJobs["job-1"].Status; got != jobs.StatusRunning {
+		t.Fatalf("status = %s, want running", got)
 	}
 
-	// Terminal (seq 3) is published first, then the older progress snapshot (seq 2),
-	// both before the next drain.
-	bus.Publish("job.updated", jobs.Job{ID: "job-1", Status: jobs.StatusDone, StartedAt: started, FinishedAt: time.Now(), EventSeq: 3})
-	bus.Publish("job.updated", jobs.Job{ID: "job-1", Status: jobs.StatusRunning, StartedAt: started, Progress: "late", EventSeq: 2})
-
-	stop := make(chan struct{})
-	consumerDone := make(chan struct{})
-	go func() {
-		defer close(consumerDone)
-		forwardJobUpdates(sub, stop, func(msg tea.Msg) {
-			model, _ := m.Update(msg)
-			m = model.(TuiModel)
-		})
-	}()
-	unsubscribe()
-	select {
-	case <-consumerDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("consumer did not finish")
+	publishJobStatus(b, bus.JobStatus{ID: "job-1", Name: "build", Status: string(jobs.StatusRunning), Progress: "compiling", Started: started})
+	m.applyJobUpdate(next(t))
+	if got := m.backgroundJobs["job-1"].Progress; got != "compiling" {
+		t.Fatalf("progress = %q, want compiling", got)
+	}
+	if line := formatJobLine(m.backgroundJobs["job-1"], 200); !strings.Contains(line, "progress: compiling") {
+		t.Fatalf("jobs panel line %q does not show the progress text", line)
 	}
 
+	publishJobStatus(b, bus.JobStatus{ID: "job-1", Name: "build", Status: string(jobs.StatusDone), Progress: "compiling", Started: started, Ended: time.Now()})
+	m.applyJobUpdate(next(t))
 	if got := m.backgroundJobs["job-1"].Status; got != jobs.StatusDone {
 		t.Fatalf("status = %s, want done", got)
 	}

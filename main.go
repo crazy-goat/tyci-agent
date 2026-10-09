@@ -923,8 +923,6 @@ func (f *jobEventForwarder) publishStatus(j jobs.Job) {
 // globals when it runs. withTestWiring waits for each job's terminal event
 // before it swaps them back.
 func forwardJobEvent(j jobs.Job) {
-	jobEventBus.Publish("job.updated", j)
-
 	// The inbox of a job opens on its start event, which Start fires
 	// before it returns the job ID. It closes on the terminal event.
 	if agentInboxes != nil {

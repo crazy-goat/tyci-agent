@@ -1,18 +1,18 @@
 package main
 
-// This file drives the async job/eventbus/lock subsystem through the REAL
+// This file drives the async job/bus/lock subsystem through the REAL
 // production composition-root wiring (wireTools, agentRunner,
-// jobStarterAdapter/jobWaiterAdapter, JobRegistry, jobEventBus) via
+// jobStarterAdapter/jobWaiterAdapter, JobRegistry, appBus) via
 // agent.Run + connectortest.Fake, instead of hand-rolled mocks. See
 // docs/subagent-testing-plan.md for the full manual scenario catalog this
 // automates; scenario IDs are cited in comments below.
 //
 // Harness notes (apply to every test in this file):
-//   - withTestWiring(t) swaps JobRegistry/jobEventBus for fresh instances
+//   - withTestWiring(t) swaps JobRegistry/appBus for fresh instances
 //     and re-runs wireTools() so each test gets an isolated job registry and
-//     event bus, restoring the originals on cleanup.
+//     app bus, restoring the originals on cleanup.
 //   - These tests share package-level mutable state (JobRegistry,
-//     jobEventBus, providers.Default, the tools package's singletons) and
+//     appBus, providers.Default, the tools package's singletons) and
 //     must NOT run under t.Parallel with each other.
 //   - Prefer channel-gated synchronization (jobs.Registry.Wait, explicit
 //     "release" channels) over time.Sleep for determinism; a bounded
@@ -36,67 +36,55 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/connector/connectortest"
-	"github.com/crazy-goat/tyci-agent/eventbus"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/providers"
 	"github.com/crazy-goat/tyci-agent/stream"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
-// withTestWiring gives a test its own JobRegistry and jobEventBus, wired via
+// withTestWiring gives a test its own JobRegistry and appBus, wired via
 // the same wireTools() main() calls, and restores the previous globals (plus
 // production wiring over them) on cleanup so later tests — and any real
 // wiring done elsewhere in this package's test binary — are unaffected.
 //
 // jobs.Registry.Start's completing goroutine closes job.done and THEN, a
-// moment later in that same goroutine, invokes onEvent — which reads the
-// PACKAGE-LEVEL jobEventBus at call time (see wireTools). So a job observed
-// "done" via reg.Wait can still have its terminal onEvent call in flight for
-// a brief window afterwards. Swapping jobEventBus back under that in-flight
-// call would race with its read. Cleanup therefore subscribes to the test's
-// bus for the test's whole lifetime and, before swapping anything back,
-// waits until every job's LATEST status has actually been observed as an
-// event — not a fixed sleep, an actual drain of the real notification.
-func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
+// moment later in that same goroutine, publishes the terminal snapshot through
+// the PACKAGE-LEVEL appBus (see jobEventForwarder). So a job observed "done"
+// via reg.Wait can still have its terminal publish in flight for a brief
+// window afterwards. Cleanup therefore subscribes to the test's bus for the
+// test's whole lifetime and, before swapping anything back, waits until every
+// job's LATEST status has actually been observed — not a fixed sleep, an
+// actual drain of the real message.
+func withTestWiring(t *testing.T) (*jobs.Registry, *bus.Bus) {
 	t.Helper()
-	origReg, origBus, origAppBus := JobRegistry, jobEventBus, appBus
+	origReg, origAppBus := JobRegistry, appBus
 
 	reg := jobs.NewRegistry(&jobEventForwarder{})
-	// Production bus size: the cleanup below subscribes coalesced, so a burst
-	// of events (floodRegistryPastTerminalCap) cannot lose a terminal state.
-	bus := eventbus.New(jobEventBusSize)
-	// A fresh app bus too: its bus tree belongs to reg, and the notices of one
-	// test must not show up in another's queue.
-	JobRegistry, jobEventBus = reg, bus
-	appBus = newAppBus("")
+	// A fresh app bus: its bus tree belongs to reg (newAppBus reads
+	// JobRegistry, so it must be set first), and the notices of one test must
+	// not show up in another's queue.
+	JobRegistry = reg
+	ab := newAppBus("")
+	appBus = ab
 	wireTools()
 
-	sub, unsub := bus.SubscribeCoalesced("job.updated", func(ev eventbus.Event) string {
-		if j, ok := ev.Payload.(jobs.Job); ok {
-			return j.ID
-		}
-		return ""
-	}, eventbus.WithReplaces(func(pending, incoming eventbus.Event) bool {
-		// A snapshot published late must not replace a newer one (#131).
-		p, pok := pending.Payload.(jobs.Job)
-		n, nok := incoming.Payload.(jobs.Job)
-		return !pok || !nok || n.EventSeq >= p.EventSeq
-	}))
+	// The bus keeps the newest job.status message per job, so the drain below
+	// always ends with each job's latest state.
+	sub := subscribeJobStatus(ab)
 	var mu sync.Mutex
 	seen := make(map[string]jobs.Status)
-	latest := make(map[string]uint64) // highest EventSeq recorded per job
 	record := func() {
-		for _, ev := range sub.Drain() {
-			if j, ok := ev.Payload.(jobs.Job); ok {
-				mu.Lock()
-				if prev, ok := latest[j.ID]; !ok || j.EventSeq >= prev {
-					latest[j.ID] = j.EventSeq
-					seen[j.ID] = j.Status
-				}
-				mu.Unlock()
+		for _, m := range sub.Drain() {
+			st, err := bus.Decode[bus.JobStatus](m)
+			if err != nil {
+				continue
 			}
+			mu.Lock()
+			seen[st.ID] = jobs.Status(st.Status)
+			mu.Unlock()
 		}
 	}
 	drainDone := make(chan struct{})
@@ -130,18 +118,48 @@ func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
 				break
 			}
 			if time.Now().After(deadline) {
-				t.Errorf("withTestWiring cleanup: timed out waiting for job.updated events to catch up with job state")
+				t.Errorf("withTestWiring cleanup: timed out waiting for job.status messages to catch up with job state")
 				break
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		unsub()
+		sub.Close()
 		<-drainDone
 
-		JobRegistry, jobEventBus, appBus = origReg, origBus, origAppBus
+		JobRegistry, appBus = origReg, origAppBus
 		wireTools()
 	})
-	return reg, bus
+	return reg, ab
+}
+
+// collectJobStatus reads the job.status messages of jobID from sub until the
+// job leaves the running state or timeout passes. It returns the statuses seen.
+// The bus keeps only the newest message per job, so "running" can be skipped
+// when the reader is slow; the terminal status always arrives.
+func collectJobStatus(t *testing.T, sub *bus.Sub, jobID string, timeout time.Duration) []jobs.Status {
+	t.Helper()
+	var statuses []jobs.Status
+	deadline := time.After(timeout)
+	for {
+		for _, m := range sub.Drain() {
+			st, err := bus.Decode[bus.JobStatus](m)
+			if err != nil {
+				t.Fatalf("decode job.status: %v", err)
+			}
+			if st.ID != jobID {
+				continue
+			}
+			statuses = append(statuses, jobs.Status(st.Status))
+			if jobs.Status(st.Status) != jobs.StatusRunning {
+				return statuses
+			}
+		}
+		select {
+		case <-sub.Ready():
+		case <-deadline:
+			return statuses
+		}
+	}
 }
 
 // waitForGoroutineSettle polls runtime.NumGoroutine() until it drops to at
@@ -296,20 +314,20 @@ func waitToolArgs(jobID string, seconds int) string {
 // TestWiring_R1_FullStackAsyncRoundTrip drives: parent agent.Run (real Fake,
 // real toolsAdapter/tools.RunTool) -> subagent(async:true) -> real
 // agentRunner resolving the child's Fake via connector.ModelClientFromContext
-// / providers.FindModel -> real jobStarterAdapter/JobRegistry -> job.updated
-// events observed on the real jobEventBus -> parent's wait(job_id) through
+// / providers.FindModel -> real jobStarterAdapter/JobRegistry -> job.status
+// messages observed on the real appBus -> parent's wait(job_id) through
 // the real jobWaiterAdapter returns the child's result -> parent's final
 // turn incorporates it into its answer.
 func TestWiring_R1_FullStackAsyncRoundTrip(t *testing.T) {
-	reg, bus := withTestWiring(t)
+	reg, ab := withTestWiring(t)
 	// Baseline taken AFTER withTestWiring, whose own event-drain goroutine
 	// lives for the rest of the test — otherwise it would look like a leak.
 	before := runtime.NumGoroutine()
 
-	// Subscribe before anything runs so we're guaranteed to see both the
-	// running and terminal events for the job this test spawns (see C-7).
-	evCh, unsub := bus.Subscribe("job.updated")
-	t.Cleanup(unsub)
+	// Subscribe before anything runs so we can see the job.status messages of
+	// the job this test spawns (see C-7).
+	sub := subscribeJobStatus(ab)
+	t.Cleanup(sub.Close)
 
 	childFake := connectortest.Text("child answer")
 	providers.Register(&fixedClientProvider{name: "r1-child-prov", client: childFake})
@@ -377,48 +395,27 @@ func TestWiring_R1_FullStackAsyncRoundTrip(t *testing.T) {
 		t.Fatalf("parent final text = %q, want %q", got, wantText)
 	}
 
-	// Drain the subscribed events (published asynchronously; give them a
-	// moment to land, bounded — this is a safety cap, not the sync
-	// mechanism, since the actual coordination above already happened via
-	// agent.Run/wait() returning).
-	var statuses []jobs.Status
-	deadline := time.After(time.Second)
-collect:
-	for {
-		select {
-		case ev := <-evCh:
-			j, ok := ev.Payload.(jobs.Job)
-			if !ok {
-				t.Fatalf("event payload type = %T, want jobs.Job (value, not pointer) — see X-5", ev.Payload)
-			}
-			if j.ID != job.ID {
-				continue
-			}
-			statuses = append(statuses, j.Status)
-			if j.Status != jobs.StatusRunning {
-				break collect
-			}
-		case <-deadline:
-			break collect
-		}
-	}
-	if len(statuses) < 2 || statuses[0] != jobs.StatusRunning || statuses[len(statuses)-1] != jobs.StatusDone {
-		t.Errorf("job.updated events for this job = %v, want [running ... done]", statuses)
+	// The terminal status is published asynchronously, so read it with a
+	// bounded wait (a safety cap, not the sync mechanism; the wait() above
+	// already returned).
+	statuses := collectJobStatus(t, sub, job.ID, time.Second)
+	if len(statuses) == 0 || statuses[len(statuses)-1] != jobs.StatusDone {
+		t.Errorf("job.status messages for this job = %v, want to end with done", statuses)
 	}
 
 	waitForGoroutineSettle(t, before)
 }
 
 // TestWiring_R6_WireToolsIdempotent calling wireTools() twice must not
-// double-deliver job.updated events — SetOnEvent replaces the hook, it does
-// not accumulate.
+// publish job.status messages twice — the job observer is set up once, it
+// does not accumulate.
 func TestWiring_R6_WireToolsIdempotent(t *testing.T) {
-	_, bus := withTestWiring(t)
+	_, ab := withTestWiring(t)
 	wireTools()
 	wireTools()
 
-	evCh, unsub := bus.Subscribe("job.updated")
-	defer unsub()
+	sub := subscribeJobStatus(ab)
+	defer sub.Close()
 
 	release := make(chan struct{})
 	job := JobRegistry.Start(context.Background(), "idempotent", jobs.KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
@@ -427,28 +424,15 @@ func TestWiring_R6_WireToolsIdempotent(t *testing.T) {
 	})
 	close(release)
 
-	var got []jobs.Status
-	timeout := time.After(2 * time.Second)
-loop:
-	for {
-		select {
-		case ev := <-evCh:
-			j := ev.Payload.(jobs.Job)
-			if j.ID != job.ID {
-				continue
-			}
-			got = append(got, j.Status)
-			if j.Status != jobs.StatusRunning {
-				break loop
-			}
-		case <-timeout:
-			t.Fatal("timed out waiting for job.updated events")
-		}
+	got := collectJobStatus(t, sub, job.ID, 2*time.Second)
+	if len(got) == 0 || got[len(got)-1] != jobs.StatusDone {
+		t.Fatalf("job.status messages = %v, want to end with done", got)
 	}
-	// Exactly one running + one terminal event, not two of each (which a
-	// duplicated SetOnEvent hook would produce).
-	if len(got) != 2 {
-		t.Fatalf("events = %v, want exactly 2 (one running, one terminal) despite wireTools() called 3x total", got)
+	// Exactly one running and one terminal message were stored, not two of
+	// each (which a duplicated observer would produce). Accepted counts stored
+	// messages even when the queue later replaces one of them.
+	if n := sub.Accepted(); n != 2 {
+		t.Fatalf("stored job.status messages = %d, want exactly 2 (one running, one terminal) despite wireTools() called 3x total", n)
 	}
 }
 
@@ -834,17 +818,16 @@ func close2(ch chan struct{}) {
 }
 
 // =============================================================================
-// C-6 (high priority): a slow/non-draining eventbus subscriber must not
+// C-6 (high priority): a slow/non-draining bus subscriber must not
 // block job completion for anyone else.
 // =============================================================================
 
 func TestWiring_C6_SlowSubscriberDoesNotBlockOtherJobs(t *testing.T) {
-	reg, bus := withTestWiring(t)
+	reg, ab := withTestWiring(t)
 
-	// A subscriber that never reads its channel at all — the worst case.
-	stalledCh, unsub := bus.Subscribe("job.updated")
-	defer unsub()
-	_ = stalledCh // deliberately never drained
+	// A subscriber that never drains its queue at all — the worst case.
+	stalled := subscribeJobStatus(ab)
+	defer stalled.Close()
 
 	const n = 5
 	var wg sync.WaitGroup

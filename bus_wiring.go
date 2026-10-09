@@ -495,3 +495,8 @@ func jobStatusOf(j jobs.Job) bus.JobStatus {
 		LastActivity: j.LastActivity,
 	}
 }
+
+// subscribeJobStatus subscribes to the job.status messages that the TUI reads.
+func subscribeJobStatus(b *bus.Bus) *bus.Sub {
+	return b.Subscribe("tui-jobs", bus.Filter{To: bus.Addr{Type: bus.AddrTUI}, Kinds: []bus.Kind{bus.KindJobStatus}})
+}
