@@ -1074,13 +1074,7 @@ func main() {
 	wdCtx, stopWatchdog := context.WithCancel(context.Background())
 	go (&watchdog.Watchdog{
 		Reg: JobRegistry, IdleAfter: idle, EscalateAfter: escalate,
-		Notify: func(to, text string) bool {
-			if to == "" {
-				JobNotices.Notify(text)
-				return true
-			}
-			return JobRegistry.Post(to, text)
-		},
+		Notify: watchdogNotify,
 	}).Run(wdCtx)
 
 	err = rootCmd.Execute()

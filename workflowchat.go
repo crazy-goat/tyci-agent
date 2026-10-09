@@ -9,4 +9,4 @@ import (
 // friends). Notices go to JobNotices, read at call time so tests can swap it.
 var workflowManager = flow.NewManager(workflowNotify, tools.RunSubagentTask)
 
-func workflowNotify(text string) { JobNotices.Notify(text) }
+func workflowNotify(text string) { publishNotice(appBus, "", text) }

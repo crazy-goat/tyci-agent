@@ -180,3 +180,19 @@ func (n noticeCounter) Queued() uint64 {
 	}
 	return n.Notifier.Queued() + busOrchestratorNotices.Accepted()
 }
+
+// watchdogNotify sends a watchdog alarm to the agent to, or to the human when
+// to is "". It reports false when to is not live, so that the watchdog climbs
+// to the next ancestor. The bus would otherwise reroute the alarm to the
+// orchestrator.
+func watchdogNotify(to, text string) bool {
+	if to == "" {
+		publishNotice(appBus, "", text)
+		return true
+	}
+	if !JobRegistry.IsLive(to) {
+		return false
+	}
+	publishNotice(appBus, to, text)
+	return true
+}
