@@ -192,6 +192,12 @@ func publishAgentMessage(b *bus.Bus, id string, from bus.Addr, origin bus.Origin
 
 // maxShownAsks bounds the asks that a handoff message already carried. When
 // it is full, an arbitrary mark is dropped first.
+//
+// A mark is removed when a drain reaches its ask. A mark for an ask that a
+// drain already showed is never removed that way, so it stays until the
+// eviction. The eviction can then drop a live mark, and that can show one
+// question twice. The bound keeps the map small, and a duplicate is the only
+// effect. A question is never lost.
 const maxShownAsks = 64
 
 // askKey identifies one question of one agent.
