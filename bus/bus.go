@@ -79,11 +79,13 @@ func New(opts ...Option) *Bus {
 // Subscribe adds a subscription called name for the messages that match f.
 // On a closed bus the subscription gets no messages.
 func (b *Bus) Subscribe(name string, f Filter) *Sub {
-	s := &Sub{bus: b, name: name, filter: f, q: newQueue()}
+	s := &Sub{bus: b, name: name, filter: f, q: newQueue(), done: make(chan struct{})}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !b.closed {
+	if b.closed {
+		s.finish()
+	} else {
 		b.subs = append(b.subs, s)
 	}
 	return s
@@ -96,8 +98,16 @@ func (b *Bus) Subscribe(name string, f Filter) *Sub {
 // than once.
 func (b *Bus) Close() {
 	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return
+	}
 	b.closed = true
+	subs := slices.Clone(b.subs)
 	b.mu.Unlock()
+	for _, s := range subs {
+		s.finish()
+	}
 	if b.journal != nil {
 		b.journal.close()
 	}
@@ -184,6 +194,8 @@ func (b *Bus) deliver(m Message, class Class, key string) (Message, []inboxWarni
 		return m, nil, ErrClosed
 	}
 	if m.To.Type == AddrAgent && !b.isLive(m.To.ID) {
+		orig := m.To
+		m.OrigTo = &orig
 		m.To = Addr{Type: AddrOrchestrator}
 		m.Origin = OriginSystem
 	}
@@ -220,6 +232,9 @@ type Sub struct {
 	name   string
 	filter Filter
 	q      *queue
+
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
 // Filter selects the messages that a subscription receives.
@@ -244,9 +259,31 @@ func (s *Sub) Ready() <-chan struct{} { return s.q.ready }
 // the newest message per key in first-seen order. It clears the queue.
 func (s *Sub) Drain() []Message { return s.q.drain() }
 
+// Done returns a channel that closes once the subscription is closed, or
+// once the bus is closed. A consumer that waits on Ready and Done can stop
+// when either happens.
+func (s *Sub) Done() <-chan struct{} { return s.done }
+
 // Close stops the subscription. It receives no more messages, and the
 // queue is discarded. Close can be called more than once.
 func (s *Sub) Close() {
 	s.bus.unsubscribe(s)
 	s.q.close()
+	s.finish()
+}
+
+// CloseAndDrain stops the subscription like Close. It returns the messages
+// that the queue held, in the order of Drain, so that the caller can pass
+// them on. The caller must not hold a lock that Publish takes.
+func (s *Sub) CloseAndDrain() []Message {
+	s.bus.unsubscribe(s)
+	msgs := s.q.drain()
+	s.q.close()
+	s.finish()
+	return msgs
+}
+
+// finish closes the Done channel once.
+func (s *Sub) finish() {
+	s.doneOnce.Do(func() { close(s.done) })
 }

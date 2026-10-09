@@ -397,3 +397,76 @@ func TestJSONRoundTrip(t *testing.T) {
 		t.Fatalf("Decode = %+v, want {k 7}", decoded)
 	}
 }
+
+func TestSubDone_ClosedBySubClose(t *testing.T) {
+	b := New()
+	s := b.Subscribe("s", Filter{To: agent("a")})
+	s.Close()
+	select {
+	case <-s.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Done is not closed after Sub.Close")
+	}
+	s.Close() // a second Close must not panic
+}
+
+func TestSubDone_ClosedByBusClose_WakesWaiter(t *testing.T) {
+	b := New()
+	s := b.Subscribe("s", Filter{To: agent("a")})
+	woke := make(chan struct{})
+	go func() {
+		select {
+		case <-s.Ready():
+		case <-s.Done():
+		}
+		close(woke)
+	}()
+
+	b.Close()
+	b.Close() // Close is idempotent
+	select {
+	case <-woke:
+	case <-time.After(time.Second):
+		t.Fatal("waiter did not return after Bus.Close")
+	}
+}
+
+func TestSubDone_OnClosedBusIsClosed(t *testing.T) {
+	b := New()
+	b.Close()
+	s := b.Subscribe("late", Filter{To: agent("a")})
+	select {
+	case <-s.Done():
+	default:
+		t.Fatal("Done of a subscription made on a closed bus is open")
+	}
+}
+
+func TestSubCloseAndDrain_ReturnsQueuedMessages(t *testing.T) {
+	b := New()
+	s := b.Subscribe("s", Filter{To: agent("a")})
+	mustPublishTo(t, b, agent("a"), item{ID: "1"})
+	mustPublishTo(t, b, agent("a"), item{ID: "2"})
+
+	got := decodeItems(t, s.CloseAndDrain())
+	if want := []item{{ID: "1"}, {ID: "2"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("CloseAndDrain = %v, want %v", got, want)
+	}
+	mustPublishTo(t, b, agent("a"), item{ID: "3"})
+	if msgs := s.Drain(); msgs != nil {
+		t.Fatalf("closed sub got %d messages after CloseAndDrain, want none", len(msgs))
+	}
+	select {
+	case <-s.Done():
+	default:
+		t.Fatal("Done is open after CloseAndDrain")
+	}
+}
+
+// mustPublishTo publishes item p to agent a from the orchestrator.
+func mustPublishTo(t *testing.T, b *Bus, to Addr, p item) {
+	t.Helper()
+	if _, err := Publish(b, kindDurable, orchestrator, to, OriginSystem, p); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+}
