@@ -477,3 +477,21 @@ func formatIdle(idle time.Duration) string {
 	}
 	return fmt.Sprintf("%dm", int((idle+30*time.Second)/time.Minute))
 }
+
+// jobStatusOf converts a job snapshot to the payload of job.status.
+func jobStatusOf(j jobs.Job) bus.JobStatus {
+	return bus.JobStatus{
+		ID:           j.ID,
+		ParentID:     j.ParentID,
+		Kind:         string(j.Kind),
+		Name:         j.Description,
+		Status:       string(j.Status),
+		Progress:     j.Progress,
+		Result:       j.Result,
+		Err:          j.Err,
+		Question:     j.Question,
+		Started:      j.StartedAt,
+		Ended:        j.FinishedAt,
+		LastActivity: j.LastActivity,
+	}
+}

@@ -63,7 +63,7 @@ func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
 	t.Helper()
 	origReg, origBus, origAppBus := JobRegistry, jobEventBus, appBus
 
-	reg := jobs.NewRegistry(jobEventForwarder{})
+	reg := jobs.NewRegistry(&jobEventForwarder{})
 	// Production bus size: the cleanup below subscribes coalesced, so a burst
 	// of events (floodRegistryPastTerminalCap) cannot lose a terminal state.
 	bus := eventbus.New(jobEventBusSize)

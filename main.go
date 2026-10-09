@@ -891,10 +891,33 @@ func wireTools() {
 
 // jobEventForwarder is the jobs.EventPublisher of JobRegistry. The registry
 // calls it outside its lock on every job status change.
-type jobEventForwarder struct{}
+type jobEventForwarder struct {
+	mu   sync.Mutex
+	last map[string]uint64 // newest EventSeq published as job.status, per job
+}
 
 // JobEvent implements jobs.EventPublisher.
-func (jobEventForwarder) JobEvent(j jobs.Job) { forwardJobEvent(j) }
+func (f *jobEventForwarder) JobEvent(j jobs.Job) {
+	f.publishStatus(j)
+	forwardJobEvent(j)
+}
+
+// publishStatus publishes j as job.status for the TUI. The registry calls
+// JobEvent after it releases its lock, so an older snapshot can arrive after a
+// newer one. A Latest message replaces the older one by Seq, so such a
+// snapshot is dropped here, before it gets a newer Seq.
+func (f *jobEventForwarder) publishStatus(j jobs.Job) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if j.EventSeq <= f.last[j.ID] {
+		return
+	}
+	if f.last == nil {
+		f.last = make(map[string]uint64)
+	}
+	f.last[j.ID] = j.EventSeq
+	publishTo(appBus, bus.KindJobStatus, agentAddr(j.ID), bus.Addr{Type: bus.AddrTUI}, bus.OriginSystem, jobStatusOf(j))
+}
 
 // forwardJobEvent reacts to one job status change. It reads the package
 // globals when it runs. withTestWiring waits for each job's terminal event

@@ -58,15 +58,18 @@ type BtwAnswer struct {
 // JobStatus is the payload of KindJobStatus. It is a bus-local copy of the
 // fields that the TUI jobs panel reads, so that bus does not import jobs.
 type JobStatus struct {
-	ID       string    `json:"id"`
-	ParentID string    `json:"parent_id"`
-	Kind     string    `json:"kind"`
-	Name     string    `json:"name"`
-	Status   string    `json:"status"`
-	Progress string    `json:"progress"`
-	Started  time.Time `json:"started"`
-	Ended    time.Time `json:"ended"`
-	Question bool      `json:"question"`
+	ID           string    `json:"id"`
+	ParentID     string    `json:"parent_id"`
+	Kind         string    `json:"kind"`
+	Name         string    `json:"name"`
+	Status       string    `json:"status"`
+	Progress     string    `json:"progress"`
+	Result       string    `json:"result"`
+	Err          string    `json:"err"`
+	Question     string    `json:"question"`
+	Started      time.Time `json:"started"`
+	Ended        time.Time `json:"ended"`
+	LastActivity time.Time `json:"last_activity"`
 }
 
 func init() {
