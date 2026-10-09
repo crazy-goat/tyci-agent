@@ -201,8 +201,9 @@ func TestRun_AutoCompact_CustomPercent(t *testing.T) {
 // OnExhausted slot would answer if Run asked for a second turn. Anthropic
 // treats a trailing assistant message as an invalid prefill; the fix is to
 // fall through and return after a successful auto-compaction rather than
-// `continue` the loop. If this regresses, Run would consume OnExhausted and
-// this test's provider-call counter would read 2.
+// `continue` the loop. The only call after the turn is the summary call,
+// which sends one user transcript with no tools. If this regresses, a third
+// call would appear, or the second one would carry the assistant's history.
 func TestRun_AutoCompact_DoesNotReinvokeProviderAfterCompacting(t *testing.T) {
 	sess := newAutoCompactSession(t)
 	p := &connectortest.Fake{
@@ -213,7 +214,7 @@ func TestRun_AutoCompact_DoesNotReinvokeProviderAfterCompacting(t *testing.T) {
 			stream.Finish{Usage: stream.Usage{Input: 180000, Output: 1000}},
 		}},
 		OnExhausted: []stream.Event{
-			stream.TextDelta{Text: "should not be called"},
+			stream.TextDelta{Text: "summary text"},
 			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
 		},
 	}
@@ -234,8 +235,13 @@ func TestRun_AutoCompact_DoesNotReinvokeProviderAfterCompacting(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if got := p.Calls(); got != 1 {
-		t.Fatalf("provider Calls() = %d, want 1 (auto-compaction must not trigger a second provider call ending on an assistant message)", got)
+	// Call 1 is the turn, call 2 the summary call. No third call may follow.
+	if got := p.Calls(); got != 2 {
+		t.Fatalf("provider Calls() = %d, want 2 (the turn and the summary call only)", got)
+	}
+	reqs := p.Requests()
+	if n := len(reqs[1].Messages); n != 1 || reqs[1].Messages[0].Role != "user" {
+		t.Fatalf("summary request has %d messages, want one user transcript", n)
 	}
 }
 
@@ -291,6 +297,9 @@ func TestCompactThresholds(t *testing.T) {
 		{"negative percent disables hard", 1000000, 0, 0, -1, 800000, 0},
 		{"unknown window, user limits only", 0, 100, 200, 0, 100, 200},
 		{"unknown window, nothing set", 0, 0, 0, 0, 0, 0},
+		{"summary reserve lowers the hard limit of a small window", 100000, 0, 0, 0, 80000, 91808},
+		{"summary reserve does not bind a large window", 200000, 0, 0, 0, 160000, 190000},
+		{"window below the summary reserve is not lowered", 5000, 0, 0, 0, 4000, 4750},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

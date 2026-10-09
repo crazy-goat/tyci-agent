@@ -489,7 +489,15 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			softAt, hardAt := compactThresholds(contextLimit(), cfg.SoftLimit, cfg.HardLimit, cfg.AutoCompactPercent)
 			switch {
 			case used > 0 && hardAt > 0 && used >= hardAt:
-				if compactInMemory(msgs, task, buildInLoopCompactNote(used, hardAt)) {
+				note := buildInLoopCompactNote(used, hardAt, "")
+				if len(*msgs) > compactKeepMessages {
+					res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout)
+					accountSummary(d, &totalUsage, res)
+					if err == nil {
+						note = buildInLoopCompactNote(used, hardAt, res.text)
+					}
+				}
+				if compactInMemory(msgs, task, note) {
 					contextReminded = false
 				}
 			case used > 0 && softAt > 0 && used >= softAt && !contextReminded:
@@ -525,7 +533,13 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 					if cfg.Session != nil {
 						dumpPath = session.DumpPathFor(cfg.Session.Path())
 					}
-					summary := buildAutoCompactSummary(used, hardAt, dumpPath)
+					modelSummary := ""
+					res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout)
+					accountSummary(d, &totalUsage, res)
+					if err == nil {
+						modelSummary = res.text
+					}
+					summary := buildAutoCompactSummary(used, hardAt, dumpPath, modelSummary)
 					_, compactErr := cfg.Compactor(summary, "")
 					// Whether or not compaction succeeded, do NOT `continue`
 					// here (review of F5): the model has already finished
@@ -693,6 +707,12 @@ func compactThresholds(window, soft, hard, hardPercent int) (softAt, hardAt int)
 	default:
 		hardAt = window * autoHardPercent / 100
 	}
+	// The summary call needs room in the window after the hard limit (see
+	// compactSummaryReserve). The reserve only applies to a known window
+	// larger than itself.
+	if hardAt > 0 && window > compactSummaryReserve {
+		hardAt = min(hardAt, window-compactSummaryReserve)
+	}
 	return softAt, hardAt
 }
 
@@ -710,20 +730,41 @@ func buildContextBudgetReminder(used, hardAt int, canCompact bool) string {
 }
 
 // buildInLoopCompactNote is the note that replaces the removed history in an
-// in-loop compaction (Config.InLoopCompaction).
-func buildInLoopCompactNote(used, hardAt int) string {
-	return fmt.Sprintf("[automated context compaction, not the user] Your context reached %d tokens (hard limit %d), so the harness removed the older messages. Your task and the last messages remain. Read again any file you still need, then continue the task.", used, hardAt)
+// in-loop compaction (Config.InLoopCompaction). summary is the model's summary
+// of the removed messages, or "" when the summary call failed; it follows the
+// note.
+func buildInLoopCompactNote(used, hardAt int, summary string) string {
+	note := fmt.Sprintf("[automated context compaction, not the user] Your context reached %d tokens (hard limit %d), so the harness removed the older messages. Your task and the last messages remain. Read again any file you still need, then continue the task.", used, hardAt)
+	if summary != "" {
+		note += "\n\nSummary of the removed messages, written by the model before they were removed:\n\n" + summary
+	}
+	return note
 }
 
 // buildAutoCompactSummary produces the lead message for a compaction the
-// harness triggered, not the model. There is no model-authored summary to
-// use (unlike the compact tool), but per item 10 design point (a) compaction
-// never deletes anything — the raw JSONL and the dump at dumpPath both
-// survive — so a factual marker naming the measured usage and where the
-// full record lives costs nothing and lets the model recover context on
-// request. Mirrors commands.go's manualCompactSummary for /compact.
-func buildAutoCompactSummary(used, limit int, dumpPath string) string {
+// harness triggered, not the model. summary is the model's summary written
+// by the summary call, or "" when that call failed, in which case the fixed
+// marker is used. Either way the raw JSONL and the dump at dumpPath survive
+// (per item 10 design point (a) compaction never deletes anything), so the
+// message names where the full record lives and lets the model recover
+// context on request. Mirrors commands.go's manualCompactSummary for /compact.
+func buildAutoCompactSummary(used, limit int, dumpPath, summary string) string {
+	if summary != "" {
+		return fmt.Sprintf("Automatic compaction triggered at %d context tokens (hard limit %d; no model or user request). Summary of the earlier turns, written by the model before they were removed:\n\n%s\n\nThe raw session file and its markdown dump at %s hold the full record.", used, limit, summary, dumpPath)
+	}
 	return fmt.Sprintf("Automatic compaction triggered at %d context tokens (hard limit %d; no model or user request). Earlier turns are not repeated here — the raw session file and its markdown dump at %s hold the full record.", used, limit, dumpPath)
+}
+
+// accountSummary records the usage of a summary call the same way as a normal
+// model call: the sink (and so the ledger, see ledger.Watch) gets a Summary,
+// and the run total grows. It does nothing when the call reported no usage.
+func accountSummary(d Sink, totalUsage *stream.Usage, res summaryResult) {
+	if !hasUsage(res.usage) {
+		return
+	}
+	d.Summary(res.usage, res.stats)
+	totalUsage.Add(res.usage)
+	d.Total(*totalUsage)
 }
 
 // buildProgressHeartbeatReminder produces the harness-authored nudge
