@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/conductor"
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/display"
@@ -162,8 +163,18 @@ func (a jobProgressHeartbeatAdapter) NeedsProgressHeartbeat(id string, after tim
 type jobMailboxAdapter struct{ reg *jobs.Registry }
 
 func (a jobMailboxAdapter) Resolve(id string) (string, bool) { return a.reg.Resolve(id) }
-func (a jobMailboxAdapter) Post(id, text string) bool        { return a.reg.Post(id, text) }
-func (a jobMailboxAdapter) IsLive(id string) bool            { return a.reg.IsLive(id) }
+
+// Post sends text to job id as an agent.message from the orchestrator. It
+// reports false when id is not live, so the caller does not report success
+// for a message that the bus would reroute.
+func (a jobMailboxAdapter) Post(id, text string) bool {
+	if !a.reg.IsLive(id) {
+		return false
+	}
+	publishAgentMessage(appBus, id, orchestratorAddr, bus.OriginAgent, text)
+	return true
+}
+func (a jobMailboxAdapter) IsLive(id string) bool { return a.reg.IsLive(id) }
 func (a jobMailboxAdapter) Drain(id string) []string {
 	return append(a.reg.DrainMessages(id), agentInboxes.drain(id)...)
 }

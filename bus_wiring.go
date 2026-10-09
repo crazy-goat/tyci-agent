@@ -68,7 +68,7 @@ var orchestratorAddr = bus.Addr{Type: bus.AddrOrchestrator}
 // noticeKinds lists the kinds that an inbox or the orchestrator reads. A
 // subscription gets only the kinds it lists, so every consumer lists all of
 // them.
-var noticeKinds = []bus.Kind{bus.KindNoticeCompletion, bus.KindAskRequest, bus.KindBtwAnswer}
+var noticeKinds = []bus.Kind{bus.KindNoticeCompletion, bus.KindAskRequest, bus.KindBtwAnswer, bus.KindAgentMessage}
 
 // inboxSet keeps one Durable inbox subscription per agent. The inbox of an
 // agent opens when the job starts, before its ID is returned, and closes when
@@ -182,6 +182,12 @@ func publishBtwAnswer(b *bus.Bus, parentID, jobID, question, answer string) {
 		bus.BtwAnswer{Question: question, Text: answer, JobID: jobID})
 }
 
+// publishAgentMessage sends text from one sender to agent id. origin says what
+// caused it: the "message" tool and the /msg command set it.
+func publishAgentMessage(b *bus.Bus, id string, from bus.Addr, origin bus.Origin, text string) {
+	publishTo(b, bus.KindAgentMessage, from, agentAddr(id), origin, bus.AgentMessage{Text: text})
+}
+
 // maxShownAsks bounds the asks that a handoff message already carried. When
 // it is full, an arbitrary mark is dropped first.
 const maxShownAsks = 64
@@ -253,6 +259,13 @@ func noticeText(m bus.Message) (text string, ok bool) {
 			return "", false
 		}
 		return c.Text, true
+	case bus.KindAgentMessage:
+		a, err := bus.Decode[bus.AgentMessage](m)
+		if err != nil {
+			fmt.Fprintf(busLog, "bus: message %d not read: %v\n", m.Seq, err)
+			return "", false
+		}
+		return a.Text, true
 	case bus.KindBtwAnswer:
 		a, err := bus.Decode[bus.BtwAnswer](m)
 		if err != nil {
