@@ -33,6 +33,7 @@ func validateStructure(wf *Workflow) []error {
 	} else if strings.ContainsAny(d, "\r\n") {
 		errs = append(errs, fmt.Errorf("workflow description must be one line"))
 	}
+	errs = append(errs, validateParams(wf)...)
 	if wf.Start == "" {
 		errs = append(errs, fmt.Errorf("workflow start is empty"))
 	}

@@ -74,7 +74,7 @@ func writeReview(t *testing.T, dir, text string) {
 func TestSubagentRunner_UsesRunWorktree(t *testing.T) {
 	s := &spawnRec{}
 	wt := t.TempDir()
-	key, _, err := newRunner(s).Run(context.Background(), "worker", "", RunContext{Worktree: wt})
+	key, _, err := newRunner(s).Run(context.Background(), "worker", "", RunContext{Worktree: wt, Issue: 7})
 	if err != nil || key != "done" {
 		t.Fatalf("key=%q err=%v", key, err)
 	}
@@ -180,7 +180,7 @@ func TestVerdict_CleanWorktreeAccepts(t *testing.T) {
 func TestVerdict_DirtyCheckOnlyForReviewState(t *testing.T) {
 	wt := gitRepo(t)
 	_ = os.WriteFile(filepath.Join(wt, "x"), []byte("x"), 0o644)
-	key, _, err := newRunner(&spawnRec{}).Run(context.Background(), "review", "findings_to_issues", RunContext{Worktree: wt})
+	key, _, err := newRunner(&spawnRec{}).Run(context.Background(), "review", "findings_to_issues", RunContext{Worktree: wt, Issue: 7})
 	if err != nil || key != "done" {
 		t.Errorf("key=%q err=%v", key, err)
 	}

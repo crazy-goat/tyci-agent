@@ -60,7 +60,7 @@ func TestWorkerTask_RunSoFarOnSecondVisit(t *testing.T) {
 		"ask":    {Ask: "help"},
 	}}
 	r := &Runner{WF: wf, Agents: reportRunner(s), Checks: keyChecks{"ci.sh": "red"}, RunDir: run}
-	st := &RunState{Version: 1, Current: "code", Status: "running", Visits: map[string]int{}, Worktree: t.TempDir()}
+	st := &RunState{Version: 1, Current: "code", Status: "running", Issue: 7, Visits: map[string]int{}, Worktree: t.TempDir()}
 	if err := r.Run(context.Background(), st); !errors.Is(err, ErrPaused) {
 		t.Fatalf("err = %v, history %+v", err, st.History)
 	}

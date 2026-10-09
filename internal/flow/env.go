@@ -40,7 +40,9 @@ func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string
 	lastComment := "0"
 	lastReview := "0"
 	if st != nil {
-		issue = strconv.Itoa(st.Issue)
+		if st.Issue > 0 {
+			issue = strconv.Itoa(st.Issue)
+		}
 		branch = st.Branch
 		repo = st.Repo
 		worktree = st.Worktree

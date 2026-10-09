@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,11 +39,17 @@ func (g *gatedChecks) Run(ctx context.Context, _ State, _ []string, _ string) (s
 }
 
 func demoWF() *Workflow {
-	return &Workflow{Name: "demo", Start: "c", States: map[string]State{
+	return &Workflow{Name: "demo", Start: "c", Params: []Param{{Name: "issue", Description: "GitHub issue number", Required: true}}, States: map[string]State{
 		"c":   {Check: "c.sh", On: map[string]string{"ok": "end", "default": "ask"}},
 		"ask": {Ask: "Need a decision.", On: map[string]string{"retry": "c", "stop": "end"}},
 		"end": {End: true},
 	}}
+}
+
+// testIssue is the issue number of a fake Prepare request.
+func testIssue(req StartRequest) int {
+	n, _ := strconv.Atoi(req.Params[0])
+	return n
 }
 
 type mgrEnv struct {
@@ -64,8 +71,8 @@ func newMgrEnv(t *testing.T, checks *gatedChecks) *mgrEnv {
 			if e.prepErr != nil {
 				return nil, nil, nil, e.prepErr
 			}
-			id := NewRunID(req.Issue, time.Now())
-			st := &RunState{Version: 1, Run: id, Workflow: "demo", Repo: "o/r", Issue: req.Issue,
+			id := NewRunID(testIssue(req), time.Now())
+			st := &RunState{Version: 1, Run: id, Workflow: "demo", Repo: "o/r", Issue: testIssue(req),
 				Status: "running", Current: "c", Visits: map[string]int{}, History: []Step{}}
 			if err := (&Store{Dir: runDir(id)}).Save(st); err != nil {
 				return nil, nil, nil, err
@@ -95,15 +102,15 @@ func (e *mgrEnv) notice(t *testing.T) string {
 func TestWorkflowStart_AllowsSeveralActiveRuns(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
-	id1, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1})
+	id1, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 2})
+	id2, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"2"}})
 	if err != nil || id1 == id2 {
 		t.Fatalf("id2 = %q, err = %v", id2, err)
 	}
-	_, _, err = e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 2})
+	_, _, err = e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"2"}})
 	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "issue 2") {
 		t.Fatalf("same issue: err = %v", err)
 	}
@@ -118,7 +125,7 @@ func TestManager_SubscribeGetsEndAndResume(t *testing.T) {
 	events := make(chan RunEvent, 8)
 	unsub := e.m.Subscribe(func(ev RunEvent) { events <- ev })
 	defer unsub()
-	id, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 3})
+	id, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"3"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +172,7 @@ func TestWorkflowStart_RefusesSecondRunForSameIssue(t *testing.T) {
 	if err := (&Store{Dir: RunDir(e.home, "r", old.Run)}).Save(old); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 5})
+	_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"5"}})
 	if err == nil || !strings.Contains(err.Error(), "already has run "+old.Run) {
 		t.Fatalf("err = %v", err)
 	}
@@ -176,7 +183,7 @@ func TestWorkflowStart_RefusesSecondRunForSameIssue(t *testing.T) {
 func TestWorkflowStart_RefusesRunOwnedByOtherLiveProcess(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	old := saveRun(t, e.home, 5, func(st *RunState) { st.PID = os.Getppid() })
-	_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 5})
+	_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"5"}})
 	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "already has run "+old.Run) {
 		t.Fatalf("err = %v", err)
 	}
@@ -195,7 +202,7 @@ func TestWorkflowStart_StaleRunningDoesNotBlock(t *testing.T) {
 	if err := (&Store{Dir: RunDir(e.home, "r", old.Run)}).Save(old); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 5}); err != nil {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"5"}}); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	e.notice(t)
@@ -205,7 +212,7 @@ func TestWorkflowStart_ReturnsImmediately(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
 	t0 := time.Now()
-	_, warnings, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1})
+	_, warnings, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
 	if err != nil || time.Since(t0) > time.Second {
 		t.Fatalf("err = %v, took %v", err, time.Since(t0))
 	}
@@ -218,7 +225,7 @@ func TestWorkflowStart_ReturnsImmediately(t *testing.T) {
 
 func TestWorkflowStart_NeedsWorkflowName(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err == nil || !strings.Contains(err.Error(), "workflow name is required") {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Params: []string{"1"}}); err == nil || !strings.Contains(err.Error(), "workflow name is required") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(e.home, ".tyci")); !os.IsNotExist(err) {
@@ -232,7 +239,7 @@ func TestWorkflowStart_NeedsWorkflowName(t *testing.T) {
 func TestWorkflowStart_InvalidWorkflowCreatesNothing(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	e.prepErr = errors.New("workflow \"x\" is invalid")
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1}); err == nil {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}}); err == nil {
 		t.Fatal("expected error")
 	}
 	if _, err := os.Stat(filepath.Join(e.home, ".tyci")); !os.IsNotExist(err) {
@@ -271,7 +278,7 @@ func TestFinishedRun_NoticeFollowsEndState(t *testing.T) {
 
 func TestPausedRun_PushesNotice(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "bad"})
-	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1})
+	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
 	want := "workflow run " + id + " paused: Need a decision. (last step: c, key bad) (needs a human; answer with workflow_resume: retry|stop|retry <note>|goto <state>)"
 	if got := e.notice(t); got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
@@ -280,7 +287,7 @@ func TestPausedRun_PushesNotice(t *testing.T) {
 
 func TestRunPanic_MarksFailedAndNotifies(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{panics: true})
-	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1})
+	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
 	got := e.notice(t)
 	if !strings.Contains(got, id+" failed: panic") {
 		t.Fatalf("notice = %q", got)
@@ -295,7 +302,7 @@ func TestRunPanic_MarksFailedAndNotifies(t *testing.T) {
 // Runner adds no second one.
 func TestRunPanic_SendsOneNotice(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{panics: true})
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1}); err != nil {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}}); err != nil {
 		t.Fatal(err)
 	}
 	e.notice(t)
@@ -317,7 +324,7 @@ func TestFailedNotice_NamesStep(t *testing.T) {
 
 func TestWorkflowStatus_ReportsCurrentState(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "bad"})
-	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1})
+	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
 	e.notice(t)
 	for _, run := range []string{"", id} {
 		st, err := e.m.Status(run)
@@ -333,7 +340,7 @@ func TestWorkflowStatus_ReportsCurrentState(t *testing.T) {
 func TestWorkflowResume_PassesAnswer(t *testing.T) {
 	c := &gatedChecks{key: "bad"}
 	e := newMgrEnv(t, c)
-	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1})
+	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
 	e.notice(t)
 	waitIdle(t, e.m)
 	if err := e.m.Resume(id, "stop"); err != nil {
@@ -346,7 +353,7 @@ func TestWorkflowResume_PassesAnswer(t *testing.T) {
 
 func TestWorkflowResume_BadAnswerListsKeys(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "bad"})
-	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1})
+	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
 	e.notice(t)
 	waitIdle(t, e.m)
 	err := e.m.Resume(id, "maybe")
@@ -375,7 +382,7 @@ func waitIdle(t *testing.T, m *Manager) {
 func TestShutdown_CancelsRun(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
-	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1})
+	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
 	e.m.Shutdown(5 * time.Second)
 	st, _ := e.m.Status(id)
 	if st.Status != "failed" || st.Reason != "cancelled" {
@@ -396,7 +403,7 @@ func TestShutdown_CancelsPreparation(t *testing.T) {
 	}
 	started := make(chan error, 1)
 	go func() {
-		_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1})
+		_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
 		started <- err
 	}()
 	select {

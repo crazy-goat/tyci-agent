@@ -94,14 +94,14 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 				return Lookup(name, info.Home, info.Root, info.Trusted)
 			},
 			Config: func() (*flowconfig.Config, error) { return flowconfig.Load(info.Home, info.Root, info.Trusted) },
-			AddIssue: func(ctx context.Context) (*worktree.Worktree, error) {
-				return worktree.AddIssue(ctx, info.Home, info.Root, req.Issue, info.DefaultBranch)
+			AddWorktree: func(ctx context.Context, runID string, issue int) (*worktree.Worktree, error) {
+				return addRunWorktree(ctx, info, runID, issue)
 			},
 			NewStore: func(runID string) (*Store, error) {
 				return &Store{Dir: RunDir(info.Home, info.Name(), runID)}, nil
 			},
 		}
-		return PrepareRun(ctx, d, PrepareReq{Workflow: req.Workflow, Repo: info.Repo, DefaultBranch: info.DefaultBranch, Issue: req.Issue})
+		return PrepareRun(ctx, d, PrepareReq{Workflow: req.Workflow, Repo: info.Repo, DefaultBranch: info.DefaultBranch, Params: req.Params})
 	}
 	m.NewRunner = func(info RepoInfo, wf *Workflow, st *RunState) *Runner {
 		runDir := RunDir(info.Home, info.Name(), st.Run)
@@ -151,12 +151,21 @@ func (f failingAgents) Run(context.Context, string, string, RunContext) (string,
 	return "", "", f.err
 }
 
+// addRunWorktree creates the worktree of a run. A run with an issue gets issue-<N>;
+// a run without one gets run-<run id>.
+func addRunWorktree(ctx context.Context, info RepoInfo, runID string, issue int) (*worktree.Worktree, error) {
+	if issue > 0 {
+		return worktree.AddIssue(ctx, info.Home, info.Root, issue, info.DefaultBranch)
+	}
+	return worktree.AddRun(ctx, info.Home, info.Root, runID, info.DefaultBranch)
+}
+
 // ChatTools adapts a Manager to tools.WorkflowManager.
 type ChatTools struct{ M *Manager }
 
 // Start implements tools.WorkflowManager.
 func (c ChatTools) Start(ctx context.Context, workflow string, issue int) (string, []string, error) {
-	return c.M.Start(ctx, StartRequest{Workflow: workflow, Issue: issue})
+	return c.M.StartIssue(ctx, workflow, issue)
 }
 
 // Resume implements tools.WorkflowManager.
@@ -195,6 +204,9 @@ func (c ChatTools) Status(run string) (any, error) {
 	}
 	if st.Reason != "" {
 		out["reason"] = st.Reason
+	}
+	if len(st.Params) > 0 {
+		out["params"] = st.Params
 	}
 	if st.Ask != nil {
 		out["ask"] = st.Ask.Message

@@ -1,6 +1,8 @@
 package flow
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,9 +19,16 @@ const stateFile = "state.json"
 // Store writes RunState to <Dir>/state.json atomically.
 type Store struct{ Dir string }
 
-// NewRunID returns the run id YYYYMMDD-HHMMSS-<issue> (UTC).
+// NewRunID returns the run id YYYYMMDD-HHMMSS-<issue> (UTC). A run without an
+// issue (issue 0) gets a random suffix, so two such runs in one second differ.
 func NewRunID(issue int, now time.Time) string {
-	return now.UTC().Format("20060102-150405") + "-" + strconv.Itoa(issue)
+	id := now.UTC().Format("20060102-150405") + "-" + strconv.Itoa(issue)
+	if issue > 0 {
+		return id
+	}
+	var b [3]byte
+	_, _ = rand.Read(b[:]) // crypto/rand does not fail on supported platforms
+	return id + "-" + hex.EncodeToString(b[:])
 }
 
 // RunDir returns <home>/.tyci/runs/<repo>/<run>.
@@ -126,6 +135,14 @@ func Load(dir string) (*RunState, error) {
 	}
 	if st.Version != 1 {
 		return nil, fmt.Errorf("flow: unsupported state version %d", st.Version)
+	}
+	// A state saved before params existed has none. The issue is then the
+	// only param that can be filled, so templates still read {{.Params.issue}}.
+	if st.Params == nil {
+		st.Params = map[string]string{}
+	}
+	if _, ok := st.Params[IssueParam]; !ok && st.Issue > 0 {
+		st.Params[IssueParam] = strconv.Itoa(st.Issue)
 	}
 	return &st, nil
 }

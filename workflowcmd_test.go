@@ -100,7 +100,7 @@ func wfWrite(t *testing.T, path, content string) {
 
 // oneCheckFlow is a workflow named name: one check state, then end.
 func oneCheckFlow(name string) string {
-	return `{"description":"test","name":"` + name + `","start":"check","states":{` +
+	return `{"description":"test","name":"` + name + `","params":[{"name":"issue","description":"issue","required":true}],"start":"check","states":{` +
 		`"check":{"check":"checks/ok.sh","on":{"default":"end"}},` +
 		`"end":{"end":true}}}`
 }
@@ -297,7 +297,7 @@ func TestWorkflowRunDone(t *testing.T) {
 func TestWorkflowRunFailed(t *testing.T) {
 	home := wfHome(t)
 	wfUseRepo(t, wfRunRepo(t, home))
-	body := `{"description":"test","name":"fail-check","start":"check","states":{` +
+	body := `{"description":"test","name":"fail-check","params":[{"name":"issue","description":"issue","required":true}],"start":"check","states":{` +
 		`"check":{"check":"checks/fail.sh","on":{"ok":"end"}},` +
 		`"end":{"end":true}}}`
 	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "fail-check", "workflow.json"), body)
@@ -316,7 +316,7 @@ func TestWorkflowRunFailed(t *testing.T) {
 func TestWorkflowRunStopsAtAsk(t *testing.T) {
 	home := wfHome(t)
 	wfUseRepo(t, wfRunRepo(t, home))
-	body := `{"description":"test","name":"ask-flow","start":"check","states":{` +
+	body := `{"description":"test","name":"ask-flow","params":[{"name":"issue","description":"issue","required":true}],"start":"check","states":{` +
 		`"check":{"check":"checks/ok.sh","on":{"default":"wait"}},` +
 		`"wait":{"ask":"need an answer","human":true,"on":{"go":"end"}},` +
 		`"end":{"end":true}}}`
@@ -369,7 +369,7 @@ func TestWorkflowRunAgentGetsProvidersAndHooks(t *testing.T) {
 	wfWrite(t, filepath.Join(home, ".tyci", "hooks.json"),
 		`{"hooks":[{"event":"pre_tool","command":"true"}]}`)
 	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "agent-flow", "workflow.json"),
-		`{"description":"test","name":"agent-flow","start":"work","states":{`+
+		`{"description":"test","name":"agent-flow","params":[{"name":"issue","description":"issue","required":true}],"start":"work","states":{`+
 			`"work":{"agent":"helper","on":{"done":"end"}},`+
 			`"end":{"end":true}}}`)
 
@@ -453,6 +453,37 @@ func TestWorkflowStatusReadsStateFile(t *testing.T) {
 	}
 	if r.StateFile != flow.StatePath(dir) || strings.Contains(out, `"error"`) {
 		t.Fatalf("state_file = %q, want %q", r.StateFile, flow.StatePath(dir))
+	}
+}
+
+// The text form prints the params after the state line, one name=value per line.
+// The JSON form has them as the params object.
+func TestWorkflowStatusPrintsParams(t *testing.T) {
+	home := wfHome(t)
+	const id = "20261005-153012-42"
+	dir := flow.RunDir(home, "demo", id)
+	st := &flow.RunState{Version: 1, Run: id, Workflow: "one-check", Repo: "acme/demo", Issue: 42,
+		Status: "done", Current: "end", Visits: map[string]int{"check": 1},
+		Params: map[string]string{"issue": "42", "branch": "dev"}}
+	if err := (&flow.Store{Dir: dir}).Save(st); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runWorkflowCLI(t, "workflow", "status", id)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	want := "run " + id + ": done at state end\nbranch=dev\nissue=42\n"
+	if out != want {
+		t.Fatalf("text output = %q, want %q", out, want)
+	}
+
+	out, _, err = runWorkflowCLI(t, "workflow", "status", id, "--json")
+	if err != nil {
+		t.Fatalf("status --json: %v", err)
+	}
+	if r := decodeWorkflowResult(t, out); r.Params["branch"] != "dev" || r.Params["issue"] != "42" {
+		t.Fatalf("json params = %v", r.Params)
 	}
 }
 

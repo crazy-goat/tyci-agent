@@ -133,6 +133,7 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 		Pause:         MaskSecrets(st.Ask.Message),
 		Goto:          gotoStates(r.WF, st),
 		Issue:         st.Issue,
+		Params:        st.Params,
 		PR:            st.PR,
 		ArtifactDir:   artDir,
 		RunSoFar:      runSoFar(st, cur, r.RunDir),
