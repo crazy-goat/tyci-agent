@@ -172,3 +172,31 @@ func TestFindModel_CaseFallbackIsStable(t *testing.T) {
 		t.Fatalf("display-name tie-break = %+v ok=%v, want Model-A", byName, ok)
 	}
 }
+
+// Lookup remembers catalog answers, so a new catalog must not see the old ones:
+// withCatalog calls Reset, which has to clear the memo.
+func TestLookup_MemoIsClearedByReset(t *testing.T) {
+	withCatalog(t, testCatalog)
+	if r, _ := Lookup("", "claude-sonnet-5"); !r.Known() {
+		t.Fatal("first lookup: model not found")
+	}
+	withCatalog(t, `{}`)
+	if r, _ := Lookup("", "claude-sonnet-5"); r.Known() {
+		t.Fatalf("lookup after Reset returned a stale entry: %+v", r)
+	}
+}
+
+// A second Lookup of an unknown model must come from the memo, not from another
+// scan of the catalog. The test plants a marker under the memo key. A rescan
+// would return zero rates and not the marker, so the test fails without the memo.
+func TestLookup_UnknownModelIsNotRescanned(t *testing.T) {
+	withCatalog(t, testCatalog)
+	const model = "no-such-model"
+	if r, _ := Lookup("", model); r.Known() {
+		t.Fatalf("first lookup: unexpected rates %+v", r)
+	}
+	lookupMemo.Store(memoKey("", model), catalogHit{rates: Rates{Input: 42}})
+	if r, _ := Lookup("", model); r.Input != 42 {
+		t.Fatalf("second lookup rescanned the catalog: rates %+v, want the memoized entry", r)
+	}
+}
