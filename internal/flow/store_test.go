@@ -129,6 +129,25 @@ func TestLoad_Missing(t *testing.T) {
 	}
 }
 
+// A state.json saved before params existed has no "params": Load fills the issue.
+func TestLoad_OldStateGetsIssueParam(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"version":1,"run":"20261009-101010-7","workflow":"demo","issue":7,"status":"paused","current":"code"}`
+	if err := os.WriteFile(filepath.Join(dir, stateFile), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Params["issue"] != "7" {
+		t.Fatalf("params = %v, want issue=7", st.Params)
+	}
+}
+
 func TestNewRunID_Format(t *testing.T) {
 	got := NewRunID(160, time.Date(2026, 10, 5, 12, 3, 1, 0, time.UTC))
 	if got != "20261005-120301-160" {

@@ -367,6 +367,27 @@ func TestResume_FillsParamsFromSavedState(t *testing.T) {
 	}
 }
 
+// A state saved before params existed renders {{.Params.issue}} without an error.
+func TestLoad_OldStateRendersIssueParam(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"version":1,"run":"20261009-101010-7","workflow":"demo","issue":7,"status":"running","current":"code"}`
+	if err := os.WriteFile(StatePath(dir), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wfDir := t.TempDir()
+	e2eWrite(t, filepath.Join(wfDir, "tasks", "t.md"), "I={{.Params.issue}}")
+	if out, err := (TaskTemplates{Dir: wfDir}).Render("t", RunContext{Params: st.Params}); err != nil || out != "I=7" {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+}
+
 // ChatTools.Status reports the params of the run.
 func TestChatTools_StatusShowsParams(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
