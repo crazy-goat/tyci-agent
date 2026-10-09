@@ -233,7 +233,7 @@ func (m TuiModel) sidebarRowCount() int {
 // "the last line is at the top of the viewport").
 func (m TuiModel) sidebarLineCount(contentWidth int) int {
 	if m.sidebarTab == sidebarTabTasks {
-		// renderSidebarTasks emits one line per row, and the rows always start
+		// The Tasks tab emits one line per row, and the rows always start
 		// with a heading. Counting the rows skips the styling of every line.
 		return len(m.sidebarTaskRows(contentWidth))
 	}
@@ -286,12 +286,6 @@ func (m *TuiModel) sidebarSwitchTab(tab int) {
 func (m *TuiModel) sidebarClampScrollToCursor(contentHeight int) {
 	cursorLine := m.sidebarCursor
 	switch m.sidebarTab {
-	case sidebarTabTasks:
-		_, jobRows := m.sidebarTaskRowsAndJobs(m.sidebarLayout().contentWidth)
-		if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) {
-			return
-		}
-		cursorLine = jobRows[m.sidebarCursor]
 	case sidebarTabRuns:
 		// A run takes one line or more; the cursor follows its first line.
 		starts := m.runsTab(m.sidebarLayout().contentWidth).start
@@ -616,7 +610,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// cursor move yet still maps clicks to the row actually drawn.
 			//
 			// `line` is an index into the RENDERED LINE list (one line per
-			// sidebarTaskRow — renderSidebarTasks emits exactly one styled
+			// sidebarTaskRow — styleSidebarTaskRows emits exactly one styled
 			// line per row, headings included), computed once here. It is
 			// NOT the same thing as m.sidebarRowCount(), which on Tasks
 			// counts only job rows (see its doc comment) — Tasks mixes
@@ -954,7 +948,10 @@ type sidebarTaskRow struct {
 }
 
 // sidebarTaskRowBuilds counts the calls of sidebarTaskRows. The tests read it
-// to check how many times one key, click or job event builds the Tasks rows.
+// to check how many times one key, click or job event builds the Tasks rows
+// (tui_sidebar_builds_test.go). It stays in production code on purpose: one
+// atomic add per build is cheap, and a test hook would need a field on
+// TuiModel that every render path would have to carry.
 var sidebarTaskRowBuilds atomic.Int64
 
 // sidebarTaskRows keeps the three source groups separate and stable. The Bash

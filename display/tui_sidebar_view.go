@@ -468,8 +468,6 @@ func (m TuiModel) sidebarTabLines(width int) []string {
 		return m.buildUsageDetail(width)
 	case sidebarTabSessions:
 		return m.renderSidebarSessions(width)
-	case sidebarTabTasks:
-		return m.renderSidebarTasks(width)
 	case sidebarTabRuns:
 		return m.renderSidebarRuns(width)
 	default:
@@ -500,14 +498,6 @@ func (m TuiModel) sidebarBodyLines(layout sidebarLayoutT, width int) []string {
 	}
 	lines := m.sidebarTabLines(width)
 	return lines[m.sidebarVisibleScrollForLineCount(layout, len(lines)):]
-}
-
-// renderSidebarTasks builds the Tasks rows once and styles all of them. It
-// derives the cursor line from those same rows, so one render builds the
-// subagent tree, the Bash rows and the Lua rows only once.
-func (m TuiModel) renderSidebarTasks(width int) []string {
-	rows := m.sidebarTaskRows(width)
-	return styleSidebarTaskRows(rows, m.sidebarTaskCursorLine(rows), width)
 }
 
 // sidebarTaskCursorLine returns the index in rows of the selected job row, or -1.

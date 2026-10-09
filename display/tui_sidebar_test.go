@@ -157,7 +157,7 @@ func TestSidebarVisibleScrollForRenderedLineCount(t *testing.T) {
 	m.openSidebar(sidebarTabTasks)
 	layout := m.sidebarLayout()
 	m.sidebarScroll = 99
-	lineCount := len(m.sidebarTabLines(layout.contentWidth))
+	lineCount := len(m.sidebarTaskRows(layout.contentWidth))
 	got := m.sidebarVisibleScrollForLineCount(layout, lineCount)
 	want := m.sidebarVisibleScroll(layout)
 	if got != want {
@@ -1995,7 +1995,7 @@ func TestSidebarTaskRowsKeepBackgroundAcrossLine(t *testing.T) {
 	m.applyJobUpdate(jobs.Job{ID: "job-2", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "done/coder", StartedAt: time.Now()})
 	m.openSidebar(sidebarTabTasks)
 	m.sidebarCursor = 0
-	lines := m.renderSidebarTasks(40)
+	lines := renderAllSidebarTasks(m, 40)
 	checked := 0
 	for _, l := range lines {
 		if !strings.Contains(l, "/coder") {

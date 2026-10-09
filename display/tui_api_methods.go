@@ -180,45 +180,11 @@ func (t *TUI) Phase(name string) {
 func (t *TUI) ToolFinish() {}
 
 func (t *TUI) Thinking(text string) {
-	t.mu.Lock()
-	if t.pendingKind != "" && t.pendingKind != "thinking" {
-		// Kind changed, flush previous
-		kind := t.pendingKind
-		content := t.pendingContent.String()
-		t.pendingKind = "thinking"
-		t.pendingContent.Reset()
-		t.pendingContent.WriteString(text)
-		t.mu.Unlock()
-		if content != "" {
-			t.post(tuiMsgBlock{kind: kind, content: content})
-		}
-	} else {
-		t.pendingKind = "thinking"
-		t.pendingContent.WriteString(text)
-		t.mu.Unlock()
-	}
-	t.wakeFlush()
+	t.appendPending("thinking", 0, text)
 }
 
 func (t *TUI) Text(text string) {
-	t.mu.Lock()
-	if t.pendingKind != "" && t.pendingKind != "text" {
-		// Kind changed, flush previous
-		kind := t.pendingKind
-		content := t.pendingContent.String()
-		t.pendingKind = "text"
-		t.pendingContent.Reset()
-		t.pendingContent.WriteString(text)
-		t.mu.Unlock()
-		if content != "" {
-			t.post(tuiMsgBlock{kind: kind, content: content})
-		}
-	} else {
-		t.pendingKind = "text"
-		t.pendingContent.WriteString(text)
-		t.mu.Unlock()
-	}
-	t.wakeFlush()
+	t.appendPending("text", 0, text)
 }
 
 func (t *TUI) ToolCallStart(name string) {
@@ -227,8 +193,7 @@ func (t *TUI) ToolCallStart(name string) {
 }
 
 func (t *TUI) ToolCallDelta(delta string) {
-	t.flushNow()
-	t.post(tuiMsgBlock{kind: "tool-delta", content: delta})
+	t.appendPending("tool-delta", 0, delta)
 }
 
 // ToolCallDuration reports how long the tool whose ToolCallEnd comes next
@@ -326,7 +291,7 @@ func (t *TUI) ShowTotalUsage(usage stream.Usage) {
 // StreamProgress sends incremental tool output to the TUI.
 // toolIdx is the index of the tool in the current tool batch (0-based).
 func (t *TUI) StreamProgress(toolIdx int, line string) {
-	t.post(tuiMsgBlock{kind: "tool-progress", toolIdx: toolIdx, content: line + "\n"})
+	t.appendPending("tool-progress", toolIdx, line+"\n")
 }
 
 // OpenBtw registers a new /btw side-conversation and opens its live modal

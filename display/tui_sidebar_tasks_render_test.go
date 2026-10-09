@@ -26,6 +26,14 @@ func tasksFixtureAllDone(t *testing.T) TuiModel {
 	return m
 }
 
+// renderAllSidebarTasks styles every Tasks row, not only the visible window.
+// The production code styles the window only (sidebarBodyLines), so the tests
+// use this to compare the full list with a window.
+func renderAllSidebarTasks(m TuiModel, width int) []string {
+	rows := m.sidebarTaskRows(width)
+	return styleSidebarTaskRows(rows, m.sidebarTaskCursorLine(rows), width)
+}
+
 // legacyRenderSidebarTasks is the render as it was before the rows were built
 // once: it calls sidebarTaskRows and then sidebarTaskJobRows, which builds the
 // rows a second time. It is the reference for the byte-identical check.
@@ -66,7 +74,7 @@ func TestRenderSidebarTasksMatchesLegacyTwoCallPath(t *testing.T) {
 		for _, cursor := range []int{-1, 0, 1, 5, 40, 500} {
 			m := base
 			m.sidebarCursor = cursor
-			got := m.renderSidebarTasks(width)
+			got := renderAllSidebarTasks(m, width)
 			want := legacyRenderSidebarTasks(m, width)
 			if strings.Join(got, "\n") != strings.Join(want, "\n") {
 				t.Fatalf("width %d cursor %d: render differs from the legacy path", width, cursor)
@@ -138,7 +146,7 @@ func TestSidebarTaskRowSelectionByKeyAndMouse(t *testing.T) {
 func TestRenderSidebarTasksFollowsJobEvents(t *testing.T) {
 	m := tasksFixtureAllDone(t)
 	m.sidebarCursor = 2
-	before := m.renderSidebarTasks(40)
+	before := renderAllSidebarTasks(m, 40)
 
 	m.applyJobUpdate(jobs.Job{
 		ID:          "bash-new",
@@ -148,7 +156,7 @@ func TestRenderSidebarTasksFollowsJobEvents(t *testing.T) {
 		StartedAt:   time.Now().Add(-time.Minute),
 		FinishedAt:  time.Now(),
 	})
-	after := m.renderSidebarTasks(40)
+	after := renderAllSidebarTasks(m, 40)
 	if strings.Join(before, "\n") == strings.Join(after, "\n") {
 		t.Fatalf("render did not change after a job was added")
 	}
@@ -187,7 +195,7 @@ func TestSidebarTasksWindowStylesVisibleRowsOnly(t *testing.T) {
 			width := 60
 			layout := sidebarLayoutT{contentHeight: height}
 
-			full := m.renderSidebarTasks(width)
+			full := renderAllSidebarTasks(m, width)
 			scroll := m.sidebarVisibleScrollForLineCount(layout, len(full))
 			end := min(len(full), scroll+height)
 			want := full[scroll:end]

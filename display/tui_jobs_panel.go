@@ -81,8 +81,17 @@ func (m *TuiModel) pruneBackgroundJobsLocked() {
 	if len(terminal) <= jobs.MaxRetainedTerminalJobs {
 		return
 	}
+	// Ties on FinishedAt (zero times, or the same clock tick) break on StartedAt
+	// and then ID, so the evicted set does not depend on map order.
 	sort.Slice(terminal, func(i, k int) bool {
-		return terminal[i].FinishedAt.Before(terminal[k].FinishedAt)
+		a, b := terminal[i], terminal[k]
+		if !a.FinishedAt.Equal(b.FinishedAt) {
+			return a.FinishedAt.Before(b.FinishedAt)
+		}
+		if !a.StartedAt.Equal(b.StartedAt) {
+			return a.StartedAt.Before(b.StartedAt)
+		}
+		return a.ID < b.ID
 	})
 	for _, j := range terminal[:len(terminal)-jobs.MaxRetainedTerminalJobs] {
 		delete(m.backgroundJobs, j.ID)

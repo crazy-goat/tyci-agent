@@ -102,6 +102,46 @@ func TestUpdateJobsResetClearsVisibleJobsAndIgnoresOldEvents(t *testing.T) {
 	}
 }
 
+// TestPruneBackgroundJobs_TiedFinishedAtEvictsByStartedAtThenID checks that
+// jobs with the same FinishedAt (here all zero) are evicted by StartedAt and
+// then ID. The evicted set must not depend on map iteration order.
+func TestPruneBackgroundJobs_TiedFinishedAtEvictsByStartedAtThenID(t *testing.T) {
+	const extra = 2
+	n := jobs.MaxRetainedTerminalJobs + extra
+	base := time.Now()
+	id := func(i int) string { return fmt.Sprintf("job-%03d", i) }
+
+	cases := []struct {
+		name        string
+		started     func(i int) time.Time
+		wantEvicted []string
+	}{
+		// StartedAt decides: higher i started earlier, so the last two are oldest.
+		{"by StartedAt", func(i int) time.Time { return base.Add(time.Duration(n-i) * time.Second) },
+			[]string{id(n - 1), id(n - 2)}},
+		// All StartedAt tie: ID decides, so the two lowest IDs are evicted.
+		{"by ID", func(int) time.Time { return base }, []string{id(0), id(1)}},
+	}
+	for _, tc := range cases {
+		for run := 0; run < 20; run++ {
+			m := newTestModelForJobs()
+			for i := 0; i < n; i++ {
+				m.backgroundJobs[id(i)] = jobs.Job{ID: id(i), Status: jobs.StatusDone, StartedAt: tc.started(i)}
+			}
+			m.pruneBackgroundJobsLocked()
+
+			if len(m.backgroundJobs) != jobs.MaxRetainedTerminalJobs {
+				t.Fatalf("%s run %d: retained %d jobs, want %d", tc.name, run, len(m.backgroundJobs), jobs.MaxRetainedTerminalJobs)
+			}
+			for _, evicted := range tc.wantEvicted {
+				if _, ok := m.backgroundJobs[evicted]; ok {
+					t.Fatalf("%s run %d: %s should be evicted", tc.name, run, evicted)
+				}
+			}
+		}
+	}
+}
+
 // TestApplyJobUpdate_PrunesTerminalJobsBeyondTheRegistryBound mirrors
 // jobs.Registry's own eviction (pruneTerminalLocked): backgroundJobs is a
 // mirror fed by SetJobEvents, not the registry itself, so without its own
