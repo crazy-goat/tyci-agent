@@ -736,6 +736,10 @@ A subagent uses the same hand-off. Its notice goes to the subagent that
 started the command. When the subagent ends, its background commands are
 stopped.
 
+## Answers while the assistant is busy
+
+In the TUI, a line typed while a turn is running still waits in the queue for the main assistant. The same line also starts a read-only `/btw` fork that answers it. The answer appears in the chat at once. The main assistant gets it as a `[btw suggestion]` message at its next drain, and that message does not wake an idle chat. The fork can read and search, but it cannot run commands, write files, start subagents or stop jobs. It only suggests, and it never promotes. An idle chat starts no fork. This is always on, and it shares the 32-evaluation limit with `/btw`.
+
 ## Stream guards
 
 Two things are watched on every OpenAI-compatible stream, because neither the
