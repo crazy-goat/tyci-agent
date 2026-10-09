@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/bus"
+	"github.com/crazy-goat/tyci-agent/conductor"
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/connector/connectortest"
+	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/stream"
 	"github.com/crazy-goat/tyci-agent/tools"
@@ -531,5 +534,238 @@ func TestBtwPromotionAdapter_UsesChildRuntimeGate(t *testing.T) {
 	}
 	if got := fake.Calls(); got != 2 {
 		t.Fatalf("expected one refused tool turn plus final answer, got %d model calls", got)
+	}
+}
+
+// ─── busy-line forks ─────────────────────────────────────────────────────
+
+// busyTestConductor returns a conductor over a fake model that answers text.
+func busyTestConductor(text string) (*conductor.Conductor, *connectortest.Fake) {
+	fake := connectortest.Text(text)
+	return conductor.New(conductor.Options{Client: fake, Sink: noopDisplay{}}), fake
+}
+
+// busyLineFork runs forkBusyLines over one queued line, as the TUI does at a
+// safe point. It returns the lines and the job of the fork, or nil.
+func busyLineFork(t *testing.T, cond *conductor.Conductor, sink *display.BtwSink, line string) (lines []string, job *jobs.Job) {
+	t.Helper()
+	drain := forkBusyLines(func() []string { return []string{line} }, func(q string) {
+		job = startBusyBtw(context.Background(), cond, q, sink)
+	})
+	return drain(), job
+}
+
+// awaitBusyFork waits until the fork job is finished.
+func awaitBusyFork(t *testing.T, reg *jobs.Registry, job *jobs.Job) {
+	t.Helper()
+	if _, ok := reg.Wait(context.Background(), job.ID, 5*time.Second); !ok {
+		t.Fatal("busy-line fork never finished")
+	}
+}
+
+// TestBusyBtw_BusyTurn_StartsFork checks that a queued line starts one fork
+// whose question is the raw line, behind the busy sentence.
+func TestBusyBtw_BusyTurn_StartsFork(t *testing.T) {
+	reg, _ := withTestWiring(t)
+	cond, _ := busyTestConductor("looks fine")
+	sink := display.NewBtwSink(&display.TUI{}, "busy-start")
+
+	_, job := busyLineFork(t, cond, sink, "should we ship now?")
+	if job == nil {
+		t.Fatal("busy line did not start a fork")
+	}
+	defer func() {
+		btwEvaluationsMu.Lock()
+		delete(btwEvaluations, job.ID)
+		btwEvaluationsMu.Unlock()
+	}()
+	awaitBusyFork(t, reg, job)
+
+	btwEvaluationsMu.Lock()
+	eval := btwEvaluations[job.ID]
+	btwEvaluationsMu.Unlock()
+	if eval == nil {
+		t.Fatal("busy-line fork was not retained")
+	}
+	if eval.question != "should we ship now?" {
+		t.Fatalf("retained question = %q, want the raw line", eval.question)
+	}
+	var user string
+	for _, m := range eval.msgs {
+		if m.Role == "user" && len(m.Content) > 0 {
+			user = m.Content[0].Text
+		}
+	}
+	if !strings.HasPrefix(user, btwBusyFraming) || !strings.HasSuffix(user, "should we ship now?") {
+		t.Fatalf("fork user turn = %q, want the busy sentence, then the question", user)
+	}
+	if got := sink.CollectedText(); got != "looks fine" {
+		t.Fatalf("sink collected %q, want the answer", got)
+	}
+}
+
+// TestBusyBtw_ForkToolGate_DeniesBashSubagentKillJob checks the read-only gate
+// that a busy-line fork runs under. Mutating tools are refused, and read stays allowed.
+func TestBusyBtw_ForkToolGate_DeniesBashSubagentKillJob(t *testing.T) {
+	gate := tools.BtwReadOnlyGate()
+	for _, name := range []string{"bash", "write", "subagent", "kill_job", "workflow_start"} {
+		if err := gate(name); err == nil {
+			t.Errorf("gate allowed %q during a busy-line fork", name)
+		}
+	}
+	if err := gate("read"); err != nil {
+		t.Fatalf("gate refused read: %v", err)
+	}
+}
+
+// TestBusyBtw_AnswerPublishedToTuiAndOrchestrator_Once checks that the answer
+// reaches the TUI and the orchestrator exactly once each.
+func TestBusyBtw_AnswerPublishedToTuiAndOrchestrator_Once(t *testing.T) {
+	reg, _ := withTestWiring(t)
+	tuiSub := subscribeBtwSuggestions(appBus)
+	defer tuiSub.Close()
+	cond, _ := busyTestConductor("yes, ship it")
+	sink := display.NewBtwSink(&display.TUI{}, "busy-once")
+
+	_, job := busyLineFork(t, cond, sink, "ship?")
+	if job == nil {
+		t.Fatal("busy line did not start a fork")
+	}
+	defer func() {
+		btwEvaluationsMu.Lock()
+		delete(btwEvaluations, job.ID)
+		btwEvaluationsMu.Unlock()
+	}()
+	awaitBusyFork(t, reg, job)
+
+	tui := tuiSub.Drain()
+	if len(tui) != 1 {
+		t.Fatalf("TUI got %d btw answers, want 1", len(tui))
+	}
+	if a, err := bus.Decode[bus.BtwAnswer](tui[0]); err != nil || !a.Suggestion || a.Text != "yes, ship it" {
+		t.Fatalf("TUI answer = %+v (err=%v), want the suggestion text", a, err)
+	}
+	orch := drainNotices()
+	if len(orch) != 1 || !strings.Contains(orch[0], "[btw suggestion]") {
+		t.Fatalf("orchestrator drain = %q, want the suggestion once", orch)
+	}
+}
+
+// TestBusyBtw_OrchestratorCopyIsTaggedAgentOrigin checks that the orchestrator
+// copy has the agent origin, so the model does not read it as a user line.
+func TestBusyBtw_OrchestratorCopyIsTaggedAgentOrigin(t *testing.T) {
+	reg, _ := withTestWiring(t)
+	cond, _ := busyTestConductor("maybe")
+	sink := display.NewBtwSink(&display.TUI{}, "busy-origin")
+
+	_, job := busyLineFork(t, cond, sink, "later?")
+	if job == nil {
+		t.Fatal("busy line did not start a fork")
+	}
+	defer func() {
+		btwEvaluationsMu.Lock()
+		delete(btwEvaluations, job.ID)
+		btwEvaluationsMu.Unlock()
+	}()
+	awaitBusyFork(t, reg, job)
+
+	orch := drainNotices()
+	want := fmt.Sprintf("[notice from=agent:%s kind=btw.answer] [btw suggestion]", job.ID)
+	if len(orch) != 1 || !strings.HasPrefix(orch[0], want) {
+		t.Fatalf("orchestrator drain = %q, want a prefix %q", orch, want)
+	}
+	if strings.Contains(orch[0], "promote_btw") {
+		t.Fatalf("suggestion must not offer promotion: %q", orch[0])
+	}
+}
+
+// TestBusyBtw_LineStillQueuedForOrchestrator checks that every busy line is
+// returned in order, with the fork started or not.
+func TestBusyBtw_LineStillQueuedForOrchestrator(t *testing.T) {
+	queued := []string{"first", "second"}
+	var started []string
+	drain := forkBusyLines(func() []string { return queued }, func(q string) { started = append(started, q) })
+
+	got := drain()
+	if strings.Join(got, "|") != "first|second" {
+		t.Fatalf("drain returned %q, want the user lines in order", got)
+	}
+	if strings.Join(started, "|") != "first|second" {
+		t.Fatalf("forks started for %q, want one per line", started)
+	}
+
+	btwEvaluationsMu.Lock()
+	btwActive = maxBtwEvaluations
+	btwEvaluationsMu.Unlock()
+	t.Cleanup(func() {
+		btwEvaluationsMu.Lock()
+		btwActive = 0
+		btwEvaluationsMu.Unlock()
+	})
+	refused := forkBusyLines(func() []string { return []string{"third"} }, func(q string) {
+		startBusyBtw(context.Background(), busyTestConductorOnly(), q, display.NewBtwSink(&display.TUI{}, "refused"))
+	})
+	if got := refused(); strings.Join(got, "|") != "third" {
+		t.Fatalf("refused fork changed the queued lines: %q", got)
+	}
+}
+
+// busyTestConductorOnly returns a conductor that is never run.
+func busyTestConductorOnly() *conductor.Conductor {
+	cond, _ := busyTestConductor("unused")
+	return cond
+}
+
+// TestBusyBtw_33rdFork_RefusedLikeBtwCommand checks that a busy-line fork past
+// the limit is refused with the same error as /btw.
+func TestBusyBtw_33rdFork_RefusedLikeBtwCommand(t *testing.T) {
+	withTestWiring(t)
+	btwEvaluationsMu.Lock()
+	btwActive = maxBtwEvaluations
+	btwEvaluationsMu.Unlock()
+	t.Cleanup(func() {
+		btwEvaluationsMu.Lock()
+		btwActive = 0
+		btwEvaluationsMu.Unlock()
+	})
+	cond, _ := busyTestConductor("unused")
+	sink := display.NewBtwSink(&display.TUI{}, "refused")
+
+	if job := startBusyBtw(context.Background(), cond, "one more?", sink); job != nil {
+		t.Fatal("busy-line fork started past the limit")
+	}
+	if job := startBtw(context.Background(), cond, "one more?", sink); job != nil {
+		t.Fatal("/btw started past the limit")
+	}
+	if got, want := btwLimitError().Error(), fmt.Sprintf("/btw: too many active evaluations (limit %d)", maxBtwEvaluations); got != want {
+		t.Fatalf("refusal = %q, want %q", got, want)
+	}
+}
+
+// TestBusyBtw_SlashCommandLineIgnored checks that a queued slash command never
+// starts a fork. It is still returned as before.
+func TestBusyBtw_SlashCommandLineIgnored(t *testing.T) {
+	lines := []string{"/btw is it fast?", "/compact", "/msg job-1 hi"}
+	var started []string
+	drain := forkBusyLines(func() []string { return lines }, func(q string) { started = append(started, q) })
+
+	if got := drain(); strings.Join(got, "|") != strings.Join(lines, "|") {
+		t.Fatalf("drain returned %q, want the lines unchanged", got)
+	}
+	if len(started) != 0 {
+		t.Fatalf("slash lines started forks: %q", started)
+	}
+}
+
+// TestBusyBtw_NotBusy_NoFork checks that an idle chat starts no fork: the
+// queue is empty, and a wrapped drain without a source stays nil.
+func TestBusyBtw_NotBusy_NoFork(t *testing.T) {
+	var started []string
+	drain := forkBusyLines(func() []string { return nil }, func(q string) { started = append(started, q) })
+	if got := drain(); len(got) != 0 || len(started) != 0 {
+		t.Fatalf("idle drain = %q, forks %q; want nothing", got, started)
+	}
+	if forkBusyLines(nil, func(string) {}) != nil {
+		t.Fatal("a missing drain must stay missing")
 	}
 }
