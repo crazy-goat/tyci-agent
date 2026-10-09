@@ -17,14 +17,16 @@ func TestCompactionDividerText(t *testing.T) {
 		msg  tuiMsgCompaction
 		want string
 	}{
-		{"auto with size before", tuiMsgCompaction{kind: "auto compaction", tokensBefore: 412000, time: at},
+		{"auto with size before", tuiMsgCompaction{kind: session.CompactKindAuto, tokensBefore: 412000, time: at},
 			"auto compaction · 412k tok · 14:32"},
-		{"summarized label", tuiMsgCompaction{kind: "auto compaction", summarized: true, tokensBefore: 412000, time: at},
+		{"summarized label", tuiMsgCompaction{kind: session.CompactKindAuto, summarized: true, tokensBefore: 412000, time: at},
 			"auto compaction (summarized) · 412k tok · 14:32"},
-		{"unknown sizes are left out", tuiMsgCompaction{kind: "/compact", time: at},
+		{"unknown sizes are left out", tuiMsgCompaction{kind: session.CompactKindCommand, time: at},
 			"/compact · 14:32"},
-		{"zero time is left out", tuiMsgCompaction{kind: "in-loop compaction"},
+		{"zero time is left out", tuiMsgCompaction{kind: session.CompactKindInLoop},
 			"in-loop compaction"},
+		{"unknown id shows plain label", tuiMsgCompaction{kind: "something else"},
+			"compaction"},
 		{"empty kind falls back", tuiMsgCompaction{},
 			"compaction"},
 	}
@@ -124,4 +126,37 @@ func TestUpdateCompactionMsgShowsDivider(t *testing.T) {
 	if b := next.blocks[0]; b.kind != "compaction" || !strings.Contains(b.content, "/compact · 90k tok") {
 		t.Fatalf("divider block = %+v", b)
 	}
+}
+
+// TestScrollbackDividerPagesInAtNewWidth checks that a flushed divider keeps its
+// text, and that page-in at another width gives one line of that width with the
+// label, not the old lines.
+func TestScrollbackDividerPagesInAtNewWidth(t *testing.T) {
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+	m.width = 80
+	m.height = 24
+	m.handleCompactionMsg(newCompactionMsg(session.CompactMeta{Kind: session.CompactKindAuto, Summarized: true, TokensBefore: 412000, At: time.Now()}))
+	m.forceRenderDirtyBlocks()
+	if lines := m.getBlockLines(0, false); len(lines) != 1 {
+		t.Fatalf("divider at width 80 has %d lines, want 1", len(lines))
+	}
+
+	m.scrollback.flushBlock(&m.blocks[0], 80)
+	if m.blocks[0].cachedLines != nil {
+		t.Fatal("flush should drop the cached lines")
+	}
+
+	m.width = 40
+	m.invalidateAllBlockLineCounts()
+	lines := m.ensureBlockResident(0)
+	if len(lines) != 1 {
+		t.Fatalf("paged-in divider has %d lines, want 1", len(lines))
+	}
+	if w := ansi.StringWidth(lines[0]); w != 40 {
+		t.Fatalf("paged-in divider is %d columns, want 40", w)
+	}
+	if !strings.Contains(ansi.Strip(lines[0]), "auto compaction (summarized)") {
+		t.Fatalf("paged-in divider lost its label: %q", ansi.Strip(lines[0]))
+	}
+	m.scrollback.close()
 }

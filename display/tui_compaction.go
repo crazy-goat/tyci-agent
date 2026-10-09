@@ -57,10 +57,7 @@ func (m *TuiModel) handleCompactionMsg(msg tuiMsgCompaction) {
 // when unknown. A stored event without a kind (older session files) shows
 // "compaction".
 func compactionDividerText(msg tuiMsgCompaction) string {
-	label := sanitizeUntrusted(msg.kind)
-	if label == "" {
-		label = "compaction"
-	}
+	label := compactionKindLabel(msg.kind)
 	if msg.summarized {
 		label += " (summarized)"
 	}
@@ -72,6 +69,23 @@ func compactionDividerText(msg tuiMsgCompaction) string {
 		parts = append(parts, msg.time.Local().Format("15:04"))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// compactionKindLabel maps a stored kind id to its divider text. An empty or
+// unknown id gives the plain "compaction".
+func compactionKindLabel(kind string) string {
+	switch kind {
+	case session.CompactKindAuto:
+		return "auto compaction"
+	case session.CompactKindCommand:
+		return "/compact"
+	case session.CompactKindTool:
+		return "compacted by the model"
+	case session.CompactKindInLoop:
+		return "in-loop compaction"
+	default:
+		return "compaction"
+	}
 }
 
 // renderCompactionDivider draws text centred between rules, across exactly

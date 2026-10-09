@@ -52,6 +52,13 @@ func TestWriteCompactionStoresMeta(t *testing.T) {
 	if got.Kind != CompactKindAuto || !got.Summarized || got.TokensBefore != 412000 {
 		t.Fatalf("stored meta = %+v", got)
 	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"kind":"auto"`) {
+		t.Fatal("the session file must store the stable id auto, not a label")
+	}
 }
 
 func TestWriteCompactionOmitsEmptyMeta(t *testing.T) {

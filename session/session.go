@@ -136,13 +136,14 @@ type CompactionEvent struct {
 	CompactMeta
 }
 
-// Kinds of compaction, the text the display shows in the divider. Older
-// session files have no kind; the display shows a plain "compaction" then.
+// Kinds of compaction, stored in the session file as these stable ids. The
+// display maps each id to its divider text. Older session files have no kind,
+// and an unknown id is shown as a plain "compaction".
 const (
-	CompactKindAuto    = "auto compaction"
-	CompactKindCommand = "/compact"
-	CompactKindTool    = "compacted by the model"
-	CompactKindInLoop  = "in-loop compaction"
+	CompactKindAuto    = "auto"
+	CompactKindCommand = "command"
+	CompactKindTool    = "tool"
+	CompactKindInLoop  = "in_loop"
 )
 
 // CompactMeta describes one compaction for the display. It is stored in the
