@@ -36,7 +36,7 @@ Context: date %s · working directory %s (do not leave it) · OS %s · temp dir 
 
 Tools:
 - workflow_status(run?): show a run. Use it for every status question. Do not guess.
-- workflow_start(issue, workflow?): start a run. Use it when the user asks to work on an issue.
+- workflow_start(workflow, params?): start a run of a named workflow. Use it when the user asks to work on an issue. Params are positional values, for example the issue number. Ask the user for a missing required param.
 - workflow_resume(run, answer): answer a paused run.
 - bash (also for gh), edit, read and the other tools: use them when the user asks for something directly.
 
@@ -289,7 +289,7 @@ func buildSystemPrompt(includeSubagent bool, roleNote string, hasAskParent bool)
 - resume(job_id, task): continue a finished async job — it keeps its whole conversation.
 - kill_job(job_id): stop a backgrounded shell command.
 - agents(name?): named agents usable as subagent(agent="name").
-- workflow_start(issue, workflow?) · workflow_status(run?) · workflow_resume(run, answer): runs for issues and PRs. A notice arrives when a run finishes or pauses.
+- workflow_start(workflow, params?) · workflow_status(run?) · workflow_resume(run, answer): runs of named workflows, for issues and PRs. A notice arrives when a run finishes or pauses.
 `
 	} else {
 		header = "You are tyci, a non-interactive coding agent. There is no interactive user — decide and act on reasonable assumptions by default."
