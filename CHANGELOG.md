@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Background command completion notices go through the bus. A notice for a subagent that has already finished reaches the main conversation and names that agent, `for agent <id>`, where it used to name `for job <id>` (#194).
 - Subagent completion notices, questions, btw answers, agent messages and the `/msg` command go through the bus. Each one reaches its recipient once. A Durable message to a live agent goes to that agent's inbox only. A message to an agent that has finished goes to the main conversation with a tag that names the agent. A cron notice that is not for a person waits for the next drain and does not wake an idle chat (#194).
 - `/msg` and the `message` tool report an error for a job that has finished. A bus publish error from a job is logged and does not stop the job. `/msg` shows the error to the person (#194).
+- Every notice that does not come from a person starts with the tag `[notice from=<sender> kind=<kind>]`. The model can tell it from a user message (#194).
+- `tyci run` gives background notices to the model. `tyci run` and `tyci workflow run` print a line on stderr that counts the notices that arrive too late to be shown (#194).
+- The session lists skip `bus.jsonl`, the message journal of the bus (#194).
 
 ### Fixed
 - TUI: the Tasks tab shows the tokens and the cost of each row, `main` and the subagents, in two right-aligned columns at the right edge of the sidebar. The columns line up in all rows. In a narrow row, the label is cut first. Then the tokens are dropped, then the cost (#527).
