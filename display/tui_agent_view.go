@@ -112,6 +112,11 @@ func (m *TuiModel) showAgentView(jobID, label string) {
 func agentViewPlaceholder(jobID, label string) string {
 	target := jobID
 	if label = strings.Join(strings.Fields(label), " "); label != "" {
+		// A workflow agent is named "<run>/<role>". The run is not shown: the
+		// job id already names the agent. A name with a space is free text.
+		if run, role, named := strings.Cut(label, "/"); named && !strings.Contains(run, " ") && role != "" {
+			label = role
+		}
 		target += "/" + label
 	}
 	return "message to " + target + " (Esc: back to main)"

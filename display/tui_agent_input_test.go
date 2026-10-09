@@ -202,6 +202,15 @@ func TestAgentInput_PlaceholderNamesTheViewedAgent(t *testing.T) {
 	}
 }
 
+func TestAgentViewPlaceholder_HidesTheRunOfAWorkflowAgent(t *testing.T) {
+	if got, want := agentViewPlaceholder("job-1", "run-1/coder"), "message to job-1/coder (Esc: back to main)"; got != want {
+		t.Fatalf("placeholder = %q, want %q", got, want)
+	}
+	if got, want := agentViewPlaceholder("job-2", "fix src/a.go now"), "message to job-2/fix src/a.go now (Esc: back to main)"; got != want {
+		t.Fatalf("placeholder of free text = %q, want %q", got, want)
+	}
+}
+
 func TestAgentInput_ResumedViewOpensBeforeItsTranscriptExists(t *testing.T) {
 	fake := &fakeAgentInput{newID: "agent-fresh"}
 	m := openInputTestView(t, "agent-old2", jobs.StatusDone, fake)
