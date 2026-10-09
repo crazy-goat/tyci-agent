@@ -111,6 +111,14 @@ func (m *TuiModel) filterSlashItems() {
 	}
 	m.slashItems = append(prefix, middle...)
 	m.slashCursor = 0
+	// An exact name takes the highlight, so Enter runs the typed name, not a
+	// longer name that the query also matches.
+	for i, it := range m.slashItems {
+		if it.name == query {
+			m.slashCursor = i
+			return
+		}
+	}
 	for i, it := range m.slashItems {
 		if it.name == prev {
 			m.slashCursor = i

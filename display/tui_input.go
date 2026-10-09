@@ -29,6 +29,12 @@ func (m TuiModel) submit() tea.Model {
 		return m
 	}
 	m.recordInputHistory(line)
+	return m.send(line)
+}
+
+// send gives a line to the agent without recording it in the input history.
+// A text that the TUI writes for the model, not the person, uses this path.
+func (m TuiModel) send(line string) tea.Model {
 	// If the agent is busy, route the line to the pending-message queue
 	// (issue #88) instead of submitting it through the results channel.
 	// The line will be drained by the agent loop at the next safe point

@@ -3,6 +3,7 @@ package display
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -65,6 +66,10 @@ func IsReservedWorkflowName(name string) bool {
 	}
 	return false
 }
+
+// workflowNameRe is the shape of a workflow name. A head that does not match it
+// (for example a pasted path) cannot name a workflow, so List is not called.
+var workflowNameRe = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // commandHead is the lower-case name of the command in a slash line, without
 // the slash. It is "" for a line with no name.
@@ -151,7 +156,7 @@ func (m *TuiModel) startWorkflowFromInput() (bool, tea.Cmd) {
 	// The list reads the repository and the workflow files. Read it only for a
 	// line that can name a workflow, not for every submitted line.
 	var list []WorkflowEntry
-	if head := commandHead(line); head != "" && head != "workflow" && !IsReservedWorkflowName(head) {
+	if head := commandHead(line); workflowNameRe.MatchString(head) && head != "workflow" && !IsReservedWorkflowName(head) {
 		list = m.workflows.List()
 	}
 	name, params, ok := workflowLine(line, list)
@@ -163,22 +168,24 @@ func (m *TuiModel) startWorkflowFromInput() (bool, tea.Cmd) {
 	m.input.SetHeight(1)
 	m.closeFileComplete()
 	m.closeSlashComplete()
+	// Start can take minutes (Prepare runs the setup script), so the chat shows
+	// the start at once. The result comes later as workflowStartedMsg.
+	notice := m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "starting /" + strings.Join(append([]string{name}, params...), " ") + "..."})
 	s := m.workflows
-	return true, func() tea.Msg { return startWorkflow(s, name, params) }
+	start := func() tea.Msg { return startWorkflow(s, name, params) }
+	return true, tea.Batch(notice, start)
 }
 
 // handleWorkflowStarted shows the result of a start. A missing param is sent to
-// the model like a typed prompt, and the text the person is typing stays put.
+// the model like a typed prompt. The model text is not recorded in the input
+// history, and the text the person is typing stays put.
 func (m TuiModel) handleWorkflowStarted(msg workflowStartedMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.err != nil:
 		cmd := m.handleBlockMsg(tuiMsgBlock{kind: "error", content: msg.err.Error()})
 		return m, cmd
 	case msg.modelText != "":
-		typed := m.input.Value()
-		m.input.SetValue(msg.modelText)
-		next := m.submit().(TuiModel)
-		next.input.SetValue(typed)
+		next := m.send(msg.modelText).(TuiModel)
 		return next, next.armStatusTick()
 	default:
 		cmd := m.handleBlockMsg(tuiMsgBlock{kind: "block", content: msg.notice})

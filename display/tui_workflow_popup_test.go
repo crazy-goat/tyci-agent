@@ -1,6 +1,7 @@
 package display
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -184,5 +185,36 @@ func TestSlashPopupOpeningAsksForTheWorkflowList(t *testing.T) {
 	}
 	if msg, ok := cmd().(slashListMsg); !ok || len(msg.entries) != 1 {
 		t.Fatalf("message %#v", cmd())
+	}
+}
+
+func TestSlashPopupEnterRunsTypedNameAfterBackspace(t *testing.T) {
+	f := &fakeStarter{entries: []WorkflowEntry{{Name: "review"}, {Name: "review-pr"}}}
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+	m.reading = true
+	m.width = 80
+	m.workflows = f
+	m.input.SetValue("/review-")
+	m.refreshSlashComplete()
+	m.slashEntries = f.entries
+	m.filterSlashItems()
+	if got := itemNames(m); len(got) == 0 || got[m.slashCursor] != "review-pr" {
+		t.Fatalf("highlight %v on %d", got, m.slashCursor)
+	}
+	m.input.SetValue("/review")
+	m.filterSlashItems()
+	if m.slashItems[m.slashCursor].name != "review" {
+		t.Fatalf("highlight on %q, want review", m.slashItems[m.slashCursor].name)
+	}
+	if m.handleSlashCompleteKey(tea.KeyMsg{Type: tea.KeyEnter}) {
+		t.Fatal("Enter was taken by the popup instead of running the line")
+	}
+	handled, cmd := m.startWorkflowFromInput()
+	if !handled || cmd == nil {
+		t.Fatal("line not started")
+	}
+	cmd()
+	if !reflect.DeepEqual(f.started, []string{"review"}) {
+		t.Fatalf("started %v, want review", f.started)
 	}
 }

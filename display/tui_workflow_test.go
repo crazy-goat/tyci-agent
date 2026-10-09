@@ -261,3 +261,67 @@ func TestWorkflowStartedReachesTranscriptWhileModalIsOpen(t *testing.T) {
 		t.Fatalf("notice lost while a modal was open: %+v", tm.blocks)
 	}
 }
+
+func TestMissingParamRecordsOnlyTheTypedLine(t *testing.T) {
+	results := make(chan string, 2)
+	f := &fakeStarter{entries: []WorkflowEntry{issueToMerge}, err: WorkflowParamError{Name: "issue", Description: "Issue number"}}
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
+	m.reading = true
+	m.workflows = f
+	m.input.SetValue("/issue-to-merge")
+
+	_, cmd := m.startWorkflowFromInput()
+	if cmd == nil {
+		t.Fatal("no start command")
+	}
+	res, _ := m.Update(cmd())
+	<-results
+	got := res.(TuiModel).inputHistory
+	if len(got) != 1 || got[0] != "/issue-to-merge" {
+		t.Fatalf("history %q, want only the typed line", got)
+	}
+}
+
+// blockingStarter holds Start until release is closed, like a slow Prepare.
+type blockingStarter struct {
+	fakeStarter
+	release chan struct{}
+}
+
+func (b *blockingStarter) Start(name string, params []string) (string, []string, error) {
+	<-b.release
+	return b.fakeStarter.Start(name, params)
+}
+
+func TestStartingNoticeShowsBeforeStartReturns(t *testing.T) {
+	f := &blockingStarter{fakeStarter: fakeStarter{entries: []WorkflowEntry{issueToMerge}}, release: make(chan struct{})}
+	defer close(f.release)
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+	m.workflows = f
+	m.input.SetValue("/issue-to-merge 160")
+
+	handled, cmd := m.startWorkflowFromInput()
+	if !handled || cmd == nil {
+		t.Fatal("line not taken")
+	}
+	if !strings.Contains(fmt.Sprint(m.blocks), "starting /issue-to-merge 160...") {
+		t.Fatalf("no starting notice before the start returns: %+v", m.blocks)
+	}
+	if len(f.started) != 0 {
+		t.Fatal("the start ran before the command")
+	}
+	go cmd()
+}
+
+func TestStartWorkflowFromInputSkipsListForPastedPath(t *testing.T) {
+	c := &countingStarter{}
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+	m.workflows = c
+	m.input.SetValue("/Users/x/file.go explain")
+	if handled, _ := m.startWorkflowFromInput(); handled {
+		t.Fatal("a path must go to the model")
+	}
+	if c.lists != 0 {
+		t.Fatalf("List called %d times for a path", c.lists)
+	}
+}
