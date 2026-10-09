@@ -104,7 +104,7 @@ func (m TuiModel) runsTab(width int) runsView {
 		}
 		v.start = append(v.start, len(v.lines))
 		selected := i == m.sidebarCursor
-		style := rowStyle(width, selected)
+		style := rowStyle(selected)
 		if !selected && runFinished(r) {
 			style = dim
 		}
@@ -202,12 +202,12 @@ func fmtRunDuration(d time.Duration) string {
 // cut first when both do not fit. right is dropped when no gap is left. The
 // line is always exactly width columns wide, see fillWidth.
 func lineWithRight(left, right string, width int) string {
-	rw := lipgloss.Width(right)
+	rw := cellWidth(right)
 	if right == "" || width <= rw+1 {
 		return fillWidth(left, width)
 	}
 	left = truncateToWidth(left, width-rw-1)
-	return left + strings.Repeat(" ", width-lipgloss.Width(left)-rw) + right
+	return left + strings.Repeat(" ", width-cellWidth(left)-rw) + right
 }
 
 // fillWidth cuts s to width columns and pads it with spaces to exactly width.
@@ -216,7 +216,7 @@ func lineWithRight(left, right string, width int) string {
 // reset is drawn without that background.
 func fillWidth(s string, width int) string {
 	s = truncateToWidth(s, width)
-	return s + strings.Repeat(" ", max(0, width-lipgloss.Width(s)))
+	return s + strings.Repeat(" ", max(0, width-cellWidth(s)))
 }
 
 // fitCells joins the right-hand cells of a row with gap spaces. When the row is
@@ -225,7 +225,7 @@ func fillWidth(s string, width int) string {
 func fitCells(cells []string, gap, width int) string {
 	for len(cells) > 0 {
 		right := strings.Join(cells, strings.Repeat(" ", gap))
-		if width > lipgloss.Width(right)+1 {
+		if width > cellWidth(right)+1 {
 			return right
 		}
 		cells = cells[1:]
@@ -249,5 +249,5 @@ func runRowLine(left, dur, cost string, width, durW, costW int) string {
 
 // padLeft right-aligns s in width columns.
 func padLeft(s string, width int) string {
-	return strings.Repeat(" ", max(0, width-lipgloss.Width(s))) + s
+	return strings.Repeat(" ", max(0, width-cellWidth(s))) + s
 }

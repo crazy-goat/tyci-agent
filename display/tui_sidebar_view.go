@@ -309,12 +309,6 @@ func (m TuiModel) sidebarLayout() sidebarLayoutT {
 // keyboard.
 func (m TuiModel) renderSidebarColumn() string {
 	layout := m.sidebarLayout()
-	// panelWidth is the Width() style parameter the box below is built
-	// with — see sidebarLayoutT's doc comment: layout.width is the box's
-	// total on-screen footprint (border included), one column MORE than
-	// this. contentWidth is what actually goes inside (content+padding
-	// minus the padding itself).
-	panelWidth := layout.width - 1
 	contentWidth := layout.contentWidth
 
 	var b strings.Builder
@@ -353,9 +347,11 @@ func (m TuiModel) renderSidebarColumn() string {
 	lines := m.sidebarBodyLines(layout, contentWidth)
 	shown := 0
 	for i := 0; i < len(lines) && shown < layout.contentHeight; i++ {
-		// Cut the line before styling it. Width() alone wraps a long line
-		// onto a second row, which pushes the key line off the last row.
-		b.WriteString(lipgloss.NewStyle().Width(contentWidth).Render(ansi.Truncate(lines[i], contentWidth, "…")))
+		// Cut and pad by grapheme-cluster width before styling. Lipgloss's
+		// Width uses a different width table, which can add extra cells for
+		// Devanagari clusters and move the border on that row.
+		line := fillWidth(truncateToWidth(lines[i], contentWidth), contentWidth)
+		b.WriteString(lipgloss.NewStyle().Render(line))
 		b.WriteString("\n")
 		shown++
 	}
@@ -383,17 +379,30 @@ func (m TuiModel) renderSidebarColumn() string {
 		// "you are here" cues agree.
 		borderColor = lipgloss.Color("45")
 	}
-	box := lipgloss.NewStyle().
-		Width(panelWidth).
-		Height(layout.height).
-		Padding(0, 1).
-		Background(sidebarBackground).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderLeft(true).BorderRight(false).BorderTop(false).BorderBottom(false).
-		BorderForeground(borderColor).
-		Render(b.String())
-
-	return box
+	borderStyle := lipgloss.NewStyle().Foreground(borderColor).Background(sidebarBackground)
+	backgroundStyle := lipgloss.NewStyle().Background(sidebarBackground)
+	rows := strings.Split(b.String(), "\n")
+	if layout.height > 0 {
+		if len(rows) > layout.height {
+			rows = rows[:layout.height]
+		}
+		for len(rows) < layout.height {
+			rows = append(rows, strings.Repeat(" ", contentWidth))
+		}
+	}
+	var box strings.Builder
+	border := lipgloss.NormalBorder().Left
+	for i, row := range rows {
+		row = fillWidth(row, contentWidth)
+		box.WriteString(borderStyle.Render(border))
+		box.WriteString(backgroundStyle.Render(" "))
+		box.WriteString(backgroundStyle.Render(row))
+		box.WriteString(backgroundStyle.Render(" "))
+		if i < len(rows)-1 {
+			box.WriteByte('\n')
+		}
+	}
+	return box.String()
 }
 
 // renderSidebarTabs renders the tab row, highlighting the active one. Each
@@ -414,7 +423,7 @@ func (m TuiModel) renderSidebarTabs(width int) string {
 		}
 	}
 	row := truncateToWidth(b.String(), width)
-	pad := strings.Repeat(" ", max(0, width-lipgloss.Width(row)))
+	pad := strings.Repeat(" ", max(0, width-cellWidth(row)))
 	return row + lipgloss.NewStyle().Background(sidebarBackground).Render(pad)
 }
 
@@ -475,13 +484,13 @@ func (m TuiModel) sidebarTabLines(width int) []string {
 	}
 }
 
-// rowStyle returns the style for row i given the current cursor —
-// highlighted when selected, plain otherwise.
-func rowStyle(width int, selected bool) lipgloss.Style {
+// rowStyle applies the row colors. Callers pad the plain row with fillWidth
+// before styling it, so lipgloss does not measure grapheme widths again.
+func rowStyle(selected bool) lipgloss.Style {
 	if selected {
-		return lipgloss.NewStyle().Width(width).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("45"))
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("45"))
 	}
-	return lipgloss.NewStyle().Width(width)
+	return lipgloss.NewStyle()
 }
 
 // sidebarBodyLines returns the lines of the active tab from the scroll
@@ -531,7 +540,7 @@ func styleSidebarTaskRows(rows []sidebarTaskRow, cursorLine, width int) []string
 			// reset only the foreground instead.
 			line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[39m")
 		}
-		out = append(out, rowStyle(width, i == cursorLine).Render(truncateToWidth(line, width)))
+		out = append(out, rowStyle(i == cursorLine).Render(fillWidth(truncateToWidth(line, width), width)))
 	}
 	if len(out) == 0 {
 		return []string{"", "  No tasks recorded this session."}
@@ -555,7 +564,7 @@ func (m TuiModel) renderSidebarSessions(width int) []string {
 		date := formatResumeDate(e.ModTime)
 		prompt := truncateResumePrompt(e.FirstPrompt, max(1, width-len(date)-3))
 		line := fmt.Sprintf(" %s  %s", date, prompt)
-		out = append(out, rowStyle(width, i == m.sidebarCursor).Render(truncateToWidth(line, width)))
+		out = append(out, rowStyle(i == m.sidebarCursor).Render(fillWidth(truncateToWidth(line, width), width)))
 	}
 	return out
 }
@@ -588,8 +597,8 @@ func subagentCost(row subagentTreeRow) string {
 // columns line up.
 func subagentColumnWidths(rows []subagentTreeRow) (tokW, costW int) {
 	for _, row := range rows {
-		tokW = max(tokW, lipgloss.Width(subagentTokens(row)))
-		costW = max(costW, lipgloss.Width(subagentCost(row)))
+		tokW = max(tokW, cellWidth(subagentTokens(row)))
+		costW = max(costW, cellWidth(subagentCost(row)))
 	}
 	return tokW, costW
 }

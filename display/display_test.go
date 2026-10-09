@@ -4,7 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/rivo/uniseg"
 )
 
 // --- Tests for stripAnsi ---
@@ -175,10 +177,84 @@ func TestWrapText_WithAnsiSpanningWrap(t *testing.T) {
 func TestWrapText_WithUnicode(t *testing.T) {
 	input := "💭1234567890abcdef"
 	got := wrapText(input, 10, 0)
-	// 💭 is one rune (visible width 1), so 10 visible chars: "💭123456789"
-	expected := "💭123456789\033[K\n0abcdef"
+	// 💭 is one grapheme cluster that is two cells wide, so 10
+	// columns hold "💭12345678". The wrap must not split the
+	// cluster, whatever its width.
+	expected := "💭12345678\033[K\n90abcdef"
 	if got != expected {
 		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+// startsMidCluster reports whether line begins inside a grapheme
+// cluster: a continuation rune (combining mark, ZWJ, skin-tone
+// modifier, ...) joins the prepended "x" into one cluster with the
+// line's first rune, so the first cluster is longer than "x".
+func startsMidCluster(line string) bool {
+	if line == "" {
+		return false
+	}
+	cluster, _, _, _ := uniseg.FirstGraphemeClusterInString("x"+line, -1)
+	return cluster != "x"
+}
+
+// TestWrapText_GraphemeClusters checks that wrapping treats a
+// grapheme cluster as one token: it is never split across lines
+// and never wrapped past the width. Splitting a cluster leaves a
+// continuation rune at the start of the next line, which the
+// terminal draws in its own cell while every width measure counts
+// it as zero — the row then draws wider than the TUI measured, and
+// the sidebar border moves on that row (#579).
+func TestWrapText_GraphemeClusters(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		width int
+	}{
+		{"devanagari split mid conjunct", "abधन्यवाद", 4},
+		{"devanagari word", "धन्यवाद", 3},
+		{"devanagari conjunct", "क्षत्रिय", 3},
+		{"combining accent orphaned", "cafe\u0301", 4},
+		{"skin tone emoji overflow", "a👍🏽b", 2},
+		{"zwj family emoji", "x👨‍👩‍👧‍👦y", 2},
+		{"ascii unchanged", "1234567890abcdef", 10},
+	}
+	for _, tt := range tests {
+		got := wrapText(tt.input, tt.width, 0)
+		var joined strings.Builder
+		for i, line := range strings.Split(got, "\n") {
+			line = strings.TrimSuffix(line, clearLine)
+			joined.WriteString(line)
+			if line == "" {
+				continue
+			}
+			if w := lipgloss.Width(line); w > tt.width {
+				t.Errorf("%s: line %d %q is %d columns wide, want at most %d", tt.name, i, line, w, tt.width)
+			}
+			if startsMidCluster(line) {
+				t.Errorf("%s: line %d %q starts inside a grapheme cluster", tt.name, i, line)
+			}
+		}
+		if joined.String() != tt.input {
+			t.Errorf("%s: wrapping lost or reordered content: got %q, want %q", tt.name, joined.String(), tt.input)
+		}
+	}
+}
+
+// TestWrapRawText_GraphemeClusters pins the main-column wrapping
+// of combining text: user blocks and streaming tails render through
+// wrapRawText, and every rendered line must fit the column without
+// splitting a cluster (#579).
+func TestWrapRawText_GraphemeClusters(t *testing.T) {
+	content := strings.Repeat("धन्यवाद", 8) + " cafe\u0301 👍🏽 👨‍👩‍👧‍👦"
+	for i, line := range strings.Split(wrapRawText(content, false, 40), "\n") {
+		line = strings.TrimSuffix(line, clearLine)
+		if w := lipgloss.Width(line); w > 40 {
+			t.Errorf("line %d %q is %d columns wide, want at most 40", i, line, w)
+		}
+		if startsMidCluster(line) {
+			t.Errorf("line %d %q starts inside a grapheme cluster", i, line)
+		}
 	}
 }
 
