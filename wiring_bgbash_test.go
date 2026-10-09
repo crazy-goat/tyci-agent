@@ -255,7 +255,7 @@ func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
 	var notices []string
 	for len(notices) == 0 {
 		select {
-		case <-JobNotices.Signal():
+		case <-busOrchestratorNotices.Ready():
 			notices = drainNotices()
 		case <-deadline:
 			t.Fatal("no notice: a blocked child would sit there until it timed out")

@@ -890,7 +890,7 @@ func wireTools() {
 	b := appBus
 	busOrchestratorNotices = b.Subscribe("orchestrator", bus.Filter{
 		To:    orchestratorAddr,
-		Kinds: []bus.Kind{bus.KindNoticeCompletion},
+		Kinds: noticeKinds,
 	})
 	agentInboxes = newInboxSet(b)
 	tools.SetNoticePublisher(func(parentID, text string) { publishNotice(b, parentID, text) })
@@ -918,7 +918,7 @@ func wireTools() {
 	// then calls onEvent — see jobs/registry.go — so a test that only
 	// waits on job.done can already have moved on and rewired the globals
 	// by the time onEvent actually runs).
-	bus, notices, reg := jobEventBus, JobNotices, JobRegistry
+	bus, notices := jobEventBus, JobNotices
 	inboxes := agentInboxes
 	JobRegistry.SetOnEvent(func(j jobs.Job) {
 		bus.Publish("job.updated", j)
@@ -963,44 +963,10 @@ func wireTools() {
 					"Until it is answered it makes no progress, and its work is discarded when it times out.",
 				j.Description, j.Question, j.ID, j.ID)
 
-			// B4: address this to whoever spawned j (j.ParentID), not
-			// unconditionally to the main queue — a job spawned from an
-			// independent fork (a /btw side-conversation, or a subagent
-			// nested inside one) must notify that fork, never the main
-			// conversation it must never touch (see btwConfig's doc
-			// comment in btw.go). reg.Post delivers into the parent job's
-			// own mailbox, drained at its next agent-loop iteration the
-			// same way "message"/"/msg" already work; it returns false
-			// when parentID is unknown or that job has already finished.
-			// Design choice for that case: forward to main rather than
-			// drop the notice silently — a dropped notice leaves no trace
-			// that a child ever asked anything, while a forwarded one at
-			// least reaches someone, tagged as not its original addressee.
-			// TODO(item 54 review finding 2): the reg.Post branch below is NOT
-			// covered by the MarkQuestionShown dedup — that only suppresses a
-			// duplicate on the main JobNotifier queue (the j.ParentID == ""
-			// case). A mid-level subagent (one with a live ParentID) whose
-			// blocking call hands a child off still gets this same ask-notice
-			// duplicated in its own mailbox exactly as before item 54, since
-			// nothing here checks or records "already shown" against a
-			// mailbox-routed message. Fixing it properly needs the same key
-			// (jobID+QuestionSeq) threaded through jobs.Job's
-			// mailbox/Post/DrainMessages path, which item 54 did not have
-			// time to do — see the PR discussion for triage.
-			if j.ParentID == "" || !reg.Post(j.ParentID, text) {
-				if j.ParentID != "" {
-					text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", j.ParentID, text)
-				}
-				// NotifyQuestion (not plain Notify): keyed by j.ID/j.QuestionSeq
-				// — an unforgeable per-ask id, not the question text itself,
-				// so an identically-worded LATER ask from the same job is
-				// never mistaken for this one (item 54 review finding 1) — so
-				// a blocking subagent call's handoff message, if it ends up
-				// carrying this exact ask too (see tools/subagent.go's
-				// handOff/markQuestionsShown), can mark this entry shown and
-				// Drain will not repeat it.
-				notices.NotifyQuestion(j.ID, j.QuestionSeq, text)
-			}
+			// The ask goes to the job that spawned j, or to the orchestrator when
+			// j has no parent. The bus reroutes it when that parent has finished,
+			// and dedups it against a handoff message (see bus_wiring.go).
+			publishAsk(b, j.ParentID, j.ID, j.QuestionSeq, text)
 		}
 
 		// C3 (batch-2 review): a message sitting in a job's mailbox when

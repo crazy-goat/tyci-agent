@@ -166,7 +166,7 @@ func TestWiring_54b_HandoffWithoutObserver_DrainSurfacesTheQuestion(t *testing.T
 	var notices []string
 	for len(notices) == 0 {
 		select {
-		case <-JobNotices.Signal():
+		case <-busOrchestratorNotices.Ready():
 			notices = drainNotices()
 		case <-deadline:
 			t.Fatal("no notice: the question must still reach the parent when the handoff message did not carry it")
