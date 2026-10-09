@@ -69,22 +69,29 @@ func TestRunWorkdirIn_AgentOfNoRunIsAllowed(t *testing.T) {
 	}
 }
 
-// startNamedJob starts a subagent job with the description name in a fresh
+// Run ids in the format of flow.NewRunID, for the tests of the name lookup.
+const (
+	testRunActive = "20261008-125053-584"
+	testRunDone   = "20261008-130000-584"
+)
+
+// startNamedJobs starts one subagent job per description in a fresh
 // JobRegistry (withTestWiring drains its events at the end of the test). The
-// job runs until the test ends and returns its id.
-func startNamedJob(t *testing.T, name string) string {
+// jobs run until the test ends, and it returns their ids.
+func startNamedJobs(t *testing.T, names ...string) []string {
 	t.Helper()
 	withTestWiring(t)
 	block := make(chan struct{})
-	job := JobRegistry.Start(context.Background(), name, jobs.KindSubagent, "", func(context.Context, string) (string, bool, error) {
-		<-block
-		return "", false, nil
-	})
-	t.Cleanup(func() {
-		close(block)
-		JobRegistry.Cancel(job.ID)
-	})
-	return job.ID
+	t.Cleanup(func() { close(block) })
+	var ids []string
+	for _, name := range names {
+		job := JobRegistry.Start(context.Background(), name, jobs.KindSubagent, "", func(context.Context, string) (string, bool, error) {
+			<-block
+			return "", false, nil
+		})
+		ids = append(ids, job.ID)
+	}
+	return ids
 }
 
 func TestRunWorkdirIn_RefusesAWorkflowAgentOfAnActiveRunBeforeItsStepIsSaved(t *testing.T) {
@@ -92,10 +99,10 @@ func TestRunWorkdirIn_RefusesAWorkflowAgentOfAnActiveRunBeforeItsStepIsSaved(t *
 	// step is saved). The job name "<run>/<role>" still finds the run.
 	home := t.TempDir()
 	info := flow.RepoInfo{Home: home, Repo: "owner/repo"}
-	saveTestRun(t, home, "run-active", "running", t.TempDir(), "job-other")
-	job := startNamedJob(t, "run-active/coder")
+	saveTestRun(t, home, testRunActive, "running", t.TempDir(), "job-other")
+	job := startNamedJobs(t, testRunActive+"/coder")[0]
 
-	if _, err := runWorkdirIn(info, job); err == nil || !strings.Contains(err.Error(), "run-active (running)") {
+	if _, err := runWorkdirIn(info, job); err == nil || !strings.Contains(err.Error(), testRunActive+" (running)") {
 		t.Fatalf("err = %v, want a refusal that names the active run", err)
 	}
 }
@@ -104,22 +111,50 @@ func TestRunWorkdirIn_AllowsAWorkflowAgentOfADoneRunBeforeItsStepIsSaved(t *test
 	home := t.TempDir()
 	info := flow.RepoInfo{Home: home, Repo: "owner/repo"}
 	wt := t.TempDir()
-	saveTestRun(t, home, "run-done", "done", wt, "job-other")
-	job := startNamedJob(t, "run-done/coder")
+	saveTestRun(t, home, testRunDone, "done", wt, "job-other")
+	job := startNamedJobs(t, testRunDone+"/coder")[0]
 
 	if dir, err := runWorkdirIn(info, job); err != nil || dir != wt {
 		t.Fatalf("dir=%q err=%v, want the worktree of the done run", dir, err)
 	}
 }
 
-func TestRunWorkdirIn_PlainJobNameIsNoRun(t *testing.T) {
-	// "foo/bar" names no run: there is no state file of run foo, so the
-	// agent belongs to no run and the resume is allowed.
+func TestRunWorkdirIn_LongFreeTextWithALateSlashIsNoRun(t *testing.T) {
+	// A task text is no run name: its first segment is far longer than a
+	// file name, so no state file is read and the resume is allowed.
 	home := t.TempDir()
+	saveTestRun(t, home, testRunDone, "done", t.TempDir(), "job-other")
 	info := flow.RepoInfo{Home: home, Repo: "owner/repo"}
-	job := startNamedJob(t, "foo/bar")
+	text := strings.Repeat("Please review the change carefully. ", 10) + "Look at src/x.go."
+	job := startNamedJobs(t, text)[0]
 
 	if dir, err := runWorkdirIn(info, job); err != nil || dir != "" {
+		t.Fatalf("dir=%q err=%v, want no worktree and no error", dir, err)
+	}
+}
+
+func TestRunWorkdirIn_FileNameDescriptionIsNoRun(t *testing.T) {
+	// "src/x.go" names no run: its segment is not a run id.
+	home := t.TempDir()
+	info := flow.RepoInfo{Home: home, Repo: "owner/repo"}
+	job := startNamedJobs(t, "src/x.go")[0]
+
+	if dir, err := runWorkdirIn(info, job); err != nil || dir != "" {
+		t.Fatalf("dir=%q err=%v, want no worktree and no error", dir, err)
+	}
+}
+
+func TestRunWorkdirIn_ChainedFreeTextWithALateSlashIsNoRun(t *testing.T) {
+	// Only the first job of the chain names a run. The typed text of the
+	// resumed job T is not a run name, even with a late slash.
+	resetResumableForTest(t)
+	home := t.TempDir()
+	info := flow.RepoInfo{Home: home, Repo: "owner/repo"}
+	saveTestRun(t, home, testRunDone, "done", t.TempDir(), "job-other")
+	ids := startNamedJobs(t, "write the notes", strings.Repeat("Check the parser and its tests. ", 10)+"See docs/a.md.")
+	stashChainedAgent(ids[1], ids[0])
+
+	if dir, err := runWorkdirIn(info, ids[1]); err != nil || dir != "" {
 		t.Fatalf("dir=%q err=%v, want no worktree and no error", dir, err)
 	}
 }

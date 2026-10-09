@@ -55,3 +55,20 @@ func TestRunOfSession_UnreadableStateIsAnError(t *testing.T) {
 		t.Fatalf("ok=%v err=%v, want an error: the agent may belong to the broken run", ok, err)
 	}
 }
+
+func TestRunByID_NoRunForANameThatIsNoRunId(t *testing.T) {
+	home := t.TempDir()
+	base := filepath.Join(home, ".tyci", "runs", "repo")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A plain file where a run directory would be: the path is not a directory.
+	if err := os.WriteFile(filepath.Join(base, "20261008-125053-584"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"src/x.go", "Please review the change", "../repo", "20261008-125053-584", "run-active"} {
+		if _, ok, err := RunByID(home, "repo", id); ok || err != nil {
+			t.Fatalf("RunByID(%q) ok=%v err=%v, want no run and no error", id, ok, err)
+		}
+	}
+}

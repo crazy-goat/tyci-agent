@@ -111,30 +111,24 @@ func runIDsOf(jobID string) []string {
 	return ids
 }
 
-// runOfJobName returns the run that a job of the chain of jobID is named
-// after. A workflow agent job has the description "<run>/<role>", and the run
-// is found by its state file. This finds a run before its first step is
-// saved. A job whose name has no run state file is no run. The first job of
-// the chain is tried first.
+// runOfJobName returns the run that the first job of the chain of jobID is
+// named after. Only a workflow runner job has the description "<run>/<role>",
+// and it is always the first job of its chain. This finds a run before its
+// first step is saved. Any other description is free text and names no run.
+// A job that the registry no longer holds is not checked here.
 func runOfJobName(info flow.RepoInfo, jobID string) (*flow.RunState, bool, error) {
 	resumableMu.Lock()
-	ids := chainIDs(jobID, resumable[jobID])
+	first := chainIDs(jobID, resumable[jobID])[0]
 	resumableMu.Unlock()
-	for _, id := range ids {
-		job, found := JobRegistry.Get(id)
-		if !found {
-			continue
-		}
-		run, _, named := strings.Cut(job.Description, "/")
-		if !named || run == "" || run == "." || run == ".." {
-			continue
-		}
-		st, ok, err := flow.RunByID(info.Home, info.Name(), run)
-		if err != nil || ok {
-			return st, ok, err
-		}
+	job, found := JobRegistry.Get(first)
+	if !found {
+		return nil, false, nil
 	}
-	return nil, false, nil
+	run, _, named := strings.Cut(job.Description, "/")
+	if !named {
+		return nil, false, nil
+	}
+	return flow.RunByID(info.Home, info.Name(), run)
 }
 
 // chainIDs returns the chain of the job id whose stashed entry is e.
