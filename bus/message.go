@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Kind names a message type, for example "notice.completion". Register declares
+// Kind names a message type, for example "job.status". Register declares
 // each Kind once.
 type Kind string
 

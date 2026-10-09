@@ -37,19 +37,19 @@ func TestBusTree_ParentOfAndIsLive(t *testing.T) {
 	}
 }
 
-// TestBusTree_PublishFromHookDoesNotDeadlock publishes a notice.completion message
+// TestBusTree_PublishFromHookDoesNotDeadlock publishes a job.status message
 // from the registry event hook. The bus takes its own lock and then calls
 // IsLive, which takes r.mu, so the hook must run without r.mu held.
 func TestBusTree_PublishFromHookDoesNotDeadlock(t *testing.T) {
 	r := NewRegistry()
 	b := bus.New(bus.WithTree(r.BusTree()))
 	defer b.Close()
-	sub := b.Subscribe("orch", bus.Filter{To: bus.Addr{Type: bus.AddrOrchestrator}, Kinds: []bus.Kind{bus.KindNoticeCompletion}})
+	sub := b.Subscribe("orch", bus.Filter{To: bus.Addr{Type: bus.AddrOrchestrator}, Kinds: []bus.Kind{bus.KindJobStatus}})
 
 	r.SetOnEvent(func(j Job) {
-		_, _ = bus.Publish(b, bus.KindNoticeCompletion, bus.Addr{Type: bus.AddrOrchestrator},
+		_, _ = bus.Publish(b, bus.KindJobStatus, bus.Addr{Type: bus.AddrOrchestrator},
 			bus.Addr{Type: bus.AddrOrchestrator}, bus.OriginSystem,
-			bus.Completion{Text: string(j.Status)})
+			bus.JobStatus{ID: j.ID, Status: string(j.Status)})
 	})
 
 	done := make(chan struct{})
@@ -67,16 +67,17 @@ func TestBusTree_PublishFromHookDoesNotDeadlock(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("publishing from the event hook deadlocked")
 	}
+	// job.status is Latest per job, so the subscriber sees the newest status.
 	// The completion event fires after Wait returns, so wait for the done status.
 	deadline := time.After(5 * time.Second)
 	last := ""
 	for last != string(StatusDone) {
 		for _, m := range sub.Drain() {
-			c, err := bus.Decode[bus.Completion](m)
+			st, err := bus.Decode[bus.JobStatus](m)
 			if err != nil {
-				t.Fatalf("decode notice.completion: %v", err)
+				t.Fatalf("decode job.status: %v", err)
 			}
-			last = c.Text
+			last = st.Status
 		}
 		if last == string(StatusDone) {
 			break
@@ -84,7 +85,7 @@ func TestBusTree_PublishFromHookDoesNotDeadlock(t *testing.T) {
 		select {
 		case <-sub.Ready():
 		case <-deadline:
-			t.Fatalf("last notice = %q, want done", last)
+			t.Fatalf("last job.status = %q, want done", last)
 		}
 	}
 }
