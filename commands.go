@@ -459,6 +459,7 @@ var runCmd = &cobra.Command{
 		// canceled run -- cron's included, since it just shells out to
 		// `tyci run`. See finishPromptRun's doc comment (prompt_finish.go).
 		cleanup := func() {
+			dropLeftoverNotices(os.Stderr)
 			if dl != nil {
 				if err := dl.Close(); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: debug log: close: %v\n", err)
@@ -472,6 +473,9 @@ var runCmd = &cobra.Command{
 		// to pipe. For the full-screen experience, use `tyci tui`.
 		disp := &plainSink{out: cmd.OutOrStdout(), err: cmd.ErrOrStderr()}
 		cond := newConductor(provider, modelName, disp, cfg, sessionPath)
+		// No TUI reads the orchestrator inbox here. The model reads its
+		// notices through NextMessages, so a notice reaches the model.
+		cond.SetNextMessages(withOrchestratorNotices(cond.Config().NextMessages))
 		runPrompt(cond, disp, prompt, ctx, cleanup)
 		return nil
 	},

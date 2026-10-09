@@ -377,6 +377,22 @@ func wakeNotices() []string {
 	return drainNotices()
 }
 
+// withOrchestratorNotices adds the orchestrator's notices to a NextMessages
+// drain. The modes without a TUI (tyci run, which cron also runs) use it, so
+// that the model reads its notices at the next safe point.
+func withOrchestratorNotices(base func() []string) func() []string {
+	return mergeNextMessages(base, drainNotices)
+}
+
+// dropLeftoverNotices drops the notices that no model turn read, and writes
+// their count to w. The modes that end without a model turn after the
+// notices arrive (the workflow CLI, the end of tyci run) call it at the end.
+func dropLeftoverNotices(w io.Writer) {
+	if n := len(drainNotices()); n > 0 {
+		fmt.Fprintf(w, "Note: %d background notice(s) arrived too late to be shown and were dropped.\n", n)
+	}
+}
+
 // clearNotices drops every waiting notice of the main conversation. /new uses
 // it so that no notice of the old conversation reaches the new one.
 func clearNotices() {

@@ -133,6 +133,9 @@ stderr. Exit code 0 means done or paused. Exit code 1 means failed or invalid.`,
 		events := make(chan flow.RunEvent, 16)
 		unsubscribe := m.Subscribe(func(ev flow.RunEvent) { events <- ev })
 		defer unsubscribe()
+		// A workflow run has no model turn of its own, so no NextMessages
+		// reads the orchestrator inbox. Its notices are dropped at the end.
+		defer dropLeftoverNotices(cmd.ErrOrStderr())
 
 		runID, _, err := m.Start(ctx, flow.StartRequest{Workflow: args[0], Issue: issue})
 		if err != nil {
