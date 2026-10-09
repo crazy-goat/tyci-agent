@@ -20,7 +20,7 @@ func TestInit_WritesWorkflowDir(t *testing.T) {
 	root := filepath.Join(dir, ".tyci", "workflows", "issue-to-merge")
 	all := strings.Join(written, "\n")
 	for _, rel := range []string{"workflow.json", "checks/merge.sh", "tasks/fixer.md", "tasks/recover.md",
-		"tasks/findings_to_issues.md", "prompts/worker.md", "prompts/oracle.md"} {
+		"tasks/findings_to_issues.md", "tasks/ask.md", "prompts/worker.md", "prompts/oracle.md"} {
 		if !strings.Contains(all, filepath.Join(root, rel)) {
 			t.Errorf("%s not in written list", rel)
 		}

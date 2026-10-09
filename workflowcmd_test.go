@@ -177,6 +177,26 @@ func TestWorkflowValidateMissingFilesAreProblems(t *testing.T) {
 	}
 }
 
+// TestWorkflowValidateMissingOracleTask checks that an ask state, which the oracle
+// answers, needs tasks/ask.md.
+func TestWorkflowValidateMissingOracleTask(t *testing.T) {
+	home := wfHome(t)
+	project := wfProject(t)
+	body := `{"description":"test","name":"no-ask-task","start":"ask","states":{` +
+		`"ask":{"ask":"need a human","on":{"retry":"end"}},` +
+		`"end":{"end":true}}}`
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "no-ask-task", "workflow.json"), body)
+
+	out, _, err := runWorkflowCLI(t, "workflow", "validate", "no-ask-task", "--json", "--dir", project)
+	if err == nil {
+		t.Fatal("validate without tasks/ask.md must fail")
+	}
+	r := decodeWorkflowResult(t, out)
+	if r.OK == nil || *r.OK || countContaining(r.Errors, "tasks/ask.md is missing") != 1 {
+		t.Fatalf("result = %+v", r)
+	}
+}
+
 // countContaining returns how many of msgs contain sub.
 func countContaining(msgs []string, sub string) int {
 	n := 0
@@ -298,7 +318,7 @@ func TestWorkflowRunStopsAtAsk(t *testing.T) {
 	wfUseRepo(t, wfRunRepo(t, home))
 	body := `{"description":"test","name":"ask-flow","start":"check","states":{` +
 		`"check":{"check":"checks/ok.sh","on":{"default":"wait"}},` +
-		`"wait":{"ask":"need an answer","on":{"go":"end"}},` +
+		`"wait":{"ask":"need an answer","human":true,"on":{"go":"end"}},` +
 		`"end":{"end":true}}}`
 	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "ask-flow", "workflow.json"), body)
 	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "ask-flow", "checks", "ok.sh"), wfOKScript)

@@ -112,6 +112,10 @@ func templateFiles(wf *Workflow, data []byte) ([]templateFile, error) {
 		if s.Agent != "" {
 			roles[s.Agent] = true
 		}
+		if s.Ask != "" {
+			// The oracle reads tasks/ask.md to answer an ask pause (see oracle.go).
+			tasks[oracleTask] = true
+		}
 	}
 	for _, t := range sortedSet(tasks) {
 		b, err := templates.ReadFile("tasks/" + t + ".md")

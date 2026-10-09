@@ -141,6 +141,9 @@ func CheckWorkflow(info RepoInfo, name string) (warnings, problems []string, err
 	textErr := loadTexts(wf, dir)
 	warnings, verr := Validate(wf, cfg, wfResolver(wf))
 	problems = append(errorMessages(textErr), errorMessages(verr)...)
+	if p := oracleTaskProblem(wf, dir); p != "" {
+		problems = append(problems, p)
+	}
 	return warnings, problems, nil
 }
 

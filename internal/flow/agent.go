@@ -27,8 +27,8 @@ type TaskRenderer interface {
 	Render(name string, rc RunContext) (string, error)
 }
 
-// NewSubagentRunner returns a runner that renders the embedded task templates
-// (set Render to TaskTemplates with Dirs for local templates).
+// NewSubagentRunner returns a runner with an empty TaskTemplates. The caller
+// sets Render to TaskTemplates{Dir: <workflow dir>} before a run.
 func NewSubagentRunner(cfg *flowconfig.Config, spawn func(ctx context.Context, s tools.TaskSpec) (string, string, error)) *SubagentRunner {
 	return &SubagentRunner{Cfg: cfg, Render: TaskTemplates{}, Spawn: spawn, URIEffort: providers.URIReasoningEffort}
 }

@@ -102,6 +102,8 @@ The `oracle` agent answers a pause at an `ask` state before a human sees it. The
 
 Each oracle answer is a history step in `state.json` and a notice, for example `workflow run 606: oracle answered retry: CI runner has exception_ignore_args=On`. A run gets at most 2 oracle answers. Set `defaults.oracle_answers` in the workflow to change the limit. Set it to `0` to turn the oracle off.
 
+The oracle reads the task file `tasks/ask.md` of the workflow. `tyci workflow init` copies it when the template has an `ask` state. A workflow with an `ask` state that does not set `"human": true` needs this file, unless `defaults.oracle_answers` is `0`. `tyci workflow validate` reports the file when it is missing.
+
 The oracle never answers these pauses. A human answers them:
 
 - a pause at an ask state with `"human": true`,
