@@ -2,6 +2,7 @@ package display
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -203,5 +204,60 @@ func TestStartWorkflowFromInputPassesOtherLinesOn(t *testing.T) {
 	}
 	if m.input.Value() != "/btw why" {
 		t.Fatalf("input changed: %q", m.input.Value())
+	}
+}
+
+// countingStarter counts the List calls.
+type countingStarter struct {
+	fakeStarter
+	lists int
+}
+
+func (c *countingStarter) List() []WorkflowEntry {
+	c.lists++
+	return c.fakeStarter.List()
+}
+
+func TestStartWorkflowFromInputListsOnlyForWorkflowNames(t *testing.T) {
+	for _, line := range []string{"hello", "/btw why", "/workflow x", "/exit", "/"} {
+		c := &countingStarter{}
+		m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+		m.workflows = c
+		m.input.SetValue(line)
+		m.startWorkflowFromInput()
+		if c.lists != 0 {
+			t.Fatalf("%q: List called %d times", line, c.lists)
+		}
+	}
+	c := &countingStarter{}
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+	m.workflows = c
+	m.input.SetValue("/issue-to-merge 160")
+	m.startWorkflowFromInput()
+	if c.lists != 1 {
+		t.Fatalf("workflow line: List called %d times, want 1", c.lists)
+	}
+}
+
+func TestStartWorkflowFromInputRecordsHistory(t *testing.T) {
+	f := &fakeStarter{entries: []WorkflowEntry{issueToMerge}}
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+	m.workflows = f
+	m.input.SetValue("/issue-to-merge 160")
+	if handled, _ := m.startWorkflowFromInput(); !handled {
+		t.Fatal("line not taken")
+	}
+	if len(m.inputHistory) != 1 || m.inputHistory[0] != "/issue-to-merge 160" {
+		t.Fatalf("history %q", m.inputHistory)
+	}
+}
+
+func TestWorkflowStartedReachesTranscriptWhileModalIsOpen(t *testing.T) {
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+	m.btwListActive = true
+	res, _ := m.Update(workflowStartedMsg{notice: "started /issue-to-merge 160"})
+	tm := res.(TuiModel)
+	if len(tm.blocks) == 0 || !strings.Contains(fmt.Sprint(tm.blocks), "started /issue-to-merge 160") {
+		t.Fatalf("notice lost while a modal was open: %+v", tm.blocks)
 	}
 }

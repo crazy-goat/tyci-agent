@@ -66,6 +66,16 @@ func IsReservedWorkflowName(name string) bool {
 	return false
 }
 
+// commandHead is the lower-case name of the command in a slash line, without
+// the slash. It is "" for a line with no name.
+func commandHead(line string) string {
+	fields := strings.Fields(strings.TrimPrefix(line, "/"))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.ToLower(fields[0])
+}
+
 // workflowLine splits a line that starts a workflow: "/workflow <name> params"
 // or "/<name> params" for a workflow in list that can start. ok is false for
 // every other line. A bare "/workflow" returns ok with an empty name.
@@ -77,7 +87,7 @@ func workflowLine(line string, list []WorkflowEntry) (name string, params []stri
 	if len(fields) == 0 {
 		return "", nil, false
 	}
-	head := strings.ToLower(fields[0])
+	head := commandHead(line)
 	if head == "workflow" {
 		if len(fields) == 1 {
 			return "", nil, true
@@ -93,16 +103,6 @@ func workflowLine(line string, list []WorkflowEntry) (name string, params []stri
 		}
 	}
 	return "", nil, false
-}
-
-// IsWorkflowLine reports whether line starts a workflow in the TUI. It returns
-// false when s is nil.
-func IsWorkflowLine(line string, s WorkflowStarter) bool {
-	if s == nil {
-		return false
-	}
-	_, _, ok := workflowLine(strings.TrimSpace(line), s.List())
-	return ok
 }
 
 // workflowStartedMsg is the result of a start that runs in a tea.Cmd, so the
@@ -144,14 +144,21 @@ func startWorkflow(s WorkflowStarter, name string, params []string) workflowStar
 // a tea.Cmd. It is handled, and the turn is not touched, whether the agent is
 // busy or not. Any other line returns handled false.
 func (m *TuiModel) startWorkflowFromInput() (bool, tea.Cmd) {
-	if m.workflows == nil {
+	line := strings.TrimSpace(m.input.Value())
+	if m.workflows == nil || !strings.HasPrefix(line, "/") {
 		return false, nil
 	}
-	line := strings.TrimSpace(m.input.Value())
-	name, params, ok := workflowLine(line, m.workflows.List())
+	// The list reads the repository and the workflow files. Read it only for a
+	// line that can name a workflow, not for every submitted line.
+	var list []WorkflowEntry
+	if head := commandHead(line); head != "" && head != "workflow" && !IsReservedWorkflowName(head) {
+		list = m.workflows.List()
+	}
+	name, params, ok := workflowLine(line, list)
 	if !ok {
 		return false, nil
 	}
+	m.recordInputHistory(line)
 	m.input.Reset()
 	m.input.SetHeight(1)
 	m.closeFileComplete()

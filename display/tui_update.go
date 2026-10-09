@@ -201,6 +201,21 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if block, ok := msg.(tuiMsgBlock); ok {
 		return m, m.handleBlockMsg(block)
 	}
+	// Workflow messages are dispatched here for the same reason: a modal that is
+	// open must not lose the start result, or the model text of a missing param.
+	switch msg := msg.(type) {
+	case tuiWorkflowStarterMsg:
+		m.workflows = msg.starter
+		return m, nil
+	case slashListMsg:
+		m.slashEntries = msg.entries
+		if m.slashActive {
+			m.filterSlashItems()
+		}
+		return m, nil
+	case workflowStartedMsg:
+		return m.handleWorkflowStarted(msg)
+	}
 	// /btw entries run independently of the main view and likewise must land
 	// regardless of which overlay is active.
 	switch msg.(type) {
@@ -272,17 +287,6 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMessage = ""
 		}
 		return m, nil
-	case tuiWorkflowStarterMsg:
-		m.workflows = msg.starter
-		return m, nil
-	case slashListMsg:
-		m.slashEntries = msg.entries
-		if m.slashActive {
-			m.filterSlashItems()
-		}
-		return m, nil
-	case workflowStartedMsg:
-		return m.handleWorkflowStarted(msg)
 	case tuiBtwListOpenMsg:
 		m.openBtwList()
 		return m, nil
