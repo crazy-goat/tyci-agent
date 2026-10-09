@@ -314,6 +314,8 @@ tyci tui
 
 The sidebar (Ctrl+T) has a width you can change. Shift+Left makes it wider and Shift+Right makes it narrower, one column per press. With the sidebar focused, `<` and `>` do the same. The width is a percentage of the terminal width, and it is saved globally in `~/.tyci/tui-state.json` (`sidebar_width_percent`, default `40`). The sidebar keeps at least 36 columns and the chat keeps at least 40.
 
+Press Enter on a subagent in the Subagents list to open its conversation. Text you type there goes to that agent: a running agent reads it as a message before its next turn. A finished agent is resumed with the text, but only after a second Enter, which shows the context size and the estimated cost first; any other key cancels. A resumed agent is a side conversation, so its reply does not change its workflow run. An agent of a run that is running, or failed, cannot be resumed. The resumed job is listed under the job it continues, marked with `↻`.
+
 ## Run transcripts
 
 Every agent visit of a flow run writes its messages to
