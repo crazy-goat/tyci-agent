@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // Compactor is installed by the conversation owner for a running agent.
 // It returns the path to the derived dump and replaces the live history with
 // the compacted view; the raw JSONL is retained by the owner.
-type Compactor func(summary, focus string) (dumpPath string, err error)
+type Compactor func(summary, focus string, meta session.CompactMeta) (dumpPath string, err error)
 
 type compactorCtxKey struct{}
 
@@ -45,7 +48,7 @@ func (t *CompactTool) Run(ctx context.Context, input map[string]any) ToolResult 
 	if c == nil {
 		return ToolResult{Type: "result", Success: false, Error: "compact is unavailable: this conversation has no writable session"}
 	}
-	path, err := c(summary, focus)
+	path, err := c(summary, focus, session.CompactMeta{Kind: session.CompactKindTool, At: time.Now()})
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("compaction failed: %v", err)}
 	}

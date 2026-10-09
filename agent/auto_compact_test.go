@@ -48,9 +48,9 @@ func TestRun_AutoCompact_TriggersPastThreshold(t *testing.T) {
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
 	}
 	var compactCalls int
-	compactor := func(summary, focus string) (string, error) {
+	compactor := func(summary, focus string, meta session.CompactMeta) (string, error) {
 		compactCalls++
-		return CompactSession(sess, &msgs, summary, focus)
+		return CompactSession(sess, &msgs, summary, focus, meta)
 	}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -91,9 +91,9 @@ func TestRun_AutoCompact_NoTriggerBelowThreshold(t *testing.T) {
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
 	}
 	var compactCalls int
-	compactor := func(summary, focus string) (string, error) {
+	compactor := func(summary, focus string, meta session.CompactMeta) (string, error) {
 		compactCalls++
-		return CompactSession(sess, &msgs, summary, focus)
+		return CompactSession(sess, &msgs, summary, focus, meta)
 	}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -132,9 +132,9 @@ func TestRun_AutoCompact_DisabledByNegativePercent(t *testing.T) {
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
 	}
 	var compactCalls int
-	compactor := func(summary, focus string) (string, error) {
+	compactor := func(summary, focus string, meta session.CompactMeta) (string, error) {
 		compactCalls++
-		return CompactSession(sess, &msgs, summary, focus)
+		return CompactSession(sess, &msgs, summary, focus, meta)
 	}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -174,9 +174,9 @@ func TestRun_AutoCompact_CustomPercent(t *testing.T) {
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
 	}
 	var compactCalls int
-	compactor := func(summary, focus string) (string, error) {
+	compactor := func(summary, focus string, meta session.CompactMeta) (string, error) {
 		compactCalls++
-		return CompactSession(sess, &msgs, summary, focus)
+		return CompactSession(sess, &msgs, summary, focus, meta)
 	}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -220,8 +220,8 @@ func TestRun_AutoCompact_DoesNotReinvokeProviderAfterCompacting(t *testing.T) {
 	}
 	d := &silentDisplay{}
 	msgs := historyOf(9)
-	compactor := func(summary, focus string) (string, error) {
-		return CompactSession(sess, &msgs, summary, focus)
+	compactor := func(summary, focus string, meta session.CompactMeta) (string, error) {
+		return CompactSession(sess, &msgs, summary, focus, meta)
 	}
 
 	if _, err := Run(context.Background(), p, d, &msgs, Config{
@@ -262,7 +262,7 @@ func TestRun_AutoCompact_SkipsWhenNoOwnSession(t *testing.T) {
 		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
 	}
 	var compactCalls int
-	compactor := func(summary, focus string) (string, error) {
+	compactor := func(summary, focus string, meta session.CompactMeta) (string, error) {
 		compactCalls++
 		return "", nil
 	}
@@ -332,7 +332,7 @@ func TestRun_HardLimit_WithoutKnownWindow(t *testing.T) {
 		MaxRetries: 1,
 		HardLimit:  150000,
 		Session:    sess,
-		Compactor: func(summary, focus string) (string, error) {
+		Compactor: func(summary, focus string, meta session.CompactMeta) (string, error) {
 			compactCalls++
 			return "", nil
 		},

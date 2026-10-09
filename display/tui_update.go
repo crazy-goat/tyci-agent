@@ -220,6 +220,9 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case workflowStartedMsg:
 		return m.handleWorkflowStarted(msg)
+	case tuiMsgCompaction:
+		m.handleCompactionMsg(msg)
+		return m, nil
 	}
 	// /btw entries run independently of the main view and likewise must land
 	// regardless of which overlay is active.

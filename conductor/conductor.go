@@ -283,7 +283,7 @@ func (c *Conductor) Client() connector.ModelClient { return c.client }
 
 // Compact writes a compaction event for the live conversation and updates the
 // agent's history. It is safe to call at a turn boundary.
-func (c *Conductor) Compact(summary, focus string) (string, error) {
+func (c *Conductor) Compact(summary, focus string, meta session.CompactMeta) (string, error) {
 	if strings.TrimSpace(summary) == "" {
 		return "", errors.New("compaction summary must not be empty")
 	}
@@ -291,7 +291,7 @@ func (c *Conductor) Compact(summary, focus string) (string, error) {
 	if c.cfg.Session == nil {
 		return "", errors.New("no writable session")
 	}
-	path, err := agent.CompactSession(c.cfg.Session, &c.conversation, summary, focus)
+	path, err := agent.CompactSession(c.cfg.Session, &c.conversation, summary, focus, meta)
 	if err != nil {
 		return "", err
 	}
@@ -317,7 +317,7 @@ func (c *Conductor) Config() agent.Config { return c.cfg }
 func (c *Conductor) SetNextMessages(fn func() []string) { c.cfg.NextMessages = fn }
 
 // SetCompactor wires the owner callback used by the model-facing compact tool.
-func (c *Conductor) SetCompactor(fn func(summary, focus string) (string, error)) {
+func (c *Conductor) SetCompactor(fn func(summary, focus string, meta session.CompactMeta) (string, error)) {
 	c.cfg.Compactor = fn
 }
 

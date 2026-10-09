@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"github.com/crazy-goat/tyci-agent/session"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func TestRun_ContextBudgetReminder_FiresOnceThenFinishes(t *testing.T) {
 		ContextLimit: 200000,
 		SoftLimit:    100000,
 		Session:      newAutoCompactSession(t),
-		Compactor:    func(summary, focus string) (string, error) { return "", nil },
+		Compactor:    func(summary, focus string, meta session.CompactMeta) (string, error) { return "", nil },
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

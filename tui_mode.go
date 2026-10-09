@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/crazy-goat/tyci-agent/conductor"
@@ -124,6 +125,21 @@ func handleCompactCommand(disp slashCommandDisplay, compact func() (string, bool
 	}
 }
 
+// compactionDisplay is the part of display.TUI that shows a compaction divider.
+type compactionDisplay interface {
+	Compaction(meta session.CompactMeta)
+}
+
+// compactAndShow runs compact and, when it succeeds, shows the divider of
+// meta on disp. A failed compaction shows no divider.
+func compactAndShow(disp compactionDisplay, compact func(summary, focus string, meta session.CompactMeta) (string, error), summary, focus string, meta session.CompactMeta) (string, error) {
+	path, err := compact(summary, focus, meta)
+	if err == nil {
+		disp.Compaction(meta)
+	}
+	return path, err
+}
+
 // runTUI is the full-screen frontend. It reads user input, dispatches slash
 // commands and paints; the conversation behind it — history, model client,
 // session log, usage — is the conductor's.
@@ -227,7 +243,9 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		return nil
 	}
 
-	cond.SetCompactor(cond.Compact)
+	cond.SetCompactor(func(summary, focus string, meta session.CompactMeta) (string, error) {
+		return compactAndShow(tuiDisp, cond.Compact, summary, focus, meta)
+	})
 
 	// handleMsgCommand implements "/msg <job> <text>": posts text to job's
 	// mailbox, delivered at that job's next iteration boundary (see
@@ -381,7 +399,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 					// history's lead message — not just printed here — before
 					// Compact ever writes it.
 					dumpPath := session.DumpPathFor(cond.SessionPath())
-					path, err := cond.Compact(manualCompactSummary(dumpPath), focus)
+					path, err := compactAndShow(tuiDisp, cond.Compact, manualCompactSummary(dumpPath), focus, session.CompactMeta{Kind: session.CompactKindCommand, At: time.Now()})
 					if err != nil {
 						return fmt.Sprintf("/compact: %v", err), true
 					}
