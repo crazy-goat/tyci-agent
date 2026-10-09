@@ -108,16 +108,12 @@ func (m *TuiModel) showAgentView(jobID, label string) {
 }
 
 // agentViewPlaceholder is the input hint while an agent view is open. It says
-// who receives the text, for example "message to 20261008-125053/review".
+// who receives the text: the label of the agent when it has one, for example
+// "message to 20261008-125053-584/review", otherwise the job id.
 func agentViewPlaceholder(jobID, label string) string {
 	target := jobID
 	if label = strings.Join(strings.Fields(label), " "); label != "" {
-		// A workflow agent is named "<run>/<role>". The run is not shown: the
-		// job id already names the agent. A name with a space is free text.
-		if run, role, named := strings.Cut(label, "/"); named && !strings.Contains(run, " ") && role != "" {
-			label = role
-		}
-		target += "/" + label
+		target = label
 	}
 	return "message to " + target + " (Esc: back to main)"
 }
