@@ -263,3 +263,28 @@ func TestRenderBtwListView_DoesNotPanicWhenEmpty(t *testing.T) {
 		t.Error("expected non-empty rendered list view even with no entries")
 	}
 }
+
+// A busy-line fork records its entry with quiet set. The entry must reach the
+// /btw list, but the modal must stay closed, so the prompt keeps the keyboard.
+func TestUpdateBtwMsg_QuietEntryKeepsKeyboardInInput(t *testing.T) {
+	m := newBtwTestModel()
+
+	updated, _ := m.updateBtwMsg(tuiBtwOpenMsg{id: "btw-busy", question: "ship it?", createdAt: time.Now(), quiet: true})
+	tm := updated.(TuiModel)
+
+	if len(tm.btwEntries) != 1 || tm.btwEntries[0].ID != "btw-busy" {
+		t.Fatalf("expected the quiet entry in the /btw list, got %+v", tm.btwEntries)
+	}
+	if tm.btwModalActive {
+		t.Fatal("a quiet entry must not open the modal")
+	}
+	if tm.btwModalEntry != nil {
+		t.Error("a quiet entry must not become the modal entry")
+	}
+
+	updated, _ = tm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	after := updated.(TuiModel)
+	if got := after.input.Value(); got != "h" {
+		t.Fatalf("input = %q after a letter key, want %q", got, "h")
+	}
+}
