@@ -228,7 +228,7 @@ func (m *TuiModel) visibleLine(visY int) (flatRenderLine, bool) {
 
 // messageRegionCache holds the rendered message-region string (the transcript
 // area between the top bar and the status bar) so the status tick doesn't
-// rebuild it on every 250ms fire. Pointer-referenced by TuiModel so it
+// rebuild it on every status tick. Pointer-referenced by TuiModel so it
 // survives the value-copy bubbletea performs on every Update, exactly like
 // scrollback and painter. See issue #84.
 //

@@ -14,17 +14,17 @@ func TestBuildStatus_ShowsElapsedTimeWhenReading(t *testing.T) {
 	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false // request in flight
 	m.status = "tool"
-	m.requestStartTime = time.Now().Add(-5300 * time.Millisecond) // 5.3s ago
+	m.requestStartTime = time.Now().Add(-5300 * time.Millisecond) // 5s ago
 	m.width = 100
 
 	result := m.buildStatus()
 
 	// Should contain the elapsed time suffix with one decimal
-	if !strings.Contains(result, "5.3s") {
-		t.Errorf("buildStatus should contain '5.3s', got: %q", result)
+	if !strings.Contains(result, "5s") {
+		t.Errorf("buildStatus should contain '5s', got: %q", result)
 	}
-	if !strings.Contains(result, "⟳ tool... 5.3s") {
-		t.Errorf("buildStatus should contain '⟳ tool... 5.3s', got: %q", result)
+	if !strings.Contains(result, "⟳ tool... 5s") {
+		t.Errorf("buildStatus should contain '⟳ tool... 5s', got: %q", result)
 	}
 }
 
@@ -57,8 +57,8 @@ func TestBuildStatus_NoSuffixWhenRequestStartTimeIsZero(t *testing.T) {
 
 	result := m.buildStatus()
 
-	if strings.Contains(result, "0.0s") {
-		t.Errorf("buildStatus should not show '0.0s' for zero start time, got: %q", result)
+	if strings.Contains(result, " 0s") {
+		t.Errorf("buildStatus should not show ' 0s' for zero start time, got: %q", result)
 	}
 }
 
@@ -71,8 +71,8 @@ func TestBuildStatus_ShowsThinkingSuffix(t *testing.T) {
 
 	result := m.buildStatus()
 
-	if !strings.Contains(result, "⟳ thinking... 2.4s") {
-		t.Errorf("expected '⟳ thinking... 2.4s', got: %q", result)
+	if !strings.Contains(result, "⟳ thinking... 2s") {
+		t.Errorf("expected '⟳ thinking... 2s', got: %q", result)
 	}
 }
 
@@ -85,8 +85,8 @@ func TestBuildStatus_ShowsRespondingSuffix(t *testing.T) {
 
 	result := m.buildStatus()
 
-	if !strings.Contains(result, "⟳ responding... 12.7s") {
-		t.Errorf("expected '⟳ responding... 12.7s', got: %q", result)
+	if !strings.Contains(result, "⟳ responding... 12s") {
+		t.Errorf("expected '⟳ responding... 12s', got: %q", result)
 	}
 }
 
@@ -94,29 +94,31 @@ func TestBuildStatus_ShowsWorkingSuffix(t *testing.T) {
 	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "" // default → "working"
-	m.requestStartTime = time.Now().Add(-400 * time.Millisecond)
+	m.requestStartTime = time.Now().Add(-2400 * time.Millisecond)
 	m.width = 100
 
 	result := m.buildStatus()
 
-	if !strings.Contains(result, "⟳ working... 0.4s") {
-		t.Errorf("expected '⟳ working... 0.4s', got: %q", result)
+	if !strings.Contains(result, "⟳ working... 2s") {
+		t.Errorf("expected '⟳ working... 2s', got: %q", result)
 	}
 }
 
-func TestBuildStatus_ElapsedFormatPrecision(t *testing.T) {
-	// Verify exactly one decimal place with "s" suffix.
+func TestBuildStatus_ElapsedFormatWholeSeconds(t *testing.T) {
+	// Verify whole seconds with an "s" suffix: the status tick is 1s (issue #630).
 	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "tool"
-	m.requestStartTime = time.Now().Add(-12340 * time.Millisecond) // 12.34s → should round to 12.3s
+	m.requestStartTime = time.Now().Add(-12340 * time.Millisecond) // 12.34s → shows 12s
 	m.width = 100
 
 	result := m.buildStatus()
 
-	// The format is "%.1fs" so 12.34 rounds to 12.3, not 12.34
-	if !strings.Contains(result, "12.3s") {
-		t.Errorf("expected '12.3s' (one decimal), got: %q", result)
+	if !strings.Contains(result, " 12s") {
+		t.Errorf("expected ' 12s' (whole seconds), got: %q", result)
+	}
+	if strings.Contains(result, "12.") {
+		t.Errorf("elapsed time must not have decimals, got: %q", result)
 	}
 }
 
@@ -343,17 +345,23 @@ func TestStatusTickCmd_ProducesStatusTickMsg(t *testing.T) {
 	// This is a basic smoke test that the function doesn't panic.
 }
 
-func TestStatusTickCmd_IntervalIs250ms(t *testing.T) {
-	// Issue #83: tick interval was reduced from 100ms to 250ms.
-	if statusTickInterval != 250*time.Millisecond {
-		t.Errorf("statusTickInterval = %v, want 250ms", statusTickInterval)
+func TestStatusTickCmd_IntervalIs1s(t *testing.T) {
+	// Issue #630: the tick is 1s, the same as the stream flush and the jobs tick.
+	if statusTickInterval != time.Second {
+		t.Errorf("statusTickInterval = %v, want 1s", statusTickInterval)
+	}
+	if jobsOnlyTickInterval != time.Second {
+		t.Errorf("jobsOnlyTickInterval = %v, want 1s", jobsOnlyTickInterval)
+	}
+	if streamFlushInterval != time.Second {
+		t.Errorf("streamFlushInterval = %v, want 1s", streamFlushInterval)
 	}
 }
 
 // ─── buildStatus format lock test ──────────────────────────────────────
 
 func TestBuildStatus_FormatLock(t *testing.T) {
-	// Lock the exact wire format: "⟳ tool... 5.3s"
+	// Lock the exact wire format: "⟳ tool... 5s"
 	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.modelName = "test/model"
 	m.reading = false
@@ -364,8 +372,8 @@ func TestBuildStatus_FormatLock(t *testing.T) {
 	result := m.buildStatus()
 	plain := stripANSI(result) // colors shouldn't affect the format
 
-	if !strings.Contains(plain, "⟳ tool... 5.3s") {
-		t.Errorf("expected exact format '⟳ tool... 5.3s', got: %q", plain)
+	if !strings.Contains(plain, "⟳ tool... 5s") {
+		t.Errorf("expected exact format '⟳ tool... 5s', got: %q", plain)
 	}
 }
 
@@ -394,8 +402,8 @@ func TestBuildStatus_AllSpinnerTypes(t *testing.T) {
 			result := m.buildStatus()
 			plain := stripANSI(result)
 
-			if !strings.Contains(plain, tt.expected+" 1.0s") {
-				t.Errorf("expected %q with 1.0s suffix, got: %q", tt.expected, plain)
+			if !strings.Contains(plain, tt.expected+" 1s") {
+				t.Errorf("expected %q with 1s suffix, got: %q", tt.expected, plain)
 			}
 		})
 	}
@@ -447,12 +455,12 @@ func TestRenderFrame_StatusLineContainsElapsedTime(t *testing.T) {
 	// It should contain the elapsed time.
 	found := false
 	for _, line := range lines {
-		if strings.Contains(line, "⟳ tool") && strings.Contains(line, "3.2s") {
+		if strings.Contains(line, "⟳ tool") && strings.Contains(line, "3s") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("renderFrame should contain a status line with '⟳ tool' and '3.2s', got frame:\n%s", frame)
+		t.Errorf("renderFrame should contain a status line with '⟳ tool' and '3s', got frame:\n%s", frame)
 	}
 }

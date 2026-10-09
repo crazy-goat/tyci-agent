@@ -1,9 +1,13 @@
 package display
 
 import (
+	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // ─── streamWrap incremental wrapping ─────────────────────────────────────
@@ -208,14 +212,69 @@ func TestRenderLinePlainLazy(t *testing.T) {
 
 // ─── adaptive streaming coalescing ───────────────────────────────────────
 
-func TestNextCoalesce(t *testing.T) {
-	// First flush after a quiet period paints fast.
-	if got := nextCoalesce(time.Hour); got != coalesceCold {
-		t.Errorf("cold stream: got %v, want %v", got, coalesceCold)
+// flushCounter is a bubbletea model that counts the transcript flushes it
+// receives (tuiMsgBlock) and the text bytes they carry. Each flush is one
+// repaint of the transcript.
+type flushCounter struct {
+	flushes *atomic.Int32
+	bytes   *atomic.Int64
+}
+
+func (f flushCounter) Init() tea.Cmd { return nil }
+
+func (f flushCounter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if b, ok := msg.(tuiMsgBlock); ok {
+		f.flushes.Add(1)
+		f.bytes.Add(int64(len(b.content)))
 	}
-	// Sustained stream batches harder.
-	if got := nextCoalesce(50 * time.Millisecond); got != coalesceHot {
-		t.Errorf("hot stream: got %v, want %v", got, coalesceHot)
+	return f, nil
+}
+
+func (f flushCounter) View() string { return "" }
+
+// TestStreamFlushRepaintsOncePerInterval streams a chunk every 10ms for 2s
+// through the real flushLoop and a real bubbletea program. With the 1s
+// streamFlushInterval the TUI repaints at the first chunk and then about once
+// per second, not once per chunk. The 2s end flush must deliver every byte.
+func TestStreamFlushRepaintsOncePerInterval(t *testing.T) {
+	var flushes atomic.Int32
+	var bytes atomic.Int64
+	p := tea.NewProgram(flushCounter{flushes: &flushes, bytes: &bytes},
+		tea.WithInput(nil), tea.WithoutRenderer(), tea.WithOutput(io.Discard))
+	runDone := make(chan struct{})
+	go func() {
+		_, _ = p.Run()
+		close(runDone)
+	}()
+
+	tui := &TUI{
+		prog:      p,
+		done:      make(chan struct{}),
+		flushWake: make(chan struct{}, 1),
+		flushDone: make(chan struct{}),
+	}
+	go tui.flushLoop()
+
+	const chunk = "streamed text "
+	chunks := 0
+	for start := time.Now(); time.Since(start) < 2*time.Second; {
+		tui.Text(chunk)
+		chunks++
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(tui.done)
+	<-tui.flushDone
+	p.Quit()
+	<-runDone
+
+	// Flushes at about 0s, 1s and 2s, plus the end flush: far below the chunk count.
+	got := int(flushes.Load())
+	t.Logf("%d chunks over 2s -> %d repaints", chunks, got)
+	if got < 2 || got > 4 {
+		t.Errorf("repaints = %d for %d chunks over 2s, want 2 to 4", got, chunks)
+	}
+	if want := int64(chunks * len(chunk)); bytes.Load() != want {
+		t.Errorf("flushed %d bytes, want %d", bytes.Load(), want)
 	}
 }
 

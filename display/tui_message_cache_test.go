@@ -270,8 +270,8 @@ func TestMessageRegionCache_StatusBarStillUpdates(t *testing.T) {
 	plain := stripANSI(frame2)
 
 	// The status bar should reflect the new elapsed time.
-	if !strings.Contains(plain, "3.") {
-		t.Errorf("status bar should show updated elapsed time (~3.5s), got:\n%s", plain)
+	if !strings.Contains(plain, "⟳ bash 3s") {
+		t.Errorf("status bar should show updated elapsed time (3s), got:\n%s", plain)
 	}
 }
 

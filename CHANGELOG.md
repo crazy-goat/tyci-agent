@@ -10,7 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: the chat tool `workflow_stop`, the `/stop <run> [reason]` command and the Runs tab key `x` (then `y` to confirm) stop an active run of the current session (#583).
 - Flow: a run can be stopped. A stopped run has the status `stopped`, keeps its worktree and its pull request, and cannot be resumed. `tyci workflow stop <run-id> [--reason text] [--json]` stops a running run that no live tyci process owns. The Runs tab and `tyci workflow status` show the status. `tyci workflow status` exits with code 0 for `stopped` (#582).
 
+### Changed
+- TUI: streamed output (text, thinking and tool output) is drawn at most once per second. The first chunk after a quiet period is drawn at once, and the end of a turn draws the rest at once. The status bar and the background job times are refreshed once per second, and the status bar shows elapsed times in whole seconds, for example `12s`, not tenths. Keyboard, mouse, resize and modal redraws are not delayed (#630).
+
 ### Fixed
+- TUI: the sidebar Tasks tab styles only the rows in the visible window, not the whole list, and sorts the background job list once per redraw instead of three times. The displayed text does not change (#630).
 - TUI: the sidebar Tasks tab uses less CPU. Each redraw, key press, click and job event built the Subagents, Bash and Lua rows several times; now a redraw builds them once, a key or click at most twice, and a job event twice (it was five times). The displayed text does not change (#545).
 - TUI: a redraw is cheaper when the model id is not in the pricing catalog. The status bar looked up the model's context limit with a full scan and sort of the catalog on every redraw, so each wheel event paid for it. The lookup is now remembered per provider and model. The freeze on fast scrolling reported in #595 was not reproduced. This change only lowers one measured per-redraw cost (#595).
 

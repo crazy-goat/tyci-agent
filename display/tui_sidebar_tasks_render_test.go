@@ -156,3 +156,48 @@ func TestRenderSidebarTasksFollowsJobEvents(t *testing.T) {
 		t.Fatalf("added job is missing from the render")
 	}
 }
+
+// TestSidebarTasksWindowStylesVisibleRowsOnly checks that the lines of the
+// Tasks window are the same as the lines of the full render at the same
+// scroll position, for the top, the middle, the bottom and a list shorter
+// than the window. Only the rows of the window are styled.
+func TestSidebarTasksWindowStylesVisibleRowsOnly(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	const height = 10
+	base := tasksFixtureAllDone(t)
+	empty := newTestModelForSidebar()
+	empty.openSidebar(sidebarTabTasks)
+
+	cases := []struct {
+		name   string
+		model  TuiModel
+		scroll int
+	}{
+		{"top", base, 0},
+		{"middle", base, 40},
+		{"bottom", base, 1 << 20},
+		{"fewer rows than the window", empty, 0},
+	}
+	for _, tc := range cases {
+		for _, cursor := range []int{-1, 0, 5, 40, 500} {
+			m := tc.model
+			m.sidebarScroll = tc.scroll
+			m.sidebarCursor = cursor
+			width := 60
+			layout := sidebarLayoutT{contentHeight: height}
+
+			full := m.renderSidebarTasks(width)
+			scroll := m.sidebarVisibleScrollForLineCount(layout, len(full))
+			end := min(len(full), scroll+height)
+			want := full[scroll:end]
+			got := m.sidebarBodyLines(layout, width)
+			if strings.Join(got, "\n") != strings.Join(want, "\n") {
+				t.Fatalf("%s, cursor %d: window differs from the full render lines %d-%d", tc.name, cursor, scroll, end)
+			}
+			if len(got) != end-scroll {
+				t.Fatalf("%s, cursor %d: got %d lines, want %d", tc.name, cursor, len(got), end-scroll)
+			}
+		}
+	}
+}

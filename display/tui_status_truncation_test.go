@@ -174,7 +174,7 @@ func TestAssembleStatusRow_OverlongRightPartIsClamped(t *testing.T) {
 	right := strings.Repeat("subsidy figures ", 10) // ~160 cols, no truncation hints
 
 	for _, w := range []int{20, 40, 60, 106} {
-		got := assembleStatusRow("⟳ thinking... 1.0s", right, w)
+		got := assembleStatusRow("⟳ thinking... 1s", right, w)
 		if strings.Contains(got, "\n") {
 			t.Fatalf("width=%d: assembleStatusRow wrapped to multiple lines: %q", w, got)
 		}

@@ -174,41 +174,27 @@ func setupPainterTerminal(p *tea.Program) func() {
 	}
 }
 
-// Coalescing windows for flushLoop. The first chunk after a quiet period
-// flushes fast so the response appears promptly; once the stream is clearly
-// sustained (previous flush was recent), batching harder cuts the number of
-// transcript repaints 3x with no visible difference at reading speed.
-const (
-	coalesceCold  = 33 * time.Millisecond
-	coalesceHot   = 100 * time.Millisecond
-	coalesceHotIf = 300 * time.Millisecond // a flush this recent means the stream is hot
-)
-
-// nextCoalesce picks the coalescing window given the time since the last flush.
-func nextCoalesce(sinceLastFlush time.Duration) time.Duration {
-	if sinceLastFlush < coalesceHotIf {
-		return coalesceHot
-	}
-	return coalesceCold
-}
-
 // flushLoop flushes accumulated streaming content on demand. It sleeps until
-// signaled via flushWake (set by Thinking/Text when content is appended), then
-// waits a coalescing window so multiple rapid appends batch into a single
-// render. This keeps the loop idle (zero wakeups) when nothing is streaming.
+// signaled via flushWake (set by Thinking/Text when content is appended). A
+// flush at most every streamFlushInterval keeps the transcript repaints to one
+// per interval: the first chunk after a quiet period flushes at once, later
+// chunks wait for the interval to end. This keeps the loop idle (zero wakeups)
+// when nothing is streaming. End, Done and Error flush at once (flushNow).
 func (t *TUI) flushLoop() {
 	var lastFlush time.Time
 
 	for {
 		select {
 		case <-t.flushWake:
-			// Coalesce: wait briefly so bursts of appends flush as one message.
-			select {
-			case <-time.After(nextCoalesce(time.Since(lastFlush))):
-			case <-t.done:
-				t.flushPending()
-				close(t.flushDone)
-				return
+			// Wait for the rest of the interval, so bursts of appends flush as one message.
+			if wait := streamFlushInterval - time.Since(lastFlush); wait > 0 {
+				select {
+				case <-time.After(wait):
+				case <-t.done:
+					t.flushPending()
+					close(t.flushDone)
+					return
+				}
 			}
 			t.flushPending()
 			lastFlush = time.Now()
