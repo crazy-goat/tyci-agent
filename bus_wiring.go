@@ -11,6 +11,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/internal/redact"
 	"github.com/crazy-goat/tyci-agent/internal/watchdog"
+	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/session"
 )
 
@@ -375,6 +376,19 @@ func wakeNotices() []string {
 		return nil
 	}
 	return drainNotices()
+}
+
+// inboxEvent opens or closes the inbox of a job from one of its snapshots.
+// Only the start snapshot (EventSeq 1) opens the inbox. Snapshots can reach
+// the hook out of order (#131), so a Running snapshot that comes after the
+// terminal one must not open an inbox that nothing closes again.
+func inboxEvent(inboxes *inboxSet, j jobs.Job) {
+	switch {
+	case j.Status == jobs.StatusRunning && j.EventSeq == 1:
+		inboxes.open(j.ID)
+	case j.Status != jobs.StatusRunning && j.Status != jobs.StatusWaitingAnswer:
+		inboxes.close(j.ID)
+	}
 }
 
 // withOrchestratorNotices adds the orchestrator's notices to a NextMessages

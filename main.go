@@ -906,14 +906,9 @@ func wireTools() {
 	JobRegistry.SetOnEvent(func(j jobs.Job) {
 		bus.Publish("job.updated", j)
 
-		// The inbox of a job opens on its first event, which Start fires
+		// The inbox of a job opens on its start event, which Start fires
 		// before it returns the job ID. It closes on the terminal event.
-		switch j.Status {
-		case jobs.StatusRunning, jobs.StatusWaitingAnswer:
-			inboxes.open(j.ID)
-		default:
-			inboxes.close(j.ID)
-		}
+		inboxEvent(inboxes, j)
 
 		// A job that called "ask_parent" is now blocked, and it stays blocked until
 		// someone calls "answer_job" or its wall-clock limit expires — at which
