@@ -272,6 +272,17 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMessage = ""
 		}
 		return m, nil
+	case tuiWorkflowStarterMsg:
+		m.workflows = msg.starter
+		return m, nil
+	case slashListMsg:
+		m.slashEntries = msg.entries
+		if m.slashActive {
+			m.filterSlashItems()
+		}
+		return m, nil
+	case workflowStartedMsg:
+		return m.handleWorkflowStarted(msg)
 	case tuiBtwListOpenMsg:
 		m.openBtwList()
 		return m, nil

@@ -175,6 +175,7 @@ func (m TuiModel) renderMainColumn() string {
 	// "@" file-path candidates sit directly above the input, and render as
 	// nothing at all when the popup is closed.
 	b.WriteString(m.renderFileComplete(m.width))
+	b.WriteString(m.renderSlashComplete(m.width))
 
 	b.WriteString(m.input.View())
 	return b.String()

@@ -376,6 +376,13 @@ type TuiModel struct {
 	// describes fileCompleteItems[i]; a shorter kinds slice (as in tests that
 	// set fileCompleteItems directly) means "file" for every entry.
 	fileCompleteActive bool
+	// "/" popup: builtin commands and workflows (tui_workflow_popup.go).
+	slashActive  bool
+	slashEntries []WorkflowEntry
+	slashItems   []slashItem
+	slashCursor  int
+	// workflows starts the workflows typed as "/<name>" (tui_workflow.go).
+	workflows          WorkflowStarter
 	fileCompleteItems  []string
 	fileCompleteKinds  []string // "file" or "agent", parallel to fileCompleteItems
 	fileCompleteDescs  []string // agent description; "" for files, parallel to fileCompleteItems

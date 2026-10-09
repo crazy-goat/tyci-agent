@@ -1,0 +1,207 @@
+package display
+
+import (
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// fakeStarter records the starts. A start with err set fails and starts nothing.
+type fakeStarter struct {
+	entries  []WorkflowEntry
+	err      error
+	warnings []string
+	started  []string
+}
+
+func (f *fakeStarter) List() []WorkflowEntry { return f.entries }
+
+func (f *fakeStarter) Start(name string, params []string) (string, []string, error) {
+	if f.err != nil {
+		return "", nil, f.err
+	}
+	f.started = append(f.started, strings.Join(append([]string{name}, params...), " "))
+	return "run-1", f.warnings, nil
+}
+
+var issueToMerge = WorkflowEntry{
+	Name:   "issue-to-merge",
+	Params: []WorkflowParam{{Name: "issue", Required: true}},
+	Source: "project",
+}
+
+func TestWorkflowLineStartsNamedWorkflowWithParams(t *testing.T) {
+	list := []WorkflowEntry{issueToMerge}
+	name, params, ok := workflowLine("/issue-to-merge 160 extra", list)
+	if !ok || name != "issue-to-merge" || !reflect.DeepEqual(params, []string{"160", "extra"}) {
+		t.Fatalf("got %q %q %v", name, params, ok)
+	}
+}
+
+func TestWorkflowLineIgnoresOtherLines(t *testing.T) {
+	list := []WorkflowEntry{
+		issueToMerge,
+		{Name: "broken", Err: "bad JSON"},
+	}
+	for _, line := range []string{
+		"hello", "/", "/unknown 1", "/broken", // not a workflow, or does not load
+		"/btw why", "/new", "/msg job text", "/compact", // builtins win
+		"/resume --all",
+	} {
+		if _, _, ok := workflowLine(line, list); ok {
+			t.Errorf("%q must not start a workflow", line)
+		}
+	}
+}
+
+func TestWorkflowCommandReachesReservedNames(t *testing.T) {
+	cases := []struct {
+		line   string
+		name   string
+		params []string
+	}{
+		{"/workflow btw 1", "btw", []string{"1"}},
+		{"/workflow issue-to-merge 160", "issue-to-merge", []string{"160"}},
+		{"/workflow", "", nil},
+	}
+	for _, c := range cases {
+		name, params, ok := workflowLine(c.line, nil)
+		if !ok || name != c.name || len(params) != len(c.params) {
+			t.Errorf("%q: got %q %q %v", c.line, name, params, ok)
+		}
+	}
+}
+
+func TestIsReservedWorkflowName(t *testing.T) {
+	for _, n := range []string{"btw", "compact", "exit", "msg", "new", "resume", "workflow"} {
+		if !IsReservedWorkflowName(n) {
+			t.Errorf("%q must be reserved", n)
+		}
+	}
+	if IsReservedWorkflowName("issue-to-merge") {
+		t.Error("issue-to-merge must not be reserved")
+	}
+}
+
+func TestStartWorkflowStartsWithParams(t *testing.T) {
+	f := &fakeStarter{warnings: []string{"check skipped"}}
+	msg := startWorkflow(f, "issue-to-merge", []string{"160"})
+	if msg.err != nil || msg.modelText != "" {
+		t.Fatalf("unexpected result %+v", msg)
+	}
+	if !reflect.DeepEqual(f.started, []string{"issue-to-merge 160"}) {
+		t.Fatalf("started %v", f.started)
+	}
+	if msg.notice != "started /issue-to-merge 160\nwarning: check skipped" {
+		t.Fatalf("notice %q", msg.notice)
+	}
+}
+
+func TestStartWorkflowMissingParamStartsNothingAndAsksTheModel(t *testing.T) {
+	f := &fakeStarter{err: WorkflowParamError{Name: "issue", Description: "Issue number"}}
+	msg := startWorkflow(f, "issue-to-merge", nil)
+	want := "user wants /issue-to-merge, missing: issue (Issue number). Ask the user for it, then call workflow_start."
+	if msg.modelText != want || msg.err != nil || msg.notice != "" {
+		t.Fatalf("got %+v", msg)
+	}
+	if len(f.started) != 0 {
+		t.Fatalf("a run started: %v", f.started)
+	}
+}
+
+func TestStartWorkflowErrorIsReturnedNotSentToTheModel(t *testing.T) {
+	f := &fakeStarter{err: errors.New("workflow \"x\" not found")}
+	msg := startWorkflow(f, "x", []string{"1", "2"})
+	if msg.err == nil || msg.modelText != "" {
+		t.Fatalf("got %+v", msg)
+	}
+}
+
+func TestStartWorkflowBareWorkflowCommandIsUsageError(t *testing.T) {
+	msg := startWorkflow(&fakeStarter{}, "", nil)
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "/workflow <name>") {
+		t.Fatalf("got %+v", msg)
+	}
+}
+
+// TestWorkflowStartWhileBusyLeavesTheTurnAlone is the busy-turn rule: Enter on
+// "/<name>" starts the workflow in a command, and the pending-message queue and
+// the cancel channel of the running turn are not touched.
+func TestWorkflowStartWhileBusyLeavesTheTurnAlone(t *testing.T) {
+	f := &fakeStarter{entries: []WorkflowEntry{issueToMerge}}
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+	m.reading = false
+	m.workflows = f
+	m.queue = make(chan string, 4)
+	m.commands = make(chan string, 4)
+	m.input.SetValue("/issue-to-merge 160")
+
+	next, cmd := m.handleKeyWhileBusy(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("no start command")
+	}
+	if len(f.started) != 0 {
+		t.Fatal("the start ran before the command")
+	}
+	if got := len(next.(TuiModel).queue); got != 0 {
+		t.Fatalf("the line was queued for the model (%d)", got)
+	}
+	if got := len(m.commands); got != 0 {
+		t.Fatalf("the line went to the command channel (%d)", got)
+	}
+	if v := next.(TuiModel).input.Value(); v != "" {
+		t.Fatalf("input not cleared: %q", v)
+	}
+
+	msg := cmd()
+	res, _ := next.(TuiModel).Update(msg)
+	if !reflect.DeepEqual(f.started, []string{"issue-to-merge 160"}) {
+		t.Fatalf("started %v", f.started)
+	}
+	if got := len(res.(TuiModel).queue); got != 0 {
+		t.Fatalf("notice touched the queue (%d)", got)
+	}
+}
+
+// TestMissingParamWhileIdleSendsTheTextAsAPrompt checks the missing-param path:
+// nothing starts, and the model gets the text as a prompt, with the typed text kept.
+func TestMissingParamWhileIdleSendsTheTextAsAPrompt(t *testing.T) {
+	results := make(chan string, 2)
+	f := &fakeStarter{entries: []WorkflowEntry{issueToMerge}, err: WorkflowParamError{Name: "issue", Description: "Issue number"}}
+	m := newModel(results, "test/model", "", nil, 0, 0, 0)
+	m.reading = true
+	m.workflows = f
+	m.input.SetValue("/issue-to-merge")
+
+	started, cmd := m.startWorkflowFromInput()
+	if !started || cmd == nil {
+		t.Fatal("the line was not taken")
+	}
+	m.input.SetValue("typing")
+	res, _ := m.Update(cmd())
+	if len(f.started) != 0 {
+		t.Fatalf("a run started: %v", f.started)
+	}
+	got := <-results
+	if !strings.HasPrefix(got, "user wants /issue-to-merge, missing: issue (Issue number).") {
+		t.Fatalf("model text %q", got)
+	}
+	if v := res.(TuiModel).input.Value(); v != "typing" {
+		t.Fatalf("typed text lost: %q", v)
+	}
+}
+
+func TestStartWorkflowFromInputPassesOtherLinesOn(t *testing.T) {
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+	m.workflows = &fakeStarter{}
+	m.input.SetValue("/btw why")
+	if handled, _ := m.startWorkflowFromInput(); handled {
+		t.Fatal("/btw must not start a workflow")
+	}
+	if m.input.Value() != "/btw why" {
+		t.Fatalf("input changed: %q", m.input.Value())
+	}
+}
