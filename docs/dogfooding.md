@@ -159,16 +159,16 @@ workflow run 606: oracle answered retry: CI runner has exception_ignore_args=On
 A run gets 2 oracle answers at most. To change the limit, set `"oracle_answers"` in
 `defaults` of the workflow file. Set it to `0` to turn the oracle off.
 
-A state with `"human": true` is never answered by the oracle. Use it for a pause that
-needs your decision:
+The oracle never answers a pause at a state with `"human": true`. Use that flag for a
+pause that needs your decision:
 
 ```json
 "ask": {"ask": "Check the pull request.", "human": true, "on": {"retry": "code", "stop": "end"}}
 ```
 
 The oracle never answers these pauses: an apply or reject of a workflow proposal, a merge
-to a protected branch, and a stop of a run with an open pull request. For a stop, the
-oracle can propose it, and you confirm it. A pause that waits for you says `needs a human`
+to a protected branch, a move to the `merge` state, and a stop of a run with an open pull
+request. For a stop, the oracle can propose it, and you confirm it. A pause that waits for you says `needs a human`
 in the notice and on the Runs tab.
 
 ## 7. Negative checks

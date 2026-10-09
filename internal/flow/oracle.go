@@ -15,6 +15,12 @@ const defaultOracleAnswers = 2
 // oracleTask is the task template of the oracle answer to an ask pause.
 const oracleTask = "ask"
 
+// isPauseOracle reports whether the agent call is the oracle answer to an ask
+// pause. The answer is the text of the agent, so the oracle writes no report.md.
+func isPauseOracle(role, task string) bool {
+	return role == "oracle" && task == oracleTask
+}
+
 // askOrPause pauses the run in the ask state s with the pause message. Unless
 // a human must answer, the oracle answers the pause first (see oracleAnswer).
 // A valid answer moves the run on, and askOrPause returns the result of the rest
@@ -126,6 +132,9 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 	next, note, ok := oracleTarget(r.WF, s, ans)
 	if !ok {
 		return r.escalate(st, step, fmt.Sprintf("The oracle answer is not valid: %q", ans))
+	}
+	if next == "merge" {
+		return r.escalate(st, step, "The oracle proposes a merge, a human must confirm: "+why)
 	}
 	if word, _, _ := strings.Cut(ans, " "); word == "stop" && st.PR > 0 && !WasMerged(st) {
 		return r.escalate(st, step, "The oracle proposes stop, a human must confirm: "+why)

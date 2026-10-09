@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // oracleAgents runs the oracle role with scripted answers. Other roles go to inner.
@@ -156,6 +158,47 @@ func TestOracle_ProtectedMergeGoesToHuman(t *testing.T) {
 	}
 	if !strings.Contains(f.st.Ask.Message, "(last step: merge, key protected)") {
 		t.Fatalf("message %q", f.st.Ask.Message)
+	}
+}
+
+func TestOracle_GotoMergeNeedsHuman(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
+		"code":  {Agent: "coder", MaxVisits: 1, On: map[string]string{"done": "code"}},
+		"merge": {Check: "merge.sh", On: map[string]string{"merged": "end", "default": "end"}},
+		"ask":   {Ask: "The run needs a human decision.", On: map[string]string{"retry": "code", "stop": "end"}},
+		"end":   {End: true},
+	}}
+	f := newOracleFixture(wf, "goto merge\nthe CI timed out and the change looks ready")
+	if err := f.r.Run(context.Background(), f.st); !errors.Is(err, ErrPaused) {
+		t.Fatalf("err = %v, want ErrPaused", err)
+	}
+	if f.st.Status != "paused" || f.st.Current != "ask" {
+		t.Fatalf("status %q current %q, want paused at ask", f.st.Status, f.st.Current)
+	}
+	if !strings.Contains(f.st.Ask.Message, "The oracle proposes a merge, a human must confirm: the CI timed out and the change looks ready") {
+		t.Fatalf("message %q", f.st.Ask.Message)
+	}
+	steps := oracleSteps(f.st)
+	if len(steps) != 1 || steps[0].Key != "goto merge" {
+		t.Fatalf("oracle steps %+v", steps)
+	}
+}
+
+// The real subagent runner returns the trimmed text of the ask task as the answer.
+func TestOracle_SubagentRunnerReturnsSpawnText(t *testing.T) {
+	var got tools.TaskSpec
+	runner := &SubagentRunner{
+		Cfg: testCfg(), Render: fakeRender{},
+		Spawn: func(_ context.Context, sp tools.TaskSpec) (string, string, error) {
+			got = sp
+			return "  retry\nflaky CI  \n", "job9", nil
+		},
+		IssueContext: func(context.Context, string, int) (string, error) { return "ISSUE", nil },
+	}
+	rc := RunContext{Worktree: t.TempDir(), ArtifactDir: t.TempDir()}
+	answer, session, err := runner.Run(context.Background(), "oracle", oracleTask, rc)
+	if err != nil || answer != "retry\nflaky CI" || session != "job9" || !strings.Contains(got.Task, "rendered ask") || strings.Contains(got.Task, "MUST write") {
+		t.Fatalf("answer %q session %q err %v task %q", answer, session, err, got.Task)
 	}
 }
 
