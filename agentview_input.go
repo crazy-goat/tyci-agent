@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
@@ -110,6 +111,32 @@ func runIDsOf(jobID string) []string {
 	return ids
 }
 
+// runOfJobName returns the run that a job of the chain of jobID is named
+// after. A workflow agent job has the description "<run>/<role>", and the run
+// is found by its state file. This finds a run before its first step is
+// saved. A job whose name has no run state file is no run. The first job of
+// the chain is tried first.
+func runOfJobName(info flow.RepoInfo, jobID string) (*flow.RunState, bool, error) {
+	resumableMu.Lock()
+	ids := chainIDs(jobID, resumable[jobID])
+	resumableMu.Unlock()
+	for _, id := range ids {
+		job, found := JobRegistry.Get(id)
+		if !found {
+			continue
+		}
+		run, _, named := strings.Cut(job.Description, "/")
+		if !named || run == "" || run == "." || run == ".." {
+			continue
+		}
+		st, ok, err := flow.RunByID(info.Home, info.Name(), run)
+		if err != nil || ok {
+			return st, ok, err
+		}
+	}
+	return nil, false, nil
+}
+
 // chainIDs returns the chain of the job id whose stashed entry is e.
 func chainIDs(id string, e resumableEntry) []string {
 	if len(e.chain) == 0 {
@@ -120,7 +147,10 @@ func chainIDs(id string, e resumableEntry) []string {
 
 // runWorkdirIn is agentRunWorkdir for the repository info info.
 func runWorkdirIn(info flow.RepoInfo, jobID string) (string, error) {
-	st, ok, err := flow.RunOfSession(info.Home, info.Name(), runIDsOf(jobID))
+	st, ok, err := runOfJobName(info, jobID)
+	if err == nil && !ok {
+		st, ok, err = flow.RunOfSession(info.Home, info.Name(), runIDsOf(jobID))
+	}
 	if err != nil {
 		return "", fmt.Errorf("cannot check the workflow runs for the agent: %w", err)
 	}

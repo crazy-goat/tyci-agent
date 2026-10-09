@@ -197,6 +197,20 @@ func RecentRuns(home, repoName string, n int) []*RunState {
 	return out
 }
 
+// RunByID returns the state of the run runID of repository repoName. ok is
+// false when that run has no state file. err is set when the state file
+// exists but cannot be read.
+func RunByID(home, repoName, runID string) (st *RunState, ok bool, err error) {
+	st, err = Load(filepath.Join(home, ".tyci", "runs", repoName, runID))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return st, true, nil
+}
+
 // RunOfSession returns the run that has an agent step whose session is one of
 // sessions (job ids of agents). ok is false when no run of repoName has such a
 // step, for example an agent started outside a workflow. A run directory

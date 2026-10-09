@@ -12,6 +12,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/pricing"
+	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/stream"
 )
 
@@ -64,6 +65,61 @@ func TestRunWorkdirIn_RefusesWhenTheWorktreeIsGone(t *testing.T) {
 func TestRunWorkdirIn_AgentOfNoRunIsAllowed(t *testing.T) {
 	info := flow.RepoInfo{Home: t.TempDir(), Repo: "owner/repo"}
 	if dir, err := runWorkdirIn(info, "job-btw"); err != nil || dir != "" {
+		t.Fatalf("dir=%q err=%v, want no worktree and no error", dir, err)
+	}
+}
+
+// startNamedJob starts a subagent job with the description name in a fresh
+// JobRegistry (withTestWiring drains its events at the end of the test). The
+// job runs until the test ends and returns its id.
+func startNamedJob(t *testing.T, name string) string {
+	t.Helper()
+	withTestWiring(t)
+	block := make(chan struct{})
+	job := JobRegistry.Start(context.Background(), name, jobs.KindSubagent, "", func(context.Context, string) (string, bool, error) {
+		<-block
+		return "", false, nil
+	})
+	t.Cleanup(func() {
+		close(block)
+		JobRegistry.Cancel(job.ID)
+	})
+	return job.ID
+}
+
+func TestRunWorkdirIn_RefusesAWorkflowAgentOfAnActiveRunBeforeItsStepIsSaved(t *testing.T) {
+	// The run has no step of this job yet (a report reminder runs before the
+	// step is saved). The job name "<run>/<role>" still finds the run.
+	home := t.TempDir()
+	info := flow.RepoInfo{Home: home, Repo: "owner/repo"}
+	saveTestRun(t, home, "run-active", "running", t.TempDir(), "job-other")
+	job := startNamedJob(t, "run-active/coder")
+
+	if _, err := runWorkdirIn(info, job); err == nil || !strings.Contains(err.Error(), "run-active (running)") {
+		t.Fatalf("err = %v, want a refusal that names the active run", err)
+	}
+}
+
+func TestRunWorkdirIn_AllowsAWorkflowAgentOfADoneRunBeforeItsStepIsSaved(t *testing.T) {
+	home := t.TempDir()
+	info := flow.RepoInfo{Home: home, Repo: "owner/repo"}
+	wt := t.TempDir()
+	saveTestRun(t, home, "run-done", "done", wt, "job-other")
+	job := startNamedJob(t, "run-done/coder")
+
+	if dir, err := runWorkdirIn(info, job); err != nil || dir != wt {
+		t.Fatalf("dir=%q err=%v, want the worktree of the done run", dir, err)
+	}
+}
+
+func TestRunWorkdirIn_PlainJobNameIsNoRun(t *testing.T) {
+	// "foo/bar" names no run: there is no state file of run foo, so the
+	// agent belongs to no run and the resume is allowed.
+	home := t.TempDir()
+	info := flow.RepoInfo{Home: home, Repo: "owner/repo"}
+	job := startNamedJob(t, "foo/bar")
+
+	if dir, err := runWorkdirIn(info, job); err != nil || dir != "" {
 		t.Fatalf("dir=%q err=%v, want no worktree and no error", dir, err)
 	}
 }
