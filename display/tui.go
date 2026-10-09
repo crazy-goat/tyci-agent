@@ -480,7 +480,13 @@ type TuiModel struct {
 	// tui_sidebar.go's updateSidebar for the Left/Right boundary-exit logic.
 	sidebarFocused bool
 	sidebarTab     int // one of the sidebarTab* constants (tui_sidebar.go)
-	sidebarCursor  int // selected row within the current tab's list, if any
+	// sidebarWidthPercent is the sidebar width as a percent of the terminal
+	// width (see sidebarColumnWidth). Shift+Left/Right change it; it is saved
+	// to ~/.tyci/tui-state.json (tui_state.go). 0 means the default.
+	sidebarWidthPercent float64
+	// sidebarWidthSeq numbers the width key presses; only the newest one saves.
+	sidebarWidthSeq int
+	sidebarCursor   int // selected row within the current tab's list, if any
 	// sidebarScroll is the first visible line's index into the active tab's
 	// rendered lines (tui_sidebar_view.go's sidebarTabLines) — a plain
 	// vertical offset, distinct from sidebarCursor: a non-selectable tab
@@ -572,5 +578,6 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 		toolCount:             toolCount,
 		skillCount:            skillCount,
 		mcpCount:              mcpCount,
+		sidebarWidthPercent:   defaultSidebarWidthPercent,
 	}
 }

@@ -312,6 +312,8 @@ tyci run --prompt "What is the capital of France?"
 tyci tui
 ```
 
+The sidebar (Ctrl+T) has a width you can change. Shift+Left makes it wider and Shift+Right makes it narrower, one column per press. With the sidebar focused, `<` and `>` do the same. The width is a percentage of the terminal width, and it is saved globally in `~/.tyci/tui-state.json` (`sidebar_width_percent`, default `40`). The sidebar keeps at least 36 columns and the chat keeps at least 40.
+
 ## Run transcripts
 
 Every agent visit of a flow run writes its messages to
@@ -341,6 +343,7 @@ runs. A negative value is a config error.
 ├── agents/             # Markdown agent definitions (<name>.md, global)
 │   └── .managed.json   # sha256 bookkeeping for the builtin definitions (see below)
 ├── history             # Readline history file
+├── tui-state.json      # TUI UI state, e.g. the sidebar width (written by the TUI)
 ├── debug/              # Debug logs (when --no-debug is not set)
 ├── sessions/           # Auto-generated session files (JSONL)
 └── worktrees/          # Fixed-path issue worktrees (<repo>/issue-N)
