@@ -132,3 +132,40 @@ func TestNotice_Stopped_NoPR(t *testing.T) {
 		t.Fatalf("notice = %q", got)
 	}
 }
+
+// savePausedRun writes a paused run of workflow demo at state ask.
+func savePausedRun(t *testing.T, e *mgrEnv, id string) {
+	t.Helper()
+	st := &RunState{Version: 1, Run: id, Workflow: "demo", Repo: "o/r", Issue: 1,
+		Status: "paused", Current: "ask", Visits: map[string]int{}, History: []Step{}}
+	if err := (&Store{Dir: RunDir(e.home, "r", id)}).Save(st); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStop_PausedRunHintListsItsAnswers(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{release: make(chan struct{}), key: "ok"})
+	savePausedRun(t, e, "20990101-000000-2")
+	_, err := e.m.Stop("20990101-000000-2", "")
+	if err == nil || !strings.Contains(err.Error(), "one of the answers: retry, stop") {
+		t.Fatalf("err = %v, want the answers of the paused state", err)
+	}
+}
+
+// A workflow without a "stop" key must not get a hint that names one.
+func TestStop_PausedRunWithoutStopKeyHintHasNoStop(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{release: make(chan struct{}), key: "ok"})
+	e.m.Workflow = func(RepoInfo, string) (*Workflow, error) {
+		wf := demoWF()
+		wf.States["ask"] = State{Ask: "Need a decision.", On: map[string]string{"retry": "c"}}
+		return wf, nil
+	}
+	savePausedRun(t, e, "20990101-000000-3")
+	_, err := e.m.Stop("20990101-000000-3", "")
+	if err == nil || !strings.Contains(err.Error(), "one of the answers: retry") {
+		t.Fatalf("err = %v, want the answer retry", err)
+	}
+	if strings.Contains(err.Error(), "stop") {
+		t.Fatalf("hint names a stop answer the workflow does not have: %v", err)
+	}
+}

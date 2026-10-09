@@ -22,6 +22,8 @@ type WorkflowManager interface {
 	Status(run string) (any, error)
 	// Resume answers a paused run; a bad answer returns an error listing the keys.
 	Resume(run, answer string) error
+	// Stop ends an active run and returns a JSON-ready summary of it.
+	Stop(run, reason string) (any, error)
 }
 
 // WorkflowInfo describes a workflow for the model.
@@ -78,6 +80,16 @@ func workflowJSON(v any) ToolResult {
 	return ToolResult{Type: "result", Success: true, Content: string(b)}
 }
 
+// StopWorkflowRun stops an active run through the wired workflow manager. It is
+// used by the workflow_stop tool, by the /stop command and by the Runs tab key.
+func StopWorkflowRun(run, reason string) (any, error) {
+	m, bad := getWorkflowManager()
+	if bad != nil {
+		return nil, errors.New(bad.Error)
+	}
+	return m.Stop(strings.TrimSpace(run), reason)
+}
+
 // WorkflowStartTool starts a workflow run.
 type WorkflowStartTool struct{}
 
@@ -129,6 +141,23 @@ func (t *WorkflowStatusTool) Run(_ context.Context, input map[string]any) ToolRe
 		return *bad
 	}
 	st, err := m.Status(stringParam(input, "run", ""))
+	if err != nil {
+		return workflowFail(err)
+	}
+	return workflowJSON(st)
+}
+
+// WorkflowStopTool stops an active run. The worktree and the pull request stay.
+type WorkflowStopTool struct{}
+
+func (t *WorkflowStopTool) Name() string { return "workflow_stop" }
+
+func (t *WorkflowStopTool) Run(_ context.Context, input map[string]any) ToolResult {
+	run := stringParam(input, "run", "")
+	if run == "" {
+		return ToolResult{Type: "result", Success: false, Error: "workflow_stop requires run", validationError: true}
+	}
+	st, err := StopWorkflowRun(run, stringParam(input, "reason", ""))
 	if err != nil {
 		return workflowFail(err)
 	}
@@ -241,7 +270,7 @@ func workflowParams(input map[string]any) ([]string, error) {
 }
 
 // workflowToolsSchema is the schema of the workflow_* tools. They are for the
-// chat model only: all three are in subagentDeniedTools. The start description
+// chat model only: all four are in subagentDeniedTools. The start description
 // lists list, so the model picks a real workflow.
 func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 	fn := func(name, desc string, props map[string]any, required []string) map[string]any {
@@ -268,6 +297,11 @@ func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 			}, []string{"workflow"}),
 		fn("workflow_status", "Show the state of a workflow run: status, current state, visits, last history entries, PR.",
 			map[string]any{"run": map[string]any{"type": "string", "description": "Run id (default: newest run)."}}, []string{}),
+		fn("workflow_stop", "Stop an active workflow run. The worktree and the pull request stay. Use workflow_status first if the run is not known.",
+			map[string]any{
+				"run":    map[string]any{"type": "string", "description": "Run id."},
+				"reason": map[string]any{"type": "string", "description": "Why the run stops. Optional."},
+			}, []string{"run"}),
 		fn("workflow_resume", "Answer a paused workflow run. Use one of the answers named in the pause notice: \"retry\" (back to the worker), \"stop\" (end the run), \"retry <note>\" (back to the worker with the note), \"goto <state>\" (continue at that state) or \"resume\" (only for a run paused at start-up: continue at its saved state). When the pause has a workflow proposal, first show its summary and patch from workflow_status to the user, then answer \"apply\" (opens a PR with the change of .tyci/workflows/<name>/) or \"reject\" only as the user says; the run stays paused for its normal answer.",
 			map[string]any{
 				"run":    map[string]any{"type": "string", "description": "Run id."},

@@ -189,6 +189,18 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runLister = rl.fn
 		return m, nil
 	}
+	if rs, ok := msg.(tuiSetRunStopperMsg); ok {
+		m.runStopper = rs.fn
+		return m, nil
+	}
+	if res, ok := msg.(runStopResultMsg); ok {
+		if res.err != nil {
+			m.statusMessage = "stop run " + res.run + ": " + res.err.Error()
+		} else {
+			m.statusMessage = "run " + res.run + " stopped"
+		}
+		return m, nil
+	}
 	if next, cmd, handled := m.handleAgentInputMsg(msg); handled {
 		return next, cmd
 	}

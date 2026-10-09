@@ -120,6 +120,9 @@ func (m TuiModel) runsTab(width int) runsView {
 			v.add(fillWidth("   "+runStepText(r, now), width), i)
 		}
 	}
+	if m.sidebarStopRun != "" {
+		v.add(dim.Render(fillWidth(" Stop run "+m.sidebarStopRun+"? press y to confirm", width)), -1)
+	}
 	return v
 }
 

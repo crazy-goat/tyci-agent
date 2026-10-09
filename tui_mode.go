@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -91,6 +92,44 @@ func handleBtwQuestionCommand(disp slashCommandDisplay, question string, spawn f
 	}
 	disp.ResetStatus()
 	spawn(question)
+}
+
+// parseStopArgs splits the argument of "/stop <run> [reason]". The run is the
+// first word. The rest of the line is the reason.
+func parseStopArgs(arg string) (run, reason string, err error) {
+	run, reason, _ = strings.Cut(strings.TrimSpace(arg), " ")
+	if run == "" {
+		return "", "", errors.New("usage: /stop <run> [reason]")
+	}
+	return run, strings.TrimSpace(reason), nil
+}
+
+// handleStopCommand implements "/stop <run> [reason]". Stopping a run never
+// runs the agent, so it calls disp.ResetStatus() first, like the commands above.
+func handleStopCommand(disp slashCommandDisplay, arg string, stop func(run, reason string) (any, error)) {
+	disp.ResetStatus()
+	stopCommandOutput(disp, arg, stop)
+}
+
+// stopCommandOutput stops the run of a "/stop" line and shows the saved state
+// of the run. It does not touch the status, so it is safe while a turn runs.
+func stopCommandOutput(disp slashCommandDisplay, arg string, stop func(run, reason string) (any, error)) {
+	run, reason, err := parseStopArgs(arg)
+	if err != nil {
+		disp.Error(err)
+		return
+	}
+	st, err := stop(run, reason)
+	if err != nil {
+		disp.Error(fmt.Errorf("/stop: %v", err))
+		return
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		disp.Error(fmt.Errorf("/stop: %v", err))
+		return
+	}
+	disp.ToolBlock(string(b))
 }
 
 // handleMsgSlashCommand implements "/msg <job> <text>": posts to a job's
@@ -302,6 +341,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				startBtwQuestion(question)
 			case strings.HasPrefix(cmd, "/msg "):
 				handleMsgCommand(strings.TrimSpace(strings.TrimPrefix(cmd, "/msg")))
+			case cmd == "/stop" || strings.HasPrefix(cmd, "/stop "):
+				stopCommandOutput(tuiDisp, strings.TrimPrefix(cmd, "/stop"), tools.StopWorkflowRun)
 			}
 		}
 		return nil
@@ -437,6 +478,12 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// just the one containing cwd.
 				iterCancel()
 				handleResumeAllCommand(tuiDisp, session.ResumeEntriesAll)
+				continue
+			case trimmed == "/stop" || strings.HasPrefix(trimmed, "/stop "):
+				// /stop <run> [reason]: stop a workflow run. The run is not the
+				// conversation, so the turn state is left alone.
+				iterCancel()
+				handleStopCommand(tuiDisp, strings.TrimPrefix(trimmed, "/stop"), tools.StopWorkflowRun)
 				continue
 			case trimmed == "/btw":
 				// Bare /btw: browse previous side-conversations from this session.

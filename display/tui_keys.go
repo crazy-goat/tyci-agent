@@ -140,6 +140,16 @@ func (m TuiModel) handleLocalSlashCommand() (bool, tea.Model) {
 	case lower == "/compact" || strings.HasPrefix(lower, "/compact "):
 		m.statusMessage = "/compact has to wait — it changes the conversation this turn is writing to. Esc stops the turn, then press Enter."
 		return true, m
+	case lower == "/stop" || strings.HasPrefix(lower, "/stop "):
+		// Stopping a run does not touch the conversation the turn writes to,
+		// so it is routed to the main loop like /msg.
+		m.input.Reset()
+		m.input.SetHeight(1)
+		m.closeFileComplete()
+		if m.commands != nil {
+			enqueueOrStatus(m.commands, line, &m.statusMessage)
+		}
+		return true, m
 	case strings.HasPrefix(lower, "/msg "):
 		// Posting to a job's mailbox doesn't touch the conversation the
 		// running turn is writing to, but resolving/posting needs

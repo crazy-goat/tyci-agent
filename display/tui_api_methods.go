@@ -43,6 +43,12 @@ func (t *TUI) SetRunLister(fn func() []TuiRunRow) {
 	t.prog.Send(tuiSetRunListerMsg{fn: fn})
 }
 
+// SetRunStopper wires the Runs tab stop key to fn, which stops a run by id.
+// It runs in a background command, so it may block.
+func (t *TUI) SetRunStopper(fn func(run string) error) {
+	t.prog.Send(tuiSetRunStopperMsg{fn: fn})
+}
+
 // SetWorkflowStarter gives the TUI the workflow runner. Call it once, before
 // the first user input.
 func (t *TUI) SetWorkflowStarter(s WorkflowStarter) {

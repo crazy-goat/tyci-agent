@@ -42,6 +42,26 @@ func TestBtwWhileBusyGoesToTheCommandChannel(t *testing.T) {
 	}
 }
 
+// TestStopWhileBusyGoesToTheCommandChannel: /stop ends a run, not the turn, so
+// it is routed to the main loop instead of being sent to the model as a prompt.
+func TestStopWhileBusyGoesToTheCommandChannel(t *testing.T) {
+	for _, typed := range []string{"/stop 20261005-120301-160", "/stop 20261005-120301-160 too slow"} {
+		m := busyModel(t, typed)
+		handled, next := m.handleLocalSlashCommand()
+		if !handled {
+			t.Fatalf("%q fell through to submit()", typed)
+		}
+		select {
+		case cmd := <-next.(TuiModel).commands:
+			if cmd != typed {
+				t.Fatalf("command channel got %q, want %q", cmd, typed)
+			}
+		default:
+			t.Fatalf("%q was swallowed: nothing reached the command channel", typed)
+		}
+	}
+}
+
 // TestConversationChangingCommandsAreRefusedWhileBusy: these replace or end
 // the conversation the running turn is writing to, so they cannot run mid-turn
 // — but they must not be handed to the model either.
