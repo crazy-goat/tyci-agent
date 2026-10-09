@@ -20,7 +20,11 @@ import (
 // history rather than a live registry, for the sidebar's Lua tab (TODO
 // item 1).
 type LuaRun struct {
-	Name      string
+	Name string
+	// Owner is the job id of the agent that ran the tool (JobIDCtxKey), empty
+	// for the main conversation. The sidebar's Tasks tab lists a run under
+	// the agent that owns it.
+	Owner     string
 	StartedAt time.Time
 	Duration  time.Duration
 	Success   bool
@@ -158,8 +162,10 @@ func newTopLevelFunction(L *lua.LState, proto *lua.FunctionProto) *lua.LFunction
 func (t *LuaTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	started := time.Now()
 	res := t.run(ctx, input)
+	owner, _ := ctx.Value(JobIDCtxKey{}).(string)
 	recordLuaRun(LuaRun{
 		Name:      t.name,
+		Owner:     owner,
 		StartedAt: started,
 		Duration:  time.Since(started),
 		Success:   res.Success,

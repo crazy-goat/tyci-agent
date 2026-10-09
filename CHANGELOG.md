@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- TUI: the Bash and Lua lists on the sidebar Tasks tab show only the jobs of one agent: `main` or a subagent. Press Enter, or click, on a row of the Subagents list to select that agent. Moving the cursor does not change the selection. With `main` selected, the lists also show the jobs of a subagent that is no longer in the Subagents list. Enter on a subagent without a live transcript still closes the sidebar, so it cannot select that agent (#523).
 - TUI: the Subagents list on the sidebar Tasks tab shows the active subagents first, newest start first. A separator line follows them, then the finished subagents, most recently finished first. The cursor stays on the same subagent when it moves to the finished part (#526).
 
 ### Added

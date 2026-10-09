@@ -482,6 +482,10 @@ type TuiModel struct {
 	// sync with the cursor via sidebarClampScrollToCursor so the selected
 	// row is always on screen.
 	sidebarScroll int
+	// sidebarTaskOwner is the job id of the agent whose Bash and Lua rows the
+	// Tasks tab lists: the Subagents row that Enter or a click selected last,
+	// empty for main (see sidebarActivateRow in tui_sidebar.go).
+	sidebarTaskOwner string
 
 	// sidebarRunsExpanded holds the run ids the Runs tab shows expanded
 	// (every step). A run is collapsed unless its id is true here.
