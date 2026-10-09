@@ -74,9 +74,16 @@ func TestRenderSidebarTasksMatchesLegacyTwoCallPath(t *testing.T) {
 		for _, cursor := range []int{-1, 0, 1, 5, 40, 500} {
 			m := base
 			m.sidebarCursor = cursor
-			got := renderAllSidebarTasks(m, width)
-			want := legacyRenderSidebarTasks(m, width)
-			if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			// The two renders run at different moments and the rows show
+			// elapsed times, so a render pair that straddles a second or
+			// minute boundary can differ. A real difference repeats.
+			same := false
+			for attempt := 0; attempt < 5 && !same; attempt++ {
+				got := renderAllSidebarTasks(m, width)
+				want := legacyRenderSidebarTasks(m, width)
+				same = strings.Join(got, "\n") == strings.Join(want, "\n")
+			}
+			if !same {
 				t.Fatalf("width %d cursor %d: render differs from the legacy path", width, cursor)
 			}
 		}
