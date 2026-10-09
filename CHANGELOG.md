@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
-- TUI: each wheel event and the redraw after it are faster on a session with many blocks, most of them flushed to disk. The status bar looked up the model's context limit with a full scan and sort of the pricing catalog on every redraw when the model id was not in the catalog. Such a lookup now runs once per model id and provider (#595).
+- TUI: a redraw is cheaper when the model id is not in the pricing catalog. The status bar looked up the model's context limit with a full scan and sort of the catalog on every redraw, so each wheel event paid for it. The lookup is now remembered per provider and model. The freeze on fast scrolling reported in #595 was not reproduced. This change only lowers one measured per-redraw cost (#595).
 
 ## [0.7.0] - 2026-10-09
 

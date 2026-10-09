@@ -185,3 +185,18 @@ func TestLookup_MemoIsClearedByReset(t *testing.T) {
 		t.Fatalf("lookup after Reset returned a stale entry: %+v", r)
 	}
 }
+
+// A second Lookup of an unknown model must come from the memo, not from another
+// scan of the catalog. The test plants a marker under the memo key. A rescan
+// would return zero rates and not the marker, so the test fails without the memo.
+func TestLookup_UnknownModelIsNotRescanned(t *testing.T) {
+	withCatalog(t, testCatalog)
+	const model = "no-such-model"
+	if r, _ := Lookup("", model); r.Known() {
+		t.Fatalf("first lookup: unexpected rates %+v", r)
+	}
+	lookupMemo.Store(memoKey("", model), catalogHit{rates: Rates{Input: 42}})
+	if r, _ := Lookup("", model); r.Input != 42 {
+		t.Fatalf("second lookup rescanned the catalog: rates %+v, want the memoized entry", r)
+	}
+}

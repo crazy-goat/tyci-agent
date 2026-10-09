@@ -137,8 +137,13 @@ type catalogHit struct {
 // repaint. Reset clears it.
 var lookupMemo sync.Map // key: provider + "\x00" + model, value: catalogHit
 
+// memoKey is the lookupMemo key for one provider and model pair.
+func memoKey(provider, model string) string {
+	return provider + "\x00" + model
+}
+
 func lookupCatalog(provider, model string) (Rates, Limits) {
-	key := provider + "\x00" + model
+	key := memoKey(provider, model)
 	if v, ok := lookupMemo.Load(key); ok {
 		h := v.(catalogHit)
 		return h.rates, h.limits

@@ -1,19 +1,65 @@
 package display
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/crazy-goat/tyci-agent/internal/pricing"
 )
 
-// newWheelBenchModel returns a 120 x 40 model with `blocks` text blocks. Each
-// block renders about 1 KiB, so the resident budget is exceeded and the oldest
-// blocks are flushed to the scrollback file, as in a long session.
+// useFixtureCatalog points HOME at a temporary directory with a providers.json
+// of 40 providers and 50 models each. The status bar looks up the model context
+// limit on every redraw, so the catalog size sets the cost of an unknown model
+// id. Without the fixture, the cost would depend on the developer's own catalog.
+// The model "test/model" that newTestModel uses is not in the fixture, so it
+// takes the full-scan path.
+func useFixtureCatalog(tb testing.TB) {
+	tb.Helper()
+	home := tb.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".tyci"), 0o755); err != nil {
+		tb.Fatal(err)
+	}
+	catalog := map[string]any{}
+	for p := 0; p < 40; p++ {
+		models := map[string]any{}
+		for m := 0; m < 50; m++ {
+			id := fmt.Sprintf("model-%03d", m)
+			models[id] = map[string]any{
+				"id":    id,
+				"name":  "Model " + id,
+				"cost":  map[string]any{"input": 1, "output": 2},
+				"limit": map[string]any{"context": 100000, "output": 8000},
+			}
+		}
+		pid := fmt.Sprintf("provider-%02d", p)
+		catalog[pid] = map[string]any{"id": pid, "name": pid, "models": models}
+	}
+	data, err := json.Marshal(catalog)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".tyci", "providers.json"), data, 0o644); err != nil {
+		tb.Fatal(err)
+	}
+	tb.Setenv("HOME", home)
+	pricing.Reset()
+	tb.Cleanup(pricing.Reset)
+}
+
+// newWheelBenchModel returns a 120 x 40 model with `blocks` text blocks, using
+// the fixture catalog. Each block renders about 1 KiB, so the resident budget is
+// exceeded and the oldest blocks are flushed to the scrollback file, as in a
+// long session.
 func newWheelBenchModel(tb testing.TB, blocks int) TuiModel {
 	tb.Helper()
+	useFixtureCatalog(tb)
 	m := newTestModel()
 	body := strings.Repeat("lorem ipsum dolor sit amet consectetur ", 25)
 	for i := 0; i < blocks; i++ {
@@ -51,6 +97,40 @@ func BenchmarkScrollWheel(b *testing.B) {
 		m := newWheelBenchModel(b, 500)
 		b.StartTimer()
 		for i := 0; i < 100; i++ {
+			m = wheelUp(m)
+		}
+		_ = m.View()
+	}
+}
+
+// BenchmarkScrollWheelStreaming is BenchmarkScrollWheel with a streamed text
+// delta before each wheel event, as while an agent streams. The delta goes
+// through handleBlockMsg, the same path as a model token.
+func BenchmarkScrollWheelStreaming(b *testing.B) {
+	b.ReportAllocs()
+	for n := 0; n < b.N; n++ {
+		b.StopTimer()
+		m := newWheelBenchModel(b, 500)
+		b.StartTimer()
+		for i := 0; i < 100; i++ {
+			m.handleBlockMsg(tuiMsgBlock{kind: "text", content: "streamed token "})
+			m = wheelUp(m)
+		}
+		_ = m.View()
+	}
+}
+
+// BenchmarkScrollWheelInvalidated is BenchmarkScrollWheel with
+// invalidateTotalLines before each wheel event. That sets cachedTotalLines to -1,
+// the suspect in issue #595, so each event recounts every block.
+func BenchmarkScrollWheelInvalidated(b *testing.B) {
+	b.ReportAllocs()
+	for n := 0; n < b.N; n++ {
+		b.StopTimer()
+		m := newWheelBenchModel(b, 500)
+		b.StartTimer()
+		for i := 0; i < 100; i++ {
+			m.invalidateTotalLines()
 			m = wheelUp(m)
 		}
 		_ = m.View()
