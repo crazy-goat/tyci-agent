@@ -312,3 +312,100 @@ func TestSidebarWidth_FooterNamesBothKeysFirst(t *testing.T) {
 		}
 	}
 }
+
+func TestSidebarWidth_FocusedShiftKeysChangeOneColumnEach(t *testing.T) {
+	useTempHome(t)
+	m := sidebarWidthModel(120)
+	m.sidebarFocused = true
+	base := m.sidebarColumnWidth()
+
+	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyShiftLeft})
+	if got := m.sidebarColumnWidth(); got != base+1 {
+		t.Fatalf("focused Shift+Left: want %d columns, got %d", base+1, got)
+	}
+	if !m.sidebarFocused {
+		t.Fatalf("focused Shift+Left: focus left the sidebar")
+	}
+	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyShiftRight})
+	if got := m.sidebarColumnWidth(); got != base {
+		t.Fatalf("focused Shift+Right: want %d columns, got %d", base, got)
+	}
+	m = pressKey(t, m, tea.KeyMsg{Type: tea.KeyShiftRight})
+	if got := m.sidebarColumnWidth(); got != base-1 {
+		t.Fatalf("focused Shift+Right again: want %d columns, got %d", base-1, got)
+	}
+	if !m.sidebarFocused {
+		t.Fatalf("focused Shift+Right: focus left the sidebar")
+	}
+}
+
+func TestSidebarWidth_KeyPressSchedulesSaveOfNewestPress(t *testing.T) {
+	home := useTempHome(t)
+	m := sidebarWidthModel(120)
+
+	model, cmd := m.resizeSidebar(1)
+	m = model
+	if cmd == nil {
+		t.Fatalf("a key press returned no timer command, so it would never save")
+	}
+	// Running the tick cmd gives the save message of this press.
+	msg, ok := cmd().(sidebarWidthSaveMsg)
+	if !ok {
+		t.Fatalf("timer command did not produce a sidebarWidthSaveMsg")
+	}
+	if msg.seq != m.sidebarWidthSeq {
+		t.Fatalf("timer message seq %d, want newest seq %d", msg.seq, m.sidebarWidthSeq)
+	}
+
+	// A second press makes the first timer stale.
+	model, cmd2 := m.resizeSidebar(1)
+	m = model
+	if cmd2 == nil {
+		t.Fatalf("second key press returned no timer command")
+	}
+	if _, saveCmd := m.Update(msg); saveCmd != nil {
+		t.Fatalf("stale timer must not save")
+	}
+
+	// The newest timer saves the width of the last press.
+	newest, ok := cmd2().(sidebarWidthSaveMsg)
+	if !ok {
+		t.Fatalf("second timer command did not produce a sidebarWidthSaveMsg")
+	}
+	_, saveCmd := m.Update(newest)
+	if saveCmd == nil {
+		t.Fatalf("newest timer returned no save command")
+	}
+	saveCmd()
+	path := filepath.Join(home, ".tyci", tuiStateFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("state file not written: %v", err)
+	}
+	var st tuiState
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatalf("state file is not JSON: %v", err)
+	}
+	if st.SidebarWidthPercent != m.sidebarWidthPercent {
+		t.Fatalf("saved %v, want %v", st.SidebarWidthPercent, m.sidebarWidthPercent)
+	}
+}
+
+func TestSidebarWidth_PressAtLimitSchedulesNothing(t *testing.T) {
+	useTempHome(t)
+	m := sidebarWidthModel(100)
+	for m.sidebarColumnWidth() > sidebarMinPanel+1 {
+		model, _ := m.resizeSidebar(-1)
+		m = model
+	}
+	seq := m.sidebarWidthSeq
+	percent := m.sidebarWidthPercent
+
+	model, cmd := m.resizeSidebar(-1)
+	if cmd != nil {
+		t.Fatalf("press at the sidebar minimum returned a command")
+	}
+	if model.sidebarWidthSeq != seq || model.sidebarWidthPercent != percent {
+		t.Fatalf("press at the sidebar minimum changed the state")
+	}
+}
