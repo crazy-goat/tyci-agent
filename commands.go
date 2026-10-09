@@ -449,15 +449,9 @@ var runCmd = &cobra.Command{
 			return err
 		}
 		// cleanup bundles everything that must run once, however this
-		// invocation ends: the normal return below (via defer) AND the two
-		// os.Exit paths inside finishPromptRun (via the cleanup param passed
-		// to runPrompt) -- os.Exit terminates before any defer gets to run,
-		// so runPrompt/finishPromptRun call this explicitly right before
-		// each os.Exit. Without it, an errored or Ctrl-C'd `tyci run` would
-		// skip tools.ShutdownMCP() (and the debug log's Close()) entirely,
-		// leaking a connected MCP server's process on every failed or
-		// canceled run -- cron's included, since it just shells out to
-		// `tyci run`. See finishPromptRun's doc comment (prompt_finish.go).
+		// invocation ends. The exit code goes up as an error, so main exits
+		// only after this defer ran. That keeps tools.ShutdownMCP() and the
+		// debug log's Close() on the failed and canceled paths too.
 		cleanup := func() {
 			dropLeftoverNotices(os.Stderr)
 			if dl != nil {
@@ -476,7 +470,9 @@ var runCmd = &cobra.Command{
 		// No TUI reads the orchestrator inbox here. The model reads its
 		// notices through NextMessages, so a notice reaches the model.
 		cond.SetNextMessages(withOrchestratorNotices(cond.Config().NextMessages))
-		runPrompt(cond, disp, prompt, ctx, cleanup)
+		if code := runPrompt(cond, disp, prompt, ctx); code != 0 {
+			return exitCodeError(code)
+		}
 		return nil
 	},
 }

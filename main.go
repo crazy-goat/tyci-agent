@@ -954,6 +954,11 @@ func wireTools() {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+// run starts tyci and returns its exit code. Its defers run before main exits.
+func run() int {
 	// The process-wide message bus of v0.7.0. Its journal is
 	// <session dir>/bus.jsonl when the session directory exists. It is set
 	// before wireTools, which subscribes to it.
@@ -976,11 +981,11 @@ func main() {
 	idle, escalate, err := agent.LoadTyciConfigFrom("").WatchdogDurations()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config:", err)
-		os.Exit(1)
+		return 1
 	}
 	if _, err := agent.LoadTyciConfigFrom("").PingIntervalDuration(); err != nil {
 		fmt.Fprintln(os.Stderr, "config:", err)
-		os.Exit(1)
+		return 1
 	}
 	wdCtx, stopWatchdog := context.WithCancel(context.Background())
 	go (&watchdog.Watchdog{
@@ -991,9 +996,14 @@ func main() {
 	err = rootCmd.Execute()
 	stopWatchdog()
 	if err != nil {
+		var code exitCodeError
+		if errors.As(err, &code) {
+			return int(code)
+		}
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // takeTranscriptPath returns the run transcript path of this child and a ctx
