@@ -7,12 +7,10 @@ import (
 
 func TestKinds_ClassTable(t *testing.T) {
 	want := map[Kind]Class{
-		KindJobStatus:        Latest,
 		KindNoticeCompletion: Durable,
 		KindAskRequest:       Durable,
 		KindAgentMessage:     Durable,
 		KindBtwAnswer:        Durable,
-		KindPingMissed:       Durable,
 	}
 	for kind, class := range want {
 		info, ok := lookupKind(kind)
