@@ -12,12 +12,23 @@ type Workflow struct {
 	// Name is optional in workflow.json. When set, it must equal the directory name.
 	Name string `json:"name"`
 	// Description is one line, shown by the / popup and by workflow_start.
-	Description string           `json:"description"`
-	Start       string           `json:"start"`
-	Defaults    Defaults         `json:"defaults"`
-	States      map[string]State `json:"states"`
+	Description string `json:"description"`
+	Start       string `json:"start"`
+	// Params are the positional parameters of a run, in order (#520).
+	Params   []Param          `json:"params,omitempty"`
+	Defaults Defaults         `json:"defaults"`
+	States   map[string]State `json:"states"`
 	// Source is the workflow directory the workflow was read from. Set by Lookup.
 	Source string `json:"-"`
+}
+
+// Param is one positional parameter of a workflow. A run gets its values as
+// strings, in the order of the params. The param "issue" is the issue number of
+// the run (#520).
+type Param struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Required    bool   `json:"required"`
 }
 
 // Defaults holds workflow-wide defaults.
@@ -64,12 +75,14 @@ type RunState struct {
 	Run      string `json:"run"`
 	Workflow string `json:"workflow"`
 	Repo     string `json:"repo"`
-	Issue    int    `json:"issue"`
-	Branch   string `json:"branch"`
-	Worktree string `json:"worktree"`
-	Status   string `json:"status"` // running|paused|done|failed
-	Reason   string `json:"reason,omitempty"`
-	Current  string `json:"current"`
+	Issue    int    `json:"issue"` // 0 when the workflow has no issue param
+	// Params are the bound param values of the run, by name (#520).
+	Params   map[string]string `json:"params,omitempty"`
+	Branch   string            `json:"branch"`
+	Worktree string            `json:"worktree"`
+	Status   string            `json:"status"` // running|paused|done|failed
+	Reason   string            `json:"reason,omitempty"`
+	Current  string            `json:"current"`
 	// EntryPending is true after a transition into Current, until the visit of
 	// that entry is saved. A restart counts the visit when it is still pending.
 	EntryPending bool `json:"entry_pending,omitempty"`
@@ -188,8 +201,10 @@ type RunContext struct {
 	StateName     string
 	Workflow      string // workflow name
 	// Prompt overrides the role prompt (the state "prompt"). Empty: the role prompt.
-	Prompt   string
-	Issue    int
+	Prompt string
+	Issue  int
+	// Params are the bound param values of the run, by name (#520).
+	Params   map[string]string
 	PR       int
 	Visit    int
 	AgentSeq int // run-wide agent counter; names the transcript file

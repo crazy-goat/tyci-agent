@@ -36,10 +36,10 @@ func (i RepoInfo) Name() string {
 	return i.Repo
 }
 
-// StartRequest says which workflow to start.
+// StartRequest says which workflow to start and its positional param values.
 type StartRequest struct {
 	Workflow string
-	Issue    int
+	Params   []string
 }
 
 // Manager starts and resumes runs in goroutines. Several runs may be active, but
@@ -60,8 +60,10 @@ type Manager struct {
 	// text (production: the roadmap workflow). It creates no run state. Optional.
 	Text func(ctx context.Context, info RepoInfo, wf *Workflow, input string) (string, error)
 
-	mu     sync.Mutex
-	base   context.Context
+	mu   sync.Mutex
+	base context.Context
+	// nprep numbers the preparations of runs without an issue (their active keys).
+	nprep  int
 	active map[string]activeRun
 	subs   map[int]func(RunEvent)
 	nsub   int
@@ -152,44 +154,58 @@ func (m *Manager) SetWorkers(n int) {
 	m.mu.Unlock()
 }
 
-// Start prepares a run and starts it in a goroutine. A run of the issue resumed
-// with the answer "resume" is returned instead of a new one, and a run of the
-// issue whose owner process is gone is resumed.
+// Start prepares a run and starts it in a goroutine. The param "issue" of the
+// workflow, when it has one, is the issue of the run. A run of that issue resumed
+// with the answer "resume" is returned instead of a new one, and a run of that
+// issue whose owner process is gone is resumed. A run without an issue is always
+// new.
 //
 // Prepare runs the repository's setup script, which can take minutes. Start
-// does not hold m.mu meanwhile. The issue is reserved in m.active while it is
+// does not hold m.mu meanwhile. The run is reserved in m.active while it is
 // prepared, so Shutdown cancels the preparation like an active run.
 func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string, error) {
 	if req.Workflow == "" {
 		return "", nil, errors.New("workflow name is required: start a workflow by name, or create one with tyci workflow init")
 	}
-	if req.Issue <= 0 {
-		return "", nil, fmt.Errorf("issue must be a positive number, got %d", req.Issue)
-	}
 	info, err := m.Info()
 	if err != nil {
 		return "", nil, err
 	}
-	prepCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	key := fmt.Sprintf("%s%d", preparingPrefix, req.Issue)
-	m.mu.Lock()
-	if id, ok := m.adopt(req.Issue); ok {
-		m.mu.Unlock()
-		return id, nil, nil
-	}
-	if err := m.refuse(info, req.Issue); err != nil {
-		m.mu.Unlock()
+	def, err := m.Workflow(info, req.Workflow)
+	if err != nil {
 		return "", nil, err
 	}
-	if id, found, err := m.resumeStale(info, req.Issue); found {
-		m.mu.Unlock()
-		return id, nil, err
+	params, err := BindParams(def, req.Params)
+	if err != nil {
+		return "", nil, err
+	}
+	issue := issueOf(params)
+	prepCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	m.mu.Lock()
+	if issue > 0 {
+		if id, ok := m.adopt(issue); ok {
+			m.mu.Unlock()
+			return id, nil, nil
+		}
+		if err := m.refuse(info, issue); err != nil {
+			m.mu.Unlock()
+			return "", nil, err
+		}
+		if id, found, err := m.resumeStale(info, issue); found {
+			m.mu.Unlock()
+			return id, nil, err
+		}
+	}
+	key := fmt.Sprintf("%s%d", preparingPrefix, issue)
+	if issue == 0 {
+		m.nprep++
+		key = fmt.Sprintf("%s0.%d", preparingPrefix, m.nprep)
 	}
 	if m.active == nil {
 		m.active = map[string]activeRun{}
 	}
-	m.active[key] = activeRun{cancel: cancel, issue: req.Issue}
+	m.active[key] = activeRun{cancel: cancel, issue: issue}
 	m.mu.Unlock()
 
 	st, wf, warnings, err := m.Prepare(prepCtx, info, req)

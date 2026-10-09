@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,14 +95,17 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 				return Lookup(name, info.Home, info.Root, info.Trusted)
 			},
 			Config: func() (*flowconfig.Config, error) { return flowconfig.Load(info.Home, info.Root, info.Trusted) },
-			AddIssue: func(ctx context.Context) (*worktree.Worktree, error) {
-				return worktree.AddIssue(ctx, info.Home, info.Root, req.Issue, info.DefaultBranch)
+			AddWorktree: func(ctx context.Context, runID string, issue int) (*worktree.Worktree, error) {
+				if issue > 0 {
+					return worktree.AddIssue(ctx, info.Home, info.Root, issue, info.DefaultBranch)
+				}
+				return worktree.AddRun(ctx, info.Home, info.Root, runID, info.DefaultBranch)
 			},
 			NewStore: func(runID string) (*Store, error) {
 				return &Store{Dir: RunDir(info.Home, info.Name(), runID)}, nil
 			},
 		}
-		return PrepareRun(ctx, d, PrepareReq{Workflow: req.Workflow, Repo: info.Repo, DefaultBranch: info.DefaultBranch, Issue: req.Issue})
+		return PrepareRun(ctx, d, PrepareReq{Workflow: req.Workflow, Repo: info.Repo, DefaultBranch: info.DefaultBranch, Params: req.Params})
 	}
 	m.NewRunner = func(info RepoInfo, wf *Workflow, st *RunState) *Runner {
 		runDir := RunDir(info.Home, info.Name(), st.Run)
@@ -156,7 +160,7 @@ type ChatTools struct{ M *Manager }
 
 // Start implements tools.WorkflowManager.
 func (c ChatTools) Start(ctx context.Context, workflow string, issue int) (string, []string, error) {
-	return c.M.Start(ctx, StartRequest{Workflow: workflow, Issue: issue})
+	return c.M.Start(ctx, StartRequest{Workflow: workflow, Params: []string{strconv.Itoa(issue)}})
 }
 
 // Resume implements tools.WorkflowManager.
@@ -195,6 +199,9 @@ func (c ChatTools) Status(run string) (any, error) {
 	}
 	if st.Reason != "" {
 		out["reason"] = st.Reason
+	}
+	if len(st.Params) > 0 {
+		out["params"] = st.Params
 	}
 	if st.Ask != nil {
 		out["ask"] = st.Ask.Message

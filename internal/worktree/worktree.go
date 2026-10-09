@@ -89,6 +89,21 @@ func AddIssue(ctx context.Context, home, repo string, issue int, defaultBranch s
 	if issue <= 0 {
 		return nil, fmt.Errorf("worktree: invalid issue number %d: must be positive", issue)
 	}
+	return addNamed(ctx, home, repo, fmt.Sprintf("issue-%d", issue), defaultBranch)
+}
+
+// AddRun is AddIssue for a workflow run that has no issue. It creates
+// <home>/.tyci/worktrees/<repoName>/run-<runID> on branch run-<runID>.
+func AddRun(ctx context.Context, home, repo, runID string, defaultBranch string) (*Worktree, error) {
+	if runID == "" {
+		return nil, fmt.Errorf("worktree: run id must not be empty")
+	}
+	return addNamed(ctx, home, repo, "run-"+runID, defaultBranch)
+}
+
+// addNamed is the shared part of AddIssue and AddRun: the worktree and the branch
+// are both named name.
+func addNamed(ctx context.Context, home, repo, name string, defaultBranch string) (*Worktree, error) {
 	if defaultBranch == "" {
 		return nil, fmt.Errorf("worktree: default branch must not be empty")
 	}
@@ -101,7 +116,7 @@ func AddIssue(ctx context.Context, home, repo string, issue int, defaultBranch s
 		return nil, err
 	}
 
-	branch := fmt.Sprintf("issue-%d", issue)
+	branch := name
 	target := filepath.Join(home, ".tyci", "worktrees", filepath.Base(root), branch)
 
 	if _, err := os.Stat(target); err == nil {

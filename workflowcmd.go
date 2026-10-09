@@ -83,15 +83,16 @@ var workflowSpawn = tools.RunSubagentTask
 // workflowResult is the one JSON object that the headless workflow commands
 // print on stdout with --json.
 type workflowResult struct {
-	RunID     string         `json:"run_id,omitempty"`
-	Workflow  string         `json:"workflow,omitempty"`
-	State     string         `json:"state,omitempty"`
-	Status    string         `json:"status,omitempty"` // running|paused|done|failed
-	Visits    map[string]int `json:"visits,omitempty"`
-	StateFile string         `json:"state_file,omitempty"`
-	OK        *bool          `json:"ok,omitempty"` // validate only
-	Errors    []string       `json:"errors,omitempty"`
-	Error     string         `json:"error,omitempty"`
+	RunID     string            `json:"run_id,omitempty"`
+	Workflow  string            `json:"workflow,omitempty"`
+	State     string            `json:"state,omitempty"`
+	Status    string            `json:"status,omitempty"` // running|paused|done|failed
+	Visits    map[string]int    `json:"visits,omitempty"`
+	Params    map[string]string `json:"params,omitempty"`
+	StateFile string            `json:"state_file,omitempty"`
+	OK        *bool             `json:"ok,omitempty"` // validate only
+	Errors    []string          `json:"errors,omitempty"`
+	Error     string            `json:"error,omitempty"`
 }
 
 var workflowRunCmd = &cobra.Command{
@@ -135,7 +136,7 @@ stderr. Exit code 0 means done or paused. Exit code 1 means failed or invalid.`,
 		unsubscribe := m.Subscribe(func(ev flow.RunEvent) { events <- ev })
 		defer unsubscribe()
 
-		runID, _, err := m.Start(ctx, flow.StartRequest{Workflow: args[0], Issue: issue})
+		runID, _, err := m.Start(ctx, flow.StartRequest{Workflow: args[0], Params: []string{strconv.Itoa(issue)}})
 		if err != nil {
 			return fail(cmd, jsonOut, err)
 		}
@@ -248,6 +249,7 @@ func runResult(st *flow.RunState, statePath string) workflowResult {
 		State:     st.Current,
 		Status:    st.Status,
 		Visits:    st.Visits,
+		Params:    st.Params,
 		StateFile: statePath,
 	}
 	if st.Status == "failed" {

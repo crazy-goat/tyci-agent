@@ -116,7 +116,7 @@ func TestManager_PostReviewFailReachesNotify(t *testing.T) {
 		}}
 		return st, wf, w, err
 	}
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1}); err != nil {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}}); err != nil {
 		t.Fatal(err)
 	}
 	if n := e.notice(t); !strings.Contains(n, "posting the review") {

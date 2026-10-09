@@ -33,7 +33,7 @@ func TestFlowRunnerAskResumeMerged(t *testing.T) {
 	m := &fakeManager{}
 	r := NewRunner(m)
 	h, err := r.Start(context.Background(), "issue-to-merge", map[string]string{"issue": "7"})
-	if err != nil || m.req.Issue != 7 || m.req.Workflow != "issue-to-merge" {
+	if err != nil || m.req.Params[0] != "7" || m.req.Workflow != "issue-to-merge" {
 		t.Fatalf("err=%v req=%+v", err, m.req)
 	}
 	m.sub(flow.RunEvent{Run: "other", Status: "failed"})

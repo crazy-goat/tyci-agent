@@ -241,6 +241,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				Workflow:      st.Workflow,
 				Prompt:        s.Prompt,
 				Issue:         st.Issue,
+				Params:        st.Params,
 				PR:            st.PR,
 				Visit:         st.Visits[cur],
 				ArtifactDir:   artDir,

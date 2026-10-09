@@ -99,16 +99,19 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 		}
 	}
 	if role == "worker" {
-		fetch := r.IssueContext
-		if fetch == nil {
-			r.once.Do(func() { r.fetcher = newIssueFetcher() })
-			fetch = r.fetcher.fetch
+		// A run without an issue param has no issue text to add (#520).
+		if rc.Issue > 0 {
+			fetch := r.IssueContext
+			if fetch == nil {
+				r.once.Do(func() { r.fetcher = newIssueFetcher() })
+				fetch = r.fetcher.fetch
+			}
+			issueText, err := fetch(ctx, rc.Repo, rc.Issue)
+			if err != nil {
+				return "", "", err
+			}
+			text += "\n\n" + issueText
 		}
-		issueText, err := fetch(ctx, rc.Repo, rc.Issue)
-		if err != nil {
-			return "", "", err
-		}
-		text += "\n\n" + issueText
 		if rc.Note != "" {
 			text += "\n\n## Note from the orchestrator\n\n" + rc.Note + "\n"
 		}

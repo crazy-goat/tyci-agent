@@ -125,6 +125,32 @@ func TestAddIssue_LocationUnderHome(t *testing.T) {
 	}
 }
 
+func TestAddRun_LocationAndBranchAfterRunID(t *testing.T) {
+	work, _ := newRepoWithOrigin(t)
+	home := t.TempDir()
+
+	wt, err := AddRun(context.Background(), home, work, "20261009-101010-0", "main")
+	if err != nil {
+		t.Fatalf("AddRun: %v", err)
+	}
+	t.Cleanup(func() { _ = wt.Remove(context.Background()) })
+
+	root, err := Root(context.Background(), work)
+	if err != nil {
+		t.Fatalf("Root: %v", err)
+	}
+	want := filepath.Join(home, ".tyci", "worktrees", filepath.Base(root), "run-20261009-101010-0")
+	if wt.Dir != want {
+		t.Fatalf("Dir = %q, want %q", wt.Dir, want)
+	}
+	if wt.Branch != "run-20261009-101010-0" {
+		t.Fatalf("Branch = %q", wt.Branch)
+	}
+	if _, err := AddRun(context.Background(), home, work, "", "main"); err == nil {
+		t.Fatal("AddRun with an empty run id succeeded, want an error")
+	}
+}
+
 func TestAddIssue_ExistingDirFails(t *testing.T) {
 	work, _ := newRepoWithOrigin(t)
 	home := t.TempDir()

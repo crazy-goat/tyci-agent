@@ -133,6 +133,10 @@ An agent state can set its own prompt for that state only:
 `"prompt": "@prompts/<file>.md"` (relative to the workflow directory; no
 absolute path, no `..`, no symlink).
 
+A workflow declares its positional params in `workflow.json`, in the list `params`. Each param has a `name`, a `description` and `required`. A name matches `^[a-z][a-z0-9_]*$`. A run gets the values as strings, in the order of the params. Extra values are an error. A missing required value is an error that names the param.
+
+The task templates read a value as `{{.Params.<name>}}`. The param `issue` is the issue number of the run. A workflow without an `issue` param has no issue. Its worktree and branch are named after the run id, `run-<run id>`. `tyci workflow status` shows the params of a run.
+
 The `post_review` check state of a custom workflow must have a `default` key, or one key for each answer of `post_review.sh`.
 The answers are `ok`, `skip` and `fail`.
 The script answers `skip` when the run has no review step, for example a run that continues an open PR.

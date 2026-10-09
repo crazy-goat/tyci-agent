@@ -76,7 +76,7 @@ func (f okFixer) Run(_ context.Context, _, _ string, rc RunContext) (string, str
 }
 
 func proposalWF() *Workflow {
-	return &Workflow{Name: "issue-to-merge", Start: "fixer", States: map[string]State{
+	return &Workflow{Name: "issue-to-merge", Start: "fixer", Params: []Param{{Name: "issue", Description: "GitHub issue number", Required: true}}, States: map[string]State{
 		"fixer": {Agent: "fixer", On: map[string]string{"default": "ask"}},
 		"ask":   {Ask: "Need a decision.", On: map[string]string{"retry": "fixer", "stop": "end"}},
 		"end":   {End: true},
@@ -106,8 +106,8 @@ func newProposalEnv(t *testing.T, patch string) *proposalEnv {
 		Info:   func() (RepoInfo, error) { return e.info, nil },
 		Notify: func(s string) { e.notices <- s },
 		Prepare: func(_ context.Context, _ RepoInfo, req StartRequest) (*RunState, *Workflow, []string, error) {
-			id := NewRunID(req.Issue, time.Now())
-			st := &RunState{Version: 1, Run: id, Workflow: "issue-to-merge", Repo: "o/r", Issue: req.Issue,
+			id := NewRunID(testIssue(req), time.Now())
+			st := &RunState{Version: 1, Run: id, Workflow: "issue-to-merge", Repo: "o/r", Issue: testIssue(req),
 				Status: "running", Current: "fixer", Visits: map[string]int{}, History: []Step{}}
 			return st, proposalWF(), nil, (&Store{Dir: runDir(id)}).Save(st)
 		},
@@ -142,7 +142,7 @@ func (e *proposalEnv) notice(t *testing.T) string {
 
 func (e *proposalEnv) start(t *testing.T) string {
 	t.Helper()
-	id, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 3})
+	id, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"3"}})
 	if err != nil {
 		t.Fatal(err)
 	}

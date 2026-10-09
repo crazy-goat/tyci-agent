@@ -17,6 +17,7 @@ type TaskData struct {
 	Failed, FailedKey, FailedDir                          string // the failed check step (fixer, recover)
 	Pause, Goto                                           string // the pause message and goto states (ask)
 	Issue, PR, Visit                                      int
+	Params                                                map[string]string // the bound params (#520)
 }
 
 func renderTaskText(name, text string, d TaskData) (string, error) {
@@ -46,7 +47,7 @@ func (t TaskTemplates) Render(name string, rc RunContext) (string, error) {
 		Workflow: rc.Workflow,
 		Repo:     rc.Repo, Branch: rc.Branch, DefaultBranch: rc.DefaultBranch,
 		Worktree: rc.Worktree, RunDir: rc.RunDir, Reason: MaskSecrets(rc.Reason),
-		Issue: rc.Issue, PR: rc.PR, Visit: rc.Visit, Input: rc.Input,
+		Issue: rc.Issue, PR: rc.PR, Visit: rc.Visit, Input: rc.Input, Params: rc.Params,
 		Failed: rc.Failed, FailedKey: rc.FailedKey, FailedDir: rc.FailedDir,
 		Pause: rc.Pause, Goto: rc.Goto,
 	}

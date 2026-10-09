@@ -77,7 +77,7 @@ func (r *flowRunner) Start(ctx context.Context, workflow string, inputs map[stri
 	}
 	h := newFlowHandle()
 	unsub := r.m.Subscribe(h.add)
-	id, _, err := r.m.Start(ctx, flow.StartRequest{Workflow: workflow, Issue: n})
+	id, _, err := r.m.Start(ctx, flow.StartRequest{Workflow: workflow, Params: []string{strconv.Itoa(n)}})
 	if err != nil {
 		unsub()
 		return nil, err
