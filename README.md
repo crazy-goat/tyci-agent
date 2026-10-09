@@ -90,6 +90,27 @@ and answers `ok` (the step runs again) or `failed`. On `failed` the `oracle` ans
 step, the run pauses. The limits apply to the states named `fixer` and `oracle`, not to
 their agent role.
 
+### Pauses and the oracle
+
+The `oracle` agent answers a pause at an `ask` state before a human sees it. The oracle answers one of these forms:
+
+- `retry`: the run tries the work again.
+- `retry <note>`: the run tries again. The note goes to the worker prompt.
+- `goto <state>`: the run continues at that state.
+- `stop`: the run ends without a merge.
+- `ask`: a human must decide.
+
+Each oracle answer is a history step in `state.json` and a notice, for example `workflow run 606: oracle answered retry: CI runner has exception_ignore_args=On`. A run gets at most 2 oracle answers. Set `defaults.oracle_answers` in the workflow to change the limit. Set it to `0` to turn the oracle off.
+
+The oracle never answers these pauses. A human answers them:
+
+- a pause at an ask state with `"human": true`,
+- an apply or reject of a workflow proposal,
+- a merge to a protected branch, and an oracle answer that moves the run to the `merge` state,
+- a step that ends the run, or a step of the `oracle` agent, while the run has an open PR. The oracle can propose the step, and a human confirms it.
+
+An answer that is not valid, and an oracle error, go to a human. The pause message gives the reason. A pause that waits for a human says `needs a human` in the notice and on the Runs tab.
+
 ### Create or change a workflow
 
 Run `tyci workflow init issue-to-merge` to create the workflow `issue-to-merge` from the

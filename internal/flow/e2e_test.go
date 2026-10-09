@@ -609,14 +609,14 @@ func TestE2E_PushFail_FixerResetsToPRBranch(t *testing.T) {
 }
 
 func TestE2E_CITimeout_GoesToAsk(t *testing.T) {
-	e := newE2E(t, map[string][]string{"code": {"done"}, "review": {"ACCEPT"}})
+	e := newE2E(t, map[string][]string{"code": {"done"}, "review": {"ACCEPT"}, "oracle": {"ask ci timed out"}})
 	e.ctlSet("ci_bucket", "pending")
 	e.extraCheckEnv = []string{"TYCI_CI_POLL_SEC=0.1"}
 	ci := e.wf.States["ci"]
 	ci.TimeoutSec = 1
 	e.wf.States["ci"] = ci
 	e.mustPause()
-	e.wantStates("check_done, open_pr, code, review, lock, update, post_review, ci")
+	e.wantStates("check_done, open_pr, code, review, lock, update, post_review, ci, ask")
 	if h := e.st.History[7]; h.Key != "timeout" || h.To != "ask" {
 		t.Errorf("ci step = %+v", h)
 	}

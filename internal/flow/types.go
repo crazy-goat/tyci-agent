@@ -23,6 +23,9 @@ type Workflow struct {
 // Defaults holds workflow-wide defaults.
 type Defaults struct {
 	MaxVisits int `json:"max_visits"`
+	// OracleAnswers is how many oracle answers one run may use for its pauses.
+	// Nil means defaultOracleAnswers; 0 turns the oracle off (#531).
+	OracleAnswers *int `json:"oracle_answers,omitempty"`
 }
 
 // State is one node of the workflow graph.
@@ -35,8 +38,10 @@ type State struct {
 	// Prompt overrides the role prompt for this agent state only. Lookup
 	// replaces "@<file>" (relative to the workflow directory) with the file
 	// text. Without it, Lookup uses prompts/<role>.md of the workflow.
-	Prompt     string            `json:"prompt,omitempty"`
-	Ask        string            `json:"ask,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	Ask    string `json:"ask,omitempty"`
+	// Human makes an ask state wait for a human: the oracle does not answer it (#531).
+	Human      bool              `json:"human,omitempty"`
 	End        bool              `json:"end,omitempty"`
 	On         map[string]string `json:"on,omitempty"`
 	MaxVisits  int               `json:"max_visits,omitempty"`
@@ -197,6 +202,9 @@ type RunContext struct {
 	// Failed, FailedKey and FailedDir name the last check step, its key and its
 	// absolute artifact dir. Set only for the fixer and oracle roles (#369).
 	Failed, FailedKey, FailedDir string
+	// Pause is the pause message and Goto the states an oracle answer may name.
+	// Set only for the oracle answer to an ask pause (#531).
+	Pause, Goto string
 	// Stats is filled by the agent runner when the agent ends. Nil: not wanted.
 	Stats *StepStats
 }

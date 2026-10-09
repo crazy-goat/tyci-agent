@@ -15,6 +15,7 @@ type TaskData struct {
 	Workflow                                              string // workflow name
 	Input                                                 string // roadmap oracle input JSON
 	Failed, FailedKey, FailedDir                          string // the failed check step (fixer, recover)
+	Pause, Goto                                           string // the pause message and goto states (ask)
 	Issue, PR, Visit                                      int
 }
 
@@ -47,6 +48,7 @@ func (t TaskTemplates) Render(name string, rc RunContext) (string, error) {
 		Worktree: rc.Worktree, RunDir: rc.RunDir, Reason: MaskSecrets(rc.Reason),
 		Issue: rc.Issue, PR: rc.PR, Visit: rc.Visit, Input: rc.Input,
 		Failed: rc.Failed, FailedKey: rc.FailedKey, FailedDir: rc.FailedDir,
+		Pause: rc.Pause, Goto: rc.Goto,
 	}
 	if !taskName.MatchString(name) {
 		return "", fmt.Errorf("bad task name %q: use a-z, 0-9, _ and -", name)
