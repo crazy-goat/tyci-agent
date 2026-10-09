@@ -1,6 +1,9 @@
 package ledger
 
-import "github.com/crazy-goat/tyci-agent/stream"
+import (
+	"github.com/crazy-goat/tyci-agent/session"
+	"github.com/crazy-goat/tyci-agent/stream"
+)
 
 // Sink is the event interface the agent loop writes to, restated here so this
 // package never has to import agent (which would be a cycle: the conductor
@@ -55,6 +58,14 @@ type watcher struct {
 func (w *watcher) Summary(usage stream.Usage, stats stream.Stats) {
 	Record(w.kind, w.provider, w.model, w.jobID, usage)
 	w.Sink.Summary(usage, stats)
+}
+
+// Compaction forwards to the wrapped Sink's Compaction, if it has one. See
+// Phase for why the method is forwarded by hand.
+func (w *watcher) Compaction(meta session.CompactMeta) {
+	if cs, ok := w.Sink.(interface{ Compaction(session.CompactMeta) }); ok {
+		cs.Compaction(meta)
+	}
 }
 
 // Phase forwards to the wrapped Sink's Phase, if it has one. The embedded

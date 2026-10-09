@@ -46,7 +46,7 @@ func TestManualCompactSummary_CarriesRealDumpPathIntoConversation(t *testing.T) 
 		t.Fatal("expected a writable session")
 	}
 	predictedPath := session.DumpPathFor(cond.SessionPath())
-	returnedPath, err := cond.Compact(manualCompactSummary(predictedPath), "keep the deploy details")
+	returnedPath, err := cond.Compact(manualCompactSummary(predictedPath), "keep the deploy details", session.CompactMeta{})
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}

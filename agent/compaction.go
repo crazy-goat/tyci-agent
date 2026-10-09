@@ -73,8 +73,24 @@ Cover these points, in this order:
 5. Open questions.
 6. Anything the user asked to keep.`
 
-// CompactSession is the default compactor used by top-level conductors.
-func CompactSession(sess *session.Session, msgs *[]connector.Message, summary, focus string) (string, error) {
+// compactionSink is an optional Sink capability: a sink that shows the
+// divider of a compaction. It is optional for the same reason as PhaseSink
+// (run_once.go). Only the sinks of subagents (streamingCollector) and the
+// ledger wrapper that forwards to them implement it.
+type compactionSink interface {
+	Compaction(meta session.CompactMeta)
+}
+
+// emitCompaction tells d about a compaction, when d shows dividers.
+func emitCompaction(d Sink, meta session.CompactMeta) {
+	if cs, ok := d.(compactionSink); ok {
+		cs.Compaction(meta)
+	}
+}
+
+// CompactSession is the default compactor used by top-level conductors. meta
+// describes the compaction and is stored with its session event.
+func CompactSession(sess *session.Session, msgs *[]connector.Message, summary, focus string, meta session.CompactMeta) (string, error) {
 	if sess == nil {
 		return "", fmt.Errorf("no writable session")
 	}
@@ -103,7 +119,7 @@ func CompactSession(sess *session.Session, msgs *[]connector.Message, summary, f
 	// this empty is honest; consumers must not mistake a synthetic value for
 	// an event they can fork at.
 	tailID := ""
-	path, err := sess.Compact(summary, tailID, keep, dropped)
+	path, err := sess.Compact(summary, tailID, keep, dropped, meta)
 	if err != nil {
 		return "", err
 	}

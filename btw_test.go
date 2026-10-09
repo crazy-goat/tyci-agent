@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/crazy-goat/tyci-agent/session"
 	"strings"
 	"testing"
 	"time"
@@ -95,7 +96,7 @@ func TestBtwConfig_StripsMainThreadCallbacksButKeepsToolBehavior(t *testing.T) {
 		MaxIterations: 10,
 		NextMessages:  func() []string { return []string{"should never be called by a fork"} },
 		PendingTodos:  func() []string { return []string{"todo"} },
-		Compactor: func(summary, focus string) (string, error) {
+		Compactor: func(summary, focus string, meta session.CompactMeta) (string, error) {
 			t.Fatal("F10: a /btw/fork/resume child must never call the main conversation's Compactor")
 			return "", nil
 		},

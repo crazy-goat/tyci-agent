@@ -206,6 +206,10 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if block, ok := msg.(tuiMsgBlock); ok {
 		return m, m.handleBlockMsg(block)
 	}
+	if cm, ok := msg.(tuiMsgCompaction); ok {
+		m.handleCompactionMsg(cm)
+		return m, nil
+	}
 	// /btw entries run independently of the main view and likewise must land
 	// regardless of which overlay is active.
 	switch msg.(type) {

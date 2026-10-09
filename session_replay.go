@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/display"
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // replaySessionToDisplay reads a JSONL session file and re-renders every
@@ -51,6 +53,9 @@ func replaySessionToDisplay(disp display.Display, sessionPath string) {
 	type replayEntry struct {
 		role string
 		body string // formatted, multi-line ready for ToolBlock
+		// compaction is set for a compaction event: it is shown as a divider
+		// (see compactionDisplay), not as a block.
+		compaction *session.CompactMeta
 	}
 	var entries []replayEntry
 
@@ -66,7 +71,17 @@ func replaySessionToDisplay(disp display.Display, sessionPath string) {
 			continue
 		}
 		evType, _ := raw["type"].(string)
-		if evType == "session" || evType == "session_end" || evType == "compaction" {
+		if evType == "compaction" {
+			var ev session.CompactionEvent
+			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+				continue
+			}
+			meta := ev.CompactMeta
+			meta.At, _ = time.Parse(time.RFC3339Nano, ev.Timestamp)
+			entries = append(entries, replayEntry{compaction: &meta})
+			continue
+		}
+		if evType == "session" || evType == "session_end" {
 			continue
 		}
 		msgRaw, ok := raw["message"].(map[string]any)
@@ -94,7 +109,14 @@ func replaySessionToDisplay(disp display.Display, sessionPath string) {
 		entries = entries[len(entries)-maxReplayBlocks:]
 	}
 
+	cd, canDivide := disp.(compactionDisplay)
 	for _, e := range entries {
+		if e.compaction != nil {
+			if canDivide {
+				cd.Compaction(*e.compaction)
+			}
+			continue
+		}
 		disp.ToolBlock(e.body)
 		disp.End()
 	}

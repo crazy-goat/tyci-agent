@@ -112,7 +112,10 @@ func (sc *scrollbackCache) flushBlock(b *block, width int) {
 	b.flushed = true
 	sc.residentBytes -= blockLinesBytes(b.cachedLines)
 	b.cachedLines = nil
-	b.content = ""
+	// A divider keeps its text: page-in re-renders it at the new width.
+	if b.kind != "compaction" {
+		b.content = ""
+	}
 	b.output = ""
 }
 
@@ -364,7 +367,11 @@ func (m *TuiModel) ensureBlockResident(idx int) []string {
 	// invalidateAllBlockLineCounts leaves flushed blocks' counts untouched)
 	// without re-running the markdown renderer.
 	if b.flushedWidth != 0 && b.flushedWidth != m.renderWidth() {
-		lines = rewrapLines(lines, b.kind, m.renderWidth())
+		if b.kind == "compaction" {
+			lines = []string{renderCompactionDivider(b.content, m.renderWidth())}
+		} else {
+			lines = rewrapLines(lines, b.kind, m.renderWidth())
+		}
 		b.cachedLines = lines
 		b.cachedLineCount = len(lines)
 		m.scrollback.residentBytes = m.residentBlockBytes()

@@ -14,6 +14,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 	"github.com/crazy-goat/tyci-agent/internal/worktree"
+	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/stream"
 )
 
@@ -491,6 +492,12 @@ func (s *streamingCollector) ToolCallEnd(name, result string) {
 	s.collector.ToolCallEnd(name, result)
 	s.live.add(LiveEvent{Kind: "tool-end", Content: result})
 	s.touchActivity()
+}
+
+// Compaction records an in-loop compaction in the live transcript, so the
+// agent view of this subagent shows its divider (see agent.compactionSink).
+func (s *streamingCollector) Compaction(meta session.CompactMeta) {
+	s.live.add(LiveEvent{Kind: "compaction", Compaction: meta})
 }
 
 // pushText buffers text and pushes complete lines to the parent's streaming

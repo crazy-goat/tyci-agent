@@ -1003,7 +1003,7 @@ func TestCompactKeepsRawLogAndReplay(t *testing.T) {
 	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "compacted-away-turn"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Compact("preserved summary", "tail-1", msgs[1:], 1); err != nil {
+	if _, err := s.Compact("preserved summary", "tail-1", msgs[1:], 1, CompactMeta{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
@@ -1036,7 +1036,7 @@ func TestMarkdownDumpRefreshesAfterLaterMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if _, err := s.Compact("summary", "", nil, 0); err != nil {
+	if _, err := s.Compact("summary", "", nil, 0, CompactMeta{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "new message"}}, nil); err != nil {
@@ -1049,7 +1049,7 @@ func TestMarkdownDumpRefreshesAfterLaterMessage(t *testing.T) {
 	if !strings.Contains(string(data), "new message") {
 		t.Fatalf("dump was stale after WriteMessage: %s", data)
 	}
-	if err := s.WriteCompaction("second summary", "", nil, 0); err != nil {
+	if err := s.WriteCompaction("second summary", "", nil, 0, CompactMeta{}); err != nil {
 		t.Fatal(err)
 	}
 	data, err = os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".md")
@@ -1123,7 +1123,7 @@ func TestIncrementalDump_MatchesFullRewriteByteForByte(t *testing.T) {
 	if err := s.WriteMessage("assistant", []ContentBlock{{Type: "text", Text: "hi there"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WriteCompaction("summary text", "", nil, 1); err != nil {
+	if err := s.WriteCompaction("summary text", "", nil, 1, CompactMeta{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.WriteMessage("user", []ContentBlock{{Type: "text", Text: "after compaction"}}, nil); err != nil {
@@ -1266,7 +1266,7 @@ func TestCompactionLiveBoundaryDoesNotInventEventID(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.WriteCompaction("summary", "", nil, 1); err != nil {
+	if err := s.WriteCompaction("summary", "", nil, 1, CompactMeta{}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)

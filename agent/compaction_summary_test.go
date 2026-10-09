@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/crazy-goat/tyci-agent/session"
 	"strings"
 	"testing"
 	"time"
@@ -100,8 +101,8 @@ func runHardLimit(t *testing.T, mc connector.ModelClient, d Sink, cfg Config) ([
 	cfg.ContextLimit = 200000
 	cfg.HardLimit = 170000
 	cfg.Session = sess
-	cfg.Compactor = func(summary, focus string) (string, error) {
-		return CompactSession(sess, &msgs, summary, focus)
+	cfg.Compactor = func(summary, focus string, meta session.CompactMeta) (string, error) {
+		return CompactSession(sess, &msgs, summary, focus, meta)
 	}
 	usage, err := Run(context.Background(), mc, d, &msgs, cfg)
 	if err != nil {
@@ -137,8 +138,8 @@ func TestCompactSummary_EightMessagesSkipCall(t *testing.T) {
 		ContextLimit: 200000,
 		HardLimit:    170000,
 		Session:      sess,
-		Compactor: func(summary, focus string) (string, error) {
-			return CompactSession(sess, &msgs, summary, focus)
+		Compactor: func(summary, focus string, meta session.CompactMeta) (string, error) {
+			return CompactSession(sess, &msgs, summary, focus, meta)
 		},
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -169,8 +170,8 @@ func TestCompactSummary_SmallWindowSkipsCallAndUsesMarker(t *testing.T) {
 		MaxRetries:   1,
 		ContextLimit: 10000,
 		Session:      sess,
-		Compactor: func(summary, focus string) (string, error) {
-			return CompactSession(sess, &msgs, summary, focus)
+		Compactor: func(summary, focus string, meta session.CompactMeta) (string, error) {
+			return CompactSession(sess, &msgs, summary, focus, meta)
 		},
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -250,8 +251,8 @@ func TestCompactSummary_RequestHasNoTools(t *testing.T) {
 		HardLimit:    170000,
 		Schema:       schema,
 		Session:      sess,
-		Compactor: func(summary, focus string) (string, error) {
-			return CompactSession(sess, &msgs, summary, focus)
+		Compactor: func(summary, focus string, meta session.CompactMeta) (string, error) {
+			return CompactSession(sess, &msgs, summary, focus, meta)
 		},
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -277,8 +278,8 @@ func TestCompactSummary_InputIsCurrentConversation(t *testing.T) {
 		ContextLimit: 200000,
 		HardLimit:    170000,
 		Session:      sess,
-		Compactor: func(summary, focus string) (string, error) {
-			return CompactSession(sess, &msgs, summary, focus)
+		Compactor: func(summary, focus string, meta session.CompactMeta) (string, error) {
+			return CompactSession(sess, &msgs, summary, focus, meta)
 		},
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -447,8 +448,8 @@ func runAtDefaultLimit(t *testing.T, window, used int, stub func(context.Context
 		MaxRetries:   1,
 		ContextLimit: window,
 		Session:      sess,
-		Compactor: func(summary, focus string) (string, error) {
-			return CompactSession(sess, &msgs, summary, focus)
+		Compactor: func(summary, focus string, meta session.CompactMeta) (string, error) {
+			return CompactSession(sess, &msgs, summary, focus, meta)
 		},
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
