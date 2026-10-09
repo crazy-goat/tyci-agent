@@ -10,8 +10,11 @@ import (
 
 // Repaint cadence of the TUI. All three intervals are 1s, so the TUI repaints
 // at most once per second for streamed output, the status tick and background
-// jobs (issue #630). Keyboard, mouse, resize and modal repaints do not use
-// these intervals and stay immediate. Change them together.
+// jobs (issue #630). The exception: a change of block kind or tool index posts
+// the previous streamed content at once (appendPending), so several parallel
+// tools with mixed progress can still repaint once per line. Keyboard, mouse,
+// resize and modal repaints do not use these intervals and stay immediate.
+// Change them together.
 const (
 	// streamFlushInterval is the minimum gap between two flushes of streamed
 	// text, thinking or tool output to the transcript (flushLoop, tui_api.go).

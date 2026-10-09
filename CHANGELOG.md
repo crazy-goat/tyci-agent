@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: a run can be stopped. A stopped run has the status `stopped`, keeps its worktree and its pull request, and cannot be resumed. `tyci workflow stop <run-id> [--reason text] [--json]` stops a running run that no live tyci process owns. The Runs tab and `tyci workflow status` show the status. `tyci workflow status` exits with code 0 for `stopped` (#582).
 
 ### Changed
-- TUI: streamed output (text, thinking and tool output) is drawn at most once per second. The first chunk after a quiet period is drawn at once, and the end of a turn draws the rest at once. The status bar and the background job times are refreshed once per second, and the status bar shows elapsed times in whole seconds, for example `12s`, not tenths. Keyboard, mouse, resize and modal redraws are not delayed (#630).
+- TUI: streamed output (text, thinking and tool output) is drawn at most once per second, except that a change of block kind or tool index draws the previous content at once. So several parallel tools with mixed progress can still draw once per line. The first chunk after a quiet period is drawn at once, and the end of a turn draws the rest at once. The status bar and the background job times are refreshed once per second, and the status bar shows elapsed times in whole seconds, for example `12s`, not tenths. Keyboard, mouse, resize and modal redraws are not delayed (#630).
 
 ### Fixed
 - TUI: the sidebar Tasks tab styles only the rows in the visible window, not the whole list, and sorts the background job list once per redraw instead of three times. The displayed text does not change (#630).
