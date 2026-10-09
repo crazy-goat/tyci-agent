@@ -443,7 +443,7 @@ func TestRunner_RecoveryCapFollowsStateName(t *testing.T) {
 	wf := &Workflow{Name: "demo", Start: "check", States: map[string]State{
 		"check": {Check: "x.sh", On: map[string]string{"fail": "fixer", "go": "end"}},
 		"fixer": {Agent: "repair", On: map[string]string{"ok": FailedTarget, "failed": "ask"}},
-		"ask":   {Ask: "help"},
+		"ask":   {Ask: "help", Human: true},
 		"end":   {End: true},
 	}}
 	checks := &fakeChecks{keys: map[string][]string{"x.sh": {"fail", "fail", "fail", "go"}}}

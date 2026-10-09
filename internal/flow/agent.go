@@ -58,6 +58,10 @@ func (r *SubagentRunner) Run(ctx context.Context, role, task string, rc RunConte
 	if err != nil {
 		return "", session, err
 	}
+	if isPauseOracle(role, task) {
+		// The answer is the text. The oracle does not write report.md.
+		return strings.TrimSpace(out), session, nil
+	}
 	if session, err = r.ensureReport(ctx, role, session, rc); err != nil {
 		return "", session, err
 	}
@@ -114,8 +118,10 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 		if rc.RunSoFar != "" {
 			text += "Steps since your last visit, with their artifact files (read them with the read tool):\n\n" + rc.RunSoFar + "\n"
 		}
-		text += "Your artifact dir: " + rc.ArtifactDir + "\n" +
-			"Before you end, you MUST write " + reportPath(rc) + ": what you did, the result, what is left.\n"
+		text += "Your artifact dir: " + rc.ArtifactDir + "\n"
+		if !isPauseOracle(role, task) {
+			text += "Before you end, you MUST write " + reportPath(rc) + ": what you did, the result, what is left.\n"
+		}
 	}
 	name := ""
 	if rc.Run != "" {

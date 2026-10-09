@@ -116,7 +116,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			return nil
 		}
 		if s.Ask != "" {
-			return r.pause(st, s.Ask, "")
+			return r.askOrPause(ctx, st, s, s.Ask, "")
 		}
 		// A restart enters the saved state without a new visit. The visit is
 		// counted now when the saved file shows it was not counted: the crash
@@ -131,7 +131,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					return r.fail(ctx, st, `max_visits needs an "ask" state`, errors.New(`max_visits needs an "ask" state`))
 				}
 				st.Current = "ask"
-				return r.pause(st, askState.Ask, "max_visits:"+cur)
+				return r.askOrPause(ctx, st, askState, askState.Ask, "max_visits:"+cur)
 			}
 			st.Visits[cur]++
 			st.EntryPending = false
@@ -420,7 +420,7 @@ func (r *Runner) pauseNoArtifact(ctx context.Context, st *RunState, cur string, 
 		Artifact:  art,
 	})
 	st.Current = "ask"
-	return r.pause(st, askState.Ask, runErr.Error())
+	return r.askOrPause(ctx, st, askState, askState.Ask, runErr.Error())
 }
 
 // readPRFile copies the PR number from <runDir>/pr (written by push.sh).
@@ -542,7 +542,25 @@ func (r *Runner) effectiveLimit(s State) int {
 
 // pause saves the run as paused and returns ErrPaused.
 func (r *Runner) pause(st *RunState, message, reason string) error {
+	r.setAsk(st, message, reason)
+	return r.savePaused(st)
+}
+
+// savePaused saves the run as paused and returns ErrPaused. The pause payload
+// must be set (see setAsk).
+func (r *Runner) savePaused(st *RunState) error {
 	st.Status = "paused"
+	st.UpdatedAt = time.Now()
+	if r.Store != nil {
+		if err := r.Store.Save(st); err != nil {
+			return err
+		}
+	}
+	return ErrPaused
+}
+
+// setAsk sets the pause payload of st. The message names the last step of the run.
+func (r *Runner) setAsk(st *RunState, message, reason string) {
 	if n := len(st.History); n > 0 && st.History[n-1].Error != "" {
 		h := st.History[n-1]
 		message += fmt.Sprintf(" (%s failed: %s)", h.State, h.Error)
@@ -566,13 +584,6 @@ func (r *Runner) pause(st *RunState, message, reason string) error {
 		st.Ask.Message += proposalWaits + proposalSummary(dir) +
 			" (workflow_status shows it; answer apply or reject)"
 	}
-	st.UpdatedAt = time.Now()
-	if r.Store != nil {
-		if err := r.Store.Save(st); err != nil {
-			return err
-		}
-	}
-	return ErrPaused
 }
 
 // checkGoto rejects a goto target that is not a state of wf, is an ask state
@@ -639,7 +650,7 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		return fmt.Errorf("flow: unknown answer %q, allowed: %s", answer, strings.Join(keys, ", "))
 	}
 	now := time.Now()
-	st.History = append(st.History, Step{
+	step := Step{
 		Seq:       len(st.History) + 1,
 		State:     st.Current,
 		Kind:      "ask",
@@ -647,10 +658,11 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		To:        next,
 		StartedAt: now,
 		EndedAt:   now,
-	})
-	st.Ask = nil
-	st.UpdatedAt = now
+	}
 	if !ok {
+		st.History = append(st.History, step)
+		st.Ask = nil
+		st.UpdatedAt = now
 		st.Status = "done"
 		if r.Store != nil {
 			if err := r.Store.Save(st); err != nil {
@@ -659,6 +671,16 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		}
 		return nil
 	}
+	return r.moveOn(ctx, st, step, next, restart)
+}
+
+// moveOn appends step to the history of st, which leaves its ask state for next,
+// and runs the run from next. A restart continues at next without a new visit
+// (see Continue). Otherwise the visit counts reset, unless next is an end state.
+func (r *Runner) moveOn(ctx context.Context, st *RunState, step Step, next string, restart bool) error {
+	st.History = append(st.History, step)
+	st.Ask = nil
+	st.UpdatedAt = time.Now()
 	if !r.WF.States[next].End && !restart {
 		st.Visits = map[string]int{}
 	}

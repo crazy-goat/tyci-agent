@@ -118,7 +118,7 @@ func TestArtifacts_OneDirPerStepAndResumeContinues(t *testing.T) {
 	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
 		"a":   {Check: "a.sh", On: map[string]string{"ok": "w"}},
 		"w":   {Agent: "worker", On: map[string]string{"done": "ask"}},
-		"ask": {Ask: "go on?", On: map[string]string{"yes": "b"}},
+		"ask": {Ask: "go on?", Human: true, On: map[string]string{"yes": "b"}},
 		"b":   {Check: "b.sh", On: map[string]string{"ok": "end"}},
 		"end": {End: true},
 	}}

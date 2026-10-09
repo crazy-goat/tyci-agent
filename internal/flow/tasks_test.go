@@ -16,6 +16,7 @@ func TestTasks_Render(t *testing.T) {
 		"findings_to_issues": {"o/r", "/wt/x", "Run so far", "#42"},
 		"fixer":              {"`upd`", "`fail`", "/run/y/artifacts/005-upd/output.log", "#42", "`ok`", "`failed`", "failed.log"},
 		"recover":            {"`upd`", "`fail`", "/run/y/artifacts/005-upd/output.log", "goto:<state>", "`stop`", "ask <reason>"},
+		"ask":                {"#7", "#42", "boom-reason", "`retry <note>`"},
 	}
 	for name, want := range cases {
 		out, err := RenderTask(name, testTaskData)

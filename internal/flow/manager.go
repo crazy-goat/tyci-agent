@@ -312,13 +312,14 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 		if st.Ask != nil {
 			msg = st.Ask.Message
 		}
-		text += " paused: " + msg
+		text += " paused: " + msg + " (needs a human"
 		if keys := answerKeys(wf, st.Current); len(keys) > 0 {
 			if st.Ask != nil && st.Ask.Proposal != "" {
 				keys = append([]string{"apply", "reject"}, keys...)
 			}
-			text += " (answer with workflow_resume: " + strings.Join(keys, "|") + "|retry <note>|goto <state>)"
+			text += "; answer with workflow_resume: " + strings.Join(keys, "|") + "|retry <note>|goto <state>"
 		}
+		text += ")"
 	default:
 		text += " " + st.Status
 		if st.Reason != "" {
@@ -543,8 +544,9 @@ func loadRun(info RepoInfo, runID string) (*RunState, error) {
 	return st, nil
 }
 
-// Shutdown cancels every active run (state failed, reason cancelled) and
-// waits up to wait for the goroutines to save it.
+// Shutdown cancels every active run and waits up to wait for the goroutines to
+// save them. A run ends as failed with the reason cancelled. A run whose oracle
+// answer was cancelled stays paused for a human.
 func (m *Manager) Shutdown(wait time.Duration) {
 	m.mu.Lock()
 	for _, a := range m.active {

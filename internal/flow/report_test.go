@@ -128,6 +128,10 @@ func TestE2E_NoReport_RemindsThenPauses(t *testing.T) {
 	e := newE2E(t, nil)
 	s := &reportSpawn{write: func(tools.TaskSpec) bool { return false }}
 	e.agentRunner = reportRunner(s)
+	// The ask state is human, so the oracle does not answer this pause.
+	ask := e.wf.States["ask"]
+	ask.Human = true
+	e.wf.States["ask"] = ask
 	e.mustPause()
 	e.wantStates("check_done, open_pr, code")
 	if e.st.Current != "ask" || e.st.Ask == nil || e.st.Ask.Reason != "no artifact from worker" {
