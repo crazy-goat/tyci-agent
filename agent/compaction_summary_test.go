@@ -419,3 +419,90 @@ func TestCompactSummary_InLoopFallsBackToNoteWithoutSummary(t *testing.T) {
 		t.Fatalf("note = %q, want the plain note without a summary", note)
 	}
 }
+
+// runAtDefaultLimit runs one turn that ends with used tokens in a window of
+// window tokens. It sets no hard limit, so the default limit of the window
+// applies. It returns the history after the run and the provider.
+func runAtDefaultLimit(t *testing.T, window, used int, stub func(context.Context) (<-chan stream.Event, error)) ([]connector.Message, *connectortest.Fake) {
+	t.Helper()
+	sess := newAutoCompactSession(t)
+	fake := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		Turns: [][]stream.Event{{
+			stream.TextDelta{Text: "working"},
+			stream.Finish{Usage: stream.Usage{Input: used - 1000, Output: 1000}},
+		}},
+		OnExhausted: []stream.Event{
+			stream.TextDelta{Text: "done"},
+			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+		},
+	}
+	var mc connector.ModelClient = fake
+	if stub != nil {
+		mc = &summaryStub{Fake: fake, stub: stub}
+	}
+	msgs := historyOf(9)
+	if _, err := Run(context.Background(), mc, &silentDisplay{}, &msgs, Config{
+		MaxRetries:   1,
+		ContextLimit: window,
+		Session:      sess,
+		Compactor: func(summary, focus string) (string, error) {
+			return CompactSession(sess, &msgs, summary, focus)
+		},
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	return msgs, fake
+}
+
+// TestCompactSummary_DefaultLimitsCallWithRoom checks that the summary call is
+// made when the conversation is a few thousand tokens past the default hard
+// limit and the window still has room for the reply.
+func TestCompactSummary_DefaultLimitsCallWithRoom(t *testing.T) {
+	for _, window := range []int{200000, 128000} {
+		_, hardAt := compactThresholds(window, 0, 0, 0)
+		msgs, _ := runAtDefaultLimit(t, window, hardAt+3000, summaryReply("SUMMARY TEXT"))
+		if lead := msgs[0].Content[0].Text; !strings.Contains(lead, "SUMMARY TEXT") {
+			t.Fatalf("window %d: lead = %q, want the model summary", window, lead)
+		}
+	}
+}
+
+// TestCompactSummary_DefaultLimitsSkipWithoutRoom checks that the call is not
+// made when the conversation leaves less than compactSummaryMinTokens of room,
+// and that the fixed marker is used.
+func TestCompactSummary_DefaultLimitsSkipWithoutRoom(t *testing.T) {
+	for _, window := range []int{200000, 128000} {
+		_, hardAt := compactThresholds(window, 0, 0, 0)
+		used := hardAt + 10000
+		if summaryBudget(used, window) >= compactSummaryMinTokens {
+			t.Fatalf("window %d: test setup has room for the summary", window)
+		}
+		msgs, fake := runAtDefaultLimit(t, window, used, nil)
+		if got := fake.Calls(); got != 1 {
+			t.Fatalf("window %d: provider Calls() = %d, want 1 (no summary call)", window, got)
+		}
+		if lead := msgs[0].Content[0].Text; !strings.Contains(lead, markerText) {
+			t.Fatalf("window %d: lead = %q, want the fixed marker", window, lead)
+		}
+	}
+}
+
+func TestSummaryBudget(t *testing.T) {
+	tests := []struct {
+		name         string
+		used, window int
+		want         int
+	}{
+		{"unknown window", 50000, 0, compactSummaryMaxTokens},
+		{"plenty of room", 100000, 200000, compactSummaryMaxTokens},
+		{"room below the cap", 193000, 200000, 200000 - 193000 - compactSummaryOverhead},
+		{"no room", 200000, 200000, -compactSummaryOverhead},
+	}
+	for _, tt := range tests {
+		if got := summaryBudget(tt.used, tt.window); got != tt.want {
+			t.Errorf("%s: summaryBudget(%d, %d) = %d, want %d", tt.name, tt.used, tt.window, got, tt.want)
+		}
+	}
+}
