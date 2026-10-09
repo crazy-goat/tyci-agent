@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: the notice of a paused run says `needs a human` and names the answers, for example `workflow_resume: retry|stop|retry <note>|goto <state>`. The Runs tab shows `needs a human: <state>` instead of `ask: <state>` (#531).
 
 ### Added
+- TUI: type `/<name> params` to start a workflow from the chat, and `/workflow <name> params` to start one whose name is a builtin command. Type `/` for a list of the builtin commands and the workflows, with their params and source. A missing required param makes the model ask you. A workflow named like a builtin command is an error (#521).
 - TUI: Shift+Left and Shift+Right resize the sidebar by one column (with `<` and `>` when the sidebar has focus). The width is a percentage of the terminal width, saved globally in `~/.tyci/tui-state.json`, not in `config.json` (#535).
 - Flow: a workflow declares its positional params in `workflow.json` (`params`: `name`, `description`, `required`). The task templates read them as `{{.Params.<name>}}`. The param `issue` is the issue number of the run. A workflow without `issue` runs without an issue, and its worktree and branch are named after the run id. A run saves its params in `state.json`, and `tyci workflow status` shows them (#520).
 - TUI: Shift+Tab moves focus between the prompt and the sidebar. With the sidebar closed, it opens the sidebar and focuses it (#511).
