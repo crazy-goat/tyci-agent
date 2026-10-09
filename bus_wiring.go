@@ -184,6 +184,15 @@ func publishBtwAnswer(b *bus.Bus, parentID, jobID, question, answer string) {
 		bus.BtwAnswer{Question: question, Text: answer, JobID: jobID})
 }
 
+// publishBtwSuggestion sends the answer of a busy-line fork jobID to the TUI,
+// which shows it in the chat at once, and to the orchestrator, which reads it
+// at its next drain. Both copies are published once each.
+func publishBtwSuggestion(b *bus.Bus, jobID, question, answer string) {
+	payload := bus.BtwAnswer{Question: question, Text: answer, JobID: jobID, Suggestion: true}
+	publishTo(b, bus.KindBtwAnswer, agentAddr(jobID), orchestratorAddr, bus.OriginAgent, payload)
+	publishTo(b, bus.KindBtwAnswer, agentAddr(jobID), bus.Addr{Type: bus.AddrTUI}, bus.OriginAgent, payload)
+}
+
 // publishAgentMessage sends text from one sender to agent id. origin says what
 // caused it: the "message" tool and the /msg command set it.
 func publishAgentMessage(b *bus.Bus, id string, from bus.Addr, origin bus.Origin, text string) {
@@ -313,6 +322,9 @@ func noticeText(m bus.Message) (text string, ok bool) {
 			fmt.Fprintf(busLog, "bus: btw answer %d not read: %v\n", m.Seq, err)
 			return "", false
 		}
+		if a.Suggestion {
+			return btwSuggestionNotice(a.Question, a.JobID, a.Text), true
+		}
 		return btwEvaluationNotice(a.Question, a.JobID, a.Text), true
 	case bus.KindAskRequest:
 		a, err := bus.Decode[bus.AskRequest](m)
@@ -338,13 +350,18 @@ var (
 	pendingLoud    bool
 )
 
-// quietNotice reports whether m is a quiet completion notice.
+// quietNotice reports whether m waits for the next drain instead of waking an
+// idle chat: a quiet completion notice, or a btw suggestion.
 func quietNotice(m bus.Message) bool {
-	if m.Kind != bus.KindNoticeCompletion {
-		return false
+	switch m.Kind {
+	case bus.KindNoticeCompletion:
+		c, err := bus.Decode[bus.Completion](m)
+		return err == nil && c.Quiet
+	case bus.KindBtwAnswer:
+		a, err := bus.Decode[bus.BtwAnswer](m)
+		return err == nil && a.Suggestion
 	}
-	c, err := bus.Decode[bus.Completion](m)
-	return err == nil && c.Quiet
+	return false
 }
 
 // stashBusNotices moves the waiting notices of the orchestrator's subscription
@@ -499,4 +516,36 @@ func jobStatusOf(j jobs.Job) bus.JobStatus {
 // subscribeJobStatus subscribes to the job.status messages that the TUI reads.
 func subscribeJobStatus(b *bus.Bus) *bus.Sub {
 	return b.Subscribe("tui-jobs", bus.Filter{To: bus.Addr{Type: bus.AddrTUI}, Kinds: []bus.Kind{bus.KindJobStatus}})
+}
+
+// subscribeBtwSuggestions subscribes to the btw answers that the TUI shows in
+// the chat.
+func subscribeBtwSuggestions(b *bus.Bus) *bus.Sub {
+	return b.Subscribe("tui-btw", bus.Filter{To: bus.Addr{Type: bus.AddrTUI}, Kinds: []bus.Kind{bus.KindBtwAnswer}})
+}
+
+// showBtwSuggestions passes the text of each drained btw suggestion to show,
+// until done closes or the subscription ends.
+func showBtwSuggestions(sub *bus.Sub, done <-chan struct{}, show func(string)) {
+	defer sub.Close()
+	deliver := func() {
+		for _, m := range sub.Drain() {
+			a, err := bus.Decode[bus.BtwAnswer](m)
+			if err != nil || !a.Suggestion {
+				continue
+			}
+			show(btwSuggestionNotice(a.Question, a.JobID, a.Text))
+		}
+	}
+	for {
+		select {
+		case <-sub.Ready():
+			deliver()
+		case <-sub.Done():
+			deliver()
+			return
+		case <-done:
+			return
+		}
+	}
 }
