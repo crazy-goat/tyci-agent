@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/internal/redact"
 )
 
@@ -1076,6 +1077,24 @@ func (r *Registry) IsLive(id string) bool {
 	defer r.mu.Unlock()
 	job, ok := r.jobs[id]
 	return ok && jobLive(job.Status)
+}
+
+// BusTree returns the agent hierarchy of the registry for bus.WithTree. The
+// bus calls it while it holds its own lock, so the functions take r.mu and
+// never call back into the bus.
+func (r *Registry) BusTree() bus.Tree {
+	return bus.Tree{
+		ParentOf: func(id string) (string, bool) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			job, ok := r.jobs[id]
+			if !ok {
+				return "", false
+			}
+			return job.ParentID, true
+		},
+		IsLive: r.IsLive,
+	}
 }
 
 func jobLive(status Status) bool {
