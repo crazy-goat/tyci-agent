@@ -676,11 +676,22 @@ A limit is capped by the model window. An unset soft limit is 80% and an unset
 hard limit is 95% of the window. The legacy `auto_compact_percent` sets the
 hard limit only when no hard limit is set; a negative value disables it. The
 window of nexos models comes from the nexos API (see `nexos-models.json`).
+The hard limit leaves 8192 tokens of the window free for the summary call.
+A window under 163840 tokens therefore gets a lower hard limit.
 
 The main conversation checks the limits when the turn ends. Subagents and flow
-roles check them after each tool round. Past the hard limit they compact in
-memory: they keep the task and the last 8 messages, with a note that older
-messages were removed.
+roles check them after each tool round.
+
+Past the hard limit, tyci first asks the model for a summary of the
+conversation. The call uses the same model and no tools. Its usage and cost
+count in the status bar and the ledger. If the call fails, returns no text or
+takes longer than 60 seconds, tyci uses a fixed note instead. The turn does
+not wait longer than that.
+
+The main conversation keeps the summary as its first message, then the path to
+the session file and its markdown dump, then the last 8 messages. Subagents and
+flow roles compact in memory: they keep the task, a note with the summary, and
+the last 8 messages.
 
 ## Long subagents
 
