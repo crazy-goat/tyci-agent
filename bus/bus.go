@@ -90,8 +90,10 @@ func (b *Bus) Subscribe(name string, f Filter) *Sub {
 }
 
 // Close stops the bus. Publish returns ErrClosed afterwards. Subscriptions
-// can still Drain the messages they hold. The journal file is closed. Close
-// can be called more than once.
+// can still Drain the messages they hold. The journal file is closed. A
+// Publish that runs at the same time as Close can get a Seq and keep its
+// message in memory, but lose its journal line. Close can be called more
+// than once.
 func (b *Bus) Close() {
 	b.mu.Lock()
 	b.closed = true

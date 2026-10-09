@@ -40,6 +40,8 @@ func openJournal(path string, redact func([]byte) []byte) (*journal, uint64, err
 		}
 	}
 
+	// Take the highest Seq, not the last line. Writes happen after bus.mu is
+	// released, so two publishers can write their lines out of Seq order.
 	var last uint64
 	for line := range bytes.Lines(data[:end]) {
 		var m Message
@@ -50,6 +52,11 @@ func openJournal(path string, redact func([]byte) []byte) (*journal, uint64, err
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
+		return nil, 0, err
+	}
+	// The mode of OpenFile applies only to a new file. Set it on an old one too.
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
 		return nil, 0, err
 	}
 	return &journal{redact: redact, logw: os.Stderr, f: f, w: f}, last, nil

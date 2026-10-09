@@ -181,6 +181,73 @@ func TestJournal_FileMode0600(t *testing.T) {
 	}
 }
 
+func TestJournal_ExistingFileGetsMode0600(t *testing.T) {
+	path := journalPath(t)
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	b := New(WithJournal(path))
+	defer b.Close()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("journal mode = %o, want 600", perm)
+	}
+}
+
+func TestJournal_SeqFromOutOfOrderLines(t *testing.T) {
+	path := journalPath(t)
+	// Lines written by two publishers, the later Seq first.
+	var data []byte
+	for _, seq := range []uint64{5, 3} {
+		line, err := json.Marshal(Message{Seq: seq, Kind: kindDurable, Origin: OriginSystem, Payload: []byte(`{}`)})
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		data = append(append(data, line...), '\n')
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	b := New(WithJournal(path))
+	defer b.Close()
+	if seq := mustPublish(t, b, kindDurable, item{ID: "a"}); seq != 6 {
+		t.Fatalf("Seq after reopen = %d, want 6", seq)
+	}
+}
+
+func TestJournal_ReplaysSameMessages(t *testing.T) {
+	path := journalPath(t)
+	b := New(WithJournal(path))
+	defer b.Close()
+	s := b.Subscribe("x", Filter{To: agent("x")})
+	if _, err := Publish(b, kindDurable, agent("y"), agent("x"), OriginAgent, item{ID: "a", N: 1}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	mustPublish(t, b, kindDurable, item{ID: "b", N: 2})
+	drained := s.Drain()
+
+	lines := readJournal(t, path)
+	if len(lines) != len(drained) {
+		t.Fatalf("journal has %d lines, drained %d messages", len(lines), len(drained))
+	}
+	for i, got := range lines {
+		want := drained[i]
+		if got.Seq != want.Seq || got.Kind != want.Kind || got.From != want.From ||
+			got.To != want.To || got.Origin != want.Origin || !bytes.Equal(got.Payload, want.Payload) ||
+			!got.At.Equal(want.At) {
+			t.Fatalf("line %d = %+v, want %+v", i, got, want)
+		}
+	}
+}
+
 func TestJournal_WriteFailure_DoesNotBlockOrDropInMemory(t *testing.T) {
 	b := New(WithJournal(journalPath(t)))
 	defer b.Close()
