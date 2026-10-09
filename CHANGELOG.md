@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- TUI: each wheel event and the redraw after it are faster on a session with many blocks, most of them flushed to disk. The status bar looked up the model's context limit with a full scan and sort of the pricing catalog on every redraw when the model id was not in the catalog. Such a lookup now runs once per model id and provider (#595).
+
 ## [0.7.0] - 2026-10-09
 
 ### Changed

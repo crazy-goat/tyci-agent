@@ -79,6 +79,7 @@ func catalog() map[string]connect.ModelsDevProvider {
 func Reset() {
 	mu.Lock()
 	loaded, cat = false, nil
+	lookupMemo.Clear()
 	mu.Unlock()
 	nexosMu.Lock()
 	nexosLoaded, nexosModels = false, nil
@@ -124,7 +125,30 @@ func LookupIn(provider, model string) (Rates, Limits) {
 	return Rates{}, Limits{}
 }
 
+// catalogHit is one memoized lookupCatalog answer. A miss is memoized too.
+type catalogHit struct {
+	rates  Rates
+	limits Limits
+}
+
+// lookupMemo caches lookupCatalog by provider and model. The catalog does not
+// change under a running session, but a miss on an unknown model id scans and
+// sorts every model of every provider, and the status bar asks for it on every
+// repaint. Reset clears it.
+var lookupMemo sync.Map // key: provider + "\x00" + model, value: catalogHit
+
 func lookupCatalog(provider, model string) (Rates, Limits) {
+	key := provider + "\x00" + model
+	if v, ok := lookupMemo.Load(key); ok {
+		h := v.(catalogHit)
+		return h.rates, h.limits
+	}
+	r, l := lookupCatalogUncached(provider, model)
+	lookupMemo.Store(key, catalogHit{rates: r, limits: l})
+	return r, l
+}
+
+func lookupCatalogUncached(provider, model string) (Rates, Limits) {
 	c := catalog()
 	if c == nil {
 		return Rates{}, Limits{}

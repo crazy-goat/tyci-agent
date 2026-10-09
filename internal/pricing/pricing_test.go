@@ -172,3 +172,16 @@ func TestFindModel_CaseFallbackIsStable(t *testing.T) {
 		t.Fatalf("display-name tie-break = %+v ok=%v, want Model-A", byName, ok)
 	}
 }
+
+// Lookup remembers catalog answers, so a new catalog must not see the old ones:
+// withCatalog calls Reset, which has to clear the memo.
+func TestLookup_MemoIsClearedByReset(t *testing.T) {
+	withCatalog(t, testCatalog)
+	if r, _ := Lookup("", "claude-sonnet-5"); !r.Known() {
+		t.Fatal("first lookup: model not found")
+	}
+	withCatalog(t, `{}`)
+	if r, _ := Lookup("", "claude-sonnet-5"); r.Known() {
+		t.Fatalf("lookup after Reset returned a stale entry: %+v", r)
+	}
+}
