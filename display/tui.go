@@ -114,6 +114,17 @@ type tuiSetRunListerMsg struct {
 	fn func() []TuiRunRow
 }
 
+// tuiSetRunStopperMsg carries the callback that stops a run from the Runs tab.
+type tuiSetRunStopperMsg struct {
+	fn func(run string) error
+}
+
+// runStopResultMsg is the result of a stop started from the Runs tab.
+type runStopResultMsg struct {
+	run string
+	err error
+}
+
 // TuiResumeEntry is the data shape the resume picker renders. Defined in
 // the display package (instead of importing session.ResumeEntry directly)
 // so the picker stays decoupled from the on-disk format and can be
@@ -505,6 +516,11 @@ type TuiModel struct {
 	// sidebarRunsExpanded holds the run ids the Runs tab shows expanded
 	// (every step). A run is collapsed unless its id is true here.
 	sidebarRunsExpanded map[string]bool
+
+	// runStopper stops a workflow run (TUI.SetRunStopper). sidebarStopRun is the
+	// run that waits for y in the Runs tab; empty when no stop is asked.
+	runStopper     func(run string) error
+	sidebarStopRun string
 
 	// sessionLister, when set (via TUI.SetSessionLister, called once from
 	// main()), fetches this project's resumable sessions for the Sidebar's

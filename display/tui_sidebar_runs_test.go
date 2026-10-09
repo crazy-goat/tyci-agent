@@ -459,3 +459,56 @@ func TestRunDuration_StoppedRunDoesNotTick(t *testing.T) {
 		t.Fatal("a running run is not finished")
 	}
 }
+
+// The x key asks for y, y stops the run in a command, and the result is shown.
+func TestSidebarRunsTab_StopKeyAsksThenYStops(t *testing.T) {
+	m := runsModel(TuiRunRow{ID: "r1", Issue: 1, Status: "running", State: "code", Role: "worker", Since: time.Now()})
+	var stopped []string
+	m.runStopper = func(run string) error { stopped = append(stopped, run); return nil }
+	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m = model.(TuiModel)
+	if m.sidebarStopRun != "r1" || !strings.Contains(strings.Join(m.renderSidebarRuns(60), "\n"), "Stop run r1?") {
+		t.Fatalf("x must ask before it stops: %q", m.sidebarStopRun)
+	}
+	model, cmd := m.updateSidebar(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = model.(TuiModel)
+	if m.sidebarStopRun != "" || cmd == nil {
+		t.Fatalf("y must clear the question and start the stop: %q, cmd %v", m.sidebarStopRun, cmd)
+	}
+	if len(stopped) != 0 {
+		t.Fatal("the stop must run in the command, not in Update")
+	}
+	res, ok := cmd().(runStopResultMsg)
+	if !ok || res.run != "r1" || res.err != nil || len(stopped) != 1 || stopped[0] != "r1" {
+		t.Fatalf("stop result = %#v, stopped = %v", res, stopped)
+	}
+	model, _ = m.update(res)
+	if got := model.(TuiModel).statusMessage; got != "run r1 stopped" {
+		t.Fatalf("status = %q", got)
+	}
+}
+
+func TestSidebarRunsTab_StopKeyOtherKeyCancels(t *testing.T) {
+	m := runsModel(TuiRunRow{ID: "r1", Issue: 1, Status: "running", State: "code", Role: "worker", Since: time.Now()})
+	called := false
+	m.runStopper = func(string) error { called = true; return nil }
+	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	model, cmd := model.(TuiModel).updateSidebar(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if model.(TuiModel).sidebarStopRun != "" || cmd != nil || called {
+		t.Fatal("any key but y must cancel the stop")
+	}
+}
+
+// Only a running run can be stopped. A finished stopped run shows no step text.
+func TestSidebarRunsTab_StopKeyIgnoresFinishedRuns(t *testing.T) {
+	m := runsModel(TuiRunRow{ID: "s1", Issue: 5, Status: "stopped", State: "ci_wait", Took: 90 * time.Second,
+		Steps: []TuiRunStep{{Text: "code -> ok: worker"}}})
+	m.sidebarRunsExpanded = map[string]bool{"s1": true}
+	if strings.Contains(strings.Join(m.renderSidebarRuns(60), "\n"), "(script)") {
+		t.Fatal("a finished stopped run must not show its step text")
+	}
+	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if model.(TuiModel).sidebarStopRun != "" {
+		t.Fatal("x must not ask to stop a finished run")
+	}
+}

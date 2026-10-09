@@ -631,6 +631,32 @@ func (m *Manager) Shutdown(wait time.Duration) {
 	}
 }
 
+// stopHint tells how to end a paused run, which Stop cannot end. The answers
+// come from the workflow of the run, because not every workflow has a "stop"
+// key. It returns "" when the run is not paused or cannot be read.
+func (m *Manager) stopHint(run string) string {
+	if run == "" {
+		return ""
+	}
+	info, err := m.Info()
+	if err != nil {
+		return ""
+	}
+	st, err := loadRun(info, run)
+	if err != nil || st.Status != "paused" {
+		return ""
+	}
+	wf, err := m.Workflow(info, st.Workflow)
+	if err != nil {
+		return ""
+	}
+	keys := answerKeys(wf, st.Current)
+	if len(keys) == 0 {
+		return ""
+	}
+	return "; for a paused run use workflow_resume with one of the answers: " + strings.Join(keys, ", ")
+}
+
 // Stop cancels an active run and records it as stopped. The run keeps its
 // worktree and its pull request. It returns the saved state. A stop of a run
 // that ends by itself before Stop reads its state keeps the natural result.
@@ -648,12 +674,12 @@ func (m *Manager) Stop(run, reason string) (*RunState, error) {
 			}
 		}
 		m.mu.Unlock()
+		hint := m.stopHint(run)
 		if len(ids) == 0 {
-			return nil, errors.New("no active runs; for a paused run use workflow_resume with answer \"stop\"")
+			return nil, errors.New("no active runs" + hint)
 		}
 		sort.Strings(ids)
-		return nil, fmt.Errorf("run %q is not active; active runs: %s; for a paused run use workflow_resume with answer \"stop\"",
-			run, strings.Join(ids, ", "))
+		return nil, fmt.Errorf("run %q is not active; active runs: %s%s", run, strings.Join(ids, ", "), hint)
 	}
 	a.stopped = true
 	a.stopReason = reason

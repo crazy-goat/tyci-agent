@@ -36,7 +36,7 @@ func TestSlashPopupOpensOnSlashAndListsBuiltinsAndWorkflows(t *testing.T) {
 		t.Fatal("popup closed on \"/\"")
 	}
 	got := strings.Join(itemNames(m), " ")
-	if got != "btw compact exit msg new resume workflow issue-to-merge" {
+	if got != "btw compact exit msg new resume stop workflow issue-to-merge" {
 		t.Fatalf("items %q", got)
 	}
 }

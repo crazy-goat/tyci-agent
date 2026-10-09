@@ -551,6 +551,12 @@ var tuiCmd = &cobra.Command{
 			}
 			return runRowsCache
 		})
+		// The Runs tab stop key stops a run through the same function as
+		// the workflow_stop tool and /stop.
+		tuiDisp.SetRunStopper(func(run string) error {
+			_, err := tools.StopWorkflowRun(run, "stopped from the Runs tab")
+			return err
+		})
 		// The agent view sends its input to the viewed agent (see
 		// agentViewInput). Enter on a finished agent resumes it.
 		tuiDisp.SetAgentInput(agentViewInput{})

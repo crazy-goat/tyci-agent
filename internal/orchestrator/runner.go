@@ -45,7 +45,7 @@ type RunHandle interface {
 
 // RunResult is the final result of a run.
 type RunResult struct {
-	Outcome string // merged | ended | failed | cancelled
+	Outcome string // merged | ended | failed | cancelled | stopped
 	Output  string // final agent text; the roadmap run returns the oracle JSON here
 	Err     error
 }
@@ -247,6 +247,9 @@ func (h *flowHandle) watch(ctx context.Context) {
 					out = "cancelled"
 				}
 				h.done <- RunResult{Outcome: out, Err: errors.New(ev.Reason)}
+				return
+			case "stopped":
+				h.done <- RunResult{Outcome: "stopped", Err: errors.New(ev.Reason)}
 				return
 			}
 		}

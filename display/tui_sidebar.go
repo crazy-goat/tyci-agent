@@ -270,6 +270,7 @@ func (m *TuiModel) sidebarSwitchTab(tab int) {
 	m.sidebarCursor = 0
 	m.sidebarScroll = 0
 	m.sidebarTaskOwner = ""
+	m.sidebarStopRun = ""
 }
 
 // sidebarClampScrollToCursor keeps sidebarCursor within the visible window
@@ -478,6 +479,14 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// A pending stop of a run waits for y. Any other key cancels it.
+		if m.sidebarStopRun != "" {
+			run := m.sidebarStopRun
+			m.sidebarStopRun = ""
+			if msg.Type == tea.KeyRunes && string(msg.Runes) == "y" {
+				return m, m.stopRunCmd(run)
+			}
+		}
 		switch msg.Type {
 		case tea.KeyEscape:
 			if m.agentView != nil {
@@ -547,6 +556,10 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "r":
 				if m.sidebarTab == sidebarTabTasks {
 					return m.sidebarResumeSubagentRow()
+				}
+			case "x":
+				if m.sidebarTab == sidebarTabRuns {
+					return m.sidebarAskStop(), nil
 				}
 			case "<":
 				// Fallback for terminals that do not send Shift+Left.
@@ -715,6 +728,27 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+// sidebarAskStop asks for y before the run under the cursor is stopped. Only a
+// running run can be stopped: Manager.Stop rejects the other runs.
+func (m TuiModel) sidebarAskStop() TuiModel {
+	rows := m.sidebarRunRows()
+	if m.sidebarCursor < 0 || m.sidebarCursor >= len(rows) || rows[m.sidebarCursor].Status != "running" {
+		return m
+	}
+	m.sidebarStopRun = rows[m.sidebarCursor].ID
+	return m
+}
+
+// stopRunCmd stops a run in a background command. Manager.Stop can wait for
+// seconds, so it must not run in Update. The result comes back as runStopResultMsg.
+func (m TuiModel) stopRunCmd(run string) tea.Cmd {
+	stop := m.runStopper
+	if stop == nil {
+		return nil
+	}
+	return func() tea.Msg { return runStopResultMsg{run: run, err: stop(run)} }
 }
 
 // sidebarToggleRun expands or collapses the run under the cursor.

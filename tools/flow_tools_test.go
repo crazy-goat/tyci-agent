@@ -13,6 +13,8 @@ type fakeWorkflowManager struct {
 	answer   string
 	err      error
 	list     []WorkflowInfo
+	// stopped and stopReason record the last Stop call.
+	stopped, stopReason string
 }
 
 func (f *fakeWorkflowManager) Start(_ context.Context, workflow string, params []string) (string, []string, error) {
@@ -24,6 +26,10 @@ func (f *fakeWorkflowManager) Status(string) (any, error) {
 	return map[string]any{"status": "running"}, f.err
 }
 func (f *fakeWorkflowManager) Resume(_, answer string) error { f.answer = answer; return f.err }
+func (f *fakeWorkflowManager) Stop(run, reason string) (any, error) {
+	f.stopped, f.stopReason = run, reason
+	return map[string]any{"run": run, "status": "stopped"}, f.err
+}
 
 func withWorkflowManager(t *testing.T, m WorkflowManager) {
 	t.Helper()
@@ -55,7 +61,7 @@ func TestWorkflowTools_StartStatusResume(t *testing.T) {
 
 func TestSubagentToolSetExcludesWorkflowTools(t *testing.T) {
 	withWorkflowManager(t, &fakeWorkflowManager{})
-	names := []string{"workflow_start", "workflow_status", "workflow_resume"}
+	names := []string{"workflow_start", "workflow_status", "workflow_resume", "workflow_stop"}
 	for _, schema := range []string{string(GetSubagentToolsSchemaJSON()), string(GetSubagentToolsSchemaJSONFor(names))} {
 		for _, n := range names {
 			if strings.Contains(schema, `"`+n+`"`) {
@@ -65,6 +71,9 @@ func TestSubagentToolSetExcludesWorkflowTools(t *testing.T) {
 	}
 	if !strings.Contains(string(GetToolsSchemaJSON())+string(GetAllToolsSchemaJSON()), `"workflow_start"`) {
 		t.Error("chat schema lacks workflow_start")
+	}
+	if !IsSubagentDenied("workflow_stop") {
+		t.Error("workflow_stop is not denied to subagents")
 	}
 	gate := AllowOnlySubagent(names)
 	for _, n := range names {
@@ -97,5 +106,41 @@ func TestTopLevelSchemaJSONHasNoNullRequired(t *testing.T) {
 	withWorkflowManager(t, &fakeWorkflowManager{})
 	if strings.Contains(string(GetTopLevelToolsSchemaJSON()), `"required":null`) {
 		t.Fatal(`top-level schema contains "required":null`)
+	}
+}
+
+func TestWorkflowStop_ReturnsStoppedState(t *testing.T) {
+	f := &fakeWorkflowManager{}
+	withWorkflowManager(t, f)
+	res := RunTool(context.Background(), "workflow_stop", map[string]any{"run": "r1", "reason": "too slow"})
+	if !res.Success || !strings.Contains(res.Content, `"status":"stopped"`) {
+		t.Fatalf("stop: %+v", res)
+	}
+	if f.stopped != "r1" || f.stopReason != "too slow" {
+		t.Fatalf("manager got run %q reason %q", f.stopped, f.stopReason)
+	}
+}
+
+func TestWorkflowStop_RequiresRun(t *testing.T) {
+	withWorkflowManager(t, &fakeWorkflowManager{})
+	res := RunTool(context.Background(), "workflow_stop", map[string]any{"reason": "x"})
+	if res.Success || !res.validationError {
+		t.Fatalf("stop without run: %+v", res)
+	}
+}
+
+func TestWorkflowStop_ErrorIsReturned(t *testing.T) {
+	f := &fakeWorkflowManager{err: errors.New("run \"x\" is not active; active runs: a, b")}
+	withWorkflowManager(t, f)
+	res := RunTool(context.Background(), "workflow_stop", map[string]any{"run": "x"})
+	if res.Success || !strings.Contains(res.Error, "active runs") {
+		t.Fatalf("stop error: %+v", res)
+	}
+}
+
+func TestWorkflowStopSchema_InTopLevelSchemaOnce(t *testing.T) {
+	withWorkflowManager(t, &fakeWorkflowManager{})
+	if n := strings.Count(string(GetTopLevelToolsSchemaJSON()), `"name":"workflow_stop"`); n != 1 {
+		t.Fatalf("workflow_stop appears %d times in the top-level schema", n)
 	}
 }

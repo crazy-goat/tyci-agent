@@ -138,3 +138,21 @@ func TestFlowRunnerAdoptPausedRunAsksAtOnce(t *testing.T) {
 		t.Fatal("second adopt")
 	}
 }
+
+func TestFlowRunnerStoppedRunEndsHandler(t *testing.T) {
+	m := &fakeManager{}
+	r := NewRunner(m)
+	h, err := r.Start(context.Background(), "issue-to-merge", map[string]string{"issue": "7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.sub(flow.RunEvent{Run: h.ID(), Status: "stopped", Reason: "stopped by user"})
+	select {
+	case res := <-h.Done():
+		if res.Outcome != "stopped" || res.Err == nil || res.Err.Error() != "stopped by user" {
+			t.Fatalf("%+v", res)
+		}
+	case <-time.After(wait):
+		t.Fatal("a stopped run did not end the handler")
+	}
+}

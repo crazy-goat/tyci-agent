@@ -212,6 +212,14 @@ func (c ChatTools) Workflows() []tools.WorkflowInfo {
 // Resume implements tools.WorkflowManager.
 func (c ChatTools) Resume(run, answer string) error { return c.M.Resume(run, answer) }
 
+// Stop implements tools.WorkflowManager. It returns the saved state of the run.
+func (c ChatTools) Stop(run, reason string) (any, error) {
+	if _, err := c.M.Stop(run, reason); err != nil {
+		return nil, err
+	}
+	return c.Status(run)
+}
+
 // Status implements tools.WorkflowManager. It returns a JSON-ready summary.
 func (c ChatTools) Status(run string) (any, error) {
 	st, err := c.M.Status(run)

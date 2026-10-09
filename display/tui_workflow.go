@@ -54,6 +54,7 @@ var builtinCommands = []struct{ name, desc string }{
 	{"msg", "send a message to a background job"},
 	{"new", "start a new conversation"},
 	{"resume", "resume a session"},
+	{"stop", "stop a workflow run"},
 	{"workflow", "start a workflow by name"},
 }
 

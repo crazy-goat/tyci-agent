@@ -1039,6 +1039,7 @@ var toolRegistry = map[string]Tool{
 	"workflow_start":  &WorkflowStartTool{},
 	"workflow_status": &WorkflowStatusTool{},
 	"workflow_resume": &WorkflowResumeTool{},
+	"workflow_stop":   &WorkflowStopTool{},
 }
 
 // lookupTool returns the tool registered under name, copying the interface

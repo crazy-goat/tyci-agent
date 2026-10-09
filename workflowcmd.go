@@ -242,7 +242,7 @@ unknown or ambiguous.`,
 			return fail(cmd, jsonOut, fmt.Errorf("run %s is %s, not running", st.Run, st.Status))
 		}
 		if !flow.OwnerGone(st) {
-			return fail(cmd, jsonOut, errors.New("run is live in another process; use /stop in that session"))
+			return fail(cmd, jsonOut, errors.New("run is live in another process; use /stop <run> in its chat session, or end that process first"))
 		}
 		st.Status = flow.StatusStopped
 		st.Reason = workflowStopReason
