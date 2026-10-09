@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/crazy-goat/tyci-agent/conductor"
 	"github.com/crazy-goat/tyci-agent/display"
+	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/stream"
 	"github.com/crazy-goat/tyci-agent/tools"
@@ -123,6 +125,21 @@ func handleCompactCommand(disp slashCommandDisplay, compact func() (string, bool
 	}
 }
 
+// compactionDisplay is the part of display.TUI that shows a compaction divider.
+type compactionDisplay interface {
+	Compaction(meta session.CompactMeta)
+}
+
+// compactAndShow runs compact and, when it succeeds, shows the divider of
+// meta on disp. A failed compaction shows no divider.
+func compactAndShow(disp compactionDisplay, compact func(summary, focus string, meta session.CompactMeta) (string, error), summary, focus string, meta session.CompactMeta) (string, error) {
+	path, err := compact(summary, focus, meta)
+	if err == nil {
+		disp.Compaction(meta)
+	}
+	return path, err
+}
+
 // runTUI is the full-screen frontend. It reads user input, dispatches slash
 // commands and paints; the conversation behind it — history, model client,
 // session log, usage — is the conductor's.
@@ -226,7 +243,9 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 		return nil
 	}
 
-	cond.SetCompactor(cond.Compact)
+	cond.SetCompactor(func(summary, focus string, meta session.CompactMeta) (string, error) {
+		return compactAndShow(tuiDisp, cond.Compact, summary, focus, meta)
+	})
 
 	// handleMsgCommand implements "/msg <job> <text>": posts text to job's
 	// mailbox, delivered at that job's next iteration boundary (see
@@ -247,17 +266,20 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 	// startBtwQuestion forks the conversation into a background side
 	// conversation. Runs on baseCtx (not the per-iteration context the loop
 	// below cancels) so it keeps going independently of the main thread.
-	startBtwQuestion := func(question string) {
+	// open adds the entry to the /btw list, and opens its modal only for a /btw
+	// command. A busy-line fork only records the entry, so the prompt keeps the keyboard.
+	openBtwEvaluation := func(question string, start func(context.Context, *conductor.Conductor, string, *display.BtwSink) *jobs.Job, open func(id, question string)) {
 		id := nextBtwID()
 		sink := tuiDisp.BtwSink(id)
-		tuiDisp.OpenBtw(id, question)
-		job := startBtw(baseCtx, cond, question, sink)
+		open(id, question)
+		job := start(baseCtx, cond, question, sink)
 		if job == nil {
-			tuiDisp.Error(fmt.Errorf("/btw: too many active evaluations (limit %d)", maxBtwEvaluations))
+			tuiDisp.Error(btwLimitError())
 			return
 		}
 		tuiDisp.SetBtwJobID(id, job.ID)
 	}
+	startBtwQuestion := func(question string) { openBtwEvaluation(question, startBtw, tuiDisp.OpenBtw) }
 
 	// serviceCommands runs the slash commands typed while a turn was in
 	// flight, when the main loop below was blocked in the agent run and could
@@ -289,13 +311,17 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 	// NextMessages source, so a child could finish successfully while the
 	// person saw no indication until they inferred it from model output.
 	drainOrchestratorNotices := func() []string {
-		notices := drainNotices()
-		for _, notice := range notices {
+		notices, shown := drainNoticesForTUI()
+		for _, notice := range shown {
 			tuiDisp.ToolBlock(notice)
 		}
 		return notices
 	}
-	cond.SetNextMessages(mergeNextMessages(serviceCommands, cond.Config().NextMessages, drainOrchestratorNotices))
+	// The queue drain is the busy-line path: a line typed while a turn is in
+	// flight waits in the queue. forkBusyLines starts a read-only fork for it
+	// and the line still goes to the orchestrator.
+	startBusyQuestion := func(question string) { openBtwEvaluation(question, startBusyBtw, tuiDisp.RecordBtw) }
+	cond.SetNextMessages(mergeNextMessages(serviceCommands, forkBusyLines(cond.Config().NextMessages, startBusyQuestion), drainOrchestratorNotices))
 
 	for {
 		iterCtx, iterCancel := context.WithCancel(baseCtx)
@@ -373,7 +399,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 					// history's lead message — not just printed here — before
 					// Compact ever writes it.
 					dumpPath := session.DumpPathFor(cond.SessionPath())
-					path, err := cond.Compact(manualCompactSummary(dumpPath), focus)
+					path, err := compactAndShow(tuiDisp, cond.Compact, manualCompactSummary(dumpPath), focus, session.CompactMeta{Kind: session.CompactKindCommand, At: time.Now()})
 					if err != nil {
 						return fmt.Sprintf("/compact: %v", err), true
 					}

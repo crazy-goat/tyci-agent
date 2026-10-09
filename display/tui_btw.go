@@ -18,7 +18,7 @@ import (
 func (m TuiModel) updateBtwMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tuiBtwOpenMsg:
-		m.openBtwEntry(msg.id, msg.question, msg.createdAt)
+		m.openBtwEntry(msg.id, msg.question, msg.createdAt, !msg.quiet)
 	case tuiBtwJobIDMsg:
 		if e := m.findBtwEntry(msg.id); e != nil {
 			e.JobID = msg.jobID
@@ -39,8 +39,9 @@ func (m *TuiModel) findBtwEntry(id string) *BtwEntry {
 	return nil
 }
 
-// openBtwEntry records a new entry and opens its live modal.
-func (m *TuiModel) openBtwEntry(id, question string, createdAt time.Time) {
+// openBtwEntry records a new entry. It opens the live modal only when openModal
+// is set. The /btw list still shows the entry either way.
+func (m *TuiModel) openBtwEntry(id, question string, createdAt time.Time, openModal bool) {
 	entry := &BtwEntry{
 		ID:        id,
 		Question:  question,
@@ -48,6 +49,9 @@ func (m *TuiModel) openBtwEntry(id, question string, createdAt time.Time) {
 		content:   &strings.Builder{},
 	}
 	m.btwEntries = append(m.btwEntries, entry)
+	if !openModal {
+		return
+	}
 	m.btwModalEntry = entry
 	m.btwModalActive = true
 	m.btwModalScroll = 0

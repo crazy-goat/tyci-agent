@@ -47,11 +47,13 @@ type tuiResumeRequestMsg struct {
 // immediately — before the background job has produced any output. Sent by
 // TUI.OpenBtw, strictly before the caller starts the job's goroutine, so
 // Update always registers the entry before any tuiBtwStreamMsg for the same
-// id can arrive.
+// id can arrive. With quiet set (TUI.RecordBtw), the entry is only recorded
+// and no modal opens, so the keyboard stays with the prompt.
 type tuiBtwOpenMsg struct {
 	id        string
 	question  string
 	createdAt time.Time
+	quiet     bool
 }
 
 // tuiBtwJobIDMsg records the background job's ID on an already-open /btw

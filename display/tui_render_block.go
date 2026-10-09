@@ -142,7 +142,7 @@ func (m TuiModel) renderBlock(idx int, b block) string {
 			return cached
 		}
 		return renderErrorOrBlock(b, m.renderWidth())
-	case "block":
+	case "block", "compaction":
 		if cached, ok := m.mdCacheRendered[idx]; ok && cached != "" && !m.dirtyBlocks[idx] {
 			return cached
 		}
@@ -198,6 +198,9 @@ func (m *TuiModel) getBlockLines(idx int, forceRender bool) []string {
 
 // renderErrorOrBlock renders error and block type blocks (no glamour, just wrapText).
 func renderErrorOrBlock(b block, width int) string {
+	if b.kind == "compaction" {
+		return renderCompactionDivider(b.content, width)
+	}
 	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("│")
 	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Italic(true)
 	if b.kind == "block" {

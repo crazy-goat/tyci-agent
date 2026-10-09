@@ -526,6 +526,8 @@ var tuiCmd = &cobra.Command{
 		// Show async subagent jobs (subagent(async: true), see tools/subagent.go)
 		// in the TUI's background-jobs panel/modal (Ctrl+B).
 		tuiDisp.SetJobEvents(subscribeJobStatus(appBus))
+		// Busy-line btw answers (see publishBtwSuggestion) appear in the chat.
+		go showBtwSuggestions(subscribeBtwSuggestions(appBus), tuiDisp.DoneCh(), tuiDisp.ToolBlock)
 
 		// Cache the rows: View() calls this on every frame. Only the Bubble Tea
 		// goroutine calls it, so no lock. Detecting the repo runs git

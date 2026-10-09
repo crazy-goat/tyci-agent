@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"github.com/crazy-goat/tyci-agent/session"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func TestCompactToolRequiresSummaryAndOwner(t *testing.T) {
 }
 
 func TestCompactToolCallsOwner(t *testing.T) {
-	ctx := WithCompactor(context.Background(), func(summary, focus string) (string, error) {
+	ctx := WithCompactor(context.Background(), func(summary, focus string, meta session.CompactMeta) (string, error) {
 		if summary != "keep" || focus != "tests" {
 			t.Fatalf("got %q/%q", summary, focus)
 		}
@@ -45,7 +46,7 @@ func TestCompactIsHiddenFromSubagents(t *testing.T) {
 }
 
 func TestCompactToolRejectsEmptySummaryEvenWithOwner(t *testing.T) {
-	ctx := WithCompactor(context.Background(), func(summary, focus string) (string, error) {
+	ctx := WithCompactor(context.Background(), func(summary, focus string, meta session.CompactMeta) (string, error) {
 		t.Fatal("empty summary must not invoke compactor")
 		return "", nil
 	})

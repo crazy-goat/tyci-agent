@@ -35,7 +35,7 @@ func TestCompactSessionDropsTrailingUnansweredToolCall(t *testing.T) {
 			{Type: "toolCall", ID: "call-1", Name: "bash"},
 		},
 	})
-	if _, err := CompactSession(sess, &msgs, "summary", ""); err != nil {
+	if _, err := CompactSession(sess, &msgs, "summary", "", session.CompactMeta{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(msgs) != 9 || len(msgs[len(msgs)-1].Content) != 2 || msgs[len(msgs)-1].Content[1].Type != "toolCall" {
@@ -52,7 +52,9 @@ func TestRunCompactAsOnlyToolPreservesToolCallResultPair(t *testing.T) {
 	defer sess.Close()
 	calls := 0
 	var msgs []connector.Message
-	compactor := func(summary, focus string) (string, error) { return CompactSession(sess, &msgs, summary, focus) }
+	compactor := func(summary, focus string, meta session.CompactMeta) (string, error) {
+		return CompactSession(sess, &msgs, summary, focus, meta)
+	}
 	runner := toolRunnerFunc(func(ctx context.Context, name string, args map[string]any) (string, error) {
 		calls++
 		if name != "compact" {

@@ -184,6 +184,15 @@ func publishBtwAnswer(b *bus.Bus, parentID, jobID, question, answer string) {
 		bus.BtwAnswer{Question: question, Text: answer, JobID: jobID})
 }
 
+// publishBtwSuggestion sends the answer of a busy-line fork jobID to the TUI,
+// which shows it in the chat at once, and to the orchestrator, which reads it
+// at its next drain. Both copies are published once each.
+func publishBtwSuggestion(b *bus.Bus, jobID, question, answer string) {
+	payload := bus.BtwAnswer{Question: question, Text: answer, JobID: jobID, Suggestion: true}
+	publishTo(b, bus.KindBtwAnswer, agentAddr(jobID), orchestratorAddr, bus.OriginAgent, payload)
+	publishTo(b, bus.KindBtwAnswer, agentAddr(jobID), bus.Addr{Type: bus.AddrTUI}, bus.OriginAgent, payload)
+}
+
 // publishAgentMessage sends text from one sender to agent id. origin says what
 // caused it: the "message" tool and the /msg command set it.
 func publishAgentMessage(b *bus.Bus, id string, from bus.Addr, origin bus.Origin, text string) {
@@ -313,6 +322,9 @@ func noticeText(m bus.Message) (text string, ok bool) {
 			fmt.Fprintf(busLog, "bus: btw answer %d not read: %v\n", m.Seq, err)
 			return "", false
 		}
+		if a.Suggestion {
+			return btwSuggestionNotice(a.Question, a.JobID, a.Text), true
+		}
 		return btwEvaluationNotice(a.Question, a.JobID, a.Text), true
 	case bus.KindAskRequest:
 		a, err := bus.Decode[bus.AskRequest](m)
@@ -334,17 +346,29 @@ func noticeText(m bus.Message) (text string, ok bool) {
 // an idle chat.
 var (
 	pendingMu      sync.Mutex
-	pendingNotices []string
+	pendingNotices []pendingNotice
 	pendingLoud    bool
 )
 
-// quietNotice reports whether m is a quiet completion notice.
+// pendingNotice is one notice that waits for a drain. hidden is true for a btw
+// suggestion: the TUI already showed it in the chat (see showBtwSuggestions), so
+// the mirror of the drain must not show it again. The model still gets it.
+type pendingNotice struct {
+	text   string
+	hidden bool
+}
+
+// quietNotice reports whether m waits for the next drain instead of waking an
+// idle chat: a quiet completion notice, or a btw suggestion.
 func quietNotice(m bus.Message) bool {
-	if m.Kind != bus.KindNoticeCompletion {
-		return false
+	switch m.Kind {
+	case bus.KindNoticeCompletion:
+		c, err := bus.Decode[bus.Completion](m)
+		return err == nil && c.Quiet
+	case bus.KindBtwAnswer:
+		return isBtwSuggestion(m)
 	}
-	c, err := bus.Decode[bus.Completion](m)
-	return err == nil && c.Quiet
+	return false
 }
 
 // stashBusNotices moves the waiting notices of the orchestrator's subscription
@@ -353,10 +377,13 @@ func stashBusNotices() {
 	if busOrchestratorNotices == nil {
 		return
 	}
-	var fresh []string
+	var fresh []pendingNotice
 	loud := false
 	for _, m := range busOrchestratorNotices.Drain() {
-		fresh = append(fresh, formatNotices([]bus.Message{m})...)
+		hidden := isBtwSuggestion(m)
+		for _, text := range formatNotices([]bus.Message{m}) {
+			fresh = append(fresh, pendingNotice{text: text, hidden: hidden})
+		}
 		loud = loud || !quietNotice(m)
 	}
 	pendingMu.Lock()
@@ -365,9 +392,17 @@ func stashBusNotices() {
 	pendingLoud = pendingLoud || loud
 }
 
-// drainNotices returns every waiting notice of the main conversation, quiet
-// ones included.
-func drainNotices() []string {
+// isBtwSuggestion reports whether m is the answer of a busy-line fork.
+func isBtwSuggestion(m bus.Message) bool {
+	if m.Kind != bus.KindBtwAnswer {
+		return false
+	}
+	a, err := bus.Decode[bus.BtwAnswer](m)
+	return err == nil && a.Suggestion
+}
+
+// takePendingNotices stashes the new notices and empties the pending list.
+func takePendingNotices() []pendingNotice {
 	stashBusNotices()
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
@@ -375,6 +410,34 @@ func drainNotices() []string {
 	pendingNotices = nil
 	pendingLoud = false
 	return out
+}
+
+// noticeTexts returns the text of each notice, in order.
+func noticeTexts(items []pendingNotice) []string {
+	out := make([]string, 0, len(items))
+	for _, n := range items {
+		out = append(out, n.text)
+	}
+	return out
+}
+
+// drainNotices returns every waiting notice of the main conversation, quiet
+// ones included.
+func drainNotices() []string {
+	return noticeTexts(takePendingNotices())
+}
+
+// drainNoticesForTUI is drainNotices for the TUI's drain. It returns every
+// notice for the model, and the notices the chat must show. A btw suggestion
+// is left out of the chat list: the TUI shows it once when it is published.
+func drainNoticesForTUI() (model, chat []string) {
+	items := takePendingNotices()
+	for _, n := range items {
+		if !n.hidden {
+			chat = append(chat, n.text)
+		}
+	}
+	return noticeTexts(items), chat
 }
 
 // wakeNotices is drainNotices for the TUI's wake-up. It returns nothing when
@@ -499,4 +562,36 @@ func jobStatusOf(j jobs.Job) bus.JobStatus {
 // subscribeJobStatus subscribes to the job.status messages that the TUI reads.
 func subscribeJobStatus(b *bus.Bus) *bus.Sub {
 	return b.Subscribe("tui-jobs", bus.Filter{To: bus.Addr{Type: bus.AddrTUI}, Kinds: []bus.Kind{bus.KindJobStatus}})
+}
+
+// subscribeBtwSuggestions subscribes to the btw answers that the TUI shows in
+// the chat.
+func subscribeBtwSuggestions(b *bus.Bus) *bus.Sub {
+	return b.Subscribe("tui-btw", bus.Filter{To: bus.Addr{Type: bus.AddrTUI}, Kinds: []bus.Kind{bus.KindBtwAnswer}})
+}
+
+// showBtwSuggestions passes the text of each drained btw suggestion to show,
+// until done closes or the subscription ends.
+func showBtwSuggestions(sub *bus.Sub, done <-chan struct{}, show func(string)) {
+	defer sub.Close()
+	deliver := func() {
+		for _, m := range sub.Drain() {
+			a, err := bus.Decode[bus.BtwAnswer](m)
+			if err != nil || !a.Suggestion {
+				continue
+			}
+			show(btwSuggestionNotice(a.Question, a.JobID, a.Text))
+		}
+	}
+	for {
+		select {
+		case <-sub.Ready():
+			deliver()
+		case <-sub.Done():
+			deliver()
+			return
+		case <-done:
+			return
+		}
+	}
 }

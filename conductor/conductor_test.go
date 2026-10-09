@@ -799,7 +799,7 @@ func TestConductor_CompactRejectsEmptySummary(t *testing.T) {
 	// so this actually exercises the early-return: without it, c.Session()
 	// would stay nil regardless of whether the empty-summary guard ran at all.
 	c := New(Options{Client: client, Sink: &recorder{}, SessionPath: path, WorkDir: dir})
-	if _, err := c.Compact("   ", ""); err == nil {
+	if _, err := c.Compact("   ", "", session.CompactMeta{}); err == nil {
 		t.Fatal("expected an error for a blank summary")
 	}
 	if c.Session() != nil {
@@ -817,7 +817,7 @@ func TestConductor_CompactRejectsEmptySummary(t *testing.T) {
 func TestConductor_CompactWithoutSessionPathErrors(t *testing.T) {
 	client := &connectortest.Fake{ProviderName: "prov", ModelName: "mod"}
 	c := New(Options{Client: client, Sink: &recorder{}})
-	if _, err := c.Compact("keep this", ""); err == nil {
+	if _, err := c.Compact("keep this", "", session.CompactMeta{}); err == nil {
 		t.Fatal("expected an error with no writable session")
 	}
 }
@@ -842,7 +842,7 @@ func TestConductor_CompactWritesEventAndUpdatesLiveHistory(t *testing.T) {
 	}
 	before := len(c.Messages())
 
-	dumpPath, err := c.Compact("what happened so far", "keep the deploy details")
+	dumpPath, err := c.Compact("what happened so far", "keep the deploy details", session.CompactMeta{})
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}

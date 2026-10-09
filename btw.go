@@ -542,6 +542,46 @@ func btwConfig(base agent.Config) agent.Config {
 // agent run and must share nothing transport-level with the parent, same
 // as a subagent.
 func startBtw(ctx context.Context, cond *conductor.Conductor, question string, sink *display.BtwSink) *jobs.Job {
+	return startBtwFork(ctx, cond, question, sink, false)
+}
+
+// btwBusyFraming is put in front of a busy-line fork's question. It tells the
+// fork that the main assistant cannot take its suggestions. A /btw fork does not get it.
+const btwBusyFraming = "You are answering while the main assistant is busy. Answer briefly. You cannot start or stop work; suggest actions only."
+
+// startBusyBtw is startBtw for a line that the user typed while a turn was in
+// flight. The fork is read-only like a /btw fork. Its answer is published as a
+// suggestion (see publishBtwSuggestion), never as a /btw evaluation.
+func startBusyBtw(ctx context.Context, cond *conductor.Conductor, question string, sink *display.BtwSink) *jobs.Job {
+	return startBtwFork(ctx, cond, question, sink, true)
+}
+
+// btwLimitError is the refusal shown when no more forks can start. /btw and
+// a busy-line fork report the same text.
+func btwLimitError() error {
+	return fmt.Errorf("/btw: too many active evaluations (limit %d)", maxBtwEvaluations)
+}
+
+// forkBusyLines wraps drain, the queue drain of the TUI. Each line that drain
+// returns and that does not start with "/" starts a busy-line fork through
+// start, before the lines are returned. So the fork does not see the line
+// yet, and the line stays queued for the orchestrator, in order.
+func forkBusyLines(drain func() []string, start func(question string)) func() []string {
+	if drain == nil {
+		return nil
+	}
+	return func() []string {
+		lines := drain()
+		for _, line := range lines {
+			if !strings.HasPrefix(line, "/") {
+				start(line)
+			}
+		}
+		return lines
+	}
+}
+
+func startBtwFork(ctx context.Context, cond *conductor.Conductor, question string, sink *display.BtwSink, busy bool) *jobs.Job {
 	btwEvaluationsMu.Lock()
 	if btwActive >= maxBtwEvaluations {
 		btwEvaluationsMu.Unlock()
@@ -553,7 +593,11 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 	// signal, but do not create a special subagent deadline; kill_job and the
 	// registry still cancel the job when requested.
 	ctx, cancelEvaluation := context.WithCancel(ctx)
-	forked := forkMessagesForBtw(cond.Messages(), question)
+	forkQuestion := question
+	if busy {
+		forkQuestion = btwBusyFraming + "\n\n" + question
+	}
+	forked := forkMessagesForBtw(cond.Messages(), forkQuestion)
 	cfg := btwConfig(cond.Config())
 	cfg.Schema = tools.BtwEvaluationSchemaJSON()
 	client, fallbacks := withIsolatedPool(cond.Client(), cfg.Fallbacks)
@@ -595,9 +639,13 @@ func startBtw(ctx context.Context, cond *conductor.Conductor, question string, s
 		text := sink.CollectedText()
 		if err == nil || truncated {
 			retainBtwEvaluation(jobID, &btwEvaluation{msgs: session.ForkMessages(forked), mc: client, cfg: cfg, question: question})
-			// The answer goes to the spawner of this job, or to the orchestrator
-			// when there is none. The bus reroutes it when that spawner finished.
-			publishBtwAnswer(b, parentID, jobID, question, strings.TrimSpace(text))
+			if busy {
+				publishBtwSuggestion(b, jobID, question, strings.TrimSpace(text))
+			} else {
+				// The answer goes to the spawner of this job, or to the orchestrator
+				// when there is none. The bus reroutes it when that spawner finished.
+				publishBtwAnswer(b, parentID, jobID, question, strings.TrimSpace(text))
+			}
 		}
 		sink.MarkDone(err)
 		return text, truncated, err
@@ -635,4 +683,10 @@ func (a listJobsAdapter) ListJobs() []tools.JobKindSource {
 // finishes. Its answer is already trimmed.
 func btwEvaluationNotice(question, jobID, answer string) string {
 	return fmt.Sprintf("[btw] evaluation %q finished (job_id=%q): %s\nIf it is worth doing, call promote_btw(job_id=%q). Promotion creates one real subthread; wait for that job instead of doing the work in this thread.", question, jobID, answer, jobID)
+}
+
+// btwSuggestionNotice is the text of a busy-line fork's answer. It only
+// suggests: it does not mention promote_btw.
+func btwSuggestionNotice(question, jobID, answer string) string {
+	return fmt.Sprintf("[btw suggestion] %q (job_id=%q): %s", question, jobID, answer)
 }

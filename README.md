@@ -715,6 +715,15 @@ the session file and its markdown dump, then the last 8 messages. Subagents and
 flow roles compact in memory: they keep the task, a note with the summary, and
 the last 8 messages.
 
+Each compaction shows a divider line in the chat. The divider shows the kind of
+compaction, for example `auto compaction`, `/compact` or `in-loop compaction`.
+It adds `(summarized)` when a summary was used, and the context size before the
+compaction when it is known. A session resume shows the same dividers. The
+session file stores the compaction fields `kind`, `summarized` and
+`tokens_before`. The stored `kind` is an id: `auto`, `command`, `tool` or
+`in_loop`. The divider text is not stored. Older session files have no `kind`,
+so their divider shows `compaction`. Older files without these fields still load.
+
 ## Long subagents
 
 A blocking `subagent` call waits 60s. After that its children move to the
@@ -747,6 +756,10 @@ part, so that is all the notice carries.
 A subagent uses the same hand-off. Its notice goes to the subagent that
 started the command. When the subagent ends, its background commands are
 stopped.
+
+## Answers while the assistant is busy
+
+In the TUI, a line typed while a turn is running still waits in the queue for the main assistant. The same line also starts a read-only `/btw` fork that answers it. The answer appears in the chat at once. The main assistant gets it as a `[btw suggestion]` message at its next drain, and that message does not wake an idle chat. The fork can read and search, but it cannot run commands, write files, start subagents or stop jobs. It only suggests, and it never promotes. An idle chat starts no fork. This is always on, and it shares the 32-evaluation limit with `/btw`.
 
 ## Stream guards
 

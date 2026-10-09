@@ -110,7 +110,7 @@ type Config struct {
 
 	// Compactor is called by the model-facing compact tool at a safe turn
 	// boundary. It appends an event and updates the live conversation.
-	Compactor func(summary, focus string) (string, error)
+	Compactor func(summary, focus string, meta session.CompactMeta) (string, error)
 
 	// ContextLimitFor returns the current model's published context window.
 	// It is evaluated at each turn so a fallback model gets its own limit.
@@ -491,15 +491,18 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			case used > 0 && hardAt > 0 && used >= hardAt:
 				note := buildInLoopCompactNote(used, hardAt, "")
 				budget := summaryBudget(used, contextLimit())
+				summarized := false
 				if len(*msgs) > compactKeepMessages && budget >= compactSummaryMinTokens {
 					res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout, budget)
 					accountSummary(d, &totalUsage, res)
 					if err == nil {
 						note = buildInLoopCompactNote(used, hardAt, res.text)
+						summarized = true
 					}
 				}
 				if compactInMemory(msgs, task, note) {
 					contextReminded = false
+					emitCompaction(d, session.CompactMeta{Kind: session.CompactKindInLoop, Summarized: summarized, TokensBefore: used, At: time.Now()})
 				}
 			case used > 0 && softAt > 0 && used >= softAt && !contextReminded:
 				contextReminded = true
@@ -548,7 +551,8 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 						}
 					}
 					summary := buildAutoCompactSummary(used, hardAt, dumpPath, modelSummary)
-					_, compactErr := cfg.Compactor(summary, "")
+					meta := session.CompactMeta{Kind: session.CompactKindAuto, Summarized: modelSummary != "", TokensBefore: used, At: time.Now()}
+					_, compactErr := cfg.Compactor(summary, "", meta)
 					// Whether or not compaction succeeded, do NOT `continue`
 					// here (review of F5): the model has already finished
 					// its answer for this turn (!more && !drained), and

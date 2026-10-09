@@ -3,6 +3,7 @@ package tools
 import (
 	"sync"
 
+	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/stream"
 )
 
@@ -11,13 +12,15 @@ import (
 const liveTranscriptCap = 100
 
 // LiveEvent is one step of a subagent's conversation, in the order the
-// subagent produced it. Kind is "thinking", "text", "tool-start", "tool-delta"
-// or "tool-end". These are the same names the TUI uses for its own block
-// messages, so the display replays events without a mapping table.
+// subagent produced it. Kind is "thinking", "text", "tool-start", "tool-delta",
+// "tool-end" or "compaction". These are the same names the TUI uses for its
+// own block messages, so the display replays events without a mapping table.
+// Compaction is set only for a "compaction" event.
 type LiveEvent struct {
-	Kind     string
-	Content  string
-	ToolName string
+	Kind       string
+	Content    string
+	ToolName   string
+	Compaction session.CompactMeta
 }
 
 // liveTranscript holds the events of one job. The job's streamingCollector
