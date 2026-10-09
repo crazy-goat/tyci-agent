@@ -335,10 +335,7 @@ func TestJobObserverAdapter_TranslatesProgressHistoryAndTruncation(t *testing.T)
 // real subagent job, and gives it every message from the side conversation
 // before the continuation instruction.
 func TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread(t *testing.T) {
-	reg := jobs.NewRegistry()
-	prevRegistry, prevNotices := JobRegistry, JobNotices
-	JobRegistry, JobNotices = reg, jobs.NewNotifier()
-	defer func() { JobRegistry, JobNotices = prevRegistry, prevNotices }()
+	reg, _ := withTestWiring(t)
 
 	fake := connectortest.Text("promoted result")
 	evaluationID := "btw-evaluation-test"
@@ -498,10 +495,7 @@ func TestBtwPromotionAdapter_ScoutSchemaGateAgreement(t *testing.T) {
 // subagent call must be refused, and the registry must still contain only the
 // one promoted job.
 func TestBtwPromotionAdapter_UsesChildRuntimeGate(t *testing.T) {
-	reg := jobs.NewRegistry()
-	prevRegistry, prevNotices := JobRegistry, JobNotices
-	JobRegistry, JobNotices = reg, jobs.NewNotifier()
-	defer func() { JobRegistry, JobNotices = prevRegistry, prevNotices }()
+	reg, _ := withTestWiring(t)
 
 	fake := &connectortest.Fake{
 		ProviderName: "test-provider",

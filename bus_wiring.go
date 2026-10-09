@@ -68,7 +68,7 @@ var orchestratorAddr = bus.Addr{Type: bus.AddrOrchestrator}
 // noticeKinds lists the kinds that an inbox or the orchestrator reads. A
 // subscription gets only the kinds it lists, so every consumer lists all of
 // them.
-var noticeKinds = []bus.Kind{bus.KindNoticeCompletion, bus.KindAskRequest}
+var noticeKinds = []bus.Kind{bus.KindNoticeCompletion, bus.KindAskRequest, bus.KindBtwAnswer}
 
 // inboxSet keeps one Durable inbox subscription per agent. The inbox of an
 // agent opens when the job starts, before its ID is returned, and closes when
@@ -150,14 +150,19 @@ func agentAddr(id string) bus.Addr {
 	return bus.Addr{Type: bus.AddrAgent, ID: id}
 }
 
+// recipientAddr returns the address of the spawner id, or of the orchestrator
+// when id is "".
+func recipientAddr(id string) bus.Addr {
+	if id == "" {
+		return orchestratorAddr
+	}
+	return agentAddr(id)
+}
+
 // publishNotice sends one completion notice to parentID, or to the
 // orchestrator when parentID is "".
 func publishNotice(b *bus.Bus, parentID, text string) {
-	to := orchestratorAddr
-	if parentID != "" {
-		to = agentAddr(parentID)
-	}
-	publishTo(b, bus.KindNoticeCompletion, orchestratorAddr, to, bus.OriginSystem,
+	publishTo(b, bus.KindNoticeCompletion, orchestratorAddr, recipientAddr(parentID), bus.OriginSystem,
 		bus.Completion{Text: text})
 }
 
@@ -165,12 +170,16 @@ func publishNotice(b *bus.Bus, parentID, text string) {
 // orchestrator when parentID is "". The bus reroutes it to the orchestrator
 // when parentID has finished.
 func publishAsk(b *bus.Bus, parentID, agentID string, seq int, text string) {
-	to := orchestratorAddr
-	if parentID != "" {
-		to = agentAddr(parentID)
-	}
-	publishTo(b, bus.KindAskRequest, agentAddr(agentID), to, bus.OriginAgent,
+	publishTo(b, bus.KindAskRequest, agentAddr(agentID), recipientAddr(parentID), bus.OriginAgent,
 		bus.AskRequest{Agent: agentID, QuestionSeq: seq, Text: text})
+}
+
+// publishBtwAnswer sends the answer of the /btw evaluation jobID to parentID,
+// or to the orchestrator when parentID is "". The bus reroutes it when
+// parentID has finished.
+func publishBtwAnswer(b *bus.Bus, parentID, jobID, question, answer string) {
+	publishTo(b, bus.KindBtwAnswer, agentAddr(jobID), recipientAddr(parentID), bus.OriginAgent,
+		bus.BtwAnswer{Question: question, Text: answer, JobID: jobID})
 }
 
 // maxShownAsks bounds the asks that a handoff message already carried. When
@@ -244,6 +253,13 @@ func noticeText(m bus.Message) (text string, ok bool) {
 			return "", false
 		}
 		return c.Text, true
+	case bus.KindBtwAnswer:
+		a, err := bus.Decode[bus.BtwAnswer](m)
+		if err != nil {
+			fmt.Fprintf(busLog, "bus: btw answer %d not read: %v\n", m.Seq, err)
+			return "", false
+		}
+		return btwEvaluationNotice(a.Question, a.JobID, a.Text), true
 	case bus.KindAskRequest:
 		a, err := bus.Decode[bus.AskRequest](m)
 		if err != nil {
