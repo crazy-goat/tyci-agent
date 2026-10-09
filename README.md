@@ -146,6 +146,16 @@ The answers are `ok`, `skip` and `fail`.
 The script answers `skip` when the run has no review step, for example a run that continues an open PR.
 If a needed key is missing, the run fails with `unknown transition key "<key>" in state "post_review"`.
 
+### Start a workflow from the TUI
+
+Type `/<name>` and the params in the chat to start a workflow. For example, `/issue-to-merge 160`. The line does not go to the model. The params are positional. Their order is the order of `params` in `workflow.json`. You can start a workflow while the model is busy. The running turn is not changed.
+
+- Type `/` at the start of the input to open the list. The list shows the builtin commands and the workflows. Each workflow row shows its params and its source: `project` or `home`. Up and Down move the highlight. Tab takes the highlighted row. Enter takes it too, unless the typed name is already the full name of the row. Esc closes the list. The list narrows while you type.
+- A workflow that does not load is listed with the reason. Its row cannot be taken into the input.
+- If a required param is missing, the run does not start. The model asks you for the value. Then the model starts the run.
+- `/workflow <name> [params]` always starts a workflow. Use it for a workflow whose name is a builtin command.
+- The builtin commands are `btw`, `compact`, `exit`, `msg`, `new`, `resume` and `workflow`. A workflow with one of these names is an error. tyci shows the error at start-up and in the list. Start that workflow with `/workflow <name>`.
+
 ### Workflow proposals
 
 When the workflow cannot handle a failure, or the same step failed with the same cause

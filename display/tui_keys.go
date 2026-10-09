@@ -13,6 +13,9 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.handleFileCompleteKey(msg) {
 		return m, nil
 	}
+	if m.handleSlashCompleteKey(msg) {
+		return m, nil
+	}
 
 	// Esc in an agent view goes back to the main conversation. It returns
 	// before the busy-turn handler, so it never cancels the main turn.
@@ -58,6 +61,9 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.capInputHeight()
 			return m, nil
 		}
+		if handled, cmd := m.startWorkflowFromInput(); handled {
+			return m, cmd
+		}
 		if handled, next := m.handleLocalSlashCommand(); handled {
 			return next, nil
 		}
@@ -82,10 +88,11 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.capInputHeight()
 	// Opening, filtering and closing the "@" popup all follow from the text
 	// that is now in the input, rather than from tracking which key did what.
+	slash := m.refreshSlashComplete()
 	if scan := m.refreshFileComplete(); scan != nil {
-		return m, tea.Batch(cmd, scan)
+		return m, tea.Batch(cmd, slash, scan)
 	}
-	return m, cmd
+	return m, tea.Batch(cmd, slash)
 }
 
 // handleLocalSlashCommand deals with the commands the TUI owns itself, before
@@ -257,6 +264,9 @@ func (m TuiModel) handleKeyWhileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.capInputHeight()
 			return m, nil
 		}
+		if handled, cmd := m.startWorkflowFromInput(); handled {
+			return m, cmd
+		}
 		if handled, next := m.handleLocalSlashCommand(); handled {
 			return next, nil
 		}
@@ -285,10 +295,11 @@ func (m TuiModel) handleKeyWhileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.capInputHeight()
 	// Opening, filtering and closing the "@" popup all follow from the text
 	// that is now in the input, rather than from tracking which key did what.
+	slash := m.refreshSlashComplete()
 	if scan := m.refreshFileComplete(); scan != nil {
-		return m, tea.Batch(cmd, scan)
+		return m, tea.Batch(cmd, slash, scan)
 	}
-	return m, cmd
+	return m, tea.Batch(cmd, slash)
 }
 
 // clearMessageQueue drops all pending user messages: both the rendering

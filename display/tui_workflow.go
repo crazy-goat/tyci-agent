@@ -1,0 +1,228 @@
+package display
+
+import (
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// WorkflowParam is one positional param of a workflow, as the "/" popup shows it.
+type WorkflowParam struct {
+	Name     string
+	Required bool
+}
+
+// WorkflowEntry describes one workflow for the "/" popup. Source is "project"
+// or "home". Err is the reason the workflow cannot be started; an entry with
+// Err is listed but never started by "/<name>".
+type WorkflowEntry struct {
+	Name   string
+	Params []WorkflowParam
+	Source string
+	Err    string
+}
+
+// WorkflowStarter is what the TUI needs from the workflow runner. internal/flow
+// implements it in package main, so this package does not import flow.
+type WorkflowStarter interface {
+	// List returns the workflows of the current repository, with the ones that
+	// do not load.
+	List() []WorkflowEntry
+	// Start starts a run and returns at once. A missing required param returns a
+	// WorkflowParamError and starts nothing.
+	Start(name string, params []string) (run string, warnings []string, err error)
+}
+
+// WorkflowParamError is returned by WorkflowStarter.Start for a required param
+// without a value.
+type WorkflowParamError struct{ Name, Description string }
+
+func (e WorkflowParamError) Error() string {
+	return fmt.Sprintf("missing required param %s: %s", e.Name, e.Description)
+}
+
+// builtinCommands are the slash commands the TUI owns. A workflow cannot take
+// one of these names: "/<name>" always means the builtin, and the workflow is
+// still reachable with "/workflow <name>".
+var builtinCommands = []struct{ name, desc string }{
+	{"btw", "side question"},
+	{"compact", "summarize the conversation"},
+	{"exit", "quit"},
+	{"msg", "send a message to a background job"},
+	{"new", "start a new conversation"},
+	{"resume", "resume a session"},
+	{"workflow", "start a workflow by name"},
+}
+
+// IsReservedWorkflowName reports whether name is a builtin slash command.
+func IsReservedWorkflowName(name string) bool {
+	for _, c := range builtinCommands {
+		if c.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// workflowUsage is the error for a bare "/workflow" line.
+const workflowUsage = "usage: /workflow <name> [params]"
+
+// workflowNameRe is the shape of a workflow name. A head that does not match it
+// (for example a pasted path) cannot name a workflow, so List is not called.
+var workflowNameRe = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// commandHead is the lower-case name of the command in a slash line, without
+// the slash. It is "" for a line with no name.
+func commandHead(line string) string {
+	fields := strings.Fields(strings.TrimPrefix(line, "/"))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.ToLower(fields[0])
+}
+
+// workflowLine splits a line that starts a workflow: "/workflow <name> params"
+// or "/<name> params" for a workflow in list that can start. ok is false for
+// every other line. A bare "/workflow" returns ok with an empty name.
+func workflowLine(line string, list []WorkflowEntry) (name string, params []string, ok bool) {
+	if !strings.HasPrefix(line, "/") {
+		return "", nil, false
+	}
+	fields := strings.Fields(line[1:])
+	if len(fields) == 0 {
+		return "", nil, false
+	}
+	head := commandHead(line)
+	if head == "workflow" {
+		if len(fields) == 1 {
+			return "", nil, true
+		}
+		return strings.ToLower(fields[1]), fields[2:], true
+	}
+	if IsReservedWorkflowName(head) {
+		return "", nil, false
+	}
+	for _, e := range list {
+		if e.Name == head && e.Err == "" {
+			return head, fields[1:], true
+		}
+	}
+	return "", nil, false
+}
+
+// workflowStartedMsg is the result of a start that runs in a tea.Cmd, so the
+// event loop does not wait for the worktree to be prepared.
+type workflowStartedMsg struct {
+	notice    string // chat line for a started run
+	modelText string // text for the chat model when a required param is missing
+	err       error
+}
+
+// startWorkflow starts a workflow through s and turns the result into chat text.
+// A missing required param does not fail: the text asks the model to ask the
+// user, so the model calls workflow_start with the full param list.
+func startWorkflow(s WorkflowStarter, name string, params []string) workflowStartedMsg {
+	if name == "" {
+		return workflowStartedMsg{err: errors.New(workflowUsage)}
+	}
+	_, warnings, err := s.Start(name, params)
+	var pe WorkflowParamError
+	if errors.As(err, &pe) {
+		call := strings.TrimSpace("/" + name + " " + strings.Join(params, " "))
+		text := fmt.Sprintf("user wants %s, missing: %s", call, pe.Name)
+		if pe.Description != "" {
+			text += " (" + pe.Description + ")"
+		}
+		return workflowStartedMsg{modelText: text + ". Ask the user for it, then call workflow_start."}
+	}
+	if err != nil {
+		return workflowStartedMsg{err: err}
+	}
+	notice := strings.TrimSpace("started /" + name + " " + strings.Join(params, " "))
+	for _, w := range warnings {
+		notice += "\nwarning: " + w
+	}
+	return workflowStartedMsg{notice: notice}
+}
+
+// startWorkflowFromInput takes a workflow line out of the input and starts it in
+// a tea.Cmd. It is handled, and the turn is not touched, whether the agent is
+// busy or not. A line that names a workflow which does not load is handled too:
+// its error is shown and the line never goes to the model. Any other line
+// returns handled false.
+func (m *TuiModel) startWorkflowFromInput() (bool, tea.Cmd) {
+	line := strings.TrimSpace(m.input.Value())
+	if m.workflows == nil || !strings.HasPrefix(line, "/") {
+		return false, nil
+	}
+	// The list reads the repository and the workflow files. Read it only for a
+	// line that can name a workflow, not for every submitted line.
+	head := commandHead(line)
+	var list []WorkflowEntry
+	if workflowNameRe.MatchString(head) && head != "workflow" && !IsReservedWorkflowName(head) {
+		list = m.workflows.List()
+	}
+	if e, broken := brokenWorkflow(head, list); broken {
+		m.takeWorkflowLine(line)
+		return true, m.handleBlockMsg(tuiMsgBlock{kind: "error", content: "/" + e.Name + ": " + e.Err})
+	}
+	name, params, ok := workflowLine(line, list)
+	if !ok {
+		return false, nil
+	}
+	if name == "" {
+		m.takeWorkflowLine(line)
+		return true, m.handleBlockMsg(tuiMsgBlock{kind: "error", content: workflowUsage})
+	}
+	m.takeWorkflowLine(line)
+	// Start can take minutes (Prepare runs the setup script), so the chat shows
+	// the start at once. The result comes later as workflowStartedMsg.
+	notice := m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "starting /" + strings.Join(append([]string{name}, params...), " ") + "..."})
+	s := m.workflows
+	start := func() tea.Msg { return startWorkflow(s, name, params) }
+	return true, tea.Batch(notice, start)
+}
+
+// takeWorkflowLine clears the input and records the line once in the input
+// history, for a line the TUI handles itself.
+func (m *TuiModel) takeWorkflowLine(line string) {
+	m.recordInputHistory(line)
+	m.input.Reset()
+	m.input.SetHeight(1)
+	m.closeFileComplete()
+	m.closeSlashComplete()
+}
+
+// brokenWorkflow reports the entry for head when head names a listed workflow
+// that does not load. Such a line is not sent to the model.
+func brokenWorkflow(head string, list []WorkflowEntry) (WorkflowEntry, bool) {
+	if head == "" || head == "workflow" || IsReservedWorkflowName(head) {
+		return WorkflowEntry{}, false
+	}
+	for _, e := range list {
+		if e.Name == head && e.Err != "" {
+			return e, true
+		}
+	}
+	return WorkflowEntry{}, false
+}
+
+// handleWorkflowStarted shows the result of a start. A missing param is sent to
+// the model like a typed prompt. The model text is not recorded in the input
+// history, and the text the person is typing stays put.
+func (m TuiModel) handleWorkflowStarted(msg workflowStartedMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.err != nil:
+		cmd := m.handleBlockMsg(tuiMsgBlock{kind: "error", content: msg.err.Error()})
+		return m, cmd
+	case msg.modelText != "":
+		next := m.send(msg.modelText).(TuiModel)
+		return next, next.armStatusTick()
+	default:
+		cmd := m.handleBlockMsg(tuiMsgBlock{kind: "block", content: msg.notice})
+		return m, cmd
+	}
+}
