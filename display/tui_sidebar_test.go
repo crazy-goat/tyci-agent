@@ -792,6 +792,123 @@ func TestSidebarFocus_TabDoesNotChangeModelWhenUnfocused(t *testing.T) {
 	}
 }
 
+// TestSidebarFocus_ShiftTabEntersSidebarFromConversation covers Shift+Tab
+// moving focus onto an open sidebar, keeping the tab that was already
+// selected.
+func TestSidebarFocus_ShiftTabEntersSidebarFromConversation(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabTasks)
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m2 := model.(TuiModel)
+	if !m2.sidebarFocused {
+		t.Fatalf("expected Shift+Tab from the conversation to focus the sidebar")
+	}
+	if !m2.sidebarActive || m2.sidebarTab != sidebarTabTasks {
+		t.Fatalf("expected the sidebar to stay open on Tasks, got active=%v tab=%d", m2.sidebarActive, m2.sidebarTab)
+	}
+}
+
+// TestSidebarFocus_ShiftTabReturnsToConversation covers Shift+Tab from the
+// sidebar giving focus back to the prompt. The sidebar stays open, and the
+// prompt takes keystrokes again.
+func TestSidebarFocus_ShiftTabReturnsToConversation(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabTasks)
+	m.sidebarFocused = true
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m2 := model.(TuiModel)
+	if m2.sidebarFocused {
+		t.Fatalf("expected Shift+Tab from the sidebar to return focus to the conversation")
+	}
+	if !m2.sidebarActive || m2.sidebarTab != sidebarTabTasks {
+		t.Fatalf("expected the sidebar to stay open on Tasks, got active=%v tab=%d", m2.sidebarActive, m2.sidebarTab)
+	}
+
+	model, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	if got := model.(TuiModel).input.Value(); got != "x" {
+		t.Fatalf("expected typing after Shift+Tab to reach the input box, got %q", got)
+	}
+}
+
+// TestSidebarFocus_ShiftTabOpensClosedSidebar covers Shift+Tab with the
+// sidebar closed: it opens the sidebar on the last selected tab and focuses
+// it at once. It works while a turn is running too, like Ctrl+T.
+func TestSidebarFocus_ShiftTabOpensClosedSidebar(t *testing.T) {
+	for _, reading := range []bool{true, false} {
+		m := newTestModelForSidebar()
+		m.reading = reading
+		m.sidebarTab = sidebarTabSessions
+
+		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+		m2 := model.(TuiModel)
+		if !m2.sidebarActive {
+			t.Fatalf("reading=%v: expected Shift+Tab to open the closed sidebar", reading)
+		}
+		if !m2.sidebarFocused {
+			t.Fatalf("reading=%v: expected Shift+Tab to focus the sidebar it opened", reading)
+		}
+		if m2.sidebarTab != sidebarTabSessions {
+			t.Fatalf("reading=%v: expected the sidebar to open on Sessions, got %d", reading, m2.sidebarTab)
+		}
+	}
+}
+
+// TestSidebarFocus_ShiftTabKeepsHistorySearch covers Ctrl+R's history search
+// over an open sidebar: the search keeps Shift+Tab, and the sidebar does not
+// take focus behind it.
+func TestSidebarFocus_ShiftTabKeepsHistorySearch(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabTokens)
+	m.openHistorySearch()
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m2 := model.(TuiModel)
+	if m2.sidebarFocused {
+		t.Fatalf("expected Shift+Tab in the history search to leave the sidebar unfocused")
+	}
+	if !m2.historySearchActive {
+		t.Fatalf("expected Shift+Tab to leave the history search open")
+	}
+}
+
+// TestSidebarFocus_ShiftTabKeepsSubagentModal covers the subagent modal,
+// which is drawn above an open sidebar. Shift+Tab must not move focus to the
+// sidebar under the modal, or Esc would close the sidebar instead of the
+// modal.
+func TestSidebarFocus_ShiftTabKeepsSubagentModal(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.openSidebar(sidebarTabTokens)
+	m.openJobResultModal(jobs.Job{ID: "job-1", Status: jobs.StatusDone})
+
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m2 := model.(TuiModel)
+	if m2.sidebarFocused {
+		t.Fatalf("expected Shift+Tab under the subagent modal to leave the sidebar unfocused")
+	}
+	if !m2.subagentModalActive {
+		t.Fatalf("expected Shift+Tab to leave the subagent modal open")
+	}
+}
+
+// TestSidebarShiftTab_HelpTextNamesKeyAndFits checks the two help texts that
+// name the key: the unfocused title and the key line. Both must fit the
+// narrowest normal sidebar (80 columns) without "…".
+func TestSidebarShiftTab_HelpTextNamesKeyAndFits(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.width = 80
+	m.openSidebar(sidebarTabTokens)
+
+	rows := sidebarTextRows(m)
+	if want := "Sidebar (Shift+Tab to focus)"; !strings.Contains(rows[0], want) {
+		t.Fatalf("expected the title %q, got %q", want, rows[0])
+	}
+	if want := "Shift+Tab: focus  Esc close"; rows[len(rows)-1] != want {
+		t.Fatalf("expected the key line %q, got %q", want, rows[len(rows)-1])
+	}
+}
+
 // ─── Mouse column dispatch (Update()) ──────────────────────────────────────
 
 // TestSidebarMouse_MainColumnClickRoutesToMainAndUnfocuses covers Update()'s
@@ -1080,9 +1197,9 @@ func TestBuildSubagentTree_UnpricedDescendantPropagates(t *testing.T) {
 	}
 }
 
-// TestBuildSubagentTree_NewestFirst ignores status and keeps the newest job
-// first within each sibling group.
-func TestBuildSubagentTree_NewestFirst(t *testing.T) {
+// TestBuildSubagentTree_ActiveFirst: an active job (waiting for an answer, even
+// an older one) comes before a finished job in the same sibling group.
+func TestBuildSubagentTree_ActiveFirst(t *testing.T) {
 	ledger.Reset()
 	t.Cleanup(ledger.Reset)
 
@@ -1096,8 +1213,8 @@ func TestBuildSubagentTree_NewestFirst(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("expected root + 2 children, got %d", len(rows))
 	}
-	if rows[1].job.ID != "job-2" || rows[2].job.ID != "job-1" {
-		t.Fatalf("expected newest-first regardless of status, got %+v", rows[1:])
+	if rows[1].job.ID != "job-1" || rows[2].job.ID != "job-2" {
+		t.Fatalf("expected the waiting job before the finished one, got %+v", rows[1:])
 	}
 }
 

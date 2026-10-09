@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - TUI: the Bash and Lua lists on the sidebar Tasks tab show only the jobs of the agent selected in the Subagents list (`main` or a subagent). Moving the cursor into the Bash rows keeps that agent (#523).
+- TUI: the Subagents list on the sidebar Tasks tab shows the active subagents first, newest start first. A separator line follows them, then the finished subagents, most recently finished first. The cursor stays on the same subagent when it moves to the finished part (#526).
+
+### Added
+- TUI: Shift+Tab moves focus between the prompt and the sidebar. With the sidebar closed, it opens the sidebar and focuses it (#511).
 
 ### Fixed
 - TUI: the Tasks tab shows the tokens and the cost of each row, `main` and the subagents, in two right-aligned columns at the right edge of the sidebar. The columns line up in all rows. In a narrow row, the label is cut first. Then the tokens are dropped, then the cost (#527).

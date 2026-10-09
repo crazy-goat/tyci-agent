@@ -42,8 +42,12 @@ func (m *TuiModel) applyJobUpdate(j jobs.Job) {
 	if prev, ok := m.backgroundJobs[j.ID]; ok && j.EventSeq < prev.EventSeq {
 		return
 	}
+	// A job can move in the Tasks list (active to finished), so the cursor
+	// follows the job it was on, not the row index.
+	selected := m.sidebarCursorJobID()
 	m.backgroundJobs[j.ID] = j
 	m.pruneBackgroundJobsLocked()
+	m.sidebarFollowJob(selected)
 	// The panel's height depends on len(backgroundJobs), which changes the
 	// message viewport height (see renderFrame's jobsH). invalidateTotalLines
 	// also marks the cached message region dirty so a job starting/finishing
