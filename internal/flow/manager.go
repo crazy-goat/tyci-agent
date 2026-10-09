@@ -312,13 +312,14 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 		if st.Ask != nil {
 			msg = st.Ask.Message
 		}
-		text += " paused: " + msg
+		text += " paused: " + msg + " (needs a human"
 		if keys := answerKeys(wf, st.Current); len(keys) > 0 {
 			if st.Ask != nil && st.Ask.Proposal != "" {
 				keys = append([]string{"apply", "reject"}, keys...)
 			}
-			text += " (answer with workflow_resume: " + strings.Join(keys, "|") + "|retry <note>|goto <state>)"
+			text += "; answer with workflow_resume: " + strings.Join(keys, "|") + "|retry <note>|goto <state>"
 		}
+		text += ")"
 	default:
 		text += " " + st.Status
 		if st.Reason != "" {

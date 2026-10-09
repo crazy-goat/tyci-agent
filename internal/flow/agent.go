@@ -68,6 +68,8 @@ func (r *SubagentRunner) Run(ctx context.Context, role, task string, rc RunConte
 		return fixerKey(out, rc), session, nil
 	case role == "oracle" && task == "recover":
 		return oracleKey(out), session, nil
+	case role == "oracle" && task == oracleTask:
+		return strings.TrimSpace(out), session, nil
 	}
 	return "done", session, nil
 }
