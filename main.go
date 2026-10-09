@@ -880,10 +880,12 @@ type jobEventForwarder struct {
 	last map[string]uint64 // newest EventSeq published as job.status, per job
 }
 
-// JobEvent implements jobs.EventPublisher.
+// JobEvent implements jobs.EventPublisher. It runs forwardJobEvent first: the
+// job.status message is the last step, so a test that sees the status knows
+// that forwardJobEvent no longer reads the package globals.
 func (f *jobEventForwarder) JobEvent(j jobs.Job) {
-	f.publishStatus(j)
 	forwardJobEvent(j)
+	f.publishStatus(j)
 }
 
 // publishStatus publishes j as job.status for the TUI. The registry calls

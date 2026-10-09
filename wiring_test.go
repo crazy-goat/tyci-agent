@@ -102,6 +102,10 @@ func withTestWiring(t *testing.T) (*jobs.Registry, *bus.Bus) {
 	}()
 
 	t.Cleanup(func() {
+		// Stop the live jobs of this test and wait for them to finish, so
+		// that no terminal publish is still in flight when the globals below
+		// are restored.
+		reg.CancelAll()
 		deadline := time.Now().Add(2 * time.Second)
 		for {
 			pending := false
