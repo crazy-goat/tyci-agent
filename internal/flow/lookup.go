@@ -20,6 +20,19 @@ var workflowName = regexp.MustCompile(`^[a-z0-9-]+$`)
 // exists wins. source is that directory. There is no fallback: a workflow that is not
 // on disk is an error.
 func Lookup(name, home, projectDir string, trusted bool) (wf *Workflow, source string, err error) {
+	wf, source, err = findWorkflow(name, home, projectDir, trusted)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := loadFiles(wf, source); err != nil {
+		return nil, "", fmt.Errorf("%s: %w", source, err)
+	}
+	return wf, source, nil
+}
+
+// findWorkflow returns the workflow named name and its directory. It parses
+// workflow.json but does not read the files that the workflow names (see loadFiles).
+func findWorkflow(name, home, projectDir string, trusted bool) (*Workflow, string, error) {
 	if !workflowName.MatchString(name) {
 		return nil, "", fmt.Errorf("bad workflow name %q: use a-z, 0-9 and -", name)
 	}
@@ -56,10 +69,8 @@ func lookupBases(home, projectDir string, trusted bool) []string {
 	return bases
 }
 
-// loadWorkflow reads <dir>/workflow.json and every file it names: check scripts,
-// task templates and @file state prompts. Role prompts in <dir>/prompts/<role>.md
-// become the prompt of the agent states of that role, unless the state has its own.
-// Every missing or unreadable file is reported, in one error.
+// loadWorkflow reads <dir>/workflow.json and checks its name. It does not read the
+// files that the workflow names (see loadFiles).
 func loadWorkflow(name, dir string) (*Workflow, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "workflow.json"))
 	if err != nil {
@@ -75,22 +86,35 @@ func loadWorkflow(name, dir string) (*Workflow, error) {
 		return nil, fmt.Errorf("%s: name %q must equal the directory name %q", dir, wf.Name, name)
 	}
 	wf.Source = dir
-	if err := loadFiles(wf, dir); err != nil {
-		return nil, fmt.Errorf("%s: %w", dir, err)
-	}
 	return wf, nil
 }
 
-// loadFiles checks and reads the files of the workflow in dir (see loadWorkflow).
+// loadFiles checks the check scripts and reads the task templates and the prompts of
+// the workflow in dir. Every missing or unreadable file is reported, in one error.
 func loadFiles(wf *Workflow, dir string) error {
+	return errors.Join(checkScripts(wf, dir), loadTexts(wf, dir))
+}
+
+// checkScripts returns one error for each check script of wf that dir does not hold.
+func checkScripts(wf *Workflow, dir string) error {
 	var errs []error
 	for _, name := range sortedStates(wf) {
-		s := wf.States[name]
-		if s.Check != "" {
+		if s := wf.States[name]; s.Check != "" {
 			if _, err := ResolveCheck(s.Check, dir); err != nil {
 				errs = append(errs, fmt.Errorf("state %q: %w", name, err))
 			}
 		}
+	}
+	return errors.Join(errs...)
+}
+
+// loadTexts reads the task templates and the @file state prompts of wf from dir.
+// Role prompts in <dir>/prompts/<role>.md become the prompt of the agent states of
+// that role, unless the state has its own.
+func loadTexts(wf *Workflow, dir string) error {
+	var errs []error
+	for _, name := range sortedStates(wf) {
+		s := wf.States[name]
 		if s.Task != "" && s.Agent != "" {
 			if _, err := flowconfig.ReadPromptFile(dir, taskFile(s.Task)); err != nil {
 				errs = append(errs, fmt.Errorf("state %q: task: %w", name, err))
@@ -152,7 +176,11 @@ func workflowNotFound(name, home, projectDir string, trusted bool) error {
 	} else {
 		msg += " (no workflows are available)"
 	}
-	msg += `; run "tyci workflow init issue-to-merge" to create one from a template`
+	hint := "issue-to-merge"
+	if slices.Contains(Templates(), name) {
+		hint = name
+	}
+	msg += fmt.Sprintf(`; run "tyci workflow init %s" to create one from a template`, hint)
 	for _, n := range notes {
 		msg += ". " + n
 	}
@@ -182,13 +210,9 @@ func availableWorkflows(home, projectDir string, trusted bool) []string {
 	return names
 }
 
-// ProjectHasWorkflows reports whether the git repository of dir has a
-// .tyci/workflows directory. tyci does not use it in an untrusted project.
-func ProjectHasWorkflows(dir string) bool {
-	root, err := gitOut(dir, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return false
-	}
+// ProjectHasWorkflows reports whether the project root has a .tyci/workflows
+// directory. tyci does not use it in an untrusted project.
+func ProjectHasWorkflows(root string) bool {
 	st, err := os.Stat(filepath.Join(root, ".tyci", "workflows"))
 	return err == nil && st.IsDir()
 }

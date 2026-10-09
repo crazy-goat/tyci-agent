@@ -167,7 +167,7 @@ func TestLookup_NameMustMatchDir(t *testing.T) {
 	}
 }
 
-func TestLookup_RolePromptFileBeatsStatePrompt(t *testing.T) {
+func TestLookup_StatePromptBeatsRolePromptFile(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, ".tyci", "workflows", "wf")
 	_ = os.MkdirAll(filepath.Join(dir, "prompts"), 0o755)
@@ -183,6 +183,16 @@ func TestLookup_RolePromptFileBeatsStatePrompt(t *testing.T) {
 	}
 	if wf.States["a"].Prompt != "from file" || wf.States["b"].Prompt != "own" {
 		t.Fatalf("prompts: %q %q", wf.States["a"].Prompt, wf.States["b"].Prompt)
+	}
+}
+
+func TestLookup_HintNamesTheTemplate(t *testing.T) {
+	home := t.TempDir()
+	if _, _, err := Lookup("roadmap", home, "", false); err == nil || !strings.Contains(err.Error(), `tyci workflow init roadmap`) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, _, err := Lookup("plan", home, "", false); err == nil || !strings.Contains(err.Error(), `tyci workflow init issue-to-merge`) {
+		t.Fatalf("err = %v", err)
 	}
 }
 

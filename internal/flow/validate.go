@@ -121,8 +121,9 @@ func wfResolver(wf *Workflow) Resolver {
 // CheckWorkflow loads the named workflow for the repository of info and checks it
 // the way a run does (see PrepareRun). It returns the warnings and one message per
 // problem. The error is set only when the workflow or the config cannot be read.
+// A missing task or prompt file is a problem, like the other problems.
 func CheckWorkflow(info RepoInfo, name string) (warnings, problems []string, err error) {
-	wf, _, err := Lookup(name, info.Home, info.Root, info.Trusted)
+	wf, dir, err := findWorkflow(name, info.Home, info.Root, info.Trusted)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -130,8 +131,11 @@ func CheckWorkflow(info RepoInfo, name string) (warnings, problems []string, err
 	if err != nil {
 		return nil, nil, err
 	}
+	// Validate checks the check scripts, so they are not checked twice.
+	textErr := loadTexts(wf, dir)
 	warnings, verr := Validate(wf, cfg, wfResolver(wf))
-	return warnings, errorMessages(verr), nil
+	problems = append(errorMessages(textErr), errorMessages(verr)...)
+	return warnings, problems, nil
 }
 
 // errorMessages returns the message of each error that errors.Join joined.

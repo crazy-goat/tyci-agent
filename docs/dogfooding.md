@@ -64,12 +64,17 @@ gh issue edit N -R crazy-goat/tyci-agent --add-label accepted
 
 ## 4. Start
 
-Go into a clone of the repository, start the TUI and ask for the issue.
+Go into a clone of the repository. Create its workflow, then start the TUI and ask for the issue.
 
 ```bash
 cd ~/work/crazy-goat/tyci-agent
+tyci workflow init issue-to-merge
 tyci tui
 ```
+
+Run `tyci workflow init roadmap` too if you use the orchestrator. The command stops if the
+workflow directory exists already, so run it once for each repository. It does not change
+`.tyci/config.json`.
 
 Type `work on #N`. The assistant calls the tool `workflow_start` and returns a run id.
 Ask "status of the run" to call `workflow_status`.
@@ -253,7 +258,7 @@ directory, and the runner copies them to `state.json`.
 | What | Where |
 |---|---|
 | Workflow | `.tyci/workflows/<name>/` (trusted projects only), then `~/.tyci/workflows/<name>/`. No built-in fallback: create one with `tyci workflow init issue-to-merge` |
-| Check scripts | `.tyci/checks/`, then `~/.tyci/checks/` |
+| Check scripts | `checks/` of the workflow directory only (no fallback to `.tyci/checks/` or `~/.tyci/checks/`) |
 | Config | `.tyci/config.json` over `~/.tyci/config.json` |
 
 `tyci` reads project files (`.tyci/...`) only for trusted projects.

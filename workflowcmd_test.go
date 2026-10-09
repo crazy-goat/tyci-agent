@@ -151,6 +151,42 @@ func resetWorkflowFlags() {
 }
 
 // decodeWorkflowResult decodes out as exactly one JSON object.
+func TestWorkflowValidateMissingFilesAreProblems(t *testing.T) {
+	home := wfHome(t)
+	project := wfProject(t)
+	body := `{"description":"test","name":"missing-files","start":"work","states":{` +
+		`"work":{"agent":"worker","task":"t1","on":{"default":"check"}},` +
+		`"check":{"check":"checks/gone.sh","on":{"default":"end"}},` +
+		`"end":{"end":true}}}`
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "missing-files", "workflow.json"), body)
+	wfWrite(t, filepath.Join(home, ".tyci", "config.json"), `{"default_model":"wfprov/wfmodel"}`)
+
+	out, _, err := runWorkflowCLI(t, "workflow", "validate", "missing-files", "--json", "--dir", project)
+	if err == nil {
+		t.Fatal("validate with missing files must fail")
+	}
+	r := decodeWorkflowResult(t, out)
+	if r.OK == nil || *r.OK || len(r.Errors) != 2 {
+		t.Fatalf("result = %+v", r)
+	}
+	for _, want := range []string{"checks/gone.sh", "tasks/t1.md"} {
+		if n := countContaining(r.Errors, want); n != 1 {
+			t.Errorf("%d errors name %s, want 1: %v", n, want, r.Errors)
+		}
+	}
+}
+
+// countContaining returns how many of msgs contain sub.
+func countContaining(msgs []string, sub string) int {
+	n := 0
+	for _, m := range msgs {
+		if strings.Contains(m, sub) {
+			n++
+		}
+	}
+	return n
+}
+
 func decodeWorkflowResult(t *testing.T, out string) workflowResult {
 	t.Helper()
 	dec := json.NewDecoder(strings.NewReader(out))

@@ -216,6 +216,19 @@ func TestWorkflowStart_ReturnsImmediately(t *testing.T) {
 	e.notice(t)
 }
 
+func TestWorkflowStart_NeedsWorkflowName(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err == nil || !strings.Contains(err.Error(), "workflow name is required") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(e.home, ".tyci")); !os.IsNotExist(err) {
+		t.Fatalf(".tyci created: %v", err)
+	}
+	if len(e.m.active) != 0 {
+		t.Fatal("run is active")
+	}
+}
+
 func TestWorkflowStart_InvalidWorkflowCreatesNothing(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	e.prepErr = errors.New("workflow \"x\" is invalid")

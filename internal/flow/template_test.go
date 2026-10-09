@@ -45,6 +45,13 @@ func TestInit_NameTemplateAndBadInput(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".tyci", "workflows", "plan", "workflow.json")); err != nil {
 		t.Fatal(err)
 	}
+	wf, _, err := Lookup("plan", t.TempDir(), dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Name != "plan" {
+		t.Fatalf("name = %q, want plan", wf.Name)
+	}
 	if _, err := Init("nope", "", dir); err == nil || !strings.Contains(err.Error(), "unknown template") {
 		t.Fatalf("unknown template: %v", err)
 	}
@@ -166,5 +173,45 @@ func TestRun_UsesWorkflowTaskAndStatePrompt(t *testing.T) {
 	}
 	if want, _ := flowconfig.DefaultPrompt("review"); specs[1].SystemPrompt != want {
 		t.Fatal("findings state lost the review role prompt")
+	}
+}
+
+func TestRun_RolePromptFileBeatsConfigPrompt(t *testing.T) {
+	home := t.TempDir()
+	wfDir := filepath.Join(home, ".tyci", "workflows", "w")
+	e2eWrite(t, filepath.Join(wfDir, "prompts", "worker.md"), "FILE")
+	e2eWrite(t, filepath.Join(home, ".tyci", "config.json"),
+		`{"default_model":"p/m","roles":{"worker":{"prompt":"CONFIG"},"review":{"prompt":"CONFIG REVIEW"}}}`)
+	e2eWrite(t, filepath.Join(wfDir, "workflow.json"), `{"description":"d","start":"code","states":{
+		"code":{"agent":"worker","on":{"default":"review"}},
+		"review":{"agent":"review","on":{"default":"end"}},
+		"end":{"end":true}}}`)
+	wf, _, err := Lookup("w", home, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := flowconfig.Load(home, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var specs []tools.TaskSpec
+	agents := &SubagentRunner{Cfg: cfg, Render: TaskTemplates{Dir: wfDir},
+		IssueContext: func(context.Context, string, int) (string, error) { return "ISSUE", nil },
+		Spawn: func(_ context.Context, s tools.TaskSpec) (string, string, error) {
+			specs = append(specs, s)
+			return "done", "", nil
+		}}
+	st := &RunState{Run: "r", Repo: "o/r", Issue: 1, Worktree: t.TempDir()}
+	if err := (&Runner{WF: wf, Agents: agents}).Run(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 2 {
+		t.Fatalf("specs = %d", len(specs))
+	}
+	if specs[0].SystemPrompt != "FILE" {
+		t.Fatalf("worker prompt = %q, want the role prompt file", specs[0].SystemPrompt)
+	}
+	if specs[1].SystemPrompt != "CONFIG REVIEW" {
+		t.Fatalf("review prompt = %q, want the config prompt", specs[1].SystemPrompt)
 	}
 }

@@ -143,7 +143,7 @@ func workflowToolsSchema() []map[string]any {
 			}, []string{"workflow", "issue"}),
 		fn("workflow_status", "Show the state of a workflow run: status, current state, visits, last history entries, PR.",
 			map[string]any{"run": map[string]any{"type": "string", "description": "Run id (default: newest run)."}}, []string{}),
-		fn("workflow_resume", "Answer a paused workflow run. Use one of the answers named in the pause notice: \"retry\" (back to the worker), \"stop\" (end the run), \"retry <note>\" (back to the worker with the note), \"goto <state>\" (continue at that state) or \"resume\" (only for a run paused at start-up: continue at its saved state). When the pause has a workflow proposal, first show its summary and patch from workflow_status to the user, then answer \"apply\" (opens a PR with the .tyci/ change) or \"reject\" only as the user says; the run stays paused for its normal answer.",
+		fn("workflow_resume", "Answer a paused workflow run. Use one of the answers named in the pause notice: \"retry\" (back to the worker), \"stop\" (end the run), \"retry <note>\" (back to the worker with the note), \"goto <state>\" (continue at that state) or \"resume\" (only for a run paused at start-up: continue at its saved state). When the pause has a workflow proposal, first show its summary and patch from workflow_status to the user, then answer \"apply\" (opens a PR with the change of .tyci/workflows/<name>/) or \"reject\" only as the user says; the run stays paused for its normal answer.",
 			map[string]any{
 				"run":    map[string]any{"type": "string", "description": "Run id."},
 				"answer": map[string]any{"type": "string", "description": "One of the allowed answers."},

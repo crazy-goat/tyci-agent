@@ -35,6 +35,24 @@ rename from x
 rename to .tyci/x
 `
 
+// configPatch changes the project config, which is outside the workflow directory.
+const configPatch = `diff --git a/.tyci/config.json b/.tyci/config.json
+new file mode 100644
+--- /dev/null
++++ b/.tyci/config.json
+@@ -0,0 +1 @@
++{}
+`
+
+// otherWorkflowPatch changes the workflow of another name.
+const otherWorkflowPatch = `diff --git a/.tyci/workflows/other/workflow.json b/.tyci/workflows/other/workflow.json
+new file mode 100644
+--- /dev/null
++++ b/.tyci/workflows/other/workflow.json
+@@ -0,0 +1 @@
++{"description":"other"}
+`
+
 // writeProposal writes a proposal.md and a proposal.patch into dir.
 func writeProposal(dir, patch string) {
 	_ = os.WriteFile(filepath.Join(dir, "proposal.md"), []byte("# Handle non-fast-forward\n\nwhy\n"), 0o600)
@@ -243,6 +261,41 @@ func TestProposal_ApplyRefusesRenameFromOutsideTyci(t *testing.T) {
 	id := e.start(t)
 	err := e.m.Resume(id, "apply")
 	if err == nil || !strings.Contains(err.Error(), "outside .tyci/workflows/issue-to-merge/") {
+		t.Fatalf("err = %v", err)
+	}
+	e.assertUntouched(t)
+	if b := e2eGit(t, e.origin, "branch", "--list", "tyci/*"); b != "" {
+		t.Fatalf("branch pushed: %s", b)
+	}
+}
+
+func TestProposal_ApplyRefusesChangesOutsideWorkflow(t *testing.T) {
+	for _, c := range []struct{ name, patch string }{{"config", configPatch}, {"other workflow", otherWorkflowPatch}} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newProposalEnv(t, c.patch)
+			id := e.start(t)
+			err := e.m.Resume(id, "apply")
+			if err == nil || !strings.Contains(err.Error(), "outside .tyci/workflows/issue-to-merge/") {
+				t.Fatalf("err = %v", err)
+			}
+			e.assertUntouched(t)
+			if b := e2eGit(t, e.origin, "branch", "--list", "tyci/*"); b != "" {
+				t.Fatalf("branch pushed: %s", b)
+			}
+		})
+	}
+}
+
+func TestProposal_ApplyNeedsWorkflowOnOrigin(t *testing.T) {
+	e := newProposalEnv(t, goodPatch)
+	c := filepath.Join(t.TempDir(), "c")
+	e2eGit(t, filepath.Dir(c), "clone", "-q", e.origin, c)
+	e2eGit(t, c, "rm", "-q", "-r", ".tyci")
+	e2eGit(t, c, "commit", "-q", "-m", "remove the workflow")
+	e2eGit(t, c, "push", "-q", "origin", "main")
+	id := e.start(t)
+	err := e.m.Resume(id, "apply")
+	if err == nil || !strings.Contains(err.Error(), "commit the workflow") {
 		t.Fatalf("err = %v", err)
 	}
 	e.assertUntouched(t)

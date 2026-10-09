@@ -60,6 +60,8 @@ make install
 `workflow_start`, `workflow_status` and `workflow_resume`. The issue needs the label
 `accepted`, and its author needs write access.
 
+`tyci` has no built-in workflow. Run `tyci workflow init issue-to-merge` in the repository before the first run. The orchestrator also needs the workflow `roadmap` for its oracle step. Run `tyci workflow init roadmap` too. See "Create or change a workflow" below.
+
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
 - Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
 - Setup script: if the file `bin/worktree-setup.sh` in the repository is executable, tyci runs it once in the new worktree. If the script fails or the run is cancelled, the run stops and tyci removes the worktree and its branch.
@@ -88,7 +90,7 @@ and answers `ok` (the step runs again) or `failed`. On `failed` the `oracle` ans
 step, the run pauses. The limits apply to the states named `fixer` and `oracle`, not to
 their agent role.
 
-### Change a workflow for one repository
+### Create or change a workflow
 
 Run `tyci workflow init issue-to-merge` to create the workflow `issue-to-merge` from the
 template. The command writes `.tyci/workflows/issue-to-merge/` in the repository. The
@@ -115,7 +117,7 @@ If a needed key is missing, the run fails with `unknown transition key "<key>" i
 
 When the workflow cannot handle a failure, or the same step failed with the same cause
 in an earlier run, the fixer writes `proposal.md` and `proposal.patch` (a diff of the
-repository's `.tyci/` files only) in its artifact dir. When the run pauses, the notice
+repository's `.tyci/workflows/<name>/` files only) in its artifact dir. When the run pauses, the notice
 says so and `workflow_status` shows the summary and the patch under `proposal` (a long
 patch is cut; `patch_file` is the path of the full patch that `apply` uses). Answer
 `apply` or `reject` with `workflow_resume`:
