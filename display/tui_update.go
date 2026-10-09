@@ -195,6 +195,11 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sidebarSaveVisible = sp.fn
 		return m, nil
 	}
+	// The debounced save of the sidebar width. It must be handled here, before
+	// the sidebar and overlay routing: a focused sidebar drops unknown messages.
+	if sw, ok := msg.(sidebarWidthSaveMsg); ok {
+		return m.handleSidebarWidthSave(sw)
+	}
 	// Background stream blocks must never be lost just because some other
 	// popup happens to be open when they arrive. Dispatch them unconditionally,
 	// ahead of every exclusivity check below, just like /btw messages.
