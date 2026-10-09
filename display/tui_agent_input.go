@@ -151,8 +151,9 @@ func (m TuiModel) handleAgentInputMsg(msg tea.Msg) (next TuiModel, cmd tea.Cmd, 
 		return m, nil, true
 	case agentResumeCheckDoneMsg:
 		av := m.agentView
-		if av == nil || av.jobID != msg.jobID {
-			// The view shows another agent now, or none. The result is stale.
+		if av == nil || av.jobID != msg.jobID || strings.TrimSpace(m.input.Value()) != msg.text {
+			// The view shows another agent now, or the input changed while
+			// the check ran. The result is stale: a new Enter checks again.
 			return m, nil, true
 		}
 		if msg.err != nil {

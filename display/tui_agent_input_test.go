@@ -351,3 +351,24 @@ func TestAgentInput_UnpricedModelSaysCostUnknown(t *testing.T) {
 		t.Fatalf("confirmation notice = %q, want the cost shown as unknown", got)
 	}
 }
+
+func TestAgentInput_TextChangedDuringCheckIsNotConfirmed(t *testing.T) {
+	fake := &fakeAgentInput{priced: true}
+	m := openInputTestView(t, "agent-old", jobs.StatusDone, fake)
+	m.input.SetValue("text")
+	m, cmd := press(m, enterKey)
+	if cmd == nil {
+		t.Fatal("the first Enter must return the check as a command")
+	}
+	msg := cmd()
+
+	// The user types more while the check runs. The result is for the old text.
+	m.input.SetValue("text and more")
+	m = feedMsg(t, m, msg)
+	if m.agentView.confirming {
+		t.Fatal("a result for changed input must not confirm a resume")
+	}
+	if m.input.Value() != "text and more" {
+		t.Fatalf("input = %q, want the text the user typed", m.input.Value())
+	}
+}
