@@ -73,25 +73,33 @@ func (m TuiModel) queuePanelHeight() int {
 	return n
 }
 
-// truncateToWidth truncates s to fit `width` terminal columns, appending
-// "…" if truncation occurred. Width must be >= 1.
+// truncateToWidth truncates s at a grapheme boundary to fit width terminal
+// cells, appending "…" if truncation occurred. Width must be >= 1.
 func truncateToWidth(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	if lipgloss.Width(s) <= width {
+	if cellWidth(s) <= width {
 		return s
 	}
-	if width == 1 {
-		return "…"
-	}
-	runes := []rune(s)
-	for len(runes) > 1 {
-		candidate := string(runes[:len(runes)-1]) + "…"
-		if lipgloss.Width(candidate) <= width {
-			return candidate
+
+	ellipsis := "…"
+	available := width - cellWidth(ellipsis)
+	var out strings.Builder
+	used := 0
+	for _, token := range layoutTokens(s) {
+		if token.newline {
+			out.WriteString(token.value)
+			used = 0
+			continue
 		}
-		runes = runes[:len(runes)-1]
+		if token.width > 0 && used+token.width > available {
+			out.WriteString(ellipsis)
+			return out.String()
+		}
+		out.WriteString(token.value)
+		used += token.width
 	}
-	return "…"
+	out.WriteString(ellipsis)
+	return out.String()
 }

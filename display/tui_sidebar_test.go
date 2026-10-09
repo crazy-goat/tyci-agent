@@ -14,6 +14,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/stream"
 	"github.com/crazy-goat/tyci-agent/tools"
 	"github.com/muesli/termenv"
+	"github.com/rivo/uniseg"
 )
 
 // taskLineOfFirstJob returns the Tasks content line of the first real job row,
@@ -1970,6 +1971,40 @@ func TestSubagentRows_SharedColumnWidthsLineUp(t *testing.T) {
 			want = end
 		} else if end != want {
 			t.Errorf("line %q: tokens end at column %d, want column %d", line, end, want)
+		}
+	}
+}
+
+// TestSidebarTasks_CombiningTextRowsKeepWidth renders Tasks rows
+// whose labels combine base letters with marks (Devanagari,
+// accents, emoji) and checks every rendered line keeps the exact
+// sidebar width, so the sidebar border stays in one column (#579).
+func TestSidebarTasks_CombiningTextRowsKeepWidth(t *testing.T) {
+	m := newTestModelForSidebar()
+	m.input.SetValue("")
+	for _, desc := range []string{"धन्यवाद", "क्षत्रिय", "café", "👍🏽 done", "👨‍👩‍👧‍👦 family"} {
+		m.applyJobUpdate(jobs.Job{ID: "job-" + desc, Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: desc, StartedAt: time.Now()})
+	}
+	m.openSidebar(sidebarTabTasks)
+	const width = 40
+	lines := styleSidebarTaskRows(m.sidebarTaskRows(width), -1, width)
+	for i, line := range lines {
+		if w := uniseg.StringWidth(ansi.Strip(line)); w != width {
+			t.Errorf("row %d: line %q has width %d, want %d", i, line, w, width)
+		}
+	}
+}
+
+func TestRenderSidebarColumn_CombiningTextKeepsWidth(t *testing.T) {
+	m := newTestModelForSidebar()
+	for _, desc := range []string{"धन्यवाद", "क्षत्रिय", "cafe\u0301", "👍🏽 done", "👨‍👩‍👧‍👦 family"} {
+		m.applyJobUpdate(jobs.Job{ID: "job-" + desc, Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: desc, StartedAt: time.Now()})
+	}
+	m.openSidebar(sidebarTabTasks)
+	width := m.sidebarLayout().width
+	for i, line := range strings.Split(m.renderSidebarColumn(), "\n") {
+		if got := uniseg.StringWidth(ansi.Strip(line)); got != width {
+			t.Errorf("sidebar row %d: width %d, want %d: %q", i, got, width, ansi.Strip(line))
 		}
 	}
 }

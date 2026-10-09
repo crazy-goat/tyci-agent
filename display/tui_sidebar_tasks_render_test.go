@@ -58,7 +58,7 @@ func legacyRenderSidebarTasks(m TuiModel, width int) []string {
 		} else {
 			line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[39m")
 		}
-		out = append(out, rowStyle(width, i == cursorLine).Render(truncateToWidth(line, width)))
+		out = append(out, rowStyle(i == cursorLine).Render(truncateToWidth(line, width)))
 	}
 	if len(out) == 0 {
 		return []string{"", "  No tasks recorded this session."}
