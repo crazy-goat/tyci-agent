@@ -382,8 +382,8 @@ func TestRunner_SkipHookCalledAfterMerge(t *testing.T) {
 	}
 }
 
-func TestRunner_BuiltinWorkflowRunsToEnd(t *testing.T) {
-	data := []byte(`{"name":"issue-to-merge","start":"check_done","defaults":{"max_visits":0},"states":{
+func TestRunner_IssueToMergeShapeRunsToEnd(t *testing.T) {
+	data := []byte(`{"description":"test","name":"issue-to-merge","start":"check_done","defaults":{"max_visits":0},"states":{
 		"check_done":{"check":"checks/issue_done.sh","on":{"go":"code","skip":"end"}},
 		"code":{"agent":"worker","on":{"done":"review"}},
 		"review":{"agent":"review","on":{"ACCEPT":"push","CHANGES":"code"}},

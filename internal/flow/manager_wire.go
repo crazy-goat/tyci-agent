@@ -80,13 +80,6 @@ func DetectRepoAt(dir string) (RepoInfo, error) {
 	return RepoInfo{Home: home, Root: root, Repo: repo, DefaultBranch: strings.TrimPrefix(ref, "origin/"), Trusted: trusted}, nil
 }
 
-func projectDir(i RepoInfo) string {
-	if i.Trusted {
-		return i.Root
-	}
-	return ""
-}
-
 // NewManager returns the production Manager. notify receives the notices;
 // spawn runs one subagent (tools.RunSubagentTask).
 func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec) (string, string, error)) *Manager {
@@ -96,19 +89,11 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 	}
 	m := &Manager{Info: DetectRepo, Workflow: lookup, Notify: notify}
 	m.Prepare = func(ctx context.Context, info RepoInfo, req StartRequest) (*RunState, *Workflow, []string, error) {
-		tmp, err := os.MkdirTemp("", "tyci-validate-")
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		defer func() { _ = os.RemoveAll(tmp) }()
 		d := PrepareDeps{
 			Lookup: func(name string) (*Workflow, string, error) {
 				return Lookup(name, info.Home, info.Root, info.Trusted)
 			},
 			Config: func() (*flowconfig.Config, error) { return flowconfig.Load(info.Home, info.Root, info.Trusted) },
-			Resolve: func(rel string) (string, error) {
-				return ResolveCheck(rel, projectDir(info), info.Home, Embedded(), tmp)
-			},
 			AddIssue: func(ctx context.Context) (*worktree.Worktree, error) {
 				return worktree.AddIssue(ctx, info.Home, info.Root, req.Issue, info.DefaultBranch)
 			},
@@ -121,9 +106,6 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 	m.NewRunner = func(info RepoInfo, wf *Workflow, st *RunState) *Runner {
 		runDir := RunDir(info.Home, info.Name(), st.Run)
 		cfg, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
-		resolve := func(rel string) (string, error) {
-			return ResolveCheck(rel, projectDir(info), info.Home, Embedded(), runDir)
-		}
 		r := &Runner{
 			WF:            wf,
 			Store:         &Store{Dir: runDir},
@@ -134,12 +116,12 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 		}
 		if err != nil {
 			r.Agents = failingAgents{err}
-			r.Checks = &ExecChecker{Resolve: resolve}
+			r.Checks = &ExecChecker{Resolve: wfResolver(wf)}
 			return r
 		}
-		r.Checks = &ExecChecker{DefaultTimeout: cfg.CheckTimeout(), Resolve: resolve}
+		r.Checks = &ExecChecker{DefaultTimeout: cfg.CheckTimeout(), Resolve: wfResolver(wf)}
 		agents := NewSubagentRunner(cfg, spawn)
-		agents.Render = TaskTemplates{Dirs: []string{projectDir(info), info.Home}}
+		agents.Render = TaskTemplates{Dir: wf.Source}
 		r.Agents = agents
 		return r
 	}
@@ -153,7 +135,7 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 			return "", err
 		}
 		agents := NewSubagentRunner(cfg, spawn)
-		agents.Render = TaskTemplates{Dirs: []string{projectDir(info), info.Home}}
+		agents.Render = TaskTemplates{Dir: wf.Source}
 		out, _, err := agents.Text(ctx, s.Agent, s.Task, RunContext{
 			Repo: info.Repo, DefaultBranch: info.DefaultBranch, Worktree: info.Root, Input: input,
 			Workflow: wf.Name, Prompt: s.Prompt,

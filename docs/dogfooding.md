@@ -133,7 +133,7 @@ pause message shows the reason).
 The fixer runs at most 2 times for the same failed step, and the oracle once. After that
 the run pauses at `ask`. The limits apply to the states named `fixer` and `oracle`, not to
 the agent role of a state. In a workflow file, the on target `$failed` means "the last check
-step"; the built-in workflow uses it for the fixer answer `ok`.
+step"; the issue-to-merge workflow uses it for the fixer answer `ok`.
 
 The loop limits its retries with `max_visits`: `code` runs at most 3 times and `ci`
 at most 3 times. At the limit the run pauses at `ask`.
@@ -252,7 +252,7 @@ directory, and the runner copies them to `state.json`.
 
 | What | Where |
 |---|---|
-| Workflow | `.tyci/workflows/<name>.json`, then `~/.tyci/workflows/<name>.json`, then the built-in `issue-to-merge` |
+| Workflow | `.tyci/workflows/<name>/` (trusted projects only), then `~/.tyci/workflows/<name>/`. No built-in fallback: create one with `tyci workflow init issue-to-merge` |
 | Check scripts | `.tyci/checks/`, then `~/.tyci/checks/` |
 | Config | `.tyci/config.json` over `~/.tyci/config.json` |
 

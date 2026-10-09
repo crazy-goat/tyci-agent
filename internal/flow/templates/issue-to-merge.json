@@ -1,5 +1,5 @@
 {
-  "name": "issue-to-merge",
+  "description": "Work on a GitHub issue: code, review, open a PR, wait for CI and merge.",
   "start": "check_done",
   "defaults": {"max_visits": 0},
   "states": {

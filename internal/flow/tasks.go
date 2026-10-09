@@ -2,11 +2,7 @@ package flow
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"regexp"
 	"text/template"
 
@@ -20,15 +16,6 @@ type TaskData struct {
 	Input                                                 string // roadmap oracle input JSON
 	Failed, FailedKey, FailedDir                          string // the failed check step (fixer, recover)
 	Issue, PR, Visit                                      int
-}
-
-// RenderTask renders the embedded task template name (without extension).
-func RenderTask(name string, d TaskData) (string, error) {
-	b, err := embedded.ReadFile("tasks/" + name + ".md")
-	if err != nil {
-		return "", fmt.Errorf("unknown task %q", name)
-	}
-	return renderTaskText(name, string(b), d)
 }
 
 func renderTaskText(name, text string, d TaskData) (string, error) {
@@ -45,12 +32,10 @@ func renderTaskText(name, text string, d TaskData) (string, error) {
 
 var taskName = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
-// TaskTemplates implements TaskRenderer. A template is read from the first
-// <dir>/.tyci/tasks/<name>.md of Dirs (empty entries are skipped), then from
-// the embedded copy.
+// TaskTemplates implements TaskRenderer. A task is read from <Dir>/tasks/<name>.md,
+// where Dir is the workflow directory.
 type TaskTemplates struct {
-	// Dirs are the trusted repo root and the home dir, in this order.
-	Dirs []string
+	Dir string
 }
 
 // Render implements TaskRenderer. It masks Reason again, so a caller
@@ -66,20 +51,9 @@ func (t TaskTemplates) Render(name string, rc RunContext) (string, error) {
 	if !taskName.MatchString(name) {
 		return "", fmt.Errorf("bad task name %q: use a-z, 0-9, _ and -", name)
 	}
-	for _, dir := range t.Dirs {
-		if dir == "" {
-			continue
-		}
-		tyci := filepath.Join(dir, ".tyci")
-		rel := filepath.Join("tasks", name+".md")
-		if _, err := os.Lstat(filepath.Join(tyci, rel)); errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		text, err := flowconfig.ReadPromptFile(tyci, rel)
-		if err != nil {
-			return "", fmt.Errorf("task %q: %w", name, err)
-		}
-		return renderTaskText(name, text, d)
+	text, err := flowconfig.ReadPromptFile(t.Dir, taskFile(name))
+	if err != nil {
+		return "", fmt.Errorf("task %q: %w", name, err)
 	}
-	return RenderTask(name, d)
+	return renderTaskText(name, text, d)
 }

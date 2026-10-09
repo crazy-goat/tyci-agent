@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 )
@@ -26,6 +27,11 @@ func validateStructure(wf *Workflow) []error {
 	}
 	if wf.Name == "" {
 		errs = append(errs, fmt.Errorf("workflow name is empty"))
+	}
+	if d := wf.Description; strings.TrimSpace(d) == "" {
+		errs = append(errs, fmt.Errorf("workflow description is empty"))
+	} else if strings.ContainsAny(d, "\r\n") {
+		errs = append(errs, fmt.Errorf("workflow description must be one line"))
 	}
 	if wf.Start == "" {
 		errs = append(errs, fmt.Errorf("workflow start is empty"))
@@ -107,6 +113,11 @@ func sortedKeys(m map[string]string) []string {
 // Resolver maps a relative check path to an absolute script path.
 type Resolver func(rel string) (abs string, err error)
 
+// wfResolver resolves the check scripts of wf in its workflow directory.
+func wfResolver(wf *Workflow) Resolver {
+	return func(rel string) (string, error) { return ResolveCheck(rel, wf.Source) }
+}
+
 // CheckWorkflow loads the named workflow for the repository of info and checks it
 // the way a run does (see PrepareRun). It returns the warnings and one message per
 // problem. The error is set only when the workflow or the config cannot be read.
@@ -119,15 +130,7 @@ func CheckWorkflow(info RepoInfo, name string) (warnings, problems []string, err
 	if err != nil {
 		return nil, nil, err
 	}
-	tmp, err := os.MkdirTemp("", "tyci-validate-")
-	if err != nil {
-		return nil, nil, err
-	}
-	defer func() { _ = os.RemoveAll(tmp) }()
-	resolve := func(rel string) (string, error) {
-		return ResolveCheck(rel, projectDir(info), info.Home, Embedded(), tmp)
-	}
-	warnings, verr := Validate(wf, cfg, resolve)
+	warnings, verr := Validate(wf, cfg, wfResolver(wf))
 	return warnings, errorMessages(verr), nil
 }
 

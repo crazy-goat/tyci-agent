@@ -14,8 +14,9 @@ import (
 )
 
 // A workflow proposal (#372) is proposal.md and proposal.patch in the artifact
-// dir of a fixer step: a change of the repository's .tyci/ files. It changes
-// nothing until the user answers "apply"; "reject" hides it for good.
+// dir of a fixer step: a change of the files of one workflow in the repository's
+// .tyci/workflows/<name>/ directory. It changes nothing until the user answers
+// "apply"; "reject" hides it for good.
 
 // rejectedProposals is the file, next to the run dirs of a repository, with
 // one sha256 of a rejected proposal.patch per line.
@@ -126,11 +127,10 @@ func firstLine(s string) string {
 
 // ApplyProposal applies the proposal in dir to the repository in a new branch
 // tyci/proposal-<run>-<patch hash>, made from origin/<default branch> in a temporary
-// worktree, pushes it and opens a PR. When the repository has no local copy
-// of the workflow yet, the missing files of the builtin one are ejected first
-// (existing .tyci/ files and role prompts are kept). A patch that touches
-// a file outside .tyci/ is refused. The checkout of the user is not touched.
-// It returns the PR URL.
+// worktree, pushes it and opens a PR. The workflow must already be committed in
+// .tyci/workflows/<name>/ on the default branch. A patch that touches a file outside
+// that directory is refused. The checkout of the user is not touched. It returns the
+// PR URL.
 func ApplyProposal(ctx context.Context, info RepoInfo, st *RunState, dir string) (string, error) {
 	patch := filepath.Join(dir, "proposal.patch")
 	key, err := proposalKey(dir)
@@ -166,13 +166,9 @@ func ApplyProposal(ctx context.Context, info RepoInfo, st *RunState, dir string)
 		_, _ = git(info.Root, "worktree", "remove", "--force", wt)
 		_, _ = git(info.Root, "branch", "-D", branch)
 	}()
-	if _, err := os.Stat(filepath.Join(wt, ".tyci", "workflows", st.Workflow+".json")); err != nil {
-		if _, err := EjectMissing(st.Workflow, wt); err != nil {
-			return "", fmt.Errorf("eject %s: %w", st.Workflow, err)
-		}
-		if _, err := git(wt, "add", "-A", ".tyci"); err != nil {
-			return "", err
-		}
+	wfDir := ".tyci/workflows/" + st.Workflow + "/"
+	if _, err := os.Stat(filepath.Join(wt, wfDir, "workflow.json")); err != nil {
+		return "", fmt.Errorf("origin/%s has no %sworkflow.json: commit the workflow before a proposal can change it", info.DefaultBranch, wfDir)
 	}
 	if _, err := git(wt, "apply", "--index", patch); err != nil {
 		return "", err
@@ -186,8 +182,8 @@ func ApplyProposal(ctx context.Context, info RepoInfo, st *RunState, dir string)
 		return "", errors.New("the proposal changes nothing")
 	}
 	for _, n := range strings.Split(names, "\n") {
-		if !strings.HasPrefix(n, ".tyci/") {
-			return "", fmt.Errorf("the proposal changes %s, outside .tyci/", n)
+		if !strings.HasPrefix(n, wfDir) {
+			return "", fmt.Errorf("the proposal changes %s, outside %s", n, wfDir)
 		}
 	}
 	title := "chore(workflow): apply the workflow proposal of run " + st.Run

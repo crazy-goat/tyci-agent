@@ -12,10 +12,10 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/flow/internal/testutil"
 )
 
-const goodPatch = `diff --git a/.tyci/checks/extra.sh b/.tyci/checks/extra.sh
+const goodPatch = `diff --git a/.tyci/workflows/issue-to-merge/checks/extra.sh b/.tyci/workflows/issue-to-merge/checks/extra.sh
 new file mode 100644
 --- /dev/null
-+++ b/.tyci/checks/extra.sh
++++ b/.tyci/workflows/issue-to-merge/checks/extra.sh
 @@ -0,0 +1 @@
 +echo ok
 `
@@ -79,6 +79,7 @@ func newProposalEnv(t *testing.T, patch string) *proposalEnv {
 		t.Setenv(k, v)
 	}
 	work, origin := newRepo(t)
+	pushWorkflow(t, origin)
 	e := &proposalEnv{origin: origin, notices: make(chan string, 8),
 		info: RepoInfo{Home: t.TempDir(), Root: work, Repo: "o/r", DefaultBranch: "main", Trusted: true}}
 	e.ghLog = testutil.StubGH(t, `case "$*" in "pr create"*) echo https://example/pull/9 ;; *) exit 2 ;; esac`)
@@ -100,6 +101,16 @@ func newProposalEnv(t *testing.T, patch string) *proposalEnv {
 	return e
 }
 
+// pushWorkflow commits the workflow directory to origin main from another clone. The
+// run checkout stays untouched, and apply needs the workflow on the default branch.
+func pushWorkflow(t *testing.T, origin string) {
+	t.Helper()
+	c := filepath.Join(t.TempDir(), "c")
+	e2eGit(t, filepath.Dir(c), "clone", "-q", origin, c)
+	e2eCommit(t, c, ".tyci/workflows/issue-to-merge/workflow.json", `{"description":"test"}`)
+	e2eGit(t, c, "push", "-q", "origin", "main")
+}
+
 func (e *proposalEnv) notice(t *testing.T) string {
 	t.Helper()
 	select {
@@ -113,7 +124,7 @@ func (e *proposalEnv) notice(t *testing.T) string {
 
 func (e *proposalEnv) start(t *testing.T) string {
 	t.Helper()
-	id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 3})
+	id, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +179,7 @@ func TestProposal_StatusShowsItAndApplyOpensPR(t *testing.T) {
 			t.Fatalf("change outside .tyci/: %s", n)
 		}
 	}
-	if !strings.Contains(names, ".tyci/checks/extra.sh") || !strings.Contains(names, ".tyci/workflows/issue-to-merge.json") {
+	if !strings.Contains(names, ".tyci/workflows/issue-to-merge/checks/extra.sh") {
 		t.Fatalf("branch changes = %s", names)
 	}
 	if b, _ := os.ReadFile(e.ghLog); !strings.Contains(string(b), "pr create -R o/r --base main --head "+branch) {
@@ -231,39 +242,12 @@ func TestProposal_ApplyRefusesRenameFromOutsideTyci(t *testing.T) {
 	e := newProposalEnv(t, renamePatch)
 	id := e.start(t)
 	err := e.m.Resume(id, "apply")
-	if err == nil || !strings.Contains(err.Error(), "changes x, outside .tyci/") {
+	if err == nil || !strings.Contains(err.Error(), "outside .tyci/workflows/issue-to-merge/") {
 		t.Fatalf("err = %v", err)
 	}
 	e.assertUntouched(t)
 	if b := e2eGit(t, e.origin, "branch", "--list", "tyci/*"); b != "" {
 		t.Fatalf("branch pushed: %s", b)
-	}
-}
-
-func TestProposal_ApplyKeepsLocalOverrides(t *testing.T) {
-	e := newProposalEnv(t, goodPatch)
-	e2eCommit(t, e.info.Root, ".tyci/checks/merge.sh", "mine\n")
-	e2eWrite(t, filepath.Join(e.info.Root, ".tyci", "config.json"), `{"roles":{"worker":{"prompt":"custom"}}}`)
-	e2eGit(t, e.info.Root, "add", "-A")
-	e2eGit(t, e.info.Root, "commit", "-q", "-m", "overrides")
-	e2eGit(t, e.info.Root, "push", "-q", "origin", "main")
-	id := e.start(t)
-	if err := e.m.Resume(id, "apply"); err != nil {
-		t.Fatal(err)
-	}
-	if got := e.notice(t); !strings.Contains(got, "Workflow proposal applied") {
-		t.Fatalf("notice = %q", got)
-	}
-	branch := strings.TrimSpace(e2eGit(t, e.origin, "branch", "--list", "tyci/proposal-*"))
-	if got := e2eGit(t, e.origin, "show", branch+":.tyci/checks/merge.sh"); got != "mine" {
-		t.Fatalf("merge.sh = %q", got)
-	}
-	if got := e2eGit(t, e.origin, "show", branch+":.tyci/config.json"); !strings.Contains(got, `"custom"`) {
-		t.Fatalf("config.json = %s", got)
-	}
-	names := e2eGit(t, e.origin, "diff", "--name-only", "main", branch)
-	if !strings.Contains(names, ".tyci/workflows/issue-to-merge.json") || strings.Contains(names, "merge.sh") {
-		t.Fatalf("branch changes = %s", names)
 	}
 }
 
@@ -284,7 +268,7 @@ func TestProposal_ApplyRefusesHomeWorkflow(t *testing.T) {
 	id := e.start(t)
 	e.m.Workflow = func(RepoInfo, string) (*Workflow, error) {
 		wf := proposalWF()
-		wf.Source = filepath.Join(e.info.Home, ".tyci", "workflows", "issue-to-merge.json")
+		wf.Source = filepath.Join(e.info.Home, ".tyci", "workflows", "issue-to-merge")
 		return wf, nil
 	}
 	if err := e.m.Resume(id, "apply"); err == nil || !strings.Contains(err.Error(), "outside the repository") {

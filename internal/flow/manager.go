@@ -13,9 +13,6 @@ import (
 	"time"
 )
 
-// DefaultWorkflow is the workflow a start request uses when none is named.
-const DefaultWorkflow = "issue-to-merge"
-
 // preparingPrefix starts the m.active key of an issue whose run is being
 // prepared. The rest of the key is the issue number, not a run ID.
 const preparingPrefix = "preparing:"
@@ -164,7 +161,7 @@ func (m *Manager) SetWorkers(n int) {
 // prepared, so Shutdown cancels the preparation like an active run.
 func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string, error) {
 	if req.Workflow == "" {
-		req.Workflow = DefaultWorkflow
+		return "", nil, errors.New("workflow name is required: start a workflow by name, or create one with tyci workflow init")
 	}
 	if req.Issue <= 0 {
 		return "", nil, fmt.Errorf("issue must be a positive number, got %d", req.Issue)
@@ -422,8 +419,8 @@ func (m *Manager) Resume(runID, answer string) error {
 // answerProposal applies or rejects the workflow proposal of a paused run.
 // The run stays paused and waits for its normal answer; a new notice says so.
 func (m *Manager) answerProposal(info RepoInfo, wf *Workflow, st *RunState, answer string) error {
-	if answer == "apply" && wf.Source != "" && wf.Source != "builtin" && !strings.HasPrefix(wf.Source, info.Root+string(filepath.Separator)) {
-		return fmt.Errorf("the run uses %s, outside the repository: a proposal can change only the repository's .tyci/ files or the builtin workflow", wf.Source)
+	if answer == "apply" && wf.Source != "" && !strings.HasPrefix(wf.Source, info.Root+string(filepath.Separator)) {
+		return fmt.Errorf("the run uses %s, outside the repository: a proposal can change only the workflow files in the repository's .tyci/workflows/", wf.Source)
 	}
 	// Reserve the run, so no other answer runs or saves it at the same time.
 	parent := m.base

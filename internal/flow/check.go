@@ -1,12 +1,10 @@
 package flow
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -160,11 +158,10 @@ func lastLine(out string) string {
 	return ""
 }
 
-// ResolveCheck finds a check script (SDR 5.2). Order: <repoDir>/.tyci/<rel>
-// (callers pass repoDir="" when the repo is untrusted), <home>/.tyci/<rel>,
-// then the embedded copy. On first use of an embedded script, all embedded
-// checks/*.sh are copied into <runDir>/checks (mode 0700) so siblings exist.
-func ResolveCheck(rel, repoDir, home string, embedded fs.FS, runDir string) (string, error) {
+// ResolveCheck finds the check script rel (for example "checks/lock.sh") in the
+// workflow directory wfDir. There is no other place to look. It returns an error
+// when the path is not relative or the file does not exist.
+func ResolveCheck(rel, wfDir string) (string, error) {
 	if rel == "" || path.IsAbs(rel) || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("check path %q must be relative", rel)
 	}
@@ -173,41 +170,9 @@ func ResolveCheck(rel, repoDir, home string, embedded fs.FS, runDir string) (str
 			return "", fmt.Errorf("check path %q must not contain a parent segment", rel)
 		}
 	}
-	for _, base := range []string{repoDir, home} {
-		if base == "" {
-			continue
-		}
-		p := filepath.Join(base, ".tyci", filepath.FromSlash(rel))
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p, nil
-		}
+	p := filepath.Join(wfDir, filepath.FromSlash(rel))
+	if st, err := os.Stat(p); err != nil || st.IsDir() {
+		return "", fmt.Errorf("check %q not found (%s)", rel, p)
 	}
-	if embedded == nil {
-		return "", fmt.Errorf("check %q not found", rel)
-	}
-	if _, err := fs.Stat(embedded, path.Clean(rel)); err != nil {
-		return "", fmt.Errorf("check %q not found", rel)
-	}
-	matches, err := fs.Glob(embedded, "checks/*.sh")
-	if err != nil {
-		return "", err
-	}
-	dstDir := filepath.Join(runDir, "checks")
-	if err := os.MkdirAll(dstDir, 0o700); err != nil {
-		return "", err
-	}
-	for _, m := range matches {
-		data, err := fs.ReadFile(embedded, m)
-		if err != nil {
-			return "", err
-		}
-		dst := filepath.Join(dstDir, path.Base(m))
-		if _, err := os.Stat(dst); err == nil {
-			continue
-		}
-		if err := os.WriteFile(dst, bytes.Clone(data), 0o700); err != nil {
-			return "", err
-		}
-	}
-	return filepath.Join(runDir, filepath.FromSlash(path.Clean(rel))), nil
+	return p, nil
 }

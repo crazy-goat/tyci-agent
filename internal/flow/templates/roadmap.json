@@ -1,5 +1,5 @@
 {
-  "name": "roadmap",
+  "description": "Plan the open issues into a roadmap with the oracle role.",
   "start": "plan",
   "states": {
     "plan": {"agent": "oracle", "task": "roadmap", "on": {"done": "end"}},

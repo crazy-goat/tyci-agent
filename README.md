@@ -66,7 +66,7 @@ make install
 - Run state: `~/.tyci/runs/<repo>/<run>/state.json`
 - Run usage: agent steps in `state.json` carry `stats` (tokens, cost, turns); `workflow_status` and the Runs tab show it
 - Run artifacts: `~/.tyci/runs/<repo>/<run>/artifacts/NNN-<state>/` (one dir per step; checks write `output.log`, agents must write `report.md`)
-- Overrides (trusted projects first, then `~/.tyci/`, then the builtin copy): `.tyci/workflows/`, `.tyci/checks/` and `.tyci/tasks/<name>.md` (task templates)
+- Workflows: `.tyci/workflows/<name>/` of a trusted project, then `~/.tyci/workflows/<name>/`. The first directory that exists is used. Each directory holds `workflow.json`, `checks/`, `tasks/` and `prompts/`. Check scripts, task templates and `@file` prompts are read only from that directory. There is no built-in workflow at run time.
 
 A run survives a crash or a kill (`kill <pid>`, `kill -9`). A normal quit (Ctrl+C in the TUI) cancels the active runs and saves them as `failed`, so they are not resumed. `state.json` keeps the owner process (`pid`) and the number of
 resumes (`resumed`). It also keeps `entry_pending`. This is `true` after a change to a new state, until the visit of that state is saved. A resumed run counts that visit. When `tyci` or `tyci tui` starts, it resumes nothing by itself.
@@ -90,16 +90,20 @@ their agent role.
 
 ### Change a workflow for one repository
 
-`tyci workflow eject issue-to-merge` copies the builtin workflow into `.tyci/` of the
-repository: `workflows/issue-to-merge.json`, all check scripts in `checks/`, the task
-templates in `tasks/` and the role prompts in `prompts/`. It sets
-`roles.<role>.prompt` to `"@prompts/<role>.md"` in `.tyci/config.json` and prints every
-file it wrote. It does not overwrite a file (or another role prompt) without `--force`.
-`--dir <path>` selects the repository. A run in a trusted project then uses the local
-copy; `workflow_source` in `workflow_status` shows the file.
+Run `tyci workflow init issue-to-merge` to create the workflow `issue-to-merge` from the
+template. The command writes `.tyci/workflows/issue-to-merge/` in the repository. The
+directory holds `workflow.json`, the check scripts in `checks/`, the task templates in
+`tasks/` and the role prompts in `prompts/`. Change the files in that directory.
+
+Run `tyci workflow init <template> [name]` to use another name. The command never
+overwrites an existing directory. It does not change `.tyci/config.json`. `--dir <path>`
+selects the repository. A run in a trusted project then uses the workflow directory.
+
+A file `prompts/<role>.md` sets the prompt of the agent states of that role. It replaces
+`roles.<role>.prompt` in `.tyci/config.json`. A state with its own `prompt` keeps that prompt.
 
 An agent state can set its own prompt for that state only:
-`"prompt": "@prompts/<file>.md"` (relative to the `.tyci/` dir of the workflow; no
+`"prompt": "@prompts/<file>.md"` (relative to the workflow directory; no
 absolute path, no `..`, no symlink).
 
 The `post_review` check state of a custom workflow must have a `default` key, or one key for each answer of `post_review.sh`.
@@ -117,12 +121,12 @@ patch is cut; `patch_file` is the path of the full patch that `apply` uses). Ans
 `apply` or `reject` with `workflow_resume`:
 
 - `apply`: tyci makes the branch `tyci/proposal-<run>-<hash>` from the default branch in a
-  temporary worktree, ejects the missing files of the builtin workflow when the repository
-  has no local copy (existing `.tyci/` files and role prompts stay), applies the patch,
-  pushes and opens a PR. A patch that changes a file outside `.tyci/` (also as the source
-  of a rename) is refused. Your
-  checkout does not change. When the run used a workflow from `~/.tyci/workflows/`,
-  `apply` is refused: a proposal changes only the repository's `.tyci/` files.
+  temporary worktree, applies the patch, pushes and opens a PR. The default branch must
+  contain `.tyci/workflows/<name>/workflow.json`, or the apply fails: commit the workflow
+  first. A patch that changes a file outside `.tyci/workflows/<name>/` (also as the source
+  of a rename) is refused. Your checkout does not change. When the run used a workflow
+  from `~/.tyci/workflows/`, `apply` is refused: a proposal changes only the repository's
+  `.tyci/workflows/<name>/` files.
   When `gh pr create` fails, tyci deletes the pushed branch, so you can try again.
 - `reject`: nothing changes; the proposal is recorded in
   `~/.tyci/runs/<repo>/rejected-proposals` and is not shown again.

@@ -9,11 +9,14 @@ import (
 // It never calls a model itself; models run only inside agent states
 // through AgentRunner.
 type Workflow struct {
-	Name     string           `json:"name"`
-	Start    string           `json:"start"`
-	Defaults Defaults         `json:"defaults"`
-	States   map[string]State `json:"states"`
-	// Source is the file the workflow was read from, or "builtin". Set by Lookup.
+	// Name is optional in workflow.json. When set, it must equal the directory name.
+	Name string `json:"name"`
+	// Description is one line, shown by the / popup and by workflow_start.
+	Description string           `json:"description"`
+	Start       string           `json:"start"`
+	Defaults    Defaults         `json:"defaults"`
+	States      map[string]State `json:"states"`
+	// Source is the workflow directory the workflow was read from. Set by Lookup.
 	Source string `json:"-"`
 }
 
@@ -30,8 +33,8 @@ type State struct {
 	Agent string `json:"agent,omitempty"`
 	Task  string `json:"task,omitempty"`
 	// Prompt overrides the role prompt for this agent state only. Lookup
-	// replaces "@<file>" (relative to the .tyci dir of the workflow) with the
-	// file text.
+	// replaces "@<file>" (relative to the workflow directory) with the file
+	// text. Without it, Lookup uses prompts/<role>.md of the workflow.
 	Prompt     string            `json:"prompt,omitempty"`
 	Ask        string            `json:"ask,omitempty"`
 	End        bool              `json:"end,omitempty"`

@@ -14,7 +14,6 @@ import (
 type PrepareDeps struct {
 	Lookup   func(name string) (*Workflow, string, error) // workflow + source
 	Config   func() (*flowconfig.Config, error)
-	Resolve  Resolver
 	AddIssue func(ctx context.Context) (*worktree.Worktree, error)
 	NewStore func(runID string) (*Store, error)
 }
@@ -37,7 +36,7 @@ func PrepareRun(ctx context.Context, d PrepareDeps, req PrepareReq) (*RunState, 
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	warnings, err := Validate(wf, cfg, d.Resolve)
+	warnings, err := Validate(wf, cfg, wfResolver(wf))
 	if err != nil {
 		return nil, nil, warnings, fmt.Errorf("workflow %q is invalid: %w", req.Workflow, err)
 	}

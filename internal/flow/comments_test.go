@@ -13,7 +13,7 @@ import (
 func TestRunner_PostReviewFailLeavesHistoryAndNotice(t *testing.T) {
 	var notices []string
 	r := &Runner{
-		WF:     builtinWF(t),
+		WF:     templateWF(t),
 		Checks: &fakeChecks{keys: map[string][]string{"checks/post_review.sh": {"fail"}, "checks/ci_wait.sh": {"green"}, "checks/fetch_comments.sh": {"none"}, "checks/merge.sh": {"merged"}}},
 		Agents: &fakeAgents{keys: map[string][]string{"findings": {"done"}}},
 		Warn:   func(m string) { notices = append(notices, m) },
@@ -33,7 +33,7 @@ func TestRunner_PostReviewFailLeavesHistoryAndNotice(t *testing.T) {
 
 func TestRunner_CommentsGoBackToCode(t *testing.T) {
 	r := &Runner{
-		WF: builtinWF(t),
+		WF: templateWF(t),
 		Checks: &fakeChecks{keys: map[string][]string{
 			"checks/fetch_comments.sh": {"new", "new", "new", "new"},
 			"checks/lock.sh":           {"ok", "ok", "ok"}, "checks/rebase.sh": {"ok", "ok", "ok"},
@@ -65,7 +65,7 @@ func (c idChecker) Run(_ context.Context, _ State, env []string, _ string) (stri
 
 func TestRunner_LastCommentIDSurvivesResume(t *testing.T) {
 	dir := t.TempDir()
-	r := &Runner{WF: builtinWF(t), Checks: idChecker{dir}, RunDir: dir}
+	r := &Runner{WF: templateWF(t), Checks: idChecker{dir}, RunDir: dir}
 	st := newRun("comments")
 	st.LastCommentID = 42
 	r.WF.States["merge"] = State{End: true}
@@ -116,7 +116,7 @@ func TestManager_PostReviewFailReachesNotify(t *testing.T) {
 		}}
 		return st, wf, w, err
 	}
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err != nil {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Issue: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if n := e.notice(t); !strings.Contains(n, "posting the review") {
