@@ -346,9 +346,17 @@ func noticeText(m bus.Message) (text string, ok bool) {
 // an idle chat.
 var (
 	pendingMu      sync.Mutex
-	pendingNotices []string
+	pendingNotices []pendingNotice
 	pendingLoud    bool
 )
+
+// pendingNotice is one notice that waits for a drain. hidden is true for a btw
+// suggestion: the TUI already showed it in the chat (see showBtwSuggestions), so
+// the mirror of the drain must not show it again. The model still gets it.
+type pendingNotice struct {
+	text   string
+	hidden bool
+}
 
 // quietNotice reports whether m waits for the next drain instead of waking an
 // idle chat: a quiet completion notice, or a btw suggestion.
@@ -358,8 +366,7 @@ func quietNotice(m bus.Message) bool {
 		c, err := bus.Decode[bus.Completion](m)
 		return err == nil && c.Quiet
 	case bus.KindBtwAnswer:
-		a, err := bus.Decode[bus.BtwAnswer](m)
-		return err == nil && a.Suggestion
+		return isBtwSuggestion(m)
 	}
 	return false
 }
@@ -370,10 +377,13 @@ func stashBusNotices() {
 	if busOrchestratorNotices == nil {
 		return
 	}
-	var fresh []string
+	var fresh []pendingNotice
 	loud := false
 	for _, m := range busOrchestratorNotices.Drain() {
-		fresh = append(fresh, formatNotices([]bus.Message{m})...)
+		hidden := isBtwSuggestion(m)
+		for _, text := range formatNotices([]bus.Message{m}) {
+			fresh = append(fresh, pendingNotice{text: text, hidden: hidden})
+		}
 		loud = loud || !quietNotice(m)
 	}
 	pendingMu.Lock()
@@ -382,9 +392,17 @@ func stashBusNotices() {
 	pendingLoud = pendingLoud || loud
 }
 
-// drainNotices returns every waiting notice of the main conversation, quiet
-// ones included.
-func drainNotices() []string {
+// isBtwSuggestion reports whether m is the answer of a busy-line fork.
+func isBtwSuggestion(m bus.Message) bool {
+	if m.Kind != bus.KindBtwAnswer {
+		return false
+	}
+	a, err := bus.Decode[bus.BtwAnswer](m)
+	return err == nil && a.Suggestion
+}
+
+// takePendingNotices stashes the new notices and empties the pending list.
+func takePendingNotices() []pendingNotice {
 	stashBusNotices()
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
@@ -392,6 +410,34 @@ func drainNotices() []string {
 	pendingNotices = nil
 	pendingLoud = false
 	return out
+}
+
+// noticeTexts returns the text of each notice, in order.
+func noticeTexts(items []pendingNotice) []string {
+	out := make([]string, 0, len(items))
+	for _, n := range items {
+		out = append(out, n.text)
+	}
+	return out
+}
+
+// drainNotices returns every waiting notice of the main conversation, quiet
+// ones included.
+func drainNotices() []string {
+	return noticeTexts(takePendingNotices())
+}
+
+// drainNoticesForTUI is drainNotices for the TUI's drain. It returns every
+// notice for the model, and the notices the chat must show. A btw suggestion
+// is left out of the chat list: the TUI shows it once when it is published.
+func drainNoticesForTUI() (model, chat []string) {
+	items := takePendingNotices()
+	for _, n := range items {
+		if !n.hidden {
+			chat = append(chat, n.text)
+		}
+	}
+	return noticeTexts(items), chat
 }
 
 // wakeNotices is drainNotices for the TUI's wake-up. It returns nothing when

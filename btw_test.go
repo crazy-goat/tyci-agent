@@ -604,17 +604,72 @@ func TestBusyBtw_BusyTurn_StartsFork(t *testing.T) {
 	}
 }
 
-// TestBusyBtw_ForkToolGate_DeniesBashSubagentKillJob checks the read-only gate
-// that a busy-line fork runs under. Mutating tools are refused, and read stays allowed.
+// TestBusyBtw_ForkToolGate_DeniesBashSubagentKillJob runs a busy-line fork
+// whose model calls every mutating tool. Each call must be refused, no extra
+// job may start, and a live job named by kill_job must keep running.
 func TestBusyBtw_ForkToolGate_DeniesBashSubagentKillJob(t *testing.T) {
-	gate := tools.BtwReadOnlyGate()
-	for _, name := range []string{"bash", "write", "subagent", "kill_job", "workflow_start"} {
-		if err := gate(name); err == nil {
-			t.Errorf("gate allowed %q during a busy-line fork", name)
+	reg, _ := withTestWiring(t)
+	liveID, release := startLiveJob(t, reg)
+	defer release()
+	before := len(reg.List())
+
+	calls := []stream.ToolCall{
+		{ID: "call-bash", Name: "bash", Arguments: `{"command":"touch /tmp/should-not-exist"}`},
+		{ID: "call-write", Name: "write", Arguments: `{"path":"/tmp/should-not-exist","content":"x"}`},
+		{ID: "call-subagent", Name: "subagent", Arguments: `{"task":"should not run"}`},
+		{ID: "call-kill", Name: "kill_job", Arguments: fmt.Sprintf(`{"job_id":%q}`, liveID)},
+		{ID: "call-workflow", Name: "workflow_start", Arguments: `{"name":"any","params":{}}`},
+	}
+	fake := &connectortest.Fake{
+		ProviderName: "test-provider",
+		ModelName:    "test-model",
+		Script: func(turn int, _ connector.Request) []stream.Event {
+			if turn == 0 {
+				events := make([]stream.Event, 0, len(calls)+1)
+				for _, c := range calls {
+					events = append(events, c)
+				}
+				return append(events, stream.Finish{Reason: "tool_calls"})
+			}
+			return []stream.Event{stream.TextDelta{Text: "gate held"}, stream.Finish{Reason: "stop"}}
+		},
+	}
+	cond := conductor.New(conductor.Options{Client: fake, Sink: noopDisplay{}, Config: agent.Config{Tools: toolsAdapter{}}})
+	sink := display.NewBtwSink(&display.TUI{}, "busy-gate")
+
+	job := startBusyBtw(context.Background(), cond, "try everything", sink)
+	if job == nil {
+		t.Fatal("busy line did not start a fork")
+	}
+	defer func() {
+		btwEvaluationsMu.Lock()
+		delete(btwEvaluations, job.ID)
+		btwEvaluationsMu.Unlock()
+	}()
+	awaitBusyFork(t, reg, job)
+
+	if fake.Calls() != 2 {
+		t.Fatalf("model calls = %d, want one tool turn plus final answer", fake.Calls())
+	}
+	reqs := fake.Requests()
+	if len(reqs) < 2 {
+		t.Fatalf("requests = %d, want at least 2", len(reqs))
+	}
+	raw, err := json.Marshal(reqs[len(reqs)-1].Messages)
+	if err != nil {
+		t.Fatalf("marshal messages: %v", err)
+	}
+	for _, c := range calls {
+		if !strings.Contains(string(raw), "tool \\\""+c.Name+"\\\" is not available during /btw evaluation") {
+			t.Errorf("call %q was not refused by the fork gate", c.Name)
 		}
 	}
-	if err := gate("read"); err != nil {
-		t.Fatalf("gate refused read: %v", err)
+	if got := len(reg.List()); got != before+1 {
+		t.Fatalf("registry has %d jobs, want %d (live job plus the fork only)", got, before+1)
+	}
+	live, ok := reg.Get(liveID)
+	if !ok || live.Status != jobs.StatusRunning {
+		t.Fatalf("live job targeted by kill_job: ok=%v status=%v, want running", ok, live.Status)
 	}
 }
 
@@ -767,5 +822,40 @@ func TestBusyBtw_NotBusy_NoFork(t *testing.T) {
 	}
 	if forkBusyLines(nil, func(string) {}) != nil {
 		t.Fatal("a missing drain must stay missing")
+	}
+}
+
+// TestBtwSuggestion_ShownOnceInChat checks that a busy-line answer reaches the
+// chat exactly once. The TUI leg shows it, and the drain of the orchestrator
+// notices keeps it out of the chat list. The model list still gets it.
+func TestBtwSuggestion_ShownOnceInChat(t *testing.T) {
+	withTestWiring(t)
+	tuiSub := subscribeBtwSuggestions(appBus)
+	done := make(chan struct{})
+	defer close(done)
+	shown := make(chan string, 4)
+	go showBtwSuggestions(tuiSub, done, func(s string) { shown <- s })
+
+	publishBtwSuggestion(appBus, "job-once", "ship?", "yes, ship it")
+	model, chat := drainNoticesForTUI()
+
+	if len(model) != 1 || !strings.Contains(model[0], "[btw suggestion]") {
+		t.Fatalf("model notices = %q, want the one suggestion", model)
+	}
+	if len(chat) != 0 {
+		t.Fatalf("drain showed %q in the chat, want no chat line (the TUI leg shows it)", chat)
+	}
+	select {
+	case got := <-shown:
+		if !strings.Contains(got, "yes, ship it") {
+			t.Fatalf("TUI leg showed %q, want the answer text", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("TUI leg did not show the suggestion")
+	}
+	select {
+	case got := <-shown:
+		t.Fatalf("suggestion shown a second time: %q", got)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
