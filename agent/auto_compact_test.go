@@ -219,9 +219,7 @@ func TestRun_AutoCompact_DoesNotReinvokeProviderAfterCompacting(t *testing.T) {
 		},
 	}
 	d := &silentDisplay{}
-	msgs := []connector.Message{
-		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
-	}
+	msgs := historyOf(9)
 	compactor := func(summary, focus string) (string, error) {
 		return CompactSession(sess, &msgs, summary, focus)
 	}
@@ -291,15 +289,19 @@ func TestCompactThresholds(t *testing.T) {
 	}{
 		{"automatic", 1000000, 0, 0, 0, 800000, 950000},
 		{"user limits", 1000000, 100000, 150000, 0, 100000, 150000},
-		{"user limits capped by window", 1000, 5000, 9000, 0, 1000, 1000},
+		{"user limits capped by window", 1000, 5000, 9000, 0, 1000, 900},
 		{"legacy percent", 1000000, 0, 0, 50, 800000, 500000},
 		{"hard wins over legacy percent", 1000000, 0, 150000, 50, 800000, 150000},
 		{"negative percent disables hard", 1000000, 0, 0, -1, 800000, 0},
 		{"unknown window, user limits only", 0, 100, 200, 0, 100, 200},
 		{"unknown window, nothing set", 0, 0, 0, 0, 0, 0},
-		{"summary reserve lowers the hard limit of a small window", 100000, 0, 0, 0, 80000, 91808},
-		{"summary reserve does not bind a large window", 200000, 0, 0, 0, 160000, 190000},
-		{"window below the summary reserve is not lowered", 5000, 0, 0, 0, 4000, 4750},
+		{"summary reserve lowers the hard limit of a window of 100000", 100000, 0, 0, 0, 80000, 91808},
+		{"summary reserve on a window of 8193", 8193, 0, 0, 0, 6554, 7374},
+		{"summary reserve on a window of 10000", 10000, 0, 0, 0, 8000, 9000},
+		{"summary reserve on a window of 16384", 16384, 0, 0, 0, 13107, 14746},
+		{"summary reserve on a window of 32768", 32768, 0, 0, 0, 26214, 29492},
+		{"large window of 200000 is unchanged", 200000, 0, 0, 0, 160000, 190000},
+		{"small window, user hard limit at the window", 5000, 0, 0, 0, 4000, 4500},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -69,14 +70,32 @@ func hardLimitTurn(stub func(context.Context) (<-chan stream.Event, error)) conn
 	return &summaryStub{Fake: fake, stub: stub}
 }
 
+// historyOf returns n messages that alternate user and assistant, starting
+// with a user message. The first text is "the first question". The turn of a
+// test adds one assistant message, so historyOf(9) gives 10 messages, more
+// than compactKeepMessages.
+func historyOf(n int) []connector.Message {
+	msgs := make([]connector.Message, 0, n)
+	for i := 0; i < n; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		text := fmt.Sprintf("message %d", i)
+		if i == 0 {
+			text = "the first question"
+		}
+		msgs = append(msgs, connector.Message{Role: role, Content: []connector.ContentBlock{{Type: "text", Text: text}}})
+	}
+	return msgs
+}
+
 // runHardLimit runs one turn that triggers the automatic compaction and
 // returns the compacted history and the usage of the run.
 func runHardLimit(t *testing.T, mc connector.ModelClient, d Sink, cfg Config) ([]connector.Message, stream.Usage) {
 	t.Helper()
 	sess := newAutoCompactSession(t)
-	msgs := []connector.Message{
-		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
-	}
+	msgs := historyOf(9)
 	cfg.MaxRetries = 1
 	cfg.ContextLimit = 200000
 	cfg.HardLimit = 170000
@@ -104,6 +123,63 @@ func TestCompactSummary_SummaryLeadsCompactedHistory(t *testing.T) {
 	}
 	if strings.Contains(lead, markerText) {
 		t.Fatalf("lead = %q, must not use the fixed marker when a summary exists", lead)
+	}
+}
+
+// With 8 messages in total, CompactSession keeps all of them. The summary
+// call would add cost and no benefit, so it is not made.
+func TestCompactSummary_EightMessagesSkipCall(t *testing.T) {
+	sess := newAutoCompactSession(t)
+	p := hardLimitTurn(nil).(*connectortest.Fake)
+	msgs := historyOf(7)
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries:   1,
+		ContextLimit: 200000,
+		HardLimit:    170000,
+		Session:      sess,
+		Compactor: func(summary, focus string) (string, error) {
+			return CompactSession(sess, &msgs, summary, focus)
+		},
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := p.Calls(); got != 1 {
+		t.Fatalf("provider Calls() = %d, want 1 (the turn only, no summary call)", got)
+	}
+	if lead := msgs[0].Content[0].Text; !strings.Contains(lead, markerText) {
+		t.Fatalf("lead = %q, want the fixed marker", lead)
+	}
+}
+
+// A window too small for the summary call (9500 tokens of conversation, the
+// overhead and a 1000-token reply do not fit in 10000) uses the fixed marker
+// and makes no call.
+func TestCompactSummary_SmallWindowSkipsCallAndUsesMarker(t *testing.T) {
+	sess := newAutoCompactSession(t)
+	p := &connectortest.Fake{
+		ProviderName: "count",
+		ModelName:    "count-1",
+		Turns: [][]stream.Event{{
+			stream.TextDelta{Text: "working"},
+			stream.Finish{Usage: stream.Usage{Input: 9500, Output: 100}},
+		}},
+	}
+	msgs := historyOf(9)
+	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
+		MaxRetries:   1,
+		ContextLimit: 10000,
+		Session:      sess,
+		Compactor: func(summary, focus string) (string, error) {
+			return CompactSession(sess, &msgs, summary, focus)
+		},
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := p.Calls(); got != 1 {
+		t.Fatalf("provider Calls() = %d, want 1 (no summary call in a small window)", got)
+	}
+	if lead := msgs[0].Content[0].Text; !strings.Contains(lead, markerText) {
+		t.Fatalf("lead = %q, want the fixed marker", lead)
 	}
 }
 
@@ -154,7 +230,7 @@ func TestSummarizeForCompaction_TimeoutDoesNotBlock(t *testing.T) {
 	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}}}
 
 	start := time.Now()
-	_, err := summarizeForCompaction(context.Background(), b, msgs, 50*time.Millisecond)
+	_, err := summarizeForCompaction(context.Background(), b, msgs, 50*time.Millisecond, compactSummaryMaxTokens)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
 	}
@@ -166,7 +242,7 @@ func TestSummarizeForCompaction_TimeoutDoesNotBlock(t *testing.T) {
 func TestCompactSummary_RequestHasNoTools(t *testing.T) {
 	sess := newAutoCompactSession(t)
 	p := hardLimitTurn(nil).(*connectortest.Fake)
-	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}}}
+	msgs := historyOf(9)
 	schema := json.RawMessage(`[{"type":"function","function":{"name":"read"}}]`)
 	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
 		MaxRetries:   1,
@@ -195,7 +271,7 @@ func TestCompactSummary_RequestHasNoTools(t *testing.T) {
 func TestCompactSummary_InputIsCurrentConversation(t *testing.T) {
 	sess := newAutoCompactSession(t)
 	p := hardLimitTurn(nil).(*connectortest.Fake)
-	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "the first question"}}}}
+	msgs := historyOf(9)
 	if _, err := Run(context.Background(), p, &silentDisplay{}, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
