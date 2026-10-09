@@ -74,7 +74,7 @@ var agentRunInfo = func() (flow.RepoInfo, error) { return workflowManager.Info()
 // which is not done or paused. It returns the worktree of that run, so the
 // resumed agent works in the same files. An agent of no run returns "". A
 // resumed job belongs to the run of the agent it continues (see
-// runOriginOf). The worktree of a merged or skipped run is removed; a resume
+// runIDsOf). The worktree of a merged or skipped run is removed; a resume
 // then would work in the main checkout, so it is refused too.
 func agentRunWorkdir(jobID string) (string, error) {
 	info, err := agentRunInfo()
@@ -84,25 +84,43 @@ func agentRunWorkdir(jobID string) (string, error) {
 		// belongs to no run.
 		return "", nil
 	}
-	return runWorkdirIn(info, runOriginOf(jobID))
+	return runWorkdirIn(info, jobID)
 }
 
-// runOriginOf returns the job id under which the workflow run of jobID is
-// recorded: the job it continues, or jobID itself.
-func runOriginOf(jobID string) string {
+// runIDsOf returns the job ids that can be the session of a step of the run
+// of jobID: every id of each conversation chain that jobID belongs to. A run
+// records the last job of a chain, so the first job of the chain is not enough.
+func runIDsOf(jobID string) []string {
 	resumableMu.Lock()
-	entry, ok := resumable[jobID]
-	resumableMu.Unlock()
-	if ok && entry.origin != "" {
-		return entry.origin
+	defer resumableMu.Unlock()
+	mine := chainIDs(jobID, resumable[jobID])
+	want := map[string]bool{}
+	for _, id := range mine {
+		want[id] = true
 	}
-	return jobID
+	ids := append([]string(nil), mine...)
+	for id, entry := range resumable {
+		for _, c := range chainIDs(id, entry) {
+			if want[c] {
+				ids = append(ids, id)
+				break
+			}
+		}
+	}
+	return ids
 }
 
-// runWorkdirIn is agentRunWorkdir for the repository info info. jobID is the
-// id under which the run is recorded.
+// chainIDs returns the chain of the job id whose stashed entry is e.
+func chainIDs(id string, e resumableEntry) []string {
+	if len(e.chain) == 0 {
+		return []string{id}
+	}
+	return e.chain
+}
+
+// runWorkdirIn is agentRunWorkdir for the repository info info.
 func runWorkdirIn(info flow.RepoInfo, jobID string) (string, error) {
-	st, ok, err := flow.RunOfSession(info.Home, info.Name(), jobID)
+	st, ok, err := flow.RunOfSession(info.Home, info.Name(), runIDsOf(jobID))
 	if err != nil {
 		return "", fmt.Errorf("cannot check the workflow runs for the agent: %w", err)
 	}

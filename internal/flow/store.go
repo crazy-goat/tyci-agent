@@ -197,13 +197,19 @@ func RecentRuns(home, repoName string, n int) []*RunState {
 	return out
 }
 
-// RunOfSession returns the run that has an agent step run as session (the job
-// id of the agent). ok is false when no run of repoName has such a step, for
-// example an agent started outside a workflow. A run directory without a state
-// file is not a run. err is set when a state file exists but cannot be read,
-// and no run has the session: the agent may belong to that run.
-func RunOfSession(home, repoName, session string) (st *RunState, ok bool, err error) {
-	if session == "" {
+// RunOfSession returns the run that has an agent step whose session is one of
+// sessions (job ids of agents). ok is false when no run of repoName has such a
+// step, for example an agent started outside a workflow. A run directory
+// without a state file is not a run. err is set when a state file exists but
+// cannot be read, and no run has the session: the agent may belong to that run.
+func RunOfSession(home, repoName string, sessions []string) (st *RunState, ok bool, err error) {
+	want := map[string]bool{}
+	for _, s := range sessions {
+		if s != "" {
+			want[s] = true
+		}
+	}
+	if len(want) == 0 {
 		return nil, false, nil
 	}
 	base := filepath.Join(home, ".tyci", "runs", repoName)
@@ -227,7 +233,7 @@ func RunOfSession(home, repoName, session string) (st *RunState, ok bool, err er
 			continue
 		}
 		for _, h := range run.History {
-			if h.Session == session {
+			if want[h.Session] {
 				return run, true, nil
 			}
 		}

@@ -88,11 +88,11 @@ type resumableEntry struct {
 	// depth behaves exactly as before this field existed.
 	depth int
 
-	// origin is the job id that the workflow run of this conversation is
-	// recorded under. A job resumed from a run agent keeps the origin of
-	// that agent, so a resume of the resumed job still finds the run (see
-	// resumeOrigin). Empty means the job itself is its own origin.
-	origin string
+	// chain is every job id of the conversation chain this job belongs to,
+	// the first job first and this job last. A run records the last job of
+	// a chain (for example after a report reminder), so the run guard looks
+	// for every id of the chain (see runIDsOf). Empty means the job alone.
+	chain []string
 }
 
 // resumableMu guards resumable and resumableOrder.

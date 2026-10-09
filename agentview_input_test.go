@@ -193,10 +193,10 @@ func TestAgentRunWorkdir_RefusesWhenARunCannotBeRead(t *testing.T) {
 	}
 }
 
-// stashChainedAgent stashes a resumed job that continues the run of origin.
+// stashChainedAgent stashes a resumed job whose chain starts at origin.
 func stashChainedAgent(jobID, origin string) {
 	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go on"}}}}
-	stashResumable(jobID, resumableEntry{msgs: msgs, mc: fakeCheckModel{provider: "nowhere", model: "unpriced"}, origin: origin})
+	stashResumable(jobID, resumableEntry{msgs: msgs, mc: fakeCheckModel{provider: "nowhere", model: "unpriced"}, chain: []string{origin, jobID}})
 }
 
 func TestAgentRunWorkdir_ChainedResumeOfAnActiveRunIsRefused(t *testing.T) {
@@ -226,11 +226,12 @@ func TestAgentRunWorkdir_ChainedResumeOfADoneRunGetsTheWorktree(t *testing.T) {
 	}
 }
 
-func TestResumeOrigin_KeepsTheOriginOfAChain(t *testing.T) {
-	if got := resumeOrigin(resumableEntry{}, "job-first"); got != "job-first" {
-		t.Fatalf("first resume origin = %q, want the resumed job", got)
+func TestResumeChain_KeepsEveryIdOfTheChain(t *testing.T) {
+	if got := resumeChain(resumableEntry{}, "job-first", "job-second"); len(got) != 2 || got[0] != "job-first" || got[1] != "job-second" {
+		t.Fatalf("first resume chain = %v, want [job-first job-second]", got)
 	}
-	if got := resumeOrigin(resumableEntry{origin: "job-first"}, "job-second"); got != "job-first" {
-		t.Fatalf("chained origin = %q, want job-first", got)
+	entry := resumableEntry{chain: []string{"job-first", "job-second"}}
+	if got := resumeChain(entry, "job-second", "job-third"); len(got) != 3 || got[2] != "job-third" || got[0] != "job-first" {
+		t.Fatalf("chained resume chain = %v, want [job-first job-second job-third]", got)
 	}
 }

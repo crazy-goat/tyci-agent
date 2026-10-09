@@ -22,17 +22,17 @@ func TestRunOfSession_FindsTheRunOfAnAgentStep(t *testing.T) {
 	saveRun("run-a", "done", "job-1", "job-2")
 	saveRun("run-b", "paused", "job-3")
 
-	got, ok, err := RunOfSession(home, "repo", "job-2")
+	got, ok, err := RunOfSession(home, "repo", []string{"job-2"})
 	if err != nil || !ok || got.Run != "run-a" || got.Status != "done" {
 		t.Fatalf("RunOfSession(job-2) = %+v, %v, %v; want run-a done", got, ok, err)
 	}
-	if _, ok, err := RunOfSession(home, "repo", "job-9"); ok || err != nil {
+	if _, ok, err := RunOfSession(home, "repo", []string{"job-9"}); ok || err != nil {
 		t.Fatal("an agent of no run must not be found")
 	}
-	if _, ok, err := RunOfSession(home, "other-repo", "job-1"); ok || err != nil {
+	if _, ok, err := RunOfSession(home, "other-repo", []string{"job-1"}); ok || err != nil {
 		t.Fatal("runs of another repository must not be found")
 	}
-	if _, ok, err := RunOfSession(home, "repo", ""); ok || err != nil {
+	if _, ok, err := RunOfSession(home, "repo", []string{""}); ok || err != nil {
 		t.Fatal("an empty session must not be found")
 	}
 }
@@ -51,7 +51,7 @@ func TestRunOfSession_UnreadableStateIsAnError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, ok, err := RunOfSession(home, "repo", "job-x"); ok || err == nil {
+	if _, ok, err := RunOfSession(home, "repo", []string{"job-x"}); ok || err == nil {
 		t.Fatalf("ok=%v err=%v, want an error: the agent may belong to the broken run", ok, err)
 	}
 }
