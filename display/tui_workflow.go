@@ -67,6 +67,9 @@ func IsReservedWorkflowName(name string) bool {
 	return false
 }
 
+// workflowUsage is the error for a bare "/workflow" line.
+const workflowUsage = "usage: /workflow <name> [params]"
+
 // workflowNameRe is the shape of a workflow name. A head that does not match it
 // (for example a pasted path) cannot name a workflow, so List is not called.
 var workflowNameRe = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -97,7 +100,7 @@ func workflowLine(line string, list []WorkflowEntry) (name string, params []stri
 		if len(fields) == 1 {
 			return "", nil, true
 		}
-		return fields[1], fields[2:], true
+		return strings.ToLower(fields[1]), fields[2:], true
 	}
 	if IsReservedWorkflowName(head) {
 		return "", nil, false
@@ -123,7 +126,7 @@ type workflowStartedMsg struct {
 // user, so the model calls workflow_start with the full param list.
 func startWorkflow(s WorkflowStarter, name string, params []string) workflowStartedMsg {
 	if name == "" {
-		return workflowStartedMsg{err: errors.New("usage: /workflow <name> [params]")}
+		return workflowStartedMsg{err: errors.New(workflowUsage)}
 	}
 	_, warnings, err := s.Start(name, params)
 	var pe WorkflowParamError
@@ -147,7 +150,9 @@ func startWorkflow(s WorkflowStarter, name string, params []string) workflowStar
 
 // startWorkflowFromInput takes a workflow line out of the input and starts it in
 // a tea.Cmd. It is handled, and the turn is not touched, whether the agent is
-// busy or not. Any other line returns handled false.
+// busy or not. A line that names a workflow which does not load is handled too:
+// its error is shown and the line never goes to the model. Any other line
+// returns handled false.
 func (m *TuiModel) startWorkflowFromInput() (bool, tea.Cmd) {
 	line := strings.TrimSpace(m.input.Value())
 	if m.workflows == nil || !strings.HasPrefix(line, "/") {
@@ -155,25 +160,54 @@ func (m *TuiModel) startWorkflowFromInput() (bool, tea.Cmd) {
 	}
 	// The list reads the repository and the workflow files. Read it only for a
 	// line that can name a workflow, not for every submitted line.
+	head := commandHead(line)
 	var list []WorkflowEntry
-	if head := commandHead(line); workflowNameRe.MatchString(head) && head != "workflow" && !IsReservedWorkflowName(head) {
+	if workflowNameRe.MatchString(head) && head != "workflow" && !IsReservedWorkflowName(head) {
 		list = m.workflows.List()
+	}
+	if e, broken := brokenWorkflow(head, list); broken {
+		m.takeWorkflowLine(line)
+		return true, m.handleBlockMsg(tuiMsgBlock{kind: "error", content: "/" + e.Name + ": " + e.Err})
 	}
 	name, params, ok := workflowLine(line, list)
 	if !ok {
 		return false, nil
 	}
-	m.recordInputHistory(line)
-	m.input.Reset()
-	m.input.SetHeight(1)
-	m.closeFileComplete()
-	m.closeSlashComplete()
+	if name == "" {
+		m.takeWorkflowLine(line)
+		return true, m.handleBlockMsg(tuiMsgBlock{kind: "error", content: workflowUsage})
+	}
+	m.takeWorkflowLine(line)
 	// Start can take minutes (Prepare runs the setup script), so the chat shows
 	// the start at once. The result comes later as workflowStartedMsg.
 	notice := m.handleBlockMsg(tuiMsgBlock{kind: "block", content: "starting /" + strings.Join(append([]string{name}, params...), " ") + "..."})
 	s := m.workflows
 	start := func() tea.Msg { return startWorkflow(s, name, params) }
 	return true, tea.Batch(notice, start)
+}
+
+// takeWorkflowLine clears the input and records the line once in the input
+// history, for a line the TUI handles itself.
+func (m *TuiModel) takeWorkflowLine(line string) {
+	m.recordInputHistory(line)
+	m.input.Reset()
+	m.input.SetHeight(1)
+	m.closeFileComplete()
+	m.closeSlashComplete()
+}
+
+// brokenWorkflow reports the entry for head when head names a listed workflow
+// that does not load. Such a line is not sent to the model.
+func brokenWorkflow(head string, list []WorkflowEntry) (WorkflowEntry, bool) {
+	if head == "" || head == "workflow" || IsReservedWorkflowName(head) {
+		return WorkflowEntry{}, false
+	}
+	for _, e := range list {
+		if e.Name == head && e.Err != "" {
+			return e, true
+		}
+	}
+	return WorkflowEntry{}, false
 }
 
 // handleWorkflowStarted shows the result of a start. A missing param is sent to

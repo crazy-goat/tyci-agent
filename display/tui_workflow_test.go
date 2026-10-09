@@ -48,7 +48,7 @@ func TestWorkflowLineIgnoresOtherLines(t *testing.T) {
 		{Name: "broken", Err: "bad JSON"},
 	}
 	for _, line := range []string{
-		"hello", "/", "/unknown 1", "/broken", // not a workflow, or does not load
+		"hello", "/", "/unknown 1", // not a workflow
 		"/btw why", "/new", "/msg job text", "/compact", // builtins win
 		"/resume --all",
 	} {
@@ -324,4 +324,83 @@ func TestStartWorkflowFromInputSkipsListForPastedPath(t *testing.T) {
 	if c.lists != 0 {
 		t.Fatalf("List called %d times for a path", c.lists)
 	}
+}
+
+func TestBrokenWorkflowIsShownAndNeverSent(t *testing.T) {
+	for _, line := range []string{"/broken 160", "/broken"} {
+		results := make(chan string, 2)
+		m := newModel(results, "test/model", "", nil, 0, 0, 0)
+		m.reading = true
+		m.workflows = &fakeStarter{entries: []WorkflowEntry{{Name: "broken", Err: "bad JSON"}}}
+		m.input.SetValue(line)
+
+		handled, _ := m.startWorkflowFromInput()
+		if !handled {
+			t.Fatalf("%q: not taken", line)
+		}
+		if len(results) != 0 || m.queueItems != nil {
+			t.Fatalf("%q: sent to the model or queued", line)
+		}
+		if !hasBlock(m, "error", "/broken: bad JSON") {
+			t.Fatalf("%q: no error block: %+v", line, m.blocks)
+		}
+		if !reflect.DeepEqual(m.inputHistory, []string{line}) {
+			t.Fatalf("%q: history %q", line, m.inputHistory)
+		}
+		if m.input.Value() != "" {
+			t.Fatalf("%q: input not cleared", line)
+		}
+	}
+}
+
+func TestBrokenWorkflowExactPopupNameIsShownAndNeverSent(t *testing.T) {
+	f := &fakeStarter{entries: []WorkflowEntry{{Name: "broken", Err: "bad JSON"}}}
+	m := popupModel(t, "/broken", f.entries)
+	m.workflows = f
+	if m.handleSlashCompleteKey(tea.KeyMsg{Type: tea.KeyEnter}) {
+		t.Fatal("Enter was taken by the popup")
+	}
+	if handled, _ := m.startWorkflowFromInput(); !handled {
+		t.Fatal("broken workflow line went on to the model")
+	}
+	if !hasBlock(m, "error", "/broken: bad JSON") {
+		t.Fatalf("no error block: %+v", m.blocks)
+	}
+}
+
+func TestBareWorkflowShowsUsageBeforeStarting(t *testing.T) {
+	f := &fakeStarter{}
+	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
+	m.workflows = f
+	m.input.SetValue("/workflow")
+	if handled, _ := m.startWorkflowFromInput(); !handled {
+		t.Fatal("bare /workflow not taken")
+	}
+	if hasBlock(m, "block", "") || strings.Contains(fmt.Sprint(m.blocks), "starting") {
+		t.Fatalf("starting notice shown for a bare /workflow: %+v", m.blocks)
+	}
+	if !hasBlock(m, "error", workflowUsage) {
+		t.Fatalf("no usage error: %+v", m.blocks)
+	}
+}
+
+func TestWorkflowNameCaseIsTheSameInBothForms(t *testing.T) {
+	list := []WorkflowEntry{issueToMerge}
+	for _, line := range []string{"/Issue-To-Merge 1", "/workflow Issue-To-Merge 1"} {
+		name, params, ok := workflowLine(line, list)
+		if !ok || name != "issue-to-merge" || !reflect.DeepEqual(params, []string{"1"}) {
+			t.Errorf("%q: got %q %q %v", line, name, params, ok)
+		}
+	}
+}
+
+// hasBlock reports whether the transcript holds a block of kind with content.
+// An empty content matches any block of kind.
+func hasBlock(m TuiModel, kind, content string) bool {
+	for _, b := range m.blocks {
+		if b.kind == kind && (content == "" || b.content == content) {
+			return true
+		}
+	}
+	return false
 }
