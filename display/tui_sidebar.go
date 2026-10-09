@@ -1037,6 +1037,9 @@ type subagentTreeRow struct {
 	// separatorBefore is true when a separator line sits above this row: it is
 	// the first finished row of a sibling group that has active rows above it.
 	separatorBefore bool
+	// continues is true for a resumed job: it is shown under the finished job
+	// it continues, with that job's description and a marker.
+	continues bool
 }
 
 // buildSubagentTree walks jobs.Job.ParentID to build the Subagents tab's
@@ -1059,11 +1062,21 @@ type subagentTreeRow struct {
 // depth).
 func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 	byParent := map[string][]jobs.Job{}
+	descriptions := map[string]string{}
 	for _, j := range m.sortedBackgroundJobs() {
 		if j.Kind != jobs.KindSubagent {
 			continue
 		}
-		byParent[j.ParentID] = append(byParent[j.ParentID], j)
+		descriptions[j.ID] = j.Description
+		// A resumed job is listed under the job it continues. Its real
+		// ParentID stays as it is, so notices do not change. The cost rollup
+		// walks this tree, so the cost of the resumed job also counts in the
+		// job it continues and in that job's ancestors.
+		parent := j.ParentID
+		if old, ok := m.resumedFrom[j.ID]; ok {
+			parent = old
+		}
+		byParent[parent] = append(byParent[parent], j)
 	}
 	active := subagentActiveSet(byParent)
 	for parent, kids := range byParent {
@@ -1104,6 +1117,18 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 		for i, j := range kids {
 			own := usage[j.ID]
 			cost, unpriced := rollupJobCost(j.ID, byParent, usage)
+			_, continues := m.resumedFrom[j.ID]
+			if continues {
+				// Show the name of the original agent, also for a job that
+				// continues a resumed job: follow the chain back to its start.
+				origin := m.resumedFrom[j.ID]
+				for next, ok := m.resumedFrom[origin]; ok; next, ok = m.resumedFrom[origin] {
+					origin = next
+				}
+				if desc, ok := descriptions[origin]; ok {
+					j.Description = desc
+				}
+			}
 			rows = append(rows, subagentTreeRow{
 				depth:           depth,
 				job:             j,
@@ -1111,6 +1136,7 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 				rollupUSD:       cost,
 				rollupUnpriced:  unpriced,
 				separatorBefore: i > 0 && !active[j.ID] && active[kids[i-1].ID],
+				continues:       continues,
 			})
 			walk(j.ID, depth+1)
 		}

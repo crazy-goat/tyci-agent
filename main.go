@@ -87,6 +87,12 @@ type resumableEntry struct {
 	// wrapped with WithDepth, so an old/test-built entry with no explicit
 	// depth behaves exactly as before this field existed.
 	depth int
+
+	// chain is every job id of the conversation chain this job belongs to,
+	// the first job first and this job last. A run records the last job of
+	// a chain (for example after a report reminder), so the run guard looks
+	// for every id of the chain (see runIDsOf). Empty means the job alone.
+	chain []string
 }
 
 // resumableMu guards resumable and resumableOrder.

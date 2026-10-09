@@ -529,11 +529,19 @@ type TuiModel struct {
 	// agentView is non-nil while the main window shows a subagent's live
 	// conversation instead of the main one (see tui_agent_view.go).
 	agentView *agentView
+	// agentInput is the app side of the agent view's input (see
+	// tui_agent_input.go). resumedFrom maps the id of a resumed job to the id
+	// of the finished job it continues.
+	agentInput  AgentInput
+	resumedFrom map[string]string
 }
+
+// inputPlaceholder is the hint of the input box while no agent view is open.
+const inputPlaceholder = "Type message (Enter send, Alt+Enter / Ctrl+N newline)"
 
 func newModel(submitResult chan<- string, modelName string, historyPath string, cancelCh chan<- struct{}, toolCount int, skillCount int, mcpCount int) TuiModel {
 	ta := textarea.New()
-	ta.Placeholder = "Type message (Enter send, Alt+Enter / Ctrl+N newline)"
+	ta.Placeholder = inputPlaceholder
 	ta.CharLimit = 0
 	ta.ShowLineNumbers = false
 	ta.SetWidth(80)
@@ -552,6 +560,7 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 	return TuiModel{
 		blocks:                make([]block, 0, 1024),
 		input:                 ta,
+		resumedFrom:           map[string]string{},
 		submitResult:          submitResult,
 		ready:                 true,
 		reading:               true,

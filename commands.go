@@ -551,6 +551,9 @@ var tuiCmd = &cobra.Command{
 			}
 			return runRowsCache
 		})
+		// The agent view sends its input to the viewed agent (see
+		// agentViewInput). Enter on a finished agent resumes it.
+		tuiDisp.SetAgentInput(agentViewInput{})
 		// Wire the sidebar's Sessions tab (TODO item 1) to the same
 		// cwd-scoped session listing bare "/resume" already uses (tui_mode.go)
 		// — reusing session.ResumeEntries rather than the display package

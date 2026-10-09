@@ -189,6 +189,9 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runLister = rl.fn
 		return m, nil
 	}
+	if next, cmd, handled := m.handleAgentInputMsg(msg); handled {
+		return next, cmd
+	}
 	// Same delivery pattern, same "can arrive at any point in startup"
 	// guarantee: the sidebar persistence callback (TUI.SetSidebarPersister).
 	if sp, ok := msg.(tuiSetSidebarPersisterMsg); ok {

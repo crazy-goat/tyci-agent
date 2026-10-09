@@ -4,13 +4,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -193,4 +196,69 @@ func RecentRuns(home, repoName string, n int) []*RunState {
 		}
 	}
 	return out
+}
+
+// RunByID returns the state of the run runID of repository repoName. ok is
+// false when runID is not a run id, when that run has no state file, or when
+// the run path is not a directory. err is set when the state file exists but
+// cannot be read.
+func RunByID(home, repoName, runID string) (st *RunState, ok bool, err error) {
+	if !runIDPattern.MatchString(runID) {
+		return nil, false, nil
+	}
+	st, err = Load(filepath.Join(home, ".tyci", "runs", repoName, runID))
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return st, true, nil
+}
+
+// RunOfSession returns the run that has an agent step whose session is one of
+// sessions (job ids of agents). ok is false when no run of repoName has such a
+// step, for example an agent started outside a workflow. A run directory
+// without a state file is not a run. err is set when a state file exists but
+// cannot be read, and no run has the session: the agent may belong to that run.
+func RunOfSession(home, repoName string, sessions []string) (st *RunState, ok bool, err error) {
+	want := map[string]bool{}
+	for _, s := range sessions {
+		if s != "" {
+			want[s] = true
+		}
+	}
+	if len(want) == 0 {
+		return nil, false, nil
+	}
+	base := filepath.Join(home, ".tyci", "runs", repoName)
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("flow: read runs of %s: %w", repoName, err)
+	}
+	var unreadable error
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		run, err := Load(filepath.Join(base, e.Name()))
+		if err != nil {
+			if unreadable == nil && !errors.Is(err, fs.ErrNotExist) {
+				unreadable = err
+			}
+			continue
+		}
+		for _, h := range run.History {
+			if want[h.Session] {
+				return run, true, nil
+			}
+		}
+	}
+	if unreadable != nil {
+		return nil, false, fmt.Errorf("flow: a run of %s cannot be read, so the agent may belong to it: %w", repoName, unreadable)
+	}
+	return nil, false, nil
 }

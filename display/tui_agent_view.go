@@ -18,8 +18,9 @@ import (
 //
 // Scroll position and text selection are shared with the main model while the
 // view is open, and mainScroll/mainAtBottom keep the main conversation's own
-// position for the way back. The input box and the main conversation are not
-// part of the view: typed text and new messages go to the main model.
+// position for the way back. The input box belongs to the view: Enter sends the
+// text to the viewed agent (see tui_agent_input.go). The main conversation is
+// not part of the view.
 type agentView struct {
 	jobID string
 	// label is the job's description (for a workflow worker, its role name).
@@ -35,6 +36,13 @@ type agentView struct {
 	// from before the view opened.
 	mainScroll   int
 	mainAtBottom bool
+	// confirming is true after Enter on a finished agent: the next Enter
+	// resumes it with confirmText, any other key cancels.
+	confirming  bool
+	confirmText string
+	// checking is true while the resume check of a finished agent runs: an
+	// Enter then does nothing, so a second Enter starts no second check.
+	checking bool
 }
 
 // newAgentViewModel returns an empty block model with its own caches. It is
@@ -68,6 +76,14 @@ func (m *TuiModel) openAgentView(jobID, label string) bool {
 	if !tools.HasLiveTranscript(jobID) {
 		return false
 	}
+	m.showAgentView(jobID, label)
+	return true
+}
+
+// showAgentView is openAgentView without the transcript check. A job that was
+// just resumed may not have its transcript yet: its goroutine creates it, and
+// pullAgentView fills the view on the next status tick.
+func (m *TuiModel) showAgentView(jobID, label string) {
 	av := &agentView{jobID: jobID, label: label, model: newAgentViewModel()}
 	if old := m.agentView; old != nil {
 		av.mainScroll, av.mainAtBottom = old.mainScroll, old.mainAtBottom
@@ -82,13 +98,24 @@ func (m *TuiModel) openAgentView(jobID, label string) bool {
 	m.selection = SelectionState{}
 	m.selectionFlash = false
 	m.invalidateMessageRegion()
+	m.input.Placeholder = agentViewPlaceholder(jobID, label)
 	m.pullAgentView()
 	// The catch-up replay arrives in one go. Counting it would show the
 	// throughput of the whole transcript over a fraction of a second, so only
 	// the deltas that arrive after the view opened count as this round's.
 	av.model.roundBytes = 0
 	av.model.roundFirstDeltaAt = time.Time{}
-	return true
+}
+
+// agentViewPlaceholder is the input hint while an agent view is open. It says
+// who receives the text: the label of the agent when it has one, for example
+// "message to 20261008-125053-584/review", otherwise the job id.
+func agentViewPlaceholder(jobID, label string) string {
+	target := jobID
+	if label = strings.Join(strings.Fields(label), " "); label != "" {
+		target = label
+	}
+	return "message to " + target + " (Esc: back to main)"
 }
 
 // closeAgentView switches the main window back to the main conversation and
@@ -100,6 +127,7 @@ func (m *TuiModel) closeAgentView() {
 	}
 	av.model.scrollback.close()
 	m.agentView = nil
+	m.input.Placeholder = inputPlaceholder
 	m.scrollLine = av.mainScroll
 	m.atBottom = av.mainAtBottom
 	m.selectionVersion++

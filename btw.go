@@ -298,13 +298,23 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 			// conversation does not change how deep it is nested, so a
 			// chained resume off of newJobID must restore the exact same
 			// depth this one did, not silently reset to 0.
-			stashResumable(newJobID, resumableEntry{msgs: forked, mc: entry.mc, cfg: runCfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx), depth: entry.depth})
+			stashResumable(newJobID, resumableEntry{msgs: forked, mc: entry.mc, cfg: runCfg, todoAgentID: tools.TodoAgentIDFromContext(runCtx), depth: entry.depth, chain: resumeChain(entry, jobID, newJobID)})
 		}
 
 		return text, truncated, err
 	})
 
 	return jobHandleAdapter{job}, nil
+}
+
+// resumeChain returns the chain (see resumableEntry.chain) of newJobID, the
+// job that resumes entry, which was stashed under jobID.
+func resumeChain(entry resumableEntry, jobID, newJobID string) []string {
+	chain := entry.chain
+	if len(chain) == 0 {
+		chain = []string{jobID}
+	}
+	return append(append([]string(nil), chain...), newJobID)
 }
 
 // btwIDCounter backs nextBtwID, mirroring jobs' own timestamp+counter ID

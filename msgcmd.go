@@ -45,9 +45,17 @@ func postMsgCommand(b *bus.Bus, reg *jobs.Registry, arg string) (jobID string, e
 	if !reg.IsLive(jobID) {
 		return "", fmt.Errorf("/msg: job %q not found", jobID)
 	}
-	if _, err := bus.Publish(b, bus.KindAgentMessage, bus.Addr{Type: bus.AddrUser}, agentAddr(jobID),
-		bus.OriginHuman, bus.AgentMessage{Text: text}); err != nil {
+	if err := publishUserMessage(b, jobID, text); err != nil {
 		return "", fmt.Errorf("/msg: %w", err)
 	}
 	return jobID, nil
+}
+
+// publishUserMessage sends text from the person to the mailbox of the running
+// job jobID. It is the one producer with OriginHuman: "/msg" and the agent
+// view both use it, so the agent reads the text the same way in both cases.
+func publishUserMessage(b *bus.Bus, jobID, text string) error {
+	_, err := bus.Publish(b, bus.KindAgentMessage, bus.Addr{Type: bus.AddrUser}, agentAddr(jobID),
+		bus.OriginHuman, bus.AgentMessage{Text: text})
+	return err
 }
