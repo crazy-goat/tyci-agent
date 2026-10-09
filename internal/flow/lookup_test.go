@@ -227,6 +227,9 @@ func TestTemplate_RunsToEndWithFakes(t *testing.T) {
 // uses: in a linked worktree, the .tyci/workflows of that worktree counts, not
 // the one of the main clone.
 func TestProjectHasWorkflowsUsesWorktreeToplevel(t *testing.T) {
+	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"} {
+		t.Setenv(k, v)
+	}
 	clone := t.TempDir()
 	e2eGit(t, clone, "init", "-q", "-b", "main")
 	e2eCommit(t, clone, "README.md", "x")
