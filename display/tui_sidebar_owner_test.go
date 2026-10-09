@@ -312,6 +312,30 @@ func TestSidebarTasks_OrphanRowsListedUnderMain(t *testing.T) {
 	}
 }
 
+// TestSidebarTasks_SubagentWithEvictedParentIsSelectable: a subagent whose
+// parent was evicted from the job list still has a Subagents row. Enter on that
+// row lists its Bash jobs, and main does not list them.
+func TestSidebarTasks_SubagentWithEvictedParentIsSelectable(t *testing.T) {
+	m := ownerTestModel(t)
+	m.applyJobUpdate(jobs.Job{ID: "sub-x", Kind: jobs.KindSubagent, ParentID: "gone", Status: jobs.StatusDone, Description: "run/orphan-x", StartedAt: time.Now().Add(-30 * time.Second)})
+	m.applyJobUpdate(jobs.Job{ID: "bash-x", Kind: jobs.KindBash, ParentID: "sub-x", Status: jobs.StatusDone, Description: "x command", StartedAt: time.Now()})
+	tools.RecordLiveEvent("sub-x", tools.LiveEvent{Kind: "text", Content: "x"})
+
+	if got := taskBashIDs(m); slices.Contains(got, "bash-x") {
+		t.Fatalf("main selected: want no bash-x, got %v", got)
+	}
+	for i := 0; cursorRowID(m) != "sub-x"; i++ {
+		if i > 10 {
+			t.Fatal("cursor never reached the sub-x row")
+		}
+		m = pressSidebarKey(t, m, tea.KeyDown)
+	}
+	m = pressSidebarKey(t, m, tea.KeyEnter)
+	if got := taskBashIDs(m); !slices.Equal(got, []string{"bash-x"}) {
+		t.Fatalf("sub-x selected: want [bash-x], got %v", got)
+	}
+}
+
 // TestSidebarTasks_ClickOnAgentRowSelectsItsBash: a click on a Subagents row
 // selects that agent, as Enter does. The row has a live transcript, so the
 // click opens its agent view and the sidebar stays open.
