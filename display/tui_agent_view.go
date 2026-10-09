@@ -122,6 +122,10 @@ func (m *TuiModel) pullAgentView() {
 		return
 	}
 	for _, ev := range events {
+		if ev.Kind == "compaction" {
+			av.model.handleCompactionMsg(newCompactionMsg(ev.Compaction))
+			continue
+		}
 		av.model.handleBlockMsg(tuiMsgBlock{kind: ev.Kind, content: ev.Content, toolName: ev.ToolName})
 	}
 	av.seen += len(events)

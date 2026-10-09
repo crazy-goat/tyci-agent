@@ -133,6 +133,29 @@ type CompactionEvent struct {
 	TailStartID   string           `json:"tail_start_id,omitempty"`
 	TailMessages  []MessagePayload `json:"tail_messages,omitempty"`
 	DroppedEvents int              `json:"dropped_events,omitempty"`
+	CompactMeta
+}
+
+// Kinds of compaction, stored in the session file as these stable ids. The
+// display maps each id to its divider text. Older session files have no kind,
+// and an unknown id is shown as a plain "compaction".
+const (
+	CompactKindAuto    = "auto"
+	CompactKindCommand = "command"
+	CompactKindTool    = "tool"
+	CompactKindInLoop  = "in_loop"
+)
+
+// CompactMeta describes one compaction for the display. It is stored in the
+// compaction event (the fields are optional in the JSON). Summarized is true
+// when a model summary was written. TokensBefore is the context size in tokens
+// before the compaction; 0 means unknown. At is the time of the compaction; it
+// is not stored, because the event Timestamp is.
+type CompactMeta struct {
+	Kind         string    `json:"kind,omitempty"`
+	Summarized   bool      `json:"summarized,omitempty"`
+	TokensBefore int       `json:"tokens_before,omitempty"`
+	At           time.Time `json:"-"`
 }
 
 // ─── Session ──────────────────────────────────────────────────────────────
@@ -351,7 +374,7 @@ type MessageOptions struct {
 }
 
 // WriteSessionEnd writes the final session_end event.
-func (s *Session) WriteCompaction(summary string, tailStartID string, tailMessages []MessagePayload, droppedEvents int) error {
+func (s *Session) WriteCompaction(summary string, tailStartID string, tailMessages []MessagePayload, droppedEvents int, meta CompactMeta) error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -373,6 +396,7 @@ func (s *Session) WriteCompaction(summary string, tailStartID string, tailMessag
 		TailStartID:   tailStartID,
 		TailMessages:  tailMessages,
 		DroppedEvents: droppedEvents,
+		CompactMeta:   meta,
 	}
 	err = s.encoder.Encode(ev)
 	s.mu.Unlock()
@@ -484,12 +508,12 @@ func (s *Session) RecordSystemPrompt(prompt string) (drift bool, err error) {
 
 // Compact appends a compaction event and regenerates the derived markdown
 // dump. The JSONL remains the source of truth and is never deleted.
-func (s *Session) Compact(summary, tailStartID string, tail []connector.Message, droppedEvents int) (string, error) {
+func (s *Session) Compact(summary, tailStartID string, tail []connector.Message, droppedEvents int, meta CompactMeta) (string, error) {
 	payload := make([]MessagePayload, len(tail))
 	for i, msg := range tail {
 		payload[i] = MessagePayload{Role: msg.Role, Content: ContentBlocksFromConnector(msg.Content)}
 	}
-	if err := s.WriteCompaction(summary, tailStartID, payload, droppedEvents); err != nil {
+	if err := s.WriteCompaction(summary, tailStartID, payload, droppedEvents, meta); err != nil {
 		return "", err
 	}
 	s.mu.Lock()

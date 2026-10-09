@@ -166,7 +166,7 @@ func (m *TuiModel) forceRenderDirtyBlocks() {
 				delete(m.dirtyBlocks, idx)
 				delete(m.streamWraps, idx)
 				delete(m.mdStreamState, idx)
-			case "error", "block":
+			case "error", "block", "compaction":
 				rendered := renderErrorOrBlock(b, m.renderWidth())
 				if rendered != "" {
 					m.mdCacheRendered[idx] = rendered
