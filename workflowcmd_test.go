@@ -150,7 +150,8 @@ func resetWorkflowFlags() {
 	workflowStatusJSON = false
 }
 
-// decodeWorkflowResult decodes out as exactly one JSON object.
+// TestWorkflowValidateMissingFilesAreProblems checks that a missing check script
+// and a missing task file are both reported, each as one problem.
 func TestWorkflowValidateMissingFilesAreProblems(t *testing.T) {
 	home := wfHome(t)
 	project := wfProject(t)
@@ -187,6 +188,7 @@ func countContaining(msgs []string, sub string) int {
 	return n
 }
 
+// decodeWorkflowResult decodes out as exactly one JSON object.
 func decodeWorkflowResult(t *testing.T, out string) workflowResult {
 	t.Helper()
 	dec := json.NewDecoder(strings.NewReader(out))

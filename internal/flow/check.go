@@ -29,7 +29,7 @@ import (
 //   - Output holds stdout and stderr as they arrive (the last 128 KiB); the
 //     runner saves it as output.log in the step artifact dir (64 KiB limit).
 //
-// Builtin scripts start with `set -euo pipefail` (documented, not enforced).
+// Check scripts start with `set -euo pipefail` (documented, not enforced).
 const (
 	stdoutCap = 64 << 10
 	stderrCap = 2 << 10

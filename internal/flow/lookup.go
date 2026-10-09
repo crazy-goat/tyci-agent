@@ -210,9 +210,15 @@ func availableWorkflows(home, projectDir string, trusted bool) []string {
 	return names
 }
 
-// ProjectHasWorkflows reports whether the project root has a .tyci/workflows
-// directory. tyci does not use it in an untrusted project.
-func ProjectHasWorkflows(root string) bool {
+// ProjectHasWorkflows reports whether the git repository of dir has a
+// .tyci/workflows directory. tyci does not use it in an untrusted project.
+// It uses the same toplevel as DetectRepoAt, so a linked worktree is checked
+// in its own directory, as Lookup does.
+func ProjectHasWorkflows(dir string) bool {
+	root, err := gitOut(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return false
+	}
 	st, err := os.Stat(filepath.Join(root, ".tyci", "workflows"))
 	return err == nil && st.IsDir()
 }

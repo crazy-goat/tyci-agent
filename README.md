@@ -103,6 +103,8 @@ selects the repository. A run in a trusted project then uses the workflow direct
 
 A file `prompts/<role>.md` sets the prompt of the agent states of that role. It replaces
 `roles.<role>.prompt` in `.tyci/config.json`. A state with its own `prompt` keeps that prompt.
+A role other than `worker`, `review`, `fixer` or `oracle` still needs a `roles` entry in
+`.tyci/config.json`.
 
 An agent state can set its own prompt for that state only:
 `"prompt": "@prompts/<file>.md"` (relative to the workflow directory; no

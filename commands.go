@@ -258,7 +258,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	}
 	if !trusted {
 		warnProjectUntrusted()
-		if flow.ProjectHasWorkflows(projectRoot) {
+		if flow.ProjectHasWorkflows(wd) {
 			fmt.Fprintln(os.Stderr, "tyci: the workflows in .tyci/workflows are ignored until the project is trusted.")
 		}
 	}

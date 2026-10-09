@@ -14,8 +14,8 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/worktree"
 )
 
-// End-to-end runner tests: the REAL ExecChecker, the REAL builtin check scripts,
-// a stub gh, a temp git repo with a bare origin and a FAKE AgentRunner.
+// End-to-end runner tests: the REAL ExecChecker, the REAL check scripts of a
+// workflow, a stub gh, a temp git repo with a bare origin and a FAKE AgentRunner.
 
 const (
 	e2eRepo  = "o/r"

@@ -222,3 +222,30 @@ func TestTemplate_RunsToEndWithFakes(t *testing.T) {
 		t.Fatalf("status = %q", st.Status)
 	}
 }
+
+// TestProjectHasWorkflowsUsesWorktreeToplevel checks the directory that Lookup
+// uses: in a linked worktree, the .tyci/workflows of that worktree counts, not
+// the one of the main clone.
+func TestProjectHasWorkflowsUsesWorktreeToplevel(t *testing.T) {
+	clone := t.TempDir()
+	e2eGit(t, clone, "init", "-q", "-b", "main")
+	e2eCommit(t, clone, "README.md", "x")
+	linked := filepath.Join(t.TempDir(), "wt")
+	e2eGit(t, clone, "worktree", "add", "-q", linked, "-b", "wt")
+	if err := os.MkdirAll(filepath.Join(linked, ".tyci", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(linked, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !ProjectHasWorkflows(linked) {
+		t.Error("the linked worktree has .tyci/workflows, want true")
+	}
+	if !ProjectHasWorkflows(sub) {
+		t.Error("a directory in the linked worktree sees its .tyci/workflows, want true")
+	}
+	if ProjectHasWorkflows(clone) {
+		t.Error("the main clone has no .tyci/workflows, want false")
+	}
+}
