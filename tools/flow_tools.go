@@ -109,7 +109,7 @@ func (t *WorkflowStartTool) Run(_ context.Context, input map[string]any) ToolRes
 	run, warnings, err := m.Start(context.Background(), name, params)
 	if err != nil {
 		msg := err.Error()
-		if !workflowKnown(list, name) && !strings.Contains(msg, "available") {
+		if len(list) > 0 && !workflowKnown(list, name) && !strings.Contains(msg, "available") {
 			msg += ". Available workflows: " + workflowSummary(list)
 		}
 		return ToolResult{Type: "result", Success: false, Error: msg}
