@@ -1023,6 +1023,11 @@ func wireTools() {
 
 func main() {
 	wireTools()
+	// The process-wide message bus of v0.7.0. Its journal is
+	// <session dir>/bus.jsonl when the session directory exists. Producers
+	// and consumers move to it one by one.
+	appBus := newAppBus(busJournalPath())
+	defer appBus.Close()
 
 	// Unpack the builtin agent definitions (internal/agentdefs/builtin) into
 	// ~/.tyci/agents/ so tyci is useful with zero setup. This runs on every
