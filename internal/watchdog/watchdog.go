@@ -35,11 +35,14 @@ type Watchdog struct {
 	state map[string]*escState
 }
 
-// Alarm says that an agent has shown no activity for QuietFor. The receiver
-// formats it.
+// Alarm says that an agent has shown no activity for QuietFor. Description
+// and LastNote are the job's own text, so the receiver can name the agent. The
+// receiver formats it.
 type Alarm struct {
-	Agent    string
-	QuietFor time.Duration
+	Agent       string
+	Description string
+	LastNote    string
+	QuietFor    time.Duration
 }
 
 type escState struct {
@@ -104,7 +107,7 @@ func (w *Watchdog) Tick(now time.Time) {
 // unreachable ancestor moves to the next level in the same call. Past the top
 // (or past maxDepth, which guards against cycles) the human is told.
 func (w *Watchdog) escalate(j jobs.Job, byID map[string]jobs.Job, level int, idle time.Duration, now time.Time) {
-	a := Alarm{Agent: j.ID, QuietFor: idle}
+	a := Alarm{Agent: j.ID, Description: j.Description, LastNote: j.Progress, QuietFor: idle}
 	for ; level <= maxDepth; level++ {
 		anc, ok := ancestor(j, byID, level)
 		if !ok || anc == "" {

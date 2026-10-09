@@ -292,8 +292,14 @@ func noticeText(m bus.Message) (text string, ok bool) {
 			fmt.Fprintf(busLog, "bus: alarm %d not read: %v\n", m.Seq, err)
 			return "", false
 		}
-		return fmt.Sprintf("[watchdog] Agent %s has shown no activity for %s.\n"+
-			"You may: send it a message (message), or cancel it (kill_job).", p.Agent, formatIdle(p.QuietFor)), true
+		note := p.LastNote
+		if note == "" {
+			note = "none"
+		}
+		return fmt.Sprintf("[watchdog] Agent %s (%s) has shown no activity for %s.\n"+
+			"Last progress note: %q.\n"+
+			"You may: send it a message (message), or cancel it (kill_job).",
+			p.Agent, p.Description, formatIdle(p.QuietFor), note), true
 	case bus.KindAgentMessage:
 		a, err := bus.Decode[bus.AgentMessage](m)
 		if err != nil {
@@ -461,7 +467,7 @@ func watchdogNotify(to string, a watchdog.Alarm) bool {
 // to the orchestrator when parentID is "".
 func publishPingMissed(b *bus.Bus, parentID string, a watchdog.Alarm) {
 	publishTo(b, bus.KindPingMissed, bus.Addr{Type: bus.AddrAgent, ID: a.Agent}, recipientAddr(parentID), bus.OriginSystem,
-		bus.PingMissed{Agent: a.Agent, QuietFor: a.QuietFor})
+		bus.PingMissed{Agent: a.Agent, Description: a.Description, LastNote: a.LastNote, QuietFor: a.QuietFor})
 }
 
 // formatIdle shows whole seconds below one minute and rounded minutes above.

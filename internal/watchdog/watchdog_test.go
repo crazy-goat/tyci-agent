@@ -162,7 +162,7 @@ func TestTick_MessageUsesRealIdleTime(t *testing.T) {
 	p := r.job(jobs.KindOther, "")
 	sub := r.job(jobs.KindSubagent, p.ID)
 	r.tick(4*time.Minute + 20*time.Second)
-	if want := (Alarm{Agent: sub.ID, QuietFor: 4*time.Minute + 20*time.Second}); len(r.msgs) != 1 || r.msgs[0].a != want {
+	if want := (Alarm{Agent: sub.ID, Description: sub.Description, LastNote: sub.Progress, QuietFor: 4*time.Minute + 20*time.Second}); len(r.msgs) != 1 || r.msgs[0].a != want {
 		t.Fatalf("got %v", r.msgs)
 	}
 }
@@ -185,7 +185,7 @@ func TestTick_SubMinuteIdleShowsSeconds(t *testing.T) {
 	p := r.job(jobs.KindOther, "")
 	sub := r.job(jobs.KindSubagent, p.ID)
 	r.tick(20 * time.Second)
-	if want := (Alarm{Agent: sub.ID, QuietFor: 20 * time.Second}); len(r.msgs) != 1 || r.msgs[0].a != want {
+	if want := (Alarm{Agent: sub.ID, Description: sub.Description, LastNote: sub.Progress, QuietFor: 20 * time.Second}); len(r.msgs) != 1 || r.msgs[0].a != want {
 		t.Fatalf("got %v", r.msgs)
 	}
 }

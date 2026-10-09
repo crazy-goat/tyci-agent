@@ -25,7 +25,7 @@ func TestPingMissed_ToOrchestrator_DeliveredOnce(t *testing.T) {
 		t.Fatalf("ping.missed messages = %d, want one", len(msgs))
 	}
 	got := drainNotices()
-	if len(got) != 1 || !strings.Contains(got[0], "[watchdog] Agent job-17 has shown no activity for 4m.") {
+	if len(got) != 1 || !strings.Contains(got[0], "[watchdog] Agent job-17 () has shown no activity for 4m.") {
 		t.Fatalf("orchestrator drain = %q, want the alarm once", got)
 	}
 	if again := drainNotices(); len(again) != 0 {
@@ -72,6 +72,42 @@ func TestFormatIdle(t *testing.T) {
 	} {
 		if got := formatIdle(in); got != want {
 			t.Errorf("%v: got %q want %q", in, got, want)
+		}
+	}
+}
+
+// TestPingMissed_TextMatchesOldAlarm checks that the formatted alarm equals the
+// text the watchdog sent before #194, byte for byte, with and without a
+// progress note.
+func TestPingMissed_TextMatchesOldAlarm(t *testing.T) {
+	withTestWiring(t)
+	cases := []struct {
+		name string
+		a    watchdog.Alarm
+		want string
+	}{
+		{
+			name: "with note",
+			a: watchdog.Alarm{Agent: "job-17", Description: "build the API",
+				LastNote: "parsing routes", QuietFor: 4*time.Minute + 20*time.Second},
+			want: "[watchdog] Agent job-17 (build the API) has shown no activity for 4m.\n" +
+				"Last progress note: \"parsing routes\".\n" +
+				"You may: send it a message (message), or cancel it (kill_job).",
+		},
+		{
+			name: "without note",
+			a: watchdog.Alarm{Agent: "job-18", Description: "lint",
+				QuietFor: 20 * time.Second},
+			want: "[watchdog] Agent job-18 (lint) has shown no activity for 20s.\n" +
+				"Last progress note: \"none\".\n" +
+				"You may: send it a message (message), or cancel it (kill_job).",
+		},
+	}
+	for _, c := range cases {
+		publishPingMissed(appBus, "", c.a)
+		got := drainNotices()
+		if len(got) != 1 || bodyOf(got[0]) != c.want {
+			t.Fatalf("%s: text = %q, want %q", c.name, got, c.want)
 		}
 	}
 }
