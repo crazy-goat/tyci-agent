@@ -23,20 +23,39 @@ const compactKeepMessages = 8
 const compactSummaryTimeout = 60 * time.Second
 
 // compactSummaryMaxTokens caps the reply of the summary call. It is sent as
-// MaxTokens, so a long summary is cut rather than running on.
+// MaxTokens, so a long summary is cut rather than running on. For a small
+// window the cap is window/10 (see summaryMaxTokensFor).
 const compactSummaryMaxTokens = 6144
 
 // compactSummaryOverhead is the room kept for the summary instruction and the
 // transcript labels, which the summary call adds on top of the conversation.
 const compactSummaryOverhead = 2048
 
-// compactSummaryReserve is the part of the context window that the hard limit
-// leaves free. The summary call sends the conversation (about the hard limit
-// in tokens) plus compactSummaryOverhead, and reads back at most
-// compactSummaryMaxTokens. With the default hard limit of 95% this reserve
-// binds only for windows below 163840 tokens; there the hard limit is
-// lowered to window - reserve (see compactThresholds).
-const compactSummaryReserve = compactSummaryMaxTokens + compactSummaryOverhead
+// compactSummaryReserve is the most of the context window that the hard limit
+// leaves free for the summary call. The reserve is the smaller of this value
+// and a tenth of the window (see compactThresholds). A tenth, not a fifth,
+// keeps the hard limit above the 80% soft default, so the soft notice still
+// shows for small windows.
+const compactSummaryReserve = 8192
+
+// summaryMaxTokensFor returns the reply cap of the summary call for a window.
+// An unknown window (0) keeps compactSummaryMaxTokens.
+func summaryMaxTokensFor(window int) int {
+	if window <= 0 {
+		return compactSummaryMaxTokens
+	}
+	return min(compactSummaryMaxTokens, window/10)
+}
+
+// summaryFits reports whether the summary call fits in the window: the
+// conversation (used tokens), the instruction overhead and the reply cap.
+// An unknown window (0) always fits, because the provider decides then.
+func summaryFits(used, window int) bool {
+	if window <= 0 {
+		return true
+	}
+	return used+compactSummaryOverhead+summaryMaxTokensFor(window) <= window
+}
 
 // compactSummaryInstruction is the fixed request sent with the conversation
 // when the harness compacts. It asks for plain text, so no tool is needed.
@@ -137,12 +156,12 @@ var errEmptySummary = errors.New("compaction summary is empty")
 // marker on any error. The usage of the call is returned even when the
 // summary is empty, so the caller can count it; on a timeout the usage is
 // lost, because the call has not finished.
-func summarizeForCompaction(ctx context.Context, mc connector.ModelClient, msgs []connector.Message, timeout time.Duration) (summaryResult, error) {
+func summarizeForCompaction(ctx context.Context, mc connector.ModelClient, msgs []connector.Message, timeout time.Duration, maxTokens int) (summaryResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	done := make(chan summaryCall, 1)
 	go func() {
-		res, err := runSummaryCall(ctx, mc, msgs)
+		res, err := runSummaryCall(ctx, mc, msgs, maxTokens)
 		done <- summaryCall{res: res, err: err}
 	}()
 	select {
@@ -156,7 +175,7 @@ func summarizeForCompaction(ctx context.Context, mc connector.ModelClient, msgs 
 // runSummaryCall sends the conversation as one text transcript, not as the
 // raw messages. Anthropic rejects tool blocks in a request that defines no
 // tools, and this call defines none. Thinking blocks are left out.
-func runSummaryCall(ctx context.Context, mc connector.ModelClient, msgs []connector.Message) (summaryResult, error) {
+func runSummaryCall(ctx context.Context, mc connector.ModelClient, msgs []connector.Message, maxTokens int) (summaryResult, error) {
 	start := time.Now()
 	req := connector.Request{
 		Model: mc.Model(),
@@ -164,7 +183,7 @@ func runSummaryCall(ctx context.Context, mc connector.ModelClient, msgs []connec
 			Role:    "user",
 			Content: []connector.ContentBlock{{Type: "text", Text: transcriptForSummary(msgs) + "\n" + compactSummaryInstruction}},
 		}},
-		MaxTokens: compactSummaryMaxTokens,
+		MaxTokens: maxTokens,
 		// The request prefix differs from the conversation, so a cache
 		// entry would not be reused. Writing one would cost extra.
 		NoPromptCache: true,

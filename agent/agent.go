@@ -490,8 +490,8 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			switch {
 			case used > 0 && hardAt > 0 && used >= hardAt:
 				note := buildInLoopCompactNote(used, hardAt, "")
-				if len(*msgs) > compactKeepMessages {
-					res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout)
+				if len(*msgs) > compactKeepMessages && summaryFits(used, contextLimit()) {
+					res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout, summaryMaxTokensFor(contextLimit()))
 					accountSummary(d, &totalUsage, res)
 					if err == nil {
 						note = buildInLoopCompactNote(used, hardAt, res.text)
@@ -534,10 +534,15 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 						dumpPath = session.DumpPathFor(cfg.Session.Path())
 					}
 					modelSummary := ""
-					res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout)
-					accountSummary(d, &totalUsage, res)
-					if err == nil {
-						modelSummary = res.text
+					// Nothing is dropped with 8 messages or fewer, so the
+					// call would only add cost (see compactTail). A call
+					// that does not fit in the window is not made either.
+					if len(*msgs) > compactKeepMessages && summaryFits(used, limit) {
+						res, err := summarizeForCompaction(ctx, fs.mc, *msgs, compactSummaryTimeout, summaryMaxTokensFor(limit))
+						accountSummary(d, &totalUsage, res)
+						if err == nil {
+							modelSummary = res.text
+						}
 					}
 					summary := buildAutoCompactSummary(used, hardAt, dumpPath, modelSummary)
 					_, compactErr := cfg.Compactor(summary, "")
@@ -707,11 +712,13 @@ func compactThresholds(window, soft, hard, hardPercent int) (softAt, hardAt int)
 	default:
 		hardAt = window * autoHardPercent / 100
 	}
-	// The summary call needs room in the window after the hard limit (see
-	// compactSummaryReserve). The reserve only applies to a known window
-	// larger than itself.
-	if hardAt > 0 && window > compactSummaryReserve {
-		hardAt = min(hardAt, window-compactSummaryReserve)
+	// The summary call needs room in the window after the hard limit. The
+	// reserve is a tenth of the window, at most compactSummaryReserve. The
+	// hard limit never drops below 70% of the window because of it. A
+	// window of 163840 tokens or more is unaffected (95% leaves 8192).
+	if hardAt > 0 && window > 0 {
+		reserve := min(compactSummaryReserve, window/10)
+		hardAt = min(hardAt, max(window-reserve, window*70/100))
 	}
 	return softAt, hardAt
 }
