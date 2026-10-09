@@ -198,16 +198,12 @@ func RecentRuns(home, repoName string, n int) []*RunState {
 	return out
 }
 
-// runIDRe matches the run ids of NewRunID: YYYYMMDD-HHMMSS-<issue>, or with a
-// random hex suffix for a run without an issue.
-var runIDRe = regexp.MustCompile(`^\d{8}-\d{6}-(\d+|[0-9a-f]{6})$`)
-
 // RunByID returns the state of the run runID of repository repoName. ok is
 // false when runID is not a run id, when that run has no state file, or when
 // the run path is not a directory. err is set when the state file exists but
 // cannot be read.
 func RunByID(home, repoName, runID string) (st *RunState, ok bool, err error) {
-	if !runIDRe.MatchString(runID) {
+	if !runIDPattern.MatchString(runID) {
 		return nil, false, nil
 	}
 	st, err = Load(filepath.Join(home, ".tyci", "runs", repoName, runID))

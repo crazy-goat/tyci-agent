@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
@@ -115,6 +116,30 @@ func TestRunWorkdirIn_AllowsAWorkflowAgentOfADoneRunBeforeItsStepIsSaved(t *test
 	job := startNamedJobs(t, testRunDone+"/coder")[0]
 
 	if dir, err := runWorkdirIn(info, job); err != nil || dir != wt {
+		t.Fatalf("dir=%q err=%v, want the worktree of the done run", dir, err)
+	}
+}
+
+func TestRunWorkdirIn_IssuelessRunIsFoundByItsJobName(t *testing.T) {
+	// A run without an issue has the id YYYYMMDD-HHMMSS-0-<hex>. Its job name
+	// finds the run, so an active one is refused and a done one gives its worktree.
+	id := flow.NewRunID(0, time.Now())
+
+	jobIDs := startNamedJobs(t, id+"/coder", id+"/coder")
+	home := t.TempDir()
+	info := flow.RepoInfo{Home: home, Repo: "owner/repo"}
+	saveTestRun(t, home, id, "running", t.TempDir(), "job-other")
+	active := jobIDs[0]
+	if _, err := runWorkdirIn(info, active); err == nil || !strings.Contains(err.Error(), id+" (running)") {
+		t.Fatalf("err = %v, want a refusal that names the active run", err)
+	}
+
+	doneHome := t.TempDir()
+	doneInfo := flow.RepoInfo{Home: doneHome, Repo: "owner/repo"}
+	wt := t.TempDir()
+	saveTestRun(t, doneHome, id, "done", wt, "job-other")
+	done := jobIDs[1]
+	if dir, err := runWorkdirIn(doneInfo, done); err != nil || dir != wt {
 		t.Fatalf("dir=%q err=%v, want the worktree of the done run", dir, err)
 	}
 }
