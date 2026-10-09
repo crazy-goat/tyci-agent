@@ -176,10 +176,10 @@ func (a jobMailboxAdapter) Post(id, text string) bool {
 }
 func (a jobMailboxAdapter) IsLive(id string) bool { return a.reg.IsLive(id) }
 func (a jobMailboxAdapter) Drain(id string) []string {
-	return append(a.reg.DrainMessages(id), agentInboxes.drain(id)...)
+	return agentInboxes.drain(id)
 }
 func (a jobMailboxAdapter) Posted(id string) uint64 {
-	return a.reg.Posted(id) + agentInboxes.accepted(id)
+	return agentInboxes.accepted(id)
 }
 
 // jobResumerAdapter satisfies tools.JobResumer over JobRegistry and the

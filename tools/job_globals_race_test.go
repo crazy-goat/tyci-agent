@@ -426,7 +426,7 @@ func TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree(t *te
 
 	regA := jobs.NewRegistry()
 	regB := jobs.NewRegistry()
-	SetJobNotifier(jobs.NewNotifier())
+	SetJobNotifier(&recordingNotifier{})
 	SetSubAgentRunner(&mockRunner{
 		RunTaskFunc: func(ctx context.Context, task, model string, opts SubagentOptions) (string, error) {
 			return "ok", nil
@@ -473,7 +473,7 @@ func TestBashToolRun_ConcurrentSetJobStarterAndRealHandoff_RaceFree(t *testing.T
 	regB := jobs.NewRegistry()
 	SetJobProgressReporter(regA)
 	SetJobActivityToucher(regA)
-	SetJobNotifier(jobs.NewNotifier())
+	SetJobNotifier(&recordingNotifier{})
 	SetBackgroundBashEnabled(true)
 	t.Cleanup(func() {
 		killBackgroundBashAndWait(t)
@@ -547,7 +547,7 @@ func TestCronRunNow_ConcurrentSetJobStarterAndRealSpawn_RaceFree(t *testing.T) {
 
 	regA := jobs.NewRegistry()
 	regB := jobs.NewRegistry()
-	SetJobNotifier(jobs.NewNotifier())
+	SetJobNotifier(&recordingNotifier{})
 	t.Cleanup(func() {
 		SetJobStarter(nil)
 		SetJobNotifier(nil)

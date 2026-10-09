@@ -1,7 +1,7 @@
 package main
 
 // Integration coverage for background shell commands, driven through the real
-// composition-root wiring (wireTools, JobRegistry, JobNotices) rather than
+// composition-root wiring (wireTools, JobRegistry, appBus) rather than
 // package-local fakes — the unit tests in tools/bash_bg_test.go already cover
 // the tool's own behaviour, so what matters here is the seam between the
 // tool, the job registry, and the two paths a completion notice reaches the
@@ -132,7 +132,7 @@ func TestWiring_BG2_UserLineIsDeliveredBeforeBackgroundNotice(t *testing.T) {
 	withTestWiring(t)
 
 	userQueue := func() []string { return []string{"what the user typed"} }
-	JobNotices.Notify("[background command] something finished")
+	publishNotice(appBus, "", "[background command] something finished", false)
 
 	got := mergeNextMessages(userQueue, drainNotices)()
 	if len(got) != 2 {
@@ -290,7 +290,7 @@ func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
 func TestWiring_BG7_CompletionNoticeTriggersNextLLMRequest(t *testing.T) {
 	withTestWiring(t)
 
-	JobNotices.Notify("[subagent] child finished (job_id=job-test)")
+	publishNotice(appBus, "", "[subagent] child finished (job_id=job-test)", false)
 	client := &connectortest.Fake{
 		ProviderName: "test-provider",
 		ModelName:    "test-model",
@@ -343,7 +343,7 @@ func TestWiring_BG8_MultipleCompletionNoticesReachOneNextLLMRequest(t *testing.T
 		"[background command] build finished (job_id=job-bash)",
 		"[subagent] worker-b finished (job_id=job-b)",
 	} {
-		JobNotices.Notify(notice)
+		publishNotice(appBus, "", notice, false)
 	}
 
 	client := &connectortest.Fake{

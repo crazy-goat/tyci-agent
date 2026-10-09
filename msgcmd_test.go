@@ -68,7 +68,7 @@ func TestPostMsgCommand_ResolvesFullID(t *testing.T) {
 	}
 	msgs := agentInboxes.drain(job.ID)
 	if len(msgs) != 1 || msgs[0] != "hello there" {
-		t.Fatalf("DrainMessages = %v, want [hello there]", msgs)
+		t.Fatalf("agentInboxes.drain = %v, want [hello there]", msgs)
 	}
 }
 
@@ -90,7 +90,7 @@ func TestPostMsgCommand_ResolvesShortID(t *testing.T) {
 	}
 	msgs := agentInboxes.drain(job.ID)
 	if len(msgs) != 1 || msgs[0] != "steer this way" {
-		t.Fatalf("DrainMessages = %v, want [steer this way]", msgs)
+		t.Fatalf("agentInboxes.drain = %v, want [steer this way]", msgs)
 	}
 }
 

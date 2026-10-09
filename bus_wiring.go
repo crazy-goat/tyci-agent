@@ -9,7 +9,6 @@ import (
 
 	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/internal/redact"
-	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/session"
 )
 
@@ -160,10 +159,10 @@ func recipientAddr(id string) bus.Addr {
 }
 
 // publishNotice sends one completion notice to parentID, or to the
-// orchestrator when parentID is "".
-func publishNotice(b *bus.Bus, parentID, text string) {
+// orchestrator when parentID is "". A quiet notice does not wake an idle chat.
+func publishNotice(b *bus.Bus, parentID, text string, quiet bool) {
 	publishTo(b, bus.KindNoticeCompletion, orchestratorAddr, recipientAddr(parentID), bus.OriginSystem,
-		bus.Completion{Text: text})
+		bus.Completion{Text: text, Quiet: quiet})
 }
 
 // publishAsk sends the question of agent agentID to parentID, or to the
@@ -288,30 +287,92 @@ func noticeText(m bus.Message) (text string, ok bool) {
 	return "", false
 }
 
-// drainNotices returns the waiting notices of the main conversation: the
-// queue of JobNotices first, then the bus notices.
+// pendingNotices holds the notices of the main conversation that were read from
+// the bus but not handed out yet. pendingLoud is true when one of them may wake
+// an idle chat.
+var (
+	pendingMu      sync.Mutex
+	pendingNotices []string
+	pendingLoud    bool
+)
+
+// quietNotice reports whether m is a quiet completion notice.
+func quietNotice(m bus.Message) bool {
+	if m.Kind != bus.KindNoticeCompletion {
+		return false
+	}
+	c, err := bus.Decode[bus.Completion](m)
+	return err == nil && c.Quiet
+}
+
+// stashBusNotices moves the waiting notices of the orchestrator's subscription
+// to pendingNotices, so that they are kept in order for the next drain.
+func stashBusNotices() {
+	if busOrchestratorNotices == nil {
+		return
+	}
+	var fresh []string
+	loud := false
+	for _, m := range busOrchestratorNotices.Drain() {
+		fresh = append(fresh, formatNotices([]bus.Message{m})...)
+		loud = loud || !quietNotice(m)
+	}
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	pendingNotices = append(pendingNotices, fresh...)
+	pendingLoud = pendingLoud || loud
+}
+
+// drainNotices returns every waiting notice of the main conversation, quiet
+// ones included.
 func drainNotices() []string {
-	out := JobNotices.Drain()
-	if busOrchestratorNotices == nil {
-		return out
-	}
-	return append(out, formatNotices(busOrchestratorNotices.Drain())...)
+	stashBusNotices()
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	out := pendingNotices
+	pendingNotices = nil
+	pendingLoud = false
+	return out
 }
 
-// noticeCounter counts the notices of the main conversation on both paths, so
-// that wait sees a notice that reached either one.
-type noticeCounter struct{ *jobs.Notifier }
-
-func (n noticeCounter) Queued() uint64 {
-	if busOrchestratorNotices == nil {
-		return n.Notifier.Queued()
+// wakeNotices is drainNotices for the TUI's wake-up. It returns nothing when
+// only quiet notices arrived, and keeps them for the next drain.
+func wakeNotices() []string {
+	stashBusNotices()
+	pendingMu.Lock()
+	loud := pendingLoud
+	pendingMu.Unlock()
+	if !loud {
+		return nil
 	}
-	return n.Notifier.Queued() + busOrchestratorNotices.Accepted()
+	return drainNotices()
 }
 
-// MarkQuestionShown records a handoff message's question on the bus path. The
-// ask itself is published by the bus, so the mark is kept here.
-func (n noticeCounter) MarkQuestionShown(jobID string, seq int) {
+// clearNotices drops every waiting notice of the main conversation. /new uses
+// it so that no notice of the old conversation reaches the new one.
+func clearNotices() {
+	if busOrchestratorNotices != nil {
+		busOrchestratorNotices.Drain()
+	}
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	pendingNotices = nil
+	pendingLoud = false
+}
+
+// noticeCounter counts the notices of the main conversation, so that wait sees
+// a notice that arrived. It satisfies tools.JobNotifier.
+type noticeCounter struct{}
+
+func (noticeCounter) Queued() uint64 {
+	if busOrchestratorNotices == nil {
+		return 0
+	}
+	return busOrchestratorNotices.Accepted()
+}
+
+// MarkAskShown records a handoff message's question. See markAskShown.
+func (noticeCounter) MarkAskShown(jobID string, seq int) {
 	markAskShown(jobID, seq)
 }
 
@@ -321,12 +382,12 @@ func (n noticeCounter) MarkQuestionShown(jobID string, seq int) {
 // orchestrator.
 func watchdogNotify(to, text string) bool {
 	if to == "" {
-		publishNotice(appBus, "", text)
+		publishNotice(appBus, "", text, false)
 		return true
 	}
 	if !JobRegistry.IsLive(to) {
 		return false
 	}
-	publishNotice(appBus, to, text)
+	publishNotice(appBus, to, text, false)
 	return true
 }

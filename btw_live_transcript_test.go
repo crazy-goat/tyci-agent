@@ -11,7 +11,6 @@ import (
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/connector/connectortest"
 	"github.com/crazy-goat/tyci-agent/display"
-	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
@@ -66,10 +65,7 @@ func TestJobResumerAdapter_ResumedJobHasLiveTranscript(t *testing.T) {
 // records its conversation in the live transcript. The sink must still get
 // the text, because it is the job result.
 func TestStartBtw_EvaluationHasLiveTranscript(t *testing.T) {
-	reg := jobs.NewRegistry()
-	prevRegistry, prevNotices := JobRegistry, JobNotices
-	JobRegistry, JobNotices = reg, jobs.NewNotifier()
-	defer func() { JobRegistry, JobNotices = prevRegistry, prevNotices }()
+	reg, _ := withTestWiring(t)
 
 	fake := connectortest.Text("btw answer")
 	cond := conductor.New(conductor.Options{Client: fake, Sink: noopDisplay{}})

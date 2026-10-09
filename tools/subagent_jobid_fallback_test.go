@@ -11,7 +11,7 @@ package tools
 // ask_parent is the one exception, deliberately: giving these children a
 // job id must not make ask_parent BLOCK for its full SubagentTimeoutSec
 // with no way for an answer to ever arrive (see AskUnroutableCtxKey in
-// ask.go) — a `tyci run` invocation never drains JobNotices and the
+// ask.go) — a `tyci run` invocation never drains the main notice queue and the
 // blocking "subagent" tool call here never returns until every child
 // finishes, so nobody is ever free to call "answer_job".
 
@@ -113,7 +113,7 @@ func TestPrintModeChildCanReportProgress(t *testing.T) {
 // job-id gate and then block for its whole timeout on the one path where an
 // answer can structurally never arrive (the "subagent" tool call here does
 // not return until the child itself finishes — there is no handoff to free
-// it up, and no drained JobNotices either). It must fail immediately,
+// it up, and no drained notice either). It must fail immediately,
 // exactly as it did before this job id existed at all.
 func TestAskFailsFastWhenTheSpawningCallCannotHandOff(t *testing.T) {
 	_, _ = printModeEnv(t)
@@ -275,7 +275,7 @@ func TestPrintModeParentCancelStopsWaitingImmediately(t *testing.T) {
 
 	// Review finding 2: a cancelled child must NOT emit the
 	// background-finished/FAILED notice — nothing in this mode drains
-	// JobNotices, and the notice text invites wait(job_id=...) where no id
+	// the main notice queue, and the notice text invites wait(job_id=...) where no id
 	// was ever surfaced to the model. waitTerminal above already guarantees
 	// the child's goroutine (and any notify() call inside it) has run.
 	if got := notifier.all(); len(got) != 0 {

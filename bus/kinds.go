@@ -23,6 +23,8 @@ const (
 type Completion struct {
 	Text  string `json:"text"`
 	Agent string `json:"agent,omitempty"`
+	// Quiet notices wait for the next drain and do not wake an idle chat.
+	Quiet bool `json:"quiet,omitempty"`
 }
 
 // AskRequest is the payload of KindAskRequest.

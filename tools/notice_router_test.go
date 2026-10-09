@@ -9,15 +9,19 @@ import "fmt"
 // with the tag that the bus gives a notice for a finished agent. The routing
 // rules of the bus are tested in the bus package and in main.
 func init() {
-	SetNoticePublisher(func(parentID, text string) {
-		if parentID != "" {
-			if mb := getJobMailbox(); mb != nil && mb.Post(parentID, text) {
-				return
-			}
-			text = fmt.Sprintf("[for agent %s, which has already finished — forwarded here instead] %s", parentID, text)
+	SetNoticePublisher(routeTestNotice)
+}
+
+// routeTestNotice is the test publisher. A quiet flag has no effect here, the
+// tests that check it install their own publisher.
+func routeTestNotice(parentID, text string, _ bool) {
+	if parentID != "" {
+		if mb := getJobMailbox(); mb != nil && mb.Post(parentID, text) {
+			return
 		}
-		if n := getJobNotifier(); n != nil {
-			n.Notify(text)
-		}
-	})
+		text = fmt.Sprintf("[for agent %s, which has already finished — forwarded here instead] %s", parentID, text)
+	}
+	if n, ok := getJobNotifier().(*recordingNotifier); ok {
+		n.Notify(text)
+	}
 }

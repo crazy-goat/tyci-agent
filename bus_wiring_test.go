@@ -103,7 +103,7 @@ func TestBgBashNotice_DeliveredOnce_ToAgentInbox(t *testing.T) {
 	id, release := startLiveJob(t, reg)
 	defer release()
 
-	publishNotice(appBus, id, "[background command] done")
+	publishNotice(appBus, id, "[background command] done", false)
 
 	got := agentInboxes.drain(id)
 	if len(got) != 1 || got[0] != "[background command] done" {
@@ -123,7 +123,7 @@ func TestBgBashNotice_DeliveredOnce_ToAgentInbox(t *testing.T) {
 func TestBgBashNotice_ToFinishedAgent_GoesToOrchestratorTagged(t *testing.T) {
 	withTestWiring(t)
 
-	publishNotice(appBus, "job-gone", "[background command] late")
+	publishNotice(appBus, "job-gone", "[background command] late", false)
 
 	got := drainNotices()
 	want := "[for agent job-gone, which has already finished — forwarded here instead] [background command] late"
@@ -140,7 +140,7 @@ func TestBgBashNotice_ToFinishedAgent_GoesToOrchestratorTagged(t *testing.T) {
 func TestInbox_UndeliveredAtFinish_NothingLost(t *testing.T) {
 	reg, _ := withTestWiring(t)
 	id, release := startLiveJob(t, reg)
-	publishNotice(appBus, id, "[background command] waiting")
+	publishNotice(appBus, id, "[background command] waiting", false)
 
 	release()
 	if _, ok := reg.Wait(context.Background(), id, 5*time.Second); !ok {
@@ -171,7 +171,7 @@ func TestInbox_OpenTwice_OneSubscription(t *testing.T) {
 	agentInboxes.open(id)
 	agentInboxes.open(id)
 
-	publishNotice(appBus, id, "once")
+	publishNotice(appBus, id, "once", false)
 
 	if got := agentInboxes.drain(id); len(got) != 1 {
 		t.Fatalf("inbox drain = %q, want exactly one notice", got)

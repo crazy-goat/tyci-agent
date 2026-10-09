@@ -37,23 +37,6 @@ const jobEventBusSize = 32
 // subscribes, so this costs them nothing.
 var jobEventBus = eventbus.New(jobEventBusSize)
 
-// JobNotices is the single, process-wide queue of short completion notices
-// produced by background work — today, shell commands the bash tool moved to
-// the background. It has two consumers, wired per mode: the agent loop drains
-// it between turns (agent.Config.NextMessages), and an idle REPL selects on
-// its Signal to start a turn of its own (see runTUI). Exported so integration
-// tests in package main can assert on delivery.
-var JobNotices = jobs.NewNotifier()
-
-// residualMailboxSweepCap bounds how many of a finished job's leftover
-// mailbox entries (see jobs.Job.ResidualMailbox) get forwarded to the main
-// queue individually — batch-2 review round 2 finding D5. A handful is a
-// genuinely useful, readable heads-up; dozens (an orphaned fork with
-// several background bash jobs each posting periodic progress notices
-// into it) would just flood the queue. Past this many, the remainder is
-// summarized as a count instead of shown one by one.
-const residualMailboxSweepCap = 5
-
 // mergeNextMessages composes several NextMessages-shaped drain callbacks into
 // the single one agent.Config accepts, calling them in the order given so a
 // user's own queued line is delivered ahead of a background notice that
@@ -893,7 +876,7 @@ func wireTools() {
 		Kinds: noticeKinds,
 	})
 	agentInboxes = newInboxSet(b)
-	tools.SetNoticePublisher(func(parentID, text string) { publishNotice(b, parentID, text) })
+	tools.SetNoticePublisher(func(parentID, text string, quiet bool) { publishNotice(b, parentID, text, quiet) })
 	tools.SetJobResumer(jobResumerAdapter{reg: JobRegistry})
 	tools.SetJobPromoter(btwPromotionAdapter{})
 	// kill_job's subagent path + its inside-a-child subtree check (see
@@ -906,19 +889,19 @@ func wireTools() {
 	// no-op for every other mode, which never calls TUI.SetJobEventBus.
 	// Captured as locals, not read from the package globals inside the
 	// closure below: wireTools can be called again later (tests swap
-	// jobEventBus/JobNotices for isolation — see withTestWiring) to point a
+	// jobEventBus/appBus for isolation — see withTestWiring) to point a
 	// FUTURE registry's events at a FUTURE bus/notifier, but a job started
 	// on THIS JobRegistry, right now, must always report to THIS bus and
 	// THIS notifier — the ones actually wired in below — no matter what
 	// the globals get reassigned to later while that job is still running.
 	// Reading the globals at event-fire time instead of at wiring time let
 	// a job finished on one test's registry deliver its completion event
-	// into whatever jobEventBus/JobNotices the NEXT test had already
+	// into whatever jobEventBus/appBus the NEXT test had already
 	// swapped in by then (Start's completion goroutine closes job.done,
 	// then calls onEvent — see jobs/registry.go — so a test that only
 	// waits on job.done can already have moved on and rewired the globals
 	// by the time onEvent actually runs).
-	bus, notices := jobEventBus, JobNotices
+	bus := jobEventBus
 	inboxes := agentInboxes
 	JobRegistry.SetOnEvent(func(j jobs.Job) {
 		bus.Publish("job.updated", j)
@@ -968,44 +951,11 @@ func wireTools() {
 			// and dedups it against a handoff message (see bus_wiring.go).
 			publishAsk(b, j.ParentID, j.ID, j.QuestionSeq, text)
 		}
-
-		// C3 (batch-2 review): a message sitting in a job's mailbox when
-		// that job goes terminal will never be drained by anyone — its own
-		// agent loop has stopped for good, and nothing else ever reads
-		// that mailbox (see jobs.Job.ResidualMailbox's doc comment). That
-		// includes a notice this very hook routed there via reg.Post above,
-		// on some earlier event, for a fork that then finished before its
-		// own next iteration got around to draining it. Before this swept
-		// it to main, tagged, it simply vanished — silently dropping a
-		// notice is exactly the failure this whole notify-routing design
-		// exists to avoid.
-		//
-		// Capped (batch-2 review round 2 finding D5): an orphaned fork
-		// that had several background bash jobs each posting periodic
-		// progress notices into its mailbox would otherwise dump every one
-		// of them into main at once. Still far better than vanishing, but
-		// past residualMailboxSweepCap this says how many were left out
-		// instead of flooding the queue with all of them individually.
-		if n := len(j.ResidualMailbox); n > 0 {
-			shown := j.ResidualMailbox
-			if n > residualMailboxSweepCap {
-				shown = j.ResidualMailbox[:residualMailboxSweepCap]
-			}
-			for _, m := range shown {
-				notices.Notify(fmt.Sprintf("[for job %s, which finished before this could be delivered to it — forwarded here instead] %s", j.ID, m))
-			}
-			if remaining := n - len(shown); remaining > 0 {
-				notices.Notify(fmt.Sprintf("[for job %s] and %d more queued message(s) that finished before delivery — not shown, not delivered", j.ID, remaining))
-			}
-		}
 	})
 
-	// Wire background-command completion notices to the shared queue. This is
-	// only half the story: a notice is queued from here, but whether anything
-	// consumes it depends on the mode wiring up JobNotices.Drain /
-	// JobNotices.Signal — which is exactly why backgrounding itself stays off
-	// until a mode opts in via tools.SetBackgroundBashEnabled.
-	tools.SetJobNotifier(noticeCounter{JobNotices})
+	// Background-command notices reach the main conversation through the bus,
+	// see wakeNotices and drainNotices.
+	tools.SetJobNotifier(noticeCounter{})
 }
 
 func main() {

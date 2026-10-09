@@ -518,20 +518,11 @@ func cronNotify(j cron.Job, err error) {
 		// without waking an idle chat. A wake would start a model turn for
 		// every run of a frequent job. A one-shot job wakes the chat,
 		// because the caller asked for that one result.
-		jobNotifierMu.RLock()
-		n := jobNotifier
-		jobNotifierMu.RUnlock()
-		if q, ok := n.(quietNotifier); ok {
-			q.NotifyQuiet(msg)
-			return
-		}
+		sendNotice("", msg, true)
+		return
 	}
 	notifyToParent(j.Caller, msg)
 }
-
-// quietNotifier is a JobNotifier that can queue a notice without waking an
-// idle chat.
-type quietNotifier interface{ NotifyQuiet(text string) }
 
 // cronWhen phrases a timestamp relative to now, because "in 20 minutes" is the
 // thing the caller needs and a wall-clock time is not.

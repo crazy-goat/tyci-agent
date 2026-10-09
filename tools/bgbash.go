@@ -79,29 +79,20 @@ func SetBackgroundBashEnabled(v bool) { backgroundBashEnabled.Store(v) }
 // registry there would be nowhere to record the result.
 func BackgroundBashEnabled() bool { return backgroundBashEnabled.Load() && getJobStarter() != nil }
 
-// JobNotifier receives one short, model-facing line when a background
-// command finishes. Deliberately a plain string rather than a job struct:
-// this package must not import "jobs" (same import-cycle rule as JobWaiter
-// and JobStarter), and the producer is better placed to phrase the notice
-// than the consumer is.
+// JobNotifier is the view of the main conversation's notices that this
+// package needs. The main conversation's notices travel on the bus; main()
+// wires an implementation with SetJobNotifier.
 //
-// MarkQuestionShown lets this package (specifically handOff in subagent.go)
-// tell the same notifier that a "child is blocked on a question" notice it
-// may already have queued (via jobs.Registry.Ask's onEvent hook — see
-// main.go's wireTools) was just also delivered through a handoff message, so
-// a later drain of the queue does not repeat it. Keyed on jobID+seq — seq is
-// jobs.Job.QuestionSeq, an unforgeable per-ask id, NOT the question text:
-// keying on text would let one ask's "shown" mark wrongly suppress a later,
-// identically-worded ask from the same job (item 54 review finding 1). See
-// jobs.Notifier's MarkQuestionShown doc comment for the full reasoning,
-// including the one path (Esc/ctx.Done) that deliberately never calls this.
+// MarkAskShown tells the bus dedup (see bus_wiring.go) that a handoff message
+// already carried question seq of job jobID, so the notice of that ask is left
+// out of the next drain. It keys on seq, not on the question text, because
+// jobs.Job.QuestionSeq is unique per ask (item 54 review finding 1). handOff
+// (subagent.go) is the only caller.
 //
-// jobs.Notifier satisfies this structurally; main() wires it in wireTools.
+// Queued returns how many notices reached the main conversation. wait compares
+// two calls to see whether a new notice arrived.
 type JobNotifier interface {
-	Notify(text string)
-	MarkQuestionShown(jobID string, seq int)
-	// Queued returns how many notices were ever queued. wait compares it
-	// between two calls to see whether a new notice arrived.
+	MarkAskShown(jobID string, seq int)
 	Queued() uint64
 }
 
@@ -121,7 +112,7 @@ var (
 )
 
 // SetJobNotifier wires background-command completion notices to a
-// JobNotifier (in practice the app's shared jobs.Notifier, whose queue is
+// JobNotifier (in practice the app's noticeCounter in bus_wiring.go, whose queue is
 // drained into the agent loop and also wakes an idle REPL).
 func SetJobNotifier(n JobNotifier) {
 	jobNotifierMu.Lock()
@@ -139,9 +130,10 @@ func getJobNotifier() JobNotifier {
 }
 
 // NoticePublisher publishes one completion notice to the agent parentID, or to
-// the orchestrator when parentID is "". The bus rewrites a notice to an agent
-// that is no longer live. main() wires it with SetNoticePublisher.
-type NoticePublisher func(parentID, text string)
+// the orchestrator when parentID is "". A quiet notice waits for the next drain
+// and does not wake an idle chat. The bus rewrites a notice to an agent that is
+// no longer live. main() wires it with SetNoticePublisher.
+type NoticePublisher func(parentID, text string, quiet bool)
 
 var (
 	noticePublisherMu sync.RWMutex
@@ -155,9 +147,9 @@ func SetNoticePublisher(fn NoticePublisher) {
 	noticePublisherMu.Unlock()
 }
 
-// notifyToParent sends text to parentID through the notice publisher. A notice
+// sendNotice sends text to parentID through the notice publisher. A notice
 // with no publisher wired is dropped; production always wires one.
-func notifyToParent(parentID, text string) {
+func sendNotice(parentID, text string, quiet bool) {
 	if text == "" {
 		return
 	}
@@ -165,8 +157,13 @@ func notifyToParent(parentID, text string) {
 	fn := noticePublisher
 	noticePublisherMu.RUnlock()
 	if fn != nil {
-		fn(parentID, text)
+		fn(parentID, text, quiet)
 	}
+}
+
+// notifyToParent sends a notice that wakes an idle chat, see sendNotice.
+func notifyToParent(parentID, text string) {
+	sendNotice(parentID, text, false)
 }
 
 // parentEnded reports whether parentID names a job that can no longer receive
@@ -177,28 +174,6 @@ func notifyToParent(parentID, text string) {
 func parentEnded(parentID string) bool {
 	mb := getJobMailbox()
 	return parentID != "" && mb != nil && !mb.IsLive(parentID)
-}
-
-// markQuestionsShown tells the wired JobNotifier that each jobID/seq pair in
-// questions was just delivered via a handoff message, so a "child is
-// blocked on a question" notice already queued for that exact ask is left
-// out the next time the queue drains — see handOff (subagent.go), which is
-// the only caller, and JobNotifier.MarkQuestionShown's doc comment for why
-// this keys on seq (jobs.Job.QuestionSeq), not the question text. A no-op
-// with no notifier wired (tests that don't exercise this).
-func markQuestionsShown(questions map[string]pendingQuestion) {
-	if len(questions) == 0 {
-		return
-	}
-	jobNotifierMu.RLock()
-	n := jobNotifier
-	jobNotifierMu.RUnlock()
-	if n == nil {
-		return
-	}
-	for jobID, q := range questions {
-		n.MarkQuestionShown(jobID, q.Seq)
-	}
 }
 
 // userPending reports whether a person has typed something that the agent has

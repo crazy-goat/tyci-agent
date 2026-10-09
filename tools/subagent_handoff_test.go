@@ -796,7 +796,7 @@ func TestAskAnswerRoundTripWhenHandoffIsAvailable(t *testing.T) {
 // TestHandoffMarksShownQuestionsWhenTrue is case (a): the handoff message
 // carries a still-running child's question, and markShown=true must report
 // exactly that job/question pair to the notifier — the signal
-// jobs.Notifier.MarkQuestionShown uses to suppress the duplicate onEvent
+// noticeCounter.MarkAskShown uses to suppress the duplicate onEvent
 // notice at drain time.
 func TestHandoffMarksShownQuestionsWhenTrue(t *testing.T) {
 	reg := jobs.NewRegistry()
@@ -844,7 +844,7 @@ func TestHandoffMarksShownQuestionsWhenTrue(t *testing.T) {
 		t.Fatal("expected the job to still be known to the registry")
 	}
 	if seq, ok := notifier.shownFor(st.jobID); !ok || seq != wantSeq.QuestionSeq {
-		t.Fatalf("expected MarkQuestionShown(%q, %d), got shown=%v", st.jobID, wantSeq.QuestionSeq, notifier.shown)
+		t.Fatalf("expected MarkAskShown(%q, %d), got shown=%v", st.jobID, wantSeq.QuestionSeq, notifier.shown)
 	}
 
 	reg.Answer(st.jobID, "main", true)
@@ -897,7 +897,7 @@ func TestHandoffDoesNotMarkShownWhenFalse(t *testing.T) {
 		t.Fatalf("expected the handoff message to still carry the question: %s", res.Content)
 	}
 	if seq, ok := notifier.shownFor(st.jobID); ok {
-		t.Fatalf("expected no MarkQuestionShown call with markShown=false, got %d", seq)
+		t.Fatalf("expected no MarkAskShown call with markShown=false, got %d", seq)
 	}
 
 	reg.Answer(st.jobID, "main", true)

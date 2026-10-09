@@ -19,7 +19,7 @@ package main
 //     survive untouched, because duplicating it there costs far less than
 //     risking its only delivery.
 //
-// See jobs.Notifier.MarkQuestionShown and tools.SubagentTool.handOff's doc
+// See noticeCounter.MarkAskShown and tools.SubagentTool.handOff's doc
 // comments for the mechanism this exercises end to end.
 
 import (
@@ -105,7 +105,7 @@ func TestWiring_54a_HandoffCarriesQuestion_DrainDoesNotDuplicate(t *testing.T) {
 	jobID := m[1]
 
 	// The onEvent notice and handOff's markShown call race on different
-	// goroutines (see MarkQuestionShown's doc comment) — either can run
+	// goroutines (see MarkAskShown's doc comment) — either can run
 	// first, and the dedup is correct either way, so there is no "wait a
 	// moment then check" needed for correctness. This sleep only gives a
 	// genuinely buggy implementation (one that fails to suppress the later

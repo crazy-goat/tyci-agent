@@ -344,13 +344,19 @@ func (m *cronTestMailbox) Posted(id string) uint64 {
 	return uint64(len(m.posted[id]))
 }
 
+// cronTestNotifier records the notices cron sends to the main conversation,
+// split into loud (wakes an idle chat) and quiet ones.
 type cronTestNotifier struct{ loud, quiet []string }
 
-func (n *cronTestNotifier) Notify(s string)               { n.loud = append(n.loud, s) }
-func (n *cronTestNotifier) NotifyQuiet(s string)          { n.quiet = append(n.quiet, s) }
-func (n *cronTestNotifier) MarkQuestionShown(string, int) {}
-func (n *cronTestNotifier) Queued() uint64 {
-	return uint64(len(n.loud) + len(n.quiet))
+func (n *cronTestNotifier) publish(parentID, s string, quiet bool) {
+	if parentID != "" {
+		return
+	}
+	if quiet {
+		n.quiet = append(n.quiet, s)
+	} else {
+		n.loud = append(n.loud, s)
+	}
 }
 
 func TestCronAddStoresCallerAndNotifyGoesToItsMailbox(t *testing.T) {
@@ -388,8 +394,8 @@ func TestCronAddStoresCallerAndNotifyGoesToItsMailbox(t *testing.T) {
 func TestCronNotifyForMainChatDoesNotWakeIt(t *testing.T) {
 	withCronHome(t)
 	n := &cronTestNotifier{}
-	SetJobNotifier(n)
-	t.Cleanup(func() { SetJobNotifier(nil) })
+	SetNoticePublisher(n.publish)
+	t.Cleanup(func() { SetNoticePublisher(routeTestNotice) })
 
 	cronNotify(cron.Job{Name: "j2"}, nil)
 	if len(n.loud) != 0 || len(n.quiet) != 1 {
@@ -400,8 +406,8 @@ func TestCronNotifyForMainChatDoesNotWakeIt(t *testing.T) {
 func TestCronNotifyOneShotForMainChatWakesIt(t *testing.T) {
 	withCronHome(t)
 	n := &cronTestNotifier{}
-	SetJobNotifier(n)
-	t.Cleanup(func() { SetJobNotifier(nil) })
+	SetNoticePublisher(n.publish)
+	t.Cleanup(func() { SetNoticePublisher(routeTestNotice) })
 
 	cronNotify(cron.Job{Name: "j3", Schedule: "once 2030-01-02T03:04:05Z"}, nil)
 	if len(n.loud) != 1 || len(n.quiet) != 0 {
@@ -412,9 +418,9 @@ func TestCronNotifyOneShotForMainChatWakesIt(t *testing.T) {
 func TestCronNotifyEndedCallerUsesQuietPathWithoutLogTail(t *testing.T) {
 	withCronHome(t)
 	n := &cronTestNotifier{}
-	SetJobNotifier(n)
+	SetNoticePublisher(n.publish)
 	SetJobMailbox(&cronTestMailbox{posted: map[string][]string{}, dead: true})
-	t.Cleanup(func() { SetJobNotifier(nil); SetJobMailbox(nil) })
+	t.Cleanup(func() { SetNoticePublisher(routeTestNotice); SetJobMailbox(nil) })
 	if err := os.MkdirAll(filepath.Dir(cron.LogPath(cronConfigDir(), "j4")), 0o755); err != nil {
 		t.Fatal(err)
 	}

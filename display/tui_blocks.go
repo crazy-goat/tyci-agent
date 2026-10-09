@@ -11,8 +11,8 @@ import (
 // handleBlockMsg returns a tea.Cmd (armStatusTick's, on the "request-start"
 // and "phase" cases — see below) instead of being purely a state mutator,
 // because those two are the turn-start paths the REPL can drive without
-// ever calling TuiModel.submit() (a job-notice turn from tui_mode.go's
-// JobNotices.Signal case, item 56): submit() already arms the tick, but
+// ever calling TuiModel.submit() (a turn that a bus notice starts,
+// see the wake case in tui_mode.go, item 56): submit() already arms the tick, but
 // nothing else did.
 func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 	var cmd tea.Cmd
@@ -33,7 +33,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 	switch msg.kind {
 	case "request-start":
 		// A turn that never went through TuiModel.submit() — the REPL
-		// driving itself from a job notice (tui_mode.go's JobNotices.Signal
+		// driving itself from a job notice (tui_mode.go's bus notice wake
 		// case) instead of a person pressing Enter — leaves m.reading true:
 		// nothing else flips it. Left uncorrected, the status bar stays
 		// hidden (buildStatus only shows it while !reading) and a line

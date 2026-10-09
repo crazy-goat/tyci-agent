@@ -58,7 +58,7 @@ type JobStatus struct {
 	// mirrored) — an unforgeable per-ask id, unlike Question itself, which
 	// is free text a job can pose identically more than once across its
 	// lifetime. handOff's pendingQuestions peek uses this, not Question
-	// text, to key jobs.Notifier.MarkQuestionShown so the "already shown"
+	// text, to key JobNotifier.MarkAskShown so the "already shown"
 	// mark from one ask can never be mistaken for covering a later,
 	// identically-worded one (item 54 review finding 1).
 	QuestionSeq int
