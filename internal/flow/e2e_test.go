@@ -14,8 +14,8 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/worktree"
 )
 
-// End-to-end runner tests: the REAL ExecChecker, the REAL builtin check scripts,
-// a stub gh, a temp git repo with a bare origin and a FAKE AgentRunner.
+// End-to-end runner tests: the REAL ExecChecker, the REAL check scripts of a
+// workflow, a stub gh, a temp git repo with a bare origin and a FAKE AgentRunner.
 
 const (
 	e2eRepo  = "o/r"
@@ -63,6 +63,8 @@ func e2eGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	// CI runners have no git identity, so every commit needs one.
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
@@ -182,10 +184,7 @@ func newE2E(t *testing.T, script map[string][]string) *e2e {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.wf, _, err = Lookup("issue-to-merge", e.home, "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e.wf = initWF(t, e.home, "issue-to-merge", "issue-to-merge")
 	runID := NewRunID(e2eIssue, time.Now())
 	e.runDir = RunDir(e.home, "r", runID)
 	e.st = &RunState{
@@ -226,9 +225,7 @@ func (e *e2e) newRunner() *Runner {
 	runDir := e.runDir
 	checks := &ExecChecker{
 		DefaultTimeout: 60 * time.Second,
-		Resolve: func(rel string) (string, error) {
-			return ResolveCheck(rel, "", e.home, Embedded(), runDir)
-		},
+		Resolve:        wfResolver(e.wf),
 	}
 	extra := append([]string{
 		"GIT_CONFIG_GLOBAL=/dev/null",

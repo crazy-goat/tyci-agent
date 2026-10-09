@@ -100,7 +100,7 @@ func wfWrite(t *testing.T, path, content string) {
 
 // oneCheckFlow is a workflow named name: one check state, then end.
 func oneCheckFlow(name string) string {
-	return `{"name":"` + name + `","start":"check","states":{` +
+	return `{"description":"test","name":"` + name + `","params":[{"name":"issue","description":"issue","required":true}],"start":"check","states":{` +
 		`"check":{"check":"checks/ok.sh","on":{"default":"end"}},` +
 		`"end":{"end":true}}}`
 }
@@ -144,10 +144,68 @@ func wfUseSpawn(t *testing.T, spawn func(context.Context, tools.TaskSpec) (strin
 // resetWorkflowFlags sets the flag variables back to their defaults. Cobra keeps
 // the values of the previous Execute.
 func resetWorkflowFlags() {
-	workflowDir, workflowEjectForce = "", false
+	workflowInitDir = ""
 	workflowRunJSON, workflowRunDir = false, ""
 	workflowValidateJSON, workflowValidateDir = false, ""
 	workflowStatusJSON = false
+}
+
+// TestWorkflowValidateMissingFilesAreProblems checks that a missing check script
+// and a missing task file are both reported, each as one problem.
+func TestWorkflowValidateMissingFilesAreProblems(t *testing.T) {
+	home := wfHome(t)
+	project := wfProject(t)
+	body := `{"description":"test","name":"missing-files","start":"work","states":{` +
+		`"work":{"agent":"worker","task":"t1","on":{"default":"check"}},` +
+		`"check":{"check":"checks/gone.sh","on":{"default":"end"}},` +
+		`"end":{"end":true}}}`
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "missing-files", "workflow.json"), body)
+	wfWrite(t, filepath.Join(home, ".tyci", "config.json"), `{"default_model":"wfprov/wfmodel"}`)
+
+	out, _, err := runWorkflowCLI(t, "workflow", "validate", "missing-files", "--json", "--dir", project)
+	if err == nil {
+		t.Fatal("validate with missing files must fail")
+	}
+	r := decodeWorkflowResult(t, out)
+	if r.OK == nil || *r.OK || len(r.Errors) != 2 {
+		t.Fatalf("result = %+v", r)
+	}
+	for _, want := range []string{"checks/gone.sh", "tasks/t1.md"} {
+		if n := countContaining(r.Errors, want); n != 1 {
+			t.Errorf("%d errors name %s, want 1: %v", n, want, r.Errors)
+		}
+	}
+}
+
+// TestWorkflowValidateMissingOracleTask checks that an ask state, which the oracle
+// answers, needs tasks/ask.md.
+func TestWorkflowValidateMissingOracleTask(t *testing.T) {
+	home := wfHome(t)
+	project := wfProject(t)
+	body := `{"description":"test","name":"no-ask-task","start":"ask","states":{` +
+		`"ask":{"ask":"need a human","on":{"retry":"end"}},` +
+		`"end":{"end":true}}}`
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "no-ask-task", "workflow.json"), body)
+
+	out, _, err := runWorkflowCLI(t, "workflow", "validate", "no-ask-task", "--json", "--dir", project)
+	if err == nil {
+		t.Fatal("validate without tasks/ask.md must fail")
+	}
+	r := decodeWorkflowResult(t, out)
+	if r.OK == nil || *r.OK || countContaining(r.Errors, "tasks/ask.md is missing") != 1 {
+		t.Fatalf("result = %+v", r)
+	}
+}
+
+// countContaining returns how many of msgs contain sub.
+func countContaining(msgs []string, sub string) int {
+	n := 0
+	for _, m := range msgs {
+		if strings.Contains(m, sub) {
+			n++
+		}
+	}
+	return n
 }
 
 // decodeWorkflowResult decodes out as exactly one JSON object.
@@ -167,8 +225,8 @@ func decodeWorkflowResult(t *testing.T, out string) workflowResult {
 func TestWorkflowValidateOK(t *testing.T) {
 	home := wfHome(t)
 	project := wfProject(t)
-	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "one-check.json"), oneCheckFlow("one-check"))
-	wfWrite(t, filepath.Join(home, ".tyci", "checks", "ok.sh"), wfOKScript)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "one-check", "workflow.json"), oneCheckFlow("one-check"))
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "one-check", "checks", "ok.sh"), wfOKScript)
 
 	out, _, err := runWorkflowCLI(t, "workflow", "validate", "one-check", "--json", "--dir", project)
 	if err != nil {
@@ -183,11 +241,11 @@ func TestWorkflowValidateOK(t *testing.T) {
 func TestWorkflowValidateUnknownTarget(t *testing.T) {
 	home := wfHome(t)
 	project := wfProject(t)
-	body := `{"name":"bad-target","start":"check","states":{` +
+	body := `{"description":"test","name":"bad-target","start":"check","states":{` +
 		`"check":{"check":"checks/ok.sh","on":{"default":"mrge"}},` +
 		`"end":{"end":true}}}`
-	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "bad-target.json"), body)
-	wfWrite(t, filepath.Join(home, ".tyci", "checks", "ok.sh"), wfOKScript)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "bad-target", "workflow.json"), body)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "bad-target", "checks", "ok.sh"), wfOKScript)
 
 	out, _, err := runWorkflowCLI(t, "workflow", "validate", "bad-target", "--json", "--dir", project)
 	if err == nil {
@@ -202,10 +260,10 @@ func TestWorkflowValidateUnknownTarget(t *testing.T) {
 func TestWorkflowValidateUndefinedRole(t *testing.T) {
 	home := wfHome(t)
 	project := wfProject(t)
-	body := `{"name":"role-typo","start":"review","states":{` +
+	body := `{"description":"test","name":"role-typo","start":"review","states":{` +
 		`"review":{"agent":"reviwer","on":{"default":"end"}},` +
 		`"end":{"end":true}}}`
-	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "role-typo.json"), body)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "role-typo", "workflow.json"), body)
 
 	out, _, err := runWorkflowCLI(t, "workflow", "validate", "role-typo", "--json", "--dir", project)
 	if err == nil {
@@ -220,8 +278,8 @@ func TestWorkflowValidateUndefinedRole(t *testing.T) {
 func TestWorkflowRunDone(t *testing.T) {
 	home := wfHome(t)
 	wfUseRepo(t, wfRunRepo(t, home))
-	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "one-check.json"), oneCheckFlow("one-check"))
-	wfWrite(t, filepath.Join(home, ".tyci", "checks", "ok.sh"), wfOKScript)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "one-check", "workflow.json"), oneCheckFlow("one-check"))
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "one-check", "checks", "ok.sh"), wfOKScript)
 
 	out, _, err := runWorkflowCLI(t, "workflow", "run", "one-check", "7", "--json")
 	if err != nil {
@@ -239,11 +297,11 @@ func TestWorkflowRunDone(t *testing.T) {
 func TestWorkflowRunFailed(t *testing.T) {
 	home := wfHome(t)
 	wfUseRepo(t, wfRunRepo(t, home))
-	body := `{"name":"fail-check","start":"check","states":{` +
+	body := `{"description":"test","name":"fail-check","params":[{"name":"issue","description":"issue","required":true}],"start":"check","states":{` +
 		`"check":{"check":"checks/fail.sh","on":{"ok":"end"}},` +
 		`"end":{"end":true}}}`
-	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "fail-check.json"), body)
-	wfWrite(t, filepath.Join(home, ".tyci", "checks", "fail.sh"), "#!/bin/sh\necho fail\n")
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "fail-check", "workflow.json"), body)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "fail-check", "checks", "fail.sh"), "#!/bin/sh\necho fail\n")
 
 	out, _, err := runWorkflowCLI(t, "workflow", "run", "fail-check", "8", "--json")
 	if err == nil {
@@ -258,12 +316,12 @@ func TestWorkflowRunFailed(t *testing.T) {
 func TestWorkflowRunStopsAtAsk(t *testing.T) {
 	home := wfHome(t)
 	wfUseRepo(t, wfRunRepo(t, home))
-	body := `{"name":"ask-flow","start":"check","states":{` +
+	body := `{"description":"test","name":"ask-flow","params":[{"name":"issue","description":"issue","required":true}],"start":"check","states":{` +
 		`"check":{"check":"checks/ok.sh","on":{"default":"wait"}},` +
-		`"wait":{"ask":"need an answer","on":{"go":"end"}},` +
+		`"wait":{"ask":"need an answer","human":true,"on":{"go":"end"}},` +
 		`"end":{"end":true}}}`
-	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "ask-flow.json"), body)
-	wfWrite(t, filepath.Join(home, ".tyci", "checks", "ok.sh"), wfOKScript)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "ask-flow", "workflow.json"), body)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "ask-flow", "checks", "ok.sh"), wfOKScript)
 
 	out, errOut, err := runWorkflowCLI(t, "workflow", "run", "ask-flow", "9", "--json")
 	if err != nil {
@@ -310,8 +368,8 @@ func TestWorkflowRunAgentGetsProvidersAndHooks(t *testing.T) {
 		`{"wfprov":{"wfmodel":{"uri":"openai://wfmodel@$KEY@example.com/v1"}}}`)
 	wfWrite(t, filepath.Join(home, ".tyci", "hooks.json"),
 		`{"hooks":[{"event":"pre_tool","command":"true"}]}`)
-	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "agent-flow.json"),
-		`{"name":"agent-flow","start":"work","states":{`+
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "agent-flow", "workflow.json"),
+		`{"description":"test","name":"agent-flow","params":[{"name":"issue","description":"issue","required":true}],"start":"work","states":{`+
 			`"work":{"agent":"helper","on":{"done":"end"}},`+
 			`"end":{"end":true}}}`)
 
@@ -347,11 +405,11 @@ func TestWorkflowRunAgentGetsProvidersAndHooks(t *testing.T) {
 func TestWorkflowRunInvalidDoesNotStart(t *testing.T) {
 	home := wfHome(t)
 	wfUseRepo(t, wfRunRepo(t, home))
-	body := `{"name":"bad-target","start":"check","states":{` +
+	body := `{"description":"test","name":"bad-target","start":"check","states":{` +
 		`"check":{"check":"checks/ok.sh","on":{"default":"mrge"}},` +
 		`"end":{"end":true}}}`
-	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "bad-target.json"), body)
-	wfWrite(t, filepath.Join(home, ".tyci", "checks", "ok.sh"), wfOKScript)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "bad-target", "workflow.json"), body)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "bad-target", "checks", "ok.sh"), wfOKScript)
 
 	out, _, err := runWorkflowCLI(t, "workflow", "run", "bad-target", "10", "--json")
 	if err == nil {
@@ -398,6 +456,37 @@ func TestWorkflowStatusReadsStateFile(t *testing.T) {
 	}
 }
 
+// The text form prints the params after the state line, one name=value per line.
+// The JSON form has them as the params object.
+func TestWorkflowStatusPrintsParams(t *testing.T) {
+	home := wfHome(t)
+	const id = "20261005-153012-42"
+	dir := flow.RunDir(home, "demo", id)
+	st := &flow.RunState{Version: 1, Run: id, Workflow: "one-check", Repo: "acme/demo", Issue: 42,
+		Status: "done", Current: "end", Visits: map[string]int{"check": 1},
+		Params: map[string]string{"issue": "42", "branch": "dev"}}
+	if err := (&flow.Store{Dir: dir}).Save(st); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runWorkflowCLI(t, "workflow", "status", id)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	want := "run " + id + ": done at state end\nbranch=dev\nissue=42\n"
+	if out != want {
+		t.Fatalf("text output = %q, want %q", out, want)
+	}
+
+	out, _, err = runWorkflowCLI(t, "workflow", "status", id, "--json")
+	if err != nil {
+		t.Fatalf("status --json: %v", err)
+	}
+	if r := decodeWorkflowResult(t, out); r.Params["branch"] != "dev" || r.Params["issue"] != "42" {
+		t.Fatalf("json params = %v", r.Params)
+	}
+}
+
 func TestWorkflowStatusUnknownRun(t *testing.T) {
 	wfHome(t)
 	out, _, err := runWorkflowCLI(t, "workflow", "status", "20261005-153012-99", "--json")
@@ -430,11 +519,11 @@ func TestWorkflowJSONIsOneObject(t *testing.T) {
 	home := wfHome(t)
 	project := wfProject(t)
 	// An end state that no transition reaches gives a warning, which goes to stderr.
-	body := `{"name":"orphan","start":"check","states":{` +
+	body := `{"description":"test","name":"orphan","start":"check","states":{` +
 		`"check":{"check":"checks/ok.sh","on":{"default":"end"}},` +
 		`"end":{"end":true},"orphan":{"end":true}}}`
-	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "orphan.json"), body)
-	wfWrite(t, filepath.Join(home, ".tyci", "checks", "ok.sh"), wfOKScript)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "orphan", "workflow.json"), body)
+	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "orphan", "checks", "ok.sh"), wfOKScript)
 
 	out, errOut, err := runWorkflowCLI(t, "workflow", "validate", "orphan", "--json", "--dir", project)
 	if err != nil {
@@ -449,8 +538,8 @@ func TestWorkflowJSONIsOneObject(t *testing.T) {
 func TestWorkflowUntrustedProjectSkipsLocalWorkflows(t *testing.T) {
 	wfHome(t)
 	project := wfProject(t)
-	wfWrite(t, filepath.Join(project, ".tyci", "workflows", "local-only.json"), oneCheckFlow("local-only"))
-	wfWrite(t, filepath.Join(project, ".tyci", "checks", "ok.sh"), wfOKScript)
+	wfWrite(t, filepath.Join(project, ".tyci", "workflows", "local-only", "workflow.json"), oneCheckFlow("local-only"))
+	wfWrite(t, filepath.Join(project, ".tyci", "workflows", "local-only", "checks", "ok.sh"), wfOKScript)
 
 	out, errOut, err := runWorkflowCLI(t, "workflow", "validate", "local-only", "--json", "--dir", project)
 	if err == nil {
@@ -475,8 +564,8 @@ func TestWorkflowTrustedProjectLoadsLocalWorkflows(t *testing.T) {
 	if err := trust.SetTrusted(key, true); err != nil {
 		t.Fatal(err)
 	}
-	wfWrite(t, filepath.Join(project, ".tyci", "workflows", "local-only.json"), oneCheckFlow("local-only"))
-	wfWrite(t, filepath.Join(project, ".tyci", "checks", "ok.sh"), wfOKScript)
+	wfWrite(t, filepath.Join(project, ".tyci", "workflows", "local-only", "workflow.json"), oneCheckFlow("local-only"))
+	wfWrite(t, filepath.Join(project, ".tyci", "workflows", "local-only", "checks", "ok.sh"), wfOKScript)
 
 	out, errOut, err := runWorkflowCLI(t, "workflow", "validate", "local-only", "--json", "--dir", project)
 	if err != nil {

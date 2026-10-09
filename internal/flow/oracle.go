@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 )
 
 // defaultOracleAnswers is the oracle answer limit of a workflow without
@@ -19,6 +21,31 @@ const oracleTask = "ask"
 // pause. The answer is the text of the agent, so the oracle writes no report.md.
 func isPauseOracle(role, task string) bool {
 	return role == "oracle" && task == oracleTask
+}
+
+// oracleTaskProblem returns the problem of the workflow in dir when the oracle
+// needs tasks/ask.md and the file is missing. The oracle answers the pauses of
+// each ask state without "human": true, unless defaults.oracle_answers is 0.
+// It returns "" when there is no problem.
+func oracleTaskProblem(wf *Workflow, dir string) string {
+	if n := wf.Defaults.OracleAnswers; n != nil && *n == 0 {
+		return ""
+	}
+	var asks []string
+	for _, name := range sortedStates(wf) {
+		if s := wf.States[name]; s.Ask != "" && !s.Human {
+			asks = append(asks, fmt.Sprintf("%q", name))
+		}
+	}
+	if len(asks) == 0 {
+		return ""
+	}
+	if _, err := flowconfig.ReadPromptFile(dir, taskFile(oracleTask)); err == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s is missing: the oracle needs it to answer the pauses of the ask states %s. "+
+		"Add the file, set \"human\": true on those states, or set defaults.oracle_answers to 0.",
+		taskFile(oracleTask), strings.Join(asks, ", "))
 }
 
 // askOrPause pauses the run in the ask state s with the pause message. Unless
@@ -106,6 +133,7 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 		Pause:         MaskSecrets(st.Ask.Message),
 		Goto:          gotoStates(r.WF, st),
 		Issue:         st.Issue,
+		Params:        st.Params,
 		PR:            st.PR,
 		ArtifactDir:   artDir,
 		RunSoFar:      runSoFar(st, cur, r.RunDir),

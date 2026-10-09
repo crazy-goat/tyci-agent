@@ -3,6 +3,8 @@ package flow
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -398,7 +400,7 @@ func TestParse_HumanAndOracleAnswers(t *testing.T) {
 }
 
 func TestValidate_HumanOnlyInAskState(t *testing.T) {
-	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+	wf := &Workflow{Name: "demo", Description: "d", Start: "a", States: map[string]State{
 		"a":   {Agent: "coder", Human: true, On: map[string]string{"done": "end"}},
 		"end": {End: true},
 	}}
@@ -410,11 +412,51 @@ func TestValidate_HumanOnlyInAskState(t *testing.T) {
 
 func TestValidate_OracleAnswersNotNegative(t *testing.T) {
 	neg := -1
-	wf := &Workflow{Name: "demo", Start: "end", Defaults: Defaults{OracleAnswers: &neg}, States: map[string]State{
+	wf := &Workflow{Name: "demo", Description: "d", Start: "end", Defaults: Defaults{OracleAnswers: &neg}, States: map[string]State{
 		"end": {End: true},
 	}}
 	errs := validateStructure(wf)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "oracle_answers must be 0 or more, got -1") {
 		t.Fatalf("errs %v", errs)
+	}
+}
+
+func TestOracleTaskProblem(t *testing.T) {
+	zero := 0
+	ask := State{Ask: "need a human"}
+	end := State{End: true}
+	cases := []struct {
+		name     string
+		states   map[string]State
+		defaults Defaults
+		file     bool
+		want     bool // true: a problem is expected
+	}{
+		{"missing file", map[string]State{"ask": ask, "end": end}, Defaults{}, false, true},
+		{"file present", map[string]State{"ask": ask, "end": end}, Defaults{}, true, false},
+		{"human ask state", map[string]State{"ask": {Ask: "x", Human: true}, "end": end}, Defaults{}, false, false},
+		{"oracle off", map[string]State{"ask": ask, "end": end}, Defaults{OracleAnswers: &zero}, false, false},
+		{"no ask state", map[string]State{"end": end}, Defaults{}, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if c.file {
+				if err := os.MkdirAll(filepath.Join(dir, "tasks"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "tasks", "ask.md"), []byte("ask"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wf := &Workflow{Name: "demo", Description: "d", Start: "end", Defaults: c.defaults, States: c.states}
+			got := oracleTaskProblem(wf, dir)
+			if (got != "") != c.want {
+				t.Fatalf("problem = %q, want a problem: %v", got, c.want)
+			}
+			if c.want && !strings.Contains(got, `tasks/ask.md is missing`) {
+				t.Errorf("problem = %q, want it to name tasks/ask.md", got)
+			}
+		})
 	}
 }

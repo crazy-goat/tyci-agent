@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 )
@@ -27,6 +28,12 @@ func validateStructure(wf *Workflow) []error {
 	if wf.Name == "" {
 		errs = append(errs, fmt.Errorf("workflow name is empty"))
 	}
+	if d := wf.Description; strings.TrimSpace(d) == "" {
+		errs = append(errs, fmt.Errorf("workflow description is empty"))
+	} else if strings.ContainsAny(d, "\r\n") {
+		errs = append(errs, fmt.Errorf("workflow description must be one line"))
+	}
+	errs = append(errs, validateParams(wf)...)
 	if wf.Start == "" {
 		errs = append(errs, fmt.Errorf("workflow start is empty"))
 	}
@@ -113,11 +120,17 @@ func sortedKeys(m map[string]string) []string {
 // Resolver maps a relative check path to an absolute script path.
 type Resolver func(rel string) (abs string, err error)
 
+// wfResolver resolves the check scripts of wf in its workflow directory.
+func wfResolver(wf *Workflow) Resolver {
+	return func(rel string) (string, error) { return ResolveCheck(rel, wf.Source) }
+}
+
 // CheckWorkflow loads the named workflow for the repository of info and checks it
 // the way a run does (see PrepareRun). It returns the warnings and one message per
 // problem. The error is set only when the workflow or the config cannot be read.
+// A missing task or prompt file is a problem, like the other problems.
 func CheckWorkflow(info RepoInfo, name string) (warnings, problems []string, err error) {
-	wf, _, err := Lookup(name, info.Home, info.Root, info.Trusted)
+	wf, dir, err := findWorkflow(name, info.Home, info.Root, info.Trusted)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -125,16 +138,14 @@ func CheckWorkflow(info RepoInfo, name string) (warnings, problems []string, err
 	if err != nil {
 		return nil, nil, err
 	}
-	tmp, err := os.MkdirTemp("", "tyci-validate-")
-	if err != nil {
-		return nil, nil, err
+	// Validate checks the check scripts, so they are not checked twice.
+	textErr := loadTexts(wf, dir)
+	warnings, verr := Validate(wf, cfg, wfResolver(wf))
+	problems = append(errorMessages(textErr), errorMessages(verr)...)
+	if p := oracleTaskProblem(wf, dir); p != "" {
+		problems = append(problems, p)
 	}
-	defer func() { _ = os.RemoveAll(tmp) }()
-	resolve := func(rel string) (string, error) {
-		return ResolveCheck(rel, projectDir(info), info.Home, Embedded(), tmp)
-	}
-	warnings, verr := Validate(wf, cfg, resolve)
-	return warnings, errorMessages(verr), nil
+	return warnings, problems, nil
 }
 
 // errorMessages returns the message of each error that errors.Join joined.

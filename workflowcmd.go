@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,7 +22,7 @@ import (
 // ---------------------------------------------------------------------------
 // workflow — the CLI entry point for the project's workflows. The JSON
 // workflows (internal/flow) run headless with run, status and validate, and
-// eject copies a builtin workflow into the project.
+// init creates a project workflow from a template.
 // ---------------------------------------------------------------------------
 
 var workflowCmd = &cobra.Command{
@@ -32,31 +34,31 @@ var workflowCmd = &cobra.Command{
 	},
 }
 
-var workflowDir string
-
-var workflowEjectForce bool
-
-var workflowEjectCmd = &cobra.Command{
-	Use:   "eject <name>",
-	Short: "Copy a builtin workflow into the project's .tyci/ to change it",
-	Long: `Copy the builtin workflow <name> (for example issue-to-merge) into
-.tyci/ of the project: workflows/<name>.json, the check scripts in checks/,
-the task templates in tasks/ and the role prompts in prompts/. It sets
-roles.<role>.prompt to "@prompts/<role>.md" in .tyci/config.json.
+var workflowInitCmd = &cobra.Command{
+	Use:   "init <template> [name]",
+	Short: "Create a project workflow from a template",
+	Long: `Copy the template <template> (issue-to-merge or roadmap) into
+.tyci/workflows/<name>/ of the project. The name defaults to the template name.
+The copy has workflow.json, the check scripts in checks/, the task templates in
+tasks/ and the role prompts in prompts/. Change the copy there.
 
 The project is the git repository of --dir (default: the current directory).
-tyci uses these files only in a trusted project. Existing files are not
-overwritten unless --force is given.`,
-	Args: cobra.ExactArgs(1),
+The command never overwrites: it fails when the directory exists. It does not
+change config.json. tyci uses the workflow only in a trusted project.`,
+	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir := workflowDir
+		dir := workflowInitDir
 		if dir == "" {
 			dir, _ = os.Getwd()
 		}
 		if out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
 			dir = strings.TrimSpace(string(out))
 		}
-		written, err := flow.Eject(args[0], dir, workflowEjectForce)
+		name := ""
+		if len(args) == 2 {
+			name = args[1]
+		}
+		written, err := flow.Init(args[0], name, dir)
 		for _, p := range written {
 			fmt.Fprintln(cmd.OutOrStdout(), "wrote", p)
 		}
@@ -65,6 +67,7 @@ overwritten unless --force is given.`,
 }
 
 var (
+	workflowInitDir      string
 	workflowRunJSON      bool
 	workflowRunDir       string
 	workflowValidateJSON bool
@@ -82,15 +85,16 @@ var workflowSpawn = tools.RunSubagentTask
 // workflowResult is the one JSON object that the headless workflow commands
 // print on stdout with --json.
 type workflowResult struct {
-	RunID     string         `json:"run_id,omitempty"`
-	Workflow  string         `json:"workflow,omitempty"`
-	State     string         `json:"state,omitempty"`
-	Status    string         `json:"status,omitempty"` // running|paused|done|failed
-	Visits    map[string]int `json:"visits,omitempty"`
-	StateFile string         `json:"state_file,omitempty"`
-	OK        *bool          `json:"ok,omitempty"` // validate only
-	Errors    []string       `json:"errors,omitempty"`
-	Error     string         `json:"error,omitempty"`
+	RunID     string            `json:"run_id,omitempty"`
+	Workflow  string            `json:"workflow,omitempty"`
+	State     string            `json:"state,omitempty"`
+	Status    string            `json:"status,omitempty"` // running|paused|done|failed
+	Visits    map[string]int    `json:"visits,omitempty"`
+	Params    map[string]string `json:"params,omitempty"`
+	StateFile string            `json:"state_file,omitempty"`
+	OK        *bool             `json:"ok,omitempty"` // validate only
+	Errors    []string          `json:"errors,omitempty"`
+	Error     string            `json:"error,omitempty"`
 }
 
 var workflowRunCmd = &cobra.Command{
@@ -137,7 +141,7 @@ stderr. Exit code 0 means done or paused. Exit code 1 means failed or invalid.`,
 		// reads the orchestrator inbox. Its notices are dropped at the end.
 		defer dropLeftoverNotices(cmd.ErrOrStderr())
 
-		runID, _, err := m.Start(ctx, flow.StartRequest{Workflow: args[0], Issue: issue})
+		runID, _, err := m.StartIssue(ctx, args[0], issue)
 		if err != nil {
 			return fail(cmd, jsonOut, err)
 		}
@@ -250,6 +254,7 @@ func runResult(st *flow.RunState, statePath string) workflowResult {
 		State:     st.Current,
 		Status:    st.Status,
 		Visits:    st.Visits,
+		Params:    st.Params,
 		StateFile: statePath,
 	}
 	if st.Status == "failed" {
@@ -290,6 +295,9 @@ func printResult(w io.Writer, jsonOut bool, r workflowResult) {
 		}
 	case r.RunID != "":
 		fmt.Fprintf(w, "run %s: %s at state %s\n", r.RunID, r.Status, r.State)
+		for _, name := range slices.Sorted(maps.Keys(r.Params)) {
+			fmt.Fprintf(w, "%s=%s\n", name, r.Params[name])
+		}
 	}
 }
 
@@ -326,13 +334,12 @@ func printWarnings(cmd *cobra.Command, warnings []string) {
 }
 
 func init() {
-	workflowEjectCmd.Flags().StringVar(&workflowDir, "dir", "", "project directory (default: current directory)")
-	workflowEjectCmd.Flags().BoolVar(&workflowEjectForce, "force", false, "overwrite existing files and role prompts")
+	workflowInitCmd.Flags().StringVar(&workflowInitDir, "dir", "", "project directory (default: current directory)")
 	workflowRunCmd.Flags().BoolVar(&workflowRunJSON, "json", false, "print one JSON object on stdout")
 	workflowRunCmd.Flags().StringVar(&workflowRunDir, "dir", "", "project directory (default: current directory)")
 	workflowValidateCmd.Flags().BoolVar(&workflowValidateJSON, "json", false, "print one JSON object on stdout")
 	workflowValidateCmd.Flags().StringVar(&workflowValidateDir, "dir", "", "project directory (default: current directory)")
 	workflowStatusCmd.Flags().BoolVar(&workflowStatusJSON, "json", false, "print one JSON object on stdout")
-	workflowCmd.AddCommand(workflowEjectCmd, workflowRunCmd, workflowValidateCmd, workflowStatusCmd)
+	workflowCmd.AddCommand(workflowInitCmd, workflowRunCmd, workflowValidateCmd, workflowStatusCmd)
 	rootCmd.AddCommand(workflowCmd)
 }

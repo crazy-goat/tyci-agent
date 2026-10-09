@@ -23,7 +23,7 @@ func wantBlock(t *testing.T, stderr, result, want string) {
 	}
 }
 
-// libScript writes body after the sourcing lines of the builtin scripts, next to a copy of describe.sh.
+// libScript writes body after the sourcing lines of the template check scripts, next to a copy of describe.sh.
 func libScript(t *testing.T, body string) string {
 	t.Helper()
 	lib, err := os.ReadFile("describe.sh")

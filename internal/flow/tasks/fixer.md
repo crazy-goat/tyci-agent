@@ -20,8 +20,8 @@ Answer exactly one word:
 Earlier runs of this repository are in the directories next to {{.RunDir}}. If the workflow `{{.Workflow}}` cannot handle this failure (no state or check covers it), or the same step failed with the same cause in an earlier run, also write a proposal in your artifact dir:
 
 - `proposal.md`: a title line, then what failed, why, and what to change in the workflow.
-- `proposal.patch`: a unified diff (`git diff` format, paths `a/.tyci/...` and `b/.tyci/...`) of the repository's `.tyci/` files only: the workflow JSON, check scripts, task templates or role prompts. Never change other files.
+- `proposal.patch`: a unified diff (`git diff` format, paths `a/.tyci/workflows/{{.Workflow}}/...` and `b/.tyci/workflows/{{.Workflow}}/...`) of the files of this workflow only: workflow.json, check scripts, task templates or prompts. Never change other files.
 
-Diff against the repository's own `.tyci/` files first. If the repository has no `.tyci/workflows/{{.Workflow}}.json`, tyci ejects only the missing files of the builtin workflow before it applies the patch; existing `.tyci/` files and role prompts stay. To see the builtin files, run `tyci workflow eject {{.Workflow}} --dir <a new temp dir>`. A proposal cannot change a workflow from `~/.tyci/workflows/`.
+Diff against the repository's own `.tyci/workflows/{{.Workflow}}/` files. If the repository has no committed `.tyci/workflows/{{.Workflow}}/workflow.json`, the apply fails, so say so in proposal.md. A proposal cannot change a workflow from `~/.tyci/workflows/`.
 
 Nothing changes until the user accepts the proposal. Do not apply it yourself.

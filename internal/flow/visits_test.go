@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// loopWF mirrors the builtin code/ci/merge loop with an ask state.
+// loopWF mirrors the code/ci/merge loop of the issue-to-merge template, with an ask state.
 func loopWF(codeLimit, ciLimit, def int) *Workflow {
 	return &Workflow{Name: "demo", Start: "code", Defaults: Defaults{MaxVisits: def}, States: map[string]State{
 		"code":  {Agent: "coder", MaxVisits: codeLimit, On: map[string]string{"done": "ci"}},

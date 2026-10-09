@@ -27,8 +27,8 @@ type TaskRenderer interface {
 	Render(name string, rc RunContext) (string, error)
 }
 
-// NewSubagentRunner returns a runner that renders the embedded task templates
-// (set Render to TaskTemplates with Dirs for local templates).
+// NewSubagentRunner returns a runner with an empty TaskTemplates. The caller
+// sets Render to TaskTemplates{Dir: <workflow dir>} before a run.
 func NewSubagentRunner(cfg *flowconfig.Config, spawn func(ctx context.Context, s tools.TaskSpec) (string, string, error)) *SubagentRunner {
 	return &SubagentRunner{Cfg: cfg, Render: TaskTemplates{}, Spawn: spawn, URIEffort: providers.URIReasoningEffort}
 }
@@ -99,16 +99,19 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 		}
 	}
 	if role == "worker" {
-		fetch := r.IssueContext
-		if fetch == nil {
-			r.once.Do(func() { r.fetcher = newIssueFetcher() })
-			fetch = r.fetcher.fetch
+		// A run without an issue param has no issue text to add (#520).
+		if rc.Issue > 0 {
+			fetch := r.IssueContext
+			if fetch == nil {
+				r.once.Do(func() { r.fetcher = newIssueFetcher() })
+				fetch = r.fetcher.fetch
+			}
+			issueText, err := fetch(ctx, rc.Repo, rc.Issue)
+			if err != nil {
+				return "", "", err
+			}
+			text += "\n\n" + issueText
 		}
-		issueText, err := fetch(ctx, rc.Repo, rc.Issue)
-		if err != nil {
-			return "", "", err
-		}
-		text += "\n\n" + issueText
 		if rc.Note != "" {
 			text += "\n\n## Note from the orchestrator\n\n" + rc.Note + "\n"
 		}

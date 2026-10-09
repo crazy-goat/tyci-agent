@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -130,7 +131,7 @@ func TestAskUnfinished_ListsPausedRunUnchanged(t *testing.T) {
 func TestResume_DoesNotIncrementVisits(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, nil)
-	if id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err != nil || id != st.Run {
+	if id, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}}); err != nil || id != st.Run {
 		t.Fatalf("id = %q, err = %v", id, err)
 	}
 	if got := e.notice(t); !strings.HasPrefix(got, "workflow run "+st.Run) {
@@ -182,7 +183,7 @@ func TestResume_StartupRetryResetsVisits(t *testing.T) {
 func TestResume_CapAtThree(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, func(st *RunState) { st.Resumed = maxResumes })
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err == nil {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}}); err == nil {
 		t.Fatal("start: want an error")
 	}
 	if got := e.notice(t); !strings.Contains(got, "paused: resumed 3 times, please check") {
@@ -200,7 +201,7 @@ func TestResume_CapAtThree(t *testing.T) {
 func TestResume_MissingWorktreeGoesToAsk(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	st := saveRun(t, e.home, 1, func(st *RunState) { st.Worktree = filepath.Join(e.home, "gone") })
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err == nil {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}}); err == nil {
 		t.Fatal("start: want an error")
 	}
 	if got := e.notice(t); !strings.Contains(got, "is missing") {
@@ -289,11 +290,11 @@ func TestManager_StartAdoptsResumedRun(t *testing.T) {
 	if err := e.m.Resume(st.Run, "resume"); err != nil {
 		t.Fatal(err)
 	}
-	id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5})
+	id, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"5"}})
 	if err != nil || id != st.Run {
 		t.Fatalf("id = %q, err = %v", id, err)
 	}
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5}); !errors.Is(err, ErrBusy) {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"5"}}); !errors.Is(err, ErrBusy) {
 		t.Fatalf("second start: err = %v", err)
 	}
 	close(c.release)
@@ -336,7 +337,7 @@ func TestAskUnfinished_TwoRunsOneQuestion(t *testing.T) {
 		t.Fatal("a run resumed before the answer")
 	}
 	// The scheduler cannot start a new run while the answer is open.
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 2}); !errors.Is(err, ErrBusy) {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"2"}}); !errors.Is(err, ErrBusy) {
 		t.Fatalf("start: err = %v", err)
 	}
 
@@ -471,7 +472,7 @@ func resumeKilledInCI(t *testing.T, script map[string][]string, setup func(*e2e)
 		},
 		Notify: func(s string) { notices <- s },
 	}
-	if id, _, err := m.Start(context.Background(), StartRequest{Issue: st.Issue}); err != nil || id != st.Run {
+	if id, _, err := m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{strconv.Itoa(st.Issue)}}); err != nil || id != st.Run {
 		t.Fatalf("start: id = %q, err = %v", id, err)
 	}
 	for _, want := range []string{" done: merged "} {
@@ -590,7 +591,7 @@ func TestManager_AdoptReturnsPausedRunOnce(t *testing.T) {
 	if got := e.m.Adoptable(); len(got) != 0 {
 		t.Fatalf("adoptable after resume = %v", got)
 	}
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5}); !errors.Is(err, ErrBusy) {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"5"}}); !errors.Is(err, ErrBusy) {
 		t.Fatalf("start: err = %v", err)
 	}
 	close(c.release)
@@ -712,11 +713,11 @@ func TestWorkflowStart_ResumeRefusedAtWorkersLimit(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
 	e.m.SetWorkers(1)
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Issue: 1}); err != nil {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}}); err != nil {
 		t.Fatal(err)
 	}
 	st := saveRun(t, e.home, 6, nil)
-	_, _, err := e.m.Start(context.Background(), StartRequest{Issue: 6})
+	_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"6"}})
 	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "orchestrator.workers is 1") {
 		t.Fatalf("err = %v", err)
 	}
@@ -749,7 +750,7 @@ func TestWorkflowStart_ResumedByHandIsAdoptable(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
 	st := saveRun(t, e.home, 5, nil)
-	id, _, err := e.m.Start(context.Background(), StartRequest{Issue: 5})
+	id, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"5"}})
 	if err != nil || id != st.Run {
 		t.Fatalf("id = %q, err = %v", id, err)
 	}

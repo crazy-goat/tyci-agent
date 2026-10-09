@@ -1,6 +1,7 @@
 {
-  "name": "issue-to-merge",
+  "description": "Work on a GitHub issue: code, review, open a PR, wait for CI and merge.",
   "start": "check_done",
+  "params": [{"name": "issue", "description": "GitHub issue number", "required": true}],
   "defaults": {"max_visits": 0},
   "states": {
     "check_done": {"check": "checks/issue_done.sh", "on": {"skip": "end", "go": "open_pr", "default": "fixer"}},
