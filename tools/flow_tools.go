@@ -28,7 +28,6 @@ type WorkflowManager interface {
 type WorkflowInfo struct {
 	Name        string
 	Description string
-	Source      string
 	Params      []WorkflowParam
 }
 
@@ -95,8 +94,7 @@ func (t *WorkflowStartTool) Run(_ context.Context, input map[string]any) ToolRes
 		return ToolResult{Type: "result", Success: false, validationError: true,
 			Error: "workflow is required. Available workflows: " + workflowSummary(list)}
 	}
-	_, hasParams := input["params"]
-	if _, hasIssue := input["issue"]; hasIssue && !hasParams {
+	if _, hasIssue := input["issue"]; hasIssue {
 		return ToolResult{Type: "result", Success: false, validationError: true,
 			Error: `the "issue" argument is gone: use params instead, for example "params": ["160"]`}
 	}
@@ -254,9 +252,9 @@ func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 	}
 	startDesc := "Start a workflow run. Returns at once; a notice arrives when the run finishes or pauses."
 	if len(list) == 0 {
-		startDesc += " No workflows are available."
+		startDesc += " No workflows were found at session start. If you ask for a name, the tool checks the current list and returns it."
 	} else {
-		startDesc += " Available workflows:"
+		startDesc += " Workflows at session start (a workflow added later is not listed here; if the name is unknown, the error gives the current list):"
 		for _, w := range list {
 			startDesc += "\n- " + workflowLine(w)
 		}

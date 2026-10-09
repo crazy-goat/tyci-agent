@@ -40,7 +40,7 @@ func TestChatTools_WorkflowsSkipsBrokenDirectory(t *testing.T) {
 		t.Fatalf("alpha = %+v", list[0])
 	}
 	im := list[1]
-	if im.Description != "Merge one issue" || im.Source != filepath.Join(proj, ".tyci", "workflows", "issue-to-merge") {
+	if im.Description != "Merge one issue" {
 		t.Fatalf("issue-to-merge = %+v", im)
 	}
 	if len(im.Params) != 2 || im.Params[0].Name != "issue" || !im.Params[0].Required || im.Params[1].Required {

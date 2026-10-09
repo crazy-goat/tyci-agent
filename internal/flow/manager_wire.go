@@ -196,11 +196,11 @@ func (c ChatTools) Workflows() []tools.WorkflowInfo {
 	}
 	var out []tools.WorkflowInfo
 	for _, name := range availableWorkflows(info.Home, info.Root, info.Trusted) {
-		wf, source, err := Lookup(name, info.Home, info.Root, info.Trusted)
+		wf, _, err := Lookup(name, info.Home, info.Root, info.Trusted)
 		if err != nil {
 			continue
 		}
-		w := tools.WorkflowInfo{Name: name, Description: wf.Description, Source: source}
+		w := tools.WorkflowInfo{Name: name, Description: wf.Description}
 		for _, p := range wf.Params {
 			w.Params = append(w.Params, tools.WorkflowParam{Name: p.Name, Description: p.Description, Required: p.Required})
 		}

@@ -13,7 +13,6 @@ func issueToMergeInfo() []WorkflowInfo {
 	return []WorkflowInfo{{
 		Name:        "issue-to-merge",
 		Description: "Merge one issue",
-		Source:      "/repo/.tyci/workflows/issue-to-merge",
 		Params: []WorkflowParam{
 			{Name: "issue", Description: "GitHub issue number", Required: true},
 			{Name: "branch", Description: "branch to merge into"},
@@ -91,8 +90,32 @@ func TestWorkflowStart_OldIssueKeyRefused(t *testing.T) {
 	if res.Success || !strings.Contains(res.Error, "use params instead") {
 		t.Fatalf("old issue key: %+v", res)
 	}
+	// The old key is refused even when params is also given: it is not ignored.
+	res = RunTool(context.Background(), "workflow_start", map[string]any{"workflow": "issue-to-merge", "issue": float64(160), "params": []any{"160"}})
+	if res.Success || !strings.Contains(res.Error, "use params instead") {
+		t.Fatalf("issue key with params: %+v", res)
+	}
 	if f.workflow != "" {
 		t.Fatal("manager was called for the old issue key")
+	}
+}
+
+// The schema is built once per session, so it can list a workflow that is gone.
+// An unknown name gets the live list from the manager, not the schema list.
+func TestWorkflowStart_UnknownNameReadsLiveList(t *testing.T) {
+	f := &fakeWorkflowManager{list: issueToMergeInfo(), err: errors.New(`workflow "nope" not found`)}
+	withWorkflowManager(t, f)
+	data, err := json.Marshal(GetToolsSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "issue-to-merge issue [branch]") {
+		t.Fatal("schema lacks the session-start list")
+	}
+	f.list = []WorkflowInfo{{Name: "roadmap", Description: "Plan"}}
+	res := RunTool(context.Background(), "workflow_start", map[string]any{"workflow": "nope"})
+	if res.Success || !strings.Contains(res.Error, "Available workflows: roadmap: Plan") || strings.Contains(res.Error, "issue-to-merge") {
+		t.Fatalf("error = %+v, want the live list", res)
 	}
 }
 
@@ -127,7 +150,7 @@ func TestWorkflowToolsSchema_ListsWorkflows(t *testing.T) {
 
 func TestWorkflowToolsSchema_NoWorkflows(t *testing.T) {
 	desc, _ := json.Marshal(workflowToolsSchema(nil))
-	if !strings.Contains(string(desc), "No workflows are available.") {
+	if !strings.Contains(string(desc), "No workflows were found at session start.") {
 		t.Fatalf("schema = %s", desc)
 	}
 }

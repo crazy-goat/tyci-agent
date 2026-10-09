@@ -156,7 +156,7 @@ func (m *Manager) SetWorkers(n int) {
 
 // StartIssue starts workflow for issue. The issue goes to the param named "issue",
 // so the workflow must declare it (see IssueArgs). Use it for callers that only
-// have an issue number: the CLI, the chat tool and the orchestrator.
+// have an issue number: the CLI and the orchestrator.
 func (m *Manager) StartIssue(ctx context.Context, workflow string, issue int) (string, []string, error) {
 	if workflow == "" {
 		return "", nil, errors.New("workflow name is required: start a workflow by name, or create one with tyci workflow init")
