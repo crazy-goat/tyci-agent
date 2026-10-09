@@ -676,8 +676,12 @@ A limit is capped by the model window. An unset soft limit is 80% and an unset
 hard limit is 95% of the window. The legacy `auto_compact_percent` sets the
 hard limit only when no hard limit is set; a negative value disables it. The
 window of nexos models comes from the nexos API (see `nexos-models.json`).
-The hard limit leaves 8192 tokens of the window free for the summary call.
-A window under 163840 tokens therefore gets a lower hard limit.
+The hard limit leaves room for the summary call: a tenth of the window, at most
+8192 tokens. Because of this room, the automatic hard limit is lower for a window
+below 163840 tokens. It is 90% of the window up to 81920 tokens, and the window
+minus 8192 tokens above that. A window of 163840 tokens or more keeps 95%. A user
+hard limit is capped the same way. If the window has no room for the summary call,
+tyci uses the fixed note and makes no call.
 
 The main conversation checks the limits when the turn ends. Subagents and flow
 roles check them after each tool round.
