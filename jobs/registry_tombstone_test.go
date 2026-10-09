@@ -31,7 +31,7 @@ func runAndWaitDone(t *testing.T, r *Registry, kind Kind, label, result string) 
 }
 
 func TestPruneTerminalLocked_TombstonesSubagentResultsPastCap(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	total := maxRetainedTerminalJobs + 5
 	var ids []string
@@ -57,7 +57,7 @@ func TestPruneTerminalLocked_TombstonesSubagentResultsPastCap(t *testing.T) {
 }
 
 func TestPruneTerminalLocked_ExactlyAtCap_NothingPrunedOrTombstoned(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	var ids []string
 	for i := 0; i < maxRetainedTerminalJobs; i++ {
@@ -79,7 +79,7 @@ func TestPruneTerminalLocked_ExactlyAtCap_NothingPrunedOrTombstoned(t *testing.T
 }
 
 func TestPruneTerminalLocked_BashJobsAreNeverTombstoned(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	total := maxRetainedTerminalJobs + 5
 	var ids []string
@@ -112,7 +112,7 @@ func TestPruneTerminalLocked_BashJobsAreNeverTombstoned(t *testing.T) {
 // tombstoned subagent result out early, and vice versa is structurally
 // impossible since bash jobs are never tombstoned at all.
 func TestPruneTerminalLocked_BashAndSubagentPruningDoNotEvictEachOther(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	// Prune a subagent job first, so it is tombstoned.
 	for i := 0; i < maxRetainedTerminalJobs+1; i++ {
@@ -120,7 +120,7 @@ func TestPruneTerminalLocked_BashAndSubagentPruningDoNotEvictEachOther(t *testin
 	}
 	// The very first subagent job (index 0) is now pruned+tombstoned; confirm it.
 	// (We don't have its id handy here, so redo the same shape but capture ids.)
-	r2 := NewRegistry()
+	r2 := NewRegistry(nil)
 	var subIDs []string
 	for i := 0; i < maxRetainedTerminalJobs+1; i++ {
 		subIDs = append(subIDs, runAndWaitDone(t, r2, KindSubagent, fmt.Sprintf("sub2-%d", i), "subagent survives"))
@@ -147,7 +147,7 @@ func TestPruneTerminalLocked_BashAndSubagentPruningDoNotEvictEachOther(t *testin
 }
 
 func TestPruneTerminalLocked_TombstoneCapEvictsOldestSubagentTombstone(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	total := maxRetainedTerminalJobs + tombstoneCap + 5
 	var ids []string
@@ -180,7 +180,7 @@ func TestPruneTerminalLocked_TombstoneCapEvictsOldestSubagentTombstone(t *testin
 }
 
 func TestPruneTerminalLocked_LiveSubagentJobNeverPrunedOrTombstoned(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	block := make(chan struct{})
 	defer close(block)
@@ -217,7 +217,7 @@ func TestPruneTerminalLocked_LiveSubagentJobNeverPrunedOrTombstoned(t *testing.T
 // explicit "[note: ...]" (R4) rather than a bare ellipsis that could read
 // as the child's own punctuation.
 func TestPruneTerminalLocked_TombstoneTruncatesLongResultAndIsUTF8Safe(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	// Build a result whose rune count is well past the cap, ending on a
 	// multi-byte rune sequence (emoji, 4 bytes each in UTF-8) right at the
@@ -289,7 +289,7 @@ func lastRunes(s string, n int) string {
 // reason far longer than RequestExtension would ever accept in the first
 // place.
 func TestPruneTerminalLocked_TombstoneTruncatesExtensionReason(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	var b strings.Builder
 	for i := 0; i < tombstoneFieldRuneCap+500; i++ {

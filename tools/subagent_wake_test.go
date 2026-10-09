@@ -59,7 +59,7 @@ func (w realJobObserver) Observe(ctx context.Context, id string, timeout time.Du
 // runWithHandoff's watcher actually uses.
 func wakeEnv(t *testing.T) *jobs.Registry {
 	t.Helper()
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	SetJobStarter(testJobStarter{reg})
 	SetJobObserver(realJobObserver{reg})
 	SetJobNotifier(&recordingNotifier{})
@@ -84,14 +84,13 @@ func wakeEnv(t *testing.T) *jobs.Registry {
 // this test is flaky or hangs, the "ask before watching starts" case is
 // broken.
 func TestWatchForWaiting_WakesWhenAlreadyWaitingBeforeCalled(t *testing.T) {
-	reg := jobs.NewRegistry()
 	sawWaiting := make(chan struct{})
 	var sawWaitingOnce sync.Once
-	reg.SetOnEvent(func(j jobs.Job) {
+	reg := jobs.NewRegistry(jobEventFunc(func(j jobs.Job) {
 		if j.Status == jobs.StatusWaitingAnswer {
 			sawWaitingOnce.Do(func() { close(sawWaiting) })
 		}
-	})
+	}))
 
 	job := reg.Start(context.Background(), "asker", jobs.KindSubagent, "", func(ctx context.Context, jobID string) (string, bool, error) {
 		_, _, _ = reg.Ask(ctx, jobID, "which branch?")
@@ -220,3 +219,8 @@ func TestRunWithHandoff_WakesWhenChildAsksMidCall(t *testing.T) {
 		t.Fatal("child never received its answer")
 	}
 }
+
+// jobEventFunc adapts a plain function to jobs.EventPublisher for tests.
+type jobEventFunc func(jobs.Job)
+
+func (f jobEventFunc) JobEvent(j jobs.Job) { f(j) }

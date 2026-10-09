@@ -884,73 +884,66 @@ func wireTools() {
 	tools.SetJobCanceler(jobCancelerAdapter{reg: JobRegistry})
 	tools.SetJobLister(listJobsAdapter{reg: JobRegistry})
 
-	// Wire JobRegistry's status-change events onto jobEventBus so the TUI
-	// (see tuiCmd in commands.go) can show a live background-jobs panel. A
-	// no-op for every other mode, which never calls TUI.SetJobEventBus.
-	// Captured as locals, not read from the package globals inside the
-	// closure below: wireTools can be called again later (tests swap
-	// jobEventBus/appBus for isolation — see withTestWiring) to point a
-	// FUTURE registry's events at a FUTURE bus/notifier, but a job started
-	// on THIS JobRegistry, right now, must always report to THIS bus and
-	// THIS notifier — the ones actually wired in below — no matter what
-	// the globals get reassigned to later while that job is still running.
-	// Reading the globals at event-fire time instead of at wiring time let
-	// a job finished on one test's registry deliver its completion event
-	// into whatever jobEventBus/appBus the NEXT test had already
-	// swapped in by then (Start's completion goroutine closes job.done,
-	// then calls onEvent — see jobs/registry.go — so a test that only
-	// waits on job.done can already have moved on and rewired the globals
-	// by the time onEvent actually runs).
-	bus := jobEventBus
-	inboxes := agentInboxes
-	JobRegistry.SetOnEvent(func(j jobs.Job) {
-		bus.Publish("job.updated", j)
-
-		// The inbox of a job opens on its start event, which Start fires
-		// before it returns the job ID. It closes on the terminal event.
-		inboxEvent(inboxes, j)
-
-		// A job that called "ask_parent" is now blocked, and it stays blocked until
-		// someone calls "answer_job" or its wall-clock limit expires — at which
-		// point everything it had done is thrown away. Relying on the parent
-		// to poll for that is not good enough: it has no reason to suspect a
-		// question is pending, and a model that forgets to poll silently
-		// wastes the whole child run. So the question is pushed into the
-		// parent's next turn (and wakes an idle REPL) the same way a finished
-		// background command is.
-		//
-		// j.QuestionHasWaiter (B7) is true when some caller was already
-		// blocked inside jobs.Registry.Wait — specifically Wait, never
-		// WaitObserve — for this exact job the moment this question was
-		// posed. Only the "wait" tool goes through Wait: a blocking
-		// subagent call's own handoff watch (tools/subagent.go's
-		// watchForWaiting) deliberately goes through WaitObserve instead,
-		// since it only wakes an unrelated select and never itself
-		// reports the question to anyone (batch-2 review finding C1 — see
-		// jobs.Registry.WaitObserve's doc comment). A genuine Wait caller
-		// is about to receive the same question back as its own,
-		// synchronous Wait/wait() result (see JobStatus.Waiting), so
-		// queuing this notice too would deliver the same question twice in
-		// one turn. Skip it in that case; the notice path stays the
-		// authoritative (and only) one otherwise.
-		if j.Status == jobs.StatusWaitingAnswer && !j.QuestionHasWaiter {
-			text := fmt.Sprintf(
-				"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
-					"Relay this question to the user in your reply, wait for their answer in the conversation, then deliver it — do not invent an answer on their behalf. "+
-					"Only call answer_job(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+
-					"Until it is answered it makes no progress, and its work is discarded when it times out.",
-				j.Description, j.Question, j.ID, j.ID)
-
-			// The ask goes to the job that spawned j, or to the orchestrator when
-			// j has no parent. The bus reroutes it when that parent has finished,
-			// and dedups it against a handoff message (see bus_wiring.go).
-			publishAsk(b, j.ParentID, j.ID, j.QuestionSeq, text)
-		}
-	})
-
 	// Background-command notices reach the main conversation through the bus,
 	// see wakeNotices and drainNotices.
 	tools.SetJobNotifier(noticeCounter{})
+}
+
+// jobEventForwarder is the jobs.EventPublisher of JobRegistry. The registry
+// calls it outside its lock on every job status change.
+type jobEventForwarder struct{}
+
+// JobEvent implements jobs.EventPublisher.
+func (jobEventForwarder) JobEvent(j jobs.Job) { forwardJobEvent(j) }
+
+// forwardJobEvent reacts to one job status change. It reads the package
+// globals when it runs. withTestWiring waits for each job's terminal event
+// before it swaps them back.
+func forwardJobEvent(j jobs.Job) {
+	jobEventBus.Publish("job.updated", j)
+
+	// The inbox of a job opens on its start event, which Start fires
+	// before it returns the job ID. It closes on the terminal event.
+	if agentInboxes != nil {
+		inboxEvent(agentInboxes, j)
+	}
+
+	// A job that called "ask_parent" is now blocked, and it stays blocked until
+	// someone calls "answer_job" or its wall-clock limit expires — at which
+	// point everything it had done is thrown away. Relying on the parent
+	// to poll for that is not good enough: it has no reason to suspect a
+	// question is pending, and a model that forgets to poll silently
+	// wastes the whole child run. So the question is pushed into the
+	// parent's next turn (and wakes an idle REPL) the same way a finished
+	// background command is.
+	//
+	// j.QuestionHasWaiter (B7) is true when some caller was already
+	// blocked inside jobs.Registry.Wait — specifically Wait, never
+	// WaitObserve — for this exact job the moment this question was
+	// posed. Only the "wait" tool goes through Wait: a blocking
+	// subagent call's own handoff watch (tools/subagent.go's
+	// watchForWaiting) deliberately goes through WaitObserve instead,
+	// since it only wakes an unrelated select and never itself
+	// reports the question to anyone (batch-2 review finding C1 — see
+	// jobs.Registry.WaitObserve's doc comment). A genuine Wait caller
+	// is about to receive the same question back as its own,
+	// synchronous Wait/wait() result (see JobStatus.Waiting), so
+	// queuing this notice too would deliver the same question twice in
+	// one turn. Skip it in that case; the notice path stays the
+	// authoritative (and only) one otherwise.
+	if j.Status == jobs.StatusWaitingAnswer && !j.QuestionHasWaiter {
+		text := fmt.Sprintf(
+			"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
+				"Relay this question to the user in your reply, wait for their answer in the conversation, then deliver it — do not invent an answer on their behalf. "+
+				"Only call answer_job(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+
+				"Until it is answered it makes no progress, and its work is discarded when it times out.",
+			j.Description, j.Question, j.ID, j.ID)
+
+		// The ask goes to the job that spawned j, or to the orchestrator when
+		// j has no parent. The bus reroutes it when that parent has finished,
+		// and dedups it against a handoff message (see bus_wiring.go).
+		publishAsk(appBus, j.ParentID, j.ID, j.QuestionSeq, text)
+	}
 }
 
 func main() {

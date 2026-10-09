@@ -129,7 +129,7 @@ func killBackgroundBashAndWait(t *testing.T) {
 // it will leak into the next one.
 func bgTestEnv(t *testing.T) (*jobs.Registry, *recordingNotifier) {
 	t.Helper()
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	notifier := &recordingNotifier{}
 
 	SetJobStarter(testJobStarter{reg})

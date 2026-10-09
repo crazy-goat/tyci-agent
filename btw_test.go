@@ -195,7 +195,7 @@ func TestNextBtwID_Unique(t *testing.T) {
 // JobRegistry, and starting it returns immediately regardless of how long
 // the underlying run takes.
 func TestStartBtw_RegistersOnSharedJobRegistry(t *testing.T) {
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(jobEventForwarder{})
 	prevRegistry := JobRegistry
 	JobRegistry = reg
 	defer func() { JobRegistry = prevRegistry }()
@@ -231,7 +231,7 @@ func TestStartBtw_RegistersOnSharedJobRegistry(t *testing.T) {
 }
 
 func TestJobWaiterAdapter_TranslatesStatus(t *testing.T) {
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(jobEventForwarder{})
 	adapter := jobWaiterAdapter{reg: reg}
 
 	job := reg.Start(context.Background(), "adapter test", jobs.KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
@@ -264,7 +264,7 @@ func TestJobWaiterAdapter_TranslatesStatus(t *testing.T) {
 // bashRun.setProgress), and checks both fields survive the real
 // jobWaiterAdapter.Wait translation, not just a hand-built status struct.
 func TestJobWaiterAdapter_TranslatesProgressHistoryAndTruncation(t *testing.T) {
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(jobEventForwarder{})
 	adapter := jobWaiterAdapter{reg: reg}
 
 	job := reg.Start(context.Background(), "chatty adapter test", jobs.KindOther, "", func(context.Context, string) (string, bool, error) {
@@ -304,7 +304,7 @@ func TestJobWaiterAdapter_TranslatesProgressHistoryAndTruncation(t *testing.T) {
 // share a method signature), so a fix to one's translation would not
 // necessarily catch a miss in the other's.
 func TestJobObserverAdapter_TranslatesProgressHistoryAndTruncation(t *testing.T) {
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(jobEventForwarder{})
 	adapter := jobObserverAdapter{reg: reg}
 
 	job := reg.Start(context.Background(), "chatty observer test", jobs.KindOther, "", func(context.Context, string) (string, bool, error) {

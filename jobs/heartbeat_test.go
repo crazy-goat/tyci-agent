@@ -102,7 +102,7 @@ func TestNeedsProgressHeartbeat_RealProgressResetsTimer(t *testing.T) {
 // child (the ask/pending-jobs reminder), and a terminal job has nothing
 // left to report.
 func TestNeedsProgressHeartbeat_NotRunning_NeverFires(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	job := r.Start(context.Background(), "quick child", KindSubagent, "", func(ctx context.Context, jobID string) (string, bool, error) {
 		return "done", false, nil
@@ -122,7 +122,7 @@ func TestNeedsProgressHeartbeat_NotRunning_NeverFires(t *testing.T) {
 // nudge would not help it, and per NeedsProgressHeartbeat's doc comment this
 // status is deliberately excluded the same way a terminal job is.
 func TestNeedsProgressHeartbeat_WaitingForAnswer_NeverFires(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	defer close(release)
 
@@ -160,7 +160,7 @@ func TestNeedsProgressHeartbeat_WaitingForAnswer_NeverFires(t *testing.T) {
 
 // TestNeedsProgressHeartbeat_UnknownJob_ReturnsFalse pins the not-found case.
 func TestNeedsProgressHeartbeat_UnknownJob_ReturnsFalse(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	if r.NeedsProgressHeartbeat("no-such-job", time.Nanosecond) {
 		t.Fatal("expected false for an unknown job id")
 	}
@@ -170,7 +170,7 @@ func TestNeedsProgressHeartbeat_UnknownJob_ReturnsFalse(t *testing.T) {
 // against a zero or negative threshold, which would otherwise fire on the
 // very first call for any running job.
 func TestNeedsProgressHeartbeat_NonPositiveAfter_NeverFires(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	defer close(release)
 	job := r.Start(context.Background(), "child", KindSubagent, "", blockingJobFn(release))

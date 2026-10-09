@@ -27,7 +27,7 @@ import (
 // in tools/tool.go, because tools deliberately does not import "jobs" (see
 // tools.JobWaiter's doc comment) — main is the one layer allowed to depend
 // on both.
-var JobRegistry = jobs.NewRegistry()
+var JobRegistry = jobs.NewRegistry(jobEventForwarder{})
 
 // jobWaiterAdapter satisfies tools.JobWaiter over JobRegistry, translating
 // jobs.Job's richer status into the tools package's minimal JobStatus shape.

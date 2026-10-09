@@ -24,7 +24,7 @@ type rig struct {
 }
 
 func newRig(t *testing.T) *rig {
-	r := &rig{t: t, reg: jobs.NewRegistry(), gone: map[string]bool{}, stop: make(chan struct{})}
+	r := &rig{t: t, reg: jobs.NewRegistry(nil), gone: map[string]bool{}, stop: make(chan struct{})}
 	r.w = &Watchdog{Reg: r.reg, IdleAfter: 3 * time.Minute, EscalateAfter: 3 * time.Minute,
 		Notify: func(to string, a Alarm) bool {
 			if r.gone[to] {
