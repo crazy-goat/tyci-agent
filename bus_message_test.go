@@ -19,7 +19,7 @@ func TestAgentMessage_ToLiveJob_DeliveredOnce(t *testing.T) {
 		t.Fatal("Post to a live job returned false")
 	}
 
-	if got := (jobMailboxAdapter{reg: reg}).Drain(id); len(got) != 1 || got[0] != "steer left" {
+	if got := (jobMailboxAdapter{reg: reg}).Drain(id); len(got) != 1 || bodyOf(got[0]) != "steer left" {
 		t.Fatalf("drain = %q, want the message once", got)
 	}
 	if again := (jobMailboxAdapter{reg: reg}).Drain(id); len(again) != 0 {

@@ -132,7 +132,8 @@ func containsUserText(req connector.Request, want string) bool {
 			continue
 		}
 		for _, c := range m.Content {
-			if c.Text == want {
+			// A message from an agent carries the sender tag, see tagSender.
+			if c.Text == want || bodyOf(c.Text) == want {
 				return true
 			}
 		}

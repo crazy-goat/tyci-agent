@@ -13,7 +13,7 @@ func TestBtwAnswer_ToOrchestrator_DeliveredOnce(t *testing.T) {
 	publishBtwAnswer(appBus, "", "job-btw-1", "is it safe?", "yes")
 
 	got := drainNotices()
-	if len(got) != 1 || got[0] != btwEvaluationNotice("is it safe?", "job-btw-1", "yes") {
+	if len(got) != 1 || bodyOf(got[0]) != btwEvaluationNotice("is it safe?", "job-btw-1", "yes") {
 		t.Fatalf("orchestrator drain = %q, want the evaluation notice once", got)
 	}
 	if again := drainNotices(); len(again) != 0 {

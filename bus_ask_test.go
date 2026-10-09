@@ -12,7 +12,7 @@ func TestAsk_ToOrchestrator_DeliveredOnce(t *testing.T) {
 	withTestWiring(t)
 	publishAsk(appBus, "", "job-ask-1", 1, "[background job] Q1")
 
-	if got := drainNotices(); len(got) != 1 || got[0] != "[background job] Q1" {
+	if got := drainNotices(); len(got) != 1 || bodyOf(got[0]) != "[background job] Q1" {
 		t.Fatalf("orchestrator drain = %q, want the question once", got)
 	}
 	if again := drainNotices(); len(again) != 0 {
@@ -29,7 +29,7 @@ func TestAsk_ToLiveParent_ReachesItsInboxOnly(t *testing.T) {
 
 	publishAsk(appBus, parent, "job-child", 1, "[background job] Q2")
 
-	if got := agentInboxes.drain(parent); len(got) != 1 || got[0] != "[background job] Q2" {
+	if got := agentInboxes.drain(parent); len(got) != 1 || bodyOf(got[0]) != "[background job] Q2" {
 		t.Fatalf("parent inbox = %q, want the question once", got)
 	}
 	if got := drainNotices(); len(got) != 0 {
@@ -70,7 +70,7 @@ func TestAskDedup_OtherSeqWithSameText(t *testing.T) {
 	publishAsk(appBus, "", "job-dedup-3", 2, "[background job] same text")
 
 	got := drainNotices()
-	if len(got) != 1 || got[0] != "[background job] same text" {
+	if len(got) != 1 || bodyOf(got[0]) != "[background job] same text" {
 		t.Fatalf("drain = %q, want only the second question", got)
 	}
 }
@@ -88,7 +88,7 @@ func TestAskDedup_MidLevelInbox(t *testing.T) {
 	publishAsk(appBus, parent, "job-deep", 2, "[background job] second")
 
 	got := agentInboxes.drain(parent)
-	if len(got) != 1 || got[0] != "[background job] second" {
+	if len(got) != 1 || bodyOf(got[0]) != "[background job] second" {
 		t.Fatalf("parent inbox = %q, want only the second question", got)
 	}
 }

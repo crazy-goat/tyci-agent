@@ -11,7 +11,7 @@ func TestQuietNotice_WaitsForNextDrain(t *testing.T) {
 	if got := wakeNotices(); got != nil {
 		t.Fatalf("wakeNotices = %q, want nothing for a quiet notice alone", got)
 	}
-	if got := drainNotices(); len(got) != 1 || got[0] != "[scheduled job] quiet" {
+	if got := drainNotices(); len(got) != 1 || bodyOf(got[0]) != "[scheduled job] quiet" {
 		t.Fatalf("drainNotices = %q, want the quiet notice once", got)
 	}
 }
@@ -24,7 +24,7 @@ func TestQuietNotice_WithLoudNoticeWakes(t *testing.T) {
 	publishNotice(appBus, "", "[background command] loud", false)
 
 	got := wakeNotices()
-	if len(got) != 2 || got[0] != "[scheduled job] quiet" || got[1] != "[background command] loud" {
+	if len(got) != 2 || bodyOf(got[0]) != "[scheduled job] quiet" || bodyOf(got[1]) != "[background command] loud" {
 		t.Fatalf("wakeNotices = %q, want both notices in order", got)
 	}
 }

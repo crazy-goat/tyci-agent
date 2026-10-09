@@ -244,9 +244,28 @@ func formatNotices(msgs []bus.Message) []string {
 		if m.OrigTo != nil {
 			text = fmt.Sprintf("[for agent %s, which has already finished — forwarded here instead] %s", m.OrigTo.ID, text)
 		}
-		out = append(out, text)
+		out = append(out, tagSender(m, text))
 	}
 	return out
+}
+
+// tagSender puts the sender of m in front of text. Only a message from a
+// person (OriginHuman) is a plain user turn. Every other origin, including a
+// message from an agent, gets the tag, so the model never reads agent text as
+// something a person wrote.
+func tagSender(m bus.Message, text string) string {
+	if m.Origin == bus.OriginHuman {
+		return text
+	}
+	return fmt.Sprintf("[notice from=%s kind=%s] %s", addrLabel(m.From), m.Kind, text)
+}
+
+// addrLabel renders an address as type or type:id, for the tag.
+func addrLabel(a bus.Addr) string {
+	if a.ID == "" {
+		return string(a.Type)
+	}
+	return string(a.Type) + ":" + a.ID
 }
 
 // noticeText returns the text of m. ok is false when m must not be shown: it

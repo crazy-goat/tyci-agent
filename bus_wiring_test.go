@@ -106,7 +106,7 @@ func TestBgBashNotice_DeliveredOnce_ToAgentInbox(t *testing.T) {
 	publishNotice(appBus, id, "[background command] done", false)
 
 	got := agentInboxes.drain(id)
-	if len(got) != 1 || got[0] != "[background command] done" {
+	if len(got) != 1 || bodyOf(got[0]) != "[background command] done" {
 		t.Fatalf("inbox drain = %q, want the one notice", got)
 	}
 	if again := agentInboxes.drain(id); len(again) != 0 {
@@ -127,7 +127,7 @@ func TestBgBashNotice_ToFinishedAgent_GoesToOrchestratorTagged(t *testing.T) {
 
 	got := drainNotices()
 	want := "[for agent job-gone, which has already finished — forwarded here instead] [background command] late"
-	if len(got) != 1 || got[0] != want {
+	if len(got) != 1 || bodyOf(got[0]) != want {
 		t.Fatalf("orchestrator drain = %q, want one tagged notice", got)
 	}
 	if again := drainNotices(); len(again) != 0 {
