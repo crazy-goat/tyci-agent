@@ -185,7 +185,7 @@ type Tool interface {
 func GetToolsSchema() []map[string]any {
 	schema := builtinToolsSchema()
 	if workflowManagerSet() {
-		schema = append(schema, workflowToolsSchema()...)
+		schema = append(schema, workflowToolsSchema(workflowList())...)
 	}
 	schema = append(schema, luaToolsSchema()...)
 	return schema

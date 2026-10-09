@@ -42,7 +42,7 @@ func TestOrchestratorPromptHasNoImplementInstruction(t *testing.T) {
 
 func TestOrchestratorPromptToolList(t *testing.T) {
 	mustContain(t, BuildOrchestratorSystemPrompt(3),
-		"- workflow_status(run?):", "- workflow_start(issue, workflow?):", "- workflow_resume(run, answer):", "- bash (also for gh), edit, read and the other tools:")
+		"- workflow_status(run?):", "- workflow_start(workflow, params?):", "- workflow_resume(run, answer):", "- bash (also for gh), edit, read and the other tools:")
 }
 
 func TestOrchestratorPromptAskChoices(t *testing.T) {
