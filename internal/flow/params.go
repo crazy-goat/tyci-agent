@@ -29,13 +29,37 @@ func BindParams(wf *Workflow, values []string) (map[string]string, error) {
 			return nil, fmt.Errorf("workflow %q needs param %q: %s", wf.Name, p.Name, p.Description)
 		}
 		if p.Name == IssueParam && v != "" {
-			if n, err := strconv.Atoi(v); err != nil || n <= 0 {
+			n, err := strconv.Atoi(v)
+			if err != nil || n <= 0 {
 				return nil, fmt.Errorf("param %q must be a positive number, got %q", p.Name, v)
 			}
+			v = strconv.Itoa(n) // canonical text, the same as {{.Issue}}
 		}
 		out[p.Name] = v
 	}
 	return out, nil
+}
+
+// IssueArgs returns the positional values that start wf for issue. The issue goes
+// to the param named "issue"; every other param gets an empty value. It refuses a
+// workflow that declares no issue param, so an issue never lands on another param.
+func IssueArgs(wf *Workflow, issue int) ([]string, error) {
+	const hint = `add {"name":"issue","description":"GitHub issue number","required":true} to workflow.json`
+	if len(wf.Params) == 0 {
+		return nil, fmt.Errorf("workflow %q declares no params; %s", wf.Name, hint)
+	}
+	args := make([]string, len(wf.Params))
+	found := false
+	for i, p := range wf.Params {
+		if p.Name == IssueParam {
+			args[i] = strconv.Itoa(issue)
+			found = true
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("workflow %q declares no %q param; %s", wf.Name, IssueParam, hint)
+	}
+	return args, nil
 }
 
 // issueOf returns the issue number of bound params, or 0 when the workflow has

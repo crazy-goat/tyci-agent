@@ -52,14 +52,15 @@ type RunResult struct {
 
 // FlowManager is the part of flow.Manager the adapter uses.
 type FlowManager interface {
-	Start(ctx context.Context, req flow.StartRequest) (string, []string, error)
+	StartIssue(ctx context.Context, workflow string, issue int) (string, []string, error)
 	RunText(ctx context.Context, workflow, input string) (string, error)
 	Subscribe(fn func(flow.RunEvent)) func()
 }
 
-// flowRunner adapts a FlowManager. The input key for "work on #N" is "issue"
-// (flow.StartRequest.Issue). The input key "input" runs a one-agent workflow
-// on a text and returns the final agent text.
+// flowRunner adapts a FlowManager. The input key for "work on #N" is "issue";
+// it goes to the workflow param named "issue" (flow.Manager.StartIssue). The
+// input key "input" runs a one-agent workflow on a text and returns the final
+// agent text.
 type flowRunner struct {
 	m FlowManager
 }
@@ -77,7 +78,7 @@ func (r *flowRunner) Start(ctx context.Context, workflow string, inputs map[stri
 	}
 	h := newFlowHandle()
 	unsub := r.m.Subscribe(h.add)
-	id, _, err := r.m.Start(ctx, flow.StartRequest{Workflow: workflow, Params: []string{strconv.Itoa(n)}})
+	id, _, err := r.m.StartIssue(ctx, workflow, n)
 	if err != nil {
 		unsub()
 		return nil, err

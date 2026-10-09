@@ -166,7 +166,7 @@ func TestValidate_MissingCheckScript(t *testing.T) {
 
 func TestValidate_SameModelWarnsOnly(t *testing.T) {
 	cfg := vCfg(map[string]string{"m": "p/m"}, map[string]flowconfig.Role{"worker": {Prompt: "p"}, "review": {Prompt: "p"}})
-	wf := &Workflow{Description: "d", Name: "demo", Start: "w", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "w", Params: issueParams(), States: map[string]State{
 		"w":   {Agent: "worker", On: map[string]string{"done": "r"}},
 		"r":   {Agent: "review", On: map[string]string{"done": "end"}},
 		"end": {End: true},
@@ -189,8 +189,13 @@ func TestValidate_AllProblemsListedTogether(t *testing.T) {
 	}
 }
 
+// issueParams is the param list of a workflow that an issue can start.
+func issueParams() []Param {
+	return []Param{{Name: "issue", Description: "GitHub issue number", Required: true}}
+}
+
 func TestValidate_UnreachableStateWarns(t *testing.T) {
-	wf := &Workflow{Description: "d", Name: "demo", Start: "a", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "a", Params: issueParams(), States: map[string]State{
 		"a":    {Check: "c.sh", On: map[string]string{"ok": "end"}},
 		"lost": {Check: "c.sh", On: map[string]string{"ok": "end"}},
 		"end":  {End: true},

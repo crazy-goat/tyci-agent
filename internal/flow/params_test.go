@@ -123,7 +123,7 @@ func TestPrepareRun_NoIssueNamesWorktreeAfterRun(t *testing.T) {
 	if st.Issue != 0 || len(calls) != 1 || calls[0] != st.Run {
 		t.Fatalf("issue = %d, worktree calls = %v, run = %s", st.Issue, calls, st.Run)
 	}
-	if !strings.HasSuffix(st.Run, "-0") || st.Params["branch"] != "dev" {
+	if !strings.Contains(st.Run, "-0-") || st.Params["branch"] != "dev" {
 		t.Fatalf("run = %s, params = %v", st.Run, st.Params)
 	}
 	if !strings.HasPrefix(st.Branch, "run-") {
@@ -189,32 +189,149 @@ func TestWorkflowStart_MissingParamReservesNothing(t *testing.T) {
 // A workflow without an issue param: the run has no issue and is not refused by
 // another run of the same workflow.
 func TestWorkflowStart_NoIssueWorkflow(t *testing.T) {
+	work, _ := newRepo(t)
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	wf := demoWF()
 	wf.Params = nil
 	e.m.Workflow = func(RepoInfo, string) (*Workflow, error) { return wf, nil }
-	e.m.Prepare = func(_ context.Context, _ RepoInfo, req StartRequest) (*RunState, *Workflow, []string, error) {
+	info := RepoInfo{Home: e.home, Root: work, Repo: "o/r", DefaultBranch: "main"}
+	e.m.Prepare = func(ctx context.Context, _ RepoInfo, req StartRequest) (*RunState, *Workflow, []string, error) {
 		if len(req.Params) != 0 {
 			t.Errorf("params = %v", req.Params)
 		}
 		id := NewRunID(0, time.Now())
+		wt, err := addRunWorktree(ctx, info, id, 0)
+		if err != nil {
+			return nil, nil, nil, err
+		}
 		st := &RunState{Version: 1, Run: id, Workflow: "demo", Repo: "o/r", Issue: 0,
+			Branch: wt.Branch, Worktree: wt.Dir,
 			Status: "running", Current: "c", Visits: map[string]int{}, History: []Step{}}
 		if err := (&Store{Dir: RunDir(e.home, "r", id)}).Save(st); err != nil {
 			return nil, nil, nil, err
 		}
 		return st, wf, nil, nil
 	}
-	id, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo"})
+	// Both starts run in the same second: each must still get its own run id.
+	id1, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.notice(t)
-	st, err := Load(RunDir(e.home, "r", id))
+	e.notice(t)
+	st1, err := Load(RunDir(e.home, "r", id1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Issue != 0 {
-		t.Fatalf("issue = %d", st.Issue)
+	st2, err := Load(RunDir(e.home, "r", id2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id1 == id2 || st1.Worktree == st2.Worktree {
+		t.Fatalf("runs share an id or worktree: %s %s / %s %s", id1, st1.Worktree, id2, st2.Worktree)
+	}
+	if st1.Issue != 0 || st2.Issue != 0 {
+		t.Fatalf("issue = %d, %d", st1.Issue, st2.Issue)
+	}
+}
+
+// addRunWorktree names the worktree after the issue of a run that has one, and
+// after the run id of a run that has none.
+func TestAddRunWorktree_IssueOrRun(t *testing.T) {
+	work, _ := newRepo(t)
+	info := RepoInfo{Home: t.TempDir(), Root: work, Repo: "o/r", DefaultBranch: "main"}
+	ctx := context.Background()
+	withIssue, err := addRunWorktree(ctx, info, NewRunID(7, time.Now()), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = withIssue.Remove(ctx) })
+	if withIssue.Branch != "issue-7" || !strings.HasSuffix(withIssue.Dir, "issue-7") {
+		t.Fatalf("issue run: branch %q dir %q", withIssue.Branch, withIssue.Dir)
+	}
+	runID := NewRunID(0, time.Now())
+	noIssue, err := addRunWorktree(ctx, info, runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = noIssue.Remove(ctx) })
+	if noIssue.Branch != "run-"+runID || !strings.HasSuffix(noIssue.Dir, "run-"+runID) {
+		t.Fatalf("no-issue run: branch %q dir %q", noIssue.Branch, noIssue.Dir)
+	}
+}
+
+// IssueArgs puts the issue on the param named "issue", never on another param.
+func TestIssueArgs_BindsByName(t *testing.T) {
+	wf := demoWF()
+	wf.Params = []Param{{Name: "branch", Description: "b"}, {Name: "issue", Description: "n", Required: true}}
+	args, err := IssueArgs(wf, 160)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 || args[0] != "" || args[1] != "160" {
+		t.Fatalf("args = %q", args)
+	}
+	params, err := BindParams(wf, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["issue"] != "160" || params["branch"] != "" {
+		t.Fatalf("params = %v", params)
+	}
+}
+
+// A workflow without an issue param refuses an issue start before it reserves
+// anything, and the error gives the way to add one.
+func TestStartIssue_RefusesWorkflowWithoutIssueParam(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	e.m.Prepare = func(context.Context, RepoInfo, StartRequest) (*RunState, *Workflow, []string, error) {
+		t.Error("Prepare was called")
+		return nil, nil, nil, nil
+	}
+	wf := demoWF()
+	wf.Params = []Param{{Name: "branch", Description: "b"}}
+	e.m.Workflow = func(RepoInfo, string) (*Workflow, error) { return wf, nil }
+	if _, _, err := e.m.StartIssue(context.Background(), "demo", 5); err == nil || !strings.Contains(err.Error(), `no "issue" param`) {
+		t.Fatalf("err = %v", err)
+	}
+	wf.Params = nil
+	if _, _, err := e.m.StartIssue(context.Background(), "demo", 5); err == nil || !strings.Contains(err.Error(), "workflow.json") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// validate warns about a workflow that an issue cannot start.
+func TestValidate_NoIssueParamWarns(t *testing.T) {
+	wf := &Workflow{Description: "d", Name: "demo", Start: "a", States: map[string]State{"a": {End: true}}}
+	warns, err := Validate(wf, &flowconfig.Config{}, okResolve)
+	if err != nil || len(warns) != 1 || !strings.Contains(warns[0], "cannot start with an issue") {
+		t.Fatalf("err=%v warns=%v", err, warns)
+	}
+}
+
+// The issue param holds the canonical integer text, the same as {{.Issue}}.
+func TestBindParams_IssueIsCanonical(t *testing.T) {
+	params, err := BindParams(demoWF(), []string{"+007"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["issue"] != "7" {
+		t.Fatalf("issue param = %q, want 7", params["issue"])
+	}
+}
+
+// Two run ids made in the same second differ, and an issue run keeps its id.
+func TestNewRunID_NoIssueIsUnique(t *testing.T) {
+	now := time.Date(2026, 10, 9, 10, 10, 10, 0, time.UTC)
+	a, b := NewRunID(0, now), NewRunID(0, now)
+	if a == b || !runIDPattern.MatchString(a) || !runIDPattern.MatchString(b) {
+		t.Fatalf("ids %q and %q", a, b)
+	}
+	if got := NewRunID(160, now); got != "20261009-101010-160" {
+		t.Fatalf("issue id = %q", got)
 	}
 }

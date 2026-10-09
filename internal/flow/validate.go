@@ -197,6 +197,9 @@ func Validate(wf *Workflow, cfg *flowconfig.Config, resolveCheck Resolver) (warn
 	if w, ok := models["worker"]; ok && w == models["review"] {
 		warnings = append(warnings, "roles worker and review use the same model")
 	}
+	if _, err := IssueArgs(wf, 1); err != nil {
+		warnings = append(warnings, fmt.Sprintf("workflow cannot start with an issue: %v", err))
+	}
 	reach := reachable(wf)
 	for _, name := range sortedStates(wf) {
 		if !reach[name] {

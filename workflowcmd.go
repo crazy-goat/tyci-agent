@@ -136,7 +136,7 @@ stderr. Exit code 0 means done or paused. Exit code 1 means failed or invalid.`,
 		unsubscribe := m.Subscribe(func(ev flow.RunEvent) { events <- ev })
 		defer unsubscribe()
 
-		runID, _, err := m.Start(ctx, flow.StartRequest{Workflow: args[0], Params: []string{strconv.Itoa(issue)}})
+		runID, _, err := m.StartIssue(ctx, args[0], issue)
 		if err != nil {
 			return fail(cmd, jsonOut, err)
 		}

@@ -17,7 +17,7 @@ import (
 // prepared. The rest of the key is the issue number, not a run ID.
 const preparingPrefix = "preparing:"
 
-var runIDPattern = regexp.MustCompile(`^\d{8}-\d{6}-\d+$`)
+var runIDPattern = regexp.MustCompile(`^\d{8}-\d{6}-\d+(-[0-9a-f]{6})?$`)
 
 // RepoInfo describes the repository a run works in.
 type RepoInfo struct {
@@ -152,6 +152,28 @@ func (m *Manager) SetWorkers(n int) {
 	m.mu.Lock()
 	m.workers = n
 	m.mu.Unlock()
+}
+
+// StartIssue starts workflow for issue. The issue goes to the param named "issue",
+// so the workflow must declare it (see IssueArgs). Use it for callers that only
+// have an issue number: the CLI, the chat tool and the orchestrator.
+func (m *Manager) StartIssue(ctx context.Context, workflow string, issue int) (string, []string, error) {
+	if workflow == "" {
+		return "", nil, errors.New("workflow name is required: start a workflow by name, or create one with tyci workflow init")
+	}
+	info, err := m.Info()
+	if err != nil {
+		return "", nil, err
+	}
+	def, err := m.Workflow(info, workflow)
+	if err != nil {
+		return "", nil, err
+	}
+	args, err := IssueArgs(def, issue)
+	if err != nil {
+		return "", nil, err
+	}
+	return m.Start(ctx, StartRequest{Workflow: workflow, Params: args})
 }
 
 // Start prepares a run and starts it in a goroutine. The param "issue" of the

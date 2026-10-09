@@ -9,13 +9,14 @@ import (
 )
 
 type fakeManager struct {
-	req  flow.StartRequest
-	sub  func(flow.RunEvent)
-	text string
+	workflow string
+	issue    int
+	sub      func(flow.RunEvent)
+	text     string
 }
 
-func (m *fakeManager) Start(_ context.Context, req flow.StartRequest) (string, []string, error) {
-	m.req = req
+func (m *fakeManager) StartIssue(_ context.Context, workflow string, issue int) (string, []string, error) {
+	m.workflow, m.issue = workflow, issue
 	return "20260101-000000-1", nil, nil
 }
 
@@ -33,8 +34,8 @@ func TestFlowRunnerAskResumeMerged(t *testing.T) {
 	m := &fakeManager{}
 	r := NewRunner(m)
 	h, err := r.Start(context.Background(), "issue-to-merge", map[string]string{"issue": "7"})
-	if err != nil || m.req.Params[0] != "7" || m.req.Workflow != "issue-to-merge" {
-		t.Fatalf("err=%v req=%+v", err, m.req)
+	if err != nil || m.issue != 7 || m.workflow != "issue-to-merge" {
+		t.Fatalf("err=%v workflow=%q issue=%d", err, m.workflow, m.issue)
 	}
 	m.sub(flow.RunEvent{Run: "other", Status: "failed"})
 	m.sub(flow.RunEvent{Run: h.ID(), Status: "paused"})

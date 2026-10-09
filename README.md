@@ -137,6 +137,8 @@ A workflow declares its positional params in `workflow.json`, in the list `param
 
 The task templates read a value as `{{.Params.<name>}}`. The param `issue` is the issue number of the run. A workflow without an `issue` param has no issue. Its worktree and branch are named after the run id, `run-<run id>`. `tyci workflow status` shows the params of a run.
 
+Migration: a `workflow.json` without `params` cannot start with an issue. The CLI command `tyci workflow run`, the chat tool `workflow_start` and the orchestrator send one issue number, and they bind it to the param named `issue` only. To migrate, add `"params": [{"name": "issue", "description": "GitHub issue number", "required": true}]` to `workflow.json`. The start fails until the param exists, and `tyci workflow validate` warns about it.
+
 The `post_review` check state of a custom workflow must have a `default` key, or one key for each answer of `post_review.sh`.
 The answers are `ok`, `skip` and `fail`.
 The script answers `skip` when the run has no review step, for example a run that continues an open PR.
