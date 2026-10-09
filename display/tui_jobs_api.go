@@ -2,85 +2,42 @@ package display
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/crazy-goat/tyci-agent/eventbus"
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
-// SetJobEventBus subscribes the TUI to bus's "job.updated" topic (see
-// tools.SetJobEventBus, the producer side) so background subagent jobs show
-// up in the jobs panel/modal without the TUI polling jobs.Registry itself.
-// Safe to call with bus == nil (no-op): a caller that never wires a bus gets
-// today's behavior — no jobs panel, ever.
+// SetJobEvents feeds the jobs panel from sub, a subscription to the job.status
+// messages of the bus (see publishStatus in main). The TUI does not poll
+// jobs.Registry itself. A nil sub is a no-op: a caller that never wires a
+// subscription gets no jobs panel, ever.
 //
-// The subscription coalesces per job ID (eventbus.SubscribeCoalesced):
-// prog.Send blocks while the Bubble Tea loop is busy, and a plain bounded
-// subscription would then drop events once its buffer filled — including a
-// job's terminal one, leaving it shown as running forever (#113). Coalesced,
-// a busy TUI skips intermediate updates but always gets each job's latest
-// state.
+// The bus keeps only the newest job.status message per job, so a busy TUI
+// skips intermediate updates but always gets each job's latest state.
 //
 // The subscriber goroutine exits when t.done closes (program shutdown) or
-// when bus.Close() ends the subscription, whichever comes first; it never
+// when sub is closed or its bus is closed, whichever comes first; it never
 // blocks program exit.
-func (t *TUI) SetJobEventBus(bus *eventbus.Bus) {
-	if bus == nil {
+func (t *TUI) SetJobEvents(sub *bus.Sub) {
+	if sub == nil {
 		return
 	}
-	sub, unsubscribe := subscribeJobUpdates(bus)
 	go func() {
-		defer unsubscribe()
+		defer sub.Close()
 		forwardJobUpdates(sub, t.done, t.prog.Send)
 	}()
 }
 
-// subscribeJobUpdates builds the TUI's one "job.updated" subscription:
-// coalesced per job ID, and keeping the snapshot with the higher EventSeq (see
-// jobEventReplaces).
-//
-// It exists so there is a single place that decides how the TUI subscribes.
-// The tests in tui_jobs_test.go drive forwardJobUpdates against a real
-// subscription, and when each of them built its own they stopped covering this
-// wiring: dropping eventbus.WithReplaces(jobEventReplaces) from
-// SetJobEventBus left TestForwardJobUpdates_LateSnapshotDoesNotOverwriteTerminalState
-// (#131) passing, because the test passed the option in itself.
-func subscribeJobUpdates(bus *eventbus.Bus) (*eventbus.Coalesced, func()) {
-	return bus.SubscribeCoalesced("job.updated", jobEventKey, eventbus.WithReplaces(jobEventReplaces))
-}
-
-// jobEventKey coalesces "job.updated" events by job ID. Payloads that are
-// not a jobs.Job share one key; forwardJobUpdates ignores them anyway.
-func jobEventKey(evt eventbus.Event) string {
-	if j, ok := evt.Payload.(jobs.Job); ok {
-		return j.ID
-	}
-	return ""
-}
-
-// jobEventReplaces keeps the snapshot with the higher EventSeq: the registry
-// publishes after releasing its lock, so a stale snapshot can arrive after a
-// newer one (#131). Payloads that are not a jobs.Job always replace.
-func jobEventReplaces(pending, incoming eventbus.Event) bool {
-	p, ok := pending.Payload.(jobs.Job)
-	if !ok {
-		return true
-	}
-	n, ok := incoming.Payload.(jobs.Job)
-	if !ok {
-		return true
-	}
-	return n.EventSeq >= p.EventSeq
-}
-
-// forwardJobUpdates sends each coalesced job snapshot to send until done
-// closes or the subscription ends. Events still pending when the
-// subscription ends are delivered first, as a closed channel's buffer
-// would be.
-func forwardJobUpdates(sub *eventbus.Coalesced, done <-chan struct{}, send func(tea.Msg)) {
+// forwardJobUpdates sends the job snapshot of each drained job.status message
+// to send until done closes or the subscription ends. Messages still pending
+// when the subscription ends are delivered first.
+func forwardJobUpdates(sub *bus.Sub, done <-chan struct{}, send func(tea.Msg)) {
 	deliver := func() {
-		for _, evt := range sub.Drain() {
-			if j, ok := evt.Payload.(jobs.Job); ok {
-				send(tuiMsgJobUpdate{Job: j})
+		for _, m := range sub.Drain() {
+			st, err := bus.Decode[bus.JobStatus](m)
+			if err != nil {
+				continue
 			}
+			send(tuiMsgJobUpdate{Job: jobFromStatus(st, m.Seq)})
 		}
 	}
 	for {
@@ -93,5 +50,26 @@ func forwardJobUpdates(sub *eventbus.Coalesced, done <-chan struct{}, send func(
 		case <-done:
 			return
 		}
+	}
+}
+
+// jobFromStatus rebuilds the job snapshot that the jobs panel reads from a
+// job.status payload. seq is the bus Seq of the message. It orders the
+// snapshots of one job, so it becomes the job's EventSeq.
+func jobFromStatus(st bus.JobStatus, seq uint64) jobs.Job {
+	return jobs.Job{
+		ID:           st.ID,
+		ParentID:     st.ParentID,
+		Kind:         jobs.Kind(st.Kind),
+		Description:  st.Name,
+		Status:       jobs.Status(st.Status),
+		Progress:     st.Progress,
+		Result:       st.Result,
+		Err:          st.Err,
+		Question:     st.Question,
+		StartedAt:    st.Started,
+		FinishedAt:   st.Ended,
+		LastActivity: st.LastActivity,
+		EventSeq:     seq,
 	}
 }

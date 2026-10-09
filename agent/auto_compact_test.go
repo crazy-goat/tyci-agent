@@ -201,8 +201,9 @@ func TestRun_AutoCompact_CustomPercent(t *testing.T) {
 // OnExhausted slot would answer if Run asked for a second turn. Anthropic
 // treats a trailing assistant message as an invalid prefill; the fix is to
 // fall through and return after a successful auto-compaction rather than
-// `continue` the loop. If this regresses, Run would consume OnExhausted and
-// this test's provider-call counter would read 2.
+// `continue` the loop. The only call after the turn is the summary call,
+// which sends one user transcript with no tools. If this regresses, a third
+// call would appear, or the second one would carry the assistant's history.
 func TestRun_AutoCompact_DoesNotReinvokeProviderAfterCompacting(t *testing.T) {
 	sess := newAutoCompactSession(t)
 	p := &connectortest.Fake{
@@ -213,14 +214,12 @@ func TestRun_AutoCompact_DoesNotReinvokeProviderAfterCompacting(t *testing.T) {
 			stream.Finish{Usage: stream.Usage{Input: 180000, Output: 1000}},
 		}},
 		OnExhausted: []stream.Event{
-			stream.TextDelta{Text: "should not be called"},
+			stream.TextDelta{Text: "summary text"},
 			stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
 		},
 	}
 	d := &silentDisplay{}
-	msgs := []connector.Message{
-		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
-	}
+	msgs := historyOf(9)
 	compactor := func(summary, focus string) (string, error) {
 		return CompactSession(sess, &msgs, summary, focus)
 	}
@@ -234,8 +233,13 @@ func TestRun_AutoCompact_DoesNotReinvokeProviderAfterCompacting(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if got := p.Calls(); got != 1 {
-		t.Fatalf("provider Calls() = %d, want 1 (auto-compaction must not trigger a second provider call ending on an assistant message)", got)
+	// Call 1 is the turn, call 2 the summary call. No third call may follow.
+	if got := p.Calls(); got != 2 {
+		t.Fatalf("provider Calls() = %d, want 2 (the turn and the summary call only)", got)
+	}
+	reqs := p.Requests()
+	if n := len(reqs[1].Messages); n != 1 || reqs[1].Messages[0].Role != "user" {
+		t.Fatalf("summary request has %d messages, want one user transcript", n)
 	}
 }
 
@@ -285,12 +289,19 @@ func TestCompactThresholds(t *testing.T) {
 	}{
 		{"automatic", 1000000, 0, 0, 0, 800000, 950000},
 		{"user limits", 1000000, 100000, 150000, 0, 100000, 150000},
-		{"user limits capped by window", 1000, 5000, 9000, 0, 1000, 1000},
+		{"user limits capped by window", 1000, 5000, 9000, 0, 1000, 900},
 		{"legacy percent", 1000000, 0, 0, 50, 800000, 500000},
 		{"hard wins over legacy percent", 1000000, 0, 150000, 50, 800000, 150000},
 		{"negative percent disables hard", 1000000, 0, 0, -1, 800000, 0},
 		{"unknown window, user limits only", 0, 100, 200, 0, 100, 200},
 		{"unknown window, nothing set", 0, 0, 0, 0, 0, 0},
+		{"summary reserve lowers the hard limit of a window of 100000", 100000, 0, 0, 0, 80000, 91808},
+		{"summary reserve on a window of 8193", 8193, 0, 0, 0, 6554, 7374},
+		{"summary reserve on a window of 10000", 10000, 0, 0, 0, 8000, 9000},
+		{"summary reserve on a window of 16384", 16384, 0, 0, 0, 13107, 14746},
+		{"summary reserve on a window of 32768", 32768, 0, 0, 0, 26214, 29492},
+		{"large window of 200000 is unchanged", 200000, 0, 0, 0, 160000, 190000},
+		{"small window, user hard limit at the window", 5000, 0, 0, 0, 4000, 4500},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -19,7 +19,7 @@ import (
 func waitNoticeEnv(t *testing.T) (*recordingNotifier, *jobs.Registry) {
 	t.Helper()
 	notices := &recordingNotifier{}
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	SetJobNotifier(notices)
 	SetJobMailbox(newTestMailbox(reg))
 	t.Cleanup(func() {

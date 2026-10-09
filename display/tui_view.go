@@ -162,7 +162,7 @@ func (m TuiModel) renderMainColumn() string {
 	b.WriteString("\n")
 
 	// Background jobs panel: shows async subagent jobs (see tools/subagent.go's
-	// async mode and TUI.SetJobEventBus). Renders zero-height when there are
+	// async mode and TUI.SetJobEvents). Renders zero-height when there are
 	// no background jobs, so the layout is unchanged for anyone who never
 	// uses subagent(async: true).
 	b.WriteString(m.renderJobsPanel(m.width))

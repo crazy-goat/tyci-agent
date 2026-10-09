@@ -13,7 +13,7 @@ import (
 )
 
 func TestEndingJobStopsItsBashChildren(t *testing.T) {
-	reg := NewRegistry()
+	reg := NewRegistry(nil)
 	release := make(chan struct{})
 	parent := reg.Start(context.Background(), "subagent", KindSubagent, "", func(context.Context, string) (string, bool, error) {
 		<-release
@@ -38,7 +38,7 @@ func TestEndingJobStopsItsBashChildren(t *testing.T) {
 }
 
 func TestEndingJobKeepsNestedSubagentRunning(t *testing.T) {
-	reg := NewRegistry()
+	reg := NewRegistry(nil)
 	parentRelease := make(chan struct{})
 	nestedRelease := make(chan struct{})
 	defer close(nestedRelease)

@@ -201,13 +201,13 @@ func (m TuiModel) handleGlobalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		m.openJobsModal()
 		// Opening the modal can be the only reason the tick chain is
 		// needed (idle, jobs already running in the background) — arm it
-		// here rather than waiting for the next job.updated (item 57).
+		// here rather than waiting for the next job.status (item 57).
 		return true, m, m.armStatusTick()
 	case tea.KeyCtrlT:
 		m.toggleSidebar()
 		// Same reasoning as Ctrl+B: opening onto (or switching to) the
 		// Tasks tab needs the chain armed immediately, not on the next
-		// job.updated.
+		// job.status.
 		return true, m, m.armStatusTick()
 	case tea.KeyShiftTab:
 		// Only reached with the sidebar closed: routeSidebarMsg claims

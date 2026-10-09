@@ -424,8 +424,8 @@ func TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree(t *te
 		SetJobNotifier(nil)
 	})
 
-	regA := jobs.NewRegistry()
-	regB := jobs.NewRegistry()
+	regA := jobs.NewRegistry(nil)
+	regB := jobs.NewRegistry(nil)
 	SetJobNotifier(&recordingNotifier{})
 	SetSubAgentRunner(&mockRunner{
 		RunTaskFunc: func(ctx context.Context, task, model string, opts SubagentOptions) (string, error) {
@@ -469,8 +469,8 @@ func TestSubagentToolRun_ConcurrentSetJobStarterAndRealAsyncSpawn_RaceFree(t *te
 // run_in_background=true -> handoff -> getJobStarter().Start) concurrently
 // with SetJobStarter swaps.
 func TestBashToolRun_ConcurrentSetJobStarterAndRealHandoff_RaceFree(t *testing.T) {
-	regA := jobs.NewRegistry()
-	regB := jobs.NewRegistry()
+	regA := jobs.NewRegistry(nil)
+	regB := jobs.NewRegistry(nil)
 	SetJobProgressReporter(regA)
 	SetJobActivityToucher(regA)
 	SetJobNotifier(&recordingNotifier{})
@@ -545,8 +545,8 @@ func TestCronRunNow_ConcurrentSetJobStarterAndRealSpawn_RaceFree(t *testing.T) {
 		t.Fatalf("add: %s", addRes.Error)
 	}
 
-	regA := jobs.NewRegistry()
-	regB := jobs.NewRegistry()
+	regA := jobs.NewRegistry(nil)
+	regB := jobs.NewRegistry(nil)
 	SetJobNotifier(&recordingNotifier{})
 	t.Cleanup(func() {
 		SetJobStarter(nil)

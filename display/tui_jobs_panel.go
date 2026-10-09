@@ -38,8 +38,9 @@ func (m *TuiModel) applyJobUpdate(j jobs.Job) {
 	}
 	// Snapshots are published after the registry lock is released, so a late
 	// one (an old "running" state arriving after the terminal event) must not
-	// overwrite a newer state (#131).
-	if prev, ok := m.backgroundJobs[j.ID]; ok && j.EventSeq < prev.EventSeq {
+	// overwrite a newer state (#131). EventSeq is the bus Seq of the message.
+	// A terminal state is final, so a live snapshot never replaces it.
+	if prev, ok := m.backgroundJobs[j.ID]; ok && (j.EventSeq < prev.EventSeq || !subagentLive(prev.Status) && subagentLive(j.Status)) {
 		return
 	}
 	// A job can move in the Tasks list (active to finished), so the cursor
@@ -59,7 +60,7 @@ func (m *TuiModel) applyJobUpdate(j jobs.Job) {
 // pruneBackgroundJobsLocked drops the oldest finished jobs from
 // backgroundJobs beyond jobs.MaxRetainedTerminalJobs, mirroring
 // jobs.Registry's own eviction (pruneTerminalLocked) exactly. Without this,
-// backgroundJobs — this mirror, fed by SetJobEventBus — grows unboundedly
+// backgroundJobs — this mirror, fed by SetJobEvents — grows unboundedly
 // for the whole session even though the registry itself does not, which
 // left the sidebar's Bash/Subagents tabs (1) claiming a "last 50" bound they
 // did not actually have, and (2) able to list a job the registry had

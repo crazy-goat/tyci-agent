@@ -4,8 +4,7 @@ import "sync"
 
 // queue holds the waiting messages of one subscription. Durable messages
 // form a FIFO with no cap. Latest messages keep the newest message per key,
-// in the order in which their keys first became pending. This is the
-// coalescing rule of eventbus/coalesce.go.
+// in the order in which their keys first became pending.
 type queue struct {
 	mu      sync.Mutex
 	closed  bool

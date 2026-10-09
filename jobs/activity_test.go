@@ -15,7 +15,7 @@ import (
 // Registry.Start and this fails because Snapshot().LastActivity comes back
 // as the zero time.Time.
 func TestSnapshot_FreshJobIdleSinceStart(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
@@ -38,7 +38,7 @@ func TestSnapshot_FreshJobIdleSinceStart(t *testing.T) {
 // wiring into Snapshot) and this fails because LastActivity never advances
 // past its Start-time seed.
 func TestTouchActivity_UpdatesSnapshot(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
@@ -61,7 +61,7 @@ func TestTouchActivity_UpdatesSnapshot(t *testing.T) {
 // must be a silent no-op, the same contract SetProgress documents for an
 // unknown id.
 func TestTouchActivity_UnknownIDIsNoop(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	r.TouchActivity("no-such-job") // must not panic
 }
 
@@ -91,7 +91,7 @@ func TestTouchActivity_NeverGoesBackward(t *testing.T) {
 // non-adversarial path: repeated real touches must never decrease
 // LastActivity as observed through Snapshot.
 func TestTouchActivity_AdvancesMonotonicallyInThePlainCase(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
@@ -118,7 +118,7 @@ func TestTouchActivity_AdvancesMonotonicallyInThePlainCase(t *testing.T) {
 // diagnosis). Revert to clearing it on completion and this fails because
 // LastActivity comes back zero after Wait.
 func TestSnapshot_LastActivityPersistsPastCompletion(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, jobID string) (string, bool, error) {
 		r.TouchActivity(jobID)
 		return "done", false, nil

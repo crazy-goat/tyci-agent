@@ -82,10 +82,10 @@ type resizeFlushMsg struct{}
 // so the elapsed-time counter stays live.
 type statusTickMsg struct{}
 
-// tuiMsgJobUpdate is sent by TUI.SetJobEventBus's subscriber goroutine
-// whenever jobs.Registry reports a background job's status changed (started
-// running, or reached a terminal status). Handled unconditionally at the top
-// of Update() — see tui_update.go — so backgroundJobs stays current no
+// tuiMsgJobUpdate is sent by TUI.SetJobEvents's subscriber goroutine
+// whenever the job.status bus message reports that a background job changed
+// (started running, or reached a terminal status). Handled unconditionally at
+// the top of Update() — see tui_update.go — so backgroundJobs stays current no
 // matter which overlay (if any) is active.
 type tuiMsgJobUpdate struct {
 	Job jobs.Job
@@ -428,8 +428,8 @@ type TuiModel struct {
 	btwListCursor  int
 
 	// Background jobs: async subagent jobs registered via jobs.Registry and
-	// mirrored here through the eventbus subscription set up by
-	// TUI.SetJobEventBus (see tui_jobs_api.go). nil-safe map; empty (or
+	// mirrored here through the job.status subscription set up by
+	// TUI.SetJobEvents (see tui_jobs_api.go). nil-safe map; empty (or
 	// never wired) means the inline panel and Ctrl+B modal render nothing,
 	// so users who never touch subagent(async: true) see no UI change.
 	backgroundJobs map[string]jobs.Job

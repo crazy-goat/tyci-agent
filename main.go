@@ -13,7 +13,6 @@ import (
 	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/connector"
-	"github.com/crazy-goat/tyci-agent/eventbus"
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
@@ -23,19 +22,6 @@ import (
 	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
-
-// jobEventBusSize is the buffer of each plain subscription on jobEventBus. Tests
-// build their bus with the same size to exercise production delivery semantics.
-const jobEventBusSize = 32
-
-// jobEventBus is the single, process-wide bus carrying JobRegistry's
-// status-change events (topic "job.updated") to the TUI (the only
-// subscriber today, wired in commands.go's tuiCmd via TUI.SetJobEventBus —
-// see jobs.Registry.SetOnEvent). Package-level so both wiring sites share
-// the exact same instance without threading it through function
-// signatures; every other mode (run, etc.) simply never
-// subscribes, so this costs them nothing.
-var jobEventBus = eventbus.New(jobEventBusSize)
 
 // mergeNextMessages composes several NextMessages-shaped drain callbacks into
 // the single one agent.Config accepts, calling them in the order given so a
@@ -835,14 +821,12 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 
 // wireTools installs the composition-root wiring the tool registry needs to
 // actually run subagents/wait/jobs against the app's shared JobRegistry and
-// jobEventBus: tools.SetSubAgentRunner/SetJobWaiter/SetJobStarter and
-// JobRegistry's onEvent hook. Extracted from main() so integration tests can
+// appBus: tools.SetSubAgentRunner/SetJobWaiter/SetJobStarter and the notice
+// wiring. Extracted from main() so integration tests can
 // call the EXACT same wiring code main() calls (see wiring_test.go) rather
 // than a hand-rolled reimplementation that could drift from production.
-// Idempotent: calling it again (e.g. after swapping JobRegistry/jobEventBus
-// for test isolation) simply re-points everything at the current globals,
-// with no duplicate event delivery — SetOnEvent replaces the previous hook,
-// it does not add to it.
+// Idempotent: calling it again (e.g. after swapping JobRegistry/appBus
+// for test isolation) simply re-points everything at the current globals.
 func wireTools() {
 	// Register the subagent runner so the "subagent" tool (advertised in the
 	// tool schema) is actually executable. Without this, RunTool returns
@@ -884,73 +868,96 @@ func wireTools() {
 	tools.SetJobCanceler(jobCancelerAdapter{reg: JobRegistry})
 	tools.SetJobLister(listJobsAdapter{reg: JobRegistry})
 
-	// Wire JobRegistry's status-change events onto jobEventBus so the TUI
-	// (see tuiCmd in commands.go) can show a live background-jobs panel. A
-	// no-op for every other mode, which never calls TUI.SetJobEventBus.
-	// Captured as locals, not read from the package globals inside the
-	// closure below: wireTools can be called again later (tests swap
-	// jobEventBus/appBus for isolation — see withTestWiring) to point a
-	// FUTURE registry's events at a FUTURE bus/notifier, but a job started
-	// on THIS JobRegistry, right now, must always report to THIS bus and
-	// THIS notifier — the ones actually wired in below — no matter what
-	// the globals get reassigned to later while that job is still running.
-	// Reading the globals at event-fire time instead of at wiring time let
-	// a job finished on one test's registry deliver its completion event
-	// into whatever jobEventBus/appBus the NEXT test had already
-	// swapped in by then (Start's completion goroutine closes job.done,
-	// then calls onEvent — see jobs/registry.go — so a test that only
-	// waits on job.done can already have moved on and rewired the globals
-	// by the time onEvent actually runs).
-	bus := jobEventBus
-	inboxes := agentInboxes
-	JobRegistry.SetOnEvent(func(j jobs.Job) {
-		bus.Publish("job.updated", j)
-
-		// The inbox of a job opens on its start event, which Start fires
-		// before it returns the job ID. It closes on the terminal event.
-		inboxEvent(inboxes, j)
-
-		// A job that called "ask_parent" is now blocked, and it stays blocked until
-		// someone calls "answer_job" or its wall-clock limit expires — at which
-		// point everything it had done is thrown away. Relying on the parent
-		// to poll for that is not good enough: it has no reason to suspect a
-		// question is pending, and a model that forgets to poll silently
-		// wastes the whole child run. So the question is pushed into the
-		// parent's next turn (and wakes an idle REPL) the same way a finished
-		// background command is.
-		//
-		// j.QuestionHasWaiter (B7) is true when some caller was already
-		// blocked inside jobs.Registry.Wait — specifically Wait, never
-		// WaitObserve — for this exact job the moment this question was
-		// posed. Only the "wait" tool goes through Wait: a blocking
-		// subagent call's own handoff watch (tools/subagent.go's
-		// watchForWaiting) deliberately goes through WaitObserve instead,
-		// since it only wakes an unrelated select and never itself
-		// reports the question to anyone (batch-2 review finding C1 — see
-		// jobs.Registry.WaitObserve's doc comment). A genuine Wait caller
-		// is about to receive the same question back as its own,
-		// synchronous Wait/wait() result (see JobStatus.Waiting), so
-		// queuing this notice too would deliver the same question twice in
-		// one turn. Skip it in that case; the notice path stays the
-		// authoritative (and only) one otherwise.
-		if j.Status == jobs.StatusWaitingAnswer && !j.QuestionHasWaiter {
-			text := fmt.Sprintf(
-				"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
-					"Relay this question to the user in your reply, wait for their answer in the conversation, then deliver it — do not invent an answer on their behalf. "+
-					"Only call answer_job(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+
-					"Until it is answered it makes no progress, and its work is discarded when it times out.",
-				j.Description, j.Question, j.ID, j.ID)
-
-			// The ask goes to the job that spawned j, or to the orchestrator when
-			// j has no parent. The bus reroutes it when that parent has finished,
-			// and dedups it against a handoff message (see bus_wiring.go).
-			publishAsk(b, j.ParentID, j.ID, j.QuestionSeq, text)
-		}
-	})
-
 	// Background-command notices reach the main conversation through the bus,
 	// see wakeNotices and drainNotices.
 	tools.SetJobNotifier(noticeCounter{})
+}
+
+// jobEventForwarder is the jobs.EventPublisher of JobRegistry. The registry
+// calls it outside its lock on every job status change.
+type jobEventForwarder struct {
+	mu   sync.Mutex
+	last map[string]uint64 // newest EventSeq published as job.status, per job
+}
+
+// newJobRegistry creates a job registry that publishes its status changes
+// through jobEventForwarder. JobRegistry and the test wiring both use it, so
+// no registry can be built without the forwarder by mistake.
+func newJobRegistry() *jobs.Registry {
+	return jobs.NewRegistry(&jobEventForwarder{})
+}
+
+// JobEvent implements jobs.EventPublisher. It runs forwardJobEvent first: the
+// job.status message is the last step, so a test that sees the status knows
+// that forwardJobEvent no longer reads the package globals.
+func (f *jobEventForwarder) JobEvent(j jobs.Job) {
+	forwardJobEvent(j)
+	f.publishStatus(j)
+}
+
+// publishStatus publishes j as job.status for the TUI. The registry calls
+// JobEvent after it releases its lock, so an older snapshot can arrive after a
+// newer one. A Latest message replaces the older one by Seq, so such a
+// snapshot is dropped here, before it gets a newer Seq.
+func (f *jobEventForwarder) publishStatus(j jobs.Job) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if j.EventSeq <= f.last[j.ID] {
+		return
+	}
+	if f.last == nil {
+		f.last = make(map[string]uint64)
+	}
+	f.last[j.ID] = j.EventSeq
+	publishTo(appBus, bus.KindJobStatus, agentAddr(j.ID), bus.Addr{Type: bus.AddrTUI}, bus.OriginSystem, jobStatusOf(j))
+}
+
+// forwardJobEvent reacts to one job status change. It reads the package
+// globals when it runs. withTestWiring waits for each job's terminal event
+// before it swaps them back.
+func forwardJobEvent(j jobs.Job) {
+	// The inbox of a job opens on its start event, which Start fires
+	// before it returns the job ID. It closes on the terminal event.
+	if agentInboxes != nil {
+		inboxEvent(agentInboxes, j)
+	}
+
+	// A job that called "ask_parent" is now blocked, and it stays blocked until
+	// someone calls "answer_job" or its wall-clock limit expires — at which
+	// point everything it had done is thrown away. Relying on the parent
+	// to poll for that is not good enough: it has no reason to suspect a
+	// question is pending, and a model that forgets to poll silently
+	// wastes the whole child run. So the question is pushed into the
+	// parent's next turn (and wakes an idle REPL) the same way a finished
+	// background command is.
+	//
+	// j.QuestionHasWaiter (B7) is true when some caller was already
+	// blocked inside jobs.Registry.Wait — specifically Wait, never
+	// WaitObserve — for this exact job the moment this question was
+	// posed. Only the "wait" tool goes through Wait: a blocking
+	// subagent call's own handoff watch (tools/subagent.go's
+	// watchForWaiting) deliberately goes through WaitObserve instead,
+	// since it only wakes an unrelated select and never itself
+	// reports the question to anyone (batch-2 review finding C1 — see
+	// jobs.Registry.WaitObserve's doc comment). A genuine Wait caller
+	// is about to receive the same question back as its own,
+	// synchronous Wait/wait() result (see JobStatus.Waiting), so
+	// queuing this notice too would deliver the same question twice in
+	// one turn. Skip it in that case; the notice path stays the
+	// authoritative (and only) one otherwise.
+	if j.Status == jobs.StatusWaitingAnswer && !j.QuestionHasWaiter {
+		text := fmt.Sprintf(
+			"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
+				"Relay this question to the user in your reply, wait for their answer in the conversation, then deliver it — do not invent an answer on their behalf. "+
+				"Only call answer_job(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+
+				"Until it is answered it makes no progress, and its work is discarded when it times out.",
+			j.Description, j.Question, j.ID, j.ID)
+
+		// The ask goes to the job that spawned j, or to the orchestrator when
+		// j has no parent. The bus reroutes it when that parent has finished,
+		// and dedups it against a handoff message (see bus_wiring.go).
+		publishAsk(appBus, j.ParentID, j.ID, j.QuestionSeq, text)
+	}
 }
 
 func main() {

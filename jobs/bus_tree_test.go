@@ -9,7 +9,7 @@ import (
 )
 
 func TestBusTree_ParentOfAndIsLive(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	parent := r.Start(context.Background(), "parent", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-release
@@ -41,12 +41,12 @@ func TestBusTree_ParentOfAndIsLive(t *testing.T) {
 // from the registry event hook. The bus takes its own lock and then calls
 // IsLive, which takes r.mu, so the hook must run without r.mu held.
 func TestBusTree_PublishFromHookDoesNotDeadlock(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	b := bus.New(bus.WithTree(r.BusTree()))
 	defer b.Close()
 	sub := b.Subscribe("orch", bus.Filter{To: bus.Addr{Type: bus.AddrOrchestrator}, Kinds: []bus.Kind{bus.KindJobStatus}})
 
-	r.SetOnEvent(func(j Job) {
+	setPublisher(r, func(j Job) {
 		_, _ = bus.Publish(b, bus.KindJobStatus, bus.Addr{Type: bus.AddrOrchestrator},
 			bus.Addr{Type: bus.AddrOrchestrator}, bus.OriginSystem,
 			bus.JobStatus{ID: j.ID, Status: string(j.Status)})
