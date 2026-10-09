@@ -14,8 +14,8 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/worktree"
 )
 
-// End-to-end runner tests: the REAL ExecChecker, the REAL builtin check scripts,
-// a stub gh, a temp git repo with a bare origin and a FAKE AgentRunner.
+// End-to-end runner tests: the REAL ExecChecker, the REAL check scripts of a
+// workflow, a stub gh, a temp git repo with a bare origin and a FAKE AgentRunner.
 
 const (
 	e2eRepo  = "o/r"
@@ -182,10 +182,7 @@ func newE2E(t *testing.T, script map[string][]string) *e2e {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.wf, _, err = Lookup("issue-to-merge", e.home, "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e.wf = initWF(t, e.home, "issue-to-merge", "issue-to-merge")
 	runID := NewRunID(e2eIssue, time.Now())
 	e.runDir = RunDir(e.home, "r", runID)
 	e.st = &RunState{
@@ -226,9 +223,7 @@ func (e *e2e) newRunner() *Runner {
 	runDir := e.runDir
 	checks := &ExecChecker{
 		DefaultTimeout: 60 * time.Second,
-		Resolve: func(rel string) (string, error) {
-			return ResolveCheck(rel, "", e.home, Embedded(), runDir)
-		},
+		Resolve:        wfResolver(e.wf),
 	}
 	extra := append([]string{
 		"GIT_CONFIG_GLOBAL=/dev/null",

@@ -19,7 +19,7 @@ func TestParse_UnknownFieldIsError(t *testing.T) {
 }
 
 func TestValidateStructure_MissingStart(t *testing.T) {
-	wf := &Workflow{Name: "demo", States: map[string]State{"end": {End: true}}}
+	wf := &Workflow{Description: "d", Name: "demo", States: map[string]State{"end": {End: true}}}
 	errs := validateStructure(wf)
 	if len(errs) == 0 {
 		t.Fatal("expected error for missing start, got none")
@@ -27,7 +27,7 @@ func TestValidateStructure_MissingStart(t *testing.T) {
 }
 
 func TestValidateStructure_UnknownTarget(t *testing.T) {
-	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "a", States: map[string]State{
 		"a":   {Check: "x.sh", On: map[string]string{"go": "missing"}},
 		"end": {End: true},
 	}}
@@ -44,7 +44,7 @@ func TestValidateStructure_UnknownTarget(t *testing.T) {
 }
 
 func TestValidateStructure_TwoKindsInOneState(t *testing.T) {
-	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "a", States: map[string]State{
 		"a":   {Check: "x.sh", Agent: "worker", On: map[string]string{"done": "end"}},
 		"end": {End: true},
 	}}
@@ -61,7 +61,7 @@ func TestValidateStructure_TwoKindsInOneState(t *testing.T) {
 }
 
 func TestValidateStructure_NoEndState(t *testing.T) {
-	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "a", States: map[string]State{
 		"a": {Check: "x.sh", On: map[string]string{"go": "a"}},
 	}}
 	errs := validateStructure(wf)
@@ -78,8 +78,9 @@ func TestValidateStructure_NoEndState(t *testing.T) {
 
 func TestValidateStructure_ReportsAllErrors(t *testing.T) {
 	wf := &Workflow{
-		Name:  "",
-		Start: "ghost",
+		Description: "d",
+		Name:        "",
+		Start:       "ghost",
 		States: map[string]State{
 			"a": {Check: "x.sh", Agent: "worker", On: map[string]string{"go": "nowhere"}},
 		},
@@ -91,7 +92,7 @@ func TestValidateStructure_ReportsAllErrors(t *testing.T) {
 }
 
 func TestValidate_MaxVisitsNeedsAskState(t *testing.T) {
-	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "a", States: map[string]State{
 		"a":   {Check: "x.sh", MaxVisits: 2, On: map[string]string{"go": "end"}},
 		"end": {End: true},
 	}}
@@ -118,7 +119,7 @@ func vCfg(models map[string]string, roles map[string]flowconfig.Role) *flowconfi
 func okResolve(rel string) (string, error) { return rel, nil }
 
 func agentWF(role string) *Workflow {
-	return &Workflow{Name: "demo", Start: "code", States: map[string]State{
+	return &Workflow{Description: "d", Name: "demo", Start: "code", States: map[string]State{
 		"code": {Agent: role, On: map[string]string{"done": "end"}},
 		"end":  {End: true},
 	}}
@@ -141,7 +142,7 @@ func TestValidate_RoleWithUnknownModel(t *testing.T) {
 }
 
 func TestValidate_UnknownTargetState(t *testing.T) {
-	wf := &Workflow{Name: "demo", Start: "ci", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "ci", States: map[string]State{
 		"ci":  {Check: "c.sh", On: map[string]string{"red": "cod"}},
 		"end": {End: true},
 	}}
@@ -152,7 +153,7 @@ func TestValidate_UnknownTargetState(t *testing.T) {
 }
 
 func TestValidate_MissingCheckScript(t *testing.T) {
-	wf := &Workflow{Name: "demo", Start: "ci", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "ci", States: map[string]State{
 		"ci":  {Check: "c.sh", On: map[string]string{"ok": "end"}},
 		"end": {End: true},
 	}}
@@ -165,7 +166,7 @@ func TestValidate_MissingCheckScript(t *testing.T) {
 
 func TestValidate_SameModelWarnsOnly(t *testing.T) {
 	cfg := vCfg(map[string]string{"m": "p/m"}, map[string]flowconfig.Role{"worker": {Prompt: "p"}, "review": {Prompt: "p"}})
-	wf := &Workflow{Name: "demo", Start: "w", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "w", States: map[string]State{
 		"w":   {Agent: "worker", On: map[string]string{"done": "r"}},
 		"r":   {Agent: "review", On: map[string]string{"done": "end"}},
 		"end": {End: true},
@@ -177,7 +178,7 @@ func TestValidate_SameModelWarnsOnly(t *testing.T) {
 }
 
 func TestValidate_AllProblemsListedTogether(t *testing.T) {
-	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "a", States: map[string]State{
 		"a":   {Agent: "planner", On: map[string]string{"x": "nowhere"}},
 		"b":   {Agent: "other", On: map[string]string{"x": "end"}},
 		"end": {End: true},
@@ -189,7 +190,7 @@ func TestValidate_AllProblemsListedTogether(t *testing.T) {
 }
 
 func TestValidate_UnreachableStateWarns(t *testing.T) {
-	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+	wf := &Workflow{Description: "d", Name: "demo", Start: "a", States: map[string]State{
 		"a":    {Check: "c.sh", On: map[string]string{"ok": "end"}},
 		"lost": {Check: "c.sh", On: map[string]string{"ok": "end"}},
 		"end":  {End: true},
@@ -201,5 +202,20 @@ func TestValidate_UnreachableStateWarns(t *testing.T) {
 	warns, err := Validate(wf, vCfg(nil, nil), func(string) (string, error) { return f, nil })
 	if err != nil || len(warns) != 1 || !strings.Contains(warns[0], `"lost"`) {
 		t.Fatalf("err=%v warns=%v", err, warns)
+	}
+}
+
+func TestValidate_DescriptionIsOneLine(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{"a": {End: true}}}
+	if _, err := Validate(wf, okCfg(), nil); err == nil || !strings.Contains(err.Error(), "description is empty") {
+		t.Fatalf("empty: %v", err)
+	}
+	wf.Description = "two\nlines"
+	if _, err := Validate(wf, okCfg(), nil); err == nil || !strings.Contains(err.Error(), "must be one line") {
+		t.Fatalf("two lines: %v", err)
+	}
+	wf.Description = "one line"
+	if _, err := Validate(wf, okCfg(), nil); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"testing/fstest"
 	"time"
 )
 
@@ -150,47 +149,25 @@ func TestExecChecker_StderrTail2KiB(t *testing.T) {
 }
 
 func TestResolveCheck_RejectsAbsoluteAndDotDot(t *testing.T) {
+	wf := t.TempDir()
 	for _, rel := range []string{"/etc/passwd", "../x.sh", "checks/../../x.sh"} {
-		if _, err := ResolveCheck(rel, "", "", nil, t.TempDir()); err == nil {
+		if _, err := ResolveCheck(rel, wf); err == nil {
 			t.Errorf("%q accepted", rel)
 		}
 	}
 }
 
-func TestResolveCheck_Order(t *testing.T) {
-	repo, home, run := t.TempDir(), t.TempDir(), t.TempDir()
-	emb := fstest.MapFS{"checks/a.sh": {Data: []byte("echo e")}}
-	put := func(base string) string {
-		p := filepath.Join(base, ".tyci", "checks", "a.sh")
-		_ = os.MkdirAll(filepath.Dir(p), 0o755)
-		_ = os.WriteFile(p, []byte("x"), 0o600)
-		return p
+func TestResolveCheck_OnlyInWorkflowDir(t *testing.T) {
+	wf := t.TempDir()
+	if _, err := ResolveCheck("checks/a.sh", wf); err == nil {
+		t.Fatal("missing check accepted")
 	}
-	hp, rp := put(home), put(repo)
-	if got, _ := ResolveCheck("checks/a.sh", repo, home, emb, run); got != rp {
-		t.Fatalf("project: %q", got)
-	}
-	if got, _ := ResolveCheck("checks/a.sh", "", home, emb, run); got != hp {
-		t.Fatalf("untrusted: %q", got)
-	}
-	_ = os.Remove(hp)
-	got, err := ResolveCheck("checks/a.sh", "", home, emb, run)
-	if err != nil || got != filepath.Join(run, "checks", "a.sh") {
-		t.Fatalf("embedded: %q %v", got, err)
-	}
-}
-
-func TestResolveCheck_CopiesAllEmbeddedChecks(t *testing.T) {
-	run := t.TempDir()
-	emb := fstest.MapFS{
-		"checks/rebase.sh": {Data: []byte("bash push.sh")},
-		"checks/push.sh":   {Data: []byte("true")},
-	}
-	if _, err := ResolveCheck("checks/rebase.sh", "", "", emb, run); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(run, "checks", "push.sh")); err != nil {
-		t.Fatal(err)
+	p := filepath.Join(wf, "checks", "a.sh")
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	_ = os.WriteFile(p, []byte("true"), 0o600)
+	got, err := ResolveCheck("checks/a.sh", wf)
+	if err != nil || got != p {
+		t.Fatalf("got %q %v", got, err)
 	}
 }
 

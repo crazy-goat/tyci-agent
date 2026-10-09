@@ -168,8 +168,12 @@ func oracleCfg() *flowconfig.Config {
 }
 
 func TestRoadmapWorkflowLoads(t *testing.T) {
-	wf, src, err := flow.Lookup("roadmap", t.TempDir(), "", false)
-	if err != nil || src != "builtin" {
+	proj := t.TempDir()
+	if _, err := flow.Init("roadmap", "", proj); err != nil {
+		t.Fatal(err)
+	}
+	wf, src, err := flow.Lookup("roadmap", t.TempDir(), proj, true)
+	if err != nil || src != filepath.Join(proj, ".tyci", "workflows", "roadmap") {
 		t.Fatalf("%v %q", err, src)
 	}
 	if _, err := flow.Validate(wf, oracleCfg(), nil); err != nil {
@@ -179,22 +183,30 @@ func TestRoadmapWorkflowLoads(t *testing.T) {
 
 func TestRoadmapWorkflowOverride(t *testing.T) {
 	proj := t.TempDir()
-	dir := filepath.Join(proj, ".tyci", "workflows")
+	dir := filepath.Join(proj, ".tyci", "workflows", "roadmap")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	data := `{"name":"roadmap","start":"end","states":{"end":{"end":true}}}`
-	if err := os.WriteFile(filepath.Join(dir, "roadmap.json"), []byte(data), 0o644); err != nil {
+	data := `{"description":"d","start":"end","states":{"end":{"end":true}}}`
+	if err := os.WriteFile(filepath.Join(dir, "workflow.json"), []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, src, err := flow.Lookup("roadmap", t.TempDir(), proj, true)
-	if err != nil || src == "builtin" {
+	if err != nil || src != dir {
 		t.Fatalf("%v %q", err, src)
 	}
 }
 
 func TestRoadmapTaskRendersInput(t *testing.T) {
-	out, err := flow.RenderTask("roadmap", flow.TaskData{Input: `{"repo":"r"}`})
+	proj := t.TempDir()
+	if _, err := flow.Init("roadmap", "", proj); err != nil {
+		t.Fatal(err)
+	}
+	wf, _, err := flow.Lookup("roadmap", t.TempDir(), proj, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := flow.TaskTemplates{Dir: wf.Source}.Render("roadmap", flow.RunContext{Input: `{"repo":"r"}`})
 	if err != nil || !strings.Contains(out, `{"repo":"r"}`) {
 		t.Fatalf("%q %v", out, err)
 	}

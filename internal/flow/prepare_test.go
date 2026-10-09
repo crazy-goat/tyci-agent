@@ -21,7 +21,7 @@ func okCfg() *flowconfig.Config {
 }
 
 func okWF() *Workflow {
-	return &Workflow{Name: "demo", Start: "a", States: map[string]State{
+	return &Workflow{Name: "demo", Description: "demo", Start: "a", States: map[string]State{
 		"a":   {Agent: "worker", On: map[string]string{"done": "end"}},
 		"end": {End: true},
 	}}
@@ -35,7 +35,6 @@ func TestPrepareRun_InvalidWorkflowCreatesNothing(t *testing.T) {
 	d := PrepareDeps{
 		Lookup:   func(string) (*Workflow, string, error) { return wf, "test", nil },
 		Config:   func() (*flowconfig.Config, error) { return okCfg(), nil },
-		Resolve:  func(rel string) (string, error) { return rel, nil },
 		AddIssue: func(context.Context) (*worktree.Worktree, error) { called = true; return nil, nil },
 		NewStore: func(id string) (*Store, error) {
 			called = true
@@ -64,10 +63,6 @@ func TestPrepareRun_CallOrder(t *testing.T) {
 			return okWF(), "test", nil
 		},
 		Config: func() (*flowconfig.Config, error) { order = append(order, "Config"); return okCfg(), nil },
-		Resolve: func(rel string) (string, error) {
-			order = append(order, "Validate")
-			return rel, nil
-		},
 		AddIssue: func(context.Context) (*worktree.Worktree, error) {
 			order = append(order, "AddIssue")
 			return &worktree.Worktree{Dir: "/w", Branch: "b"}, nil
@@ -81,7 +76,6 @@ func TestPrepareRun_CallOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// okWF has no check state, so Validate leaves no trace in Resolve.
 	if got := strings.Join(order, ","); got != "Lookup,Config,AddIssue,NewStore" {
 		t.Fatalf("order = %s", got)
 	}
