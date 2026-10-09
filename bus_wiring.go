@@ -29,7 +29,7 @@ func busJournalPath() string {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return ""
 	}
-	return filepath.Join(dir, "bus.jsonl")
+	return filepath.Join(dir, session.JournalFileName)
 }
 
 // newAppBus returns a bus that routes to JobRegistry's agent tree. It journals
