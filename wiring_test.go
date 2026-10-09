@@ -1052,7 +1052,7 @@ func TestWiring_Q2_AskNeverAnsweredUnblocksViaOwnTimeout(t *testing.T) {
 
 	// Let the job finish (and wait for it) before returning, so
 	// withTestWiring's cleanup never races the job's own terminal onEvent
-	// call against swapping JobRegistry/jobEventBus back.
+	// call against swapping JobRegistry/appBus back.
 	close(release)
 	if _, ok := reg.Wait(context.Background(), job.ID, time.Second); !ok {
 		t.Fatal("job vanished from registry")

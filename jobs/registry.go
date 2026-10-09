@@ -1096,7 +1096,7 @@ func (r *Registry) Resolve(id string) (string, bool) {
 // model would still poll an old job_id with "wait".
 //
 // Exported as MaxRetainedTerminalJobs so any other mirror of this registry's
-// contents (e.g. display.TuiModel.backgroundJobs, fed by SetJobEventBus) can
+// contents (e.g. display.TuiModel.backgroundJobs, fed by SetJobEvents) can
 // prune itself to the same bound instead of drifting from — and having its
 // footer text lie about — the registry's actual retention.
 const maxRetainedTerminalJobs = MaxRetainedTerminalJobs

@@ -104,7 +104,7 @@ func TestUpdateJobsResetClearsVisibleJobsAndIgnoresOldEvents(t *testing.T) {
 
 // TestApplyJobUpdate_PrunesTerminalJobsBeyondTheRegistryBound mirrors
 // jobs.Registry's own eviction (pruneTerminalLocked): backgroundJobs is a
-// mirror fed by SetJobEventBus, not the registry itself, so without its own
+// mirror fed by SetJobEvents, not the registry itself, so without its own
 // pruning it would grow unboundedly and could keep listing a job the real
 // registry already dropped — see pruneBackgroundJobsLocked's doc comment.
 func TestApplyJobUpdate_PrunesTerminalJobsBeyondTheRegistryBound(t *testing.T) {

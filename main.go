@@ -13,7 +13,6 @@ import (
 	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/connector"
-	"github.com/crazy-goat/tyci-agent/eventbus"
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
@@ -23,19 +22,6 @@ import (
 	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
-
-// jobEventBusSize is the buffer of each plain subscription on jobEventBus. Tests
-// build their bus with the same size to exercise production delivery semantics.
-const jobEventBusSize = 32
-
-// jobEventBus is the single, process-wide bus carrying JobRegistry's
-// status-change events (topic "job.updated") to the TUI (the only
-// subscriber today, wired in commands.go's tuiCmd via TUI.SetJobEventBus —
-// see jobs.Registry.SetOnEvent). Package-level so both wiring sites share
-// the exact same instance without threading it through function
-// signatures; every other mode (run, etc.) simply never
-// subscribes, so this costs them nothing.
-var jobEventBus = eventbus.New(jobEventBusSize)
 
 // mergeNextMessages composes several NextMessages-shaped drain callbacks into
 // the single one agent.Config accepts, calling them in the order given so a
@@ -835,14 +821,12 @@ func (r *subagentToolRunner) Run(ctx context.Context, name string, args map[stri
 
 // wireTools installs the composition-root wiring the tool registry needs to
 // actually run subagents/wait/jobs against the app's shared JobRegistry and
-// jobEventBus: tools.SetSubAgentRunner/SetJobWaiter/SetJobStarter and
-// JobRegistry's onEvent hook. Extracted from main() so integration tests can
+// appBus: tools.SetSubAgentRunner/SetJobWaiter/SetJobStarter and the notice
+// wiring. Extracted from main() so integration tests can
 // call the EXACT same wiring code main() calls (see wiring_test.go) rather
 // than a hand-rolled reimplementation that could drift from production.
-// Idempotent: calling it again (e.g. after swapping JobRegistry/jobEventBus
-// for test isolation) simply re-points everything at the current globals,
-// with no duplicate event delivery — SetOnEvent replaces the previous hook,
-// it does not add to it.
+// Idempotent: calling it again (e.g. after swapping JobRegistry/appBus
+// for test isolation) simply re-points everything at the current globals.
 func wireTools() {
 	// Register the subagent runner so the "subagent" tool (advertised in the
 	// tool schema) is actually executable. Without this, RunTool returns
