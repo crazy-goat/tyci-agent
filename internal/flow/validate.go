@@ -58,6 +58,9 @@ func validateStructure(wf *Workflow) []error {
 		if s.Prompt != "" && s.Agent == "" {
 			errs = append(errs, fmt.Errorf("state %q: prompt is only allowed in an agent state", name))
 		}
+		if s.Human && s.Ask == "" {
+			errs = append(errs, fmt.Errorf("state %q: human is only allowed in an ask state", name))
+		}
 		if kinds != 1 {
 			errs = append(errs, fmt.Errorf("state %q must have exactly one of check, agent, ask, end, got %d", name, kinds))
 		}
@@ -70,6 +73,9 @@ func validateStructure(wf *Workflow) []error {
 	}
 	if st, ok := wf.States["ask"]; (wf.Defaults.MaxVisits != 0 || anyMaxVisits(wf)) && (!ok || st.Ask == "") {
 		errs = append(errs, fmt.Errorf(`max_visits is set, so the workflow needs a state named "ask" of kind ask`))
+	}
+	if n := wf.Defaults.OracleAnswers; n != nil && *n < 0 {
+		errs = append(errs, fmt.Errorf("defaults: oracle_answers must be 0 or more, got %d", *n))
 	}
 	if len(wf.States) > 0 && !hasEnd {
 		errs = append(errs, fmt.Errorf("workflow has no end state"))

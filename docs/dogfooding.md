@@ -85,9 +85,11 @@ The code is in `~/.tyci/worktrees/tyci-agent/issue-N` on branch `issue-N`.
 
 ## 6. Answer a paused run
 
-When the run reaches the state `ask`, `status` is `paused`. Tell the assistant to
-resume with `retry` (go back to `code`) or `stop` (end the run). The assistant calls
-`workflow_resume`. The pause notice names the allowed answers.
+When the run reaches the state `ask`, the `oracle` agent answers the pause first. You do
+not act on a simple pause. If the oracle asks a human, the run is `paused` and the notice
+says `needs a human`. Tell the assistant to resume with `retry` (go back to `code`) or
+`stop` (end the run). The assistant calls `workflow_resume`. The pause notice names the
+allowed answers.
 
 Two more answers work at every `ask`. `retry <note>` goes back to `code` and puts the
 note into the next worker prompt. `goto <state>` continues the run at that state, for
@@ -136,7 +138,38 @@ the agent role of a state. In a workflow file, the on target `$failed` means "th
 step"; the built-in workflow uses it for the fixer answer `ok`.
 
 The loop limits its retries with `max_visits`: `code` runs at most 3 times and `ci`
-at most 3 times. At the limit the run pauses at `ask`.
+at most 3 times. At the limit the run pauses at `ask`. The oracle answers that pause
+first, unless the `ask` state has `"human": true`.
+
+### Oracle answers at an ask state
+
+The `oracle` agent answers a pause at `ask` with one of these answers:
+
+- `retry` or `retry <note>`: the run tries again. The note goes to the next worker prompt.
+- `goto <state>`: the run continues at that state.
+- `stop`: the run ends. A run with an open pull request goes to you first.
+- `ask`: you decide.
+
+Each oracle answer is a history step and a notice, for example:
+
+```
+workflow run 606: oracle answered retry: CI runner has exception_ignore_args=On
+```
+
+A run gets 2 oracle answers at most. To change the limit, set `"oracle_answers"` in
+`defaults` of the workflow file. Set it to `0` to turn the oracle off.
+
+The oracle never answers a pause at a state with `"human": true`. Use that flag for a
+pause that needs your decision:
+
+```json
+"ask": {"ask": "Check the pull request.", "human": true, "on": {"retry": "code", "stop": "end"}}
+```
+
+The oracle never answers these pauses: an apply or reject of a workflow proposal, a merge
+to a protected branch, a move to the `merge` state, and a step that ends the run while its
+pull request is open. For such a step, the oracle can propose it, and you confirm it. A pause that waits for you says `needs a human`
+in the notice and on the Runs tab.
 
 ## 7. Negative checks
 
@@ -146,7 +179,7 @@ Run these once to see that the safety model works.
 |---|---|
 | Issue without the label `accepted` | `check_done` goes to `end`. No worktree is created. |
 | Issue by an author without write access | The run is skipped. |
-| Red CI three times | The run pauses at `ask`. No merge happens. |
+| Red CI three times | The oracle answers the pause, up to 2 times. Then the run pauses at `ask` and waits for you. No merge happens. |
 | A check fails again after 2 fixer runs | The oracle decides once, then the run pauses at `ask`. |
 
 ## 8. Protected paths

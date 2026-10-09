@@ -167,11 +167,11 @@ func runDuration(r TuiRunRow, now time.Time) string {
 }
 
 // runStep is the current step of an active run without its time: "code (worker)",
-// or "ask: code" when the run is paused. A check step has no role: "ci_wait (script)".
+// or "needs a human: code" when the run is paused. A check step has no role: "ci_wait (script)".
 func runStep(r TuiRunRow) string {
 	switch {
 	case r.Status == "paused":
-		return "ask: " + r.State
+		return "needs a human: " + r.State
 	case r.Role != "":
 		return r.State + " (" + r.Role + ")"
 	default:
