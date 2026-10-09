@@ -157,7 +157,7 @@ func TestSidebarVisibleScrollForRenderedLineCount(t *testing.T) {
 	m.openSidebar(sidebarTabTasks)
 	layout := m.sidebarLayout()
 	m.sidebarScroll = 99
-	lineCount := len(m.sidebarTabLines(layout.contentWidth))
+	lineCount := len(m.sidebarTaskRows(layout.contentWidth))
 	got := m.sidebarVisibleScrollForLineCount(layout, lineCount)
 	want := m.sidebarVisibleScroll(layout)
 	if got != want {
@@ -204,7 +204,7 @@ func TestSidebarScroll_SelectableTabKeepsCursorVisible(t *testing.T) {
 	}
 
 	// The rendered content must actually start at sidebarScroll, not 0.
-	lines := m.sidebarBashJobs()
+	lines := m.sidebarBashJobs(m.sortedBackgroundJobs())
 	rendered := m.renderSidebarColumn()
 	rows := strings.Split(rendered, "\n")
 	firstContentRow := ansi.Strip(rows[layout.contentTop])
@@ -1380,7 +1380,7 @@ func TestSidebarBashJobs_FiltersKind(t *testing.T) {
 	m.applyJobUpdate(jobs.Job{ID: "job-2", Kind: jobs.KindSubagent, Description: "subagent job"})
 	m.applyJobUpdate(jobs.Job{ID: "job-3", Kind: jobs.KindCron, Description: "cron job"})
 
-	list := m.sidebarBashJobs()
+	list := m.sidebarBashJobs(m.sortedBackgroundJobs())
 	if len(list) != 1 || list[0].ID != "job-1" {
 		t.Fatalf("expected only the bash job, got %+v", list)
 	}
@@ -1995,7 +1995,7 @@ func TestSidebarTaskRowsKeepBackgroundAcrossLine(t *testing.T) {
 	m.applyJobUpdate(jobs.Job{ID: "job-2", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "done/coder", StartedAt: time.Now()})
 	m.openSidebar(sidebarTabTasks)
 	m.sidebarCursor = 0
-	lines := m.renderSidebarTasks(40)
+	lines := renderAllSidebarTasks(m, 40)
 	checked := 0
 	for _, l := range lines {
 		if !strings.Contains(l, "/coder") {

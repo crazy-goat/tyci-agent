@@ -8,18 +8,29 @@ import (
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
-// statusTickInterval is the interval between status-bar repaints while a
-// request is in flight. 250ms reduces idle CPU compared to the previous
-// 100ms (issue #83) while still providing smooth elapsed-time updates with
-// 0.1s precision.
-const statusTickInterval = 250 * time.Millisecond
+// Repaint cadence of the TUI. All three intervals are 1s, so the TUI repaints
+// at most once per second for streamed output, the status tick and background
+// jobs (issue #630). The exception: a change of block kind or tool index posts
+// the previous streamed content at once (appendPending), so several parallel
+// tools with mixed progress can still repaint once per line. Keyboard, mouse,
+// resize and modal repaints do not use these intervals and stay immediate.
+// Change them together.
+const (
+	// streamFlushInterval is the minimum gap between two flushes of streamed
+	// text, thinking or tool output to the transcript (flushLoop, tui_api.go).
+	streamFlushInterval = 1 * time.Second
 
-// jobsOnlyTickInterval is the tick cadence once no turn is in flight and the
-// chain is only alive to keep a background job's elapsed/quiet time current
-// (item 57). formatDurationShort and jobDuration are both second-granular,
-// so ticking faster than 1s here would just burn idle CPU for a change
-// nobody can see.
-const jobsOnlyTickInterval = 1 * time.Second
+	// statusTickInterval is the interval between status-bar repaints while a
+	// request is in flight, or while a view with live durations is open. The
+	// elapsed times in the status bar are whole seconds (liveStatus,
+	// runningToolsStatus), so a 1s tick shows every change.
+	statusTickInterval = 1 * time.Second
+
+	// jobsOnlyTickInterval is the tick cadence once no turn is in flight and the
+	// chain is only alive to keep a background job's elapsed/quiet time current
+	// (item 57). formatDurationShort and jobDuration are both second-granular.
+	jobsOnlyTickInterval = 1 * time.Second
+)
 
 // wantsStatusTick reports whether the status-tick chain has a reason to
 // keep running: a turn is in flight (the original item 56 reason), or a
@@ -88,10 +99,9 @@ func (m *TuiModel) armStatusTick() tea.Cmd {
 }
 
 // tickInterval picks the tick chain's cadence: the fast, sub-second
-// statusTickInterval while a turn is actually in flight (status bar elapsed
-// time needs 0.1s precision), or the coarser jobsOnlyTickInterval when the
-// chain is alive only to repaint a background job's second-granular
-// duration.
+// statusTickInterval while a turn is actually in flight, or jobsOnlyTickInterval
+// when the chain is alive only to repaint a background job's second-granular
+// duration. Both are 1s today; the split keeps the two cases separate.
 func (m TuiModel) tickInterval() time.Duration {
 	if !m.reading || m.agentView != nil {
 		return statusTickInterval

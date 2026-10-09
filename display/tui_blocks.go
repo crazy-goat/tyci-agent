@@ -68,7 +68,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 		// transport milestones (httptrace's WroteRequest/GotFirstResponseByte)
 		// plus the moment Request() itself fires. Restart the elapsed clock
 		// at the boundary, same as "tool" already does with its own
-		// per-block start time, so "waiting for response 12.3s" answers the
+		// per-block start time, so "waiting for response 12s" answers the
 		// actual question instead of showing the whole turn's age.
 		//
 		// net/http gives no ordering guarantee between the two hooks (see

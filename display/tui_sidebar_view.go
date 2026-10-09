@@ -350,10 +350,9 @@ func (m TuiModel) renderSidebarColumn() string {
 	// clamp — the mouse row-click handler calls the exact same function, so
 	// the two can never compute a different offset for the same frame (see
 	// its doc comment for the bug that fixed).
-	lines := m.sidebarTabLines(contentWidth)
-	scroll := m.sidebarVisibleScrollForLineCount(layout, len(lines))
+	lines := m.sidebarBodyLines(layout, contentWidth)
 	shown := 0
-	for i := scroll; i < len(lines) && shown < layout.contentHeight; i++ {
+	for i := 0; i < len(lines) && shown < layout.contentHeight; i++ {
 		// Cut the line before styling it. Width() alone wraps a long line
 		// onto a second row, which pushes the key line off the last row.
 		b.WriteString(lipgloss.NewStyle().Width(contentWidth).Render(ansi.Truncate(lines[i], contentWidth, "…")))
@@ -469,8 +468,6 @@ func (m TuiModel) sidebarTabLines(width int) []string {
 		return m.buildUsageDetail(width)
 	case sidebarTabSessions:
 		return m.renderSidebarSessions(width)
-	case sidebarTabTasks:
-		return m.renderSidebarTasks(width)
 	case sidebarTabRuns:
 		return m.renderSidebarRuns(width)
 	default:
@@ -487,19 +484,31 @@ func rowStyle(width int, selected bool) lipgloss.Style {
 	return lipgloss.NewStyle().Width(width)
 }
 
-// renderSidebarTasks builds the Tasks rows once and styles them. It derives
-// the cursor line from those same rows, so one render builds the subagent
-// tree, the Bash rows and the Lua rows only once.
-func (m TuiModel) renderSidebarTasks(width int) []string {
-	rows := m.sidebarTaskRows(width)
-	cursorLine := -1
+// sidebarBodyLines returns the lines of the active tab from the scroll
+// position on, cut to the window the sidebar shows (the caller stops at
+// contentHeight). The Tasks tab styles only the rows of that window; the
+// other tabs style every line.
+func (m TuiModel) sidebarBodyLines(layout sidebarLayoutT, width int) []string {
+	if m.sidebarTab == sidebarTabTasks {
+		rows := m.sidebarTaskRows(width)
+		scroll := m.sidebarVisibleScrollForLineCount(layout, len(rows))
+		end := min(len(rows), scroll+layout.contentHeight)
+		// The cursor index moves with the window; a cursor above it gives a negative index, which matches no row.
+		return styleSidebarTaskRows(rows[scroll:end], m.sidebarTaskCursorLine(rows)-scroll, width)
+	}
+	lines := m.sidebarTabLines(width)
+	return lines[m.sidebarVisibleScrollForLineCount(layout, len(lines)):]
+}
+
+// sidebarTaskCursorLine returns the index in rows of the selected job row, or -1.
+func (m TuiModel) sidebarTaskCursorLine(rows []sidebarTaskRow) int {
 	if m.sidebarCursor >= 0 {
 		jobRows := sidebarJobRowIndices(rows)
 		if m.sidebarCursor < len(jobRows) {
-			cursorLine = jobRows[m.sidebarCursor]
+			return jobRows[m.sidebarCursor]
 		}
 	}
-	return styleSidebarTaskRows(rows, cursorLine, width)
+	return -1
 }
 
 // styleSidebarTaskRows turns built Tasks rows into the styled lines of the

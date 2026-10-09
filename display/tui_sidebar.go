@@ -233,7 +233,7 @@ func (m TuiModel) sidebarRowCount() int {
 // "the last line is at the top of the viewport").
 func (m TuiModel) sidebarLineCount(contentWidth int) int {
 	if m.sidebarTab == sidebarTabTasks {
-		// renderSidebarTasks emits one line per row, and the rows always start
+		// The Tasks tab emits one line per row, and the rows always start
 		// with a heading. Counting the rows skips the styling of every line.
 		return len(m.sidebarTaskRows(contentWidth))
 	}
@@ -286,12 +286,6 @@ func (m *TuiModel) sidebarSwitchTab(tab int) {
 func (m *TuiModel) sidebarClampScrollToCursor(contentHeight int) {
 	cursorLine := m.sidebarCursor
 	switch m.sidebarTab {
-	case sidebarTabTasks:
-		_, jobRows := m.sidebarTaskRowsAndJobs(m.sidebarLayout().contentWidth)
-		if m.sidebarCursor < 0 || m.sidebarCursor >= len(jobRows) {
-			return
-		}
-		cursorLine = jobRows[m.sidebarCursor]
 	case sidebarTabRuns:
 		// A run takes one line or more; the cursor follows its first line.
 		starts := m.runsTab(m.sidebarLayout().contentWidth).start
@@ -616,7 +610,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// cursor move yet still maps clicks to the row actually drawn.
 			//
 			// `line` is an index into the RENDERED LINE list (one line per
-			// sidebarTaskRow — renderSidebarTasks emits exactly one styled
+			// sidebarTaskRow — styleSidebarTaskRows emits exactly one styled
 			// line per row, headings included), computed once here. It is
 			// NOT the same thing as m.sidebarRowCount(), which on Tasks
 			// counts only job rows (see its doc comment) — Tasks mixes
@@ -899,9 +893,10 @@ func (m TuiModel) sidebarSessionEntries() []TuiResumeEntry {
 }
 
 // sidebarBashJobs returns the backgrounded bash jobs (jobs.KindBash) that the
-// agent sidebarTaskOwner started, oldest first, for the Bash tab.
-func (m TuiModel) sidebarBashJobs() []jobs.Job {
-	newestFirst := m.sortedBackgroundJobs()
+// agent sidebarTaskOwner started, oldest first, for the Bash tab. all is the
+// newest-first list from sortedBackgroundJobs, so the caller sorts once.
+func (m TuiModel) sidebarBashJobs(all []jobs.Job) []jobs.Job {
+	newestFirst := all
 	subagents := sidebarSubagentIDs(newestFirst)
 	var out []jobs.Job
 	for i := len(newestFirst) - 1; i >= 0; i-- {
@@ -953,15 +948,20 @@ type sidebarTaskRow struct {
 }
 
 // sidebarTaskRowBuilds counts the calls of sidebarTaskRows. The tests read it
-// to check how many times one key, click or job event builds the Tasks rows.
+// to check how many times one key, click or job event builds the Tasks rows
+// (tui_sidebar_builds_test.go). It stays in production code on purpose: one
+// atomic add per build is cheap, and a test hook would need a field on
+// TuiModel that every render path would have to carry.
 var sidebarTaskRowBuilds atomic.Int64
 
 // sidebarTaskRows keeps the three source groups separate and stable. The Bash
 // jobs and the Lua runs are each oldest first at the point they are read.
 func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 	sidebarTaskRowBuilds.Add(1)
+	// The job map is sorted once here and shared by the three source groups.
+	all := m.sortedBackgroundJobs()
 	rows := []sidebarTaskRow{{group: "Subagents", line: "Subagents", isHeading: true}}
-	tree := m.buildSubagentTree()
+	tree := m.buildSubagentTreeFrom(all)
 	tokW, costW := subagentColumnWidths(tree)
 	for _, treeRow := range tree {
 		if treeRow.separatorBefore {
@@ -978,7 +978,7 @@ func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 	}
 
 	rows = append(rows, sidebarTaskRow{group: "Bash", line: "Bash", isHeading: true})
-	bash := m.sidebarBashJobs()
+	bash := m.sidebarBashJobs(all)
 	idWidth := 0
 	for _, job := range bash {
 		idWidth = max(idWidth, lipgloss.Width(shortJobID(job.ID)))
@@ -989,14 +989,15 @@ func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 	}
 
 	rows = append(rows, sidebarTaskRow{group: "Lua", line: "Lua", isHeading: true})
-	rows = append(rows, sidebarLuaRows(m.sidebarOwnedLuaRuns(), width)...)
+	rows = append(rows, sidebarLuaRows(m.sidebarOwnedLuaRuns(all), width)...)
 	return rows
 }
 
 // sidebarOwnedLuaRuns returns the Lua runs that the agent sidebarTaskOwner
-// ran, oldest first, for the Lua rows of the Tasks tab.
-func (m TuiModel) sidebarOwnedLuaRuns() []tools.LuaRun {
-	subagents := sidebarSubagentIDs(m.sortedBackgroundJobs())
+// ran, oldest first, for the Lua rows of the Tasks tab. all is the list from
+// sortedBackgroundJobs, so the caller sorts once.
+func (m TuiModel) sidebarOwnedLuaRuns(all []jobs.Job) []tools.LuaRun {
+	subagents := sidebarSubagentIDs(all)
 	var out []tools.LuaRun
 	for _, r := range tools.LuaRunHistory() {
 		if sidebarOwnedBy(r.Owner, m.sidebarTaskOwner, subagents) {
@@ -1134,9 +1135,15 @@ type subagentTreeRow struct {
 // walked recursively, so its own children render at the correct relative
 // depth).
 func (m TuiModel) buildSubagentTree() []subagentTreeRow {
+	return m.buildSubagentTreeFrom(m.sortedBackgroundJobs())
+}
+
+// buildSubagentTreeFrom is buildSubagentTree for the newest-first list all
+// from sortedBackgroundJobs, so a caller that already sorted it does not sort it again.
+func (m TuiModel) buildSubagentTreeFrom(all []jobs.Job) []subagentTreeRow {
 	byParent := map[string][]jobs.Job{}
 	descriptions := map[string]string{}
-	for _, j := range m.sortedBackgroundJobs() {
+	for _, j := range all {
 		if j.Kind != jobs.KindSubagent {
 			continue
 		}

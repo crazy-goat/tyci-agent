@@ -196,7 +196,7 @@ func TestJobsReset_DoesNotLeaveTickArmedStuckOnceJobsAreGone(t *testing.T) {
 	}
 }
 
-// ─── interval: 250ms in-flight, 1s job-only ─────────────────────────────
+// ─── interval: 1s in-flight, 1s job-only ─────────────────────────────
 
 func TestTickInterval_FastWhileTurnInFlight(t *testing.T) {
 	m := newIdleTestModelForJobsTick()

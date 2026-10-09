@@ -201,7 +201,7 @@ func TestThroughputSuffix_EmptyBeforeFirstDelta(t *testing.T) {
 }
 
 // TestBuildStatus_RespondingIncludesTokenCount is the wire-format lock from
-// item 56: "⟳ responding... 4.1s · ~340 tok · ~85 tok/s".
+// item 56: "⟳ responding... 4s · ~340 tok · ~85 tok/s".
 func TestBuildStatus_RespondingIncludesTokenCount(t *testing.T) {
 	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
@@ -213,7 +213,7 @@ func TestBuildStatus_RespondingIncludesTokenCount(t *testing.T) {
 
 	result := stripANSI(m.buildStatus())
 
-	if !strings.Contains(result, "⟳ responding... 4.1s · ~340 tok · ") {
+	if !strings.Contains(result, "⟳ responding... 4s · ~340 tok · ") {
 		t.Errorf("expected the responding line with elapsed time and token count, got: %q", result)
 	}
 }
@@ -232,7 +232,7 @@ func TestBuildStatus_ThinkingIncludesTokenCount(t *testing.T) {
 
 	result := stripANSI(m.buildStatus())
 
-	if !strings.Contains(result, "⟳ thinking... 1.0s · ~10 tok") {
+	if !strings.Contains(result, "⟳ thinking... 1s · ~10 tok") {
 		t.Errorf("expected thinking line with token count, got: %q", result)
 	}
 	if strings.Contains(result, "tok/s") {

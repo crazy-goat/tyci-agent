@@ -18,13 +18,13 @@ func TestBuildStatus_ShowsSendingPhase(t *testing.T) {
 	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.reading = false
 	m.status = "sending"
-	m.requestStartTime = time.Now().Add(-300 * time.Millisecond)
+	m.requestStartTime = time.Now().Add(-3300 * time.Millisecond)
 	m.width = 100
 
 	result := m.buildStatus()
 
-	if !strings.Contains(result, "⟳ sending request... 0.3s") {
-		t.Errorf("expected '⟳ sending request... 0.3s', got: %q", result)
+	if !strings.Contains(result, "⟳ sending request... 3s") {
+		t.Errorf("expected '⟳ sending request... 3s', got: %q", result)
 	}
 }
 
@@ -37,8 +37,8 @@ func TestBuildStatus_ShowsWaitingPhase(t *testing.T) {
 
 	result := m.buildStatus()
 
-	if !strings.Contains(result, "⟳ waiting for response... 12.3s") {
-		t.Errorf("expected '⟳ waiting for response... 12.3s', got: %q", result)
+	if !strings.Contains(result, "⟳ waiting for response... 12s") {
+		t.Errorf("expected '⟳ waiting for response... 12s', got: %q", result)
 	}
 }
 
@@ -223,8 +223,8 @@ func TestBuildStatus_AllSpinnerTypes_IncludesNewPhases(t *testing.T) {
 			result := m.buildStatus()
 			plain := stripANSI(result)
 
-			if !strings.Contains(plain, tt.expected+" 1.0s") {
-				t.Errorf("expected %q with 1.0s suffix, got: %q", tt.expected, plain)
+			if !strings.Contains(plain, tt.expected+" 1s") {
+				t.Errorf("expected %q with 1s suffix, got: %q", tt.expected, plain)
 			}
 		})
 	}

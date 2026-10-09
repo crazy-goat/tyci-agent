@@ -100,11 +100,13 @@ Agent output arrives token-by-token. Repainting on every token would be wasteful
 so `flushLoop` (`tui_api.go`) batches appends:
 
 - Content is accumulated in a buffer; `wakeFlush` signals the loop.
-- The loop waits a **coalescing window** before emitting one `tuiMsgBlock`:
-  - `coalesceCold` (33ms) — first chunk after a quiet period flushes fast so the
-    response appears promptly.
-  - `coalesceHot` (100ms) — once the stream is clearly sustained, batch harder
-    (~3× fewer repaints, invisible at reading speed).
+- The loop emits at most one `tuiMsgBlock` per `streamFlushInterval` (1s, in
+  `tui_update.go`). The first chunk after a quiet period flushes at once; later
+  chunks wait for the interval to end.
+- `Thinking`, `Text`, `ToolCallDelta` and `StreamProgress` all use this buffer.
+  A change of kind or tool index posts the previous content at once.
+- `ToolCallStart`, `ToolCallEnd`, `End`, `Done` and `Error` flush at once, so the
+  final answer is never delayed.
 - When nothing streams, the loop is idle (zero wakeups).
 
 ---

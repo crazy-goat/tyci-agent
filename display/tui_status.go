@@ -81,7 +81,7 @@ func (m TuiModel) liveStatus() string {
 	if elapsed < 0 {
 		elapsed = 0
 	}
-	elapsedSuffix := fmt.Sprintf(" %.1fs", elapsed.Seconds())
+	elapsedSuffix := fmt.Sprintf(" %ds", int(elapsed/time.Second))
 
 	switch m.status {
 	case "sending":
@@ -93,10 +93,10 @@ func (m TuiModel) liveStatus() string {
 	case "responding":
 		return "⟳ responding..." + elapsedSuffix + m.throughputSuffix()
 	case "tool":
-		// Named, and timed from the tool's own start. "tool... 13.7s" was
+		// Named, and timed from the tool's own start. "tool... 13s" was
 		// the one status that answered neither of the questions a person
 		// actually has while watching it: which tool, and how long has
-		// THAT been going. The 13.7s was the whole turn's elapsed, so a
+		// THAT been going. The 13s was the whole turn's elapsed, so a
 		// slow tool one second in looked identical to a wedged one.
 		return m.runningToolsStatus(elapsedSuffix)
 	default:
@@ -559,7 +559,7 @@ func (m TuiModel) runningToolsStatus(fallback string) string {
 	age := ""
 	if !oldest.IsZero() {
 		if d := time.Since(oldest); d >= 0 {
-			age = fmt.Sprintf(" %.1fs", d.Seconds())
+			age = fmt.Sprintf(" %ds", int(d/time.Second))
 		}
 	}
 	if age == "" {

@@ -64,7 +64,7 @@ func BenchmarkRenderSidebarTasks(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for n := 0; n < b.N; n++ {
-		_ = m.renderSidebarTasks(width)
+		_ = m.sidebarBodyLines(m.sidebarLayout(), width)
 	}
 }
 

@@ -317,7 +317,7 @@ type TuiModel struct {
 
 	// Message region cache (issue #84). The message region is the transcript
 	// area between the top bar and the status bar. The status tick fires every
-	// 250ms while a request is in flight; without this cache, every tick
+	// statusTickInterval while a request is in flight; without this cache, every tick
 	// rebuilds the full frame string even though the message region hasn't
 	// changed. Pointer so it survives the value-copy bubbletea performs on
 	// every Update (same pattern as scrollback and painter).

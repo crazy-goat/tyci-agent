@@ -137,7 +137,7 @@ func (m TuiModel) renderMainColumn() string {
 	// The message region (transcript viewport + welcome placeholder) is the
 	// expensive part of renderFrame(): it iterates visible blocks, wraps each
 	// line, and builds the renderBuffer. During long tool execution the only
-	// thing firing is the 250ms status tick — the message region is unchanged.
+	// thing firing is the status tick — the message region is unchanged.
 	// Cache it and reuse the string until something invalidates it.
 	var region string
 	if m.agentView != nil {

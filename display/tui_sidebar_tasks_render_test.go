@@ -26,6 +26,14 @@ func tasksFixtureAllDone(t *testing.T) TuiModel {
 	return m
 }
 
+// renderAllSidebarTasks styles every Tasks row, not only the visible window.
+// The production code styles the window only (sidebarBodyLines), so the tests
+// use this to compare the full list with a window.
+func renderAllSidebarTasks(m TuiModel, width int) []string {
+	rows := m.sidebarTaskRows(width)
+	return styleSidebarTaskRows(rows, m.sidebarTaskCursorLine(rows), width)
+}
+
 // legacyRenderSidebarTasks is the render as it was before the rows were built
 // once: it calls sidebarTaskRows and then sidebarTaskJobRows, which builds the
 // rows a second time. It is the reference for the byte-identical check.
@@ -66,9 +74,16 @@ func TestRenderSidebarTasksMatchesLegacyTwoCallPath(t *testing.T) {
 		for _, cursor := range []int{-1, 0, 1, 5, 40, 500} {
 			m := base
 			m.sidebarCursor = cursor
-			got := m.renderSidebarTasks(width)
-			want := legacyRenderSidebarTasks(m, width)
-			if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			// The two renders run at different moments and the rows show
+			// elapsed times, so a render pair that straddles a second or
+			// minute boundary can differ. A real difference repeats.
+			same := false
+			for attempt := 0; attempt < 5 && !same; attempt++ {
+				got := renderAllSidebarTasks(m, width)
+				want := legacyRenderSidebarTasks(m, width)
+				same = strings.Join(got, "\n") == strings.Join(want, "\n")
+			}
+			if !same {
 				t.Fatalf("width %d cursor %d: render differs from the legacy path", width, cursor)
 			}
 		}
@@ -138,7 +153,7 @@ func TestSidebarTaskRowSelectionByKeyAndMouse(t *testing.T) {
 func TestRenderSidebarTasksFollowsJobEvents(t *testing.T) {
 	m := tasksFixtureAllDone(t)
 	m.sidebarCursor = 2
-	before := m.renderSidebarTasks(40)
+	before := renderAllSidebarTasks(m, 40)
 
 	m.applyJobUpdate(jobs.Job{
 		ID:          "bash-new",
@@ -148,11 +163,56 @@ func TestRenderSidebarTasksFollowsJobEvents(t *testing.T) {
 		StartedAt:   time.Now().Add(-time.Minute),
 		FinishedAt:  time.Now(),
 	})
-	after := m.renderSidebarTasks(40)
+	after := renderAllSidebarTasks(m, 40)
 	if strings.Join(before, "\n") == strings.Join(after, "\n") {
 		t.Fatalf("render did not change after a job was added")
 	}
 	if !strings.Contains(ansi.Strip(strings.Join(after, "\n")), "fresh job") {
 		t.Fatalf("added job is missing from the render")
+	}
+}
+
+// TestSidebarTasksWindowStylesVisibleRowsOnly checks that the lines of the
+// Tasks window are the same as the lines of the full render at the same
+// scroll position, for the top, the middle, the bottom and a list shorter
+// than the window. Only the rows of the window are styled.
+func TestSidebarTasksWindowStylesVisibleRowsOnly(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+	const height = 10
+	base := tasksFixtureAllDone(t)
+	empty := newTestModelForSidebar()
+	empty.openSidebar(sidebarTabTasks)
+
+	cases := []struct {
+		name   string
+		model  TuiModel
+		scroll int
+	}{
+		{"top", base, 0},
+		{"middle", base, 40},
+		{"bottom", base, 1 << 20},
+		{"fewer rows than the window", empty, 0},
+	}
+	for _, tc := range cases {
+		for _, cursor := range []int{-1, 0, 5, 40, 500} {
+			m := tc.model
+			m.sidebarScroll = tc.scroll
+			m.sidebarCursor = cursor
+			width := 60
+			layout := sidebarLayoutT{contentHeight: height}
+
+			full := renderAllSidebarTasks(m, width)
+			scroll := m.sidebarVisibleScrollForLineCount(layout, len(full))
+			end := min(len(full), scroll+height)
+			want := full[scroll:end]
+			got := m.sidebarBodyLines(layout, width)
+			if strings.Join(got, "\n") != strings.Join(want, "\n") {
+				t.Fatalf("%s, cursor %d: window differs from the full render lines %d-%d", tc.name, cursor, scroll, end)
+			}
+			if len(got) != end-scroll {
+				t.Fatalf("%s, cursor %d: got %d lines, want %d", tc.name, cursor, len(got), end-scroll)
+			}
+		}
 	}
 }

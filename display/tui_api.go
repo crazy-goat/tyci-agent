@@ -42,10 +42,15 @@ type TUI struct {
 
 	// Streaming coalescing
 	mu             sync.Mutex
-	pendingKind    string // "thinking" or "text"
+	pendingKind    string // "thinking", "text", "tool-delta" or "tool-progress"
+	pendingToolIdx int    // for tool-progress: index in toolQueue
 	pendingContent strings.Builder
-	flushWake      chan struct{} // signaled when pending content is appended
-	flushDone      chan struct{}
+	// postMu keeps the order of posted messages: it is held from taking the
+	// pending content until it is posted, so a flush by flushLoop cannot
+	// overtake a message posted by the agent goroutine.
+	postMu    sync.Mutex
+	flushWake chan struct{} // signaled when pending content is appended
+	flushDone chan struct{}
 }
 
 // NewTUI creates the TUI. sidebarVisible restores the persisted sidebar
@@ -174,41 +179,29 @@ func setupPainterTerminal(p *tea.Program) func() {
 	}
 }
 
-// Coalescing windows for flushLoop. The first chunk after a quiet period
-// flushes fast so the response appears promptly; once the stream is clearly
-// sustained (previous flush was recent), batching harder cuts the number of
-// transcript repaints 3x with no visible difference at reading speed.
-const (
-	coalesceCold  = 33 * time.Millisecond
-	coalesceHot   = 100 * time.Millisecond
-	coalesceHotIf = 300 * time.Millisecond // a flush this recent means the stream is hot
-)
-
-// nextCoalesce picks the coalescing window given the time since the last flush.
-func nextCoalesce(sinceLastFlush time.Duration) time.Duration {
-	if sinceLastFlush < coalesceHotIf {
-		return coalesceHot
-	}
-	return coalesceCold
-}
-
 // flushLoop flushes accumulated streaming content on demand. It sleeps until
-// signaled via flushWake (set by Thinking/Text when content is appended), then
-// waits a coalescing window so multiple rapid appends batch into a single
-// render. This keeps the loop idle (zero wakeups) when nothing is streaming.
+// signaled via flushWake (set by Thinking/Text when content is appended). A
+// flush at most every streamFlushInterval keeps the transcript repaints to one
+// per interval: the first chunk after a quiet period flushes at once, later
+// chunks wait for the interval to end. This keeps the loop idle (zero wakeups)
+// when nothing is streaming. Thinking, Text, ToolCallDelta and StreamProgress
+// are throttled this way. A kind change, ToolCallStart, ToolCallEnd, End, Done,
+// Error and the other turn events flush at once (flushNow).
 func (t *TUI) flushLoop() {
 	var lastFlush time.Time
 
 	for {
 		select {
 		case <-t.flushWake:
-			// Coalesce: wait briefly so bursts of appends flush as one message.
-			select {
-			case <-time.After(nextCoalesce(time.Since(lastFlush))):
-			case <-t.done:
-				t.flushPending()
-				close(t.flushDone)
-				return
+			// Wait for the rest of the interval, so bursts of appends flush as one message.
+			if wait := streamFlushInterval - time.Since(lastFlush); wait > 0 {
+				select {
+				case <-time.After(wait):
+				case <-t.done:
+					t.flushPending()
+					close(t.flushDone)
+					return
+				}
 			}
 			t.flushPending()
 			lastFlush = time.Now()
@@ -231,28 +224,53 @@ func (t *TUI) wakeFlush() {
 
 // flushPending sends any accumulated streaming content as a single message.
 func (t *TUI) flushPending() {
+	t.postMu.Lock()
+	defer t.postMu.Unlock()
+
 	t.mu.Lock()
-	kind := t.pendingKind
-	content := t.pendingContent.String()
-	t.pendingKind = ""
-	t.pendingContent.Reset()
+	msg, ok := t.takePendingLocked()
 	t.mu.Unlock()
 
-	if content != "" && kind != "" {
-		t.post(tuiMsgBlock{kind: kind, content: content})
+	if ok {
+		t.post(msg)
 	}
 }
 
 // flushNow forces an immediate flush of pending content.
 func (t *TUI) flushNow() {
-	t.mu.Lock()
-	kind := t.pendingKind
-	content := t.pendingContent.String()
+	t.flushPending()
+}
+
+// takePendingLocked empties the pending buffer and returns its content as a
+// message. ok is false when there is nothing to send. The caller holds t.mu.
+func (t *TUI) takePendingLocked() (msg tuiMsgBlock, ok bool) {
+	msg = tuiMsgBlock{kind: t.pendingKind, toolIdx: t.pendingToolIdx, content: t.pendingContent.String()}
 	t.pendingKind = ""
+	t.pendingToolIdx = 0
 	t.pendingContent.Reset()
+	return msg, msg.content != "" && msg.kind != ""
+}
+
+// appendPending adds content to the pending buffer and wakes the flushLoop.
+// When kind or toolIdx differs from the pending content, the pending content is
+// posted first, at once. The caller must not hold t.mu or t.postMu.
+func (t *TUI) appendPending(kind string, toolIdx int, content string) {
+	t.postMu.Lock()
+	defer t.postMu.Unlock()
+
+	t.mu.Lock()
+	var prev tuiMsgBlock
+	hasPrev := false
+	if t.pendingKind != "" && (t.pendingKind != kind || t.pendingToolIdx != toolIdx) {
+		prev, hasPrev = t.takePendingLocked()
+	}
+	t.pendingKind = kind
+	t.pendingToolIdx = toolIdx
+	t.pendingContent.WriteString(content)
 	t.mu.Unlock()
 
-	if content != "" && kind != "" {
-		t.post(tuiMsgBlock{kind: kind, content: content})
+	if hasPrev {
+		t.post(prev)
 	}
+	t.wakeFlush()
 }

@@ -1,9 +1,13 @@
 package display
 
 import (
+	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // ─── streamWrap incremental wrapping ─────────────────────────────────────
@@ -208,15 +212,105 @@ func TestRenderLinePlainLazy(t *testing.T) {
 
 // ─── adaptive streaming coalescing ───────────────────────────────────────
 
-func TestNextCoalesce(t *testing.T) {
-	// First flush after a quiet period paints fast.
-	if got := nextCoalesce(time.Hour); got != coalesceCold {
-		t.Errorf("cold stream: got %v, want %v", got, coalesceCold)
+// flushCounter is a bubbletea model that counts the transcript flushes it
+// receives (tuiMsgBlock) and the text bytes they carry. Each flush is one
+// repaint of the transcript.
+type flushCounter struct {
+	flushes *atomic.Int32
+	bytes   *atomic.Int64
+}
+
+func (f flushCounter) Init() tea.Cmd { return nil }
+
+func (f flushCounter) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if b, ok := msg.(tuiMsgBlock); ok {
+		f.flushes.Add(1)
+		f.bytes.Add(int64(len(b.content)))
 	}
-	// Sustained stream batches harder.
-	if got := nextCoalesce(50 * time.Millisecond); got != coalesceHot {
-		t.Errorf("hot stream: got %v, want %v", got, coalesceHot)
+	return f, nil
+}
+
+func (f flushCounter) View() string { return "" }
+
+// streamFor2sThroughFlushLoop calls send every 10ms for 2s through the real
+// flushLoop and a real bubbletea program. It returns the number of calls, the
+// repaints (flushes) the program received and the bytes those flushes carried.
+func streamFor2sThroughFlushLoop(t *testing.T, send func(tui *TUI)) (calls, repaints int, bytes int64) {
+	t.Helper()
+	var flushes atomic.Int32
+	var flushedBytes atomic.Int64
+	p := tea.NewProgram(flushCounter{flushes: &flushes, bytes: &flushedBytes},
+		tea.WithInput(nil), tea.WithoutRenderer(), tea.WithOutput(io.Discard))
+	runDone := make(chan struct{})
+	go func() {
+		_, _ = p.Run()
+		close(runDone)
+	}()
+
+	tui := &TUI{
+		prog:      p,
+		done:      make(chan struct{}),
+		flushWake: make(chan struct{}, 1),
+		flushDone: make(chan struct{}),
 	}
+	go tui.flushLoop()
+
+	for start := time.Now(); time.Since(start) < 2*time.Second; {
+		send(tui)
+		calls++
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(tui.done)
+	<-tui.flushDone
+	p.Quit()
+	<-runDone
+	return calls, int(flushes.Load()), flushedBytes.Load()
+}
+
+// TestStreamFlushRepaintsOncePerInterval streams a chunk every 10ms for 2s
+// through the real flushLoop and a real bubbletea program. With the 1s
+// streamFlushInterval the TUI repaints at the first chunk and then about once
+// per second, not once per chunk. The 2s end flush must deliver every byte.
+func TestStreamFlushRepaintsOncePerInterval(t *testing.T) {
+	const chunk = "streamed text "
+	chunks, got, bytes := streamFor2sThroughFlushLoop(t, func(tui *TUI) { tui.Text(chunk) })
+
+	// Flushes at about 0s, 1s and 2s, plus the end flush: far below the chunk count.
+	t.Logf("%d chunks over 2s -> %d repaints", chunks, got)
+	if got < 2 || got > 4 {
+		t.Errorf("repaints = %d for %d chunks over 2s, want 2 to 4", got, chunks)
+	}
+	if want := int64(chunks * len(chunk)); bytes != want {
+		t.Errorf("flushed %d bytes, want %d", bytes, want)
+	}
+}
+
+// TestToolEventsRepaintOncePerInterval checks that tool-delta and tool-progress
+// events go through the same 1s throttle as text. Without it each event posted
+// its own message, so one repaint per event.
+func TestToolEventsRepaintOncePerInterval(t *testing.T) {
+	t.Run("tool-delta", func(t *testing.T) {
+		const delta = `{"path":"a.go"} `
+		chunks, got, bytes := streamFor2sThroughFlushLoop(t, func(tui *TUI) { tui.ToolCallDelta(delta) })
+		t.Logf("%d tool deltas over 2s -> %d repaints", chunks, got)
+		if got < 2 || got > 4 {
+			t.Errorf("repaints = %d for %d tool deltas over 2s, want 2 to 4", got, chunks)
+		}
+		if want := int64(chunks * len(delta)); bytes != want {
+			t.Errorf("flushed %d bytes, want %d", bytes, want)
+		}
+	})
+	t.Run("tool-progress", func(t *testing.T) {
+		const line = "progress line"
+		chunks, got, bytes := streamFor2sThroughFlushLoop(t, func(tui *TUI) { tui.StreamProgress(0, line) })
+		t.Logf("%d progress lines over 2s -> %d repaints", chunks, got)
+		if got < 2 || got > 4 {
+			t.Errorf("repaints = %d for %d progress lines over 2s, want 2 to 4", got, chunks)
+		}
+		if want := int64(chunks * (len(line) + 1)); bytes != want {
+			t.Errorf("flushed %d bytes, want %d", bytes, want)
+		}
+	})
 }
 
 // ─── viewport pins to exact bottom while the agent streams ────────────────
