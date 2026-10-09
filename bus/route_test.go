@@ -134,6 +134,9 @@ func TestRoute_DeadRecipientGoesToOrchestrator(t *testing.T) {
 	if msgs[0].To != orchestrator || msgs[0].Origin != OriginSystem {
 		t.Fatalf("message = To %+v Origin %q, want orchestrator and system", msgs[0].To, msgs[0].Origin)
 	}
+	if msgs[0].OrigTo == nil || *msgs[0].OrigTo != agent("a") {
+		t.Fatalf("OrigTo = %+v, want agent a", msgs[0].OrigTo)
+	}
 	if got := subs["a"].Drain(); got != nil {
 		t.Fatalf("dead agent got %d messages, want none", len(got))
 	}
@@ -160,5 +163,33 @@ func TestRoute_CycleInTreeDoesNotHang(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("broadcast in a cyclic tree did not return")
+	}
+}
+
+func TestRoute_SubtreeSkipsDeadAgent(t *testing.T) {
+	// a -> b and a -> c. b is dead, so the broadcast from a reaches c only.
+	parents := map[string]string{"a": "", "b": "a", "c": "a"}
+	b := New(WithTree(testTree(parents, "b")))
+	subs := subscribeAll(b, "a", "b", "c")
+
+	if _, err := Publish(b, kindDurable, agent("a"), subtree("a"), OriginAgent, item{ID: "x"}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if got := receivers(subs); !slices.Equal(got, []string{"c"}) {
+		t.Fatalf("receivers = %v, want [c]", got)
+	}
+}
+
+func TestRoute_DirectMessageHasNoOrigTo(t *testing.T) {
+	b := New(WithTree(testTree(map[string]string{"a": ""})))
+	subs := subscribeAll(b, "a")
+
+	mustPublish(t, b, kindDurable, item{ID: "live"})
+	if _, err := Publish(b, kindDurable, Addr{Type: AddrUser}, agent("a"), OriginHuman, item{ID: "x"}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	msgs := subs["a"].Drain()
+	if len(msgs) != 1 || msgs[0].OrigTo != nil {
+		t.Fatalf("live agent got %+v, want one message without OrigTo", msgs)
 	}
 }

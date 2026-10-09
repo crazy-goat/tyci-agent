@@ -117,7 +117,7 @@ func TestWiring_B7_ReportingWaiter_NoticeSuppressed(t *testing.T) {
 	// The notice path must have been suppressed: give it a moment to have
 	// fired if it were going to, then confirm nothing landed.
 	time.Sleep(50 * time.Millisecond)
-	if pending := JobNotices.Drain(); len(pending) != 0 {
+	if pending := drainNotices(); len(pending) != 0 {
 		t.Fatalf("expected NO notice on the main queue when a Wait call was already blocked on the job, got %v", pending)
 	}
 
@@ -149,7 +149,7 @@ func TestWiring_B7_ObserverOnly_NoticeNotSuppressed(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	var pending []string
 	for time.Now().Before(deadline) {
-		pending = JobNotices.Drain()
+		pending = drainNotices()
 		if len(pending) > 0 {
 			break
 		}
@@ -176,7 +176,7 @@ func TestWiring_B7_ParentNotInWait_NoticeDelivered(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	var pending []string
 	for time.Now().Before(deadline) {
-		pending = JobNotices.Drain()
+		pending = drainNotices()
 		if len(pending) > 0 {
 			break
 		}

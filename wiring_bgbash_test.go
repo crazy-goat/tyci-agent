@@ -1,7 +1,7 @@
 package main
 
 // Integration coverage for background shell commands, driven through the real
-// composition-root wiring (wireTools, JobRegistry, JobNotices) rather than
+// composition-root wiring (wireTools, JobRegistry, appBus) rather than
 // package-local fakes — the unit tests in tools/bash_bg_test.go already cover
 // the tool's own behaviour, so what matters here is the seam between the
 // tool, the job registry, and the two paths a completion notice reaches the
@@ -97,13 +97,13 @@ func TestWiring_BG1_BackgroundCommandNoticeReachesTheAgentLoop(t *testing.T) {
 	// observed the job as finished the notice is already queued — no polling
 	// needed here.
 	select {
-	case <-JobNotices.Signal():
+	case <-busOrchestratorNotices.Ready():
 	default:
 		t.Fatal("no wakeup signal armed; an idle REPL would never start a turn for this")
 	}
 
 	// This is the callback the TUI installs as agent.Config.NextMessages.
-	nextMessages := mergeNextMessages(nil, JobNotices.Drain)
+	nextMessages := mergeNextMessages(nil, drainNotices)
 	pending := nextMessages()
 	if len(pending) != 1 {
 		t.Fatalf("expected exactly one pending message, got %d: %v", len(pending), pending)
@@ -132,9 +132,9 @@ func TestWiring_BG2_UserLineIsDeliveredBeforeBackgroundNotice(t *testing.T) {
 	withTestWiring(t)
 
 	userQueue := func() []string { return []string{"what the user typed"} }
-	JobNotices.Notify("[background command] something finished")
+	publishNotice(appBus, "", "[background command] something finished", false)
 
-	got := mergeNextMessages(userQueue, JobNotices.Drain)()
+	got := mergeNextMessages(userQueue, drainNotices)()
 	if len(got) != 2 {
 		t.Fatalf("expected both sources drained, got %v", got)
 	}
@@ -255,8 +255,8 @@ func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
 	var notices []string
 	for len(notices) == 0 {
 		select {
-		case <-JobNotices.Signal():
-			notices = JobNotices.Drain()
+		case <-busOrchestratorNotices.Ready():
+			notices = drainNotices()
 		case <-deadline:
 			t.Fatal("no notice: a blocked child would sit there until it timed out")
 		}
@@ -290,7 +290,7 @@ func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
 func TestWiring_BG7_CompletionNoticeTriggersNextLLMRequest(t *testing.T) {
 	withTestWiring(t)
 
-	JobNotices.Notify("[subagent] child finished (job_id=job-test)")
+	publishNotice(appBus, "", "[subagent] child finished (job_id=job-test)", false)
 	client := &connectortest.Fake{
 		ProviderName: "test-provider",
 		ModelName:    "test-model",
@@ -305,7 +305,7 @@ func TestWiring_BG7_CompletionNoticeTriggersNextLLMRequest(t *testing.T) {
 	}}
 	_, err := agent.Run(context.Background(), client, &testSilentDisplay{}, &messages, agent.Config{
 		MaxRetries:   1,
-		NextMessages: JobNotices.Drain,
+		NextMessages: drainNotices,
 	})
 	if err != nil {
 		t.Fatalf("agent.Run failed: %v", err)
@@ -343,7 +343,7 @@ func TestWiring_BG8_MultipleCompletionNoticesReachOneNextLLMRequest(t *testing.T
 		"[background command] build finished (job_id=job-bash)",
 		"[subagent] worker-b finished (job_id=job-b)",
 	} {
-		JobNotices.Notify(notice)
+		publishNotice(appBus, "", notice, false)
 	}
 
 	client := &connectortest.Fake{
@@ -360,7 +360,7 @@ func TestWiring_BG8_MultipleCompletionNoticesReachOneNextLLMRequest(t *testing.T
 	}}
 	_, err := agent.Run(context.Background(), client, &testSilentDisplay{}, &messages, agent.Config{
 		MaxRetries:   1,
-		NextMessages: JobNotices.Drain,
+		NextMessages: drainNotices,
 	})
 	if err != nil {
 		t.Fatalf("agent.Run failed: %v", err)

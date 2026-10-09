@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/internal/redact"
 )
 
@@ -214,15 +215,6 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 			default:
 				job.Status = StatusDone
 			}
-			// C3 (batch-2 review): sweep whatever is still sitting in mailbox
-			// into the snapshot BEFORE anything else can happen to it — this
-			// job's own agent loop just stopped for good, so nothing will ever
-			// drain it through the normal path again, and once pruneTerminalLocked
-			// below (or a later prune) removes this job from r.jobs, even
-			// DrainMessages could no longer reach it. See ResidualMailbox's doc
-			// comment for why leaving this silently in place instead was a bug.
-			job.ResidualMailbox = job.mailbox
-			job.mailbox = nil
 			snapshot := eventSnapshotLocked(job)
 			onEvent := r.onEvent
 			// A background command this job started would outlive it with
@@ -1036,38 +1028,6 @@ func (r *Registry) TouchActivity(id string) {
 	job.touchActivity()
 }
 
-// Post enqueues text for delivery to a live job at its own agent loop's next
-// iteration boundary (see DrainMessages). Running and waiting-for-answer jobs
-// are live; terminal jobs are not and cannot receive messages.
-//
-// Returns false when id is unknown or terminal. Callers that need to explain
-// the distinction should resolve the id first and use IsLive.
-func (r *Registry) Post(id, text string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	job, ok := r.jobs[id]
-	if !ok || !jobLive(job.Status) {
-		return false
-	}
-	job.mailbox = append(job.mailbox, text)
-	job.posted++
-	return true
-}
-
-// Posted returns how many messages Post has accepted for id, drained or not,
-// and 0 for an unknown id. It only grows, so a caller that remembers the value
-// can tell whether a new message arrived since, without taking it away from
-// DrainMessages.
-func (r *Registry) Posted(id string) uint64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	job, ok := r.jobs[id]
-	if !ok {
-		return 0
-	}
-	return job.posted
-}
-
 // IsLive reports whether id identifies a job that can still receive a
 // message. Waiting-for-answer is live: it can resume its loop after the
 // answer arrives, and message delivery remains valid at that boundary.
@@ -1078,27 +1038,26 @@ func (r *Registry) IsLive(id string) bool {
 	return ok && jobLive(job.Status)
 }
 
-func jobLive(status Status) bool {
-	return status == StatusRunning || status == StatusWaitingAnswer
+// BusTree returns the agent hierarchy of the registry for bus.WithTree. The
+// bus calls it while it holds its own lock, so the functions take r.mu and
+// never call back into the bus.
+func (r *Registry) BusTree() bus.Tree {
+	return bus.Tree{
+		ParentOf: func(id string) (string, bool) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			job, ok := r.jobs[id]
+			if !ok {
+				return "", false
+			}
+			return job.ParentID, true
+		},
+		IsLive: r.IsLive,
+	}
 }
 
-// DrainMessages pops and returns everything queued for job id via Post,
-// FIFO, clearing the mailbox. Mirrors how the main agent's pending-input
-// queue is drained (agent.Config.NextMessages) — the per-job
-// equivalent, meant to be called from that same job's own agent loop
-// between iterations. An unknown id and an empty mailbox both return nil,
-// indistinguishably — the caller (a NextMessages-shaped callback) treats
-// both the same way: nothing to inject this iteration.
-func (r *Registry) DrainMessages(id string) []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	job, ok := r.jobs[id]
-	if !ok {
-		return nil
-	}
-	msgs := job.mailbox
-	job.mailbox = nil
-	return msgs
+func jobLive(status Status) bool {
+	return status == StatusRunning || status == StatusWaitingAnswer
 }
 
 // Resolve maps id — a job's full ID, or the short form the jobs panel shows

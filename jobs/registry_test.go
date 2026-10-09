@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -849,5 +850,71 @@ func TestAsk_TimeoutReplacesAnswerChannelSoStaleAnswersCannotLeak(t *testing.T) 
 	answer, _, ok := r.Ask(shortCtx, job.ID, "second question")
 	if ok && answer == "stale" {
 		t.Fatal("the second Ask received a stale answer left over from the first, timed-out Ask")
+	}
+}
+
+// TestPendingLinesPutsBlockedJobsFirst: the two cases need opposite responses,
+// and only one of them is urgent. A running job is something to wait for; a job
+// blocked on a question makes no progress and loses all its work when it times
+// out, and only the current turn can unblock it.
+func TestPendingLinesPutsBlockedJobsFirst(t *testing.T) {
+	r := NewRegistry()
+
+	running := make(chan struct{})
+	r.Start(context.Background(), "the long one", KindOther, "", func(ctx context.Context, id string) (string, bool, error) {
+		<-running
+		return "done", false, nil
+	})
+
+	asked := make(chan struct{})
+	go func() {
+		r.Start(context.Background(), "the blocked one", KindOther, "", func(ctx context.Context, id string) (string, bool, error) {
+			close(asked)
+			ans, _, _ := r.Ask(ctx, id, "which branch?")
+			return ans, false, nil
+		})
+	}()
+	<-asked
+
+	// Ask sets the status from inside the job goroutine, so allow it a moment.
+	var lines []string
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		lines = r.PendingLines()
+		if len(lines) == 2 && strings.HasPrefix(lines[0], "WAITING") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(running)
+
+	if len(lines) != 2 {
+		t.Fatalf("expected both jobs listed, got %v", lines)
+	}
+	if !strings.HasPrefix(lines[0], "WAITING FOR ANSWER") {
+		t.Errorf("the blocked job must come first: %v", lines)
+	}
+	if !strings.Contains(lines[0], "which branch?") {
+		t.Errorf("the question itself has to be in the line: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "job_id=") {
+		t.Errorf("the line must carry the id to answer: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "the long one") {
+		t.Errorf("running job line = %q", lines[1])
+	}
+}
+
+func TestPendingLinesIsEmptyWhenNothingIsOutstanding(t *testing.T) {
+	r := NewRegistry()
+	job := r.Start(context.Background(), "quick", KindOther, "", func(ctx context.Context, id string) (string, bool, error) {
+		return "ok", false, nil
+	})
+	if _, ok := r.Wait(context.Background(), job.ID, 2*time.Second); !ok {
+		t.Fatal("job never finished")
+	}
+
+	if lines := r.PendingLines(); len(lines) != 0 {
+		t.Fatalf("expected nothing outstanding, got %v", lines)
 	}
 }

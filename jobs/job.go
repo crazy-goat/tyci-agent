@@ -75,10 +75,9 @@ type Job struct {
 	// and a child that asks the exact same words twice across its lifetime
 	// (retrying after a timeout, asking again after being answered once)
 	// would otherwise produce two notices with an identical jobID+question
-	// key. jobs.Notifier's NotifyQuestion/MarkQuestionShown key on
-	// jobID+QuestionSeq instead, specifically so the first ask's "already
-	// shown" mark can never be mistaken for covering the second ask (item
-	// 54 review finding 1). Never reset — always increasing for the life of
+	// key. The bus keys its ask dedup on the agent and QuestionSeq instead,
+	// so the first ask's "already shown" mark can never be mistaken for
+	// covering the second ask (item 54 review finding 1). Never reset — always increasing for the life of
 	// the job.
 	QuestionSeq int
 
@@ -243,20 +242,6 @@ type Job struct {
 	ExtensionPending   bool
 	ExtensionAccepted  bool
 
-	// mailbox queues messages posted via Registry.Post (the "message" tool,
-	// or the "/msg" slash command), awaiting delivery to this job's own
-	// agent loop at its next iteration boundary — see Registry.DrainMessages
-	// and tools.JobMailboxNextMessages, which wires it into a background
-	// subagent's agent.Config.NextMessages the same way the main agent's
-	// NextMessages queue works today. Guarded by Registry.mu, like Progress:
-	// unlike lastActivity there is no hot-path pressure here (a message is a
-	// rare, deliberate act, not something fired on every streamed token), so
-	// a plain slice under the registry lock is simplest.
-	mailbox []string
-	// posted counts every message accepted by Registry.Post for this job,
-	// drained or not. See Registry.Posted.
-	posted uint64
-
 	// lastHeartbeatNudgeAt is when Registry.NeedsProgressHeartbeat last
 	// returned true for this job — i.e. when the harness last injected a
 	// "post a report_progress note" reminder into this job's own loop.
@@ -268,23 +253,6 @@ type Job struct {
 	// Unexported and guarded by Registry.mu, same as lastActivity/cancelled
 	// above; Snapshot never needs to expose it.
 	lastHeartbeatNudgeAt time.Time
-
-	// ResidualMailbox is set ONCE, at the moment this job goes terminal (see
-	// Registry.Start's completion path), to whatever was still sitting in
-	// mailbox and never got drained by this job's own (now-stopped) agent
-	// loop. Batch-2 review finding C3: Registry.Post reports success for
-	// any live job, but "live" only means the loop MIGHT still drain it at
-	// its next iteration boundary — a job whose final iteration has
-	// already happened (agent.Run does not drain after its last turn) will
-	// never read another posted message again, and the mailbox is gone the
-	// moment this job is pruned. Before this field existed, that content —
-	// notices routed here by notifyToParent among them — simply vanished
-	// with no trace once the job finished. Whoever consumes onEvent's
-	// terminal snapshot is expected to forward this to somewhere still
-	// reachable (main.go's onEvent hook forwards it to the main notice
-	// queue, tagged) instead of letting it disappear. Copied by Snapshot
-	// like any other exported field; nil on every NON-terminal snapshot.
-	ResidualMailbox []string
 
 	extensionCtx      *resettableDeadlineContext
 	extensionDecision chan bool
@@ -346,8 +314,7 @@ func (j *Job) Snapshot() Job {
 		QuestionSeq:       j.QuestionSeq,
 		QuestionHasWaiter: j.QuestionHasWaiter,
 		Progress:          j.Progress,
-		// Deep-copied for the exact reason ResidualMailbox is below: a
-		// plain slice-header copy would leave every snapshot aliasing the
+		// Deep-copied: a plain slice-header copy would leave every snapshot aliasing the
 		// SAME backing array the live Job keeps appending/evicting from
 		// in SetProgress, which is a data race the moment a caller reads a
 		// snapshot's ProgressHistory while another goroutine calls
@@ -362,7 +329,6 @@ func (j *Job) Snapshot() Job {
 		// unexported/func-typed field's doc comment in this file justifies
 		// leaving out of Snapshot (batch-2 review round 2 finding D4). Read-only
 		// everywhere today, so no live bug yet — but nothing enforces that.
-		ResidualMailbox:    append([]string(nil), j.ResidualMailbox...),
 		ExtensionRequestID: j.ExtensionRequestID,
 		ExtensionDuration:  j.ExtensionDuration,
 		ExtensionReason:    j.ExtensionReason,

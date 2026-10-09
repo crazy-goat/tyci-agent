@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
@@ -27,9 +28,12 @@ func parseMsgCommand(arg string) (jobArg, text string, err error) {
 
 // postMsgCommand implements "/msg <job> <text>" against reg: resolves job
 // (full id or short "#N" form, via jobs.Registry.Resolve — the same
-// resolution the "message" tool's tools.JobMailbox.Resolve uses) and posts
-// text to its mailbox. Returns the resolved full job id on success.
-func postMsgCommand(reg *jobs.Registry, arg string) (jobID string, err error) {
+// resolution the "message" tool's tools.JobMailbox.Resolve uses) and sends
+// text to its inbox as agent.message from the user. Returns the resolved full
+// job id on success. This is the only producer with OriginHuman. Unlike the
+// job producers, it returns a publish error, so the user sees that the
+// message was not sent.
+func postMsgCommand(b *bus.Bus, reg *jobs.Registry, arg string) (jobID string, err error) {
 	jobArg, text, err := parseMsgCommand(arg)
 	if err != nil {
 		return "", err
@@ -38,8 +42,12 @@ func postMsgCommand(reg *jobs.Registry, arg string) (jobID string, err error) {
 	if !ok {
 		return "", fmt.Errorf("/msg: unknown job %q", jobArg)
 	}
-	if !reg.Post(jobID, text) {
+	if !reg.IsLive(jobID) {
 		return "", fmt.Errorf("/msg: job %q not found", jobID)
+	}
+	if _, err := bus.Publish(b, bus.KindAgentMessage, bus.Addr{Type: bus.AddrUser}, agentAddr(jobID),
+		bus.OriginHuman, bus.AgentMessage{Text: text}); err != nil {
+		return "", fmt.Errorf("/msg: %w", err)
 	}
 	return jobID, nil
 }

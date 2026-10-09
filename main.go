@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/eventbus"
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
@@ -35,23 +36,6 @@ const jobEventBusSize = 32
 // signatures; every other mode (run, etc.) simply never
 // subscribes, so this costs them nothing.
 var jobEventBus = eventbus.New(jobEventBusSize)
-
-// JobNotices is the single, process-wide queue of short completion notices
-// produced by background work — today, shell commands the bash tool moved to
-// the background. It has two consumers, wired per mode: the agent loop drains
-// it between turns (agent.Config.NextMessages), and an idle REPL selects on
-// its Signal to start a turn of its own (see runTUI). Exported so integration
-// tests in package main can assert on delivery.
-var JobNotices = jobs.NewNotifier()
-
-// residualMailboxSweepCap bounds how many of a finished job's leftover
-// mailbox entries (see jobs.Job.ResidualMailbox) get forwarded to the main
-// queue individually — batch-2 review round 2 finding D5. A handful is a
-// genuinely useful, readable heads-up; dozens (an orphaned fork with
-// several background bash jobs each posting periodic progress notices
-// into it) would just flood the queue. Past this many, the remainder is
-// summarized as a count instead of shown one by one.
-const residualMailboxSweepCap = 5
 
 // mergeNextMessages composes several NextMessages-shaped drain callbacks into
 // the single one agent.Config accepts, calling them in the order given so a
@@ -883,6 +867,16 @@ func wireTools() {
 	tools.SetJobActivityToucher(jobActivityToucherAdapter{reg: JobRegistry})
 	tools.SetJobProgressHeartbeat(jobProgressHeartbeatAdapter{reg: JobRegistry})
 	tools.SetJobMailbox(jobMailboxAdapter{reg: JobRegistry})
+	// Completion notices of background work go through the bus. The
+	// orchestrator reads its own subscription, and every agent reads its
+	// inbox through jobMailboxAdapter.Drain.
+	b := appBus
+	busOrchestratorNotices = b.Subscribe("orchestrator", bus.Filter{
+		To:    orchestratorAddr,
+		Kinds: noticeKinds,
+	})
+	agentInboxes = newInboxSet(b)
+	tools.SetNoticePublisher(func(parentID, text string, quiet bool) { publishNotice(b, parentID, text, quiet) })
 	tools.SetJobResumer(jobResumerAdapter{reg: JobRegistry})
 	tools.SetJobPromoter(btwPromotionAdapter{})
 	// kill_job's subagent path + its inside-a-child subtree check (see
@@ -895,21 +889,26 @@ func wireTools() {
 	// no-op for every other mode, which never calls TUI.SetJobEventBus.
 	// Captured as locals, not read from the package globals inside the
 	// closure below: wireTools can be called again later (tests swap
-	// jobEventBus/JobNotices for isolation — see withTestWiring) to point a
+	// jobEventBus/appBus for isolation — see withTestWiring) to point a
 	// FUTURE registry's events at a FUTURE bus/notifier, but a job started
 	// on THIS JobRegistry, right now, must always report to THIS bus and
 	// THIS notifier — the ones actually wired in below — no matter what
 	// the globals get reassigned to later while that job is still running.
 	// Reading the globals at event-fire time instead of at wiring time let
 	// a job finished on one test's registry deliver its completion event
-	// into whatever jobEventBus/JobNotices the NEXT test had already
+	// into whatever jobEventBus/appBus the NEXT test had already
 	// swapped in by then (Start's completion goroutine closes job.done,
 	// then calls onEvent — see jobs/registry.go — so a test that only
 	// waits on job.done can already have moved on and rewired the globals
 	// by the time onEvent actually runs).
-	bus, notices, reg := jobEventBus, JobNotices, JobRegistry
+	bus := jobEventBus
+	inboxes := agentInboxes
 	JobRegistry.SetOnEvent(func(j jobs.Job) {
 		bus.Publish("job.updated", j)
+
+		// The inbox of a job opens on its start event, which Start fires
+		// before it returns the job ID. It closes on the terminal event.
+		inboxEvent(inboxes, j)
 
 		// A job that called "ask_parent" is now blocked, and it stays blocked until
 		// someone calls "answer_job" or its wall-clock limit expires — at which
@@ -942,86 +941,29 @@ func wireTools() {
 					"Until it is answered it makes no progress, and its work is discarded when it times out.",
 				j.Description, j.Question, j.ID, j.ID)
 
-			// B4: address this to whoever spawned j (j.ParentID), not
-			// unconditionally to the main queue — a job spawned from an
-			// independent fork (a /btw side-conversation, or a subagent
-			// nested inside one) must notify that fork, never the main
-			// conversation it must never touch (see btwConfig's doc
-			// comment in btw.go). reg.Post delivers into the parent job's
-			// own mailbox, drained at its next agent-loop iteration the
-			// same way "message"/"/msg" already work; it returns false
-			// when parentID is unknown or that job has already finished.
-			// Design choice for that case: forward to main rather than
-			// drop the notice silently — a dropped notice leaves no trace
-			// that a child ever asked anything, while a forwarded one at
-			// least reaches someone, tagged as not its original addressee.
-			// TODO(item 54 review finding 2): the reg.Post branch below is NOT
-			// covered by the MarkQuestionShown dedup — that only suppresses a
-			// duplicate on the main JobNotifier queue (the j.ParentID == ""
-			// case). A mid-level subagent (one with a live ParentID) whose
-			// blocking call hands a child off still gets this same ask-notice
-			// duplicated in its own mailbox exactly as before item 54, since
-			// nothing here checks or records "already shown" against a
-			// mailbox-routed message. Fixing it properly needs the same key
-			// (jobID+QuestionSeq) threaded through jobs.Job's
-			// mailbox/Post/DrainMessages path, which item 54 did not have
-			// time to do — see the PR discussion for triage.
-			if j.ParentID == "" || !reg.Post(j.ParentID, text) {
-				if j.ParentID != "" {
-					text = fmt.Sprintf("[for job %s, which has already finished — forwarded here instead] %s", j.ParentID, text)
-				}
-				// NotifyQuestion (not plain Notify): keyed by j.ID/j.QuestionSeq
-				// — an unforgeable per-ask id, not the question text itself,
-				// so an identically-worded LATER ask from the same job is
-				// never mistaken for this one (item 54 review finding 1) — so
-				// a blocking subagent call's handoff message, if it ends up
-				// carrying this exact ask too (see tools/subagent.go's
-				// handOff/markQuestionsShown), can mark this entry shown and
-				// Drain will not repeat it.
-				notices.NotifyQuestion(j.ID, j.QuestionSeq, text)
-			}
-		}
-
-		// C3 (batch-2 review): a message sitting in a job's mailbox when
-		// that job goes terminal will never be drained by anyone — its own
-		// agent loop has stopped for good, and nothing else ever reads
-		// that mailbox (see jobs.Job.ResidualMailbox's doc comment). That
-		// includes a notice this very hook routed there via reg.Post above,
-		// on some earlier event, for a fork that then finished before its
-		// own next iteration got around to draining it. Before this swept
-		// it to main, tagged, it simply vanished — silently dropping a
-		// notice is exactly the failure this whole notify-routing design
-		// exists to avoid.
-		//
-		// Capped (batch-2 review round 2 finding D5): an orphaned fork
-		// that had several background bash jobs each posting periodic
-		// progress notices into its mailbox would otherwise dump every one
-		// of them into main at once. Still far better than vanishing, but
-		// past residualMailboxSweepCap this says how many were left out
-		// instead of flooding the queue with all of them individually.
-		if n := len(j.ResidualMailbox); n > 0 {
-			shown := j.ResidualMailbox
-			if n > residualMailboxSweepCap {
-				shown = j.ResidualMailbox[:residualMailboxSweepCap]
-			}
-			for _, m := range shown {
-				notices.Notify(fmt.Sprintf("[for job %s, which finished before this could be delivered to it — forwarded here instead] %s", j.ID, m))
-			}
-			if remaining := n - len(shown); remaining > 0 {
-				notices.Notify(fmt.Sprintf("[for job %s] and %d more queued message(s) that finished before delivery — not shown, not delivered", j.ID, remaining))
-			}
+			// The ask goes to the job that spawned j, or to the orchestrator when
+			// j has no parent. The bus reroutes it when that parent has finished,
+			// and dedups it against a handoff message (see bus_wiring.go).
+			publishAsk(b, j.ParentID, j.ID, j.QuestionSeq, text)
 		}
 	})
 
-	// Wire background-command completion notices to the shared queue. This is
-	// only half the story: a notice is queued from here, but whether anything
-	// consumes it depends on the mode wiring up JobNotices.Drain /
-	// JobNotices.Signal — which is exactly why backgrounding itself stays off
-	// until a mode opts in via tools.SetBackgroundBashEnabled.
-	tools.SetJobNotifier(JobNotices)
+	// Background-command notices reach the main conversation through the bus,
+	// see wakeNotices and drainNotices.
+	tools.SetJobNotifier(noticeCounter{})
 }
 
 func main() {
+	os.Exit(run())
+}
+
+// run starts tyci and returns its exit code. Its defers run before main exits.
+func run() int {
+	// The process-wide message bus of v0.7.0. Its journal is
+	// <session dir>/bus.jsonl when the session directory exists. It is set
+	// before wireTools, which subscribes to it.
+	appBus = newAppBus(busJournalPath())
+	defer appBus.Close()
 	wireTools()
 
 	// Unpack the builtin agent definitions (internal/agentdefs/builtin) into
@@ -1039,30 +981,29 @@ func main() {
 	idle, escalate, err := agent.LoadTyciConfigFrom("").WatchdogDurations()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config:", err)
-		os.Exit(1)
+		return 1
 	}
 	if _, err := agent.LoadTyciConfigFrom("").PingIntervalDuration(); err != nil {
 		fmt.Fprintln(os.Stderr, "config:", err)
-		os.Exit(1)
+		return 1
 	}
 	wdCtx, stopWatchdog := context.WithCancel(context.Background())
 	go (&watchdog.Watchdog{
 		Reg: JobRegistry, IdleAfter: idle, EscalateAfter: escalate,
-		Notify: func(to, text string) bool {
-			if to == "" {
-				JobNotices.Notify(text)
-				return true
-			}
-			return JobRegistry.Post(to, text)
-		},
+		Notify: watchdogNotify,
 	}).Run(wdCtx)
 
 	err = rootCmd.Execute()
 	stopWatchdog()
 	if err != nil {
+		var code exitCodeError
+		if errors.As(err, &code) {
+			return int(code)
+		}
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // takeTranscriptPath returns the run transcript path of this child and a ctx

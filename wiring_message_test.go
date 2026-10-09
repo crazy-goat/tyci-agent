@@ -77,7 +77,7 @@ func TestWiring_M1_MessagePostedWhileRunningReachesNextIteration(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	if !reg.Post(jobID, "steer this way") {
+	if !(jobMailboxAdapter{reg: reg}).Post(jobID, "steer this way") {
 		t.Fatal("expected Post to succeed against a known, running job")
 	}
 	// Also exercise the short-id form Resolve supports, matching what the
@@ -132,7 +132,8 @@ func containsUserText(req connector.Request, want string) bool {
 			continue
 		}
 		for _, c := range m.Content {
-			if c.Text == want {
+			// A message from an agent carries the sender tag, see tagSender.
+			if c.Text == want || bodyOf(c.Text) == want {
 				return true
 			}
 		}
@@ -147,7 +148,7 @@ func containsUserText(req connector.Request, want string) bool {
 // message was not queued anywhere.
 func TestWiring_M2_PostToUnknownJobFails(t *testing.T) {
 	reg, _ := withTestWiring(t)
-	if reg.Post("job-does-not-exist-1", "hi") {
+	if (jobMailboxAdapter{reg: reg}).Post("job-does-not-exist-1", "hi") {
 		t.Fatal("expected Post to fail for an unknown job id")
 	}
 	if _, ok := reg.Resolve("job-does-not-exist-1"); ok {

@@ -4,7 +4,6 @@ package watchdog
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/jobs"
@@ -28,12 +27,22 @@ type Watchdog struct {
 	Reg           *jobs.Registry
 	IdleAfter     time.Duration
 	EscalateAfter time.Duration
-	// Notify delivers text to a job's mailbox; toJobID "" means the human.
-	// It returns false when the job cannot receive the message.
-	Notify func(toJobID, text string) bool
+	// Notify delivers an alarm to a job's inbox; toJobID "" means the human.
+	// It returns false when the job cannot receive the alarm.
+	Notify func(toJobID string, a Alarm) bool
 
 	// state is touched only by the ticker goroutine (and tests calling Tick).
 	state map[string]*escState
+}
+
+// Alarm says that an agent has shown no activity for QuietFor. Description
+// and LastNote are the job's own text, so the receiver can name the agent. The
+// receiver formats it.
+type Alarm struct {
+	Agent       string
+	Description string
+	LastNote    string
+	QuietFor    time.Duration
 }
 
 type escState struct {
@@ -98,18 +107,18 @@ func (w *Watchdog) Tick(now time.Time) {
 // unreachable ancestor moves to the next level in the same call. Past the top
 // (or past maxDepth, which guards against cycles) the human is told.
 func (w *Watchdog) escalate(j jobs.Job, byID map[string]jobs.Job, level int, idle time.Duration, now time.Time) {
-	text := message(j, idle)
+	a := Alarm{Agent: j.ID, Description: j.Description, LastNote: j.Progress, QuietFor: idle}
 	for ; level <= maxDepth; level++ {
 		anc, ok := ancestor(j, byID, level)
 		if !ok || anc == "" {
 			break
 		}
-		if w.Notify(anc, text) {
+		if w.Notify(anc, a) {
 			w.state[j.ID] = &escState{level: level, sentAt: now}
 			return
 		}
 	}
-	w.Notify("", text)
+	w.Notify("", a)
 	w.state[j.ID] = &escState{level: humanSent, sentAt: now}
 }
 
@@ -129,23 +138,4 @@ func ancestor(j jobs.Job, byID map[string]jobs.Job, level int) (string, bool) {
 		id = p.ParentID
 	}
 	return id, true
-}
-
-func message(j jobs.Job, idle time.Duration) string {
-	note := j.Progress
-	if note == "" {
-		note = "none"
-	}
-	return fmt.Sprintf("[watchdog] Agent %s (%s) has shown no activity for %s.\n"+
-		"Last progress note: %q.\n"+
-		"You may: send it a message (message), or cancel it (kill_job).",
-		j.ID, j.Description, formatIdle(idle), note)
-}
-
-// formatIdle shows whole seconds below one minute and rounded minutes above.
-func formatIdle(idle time.Duration) string {
-	if idle < time.Minute {
-		return idle.Round(time.Second).String()
-	}
-	return fmt.Sprintf("%dm", int((idle+30*time.Second)/time.Minute))
 }

@@ -1519,7 +1519,7 @@ func TestSubagentAsync_ReturnsJobIDImmediately(t *testing.T) {
 	})
 
 	reg := jobs.NewRegistry()
-	notifier := jobs.NewNotifier()
+	notifier := &recordingNotifier{}
 	SetJobStarter(testJobStarter{reg})
 	SetJobNotifier(notifier)
 	t.Cleanup(func() { SetJobNotifier(nil) })
@@ -1563,10 +1563,8 @@ func TestSubagentAsync_ReturnsJobIDImmediately(t *testing.T) {
 		t.Errorf("unexpected final status: %+v", status)
 	}
 
-	select {
-	case <-notifier.Signal():
-	default:
-		t.Fatal("async subagent completion did not signal the jobs.Notifier")
+	if notifier.Queued() == 0 {
+		t.Fatal("async subagent completion did not reach the notifier")
 	}
 	notices := notifier.Drain()
 	if len(notices) != 1 || !strings.Contains(notices[0], "finished") || !strings.Contains(notices[0], spawned[0].JobID) {

@@ -47,7 +47,11 @@ func WithRedactor(redact func([]byte) []byte) Option {
 
 // Bus routes published messages to the matching subscriptions.
 type Bus struct {
-	mu     sync.Mutex
+	mu sync.Mutex
+	// gate is held for reading by every send, from the closed check to the
+	// journal write. Close takes it for writing, so no journal line is written
+	// after Close has closed the file.
+	gate   sync.RWMutex
 	seq    uint64
 	closed bool
 	tree   Tree
@@ -79,11 +83,13 @@ func New(opts ...Option) *Bus {
 // Subscribe adds a subscription called name for the messages that match f.
 // On a closed bus the subscription gets no messages.
 func (b *Bus) Subscribe(name string, f Filter) *Sub {
-	s := &Sub{bus: b, name: name, filter: f, q: newQueue()}
+	s := &Sub{bus: b, name: name, filter: f, q: newQueue(), done: make(chan struct{})}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !b.closed {
+	if b.closed {
+		s.finish()
+	} else {
 		b.subs = append(b.subs, s)
 	}
 	return s
@@ -91,13 +97,24 @@ func (b *Bus) Subscribe(name string, f Filter) *Sub {
 
 // Close stops the bus. Publish returns ErrClosed afterwards. Subscriptions
 // can still Drain the messages they hold. The journal file is closed. A
-// Publish that runs at the same time as Close can get a Seq and keep its
-// message in memory, but lose its journal line. Close can be called more
-// than once.
+// Publish that runs at the same time as Close either finishes before the bus
+// closes, with its journal line written, or returns ErrClosed. Close can be
+// called more than once.
 func (b *Bus) Close() {
+	b.gate.Lock()
 	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		b.gate.Unlock()
+		return
+	}
 	b.closed = true
+	subs := slices.Clone(b.subs)
 	b.mu.Unlock()
+	b.gate.Unlock()
+	for _, s := range subs {
+		s.finish()
+	}
 	if b.journal != nil {
 		b.journal.close()
 	}
@@ -159,13 +176,19 @@ func (b *Bus) send(m Message, class Class, key string) (uint64, error) {
 		return 0, ErrBroadcastNotDown
 	}
 
+	b.gate.RLock()
 	m, warnings, err := b.deliver(m, class, key)
 	if err != nil {
+		b.gate.RUnlock()
 		return 0, err
 	}
 	if b.journal != nil && class == Durable {
 		b.journal.write(m)
 	}
+	b.gate.RUnlock()
+
+	// The warnings are published after the gate is released. A nested send
+	// would take the gate again, and that is not safe while Close waits.
 	for _, w := range warnings {
 		text := fmt.Sprintf("agent %s inbox has %d unread messages", w.agent, w.depth)
 		// The warning is best effort. It fails only when the bus is closed.
@@ -173,6 +196,24 @@ func (b *Bus) send(m Message, class Class, key string) (uint64, error) {
 			Completion{Agent: w.agent, Text: text})
 	}
 	return m.Seq, nil
+}
+
+// Forward publishes the stored message m again, to the address to. The bus
+// sets OrigTo to the recipient of m and Origin to OriginSystem, as it does for
+// a message to an agent that is not live. Only Durable kinds can be forwarded.
+// A host uses it to move the messages left in the inbox of a finished agent to
+// the orchestrator.
+func (b *Bus) Forward(m Message, to Addr) (uint64, error) {
+	info, ok := lookupKind(m.Kind)
+	if !ok {
+		return 0, fmt.Errorf("bus: kind %q is not registered", m.Kind)
+	}
+	if info.class != Durable {
+		return 0, fmt.Errorf("bus: kind %q is not Durable and cannot be forwarded", m.Kind)
+	}
+	orig := m.To
+	fwd := Message{Kind: m.Kind, From: m.From, To: to, OrigTo: &orig, Origin: OriginSystem, ReplyTo: m.ReplyTo, Payload: m.Payload}
+	return b.send(fwd, Durable, "")
 }
 
 // deliver assigns Seq to m and appends it to the matching queues. It returns
@@ -184,6 +225,8 @@ func (b *Bus) deliver(m Message, class Class, key string) (Message, []inboxWarni
 		return m, nil, ErrClosed
 	}
 	if m.To.Type == AddrAgent && !b.isLive(m.To.ID) {
+		orig := m.To
+		m.OrigTo = &orig
 		m.To = Addr{Type: AddrOrchestrator}
 		m.Origin = OriginSystem
 	}
@@ -220,6 +263,9 @@ type Sub struct {
 	name   string
 	filter Filter
 	q      *queue
+
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
 // Filter selects the messages that a subscription receives.
@@ -231,6 +277,11 @@ type Filter struct {
 	// Kinds lists the kinds to receive. Empty means all kinds.
 	Kinds []Kind
 }
+
+// Accepted returns how many messages the subscription has stored, drained or
+// not. It only grows, so a caller can tell whether a new message arrived
+// without taking the message away from Drain.
+func (s *Sub) Accepted() uint64 { return s.q.count() }
 
 // Name returns the name that the subscription was created with.
 func (s *Sub) Name() string { return s.name }
@@ -244,9 +295,31 @@ func (s *Sub) Ready() <-chan struct{} { return s.q.ready }
 // the newest message per key in first-seen order. It clears the queue.
 func (s *Sub) Drain() []Message { return s.q.drain() }
 
+// Done returns a channel that closes once the subscription is closed, or
+// once the bus is closed. A consumer that waits on Ready and Done can stop
+// when either happens.
+func (s *Sub) Done() <-chan struct{} { return s.done }
+
 // Close stops the subscription. It receives no more messages, and the
 // queue is discarded. Close can be called more than once.
 func (s *Sub) Close() {
 	s.bus.unsubscribe(s)
 	s.q.close()
+	s.finish()
+}
+
+// CloseAndDrain stops the subscription like Close. It returns the messages
+// that the queue held, in the order of Drain, so that the caller can pass
+// them on. The caller must not hold a lock that Publish takes.
+func (s *Sub) CloseAndDrain() []Message {
+	s.bus.unsubscribe(s)
+	msgs := s.q.drain()
+	s.q.close()
+	s.finish()
+	return msgs
+}
+
+// finish closes the Done channel once.
+func (s *Sub) finish() {
+	s.doneOnce.Do(func() { close(s.done) })
 }

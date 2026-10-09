@@ -23,6 +23,8 @@ const (
 type Completion struct {
 	Text  string `json:"text"`
 	Agent string `json:"agent,omitempty"`
+	// Quiet notices wait for the next drain and do not wake an idle chat.
+	Quiet bool `json:"quiet,omitempty"`
 }
 
 // AskRequest is the payload of KindAskRequest.
@@ -40,8 +42,10 @@ type AgentMessage struct {
 
 // PingMissed is the payload of KindPingMissed.
 type PingMissed struct {
-	Agent    string        `json:"agent"`
-	QuietFor time.Duration `json:"quiet_for"`
+	Agent       string        `json:"agent"`
+	Description string        `json:"description,omitempty"`
+	LastNote    string        `json:"last_note,omitempty"`
+	QuietFor    time.Duration `json:"quiet_for"`
 }
 
 // BtwAnswer is the payload of KindBtwAnswer.
