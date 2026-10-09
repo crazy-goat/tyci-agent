@@ -705,11 +705,11 @@ the last 8 messages.
 
 Each compaction shows a divider line in the chat. The divider shows the kind of
 compaction, for example `auto compaction`, `/compact` or `in-loop compaction`.
-It adds `(summarized)` when a summary was used, and the context size before and
-after the compaction when these are known. A session resume shows the same
-dividers. The session file stores the compaction fields `kind`, `summarized`,
-`tokens_before` and `tokens_after`. Older session files have no `kind`, so their
-divider shows `compaction`.
+It adds `(summarized)` when a summary was used, and the context size before the
+compaction when it is known. A session resume shows the same dividers. The
+session file stores the compaction fields `kind`, `summarized` and
+`tokens_before`. Older session files have no `kind`, so their divider shows
+`compaction`. Older files without these fields still load.
 
 ## Long subagents
 

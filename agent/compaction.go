@@ -75,8 +75,8 @@ Cover these points, in this order:
 
 // compactionSink is an optional Sink capability: a sink that shows the
 // divider of a compaction. It is optional for the same reason as PhaseSink
-// (run_once.go). Only the sinks of subagents (streamingCollector) and the
-// ledger wrapper that forwards to them implement it.
+// (run_once.go). Sinks that implement it include the sink of a subagent
+// (streamingCollector), the ledger wrapper that forwards to it, and display.TUI.
 type compactionSink interface {
 	Compaction(meta session.CompactMeta)
 }

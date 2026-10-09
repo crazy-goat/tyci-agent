@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: the notice of a paused run says `needs a human` and names the answers, for example `workflow_resume: retry|stop|retry <note>|goto <state>`. The Runs tab shows `needs a human: <state>` instead of `ask: <state>` (#531).
 
 ### Added
-- TUI: a compaction shows a full-width divider in the chat, with its kind, `(summarized)` when a summary was used, and the context size when known. Session replay and the agent view of a subagent show the dividers too (#532).
+- TUI: a compaction shows a full-width divider in the chat, with its kind, `(summarized)` when a summary was used, and the context size before the compaction when known. Session replay and the agent view of a subagent show the dividers too. The compaction event in the session file has the optional fields `kind`, `summarized` and `tokens_before`. Older files without them still load (#532).
 - TUI: Shift+Left and Shift+Right resize the sidebar by one column (with `<` and `>` when the sidebar has focus). The width is a percentage of the terminal width, saved globally in `~/.tyci/tui-state.json`, not in `config.json` (#535).
 - Flow: a workflow declares its positional params in `workflow.json` (`params`: `name`, `description`, `required`). The task templates read them as `{{.Params.<name>}}`. The param `issue` is the issue number of the run. A workflow without `issue` runs without an issue, and its worktree and branch are named after the run id. A run saves its params in `state.json`, and `tyci workflow status` shows them (#520).
 - TUI: Shift+Tab moves focus between the prompt and the sidebar. With the sidebar closed, it opens the sidebar and focuses it (#511).

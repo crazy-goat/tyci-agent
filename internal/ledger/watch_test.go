@@ -3,6 +3,7 @@ package ledger
 import (
 	"testing"
 
+	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/stream"
 )
 
@@ -55,4 +56,41 @@ func TestWatch_PhaseIsANoOpWhenInnerLacksIt(t *testing.T) {
 	// Must not panic: phaselessSink does not implement Phase, and *watcher
 	// must degrade to a no-op rather than assuming every Sink has one.
 	w.(interface{ Phase(string) }).Phase("waiting")
+}
+
+// compactionRecordingSink is a Sink that also implements Compaction, recording
+// the metadata it receives.
+type compactionRecordingSink struct {
+	silentSink
+	metas []session.CompactMeta
+}
+
+func (s *compactionRecordingSink) Compaction(meta session.CompactMeta) {
+	s.metas = append(s.metas, meta)
+}
+
+// TestWatch_CompactionForwardsWhenInnerImplementsIt checks that the in-loop
+// divider reaches the sink of a subagent through the ledger wrapper.
+func TestWatch_CompactionForwardsWhenInnerImplementsIt(t *testing.T) {
+	inner := &compactionRecordingSink{}
+	w := Watch(inner, Subagent, "p", "m", "job-1")
+	cs, ok := w.(interface{ Compaction(session.CompactMeta) })
+	if !ok {
+		t.Fatal("watch wrapper does not expose Compaction")
+	}
+	cs.Compaction(session.CompactMeta{Kind: session.CompactKindInLoop, Summarized: true, TokensBefore: 170000})
+	if len(inner.metas) != 1 {
+		t.Fatalf("inner got %d compaction events, want 1", len(inner.metas))
+	}
+	if m := inner.metas[0]; m.Kind != session.CompactKindInLoop || !m.Summarized || m.TokensBefore != 170000 {
+		t.Fatalf("forwarded meta = %+v", m)
+	}
+}
+
+// TestWatch_CompactionIsANoOpWhenInnerLacksIt checks that a sink without
+// Compaction does not panic and gets no call.
+func TestWatch_CompactionIsANoOpWhenInnerLacksIt(t *testing.T) {
+	w := Watch(phaselessSink{}, Subagent, "p", "m", "job-2")
+	cs := w.(interface{ Compaction(session.CompactMeta) })
+	cs.Compaction(session.CompactMeta{Kind: session.CompactKindInLoop})
 }

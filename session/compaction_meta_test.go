@@ -37,7 +37,7 @@ func TestWriteCompactionStoresMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	meta := CompactMeta{Kind: CompactKindAuto, Summarized: true, TokensBefore: 412000, TokensAfter: 9000}
+	meta := CompactMeta{Kind: CompactKindAuto, Summarized: true, TokensBefore: 412000}
 	if err := s.WriteCompaction("summary", "", nil, 0, meta); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestWriteCompactionStoresMeta(t *testing.T) {
 		t.Fatalf("compaction events = %d, want 1", len(evs))
 	}
 	got := evs[0].CompactMeta
-	if got.Kind != CompactKindAuto || !got.Summarized || got.TokensBefore != 412000 || got.TokensAfter != 9000 {
+	if got.Kind != CompactKindAuto || !got.Summarized || got.TokensBefore != 412000 {
 		t.Fatalf("stored meta = %+v", got)
 	}
 }
@@ -68,7 +68,7 @@ func TestWriteCompactionOmitsEmptyMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	for _, key := range []string{`"kind"`, `"summarized"`, `"tokens_before"`, `"tokens_after"`} {
+	for _, key := range []string{`"kind"`, `"summarized"`, `"tokens_before"`} {
 		if strings.Contains(string(data), key) {
 			t.Fatalf("file has %s for empty meta", key)
 		}

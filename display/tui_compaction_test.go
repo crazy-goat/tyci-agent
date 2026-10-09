@@ -17,8 +17,8 @@ func TestCompactionDividerText(t *testing.T) {
 		msg  tuiMsgCompaction
 		want string
 	}{
-		{"auto with both sizes", tuiMsgCompaction{kind: "auto compaction", tokensBefore: 412000, tokensAfter: 9000, time: at},
-			"auto compaction · 412k → 9.0k tok · 14:32"},
+		{"auto with size before", tuiMsgCompaction{kind: "auto compaction", tokensBefore: 412000, time: at},
+			"auto compaction · 412k tok · 14:32"},
 		{"summarized label", tuiMsgCompaction{kind: "auto compaction", summarized: true, tokensBefore: 412000, time: at},
 			"auto compaction (summarized) · 412k tok · 14:32"},
 		{"unknown sizes are left out", tuiMsgCompaction{kind: "/compact", time: at},
@@ -39,8 +39,8 @@ func TestCompactionDividerText(t *testing.T) {
 
 func TestNewCompactionMsgKeepsMeta(t *testing.T) {
 	at := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
-	msg := newCompactionMsg(session.CompactMeta{Kind: session.CompactKindTool, Summarized: true, TokensBefore: 5, TokensAfter: 2, At: at})
-	if msg.kind != session.CompactKindTool || !msg.summarized || msg.tokensBefore != 5 || msg.tokensAfter != 2 || !msg.time.Equal(at) {
+	msg := newCompactionMsg(session.CompactMeta{Kind: session.CompactKindTool, Summarized: true, TokensBefore: 5, At: at})
+	if msg.kind != session.CompactKindTool || !msg.summarized || msg.tokensBefore != 5 || !msg.time.Equal(at) {
 		t.Fatalf("msg = %+v", msg)
 	}
 	if now := newCompactionMsg(session.CompactMeta{}).time; now.IsZero() {
@@ -109,5 +109,19 @@ func TestPullAgentViewShowsInLoopCompaction(t *testing.T) {
 	}
 	if b := blocks[1]; b.kind != "compaction" || !strings.Contains(b.content, "in-loop compaction (summarized)") {
 		t.Fatalf("divider = %+v", b)
+	}
+}
+
+// TestUpdateCompactionMsgShowsDivider checks the path of a live divider: the
+// message sent by TUI.Compaction goes through update and adds a block.
+func TestUpdateCompactionMsgShowsDivider(t *testing.T) {
+	m := newTestModel()
+	model, _ := m.Update(newCompactionMsg(session.CompactMeta{Kind: session.CompactKindCommand, TokensBefore: 90000, At: time.Now()}))
+	next := model.(TuiModel)
+	if n := len(next.blocks); n != 1 {
+		t.Fatalf("blocks = %d, want 1 divider", n)
+	}
+	if b := next.blocks[0]; b.kind != "compaction" || !strings.Contains(b.content, "/compact · 90k tok") {
+		t.Fatalf("divider block = %+v", b)
 	}
 }

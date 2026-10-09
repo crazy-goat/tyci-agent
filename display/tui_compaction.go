@@ -15,7 +15,6 @@ type tuiMsgCompaction struct {
 	kind         string
 	summarized   bool
 	tokensBefore int // 0 = unknown
-	tokensAfter  int // 0 = unknown
 	time         time.Time
 }
 
@@ -30,7 +29,6 @@ func newCompactionMsg(meta session.CompactMeta) tuiMsgCompaction {
 		kind:         meta.Kind,
 		summarized:   meta.Summarized,
 		tokensBefore: meta.TokensBefore,
-		tokensAfter:  meta.TokensAfter,
 		time:         at,
 	}
 }
@@ -67,10 +65,7 @@ func compactionDividerText(msg tuiMsgCompaction) string {
 		label += " (summarized)"
 	}
 	parts := []string{label}
-	switch {
-	case msg.tokensBefore > 0 && msg.tokensAfter > 0:
-		parts = append(parts, fmtTokens(msg.tokensBefore)+" → "+fmtTokens(msg.tokensAfter)+" tok")
-	case msg.tokensBefore > 0:
+	if msg.tokensBefore > 0 {
 		parts = append(parts, fmtTokens(msg.tokensBefore)+" tok")
 	}
 	if !msg.time.IsZero() {

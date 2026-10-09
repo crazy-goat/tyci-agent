@@ -75,11 +75,14 @@ func TestCompactDivider_InLoopSummarizedOnlyWithSummary(t *testing.T) {
 	}
 }
 
-func TestCompactDivider_AutoPassesKindAndSummarized(t *testing.T) {
+// autoCompactMeta runs one hard-limit turn over n history messages and
+// returns the metadata that the agent passes to the compactor.
+func autoCompactMeta(t *testing.T, mc connector.ModelClient, n int) session.CompactMeta {
+	t.Helper()
 	sess := newAutoCompactSession(t)
-	msgs := historyOf(9)
+	msgs := historyOf(n)
 	var got []session.CompactMeta
-	_, err := Run(context.Background(), hardLimitTurn(summaryReply("SUMMARY TEXT")), &silentDisplay{}, &msgs, Config{
+	if _, err := Run(context.Background(), mc, &silentDisplay{}, &msgs, Config{
 		MaxRetries:   1,
 		ContextLimit: 200000,
 		HardLimit:    170000,
@@ -88,14 +91,32 @@ func TestCompactDivider_AutoPassesKindAndSummarized(t *testing.T) {
 			got = append(got, meta)
 			return CompactSession(sess, &msgs, summary, focus, meta)
 		},
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("compactor calls = %d, want 1", len(got))
 	}
-	if m := got[0]; m.Kind != session.CompactKindAuto || !m.Summarized || m.TokensBefore != 181000 {
-		t.Fatalf("meta = %+v, want auto, summarized, 181000 tokens before", m)
+	return got[0]
+}
+
+func TestCompactDivider_AutoLabelFollowsSummary(t *testing.T) {
+	tests := []struct {
+		name       string
+		mc         connector.ModelClient
+		n          int
+		summarized bool
+	}{
+		{"summary written", hardLimitTurn(summaryReply("SUMMARY TEXT")), 9, true},
+		{"summary call returns no text", hardLimitTurn(summaryReply("")), 9, false},
+		{"summary call does not run", hardLimitTurn(nil), 7, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := autoCompactMeta(t, tt.mc, tt.n)
+			if m.Kind != session.CompactKindAuto || m.Summarized != tt.summarized || m.TokensBefore != 181000 {
+				t.Fatalf("meta = %+v, want auto, summarized=%v, 181000 tokens before", m, tt.summarized)
+			}
+		})
 	}
 }

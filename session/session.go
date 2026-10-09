@@ -147,14 +147,13 @@ const (
 
 // CompactMeta describes one compaction for the display. It is stored in the
 // compaction event (the fields are optional in the JSON). Summarized is true
-// when a model summary was written. TokensBefore and TokensAfter are context
-// sizes in tokens; 0 means unknown. At is the time of the compaction; it is
-// not stored, because the event Timestamp is.
+// when a model summary was written. TokensBefore is the context size in tokens
+// before the compaction; 0 means unknown. At is the time of the compaction; it
+// is not stored, because the event Timestamp is.
 type CompactMeta struct {
 	Kind         string    `json:"kind,omitempty"`
 	Summarized   bool      `json:"summarized,omitempty"`
 	TokensBefore int       `json:"tokens_before,omitempty"`
-	TokensAfter  int       `json:"tokens_after,omitempty"`
 	At           time.Time `json:"-"`
 }
 
