@@ -592,6 +592,9 @@ func (m TuiModel) formatSubagentRow(row subagentTreeRow, width, tokW, costW int)
 	if row.job.Status == jobs.StatusWaitingAnswer && row.job.Question != "" {
 		label = "asks: " + row.job.Question
 	}
+	if row.continues {
+		label = "↻ " + label
+	}
 	// Cut the row while it is plain text, so no escape sequence is split. The
 	// icon is colored afterwards. It is the first character after the indent.
 	line := lineWithRight(indent+icon+" "+label, right, width)

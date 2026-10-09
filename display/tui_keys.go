@@ -17,6 +17,14 @@ func (m TuiModel) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// The agent view takes Enter for the viewed agent, and a key that cancels
+	// a resume. It runs before Esc, so a cancelling Esc does not close the view.
+	if m.agentView != nil {
+		if handled, next, cmd := m.handleAgentViewKey(msg); handled {
+			return next, cmd
+		}
+	}
+
 	// Esc in an agent view goes back to the main conversation. It returns
 	// before the busy-turn handler, so it never cancels the main turn.
 	if msg.Type == tea.KeyEscape && m.agentView != nil {
