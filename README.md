@@ -60,7 +60,7 @@ make install
 `workflow_start`, `workflow_status` and `workflow_resume`. The issue needs the label
 `accepted`, and its author needs write access.
 
-`workflow_start` needs the workflow name, `workflow`, and the positional values of the workflow, `params`, a list of strings. For example: `{"workflow": "issue-to-merge", "params": ["160"]}`. The tool description lists the available workflows of the project and of `~/.tyci/workflows/` with their params. A missing required param makes the model ask you for it. When the model starts a run, the chat shows a line such as `model started /issue-to-merge 160`.
+`workflow_start` needs the workflow name, `workflow`, and the positional values of the workflow, `params`, a list of strings. For example: `{"workflow": "issue-to-merge", "params": ["160"]}`. The tool description lists the workflows of the project and of `~/.tyci/workflows/` with their params, as they were at session start. A workflow added later is not in that list. When you ask for a name that is not in it, the tool checks the current workflows and the error lists them. A missing required param makes the model ask you for it. When the model starts a run, the chat shows a line such as `model started /issue-to-merge 160`.
 
 `tyci` has no built-in workflow. Run `tyci workflow init issue-to-merge` in the repository before the first run. The orchestrator also needs the workflow `roadmap` for its oracle step. Run `tyci workflow init roadmap` too. See "Create or change a workflow" below.
 
