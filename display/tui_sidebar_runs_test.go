@@ -447,3 +447,15 @@ func checkSidebarChrome(t *testing.T, m TuiModel) {
 		}
 	}
 }
+
+// A stopped run is finished: its duration is the saved Took and does not tick.
+func TestRunDuration_StoppedRunDoesNotTick(t *testing.T) {
+	stopped := TuiRunRow{ID: "s1", Issue: 5, Status: "stopped", State: "code",
+		Since: time.Now().Add(-time.Hour), Took: 90 * time.Second}
+	if got := runDuration(stopped, time.Now()); got != "1m30s" {
+		t.Fatalf("duration = %q, want the saved 1m30s", got)
+	}
+	if runFinished(TuiRunRow{Status: "running"}) {
+		t.Fatal("a running run is not finished")
+	}
+}

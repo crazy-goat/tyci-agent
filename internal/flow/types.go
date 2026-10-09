@@ -68,6 +68,10 @@ type Ask struct {
 	Proposal string `json:"proposal,omitempty"`
 }
 
+// StatusStopped is the Status of a run that a user stopped (Manager.Stop or
+// tyci workflow stop). The run keeps its worktree and its pull request.
+const StatusStopped = "stopped"
+
 // RunState is the persisted run state (state.json, version 1).
 // Reason is an addition to SDR 5.7: why the run failed.
 type RunState struct {
@@ -80,7 +84,7 @@ type RunState struct {
 	Params   map[string]string `json:"params,omitempty"`
 	Branch   string            `json:"branch"`
 	Worktree string            `json:"worktree"`
-	Status   string            `json:"status"` // running|paused|done|failed
+	Status   string            `json:"status"` // running|paused|done|failed|stopped
 	Reason   string            `json:"reason,omitempty"`
 	Current  string            `json:"current"`
 	// EntryPending is true after a transition into Current, until the visit of

@@ -80,10 +80,21 @@ type activeRun struct {
 	issue  int
 	// adoptable: resumed with the answer "resume"; the next Start of the issue returns it.
 	adoptable bool
+	// stopped and stopReason are set by Stop before cancel. The run goroutine reads them.
+	stopped    bool
+	stopReason string
+	// done is closed when the run goroutine ends. It is nil for a preparing entry
+	// and for a run that Resume runs in the caller's goroutine.
+	done chan struct{}
+	// st is the run state of the goroutine. It is valid after done is closed.
+	st *RunState
 }
 
+// DefaultStopReason is the reason of a run stopped without a reason.
+const DefaultStopReason = "stopped by user"
+
 // RunEvent tells a subscriber that a run started again (Status running, after
-// Resume) or stopped (done, failed or paused).
+// Resume) or stopped (done, failed, paused or stopped).
 type RunEvent struct {
 	Run    string
 	Status string
@@ -282,7 +293,8 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 	if m.active == nil {
 		m.active = map[string]activeRun{}
 	}
-	m.active[st.Run] = activeRun{cancel: cancel, issue: st.Issue}
+	done := make(chan struct{})
+	m.active[st.Run] = activeRun{cancel: cancel, issue: st.Issue, done: done, st: st}
 	r := m.NewRunner(info, wf, st)
 	if r.Warn == nil {
 		r.Warn = m.Notify
@@ -297,6 +309,7 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 				delete(m.adopted, st.Run)
 			}
 			m.mu.Unlock()
+			close(done)
 			m.emit(RunEvent{Run: st.Run, Status: st.Status, PR: st.PR, Reason: st.Reason})
 		}()
 		defer func() {
@@ -313,7 +326,19 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 			m.emit(RunEvent{Run: st.Run, Status: "running"})
 		}
 		err := do(ctx, r)
-		if err != nil && st.Status == "running" {
+		m.mu.Lock()
+		a := m.active[st.Run]
+		m.mu.Unlock()
+		switch {
+		case a.stopped && st.Status != "done":
+			// The runner already saved the cancel as failed. A user stop wins.
+			st.Status = StatusStopped
+			st.Reason = a.stopReason
+			st.UpdatedAt = time.Now()
+			if r.Store != nil {
+				_ = r.Store.Save(st)
+			}
+		case err != nil && st.Status == "running":
 			st.Status = "failed"
 			st.Reason = err.Error()
 			if r.Store != nil {
@@ -340,6 +365,12 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 		case !ranAgent(st) && !endedByAsk(st):
 			text += " skipped"
 		default:
+			text += " stopped: no PR"
+		}
+	case StatusStopped:
+		if st.PR > 0 {
+			text += " stopped: PR " + prURL(st) + " is still open"
+		} else {
 			text += " stopped: no PR"
 		}
 	case "paused":
@@ -597,5 +628,42 @@ func (m *Manager) Shutdown(wait time.Duration) {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Stop cancels an active run and records it as stopped. The run keeps its
+// worktree and its pull request. It returns the saved state. A stop of a run
+// that ends by itself before Stop reads its state keeps the natural result.
+func (m *Manager) Stop(run, reason string) (*RunState, error) {
+	if reason == "" {
+		reason = DefaultStopReason
+	}
+	m.mu.Lock()
+	a, ok := m.active[run]
+	if !ok || a.done == nil {
+		var ids []string
+		for id, other := range m.active {
+			if other.done != nil {
+				ids = append(ids, id)
+			}
+		}
+		m.mu.Unlock()
+		if len(ids) == 0 {
+			return nil, errors.New("no active runs; for a paused run use workflow_resume with answer \"stop\"")
+		}
+		sort.Strings(ids)
+		return nil, fmt.Errorf("run %q is not active; active runs: %s; for a paused run use workflow_resume with answer \"stop\"",
+			run, strings.Join(ids, ", "))
+	}
+	a.stopped = true
+	a.stopReason = reason
+	m.active[run] = a
+	m.mu.Unlock()
+	a.cancel()
+	select {
+	case <-a.done:
+		return a.st, nil
+	case <-time.After(5 * time.Second):
+		return nil, fmt.Errorf("run %s did not stop within 5s; it is saved as stopped when it ends", run)
 	}
 }

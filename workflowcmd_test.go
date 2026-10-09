@@ -148,6 +148,7 @@ func resetWorkflowFlags() {
 	workflowRunJSON, workflowRunDir = false, ""
 	workflowValidateJSON, workflowValidateDir = false, ""
 	workflowStatusJSON = false
+	workflowStopJSON, workflowStopReason = false, ""
 }
 
 // TestWorkflowValidateMissingFilesAreProblems checks that a missing check script
@@ -577,5 +578,88 @@ func TestWorkflowTrustedProjectLoadsLocalWorkflows(t *testing.T) {
 	}
 	if strings.Contains(errOut, "not trusted") {
 		t.Errorf("stderr = %q, a trusted project must not warn", errOut)
+	}
+}
+
+// wfSaveLiveRun saves a running run whose owner is pid.
+func wfSaveLiveRun(t *testing.T, home, id string, pid int) string {
+	t.Helper()
+	dir := flow.RunDir(home, "demo", id)
+	st := &flow.RunState{
+		Version: 1, Run: id, Workflow: "one-check", Repo: "acme/demo", Issue: 42,
+		Status: "running", Current: "check", Visits: map[string]int{}, PID: pid,
+	}
+	if err := (&flow.Store{Dir: dir}).Save(st); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestWorkflowStopSavesStoppedRun(t *testing.T) {
+	home := wfHome(t)
+	const id = "20261005-153012-42"
+	dir := wfSaveLiveRun(t, home, id, 0)
+
+	out, _, err := runWorkflowCLI(t, "workflow", "stop", id, "--reason", "by hand", "--json")
+	if err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if r := decodeWorkflowResult(t, out); r.Status != "stopped" || strings.Contains(out, `"error"`) {
+		t.Fatalf("result = %+v", r)
+	}
+	st, err := flow.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Status != flow.StatusStopped || st.Reason != "by hand" {
+		t.Fatalf("saved state = %s/%s", st.Status, st.Reason)
+	}
+}
+
+func TestWorkflowStopDefaultReason(t *testing.T) {
+	home := wfHome(t)
+	const id = "20261005-153012-43"
+	dir := wfSaveLiveRun(t, home, id, 0)
+
+	if _, _, err := runWorkflowCLI(t, "workflow", "stop", id); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	st, err := flow.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Status != flow.StatusStopped || st.Reason != flow.DefaultStopReason {
+		t.Fatalf("saved state = %s/%s", st.Status, st.Reason)
+	}
+}
+
+func TestWorkflowStopRefusesLiveOwner(t *testing.T) {
+	home := wfHome(t)
+	const id = "20261005-153012-44"
+	dir := wfSaveLiveRun(t, home, id, os.Getpid())
+
+	out, _, err := runWorkflowCLI(t, "workflow", "stop", id, "--json")
+	if err == nil {
+		t.Fatal("stop of a run that a live process owns must fail")
+	}
+	if r := decodeWorkflowResult(t, out); !strings.Contains(r.Error, "live in another process") {
+		t.Fatalf("result = %+v", r)
+	}
+	if st, _ := flow.Load(dir); st.Status != "running" {
+		t.Fatalf("status = %s, want running", st.Status)
+	}
+}
+
+func TestWorkflowStopRefusesNotRunning(t *testing.T) {
+	home := wfHome(t)
+	const id = "20261005-153012-45"
+	wfSaveRun(t, home, "demo", id, "done")
+
+	out, _, err := runWorkflowCLI(t, "workflow", "stop", id, "--json")
+	if err == nil {
+		t.Fatal("stop of a done run must fail")
+	}
+	if r := decodeWorkflowResult(t, out); !strings.Contains(r.Error, "not running") {
+		t.Fatalf("result = %+v", r)
 	}
 }

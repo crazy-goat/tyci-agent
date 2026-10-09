@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -73,6 +74,8 @@ var (
 	workflowValidateJSON bool
 	workflowValidateDir  string
 	workflowStatusJSON   bool
+	workflowStopJSON     bool
+	workflowStopReason   string
 )
 
 // workflowRepoInfo finds the repository of a workflow command. Tests replace it,
@@ -194,7 +197,7 @@ var workflowStatusCmd = &cobra.Command{
 	Use:   "status <run-id>",
 	Short: "Show the saved state of a run in any repository",
 	Long: `Show the saved state of the run <run-id>. The command searches the runs of every
-repository under ~/.tyci/runs. Exit code 0 means running, paused or done. Exit code 1
+repository under ~/.tyci/runs. Exit code 0 means running, paused, done or stopped. Exit code 1
 means failed, unknown or ambiguous.`,
 	Args: jsonArgs(1, &workflowStatusJSON),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -216,7 +219,45 @@ means failed, unknown or ambiguous.`,
 	},
 }
 
-// awaitRun returns when run id reports its final status (done, failed or paused).
+var workflowStopCmd = &cobra.Command{
+	Use:   "stop <run-id>",
+	Short: "Stop a running run that no live tyci process owns",
+	Long: `Stop the run <run-id>. The run must be running and its owner process must be gone.
+The run is saved as stopped. It keeps its worktree and its pull request, and it cannot
+be resumed. The command searches the runs of every repository under ~/.tyci/runs.
+Exit code 0 means stopped. Exit code 1 means not running, owned by a live process,
+unknown or ambiguous.`,
+	Args: jsonArgs(1, &workflowStopJSON),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		jsonOut := workflowStopJSON
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fail(cmd, jsonOut, err)
+		}
+		st, statePath, err := flow.FindRun(home, args[0])
+		if err != nil {
+			return fail(cmd, jsonOut, err)
+		}
+		if st.Status != "running" {
+			return fail(cmd, jsonOut, fmt.Errorf("run %s is %s, not running", st.Run, st.Status))
+		}
+		if !flow.OwnerGone(st) {
+			return fail(cmd, jsonOut, errors.New("run is live in another process; use /stop in that session"))
+		}
+		st.Status = flow.StatusStopped
+		st.Reason = workflowStopReason
+		if st.Reason == "" {
+			st.Reason = flow.DefaultStopReason
+		}
+		if err := (&flow.Store{Dir: filepath.Dir(statePath)}).Save(st); err != nil {
+			return fail(cmd, jsonOut, err)
+		}
+		printResult(cmd.OutOrStdout(), jsonOut, runResult(st, statePath))
+		return nil
+	},
+}
+
+// awaitRun returns when run id reports its final status (done, failed, paused or stopped).
 // It returns the error of ctx when ctx ends first, so a run that never reports
 // does not block the command.
 func awaitRun(ctx context.Context, events <-chan flow.RunEvent, id string) error {
@@ -340,6 +381,8 @@ func init() {
 	workflowValidateCmd.Flags().BoolVar(&workflowValidateJSON, "json", false, "print one JSON object on stdout")
 	workflowValidateCmd.Flags().StringVar(&workflowValidateDir, "dir", "", "project directory (default: current directory)")
 	workflowStatusCmd.Flags().BoolVar(&workflowStatusJSON, "json", false, "print one JSON object on stdout")
-	workflowCmd.AddCommand(workflowInitCmd, workflowRunCmd, workflowValidateCmd, workflowStatusCmd)
+	workflowStopCmd.Flags().BoolVar(&workflowStopJSON, "json", false, "print one JSON object on stdout")
+	workflowStopCmd.Flags().StringVar(&workflowStopReason, "reason", "", "why the run is stopped (default: stopped by user)")
+	workflowCmd.AddCommand(workflowInitCmd, workflowRunCmd, workflowValidateCmd, workflowStatusCmd, workflowStopCmd)
 	rootCmd.AddCommand(workflowCmd)
 }
