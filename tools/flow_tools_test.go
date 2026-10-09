@@ -8,15 +8,18 @@ import (
 )
 
 type fakeWorkflowManager struct {
-	issue  int
-	answer string
-	err    error
+	workflow string
+	params   []string
+	answer   string
+	err      error
+	list     []WorkflowInfo
 }
 
-func (f *fakeWorkflowManager) Start(_ context.Context, _ string, issue int) (string, []string, error) {
-	f.issue = issue
+func (f *fakeWorkflowManager) Start(_ context.Context, workflow string, params []string) (string, []string, error) {
+	f.workflow, f.params = workflow, params
 	return "20261005-120301-160", nil, f.err
 }
+func (f *fakeWorkflowManager) Workflows() []WorkflowInfo { return f.list }
 func (f *fakeWorkflowManager) Status(string) (any, error) {
 	return map[string]any{"status": "running"}, f.err
 }
@@ -31,12 +34,12 @@ func withWorkflowManager(t *testing.T, m WorkflowManager) {
 func TestWorkflowTools_StartStatusResume(t *testing.T) {
 	f := &fakeWorkflowManager{}
 	withWorkflowManager(t, f)
-	res := RunTool(context.Background(), "workflow_start", map[string]any{"issue": float64(160)})
-	if !res.Success || f.issue != 160 || !strings.Contains(res.Content, `"run":"20261005-120301-160"`) || !strings.Contains(res.Content, `"warnings":[]`) {
+	res := RunTool(context.Background(), "workflow_start", map[string]any{"workflow": "issue-to-merge", "params": []any{"160"}})
+	if !res.Success || f.workflow != "issue-to-merge" || len(f.params) != 1 || f.params[0] != "160" || !strings.Contains(res.Content, `"run":"20261005-120301-160"`) || !strings.Contains(res.Content, `"warnings":[]`) {
 		t.Fatalf("start: %+v", res)
 	}
-	if res := RunTool(context.Background(), "workflow_start", map[string]any{}); res.Success {
-		t.Fatal("start without issue succeeded")
+	if res := RunTool(context.Background(), "workflow_start", map[string]any{"params": []any{"160"}}); res.Success {
+		t.Fatal("start without workflow succeeded")
 	}
 	if res := RunTool(context.Background(), "workflow_status", nil); !res.Success || !strings.Contains(res.Content, "running") {
 		t.Fatalf("status: %+v", res)

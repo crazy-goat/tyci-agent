@@ -163,9 +163,50 @@ func addRunWorktree(ctx context.Context, info RepoInfo, runID string, issue int)
 // ChatTools adapts a Manager to tools.WorkflowManager.
 type ChatTools struct{ M *Manager }
 
-// Start implements tools.WorkflowManager.
-func (c ChatTools) Start(ctx context.Context, workflow string, issue int) (string, []string, error) {
-	return c.M.StartIssue(ctx, workflow, issue)
+// Start implements tools.WorkflowManager. A missing required param gets a text
+// that tells the model to ask the user first.
+func (c ChatTools) Start(ctx context.Context, workflow string, params []string) (string, []string, error) {
+	run, warnings, err := c.M.Start(ctx, StartRequest{Workflow: workflow, Params: params})
+	var mp MissingParamError
+	if errors.As(err, &mp) {
+		text := fmt.Sprintf("missing required param %s", mp.Name)
+		if mp.Description != "" {
+			text += " (" + mp.Description + ")"
+		}
+		return "", nil, fmt.Errorf("%s: ask the user, then call workflow_start again", text)
+	}
+	if err == nil && c.M.Notify != nil {
+		c.M.Notify(startedNotice(workflow, params))
+	}
+	return run, warnings, err
+}
+
+// startedNotice is the chat line for a run the model started, for example
+// "model started /issue-to-merge 160".
+func startedNotice(workflow string, params []string) string {
+	return strings.TrimSpace("model started /" + workflow + " " + strings.Join(params, " "))
+}
+
+// Workflows implements tools.WorkflowManager. It lists the workflows on disk
+// that load, and skips the others.
+func (c ChatTools) Workflows() []tools.WorkflowInfo {
+	info, err := c.M.Info()
+	if err != nil {
+		return nil
+	}
+	var out []tools.WorkflowInfo
+	for _, name := range availableWorkflows(info.Home, info.Root, info.Trusted) {
+		wf, source, err := Lookup(name, info.Home, info.Root, info.Trusted)
+		if err != nil {
+			continue
+		}
+		w := tools.WorkflowInfo{Name: name, Description: wf.Description, Source: source}
+		for _, p := range wf.Params {
+			w.Params = append(w.Params, tools.WorkflowParam{Name: p.Name, Description: p.Description, Required: p.Required})
+		}
+		out = append(out, w)
+	}
+	return out
 }
 
 // Resume implements tools.WorkflowManager.

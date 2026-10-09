@@ -3,18 +3,40 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 )
 
 // WorkflowManager is what the chat workflow tools call. internal/flow
 // implements it; tools never imports flow (layering, as with JobWaiter).
 type WorkflowManager interface {
-	// Start validates and starts a run and returns at once.
-	Start(ctx context.Context, workflow string, issue int) (run string, warnings []string, err error)
+	// Start validates and starts a run and returns at once. params are the
+	// positional param values of the workflow.
+	Start(ctx context.Context, workflow string, params []string) (run string, warnings []string, err error)
+	// Workflows lists the workflows that can be started.
+	Workflows() []WorkflowInfo
 	// Status returns a JSON-ready summary; an empty run means the newest.
 	Status(run string) (any, error)
 	// Resume answers a paused run; a bad answer returns an error listing the keys.
 	Resume(run, answer string) error
+}
+
+// WorkflowInfo describes a workflow for the model.
+type WorkflowInfo struct {
+	Name        string
+	Description string
+	Source      string
+	Params      []WorkflowParam
+}
+
+// WorkflowParam is one positional param of a workflow.
+type WorkflowParam struct {
+	Name        string
+	Description string
+	Required    bool
 }
 
 var (
@@ -67,15 +89,30 @@ func (t *WorkflowStartTool) Run(_ context.Context, input map[string]any) ToolRes
 	if bad != nil {
 		return *bad
 	}
-	issue := intParam(input, "issue", 0)
-	if issue <= 0 {
-		return ToolResult{Type: "result", Success: false, Error: "workflow_start requires a positive issue number", validationError: true}
+	list := m.Workflows()
+	name := stringParam(input, "workflow", "")
+	if name == "" {
+		return ToolResult{Type: "result", Success: false, validationError: true,
+			Error: "workflow is required. Available workflows: " + workflowSummary(list)}
+	}
+	_, hasParams := input["params"]
+	if _, hasIssue := input["issue"]; hasIssue && !hasParams {
+		return ToolResult{Type: "result", Success: false, validationError: true,
+			Error: `the "issue" argument is gone: use params instead, for example "params": ["160"]`}
+	}
+	params, err := workflowParams(input)
+	if err != nil {
+		return ToolResult{Type: "result", Success: false, Error: err.Error(), validationError: true}
 	}
 	// The run outlives this tool call, so it must not use the turn context:
 	// the manager runs it on its own context (cancelled on quit).
-	run, warnings, err := m.Start(context.Background(), stringParam(input, "workflow", ""), issue)
+	run, warnings, err := m.Start(context.Background(), name, params)
 	if err != nil {
-		return workflowFail(err)
+		msg := err.Error()
+		if !workflowKnown(list, name) && !strings.Contains(msg, "available") {
+			msg += ". Available workflows: " + workflowSummary(list)
+		}
+		return ToolResult{Type: "result", Success: false, Error: msg}
 	}
 	if warnings == nil {
 		warnings = []string{}
@@ -126,21 +163,111 @@ func (t *WorkflowResumeTool) Run(_ context.Context, input map[string]any) ToolRe
 	return workflowJSON(map[string]any{"run": run, "status": "running"})
 }
 
+// workflowList returns the workflows of the manager, or none when it is not set.
+func workflowList() []WorkflowInfo {
+	m, bad := getWorkflowManager()
+	if bad != nil {
+		return nil
+	}
+	return m.Workflows()
+}
+
+// workflowLine describes one workflow: "name p1 [p2]: description". A required
+// param has no brackets, an optional one has them.
+func workflowLine(w WorkflowInfo) string {
+	var b strings.Builder
+	b.WriteString(w.Name)
+	for _, p := range w.Params {
+		if p.Required {
+			b.WriteString(" " + p.Name)
+		} else {
+			b.WriteString(" [" + p.Name + "]")
+		}
+	}
+	b.WriteString(":")
+	if w.Description != "" {
+		b.WriteString(" " + w.Description)
+	}
+	return b.String()
+}
+
+// workflowSummary joins the lines of workflows for an error text.
+func workflowSummary(list []WorkflowInfo) string {
+	if len(list) == 0 {
+		return "none"
+	}
+	lines := make([]string, 0, len(list))
+	for _, w := range list {
+		lines = append(lines, workflowLine(w))
+	}
+	return strings.Join(lines, "; ")
+}
+
+// workflowKnown reports whether name is one of list.
+func workflowKnown(list []WorkflowInfo, name string) bool {
+	for _, w := range list {
+		if w.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// workflowParams reads the "params" argument. JSON gives numbers as float64 and
+// arrays as []any; both are converted to the text of each value.
+func workflowParams(input map[string]any) ([]string, error) {
+	const bad = `params must be an array of strings, for example ["160"]`
+	switch v := input["params"].(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		return v, nil
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			switch x := item.(type) {
+			case nil:
+				out = append(out, "")
+			case string:
+				out = append(out, x)
+			case float64:
+				out = append(out, strconv.FormatFloat(x, 'f', -1, 64))
+			default:
+				out = append(out, fmt.Sprint(x))
+			}
+		}
+		return out, nil
+	default:
+		return nil, errors.New(bad)
+	}
+}
+
 // workflowToolsSchema is the schema of the workflow_* tools. They are for the
-// chat model only: all three are in subagentDeniedTools.
-func workflowToolsSchema() []map[string]any {
+// chat model only: all three are in subagentDeniedTools. The start description
+// lists list, so the model picks a real workflow.
+func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 	fn := func(name, desc string, props map[string]any, required []string) map[string]any {
 		return map[string]any{"type": "function", "function": map[string]any{
 			"name": name, "description": desc,
 			"parameters": map[string]any{"type": "object", "properties": props, "required": required},
 		}}
 	}
+	startDesc := "Start a workflow run. Returns at once; a notice arrives when the run finishes or pauses."
+	if len(list) == 0 {
+		startDesc += " No workflows are available."
+	} else {
+		startDesc += " Available workflows:"
+		for _, w := range list {
+			startDesc += "\n- " + workflowLine(w)
+		}
+	}
 	return []map[string]any{
-		fn("workflow_start", "Start a workflow run for a GitHub issue of the current repository (for example \"work on #160\"). Returns at once; a notice arrives when the run finishes or pauses.",
+		fn("workflow_start", startDesc,
 			map[string]any{
-				"workflow": map[string]any{"type": "string", "description": "Workflow name: a directory in .tyci/workflows/ of the project or in ~/.tyci/workflows/."},
-				"issue":    map[string]any{"type": "integer", "description": "Issue number."},
-			}, []string{"workflow", "issue"}),
+				"workflow": map[string]any{"type": "string", "description": "Workflow name, one of the available workflows in the description."},
+				"params": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
+					"description": "Positional param values, in the order the workflow declares them."},
+			}, []string{"workflow"}),
 		fn("workflow_status", "Show the state of a workflow run: status, current state, visits, last history entries, PR.",
 			map[string]any{"run": map[string]any{"type": "string", "description": "Run id (default: newest run)."}}, []string{}),
 		fn("workflow_resume", "Answer a paused workflow run. Use one of the answers named in the pause notice: \"retry\" (back to the worker), \"stop\" (end the run), \"retry <note>\" (back to the worker with the note), \"goto <state>\" (continue at that state) or \"resume\" (only for a run paused at start-up: continue at its saved state). When the pause has a workflow proposal, first show its summary and patch from workflow_status to the user, then answer \"apply\" (opens a PR with the change of .tyci/workflows/<name>/) or \"reject\" only as the user says; the run stays paused for its normal answer.",
