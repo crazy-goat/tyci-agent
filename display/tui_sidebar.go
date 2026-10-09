@@ -1069,7 +1069,9 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 		}
 		descriptions[j.ID] = j.Description
 		// A resumed job is listed under the job it continues. Its real
-		// ParentID stays as it is: notices and cost rollup do not change.
+		// ParentID stays as it is, so notices do not change. The cost rollup
+		// walks this tree, so the cost of the resumed job also counts in the
+		// job it continues and in that job's ancestors.
 		parent := j.ParentID
 		if old, ok := m.resumedFrom[j.ID]; ok {
 			parent = old

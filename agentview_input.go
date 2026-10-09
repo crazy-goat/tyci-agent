@@ -29,22 +29,23 @@ func (agentViewInput) Post(jobID, text string) error {
 // ResumeCheck returns the context size (estimated in tokens) and the estimated
 // cost of resuming the finished agent jobID. The cost is the input price of
 // the whole context, without the cache discount: a resume loads the context
-// again. It returns an error when jobID cannot be resumed.
-func (agentViewInput) ResumeCheck(jobID string) (int, float64, error) {
+// again. priced is false when the model has no known price; then usd is not
+// an estimate. It returns an error when jobID cannot be resumed.
+func (agentViewInput) ResumeCheck(jobID string) (tokens int, usd float64, priced bool, err error) {
 	if _, err := agentRunWorkdir(jobID); err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
 	resumableMu.Lock()
 	entry, ok := resumable[jobID]
 	resumableMu.Unlock()
 	if !ok {
-		return 0, 0, fmt.Errorf("job %s has no saved conversation to resume", jobID)
+		return 0, 0, false, fmt.Errorf("job %s has no saved conversation to resume", jobID)
 	}
 	// The same estimate as the status bar: about four bytes per token.
 	data, _ := json.Marshal(entry.msgs)
-	tokens := len(data) / 4
+	tokens = len(data) / 4
 	rates, _ := pricing.Lookup(entry.mc.Provider(), entry.mc.Model())
-	return tokens, ledger.Cost(rates, stream.Usage{Input: tokens}), nil
+	return tokens, ledger.Cost(rates, stream.Usage{Input: tokens}), rates.Known(), nil
 }
 
 // Resume starts a new job that continues the conversation of the finished
@@ -66,15 +67,19 @@ func (agentViewInput) Resume(jobID, text string) (string, error) {
 	return h.ID(), nil
 }
 
+// agentRunInfo gives the repository info for the run lookup. Tests replace it.
+var agentRunInfo = func() (flow.RepoInfo, error) { return workflowManager.Info() }
+
 // agentRunWorkdir refuses a resume of an agent that belongs to a workflow run
 // which is not done or paused. It returns the worktree of that run, so the
 // resumed agent works in the same files. An agent of no run returns "". The
 // worktree of a merged or skipped run is removed; a resume then would work in
-// the main checkout, so it is refused too.
+// the main checkout, so it is refused too. When the repository cannot be
+// read, the run of the agent is unknown, so the resume is refused as well.
 func agentRunWorkdir(jobID string) (string, error) {
-	info, err := workflowManager.Info()
+	info, err := agentRunInfo()
 	if err != nil {
-		return "", nil
+		return "", fmt.Errorf("cannot read the workflow runs, so the agent cannot be checked: %w", err)
 	}
 	return runWorkdirIn(info, jobID)
 }

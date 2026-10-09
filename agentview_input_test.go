@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
+	"github.com/crazy-goat/tyci-agent/internal/pricing"
+	"github.com/crazy-goat/tyci-agent/stream"
 )
 
 // saveTestRun writes a workflow run of repo "repo" under home, with one agent
@@ -67,5 +73,104 @@ func TestPostToLiveAgent_IsRefusedForAFinishedJob(t *testing.T) {
 	// instead of publishing into a dead mailbox.
 	if err := (agentViewInput{}).Post("job-unknown", "hi"); err == nil {
 		t.Fatal("Post to a job that is not running must fail")
+	}
+}
+
+// fakeCheckModel is a model client with a fixed provider and model name. It
+// never streams: ResumeCheck only reads its names.
+type fakeCheckModel struct{ provider, model string }
+
+func (f fakeCheckModel) Provider() string { return f.provider }
+func (f fakeCheckModel) Model() string    { return f.model }
+func (f fakeCheckModel) Stream(context.Context, connector.Request) (<-chan stream.Event, error) {
+	return nil, errors.New("not used by the resume check")
+}
+
+// useRunInfo replaces the run lookup for one test: it returns the repository
+// with home as its home, or err.
+func useRunInfo(t *testing.T, home string, err error) {
+	t.Helper()
+	orig := agentRunInfo
+	agentRunInfo = func() (flow.RepoInfo, error) {
+		return flow.RepoInfo{Home: home, Repo: "owner/repo"}, err
+	}
+	t.Cleanup(func() { agentRunInfo = orig })
+}
+
+// stashCheckAgent saves a finished agent job with a conversation of about
+// 400 bytes, priced by model client mc.
+func stashCheckAgent(t *testing.T, jobID string, mc connector.ModelClient) []connector.Message {
+	t.Helper()
+	resetResumableForTest(t)
+	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: strings.Repeat("x", 400)}}}}
+	stashResumable(jobID, resumableEntry{msgs: msgs, mc: mc})
+	return msgs
+}
+
+func TestResumeCheck_EstimatesTokensFromTheSavedConversation(t *testing.T) {
+	useRunInfo(t, t.TempDir(), nil)
+	msgs := stashCheckAgent(t, "job-check", fakeCheckModel{provider: "nowhere", model: "unpriced"})
+
+	tokens, _, _, err := (agentViewInput{}).ResumeCheck("job-check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(msgs)
+	if want := len(data) / 4; tokens != want || tokens < 100 {
+		t.Fatalf("tokens = %d, want %d (about four bytes per token of the saved conversation)", tokens, want)
+	}
+}
+
+func TestResumeCheck_UnpricedModelReportsNoCost(t *testing.T) {
+	useRunInfo(t, t.TempDir(), nil)
+	stashCheckAgent(t, "job-unpriced", fakeCheckModel{provider: "nowhere", model: "unpriced"})
+
+	_, usd, priced, err := (agentViewInput{}).ResumeCheck("job-unpriced")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if priced || usd != 0 {
+		t.Fatalf("priced=%v usd=%v, want an unpriced model with no cost estimate", priced, usd)
+	}
+}
+
+func TestResumeCheck_PricedModelReportsTheInputCost(t *testing.T) {
+	// The price catalog is read from HOME/.tyci/providers.json.
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".tyci"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	catalog := `{"anthropic":{"id":"anthropic","npm":"@ai-sdk/anthropic","name":"Anthropic","models":{
+		"claude-sonnet-5":{"id":"claude-sonnet-5","name":"Claude Sonnet 5",
+		"cost":{"input":3,"output":15},"limit":{"context":200000,"output":64000}}}}}`
+	if err := os.WriteFile(filepath.Join(home, ".tyci", "providers.json"), []byte(catalog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	pricing.Reset()
+	t.Cleanup(pricing.Reset)
+	useRunInfo(t, t.TempDir(), nil)
+	stashCheckAgent(t, "job-priced", fakeCheckModel{provider: "anthropic", model: "claude-sonnet-5"})
+
+	tokens, usd, priced, err := (agentViewInput{}).ResumeCheck("job-priced")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := float64(tokens) / 1_000_000 * 3
+	if !priced || usd <= 0 || usd < want*0.999 || usd > want*1.001 {
+		t.Fatalf("priced=%v usd=%v tokens=%d, want the input price of the tokens (%v)", priced, usd, tokens, want)
+	}
+}
+
+func TestAgentRunWorkdir_RefusesWhenTheRunsCannotBeRead(t *testing.T) {
+	// A failed lookup must refuse, not allow: the run of the agent is unknown.
+	useRunInfo(t, "", errors.New("not a git repository"))
+	stashCheckAgent(t, "job-lookup", fakeCheckModel{provider: "nowhere", model: "unpriced"})
+
+	if _, err := agentRunWorkdir("job-lookup"); err == nil || !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("err = %v, want a refusal that carries the lookup error", err)
+	}
+	if _, _, _, err := (agentViewInput{}).ResumeCheck("job-lookup"); err == nil {
+		t.Fatal("ResumeCheck must refuse when the runs cannot be read")
 	}
 }

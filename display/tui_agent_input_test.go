@@ -18,9 +18,12 @@ type fakeAgentInput struct {
 	checks    int
 	tokens    int
 	usd       float64
+	priced    bool
 	checkErr  error
 	newID     string
 	resumeErr error
+	// release, when set, makes ResumeCheck block until it is closed.
+	release chan struct{}
 }
 
 func (f *fakeAgentInput) Post(jobID, text string) error {
@@ -28,9 +31,12 @@ func (f *fakeAgentInput) Post(jobID, text string) error {
 	return nil
 }
 
-func (f *fakeAgentInput) ResumeCheck(jobID string) (int, float64, error) {
+func (f *fakeAgentInput) ResumeCheck(jobID string) (int, float64, bool, error) {
 	f.checks++
-	return f.tokens, f.usd, f.checkErr
+	if f.release != nil {
+		<-f.release
+	}
+	return f.tokens, f.usd, f.priced, f.checkErr
 }
 
 func (f *fakeAgentInput) Resume(jobID, text string) (string, error) {
@@ -69,6 +75,14 @@ func runCmd(t *testing.T, m TuiModel, cmd tea.Cmd) TuiModel {
 	return model.(TuiModel)
 }
 
+// enterAndCheck presses Enter in a finished agent's view and runs the check
+// command that the Enter returned, as the program does.
+func enterAndCheck(t *testing.T, m TuiModel) TuiModel {
+	t.Helper()
+	m, cmd := press(m, enterKey)
+	return runCmd(t, m, cmd)
+}
+
 func lastViewBlock(m TuiModel) block {
 	blocks := m.agentView.model.blocks
 	return blocks[len(blocks)-1]
@@ -97,12 +111,12 @@ func TestAgentInput_RunningAgentGetsTheTextAsMessage(t *testing.T) {
 }
 
 func TestAgentInput_FinishedAgentNeedsSecondEnterToResume(t *testing.T) {
-	fake := &fakeAgentInput{tokens: 392000, usd: 1.25, newID: "agent-new"}
+	fake := &fakeAgentInput{tokens: 392000, usd: 1.25, priced: true, newID: "agent-new"}
 	m := openInputTestView(t, "agent-old", jobs.StatusDone, fake)
 	m.input.SetValue("one more thing")
 
-	m, cmd := press(m, enterKey)
-	if cmd != nil || len(fake.resumed) != 0 {
+	m = enterAndCheck(t, m)
+	if len(fake.resumed) != 0 {
 		t.Fatal("the first Enter must not resume the agent")
 	}
 	if !m.agentView.confirming {
@@ -116,7 +130,7 @@ func TestAgentInput_FinishedAgentNeedsSecondEnterToResume(t *testing.T) {
 		t.Fatal("the text must stay in the input until the resume is confirmed")
 	}
 
-	m, cmd = press(m, enterKey)
+	m, cmd := press(m, enterKey)
 	m = runCmd(t, m, cmd)
 	if len(fake.resumed) != 1 || fake.resumed[0] != "agent-old: one more thing" {
 		t.Fatalf("resumed = %q, want one resume of agent-old with the text", fake.resumed)
@@ -137,14 +151,14 @@ func TestAgentInput_OtherKeyCancelsTheResume(t *testing.T) {
 	m := openInputTestView(t, "agent-old", jobs.StatusDone, fake)
 	m.input.SetValue("text")
 
-	m, _ = press(m, enterKey)
+	m = enterAndCheck(t, m)
 	m, cmd := press(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	if cmd != nil || m.agentView.confirming {
 		t.Fatal("another key must cancel the resume")
 	}
 
 	// Esc cancels a pending resume too, and it must not also close the view.
-	m, _ = press(m, enterKey)
+	m = enterAndCheck(t, m)
 	m, cmd = press(m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.agentView == nil || m.agentView.confirming {
 		t.Fatal("Esc must cancel the resume and keep the view open")
@@ -162,8 +176,8 @@ func TestAgentInput_RefusesResumeOfAnAgentOfAnActiveRun(t *testing.T) {
 	m := openInputTestView(t, "agent-busy", jobs.StatusDone, fake)
 	m.input.SetValue("text")
 
-	m, cmd := press(m, enterKey)
-	if cmd != nil || m.agentView.confirming {
+	m = enterAndCheck(t, m)
+	if m.agentView.confirming {
 		t.Fatal("a refused agent must not ask for a confirmation")
 	}
 	got := lastViewBlock(m)
@@ -192,7 +206,7 @@ func TestAgentInput_ResumedViewOpensBeforeItsTranscriptExists(t *testing.T) {
 	fake := &fakeAgentInput{newID: "agent-fresh"}
 	m := openInputTestView(t, "agent-old2", jobs.StatusDone, fake)
 	m.input.SetValue("go on")
-	m, _ = press(m, enterKey)
+	m = enterAndCheck(t, m)
 	m, cmd := press(m, enterKey)
 	m = runCmd(t, m, cmd)
 	if m.agentView == nil || m.agentView.jobID != "agent-fresh" {
@@ -253,5 +267,87 @@ func TestAgentInput_TextGoesToTheAgentWhileMainIsBusy(t *testing.T) {
 	}
 	if len(m.queueItems) != 0 {
 		t.Fatalf("queueItems = %q, the text must not join the main queue", m.queueItems)
+	}
+}
+
+func TestAgentInput_ResumeCheckDoesNotBlockUpdate(t *testing.T) {
+	// The check blocks until the test releases it. Update must return before
+	// that, because the check runs on a tea.Cmd.
+	fake := &fakeAgentInput{tokens: 1000, usd: 0.5, priced: true, release: make(chan struct{})}
+	m := openInputTestView(t, "agent-old", jobs.StatusDone, fake)
+	m.input.SetValue("text")
+
+	got := make(chan tea.Cmd, 1)
+	go func() {
+		_, cmd := press(m, enterKey)
+		got <- cmd
+	}()
+	var cmd tea.Cmd
+	select {
+	case cmd = <-got:
+	case <-time.After(2 * time.Second):
+		close(fake.release)
+		t.Fatal("Update blocked on the resume check")
+	}
+	if cmd == nil {
+		close(fake.release)
+		t.Fatal("the first Enter must return the check as a command")
+	}
+	if fake.checks != 0 {
+		close(fake.release)
+		t.Fatal("ResumeCheck must not run inside Update")
+	}
+
+	res := make(chan tea.Msg, 1)
+	go func() { res <- cmd() }()
+	close(fake.release)
+	msg := <-res
+	m = feedMsg(t, m, msg)
+	if !m.agentView.confirming || m.agentView.confirmText != "text" {
+		t.Fatal("the check result must ask for the confirmation of the text")
+	}
+	if got := lastViewBlock(m).content; !strings.Contains(got, "about $0.50") {
+		t.Fatalf("confirmation notice = %q, want the cost", got)
+	}
+}
+
+// feedMsg delivers msg to m, as the program does, and returns the model.
+func feedMsg(t *testing.T, m TuiModel, msg tea.Msg) TuiModel {
+	t.Helper()
+	model, _ := m.Update(msg)
+	return model.(TuiModel)
+}
+
+func TestAgentInput_StaleCheckResultIsIgnored(t *testing.T) {
+	fake := &fakeAgentInput{priced: true}
+	m := openInputTestView(t, "agent-old", jobs.StatusDone, fake)
+	m.input.SetValue("text")
+	blocks := len(m.agentView.model.blocks)
+
+	// The result is for another agent than the one the view shows.
+	m = feedMsg(t, m, agentResumeCheckDoneMsg{jobID: "agent-other", text: "text", usd: 0.1, priced: true})
+	if m.agentView.confirming || len(m.agentView.model.blocks) != blocks {
+		t.Fatal("a check result for another agent must be ignored")
+	}
+
+	// The view is closed before the result arrives.
+	m = feedMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = feedMsg(t, m, agentResumeCheckDoneMsg{jobID: "agent-old", text: "text", priced: true})
+	if m.agentView != nil {
+		t.Fatal("a late check result must not reopen or confirm anything")
+	}
+}
+
+func TestAgentInput_UnpricedModelSaysCostUnknown(t *testing.T) {
+	fake := &fakeAgentInput{tokens: 392000, priced: false}
+	m := openInputTestView(t, "agent-old", jobs.StatusDone, fake)
+	m.input.SetValue("text")
+
+	m = enterAndCheck(t, m)
+	if !m.agentView.confirming {
+		t.Fatal("an unpriced resume must still ask for a confirmation")
+	}
+	if got := lastViewBlock(m).content; !strings.Contains(got, "cost unknown (model not priced)") {
+		t.Fatalf("confirmation notice = %q, want the cost shown as unknown", got)
 	}
 }

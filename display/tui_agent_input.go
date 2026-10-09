@@ -15,8 +15,9 @@ type AgentInput interface {
 	// Post puts text into the mailbox of the running agent jobID.
 	Post(jobID, text string) error
 	// ResumeCheck returns the context size in tokens and the estimated cost of
-	// resuming the finished agent jobID. err is the reason it cannot resume.
-	ResumeCheck(jobID string) (tokens int, usd float64, err error)
+	// resuming the finished agent jobID. priced is false when the cost is
+	// unknown. err is the reason it cannot resume.
+	ResumeCheck(jobID string) (tokens int, usd float64, priced bool, err error)
 	// Resume starts a new job that continues the finished agent jobID with
 	// text, and returns the id of the new job.
 	Resume(jobID, text string) (newJobID string, err error)
@@ -31,6 +32,16 @@ type tuiSetAgentInputMsg struct {
 // it can be put back into the input after a failure.
 type agentPostDoneMsg struct {
 	jobID, text string
+	err         error
+}
+
+// agentResumeCheckDoneMsg is the result of AgentInput.ResumeCheck. text is the
+// text that a second Enter would send.
+type agentResumeCheckDoneMsg struct {
+	jobID, text string
+	tokens      int
+	usd         float64
+	priced      bool
 	err         error
 }
 
@@ -101,18 +112,12 @@ func (m TuiModel) sendAgentViewInput() (TuiModel, tea.Cmd) {
 			return agentPostDoneMsg{jobID: jobID, text: text, err: in.Post(jobID, text)}
 		}
 	}
-	tokens, usd, err := in.ResumeCheck(jobID)
-	if err != nil {
-		m.agentViewNotice("error", "cannot resume "+jobID+": "+err.Error())
-		return m, nil
+	// The check reads the run files and the saved conversation, so it
+	// runs on a tea.Cmd. Its result sets confirming in the handler.
+	return m, func() tea.Msg {
+		tokens, usd, priced, err := in.ResumeCheck(jobID)
+		return agentResumeCheckDoneMsg{jobID: jobID, text: text, tokens: tokens, usd: usd, priced: priced, err: err}
 	}
-	av.confirming = true
-	av.confirmText = text
-	m.agentViewNotice("block", fmt.Sprintf(
-		"Resume %s: context about %s tok, estimated cost about $%s. "+
-			"The workflow run does not read the reply. Press Enter again to resume; any other key cancels.",
-		jobID, fmtTokens(tokens), fmtUSD(usd)))
-	return m, nil
 }
 
 // confirmAgentResume resumes the viewed agent with the text that was confirmed.
@@ -143,6 +148,27 @@ func (m TuiModel) handleAgentInputMsg(msg tea.Msg) (next TuiModel, cmd tea.Cmd, 
 			return m, nil, true
 		}
 		m.agentNotice(msg.jobID, "block", "message queued for "+msg.jobID+"; the agent reads it before its next turn")
+		return m, nil, true
+	case agentResumeCheckDoneMsg:
+		av := m.agentView
+		if av == nil || av.jobID != msg.jobID {
+			// The view shows another agent now, or none. The result is stale.
+			return m, nil, true
+		}
+		if msg.err != nil {
+			m.agentViewNotice("error", "cannot resume "+msg.jobID+": "+msg.err.Error())
+			return m, nil, true
+		}
+		cost := "unknown (model not priced)"
+		if msg.priced {
+			cost = "about $" + fmtUSD(msg.usd)
+		}
+		av.confirming = true
+		av.confirmText = msg.text
+		m.agentViewNotice("block", fmt.Sprintf(
+			"Resume %s: context about %s tok, estimated cost %s. "+
+				"The workflow run does not read the reply. Press Enter again to resume; any other key cancels.",
+			msg.jobID, fmtTokens(msg.tokens), cost))
 		return m, nil, true
 	case agentResumeDoneMsg:
 		if msg.err != nil {
