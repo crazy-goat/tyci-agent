@@ -904,7 +904,7 @@ func TestSidebarShiftTab_HelpTextNamesKeyAndFits(t *testing.T) {
 	if want := "Sidebar (Shift+Tab to focus)"; !strings.Contains(rows[0], want) {
 		t.Fatalf("expected the title %q, got %q", want, rows[0])
 	}
-	if want := "Shift+Tab: focus  Esc close"; rows[len(rows)-1] != want {
+	if want := "Shift+Tab: focus  Shift+←/→ width"; rows[len(rows)-1] != want {
 		t.Fatalf("expected the key line %q, got %q", want, rows[len(rows)-1])
 	}
 }

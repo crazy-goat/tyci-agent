@@ -57,6 +57,8 @@ func NewTUI(modelName string, historyPath string, toolCount int, skillCount int,
 	queue := make(chan string, 16)
 	resumeCh := make(chan string, 1) // one slot: the picker's send never blocks the event loop
 	m := newModel(results, modelName, historyPath, cancel, toolCount, skillCount, mcpCount)
+	// Restore the saved sidebar width once; a running TUI never reloads it.
+	m.sidebarWidthPercent = loadSidebarWidthPercent()
 	// Restore the persisted sidebar visibility (sidebar_visible in
 	// ~/.tyci/config.json): the sidebar starts open when the previous session
 	// closed with it open. Set directly on the fresh model — no goroutines
