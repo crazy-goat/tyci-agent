@@ -703,6 +703,14 @@ the session file and its markdown dump, then the last 8 messages. Subagents and
 flow roles compact in memory: they keep the task, a note with the summary, and
 the last 8 messages.
 
+Each compaction shows a divider line in the chat. The divider shows the kind of
+compaction, for example `auto compaction`, `/compact` or `in-loop compaction`.
+It adds `(summarized)` when a summary was used, and the context size before and
+after the compaction when these are known. A session resume shows the same
+dividers. The session file stores the compaction fields `kind`, `summarized`,
+`tokens_before` and `tokens_after`. Older session files have no `kind`, so their
+divider shows `compaction`.
+
 ## Long subagents
 
 A blocking `subagent` call waits 60s. After that its children move to the
