@@ -487,16 +487,25 @@ func rowStyle(width int, selected bool) lipgloss.Style {
 	return lipgloss.NewStyle().Width(width)
 }
 
+// renderSidebarTasks builds the Tasks rows once and styles them. It derives
+// the cursor line from those same rows, so one render builds the subagent
+// tree, the Bash rows and the Lua rows only once.
 func (m TuiModel) renderSidebarTasks(width int) []string {
 	rows := m.sidebarTaskRows(width)
-	out := make([]string, 0, len(rows))
 	cursorLine := -1
 	if m.sidebarCursor >= 0 {
-		jobRows := m.sidebarTaskJobRows(width)
+		jobRows := sidebarJobRowIndices(rows)
 		if m.sidebarCursor < len(jobRows) {
 			cursorLine = jobRows[m.sidebarCursor]
 		}
 	}
+	return styleSidebarTaskRows(rows, cursorLine, width)
+}
+
+// styleSidebarTaskRows turns built Tasks rows into the styled lines of the
+// tab. cursorLine is the index of the selected row in rows, or -1.
+func styleSidebarTaskRows(rows []sidebarTaskRow, cursorLine, width int) []string {
+	out := make([]string, 0, len(rows))
 	for i, row := range rows {
 		if row.isHeading {
 			// Pad before styling, so the padding keeps the sidebar background (see fillWidth).

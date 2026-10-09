@@ -89,6 +89,21 @@ func SnapshotLuaRunHistoryForTesting() func() {
 	}
 }
 
+// SetLuaRunHistoryForTesting replaces the Lua run history with runs and returns
+// a func that restores the previous history. Display tests use it to seed Lua
+// rows without running scripts.
+func SetLuaRunHistoryForTesting(runs []LuaRun) func() {
+	luaRunsMu.Lock()
+	saved := luaRuns
+	luaRuns = append([]LuaRun(nil), runs...)
+	luaRunsMu.Unlock()
+	return func() {
+		luaRunsMu.Lock()
+		luaRuns = saved
+		luaRunsMu.Unlock()
+	}
+}
+
 // LuaTool implements the Tool interface for user-defined Lua scripts.
 type LuaTool struct {
 	name        string

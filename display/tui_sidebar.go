@@ -1005,7 +1005,12 @@ func sidebarLuaRows(history []tools.LuaRun, width int) []sidebarTaskRow {
 }
 
 func (m TuiModel) sidebarTaskJobRows(width int) []int {
-	rows := m.sidebarTaskRows(width)
+	return sidebarJobRowIndices(m.sidebarTaskRows(width))
+}
+
+// sidebarJobRowIndices returns the indices in rows of the selectable job rows:
+// the job rows and the main row.
+func sidebarJobRowIndices(rows []sidebarTaskRow) []int {
 	indices := make([]int, 0)
 	for i, row := range rows {
 		if row.job != nil || row.isMain {
