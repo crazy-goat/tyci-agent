@@ -53,6 +53,9 @@ type BtwAnswer struct {
 	Question string `json:"question"`
 	Text     string `json:"text"`
 	JobID    string `json:"job_id"`
+	// Suggestion marks the answer of a fork that a user line started while the
+	// orchestrator was busy. It is a suggestion only, and it never wakes an idle chat.
+	Suggestion bool `json:"suggestion,omitempty"`
 }
 
 // JobStatus is the payload of KindJobStatus. It is a bus-local copy of the

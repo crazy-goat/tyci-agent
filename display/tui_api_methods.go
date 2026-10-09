@@ -333,6 +333,13 @@ func (t *TUI) OpenBtw(id, question string) {
 	t.prog.Send(tuiBtwOpenMsg{id: id, question: question, createdAt: time.Now()})
 }
 
+// RecordBtw adds a /btw entry to the /btw list without opening its modal. A
+// busy-line fork uses it, so that the prompt keeps the keyboard. Like OpenBtw,
+// it is sent before the caller starts the job's goroutine.
+func (t *TUI) RecordBtw(id, question string) {
+	t.prog.Send(tuiBtwOpenMsg{id: id, question: question, createdAt: time.Now(), quiet: true})
+}
+
 // SetBtwJobID records the background job's ID on the /btw entry once
 // tools.JobRegistry.Start has returned one. Delivered as a message (not a
 // direct field write) because the caller and the bubbletea event loop run on
