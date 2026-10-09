@@ -62,7 +62,7 @@ func withTestWiring(t *testing.T) (*jobs.Registry, *bus.Bus) {
 	t.Helper()
 	origReg, origAppBus := JobRegistry, appBus
 
-	reg := jobs.NewRegistry(&jobEventForwarder{})
+	reg := newJobRegistry()
 	// A fresh app bus: its bus tree belongs to reg (newAppBus reads
 	// JobRegistry, so it must be set first), and the notices of one test must
 	// not show up in another's queue.

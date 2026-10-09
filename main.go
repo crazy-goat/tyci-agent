@@ -880,6 +880,13 @@ type jobEventForwarder struct {
 	last map[string]uint64 // newest EventSeq published as job.status, per job
 }
 
+// newJobRegistry creates a job registry that publishes its status changes
+// through jobEventForwarder. JobRegistry and the test wiring both use it, so
+// no registry can be built without the forwarder by mistake.
+func newJobRegistry() *jobs.Registry {
+	return jobs.NewRegistry(&jobEventForwarder{})
+}
+
 // JobEvent implements jobs.EventPublisher. It runs forwardJobEvent first: the
 // job.status message is the last step, so a test that sees the status knows
 // that forwardJobEvent no longer reads the package globals.

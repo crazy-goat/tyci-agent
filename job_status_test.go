@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/jobs"
@@ -33,5 +35,28 @@ func TestJobEventForwarder_LateSnapshotKeepsTerminalStatus(t *testing.T) {
 	}
 	if got.Status != string(jobs.StatusDone) {
 		t.Fatalf("expected the terminal status to survive, got %q", got.Status)
+	}
+}
+
+// A job that runs on the package-level JobRegistry, built by production code,
+// must publish its status on the bus. This fails if JobRegistry is built with
+// a nil publisher.
+func TestJobRegistry_ProductionRegistryPublishesJobStatus(t *testing.T) {
+	prev := appBus
+	appBus = newAppBus("")
+	t.Cleanup(func() {
+		appBus.Close()
+		appBus = prev
+	})
+	sub := subscribeJobStatus(appBus)
+	defer sub.Close()
+
+	job := JobRegistry.Start(context.Background(), "production registry", jobs.KindOther, "", func(context.Context, string) (string, bool, error) {
+		return "ok", false, nil
+	})
+
+	got := collectJobStatus(t, sub, job.ID, 2*time.Second)
+	if len(got) == 0 || got[len(got)-1] != jobs.StatusDone {
+		t.Fatalf("job.status messages for the production registry = %v, want to end with done", got)
 	}
 }
