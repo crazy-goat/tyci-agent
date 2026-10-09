@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - TUI: Shift+Tab moves focus between the prompt and the sidebar. With the sidebar closed, it opens the sidebar and focuses it (#511).
 - Bus: the new `bus` package adds a message bus for in-process messages. Each message has a JSON payload. A message goes to one address, or down a subtree of agents. Durable messages are never dropped. Latest messages keep only the newest message per key. No code uses the package yet (#192).
+- Bus: Durable messages can be written to a journal file, one redacted JSON line per message, with mode 0600. The bus continues Seq from the file after a restart. A queue that holds 1024 unread Durable messages makes the bus publish one notice to the parent of that agent. The package adds the kinds `job.status`, `notice.completion`, `ask.request`, `agent.message`, `btw.answer` and `ping.missed`. No code uses the package yet (#193).
 
 ### Fixed
 - TUI: the Tasks tab shows the tokens and the cost of each row, `main` and the subagents, in two right-aligned columns at the right edge of the sidebar. The columns line up in all rows. In a narrow row, the label is cut first. Then the tokens are dropped, then the cost (#527).

@@ -30,17 +30,24 @@ func newQueue() *queue {
 	}
 }
 
+// warnDepth is the Durable queue depth at which the bus warns the parent of
+// the agent. The warning is sent once per crossing of this depth.
+const warnDepth = 1024
+
 // put adds m. key is used only for Latest. put never blocks. It does
-// nothing on a closed queue.
-func (q *queue) put(m Message, class Class, key string) {
+// nothing on a closed queue. For Durable, it returns the new depth and
+// whether this put reached warnDepth.
+func (q *queue) put(m Message, class Class, key string) (depth int, crossed bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.closed {
-		return
+		return 0, false
 	}
 	switch class {
 	case Durable:
 		q.durable = append(q.durable, m)
+		depth = len(q.durable)
+		crossed = depth == warnDepth
 	case Latest:
 		q.putLatest(latestKey{kind: m.Kind, key: key}, m)
 	}
@@ -48,6 +55,7 @@ func (q *queue) put(m Message, class Class, key string) {
 	case q.ready <- struct{}{}:
 	default:
 	}
+	return depth, crossed
 }
 
 // putLatest stores m for k. An older message never replaces a newer one.
