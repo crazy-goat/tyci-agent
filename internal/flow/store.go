@@ -194,3 +194,32 @@ func RecentRuns(home, repoName string, n int) []*RunState {
 	}
 	return out
 }
+
+// RunOfSession returns the run that has an agent step run as session (the job
+// id of the agent). ok is false when no run of repoName has such a step, for
+// example an agent started outside a workflow.
+func RunOfSession(home, repoName, session string) (st *RunState, ok bool) {
+	if session == "" {
+		return nil, false
+	}
+	base := filepath.Join(home, ".tyci", "runs", repoName)
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil, false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		run, err := Load(filepath.Join(base, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, h := range run.History {
+			if h.Session == session {
+				return run, true
+			}
+		}
+	}
+	return nil, false
+}
