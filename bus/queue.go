@@ -14,6 +14,8 @@ type queue struct {
 	latest  map[latestKey]Message
 	// ready holds at most one signal. It is set while messages wait.
 	ready chan struct{}
+	// accepted counts the messages that put stored. It only grows.
+	accepted uint64
 }
 
 // latestKey keeps the keys of two kinds apart, so that one kind never
@@ -43,6 +45,7 @@ func (q *queue) put(m Message, class Class, key string) (depth int, crossed bool
 	if q.closed {
 		return 0, false
 	}
+	q.accepted++
 	switch class {
 	case Durable:
 		q.durable = append(q.durable, m)
@@ -67,6 +70,13 @@ func (q *queue) putLatest(k latestKey, m Message) {
 		return
 	}
 	q.latest[k] = m
+}
+
+// count returns how many messages put has stored.
+func (q *queue) count() uint64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.accepted
 }
 
 // drain returns the waiting messages, Durable first, and clears the queue.

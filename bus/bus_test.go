@@ -470,3 +470,50 @@ func mustPublishTo(t *testing.T, b *Bus, to Addr, p item) {
 		t.Fatalf("Publish: %v", err)
 	}
 }
+
+func TestSubAccepted_CountsStoredMessages(t *testing.T) {
+	b := New()
+	s := b.Subscribe("s", Filter{To: agent("a")})
+	mustPublishTo(t, b, agent("a"), item{ID: "1"})
+	mustPublishTo(t, b, agent("a"), item{ID: "2"})
+	s.Drain()
+	if got := s.Accepted(); got != 2 {
+		t.Fatalf("Accepted = %d, want 2 after Drain", got)
+	}
+}
+
+func TestForward_ToOrchestratorKeepsOrigTo(t *testing.T) {
+	b := New()
+	orch := b.Subscribe("orch", Filter{To: orchestrator})
+	inbox := b.Subscribe("inbox", Filter{To: agent("a")})
+	mustPublishTo(t, b, agent("a"), item{ID: "left"})
+	msgs := inbox.CloseAndDrain()
+	if len(msgs) != 1 {
+		t.Fatalf("inbox held %d messages, want 1", len(msgs))
+	}
+	if _, err := b.Forward(msgs[0], orchestrator); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	got := orch.Drain()
+	if len(got) != 1 {
+		t.Fatalf("orchestrator got %d messages, want 1", len(got))
+	}
+	if got[0].OrigTo == nil || *got[0].OrigTo != agent("a") || got[0].Origin != OriginSystem {
+		t.Fatalf("forwarded message = OrigTo %+v Origin %q, want agent a and system", got[0].OrigTo, got[0].Origin)
+	}
+	if v, err := Decode[item](got[0]); err != nil || v.ID != "left" {
+		t.Fatalf("payload = %+v, %v; want ID left", v, err)
+	}
+}
+
+func TestForward_NonDurableRejected(t *testing.T) {
+	b := New()
+	_, err := Publish(b, kindLatest, orchestrator, agent("a"), OriginSystem, item{ID: "k"})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	m := Message{Kind: kindLatest, To: agent("a")}
+	if _, err := b.Forward(m, orchestrator); err == nil {
+		t.Fatal("Forward of a Latest kind succeeded, want error")
+	}
+}

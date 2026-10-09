@@ -67,12 +67,25 @@ func TestBusTree_PublishFromHookDoesNotDeadlock(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("publishing from the event hook deadlocked")
 	}
-	// job.status is Latest per job, so the subscriber gets only the newest one.
-	msgs := sub.Drain()
-	if len(msgs) != 1 {
-		t.Fatalf("job.status messages = %d, want 1 coalesced message", len(msgs))
-	}
-	if st, err := bus.Decode[bus.JobStatus](msgs[0]); err != nil || st.Status != string(StatusDone) {
-		t.Fatalf("status = %+v, %v; want done", st, err)
+	// job.status is Latest per job, so the subscriber sees the newest status.
+	// The completion event fires after Wait returns, so wait for the done status.
+	deadline := time.After(5 * time.Second)
+	last := ""
+	for last != string(StatusDone) {
+		for _, m := range sub.Drain() {
+			st, err := bus.Decode[bus.JobStatus](m)
+			if err != nil {
+				t.Fatalf("decode job.status: %v", err)
+			}
+			last = st.Status
+		}
+		if last == string(StatusDone) {
+			break
+		}
+		select {
+		case <-sub.Ready():
+		case <-deadline:
+			t.Fatalf("last job.status = %q, want done", last)
+		}
 	}
 }

@@ -112,7 +112,7 @@ func TestWiring_54a_HandoffCarriesQuestion_DrainDoesNotDuplicate(t *testing.T) {
 	// arrival) a fair chance to have already gone wrong before the
 	// assertion below.
 	time.Sleep(150 * time.Millisecond)
-	if pending := JobNotices.Drain(); len(pending) != 0 {
+	if pending := drainNotices(); len(pending) != 0 {
 		t.Fatalf("expected no duplicate notice once the handoff message already carries the question, got %v", pending)
 	}
 
@@ -167,7 +167,7 @@ func TestWiring_54b_HandoffWithoutObserver_DrainSurfacesTheQuestion(t *testing.T
 	for len(notices) == 0 {
 		select {
 		case <-JobNotices.Signal():
-			notices = JobNotices.Drain()
+			notices = drainNotices()
 		case <-deadline:
 			t.Fatal("no notice: the question must still reach the parent when the handoff message did not carry it")
 		}
@@ -251,7 +251,7 @@ func TestWiring_54c_EscCtxDone_NoticeStillSurfaces(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	var notices []string
 	for len(notices) == 0 && time.Now().Before(deadline) {
-		notices = JobNotices.Drain()
+		notices = drainNotices()
 		if len(notices) == 0 {
 			time.Sleep(5 * time.Millisecond)
 		}

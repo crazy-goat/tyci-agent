@@ -185,6 +185,24 @@ func (b *Bus) send(m Message, class Class, key string) (uint64, error) {
 	return m.Seq, nil
 }
 
+// Forward publishes the stored message m again, to the address to. The bus
+// sets OrigTo to the recipient of m and Origin to OriginSystem, as it does for
+// a message to an agent that is not live. Only Durable kinds can be forwarded.
+// A host uses it to move the messages left in the inbox of a finished agent to
+// the orchestrator.
+func (b *Bus) Forward(m Message, to Addr) (uint64, error) {
+	info, ok := lookupKind(m.Kind)
+	if !ok {
+		return 0, fmt.Errorf("bus: kind %q is not registered", m.Kind)
+	}
+	if info.class != Durable {
+		return 0, fmt.Errorf("bus: kind %q is not Durable and cannot be forwarded", m.Kind)
+	}
+	orig := m.To
+	fwd := Message{Kind: m.Kind, From: m.From, To: to, OrigTo: &orig, Origin: OriginSystem, ReplyTo: m.ReplyTo, Payload: m.Payload}
+	return b.send(fwd, Durable, "")
+}
+
 // deliver assigns Seq to m and appends it to the matching queues. It returns
 // the stored message and the agent inboxes that reached warnDepth.
 func (b *Bus) deliver(m Message, class Class, key string) (Message, []inboxWarning, error) {
@@ -246,6 +264,11 @@ type Filter struct {
 	// Kinds lists the kinds to receive. Empty means all kinds.
 	Kinds []Kind
 }
+
+// Accepted returns how many messages the subscription has stored, drained or
+// not. It only grows, so a caller can tell whether a new message arrived
+// without taking the message away from Drain.
+func (s *Sub) Accepted() uint64 { return s.q.count() }
 
 // Name returns the name that the subscription was created with.
 func (s *Sub) Name() string { return s.name }

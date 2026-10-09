@@ -61,7 +61,7 @@ import (
 // event — not a fixed sleep, an actual drain of the real notification.
 func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
 	t.Helper()
-	origReg, origBus, origNotices := JobRegistry, jobEventBus, JobNotices
+	origReg, origBus, origNotices, origAppBus := JobRegistry, jobEventBus, JobNotices, appBus
 
 	reg := jobs.NewRegistry()
 	// Production bus size: the cleanup below subscribes coalesced, so a burst
@@ -72,6 +72,7 @@ func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
 	// place would let one test's background-command notices show up in
 	// another's.
 	JobRegistry, jobEventBus, JobNotices = reg, bus, jobs.NewNotifier()
+	appBus = newAppBus("")
 	wireTools()
 
 	sub, unsub := bus.SubscribeCoalesced("job.updated", func(ev eventbus.Event) string {
@@ -139,7 +140,7 @@ func withTestWiring(t *testing.T) (*jobs.Registry, *eventbus.Bus) {
 		unsub()
 		<-drainDone
 
-		JobRegistry, jobEventBus, JobNotices = origReg, origBus, origNotices
+		JobRegistry, jobEventBus, JobNotices, appBus = origReg, origBus, origNotices, origAppBus
 		wireTools()
 	})
 	return reg, bus

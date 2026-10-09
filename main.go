@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/eventbus"
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
@@ -883,6 +884,16 @@ func wireTools() {
 	tools.SetJobActivityToucher(jobActivityToucherAdapter{reg: JobRegistry})
 	tools.SetJobProgressHeartbeat(jobProgressHeartbeatAdapter{reg: JobRegistry})
 	tools.SetJobMailbox(jobMailboxAdapter{reg: JobRegistry})
+	// Completion notices of background work go through the bus. The
+	// orchestrator reads its own subscription, and every agent reads its
+	// inbox through jobMailboxAdapter.Drain.
+	b := appBus
+	busOrchestratorNotices = b.Subscribe("orchestrator", bus.Filter{
+		To:    orchestratorAddr,
+		Kinds: []bus.Kind{bus.KindNoticeCompletion},
+	})
+	agentInboxes = newInboxSet(b)
+	tools.SetNoticePublisher(func(parentID, text string) { publishNotice(b, parentID, text) })
 	tools.SetJobResumer(jobResumerAdapter{reg: JobRegistry})
 	tools.SetJobPromoter(btwPromotionAdapter{})
 	// kill_job's subagent path + its inside-a-child subtree check (see
@@ -908,8 +919,18 @@ func wireTools() {
 	// waits on job.done can already have moved on and rewired the globals
 	// by the time onEvent actually runs).
 	bus, notices, reg := jobEventBus, JobNotices, JobRegistry
+	inboxes := agentInboxes
 	JobRegistry.SetOnEvent(func(j jobs.Job) {
 		bus.Publish("job.updated", j)
+
+		// The inbox of a job opens on its first event, which Start fires
+		// before it returns the job ID. It closes on the terminal event.
+		switch j.Status {
+		case jobs.StatusRunning, jobs.StatusWaitingAnswer:
+			inboxes.open(j.ID)
+		default:
+			inboxes.close(j.ID)
+		}
 
 		// A job that called "ask_parent" is now blocked, and it stays blocked until
 		// someone calls "answer_job" or its wall-clock limit expires — at which
@@ -1018,16 +1039,16 @@ func wireTools() {
 	// consumes it depends on the mode wiring up JobNotices.Drain /
 	// JobNotices.Signal — which is exactly why backgrounding itself stays off
 	// until a mode opts in via tools.SetBackgroundBashEnabled.
-	tools.SetJobNotifier(JobNotices)
+	tools.SetJobNotifier(noticeCounter{JobNotices})
 }
 
 func main() {
-	wireTools()
 	// The process-wide message bus of v0.7.0. Its journal is
-	// <session dir>/bus.jsonl when the session directory exists. Producers
-	// and consumers move to it one by one.
-	appBus := newAppBus(busJournalPath())
+	// <session dir>/bus.jsonl when the session directory exists. It is set
+	// before wireTools, which subscribes to it.
+	appBus = newAppBus(busJournalPath())
 	defer appBus.Close()
+	wireTools()
 
 	// Unpack the builtin agent definitions (internal/agentdefs/builtin) into
 	// ~/.tyci/agents/ so tyci is useful with zero setup. This runs on every

@@ -57,14 +57,14 @@ func TestWiring_C3_ResidualMailboxSweptToMainOnCompletion(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var pending []string
 	for time.Now().Before(deadline) {
-		pending = append(pending, JobNotices.Drain()...)
+		pending = append(pending, drainNotices()...)
 		if len(pending) > 0 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	time.Sleep(50 * time.Millisecond)
-	pending = append(pending, JobNotices.Drain()...)
+	pending = append(pending, drainNotices()...)
 
 	if len(pending) != 1 {
 		t.Fatalf("expected the residual mailbox message to be swept to main exactly once, got %v", pending)
@@ -114,7 +114,7 @@ func TestWiring_C3_DrainedMailboxIsNotSweptTwice(t *testing.T) {
 	}
 
 	time.Sleep(50 * time.Millisecond)
-	if pending := JobNotices.Drain(); len(pending) != 0 {
+	if pending := drainNotices(); len(pending) != 0 {
 		t.Fatalf("expected nothing swept to main for a message the job already drained itself, got %v", pending)
 	}
 }
@@ -159,7 +159,7 @@ func TestWiring_D5_ResidualMailboxSweepIsCapped(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var pending []string
 	for time.Now().Before(deadline) {
-		pending = append(pending, JobNotices.Drain()...)
+		pending = append(pending, drainNotices()...)
 		if len(pending) >= want {
 			break
 		}
@@ -170,7 +170,7 @@ func TestWiring_D5_ResidualMailboxSweepIsCapped(t *testing.T) {
 	// message individually would still pass as soon as it crossed the
 	// expected count, which is the whole property this test exists to pin.
 	time.Sleep(50 * time.Millisecond)
-	pending = append(pending, JobNotices.Drain()...)
+	pending = append(pending, drainNotices()...)
 
 	// residualMailboxSweepCap shown individually, plus exactly one summary
 	// line for the rest.

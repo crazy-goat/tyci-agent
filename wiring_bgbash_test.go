@@ -97,13 +97,13 @@ func TestWiring_BG1_BackgroundCommandNoticeReachesTheAgentLoop(t *testing.T) {
 	// observed the job as finished the notice is already queued — no polling
 	// needed here.
 	select {
-	case <-JobNotices.Signal():
+	case <-busOrchestratorNotices.Ready():
 	default:
 		t.Fatal("no wakeup signal armed; an idle REPL would never start a turn for this")
 	}
 
 	// This is the callback the TUI installs as agent.Config.NextMessages.
-	nextMessages := mergeNextMessages(nil, JobNotices.Drain)
+	nextMessages := mergeNextMessages(nil, drainNotices)
 	pending := nextMessages()
 	if len(pending) != 1 {
 		t.Fatalf("expected exactly one pending message, got %d: %v", len(pending), pending)
@@ -134,7 +134,7 @@ func TestWiring_BG2_UserLineIsDeliveredBeforeBackgroundNotice(t *testing.T) {
 	userQueue := func() []string { return []string{"what the user typed"} }
 	JobNotices.Notify("[background command] something finished")
 
-	got := mergeNextMessages(userQueue, JobNotices.Drain)()
+	got := mergeNextMessages(userQueue, drainNotices)()
 	if len(got) != 2 {
 		t.Fatalf("expected both sources drained, got %v", got)
 	}
@@ -256,7 +256,7 @@ func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
 	for len(notices) == 0 {
 		select {
 		case <-JobNotices.Signal():
-			notices = JobNotices.Drain()
+			notices = drainNotices()
 		case <-deadline:
 			t.Fatal("no notice: a blocked child would sit there until it timed out")
 		}
@@ -305,7 +305,7 @@ func TestWiring_BG7_CompletionNoticeTriggersNextLLMRequest(t *testing.T) {
 	}}
 	_, err := agent.Run(context.Background(), client, &testSilentDisplay{}, &messages, agent.Config{
 		MaxRetries:   1,
-		NextMessages: JobNotices.Drain,
+		NextMessages: drainNotices,
 	})
 	if err != nil {
 		t.Fatalf("agent.Run failed: %v", err)
@@ -360,7 +360,7 @@ func TestWiring_BG8_MultipleCompletionNoticesReachOneNextLLMRequest(t *testing.T
 	}}
 	_, err := agent.Run(context.Background(), client, &testSilentDisplay{}, &messages, agent.Config{
 		MaxRetries:   1,
-		NextMessages: JobNotices.Drain,
+		NextMessages: drainNotices,
 	})
 	if err != nil {
 		t.Fatalf("agent.Run failed: %v", err)

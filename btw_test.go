@@ -402,7 +402,7 @@ func TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread(t *testin
 		t.Fatalf("missing promotion continuation instruction: %+v", got[len(got)-1])
 	}
 
-	notices := JobNotices.Drain()
+	notices := drainNotices()
 	if len(notices) != 0 {
 		t.Fatalf("promotion must not enqueue a duplicate notice; tool result is the parent handoff, got %v", notices)
 	}
