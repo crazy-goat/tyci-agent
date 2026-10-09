@@ -230,7 +230,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 	// call sites below (busy-turn drain and the idle loop) just
 	// fire-and-forget it.
 	handleMsgCommand := func(arg string) {
-		if jobID, err := postMsgCommand(JobRegistry, arg); err != nil {
+		if jobID, err := postMsgCommand(appBus, JobRegistry, arg); err != nil {
 			tuiDisp.Error(err)
 		} else {
 			tuiDisp.ToolBlock(fmt.Sprintf("ℹ️  message queued for job %s", jobID))
