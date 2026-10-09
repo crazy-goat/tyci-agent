@@ -10,8 +10,22 @@ import (
 	"time"
 )
 
+// funcPublisher adapts a plain function to EventPublisher for tests.
+type funcPublisher func(Job)
+
+func (f funcPublisher) JobEvent(j Job) { f(j) }
+
+// setPublisher replaces r.pub. Tests call it before any job starts. nil clears it.
+func setPublisher(r *Registry, fn func(Job)) {
+	if fn == nil {
+		r.pub = nil
+		return
+	}
+	r.pub = funcPublisher(fn)
+}
+
 func TestStartAndGet(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 
 	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
@@ -54,7 +68,7 @@ func TestStartAndGet(t *testing.T) {
 // and what kind of job it is, so a consumer (the Subagents/Bash sidebar
 // tabs) can filter and reconstruct a tree via a parent-link walk.
 func TestStart_RecordsKindAndParentID(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	parent := r.Start(context.Background(), "parent", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "done", false, nil
@@ -88,7 +102,7 @@ func TestStart_RecordsKindAndParentID(t *testing.T) {
 // no parent — that is how the Subagents tree tells a root row from a nested
 // one, per item 1's spec.
 func TestStart_TopLevelJobHasEmptyParentID(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	job := r.Start(context.Background(), "root", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "done", false, nil
 	})
@@ -99,7 +113,7 @@ func TestStart_TopLevelJobHasEmptyParentID(t *testing.T) {
 }
 
 func TestWaitBlocksUntilDone(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	job := r.Start(context.Background(), "demo", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		time.Sleep(50 * time.Millisecond)
 		return "done-result", false, nil
@@ -124,7 +138,7 @@ func TestWaitBlocksUntilDone(t *testing.T) {
 }
 
 func TestWaitTimeoutReturnsRunning(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	defer close(release)
 
@@ -143,7 +157,7 @@ func TestWaitTimeoutReturnsRunning(t *testing.T) {
 }
 
 func TestUnknownID(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	if _, ok := r.Get("unknown"); ok {
 		t.Fatalf("expected Get to return false for unknown ID")
@@ -155,7 +169,7 @@ func TestUnknownID(t *testing.T) {
 }
 
 func TestJobFails(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	job := r.Start(context.Background(), "failing", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "", false, errors.New("boom")
 	})
@@ -173,9 +187,9 @@ func TestJobFails(t *testing.T) {
 }
 
 func TestJobPanicIsRecoveredAndRegistryStaysUsable(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	notices := make(chan Job, 4)
-	r.SetOnEvent(func(job Job) { notices <- job })
+	setPublisher(r, func(job Job) { notices <- job })
 
 	panicked := r.Start(context.Background(), "panicking", KindOther, "", func(context.Context, string) (string, bool, error) {
 		panic("boom")
@@ -229,9 +243,9 @@ func (panicFormattingValue) String() string         { panic("string formatter pa
 func (panicFormattingValue) Format(fmt.State, rune) { panic("format formatter panic") }
 
 func TestJobPanicWithUnprintableValueIsRecovered(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	notices := make(chan Job, 2)
-	r.SetOnEvent(func(job Job) { notices <- job })
+	setPublisher(r, func(job Job) { notices <- job })
 	jobContext := make(chan context.Context, 1)
 
 	job := r.Start(context.Background(), "unprintable panic", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
@@ -289,7 +303,7 @@ func TestJobPanicWithUnprintableValueIsRecovered(t *testing.T) {
 }
 
 func TestJobTruncated(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	job := r.Start(context.Background(), "truncated", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "partial output", true, nil
 	})
@@ -307,7 +321,7 @@ func TestJobTruncated(t *testing.T) {
 }
 
 func TestListReturnsSnapshots(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	defer close(release)
 
@@ -325,13 +339,13 @@ func TestListReturnsSnapshots(t *testing.T) {
 	}
 }
 
-func TestSetOnEvent_CalledOnStartAndCompletion(t *testing.T) {
-	r := NewRegistry()
+func TestRegistry_PublishesStartAndTerminalEvents_InOrder(t *testing.T) {
+	r := NewRegistry(nil)
 
 	var mu sync.Mutex
 	var statuses []Status
 	done := make(chan struct{})
-	r.SetOnEvent(func(j Job) {
+	setPublisher(r, func(j Job) {
 		mu.Lock()
 		statuses = append(statuses, j.Status)
 		if len(statuses) == 2 {
@@ -366,14 +380,14 @@ func TestSetOnEvent_CalledOnStartAndCompletion(t *testing.T) {
 // A SetProgress snapshot taken while the job is running can reach onEvent after
 // the job's terminal snapshot (#131). EventSeq lets a subscriber tell that the
 // late one is older.
-func TestSetOnEvent_EventSeqOrdersLateSnapshotBeforeTerminal(t *testing.T) {
-	r := NewRegistry()
+func TestRegistry_EventSeqOrdersLateSnapshotBeforeTerminal(t *testing.T) {
+	r := NewRegistry(nil)
 
 	var mu sync.Mutex
 	var events []Job
 	inHook := make(chan struct{})
 	release := make(chan struct{})
-	r.SetOnEvent(func(j Job) {
+	setPublisher(r, func(j Job) {
 		if j.Status == StatusRunning && j.Progress == "late" {
 			close(inHook)
 			<-release
@@ -440,10 +454,8 @@ func TestSetOnEvent_EventSeqOrdersLateSnapshotBeforeTerminal(t *testing.T) {
 	}
 }
 
-func TestSetOnEvent_NilIsNoop(t *testing.T) {
-	r := NewRegistry()
-	// nil is the default; explicitly setting it back to nil must not panic.
-	r.SetOnEvent(nil)
+func TestRegistry_NilPublisher_NoPanic(t *testing.T) {
+	r := NewRegistry(nil)
 
 	job := r.Start(context.Background(), "no-hook", KindOther, "", func(ctx context.Context, _ string) (string, bool, error) {
 		return "ok", false, nil
@@ -454,13 +466,13 @@ func TestSetOnEvent_NilIsNoop(t *testing.T) {
 	}
 }
 
-// TestSetOnEvent_CanCallBackIntoRegistry ensures the hook fires outside any
+// TestRegistry_PublisherMayCallBackIntoRegistry ensures the hook fires outside any
 // internal lock: calling Get/List from within the callback must not deadlock.
-func TestSetOnEvent_CanCallBackIntoRegistry(t *testing.T) {
-	r := NewRegistry()
+func TestRegistry_PublisherMayCallBackIntoRegistry(t *testing.T) {
+	r := NewRegistry(nil)
 	done := make(chan struct{})
 
-	r.SetOnEvent(func(j Job) {
+	setPublisher(r, func(j Job) {
 		if j.Status != StatusDone {
 			return
 		}
@@ -483,7 +495,7 @@ func TestSetOnEvent_CanCallBackIntoRegistry(t *testing.T) {
 }
 
 func TestWaitRespectsContextCancellation(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	defer close(release)
 
@@ -518,7 +530,7 @@ func TestWaitRespectsContextCancellation(t *testing.T) {
 // status sequence: running -> waiting_answer -> running again, with the
 // right answer text delivered back to the blocked Ask call.
 func TestAskThenAnswer_UnblocksWithRightTextAndStatusFlow(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	var mu sync.Mutex
 	var statuses []Status
@@ -526,7 +538,7 @@ func TestAskThenAnswer_UnblocksWithRightTextAndStatusFlow(t *testing.T) {
 	sawRunningAgain := make(chan struct{})
 	var waitingClosedOnce, runningAgainClosedOnce bool
 
-	r.SetOnEvent(func(j Job) {
+	setPublisher(r, func(j Job) {
 		mu.Lock()
 		statuses = append(statuses, j.Status)
 		n := len(statuses)
@@ -630,7 +642,7 @@ func TestAskThenAnswer_UnblocksWithRightTextAndStatusFlow(t *testing.T) {
 // wall-clock timeout (modeled here as an explicit short-deadline ctx) is
 // enough to unblock a forgotten Ask, instead of hanging forever.
 func TestAsk_UnblockedByContextCancellationReturnsNotOK(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	release := make(chan struct{})
 	defer close(release)
@@ -669,7 +681,7 @@ func TestAsk_UnblockedByContextCancellationReturnsNotOK(t *testing.T) {
 // TestAsk_UnknownIDReturnsNotOK covers Ask against an id the registry has
 // never seen.
 func TestAsk_UnknownIDReturnsNotOK(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	answer, _, ok := r.Ask(context.Background(), "unknown", "q")
 	if ok || answer != "" {
 		t.Fatalf("expected (\"\", false), got (%q, %v)", answer, ok)
@@ -679,7 +691,7 @@ func TestAsk_UnknownIDReturnsNotOK(t *testing.T) {
 // TestAnswer_OnJobNotWaitingReturnsFalse covers a job that exists but isn't
 // currently blocked on Ask.
 func TestAnswer_OnJobNotWaitingReturnsFalse(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	defer close(release)
 
@@ -696,7 +708,7 @@ func TestAnswer_OnJobNotWaitingReturnsFalse(t *testing.T) {
 // TestAnswer_UnknownIDReturnsFalse covers Answer against an id the registry
 // has never seen.
 func TestAnswer_UnknownIDReturnsFalse(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	if r.Answer("unknown", "text", true) {
 		t.Fatal("expected Answer to return false for an unknown id")
 	}
@@ -706,7 +718,7 @@ func TestAnswer_UnknownIDReturnsFalse(t *testing.T) {
 // updating Snapshot().Progress, persisting after the job finishes, and
 // reporting false for an unknown id.
 func TestSetProgress_UpdatesSnapshotAndUnknownIDReturnsFalse(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	setOK := make(chan bool, 1)
 
@@ -757,7 +769,7 @@ func TestSetProgress_UpdatesSnapshotAndUnknownIDReturnsFalse(t *testing.T) {
 // finished job holds its full result — up to the bash output cap for a
 // backgrounded shell command — so an unbounded map is a session-long leak.
 func TestRegistryPrunesOldTerminalJobs(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	// A job that stays running must never be pruned, however much finishes
 	// around it: something is still waiting on it.
@@ -812,7 +824,7 @@ func TestRegistryPrunesOldTerminalJobs(t *testing.T) {
 // directly — same effect, deterministic — then checks a fresh Ask on the
 // same job does not receive it.
 func TestAsk_TimeoutReplacesAnswerChannelSoStaleAnswersCannotLeak(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	defer close(release)
 
@@ -858,7 +870,7 @@ func TestAsk_TimeoutReplacesAnswerChannelSoStaleAnswersCannotLeak(t *testing.T) 
 // blocked on a question makes no progress and loses all its work when it times
 // out, and only the current turn can unblock it.
 func TestPendingLinesPutsBlockedJobsFirst(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	running := make(chan struct{})
 	r.Start(context.Background(), "the long one", KindOther, "", func(ctx context.Context, id string) (string, bool, error) {
@@ -906,7 +918,7 @@ func TestPendingLinesPutsBlockedJobsFirst(t *testing.T) {
 }
 
 func TestPendingLinesIsEmptyWhenNothingIsOutstanding(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	job := r.Start(context.Background(), "quick", KindOther, "", func(ctx context.Context, id string) (string, bool, error) {
 		return "ok", false, nil
 	})

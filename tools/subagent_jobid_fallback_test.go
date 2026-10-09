@@ -33,7 +33,7 @@ import (
 // JobStarter.
 func printModeEnv(t *testing.T) (*jobs.Registry, *recordingNotifier) {
 	t.Helper()
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	notifier := &recordingNotifier{}
 	SetJobStarter(testJobStarter{reg})
 	SetJobAsker(reg)

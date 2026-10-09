@@ -25,7 +25,7 @@ import (
 // third notes here would have left no trace of the first and second ever
 // having happened.
 func TestSetProgress_HistoryPreservesOrder_ProgressTracksLatest(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 
 	job := r.Start(context.Background(), "progressive", KindOther, "", func(ctx context.Context, jobID string) (string, bool, error) {
@@ -75,7 +75,7 @@ func TestSetProgress_HistoryPreservesOrder_ProgressTracksLatest(t *testing.T) {
 // forever for a chatty child), and there was no way to tell a reader that
 // anything had ever been dropped.
 func TestSetProgress_CapEvictsOldestAndMarksTruncated(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	total := progressHistoryCap + 7
 	job := r.Start(context.Background(), "chatty", KindOther, "", func(context.Context, string) (string, bool, error) {
@@ -128,7 +128,7 @@ func TestSetProgress_CapEvictsOldestAndMarksTruncated(t *testing.T) {
 // Pre-fix code had no per-entry cap at all, so this would have passed the
 // raw string through unbounded.
 func TestSetProgress_TruncatesEntryRuneSafely(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	job := r.Start(context.Background(), "multibyte", KindOther, "", func(context.Context, string) (string, bool, error) {
 		return "done", false, nil
 	})
@@ -207,7 +207,7 @@ func TestJobSnapshot_ProgressHistoryIsDeepCopied(t *testing.T) {
 // would carry an arbitrarily large history rather than the bounded one the
 // rest of tombstoneLocked promises for every other field.
 func TestTombstoneLocked_BoundsWholeProgressHistoryIndependently(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	var history []string
 	for i := 0; i < progressHistoryCap+50; i++ {
@@ -254,7 +254,7 @@ func TestTombstoneLocked_BoundsWholeProgressHistoryIndependently(t *testing.T) {
 // the history changes above: SetProgress must still fail cleanly, without
 // touching any history, for an id the registry has never seen.
 func TestSetProgress_UnknownID_ReturnsFalse(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	if r.SetProgress("no-such-job", "x") {
 		t.Fatal("expected SetProgress to return false for an unknown id")
 	}
@@ -266,7 +266,7 @@ func TestSetProgress_UnknownID_ReturnsFalse(t *testing.T) {
 // write operations on the same *Job, and the only thing making them safe is
 // holding r.mu for the whole operation in SetProgress.
 func TestSetProgress_ConcurrentCallsAreRaceFree(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	job := r.Start(context.Background(), "concurrent", KindOther, "", func(context.Context, string) (string, bool, error) {
 		<-release

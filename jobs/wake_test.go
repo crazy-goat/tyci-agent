@@ -83,7 +83,7 @@ func waitUntilObserverRegistered(t *testing.T, r *Registry, id string) {
 // as the job asks a question, not after the timeout elapses and not only
 // on a later, separate call.
 func TestWait_WakesPromptlyWhenJobEntersWaitingAnswer(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 
 	job := r.Start(context.Background(), "asker", KindOther, "", func(ctx context.Context, jobID string) (string, bool, error) {
@@ -150,10 +150,10 @@ func TestWait_WakesPromptlyWhenJobEntersWaitingAnswer(t *testing.T) {
 // asserts nothing has come back yet. If the reverted signal were
 // reinstated, that assertion is exactly where this test would catch it.
 func TestWait_AnsweredThenWaitStillReachesDone(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	sawWaiting := make(chan struct{})
 	var sawWaitingOnce sync.Once
-	r.SetOnEvent(func(j Job) {
+	setPublisher(r, func(j Job) {
 		if j.Status == StatusWaitingAnswer {
 			sawWaitingOnce.Do(func() { close(sawWaiting) })
 		}
@@ -212,11 +212,11 @@ func TestWait_AnsweredThenWaitStillReachesDone(t *testing.T) {
 // registry-level half: a Wait call already in flight for this exact job,
 // before Ask is ever invoked, must be reflected on the resulting snapshot.
 func TestAsk_QuestionHasWaiter_TrueWhenAWaitIsAlreadyBlocked(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	askedCh := make(chan Job, 1)
 
-	r.SetOnEvent(func(j Job) {
+	setPublisher(r, func(j Job) {
 		if j.Status == StatusWaitingAnswer {
 			select {
 			case askedCh <- j:
@@ -255,12 +255,12 @@ func TestAsk_QuestionHasWaiter_TrueWhenAWaitIsAlreadyBlocked(t *testing.T) {
 // B7's dedup input: with no concurrent Wait call, the question must not be
 // marked as already covered by one.
 func TestAsk_QuestionHasWaiter_FalseWhenNobodyIsWaiting(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	askedCh := make(chan Job, 1)
 	var mu sync.Mutex
 	var seen bool
 
-	r.SetOnEvent(func(j Job) {
+	setPublisher(r, func(j Job) {
 		if j.Status == StatusWaitingAnswer {
 			mu.Lock()
 			if !seen {
@@ -298,11 +298,11 @@ func TestAsk_QuestionHasWaiter_FalseWhenNobodyIsWaiting(t *testing.T) {
 // question had (tools.SubagentTool's handoff message did not carry it
 // either, at the time). See jobs.Registry.WaitObserve's doc comment.
 func TestAsk_QuestionHasWaiter_FalseWhenOnlyAnObserverIsWatching(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	askedCh := make(chan Job, 1)
 
-	r.SetOnEvent(func(j Job) {
+	setPublisher(r, func(j Job) {
 		if j.Status == StatusWaitingAnswer {
 			select {
 			case askedCh <- j:
@@ -377,9 +377,9 @@ func TestAsk_QuestionHasWaiter_FalseWhenOnlyAnObserverIsWatching(t *testing.T) {
 func TestWait_TimeoutAndAskRace_NoDroppedQuestion(t *testing.T) {
 	const trials = 200
 	for i := 0; i < trials; i++ {
-		r := NewRegistry()
+		r := NewRegistry(nil)
 		askedCh := make(chan Job, 1)
-		r.SetOnEvent(func(j Job) {
+		setPublisher(r, func(j Job) {
 			if j.Status == StatusWaitingAnswer {
 				select {
 				case askedCh <- j:

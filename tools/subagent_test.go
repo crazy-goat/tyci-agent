@@ -1154,7 +1154,7 @@ func TestSubagentSchema_TimeoutField(t *testing.T) {
 }
 
 func TestSubagentRunnerGetsUnlimitedContext(t *testing.T) {
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	SetJobStarter(testJobStarter{reg})
 	t.Cleanup(func() { SetJobStarter(nil) })
 
@@ -1188,7 +1188,7 @@ func TestSubagentRunnerGetsUnlimitedContext(t *testing.T) {
 }
 
 func TestSubagentSpawnGetsUnlimitedContext(t *testing.T) {
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	SetJobStarter(testJobStarter{reg})
 	t.Cleanup(func() { SetJobStarter(nil) })
 
@@ -1518,7 +1518,7 @@ func TestSubagentAsync_ReturnsJobIDImmediately(t *testing.T) {
 		SetJobStarter(nil)
 	})
 
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	notifier := &recordingNotifier{}
 	SetJobStarter(testJobStarter{reg})
 	SetJobNotifier(notifier)
@@ -1628,7 +1628,7 @@ func TestSubagentAsync_DoesNotStreamToParentToolIdx(t *testing.T) {
 		subagentToolInstance = nil
 		SetJobStarter(nil)
 	})
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	SetJobStarter(testJobStarter{reg})
 
 	mo := &mockOutput{}
@@ -1690,7 +1690,7 @@ func TestSubagentAsync_ResultExplainsTheChannels(t *testing.T) {
 		subagentToolInstance = nil
 		SetJobStarter(nil)
 	})
-	SetJobStarter(testJobStarter{jobs.NewRegistry()})
+	SetJobStarter(testJobStarter{jobs.NewRegistry(nil)})
 	SetSubAgentRunner(&mockRunner{
 		RunTaskFunc: func(_ context.Context, _, _ string, _ SubagentOptions) (string, error) {
 			return "done", nil

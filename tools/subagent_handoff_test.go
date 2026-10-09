@@ -39,7 +39,7 @@ import (
 // `st.finish(res)` branch, see subagent.go).
 func handoffEnv(t *testing.T, after time.Duration) (*jobs.Registry, *recordingNotifier) {
 	t.Helper()
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	notifier := &recordingNotifier{}
 	SetJobStarter(testJobStarter{reg})
 	SetJobNotifier(notifier)
@@ -799,7 +799,7 @@ func TestAskAnswerRoundTripWhenHandoffIsAvailable(t *testing.T) {
 // noticeCounter.MarkAskShown uses to suppress the duplicate onEvent
 // notice at drain time.
 func TestHandoffMarksShownQuestionsWhenTrue(t *testing.T) {
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	notifier := &recordingNotifier{}
 	SetJobStarter(testJobStarter{reg})
 	SetJobObserver(realJobObserver{reg})
@@ -859,7 +859,7 @@ func TestHandoffMarksShownQuestionsWhenTrue(t *testing.T) {
 // (production) ask-notice as
 // the only delivery.
 func TestHandoffDoesNotMarkShownWhenFalse(t *testing.T) {
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	notifier := &recordingNotifier{}
 	SetJobStarter(testJobStarter{reg})
 	SetJobObserver(realJobObserver{reg})

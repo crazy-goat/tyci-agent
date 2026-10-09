@@ -15,10 +15,10 @@ import (
 )
 
 type Registry struct {
-	mu      sync.Mutex
-	now     func() time.Time // clock; tests replace it before use
-	jobs    map[string]*Job
-	onEvent func(Job)
+	mu   sync.Mutex
+	now  func() time.Time // clock; tests replace it before use
+	jobs map[string]*Job
+	pub  EventPublisher // nil means no events; set once by NewRegistry
 
 	// tombstones and tombstoneOrder hold pruned SUBAGENT jobs' final
 	// snapshots (see tombstoneCap's doc comment) — a separate, independently
@@ -30,8 +30,16 @@ type Registry struct {
 	tombstoneOrder []string
 }
 
-func NewRegistry() *Registry {
-	return &Registry{jobs: make(map[string]*Job), tombstones: make(map[string]Job), now: time.Now}
+// EventPublisher receives a snapshot of a job each time its status or progress
+// changes. JobEvent is called outside the registry lock, so it may call back
+// into the registry.
+type EventPublisher interface {
+	JobEvent(Job)
+}
+
+// NewRegistry returns an empty registry. pub may be nil, which disables events.
+func NewRegistry(pub EventPublisher) *Registry {
+	return &Registry{jobs: make(map[string]*Job), tombstones: make(map[string]Job), now: time.Now, pub: pub}
 }
 
 // SetClockForTests replaces the clock used for the progress timers. Call it
@@ -42,24 +50,22 @@ func (r *Registry) SetClockForTests(now func() time.Time) {
 	r.mu.Unlock()
 }
 
-// SetOnEvent registers fn to be called (outside any internal lock, so fn
-// may safely call back into the registry) whenever a job's status changes
-// (on Start → running, and on completion → done/failed/truncated). nil is
-// valid and is the default (no-op).
-func (r *Registry) SetOnEvent(fn func(Job)) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.onEvent = fn
-}
-
-// eventSnapshotLocked takes the snapshot that is about to be published to
-// onEvent and stamps it with the job's next EventSeq. Caller must hold r.mu,
-// so the sequence order is the order in which the states were observed.
+// eventSnapshotLocked takes the snapshot that is about to be published and
+// stamps it with the job's next EventSeq. Caller must hold r.mu, so the
+// sequence order is the order in which the states were observed.
 func eventSnapshotLocked(job *Job) Job {
 	job.eventSeq++
 	snapshot := job.Snapshot()
 	snapshot.EventSeq = job.eventSeq
 	return snapshot
+}
+
+// publish sends snapshot to the publisher, if there is one. Caller must not
+// hold r.mu. r.pub is set once in NewRegistry, so reading it needs no lock.
+func (r *Registry) publish(snapshot Job) {
+	if r.pub != nil {
+		r.pub.JobEvent(snapshot)
+	}
 }
 
 var idCounter uint64
@@ -162,13 +168,10 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 
 	r.mu.Lock()
 	r.jobs[job.ID] = job
-	onEvent := r.onEvent
 	startSnapshot := eventSnapshotLocked(job)
 	r.mu.Unlock()
 
-	if onEvent != nil {
-		onEvent(startSnapshot)
-	}
+	r.publish(startSnapshot)
 
 	go func() {
 		var result string
@@ -216,7 +219,6 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 				job.Status = StatusDone
 			}
 			snapshot := eventSnapshotLocked(job)
-			onEvent := r.onEvent
 			// A background command this job started would outlive it with
 			// nobody left to collect its result. Stop those commands too, the
 			// same way Cancel stops a subtree (see tools/bgbash.go).
@@ -234,9 +236,7 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 			}
 			close(job.done)
 
-			if onEvent != nil {
-				onEvent(snapshot)
-			}
+			r.publish(snapshot)
 		}()
 
 		func() {
@@ -482,8 +482,8 @@ func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (
 // tools/subagent.go's runWithHandoff, whose watcher only wakes an
 // unrelated select; it never hands the question back to anyone. Before
 // this method existed, that watcher used Wait, so Ask saw waiters>0 for
-// essentially every blocking subagent call and suppressed the onEvent
-// notice — the ONLY delivery the question had, since the watcher itself
+// essentially every blocking subagent call and suppressed the
+// published event — the ONLY delivery the question had, since the watcher itself
 // delivers nothing. That was batch-2 review finding C1: coupling "is
 // blocked in Wait" with "will report the question" through one counter is
 // wrong whenever a caller does the former without the latter.
@@ -645,13 +645,10 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 		job.answerCh = make(chan jobAnswer, 1)
 	}
 	answerCh := job.answerCh
-	onEvent := r.onEvent
 	snapshot := eventSnapshotLocked(job)
 	r.mu.Unlock()
 
-	if onEvent != nil {
-		onEvent(snapshot)
-	}
+	r.publish(snapshot)
 
 	var result jobAnswer
 	var got bool
@@ -687,12 +684,9 @@ func (r *Registry) Ask(ctx context.Context, id, question string) (answer string,
 		job.answerCh = nil
 	}
 	snapshot = eventSnapshotLocked(job)
-	onEvent = r.onEvent
 	r.mu.Unlock()
 
-	if onEvent != nil {
-		onEvent(snapshot)
-	}
+	r.publish(snapshot)
 
 	return result.text, result.fromUser, got
 }
@@ -905,13 +899,10 @@ func (r *Registry) SetProgress(id, text string) bool {
 	job.Progress = entry
 	job.lastProgressAt = r.now()
 	appendProgressLocked(job, entry)
-	onEvent := r.onEvent
 	snapshot := eventSnapshotLocked(job)
 	r.mu.Unlock()
 
-	if onEvent != nil {
-		onEvent(snapshot)
-	}
+	r.publish(snapshot)
 	return true
 }
 
@@ -998,12 +989,9 @@ func (r *Registry) AutoProgress(id string, after time.Duration, text string) boo
 	entry := truncateProgressEntry("[auto] " + redact.Redact(text))
 	job.Progress = entry
 	appendProgressLocked(job, entry)
-	onEvent := r.onEvent
 	snapshot := eventSnapshotLocked(job)
 	r.mu.Unlock()
-	if onEvent != nil {
-		onEvent(snapshot)
-	}
+	r.publish(snapshot)
 	return true
 }
 
@@ -1011,7 +999,7 @@ func (r *Registry) AutoProgress(id string, after time.Duration, text string) boo
 // life (streamed text/thinking/tool-call event, or a backgrounded bash
 // output line) right now. It is the hot path this whole mechanism exists
 // for — called on every streamed token from every running job — so unlike
-// SetProgress it deliberately does NOT snapshot the job or fire onEvent: it
+// SetProgress it deliberately does NOT snapshot the job or publish an event: it
 // only takes r.mu briefly for the map lookup (unavoidable, since the jobs
 // map can be mutated concurrently by pruning), then releases it before
 // writing the timestamp via the job's own atomic field. Nothing else the
@@ -1108,7 +1096,7 @@ func (r *Registry) Resolve(id string) (string, bool) {
 // model would still poll an old job_id with "wait".
 //
 // Exported as MaxRetainedTerminalJobs so any other mirror of this registry's
-// contents (e.g. display.TuiModel.backgroundJobs, fed by SetJobEventBus) can
+// contents (e.g. display.TuiModel.backgroundJobs, fed by SetJobEvents) can
 // prune itself to the same bound instead of drifting from — and having its
 // footer text lie about — the registry's actual retention.
 const maxRetainedTerminalJobs = MaxRetainedTerminalJobs
