@@ -66,7 +66,7 @@ func (b *blockerSet) waitStarted(t *testing.T, want int) {
 // through) and this hangs until the test timeout — nothing outside can stop
 // the job any more.
 func TestCancelStopsRunningJob(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	blockers := newBlockerSet()
 
 	job := r.Start(context.Background(), "blocker", KindSubagent, "", blockers.fn)
@@ -85,7 +85,7 @@ func TestCancelStopsRunningJob(t *testing.T) {
 }
 
 func TestCancelAllStopsLiveJobsAndReturnsKnownIDs(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	started := make(chan struct{})
 	job := r.Start(context.Background(), "old", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
 		close(started)
@@ -110,7 +110,7 @@ func TestCancelAllStopsLiveJobsAndReturnsKnownIDs(t *testing.T) {
 // fake success. Revert check: remove the status guard from Cancel and the
 // already-terminal case flips this test's second half to true.
 func TestCancelWaitingAnswer(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	asked := make(chan struct{})
 	job := r.Start(context.Background(), "question", KindSubagent, "", func(ctx context.Context, id string) (string, bool, error) {
 		close(asked)
@@ -148,7 +148,7 @@ func TestCancelWaitingAnswer(t *testing.T) {
 }
 
 func TestCancelRefusesTerminalAndUnknown(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 
 	if r.Cancel("job-nope") {
 		t.Fatal("Cancel claimed success on an unknown id")
@@ -180,7 +180,7 @@ func TestCancelRefusesTerminalAndUnknown(t *testing.T) {
 // loop fatals with jobs still running; (b) lose the subtree walk → only the
 // root dies; (c) flip the walk to parent-first → the order assertion fails.
 func TestCancelCascadeChildrenBeforeParentAnyDepth(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	blockers := newBlockerSet()
 
 	grandparent := r.Start(context.Background(), "gp", KindSubagent, "", blockers.fn).ID
@@ -221,7 +221,7 @@ func TestCancelCascadeChildrenBeforeParentAnyDepth(t *testing.T) {
 // spawned from. Revert check: make the subtree walk follow ParentID upward
 // and the final assertion fails with the grandparent gone terminal.
 func TestCancelLeavesAncestorsRunning(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	blockers := newBlockerSet()
 
 	grandparent := r.Start(context.Background(), "gp", KindSubagent, "", blockers.fn).ID
@@ -241,7 +241,7 @@ func TestCancelLeavesAncestorsRunning(t *testing.T) {
 // terminate the walk, not hang. Revert check: drop the visited set from the
 // DFS and this test deadlocks until the go test timeout kills it.
 func TestCancelCycleGuardTerminates(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	blockers := newBlockerSet()
 
 	a := r.Start(context.Background(), "a", KindOther, "", blockers.fn).ID
@@ -269,7 +269,7 @@ func TestCancelCycleGuardTerminates(t *testing.T) {
 // them. Revert check: remove the Resolve call from Cancel (exact-match only)
 // and both forms fail here.
 func TestCancelAcceptsShortIDs(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	blockers := newBlockerSet()
 
 	j1 := r.Start(context.Background(), "one", KindSubagent, "", blockers.fn)
@@ -297,7 +297,7 @@ func TestCancelAcceptsShortIDs(t *testing.T) {
 // Start's completion path and the first assertion sees raw "context
 // canceled"; set the flag unconditionally and the second half fails.
 func TestStoppedErrorRewrittenOnlyForUserStop(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	blockers := newBlockerSet()
 
 	killed := r.Start(context.Background(), "killed", KindSubagent, "", blockers.fn)

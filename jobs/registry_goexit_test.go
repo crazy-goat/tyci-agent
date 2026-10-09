@@ -21,7 +21,7 @@ import (
 // this test's Wait call times out (job never leaves StatusRunning) instead
 // of observing StatusFailed.
 func TestStartFinalizesJobOnGoexit(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	started := make(chan struct{})
 	job := r.Start(context.Background(), "goexits", KindSubagent, "", func(ctx context.Context, id string) (string, bool, error) {
 		close(started)

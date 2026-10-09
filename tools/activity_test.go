@@ -174,7 +174,7 @@ func (r *recordingProgressReporter) SetProgress(id, text string) bool {
 // the tools.JobActivityToucher interface end to end: a touch through the
 // interface must be observable on the registry's own Snapshot.
 func TestRealRegistry_SatisfiesJobActivityToucher(t *testing.T) {
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	withActivityToucher(t, reg)
 
 	release := make(chan struct{})
@@ -213,7 +213,7 @@ func assertJobActivityAfterStart(t *testing.T, reg *jobs.Registry, id string) {
 // but each streamed token must still move its job's LastActivity. Otherwise
 // the watchdog reports a busy role agent as idle after IdleAfter.
 func TestRunSubagentTask_RoleAgentStreamTouchesJobActivity(t *testing.T) {
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	oldStarter := getJobStarter()
 	SetJobStarter(testJobStarter{reg})
 	withActivityToucher(t, reg)
@@ -247,7 +247,7 @@ func TestSubagentAsync_StreamTouchesJobActivity(t *testing.T) {
 		subagentToolInstance = nil
 		SetJobStarter(nil)
 	})
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	SetJobStarter(testJobStarter{reg})
 	withActivityToucher(t, reg)
 

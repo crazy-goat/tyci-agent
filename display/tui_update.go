@@ -25,7 +25,7 @@ const jobsOnlyTickInterval = 1 * time.Second
 // keep running: a turn is in flight (the original item 56 reason), or a
 // background job is both non-terminal and currently painted somewhere on
 // screen (item 57 — without this, a job's elapsed/quiet time freezes
-// between job.updated events once the turn that started it has ended).
+// between job.status messages once the turn that started it has ended).
 func (m TuiModel) wantsStatusTick() bool {
 	return !m.reading || m.agentView != nil || (m.sidebarActive && m.sidebarTab == sidebarTabRuns) || m.hasLiveJobsToPaint()
 }
@@ -236,7 +236,7 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The modal is exactly one of the three places a live job's time
 		// is painted (hasLiveJobsToPaint) — re-arm on every message routed
 		// here so opening it (or a job finishing while it's open) doesn't
-		// wait for the next job.updated to start repainting (item 57).
+		// wait for the next job.status to start repainting (item 57).
 		next := model.(TuiModel)
 		return next, tea.Batch(cmd, next.armStatusTick())
 	}

@@ -32,7 +32,7 @@ func deadlineContext(t *testing.T, duration time.Duration) context.Context {
 }
 
 func TestExtensionApprovalMovesDeadlineAndContext(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	job, ctxs := startDeadlineJob(t, r, 100*time.Millisecond, release)
 	ctx := <-ctxs
@@ -77,7 +77,7 @@ func TestExtensionRejectsAndNoAnswerExpires(t *testing.T) {
 		{name: "no answer", resolve: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			r := NewRegistry()
+			r := NewRegistry(nil)
 			release := make(chan struct{})
 			job, _ := startDeadlineJob(t, r, 60*time.Millisecond, release)
 			requestID, ok := r.RequestExtension(job.ID, 200*time.Millisecond, "reason")
@@ -101,7 +101,7 @@ func TestExtensionRejectsAndNoAnswerExpires(t *testing.T) {
 }
 
 func TestExtensionValidationAndDuplicateResolution(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	job, _ := startDeadlineJob(t, r, time.Second, release)
 	for _, seconds := range []time.Duration{0, -time.Second, 11 * time.Minute} {
@@ -129,7 +129,7 @@ func TestExtensionValidationAndDuplicateResolution(t *testing.T) {
 }
 
 func TestExtensionCancelUnblocksWait(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	job := r.Start(context.Background(), "cancel", KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
 		<-ctx.Done()
 		return "", false, errors.New("cancelled")
@@ -144,7 +144,7 @@ func TestExtensionCancelUnblocksWait(t *testing.T) {
 }
 
 func TestExtensionRejectThenAllowsNewRequest(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	job, _ := startDeadlineJob(t, r, time.Second, release)
 	first, ok := r.RequestExtension(job.ID, time.Second, "first")
@@ -163,7 +163,7 @@ func TestExtensionRejectThenAllowsNewRequest(t *testing.T) {
 }
 
 func TestExtensionWaitCancellationClearsRequest(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	job, _ := startDeadlineJob(t, r, time.Second, release)
 	requestID, ok := r.RequestExtension(job.ID, time.Second, "cancel")
@@ -187,7 +187,7 @@ func TestExtensionWaitCancellationClearsRequest(t *testing.T) {
 }
 
 func TestExtensionRejectAfterDeadlineDoesNotResolve(t *testing.T) {
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	release := make(chan struct{})
 	job, _ := startDeadlineJob(t, r, 20*time.Millisecond, release)
 	requestID, ok := r.RequestExtension(job.ID, time.Second, "late")

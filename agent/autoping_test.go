@@ -34,7 +34,7 @@ func (c *clockRunner) Now() time.Time {
 
 func TestAgentLoop_AutoPingAfterIgnoredNudge(t *testing.T) {
 	clock := &clockRunner{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	reg := jobs.NewRegistry()
+	reg := jobs.NewRegistry(nil)
 	reg.SetClockForTests(clock.Now)
 	release := make(chan struct{})
 	defer close(release)

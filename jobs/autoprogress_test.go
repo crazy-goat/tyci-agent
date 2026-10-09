@@ -28,7 +28,7 @@ func (c *fakeClock) Advance(d time.Duration) {
 func newClockedJob(t *testing.T) (*Registry, *Job, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	r.SetClockForTests(clock.Now)
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
@@ -89,7 +89,7 @@ func TestAutoProgress_ResetsOnModelNote(t *testing.T) {
 
 func TestAutoProgress_NotForTerminalJob(t *testing.T) {
 	clock := &fakeClock{t: time.Now()}
-	r := NewRegistry()
+	r := NewRegistry(nil)
 	r.SetClockForTests(clock.Now)
 	job := r.Start(context.Background(), "short", KindSubagent, "", func(ctx context.Context, id string) (string, bool, error) {
 		return "done", false, nil
