@@ -47,7 +47,11 @@ func WithRedactor(redact func([]byte) []byte) Option {
 
 // Bus routes published messages to the matching subscriptions.
 type Bus struct {
-	mu     sync.Mutex
+	mu sync.Mutex
+	// gate is held for reading by every send, from the closed check to the
+	// journal write. Close takes it for writing, so no journal line is written
+	// after Close has closed the file.
+	gate   sync.RWMutex
 	seq    uint64
 	closed bool
 	tree   Tree
@@ -93,18 +97,21 @@ func (b *Bus) Subscribe(name string, f Filter) *Sub {
 
 // Close stops the bus. Publish returns ErrClosed afterwards. Subscriptions
 // can still Drain the messages they hold. The journal file is closed. A
-// Publish that runs at the same time as Close can get a Seq and keep its
-// message in memory, but lose its journal line. Close can be called more
-// than once.
+// Publish that runs at the same time as Close either finishes before the bus
+// closes, with its journal line written, or returns ErrClosed. Close can be
+// called more than once.
 func (b *Bus) Close() {
+	b.gate.Lock()
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
+		b.gate.Unlock()
 		return
 	}
 	b.closed = true
 	subs := slices.Clone(b.subs)
 	b.mu.Unlock()
+	b.gate.Unlock()
 	for _, s := range subs {
 		s.finish()
 	}
@@ -169,13 +176,19 @@ func (b *Bus) send(m Message, class Class, key string) (uint64, error) {
 		return 0, ErrBroadcastNotDown
 	}
 
+	b.gate.RLock()
 	m, warnings, err := b.deliver(m, class, key)
 	if err != nil {
+		b.gate.RUnlock()
 		return 0, err
 	}
 	if b.journal != nil && class == Durable {
 		b.journal.write(m)
 	}
+	b.gate.RUnlock()
+
+	// The warnings are published after the gate is released. A nested send
+	// would take the gate again, and that is not safe while Close waits.
 	for _, w := range warnings {
 		text := fmt.Sprintf("agent %s inbox has %d unread messages", w.agent, w.depth)
 		// The warning is best effort. It fails only when the bus is closed.
