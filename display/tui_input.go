@@ -7,6 +7,18 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// recordInputHistory saves a line to the input history (avoiding a duplicate of
+// the last entry), and to the history file.
+func (m *TuiModel) recordInputHistory(line string) {
+	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != line {
+		m.inputHistory = append(m.inputHistory, line)
+		if m.historyPath != "" {
+			_ = appendTuiHistory(m.historyPath, line)
+		}
+	}
+	m.historyIdx = -1
+}
+
 func (m TuiModel) submit() tea.Model {
 	line := strings.TrimSpace(m.input.Value())
 	m.input.Reset()
@@ -16,15 +28,13 @@ func (m TuiModel) submit() tea.Model {
 	if line == "" {
 		return m
 	}
-	// Save to input history (avoid duplicating last entry)
-	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != line {
-		m.inputHistory = append(m.inputHistory, line)
-		// Persist to history file
-		if m.historyPath != "" {
-			_ = appendTuiHistory(m.historyPath, line)
-		}
-	}
-	m.historyIdx = -1
+	m.recordInputHistory(line)
+	return m.send(line)
+}
+
+// send gives a line to the agent without recording it in the input history.
+// A text that the TUI writes for the model, not the person, uses this path.
+func (m TuiModel) send(line string) tea.Model {
 	// If the agent is busy, route the line to the pending-message queue
 	// (issue #88) instead of submitting it through the results channel.
 	// The line will be drained by the agent loop at the next safe point

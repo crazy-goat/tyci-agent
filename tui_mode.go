@@ -145,6 +145,13 @@ func compactAndShow(disp compactionDisplay, compact func(summary, focus string, 
 func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Context) {
 	titleSet := false // track whether terminal title has been set
 
+	// "/<name>" starts a workflow from the input (display/tui_workflow.go). A
+	// workflow named like a builtin command is an error, shown once here.
+	tuiDisp.SetWorkflowStarter(workflowStarter)
+	for _, err := range reservedWorkflowErrors(workflowStarter.List()) {
+		tuiDisp.Error(err)
+	}
+
 	// Replay session history if resuming. We use the stable block-per-
 	// message replay path so the transcript IS visible (user wanted to
 	// scroll it) but selection + scroll stay sane on long sessions:

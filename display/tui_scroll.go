@@ -190,7 +190,7 @@ func (m TuiModel) visibleLines() int {
 // to a panel. If a new panel is ever added between the status bar and the
 // input, subtract it here and every consumer stays correct.
 func (m TuiModel) messageRegionHeight() int {
-	return max(1, m.visibleLines()-m.queuePanelHeight()-m.jobsPanelHeight()-m.fileCompleteHeight())
+	return max(1, m.visibleLines()-m.queuePanelHeight()-m.jobsPanelHeight()-m.fileCompleteHeight()-m.slashCompleteHeight())
 }
 
 // visibleLine returns the transcript line drawn on screen row visY (0 = first

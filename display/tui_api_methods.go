@@ -43,6 +43,12 @@ func (t *TUI) SetRunLister(fn func() []TuiRunRow) {
 	t.prog.Send(tuiSetRunListerMsg{fn: fn})
 }
 
+// SetWorkflowStarter gives the TUI the workflow runner. Call it once, before
+// the first user input.
+func (t *TUI) SetWorkflowStarter(s WorkflowStarter) {
+	t.prog.Send(tuiWorkflowStarterMsg{starter: s})
+}
+
 // Results returns the channel that receives submitted lines from the TUI.
 func (t *TUI) Results() <-chan string {
 	return t.results
