@@ -132,10 +132,10 @@ func TestSidebarTaskRowSelectionByKeyAndMouse(t *testing.T) {
 	}
 }
 
-// TestSidebarTaskRowsRenderUnchangedAfterJobEvents checks that the render
+// TestRenderSidebarTasksFollowsJobEvents checks that the render
 // follows a job that changes state: the rows that the cursor and the list use
 // are the ones of the current job set, not of an earlier one.
-func TestSidebarTaskRowsRenderUnchangedAfterJobEvents(t *testing.T) {
+func TestRenderSidebarTasksFollowsJobEvents(t *testing.T) {
 	m := tasksFixtureAllDone(t)
 	m.sidebarCursor = 2
 	before := m.renderSidebarTasks(40)
