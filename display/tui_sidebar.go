@@ -443,6 +443,16 @@ func (m TuiModel) routeSidebarMsg(msg tea.Msg) (handled bool, model tea.Model, c
 			m.sidebarFocused = true
 			return true, m, nil
 		}
+		// Shift+Left makes the sidebar wider and Shift+Right narrower, also
+		// with the input focused. The modal above keeps these keys.
+		if (msg.Type == tea.KeyShiftLeft || msg.Type == tea.KeyShiftRight) && !m.subagentModalActive {
+			delta := 1
+			if msg.Type == tea.KeyShiftRight {
+				delta = -1
+			}
+			next, cmd := m.resizeSidebar(delta)
+			return true, next, cmd
+		}
 		return false, m, nil
 
 	default:
@@ -525,9 +535,24 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			return m.sidebarActivateRow()
 
+		case tea.KeyShiftLeft, tea.KeyShiftRight:
+			delta := 1
+			if msg.Type == tea.KeyShiftRight {
+				delta = -1
+			}
+			return m.resizeSidebar(delta)
+
 		case tea.KeyRunes:
-			if m.sidebarTab == sidebarTabTasks && string(msg.Runes) == "r" {
-				return m.sidebarResumeSubagentRow()
+			switch string(msg.Runes) {
+			case "r":
+				if m.sidebarTab == sidebarTabTasks {
+					return m.sidebarResumeSubagentRow()
+				}
+			case "<":
+				// Fallback for terminals that do not send Shift+Left.
+				return m.resizeSidebar(1)
+			case ">":
+				return m.resizeSidebar(-1)
 			}
 			return m, nil
 		}
