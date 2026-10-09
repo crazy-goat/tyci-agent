@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-09
+
 ### Changed
 - Internal: the `eventbus/` package, `Registry.Post`, `Registry.DrainMessages`, `jobs.Notifier` and `SetOnEvent` are removed. `Registry.Post`, `Registry.DrainMessages` and `jobs.Notifier` were removed in #194. Job status goes to the TUI as `job.status` bus messages. `jobs.NewRegistry` takes an `EventPublisher` instead of `SetOnEvent`. `TUI.SetJobEventBus` is now `TUI.SetJobEvents` (#195).
 - Automatic compaction at the hard limit asks the model for a summary first. The call uses the same model and no tools, and its usage counts in the status bar and the ledger. The summary leads the compacted history. If the call fails, returns no text or takes longer than 60 seconds, a fixed note is used. The hard limit leaves room for the call: a tenth of the window, at most 8192 tokens. For a window below 163840 tokens the automatic hard limit is lower: 90% of the window up to 81920 tokens, the window minus 8192 tokens above that. Windows of 163840 tokens and more are unchanged. The call asks for at most the room left in the window, and is made only when that is at least 1024 tokens. Otherwise the fixed note is used (#533).
