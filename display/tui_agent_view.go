@@ -40,6 +40,9 @@ type agentView struct {
 	// resumes it with confirmText, any other key cancels.
 	confirming  bool
 	confirmText string
+	// checking is true while the resume check of a finished agent runs: an
+	// Enter then does nothing, so a second Enter starts no second check.
+	checking bool
 }
 
 // newAgentViewModel returns an empty block model with its own caches. It is

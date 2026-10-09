@@ -112,8 +112,12 @@ func (m TuiModel) sendAgentViewInput() (TuiModel, tea.Cmd) {
 			return agentPostDoneMsg{jobID: jobID, text: text, err: in.Post(jobID, text)}
 		}
 	}
+	if av.checking {
+		return m, nil
+	}
 	// The check reads the run files and the saved conversation, so it
 	// runs on a tea.Cmd. Its result sets confirming in the handler.
+	av.checking = true
 	return m, func() tea.Msg {
 		tokens, usd, priced, err := in.ResumeCheck(jobID)
 		return agentResumeCheckDoneMsg{jobID: jobID, text: text, tokens: tokens, usd: usd, priced: priced, err: err}
@@ -151,6 +155,9 @@ func (m TuiModel) handleAgentInputMsg(msg tea.Msg) (next TuiModel, cmd tea.Cmd, 
 		return m, nil, true
 	case agentResumeCheckDoneMsg:
 		av := m.agentView
+		if av != nil && av.jobID == msg.jobID {
+			av.checking = false
+		}
 		if av == nil || av.jobID != msg.jobID || strings.TrimSpace(m.input.Value()) != msg.text {
 			// The view shows another agent now, or the input changed while
 			// the check ran. The result is stale: a new Enter checks again.

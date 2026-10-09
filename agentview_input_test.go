@@ -162,15 +162,75 @@ func TestResumeCheck_PricedModelReportsTheInputCost(t *testing.T) {
 	}
 }
 
-func TestAgentRunWorkdir_RefusesWhenTheRunsCannotBeRead(t *testing.T) {
-	// A failed lookup must refuse, not allow: the run of the agent is unknown.
+func TestAgentRunWorkdir_AllowsAResumeWhenTheRepositoryCannotBeRead(t *testing.T) {
+	// No repository means no workflow run can exist in this directory, so the
+	// agent belongs to no run and the resume goes ahead without a worktree.
 	useRunInfo(t, "", errors.New("not a git repository"))
 	stashCheckAgent(t, "job-lookup", fakeCheckModel{provider: "nowhere", model: "unpriced"})
 
-	if _, err := agentRunWorkdir("job-lookup"); err == nil || !strings.Contains(err.Error(), "not a git repository") {
-		t.Fatalf("err = %v, want a refusal that carries the lookup error", err)
+	if dir, err := agentRunWorkdir("job-lookup"); err != nil || dir != "" {
+		t.Fatalf("dir=%q err=%v, want no worktree and no error", dir, err)
 	}
-	if _, _, _, err := (agentViewInput{}).ResumeCheck("job-lookup"); err == nil {
-		t.Fatal("ResumeCheck must refuse when the runs cannot be read")
+	if _, _, _, err := (agentViewInput{}).ResumeCheck("job-lookup"); err != nil {
+		t.Fatalf("ResumeCheck err = %v, want the resume allowed", err)
+	}
+}
+
+func TestAgentRunWorkdir_RefusesWhenARunCannotBeRead(t *testing.T) {
+	// The agent may belong to a run whose state cannot be read, so refuse.
+	home := t.TempDir()
+	broken := filepath.Join(home, ".tyci", "runs", "repo", "run-broken")
+	if err := os.MkdirAll(broken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(broken, "state.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	useRunInfo(t, home, nil)
+
+	if _, err := agentRunWorkdir("job-unknown"); err == nil {
+		t.Fatal("a resume must be refused while a run of the agent cannot be read")
+	}
+}
+
+// stashChainedAgent stashes a resumed job that continues the run of origin.
+func stashChainedAgent(jobID, origin string) {
+	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go on"}}}}
+	stashResumable(jobID, resumableEntry{msgs: msgs, mc: fakeCheckModel{provider: "nowhere", model: "unpriced"}, origin: origin})
+}
+
+func TestAgentRunWorkdir_ChainedResumeOfAnActiveRunIsRefused(t *testing.T) {
+	// The resumed job is not in the run history: its run is found by the
+	// origin, so the run guard still refuses it.
+	resetResumableForTest(t)
+	home := t.TempDir()
+	saveTestRun(t, home, "run-active", "running", t.TempDir(), "job-orig")
+	useRunInfo(t, home, nil)
+	stashChainedAgent("job-chain", "job-orig")
+
+	if _, err := agentRunWorkdir("job-chain"); err == nil || !strings.Contains(err.Error(), "run-active (running)") {
+		t.Fatalf("err = %v, want a refusal that names the active run", err)
+	}
+}
+
+func TestAgentRunWorkdir_ChainedResumeOfADoneRunGetsTheWorktree(t *testing.T) {
+	resetResumableForTest(t)
+	home := t.TempDir()
+	wt := t.TempDir()
+	saveTestRun(t, home, "run-done", "done", wt, "job-orig2")
+	useRunInfo(t, home, nil)
+	stashChainedAgent("job-chain2", "job-orig2")
+
+	if dir, err := agentRunWorkdir("job-chain2"); err != nil || dir != wt {
+		t.Fatalf("dir=%q err=%v, want the worktree of the done run", dir, err)
+	}
+}
+
+func TestResumeOrigin_KeepsTheOriginOfAChain(t *testing.T) {
+	if got := resumeOrigin(resumableEntry{}, "job-first"); got != "job-first" {
+		t.Fatalf("first resume origin = %q, want the resumed job", got)
+	}
+	if got := resumeOrigin(resumableEntry{origin: "job-first"}, "job-second"); got != "job-first" {
+		t.Fatalf("chained origin = %q, want job-first", got)
 	}
 }

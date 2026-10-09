@@ -87,6 +87,12 @@ type resumableEntry struct {
 	// wrapped with WithDepth, so an old/test-built entry with no explicit
 	// depth behaves exactly as before this field existed.
 	depth int
+
+	// origin is the job id that the workflow run of this conversation is
+	// recorded under. A job resumed from a run agent keeps the origin of
+	// that agent, so a resume of the resumed job still finds the run (see
+	// resumeOrigin). Empty means the job itself is its own origin.
+	origin string
 }
 
 // resumableMu guards resumable and resumableOrder.

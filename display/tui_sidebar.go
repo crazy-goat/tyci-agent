@@ -1117,9 +1117,15 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 		for i, j := range kids {
 			own := usage[j.ID]
 			cost, unpriced := rollupJobCost(j.ID, byParent, usage)
-			old, continues := m.resumedFrom[j.ID]
+			_, continues := m.resumedFrom[j.ID]
 			if continues {
-				if desc, ok := descriptions[old]; ok {
+				// Show the name of the original agent, also for a job that
+				// continues a resumed job: follow the chain back to its start.
+				origin := m.resumedFrom[j.ID]
+				for next, ok := m.resumedFrom[origin]; ok; next, ok = m.resumedFrom[origin] {
+					origin = next
+				}
+				if desc, ok := descriptions[origin]; ok {
 					j.Description = desc
 				}
 			}

@@ -72,21 +72,40 @@ var agentRunInfo = func() (flow.RepoInfo, error) { return workflowManager.Info()
 
 // agentRunWorkdir refuses a resume of an agent that belongs to a workflow run
 // which is not done or paused. It returns the worktree of that run, so the
-// resumed agent works in the same files. An agent of no run returns "". The
-// worktree of a merged or skipped run is removed; a resume then would work in
-// the main checkout, so it is refused too. When the repository cannot be
-// read, the run of the agent is unknown, so the resume is refused as well.
+// resumed agent works in the same files. An agent of no run returns "". A
+// resumed job belongs to the run of the agent it continues (see
+// runOriginOf). The worktree of a merged or skipped run is removed; a resume
+// then would work in the main checkout, so it is refused too.
 func agentRunWorkdir(jobID string) (string, error) {
 	info, err := agentRunInfo()
 	if err != nil {
-		return "", fmt.Errorf("cannot read the workflow runs, so the agent cannot be checked: %w", err)
+		// Without repository info no workflow run can start in this
+		// directory (Start, StartIssue and Resume need it too), so the agent
+		// belongs to no run.
+		return "", nil
 	}
-	return runWorkdirIn(info, jobID)
+	return runWorkdirIn(info, runOriginOf(jobID))
 }
 
-// runWorkdirIn is agentRunWorkdir for the repository info info.
+// runOriginOf returns the job id under which the workflow run of jobID is
+// recorded: the job it continues, or jobID itself.
+func runOriginOf(jobID string) string {
+	resumableMu.Lock()
+	entry, ok := resumable[jobID]
+	resumableMu.Unlock()
+	if ok && entry.origin != "" {
+		return entry.origin
+	}
+	return jobID
+}
+
+// runWorkdirIn is agentRunWorkdir for the repository info info. jobID is the
+// id under which the run is recorded.
 func runWorkdirIn(info flow.RepoInfo, jobID string) (string, error) {
-	st, ok := flow.RunOfSession(info.Home, info.Name(), jobID)
+	st, ok, err := flow.RunOfSession(info.Home, info.Name(), jobID)
+	if err != nil {
+		return "", fmt.Errorf("cannot check the workflow runs for the agent: %w", err)
+	}
 	if !ok {
 		return "", nil
 	}

@@ -254,6 +254,27 @@ func TestAgentInput_ResumedJobIsListedUnderTheJobItContinues(t *testing.T) {
 	}
 }
 
+func TestAgentInput_ChainedContinuationKeepsTheOriginalName(t *testing.T) {
+	// A resume of a resumed job: its label is the name of the first agent,
+	// not the text typed in the first resume.
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(jobs.Job{ID: "agent-root", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "review", StartedAt: time.Now()})
+	m.applyJobUpdate(jobs.Job{ID: "agent-first", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "fix the nit", StartedAt: time.Now()})
+	m.applyJobUpdate(jobs.Job{ID: "agent-second", Kind: jobs.KindSubagent, Status: jobs.StatusRunning, Description: "and the typo", StartedAt: time.Now()})
+	m.resumedFrom["agent-first"] = "agent-root"
+	m.resumedFrom["agent-second"] = "agent-first"
+
+	for _, row := range m.buildSubagentTree() {
+		if row.job.ID == "agent-second" {
+			if row.job.Description != "review" {
+				t.Fatalf("chained description = %q, want the original name review", row.job.Description)
+			}
+			return
+		}
+	}
+	t.Fatal("the chained job must be listed")
+}
+
 func TestAgentInput_TextGoesToTheAgentWhileMainIsBusy(t *testing.T) {
 	fake := &fakeAgentInput{}
 	m := openInputTestView(t, "agent-busy-main", jobs.StatusRunning, fake)
@@ -370,5 +391,24 @@ func TestAgentInput_TextChangedDuringCheckIsNotConfirmed(t *testing.T) {
 	}
 	if m.input.Value() != "text and more" {
 		t.Fatalf("input = %q, want the text the user typed", m.input.Value())
+	}
+}
+
+func TestAgentInput_SecondEnterWhileCheckRunsStartsNoCheck(t *testing.T) {
+	fake := &fakeAgentInput{priced: true, tokens: 10}
+	m := openInputTestView(t, "agent-old", jobs.StatusDone, fake)
+	m.input.SetValue("text")
+
+	m, first := press(m, enterKey)
+	m, second := press(m, enterKey)
+	if first == nil || second != nil {
+		t.Fatalf("first=%v second=%v, want one check command and none for the second Enter", first != nil, second != nil)
+	}
+	m = runCmd(t, m, first)
+	if fake.checks != 1 {
+		t.Fatalf("checks = %d, want one check", fake.checks)
+	}
+	if !m.agentView.confirming {
+		t.Fatal("the check result must ask for the confirmation")
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -197,29 +199,41 @@ func RecentRuns(home, repoName string, n int) []*RunState {
 
 // RunOfSession returns the run that has an agent step run as session (the job
 // id of the agent). ok is false when no run of repoName has such a step, for
-// example an agent started outside a workflow.
-func RunOfSession(home, repoName, session string) (st *RunState, ok bool) {
+// example an agent started outside a workflow. A run directory without a state
+// file is not a run. err is set when a state file exists but cannot be read,
+// and no run has the session: the agent may belong to that run.
+func RunOfSession(home, repoName, session string) (st *RunState, ok bool, err error) {
 	if session == "" {
-		return nil, false
+		return nil, false, nil
 	}
 	base := filepath.Join(home, ".tyci", "runs", repoName)
 	entries, err := os.ReadDir(base)
 	if err != nil {
-		return nil, false
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("flow: read runs of %s: %w", repoName, err)
 	}
+	var unreadable error
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		run, err := Load(filepath.Join(base, e.Name()))
 		if err != nil {
+			if unreadable == nil && !errors.Is(err, fs.ErrNotExist) {
+				unreadable = err
+			}
 			continue
 		}
 		for _, h := range run.History {
 			if h.Session == session {
-				return run, true
+				return run, true, nil
 			}
 		}
 	}
-	return nil, false
+	if unreadable != nil {
+		return nil, false, fmt.Errorf("flow: a run of %s cannot be read, so the agent may belong to it: %w", repoName, unreadable)
+	}
+	return nil, false, nil
 }
