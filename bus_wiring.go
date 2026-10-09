@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/internal/redact"
+	"github.com/crazy-goat/tyci-agent/internal/watchdog"
 	"github.com/crazy-goat/tyci-agent/session"
 )
 
@@ -67,7 +69,7 @@ var orchestratorAddr = bus.Addr{Type: bus.AddrOrchestrator}
 // noticeKinds lists the kinds that an inbox or the orchestrator reads. A
 // subscription gets only the kinds it lists, so every consumer lists all of
 // them.
-var noticeKinds = []bus.Kind{bus.KindNoticeCompletion, bus.KindAskRequest, bus.KindBtwAnswer, bus.KindAgentMessage}
+var noticeKinds = []bus.Kind{bus.KindNoticeCompletion, bus.KindAskRequest, bus.KindBtwAnswer, bus.KindAgentMessage, bus.KindPingMissed}
 
 // inboxSet keeps one Durable inbox subscription per agent. The inbox of an
 // agent opens when the job starts, before its ID is returned, and closes when
@@ -258,6 +260,14 @@ func noticeText(m bus.Message) (text string, ok bool) {
 			return "", false
 		}
 		return c.Text, true
+	case bus.KindPingMissed:
+		p, err := bus.Decode[bus.PingMissed](m)
+		if err != nil {
+			fmt.Fprintf(busLog, "bus: alarm %d not read: %v\n", m.Seq, err)
+			return "", false
+		}
+		return fmt.Sprintf("[watchdog] Agent %s has shown no activity for %s.\n"+
+			"You may: send it a message (message), or cancel it (kill_job).", p.Agent, formatIdle(p.QuietFor)), true
 	case bus.KindAgentMessage:
 		a, err := bus.Decode[bus.AgentMessage](m)
 		if err != nil {
@@ -380,14 +390,29 @@ func (noticeCounter) MarkAskShown(jobID string, seq int) {
 // to is "". It reports false when to is not live, so that the watchdog climbs
 // to the next ancestor. The bus would otherwise reroute the alarm to the
 // orchestrator.
-func watchdogNotify(to, text string) bool {
+func watchdogNotify(to string, a watchdog.Alarm) bool {
 	if to == "" {
-		publishNotice(appBus, "", text, false)
+		publishPingMissed(appBus, "", a)
 		return true
 	}
 	if !JobRegistry.IsLive(to) {
 		return false
 	}
-	publishNotice(appBus, to, text, false)
+	publishPingMissed(appBus, to, a)
 	return true
+}
+
+// publishPingMissed sends a watchdog alarm about agent a.Agent to parentID, or
+// to the orchestrator when parentID is "".
+func publishPingMissed(b *bus.Bus, parentID string, a watchdog.Alarm) {
+	publishTo(b, bus.KindPingMissed, bus.Addr{Type: bus.AddrAgent, ID: a.Agent}, recipientAddr(parentID), bus.OriginSystem,
+		bus.PingMissed{Agent: a.Agent, QuietFor: a.QuietFor})
+}
+
+// formatIdle shows whole seconds below one minute and rounded minutes above.
+func formatIdle(idle time.Duration) string {
+	if idle < time.Minute {
+		return idle.Round(time.Second).String()
+	}
+	return fmt.Sprintf("%dm", int((idle+30*time.Second)/time.Minute))
 }

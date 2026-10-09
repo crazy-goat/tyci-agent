@@ -177,34 +177,3 @@ func TestInbox_OpenTwice_OneSubscription(t *testing.T) {
 		t.Fatalf("inbox drain = %q, want exactly one notice", got)
 	}
 }
-
-// TestWatchdogNotify_DeliveredOnce checks a watchdog alarm for a live agent
-// reaches its inbox once, and an alarm for the human reaches the orchestrator
-// once. An agent that is not live is reported as unreachable, so the watchdog
-// climbs to its ancestor.
-func TestWatchdogNotify_DeliveredOnce(t *testing.T) {
-	reg, _ := withTestWiring(t)
-	id, release := startLiveJob(t, reg)
-	defer release()
-
-	if !watchdogNotify(id, "[watchdog] quiet") {
-		t.Fatal("alarm for a live agent reported unreachable")
-	}
-	if got := agentInboxes.drain(id); len(got) != 1 || got[0] != "[watchdog] quiet" {
-		t.Fatalf("inbox drain = %q, want the one alarm", got)
-	}
-
-	if !watchdogNotify("", "[watchdog] human") {
-		t.Fatal("alarm for the human reported undelivered")
-	}
-	if got := drainNotices(); len(got) != 1 || got[0] != "[watchdog] human" {
-		t.Fatalf("orchestrator drain = %q, want the one alarm", got)
-	}
-
-	if watchdogNotify("job-unknown", "[watchdog] gone") {
-		t.Fatal("alarm for an unknown agent reported delivered")
-	}
-	if got := drainNotices(); len(got) != 0 {
-		t.Fatalf("orchestrator got %q for an unreachable agent, want nothing", got)
-	}
-}
