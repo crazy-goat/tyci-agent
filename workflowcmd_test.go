@@ -456,6 +456,37 @@ func TestWorkflowStatusReadsStateFile(t *testing.T) {
 	}
 }
 
+// The text form prints the params after the state line, one name=value per line.
+// The JSON form has them as the params object.
+func TestWorkflowStatusPrintsParams(t *testing.T) {
+	home := wfHome(t)
+	const id = "20261005-153012-42"
+	dir := flow.RunDir(home, "demo", id)
+	st := &flow.RunState{Version: 1, Run: id, Workflow: "one-check", Repo: "acme/demo", Issue: 42,
+		Status: "done", Current: "end", Visits: map[string]int{"check": 1},
+		Params: map[string]string{"issue": "42", "branch": "dev"}}
+	if err := (&flow.Store{Dir: dir}).Save(st); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runWorkflowCLI(t, "workflow", "status", id)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	want := "run " + id + ": done at state end\nbranch=dev\nissue=42\n"
+	if out != want {
+		t.Fatalf("text output = %q, want %q", out, want)
+	}
+
+	out, _, err = runWorkflowCLI(t, "workflow", "status", id, "--json")
+	if err != nil {
+		t.Fatalf("status --json: %v", err)
+	}
+	if r := decodeWorkflowResult(t, out); r.Params["branch"] != "dev" || r.Params["issue"] != "42" {
+		t.Fatalf("json params = %v", r.Params)
+	}
+}
+
 func TestWorkflowStatusUnknownRun(t *testing.T) {
 	wfHome(t)
 	out, _, err := runWorkflowCLI(t, "workflow", "status", "20261005-153012-99", "--json")

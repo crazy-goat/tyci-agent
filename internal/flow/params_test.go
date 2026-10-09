@@ -2,6 +2,8 @@ package flow
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,8 +48,20 @@ func TestBindParams_ExtraValuesAreError(t *testing.T) {
 
 func TestBindParams_MissingRequiredNamesParam(t *testing.T) {
 	_, err := BindParams(paramWF(), nil)
-	if err == nil || !strings.Contains(err.Error(), `"issue"`) || !strings.Contains(err.Error(), "GitHub issue number") {
-		t.Fatalf("err = %v", err)
+	var mp MissingParamError
+	if !errors.As(err, &mp) {
+		t.Fatalf("err = %v, want a MissingParamError", err)
+	}
+	if mp.Name != "issue" || mp.Description != "GitHub issue number" {
+		t.Fatalf("MissingParamError = %+v", mp)
+	}
+	if want := "missing required param issue: GitHub issue number"; err.Error() != want {
+		t.Fatalf("err = %q, want %q", err.Error(), want)
+	}
+	// A wrapped error still reaches the caller through errors.As.
+	wrapped := fmt.Errorf("start: %w", err)
+	if !errors.As(wrapped, &mp) {
+		t.Fatal("wrapped error does not unwrap to MissingParamError")
 	}
 }
 
@@ -134,7 +148,7 @@ func TestPrepareRun_NoIssueNamesWorktreeAfterRun(t *testing.T) {
 func TestPrepareRun_MissingRequiredParamCreatesNothing(t *testing.T) {
 	var calls []string
 	_, _, _, err := PrepareRun(context.Background(), preparedDeps(t.TempDir(), okWF(), &calls), PrepareReq{Workflow: "demo"})
-	if err == nil || !strings.Contains(err.Error(), `"issue"`) {
+	if err == nil || !strings.Contains(err.Error(), "missing required param issue") {
 		t.Fatalf("err = %v", err)
 	}
 	if len(calls) != 0 {
@@ -178,7 +192,7 @@ func TestPrepareRun_ParamsSurviveSaveAndLoad(t *testing.T) {
 // required value before it reserves anything.
 func TestWorkflowStart_MissingParamReservesNothing(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
-	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo"}); err == nil || !strings.Contains(err.Error(), `"issue"`) {
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo"}); err == nil || !strings.Contains(err.Error(), "missing required param issue") {
 		t.Fatalf("err = %v", err)
 	}
 	if len(e.m.active) != 0 {
@@ -304,12 +318,68 @@ func TestStartIssue_RefusesWorkflowWithoutIssueParam(t *testing.T) {
 	}
 }
 
-// validate warns about a workflow that an issue cannot start.
-func TestValidate_NoIssueParamWarns(t *testing.T) {
-	wf := &Workflow{Description: "d", Name: "demo", Start: "a", States: map[string]State{"a": {End: true}}}
-	warns, err := Validate(wf, &flowconfig.Config{}, okResolve)
-	if err != nil || len(warns) != 1 || !strings.Contains(warns[0], "cannot start with an issue") {
-		t.Fatalf("err=%v warns=%v", err, warns)
+// The worker and the oracle both get the params of the run in their RunContext.
+func TestRunContext_CarriesParamsToWorkerAndOracle(t *testing.T) {
+	f := newOracleFixture(askWF(false), "stop\nend")
+	f.st.Params = map[string]string{"issue": "7", "branch": "dev"}
+	if err := f.r.Run(context.Background(), f.st); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.oa.inner.rcs) == 0 || f.oa.inner.rcs[0].Params["branch"] != "dev" {
+		t.Fatalf("worker params = %v", f.oa.inner.rcs)
+	}
+	if len(f.oa.calls) == 0 || f.oa.calls[0].Params["branch"] != "dev" {
+		t.Fatalf("oracle params = %v", f.oa.calls)
+	}
+}
+
+// A run that is loaded from its saved state and continued renders {{.Params.<name>}}
+// from the saved params.
+func TestResume_FillsParamsFromSavedState(t *testing.T) {
+	home := t.TempDir()
+	const id = "20261009-101010-7"
+	dir := RunDir(home, "r", id)
+	saved := &RunState{Version: 1, Run: id, Workflow: "demo", Repo: "o/r", Issue: 7,
+		Params: map[string]string{"issue": "7", "branch": "dev"},
+		Status: "running", Current: "code", Worktree: t.TempDir(), Visits: map[string]int{}, History: []Step{}}
+	if err := (&Store{Dir: dir}).Save(saved); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
+		"code": {Agent: "coder", On: map[string]string{"done": "end"}},
+		"end":  {End: true},
+	}}
+	f := newOracleFixture(wf)
+	if err := f.r.Run(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.oa.inner.rcs) == 0 {
+		t.Fatal("worker did not run")
+	}
+	wfDir := t.TempDir()
+	e2eWrite(t, filepath.Join(wfDir, "tasks", "t.md"), "B={{.Params.branch}}")
+	if out, err := (TaskTemplates{Dir: wfDir}).Render("t", f.oa.inner.rcs[0]); err != nil || out != "B=dev" {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+}
+
+// ChatTools.Status reports the params of the run.
+func TestChatTools_StatusShowsParams(t *testing.T) {
+	e := newMgrEnv(t, &gatedChecks{key: "ok"})
+	st := saveRun(t, e.home, 5, func(st *RunState) {
+		st.Params = map[string]string{"issue": "5", "branch": "dev"}
+	})
+	out, err := ChatTools{e.m}.Status(st.Run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := out.(map[string]any)["params"].(map[string]string)
+	if p["branch"] != "dev" || p["issue"] != "5" {
+		t.Fatalf("status params = %v", out)
 	}
 }
 

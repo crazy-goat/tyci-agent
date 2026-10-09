@@ -11,6 +11,14 @@ const IssueParam = "issue"
 
 var paramName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
+// MissingParamError is returned by BindParams for a required param without a value.
+// Callers find the param with errors.As.
+type MissingParamError struct{ Name, Description string }
+
+func (e MissingParamError) Error() string {
+	return fmt.Sprintf("missing required param %s: %s", e.Name, e.Description)
+}
+
 // BindParams gives the positional values of a run to the params of wf. Every
 // declared param gets a key, so a template can read it; an optional param without
 // a value is "". It returns one error for the first problem: extra values, a
@@ -26,7 +34,7 @@ func BindParams(wf *Workflow, values []string) (map[string]string, error) {
 			v = values[i]
 		}
 		if v == "" && p.Required {
-			return nil, fmt.Errorf("workflow %q needs param %q: %s", wf.Name, p.Name, p.Description)
+			return nil, MissingParamError{Name: p.Name, Description: p.Description}
 		}
 		if p.Name == IssueParam && v != "" {
 			n, err := strconv.Atoi(v)

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -290,6 +292,9 @@ func printResult(w io.Writer, jsonOut bool, r workflowResult) {
 		}
 	case r.RunID != "":
 		fmt.Fprintf(w, "run %s: %s at state %s\n", r.RunID, r.Status, r.State)
+		for _, name := range slices.Sorted(maps.Keys(r.Params)) {
+			fmt.Fprintf(w, "%s=%s\n", name, r.Params[name])
+		}
 	}
 }
 
