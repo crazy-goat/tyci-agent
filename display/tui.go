@@ -114,6 +114,11 @@ type tuiSetRunListerMsg struct {
 	fn func() []TuiRunRow
 }
 
+// tuiSetReminderListerMsg carries the callback of the reminders in the Tasks tab.
+type tuiSetReminderListerMsg struct {
+	fn func() []TuiReminderRow
+}
+
 // tuiSetRunStopperMsg carries the callback that stops a run from the Runs tab.
 type tuiSetRunStopperMsg struct {
 	fn func(run string) error
@@ -552,6 +557,10 @@ type TuiModel struct {
 	// runLister returns the recent workflow runs for the sidebar Runs tab.
 	// nil means it was never wired.
 	runLister func() []TuiRunRow
+
+	// reminderLister returns the undelivered reminders for the Tasks tab.
+	// nil means it was never wired, and the tab shows no reminder rows.
+	reminderLister func() []TuiReminderRow
 
 	// agentView is non-nil while the main window shows a subagent's live
 	// conversation instead of the main one (see tui_agent_view.go).

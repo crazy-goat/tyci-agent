@@ -132,6 +132,18 @@ func stopCommandOutput(disp slashCommandDisplay, arg string, stop func(run, reas
 	disp.ToolBlock(string(b))
 }
 
+// handleRemindersCommand implements "/reminders": it prints the undelivered
+// reminders, the same lines as "tyci remind list".
+func handleRemindersCommand(disp slashCommandDisplay) {
+	disp.ResetStatus()
+	text, err := reminderListText()
+	if err != nil {
+		disp.Error(fmt.Errorf("/reminders: %v", err))
+		return
+	}
+	disp.ToolBlock(text)
+}
+
 // handleMsgSlashCommand implements "/msg <job> <text>": posts to a job's
 // mailbox. Same class of bug as the two commands above — this never runs
 // the agent, so nothing else would restore reading.
@@ -365,6 +377,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				handleMsgCommand(strings.TrimSpace(strings.TrimPrefix(cmd, "/msg")))
 			case cmd == "/stop" || strings.HasPrefix(cmd, "/stop "):
 				stopCommandOutput(tuiDisp, strings.TrimPrefix(cmd, "/stop"), tools.StopWorkflowRun)
+			case cmd == "/reminders":
+				handleRemindersCommand(tuiDisp)
 			}
 		}
 		return nil
@@ -528,6 +542,11 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// thread's turns.
 				iterCancel()
 				handleBtwQuestionCommand(tuiDisp, strings.TrimPrefix(trimmed, "/btw"), startBtwQuestion)
+				continue
+			case trimmed == "/reminders":
+				// Bare /reminders: list the undelivered reminders.
+				iterCancel()
+				handleRemindersCommand(tuiDisp)
 				continue
 			case strings.HasPrefix(trimmed, "/msg "):
 				// /msg <job> <text>: posts to a job's mailbox. Doesn't touch

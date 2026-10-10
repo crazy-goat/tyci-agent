@@ -14,6 +14,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/internal/connect"
+	"github.com/crazy-goat/tyci-agent/internal/cron"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/hooks"
@@ -550,6 +551,27 @@ var tuiCmd = &cobra.Command{
 				runRowsAt = time.Now()
 			}
 			return runRowsCache
+		})
+		// The Tasks tab lists the undelivered reminders. Cached like the Runs
+		// rows, because View() calls the lister on every frame. The file is
+		// read without remindMu: it is replaced by an atomic rename.
+		var reminderRowsCache []display.TuiReminderRow
+		var reminderRowsAt time.Time
+		tuiDisp.SetReminderLister(func() []display.TuiReminderRow {
+			if reminderRowsAt.IsZero() || time.Since(reminderRowsAt) >= time.Second {
+				reminderRowsCache = nil
+				if dir, err := cronConfigDir(); err == nil {
+					if f, err := cron.LoadReminders(dir); err == nil {
+						for _, r := range f.Reminders {
+							if !r.Delivered {
+								reminderRowsCache = append(reminderRowsCache, display.TuiReminderRow{ID: r.ID, Text: r.Text, FiresAt: r.FiresAt})
+							}
+						}
+					}
+				}
+				reminderRowsAt = time.Now()
+			}
+			return reminderRowsCache
 		})
 		// The Runs tab stop key stops a run through the same function as
 		// the workflow_stop tool and /stop.

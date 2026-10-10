@@ -38,6 +38,7 @@ package display
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -990,6 +991,30 @@ func (m TuiModel) sidebarTaskRows(width int) []sidebarTaskRow {
 
 	rows = append(rows, sidebarTaskRow{group: "Lua", line: "Lua", isHeading: true})
 	rows = append(rows, sidebarLuaRows(m.sidebarOwnedLuaRuns(all), width)...)
+	if m.reminderLister != nil {
+		rows = append(rows, sidebarReminderRows(m.reminderLister(), width)...)
+	}
+	return rows
+}
+
+// sidebarReminderRows returns one non-selectable Tasks row per reminder, the
+// soonest first. It returns no rows when there are no reminders. The rows
+// come after the Lua group, and rs is not changed.
+func sidebarReminderRows(rs []TuiReminderRow, width int) []sidebarTaskRow {
+	if len(rs) == 0 {
+		return nil
+	}
+	sorted := slices.Clone(rs)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].FiresAt.Before(sorted[j].FiresAt) })
+	rows := []sidebarTaskRow{{group: "Reminders", line: "Reminders", isHeading: true}}
+	for _, r := range sorted {
+		text := strings.Join(strings.Fields(r.Text), " ")
+		left := "reminder due: " + text
+		if d := time.Until(r.FiresAt).Round(time.Minute); d > 0 {
+			left = "reminder in " + formatDurationShort(d) + ": " + text
+		}
+		rows = append(rows, sidebarTaskRow{group: "Reminders", line: truncateToWidth(left, width)})
+	}
 	return rows
 }
 

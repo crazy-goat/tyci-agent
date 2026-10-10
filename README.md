@@ -367,6 +367,7 @@ runs. A negative value is a config error.
 | `tui` | Rich terminal UI (Bubble Tea) |
 | `provider` | Manage provider settings |
 | `cron` | List and run scheduled prompts |
+| `remind` | List or cancel one-shot reminders |
 | `completion` | Generate shell completion script |
 
 ### Version
@@ -631,6 +632,15 @@ The chat tool `remind` has three actions:
 When a reminder is due, the cron ticker sends it as a notice, and the notice wakes an idle chat. The notice text is `reminder <id>: <text>`. A reminder that is more than two minutes late adds ` (late by <duration>)`, for example `(late by 3h12m)`. A reminder set in another directory adds ` (set in <dir>)`. A reminder is delivered once.
 
 Delivery happens only while an interactive session runs the ticker. A reminder that is due while no session is open waits until a session is open.
+
+#### `tyci remind`
+
+`tyci remind list` prints the reminders that are not delivered yet, one per line: id, local fire time, text and directory. The chat command `/reminders` prints the same list. The Tasks tab of the TUI sidebar shows each one as `reminder in 12m: <text>`, or `reminder due: <text>` when it is past due.
+
+```bash
+tyci remind list                 # List undelivered reminders, or "no reminders"
+tyci remind cancel 3f9a1c2e      # Cancel one reminder by its id
+```
 
 ### Display Modes
 
