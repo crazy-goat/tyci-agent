@@ -220,6 +220,23 @@ func builtinToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "remind",
+				"description": "One-shot reminder for yourself. When it is due, it arrives as a notice, and that wakes an idle chat. Use cron for repeating schedules. Do not poll with wait. Delivery happens only while an interactive session is open.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"action": map[string]any{"type": "string", "enum": []string{"add", "list", "cancel"}, "description": "What to do: add a reminder, list the pending ones, or cancel one by id."},
+						"when":   map[string]any{"type": "string", "description": "For add: \"in 20m\", \"at 15:00\" (local time) or \"once <RFC3339>\"."},
+						"text":   map[string]any{"type": "string", "description": "For add: what the reminder says."},
+						"id":     map[string]any{"type": "string", "description": "For cancel: the id from add or list."},
+					},
+					"required": []string{"action"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "todo",
 				"description": "Optional task list for long work; skip it for short tasks. todo(action=\"add_batch\", items=[...]) creates the whole list in one call. Keep items at the granularity of something you can finish and verify. Mark done when done and blocked (with a reason) when it cannot proceed — the turn will not end quietly with items still open. actions: add/add_batch/update/doing/blocked/done/remove/list/clear.",
 				"parameters": map[string]any{
@@ -1057,6 +1074,7 @@ var toolRegistry = map[string]Tool{
 	"help":    &HelpTool{},
 	"agents":  &AgentsTool{},
 	"cron":    &CronTool{},
+	"remind":  &RemindTool{},
 	"compact": &CompactTool{},
 	"web":     &WebTool{},
 	// Waiter is nil until SetJobWaiter is called; plain wait (no job_id)

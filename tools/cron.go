@@ -460,6 +460,10 @@ func StartCronTicker(ctx context.Context, interval time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				// Reminders are delivered here, not in the cron run goroutine:
+				// a cron run can last minutes (see #346). A failure only
+				// skips this tick.
+				_, _ = deliverReminders(cronConfigDir(), time.Now(), func(msg string) { notifyToParent("", msg) })
 				// Cross-process lock: an external `tyci cron tick` (e.g. from
 				// a crontab) may be dispatching the same due jobs right now.
 				// Without this, both this ticker and that process would see
