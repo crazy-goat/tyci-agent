@@ -160,10 +160,10 @@ func TestHelpJobsExplainsTheWholeLifecycle(t *testing.T) {
 			t.Errorf("help(\"jobs\") is missing %q", want)
 		}
 	}
-	// It is a topic, not a tool: nothing to call, and saying so avoids the
-	// model trying jobs(...).
-	if !strings.Contains(res.Content, "not a tool") {
-		t.Error("the article should say there is nothing to call by this name")
+	// The name is now also a tool, the one that lists these jobs. The topic
+	// must point to it, so the model knows where to look.
+	if !strings.Contains(res.Content, "the jobs tool lists") {
+		t.Error("the article should point to the jobs tool")
 	}
 }
 

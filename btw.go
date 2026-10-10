@@ -671,6 +671,14 @@ type jobKindSource struct{ j jobs.Job }
 func (s jobKindSource) ID() string       { return s.j.ID }
 func (s jobKindSource) ParentID() string { return s.j.ParentID }
 
+// The detail methods make jobKindSource a tools.JobDetailSource for the jobs
+// tool and the kill_job error.
+func (s jobKindSource) Kind() string         { return string(s.j.Kind) }
+func (s jobKindSource) Status() string       { return string(s.j.Status) }
+func (s jobKindSource) Description() string  { return s.j.Description }
+func (s jobKindSource) StartedAt() time.Time { return s.j.StartedAt }
+func (s jobKindSource) Question() string     { return s.j.Question }
+
 // listJobsAdapter satisfies tools.JobLister over JobRegistry: kill_job's
 // inside-a-child subtree check walks this parentage.
 type listJobsAdapter struct{ reg *jobs.Registry }

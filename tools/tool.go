@@ -410,6 +410,21 @@ func builtinToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "jobs",
+				"description": "List background jobs: subagents, background commands and cron runs. By default only live jobs (running or waiting for an answer). A subagent sees only the jobs it started. Use kill_job(job_id) to stop one.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"kind":   map[string]any{"type": "string", "enum": []string{"subagent", "bash", "cron"}, "description": "Only jobs of this kind. Omit for all kinds."},
+						"status": map[string]any{"type": "string", "description": "Only jobs with this status, for example running, done, failed or waiting_answer. Overrides the default live-only filter."},
+						"all":    map[string]any{"type": "boolean", "description": "Show finished jobs too, with every status. Default false."},
+					},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "help",
 				"description": "Full documentation for a tool, with worked examples. The tool list in your prompt is one line each on purpose; this is the manual. Use help() to list tools or help(tool=\"name\") to learn a tool's schema when you are unsure about its parameters or need to recover from a validation error.",
 				"parameters": map[string]any{
@@ -1035,6 +1050,7 @@ var toolRegistry = map[string]Tool{
 	// stays bash-only): the bash path acts on the bgbash.go registry the
 	// bash tool populates.
 	"kill_job": &KillJobTool{},
+	"jobs":     &JobsTool{},
 
 	"workflow_start":  &WorkflowStartTool{},
 	"workflow_status": &WorkflowStatusTool{},

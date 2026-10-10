@@ -8,7 +8,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 
 - **Multi-provider support** — OpenAI-compatible, Anthropic, Gemini, and custom API types
 - **Agent loop** — model calls, tool execution, iteration, fallback models
-- **Tool system** — built-in tools: `bash`, `find`, `read`, `write`, `todo`, `subagent`, `lua`, `wait`, `lock`, `skills`, `agents`, `web`
+- **Tool system** — built-in tools: `bash`, `find`, `read`, `write`, `todo`, `subagent`, `lua`, `wait`, `jobs`, `lock`, `skills`, `agents`, `web`
 - **Background commands** — a shell command still running after 30s moves to the background; the agent is notified when it finishes
 - **Hooks** — run your own commands before and after any tool call, to gate it or feed its result back
 - **Project instructions & memory** — `AGENTS.md` plus notes the agent writes for its own future sessions
@@ -786,6 +786,11 @@ part, so that is all the notice carries.
 A subagent uses the same hand-off. Its notice goes to the subagent that
 started the command. When the subagent ends, its background commands are
 stopped.
+
+The `jobs` tool lists the live jobs (running or waiting for an answer), with
+`kind`, `status`, `all` as filters. It shows the jobs in the job registry. A background
+bash command is in that registry while it runs, so it is listed. A subagent sees only
+the jobs in its own subtree. An unknown id in `kill_job` gets the same list of live jobs.
 
 ## Answers while the assistant is busy
 
