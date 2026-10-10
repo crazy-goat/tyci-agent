@@ -8,7 +8,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 
 - **Multi-provider support** — OpenAI-compatible, Anthropic, Gemini, and custom API types
 - **Agent loop** — model calls, tool execution, iteration, fallback models
-- **Tool system** — built-in tools: `bash`, `find`, `read`, `write`, `todo`, `subagent`, `lua`, `wait`, `jobs`, `lock`, `skills`, `agents`, `web`
+- **Tool system** — built-in tools: `bash`, `find`, `read`, `write`, `todo`, `subagent`, `lua`, `wait`, `jobs`, `session_list`, `lock`, `skills`, `agents`, `web`
 - **Background commands** — a shell command still running after 30s moves to the background; the agent is notified when it finishes
 - **Hooks** — run your own commands before and after any tool call, to gate it or feed its result back
 - **Project instructions & memory** — `AGENTS.md` plus notes the agent writes for its own future sessions
@@ -933,6 +933,7 @@ file and `range: "append"` need no prior read.
 ## Session Management
 
 Sessions are automatically saved to `~/.tyci/sessions/` as JSONL files.
+The chat tool `session_list` lets the model list the saved sessions, newest first (`all: true` includes other projects). It does not read message content.
 Subagents that run as jobs write their own files to `~/.tyci/sessions/<project>/agents/`. The file name ends with the job id. `tyci session list` does not show these files, and nothing deletes them yet. Agents of a workflow run write to the run dir instead (see Run transcripts).
 `bus.jsonl` is the message journal; it is not a session and the session list skips it.
 Each line is a complete event (message, tool call, result, usage).

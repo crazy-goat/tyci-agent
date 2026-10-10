@@ -290,6 +290,7 @@ func buildSystemPrompt(includeSubagent bool, roleNote string, hasAskParent bool)
 - resume(job_id, task): continue a finished async job — it keeps its whole conversation.
 - kill_job(job_id): stop a backgrounded shell command.
 - jobs(kind?, status?, all?): list your background jobs. kill_job(job_id) stops one.
+- session_list(limit?, all?): list your saved sessions, newest first.
 - agents(name?): named agents usable as subagent(agent="name").
 - workflow_start(workflow, params?) · workflow_status(run?) · workflow_resume(run, answer) · workflow_stop(run, reason?): runs of named workflows, for issues and PRs. A notice arrives when a run finishes or pauses.
 `
