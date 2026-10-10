@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
@@ -569,5 +570,57 @@ func TestTruncateRunes_KeepsRunesIntact(t *testing.T) {
 	}
 	if got := truncateRunes("short", 10); got != "short" {
 		t.Fatalf("truncateRunes shortened an already-short string: %q", got)
+	}
+}
+
+// The session block lines up: the token and cost columns end at the same
+// column on every row, even when the token counts and the costs differ in
+// length (7.0M against 106.7M, $7.00 against $100). Every row is exactly the
+// sidebar width.
+func TestBuildUsageDetail_SessionColumnsAligned(t *testing.T) {
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"p":{"id":"p","models":{
+		"m1":{"id":"m1","name":"m1","cost":{"input":1,"output":1}},
+		"m2":{"id":"m2","name":"m2","cost":{"input":1,"output":1}}
+	}}}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	ledger.Reset()
+	t.Cleanup(pricing.Reset)
+	t.Cleanup(ledger.Reset)
+	ledger.Record(ledger.Main, "p", "m1", "", stream.Usage{Input: 7_000_000})
+	ledger.Record(ledger.Subagent, "p", "m2", "", stream.Usage{Input: 100_000_000, Output: 6_700_000})
+
+	const width = 40
+	m := TuiModel{modelName: "m1"}
+	lines := m.buildUsageDetail(width)
+
+	start := -1
+	for i, l := range lines {
+		if l == "session" {
+			start = i
+		}
+	}
+	if start < 0 {
+		t.Fatalf("no session block:\n%s", strings.Join(lines, "\n"))
+	}
+	block := lines[start+1:]
+	if len(block) != 4 {
+		t.Fatalf("want 4 rows (m1, subagent, subsession, total), got %d:\n%s", len(block), strings.Join(lines, "\n"))
+	}
+
+	tokenEnd := -1
+	for _, l := range block {
+		if n := utf8.RuneCountInString(l); n != width {
+			t.Errorf("row %q is %d runes wide, want %d", l, n, width)
+		}
+		fields := strings.Fields(l)
+		tok := fields[len(fields)-2]
+		end := utf8.RuneCountInString(l[:strings.LastIndex(l, tok)+len(tok)])
+		if tokenEnd < 0 {
+			tokenEnd = end
+		} else if end != tokenEnd {
+			t.Errorf("token column ends at %d in row %q, want %d:\n%s", end, l, tokenEnd, strings.Join(block, "\n"))
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
@@ -225,19 +226,6 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 		out = append(out, "", "last turn", "  "+usageTokens(m.lastUsage), "  "+timingTokens(m.lastUsage, m.lastStats))
 	}
 
-	// labelWidth adapts the per-model breakdown's first column to the
-	// available width. The row's literal overhead is 9 columns ("  " + the
-	// space before the numeric field + the numeric field's own width + "$"),
-	// plus up to ~8 more for the cost figure itself (e.g. "1234.56"); the
-	// rest goes to the label. No upper clamp: a wide sidebar should spend
-	// its extra width on the model name (which is what actually gets
-	// truncated in practice) rather than sitting unused, so this only
-	// floors at a usable minimum for a narrow sidebar.
-	labelWidth := width - 17
-	if labelWidth < 4 {
-		labelWidth = 4
-	}
-
 	// ByModel, not Get().Rows: Row's key now includes a job id (so the
 	// Subagents tab can track a child's tokens separately), which would
 	// otherwise show N identical-looking lines for N subagents that happen
@@ -249,7 +237,7 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 		// rows. Kind is ordered Main, Subagent, Scout. The sort is stable,
 		// so each group keeps ByModel's first-seen order.
 		sort.SliceStable(byModel, func(i, j int) bool { return byModel[i].Kind < byModel[j].Kind })
-		out = append(out, "", "session")
+		var rows []sessionRow
 		for _, r := range byModel {
 			// r.USD is already the known-priced sum only (Record/Cost give
 			// an unpriced call $0, so it never inflates this) — !r.Priced
@@ -265,8 +253,7 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 			case ledger.Scout:
 				label = "↳scout " + label
 			}
-			out = append(out, fmt.Sprintf("  %-*s %5s %s", labelWidth,
-				truncateRunes(label, labelWidth), fmtTokens(r.Usage.Input+r.Usage.Output), cost))
+			rows = append(rows, sessionRow{label, fmtTokens(r.Usage.Input + r.Usage.Output), cost})
 		}
 		// Token totals, unlike cost, are a plain sum across models here —
 		// this "total" row is the one place tokens are allowed to add up
@@ -292,16 +279,15 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 		// different populations. Scout gets its own separate line only when
 		// non-zero, mirroring formatCost's status-bar treatment above.
 		if delegated := snap.SubagentUSD + snap.ScoutUSD; delegated > 0 {
-			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "subsession",
-				fmtTokens(delegatedTokens), fmtUSD(delegated)))
+			rows = append(rows, sessionRow{"subsession", fmtTokens(delegatedTokens), "$" + fmtUSD(delegated)})
 		}
 		if snap.ScoutUSD > 0 {
-			out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "  of that scout",
-				fmtTokens(scoutTokens), fmtUSD(snap.ScoutUSD)))
+			rows = append(rows, sessionRow{"  of that scout", fmtTokens(scoutTokens), "$" + fmtUSD(snap.ScoutUSD)})
 		}
 		// The total row is the last line of the session block.
-		out = append(out, fmt.Sprintf("  %-*s %5s $%s", labelWidth, "total",
-			fmtTokens(totalTokens), fmtUSD(snap.TotalUSD())))
+		rows = append(rows, sessionRow{"total", fmtTokens(totalTokens), "$" + fmtUSD(snap.TotalUSD())})
+		out = append(out, "", "session")
+		out = append(out, sessionLines(rows, width)...)
 	}
 
 	// Warn only about a model actually in this session, and only when its
@@ -316,6 +302,32 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 		}
 	}
 	return out
+}
+
+// sessionRow is one line of the session block: a label, a token count and a
+// cost, already formatted.
+type sessionRow struct {
+	label, tokens, cost string
+}
+
+// sessionLines lays out the session block. The token and cost columns are
+// right aligned to the widest value of the block, so the rows line up. The
+// label takes the rest of width, with a usable minimum for a narrow sidebar.
+func sessionLines(rows []sessionRow, width int) []string {
+	tokW, costW := 0, 0
+	for _, r := range rows {
+		tokW = max(tokW, utf8.RuneCountInString(r.tokens))
+		costW = max(costW, utf8.RuneCountInString(r.cost))
+	}
+	// The row is "  " + label + " " + tokens + " " + cost.
+	labelWidth := max(width-2-1-tokW-1-costW, 4)
+
+	lines := make([]string, 0, len(rows))
+	for _, r := range rows {
+		lines = append(lines, fmt.Sprintf("  %-*s %*s %*s", labelWidth,
+			truncateRunes(r.label, labelWidth), tokW, r.tokens, costW, r.cost))
+	}
+	return lines
 }
 
 // truncateRunes shortens s to at most n runes, marking the cut. Rune-based on
