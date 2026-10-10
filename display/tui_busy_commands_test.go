@@ -127,3 +127,21 @@ func TestDrainCommandsIsFIFOAndEmpties(t *testing.T) {
 		t.Fatalf("expected the channel to be empty, got %v", again)
 	}
 }
+
+// TestRemindersWhileBusyGoesToTheCommandChannel: /reminders only reads a file,
+// so it is routed to the main loop while a turn runs.
+func TestRemindersWhileBusyGoesToTheCommandChannel(t *testing.T) {
+	m := busyModel(t, "/reminders")
+	handled, next := m.handleLocalSlashCommand()
+	if !handled {
+		t.Fatal("/reminders fell through to submit()")
+	}
+	select {
+	case cmd := <-next.(TuiModel).commands:
+		if cmd != "/reminders" {
+			t.Fatalf("command channel got %q", cmd)
+		}
+	default:
+		t.Fatal("/reminders was swallowed")
+	}
+}

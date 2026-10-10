@@ -150,6 +150,16 @@ func (m TuiModel) handleLocalSlashCommand() (bool, tea.Model) {
 			enqueueOrStatus(m.commands, line, &m.statusMessage)
 		}
 		return true, m
+	case lower == "/reminders":
+		// Reading the reminder file does not touch the conversation the turn
+		// writes to, so it is routed to the main loop like /stop.
+		m.input.Reset()
+		m.input.SetHeight(1)
+		m.closeFileComplete()
+		if m.commands != nil {
+			enqueueOrStatus(m.commands, line, &m.statusMessage)
+		}
+		return true, m
 	case strings.HasPrefix(lower, "/msg "):
 		// Posting to a job's mailbox doesn't touch the conversation the
 		// running turn is writing to, but resolving/posting needs

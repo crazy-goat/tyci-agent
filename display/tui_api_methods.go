@@ -43,6 +43,19 @@ func (t *TUI) SetRunLister(fn func() []TuiRunRow) {
 	t.prog.Send(tuiSetRunListerMsg{fn: fn})
 }
 
+// TuiReminderRow is one undelivered reminder shown in the Tasks tab.
+type TuiReminderRow struct {
+	ID      string
+	Text    string
+	FiresAt time.Time
+}
+
+// SetReminderLister wires the Tasks tab to fn, which returns the undelivered
+// reminders.
+func (t *TUI) SetReminderLister(fn func() []TuiReminderRow) {
+	t.prog.Send(tuiSetReminderListerMsg{fn: fn})
+}
+
 // SetRunStopper wires the Runs tab stop key to fn, which stops a run by id.
 // It runs in a background command, so it may block.
 func (t *TUI) SetRunStopper(fn func(run string) error) {
