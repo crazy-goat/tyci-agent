@@ -1,6 +1,7 @@
 package display
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -271,5 +272,59 @@ func TestAgentView_OpeningViewArmsStatusTickWhenIdle(t *testing.T) {
 	_, cmd := m.sidebarActivateRow()
 	if cmd == nil {
 		t.Fatal("opening the view while idle must start the status tick, so the view follows the agent")
+	}
+}
+
+// newPromptViewModel returns a model with one subagent job whose transcript
+// starts with the task prompt, then a model text, and the agent view open on it.
+func newPromptViewModel(t *testing.T, jobID, prompt string) TuiModel {
+	t.Helper()
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(jobs.Job{ID: jobID, Kind: jobs.KindSubagent, Status: jobs.StatusRunning, Description: "worker task", StartedAt: time.Now()})
+	tools.RecordLiveEvent(jobID, tools.LiveEvent{Kind: "prompt", Content: prompt})
+	tools.RecordLiveEvent(jobID, tools.LiveEvent{Kind: "text", Content: "model reply"})
+	m.openSidebar(sidebarTabTasks)
+	selectTaskRow(t, &m, func(r sidebarTaskRow) bool { return r.subagent })
+	model, _ := m.sidebarActivateRow()
+	return model.(TuiModel)
+}
+
+func TestAgentView_ShowsTheStartPromptBeforeTheFirstReply(t *testing.T) {
+	m := newPromptViewModel(t, "agent-prompt", "first task")
+	got := m.agentView.model.blocks
+	if len(got) != 2 {
+		t.Fatalf("view blocks = %+v, want the prompt and the reply", got)
+	}
+	if got[0].kind != "user" || got[0].content != "Task: first task" {
+		t.Fatalf("first block = %+v, want the Task: line", got[0])
+	}
+	if got[1].content != "model reply" {
+		t.Fatalf("second block = %+v, want the model reply", got[1])
+	}
+}
+
+func TestAgentView_PromptDropsEscapeBytes(t *testing.T) {
+	m := newPromptViewModel(t, "agent-prompt-esc", "task \x1b[2Jdone")
+	got := m.agentView.model.blocks[0].content
+	if !strings.HasPrefix(got, "Task: task ") {
+		t.Fatalf("first block = %q, want the Task: line", got)
+	}
+	if strings.Contains(got, "\x1b") {
+		t.Fatalf("prompt block still has an ESC byte: %q", got)
+	}
+}
+
+func TestAgentView_LongPromptIsCutWithCountOfLines(t *testing.T) {
+	lines := make([]string, 30)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %d", i+1)
+	}
+	m := newPromptViewModel(t, "agent-prompt-long", strings.Join(lines, "\n"))
+	got := m.agentView.model.blocks[0].content
+	if !strings.Contains(got, "line 12") || strings.Contains(got, "line 13") {
+		t.Fatalf("prompt block must show lines 1-12 only, got %q", got)
+	}
+	if !strings.HasSuffix(got, "\n... (18 more lines)") {
+		t.Fatalf("prompt block must end with the cut line, got %q", got)
 	}
 }

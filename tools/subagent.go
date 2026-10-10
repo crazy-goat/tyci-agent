@@ -1534,6 +1534,7 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	}
 	if jobID, _ := ctx.Value(JobIDCtxKey{}).(string); jobID != "" {
 		c.live = startLiveTranscript(jobID)
+		c.live.add(LiveEvent{Kind: "prompt", Content: task.Task})
 	}
 
 	// Hand the runner our forwarding Sink via context (see SubagentSink's
