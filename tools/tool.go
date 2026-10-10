@@ -1086,6 +1086,7 @@ var toolRegistry = map[string]Tool{
 
 	"workflow_start":  &WorkflowStartTool{},
 	"workflow_status": &WorkflowStatusTool{},
+	"workflow_list":   &WorkflowListTool{},
 	"workflow_resume": &WorkflowResumeTool{},
 	"workflow_stop":   &WorkflowStopTool{},
 }

@@ -15,6 +15,9 @@ type fakeWorkflowManager struct {
 	list     []WorkflowInfo
 	// stopped and stopReason record the last Stop call.
 	stopped, stopReason string
+	// listArchived, listLimit and listOffset record the last List call.
+	listArchived          bool
+	listLimit, listOffset int
 }
 
 func (f *fakeWorkflowManager) Start(_ context.Context, workflow string, params []string) (string, []string, error) {
@@ -24,6 +27,10 @@ func (f *fakeWorkflowManager) Start(_ context.Context, workflow string, params [
 func (f *fakeWorkflowManager) Workflows() []WorkflowInfo { return f.list }
 func (f *fakeWorkflowManager) Status(string) (any, error) {
 	return map[string]any{"status": "running"}, f.err
+}
+func (f *fakeWorkflowManager) List(archived bool, limit, offset int) (any, error) {
+	f.listArchived, f.listLimit, f.listOffset = archived, limit, offset
+	return map[string]any{"runs": []any{}, "total": 0}, f.err
 }
 func (f *fakeWorkflowManager) Resume(_, answer string) error { f.answer = answer; return f.err }
 func (f *fakeWorkflowManager) Stop(run, reason string) (any, error) {
@@ -61,7 +68,7 @@ func TestWorkflowTools_StartStatusResume(t *testing.T) {
 
 func TestSubagentToolSetExcludesWorkflowTools(t *testing.T) {
 	withWorkflowManager(t, &fakeWorkflowManager{})
-	names := []string{"workflow_start", "workflow_status", "workflow_resume", "workflow_stop"}
+	names := []string{"workflow_start", "workflow_status", "workflow_list", "workflow_resume", "workflow_stop"}
 	for _, schema := range []string{string(GetSubagentToolsSchemaJSON()), string(GetSubagentToolsSchemaJSONFor(names))} {
 		for _, n := range names {
 			if strings.Contains(schema, `"`+n+`"`) {
@@ -135,6 +142,34 @@ func TestWorkflowStop_ErrorIsReturned(t *testing.T) {
 	res := RunTool(context.Background(), "workflow_stop", map[string]any{"run": "x"})
 	if res.Success || !strings.Contains(res.Error, "active runs") {
 		t.Fatalf("stop error: %+v", res)
+	}
+}
+
+func TestWorkflowListTool_PassesFiltersAndPage(t *testing.T) {
+	f := &fakeWorkflowManager{}
+	withWorkflowManager(t, f)
+	res := RunTool(context.Background(), "workflow_list", map[string]any{"archived": true, "limit": float64(5), "offset": float64(10)})
+	if !res.Success || !strings.Contains(res.Content, `"total":0`) {
+		t.Fatalf("list: %+v", res)
+	}
+	if !f.listArchived || f.listLimit != 5 || f.listOffset != 10 {
+		t.Fatalf("list args = %v/%d/%d", f.listArchived, f.listLimit, f.listOffset)
+	}
+	if res := RunTool(context.Background(), "workflow_list", nil); !res.Success || f.listArchived || f.listLimit != 0 || f.listOffset != 0 {
+		t.Fatalf("list without args: %+v args %v/%d/%d", res, f.listArchived, f.listLimit, f.listOffset)
+	}
+}
+
+func TestWorkflowListTool_ErrorFromManager(t *testing.T) {
+	withWorkflowManager(t, &fakeWorkflowManager{err: errors.New("limit must be a positive number")})
+	if res := RunTool(context.Background(), "workflow_list", map[string]any{"limit": float64(-1)}); res.Success || !strings.Contains(res.Error, "positive") {
+		t.Fatalf("list error: %+v", res)
+	}
+}
+
+func TestWorkflowListTool_DeniedToSubagents(t *testing.T) {
+	if !IsSubagentDenied("workflow_list") {
+		t.Error("workflow_list is not denied to subagents")
 	}
 }
 

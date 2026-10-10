@@ -20,6 +20,9 @@ type WorkflowManager interface {
 	Workflows() []WorkflowInfo
 	// Status returns a JSON-ready summary; an empty run means the newest.
 	Status(run string) (any, error)
+	// List returns one page of the runs of the repo, newest first, as a JSON-ready value.
+	// A limit of 0 means the default page size.
+	List(archived bool, limit, offset int) (any, error)
 	// Resume answers a paused run; a bad answer returns an error listing the keys.
 	Resume(run, answer string) error
 	// Stop ends an active run and returns a JSON-ready summary of it.
@@ -164,6 +167,23 @@ func (t *WorkflowStopTool) Run(_ context.Context, input map[string]any) ToolResu
 	return workflowJSON(st)
 }
 
+// WorkflowListTool lists the runs of the repo, newest first.
+type WorkflowListTool struct{}
+
+func (t *WorkflowListTool) Name() string { return "workflow_list" }
+
+func (t *WorkflowListTool) Run(_ context.Context, input map[string]any) ToolResult {
+	m, bad := getWorkflowManager()
+	if bad != nil {
+		return *bad
+	}
+	list, err := m.List(boolParam(input, "archived", false), intParam(input, "limit", 0), intParam(input, "offset", 0))
+	if err != nil {
+		return workflowFail(err)
+	}
+	return workflowJSON(list)
+}
+
 // WorkflowResumeTool answers a paused run.
 type WorkflowResumeTool struct{}
 
@@ -270,7 +290,7 @@ func workflowParams(input map[string]any) ([]string, error) {
 }
 
 // workflowToolsSchema is the schema of the workflow_* tools. They are for the
-// chat model only: all four are in subagentDeniedTools. The start description
+// chat model only: all of them are in subagentDeniedTools. The start description
 // lists list, so the model picks a real workflow.
 func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 	fn := func(name, desc string, props map[string]any, required []string) map[string]any {
@@ -297,6 +317,12 @@ func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 			}, []string{"workflow"}),
 		fn("workflow_status", "Show the state of a workflow run: status, current state, visits, last history entries, PR.",
 			map[string]any{"run": map[string]any{"type": "string", "description": "Run id (default: newest run)."}}, []string{}),
+		fn("workflow_list", "List the workflow runs of this project, newest first: run id, workflow, params, status, state, start time. By default only running and paused runs. With archived true also done, stopped and failed runs. Use limit (default 20) and offset to page; the result gives total and more.",
+			map[string]any{
+				"archived": map[string]any{"type": "boolean", "description": "Also list done, stopped and failed runs. Default false."},
+				"limit":    map[string]any{"type": "number", "description": "Runs per page. Default 20."},
+				"offset":   map[string]any{"type": "number", "description": "Runs to skip, newest first. Default 0."},
+			}, []string{}),
 		fn("workflow_stop", "Stop an active workflow run. The worktree and the pull request stay. Use workflow_status first if the run is not known.",
 			map[string]any{
 				"run":    map[string]any{"type": "string", "description": "Run id."},
