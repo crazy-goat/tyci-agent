@@ -226,8 +226,8 @@ it is already on disk, and it will be there next time.`,
 	// was previously told in fragments: each of ask, answer, wait, resume and
 	// lock described its own step and nothing described the lifecycle. See
 	// HelpTool.Run for why a non-tool key is allowed.
-	"jobs": `Not a tool — the lifecycle that subagent, wait, answer, resume, lock and
-kill_job are parts of. Read this once.
+	"jobs": `The lifecycle that subagent, wait, answer, resume, lock and kill_job are
+parts of, and that the jobs tool lists. Read this once.
 
 Spawn.
 
@@ -293,8 +293,8 @@ Stopping things. kill_job(job_id) stops a running job: a backgrounded
 SHELL command dies with its whole process group, and a subagent is stopped
 mid-task along with any background commands it started (its partial output
 so far stays readable with wait). Accepts the short "#N" form the jobs panel
-shows. From inside a child you may kill only what you started; the main
-agent can stop anything.
+shows. The jobs tool lists the live job ids. From inside a child you may kill only
+what you started; the main agent can stop anything.
 
 From inside a job. A child can report_progress(text), read back via
 wait(job_id=...) or the end-of-turn pending-jobs reminder — never the jobs

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Item 26's kill_job plumbing: the contracts satisfied structurally by
@@ -63,6 +64,17 @@ type JobKindSource interface {
 // slice, so main() wraps it in a tiny adapter (listJobsAdapter in main.go).
 type JobLister interface {
 	ListJobs() []JobKindSource
+}
+
+// JobDetailSource is optional. A JobKindSource that also implements it can be
+// listed by the jobs tool and named in the kill_job error with its kind,
+// status and description. Satisfied by the jobKindSource adapter (btw.go).
+type JobDetailSource interface {
+	Kind() string
+	Status() string
+	Description() string
+	StartedAt() time.Time
+	Question() string
 }
 
 // jobLister is nil until SetJobLister is called. Unset, the inside-a-child
@@ -234,19 +246,68 @@ func (t *KillJobTool) Run(ctx context.Context, input map[string]any) ToolResult 
 		}
 	}
 
-	return killJobNotRunningError(jobID)
+	return killJobNotRunningError(jobID, liveJobsHint(ctx, lister))
 }
 
 // killJobNotRunningError builds the failure for an unresolvable or already
 // finished target, listing whatever background commands ARE still running
-// so a mistyped id can be self-corrected. Keeps the pre-item-26 shape of
-// the message ("check it with wait").
-func killJobNotRunningError(jobID string) ToolResult {
+// so a mistyped id can be self-corrected. hint is the live job list from
+// liveJobsHint ("" for none). Keeps the pre-item-26 shape of the message
+// ("check it with wait").
+func killJobNotRunningError(jobID, hint string) ToolResult {
 	msg := "is not a running job (it may have already finished — check it with wait)"
 	if running := runningBackgroundBash(); len(running) > 0 {
 		msg = fmt.Sprintf("is not a running job (it may have already finished — check it with wait); currently running background commands: %v", running)
 	}
+	msg += hint
 	return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("job %q %s", jobID, msg)}
+}
+
+// visibleJob is one job the caller may see, with its detail view.
+type visibleJob struct {
+	src    JobKindSource
+	detail JobDetailSource
+}
+
+// callerVisibleJobs returns the jobs the caller may see: all of them for the
+// main agent, only its own subtree inside a subagent (inOwnSubtree). A job
+// without JobDetailSource is left out. Returns nil when no lister is wired.
+func callerVisibleJobs(ctx context.Context, lister JobLister) []visibleJob {
+	if lister == nil {
+		return nil
+	}
+	callerJobID, _ := ctx.Value(JobIDCtxKey{}).(string)
+	var out []visibleJob
+	for _, j := range lister.ListJobs() {
+		d, ok := j.(JobDetailSource)
+		if !ok || !inOwnSubtree(ctx, callerJobID, j.ID(), lister) {
+			continue
+		}
+		out = append(out, visibleJob{src: j, detail: d})
+	}
+	return out
+}
+
+// isLiveStatus reports whether a job with this status can still be stopped.
+// The values are jobs.Status strings; this package does not import "jobs".
+func isLiveStatus(status string) bool {
+	return status == "running" || status == "waiting_answer"
+}
+
+// liveJobsHint names the live jobs the caller may stop, for the kill_job
+// error. It returns "" when there are none.
+func liveJobsHint(ctx context.Context, lister JobLister) string {
+	var parts []string
+	for _, v := range callerVisibleJobs(ctx, lister) {
+		if !isLiveStatus(v.detail.Status()) {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s, %s)", shortID(v.src.ID()), v.detail.Kind(), v.detail.Description()))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "; live jobs: " + strings.Join(parts, ", ")
 }
 
 // shortID mirrors jobs.ShortID without importing the jobs package (this
