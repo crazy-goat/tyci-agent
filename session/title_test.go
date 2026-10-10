@@ -154,3 +154,12 @@ func TestTitle_CorruptLineIsSkipped(t *testing.T) {
 		t.Errorf("ReadTitle() = %q, want %q", got, "valid")
 	}
 }
+
+func TestCleanTitle_ReplacesWhitespaceAndDropsControls(t *testing.T) {
+	if got := CleanTitle("a\tb\nc\x07d\x1b"); got != "a b cd" {
+		t.Errorf("CleanTitle() = %q, want %q", got, "a b cd")
+	}
+	if got := CleanTitle(strings.Repeat("y", 100)); len([]rune(got)) != MaxTitleRunes {
+		t.Errorf("CleanTitle() kept %d runes, want %d", len([]rune(got)), MaxTitleRunes)
+	}
+}

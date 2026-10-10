@@ -97,7 +97,8 @@ func resumeEntriesInDir(dir string) ([]ResumeEntry, error) {
 }
 
 // ReadTitle returns the title of the last title event in the session file at
-// path, or "" when there is none or the file cannot be read. It scans the
+// path, cleaned by CleanTitle, or "" when there is none or the file cannot be
+// read. It scans the
 // whole file, because a title can be written after the first prompt. Lines
 // that do not parse are skipped.
 func ReadTitle(path string) string {
@@ -121,7 +122,7 @@ func ReadTitle(path string) string {
 			title = ev.Title
 		}
 	}
-	return title
+	return CleanTitle(title)
 }
 
 // readFirstUserPrompt opens path and reads just enough of the JSONL header

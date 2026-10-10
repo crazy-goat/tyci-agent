@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
+
+	"github.com/crazy-goat/tyci-agent/session"
 )
 
 // SessionRenamer names the current session. It is nil until SetSessionRenamer
 // is called, which the chat TUI does. A subagent never gets session_rename.
-type SessionRenamer func(title string) error
+type SessionRenamer func(title string) (string, error)
 
 var (
 	sessionRenamerMu sync.RWMutex
@@ -40,7 +41,7 @@ func (t *SessionRenameTool) Name() string { return "session_rename" }
 
 // Run stores the title through the wired SessionRenamer and returns it.
 func (t *SessionRenameTool) Run(_ context.Context, input map[string]any) ToolResult {
-	title := strings.TrimSpace(stringParam(input, "title", ""))
+	title := session.CleanTitle(stringParam(input, "title", ""))
 	if title == "" {
 		return ToolResult{Type: "result", Success: false, Error: "session_rename: title is required"}
 	}
@@ -48,9 +49,11 @@ func (t *SessionRenameTool) Run(_ context.Context, input map[string]any) ToolRes
 	if rename == nil {
 		return ToolResult{Type: "result", Success: false, Error: "session_rename is unavailable in this mode"}
 	}
-	if err := rename(title); err != nil {
+	stored, err := rename(title)
+	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("session_rename: %v", err)}
 	}
+	title = stored
 	b, err := json.Marshal(map[string]string{"title": title})
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("session_rename: %v", err)}

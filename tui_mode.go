@@ -189,16 +189,20 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 	// window title. The /rename command and the session_rename tool both use
 	// it. The tool runs in a turn goroutine, so this function does not touch
 	// titleSet.
-	renameSession := func(title string) error {
+	renameSession := func(title string) (string, error) {
+		title = session.CleanTitle(title)
+		if title == "" {
+			return "", errors.New(renameUsage)
+		}
 		sess := cond.EnsureSession()
 		if sess == nil {
-			return errors.New("no writable session")
+			return "", errors.New("no writable session")
 		}
 		if err := sess.WriteTitle(title); err != nil {
-			return err
+			return "", err
 		}
 		fmt.Fprint(os.Stdout, ansi.SetWindowTitle("tyci: "+title))
-		return nil
+		return title, nil
 	}
 	tools.SetSessionRenamer(renameSession)
 	defer tools.SetSessionRenamer(nil)

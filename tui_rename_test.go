@@ -42,7 +42,7 @@ func (f *fakeRenameDisp) OpenBtwList()                              {}
 func TestHandleRenameCommand_UsageDoesNotRename(t *testing.T) {
 	d := &fakeRenameDisp{}
 	called := false
-	ok := handleRenameCommand(d, "", func(string) error { called = true; return nil })
+	ok := handleRenameCommand(d, "", func(string) (string, error) { called = true; return "", nil })
 	if ok || called {
 		t.Errorf("ok=%v called=%v, want no rename", ok, called)
 	}
@@ -57,7 +57,7 @@ func TestHandleRenameCommand_UsageDoesNotRename(t *testing.T) {
 func TestHandleRenameCommand_RenamesAndReports(t *testing.T) {
 	d := &fakeRenameDisp{}
 	var got string
-	ok := handleRenameCommand(d, " Fix login ", func(title string) error { got = title; return nil })
+	ok := handleRenameCommand(d, " Fix login ", func(title string) (string, error) { got = title; return title, nil })
 	if !ok || got != "Fix login" {
 		t.Errorf("ok=%v got=%q", ok, got)
 	}
@@ -68,7 +68,7 @@ func TestHandleRenameCommand_RenamesAndReports(t *testing.T) {
 
 func TestHandleRenameCommand_RenameErrorIsShown(t *testing.T) {
 	d := &fakeRenameDisp{}
-	ok := handleRenameCommand(d, "x", func(string) error { return errors.New("disk full") })
+	ok := handleRenameCommand(d, "x", func(string) (string, error) { return "", errors.New("disk full") })
 	if ok || len(d.errs) != 1 {
 		t.Errorf("ok=%v errs=%v, want one error", ok, d.errs)
 	}

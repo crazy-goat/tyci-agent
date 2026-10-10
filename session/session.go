@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
@@ -855,6 +856,32 @@ func (s *Session) WriteSessionEnd(status string, exitCode int, totalUsage *Usage
 		return err
 	}
 	return s.recordDumpEvent(raw)
+}
+
+// MaxTitleRunes is the longest title that CleanTitle keeps.
+const MaxTitleRunes = 80
+
+// CleanTitle makes a title safe to show. A newline or a tab becomes a space.
+// Every other control rune is removed, so no escape sequence reaches the
+// terminal. The result is trimmed and cut to MaxTitleRunes runes. The model
+// can write any title, so every title passes through here.
+func CleanTitle(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(' ')
+		case unicode.IsControl(r):
+			// dropped
+		default:
+			b.WriteRune(r)
+		}
+	}
+	runes := []rune(strings.TrimSpace(b.String()))
+	if len(runes) > MaxTitleRunes {
+		runes = runes[:MaxTitleRunes]
+	}
+	return strings.TrimSpace(string(runes))
 }
 
 // WriteTitle appends a title event to the session file. The caller trims

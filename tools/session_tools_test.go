@@ -16,9 +16,9 @@ func TestSessionRename_NilRenamerFails(t *testing.T) {
 
 func TestSessionRename_CallsRenamer(t *testing.T) {
 	var got string
-	SetSessionRenamer(func(title string) error {
+	SetSessionRenamer(func(title string) (string, error) {
 		got = title
-		return nil
+		return title, nil
 	})
 	t.Cleanup(func() { SetSessionRenamer(nil) })
 
@@ -35,7 +35,7 @@ func TestSessionRename_CallsRenamer(t *testing.T) {
 }
 
 func TestSessionRename_EmptyTitleFails(t *testing.T) {
-	SetSessionRenamer(func(string) error { t.Error("renamer must not run"); return nil })
+	SetSessionRenamer(func(string) (string, error) { t.Error("renamer must not run"); return "", nil })
 	t.Cleanup(func() { SetSessionRenamer(nil) })
 	res := (&SessionRenameTool{}).Run(context.Background(), map[string]any{"title": "   "})
 	if res.Success {
@@ -46,5 +46,42 @@ func TestSessionRename_EmptyTitleFails(t *testing.T) {
 func TestSessionRename_NotInSubagentSchema(t *testing.T) {
 	if !IsSubagentDenied("session_rename") {
 		t.Error("session_rename must be denied to subagents")
+	}
+}
+
+func TestSessionRename_RemovesControlCharacters(t *testing.T) {
+	var got string
+	SetSessionRenamer(func(title string) (string, error) {
+		got = title
+		return title, nil
+	})
+	t.Cleanup(func() { SetSessionRenamer(nil) })
+
+	res := (&SessionRenameTool{}).Run(context.Background(), map[string]any{"title": "a\x07b\x1b]2;x"})
+	if !res.Success {
+		t.Fatalf("want success, got %+v", res)
+	}
+	if want := "ab]2;x"; got != want {
+		t.Errorf("renamer got %q, want %q", got, want)
+	}
+	if strings.ContainsAny(res.Content, "\x07\x1b") {
+		t.Errorf("result %q still has control characters", res.Content)
+	}
+}
+
+func TestSessionRename_CutsLongTitle(t *testing.T) {
+	var got string
+	SetSessionRenamer(func(title string) (string, error) {
+		got = title
+		return title, nil
+	})
+	t.Cleanup(func() { SetSessionRenamer(nil) })
+
+	res := (&SessionRenameTool{}).Run(context.Background(), map[string]any{"title": strings.Repeat("x", 100)})
+	if !res.Success {
+		t.Fatalf("want success, got %+v", res)
+	}
+	if n := len([]rune(got)); n != 80 {
+		t.Errorf("renamer got %d runes, want 80", n)
 	}
 }
