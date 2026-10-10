@@ -11,20 +11,25 @@ import (
 
 // stripAnsi removes ANSI escape sequences from a string.
 func stripAnsi(s string) string {
+	if strings.IndexByte(s, 0x1b) == -1 {
+		return s
+	}
 	var b strings.Builder
+	b.Grow(len(s))
 	inEscape := false
-	for _, r := range s {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
 		if inEscape {
-			if r == 'm' || r == 'K' || r == 'H' || r == 'J' {
+			if escapeFinal(rune(c)) {
 				inEscape = false
 			}
 			continue
 		}
-		if r == 0x1b {
+		if c == 0x1b {
 			inEscape = true
 			continue
 		}
-		b.WriteRune(r)
+		b.WriteByte(c)
 	}
 	return b.String()
 }
@@ -178,16 +183,49 @@ func layoutTokens(s string) []layoutToken {
 // ANSI sequences and uses uniseg's grapheme-cluster widths rather than
 // summing rune widths.
 func cellWidth(s string) int {
+	isASCII := true
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b < 0x20 || b > 0x7e {
+			isASCII = false
+			break
+		}
+	}
+	if isASCII {
+		return len(s)
+	}
+
+	plain := s
+	if strings.IndexByte(s, 0x1b) != -1 {
+		plain = stripAnsi(s)
+	}
+
+	isPlainASCII := true
+	for i := 0; i < len(plain); i++ {
+		b := plain[i]
+		if b < 0x20 || b > 0x7e {
+			isPlainASCII = false
+			break
+		}
+	}
+	if isPlainASCII {
+		return len(plain)
+	}
+
 	width, lineWidth := 0, 0
-	for _, token := range layoutTokens(s) {
-		if token.newline {
+	state := -1
+	for rest := plain; len(rest) > 0; {
+		var cluster string
+		var w int
+		cluster, rest, w, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		if cluster == "\n" || cluster == "\r\n" {
 			if lineWidth > width {
 				width = lineWidth
 			}
 			lineWidth = 0
 			continue
 		}
-		lineWidth += token.width
+		lineWidth += w
 	}
 	if lineWidth > width {
 		width = lineWidth

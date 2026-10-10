@@ -215,8 +215,15 @@ func lineWithRight(left, right string, width int) string {
 // styled string clears the sidebar background, so padding added after the
 // reset is drawn without that background.
 func fillWidth(s string, width int) string {
-	s = truncateToWidth(s, width)
-	return s + strings.Repeat(" ", max(0, width-cellWidth(s)))
+	w := cellWidth(s)
+	if w == width {
+		return s
+	}
+	if w > width {
+		s = truncateToWidth(s, width)
+		w = cellWidth(s)
+	}
+	return s + strings.Repeat(" ", max(0, width-w))
 }
 
 // fitCells joins the right-hand cells of a row with gap spaces. When the row is
