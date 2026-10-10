@@ -591,36 +591,44 @@ func TestBuildUsageDetail_SessionColumnsAligned(t *testing.T) {
 	ledger.Record(ledger.Main, "p", "m1", "", stream.Usage{Input: 7_000_000})
 	ledger.Record(ledger.Subagent, "p", "m2", "", stream.Usage{Input: 100_000_000, Output: 6_700_000})
 
-	const width = 40
-	m := TuiModel{modelName: "m1"}
-	lines := m.buildUsageDetail(width)
+	// 36 is the narrow sidebar width: the label gets the squeezed space and
+	// every row must still fit inside the sidebar.
+	for _, width := range []int{36, 40} {
+		t.Run(fmt.Sprintf("width%d", width), func(t *testing.T) {
+			m := TuiModel{modelName: "m1"}
+			lines := m.buildUsageDetail(width)
 
-	start := -1
-	for i, l := range lines {
-		if l == "session" {
-			start = i
-		}
-	}
-	if start < 0 {
-		t.Fatalf("no session block:\n%s", strings.Join(lines, "\n"))
-	}
-	block := lines[start+1:]
-	if len(block) != 4 {
-		t.Fatalf("want 4 rows (m1, subagent, subsession, total), got %d:\n%s", len(block), strings.Join(lines, "\n"))
-	}
+			start := -1
+			for i, l := range lines {
+				if l == "session" {
+					start = i
+				}
+			}
+			if start < 0 {
+				t.Fatalf("no session block:\n%s", strings.Join(lines, "\n"))
+			}
+			block := lines[start+1:]
+			if len(block) != 4 {
+				t.Fatalf("want 4 rows (m1, subagent, subsession, total), got %d:\n%s", len(block), strings.Join(lines, "\n"))
+			}
 
-	tokenEnd := -1
-	for _, l := range block {
-		if n := utf8.RuneCountInString(l); n != width {
-			t.Errorf("row %q is %d runes wide, want %d", l, n, width)
-		}
-		fields := strings.Fields(l)
-		tok := fields[len(fields)-2]
-		end := utf8.RuneCountInString(l[:strings.LastIndex(l, tok)+len(tok)])
-		if tokenEnd < 0 {
-			tokenEnd = end
-		} else if end != tokenEnd {
-			t.Errorf("token column ends at %d in row %q, want %d:\n%s", end, l, tokenEnd, strings.Join(block, "\n"))
-		}
+			tokenEnd := -1
+			for _, l := range block {
+				if n := utf8.RuneCountInString(l); n != width {
+					t.Errorf("row %q is %d runes wide, want %d", l, n, width)
+				}
+				if w := lipgloss.Width(l); w > width {
+					t.Errorf("row %q is %d columns wide, want <= %d", l, w, width)
+				}
+				fields := strings.Fields(l)
+				tok := fields[len(fields)-2]
+				end := utf8.RuneCountInString(l[:strings.LastIndex(l, tok)+len(tok)])
+				if tokenEnd < 0 {
+					tokenEnd = end
+				} else if end != tokenEnd {
+					t.Errorf("token column ends at %d in row %q, want %d:\n%s", end, l, tokenEnd, strings.Join(block, "\n"))
+				}
+			}
+		})
 	}
 }
