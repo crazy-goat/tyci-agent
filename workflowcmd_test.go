@@ -663,3 +663,69 @@ func TestWorkflowStopRefusesNotRunning(t *testing.T) {
 		t.Fatalf("result = %+v", r)
 	}
 }
+
+// The text form prints one line per run, newest first, and a footer when more
+// runs follow. Only running and paused runs are listed without --archived.
+func TestWorkflowListTextAndPaging(t *testing.T) {
+	home := wfHome(t)
+	wfUseRepo(t, flow.RepoInfo{Home: home, Repo: "acme/demo"})
+	wfSaveRun(t, home, "demo", "20261005-100000-1", "running")
+	wfSaveRun(t, home, "demo", "20261005-110000-2", "done")
+	wfSaveRun(t, home, "demo", "20261005-120000-3", "paused")
+	wfSaveRun(t, home, "demo", "20261005-130000-4", "running")
+
+	out, _, err := runWorkflowCLI(t, "workflow", "list", "--limit", "2")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "20261005-130000-4\trunning\tend\tone-check\t") {
+		t.Fatalf("text output = %q", out)
+	}
+	if !strings.HasPrefix(lines[1], "20261005-120000-3\tpaused\t") {
+		t.Fatalf("second line = %q", lines[1])
+	}
+	if lines[2] != "showing 2 of 3 runs; use --offset 2 for more" {
+		t.Fatalf("footer = %q", lines[2])
+	}
+}
+
+func TestWorkflowListJSONArchived(t *testing.T) {
+	home := wfHome(t)
+	wfUseRepo(t, flow.RepoInfo{Home: home, Repo: "acme/demo"})
+	wfSaveRun(t, home, "demo", "20261005-100000-1", "running")
+	wfSaveRun(t, home, "demo", "20261005-110000-2", "done")
+
+	out, _, err := runWorkflowCLI(t, "workflow", "list", "--archived", "--json")
+	if err != nil {
+		t.Fatalf("list --json: %v", err)
+	}
+	var list flow.RunList
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	if list.Total != 2 || list.More || len(list.Runs) != 2 || list.Runs[0].Status != "done" || list.Runs[0].Workflow != "one-check" {
+		t.Fatalf("list = %+v", list)
+	}
+}
+
+func TestWorkflowListEmptyAndBadLimit(t *testing.T) {
+	home := wfHome(t)
+	wfUseRepo(t, flow.RepoInfo{Home: home, Repo: "acme/demo"})
+
+	out, _, err := runWorkflowCLI(t, "workflow", "list", "--json")
+	if err != nil {
+		t.Fatalf("list of an empty repo: %v", err)
+	}
+	if !strings.Contains(out, `"runs":[]`) || !strings.Contains(out, `"total":0`) {
+		t.Fatalf("empty list = %s", out)
+	}
+
+	out, _, err = runWorkflowCLI(t, "workflow", "list", "--limit", "-1", "--json")
+	if err == nil {
+		t.Fatal("negative limit must fail")
+	}
+	if r := decodeWorkflowResult(t, out); !strings.Contains(r.Error, "limit") {
+		t.Fatalf("result = %+v", r)
+	}
+}

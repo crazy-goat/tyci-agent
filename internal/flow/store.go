@@ -171,21 +171,27 @@ func LatestRun(home, repoName string) (string, error) {
 	return filepath.Join(base, names[len(names)-1]), nil
 }
 
-// RecentRuns returns the saved states of the n newest runs of a repo, newest
-// first. Runs with an unreadable state.json are skipped.
-func RecentRuns(home, repoName string, n int) []*RunState {
-	base := filepath.Join(home, ".tyci", "runs", repoName)
+// runDirsNewestFirst returns the names of the run directories of a repo, newest
+// first. A missing repo directory gives no names.
+func runDirsNewestFirst(home, repoName string) (base string, names []string) {
+	base = filepath.Join(home, ".tyci", "runs", repoName)
 	entries, err := os.ReadDir(base)
 	if err != nil {
-		return nil
+		return base, nil
 	}
-	var names []string
 	for _, e := range entries {
 		if e.IsDir() {
 			names = append(names, e.Name())
 		}
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	return base, names
+}
+
+// RecentRuns returns the saved states of the n newest runs of a repo, newest
+// first. Runs with an unreadable state.json are skipped.
+func RecentRuns(home, repoName string, n int) []*RunState {
+	base, names := runDirsNewestFirst(home, repoName)
 	var out []*RunState
 	for _, name := range names {
 		if len(out) == n {
@@ -196,6 +202,63 @@ func RecentRuns(home, repoName string, n int) []*RunState {
 		}
 	}
 	return out
+}
+
+// DefaultRunListLimit is the page size of ListRuns when the caller gives none.
+const DefaultRunListLimit = 20
+
+// RunRow is one run of a run list. The CLI and the chat tool print these fields.
+type RunRow struct {
+	Run       string            `json:"run"`
+	Workflow  string            `json:"workflow"`
+	Params    map[string]string `json:"params,omitempty"`
+	Status    string            `json:"status"`
+	State     string            `json:"state"`
+	StartedAt time.Time         `json:"started_at"`
+}
+
+// RunList is one page of the runs of a repo, newest first.
+type RunList struct {
+	Runs   []RunRow `json:"runs"`
+	Total  int      `json:"total"`  // runs that match the filter, on all pages
+	Offset int      `json:"offset"` // runs skipped before this page
+	Limit  int      `json:"limit"`
+	More   bool     `json:"more"` // runs follow this page
+}
+
+// ListRuns returns one page of the runs of repoName. Without archived it lists
+// only running and paused runs. With archived it also lists done, stopped and
+// failed runs. A limit of 0 means DefaultRunListLimit. Runs with an unreadable
+// state.json are skipped.
+func ListRuns(home, repoName string, archived bool, limit, offset int) (RunList, error) {
+	if limit == 0 {
+		limit = DefaultRunListLimit
+	}
+	if limit < 0 {
+		return RunList{}, errors.New("limit must be a positive number")
+	}
+	if offset < 0 {
+		return RunList{}, errors.New("offset must not be negative")
+	}
+	base, names := runDirsNewestFirst(home, repoName)
+	var all []*RunState
+	for _, name := range names {
+		st, err := Load(filepath.Join(base, name))
+		if err != nil {
+			continue
+		}
+		if archived || st.Status == "running" || st.Status == "paused" {
+			all = append(all, st)
+		}
+	}
+	start := min(offset, len(all))
+	end := min(start+limit, len(all))
+	out := RunList{Runs: []RunRow{}, Total: len(all), Offset: offset, Limit: limit, More: end < len(all)}
+	for _, st := range all[start:end] {
+		out.Runs = append(out.Runs, RunRow{Run: st.Run, Workflow: st.Workflow, Params: st.Params,
+			Status: st.Status, State: st.Current, StartedAt: st.StartedAt})
+	}
+	return out, nil
 }
 
 // RunByID returns the state of the run runID of repository repoName. ok is

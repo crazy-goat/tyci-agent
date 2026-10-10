@@ -209,6 +209,19 @@ func (c ChatTools) Workflows() []tools.WorkflowInfo {
 	return out
 }
 
+// List implements tools.WorkflowManager. It returns one page of the runs of the repo.
+func (c ChatTools) List(archived bool, limit, offset int) (any, error) {
+	info, err := c.M.Info()
+	if err != nil {
+		return nil, err
+	}
+	list, err := ListRuns(info.Home, info.Name(), archived, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
 // Resume implements tools.WorkflowManager.
 func (c ChatTools) Resume(run, answer string) error { return c.M.Resume(run, answer) }
 

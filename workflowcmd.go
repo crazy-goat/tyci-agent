@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/tools"
@@ -76,6 +77,11 @@ var (
 	workflowStatusJSON   bool
 	workflowStopJSON     bool
 	workflowStopReason   string
+	workflowListJSON     bool
+	workflowListDir      string
+	workflowListArchived bool
+	workflowListLimit    int
+	workflowListOffset   int
 )
 
 // workflowRepoInfo finds the repository of a workflow command. Tests replace it,
@@ -219,6 +225,30 @@ means failed, unknown or ambiguous.`,
 	},
 }
 
+var workflowListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List the runs of a project, newest first",
+	Long: `List the runs of the project of --dir (default: the current directory), newest
+first. By default only running and paused runs are listed. --archived also lists done,
+stopped and failed runs. --limit sets the page size (default 20) and --offset skips
+runs. The output gives the total count and whether more runs follow.
+Exit code 0 means the list was printed. Exit code 1 means an error.`,
+	Args: jsonArgs(0, &workflowListJSON),
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		jsonOut := workflowListJSON
+		info, err := workflowRepoInfo(workflowListDir)
+		if err != nil {
+			return fail(cmd, jsonOut, err)
+		}
+		list, err := flow.ListRuns(info.Home, info.Name(), workflowListArchived, workflowListLimit, workflowListOffset)
+		if err != nil {
+			return fail(cmd, jsonOut, err)
+		}
+		printRunList(cmd.OutOrStdout(), jsonOut, list)
+		return nil
+	},
+}
+
 var workflowStopCmd = &cobra.Command{
 	Use:   "stop <run-id>",
 	Short: "Stop a running run that no live tyci process owns",
@@ -307,6 +337,26 @@ func runResult(st *flow.RunState, statePath string) workflowResult {
 	return r
 }
 
+// printRunList writes a run list as one JSON object, or as one line per run with
+// a footer that says how to get the next page.
+func printRunList(w io.Writer, jsonOut bool, list flow.RunList) {
+	if jsonOut {
+		_ = json.NewEncoder(w).Encode(list)
+		return
+	}
+	for _, r := range list.Runs {
+		params := make([]string, 0, len(r.Params))
+		for _, name := range slices.Sorted(maps.Keys(r.Params)) {
+			params = append(params, name+"="+r.Params[name])
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Run, r.Status, r.State, r.Workflow,
+			strings.Join(params, " "), r.StartedAt.Format(time.RFC3339))
+	}
+	if list.More {
+		fmt.Fprintf(w, "showing %d of %d runs; use --offset %d for more\n", len(list.Runs), list.Total, list.Offset+len(list.Runs))
+	}
+}
+
 // printValidity prints the check of workflow name and returns an error when the
 // workflow is invalid.
 func printValidity(w io.Writer, jsonOut bool, name string, problems []string) error {
@@ -382,7 +432,12 @@ func init() {
 	workflowValidateCmd.Flags().StringVar(&workflowValidateDir, "dir", "", "project directory (default: current directory)")
 	workflowStatusCmd.Flags().BoolVar(&workflowStatusJSON, "json", false, "print one JSON object on stdout")
 	workflowStopCmd.Flags().BoolVar(&workflowStopJSON, "json", false, "print one JSON object on stdout")
+	workflowListCmd.Flags().BoolVar(&workflowListJSON, "json", false, "print one JSON object on stdout")
+	workflowListCmd.Flags().StringVar(&workflowListDir, "dir", "", "project directory (default: current directory)")
+	workflowListCmd.Flags().BoolVar(&workflowListArchived, "archived", false, "also list done, stopped and failed runs")
+	workflowListCmd.Flags().IntVar(&workflowListLimit, "limit", flow.DefaultRunListLimit, "runs per page")
+	workflowListCmd.Flags().IntVar(&workflowListOffset, "offset", 0, "runs to skip, newest first")
 	workflowStopCmd.Flags().StringVar(&workflowStopReason, "reason", "", "why the run is stopped (default: stopped by user)")
-	workflowCmd.AddCommand(workflowInitCmd, workflowRunCmd, workflowValidateCmd, workflowStatusCmd, workflowStopCmd)
+	workflowCmd.AddCommand(workflowInitCmd, workflowRunCmd, workflowValidateCmd, workflowStatusCmd, workflowListCmd, workflowStopCmd)
 	rootCmd.AddCommand(workflowCmd)
 }
