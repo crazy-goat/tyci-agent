@@ -72,8 +72,8 @@ type SessionInfo struct {
 }
 
 // SessionBrowser lists saved sessions, newest first. main wires it with
-// SetSessionBrowser. The tools package does not list sessions itself, so the
-// session package stays out of the tool code path.
+// SetSessionBrowser. The adapter in main converts session.ResumeEntry values
+// into SessionInfo, so this file only works with SessionInfo.
 type SessionBrowser interface {
 	List(cwd string, all bool) ([]SessionInfo, error)
 }
@@ -110,8 +110,7 @@ type SessionListTool struct{}
 func (t *SessionListTool) Name() string { return "session_list" }
 
 // Run returns the newest sessions as a JSON array. The limit is 1 to 50 and
-// defaults to 10. The title goes through session.CleanTitle, the same cleaning
-// as the /resume picker.
+// defaults to 10. The browser must give clean titles (session.ReadTitle does).
 func (t *SessionListTool) Run(_ context.Context, input map[string]any) ToolResult {
 	limit := sessionListLimit(input["limit"])
 	all := boolParam(input, "all", false)
@@ -136,7 +135,7 @@ func (t *SessionListTool) Run(_ context.Context, input map[string]any) ToolResul
 	for _, s := range list {
 		rows = append(rows, map[string]any{
 			"path":         s.Path,
-			"title":        session.CleanTitle(s.Title),
+			"title":        s.Title,
 			"first_prompt": s.FirstPrompt,
 			"modified":     s.Modified.Format(time.RFC3339),
 		})

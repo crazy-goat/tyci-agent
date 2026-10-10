@@ -107,20 +107,6 @@ func TestSessionList_RowHasTitleAndPrompt(t *testing.T) {
 	}
 }
 
-func TestSessionList_TitleIsCleaned(t *testing.T) {
-	wireFakeBrowser(t, &fakeBrowser{items: []SessionInfo{{Title: "a\x07b\nc\x1b]2;x"}}})
-	res := (&SessionListTool{}).Run(context.Background(), map[string]any{})
-	rows := decodeRows(t, res.Content)
-	if rows[0]["title"] != "ab c]2;x" {
-		t.Errorf("title = %q", rows[0]["title"])
-	}
-	for _, r := range res.Content {
-		if r < 0x20 && r != '\n' {
-			t.Fatalf("content has control character %q", r)
-		}
-	}
-}
-
 func TestSessionList_EmptyIsJSONArray(t *testing.T) {
 	wireFakeBrowser(t, &fakeBrowser{})
 	res := (&SessionListTool{}).Run(context.Background(), map[string]any{})

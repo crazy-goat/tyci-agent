@@ -25,7 +25,7 @@ func TestSessionBrowserAdapter_UsesHomeSessions(t *testing.T) {
 	}
 	body := `{"type":"session","id":"a","projectRoot":"` + cwd + `"}` + "\n" +
 		`{"type":"message","id":"x1","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}` + "\n" +
-		`{"type":"title","id":"a","timestamp":"2026-10-10T08:00:00Z","title":"Plan\u0007 API"}` + "\n"
+		`{"type":"title","id":"a","timestamp":"2026-10-10T08:00:00Z","title":"Plan\u0007 API\tx\u001b]2;y"}` + "\n"
 	path := filepath.Join(dir, "one.jsonl")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestSessionBrowserAdapter_UsesHomeSessions(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("items = %d, want 1", len(items))
 	}
-	if items[0].Path != path || items[0].FirstPrompt != "hello" || items[0].Title != "Plan API" {
+	if items[0].Path != path || items[0].FirstPrompt != "hello" || items[0].Title != "Plan API x]2;y" {
 		t.Errorf("item = %+v", items[0])
 	}
 }
