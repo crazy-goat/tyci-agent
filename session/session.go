@@ -34,6 +34,7 @@ const (
 	TypeCompaction   EventType = "compaction"
 	TypeSessionEnd   EventType = "session_end"
 	TypeSystemPrompt EventType = "system_prompt"
+	TypeTitle        EventType = "title"
 )
 
 // Usage mirrors stream.Usage but is JSON-serializable without coupling.
@@ -109,6 +110,15 @@ type SessionEnd struct {
 	Status     string    `json:"status"`
 	ExitCode   int       `json:"exit_code"`
 	TotalUsage *Usage    `json:"total_usage,omitempty"`
+}
+
+// TitleEvent names the session. The last title event in the file wins.
+// Old files have no title event; ReadTitle returns "" for them.
+type TitleEvent struct {
+	Type      EventType `json:"type"`
+	ID        string    `json:"id"`
+	Timestamp string    `json:"timestamp"`
+	Title     string    `json:"title"`
 }
 
 // SystemPromptEvent records the exact system prompt actually sent to the
@@ -833,6 +843,34 @@ func (s *Session) WriteSessionEnd(status string, exitCode int, totalUsage *Usage
 		Status:     status,
 		ExitCode:   exitCode,
 		TotalUsage: totalUsage,
+	}
+
+	err := s.encoder.Encode(ev)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	return s.recordDumpEvent(raw)
+}
+
+// WriteTitle appends a title event to the session file. The caller trims
+// title. The last title event wins when the session is listed.
+func (s *Session) WriteTitle(title string) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("session closed")
+	}
+
+	ev := TitleEvent{
+		Type:      TypeTitle,
+		ID:        s.id,
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Title:     title,
 	}
 
 	err := s.encoder.Encode(ev)

@@ -19,6 +19,8 @@ type ResumeEntry struct {
 	Size        int64
 	ModTime     UnixMillis
 	FirstPrompt string
+	// Title is the last title event in the file, or "" when there is none.
+	Title string
 }
 
 // ResumeEntries lists sessions in the cwd-encoded dir and reads the first
@@ -86,11 +88,40 @@ func resumeEntriesInDir(dir string) ([]ResumeEntry, error) {
 			Size:        info.Size(),
 			ModTime:     UnixMillisFromTime(info.ModTime()),
 			FirstPrompt: readFirstUserPrompt(path),
+			Title:       ReadTitle(path),
 		})
 	}
 	// Newest first.
 	sortResumeEntriesDesc(out)
 	return out, nil
+}
+
+// ReadTitle returns the title of the last title event in the session file at
+// path, or "" when there is none or the file cannot be read. It scans the
+// whole file, because a title can be written after the first prompt. Lines
+// that do not parse are skipped.
+func ReadTitle(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }() // read-only
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	title := ""
+	for sc.Scan() {
+		var ev struct {
+			Type  string `json:"type"`
+			Title string `json:"title"`
+		}
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			continue
+		}
+		if ev.Type == string(TypeTitle) && ev.Title != "" {
+			title = ev.Title
+		}
+	}
+	return title
 }
 
 // readFirstUserPrompt opens path and reads just enough of the JSONL header

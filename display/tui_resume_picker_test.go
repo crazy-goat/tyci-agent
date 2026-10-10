@@ -327,3 +327,12 @@ func TestResumePicker_CloseKeepsAnswerForLaterRead(t *testing.T) {
 		t.Fatal("answer was not kept in resumeCh")
 	}
 }
+
+func TestResumeLabel_TitleWinsOverFirstPrompt(t *testing.T) {
+	if got := resumeLabel(TuiResumeEntry{Title: "Named", FirstPrompt: "hello"}); got != "Named" {
+		t.Errorf("resumeLabel with title = %q, want %q", got, "Named")
+	}
+	if got := resumeLabel(TuiResumeEntry{FirstPrompt: "hello"}); got != "hello" {
+		t.Errorf("resumeLabel without title = %q, want %q", got, "hello")
+	}
+}

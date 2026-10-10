@@ -562,7 +562,7 @@ func (m TuiModel) renderSidebarSessions(width int) []string {
 	var out []string
 	for i, e := range entries {
 		date := formatResumeDate(e.ModTime)
-		prompt := truncateResumePrompt(e.FirstPrompt, max(1, width-len(date)-3))
+		prompt := truncateResumePrompt(resumeLabel(e), max(1, width-len(date)-3))
 		line := fmt.Sprintf(" %s  %s", date, prompt)
 		out = append(out, rowStyle(i == m.sidebarCursor).Render(fillWidth(truncateToWidth(line, width), width)))
 	}

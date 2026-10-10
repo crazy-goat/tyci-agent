@@ -279,7 +279,7 @@ func (m TuiModel) renderResumePickerContent() string {
 		isSelected := i == m.resumePickerCursor
 
 		dateStr := formatResumeDate(entry.ModTime)
-		prompt := truncateResumePrompt(entry.FirstPrompt, promptWidth)
+		prompt := truncateResumePrompt(resumeLabel(entry), promptWidth)
 
 		// Row content: " [prefix]  YYYY-MM-DD HH:MM:SS  prompt…"
 		prefix := "  "
