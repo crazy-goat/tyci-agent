@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/internal/pricing"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/stream"
 	"github.com/crazy-goat/tyci-agent/tools"
@@ -1195,6 +1196,75 @@ func TestBuildSubagentTree_UnpricedDescendantPropagates(t *testing.T) {
 	}
 	if !parentRow.rollupUnpriced {
 		t.Fatalf("expected parent's rollup to be flagged unpriced because of its child, got %+v", parentRow)
+	}
+}
+
+// useSidebarTestCatalog gives the test a private pricing catalog with one
+// priced model, "anthropic/claude-sonnet-5", so the result does not depend on
+// the catalog of the machine that runs it.
+func useSidebarTestCatalog(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"anthropic":{"id":"anthropic","models":{
+		"claude-sonnet-5":{"id":"claude-sonnet-5","name":"Sonnet","cost":{"input":3,"output":15},"limit":{"context":200000}}
+	}}}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	t.Cleanup(pricing.Reset)
+}
+
+// TestBuildSubagentTree_RootCostIsMainOnly: the main row shows the cost of the
+// main conversation only. The subagent cost is in the child rows, not in the
+// root, while the status bar keeps the session total.
+func TestBuildSubagentTree_RootCostIsMainOnly(t *testing.T) {
+	useSidebarTestCatalog(t)
+	ledger.Reset()
+	t.Cleanup(ledger.Reset)
+
+	m := newTestModelForSidebar()
+	child := jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "child"}
+	m.applyJobUpdate(child)
+
+	ledger.Record(ledger.Main, "anthropic", "claude-sonnet-5", "", stream.Usage{Input: 1_000_000})
+	ledger.Record(ledger.Subagent, "anthropic", "claude-sonnet-5", "job-1", stream.Usage{Input: 1_000_000})
+
+	snap := ledger.Get()
+	if snap.MainUSD <= 0 || snap.SubagentUSD <= 0 {
+		t.Fatalf("expected priced main and subagent cost, got main=%v subagent=%v", snap.MainUSD, snap.SubagentUSD)
+	}
+
+	rows := m.buildSubagentTree()
+	if rows[0].rollupUSD != snap.MainUSD {
+		t.Fatalf("expected root cost to be main only (%v), got %v", snap.MainUSD, rows[0].rollupUSD)
+	}
+	if rows[0].rollupUnpriced {
+		t.Fatalf("expected root not flagged unpriced")
+	}
+	if rows[1].rollupUSD != snap.SubagentUSD {
+		t.Fatalf("expected child cost %v, got %v", snap.SubagentUSD, rows[1].rollupUSD)
+	}
+}
+
+// TestBuildSubagentTree_RootUnpricedOnlyForMain: an unpriced subagent does not
+// flag the root row, but an unpriced main conversation does.
+func TestBuildSubagentTree_RootUnpricedOnlyForMain(t *testing.T) {
+	useSidebarTestCatalog(t)
+	ledger.Reset()
+	t.Cleanup(ledger.Reset)
+
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "child"})
+
+	ledger.Record(ledger.Main, "anthropic", "claude-sonnet-5", "", stream.Usage{Input: 1000})
+	ledger.Record(ledger.Subagent, "nope", "no-such-model", "job-1", stream.Usage{Input: 1000})
+	if rows := m.buildSubagentTree(); rows[0].rollupUnpriced {
+		t.Fatalf("expected an unpriced subagent not to flag the root row")
+	}
+
+	ledger.Reset()
+	ledger.Record(ledger.Main, "nope", "no-such-model", "", stream.Usage{Input: 1000})
+	if rows := m.buildSubagentTree(); !rows[0].rollupUnpriced {
+		t.Fatalf("expected an unpriced main conversation to flag the root row")
 	}
 }
 
