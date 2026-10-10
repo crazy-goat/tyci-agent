@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
@@ -34,6 +35,7 @@ const (
 	TypeCompaction   EventType = "compaction"
 	TypeSessionEnd   EventType = "session_end"
 	TypeSystemPrompt EventType = "system_prompt"
+	TypeTitle        EventType = "title"
 )
 
 // Usage mirrors stream.Usage but is JSON-serializable without coupling.
@@ -109,6 +111,15 @@ type SessionEnd struct {
 	Status     string    `json:"status"`
 	ExitCode   int       `json:"exit_code"`
 	TotalUsage *Usage    `json:"total_usage,omitempty"`
+}
+
+// TitleEvent names the session. The last title event in the file wins.
+// Old files have no title event; ReadTitle returns "" for them.
+type TitleEvent struct {
+	Type      EventType `json:"type"`
+	ID        string    `json:"id"`
+	Timestamp string    `json:"timestamp"`
+	Title     string    `json:"title"`
 }
 
 // SystemPromptEvent records the exact system prompt actually sent to the
@@ -833,6 +844,60 @@ func (s *Session) WriteSessionEnd(status string, exitCode int, totalUsage *Usage
 		Status:     status,
 		ExitCode:   exitCode,
 		TotalUsage: totalUsage,
+	}
+
+	err := s.encoder.Encode(ev)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	return s.recordDumpEvent(raw)
+}
+
+// MaxTitleRunes is the longest title that CleanTitle keeps.
+const MaxTitleRunes = 80
+
+// CleanTitle makes a title safe to show. A newline or a tab becomes a space.
+// Every other control rune is removed, so no escape sequence reaches the
+// terminal. The result is trimmed and cut to MaxTitleRunes runes. The model
+// can write any title, so every title passes through here.
+func CleanTitle(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(' ')
+		case unicode.IsControl(r):
+			// dropped
+		default:
+			b.WriteRune(r)
+		}
+	}
+	runes := []rune(strings.TrimSpace(b.String()))
+	if len(runes) > MaxTitleRunes {
+		runes = runes[:MaxTitleRunes]
+	}
+	return strings.TrimSpace(string(runes))
+}
+
+// WriteTitle appends a title event to the session file. The caller trims
+// title. The last title event wins when the session is listed.
+func (s *Session) WriteTitle(title string) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("session closed")
+	}
+
+	ev := TitleEvent{
+		Type:      TypeTitle,
+		ID:        s.id,
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Title:     title,
 	}
 
 	err := s.encoder.Encode(ev)

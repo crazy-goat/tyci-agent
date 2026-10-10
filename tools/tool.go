@@ -425,6 +425,20 @@ func builtinToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "session_rename",
+				"description": "Give this conversation a short title (at most 5 words). It shows in /resume.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"title": map[string]any{"type": "string", "description": "The new title, at most 5 words."},
+					},
+					"required": []string{"title"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "help",
 				"description": "Full documentation for a tool, with worked examples. The tool list in your prompt is one line each on purpose; this is the manual. Use help() to list tools or help(tool=\"name\") to learn a tool's schema when you are unsure about its parameters or need to recover from a validation error.",
 				"parameters": map[string]any{
@@ -1051,6 +1065,8 @@ var toolRegistry = map[string]Tool{
 	// bash tool populates.
 	"kill_job": &KillJobTool{},
 	"jobs":     &JobsTool{},
+	// session_rename fails until SetSessionRenamer is called (chat TUI only).
+	"session_rename": &SessionRenameTool{},
 
 	"workflow_start":  &WorkflowStartTool{},
 	"workflow_status": &WorkflowStatusTool{},

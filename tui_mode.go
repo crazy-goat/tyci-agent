@@ -185,6 +185,28 @@ func compactAndShow(disp compactionDisplay, compact func(summary, focus string, 
 func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Context) {
 	titleSet := false // track whether terminal title has been set
 
+	// renameSession stores a session title and shows it in the terminal
+	// window title. The /rename command and the session_rename tool both use
+	// it. The tool runs in a turn goroutine, so this function does not touch
+	// titleSet.
+	renameSession := func(title string) (string, error) {
+		title = session.CleanTitle(title)
+		if title == "" {
+			return "", errors.New(renameUsage)
+		}
+		sess := cond.EnsureSession()
+		if sess == nil {
+			return "", errors.New("no writable session")
+		}
+		if err := sess.WriteTitle(title); err != nil {
+			return "", err
+		}
+		fmt.Fprint(os.Stdout, ansi.SetWindowTitle("tyci: "+title))
+		return title, nil
+	}
+	tools.SetSessionRenamer(renameSession)
+	defer tools.SetSessionRenamer(nil)
+
 	// "/<name>" starts a workflow from the input (display/tui_workflow.go). A
 	// workflow named like a builtin command is an error, shown once here.
 	tuiDisp.SetWorkflowStarter(workflowStarter)
@@ -467,6 +489,14 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				fmt.Fprint(os.Stdout, ansi.SetWindowTitle("tyci"))
 				titleSet = false
 				continue
+			case trimmed == "/rename" || strings.HasPrefix(trimmed, "/rename "):
+				// /rename <title>: name the session. Same path as the
+				// session_rename tool (see renameSession below).
+				iterCancel()
+				if handleRenameCommand(tuiDisp, strings.TrimPrefix(trimmed, "/rename"), renameSession) {
+					titleSet = true
+				}
+				continue
 			case trimmed == "/resume":
 				// Bare /resume: list cwd's sessions in the popup picker.
 				iterCancel()
@@ -611,6 +641,7 @@ func resumeEntriesToTUI(entries []session.ResumeEntry) []display.TuiResumeEntry 
 			Name:        e.Name,
 			ModTime:     e.ModTime.Time(),
 			FirstPrompt: e.FirstPrompt,
+			Title:       e.Title,
 		}
 	}
 	return out

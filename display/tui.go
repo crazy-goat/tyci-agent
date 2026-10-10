@@ -132,12 +132,23 @@ type runStopResultMsg struct {
 // session package to enumerate the cwd's sessions. Path is the absolute
 // file the picker will hand back via the SelectedResume channel; ModTime
 // is rendered as the timestamp column; FirstPrompt is the column-2
-// preview drawn from the first user message in the JSONL.
+// preview drawn from the first user message in the JSONL. Title, when not
+// empty, is shown in that column instead of FirstPrompt.
 type TuiResumeEntry struct {
 	Path        string
 	Name        string
 	ModTime     time.Time
 	FirstPrompt string
+	Title       string
+}
+
+// resumeLabel is the text shown for a session in the /resume picker and the
+// sidebar: its title when it has one, else its first prompt.
+func resumeLabel(e TuiResumeEntry) string {
+	if e.Title != "" {
+		return e.Title
+	}
+	return e.FirstPrompt
 }
 
 type block struct {

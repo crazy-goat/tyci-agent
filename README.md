@@ -937,6 +937,8 @@ Subagents that run as jobs write their own files to `~/.tyci/sessions/<project>/
 `bus.jsonl` is the message journal; it is not a session and the session list skips it.
 Each line is a complete event (message, tool call, result, usage).
 
+A session can have a name. It is a `title` event: `{"type":"title","id":"<session id>","timestamp":"<RFC 3339>","title":"<text>"}`. `/rename <title>` and the chat tool `session_rename` append it. The last `title` event in the file wins. The `/resume` picker shows the title instead of the first prompt, and `tyci session list` shows it before the path. Old files have no `title` event. They still work, and they show the first prompt.
+
 - Re-run with `--session <path>` to resume a previous session
 - Session replay shows history before continuing
 - Use `--no-session` to disable persistence

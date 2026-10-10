@@ -144,6 +144,15 @@ func listAllSessionEntries() ([]session.SessionEntry, error) {
 	return out, nil
 }
 
+// sessionPathCell is the last column of `tyci session list`. It puts the
+// session title before the path when the session has one.
+func sessionPathCell(path string) string {
+	if title := session.ReadTitle(path); title != "" {
+		return title + "  " + path
+	}
+	return path
+}
+
 func runSessionList(cmd *cobra.Command, args []string) error {
 	cwdFlag, _ := cmd.Flags().GetString("cwd")
 	all, _ := cmd.Flags().GetBool("all")
@@ -164,7 +173,7 @@ func runSessionList(cmd *cobra.Command, args []string) error {
 				i+1,
 				e.ModTime.UTC().Format("2006-01-02 15:04:05"),
 				humanBytes(e.Size),
-				e.Path,
+				sessionPathCell(e.Path),
 			)
 		}
 		return nil
@@ -187,7 +196,7 @@ func runSessionList(cmd *cobra.Command, args []string) error {
 			i+1,
 			e.ModTime.UTC().Format("2006-01-02 15:04:05"),
 			humanBytes(e.Size),
-			e.Path,
+			sessionPathCell(e.Path),
 		)
 	}
 	return nil
