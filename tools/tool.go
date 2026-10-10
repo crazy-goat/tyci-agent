@@ -425,6 +425,20 @@ func builtinToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "session_list",
+				"description": "List your saved sessions, newest first: path, title and first prompt. Set all to true to include other projects. Use session_read(path) to read one.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"limit": map[string]any{"type": "integer", "description": "How many sessions to return, 1 to 50. Default 10."},
+						"all":   map[string]any{"type": "boolean", "description": "Include the sessions of every project. Default false."},
+					},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "session_rename",
 				"description": "Give this conversation a short title (at most 5 words). It shows in /resume.",
 				"parameters": map[string]any{
@@ -1067,6 +1081,8 @@ var toolRegistry = map[string]Tool{
 	"jobs":     &JobsTool{},
 	// session_rename fails until SetSessionRenamer is called (chat TUI only).
 	"session_rename": &SessionRenameTool{},
+	// session_list fails until SetSessionBrowser is called (main wires it).
+	"session_list": &SessionListTool{},
 
 	"workflow_start":  &WorkflowStartTool{},
 	"workflow_status": &WorkflowStatusTool{},

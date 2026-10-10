@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Tools: the chat tool `session_list` lists your saved sessions, newest first, with the path, title and first prompt. It lists the current project, or every project with `all: true`. A subagent cannot use it.
 - Sessions: a session can have a title. The `title` event is appended to the session file, the last one wins. `/rename <title>` and the chat tool `session_rename` set it. The `/resume` picker and `tyci session list` show it. Old session files still work.
 - Tools: the chat tool `jobs` lists the background jobs (filters `kind`, `status`, `all`). A subagent sees only its own subtree. An unknown id in `kill_job` now names the live jobs the caller may stop.
 - Reminders: the store `~/.tyci/reminders.json` and the parser of one-shot times (`in <duration>`, `at HH:MM`, `once <RFC3339>`). The file format is documented in the README. No tool or command uses it yet.

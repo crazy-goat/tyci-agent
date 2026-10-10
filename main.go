@@ -873,6 +873,7 @@ func wireTools() {
 	// tools/killjob.go).
 	tools.SetJobCanceler(jobCancelerAdapter{reg: JobRegistry})
 	tools.SetJobLister(listJobsAdapter{reg: JobRegistry})
+	tools.SetSessionBrowser(sessionBrowserAdapter{})
 
 	// Background-command notices reach the main conversation through the bus,
 	// see wakeNotices and drainNotices.
