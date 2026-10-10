@@ -8,7 +8,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 
 - **Multi-provider support** — OpenAI-compatible, Anthropic, Gemini, and custom API types
 - **Agent loop** — model calls, tool execution, iteration, fallback models
-- **Tool system** — built-in tools: `bash`, `find`, `read`, `write`, `todo`, `subagent`, `lua`, `wait`, `jobs`, `session_list`, `lock`, `skills`, `agents`, `web`
+- **Tool system** — built-in tools: `bash`, `find`, `read`, `write`, `todo`, `subagent`, `lua`, `wait`, `jobs`, `session_list`, `remind`, `lock`, `skills`, `agents`, `web`
 - **Background commands** — a shell command still running after 30s moves to the background; the agent is notified when it finishes
 - **Hooks** — run your own commands before and after any tool call, to gate it or feed its result back
 - **Project instructions & memory** — `AGENTS.md` plus notes the agent writes for its own future sessions
@@ -619,6 +619,18 @@ The `when` of a reminder takes one of these forms:
 - `in 20m`: after a duration from now.
 - `at 15:00`: at a local time today, or tomorrow when that time has passed.
 - `once 2026-10-09T12:00:00Z`: at an RFC3339 time. Write this form if you edit the file by hand.
+
+##### Using remind
+
+The chat tool `remind` has three actions:
+
+- `add` with `when` and `text`: stores a reminder and returns its `id`.
+- `list`: lists the reminders that are not delivered yet.
+- `cancel` with `id`: removes a reminder.
+
+When a reminder is due, the cron ticker sends it as a notice, and the notice wakes an idle chat. The notice text is `reminder <id>: <text>`. A reminder that is more than two minutes late adds ` (late by <duration>)`, for example `(late by 3h12m)`. A reminder set in another directory adds ` (set in <dir>)`. A reminder is delivered once.
+
+Delivery happens only while an interactive session runs the ticker. A reminder that is due while no session is open waits until a session is open.
 
 ### Display Modes
 
