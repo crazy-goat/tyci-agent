@@ -1100,8 +1100,8 @@ type subagentTreeRow struct {
 	// ownTokens is this row's own usage only — tokens deliberately do not
 	// roll up (see the package doc comment on why).
 	ownTokens int
-	// rollupUSD is this row's own cost plus every descendant's, so root's
-	// figure agrees with the status bar's total.
+	// rollupUSD is this row's own cost plus every descendant's. The root row
+	// is the main conversation only, so it does not include subagents.
 	rollupUSD float64
 	// rollupUnpriced is true when this row or any descendant used a model
 	// with no catalog price. Kept as data (tests pin the propagation);
@@ -1166,11 +1166,20 @@ func (m TuiModel) buildSubagentTreeFrom(all []jobs.Job) []subagentTreeRow {
 	usage := ledger.UsageByJob()
 	snap := ledger.Get()
 
+	// The root row shows the main conversation only, without subagents and
+	// scouts. Its unpriced flag looks at main rows only, for the same reason.
+	mainUnpriced := false
+	for _, r := range snap.Rows {
+		if r.Kind == ledger.Main && !r.Priced {
+			mainUnpriced = true
+		}
+	}
+
 	rows := []subagentTreeRow{{
 		isRoot:         true,
 		ownTokens:      snap.Main.Input + snap.Main.Output,
-		rollupUSD:      snap.TotalUSD(),
-		rollupUnpriced: snap.Unpriced > 0,
+		rollupUSD:      snap.MainUSD,
+		rollupUnpriced: mainUnpriced,
 	}}
 
 	// "" (the synthetic root's own key) gets marked visited by the very

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: streamed output (text, thinking and tool output) is drawn at most once per second, except that a change of block kind or tool index draws the previous content at once. So several parallel tools with mixed progress can still draw once per line. The first chunk after a quiet period is drawn at once, and the end of a turn draws the rest at once. The status bar and the background job times are refreshed once per second, and the status bar shows elapsed times in whole seconds, for example `12s`, not tenths. Keyboard, mouse, resize and modal redraws are not delayed (#630).
 
 ### Fixed
+- TUI: the `main` row of the Tasks tab (Subagents group) shows the cost of the main conversation only, without subagents. It now matches the token column of the same row. The status bar total does not change (#592).
 - TUI: the session block of the Tokens tab lines up. The token and cost columns are right aligned to the widest value of the block, so the rows no longer shift (#601).
 - TUI: the agent view shows the start prompt of the agent as its first block, labelled `Task:`. A resumed agent and a /btw job show their prompt too. A prompt longer than 12 lines is cut, with a line that says how many lines are left (#580).
 - TUI: chat text wraps and the sidebar measures rows per grapheme cluster, not per rune. Combining text (Devanagari, accented letters, skin-tone and ZWJ emoji) no longer splits across lines and no longer moves the sidebar border (#579).

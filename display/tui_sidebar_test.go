@@ -1198,6 +1198,59 @@ func TestBuildSubagentTree_UnpricedDescendantPropagates(t *testing.T) {
 	}
 }
 
+// TestBuildSubagentTree_RootCostIsMainOnly: the main row shows the cost of the
+// main conversation only. The subagent cost is in the child rows, not in the
+// root, while the status bar keeps the session total.
+func TestBuildSubagentTree_RootCostIsMainOnly(t *testing.T) {
+	ledger.Reset()
+	t.Cleanup(ledger.Reset)
+
+	m := newTestModelForSidebar()
+	child := jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "child"}
+	m.applyJobUpdate(child)
+
+	ledger.Record(ledger.Main, "anthropic", "claude-sonnet-5", "", stream.Usage{Input: 1_000_000})
+	ledger.Record(ledger.Subagent, "anthropic", "claude-sonnet-5", "job-1", stream.Usage{Input: 1_000_000})
+
+	snap := ledger.Get()
+	if snap.MainUSD <= 0 || snap.SubagentUSD <= 0 {
+		t.Fatalf("expected priced main and subagent cost, got main=%v subagent=%v", snap.MainUSD, snap.SubagentUSD)
+	}
+
+	rows := m.buildSubagentTree()
+	if rows[0].rollupUSD != snap.MainUSD {
+		t.Fatalf("expected root cost to be main only (%v), got %v", snap.MainUSD, rows[0].rollupUSD)
+	}
+	if rows[0].rollupUnpriced {
+		t.Fatalf("expected root not flagged unpriced")
+	}
+	if rows[1].rollupUSD != snap.SubagentUSD {
+		t.Fatalf("expected child cost %v, got %v", snap.SubagentUSD, rows[1].rollupUSD)
+	}
+}
+
+// TestBuildSubagentTree_RootUnpricedOnlyForMain: an unpriced subagent does not
+// flag the root row, but an unpriced main conversation does.
+func TestBuildSubagentTree_RootUnpricedOnlyForMain(t *testing.T) {
+	ledger.Reset()
+	t.Cleanup(ledger.Reset)
+
+	m := newTestModelForSidebar()
+	m.applyJobUpdate(jobs.Job{ID: "job-1", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "child"})
+
+	ledger.Record(ledger.Main, "anthropic", "claude-sonnet-5", "", stream.Usage{Input: 1000})
+	ledger.Record(ledger.Subagent, "nope", "no-such-model", "job-1", stream.Usage{Input: 1000})
+	if rows := m.buildSubagentTree(); rows[0].rollupUnpriced {
+		t.Fatalf("expected an unpriced subagent not to flag the root row")
+	}
+
+	ledger.Reset()
+	ledger.Record(ledger.Main, "nope", "no-such-model", "", stream.Usage{Input: 1000})
+	if rows := m.buildSubagentTree(); !rows[0].rollupUnpriced {
+		t.Fatalf("expected an unpriced main conversation to flag the root row")
+	}
+}
+
 // TestBuildSubagentTree_ActiveFirst: an active job (waiting for an answer, even
 // an older one) comes before a finished job in the same sibling group.
 func TestBuildSubagentTree_ActiveFirst(t *testing.T) {
