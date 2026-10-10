@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -170,5 +171,42 @@ func TestLiveTranscript_OldestTranscriptIsDropped(t *testing.T) {
 	last := fmt.Sprintf("live-cap-%03d", liveTranscriptCap)
 	if !HasLiveTranscript(last) {
 		t.Fatalf("the newest transcript %s must be kept", last)
+	}
+}
+
+func TestRunSingleTask_RecordsTheTaskAsFirstPrompt(t *testing.T) {
+	const jobID = "prompt-first-job"
+	const task = "find the bug\nin parse.go"
+	ctx := context.WithValue(context.Background(), JobIDCtxKey{}, jobID)
+	runSingleTask(ctx, &depthCapturingRunner{}, subagentTask{Task: task}, 0, false)
+
+	events, ok := LiveTranscriptSince(jobID, 0)
+	if !ok || len(events) == 0 {
+		t.Fatalf("no transcript for %s", jobID)
+	}
+	if want := (LiveEvent{Kind: "prompt", Content: task}); events[0] != want {
+		t.Fatalf("first event = %+v, want %+v", events[0], want)
+	}
+}
+
+func TestCopyLiveTranscript_KeepsTheFirstPromptOfTheContinuedJob(t *testing.T) {
+	RecordLiveEvent("prompt-old-job", LiveEvent{Kind: "prompt", Content: "old task"})
+	RecordLiveEvent("prompt-old-job", LiveEvent{Kind: "text", Content: "old answer"})
+	CopyLiveTranscript("prompt-old-job", "prompt-new-job")
+	RecordLiveEvent("prompt-new-job", LiveEvent{Kind: "prompt", Content: "resume task"})
+
+	events, _ := LiveTranscriptSince("prompt-new-job", 0)
+	want := []LiveEvent{
+		{Kind: "prompt", Content: "old task"},
+		{Kind: "text", Content: "old answer"},
+		{Kind: "prompt", Content: "resume task"},
+	}
+	if len(events) != len(want) {
+		t.Fatalf("got %d events, want %d: %+v", len(events), len(want), events)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Errorf("event %d = %+v, want %+v", i, events[i], want[i])
+		}
 	}
 }

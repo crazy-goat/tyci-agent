@@ -274,6 +274,9 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		}
 
 		c := &collector{}
+		// The new user turn of the resume is the first event of this run's
+		// agent view, after the turns copied above (see tools.LiveEvent).
+		tools.RecordLiveEvent(newJobID, tools.LiveEvent{Kind: "prompt", Content: task})
 		// Record the resumed conversation's real spend in internal/ledger via
 		// ledger.Watch: without it the spend never reaches the ledger and the
 		// Subagents tree would render this conversation as free. Every child
@@ -446,6 +449,7 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		// The promoted job continues the evaluation, so its agent view starts
 		// with the evaluation's transcript (see tools.CopyLiveTranscript).
 		tools.CopyLiveTranscript(evaluationID, jobID)
+		tools.RecordLiveEvent(jobID, tools.LiveEvent{Kind: "prompt", Content: question})
 		c := &collector{}
 		runCtx = context.WithValue(runCtx, tools.JobIDCtxKey{}, jobID)
 		runCtx = connector.WithModelClient(runCtx, client)
@@ -628,6 +632,7 @@ func startBtwFork(ctx context.Context, cond *conductor.Conductor, question strin
 		// shared with any other job, so mutating it right before the one
 		// agent.Run call that uses it is safe.
 		cfg.NextMessages = tools.JobMailboxNextMessages(jobID)
+		tools.RecordLiveEvent(jobID, tools.LiveEvent{Kind: "prompt", Content: question})
 		// Same ledger accounting as Resume: a /btw side-conversation spends the
 		// parent's money and must record against the same ledger, or it renders
 		// as free in the Subagents tree.

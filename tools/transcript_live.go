@@ -12,10 +12,12 @@ import (
 const liveTranscriptCap = 100
 
 // LiveEvent is one step of a subagent's conversation, in the order the
-// subagent produced it. Kind is "thinking", "text", "tool-start", "tool-delta",
-// "tool-end" or "compaction". These are the same names the TUI uses for its
-// own block messages, so the display replays events without a mapping table.
-// Compaction is set only for a "compaction" event.
+// subagent produced it. Kind is "prompt", "thinking", "text", "tool-start",
+// "tool-delta", "tool-end" or "compaction". These are the same names the TUI
+// uses for its own block messages, so the display replays events without a
+// mapping table. "prompt" is the task text the job got: the first event of a
+// job, and the new user turn of a resumed job. Compaction is set only for a
+// "compaction" event.
 type LiveEvent struct {
 	Kind       string
 	Content    string

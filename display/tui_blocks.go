@@ -1,12 +1,27 @@
 package display
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/crazy-goat/tyci-agent/stream"
 )
+
+// maxPromptLines is how many lines of a job's task text the agent view shows.
+// A longer task is cut and ends with a line that says how many lines are left.
+const maxPromptLines = 12
+
+// cutPromptLines keeps the first limit lines of s. When it cuts, it adds a line
+// "... (N more lines)" for the rest. The transcript keeps the full text.
+func cutPromptLines(s string, limit int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= limit {
+		return s
+	}
+	return strings.Join(lines[:limit], "\n") + fmt.Sprintf("\n... (%d more lines)", len(lines)-limit)
+}
 
 // handleBlockMsg returns a tea.Cmd (armStatusTick's, on the "request-start"
 // and "phase" cases — see below) instead of being purely a state mutator,
@@ -27,7 +42,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 	// the frame. Done here rather than at render time, when the TUI's own
 	// colour codes share the same strings.
 	switch msg.kind {
-	case "thinking", "text", "tool-delta", "tool-end", "tool-progress", "block", "error":
+	case "thinking", "text", "tool-delta", "tool-end", "tool-progress", "block", "error", "prompt":
 		msg.content = sanitizeUntrusted(msg.content)
 	}
 	switch msg.kind {
@@ -237,6 +252,15 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 		m.forceRenderDirtyBlocks()
 		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{kind: "block", content: msg.content, dirty: true})
+		m.dirtyBlocks[idx] = true
+		m.invalidateTotalLines()
+		m.maybeFlushOldBlocks()
+	case "prompt":
+		// The task text a job got, shown as the first block of its agent
+		// view. The user did not type it, so the label is "Task:", not "You:".
+		m.forceRenderDirtyBlocks()
+		idx := len(m.blocks)
+		m.blocks = append(m.blocks, block{kind: "user", content: "Task: " + cutPromptLines(msg.content, maxPromptLines), dirty: true})
 		m.dirtyBlocks[idx] = true
 		m.invalidateTotalLines()
 		m.maybeFlushOldBlocks()
