@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/internal/pricing"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/stream"
 	"github.com/crazy-goat/tyci-agent/tools"
@@ -1198,10 +1199,25 @@ func TestBuildSubagentTree_UnpricedDescendantPropagates(t *testing.T) {
 	}
 }
 
+// useSidebarTestCatalog gives the test a private pricing catalog with one
+// priced model, "anthropic/claude-sonnet-5", so the result does not depend on
+// the catalog of the machine that runs it.
+func useSidebarTestCatalog(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	writeTestCatalog(t, dir, `{"anthropic":{"id":"anthropic","models":{
+		"claude-sonnet-5":{"id":"claude-sonnet-5","name":"Sonnet","cost":{"input":3,"output":15},"limit":{"context":200000}}
+	}}}`)
+	t.Setenv("HOME", dir)
+	pricing.Reset()
+	t.Cleanup(pricing.Reset)
+}
+
 // TestBuildSubagentTree_RootCostIsMainOnly: the main row shows the cost of the
 // main conversation only. The subagent cost is in the child rows, not in the
 // root, while the status bar keeps the session total.
 func TestBuildSubagentTree_RootCostIsMainOnly(t *testing.T) {
+	useSidebarTestCatalog(t)
 	ledger.Reset()
 	t.Cleanup(ledger.Reset)
 
@@ -1232,6 +1248,7 @@ func TestBuildSubagentTree_RootCostIsMainOnly(t *testing.T) {
 // TestBuildSubagentTree_RootUnpricedOnlyForMain: an unpriced subagent does not
 // flag the root row, but an unpriced main conversation does.
 func TestBuildSubagentTree_RootUnpricedOnlyForMain(t *testing.T) {
+	useSidebarTestCatalog(t)
 	ledger.Reset()
 	t.Cleanup(ledger.Reset)
 
