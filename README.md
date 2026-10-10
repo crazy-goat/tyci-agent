@@ -590,6 +590,33 @@ minutes:
 */5 * * * * /path/to/tyci cron tick --dir /path/to/project >> ~/.tyci/cron-tick.log 2>&1
 ```
 
+#### Reminders
+
+A reminder is a one-shot notice for the orchestrator. It lives in its own file,
+`~/.tyci/reminders.json`, not in `cron.json`. Use `cron` for repeating schedules;
+a reminder is one-shot only.
+
+```json
+{
+  "reminders": [
+    {
+      "id": "3f9a1c2e",
+      "text": "check the PR",
+      "dir": "/path/to/project",
+      "fires_at": "2026-10-09T10:20:00+02:00",
+      "created_at": "2026-10-09T10:00:00+02:00",
+      "delivered": true
+    }
+  ]
+}
+```
+
+The `when` of a reminder takes one of these forms:
+
+- `in 20m`: after a duration from now.
+- `at 15:00`: at a local time today, or tomorrow when that time has passed.
+- `once 2026-10-09T12:00:00Z`: at an RFC3339 time. Write this form if you edit the file by hand.
+
 ### Display Modes
 
 - **run** — Plain text: only the final answer on stdout; errors, retry and fallback notices on stderr
