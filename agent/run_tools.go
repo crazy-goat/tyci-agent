@@ -38,7 +38,11 @@ func executeAndAppendToolResults(ctx context.Context, d Sink, msgs *[]connector.
 }
 
 func showToolCalls(d Sink, toolCalls []stream.ToolCall, toolDeltas map[string]*strings.Builder) {
+	ids, _ := d.(toolCallIDSink)
 	for _, tc := range toolCalls {
+		if ids != nil {
+			ids.SetToolCallID(tc.ID)
+		}
 		d.ToolCallStart(tc.Name)
 		if delta, ok := toolDeltas[tc.ID]; ok && delta.Len() > 0 {
 			d.ToolCallDelta(delta.String())
@@ -68,10 +72,21 @@ type toolDurationSink interface {
 	ToolCallDuration(d time.Duration)
 }
 
+// toolCallIDSink is an optional Sink capability: a display that matches the
+// end of a tool call to its start by id gets the provider id of the call. It
+// is set right before ToolCallStart and right before ToolCallEnd.
+type toolCallIDSink interface {
+	SetToolCallID(id string)
+}
+
 func appendToolResults(d Sink, msgs *[]connector.Message, cfg Config, toolCalls []stream.ToolCall, results []string, durations []time.Duration, failed []bool) {
 	ds, _ := d.(toolDurationSink)
 	fs, _ := d.(toolFailureSink)
+	ids, _ := d.(toolCallIDSink)
 	for i, tc := range toolCalls {
+		if ids != nil {
+			ids.SetToolCallID(tc.ID)
+		}
 		// Before ToolCallEnd, which is what consumes the queue entry this
 		// duration and status belong to.
 		if ds != nil && i < len(durations) {

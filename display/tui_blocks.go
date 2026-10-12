@@ -116,7 +116,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 		m.status = "tool"
 		idx := len(m.blocks)
 		m.blocks = append(m.blocks, block{
-			kind: "tool", toolName: msg.toolName,
+			kind: "tool", toolName: msg.toolName, callID: msg.callID,
 			toolState: "running", collapsed: true,
 			maxLines:  defaultMaxLines(msg.toolName),
 			startTime: time.Now(),
@@ -166,12 +166,13 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 		}
 		m.appendToLastTool(msg.content)
 	case "tool-end":
-		// tool-end arrives in queue order, so the finishing tool is the block at
-		// the front of the queue. Verify it really is a subagent instead of
-		// trusting the tracked queue index alone.
+		// The block of the finishing tool is found by call id. Parallel calls
+		// end in any order. Verify it really is a subagent instead of trusting
+		// the tracked queue index alone.
+		pos := m.queuePos(msg.callID)
 		frontIdx := -1
-		if len(m.toolQueue) > 0 {
-			frontIdx = m.toolQueue[0]
+		if pos >= 0 {
+			frontIdx = m.toolQueue[pos]
 		}
 		failed := msg.failed
 		isSubagentEnd := frontIdx >= 0 && frontIdx < len(m.blocks) &&
@@ -179,7 +180,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 
 		if isSubagentEnd {
 			// For subagent: pop queue entry without appending result to block content
-			m.toolQueue = m.toolQueue[1:]
+			m.toolQueue = append(m.toolQueue[:pos], m.toolQueue[pos+1:]...)
 			m.blocks[frontIdx].toolState = "done"
 			m.blocks[frontIdx].failed = failed
 			m.blocks[frontIdx].duration = toolDuration(msg.duration, m.blocks[frontIdx].startTime)
@@ -187,15 +188,15 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 			m.blocks[frontIdx].cachedLines = nil
 			delete(m.toolDisplayCache, frontIdx)
 			m.invalidateTotalLines()
-			if m.subagentToolIdx == 0 {
+			if m.subagentToolIdx == pos {
 				m.subagentToolIdx = -1
-			} else if m.subagentToolIdx > 0 {
+			} else if m.subagentToolIdx > pos {
 				m.subagentToolIdx--
 			}
 		} else {
-			m.finishToolAt(msg.content, msg.duration, failed)
+			m.finishToolAt(msg.callID, msg.content, msg.duration, failed)
 			// If subagent is deeper in queue, decrement its index
-			if m.subagentToolIdx > 0 {
+			if pos >= 0 && m.subagentToolIdx > pos {
 				m.subagentToolIdx--
 			}
 		}

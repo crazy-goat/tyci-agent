@@ -211,10 +211,11 @@ func (t *KillJobTool) Run(ctx context.Context, input map[string]any) ToolResult 
 	// Read once into a local: the lister is also passed to
 	// inOwnSubtree below, and two separate reads of the global
 	// could straddle a concurrent SetJobLister and see different values.
+	callerJobID, _ := ctx.Value(JobIDCtxKey{}).(string)
+	// A call id of this agent (the cN of a backgrounded call) names its job.
+	jobID = resolveCallID(callerJobID, jobID)
 	lister := getJobLister()
 	fullID, known := resolveListedJob(lister, jobID)
-
-	callerJobID, _ := ctx.Value(JobIDCtxKey{}).(string)
 
 	// Inside a child agent only its own subtree is fair game. The refusal
 	// names the boundary so the model can self-correct instead of retrying

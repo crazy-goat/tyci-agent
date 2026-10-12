@@ -935,6 +935,7 @@ func (t *SubagentTool) spawn(ctx context.Context, task subagentTask, handedAtSta
 		}
 		return res.Content, res.Truncated, nil
 	})
+	BindCallJob(ctx, job.ID())
 	st.jobID = job.ID()
 	return st
 }

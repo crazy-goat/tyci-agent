@@ -67,6 +67,9 @@ type dispatchCall struct {
 	background bool
 	// cancel ends the call's own context. It is set by Fire and is never nil.
 	cancel context.CancelFunc
+	// resultDir is the result directory when the call started. A late result
+	// is written there, even when the session changed before it ended.
+	resultDir string
 }
 
 // dispatchOutcome is what Await returns. Background is true when the call is
@@ -81,7 +84,7 @@ const (
 	// placeholderPrefix starts the text that the model gets for a background call.
 	placeholderPrefix = "started, id="
 	// placeholderSuffix ends the text that the model gets for a background call.
-	placeholderSuffix = "; the result arrives later as a tool.result notice; wait does not take this id yet"
+	placeholderSuffix = "; the result arrives later as a tool.result notice; wait and kill_job accept this id"
 	// pollInterval is how often Await checks userPending.
 	pollInterval = 50 * time.Millisecond
 	// noDeadline is the timeout of a call that never backgrounds on time.
@@ -231,7 +234,8 @@ func (d *Dispatcher) Fire(ctx context.Context, run func(context.Context) (string
 	// end of the Run does not cancel. Its own cancel ends it on ESC (see
 	// Await and cancelBackground) and on Close.
 	callCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	c := &dispatchCall{started: time.Now(), done: make(chan struct{}), seen: d.wakes, cancel: cancel}
+	callCtx = context.WithValue(callCtx, tools.CallIDCtxKey{}, id)
+	c := &dispatchCall{started: time.Now(), done: make(chan struct{}), seen: d.wakes, cancel: cancel, resultDir: d.resultDir}
 	d.calls[id] = c
 	go d.run(callCtx, id, c, run)
 	return id
@@ -273,7 +277,7 @@ func (d *Dispatcher) finish(id string, c *dispatchCall, text string, failed bool
 	if !background {
 		return
 	}
-	d.publishResult(id, c.started, text, failed)
+	d.publishResult(id, c.started, c.resultDir, text, failed)
 	// The result is on the bus queue, not yet in late. Move it there before
 	// pending drops, or waitLate could see no pending call and no result.
 	d.absorb()
@@ -298,8 +302,9 @@ func (d *Dispatcher) SetResultDir(dir string) {
 
 // publishResult delivers the late result of call id. A content longer than
 // the result_tail_bytes limit keeps only its last bytes. The full output goes
-// to the result directory, and the notice names its path.
-func (d *Dispatcher) publishResult(id string, started time.Time, text string, failed bool) {
+// to dir, the result directory of the call when it started, and the notice
+// names its path.
+func (d *Dispatcher) publishResult(id string, started time.Time, dir, text string, failed bool) {
 	r := bus.ToolResult{
 		CallID:     id,
 		Content:    text,
@@ -308,9 +313,6 @@ func (d *Dispatcher) publishResult(id string, started time.Time, text string, fa
 	}
 	limit := d.tools.ResultTailLimit()
 	if len(text) > limit {
-		d.mu.Lock()
-		dir := d.resultDir
-		d.mu.Unlock()
 		path, err := writeFull(dir, id, text)
 		if err != nil {
 			path = ""

@@ -184,6 +184,11 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	// as idle. Its return counts as activity for the caller's own job.
 	callerJobID, _ := ctx.Value(JobIDCtxKey{}).(string)
 	defer touchJobActivity(callerJobID)
+	// A call id of this agent (the cN of a backgrounded call) names its job.
+	jobID = resolveCallID(callerJobID, jobID)
+	for i := range ids {
+		ids[i] = resolveCallID(callerJobID, ids[i])
+	}
 
 	secRaw, hasSeconds := input["seconds"]
 	isJob := jobID != "" || len(ids) > 0

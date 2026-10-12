@@ -95,6 +95,22 @@ Fast tools are `read`, `find`, `skills`, `agents`, `todo`, `write`, `edit`, `loc
 A `0` value backgrounds the call at once. The keys are documented in the README,
 section "Tool timeouts before background".
 
+## Call ids
+
+Every tool call of an agent has a call id: `c1`, `c2`, and so on. The id counts per
+agent in one tyci process. The placeholder of a backgrounded call names it, for
+example `started, id=c3`. The late `tool.result` notice carries the same id in its
+`call_id` attribute.
+
+`wait` (`ids` and `job_id`) and `kill_job` (`job_id`) accept the call id as an alias of
+the job id. The alias is bound when the call starts a job (a bash command or an async
+subagent), under the job id of the agent that made the call. A call id that names no
+bound job is an unknown id.
+
+Call ids are not unique across a resume: a resumed session starts again at `c1`. The
+binding for a call id is replaced by the newer call with the same id. Use the job id
+from the `wait` or `jobs` output when an id is in doubt.
+
 ## Wait tool
 
 `wait` takes these parameters:
@@ -110,6 +126,11 @@ The wait ends early when a user message is pending or when a new notice
 arrives. The jobs are not touched in either case.
 
 `wait` runs one call at a time in a batch (`MaxParallel` is 1).
+
+`ids` and `job_id` also accept call ids (see "Call ids").
+
+The `kinds` input is accepted and checked: only `ask.reply` is allowed. It does not
+filter the notices yet. A wait wakes on any new notice.
 
 Not implemented: a `kinds` filter for notices, and a `Seq` based dedupe. The
 wait path dedupes by job id only.
@@ -171,7 +192,9 @@ call context that ends does not release the lock.
 - Subagent results do not wake the parent after its run has ended.
 - `bash_output` does not exist in this repository. Read output with
   `wait(job_id)`.
-- `call_id` is not accepted by `kill_job`. Display events are still matched
-  by queue order, not by call id.
+- A late result is not taken on the last allowed iteration of a Run (`canDrain` in
+  `agent/agent.go` is false there). The notice stays queued for the next turn. If no
+  later turn follows, the result is lost.
+- Call ids restart at `c1` after a resume (see "Call ids").
 - `runWithHandoff`, `watchForWaiting`, the bash `background_after` timer,
   `SetJobObserver` and `AskUnroutableCtxKey` still exist. See `findings.md`.

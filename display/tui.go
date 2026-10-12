@@ -17,10 +17,13 @@ type tuiMsgBlock struct {
 	kind     string // "thinking","text","tool-start","tool-delta","tool-end","tool-progress","usage","error","done","block","reset","queue-drained"
 	content  string
 	toolName string
-	failed   bool // for tool-end: the result represents a failed tool call
-	toolIdx  int  // for tool-progress: index in toolQueue
-	usage    stream.Usage
-	stats    stream.Stats
+	// callID: for "tool-start" and "tool-end", the id of the tool call. An
+	// end is matched to its start by this id. Empty means no id was given.
+	callID  string
+	failed  bool // for tool-end: the result represents a failed tool call
+	toolIdx int  // for tool-progress: index in toolQueue
+	usage   stream.Usage
+	stats   stream.Stats
 	// queuedLines: for "queue-drained", the messages that were drained
 	// and delivered to the model (FIFO order). The TUI appends each as
 	// a "You: …" block in the transcript at this point — when the model
@@ -162,9 +165,11 @@ func resumeLabel(e TuiResumeEntry) string {
 }
 
 type block struct {
-	kind      string
-	content   string
-	toolName  string
+	kind     string
+	content  string
+	toolName string
+	// callID is the id of the tool call that created the block (see tuiMsgBlock).
+	callID    string
 	toolState string // "running","done"
 	failed    bool   // completed tool returned an error
 	collapsed bool

@@ -52,12 +52,33 @@ func toolDuration(reported time.Duration, start time.Time) time.Duration {
 	return time.Since(start)
 }
 
-func (m *TuiModel) finishToolAt(result string, reported time.Duration, failed bool) {
-	if len(m.toolQueue) == 0 {
+// queuePos returns the position in toolQueue of the block of call callID. An
+// empty callID means the front of the queue. It returns -1 when no block
+// matches.
+func (m *TuiModel) queuePos(callID string) int {
+	if callID == "" {
+		if len(m.toolQueue) == 0 {
+			return -1
+		}
+		return 0
+	}
+	for j, idx := range m.toolQueue {
+		if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].callID == callID {
+			return j
+		}
+	}
+	return -1
+}
+
+// finishToolAt finishes the block of call callID and removes it from the
+// queue. Without a match nothing changes.
+func (m *TuiModel) finishToolAt(callID, result string, reported time.Duration, failed bool) {
+	pos := m.queuePos(callID)
+	if pos < 0 {
 		return
 	}
-	idx := m.toolQueue[0]
-	m.toolQueue = m.toolQueue[1:]
+	idx := m.toolQueue[pos]
+	m.toolQueue = append(m.toolQueue[:pos], m.toolQueue[pos+1:]...)
 	if idx >= 0 && idx < len(m.blocks) && m.blocks[idx].kind == "tool" {
 		if result != "" {
 			if m.blocks[idx].output != "" && !strings.HasSuffix(m.blocks[idx].output, "\n") {

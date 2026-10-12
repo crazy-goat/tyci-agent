@@ -207,9 +207,19 @@ func (t *TUI) Text(text string) {
 	t.appendPending("text", 0, text)
 }
 
+// SetToolCallID sets the id of the tool call whose ToolCallStart or
+// ToolCallEnd comes next. It satisfies the agent's optional toolCallIDSink.
+// The id is taken by the next ToolCallStart or ToolCallEnd, so the end of a
+// call is matched to its own block even when calls of a batch run in parallel.
+func (t *TUI) SetToolCallID(id string) {
+	t.pendingToolCallID = id
+}
+
 func (t *TUI) ToolCallStart(name string) {
 	t.flushNow()
-	t.post(tuiMsgBlock{kind: "tool-start", toolName: name})
+	callID := t.pendingToolCallID
+	t.pendingToolCallID = ""
+	t.post(tuiMsgBlock{kind: "tool-start", toolName: name, callID: callID})
 }
 
 func (t *TUI) ToolCallDelta(delta string) {
@@ -242,11 +252,14 @@ func (t *TUI) ToolCallEnd(name, result string) {
 	failed := t.pendingToolFailed
 	t.pendingToolDuration = 0
 	t.pendingToolFailed = false
+	callID := t.pendingToolCallID
+	t.pendingToolCallID = ""
 	t.post(tuiMsgBlock{
 		kind:     "tool-end",
 		content:  result,
 		duration: d,
 		failed:   failed,
+		callID:   callID,
 	})
 }
 

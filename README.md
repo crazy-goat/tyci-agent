@@ -817,7 +817,8 @@ removes it. The dispatcher itself never backgrounds a subagent call. Use
 ## Tool timeouts before background
 
 A tool call that runs longer than its wait moves to the background. The model gets
-a placeholder, and the result arrives later as a `tool.result` notice. The wait is
+a placeholder, and the result arrives later as a `tool.result` notice. The placeholder
+names the call id (`started, id=cN`). `wait` and `kill_job` accept that id. The wait is
 not a kill deadline: the tool keeps running, and its own timeout still applies.
 
 Tools have two classes. Fast tools wait 2.5s, slow tools wait 60s. Fast tools are

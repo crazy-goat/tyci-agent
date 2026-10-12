@@ -302,6 +302,7 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 			return output, false, nil
 		}
 	})
+	BindCallJob(ctx, handle.ID())
 
 	// cancel() is the kill switch for both paths that can stop this command
 	// early — the time limit and an explicit kill_job — because the select in

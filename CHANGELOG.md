@@ -27,12 +27,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: the chat tool `workflow_stop`, the `/stop <run> [reason]` command and the Runs tab key `x` (then `y` to confirm) stop an active run of the current session (#583).
 - Flow: the chat tool `workflow_list` and the command `tyci workflow list [--archived] [--limit n] [--offset n] [--json]` list the runs of the project, newest first. By default only running and paused runs are listed; `archived` adds done, stopped and failed runs. The page size is 20 by default, and the result gives the total and whether more runs follow. A subagent cannot use the tool (#577).
 - Flow: a run can be stopped. A stopped run has the status `stopped`, keeps its worktree and its pull request, and cannot be resumed. `tyci workflow stop <run-id> [--reason text] [--json]` stops a running run that no live tyci process owns. The Runs tab and `tyci workflow status` show the status. `tyci workflow status` exits with code 0 for `stopped` (#582).
+- Agent: `wait` (`ids` and `job_id`) and `kill_job` accept the call id of a backgrounded call (`c1`, `c2`, and so on, from the `started, id=cN` placeholder) as an alias of the job id. The alias is bound per agent (#651).
 
 ### Changed
 - Tools: a call of a fast tool (`read`, `find`, `skills`, `agents`, `todo`, `write`, `edit`, `lock`, `unlock`, `report_progress`) moves to the background after 2.5s. Every other tool, including MCP tools and unknown names, moves after 60s. Before, only `bash` and `lua` waited 60s, and every other tool waited 2.5s. The kill deadline of each tool is unchanged (#198).
 - Subagent: a blocking `subagent` call from a subagent never moves to the background. The 60s handoff of the `subagent` tool itself is unchanged until its cleanup lands (#197).
 - Locks: a lock without `seconds` lives until the agent ends, not until the tool call ends (#197).
 - TUI: streamed output (text, thinking and tool output) is drawn at most once per second, except that a change of block kind or tool index draws the previous content at once. So several parallel tools with mixed progress can still draw once per line. The first chunk after a quiet period is drawn at once, and the end of a turn draws the rest at once. The status bar and the background job times are refreshed once per second, and the status bar shows elapsed times in whole seconds, for example `12s`, not tenths. Keyboard, mouse, resize and modal redraws are not delayed (#630).
+- Agent: the full output of a late tool result goes to the result directory of the session that started the call, not the one that is current when the call ends (#651).
+- Agent: a late tool result is escaped in both cases, so `<tyci-notice` and `</tyci-notice` in the content cannot open or close the notice tag, in any letter case (#651).
+- Agent: a resumed session puts each synthetic `cancelled` result right after the assistant message that holds its call (#651).
+- TUI: each tool block is matched to its start and end by the provider call id. A parallel batch that ends out of order updates the right block (#651).
 
 ### Fixed
 - TUI: streamed text and thinking no longer force a heap scavenge (`debug.FreeOSMemory`) on each flush, which ran 10 to 30 times per second. The scavenge runs after blocks are flushed to disk, at most once every 10 seconds, on its own goroutine. Streaming benchmark: 17.6 ms/op before, 8.8 ms/op after (#623, #595).

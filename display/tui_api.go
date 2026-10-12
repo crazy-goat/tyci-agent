@@ -19,8 +19,11 @@ type TUI struct {
 	// Only ever touched from the dispatcher's goroutine.
 	pendingToolDuration time.Duration
 	pendingToolFailed   bool
-	cancel              chan struct{} // sent on when ESC pressed during agent run
-	done                chan struct{}
+	// pendingToolCallID is the id of the call that the next ToolCallStart or
+	// ToolCallEnd belongs to. It is set by SetToolCallID.
+	pendingToolCallID string
+	cancel            chan struct{} // sent on when ESC pressed during agent run
+	done              chan struct{}
 
 	// Pending-message queue: filled by the bubbletea event loop while the
 	// agent is busy (see issue #88). Drained by the agent loop via

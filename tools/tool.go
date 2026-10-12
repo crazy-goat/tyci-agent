@@ -422,7 +422,7 @@ func builtinToolsSchema() []map[string]any {
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"job_id": map[string]any{"type": "string", "description": "Id of the background command to stop, as returned by the bash tool."},
+						"job_id": map[string]any{"type": "string", "description": "Id of the background command to stop, as returned by the bash tool. The call id of a backgrounded call (cN, from its started placeholder) also works."},
 					},
 					"required": []string{"job_id"},
 				},
