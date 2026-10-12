@@ -67,3 +67,16 @@ func TestAsk_ToFinishedParent_GoesToOrchestratorTagged(t *testing.T) {
 		t.Fatalf("orchestrator drain = %q, want the question tagged with job-finished", got)
 	}
 }
+
+// TestAsk_PublishErrorIsLoggedNotFatal publishes a question on a closed bus.
+// The call must not panic, and the error must be returned to the caller,
+// which logs it (see jobAskerAdapter.Ask in btw.go).
+func TestAsk_PublishErrorIsLoggedNotFatal(t *testing.T) {
+	withTestWiring(t)
+
+	closed := newAppBus("")
+	closed.Close()
+	if _, err := publishAsk(closed, "", "job-closed", "[background job] Q5"); err == nil {
+		t.Fatal("expected publishAsk to fail on a closed bus")
+	}
+}
