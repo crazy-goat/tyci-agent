@@ -10,8 +10,8 @@ package tools
 //
 // ask_parent is the one exception, deliberately: giving these children a
 // job id must not make ask_parent BLOCK for its full SubagentTimeoutSec
-// with no way for an answer to ever arrive (see AskUnroutableCtxKey in
-// ask.go) — a `tyci run` invocation never drains the main notice queue and the
+// with no way for an answer to ever arrive (ask_parent does not block;
+// see tools/ask.go) — a `tyci run` invocation never drains the main notice queue and the
 // blocking "subagent" tool call here never returns until every child
 // finishes, so nobody is ever free to call "answer_job".
 

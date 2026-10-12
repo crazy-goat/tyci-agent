@@ -112,7 +112,7 @@ func (inlineJobStarter) Start(ctx context.Context, _, _, _ string, fn func(conte
 	return testJobHandle{"job1"}
 }
 
-func TestRunSubagentTask_NamedJobIsAskUnroutable(t *testing.T) {
+func TestRunSubagentTask_NamedJobHasJobID(t *testing.T) {
 	oldStarter := getJobStarter()
 	SetJobStarter(inlineJobStarter{})
 	oldInst := subagentToolInstance
@@ -120,18 +120,16 @@ func TestRunSubagentTask_NamedJobIsAskUnroutable(t *testing.T) {
 		SetJobStarter(oldStarter)
 		subagentToolInstance = oldInst
 	})
-	var unroutable bool
 	var jobID any
 	run := &ctxRunner{rec: &recordingRunner{}, fn: func(ctx context.Context) {
-		unroutable, _ = ctx.Value(AskUnroutableCtxKey{}).(bool)
 		jobID = ctx.Value(JobIDCtxKey{})
 	}}
 	subagentToolInstance = &SubagentTool{Runner: run}
 	if _, _, err := RunSubagentTask(context.Background(), TaskSpec{Task: "x", Name: "run/worker"}); err != nil {
 		t.Fatal(err)
 	}
-	if !unroutable || jobID != "job1" {
-		t.Errorf("unroutable=%v jobID=%v", unroutable, jobID)
+	if jobID != "job1" {
+		t.Errorf("jobID=%v", jobID)
 	}
 }
 
@@ -152,12 +150,10 @@ func TestRunSubagentTask_NamedRunSessionIsJobID(t *testing.T) {
 
 type fakeResumer struct {
 	jobID, task, dir string
-	unroutable       bool
 }
 
 func (f *fakeResumer) Resume(ctx context.Context, jobID, task string) (JobHandle, error) {
 	f.jobID, f.task, f.dir = jobID, task, Workdir(ctx)
-	f.unroutable, _ = ctx.Value(AskUnroutableCtxKey{}).(bool)
 	return testJobHandle{"job2"}, nil
 }
 
@@ -185,7 +181,7 @@ func TestRunSubagentTask_ResumeSendsTaskToSession(t *testing.T) {
 	if err != nil || out != "written" || id != "job2" {
 		t.Fatalf("out=%q id=%q err=%v", out, id, err)
 	}
-	if r.jobID != "job1" || r.task != "write it" || r.dir != dir || !r.unroutable || w.calls != 2 {
+	if r.jobID != "job1" || r.task != "write it" || r.dir != dir || w.calls != 2 {
 		t.Errorf("resumer=%+v waits=%d", r, w.calls)
 	}
 }

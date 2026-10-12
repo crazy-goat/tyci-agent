@@ -62,22 +62,17 @@ func formatExitError(err error, output string) string {
 	return fmt.Sprintf("❌ exit code %d:\n%s", exitCode, output)
 }
 
-type BashTool struct {
-	// handoffSec replaces BashBackgroundAfterSec when set. Tests use it to
-	// move the handoff in a second instead of thirty; production leaves it zero.
-	handoffSec int
-}
+type BashTool struct{}
 
 func (t *BashTool) Name() string {
 	return "bash"
 }
 
-// Run executes a shell command. A call blocks for at most BashBackgroundAfterSec.
-// A command that still runs then is handed to the job registry (or immediately,
-// with run_in_background), and Run returns a job_id instead of waiting. A
-// command is stopped instead only when no background slot is free. See handoff
-// for why that requires the tool — not the dispatcher — to own the process
-// lifetime.
+// Run executes a shell command. With run_in_background, the command is handed
+// to the job registry at once and Run returns a job_id. Otherwise Run waits
+// for the command. The dispatcher moves a slow call to the background, and the
+// command keeps running there. See handoff for why a handed-off command must
+// be owned by the tool, not by the dispatcher.
 func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	cmdVal, ok := input["command"].(string)
 	if !ok {
@@ -107,25 +102,9 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	// BashBackgroundLimitSec.
 	limitSec := min(timeoutSec, BashBackgroundLimitSec)
 
-	// A call blocks for at most the handoff delay, whatever the timeout says.
-	// A large timeout only means that the command may run that long: it still
-	// moves to the background at the delay, and the caller can wait(job_id)
-	// for it. A timeout that ends the command before the delay has passed
-	// kills it at the timeout, with no handoff.
-	bgAfterSec := t.handoffSec
-	if bgAfterSec <= 0 {
-		bgAfterSec = BashBackgroundAfterSec
-	}
-	if bgAfterSec >= timeoutSec {
-		// The command would hit its own timeout first; handing off later than
-		// that could never happen, so don't arm the timer at all.
-		bgAfterSec = 0
-	}
-
 	runInBg := boolParam(input, "run_in_background", false)
 	note := ""
 	if !BackgroundBashEnabled() {
-		bgAfterSec = 0
 		if runInBg {
 			runInBg = false
 			note = "\n\n[note: run_in_background was requested, but background commands are unavailable here (one-shot run) — ran in the foreground instead]"
@@ -153,28 +132,8 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		note = fmt.Sprintf("\n\n[note: run_in_background was requested, but all %d background slots are busy — waited in the foreground instead]", maxBackgroundBash)
 	}
 
-	startedAt := time.Now()
-	var bgC <-chan time.Time
-	if bgAfterSec > 0 {
-		bgTimer := time.NewTimer(time.Duration(bgAfterSec) * time.Second)
-		defer bgTimer.Stop()
-		bgC = bgTimer.C
-	}
 	deadline := time.NewTimer(time.Duration(timeoutSec) * time.Second)
 	defer deadline.Stop()
-
-	// Someone typing cuts the foreground wait short. The command is not
-	// touched — it moves to the background exactly as it would at 30s — so
-	// nothing is lost, and the question gets answered instead of queueing
-	// behind work the person did not ask to wait for. Only when the handoff is
-	// possible at all: with no free slot there is nowhere to move it to, and
-	// abandoning the command would be worse than a slow reply.
-	var pollC <-chan time.Time
-	if bgAfterSec > 0 {
-		poll := time.NewTicker(userPendingPoll)
-		defer poll.Stop()
-		pollC = poll.C
-	}
 
 	for {
 		select {
@@ -184,32 +143,6 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 				return ToolResult{Type: "result", Success: false, Error: formatExitError(waitErr, output) + note}
 			}
 			return ToolResult{Type: "result", Success: true, Content: output + note}
-
-		case <-pollC:
-			if !UserPending() {
-				continue
-			}
-			if res, ok := t.handoff(ctx, run, label, int(time.Since(startedAt).Seconds()), limitSec); ok {
-				return res
-			}
-			// No slot free: stop asking, and let the normal timers decide.
-			pollC = nil
-
-		case <-bgC:
-			// This fires once, and every path out of it returns. A refused
-			// handoff means every background slot is busy. The command cannot
-			// move, so it is stopped now, and the agent is not blocked until
-			// its timeout.
-			if res, ok := t.handoff(ctx, run, label, bgAfterSec, limitSec); ok {
-				return res
-			}
-			run.kill()
-			<-run.exit
-			return ToolResult{
-				Type:    "result",
-				Success: false,
-				Error:   fmt.Sprintf("bash tool stopped after %ds: no free background slot; wait for a running job or kill one, then retry. Partial output:\n%s", bgAfterSec, strings.TrimRight(run.out.result(), "\n")),
-			}
 
 		case <-deadline.C:
 			run.kill()

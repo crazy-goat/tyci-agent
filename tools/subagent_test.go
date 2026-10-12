@@ -1702,18 +1702,18 @@ func TestSubagentAsync_ResultExplainsTheChannels(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("expected success, got %q", res.Error)
 	}
-	for _, want := range []string{"answer_job(job_id", "wait(job_id", "discarded"} {
+	for _, want := range []string{"answer_job(job_id", "wait(job_id"} {
 		if !strings.Contains(res.Content, want) {
 			t.Errorf("async result does not mention %q:\n%s", want, res.Content)
 		}
 	}
-	// Item 29: subagent.go's handoff/async result text used to tell the
-	// parent to answer a blocked question unconditionally. It must now say
-	// to relay it unless the parent already knows.
-	if !strings.Contains(res.Content, "relay it") {
+	// Item 29: the async result text must not tell the parent to answer a
+	// blocked question unconditionally. It must say to relay it unless the
+	// parent already knows.
+	if !strings.Contains(res.Content, "Relay the question") {
 		t.Errorf("async result should tell the parent to relay a blocked question, not answer it unconditionally:\n%s", res.Content)
 	}
-	if !strings.Contains(res.Content, "never invent one standing in for a human who hasn't replied") {
+	if !strings.Contains(res.Content, "never invent an answer for a human who has not replied") {
 		t.Errorf("async result should say never to invent an answer for a human who hasn't replied:\n%s", res.Content)
 	}
 }

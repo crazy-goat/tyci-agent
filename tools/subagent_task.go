@@ -84,10 +84,7 @@ func RunSubagentTask(ctx context.Context, s TaskSpec) (result, sessionID string,
 	done := make(chan struct{})
 	starter.Start(ctx, s.Name, JobKindSubagent, "", func(jobCtx context.Context, jobID string) (string, bool, error) {
 		defer close(done)
-		// Nobody answers ask_parent for a role agent (parentID is empty), so
-		// mark the job as unroutable: ask_parent then fails at once.
 		jobCtx = context.WithValue(jobCtx, JobIDCtxKey{}, jobID)
-		jobCtx = context.WithValue(jobCtx, AskUnroutableCtxKey{}, true)
 		res, _, runErr = runSubagentTask(jobCtx, runner, s)
 		id = jobID
 		return res, false, runErr
@@ -109,8 +106,7 @@ func resumeSubagentTask(ctx context.Context, s TaskSpec) (string, string, error)
 	if resumer == nil || waiter == nil {
 		return "", "", errors.New("resume unavailable: job registry not configured")
 	}
-	// Same rule as a named run: nobody answers ask_parent for a role agent.
-	jobCtx := context.WithValue(WithWorkdir(ctx, s.Dir), AskUnroutableCtxKey{}, true)
+	jobCtx := WithWorkdir(ctx, s.Dir)
 	h, err := resumer.Resume(jobCtx, s.Resume, s.Task)
 	if err != nil {
 		return "", "", err

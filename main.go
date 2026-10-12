@@ -655,19 +655,15 @@ func subagentStoppedMessage(text string, jobID string) (string, error) {
 }
 
 // isStoppedByUser reports whether an agent.Run error is a kill_job stop (the
-// switch item 26 ships). A bare context.Canceled is NOT sufficient: in the
-// no-handoff mode (tyci run / --print) runWithHandoff cancels still-running
-// children itself via cancelRemaining, and that path stamps AskUnroutableCtxKey
-// on the child's context (see its doc in tools/ask.go). Those children stop
-// because the parent's tool call was cut off, not because anyone stopped
-// them — labelling them "stopped by user (kill_job)" would be a lie. In every
-// other mode the child's context is detached at spawn (WithoutCancel), so the
-// only context.Canceled a child can return is the registry Cancel — a genuine
-// kill_job stop. Factored out so the attribution decision is testable on its
-// own, independent of a full agent harness.
+// switch item 26 ships). A bare context.Canceled is NOT sufficient: when the
+// parent's blocking subagent call ends, cancelRemaining cancels its children
+// with tools.ErrCancelledByParent as the cause. Those children stop because
+// the parent's tool call ended, not because anyone stopped them, so labelling
+// them "stopped by user (kill_job)" would be a lie. A registry Cancel has no
+// such cause, so a context.Canceled with another cause is a genuine kill_job
+// stop. Factored out so the attribution decision is testable on its own.
 func isStoppedByUser(err error, ctx context.Context) bool {
-	noHandoff, _ := ctx.Value(tools.AskUnroutableCtxKey{}).(bool)
-	return errors.Is(err, context.Canceled) && !noHandoff
+	return errors.Is(err, context.Canceled) && !errors.Is(context.Cause(ctx), tools.ErrCancelledByParent)
 }
 
 // subagentCutoffMessage builds the (content, error) pair run() returns once

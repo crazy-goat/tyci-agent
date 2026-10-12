@@ -57,7 +57,7 @@ func (agentViewInput) Resume(jobID, text string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ctx := context.WithValue(context.Background(), tools.AskUnroutableCtxKey{}, true)
+	ctx := context.Background()
 	if workdir != "" {
 		ctx = tools.WithWorkdir(ctx, workdir)
 	}

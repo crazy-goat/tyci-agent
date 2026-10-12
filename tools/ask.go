@@ -44,12 +44,6 @@ func getJobAsker() JobAsker {
 	return jobAsker
 }
 
-// AskUnroutableCtxKey marks a job's context whose spawning call cannot return
-// control to anyone able to answer. It is still set by runWithHandoff
-// (subagent.go) and read by the orchestrator (main.go) and the subagent tools.
-// ask_parent itself no longer checks it: a question does not block.
-type AskUnroutableCtxKey struct{}
-
 // AskTool implements the "ask_parent" tool: lets a running job (any subagent
 // call, blocking or async, or a /btw side-conversation) pose a question to its
 // parent. The question is published on the bus and the tool returns at once

@@ -5,7 +5,6 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 // Background-bash tuning. These are the three numbers the whole feature
@@ -19,14 +18,6 @@ const (
 	// any command we just handed to the background.
 	BashDefaultTimeoutSec = 120
 
-	// BashBackgroundAfterSec is the most a bash call blocks. A command still
-	// running then is moved to the background, and the agent gets its turn
-	// back. The command is not killed at this point, unless no background slot
-	// is free (see Run). Set above the runtime of an ordinary build or test
-	// run: below that, the handoff would cost the model an extra polling turn
-	// for commands that were about to finish anyway.
-	BashBackgroundAfterSec = 30
-
 	// BashBackgroundLimitSec caps the total run time of a command, also after
 	// it has been moved to the background. A larger timeout is capped to it.
 	// Nothing else bounds a backgrounded command once it is detached from the
@@ -35,8 +26,7 @@ const (
 	BashBackgroundLimitSec = 3600
 
 	// BashFirstProgressNoticeSec is when the first "still running" heads-up
-	// goes out, measured from the command's start — so 30s after the handoff
-	// at BashBackgroundAfterSec.
+	// goes out, measured from the command's start.
 	//
 	// It exists because the handoff itself is easy to forget: the model is
 	// told the command moved to the background and then gets on with
@@ -201,10 +191,6 @@ func UserPending() bool {
 	userPendingMu.RUnlock()
 	return fn != nil && fn()
 }
-
-// userPendingPoll is how often a blocking tool checks. Short enough that
-// typing feels answered, long enough to be free.
-const userPendingPoll = 250 * time.Millisecond
 
 // bgRegistry tracks the backgrounded commands that are still running, so
 // they can be killed individually ("kill_job") or all at once on shutdown

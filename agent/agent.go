@@ -201,9 +201,8 @@ const maxJobReminders = 2
 // makes will take — so it is picked deliberately generous: long enough to
 // cover a slow model response and one ordinary tool call, short enough that
 // it still fires with real turns left rather than only in the final second.
-// 45s mirrors the same order of magnitude as SubagentBackgroundAfter
-// (tools/subagent.go), which makes the same kind of "one more round trip"
-// judgment call for a different deadline.
+// 45s is the same order of magnitude as the bash slow-call default, and makes
+// the same kind of "one more round trip" judgment call.
 const lastStepDeadlineThreshold = 45 * time.Second
 
 // ErrMaxIterations is returned by Run when the loop reaches MaxIterations

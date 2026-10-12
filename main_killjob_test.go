@@ -9,20 +9,22 @@ import (
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
-// TestIsStoppedByUser_AttributionRequiresNonHandoffCtx: a genuine
-// context.Canceled in a normal (handoff-eligible) child is a kill_job stop;
-// the SAME error in the no-handoff mode (AskUnroutableCtxKey stamped) is a
-// run-mode cutoff, NOT "stopped by user". Revert check: drop the `&& !noHandoff`
-// clause from isStoppedByUser and the second assertion flips to true.
-func TestIsStoppedByUser_AttributionRequiresNonHandoffCtx(t *testing.T) {
-	ctx := context.Background()
+// TestIsStoppedByUser_AttributionFollowsCancelCause: a registry kill gives a
+// plain context.Canceled and is a kill_job stop. The same error caused by a
+// parent's blocking call ending (cancelRemaining, cause ErrCancelledByParent)
+// is NOT "stopped by user". Revert check: drop the cause clause from
+// isStoppedByUser and the second assertion flips to true.
+func TestIsStoppedByUser_AttributionFollowsCancelCause(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	if !isStoppedByUser(context.Canceled, ctx) {
-		t.Error("context.Canceled in a normal child must be a kill_job stop")
+		t.Error("context.Canceled from a registry kill must be a kill_job stop")
 	}
 
-	noHandoff := context.WithValue(context.Background(), tools.AskUnroutableCtxKey{}, true)
-	if isStoppedByUser(context.Canceled, noHandoff) {
-		t.Error("context.Canceled in the no-handoff mode is a run-mode cutoff, not a kill_job stop — over-attribution")
+	parentCtx, cancelByParent := context.WithCancelCause(context.Background())
+	cancelByParent(tools.ErrCancelledByParent)
+	if isStoppedByUser(context.Canceled, parentCtx) {
+		t.Error("a child cancelled by its parent is not a kill_job stop — over-attribution")
 	}
 }
 
