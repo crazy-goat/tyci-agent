@@ -65,11 +65,18 @@ wait path dedupes by job id only.
 ## Mutation FIFO
 
 A mutation changes files in a worktree. These calls take a FIFO for their
-worktree, in the order they start:
+worktree:
 
 - `write`, which also covers edit mode
 - `bash`, unless the call has `parallel=true`
 - `ctx.run` and `ctx.write` inside a Lua script
+
+For a batch of tool calls, the dispatcher takes the place of each `write` and
+`bash` call in the FIFO before its goroutine starts. It takes the places in
+call order, so the mutations of one batch run in call order, even when the
+goroutines start in another order. The place is released when the call ends,
+on every path. A Lua call takes its place when `ctx.run` or `ctx.write` reaches
+the FIFO. A direct caller of a tool takes its place when the tool runs.
 
 Reads do not take the FIFO. Two agents in one worktree share one FIFO. Two
 worktrees do not block each other. The FIFO exists only in one tyci process.

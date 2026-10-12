@@ -9,6 +9,7 @@ import (
 
 	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/stream"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // TestBackgroundSurvivesRunCancel checks that a backgrounded call is not
@@ -155,5 +156,53 @@ func TestChildCallNeverBackgrounds(t *testing.T) {
 	}
 	if n := d.Pending(); n != 0 {
 		t.Errorf("pending = %d, want 0", n)
+	}
+}
+
+// TestDispatchedMutationsKeepCallOrder checks that two writes of one batch
+// run in call order, even when the first one starts late. The second write
+// is edit B->C: it fails unless the first one (A->B) has run before it.
+func TestDispatchedMutationsKeepCallOrder(t *testing.T) {
+	isolateHome(t)
+	b := bus.New()
+	sub := b.Subscribe("test", bus.Filter{To: testSelf, Kinds: []bus.Kind{bus.KindToolResult}})
+	defer sub.Close()
+	d := newDispatcher(b, testSelf, sub)
+
+	// Each call has its own worktree, so the FIFO is not shared with other tests.
+	ctx := tools.WithWorkdir(context.Background(), t.TempDir())
+	var mu sync.Mutex
+	content := "A"
+	runner := fakeRunner{fn: func(ctx context.Context, name string, args map[string]any) (string, error) {
+		from, _ := args["from"].(string)
+		to, _ := args["to"].(string)
+		if from == "A" {
+			time.Sleep(50 * time.Millisecond) // this call reaches the FIFO late
+		}
+		release := tools.AcquireMutation(ctx)
+		if release == nil {
+			return "", ctx.Err()
+		}
+		defer release()
+		mu.Lock()
+		defer mu.Unlock()
+		if content != from {
+			return "oldString not found", nil
+		}
+		content = to
+		return "ok", nil
+	}}
+	calls := []stream.ToolCall{
+		{ID: "t1", Name: "write", Arguments: `{"from":"A","to":"B"}`},
+		{ID: "t2", Name: "write", Arguments: `{"from":"B","to":"C"}`},
+	}
+	results, _, failed := executeToolsDispatched(ctx, runner, calls, d)
+	for i, r := range results {
+		if failed[i] || r != "ok" {
+			t.Errorf("result %d = %q failed=%v, want ok", i, r, failed[i])
+		}
+	}
+	if content != "C" {
+		t.Errorf("content = %q, want C", content)
 	}
 }

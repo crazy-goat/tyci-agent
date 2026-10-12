@@ -24,7 +24,7 @@ func (t *WriteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	// write itself all agree on which file this is. See tools/workdir.go.
 	path = resolvePath(ctx, path)
 
-	release := acquireMutation(ctx)
+	release := AcquireMutation(ctx)
 	if release == nil {
 		return ToolResult{Type: "result", Success: false, Error: "cancelled while waiting for earlier changes in this worktree"}
 	}

@@ -40,8 +40,15 @@ func executeToolsDispatched(ctx context.Context, runner ToolRunner, toolCalls []
 		}
 		tc := toolCalls[i]
 		starts[i] = time.Now()
+		// The FIFO place of a mutation is taken here, in call order, before the
+		// goroutine starts. Its release is deferred in the call, so it is freed
+		// on every path.
+		var args map[string]any
+		_ = json.Unmarshal([]byte(tc.Arguments), &args)
+		ticket := tools.ReserveMutation(ctx, tc.Name, args)
 		ids[i] = disp.Fire(ctx, func(c context.Context) (string, bool) {
-			out, bad := runToolCallIn(c, ctx, runner, tc, i)
+			defer ticket.Release()
+			out, bad := runToolCallIn(tools.WithMutationTicket(c, ticket), ctx, runner, tc, i)
 			if bad && c.Err() != nil {
 				return "cancelled: the turn was interrupted", true
 			}

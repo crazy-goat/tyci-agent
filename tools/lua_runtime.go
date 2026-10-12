@@ -63,7 +63,7 @@ func newLuaContext(ctx context.Context, L *lua.LState) *lua.LTable {
 func (lc *LuaContext) ctxRun(L *lua.LState) int {
 	cmdStr := L.CheckString(1)
 	// A shell command may change the worktree, so it takes the mutation FIFO.
-	release := acquireMutation(lc.ctx)
+	release := AcquireMutation(lc.ctx)
 	if release == nil {
 		L.RaiseError("cancelled while waiting for earlier changes in this worktree")
 		return 0
@@ -112,7 +112,7 @@ func (lc *LuaContext) ctxRead(L *lua.LState) int {
 func (lc *LuaContext) ctxWrite(L *lua.LState) int {
 	path := L.CheckString(1)
 	content := L.CheckString(2)
-	release := acquireMutation(lc.ctx)
+	release := AcquireMutation(lc.ctx)
 	if release == nil {
 		L.RaiseError("cancelled while waiting for earlier changes in this worktree")
 		return 0

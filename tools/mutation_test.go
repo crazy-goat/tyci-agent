@@ -48,7 +48,7 @@ func TestMutationFIFOOrder(t *testing.T) {
 	wd := t.TempDir()
 	ctx := WithWorkdir(context.Background(), wd)
 
-	holder := acquireMutation(ctx)
+	holder := AcquireMutation(ctx)
 	if holder == nil {
 		t.Fatal("first acquire must succeed")
 	}
@@ -60,7 +60,7 @@ func TestMutationFIFOOrder(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			rel := acquireMutation(ctx)
+			rel := AcquireMutation(ctx)
 			mu.Lock()
 			order = append(order, name)
 			mu.Unlock()
@@ -96,7 +96,7 @@ func TestMutationFIFOOrder(t *testing.T) {
 // holds the worktree FIFO; without it, the bash call waits.
 func TestBashParallelSkipsFIFO(t *testing.T) {
 	ctx := WithWorkdir(context.Background(), t.TempDir())
-	holder := acquireMutation(ctx)
+	holder := AcquireMutation(ctx)
 	defer holder()
 
 	done := make(chan ToolResult, 1)
