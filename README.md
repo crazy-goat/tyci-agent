@@ -744,6 +744,27 @@ Flow roles also take `roles.<name>.effort` (`low`, `medium`, `high`, `xhigh` or
 `max`) and the flow config takes `default_effort` for roles without one. A
 `?reasoning=` option in the model URI wins over both.
 
+Each flow role also takes these keys in the flow config:
+
+1. `roles.<name>.fallback`: a list of model aliases or provider URIs. The agent
+   tries them in order when the model fails. Default: `[]` (no fallback).
+2. `roles.<name>.permission`: `read-only`, `worktree-write` or `full`. Default:
+   `worktree-write`. `read-only` refuses `write`, `edit`, `bash` and `kill_job`.
+   `worktree-write` refuses writes outside the worktree. `full` has no such limit.
+3. `roles.<name>.network`: `true` or `false`. Default: `true`. `false` removes
+   the `web` tool and the MCP tools that are not listed in `tools`.
+4. `roles.<name>.tools`: the tools the role can use. Default: the tools of the
+   permission. A role can only narrow the tools of the global config.
+5. `roles.<name>.limits.rounds`: the number of tool rounds. Default: `0`
+   (no limit). A run that reaches the limit takes the `limit` key of its state.
+6. `roles.<name>.limits.time_min`: the wall-clock time in minutes. Default: `0`
+   (no limit). A run that reaches the limit takes the `limit` key of its state.
+7. `roles.<name>.limits.tool_calls` and `roles.<name>.limits.ping_min`: the
+   values are read and checked, but they do not change the run yet. Default: `0`.
+
+A flow state without a `limit` key takes the `error` key when a limit stops its run.
+A project `.tyci/config.json` can narrow these keys only when the folder is trusted.
+
 A limit is capped by the model window. An unset soft limit is 80% and an unset
 hard limit is 95% of the window. The legacy `auto_compact_percent` sets the
 hard limit only when no hard limit is set; a negative value disables it. The
