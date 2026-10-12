@@ -72,7 +72,7 @@ type sidebarWidthSaveMsg struct {
 // at least sidebarMinPanel, and the chat keeps chatMinColumns. On a narrow
 // terminal both limits cannot hold; the sidebar minimum wins, as before.
 // Both sidebarLayout and mainColumnWidth derive from this one function.
-func (m TuiModel) sidebarColumnWidth() int {
+func (m *TuiModel) sidebarColumnWidth() int {
 	percent := m.sidebarWidthPercent
 	if percent <= 0 {
 		percent = defaultSidebarWidthPercent
@@ -156,7 +156,7 @@ func (m TuiModel) handleSidebarWidthSave(msg sidebarWidthSaveMsg) (tea.Model, te
 // sides usable, so main just gets whatever's left above zero rather than
 // letting either column go negative. Both sides render squeezed in that
 // case, which is an acceptable degraded state — nothing crashes.
-func (m TuiModel) mainColumnWidth() int {
+func (m *TuiModel) mainColumnWidth() int {
 	if m.widthFinal {
 		return m.width
 	}
@@ -210,7 +210,7 @@ func (m TuiModel) mainColumnWidth() int {
 // tui_view.go, routeSidebarMsg's main-column mouse dispatch in
 // tui_sidebar.go) must go through it rather than hand-narrowing .width
 // again, or this idempotence guarantee silently breaks for that one caller.
-func (m TuiModel) renderWidth() int {
+func (m *TuiModel) renderWidth() int {
 	if m.sidebarActive {
 		return m.mainColumnWidth()
 	}

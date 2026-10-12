@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: when more finished background jobs are kept than the limit, the ones evicted are the same on every run. Jobs with the same finish time are ordered by start time, then by ID (#630).
 - TUI: the sidebar Tasks tab uses less CPU. Each redraw, key press, click and job event built the Subagents, Bash and Lua rows several times; now a redraw builds them once, a key or click at most twice, and a job event twice (it was five times). The displayed text does not change (#545).
 - TUI: a redraw is cheaper when the model id is not in the pricing catalog. The status bar looked up the model's context limit with a full scan and sort of the catalog on every redraw, so each wheel event paid for it. The lookup is now remembered per provider and model. The freeze on fast scrolling reported in #595 was not reproduced. This change only lowers one measured per-redraw cost (#595).
+- TUI: a redraw with many flushed blocks above the viewport is cheaper. `renderWidth`, `mainColumnWidth` and `sidebarColumnWidth` copied the whole model once per flushed block, so each wheel event got slower as the session grew. They now use pointer receivers. The freeze reported in #595 was not reproduced in a real terminal (#595).
 
 ## [0.7.0] - 2026-10-09
 

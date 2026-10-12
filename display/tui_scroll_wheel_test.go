@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -220,5 +221,52 @@ func TestScrollWheel_PageInKeepsPosition(t *testing.T) {
 	}
 	if after != before {
 		t.Fatal("visible rows changed after a flushed block was paged back in")
+	}
+}
+
+// countFlushed returns how many blocks of m are flushed to the scrollback file.
+func countFlushed(m TuiModel) int {
+	n := 0
+	for i := range m.blocks {
+		if m.blocks[i].flushed {
+			n++
+		}
+	}
+	return n
+}
+
+// medianWheelUpCost returns the median time of one wheel-up event followed by
+// View, over `events` events. The median ignores scheduler noise.
+func medianWheelUpCost(m TuiModel, events int) time.Duration {
+	costs := make([]time.Duration, 0, events)
+	for i := 0; i < events; i++ {
+		start := time.Now()
+		m = wheelUp(m)
+		_ = m.View()
+		costs = append(costs, time.Since(start))
+	}
+	sort.Slice(costs, func(i, j int) bool { return costs[i] < costs[j] })
+	return costs[len(costs)/2]
+}
+
+// TestScrollWheel_CostDoesNotGrowWithFlushedBlocks checks that a wheel event
+// does not copy the whole model once per flushed block. The old value receivers
+// of renderWidth and mainColumnWidth did that, so the cost grew with the number
+// of flushed blocks. The test compares a session with about 1000 flushed blocks
+// to one with about 5000. The fixed code costs about the same for both, and the
+// old code costs about 4 times more for the larger session. The limit is 2.5,
+// which leaves room for timing noise.
+func TestScrollWheel_CostDoesNotGrowWithFlushedBlocks(t *testing.T) {
+	small := newWheelBenchModel(t, 1000)
+	large := newWheelBenchModel(t, 5000)
+	smallFlushed, largeFlushed := countFlushed(small), countFlushed(large)
+	if smallFlushed < 800 || largeFlushed < 4000 {
+		t.Fatalf("flushed blocks: small=%d large=%d, want at least 800 and 4000", smallFlushed, largeFlushed)
+	}
+	smallCost := medianWheelUpCost(small, 300)
+	largeCost := medianWheelUpCost(large, 300)
+	if largeCost > smallCost*5/2 {
+		t.Fatalf("wheel event cost grows with flushed blocks: %v with %d flushed, %v with %d flushed; want ratio at most 2.5",
+			smallCost, smallFlushed, largeCost, largeFlushed)
 	}
 }
