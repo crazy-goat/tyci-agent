@@ -3,6 +3,7 @@ package flow
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -192,5 +193,40 @@ func TestFindRun_SameNumberInTwoRepos_IsAmbiguous(t *testing.T) {
 	_, _, err := FindRun(home, "#1")
 	if err == nil || !strings.Contains(err.Error(), "#1 is in more than one repository") {
 		t.Fatalf("FindRun = %v, want an ambiguity error", err)
+	}
+}
+
+func TestRunOrder_NumbersByValueBeforeOldIds(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	const old = "20261012-120000-17"
+	for _, id := range []string{"2", "9", "10", old} {
+		saveTestRun(t, home, id)
+	}
+	dir, err := LatestRun(home, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(dir) != "10" {
+		t.Fatalf("LatestRun = %s, want 10", filepath.Base(dir))
+	}
+	want := []string{"10", "9", "2", old}
+	var got []string
+	for _, st := range RecentRuns(home, "r", 10) {
+		got = append(got, st.Run)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("RecentRuns order = %v, want %v", got, want)
+	}
+	list, err := ListRuns(home, "r", true, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = got[:0]
+	for _, row := range list.Runs {
+		got = append(got, row.Run)
+	}
+	if want := []string{"#10", "#9", "#2", old}; !slices.Equal(got, want) {
+		t.Fatalf("ListRuns order = %v, want %v", got, want)
 	}
 }

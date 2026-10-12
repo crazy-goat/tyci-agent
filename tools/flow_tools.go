@@ -53,6 +53,15 @@ var (
 )
 
 // SetWorkflowManager wires the workflow_* tools. Until it is called they fail
+// showRunID returns a run number as users see it, "#17". An old id is returned
+// unchanged. tools does not import flow, so it has its own copy of flow.ShowRunID.
+func showRunID(id string) string {
+	if n, err := strconv.Atoi(id); err == nil && n > 0 && strconv.Itoa(n) == id {
+		return "#" + id
+	}
+	return id
+}
+
 // with a clear error.
 func SetWorkflowManager(m WorkflowManager) {
 	workflowMgrMu.Lock()
@@ -134,7 +143,7 @@ func (t *WorkflowStartTool) Run(_ context.Context, input map[string]any) ToolRes
 	if warnings == nil {
 		warnings = []string{}
 	}
-	return workflowJSON(map[string]any{"run": run, "status": "running", "warnings": warnings})
+	return workflowJSON(map[string]any{"run": showRunID(run), "status": "running", "warnings": warnings})
 }
 
 // WorkflowStatusTool reports the state of a run.
@@ -235,7 +244,7 @@ func (t *WorkflowResumeTool) Run(_ context.Context, input map[string]any) ToolRe
 			return workflowJSON(st)
 		}
 	}
-	return workflowJSON(map[string]any{"run": run, "status": "running"})
+	return workflowJSON(map[string]any{"run": showRunID(strings.TrimPrefix(run, "#")), "status": "running"})
 }
 
 // workflowList returns the workflows of the manager, or none when it is not set.

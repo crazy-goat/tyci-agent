@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -194,29 +195,48 @@ func Load(dir string) (*RunState, error) {
 	return &st, nil
 }
 
-// LatestRun returns the newest run directory of a repo (names start with a
-// timestamp, so string order is time order).
+// LatestRun returns the newest run directory of a repo. See runDirsNewestFirst
+// for the order.
 func LatestRun(home, repoName string) (string, error) {
-	base := filepath.Join(home, ".tyci", "runs", repoName)
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		return "", fmt.Errorf("flow: no runs: %w", err)
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
+	base, names := runDirsNewestFirst(home, repoName)
 	if len(names) == 0 {
 		return "", fmt.Errorf("flow: no runs in %s", base)
 	}
-	sort.Strings(names)
-	return filepath.Join(base, names[len(names)-1]), nil
+	return filepath.Join(base, names[0]), nil
+}
+
+// newerRunFirst orders run dir names newest first. Run numbers compare by value
+// and come before old ids, which are timestamps (YYYYMMDD-HHMMSS-<issue>) and
+// compare as strings.
+func newerRunFirst(a, b string) int {
+	na, aNum := runNumber(a)
+	nb, bNum := runNumber(b)
+	switch {
+	case aNum && bNum:
+		return cmp.Compare(nb, na)
+	case aNum != bNum:
+		if aNum {
+			return -1
+		}
+		return 1
+	default:
+		return cmp.Compare(b, a)
+	}
+}
+
+// runNumber returns the number of a run number name, such as "17". ok is false
+// for an old id.
+func runNumber(name string) (n int, ok bool) {
+	if !runNumberPattern.MatchString(name) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(name)
+	return n, err == nil
 }
 
 // runDirsNewestFirst returns the names of the run directories of a repo, newest
-// first. A missing repo directory gives no names.
+// first: run numbers by value, then old ids by their timestamp. A missing repo
+// directory gives no names.
 func runDirsNewestFirst(home, repoName string) (base string, names []string) {
 	base = filepath.Join(home, ".tyci", "runs", repoName)
 	entries, err := os.ReadDir(base)
@@ -228,7 +248,7 @@ func runDirsNewestFirst(home, repoName string) (base string, names []string) {
 			names = append(names, e.Name())
 		}
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	slices.SortFunc(names, newerRunFirst)
 	return base, names
 }
 
