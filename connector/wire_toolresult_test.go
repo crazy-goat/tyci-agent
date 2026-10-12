@@ -1,3 +1,5 @@
+//go:build !noanthropic
+
 package connector
 
 import (
