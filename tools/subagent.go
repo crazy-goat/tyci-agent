@@ -262,6 +262,10 @@ type subagentTask struct {
 
 // subagentResult holds the outcome of one subagent execution.
 type subagentResult struct {
+	// limitErr is ErrSubagentTruncated or ErrSubagentTimedOut when the run
+	// stopped on a limit, nil otherwise. runSubagentTask reports it as an
+	// error for tasks with RoleLimits; other callers do not see it.
+	limitErr  error
 	Task      string       `json:"task"`
 	Success   bool         `json:"success"`
 	Content   string       `json:"content,omitempty"`
@@ -1426,6 +1430,7 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 
 	if err != nil {
 		res.Success = false
+		res.limitErr = roleLimitCause(err)
 		switch {
 		case errors.Is(err, ErrSubagentTruncated), errors.Is(err, ErrSubagentTimedOut), errors.Is(err, ErrSubagentStoppedByUser):
 			// Hit the iteration cap or the wall-clock deadline but produced
@@ -1444,6 +1449,7 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 			// carry) surfaces as a bare "context deadline exceeded";
 			// make it actionable so the parent understands the child was
 			// cut off, not that its task was malformed.
+			res.limitErr = ErrSubagentTimedOut
 			res.Error = fmt.Sprintf("subagent exceeded its %ds time limit and was stopped; narrow the task or split it", timeoutSec)
 		default:
 			res.Error = err.Error()
@@ -1457,6 +1463,18 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	}
 
 	return res
+}
+
+// roleLimitCause returns the limit sentinel of a run that stopped on its
+// iteration cap or its deadline, or nil for any other error.
+func roleLimitCause(err error) error {
+	switch {
+	case errors.Is(err, ErrSubagentTruncated):
+		return ErrSubagentTruncated
+	case errors.Is(err, ErrSubagentTimedOut):
+		return ErrSubagentTimedOut
+	}
+	return nil
 }
 
 // worktreeNote tells the parent where the child's work ended up. Without it

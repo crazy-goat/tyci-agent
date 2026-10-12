@@ -42,6 +42,10 @@ type TaskSpec struct {
 	Policy *Policy
 	// Fallbacks are the provider URIs tried, in order, when Model fails.
 	Fallbacks []string
+	// RoleLimits is true when the role sets rounds or time_min. A run that
+	// stops on one of them returns an error that wraps ErrSubagentTruncated
+	// or ErrSubagentTimedOut, so the workflow can take its "limit" key.
+	RoleLimits bool
 	// MaxRounds, when > 0, caps the tool-call rounds of the run. A run that
 	// reaches the cap returns ErrSubagentTruncated.
 	MaxRounds int
@@ -154,6 +158,13 @@ func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (st
 	res := runSingleTask(WithWorkdir(ctx, s.Dir), runner, t, 0, false)
 	if s.OnDone != nil {
 		s.OnDone(TaskStats{Model: res.Model, Usage: res.Usage, Turns: res.Turns, ToolCalls: res.ToolCalls})
+	}
+	if s.RoleLimits && res.limitErr != nil {
+		msg := res.Error
+		if msg == "" {
+			msg = "the run stopped on a role limit"
+		}
+		return res.Content, id, fmt.Errorf("%w: %s", res.limitErr, msg)
 	}
 	if !res.Success {
 		return res.Content, id, errors.New(res.Error)
