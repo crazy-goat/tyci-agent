@@ -147,3 +147,20 @@ func TestToolNamesNeverEmptyWhenRestricted(t *testing.T) {
 		t.Fatal("bash offered under read-only")
 	}
 }
+
+// AllowedFor and ToolNames must agree: an unlisted MCP tool is offered only
+// in full mode with the network on.
+func TestAllowedForMCPAgreesWithToolNames(t *testing.T) {
+	const mcp = "mcp_x_y"
+	for _, perm := range []string{PermissionReadOnly, PermissionWorktreeWrite, PermissionFull} {
+		for _, network := range []bool{true, false} {
+			p := Policy{Permission: perm, Network: network}
+			names := p.ToolNames()
+			offered := names == nil || slices.Contains(names, mcp)
+			want := perm == PermissionFull && network
+			if AllowedFor(p, mcp) != want || offered != want {
+				t.Errorf("%s network=%v: AllowedFor=%v ToolNames offers=%v, want %v", perm, network, AllowedFor(p, mcp), offered, want)
+			}
+		}
+	}
+}

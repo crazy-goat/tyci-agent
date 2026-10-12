@@ -63,13 +63,13 @@ func AllowedFor(p Policy, name string) bool {
 		return true
 	}
 	if isMCPTool(name) {
-		if !p.Network && !mcpListed(p.Tools, name) {
-			return false
+		// One rule, the same as ToolNames: an MCP tool is offered only when
+		// the list names it, or when there is no list, the mode is full and
+		// the network is on.
+		if mcpListed(p.Tools, name) {
+			return true
 		}
-		if p.Tools != nil {
-			return mcpListed(p.Tools, name)
-		}
-		return p.Permission != PermissionReadOnly
+		return p.Tools == nil && p.Permission == PermissionFull && p.Network
 	}
 	if name == "web" && !p.Network {
 		return false

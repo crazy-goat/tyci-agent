@@ -753,6 +753,8 @@ Each flow role also takes these keys in the flow config:
    `worktree-write` refuses writes outside the worktree. `full` has no such limit.
 3. `roles.<name>.network`: `true` or `false`. Default: `true`. `false` removes
    the `web` tool and the MCP tools that are not listed in `tools`.
+   `bash` is not confined to the worktree, and `network: false` does not stop
+   network access from `bash`. Both change only when the OS sandbox ships (v0.11.0).
 4. `roles.<name>.tools`: the tools the role can use. Default: the tools of the
    permission. A role can only narrow the tools of the global config.
 5. `roles.<name>.limits.rounds`: the number of tool rounds. Default: `0`

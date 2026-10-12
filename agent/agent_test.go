@@ -1327,3 +1327,57 @@ func TestBuildContextBudgetReminderIsFactualForCurrentModel(t *testing.T) {
 		}
 	}
 }
+
+// #201: the switch to a fallback happens on a non-retryable error at once,
+// and after the retries are used up on a retryable one. The run then stays on
+// the fallback: its second turn is served by the fallback, and the primary,
+// which fails on every call, is not called again.
+func TestFallbackSwitchesOnError(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        string
+		maxRetries int
+	}{
+		{"non-retryable", "non-retryable", 3},
+		{"retries exhausted", "server error 500", 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			primary := &connectortest.Fake{ProviderName: "sw-primary", ModelName: "p", StreamErr: errors.New(tc.err)}
+			fallback := &connectortest.Fake{ProviderName: "sw-fallback", ModelName: "f", Turns: [][]stream.Event{
+				{
+					stream.ToolCallStart{ID: "tc1", Name: "bash"},
+					stream.ToolCallDelta{ID: "tc1", Delta: `{"command": "echo hi"}`},
+					stream.ToolCall{ID: "tc1", Name: "bash", Arguments: `{"command": "echo hi"}`},
+					stream.Finish{Reason: "tool_calls", Usage: stream.Usage{Input: 1, Output: 1}},
+				},
+				{
+					stream.TextDelta{Text: "done"},
+					stream.Finish{Usage: stream.Usage{Input: 1, Output: 1}},
+				},
+			}}
+
+			d := newCaptureDisplay()
+			runner := newMockToolRunner()
+			runner.SetResult("bash", "hi")
+			msgs := []connector.Message{{
+				Role:    "user",
+				Content: []connector.ContentBlock{{Type: "text", Text: "run bash"}},
+			}}
+			cfg := Config{MaxRetries: tc.maxRetries, Fallbacks: []connector.ModelClient{fallback}, Tools: runner}
+
+			if _, err := Run(context.Background(), primary, d, &msgs, cfg); err != nil {
+				t.Fatalf("Run failed: %v", err)
+			}
+			if got := strings.Join(d.text, ""); got != "done" {
+				t.Fatalf("text = %q, want done from the fallback", got)
+			}
+			if fallback.Calls() != 2 {
+				t.Fatalf("fallback calls = %d, want 2 (both turns on the fallback)", fallback.Calls())
+			}
+			if primary.Calls() < 1 {
+				t.Fatal("primary was never tried")
+			}
+		})
+	}
+}
