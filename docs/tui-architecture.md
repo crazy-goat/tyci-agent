@@ -288,7 +288,7 @@ become eligible for eviction.
 
 A click on a tool or thinking line toggles `block.expanded` (`toggleBlockAt`, `toggleBlockExpanded`). No modal opens. The renderer adds the body below the header line: a tool body is its arguments and output (`toolBodyText`, capped at `tuiExpandedToolLines` = 20 lines, with `... N more lines` first), a thinking body is the full text. Both go through `expandedBodyLines`. The body is part of the block's `cachedLines`, so the line buffer, selection and copy read it like any other line.
 
-The toggle drops the block's `cachedLines` and `cachedLineCount`, then calls `invalidateTotalLines`. Live tool output (`appendTool`) does the same while the block is expanded. When the view is scrolled up, `toggleBlockAt` adds the change in line count to `scrollLine`, so the visible text does not move. At the bottom the view stays at the bottom. An agent view is toggled through `shownModel()`.
+The toggle drops the block's `cachedLines` and `cachedLineCount`, then calls `invalidateTotalLines`. Live tool output (`appendTool`) does the same while the block is expanded. `toggleBlockAt` adds the change in line count to `scrollLine` and sets `atBottom` to false, so the header line keeps its row, also at the bottom. `clampScroll` restores the bottom mode when the offset is 0. An agent view is toggled through `shownModel()`.
 
 ## 5b. Sidebar Bus tab (`tui_sidebar_bus.go`)
 

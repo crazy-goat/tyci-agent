@@ -124,14 +124,17 @@ func (m *TuiModel) toggleBlockAt(y int) {
 	if idx < 0 || idx >= len(shown.blocks) || (shown.blocks[idx].kind != "tool" && shown.blocks[idx].kind != "thinking") {
 		return
 	}
-	// Scroll position is kept on the main model. While the view is scrolled
-	// up, the lines above the screen stay put, so the visible text does not
-	// move when the body opens. At the bottom the view stays at the bottom.
+	// Scroll position is kept on the main model. The lines of the body are
+	// added below the header, so the scroll offset grows by the same count.
+	// The header then stays on its row, also at the bottom, where the view
+	// leaves the auto-follow mode. clampScroll restores it when the offset is 0.
 	before := shown.totalRenderedLines()
 	shown.toggleBlockExpanded(idx)
+	m.scrollLine += shown.totalRenderedLines() - before
 	if m.scrollLine > 0 {
-		m.scrollLine += shown.totalRenderedLines() - before
+		m.atBottom = false
 	}
+	m.clampScroll()
 }
 
 // toggleBlockExpanded opens or folds the body of a tool or thinking block and

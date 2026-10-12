@@ -200,6 +200,45 @@ func TestToolBlock_ExpandWhileScrolledUpKeepsHeaderRow(t *testing.T) {
 	}
 }
 
+// TestToolBlock_ExpandAtBottomKeepsHeaderRow checks that a click on a tool at
+// the bottom of the transcript does not move its header row up.
+func TestToolBlock_ExpandAtBottomKeepsHeaderRow(t *testing.T) {
+	m := newTestModel()
+	for i := 0; i < 60; i++ {
+		m.blocks = append(m.blocks, block{kind: "block", content: fmt.Sprintf("filler %d", i)})
+	}
+	m.blocks = append(m.blocks, doneBashBlock("a\nb\nc"))
+	tool := len(m.blocks) - 1
+	m.scrollLine = 0
+	m.atBottom = true
+
+	headerRow := func() int {
+		m.View()
+		for y, rl := range m.renderBuffer.Lines {
+			if rl.BlockIndex == tool && rl.SourceKind != "group" {
+				return y
+			}
+		}
+		return -1
+	}
+	before := headerRow()
+	if before < 0 {
+		t.Fatal("setup: the tool header is not on screen")
+	}
+
+	m.toggleBlockAt(before)
+
+	if !m.blocks[tool].expanded {
+		t.Fatal("setup: the block should be expanded")
+	}
+	if after := headerRow(); after != before {
+		t.Errorf("the header moved from row %d to row %d when the body opened at the bottom", before, after)
+	}
+	if m.atBottom {
+		t.Error("the view should leave the bottom so the header stays in place")
+	}
+}
+
 // TestToolBlock_CopyIncludesExpandedBody checks that a selection over an
 // expanded tool copies its body without the bar gutter.
 func TestToolBlock_CopyIncludesExpandedBody(t *testing.T) {
