@@ -79,7 +79,7 @@ func executeToolsDispatched(ctx context.Context, runner ToolRunner, toolCalls []
 		if answered[i] || tools.MaxParallelFor(tc.Name) == 1 {
 			continue
 		}
-		wait := timeoutFor(tc.Name) - time.Since(starts[i])
+		wait := timeoutFor(disp.tools, tc.Name) - time.Since(starts[i])
 		if wait < 0 {
 			wait = 0
 		}

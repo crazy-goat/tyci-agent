@@ -346,6 +346,14 @@ func GetMCPToolRunner() *MCPToolRunner {
 	return globalMCPRunner
 }
 
+// AddToolForTests registers name as an MCP tool of r, with no server behind
+// it. Test-only, for callers outside this package that check HasTool.
+func (r *MCPToolRunner) AddToolForTests(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tools[name] = &mcpTool{server: "test"}
+}
+
 // SetMCPToolRunnerForTests overrides the global MCP tool runner and returns
 // a func that restores whatever was there before. Test-only escape hatch
 // for callers outside this package (e.g. package main's initCommon tests)

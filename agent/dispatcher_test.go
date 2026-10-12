@@ -195,10 +195,10 @@ func TestTimeoutFor(t *testing.T) {
 		"bash":       60 * time.Second,
 		"lua":        60 * time.Second,
 		"read":       2500 * time.Millisecond,
-		"other_tool": 2500 * time.Millisecond,
+		"other_tool": 60 * time.Second,
 	}
 	for name, want := range cases {
-		if got := timeoutFor(name); got != want {
+		if got := timeoutFor(ToolsConfig{}, name); got != want {
 			t.Errorf("timeoutFor(%q) = %v, want %v", name, got, want)
 		}
 	}

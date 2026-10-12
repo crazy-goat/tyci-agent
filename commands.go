@@ -325,7 +325,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	}
 	cfg := agent.Config{
 		System:             providers.BuildSystemPrompt(),
-		Dispatch:           agent.NewDispatcher(appBus, orchestratorAddr),
+		Dispatch:           agent.NewDispatcher(appBus, orchestratorAddr, agent.LoadTyciConfig().ToolsSettings()),
 		MaxRetries:         maxRetries,
 		MaxIterations:      maxIterations,
 		Debug:              debugFlag,

@@ -39,6 +39,8 @@ type Dispatcher struct {
 	sub *bus.Sub
 	// userPending reports that a person is waiting for the agent. It may be nil.
 	userPending func() bool
+	// tools holds the background_after settings that timeoutFor reads.
+	tools ToolsConfig
 	// wakes counts the wake messages absorbed so far. A call backgrounds when
 	// a wake arrives after it was fired.
 	wakes uint64
@@ -83,10 +85,11 @@ const (
 )
 
 // NewDispatcher returns a Dispatcher that receives its late results at self.
+// tools sets when calls move to the background (see timeoutFor).
 // It returns nil when b is nil: then every call runs inline. The owner calls
 // Close when it no longer needs the Dispatcher. self must be unique per
 // Dispatcher, because call ids are only unique inside one Dispatcher.
-func NewDispatcher(b *bus.Bus, self bus.Addr) *Dispatcher {
+func NewDispatcher(b *bus.Bus, self bus.Addr, tools ToolsConfig) *Dispatcher {
 	if b == nil {
 		return nil
 	}
@@ -94,7 +97,9 @@ func NewDispatcher(b *bus.Bus, self bus.Addr) *Dispatcher {
 		To:    self,
 		Kinds: []bus.Kind{bus.KindToolResult, bus.KindAgentMessage, bus.KindAskRequest, bus.KindPingMissed},
 	})
-	return newDispatcher(b, self, sub)
+	d := newDispatcher(b, self, sub)
+	d.tools = tools
+	return d
 }
 
 var dispatchSeq atomic.Uint64
@@ -478,19 +483,59 @@ func wakesInline(msg bus.Message) bool {
 	return false
 }
 
+// fastTools are the built-in tools with a fast class. Every other tool is
+// slow, including MCP tools and unknown names.
+var fastTools = map[string]bool{
+	"read":            true,
+	"find":            true,
+	"skills":          true,
+	"agents":          true,
+	"todo":            true,
+	"write":           true,
+	"edit":            true,
+	"lock":            true,
+	"unlock":          true,
+	"report_progress": true,
+}
+
 // timeoutFor returns how long a call of toolName waits before it is
-// backgrounded. The values are a stub. Config comes in issue #198.
+// backgrounded. The order is: a blocking tool, then the per-tool value in
+// cfg.BackgroundAfterSec, then the class value (fast or slow), then the
+// built-in default of the class.
 //
 // subagent, ask_parent and wait block by design: the model waits for the
 // answer or the child result, so they never background (noDeadline, see
-// Await).
-func timeoutFor(toolName string) time.Duration {
+// Await). Their overrides and class values are ignored.
+//
+// This wait is not a kill deadline. A tool keeps its own timeout in
+// runToolCall, which does not change here.
+func timeoutFor(cfg ToolsConfig, toolName string) time.Duration {
 	switch toolName {
 	case "subagent", "ask_parent", "wait":
 		return noDeadline
-	case "bash", "lua":
-		return 60 * time.Second
-	default:
-		return 2500 * time.Millisecond
 	}
+	if sec, ok := cfg.BackgroundAfterSec[toolName]; ok {
+		return time.Duration(sec * float64(time.Second))
+	}
+	if isFastTool(toolName) {
+		return classDuration(cfg.BackgroundAfterFastSec, defaultBackgroundAfterFast)
+	}
+	return classDuration(cfg.BackgroundAfterSlowSec, defaultBackgroundAfterSlow)
+}
+
+// isFastTool reports whether toolName has the fast class. An MCP tool is
+// slow, even when its name matches a built-in fast tool.
+func isFastTool(toolName string) bool {
+	if mcpRunner := tools.GetMCPToolRunner(); mcpRunner != nil && mcpRunner.HasTool(toolName) {
+		return false
+	}
+	return fastTools[toolName]
+}
+
+// classDuration returns the configured class wait, or def when it is absent.
+func classDuration(sec *float64, def time.Duration) time.Duration {
+	if sec == nil {
+		return def
+	}
+	return time.Duration(*sec * float64(time.Second))
 }
