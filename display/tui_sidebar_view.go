@@ -351,7 +351,7 @@ func (m TuiModel) renderSidebarColumn() string {
 		// Width uses a different width table, which can add extra cells for
 		// Devanagari clusters and move the border on that row.
 		line := fillWidth(lines[i], contentWidth)
-		b.WriteString(lipgloss.NewStyle().Render(line))
+		b.WriteString(line)
 		b.WriteString("\n")
 		shown++
 	}

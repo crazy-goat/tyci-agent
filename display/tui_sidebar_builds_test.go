@@ -18,6 +18,8 @@ func countTaskRowBuilds(fn func()) int64 {
 func TestTaskRowBuildsPerJobEvent(t *testing.T) {
 	m := tasksFixtureAllDone(t)
 	m.sidebarCursor = 3
+	// An event that moves a row (the job finishes later) builds the rows
+	// before and after the change, to keep the cursor on its job.
 	got := countTaskRowBuilds(func() {
 		m.applyJobUpdate(jobs.Job{
 			ID:          "bash-000",
@@ -30,8 +32,24 @@ func TestTaskRowBuildsPerJobEvent(t *testing.T) {
 		})
 	})
 	t.Logf("builds per job event: %d", got)
-	if got != 2 {
-		t.Fatalf("applyJobUpdate built the Tasks rows %d times, want 2", got)
+	if got > 2 {
+		t.Fatalf("applyJobUpdate built the Tasks rows %d times, want at most 2", got)
+	}
+}
+
+// A status event that changes no field the row order depends on builds no
+// Tasks rows and keeps the cursor where it is (#636).
+func TestTaskRowBuildsPerJobEvent_UnchangedOrderBuildsNothing(t *testing.T) {
+	m := tasksFixtureAllDone(t)
+	m.sidebarCursor = 3
+	prev := m.backgroundJobs["bash-000"]
+	prev.Description = "go test ./pkg000/... (updated)"
+	prev.EventSeq += 1 << 40
+	if got := countTaskRowBuilds(func() { m.applyJobUpdate(prev) }); got != 0 {
+		t.Fatalf("applyJobUpdate built the Tasks rows %d times, want 0", got)
+	}
+	if m.sidebarCursor != 3 {
+		t.Fatalf("cursor moved to %d, want 3", m.sidebarCursor)
 	}
 }
 

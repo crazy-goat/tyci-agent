@@ -45,10 +45,22 @@ func (m *TuiModel) applyJobUpdate(j jobs.Job) {
 	}
 	// A job can move in the Tasks list (active to finished), so the cursor
 	// follows the job it was on, not the row index.
-	selected := m.sidebarCursorJobID()
+	// An update that keeps the fields the row order depends on (kind, parent,
+	// status, start and end time) cannot move a row, so the cursor stays and
+	// the Tasks rows are not built at all. This is the common event: a
+	// running Bash job reports its output about once per second (#636).
+	prev, known := m.backgroundJobs[j.ID]
+	sameOrder := known && prev.Kind == j.Kind && prev.ParentID == j.ParentID && prev.Status == j.Status &&
+		prev.StartedAt.Equal(j.StartedAt) && prev.FinishedAt.Equal(j.FinishedAt)
+	selected := ""
+	if !sameOrder {
+		selected = m.sidebarCursorJobID()
+	}
 	m.backgroundJobs[j.ID] = j
-	m.pruneBackgroundJobsLocked()
-	m.sidebarFollowJob(selected)
+	if !sameOrder {
+		m.pruneBackgroundJobsLocked()
+		m.sidebarFollowJob(selected)
+	}
 	// The panel's height depends on len(backgroundJobs), which changes the
 	// message viewport height (see renderFrame's jobsH). invalidateTotalLines
 	// also marks the cached message region dirty so a job starting/finishing
