@@ -130,7 +130,8 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Run != "" {
 		name = rc.Run + "/" + role
 	}
-	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl)}
+	policy := tools.Policy{Role: role, Permission: rl.PermissionMode(), Network: rl.NetworkOn(), Tools: rl.Tools, Dir: rc.Worktree}
+	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl), Policy: &policy}
 	effective := spec.Effort
 	if r.URIEffort != nil {
 		if v := r.URIEffort(model); v != "" {

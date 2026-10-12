@@ -23,6 +23,9 @@ func (t *WriteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	// Resolved before anything else so the freshness stamps, the hooks and the
 	// write itself all agree on which file this is. See tools/workdir.go.
 	path = resolvePath(ctx, path)
+	if err := checkWriteRoot(ctx, path); err != nil {
+		return ToolResult{Type: "result", Success: false, Error: err.Error()}
+	}
 
 	release := AcquireMutation(ctx)
 	if release == nil {

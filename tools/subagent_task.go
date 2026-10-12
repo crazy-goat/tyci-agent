@@ -37,6 +37,9 @@ type TaskSpec struct {
 	// OnDone, when set, receives the usage of the run after it ends (also
 	// after an error). The workflow runner stores it in the run history.
 	OnDone func(TaskStats)
+	// Policy, when set, is the tool policy of a workflow role (see Policy).
+	// It restricts the tools and the write paths of the run.
+	Policy *Policy
 }
 
 // TaskStats is what a finished subagent run reports: the model it used and
@@ -129,6 +132,10 @@ func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (st
 		ctx = context.WithValue(ctx, TranscriptCtxKey{}, s.Transcript)
 	}
 	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: s.SystemPrompt, softLimit: s.SoftLimit, hardLimit: s.HardLimit, effort: s.Effort}
+	if s.Policy != nil {
+		ctx = WithPolicy(ctx, *s.Policy)
+		t.toolsOverride = s.Policy.ToolNames()
+	}
 	if s.MaxIterations > 0 {
 		t.MaxIterations = &s.MaxIterations
 	}
