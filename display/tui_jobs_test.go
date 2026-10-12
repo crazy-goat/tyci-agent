@@ -698,3 +698,21 @@ func TestTUI_JobsPanel_ShowsRunningThenDone(t *testing.T) {
 		t.Fatalf("status = %s, want done", got)
 	}
 }
+
+// runningBackgroundJobCount must match len(runningBackgroundJobs()) for every
+// status mix, because jobsPanelHeight uses the count to size the panel.
+func TestRunningBackgroundJobCount_MatchesRunningList(t *testing.T) {
+	m := newTestModelForJobs()
+	for i, st := range []jobs.Status{jobs.StatusRunning, jobs.StatusWaitingAnswer, jobs.StatusDone, jobs.StatusRunning} {
+		m.applyJobUpdate(jobs.Job{
+			ID: fmt.Sprintf("job-%d", i), Description: "d",
+			Status: st, StartedAt: time.Now(),
+		})
+	}
+	if got, want := m.runningBackgroundJobCount(), len(m.runningBackgroundJobs()); got != want || want != 3 {
+		t.Fatalf("runningBackgroundJobCount = %d, runningBackgroundJobs = %d, want 3", got, want)
+	}
+	if h := m.jobsPanelHeight(); h != 3 {
+		t.Errorf("jobsPanelHeight = %d, want 3", h)
+	}
+}

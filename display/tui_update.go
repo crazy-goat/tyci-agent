@@ -46,7 +46,7 @@ func (m TuiModel) wantsStatusTick() bool {
 // to exist: nothing needs repainting for it unless one of the three places
 // that render a job's duration is actually on screen right now.
 func (m TuiModel) hasLiveJobsToPaint() bool {
-	if len(m.runningBackgroundJobs()) == 0 {
+	if m.runningBackgroundJobCount() == 0 {
 		// No running/waiting-answer job at all — pruneBackgroundJobsLocked
 		// or terminal-status transitions already got us here.
 		return false
