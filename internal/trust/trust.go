@@ -156,6 +156,7 @@ func StdioPrompt(root string) (bool, error) {
 			"  Project-local hooks (.tyci/hooks.json) and Lua tools (.tyci/tools/) can run\n"+
 			"  arbitrary shell commands. Say yes only if you trust this repository's\n"+
 			"  contents. This is asked once and remembered in ~/.tyci/trust.json.\n"+
+			"  A linked worktree of this project uses the same answer.\n"+
 			"Trust this project? [y/N] ", root)
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil && line == "" {

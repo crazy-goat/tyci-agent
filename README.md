@@ -72,6 +72,7 @@ The model calls `workflow_list` to see the runs of the project, newest first. By
 
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
 - Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
+- Project files in a worktree: tyci reads each `.tyci` file from the worktree first. If the worktree does not have the file, tyci reads it from the main checkout. The trust answer of the main checkout applies to the worktree. A subagent in a worktree reads the agents, skills, `AGENTS.md` and memory of the project in the same way. A memory note that the worktree does not override is written to the main checkout.
 - Setup script: if the file `bin/worktree-setup.sh` in the repository is executable, tyci runs it once in the new worktree. If the script fails or the run is cancelled, the run stops and tyci removes the worktree and its branch.
 - Run state: `~/.tyci/runs/<repo>/<run>/state.json`
 - Run usage: agent steps in `state.json` carry `stats` (tokens, cost, turns); `workflow_status` and the Runs tab show it
