@@ -795,8 +795,9 @@ not a kill deadline: the tool keeps running, and its own timeout still applies.
 
 Tools have two classes. Fast tools wait 2.5s, slow tools wait 60s. Fast tools are
 `read`, `find`, `skills`, `agents`, `todo`, `write`, `edit`, `lock`, `unlock` and
-`report_progress`. Every other tool is slow, including MCP tools. `subagent`,
-`ask_parent` and `wait` always block, and their values are ignored.
+`report_progress`. Every other tool is slow, including MCP tools. `subagent`
+and `wait` always block, and their values are ignored. `ask_parent` returns at
+once and never backgrounds.
 
 Set the values in the `tools` block of `~/.tyci/config.json`. The defaults apply
 when a key is absent:

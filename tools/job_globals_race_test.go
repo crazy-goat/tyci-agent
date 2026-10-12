@@ -66,39 +66,6 @@ import (
 // not what a real adapter does with a call (that is covered by each tool's
 // own tests: ask_test.go, message_test.go, wait_test.go, etc).
 
-type raceJobStarter struct{}
-
-func (raceJobStarter) Start(ctx context.Context, description, kind, parentID string, fn func(context.Context, string) (string, bool, error)) JobHandle {
-	return raceJobHandle{}
-}
-
-type raceJobHandle struct{}
-
-func (raceJobHandle) ID() string { return "race-job" }
-
-type raceJobAsker struct{}
-
-func (raceJobAsker) Ask(ctx context.Context, id, question string) (string, bool, bool) {
-	return "", false, false
-}
-
-type raceJobAnswerer struct{}
-
-func (raceJobAnswerer) Answer(id, text string, fromUser bool) bool { return false }
-
-type raceJobProgressReporter struct{}
-
-func (raceJobProgressReporter) SetProgress(id, text string) bool { return false }
-
-// raceJobProgressHeartbeat is item 15's addition to this family: the
-// periodic report_progress nudge's JobProgressHeartbeat global gets the
-// same guarded pattern as every other job-hook global in this file.
-type raceJobProgressHeartbeat struct{}
-
-func (raceJobProgressHeartbeat) NeedsProgressHeartbeat(id string, after time.Duration) bool {
-	return false
-}
-
 type raceJobMailbox struct{}
 
 func (raceJobMailbox) Resolve(id string) (string, bool) { return "", false }
@@ -107,55 +74,15 @@ func (raceJobMailbox) IsLive(id string) bool            { return false }
 func (raceJobMailbox) Drain(id string) []string         { return nil }
 func (raceJobMailbox) Posted(id string) uint64          { return 0 }
 
-type raceJobResumer struct{}
-
-func (raceJobResumer) Resume(ctx context.Context, jobID, task string) (JobHandle, error) {
-	return raceJobHandle{}, nil
-}
-
-type raceJobActivityToucher struct{}
-
-func (raceJobActivityToucher) TouchActivity(id string) {}
-
-// raceJobExtensionRequester, raceJobCanceler, raceJobLister and
-// raceJobPromoter are the F11 follow-up to the batch above: four more
-// job-hook globals (jobExtensionRequester, jobCanceler, jobLister,
-// jobPromoter) that got the same jobNotifier-style treatment but were missed
-// by the original B2 audit. Same rule: minimal, behavior-free fakes, only
-// exercising the concurrent Set/read path.
-
-type raceJobExtensionRequester struct{}
-
-func (raceJobExtensionRequester) RequestExtension(id string, seconds time.Duration, reason string) (string, bool) {
-	return "", false
-}
-
-func (raceJobExtensionRequester) WaitExtension(ctx context.Context, id, requestID string) (bool, bool) {
-	return false, false
-}
-
-func (raceJobExtensionRequester) ResolveExtension(id, requestID string, approve bool) bool {
-	return false
-}
-
-type raceJobCanceler struct{}
-
-func (raceJobCanceler) Cancel(id string) bool { return false }
-
 // raceJobLister answers ListJobs with one fixed job ("race-child", parented
 // on "race-parent") so parentIDOf(...) has something to actually walk during
 // the concurrent test below, instead of trivially short-circuiting on an
 // empty slice.
+
 type raceJobLister struct{}
 
 func (raceJobLister) ListJobs() []JobKindSource {
 	return []JobKindSource{fakeJob{id: "race-child", parentID: "race-parent"}}
-}
-
-type raceJobPromoter struct{}
-
-func (raceJobPromoter) Promote(ctx context.Context, jobID string) (JobHandle, error) {
-	return raceJobHandle{}, nil
 }
 
 // runConcurrentSetGet spawns goroutines that call set and get in a tight

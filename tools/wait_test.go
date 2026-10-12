@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -329,19 +328,6 @@ func TestWaitTool_RegisteredInToolRegistry(t *testing.T) {
 // sleep is what made this tool waste turns: one observed session asked for a
 // second, got "still running after 1s", and had learned nothing a notice would
 // not have delivered free. Two minutes later it did the same and got the same.
-
-type scriptedWaiter struct {
-	mu     sync.Mutex
-	status JobStatus
-	known  bool
-	calls  int
-}
-
-func (w *scriptedWaiter) set(s JobStatus) {
-	w.mu.Lock()
-	w.status = s
-	w.mu.Unlock()
-}
 
 // TestPlainWaitStillNeedsSeconds: without a job there is nothing to wait for,
 // so a duration is the only instruction there is.

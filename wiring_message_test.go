@@ -11,38 +11,13 @@ package main
 
 import (
 	"testing"
-
-	"github.com/crazy-goat/tyci-agent/connector"
 )
 
 // countUserMessages counts user-role messages in req.Messages — the initial
 // task plus one per drained mailbox message.
-func countUserMessages(req connector.Request) int {
-	n := 0
-	for _, m := range req.Messages {
-		if m.Role == "user" {
-			n++
-		}
-	}
-	return n
-}
 
 // containsUserText reports whether any user-role message in req carries
 // text exactly matching want.
-func containsUserText(req connector.Request, want string) bool {
-	for _, m := range req.Messages {
-		if m.Role != "user" {
-			continue
-		}
-		for _, c := range m.Content {
-			// A message from an agent carries the sender tag, see tagSender.
-			if c.Text == want || bodyOf(c.Text) == want {
-				return true
-			}
-		}
-	}
-	return false
-}
 
 // TestWiring_M2_PostToUnknownJobFails guards the negative path through the
 // real wiring: posting to a job id nothing in the registry recognizes

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Tools: `ask_parent` does not block. It returns at once with a question id (`q<N>`). The answer arrives as a `tyci-notice kind=ask.reply` notice. `wait` takes `kinds=["ask.reply"]` to wait for it (#200).
 - Agent: a late result of a background call that is longer than `tools.result_tail_bytes` (default 16384) keeps only its last bytes. The notice starts with a line that gives the size and the path of the full output. The full output is saved in `~/.tyci/tool-results/<session-id>/<call_id>.txt` (mode 0600). The `tool.result` notice shows `truncated` and `full_path`. Inline results are not cut (#199).
 - Config: the `tools` block of `config.json` sets when a tool call moves to the background: `background_after_fast_sec` (default 2.5), `background_after_slow_sec` (default 60), `background_after_sec` (one value per tool name) and `result_tail_bytes` (default 16384). A project file can set the same keys and wins for each key it sets, `0` included. A negative value, or `background_after_sec.subagent`, is a config error at startup (#198).
 - Tools: `wait` takes `ids` (a list of job ids), `mode` (`any` or `all`) and keeps `job_id` as an alias for one id. Repeated ids count once (#197).

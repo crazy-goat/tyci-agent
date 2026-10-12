@@ -165,8 +165,9 @@ call context that ends does not release the lock.
 
 ## Known gaps
 
-- `subagent` and `ask_parent` block by design. Making `ask_parent` async is
-  tracked in issue #200.
+- `subagent` blocks by design. `ask_parent` returns at once (#200). Its
+  question id and route are kept in memory, so an answer after a restart of
+  tyci fails.
 - Subagent results do not wake the parent after its run has ended.
 - `bash_output` does not exist in this repository. Read output with
   `wait(job_id)`.

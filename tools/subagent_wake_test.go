@@ -19,19 +19,11 @@ package tools
 // question") is something it can make good on directly, not only
 // something the onEvent notice might.
 
-import (
-	"github.com/crazy-goat/tyci-agent/jobs"
-)
-
 // realJobObserver wraps a real jobs.Registry via WaitObserve — the
 // non-counting path runWithHandoff's watcher and handOff's pendingQuestions
 // peek actually use in production (see main.go's jobObserverAdapter). Using
 // WaitObserve (not Wait) here is what makes these tests exercise the real
 // fix for C1 rather than the pre-fix shape — see JobObserver's doc comment
 // for the distinction.
-type realJobObserver struct{ reg *jobs.Registry }
 
 // jobEventFunc adapts a plain function to jobs.EventPublisher for tests.
-type jobEventFunc func(jobs.Job)
-
-func (f jobEventFunc) JobEvent(j jobs.Job) { f(j) }

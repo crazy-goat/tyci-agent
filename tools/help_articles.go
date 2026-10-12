@@ -304,9 +304,9 @@ surfaced: at once for async or /btw, only once a blocking call hands off in
 an interactive session (at 60s, or sooner if the person types), and never
 for a blocking call under
 tyci run/--print — so there report_progress still succeeds, but nobody
-reads it before the job is done. ask_parent(question) blocks on the parent — a
-last resort, because asking is how a child stalls — and needs the same
-thing: a call that can eventually hand off. Without one, it fails
+reads it before the job is done. ask_parent(question) does not block: it returns a
+question id at once, and the answer arrives later as a notice. Asking is
+still a last resort. Without a way to hand off, it fails
 immediately instead of stalling for nothing.`,
 
 	"cron": `A prompt that runs later, or over and over, with nobody there.

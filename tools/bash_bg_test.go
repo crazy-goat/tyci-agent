@@ -61,13 +61,6 @@ func (n *recordingNotifier) all() []string {
 	return out
 }
 
-func (n *recordingNotifier) shownFor(jobID string) (int, bool) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	seq, ok := n.shown[jobID]
-	return seq, ok
-}
-
 // The three values every background-bash test here is built around: the two
 // caps on waiting, and the command that has to be killed.
 //
