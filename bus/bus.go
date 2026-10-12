@@ -138,6 +138,12 @@ func (b *Bus) unsubscribe(s *Sub) {
 // payload cannot be encoded, when a subtree broadcast is not allowed, or
 // when the bus is closed.
 func Publish[T any](b *Bus, kind Kind, from, to Addr, origin Origin, payload T) (uint64, error) {
+	return PublishReply(b, kind, from, to, origin, 0, payload)
+}
+
+// PublishReply is Publish for a message that answers the message with Seq
+// replyTo. Zero means no reply.
+func PublishReply[T any](b *Bus, kind Kind, from, to Addr, origin Origin, replyTo uint64, payload T) (uint64, error) {
 	info, ok := lookupKind(kind)
 	if !ok {
 		return 0, fmt.Errorf("bus: kind %q is not registered", kind)
@@ -154,7 +160,7 @@ func Publish[T any](b *Bus, kind Kind, from, to Addr, origin Origin, payload T) 
 		key = fn(payload)
 	}
 
-	m := Message{Kind: kind, From: from, To: to, Origin: origin, Payload: raw}
+	m := Message{Kind: kind, From: from, To: to, Origin: origin, ReplyTo: replyTo, Payload: raw}
 	return b.send(m, info.class, key)
 }
 

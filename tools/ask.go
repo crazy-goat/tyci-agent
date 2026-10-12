@@ -94,7 +94,7 @@ func (t *AskTool) Run(ctx context.Context, input map[string]any) ToolResult {
 type JobAnswerer interface {
 	// Answer sends text as the answer to question id ("q<Seq>"). It returns
 	// an error when id is unknown or already answered.
-	Answer(id, text string) error
+	Answer(ctx context.Context, id, text string) error
 }
 
 // jobAnswerer is nil until SetJobAnswerer is called. Guarded the same way
@@ -168,8 +168,8 @@ func (t *AnswerTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: false, Error: "answer_job unavailable: job registry not configured"}
 	}
 
-	if err := answerer.Answer(jobID, text); err != nil {
+	if err := answerer.Answer(ctx, jobID, text); err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}
-	return ToolResult{Type: "result", Success: true, Content: "answer delivered; job resumed"}
+	return ToolResult{Type: "result", Success: true, Content: "answer delivered; the job does not wait for it"}
 }

@@ -175,7 +175,8 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	if mode != "any" && mode != "all" {
 		return validationResultf("mode must be \"any\" or \"all\", got %q", mode)
 	}
-	if _, errText := waitKinds(input); errText != "" {
+	kinds, errText := waitKinds(input)
+	if errText != "" {
 		return validationResult(errText)
 	}
 
@@ -186,8 +187,9 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 
 	secRaw, hasSeconds := input["seconds"]
 	isJob := jobID != "" || len(ids) > 0
-	if !hasSeconds && !isJob {
-		return validationResult("seconds is required for a plain wait (or pass job_id or ids to wait for a job)")
+	// kinds alone waits for a notice of those kinds, with the default time.
+	if !hasSeconds && !isJob && len(kinds) == 0 {
+		return validationResult("seconds is required for a plain wait (or pass job_id, ids or kinds)")
 	}
 	seconds := DefaultJobWaitSeconds
 	if hasSeconds {

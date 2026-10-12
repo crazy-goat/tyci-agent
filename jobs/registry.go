@@ -280,9 +280,7 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 //
 // Returns false when id resolves to nothing or to a job that has already
 // finished (done/failed/truncated); the caller should report "not a running
-// job" rather than claim success. A waiting_answer job is cancellable: its
-// Ask call is blocked on the job context, so cancelling that context wakes it
-// and lets the job terminate instead of leaving it stuck indefinitely.
+// job" rather than claim success. A waiting_answer job is cancellable like a running job.
 //
 // The cancel funcs run OUTSIDE r.mu on purpose: a job's parting code path
 // (its fn returning into Start's completion bookkeeping) takes r.mu itself,

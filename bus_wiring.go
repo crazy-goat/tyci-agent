@@ -294,7 +294,7 @@ func noticeText(m bus.Message) (text string, ok bool) {
 		// The answer is data from the parent. A closing tag in it is escaped,
 		// so it cannot end the notice early (see agent/late_notice.go).
 		answer := strings.ReplaceAll(a.Answer, "</tyci-notice", `<\/tyci-notice`)
-		return fmt.Sprintf("<tyci-notice kind=ask.reply id=%s>%s</tyci-notice>", a.Question, answer), true
+		return fmt.Sprintf("<tyci-notice kind=ask.reply id=%s from=agent>%s</tyci-notice>", a.Question, answer), true
 	case bus.KindAskRequest:
 		a, err := bus.Decode[bus.AskRequest](m)
 		if err != nil {
@@ -302,7 +302,7 @@ func noticeText(m bus.Message) (text string, ok bool) {
 			return "", false
 		}
 		return fmt.Sprintf("[background job] %s asks: %q (job_id=%s, question id=q%d)\n"+
-			"The answer arrives as a message. Answer it with answer_job(job_id=%q, text=\"...\") only if you genuinely know it or the user told you.",
+			"Answer it with answer_job(job_id=%q, text=\"...\") only if you genuinely know it or the user told you. The child does not block on the question.",
 			a.Agent, a.Question, a.Agent, m.Seq, fmt.Sprintf("q%d", m.Seq)), true
 	}
 	fmt.Fprintf(busLog, "bus: message %d of kind %q not shown\n", m.Seq, m.Kind)

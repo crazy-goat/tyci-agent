@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/bus"
 )
@@ -46,10 +47,10 @@ func TestAnswerAcceptsQID(t *testing.T) {
 		t.Fatal("Ask failed")
 	}
 	answerer := jobAnswererAdapter{reg: reg}
-	if err := answerer.Answer(qid, "use main"); err != nil {
+	if err := answerer.Answer(context.Background(), qid, "use main"); err != nil {
 		t.Fatalf("Answer(%s): %v", qid, err)
 	}
-	if err := answerer.Answer(qid, "again"); err == nil {
+	if err := answerer.Answer(context.Background(), qid, "again"); err == nil {
 		t.Fatalf("second Answer(%s) returned no error", qid)
 	}
 
@@ -69,7 +70,7 @@ func TestAnswerUnknownIDIsError(t *testing.T) {
 	reg, _ := withTestWiring(t)
 	answerer := jobAnswererAdapter{reg: reg}
 	for _, id := range []string{"q999999", "job-1", "q", "qx"} {
-		if err := answerer.Answer(id, "text"); err == nil {
+		if err := answerer.Answer(context.Background(), id, "text"); err == nil {
 			t.Fatalf("Answer(%q) returned no error", id)
 		}
 	}
@@ -79,7 +80,7 @@ func TestAskReplyNoticeFormat(t *testing.T) {
 	m := bus.Message{Kind: bus.KindAskReply, Origin: bus.OriginAgent}
 	m.Payload = mustPayload(t, bus.AskReply{Question: "q7", Answer: "use main"})
 	got := formatNotices([]bus.Message{m})
-	want := `<tyci-notice kind=ask.reply id=q7>use main</tyci-notice>`
+	want := `<tyci-notice kind=ask.reply id=q7 from=agent>use main</tyci-notice>`
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("formatNotices = %q, want [%q]", got, want)
 	}
@@ -102,4 +103,37 @@ func mustPayload(t *testing.T, v any) json.RawMessage {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// TestAskReplyArrivesAsMessage asks a question from a live child, answers it
+// as the orchestrator and reads the child inbox. The reply must arrive there
+// as a notice that names the question id and the answering agent.
+func TestAskReplyArrivesAsMessage(t *testing.T) {
+	reg, _ := withTestWiring(t)
+	child, release := startLiveJob(t, reg)
+	defer release()
+	inboxes := newInboxSet(appBus)
+	inboxes.open(child)
+	defer inboxes.close(child)
+
+	qid, ok := jobAskerAdapter{reg: reg}.Ask(context.Background(), child, "Which branch?")
+	if !ok {
+		t.Fatal("Ask failed")
+	}
+	if err := (jobAnswererAdapter{reg: reg}).Answer(context.Background(), qid, "use main"); err != nil {
+		t.Fatalf("Answer(%s): %v", qid, err)
+	}
+	want := `<tyci-notice kind=ask.reply id=` + qid + ` from=agent>use main</tyci-notice>`
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		for _, got := range inboxes.drain(child) {
+			if got == want {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reply notice did not reach the child inbox; want %q", want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

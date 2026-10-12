@@ -87,6 +87,7 @@ func (a jobAskerAdapter) Ask(ctx context.Context, id, question string) (string, 
 	}
 	askRoutes.Lock()
 	defer askRoutes.Unlock()
+	pruneAskRoutes(a.reg)
 	seq, err := publishAsk(appBus, j.ParentID, id, question)
 	if err != nil {
 		fmt.Fprintf(busLog, "bus: ask from %s not published: %v\n", id, err)
@@ -94,6 +95,16 @@ func (a jobAskerAdapter) Ask(ctx context.Context, id, question string) (string, 
 	}
 	askRoutes.asker[seq] = id
 	return fmt.Sprintf("q%d", seq), true
+}
+
+// pruneAskRoutes drops the routes of jobs that are no longer running. Such a
+// job cannot receive the answer. The caller holds askRoutes.Lock.
+func pruneAskRoutes(reg *jobs.Registry) {
+	for seq, id := range askRoutes.asker {
+		if j, ok := reg.Get(id); !ok || (j.Status != jobs.StatusRunning && j.Status != jobs.StatusWaitingAnswer) {
+			delete(askRoutes.asker, seq)
+		}
+	}
 }
 
 // jobExtensionRequesterAdapter satisfies tools.JobExtensionRequester over
@@ -117,7 +128,7 @@ func (a jobExtensionRequesterAdapter) ResolveExtension(id, requestID string, app
 // job that asked question q<Seq> as an ask.reply message, once.
 type jobAnswererAdapter struct{ reg *jobs.Registry }
 
-func (a jobAnswererAdapter) Answer(id, text string) error {
+func (a jobAnswererAdapter) Answer(ctx context.Context, id, text string) error {
 	var seq uint64
 	if !strings.HasPrefix(id, "q") {
 		return fmt.Errorf("unknown question id %q: use the id q<N> that ask_parent returned", id)
@@ -134,8 +145,16 @@ func (a jobAnswererAdapter) Answer(id, text string) error {
 	if !ok {
 		return fmt.Errorf("unknown or already answered question id %q", id)
 	}
-	publishTo(appBus, bus.KindAskReply, orchestratorAddr, agentAddr(asker), bus.OriginAgent,
-		bus.AskReply{Question: id, Answer: text})
+	// The answer comes from the agent that called answer_job: the orchestrator
+	// or a child job. The reply points at the question message.
+	from := orchestratorAddr
+	if caller, _ := ctx.Value(tools.JobIDCtxKey{}).(string); caller != "" {
+		from = agentAddr(caller)
+	}
+	if _, err := bus.PublishReply(appBus, bus.KindAskReply, from, agentAddr(asker), bus.OriginAgent,
+		seq, bus.AskReply{Question: id, Answer: text}); err != nil {
+		fmt.Fprintf(busLog, "bus: ask.reply %s not published: %v\n", id, err)
+	}
 	return nil
 }
 

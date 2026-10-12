@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -25,7 +26,7 @@ type fakeJobAnswerer struct {
 	err     error
 }
 
-func (f *fakeJobAnswerer) Answer(id, text string) error {
+func (f *fakeJobAnswerer) Answer(ctx context.Context, id, text string) error {
 	f.gotID, f.gotText = id, text
 	return f.err
 }
@@ -91,5 +92,39 @@ func TestWaitKindsAskReply(t *testing.T) {
 	}
 	if _, errText := waitKinds(map[string]any{"kinds": []any{1}}); errText == "" {
 		t.Fatal("wait accepted a non-string kind")
+	}
+}
+
+// postingMailbox reports a new notice for the caller once n is raised.
+type postingMailbox struct {
+	raceJobMailbox
+	n atomic.Uint64
+}
+
+func (m *postingMailbox) Posted(id string) uint64 { return m.n.Load() }
+
+// TestWaitKindsAloneWaitsForReply calls wait(kinds=["ask.reply"]) with no
+// seconds and no job id. It must not fail on the missing seconds, and it must
+// return as soon as the reply notice arrives.
+func TestWaitKindsAloneWaitsForReply(t *testing.T) {
+	mb := &postingMailbox{}
+	SetJobMailbox(mb)
+	t.Cleanup(func() { SetJobMailbox(nil) })
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		mb.n.Add(1)
+	}()
+
+	ctx := context.WithValue(context.Background(), JobIDCtxKey{}, "job-1-1")
+	start := time.Now()
+	res := (&WaitTool{}).Run(ctx, map[string]any{"kinds": []any{"ask.reply"}})
+	if !res.Success {
+		t.Fatalf("wait(kinds=[ask.reply]) failed: %s", res.Error)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("wait did not stop when the reply arrived (took %s)", time.Since(start))
+	}
+	if !strings.Contains(res.Content, "notice arrived") {
+		t.Fatalf("content %q does not report the arrived notice", res.Content)
 	}
 }
