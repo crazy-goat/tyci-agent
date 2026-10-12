@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+// uniqueIDs drops repeated ids, keeping the first of each. It runs after call
+// ids are resolved to job ids, so "c3" and the job id of c3 count once.
+func uniqueIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := ids[:0]
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
 // waitIDs returns the job ids that a wait call names, in order and without
 // repeats. "ids" is the list, and "job_id" is the older single-id alias; both
 // may be given. multi is true when the call uses the list form ("ids" given,

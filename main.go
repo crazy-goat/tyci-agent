@@ -852,6 +852,7 @@ func wireTools() {
 	tools.SetJobActivityToucher(jobActivityToucherAdapter{reg: JobRegistry})
 	tools.SetJobProgressHeartbeat(jobProgressHeartbeatAdapter{reg: JobRegistry})
 	tools.SetJobMailbox(jobMailboxAdapter{reg: JobRegistry})
+	tools.SetNoticeKindWatch(busKindWatch)
 	// Completion notices of background work go through the bus. The
 	// orchestrator reads its own subscription, and every agent reads its
 	// inbox through jobMailboxAdapter.Drain.

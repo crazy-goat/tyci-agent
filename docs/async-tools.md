@@ -129,11 +129,12 @@ arrives. The jobs are not touched in either case.
 
 `ids` and `job_id` also accept call ids (see "Call ids").
 
-The `kinds` input is accepted and checked: only `ask.reply` is allowed. It does not
-filter the notices yet. A wait wakes on any new notice.
+The `kinds` input accepts only `ask.reply`. With `kinds`, the wait wakes only on
+a new notice of that kind. Notices of other kinds do not end the wait. A wait
+without `kinds` wakes on any new notice.
 
-Not implemented: a `kinds` filter for notices, and a `Seq` based dedupe. The
-wait path dedupes by job id only.
+Repeated ids count once. The dedupe runs after call ids are resolved, so `c3`
+and its job id count as one job.
 
 ## Mutation FIFO
 

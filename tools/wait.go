@@ -189,6 +189,8 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	for i := range ids {
 		ids[i] = resolveCallID(callerJobID, ids[i])
 	}
+	// A call id and its job id name the same job: count it once.
+	ids = uniqueIDs(ids)
 
 	secRaw, hasSeconds := input["seconds"]
 	isJob := jobID != "" || len(ids) > 0
@@ -228,6 +230,13 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 
 	note, _ := input["note"].(string)
 	arrived := newNoticeWatch(callerJobID)
+	if watch := getNoticeKindWatch(); watch != nil && len(kinds) > 0 {
+		// The kinds filter replaces the any-notice wake. Only notices of
+		// the given kinds that arrive after this call end the wait.
+		kindArrived, stop := watch(callerJobID, kinds)
+		defer stop()
+		arrived = kindArrived
+	}
 
 	if multi {
 		return t.runIDs(ctx, callerJobID, ids, mode, time.Duration(seconds)*time.Second, clampedNote, arrived)
@@ -478,6 +487,32 @@ func defaultSleep(ctx context.Context, d time.Duration) bool {
 func newNoticeWatch(callerJobID string) func() bool {
 	since := noticeCount(callerJobID)
 	return func() bool { return noticeCount(callerJobID) > since }
+}
+
+// NoticeKindWatch starts a watch on the notices of kinds that reach the inbox
+// of callerJobID ("" for the main conversation). arrived reports whether such a
+// notice arrived after the watch started. stop ends the watch. It is wired from
+// main() over the bus; see SetNoticeKindWatch.
+type NoticeKindWatch func(callerJobID string, kinds []string) (arrived func() bool, stop func())
+
+var (
+	noticeKindWatchMu sync.RWMutex
+	noticeKindWatch   NoticeKindWatch
+)
+
+// SetNoticeKindWatch wires the kinds filter of wait. Without it, wait ignores
+// kinds for the wake and ends on any new notice.
+func SetNoticeKindWatch(w NoticeKindWatch) {
+	noticeKindWatchMu.Lock()
+	noticeKindWatch = w
+	noticeKindWatchMu.Unlock()
+}
+
+// getNoticeKindWatch copies the current watch out under RLock, see getJobAsker.
+func getNoticeKindWatch() NoticeKindWatch {
+	noticeKindWatchMu.RLock()
+	defer noticeKindWatchMu.RUnlock()
+	return noticeKindWatch
 }
 
 // noticeCount returns the number of notices addressed to the agent that calls

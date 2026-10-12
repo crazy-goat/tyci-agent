@@ -408,7 +408,7 @@ func builtinToolsSchema() []map[string]any {
 						"ids":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Ids of background jobs to wait on. Repeats are ignored."},
 						"mode":    map[string]any{"type": "string", "enum": []string{"any", "all"}, "description": "any (default): return when the first job finishes or blocks. all: return when every job does."},
 						"note":    map[string]any{"type": "string", "description": "Optional note describing what you're waiting for, echoed back for context."},
-						"kinds":   map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"ask.reply"}}, "description": "Only \"ask.reply\": the wait is for the answer to a question you asked with ask_parent. The wait also ends early on any other new notice."},
+						"kinds":   map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"ask.reply"}}, "description": "Only \"ask.reply\": the wait is for the answer to a question you asked with ask_parent. Other notices do not end this wait."},
 					},
 					"required": []string{"seconds"},
 				},
