@@ -90,7 +90,7 @@ func BuildSubagentSystemPrompt() string {
 func buildSubagentContractNote(hasAskParent bool) string {
 	askParentBullet := ""
 	if hasAskParent {
-		askParentBullet = "\n- ask_parent is a real tool and a genuine last resort — reach for it only when you are hard blocked and ANY assumption would make the work useless or unsafe, never for a preference or style question. It costs a full stall: you block until your parent answers, and fail immediately if nobody could ever reach you."
+		askParentBullet = "\n- ask_parent is a real tool and a genuine last resort — reach for it only when you are hard blocked and ANY assumption would make the work useless or unsafe, never for a preference or style question. ask_parent does not block. `wait` for the answer only when you cannot continue without it. The answer arrives as a message."
 	}
 	return `
 You are a SUBAGENT spawned by a parent agent to complete ONE task and report back.
@@ -281,13 +281,13 @@ func buildSystemPrompt(includeSubagent bool, roleNote string, hasAskParent bool)
 	if includeSubagent {
 		posture = `1. Work through MANY agents. subagent(tasks=[...], async=true) spawns parallel children, each with its own context window; you are NOTIFIED when one finishes or blocks on a question — never poll. Delegate anything that means reading more than about three files, and any two independent pieces of work (ONE call, tasks=[...]). Keep for yourself: single-file edits, work needing the exact bytes, work that depends on this conversation.
 `
-		contracts = `- A child BLOCKED on a question makes no progress and is discarded when it times out: answer_job(job_id, text) is your NEXT action — relay a real answer (the user's, or something you genuinely know), never one invented for a human who hasn't replied.
+		contracts = `- A child that asked a question keeps working; the question arrives as a notice with id q<N>. answer_job(job_id, text) with that id relays a real answer (the user's, or something you genuinely know), never one invented for a human who hasn't replied.
 - Parallel children writing shared paths must lock/unlock them — say so in each task's text.
 - For process work (issues, PRs) use the workflow tools; do not run git or gh by hand.
 `
 		toolLines = `- subagent(task|tasks, agent?, model?, async?): delegate to child agents; tasks=[...] runs them in parallel.
 - wait(seconds, job_id?): read a finished job's result, or pause deliberately.
-- answer_job(job_id, text): relay a real answer to a child blocked on ask_parent.
+- answer_job(job_id, text): relay a real answer to a question from a child; job_id is the question id q<N>.
 - resume(job_id, task): continue a finished async job — it keeps its whole conversation.
 - kill_job(job_id): stop a backgrounded shell command.
 - jobs(kind?, status?, all?): list your background jobs. kill_job(job_id) stops one.
@@ -306,7 +306,7 @@ func buildSystemPrompt(includeSubagent bool, roleNote string, hasAskParent bool)
 		// tool the agent cannot actually call. See buildSubagentContractNote
 		// and F22 in TODO.md for the matching gate on the contract paragraph.
 		if hasAskParent {
-			toolLines = `- ask_parent(question): last resort for a hard blocker where any assumption would make the work useless or unsafe. Blocks until your parent — whoever spawned this job, human or agent — answers, or fails immediately if nobody could ever reach it.
+			toolLines = `- ask_parent(question): last resort for a hard blocker where any assumption would make the work useless or unsafe. It does not block: it returns at once with a question id, and the answer arrives as a message from your parent, whoever spawned this job, human or agent.
 `
 		}
 		toolLines += `- report_progress(text): post a status note so whoever is watching is not guessing.
