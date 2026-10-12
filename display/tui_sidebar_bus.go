@@ -65,9 +65,10 @@ func (m TuiModel) busListLines(width int) []string {
 		return []string{"", "  No bus messages yet."}
 	}
 	out := make([]string, 0, len(rows))
+	selected := m.busCursor(rows)
 	for i, r := range rows {
 		line := fillWidth(cutDots(busRowText(r), width), width)
-		if i == m.sidebarCursor {
+		if i == selected {
 			line = rowStyle(true).Render(line)
 		}
 		out = append(out, line)
@@ -96,13 +97,42 @@ func (m TuiModel) busBodyLines(layout sidebarLayoutT, width int) []string {
 	return out
 }
 
+// busCursor returns the index of the selected message in rows. The selection
+// is the Seq of the message, so a newer row does not move it. Without a
+// selected Seq, or when that message is no longer listed, the cursor index is used.
+func (m TuiModel) busCursor(rows []TuiBusRow) int {
+	if m.sidebarBusSeq != 0 {
+		for i, r := range rows {
+			if r.Seq == m.sidebarBusSeq {
+				return i
+			}
+		}
+	}
+	return m.sidebarCursor
+}
+
+// sidebarBusResolve sets the cursor to the selected message, so a key acts on
+// the row the user sees.
+func (m *TuiModel) sidebarBusResolve() {
+	m.sidebarCursor = m.busCursor(m.sidebarBusRows())
+}
+
+// sidebarBusRemember stores the Seq of the message under the cursor as the selection.
+func (m *TuiModel) sidebarBusRemember() {
+	m.sidebarBusSeq = 0
+	if r, ok := m.busSelected(); ok {
+		m.sidebarBusSeq = r.Seq
+	}
+}
+
 // busSelected returns the message under the cursor.
 func (m TuiModel) busSelected() (TuiBusRow, bool) {
 	rows := m.sidebarBusRows()
-	if m.sidebarCursor < 0 || m.sidebarCursor >= len(rows) {
+	i := m.busCursor(rows)
+	if i < 0 || i >= len(rows) {
 		return TuiBusRow{}, false
 	}
-	return rows[m.sidebarCursor], true
+	return rows[i], true
 }
 
 // busPaneScrollMax is the last first line the pane can show at width.

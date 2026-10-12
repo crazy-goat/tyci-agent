@@ -9,6 +9,11 @@ import (
 
 // busModel returns a model whose Bus tab lists rows, newest first.
 func busModel(rows ...TuiBusRow) TuiModel {
+	for i := range rows {
+		if rows[i].Seq == 0 {
+			rows[i].Seq = uint64(i + 1)
+		}
+	}
 	m := newTestModelForSidebar()
 	m.busLister = func() []TuiBusRow { return rows }
 	m.openSidebar(sidebarTabBus)
@@ -195,5 +200,68 @@ func TestSidebarBusTab_Snapshot(t *testing.T) {
 				t.Errorf("width %d line %d:\n got %q\nwant %q", c.width, i, got, want)
 			}
 		}
+	}
+}
+
+// The selection follows the message, not the row index: a newer row added
+// while the pane is open does not change the pane.
+func TestSidebarBusTab_PaneKeepsSelectedMessageWhenNewRowArrives(t *testing.T) {
+	rows := []TuiBusRow{{Seq: 1, From: "human", To: "a1", Text: "first message", State: "sent"}}
+	m := newTestModelForSidebar()
+	m.busLister = func() []TuiBusRow { return rows }
+	m.openSidebar(sidebarTabBus)
+	next, _ := m.sidebarActivateRow()
+	m = next.(TuiModel)
+
+	rows = append([]TuiBusRow{{Seq: 2, From: "a1", To: "human", Text: "newer message", State: "sent"}}, rows...)
+	if pane := strings.Join(m.busPaneLines(60), "\n"); !strings.Contains(pane, "first message") || strings.Contains(pane, "newer message") {
+		t.Fatalf("pane after a new row = %q, want the first message", pane)
+	}
+	if got := m.busCursor(m.sidebarBusRows()); got != 1 {
+		t.Fatalf("selected index = %d, want 1 (the first message moved down)", got)
+	}
+
+	// Up moves from the selected message to the newer row.
+	m.sidebarMoveCursor(-1)
+	if sel, _ := m.busSelected(); sel.Text != "newer message" {
+		t.Fatalf("selected after Up = %q, want the newer message", sel.Text)
+	}
+}
+
+// A click on another row opens the pane for that row. A click on the
+// selected row toggles the pane.
+func TestSidebarBusTab_ClickOnOtherRowOpensItsPane(t *testing.T) {
+	m := busModel(
+		TuiBusRow{From: "human", To: "a1", Text: "row zero", State: "sent"},
+		TuiBusRow{From: "a1", To: "human", Text: "row one", State: "sent"},
+	)
+	layout := m.sidebarLayout()
+	click := func(m TuiModel, row int) TuiModel {
+		model, _ := m.updateSidebar(tea.MouseMsg{
+			X: layout.contentLeft + 1, Y: layout.contentTop + row,
+			Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+		})
+		return model.(TuiModel)
+	}
+	selectedText := func(m TuiModel) string {
+		sel, _ := m.busSelected()
+		return sel.Text
+	}
+
+	m = click(m, 1)
+	if !m.sidebarBusPane || m.sidebarCursor != 1 || selectedText(m) != "row one" {
+		t.Fatalf("click on row one: pane=%v cursor=%d selected=%q", m.sidebarBusPane, m.sidebarCursor, selectedText(m))
+	}
+	m = click(m, 1)
+	if m.sidebarBusPane {
+		t.Fatal("second click on the same row did not close the pane")
+	}
+	m = click(m, 0)
+	if !m.sidebarBusPane || selectedText(m) != "row zero" {
+		t.Fatalf("click on row zero: pane=%v selected=%q", m.sidebarBusPane, selectedText(m))
+	}
+	m = click(m, 1)
+	if !m.sidebarBusPane || selectedText(m) != "row one" {
+		t.Fatalf("click on another row while open: pane=%v selected=%q, want the pane on row one", m.sidebarBusPane, selectedText(m))
 	}
 }

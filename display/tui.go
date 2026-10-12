@@ -567,6 +567,9 @@ type TuiModel struct {
 	// selected message. sidebarBusScroll is the first wrapped text line of the pane.
 	sidebarBusPane   bool
 	sidebarBusScroll int
+	// sidebarBusSeq is the Seq of the selected message, so a new row does not
+	// move the selection. 0 means the selection is the cursor index.
+	sidebarBusSeq uint64
 
 	// reminderLister returns the undelivered reminders for the Tasks tab.
 	// nil means it was never wired, and the tab shows no reminder rows.

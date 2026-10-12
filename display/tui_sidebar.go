@@ -297,6 +297,7 @@ func (m *TuiModel) sidebarSwitchTab(tab int) {
 	m.sidebarStopRun = ""
 	m.sidebarBusPane = false
 	m.sidebarBusScroll = 0
+	m.sidebarBusSeq = 0
 }
 
 // sidebarClampScrollToCursor keeps sidebarCursor within the visible window
@@ -360,6 +361,8 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 	if m.sidebarTab == sidebarTabBus {
 		// The preview pane starts at the top of the text of the new message.
 		m.sidebarBusScroll = 0
+		m.sidebarBusResolve()
+		defer m.sidebarBusRemember()
 	}
 	if m.sidebarSelectable() {
 		if m.sidebarTab == sidebarTabTasks {
@@ -693,8 +696,18 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// A click on a message row selects it and toggles the pane.
 					// A click on the pane selects nothing.
 					if msg.Y-layout.contentTop < m.sidebarListHeight(layout.contentHeight) && line >= 0 && line < m.sidebarRowCount() {
+						if line == m.busCursor(m.sidebarBusRows()) {
+							m.sidebarCursor = line
+							m.sidebarBusRemember()
+							return m.sidebarActivateRow()
+						}
+						// Another row: select it and open its pane.
 						m.sidebarCursor = line
-						return m.sidebarActivateRow()
+						m.sidebarBusRemember()
+						m.sidebarBusPane = true
+						m.sidebarBusScroll = 0
+						m.sidebarClampScrollToCursor(layout.contentHeight)
+						return m, nil
 					}
 				case sidebarTabRuns:
 					// A run has one line or more; a click on any of them
@@ -793,9 +806,11 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 // sidebarToggleBusPane opens or closes the preview pane of the selected
 // message. The cursor line stays visible when the list gets shorter.
 func (m TuiModel) sidebarToggleBusPane() TuiModel {
+	m.sidebarBusResolve()
 	if _, ok := m.busSelected(); !ok {
 		return m
 	}
+	m.sidebarBusRemember()
 	m.sidebarBusPane = !m.sidebarBusPane
 	m.sidebarBusScroll = 0
 	m.sidebarClampScrollToCursor(m.sidebarLayout().contentHeight)
