@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,94 @@ type TyciConfig struct {
 	// of it, the harness posts "[auto]" at the full interval). Global config
 	// only: a project-local value is ignored (see mergeTyciConfig).
 	PingInterval string `json:"ping_interval,omitempty"`
+	// Tools tunes when a tool call moves to the background. Nil means the
+	// built-in defaults. Global and local files merge per key (see
+	// mergeToolsConfig).
+	Tools *ToolsConfig `json:"tools,omitempty"`
+}
+
+// ToolsConfig is the "tools" block of config.json. The pointer fields
+// distinguish an absent key from 0: 0 means "background at once".
+type ToolsConfig struct {
+	// BackgroundAfterFastSec is how long a fast tool waits before it moves to
+	// the background. Absent means defaultBackgroundAfterFast.
+	BackgroundAfterFastSec *float64 `json:"background_after_fast_sec,omitempty"`
+	// BackgroundAfterSlowSec is the same for a slow tool. Absent means
+	// defaultBackgroundAfterSlow.
+	BackgroundAfterSlowSec *float64 `json:"background_after_slow_sec,omitempty"`
+	// BackgroundAfterSec overrides the wait of one tool by name. It wins over
+	// the class value.
+	BackgroundAfterSec map[string]float64 `json:"background_after_sec,omitempty"`
+	// ResultTailBytes is the size limit of a late result in the conversation.
+	// Absent means DefaultResultTailBytes.
+	ResultTailBytes *int `json:"result_tail_bytes,omitempty"`
+}
+
+const (
+	// defaultBackgroundAfterFast is the wait of a fast tool before it is backgrounded.
+	defaultBackgroundAfterFast = 2500 * time.Millisecond
+	// defaultBackgroundAfterSlow is the wait of a slow tool before it is backgrounded.
+	defaultBackgroundAfterSlow = 60 * time.Second
+	// DefaultResultTailBytes is the result_tail_bytes default.
+	DefaultResultTailBytes = 16384
+	// maxBackgroundAfterSec keeps a configured wait inside time.Duration (about 285 years).
+	maxBackgroundAfterSec = 9_000_000_000
+)
+
+// Validate reports the first invalid value. The error names its key.
+func (c ToolsConfig) Validate() error {
+	if c.BackgroundAfterFastSec != nil {
+		if err := checkBackgroundAfterSec("tools.background_after_fast_sec", *c.BackgroundAfterFastSec); err != nil {
+			return err
+		}
+	}
+	if c.BackgroundAfterSlowSec != nil {
+		if err := checkBackgroundAfterSec("tools.background_after_slow_sec", *c.BackgroundAfterSlowSec); err != nil {
+			return err
+		}
+	}
+	names := make([]string, 0, len(c.BackgroundAfterSec))
+	for name := range c.BackgroundAfterSec {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		key := "tools.background_after_sec." + name
+		if name == "subagent" {
+			return fmt.Errorf("%s: subagent always blocks, so it has no background_after value; remove this key", key)
+		}
+		if err := checkBackgroundAfterSec(key, c.BackgroundAfterSec[name]); err != nil {
+			return err
+		}
+	}
+	if c.ResultTailBytes != nil && *c.ResultTailBytes < 0 {
+		return fmt.Errorf("tools.result_tail_bytes: %d is negative; use 0 or more bytes", *c.ResultTailBytes)
+	}
+	return nil
+}
+
+// checkBackgroundAfterSec reports an error when sec is not a usable number of seconds.
+func checkBackgroundAfterSec(key string, sec float64) error {
+	if sec < 0 || sec > maxBackgroundAfterSec {
+		return fmt.Errorf("%s: %v is not a number of seconds from 0 to %d", key, sec, maxBackgroundAfterSec)
+	}
+	return nil
+}
+
+// ResultTailLimit returns result_tail_bytes, default DefaultResultTailBytes.
+func (c ToolsConfig) ResultTailLimit() int {
+	if c.ResultTailBytes == nil {
+		return DefaultResultTailBytes
+	}
+	return *c.ResultTailBytes
+}
+
+// ToolsSettings returns the tools block, or the zero value when it is absent.
+func (c TyciConfig) ToolsSettings() ToolsConfig {
+	if c.Tools == nil {
+		return ToolsConfig{}
+	}
+	return *c.Tools
 }
 
 // DefaultPingInterval is the ping interval when ping_interval is not set.
@@ -182,7 +271,41 @@ func mergeTyciConfig(global, local TyciConfig) TyciConfig {
 	if local.StreamIdleTimeoutSec != 0 {
 		merged.StreamIdleTimeoutSec = local.StreamIdleTimeoutSec
 	}
+	merged.Tools = mergeToolsConfig(global.Tools, local.Tools)
 	return merged
+}
+
+// mergeToolsConfig merges the tools blocks field by field. A local field that
+// is set (non-nil, so 0 counts) wins. A local BackgroundAfterSec map adds to
+// the global map: a key set in both files takes the local value. The result is
+// a new value, so neither input is changed.
+func mergeToolsConfig(global, local *ToolsConfig) *ToolsConfig {
+	if local == nil {
+		return global
+	}
+	if global == nil {
+		return local
+	}
+	merged := *global
+	if local.BackgroundAfterFastSec != nil {
+		merged.BackgroundAfterFastSec = local.BackgroundAfterFastSec
+	}
+	if local.BackgroundAfterSlowSec != nil {
+		merged.BackgroundAfterSlowSec = local.BackgroundAfterSlowSec
+	}
+	if local.ResultTailBytes != nil {
+		merged.ResultTailBytes = local.ResultTailBytes
+	}
+	if local.BackgroundAfterSec != nil {
+		merged.BackgroundAfterSec = make(map[string]float64, len(global.BackgroundAfterSec)+len(local.BackgroundAfterSec))
+		for name, sec := range global.BackgroundAfterSec {
+			merged.BackgroundAfterSec[name] = sec
+		}
+		for name, sec := range local.BackgroundAfterSec {
+			merged.BackgroundAfterSec[name] = sec
+		}
+	}
+	return &merged
 }
 
 // LoadTyciConfigFrom loads ~/.tyci/config.json merged with <wd>/.tyci/config.json

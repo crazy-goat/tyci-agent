@@ -1005,6 +1005,10 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "config:", err)
 		return 1
 	}
+	if err := agent.LoadTyciConfig().ToolsSettings().Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		return 1
+	}
 	wdCtx, stopWatchdog := context.WithCancel(context.Background())
 	go (&watchdog.Watchdog{
 		Reg: JobRegistry, IdleAfter: idle, EscalateAfter: escalate,
