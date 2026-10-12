@@ -350,7 +350,7 @@ func (m TuiModel) renderSidebarColumn() string {
 		// Cut and pad by grapheme-cluster width before styling. Lipgloss's
 		// Width uses a different width table, which can add extra cells for
 		// Devanagari clusters and move the border on that row.
-		line := fillWidth(truncateToWidth(lines[i], contentWidth), contentWidth)
+		line := fillWidth(lines[i], contentWidth)
 		b.WriteString(lipgloss.NewStyle().Render(line))
 		b.WriteString("\n")
 		shown++
@@ -381,6 +381,9 @@ func (m TuiModel) renderSidebarColumn() string {
 	}
 	borderStyle := lipgloss.NewStyle().Foreground(borderColor).Background(sidebarBackground)
 	backgroundStyle := lipgloss.NewStyle().Background(sidebarBackground)
+	// The border cell and the padding cell are the same on every row.
+	borderCell := borderStyle.Render(lipgloss.NormalBorder().Left)
+	padCell := backgroundStyle.Render(" ")
 	rows := strings.Split(b.String(), "\n")
 	if layout.height > 0 {
 		if len(rows) > layout.height {
@@ -391,13 +394,12 @@ func (m TuiModel) renderSidebarColumn() string {
 		}
 	}
 	var box strings.Builder
-	border := lipgloss.NormalBorder().Left
 	for i, row := range rows {
 		row = fillWidth(row, contentWidth)
-		box.WriteString(borderStyle.Render(border))
-		box.WriteString(backgroundStyle.Render(" "))
+		box.WriteString(borderCell)
+		box.WriteString(padCell)
 		box.WriteString(backgroundStyle.Render(row))
-		box.WriteString(backgroundStyle.Render(" "))
+		box.WriteString(padCell)
 		if i < len(rows)-1 {
 			box.WriteByte('\n')
 		}
@@ -540,7 +542,7 @@ func styleSidebarTaskRows(rows []sidebarTaskRow, cursorLine, width int) []string
 			// reset only the foreground instead.
 			line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[39m")
 		}
-		out = append(out, rowStyle(i == cursorLine).Render(fillWidth(truncateToWidth(line, width), width)))
+		out = append(out, rowStyle(i == cursorLine).Render(fillWidth(line, width)))
 	}
 	if len(out) == 0 {
 		return []string{"", "  No tasks recorded this session."}
@@ -564,7 +566,7 @@ func (m TuiModel) renderSidebarSessions(width int) []string {
 		date := formatResumeDate(e.ModTime)
 		prompt := truncateResumePrompt(resumeLabel(e), max(1, width-len(date)-3))
 		line := fmt.Sprintf(" %s  %s", date, prompt)
-		out = append(out, rowStyle(i == m.sidebarCursor).Render(fillWidth(truncateToWidth(line, width), width)))
+		out = append(out, rowStyle(i == m.sidebarCursor).Render(fillWidth(line, width)))
 	}
 	return out
 }

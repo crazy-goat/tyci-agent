@@ -176,23 +176,55 @@ func layoutTokens(s string) []layoutToken {
 
 // cellWidth returns the maximum number of terminal cells in s. It ignores
 // ANSI sequences and uses uniseg's grapheme-cluster widths rather than
-// summing rune widths.
+// summing rune widths. It must give the same result as the widths of
+// layoutTokens, but it does not allocate for printable ASCII.
 func cellWidth(s string) int {
-	width, lineWidth := 0, 0
-	for _, token := range layoutTokens(s) {
-		if token.newline {
-			if lineWidth > width {
-				width = lineWidth
-			}
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7e {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return len(s)
+	}
+	plain := stripEscapes(s)
+	width, lineWidth, state := 0, 0, -1
+	for len(plain) > 0 {
+		var cluster string
+		var w int
+		cluster, plain, w, state = uniseg.FirstGraphemeClusterInString(plain, state)
+		if cluster == "\n" || cluster == "\r\n" {
+			width = max(width, lineWidth)
 			lineWidth = 0
 			continue
 		}
-		lineWidth += token.width
+		lineWidth += w
 	}
-	if lineWidth > width {
-		width = lineWidth
+	return max(width, lineWidth)
+}
+
+// stripEscapes removes the ANSI sequences that layoutTokens recognises: from
+// ESC up to and including the next final byte, or to the end of s.
+func stripEscapes(s string) string {
+	if strings.IndexByte(s, 0x1b) < 0 {
+		return s
 	}
-	return width
+	var out strings.Builder
+	out.Grow(len(s))
+	inEscape := false
+	for _, r := range s {
+		switch {
+		case inEscape:
+			inEscape = !escapeFinal(r)
+		case r == 0x1b:
+			inEscape = true
+		default:
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
 }
 
 // wrapText splits long lines into multiple lines to fit within maxWidth.
