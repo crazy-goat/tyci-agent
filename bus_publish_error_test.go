@@ -22,8 +22,12 @@ func TestPublishErrorLoggedJobContinues(t *testing.T) {
 	closed := newAppBus("")
 	closed.Close()
 	job := reg.Start(context.Background(), "publishes on a closed bus", jobs.KindSubagent, "",
-		func(_ context.Context, id string) (string, bool, error) {
-			publishAsk(closed, "", id, 1, "[background job] Q7")
+		func(ctx context.Context, id string) (string, bool, error) {
+			// Only the ask uses the closed bus; the job status events keep the live one.
+			origBus := appBus
+			appBus = closed
+			_, _ = jobAskerAdapter{reg: reg}.Ask(ctx, id, "Q7")
+			appBus = origBus
 			return "finished anyway", false, nil
 		})
 

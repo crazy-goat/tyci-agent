@@ -228,61 +228,6 @@ func TestWiring_BG5_KillJobStopsABackgroundCommand(t *testing.T) {
 	}
 }
 
-// TestWiring_BG6_BlockedQuestionReachesTheParent covers the channel that used
-// to be a dead end: a child calls "ask_parent", blocks, and nothing told the parent.
-// A parent that never polls left the child blocked until its wall-clock limit,
-// at which point the whole child run was thrown away.
-func TestWiring_BG6_BlockedQuestionReachesTheParent(t *testing.T) {
-	reg, _ := withTestWiring(t)
-
-	asked := make(chan struct{})
-	go func() {
-		handle := reg.Start(context.Background(), "review the auth flow", jobs.KindOther, "",
-			func(ctx context.Context, jobID string) (string, bool, error) {
-				close(asked)
-				ans, _, ok := reg.Ask(ctx, jobID, "should I also change the tests?")
-				if !ok {
-					return "", false, context.Canceled
-				}
-				return "answered: " + ans, false, nil
-			})
-		_ = handle
-	}()
-	<-asked
-
-	// The notice must arrive without the parent asking for it.
-	deadline := time.After(5 * time.Second)
-	var notices []string
-	for len(notices) == 0 {
-		select {
-		case <-busOrchestratorNotices.Ready():
-			notices = drainNotices()
-		case <-deadline:
-			t.Fatal("no notice: a blocked child would sit there until it timed out")
-		}
-	}
-
-	notice := strings.Join(notices, "\n")
-	if !strings.Contains(notice, "should I also change the tests?") {
-		t.Errorf("the question itself must reach the parent: %q", notice)
-	}
-	if !strings.Contains(notice, "answer_job(job_id=") {
-		t.Errorf("the notice must say how to reply: %q", notice)
-	}
-	// The notice must tell the model to relay the question to the user and
-	// wait for their reply in the conversation, rather than instructing it
-	// to answer unconditionally — the old wording ("Reply with
-	// answer_job(...)") is exactly what drove the model to invent an answer
-	// on the user's behalf. There is no dedicated slash command any more:
-	// the model itself relays the reply via answer_job once it has one.
-	if !strings.Contains(notice, "Relay this question to the user") {
-		t.Errorf("the notice must tell the model to relay to the user, not invent an answer: %q", notice)
-	}
-	if strings.Contains(notice, "/answer") {
-		t.Errorf("the notice must not point at a /answer command — it no longer exists: %q", notice)
-	}
-}
-
 // TestWiring_BG7_CompletionNoticeTriggersNextLLMRequest pins the complete
 // handoff: a completion notice is queued, the TUI-style NextMessages callback
 // drains it, and agent.Run performs another model request rather than merely

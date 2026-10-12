@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 )
@@ -10,9 +9,12 @@ import (
 // The orchestrator gets it once.
 func TestAsk_ToOrchestrator_DeliveredOnce(t *testing.T) {
 	withTestWiring(t)
-	publishAsk(appBus, "", "job-ask-1", 1, "[background job] Q1")
+	if _, err := publishAsk(appBus, "", "job-ask-1", "Q1"); err != nil {
+		t.Fatalf("publishAsk: %v", err)
+	}
 
-	if got := drainNotices(); len(got) != 1 || bodyOf(got[0]) != "[background job] Q1" {
+	got := drainNotices()
+	if len(got) != 1 || !strings.Contains(bodyOf(got[0]), `asks: "Q1"`) {
 		t.Fatalf("orchestrator drain = %q, want the question once", got)
 	}
 	if again := drainNotices(); len(again) != 0 {
@@ -27,9 +29,11 @@ func TestAsk_ToLiveParent_ReachesItsInboxOnly(t *testing.T) {
 	parent, release := startLiveJob(t, reg)
 	defer release()
 
-	publishAsk(appBus, parent, "job-child", 1, "[background job] Q2")
+	if _, err := publishAsk(appBus, parent, "job-child", "Q2"); err != nil {
+		t.Fatalf("publishAsk: %v", err)
+	}
 
-	if got := agentInboxes.drain(parent); len(got) != 1 || bodyOf(got[0]) != "[background job] Q2" {
+	if got := agentInboxes.drain(parent); len(got) != 1 || !strings.Contains(bodyOf(got[0]), `asks: "Q2"`) {
 		t.Fatalf("parent inbox = %q, want the question once", got)
 	}
 	if got := drainNotices(); len(got) != 0 {
@@ -37,77 +41,15 @@ func TestAsk_ToLiveParent_ReachesItsInboxOnly(t *testing.T) {
 	}
 }
 
-// TestAskDedup_MarkBeforePublish marks a question before it is published. The
-// question is then left out of the drain.
-func TestAskDedup_MarkBeforePublish(t *testing.T) {
+// TestAsk_PublishErrorIsReturned publishes a question on a closed bus. The
+// call must not panic, and it must return the error.
+func TestAsk_PublishErrorIsReturned(t *testing.T) {
 	withTestWiring(t)
-	markAskShown("job-dedup-1", 1)
-	publishAsk(appBus, "", "job-dedup-1", 1, "[background job] Q3")
-
-	if got := drainNotices(); len(got) != 0 {
-		t.Fatalf("drain = %q, want the marked question left out", got)
-	}
-}
-
-// TestAskDedup_PublishBeforeMark publishes a question and marks it while it
-// still waits in the queue. The drain still leaves it out.
-func TestAskDedup_PublishBeforeMark(t *testing.T) {
-	withTestWiring(t)
-	publishAsk(appBus, "", "job-dedup-2", 1, "[background job] Q4")
-	markAskShown("job-dedup-2", 1)
-
-	if got := drainNotices(); len(got) != 0 {
-		t.Fatalf("drain = %q, want the marked question left out", got)
-	}
-}
-
-// TestAskDedup_OtherSeqWithSameText keeps a later question with the same text
-// when only the first one was marked. The key is the seq, not the text.
-func TestAskDedup_OtherSeqWithSameText(t *testing.T) {
-	withTestWiring(t)
-	markAskShown("job-dedup-3", 1)
-	publishAsk(appBus, "", "job-dedup-3", 1, "[background job] same text")
-	publishAsk(appBus, "", "job-dedup-3", 2, "[background job] same text")
-
-	got := drainNotices()
-	if len(got) != 1 || bodyOf(got[0]) != "[background job] same text" {
-		t.Fatalf("drain = %q, want only the second question", got)
-	}
-}
-
-// TestAskDedup_MidLevelInbox marks a question that a handoff carried. The
-// middle agent's inbox does not show it again, and a later question still
-// arrives.
-func TestAskDedup_MidLevelInbox(t *testing.T) {
-	reg, _ := withTestWiring(t)
-	parent, release := startLiveJob(t, reg)
-	defer release()
-
-	publishAsk(appBus, parent, "job-deep", 1, "[background job] first")
-	markAskShown("job-deep", 1)
-	publishAsk(appBus, parent, "job-deep", 2, "[background job] second")
-
-	got := agentInboxes.drain(parent)
-	if len(got) != 1 || bodyOf(got[0]) != "[background job] second" {
-		t.Fatalf("parent inbox = %q, want only the second question", got)
-	}
-}
-
-// TestAsk_PublishErrorIsLoggedNotFatal publishes a question on a closed bus.
-// The call must not panic, and the error must be logged.
-func TestAsk_PublishErrorIsLoggedNotFatal(t *testing.T) {
-	withTestWiring(t)
-	var log bytes.Buffer
-	orig := busLog
-	busLog = &log
-	t.Cleanup(func() { busLog = orig })
 
 	closed := newAppBus("")
 	closed.Close()
-	publishAsk(closed, "", "job-closed", 1, "[background job] Q5")
-
-	if !strings.Contains(log.String(), "not published") {
-		t.Fatalf("log = %q, want the publish error", log.String())
+	if _, err := publishAsk(closed, "", "job-closed", "Q5"); err == nil {
+		t.Fatal("publishAsk on a closed bus returned no error")
 	}
 }
 
@@ -116,10 +58,12 @@ func TestAsk_PublishErrorIsLoggedNotFatal(t *testing.T) {
 // the parent.
 func TestAsk_ToFinishedParent_GoesToOrchestratorTagged(t *testing.T) {
 	withTestWiring(t)
-	publishAsk(appBus, "job-finished", "job-child", 1, "[background job] Q6")
+	if _, err := publishAsk(appBus, "job-finished", "job-child", "Q6"); err != nil {
+		t.Fatalf("publishAsk: %v", err)
+	}
 
 	got := drainNotices()
-	if len(got) != 1 || !strings.Contains(got[0], "job-finished") || !strings.HasSuffix(got[0], "[background job] Q6") {
+	if len(got) != 1 || !strings.Contains(got[0], "job-finished") || !strings.Contains(got[0], `asks: "Q6"`) {
 		t.Fatalf("orchestrator drain = %q, want the question tagged with job-finished", got)
 	}
 }

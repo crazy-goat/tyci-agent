@@ -848,11 +848,6 @@ func wireTools() {
 	// against real background jobs — /btw side-conversations and async
 	// subagents alike — instead of each running on its own registry.
 	tools.SetJobWaiter(jobWaiterAdapter{reg: JobRegistry})
-	// runWithHandoff's watcher and handoff-message peek go through
-	// WaitObserve, not Wait — see JobObserver's doc comment (batch-2 review
-	// finding C1) for why counting them as ordinary "wait" callers would
-	// suppress the only delivery a question had.
-	tools.SetJobObserver(jobObserverAdapter{reg: JobRegistry})
 	tools.SetJobStarter(jobStarterAdapter{reg: JobRegistry})
 	tools.SetJobAsker(jobAskerAdapter{reg: JobRegistry})
 	tools.SetJobExtensionRequester(jobExtensionRequesterAdapter{reg: JobRegistry})
@@ -931,43 +926,6 @@ func forwardJobEvent(j jobs.Job) {
 	// before it returns the job ID. It closes on the terminal event.
 	if agentInboxes != nil {
 		inboxEvent(agentInboxes, j)
-	}
-
-	// A job that called "ask_parent" is now blocked, and it stays blocked until
-	// someone calls "answer_job" or its wall-clock limit expires — at which
-	// point everything it had done is thrown away. Relying on the parent
-	// to poll for that is not good enough: it has no reason to suspect a
-	// question is pending, and a model that forgets to poll silently
-	// wastes the whole child run. So the question is pushed into the
-	// parent's next turn (and wakes an idle REPL) the same way a finished
-	// background command is.
-	//
-	// j.QuestionHasWaiter (B7) is true when some caller was already
-	// blocked inside jobs.Registry.Wait — specifically Wait, never
-	// WaitObserve — for this exact job the moment this question was
-	// posed. Only the "wait" tool goes through Wait: a blocking
-	// subagent call's own handoff watch (tools/subagent.go's
-	// watchForWaiting) deliberately goes through WaitObserve instead,
-	// since it only wakes an unrelated select and never itself
-	// reports the question to anyone (batch-2 review finding C1 — see
-	// jobs.Registry.WaitObserve's doc comment). A genuine Wait caller
-	// is about to receive the same question back as its own,
-	// synchronous Wait/wait() result (see JobStatus.Waiting), so
-	// queuing this notice too would deliver the same question twice in
-	// one turn. Skip it in that case; the notice path stays the
-	// authoritative (and only) one otherwise.
-	if j.Status == jobs.StatusWaitingAnswer && !j.QuestionHasWaiter {
-		text := fmt.Sprintf(
-			"[background job] %s is BLOCKED waiting for an answer: %q (job_id=%s)\n"+
-				"Relay this question to the user in your reply, wait for their answer in the conversation, then deliver it — do not invent an answer on their behalf. "+
-				"Only call answer_job(job_id=%q, text=\"...\") yourself if you already genuinely know the answer. "+
-				"Until it is answered it makes no progress, and its work is discarded when it times out.",
-			j.Description, j.Question, j.ID, j.ID)
-
-		// The ask goes to the job that spawned j, or to the orchestrator when
-		// j has no parent. The bus reroutes it when that parent has finished,
-		// and dedups it against a handoff message (see bus_wiring.go).
-		publishAsk(appBus, j.ParentID, j.ID, j.QuestionSeq, text)
 	}
 }
 

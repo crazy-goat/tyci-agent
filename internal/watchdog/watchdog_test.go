@@ -189,30 +189,3 @@ func TestTick_SubMinuteIdleShowsSeconds(t *testing.T) {
 		t.Fatalf("got %v", r.msgs)
 	}
 }
-
-func TestTick_IgnoresWaitingAnswer(t *testing.T) {
-	r := newRig(t)
-	c := r.job(jobs.KindSubagent, "")
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		r.reg.Ask(context.Background(), c.ID, "q?")
-	}()
-	t.Cleanup(func() {
-		for !r.reg.Answer(c.ID, "a", false) {
-			time.Sleep(time.Millisecond)
-		}
-		<-done
-	})
-	for waiting := false; !waiting; time.Sleep(time.Millisecond) {
-		for _, j := range r.reg.List() {
-			if j.ID == c.ID && j.Status == jobs.StatusWaitingAnswer {
-				waiting = true
-			}
-		}
-	}
-	r.tick(time.Hour)
-	if len(r.msgs) != 0 {
-		t.Fatalf("got %v", r.msgs)
-	}
-}

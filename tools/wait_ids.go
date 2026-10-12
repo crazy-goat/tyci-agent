@@ -86,7 +86,7 @@ func (t *WaitTool) runIDs(ctx context.Context, callerJobID string, ids []string,
 				return ToolResult{Type: "result", Success: false, Error: unknownJobIDError}
 			}
 			statuses[i] = st
-			if st.Done || st.Waiting {
+			if st.Done {
 				settled++
 			}
 		}
@@ -120,8 +120,6 @@ func waitIDsResult(ids []string, statuses []JobStatus, clampedNote string, timed
 			lines = append(lines, fmt.Sprintf("job_id=%s: finished: %s", id, st.Content))
 		case st.Done:
 			lines = append(lines, fmt.Sprintf("job_id=%s: failed: %s", id, st.Error))
-		case st.Waiting:
-			lines = append(lines, fmt.Sprintf("job_id=%s: waiting for an answer: %q. Relay it to the user unless you truly know the answer, then call answer_job.", id, st.Question))
 		default:
 			lines = append(lines, fmt.Sprintf("job_id=%s: still running", id))
 		}

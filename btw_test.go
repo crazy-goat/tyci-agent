@@ -298,39 +298,6 @@ func TestJobWaiterAdapter_TranslatesProgressHistoryAndTruncation(t *testing.T) {
 	}
 }
 
-// TestJobObserverAdapter_TranslatesProgressHistoryAndTruncation is
-// jobWaiterAdapter's test above, mirrored for jobObserverAdapter — the two
-// adapters translate the same jobs.Job fields independently (see
-// jobObserverAdapter's own doc comment for why they are not allowed to
-// share a method signature), so a fix to one's translation would not
-// necessarily catch a miss in the other's.
-func TestJobObserverAdapter_TranslatesProgressHistoryAndTruncation(t *testing.T) {
-	reg, _ := withTestWiring(t)
-	adapter := jobObserverAdapter{reg: reg}
-
-	job := reg.Start(context.Background(), "chatty observer test", jobs.KindOther, "", func(context.Context, string) (string, bool, error) {
-		return "done", false, nil
-	})
-
-	const notes = 30
-	for i := 0; i < notes; i++ {
-		if !reg.SetProgress(job.ID, fmt.Sprintf("note %d", i)) {
-			t.Fatalf("SetProgress failed for note %d", i)
-		}
-	}
-
-	status, ok := adapter.Observe(context.Background(), job.ID, time.Second)
-	if !ok {
-		t.Fatal("expected job to be found")
-	}
-	if len(status.ProgressHistory) == 0 || len(status.ProgressHistory) >= notes {
-		t.Fatalf("expected a bounded, non-empty ProgressHistory (< %d entries), got %d: %v", notes, len(status.ProgressHistory), status.ProgressHistory)
-	}
-	if !status.ProgressHistoryTruncated {
-		t.Error("expected ProgressHistoryTruncated=true after reporting far more notes than the cap retains")
-	}
-}
-
 // TestBtwPromotionAdapter_PreservesTranscriptAndCreatesOneSubthread pins the
 // handoff contract: promotion consumes a completed evaluation once, starts one
 // real subagent job, and gives it every message from the side conversation

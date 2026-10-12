@@ -83,16 +83,9 @@ func BackgroundBashEnabled() bool { return backgroundBashEnabled.Load() && getJo
 // package needs. The main conversation's notices travel on the bus; main()
 // wires an implementation with SetJobNotifier.
 //
-// MarkAskShown tells the bus dedup (see bus_wiring.go) that a handoff message
-// already carried question seq of job jobID, so the notice of that ask is left
-// out of the next drain. It keys on seq, not on the question text, because
-// jobs.Job.QuestionSeq is unique per ask (item 54 review finding 1). handOff
-// (subagent.go) is the only caller.
-//
 // Queued returns how many notices reached the main conversation. wait compares
 // two calls to see whether a new notice arrived.
 type JobNotifier interface {
-	MarkAskShown(jobID string, seq int)
 	Queued() uint64
 }
 

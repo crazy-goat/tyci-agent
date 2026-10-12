@@ -257,9 +257,6 @@ func jobLinePrefix(j jobs.Job, idWidth int) string {
 // jobLineText returns the description of a job line, with the progress note.
 func jobLineText(j jobs.Job) string {
 	text := j.Description
-	if j.Status == jobs.StatusWaitingAnswer && j.Question != "" {
-		text = fmt.Sprintf("asks: %q", j.Question)
-	}
 	// A waiting question is actionable and must remain the sole body text:
 	// appending a long progress note would make normal-width lines truncate the
 	// question before the person can read what needs answering.

@@ -45,7 +45,7 @@ func TestWiring_StressChildrenAndAsk(t *testing.T) {
 			for n := range 50 {
 				publishNotice(appBus, "", fmt.Sprintf("child %02d notice %02d", child, n), false)
 			}
-			publishAsk(appBus, "", fmt.Sprintf("job-stress-%02d", child), 1, "[background job] stress question")
+			_, _ = publishAsk(appBus, "", fmt.Sprintf("job-stress-%02d", child), "stress question")
 		})
 	}
 	wg.Wait()

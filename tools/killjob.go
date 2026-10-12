@@ -74,7 +74,6 @@ type JobDetailSource interface {
 	Status() string
 	Description() string
 	StartedAt() time.Time
-	Question() string
 }
 
 // jobLister is nil until SetJobLister is called. Unset, the inside-a-child

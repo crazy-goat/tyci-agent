@@ -9,8 +9,12 @@ const (
 	// KindNoticeCompletion tells a parent that a job or a question finished.
 	// It also carries the inbox warning.
 	KindNoticeCompletion Kind = "notice.completion"
-	// KindAskRequest is a question that an agent asks its parent.
+	// KindAskRequest is a question that an agent asks its parent. Its Seq is
+	// the question id (q<Seq>) that wait and answer_job use.
 	KindAskRequest Kind = "ask.request"
+	// KindAskReply is the answer that a parent gives to a question. Its
+	// ReplyTo is the Seq of the question.
+	KindAskReply Kind = "ask.reply"
 	// KindAgentMessage is a message from one agent to another.
 	KindAgentMessage Kind = "agent.message"
 	// KindBtwAnswer is the answer of a btw fork.
@@ -32,10 +36,13 @@ type Completion struct {
 
 // AskRequest is the payload of KindAskRequest.
 type AskRequest struct {
-	Agent       string `json:"agent"`
-	Question    string `json:"question"`
-	QuestionSeq int    `json:"question_seq"`
-	Text        string `json:"text"`
+	Agent    string `json:"agent"`
+	Question string `json:"question"`
+}
+
+// AskReply is the payload of KindAskReply.
+type AskReply struct {
+	Answer string `json:"answer"`
 }
 
 // AgentMessage is the payload of KindAgentMessage.
@@ -72,7 +79,6 @@ type JobStatus struct {
 	Progress     string    `json:"progress"`
 	Result       string    `json:"result"`
 	Err          string    `json:"err"`
-	Question     string    `json:"question"`
 	Started      time.Time `json:"started"`
 	Ended        time.Time `json:"ended"`
 	LastActivity time.Time `json:"last_activity"`
@@ -93,6 +99,7 @@ func init() {
 	Register[JobStatus](KindJobStatus, Latest, jobStatusKey)
 	Register[Completion](KindNoticeCompletion, Durable, nil)
 	Register[AskRequest](KindAskRequest, Durable, nil)
+	Register[AskReply](KindAskReply, Durable, nil)
 	Register[AgentMessage](KindAgentMessage, Durable, nil)
 	Register[BtwAnswer](KindBtwAnswer, Durable, nil)
 	Register[PingMissed](KindPingMissed, Durable, nil)

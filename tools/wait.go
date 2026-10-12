@@ -48,20 +48,6 @@ type JobStatus struct {
 	Success bool
 	Content string
 	Error   string
-	// Waiting is true when the job is currently blocked inside an
-	// "ask_parent" tool call, waiting for someone to call "answer_job" on
-	// it. Only meaningful when Done is false.
-	Waiting bool
-	// Question is the pending question text while Waiting is true.
-	Question string
-	// QuestionSeq is the ask that produced Question (jobs.Job.QuestionSeq
-	// mirrored) — an unforgeable per-ask id, unlike Question itself, which
-	// is free text a job can pose identically more than once across its
-	// lifetime. handOff's pendingQuestions peek uses this, not Question
-	// text, to key JobNotifier.MarkAskShown so the "already shown"
-	// mark from one ask can never be mistaken for covering a later,
-	// identically-worded one (item 54 review finding 1).
-	QuestionSeq int
 	// Progress is the last status note recorded for the job, if any —
 	// either an explicit "report_progress" call, or (the dominant source in
 	// practice) one throttled line of a backgrounded shell command's own
@@ -248,13 +234,6 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 				return ToolResult{Type: "result", Success: true, Content: "job finished: " + status.Content + clampedNote}
 			}
 			return ToolResult{Type: "result", Success: false, Error: status.Error}
-		}
-		if status.Waiting {
-			return ToolResult{
-				Type:    "result",
-				Success: true,
-				Content: fmt.Sprintf("job %s is waiting for an answer: %q. Relay it to the user (or genuinely-known info) unless you truly know the answer — call the \"answer_job\" tool with job_id=%q and that reply to unblock it. Never invent an answer standing in for a human who hasn't replied.%s", jobID, status.Question, jobID, clampedNote),
-			}
 		}
 		// Show the whole retained sequence, not just the latest note: a
 		// job that reported several times (a backgrounded shell command's
@@ -501,7 +480,7 @@ func (t *WaitTool) waitForJob(ctx context.Context, waiter JobWaiter, jobID strin
 		if !ok {
 			return status, false, false, false
 		}
-		if status.Done || status.Waiting {
+		if status.Done {
 			return status, true, false, false
 		}
 		if ctx.Err() != nil {

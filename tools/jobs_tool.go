@@ -51,7 +51,6 @@ func (t *JobsTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			"description": d.Description(),
 			"parent":      v.src.ParentID(),
 			"age":         time.Since(d.StartedAt()).Round(time.Second).String(),
-			"question":    d.Question(),
 		})
 	}
 

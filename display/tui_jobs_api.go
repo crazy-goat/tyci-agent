@@ -66,7 +66,6 @@ func jobFromStatus(st bus.JobStatus, seq uint64) jobs.Job {
 		Progress:     st.Progress,
 		Result:       st.Result,
 		Err:          st.Err,
-		Question:     st.Question,
 		StartedAt:    st.Started,
 		FinishedAt:   st.Ended,
 		LastActivity: st.LastActivity,

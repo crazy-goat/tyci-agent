@@ -145,16 +145,15 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 		jobCtx, cancel = context.WithCancel(ctx)
 	}
 	job := &Job{
-		ID:            nextID(),
-		Description:   description,
-		Kind:          kind,
-		ParentID:      parentID,
-		Status:        StatusRunning,
-		StartedAt:     now,
-		done:          make(chan struct{}),
-		cancel:        cancel,
-		extensionCtx:  extensionCtx,
-		statusChanged: make(chan struct{}),
+		ID:           nextID(),
+		Description:  description,
+		Kind:         kind,
+		ParentID:     parentID,
+		Status:       StatusRunning,
+		StartedAt:    now,
+		done:         make(chan struct{}),
+		cancel:       cancel,
+		extensionCtx: extensionCtx,
 	}
 	// Seed lastActivity to the same instant as StartedAt, so a job that
 	// hasn't done anything yet reads as "idle since start" (a small, correct
@@ -434,74 +433,17 @@ func (r *Registry) List() []Job {
 	return list
 }
 
-// WaiterCount reports how many callers are currently blocked inside Wait
-// (not WaitObserve — see its doc comment) for id, 0 for an unknown id.
-// Production code has no use for this; it exists so a test can synchronize
-// on "a Wait call has actually registered" instead of guessing with a
-// sleep before triggering the transition it wants Wait to catch.
-func (r *Registry) WaiterCount(id string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	job, ok := r.jobs[id]
-	if !ok {
-		return 0
-	}
-	return job.waiters
-}
-
-// signalStatusChangeLocked wakes every Wait call currently blocked on this
-// job's statusChanged (a select reading from a channel that is closed right
-// under it fires immediately, with no ordering requirement against when the
-// select was entered) and arms a fresh channel for the next transition. Ask
-// is the only caller today, and only for the transition INTO
-// StatusWaitingAnswer — see Wait's doc comment on why the reverse
-// transition must not also signal. Caller must hold r.mu.
-func (r *Registry) signalStatusChangeLocked(job *Job) {
-	close(job.statusChanged)
-	job.statusChanged = make(chan struct{})
-}
-
-// Wait blocks until id finishes, enters StatusWaitingAnswer, timeout
-// elapses, or ctx is done — see waitInternal. It counts as a waiter for
-// Job.QuestionHasWaiter's purposes: this is the shape that hands its
-// result back to whoever called it (the "wait" tool, in production), which
-// is what makes it a genuine second delivery path for a pending question.
-// A caller that blocks on the same signal WITHOUT reporting the question
-// to anyone must use WaitObserve instead (see its doc comment for why —
-// batch-2 review finding C1).
-func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (*Job, bool) {
-	return r.waitInternal(ctx, id, timeout, true)
-}
-
-// WaitObserve behaves exactly like Wait — blocking until id finishes,
-// enters StatusWaitingAnswer, timeout elapses, or ctx is done — but does
-// NOT count toward Job.waiters, so it has no effect on QuestionHasWaiter.
+// Wait blocks until id finishes, timeout elapses, or ctx is done, and then
+// returns a snapshot of the job. ok is false when id is unknown.
 //
-// It exists for a caller that watches a job for its OWN purposes without
-// itself becoming a delivery path for the question it might see — see
-// tools/subagent.go's runWithHandoff, whose watcher only wakes an
-// unrelated select; it never hands the question back to anyone. Before
-// this method existed, that watcher used Wait, so Ask saw waiters>0 for
-// essentially every blocking subagent call and suppressed the
-// published event — the ONLY delivery the question had, since the watcher itself
-// delivers nothing. That was batch-2 review finding C1: coupling "is
-// blocked in Wait" with "will report the question" through one counter is
-// wrong whenever a caller does the former without the latter.
-func (r *Registry) WaitObserve(ctx context.Context, id string, timeout time.Duration) (*Job, bool) {
-	return r.waitInternal(ctx, id, timeout, false)
-}
-
-// waitInternal is Wait and WaitObserve's shared implementation. countAsWaiter
-// distinguishes them — see Wait's and WaitObserve's doc comments.
-func (r *Registry) waitInternal(ctx context.Context, id string, timeout time.Duration, countAsWaiter bool) (*Job, bool) {
+// id may have been pruned from r.jobs (pruneTerminalLocked) after finishing.
+// If it was a subagent job, its final snapshot survives in tombstones (see
+// tombstoneCap's doc comment), so Wait returns that instead of reporting an
+// unknown job.
+func (r *Registry) Wait(ctx context.Context, id string, timeout time.Duration) (*Job, bool) {
 	r.mu.Lock()
 	job, ok := r.jobs[id]
 	if !ok {
-		// id may have been pruned from r.jobs (pruneTerminalLocked) after
-		// finishing — if it was a subagent job, its final snapshot survives
-		// in tombstones (see tombstoneCap's doc comment), so degrade
-		// gracefully to the real, already-terminal result instead of
-		// reporting "unknown job_id" for something that actually finished.
 		if snap, tombstoned := r.tombstones[id]; tombstoned {
 			r.mu.Unlock()
 			return &snap, true
@@ -509,186 +451,21 @@ func (r *Registry) waitInternal(ctx context.Context, id string, timeout time.Dur
 		r.mu.Unlock()
 		return nil, false
 	}
-	// Registered while still holding r.mu so Ask (which also takes r.mu to
-	// flip Status) can never see a stale count — either this call is
-	// counted before Ask reads waiters, or Ask's whole status flip (and
-	// QuestionHasWaiter decision) happens before this one is registered.
-	// See jobs.Job's waiters doc comment and Ask's QuestionHasWaiter use.
-	if countAsWaiter {
-		job.waiters++
-	} else {
-		job.observers++
-	}
-	statusCh := job.statusChanged
 	r.mu.Unlock()
 
-	// FRAGILE (batch-2 review round 2 finding D6): everything between here
-	// and the matching job.waiters--/job.observers-- below runs with NO
-	// defer to guarantee the decrement happens — that is deliberate (see
-	// the decrement's own doc comment for why: it must share a single
-	// critical section with the snapshot, which a defer running after a
-	// second Lock cannot do), but it means a future early return added
-	// anywhere in this stretch would leak the increment permanently. A
-	// permanently-leaked waiters count permanently sets QuestionHasWaiter
-	// for that job, which permanently suppresses its ask notices —
-	// silently reintroducing the exact bug (C1) this counter exists to
-	// avoid. Do not add a return between this point and the decrement; if
-	// a new exit path is ever needed here, thread it through so the
-	// decrement still runs on every path, in the same critical section as
-	// whatever snapshot it takes.
-	//
-	// statusCh is closed the moment Ask flips this job INTO
-	// StatusWaitingAnswer (see signalStatusChangeLocked) — never on the way
-	// back out, which would wake an unrelated, non-looping call the
-	// instant some other question got answered and hand it a mid-flight
-	// "running" snapshot instead of the terminal one it actually wants. A
-	// caller that does need to notice the return-to-running transition too
-	// (there isn't one today) would have to poll for it, same as before.
-	//
-	// This gives the one transition that matters the same real-time wake
-	// job.done already gives a normal completion, instead of waiting out
-	// the rest of timeout and finding out on the next poll. Deliberately
-	// NOT special-cased for "already waiting when called": a caller in
-	// that state still wants an ordinary bounded wait for whatever happens
-	// NEXT (an answer arriving, the job being cancelled, ...), not an
-	// instant return of a status it may already know about.
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
 	select {
 	case <-job.done:
-	case <-statusCh:
 	case <-timer.C:
 	case <-ctx.Done():
 	}
 
-	// The decrement happens in the SAME critical section as the snapshot
-	// below — not deferred to run after a second, separate Lock/Unlock.
-	// Deferring it (as an earlier version of this code did) left a window
-	// where this call had already taken its snapshot — possibly "running",
-	// with an empty Question, because its own timeout or ctx was what
-	// ended the select — while still counted as a waiter a fraction longer.
-	// Ask could observe waiters>0 in exactly that window and suppress the
-	// notice for a caller that had, in fact, already returned without ever
-	// seeing the question (batch-2 review finding C2). Folding the
-	// decrement into this lock hold means Ask can only ever see this
-	// call either fully registered (strictly before its snapshot) or
-	// fully gone (strictly after) — never a state the two disagree about.
 	r.mu.Lock()
-	if countAsWaiter {
-		job.waiters--
-	} else {
-		job.observers--
-	}
 	snapshot := job.Snapshot()
 	r.mu.Unlock()
 	return &snapshot, true
-}
-
-// ObserverCount reports how many callers are currently blocked inside
-// WaitObserve (not Wait — see WaiterCount) for id, 0 for an unknown id.
-// Production code has no use for this; it exists so a test can synchronize
-// on "a WaitObserve call has actually registered" instead of a settle
-// sleep before triggering the transition it wants to catch (batch-2 review
-// round 2's "optional if cheap" suggestion).
-func (r *Registry) ObserverCount(id string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	job, ok := r.jobs[id]
-	if !ok {
-		return 0
-	}
-	return job.observers
-}
-
-// Ask lets the running job identified by id pose a blocking question to
-// whoever is watching it (the main thread, or another agent), and blocks
-// until Answer delivers a reply, ctx is cancelled, or the job's own ctx
-// (passed to Start) is done — the latter is what naturally unblocks a
-// forgotten ask once the job's own wall-clock timeout fires, since ctx here
-// is expected to be that same job ctx (or a descendant of it).
-//
-// ok is false when id is unknown, or when ctx is done before an answer
-// arrives; in both cases answer is "" and fromUser is false.
-//
-// fromUser reports who delivered the answer: true for a genuine human
-// reply, false for another agent's reply via the "answer_job" tool (see
-// tools/ask.go's AskTool, which uses this to mark the answer's provenance
-// for the child that receives it). There is no dedicated human-facing
-// command any more — a human's reply reaches a blocked job only by the
-// model relaying it through "answer_job", which always passes false (see
-// AnswerTool.Run) — but the flag itself stays part of the contract in case
-// a future caller ever has a genuine human-sourced answer to deliver
-// directly.
-func (r *Registry) Ask(ctx context.Context, id, question string) (answer string, fromUser bool, ok bool) {
-	r.mu.Lock()
-	job, found := r.jobs[id]
-	if !found {
-		r.mu.Unlock()
-		return "", false, false
-	}
-	job.Status = StatusWaitingAnswer
-	job.Question = question
-	// Unforgeable per-ask key (item 54 review finding 1): Question is free
-	// text a child could pose twice across its lifetime with the exact same
-	// words, which would otherwise make two distinct asks indistinguishable
-	// to anything keying on jobID+question text — see QuestionSeq's doc
-	// comment on Job.
-	job.QuestionSeq++
-	// See jobs.Job's QuestionHasWaiter doc comment: recorded now, while
-	// still holding r.mu, so it reflects exactly the set of Wait calls that
-	// were registered before this question existed — not a count that
-	// could still change underneath it.
-	job.QuestionHasWaiter = job.waiters > 0
-	r.signalStatusChangeLocked(job)
-	if job.answerCh == nil {
-		job.answerCh = make(chan jobAnswer, 1)
-	}
-	answerCh := job.answerCh
-	snapshot := eventSnapshotLocked(job)
-	r.mu.Unlock()
-
-	r.publish(snapshot)
-
-	var result jobAnswer
-	var got bool
-	select {
-	case ans := <-answerCh:
-		result, got = ans, true
-	case <-ctx.Done():
-		result, got = jobAnswer{}, false
-	}
-
-	r.mu.Lock()
-	job.Status = StatusRunning
-	job.Question = ""
-	job.QuestionHasWaiter = false
-	// Deliberately NOT signalStatusChangeLocked here — see its call above
-	// this select and its doc comment: only the transition INTO
-	// StatusWaitingAnswer wakes a blocked Wait early. Signaling this one
-	// too would wake an ordinary, non-looping Wait call (e.g. a plain
-	// "wait until this job finishes") the instant a completely unrelated
-	// question got answered, handing back a mid-flight "running" snapshot
-	// instead of the terminal one that call actually wants.
-	if !got {
-		// ctx.Done() won the select before an answer arrived. A racing
-		// Answer call reads job.answerCh under this same lock, so it can
-		// still land a value into the OLD channel in the narrow window
-		// between the select above and this Lock — Answer would report
-		// "delivered" for a reply nobody is listening for any more.
-		// Replacing the channel (instead of just draining it, which would
-		// need this same lock anyway) means that stale value, if one
-		// lands, is orphaned on a channel this job will never read from
-		// again — not left buffered for the NEXT Ask on this job to
-		// mistake for its own answer.
-		job.answerCh = nil
-	}
-	snapshot = eventSnapshotLocked(job)
-	r.mu.Unlock()
-
-	r.publish(snapshot)
-
-	return result.text, result.fromUser, got
 }
 
 // RequestExtension registers one bounded timeout-extension request for a
@@ -827,34 +604,6 @@ func (r *Registry) ResolveExtension(id, requestID string, approve bool) bool {
 	return true
 }
 
-// Answer delivers text to a job currently waiting on Ask, unblocking it.
-// fromUser must be true for a genuine human reply and false for another
-// agent's reply (the only caller today, the "answer_job" tool, always
-// passes false — see its doc comment) — Ask hands it back to the asker so
-// the answer's provenance survives the round trip.
-//
-// Returns false when id is unknown, the job is not currently
-// StatusWaitingAnswer, or no answerCh exists yet — including the race where
-// two answers arrive for the same question or the asker already gave up
-// (ctx done), in which case the non-blocking send below simply does nothing.
-func (r *Registry) Answer(id, text string, fromUser bool) bool {
-	r.mu.Lock()
-	job, ok := r.jobs[id]
-	if !ok || job.Status != StatusWaitingAnswer || job.answerCh == nil {
-		r.mu.Unlock()
-		return false
-	}
-	answerCh := job.answerCh
-	r.mu.Unlock()
-
-	select {
-	case answerCh <- jobAnswer{text: text, fromUser: fromUser}:
-		return true
-	default:
-		return false
-	}
-}
-
 // progressHistoryCap bounds the number of notes kept per job
 // (Job.ProgressHistory), oldest evicted first once full — see
 // SetProgress. This is NOT an overflow guard for a rare event: an explicit
@@ -931,12 +680,10 @@ func truncateProgressEntry(s string) string {
 // This is a single check-AND-set, not two separate calls — a true result
 // stamps lastHeartbeatNudgeAt to now in the same critical section, so a
 // caller polling this once per loop iteration can never observe a stale
-// "yes, nudge" for longer than one call. Same discipline as Ask's
-// QuestionHasWaiter above.
+// "yes, nudge" for longer than one call.
 //
-// Returns false for a non-running job (StatusWaitingAnswer is already a dead
-// end the parent has to unblock, not something a self-nudge fixes; a
-// terminal job has nothing left to report) or an unknown id, and for
+// Returns false for a non-running job (a terminal job has nothing left to
+// report) or an unknown id, and for
 // after <= 0 (nothing would ever elapse).
 func (r *Registry) NeedsProgressHeartbeat(id string, after time.Duration) bool {
 	if after <= 0 {
@@ -1004,7 +751,7 @@ func (r *Registry) AutoProgress(id string, after time.Duration, text string) boo
 // map can be mutated concurrently by pruning), then releases it before
 // writing the timestamp via the job's own atomic field. Nothing else the
 // registry mutex guards is touched here, so this never contends with
-// Start/List/Ask/Answer/SetProgress. A call for an unknown id is silently a
+// Start/List/SetProgress. A call for an unknown id is silently a
 // no-op.
 func (r *Registry) TouchActivity(id string) {
 	r.mu.Lock()
@@ -1271,17 +1018,8 @@ func truncateTombstoneProgressHistory(history []string) []string {
 	return out
 }
 
-// PendingLines describes the jobs that are still outstanding, one line each,
-// blocked ones first.
-//
-// It exists for the agent loop's end-of-turn check (agent.Config.PendingJobs),
-// and the ordering is the point: a running job is something to wait for or
-// leave alone, while a job blocked on a question is a dead end that only the
-// current turn can open — it makes no progress and its work is discarded when
-// it times out.
 // HasActiveSubagents reports whether at least one subagent is genuinely
-// running. A waiting-for-answer child is intentionally excluded: it needs the
-// normal job reminder so the model can relay or answer its question.
+// running.
 func (r *Registry) HasActiveSubagents() bool {
 	for _, j := range r.List() {
 		if j.Kind == KindSubagent && j.Status == StatusRunning {
@@ -1291,12 +1029,13 @@ func (r *Registry) HasActiveSubagents() bool {
 	return false
 }
 
+// PendingLines describes the jobs that are still outstanding, one line each.
+//
+// It exists for the agent loop's end-of-turn check (agent.Config.PendingJobs).
 func (r *Registry) PendingLines() []string {
-	var blocked, running []string
+	var running []string
 	for _, j := range r.List() {
 		switch j.Status {
-		case StatusWaitingAnswer:
-			blocked = append(blocked, fmt.Sprintf("WAITING FOR ANSWER: %s (job_id=%s) asks: %q", j.Description, j.ID, j.Question))
 		case StatusRunning:
 			line := fmt.Sprintf("running: %s (job_id=%s)", j.Description, j.ID)
 			if j.Progress != "" {
@@ -1305,7 +1044,7 @@ func (r *Registry) PendingLines() []string {
 			running = append(running, line)
 		}
 	}
-	return append(blocked, running...)
+	return running
 }
 
 // appendProgressLocked appends entry to the job's bounded progress history.

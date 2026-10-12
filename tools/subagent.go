@@ -203,60 +203,6 @@ func getJobStarter() JobStarter {
 	return jobStarter
 }
 
-// JobObserver watches a job for StatusWaitingAnswer purely to wake
-// something else up — never itself reporting the question to anyone — so
-// it must not count as a "waiter" for Job.QuestionHasWaiter's purposes.
-// runWithHandoff's watcher (watchForWaiting) and handOff's own
-// pendingQuestions peek are exactly that kind of caller. Must be wired to
-// jobs.Registry.WaitObserve, NOT Wait.
-//
-// Observe is a distinct method name from JobWaiter's Wait ON PURPOSE
-// (batch-2 review round 2 finding D1): JobWaiter and JobObserver used to
-// share the exact same method signature (Wait(ctx, id, timeout)
-// (JobStatus, bool)), which meant SetJobObserver(jobWaiterAdapter{...}) —
-// wiring the counting Wait in by mistake — compiled silently and would
-// have reinstated finding C1 in full. A different method name makes that
-// specific mistake a compile error instead of a silent regression.
-//
-// Before this type existed, runWithHandoff's watcher used the same
-// JobWaiter the "wait" tool uses, which made jobs.Registry.Ask see
-// waiters>0 for essentially every blocking subagent call and suppress its
-// onEvent notice — the ONLY delivery a question had, since the watcher
-// itself delivers nothing on its own. That was batch-2 review finding C1:
-// two different meanings ("I will report this" vs "I am just watching")
-// were coupled through one counter. See jobs.Registry.WaitObserve's doc
-// comment.
-type JobObserver interface {
-	Observe(ctx context.Context, id string, timeout time.Duration) (JobStatus, bool)
-}
-
-// jobObserverGlobal is nil until SetJobObserver is called; runWithHandoff's
-// watcher and handOff's pendingQuestions peek simply do nothing without it.
-// Guarded by jobObserverMu for the same reason jobStarterMu guards
-// jobStarter (see its doc comment): read from job goroutines that outlive
-// the tool call that started them, while SetJobObserver is called from the
-// setup path.
-var (
-	jobObserverMu     sync.RWMutex
-	jobObserverGlobal JobObserver
-)
-
-// SetJobObserver wires runWithHandoff's watcher and handoff-message peek to
-// a JobObserver — in production, an adapter over the app's shared
-// jobs.Registry that calls WaitObserve, never Wait. Called once from
-// main().
-func SetJobObserver(o JobObserver) {
-	jobObserverMu.Lock()
-	jobObserverGlobal = o
-	jobObserverMu.Unlock()
-}
-
-func getJobObserver() JobObserver {
-	jobObserverMu.RLock()
-	defer jobObserverMu.RUnlock()
-	return jobObserverGlobal
-}
-
 // subagentTask represents a single task for a subagent.
 type subagentTask struct {
 	Task          string `json:"task"`
@@ -1001,19 +947,9 @@ func (t *SubagentTool) runAsync(ctx context.Context, tasks []subagentTask) ToolR
 	return ToolResult{Type: "result", Success: true, Content: spawnedJobsMessage(spawned, nil, nil)}
 }
 
-// pendingQuestion is one still-running child's currently-pending question,
-// as pendingQuestions finds it. Seq is jobs.Job.QuestionSeq mirrored — an
-// unforgeable per-ask id, unlike Text, which is free text a job can pose
-// identically more than once across its lifetime (item 54 review finding
-// 1). the ask mark in handOff keys on Seq, not Text, for exactly that reason.
-type pendingQuestion struct {
-	Text string
-	Seq  int
-}
-
 // spawnedJobsMessage is what the parent reads after children go to the
 // background: the ids (and, where known, a pending question — see
-// questions/pendingQuestions) as JSON on the first line, then what the
+// questions) as JSON on the first line, then what the
 // notices mean.
 //
 // inline, when non-empty, is the text for children that finished before the
@@ -1026,7 +962,7 @@ type pendingQuestion struct {
 // that a child can block on a question and needs an answer, and a blocked
 // child that nobody answers burns its whole wall-clock limit and then discards
 // everything it did.
-func spawnedJobsMessage(spawned []*spawnedTask, inline []subagentResult, questions map[string]pendingQuestion) string {
+func spawnedJobsMessage(spawned []*spawnedTask, inline []subagentResult, questions map[string]string) string {
 	type entry struct {
 		Task     string `json:"task"`
 		JobID    string `json:"job_id"`
@@ -1034,7 +970,7 @@ func spawnedJobsMessage(spawned []*spawnedTask, inline []subagentResult, questio
 	}
 	out := make([]entry, 0, len(spawned))
 	for _, st := range spawned {
-		out = append(out, entry{Task: st.task.Task, JobID: st.jobID, Question: questions[st.jobID].Text})
+		out = append(out, entry{Task: st.task.Task, JobID: st.jobID, Question: questions[st.jobID]})
 	}
 	data, err := json.Marshal(out)
 	if err != nil {
@@ -1062,48 +998,6 @@ You will also be told when one finishes, and when a DIFFERENT child (one with no
 
 Do not call wait before you are told: it can only say "still running", which the next notice would have told you for free.`, len(spawned))
 	return b.String()
-}
-
-// watchForWaiting blocks on waiter.Wait for jobID, in a loop, until it
-// reports the job waiting on a question, the job is done, or ctx ends the
-// watch — then returns. On "waiting" it sends (non-blocking, into a
-// capacity-1 channel — see runWithHandoff) on wake so runWithHandoff's
-// select notices without polling.
-//
-// observer is a JobObserver, NOT a JobWaiter: this watcher only wakes an
-// unrelated select (runWithHandoff's) and never itself hands the question
-// back to anyone, so it must not count as a waiter for
-// Job.QuestionHasWaiter's purposes — see JobObserver's doc comment
-// (batch-2 review finding C1).
-//
-// The first call asks for timeout 0 rather than the long timeout every
-// later call uses. jobs.Registry.WaitObserve wakes immediately on a
-// TRANSITION into StatusWaitingAnswer (via its internal statusChanged
-// channel), but deliberately does not fast-return just because the job
-// already happens to be waiting when called (see its doc comment — a
-// plain "waiting right now" is not itself a wake-worthy event for every
-// caller). This watcher's very first call can lose exactly that race: the
-// child may have already asked its question before this goroutine got
-// scheduled at all, in which case there will be no future transition to
-// wake it. Asking with timeout 0 fires the select's timer branch almost at
-// once, so this call reports the CURRENT state instead of settling in for
-// however long the long-timeout wait would otherwise run.
-func watchForWaiting(ctx context.Context, observer JobObserver, jobID string, wake chan<- struct{}) {
-	timeout := time.Duration(0)
-	for {
-		status, ok := observer.Observe(ctx, jobID, timeout)
-		if !ok || status.Done || ctx.Err() != nil {
-			return
-		}
-		if status.Waiting {
-			select {
-			case wake <- struct{}{}:
-			default:
-			}
-			return
-		}
-		timeout = time.Hour
-	}
 }
 
 // runWithHandoff runs a blocking subagent call as background jobs and waits
@@ -1160,16 +1054,6 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 	// this mode has besides every child finishing.
 	var timerC <-chan time.Time
 	var pollC <-chan time.Time
-	// waitingWakeC fires the moment any child THIS CALL spawned enters
-	// StatusWaitingAnswer — see watchForWaiting. Without it, this select was
-	// blind to a child blocked on a question: it could only notice one
-	// indirectly, by sitting out the rest of timerC/pollC/ctx.Done() first,
-	// which is the most expensive way to lose a turn there is (see
-	// agent/agent.go:97-101's doc comment on why). Also nil when handoff is
-	// false: a child cannot reach StatusWaitingAnswer at all in that mode
-	// (AskUnroutableCtxKey above makes ask_parent fail before ever calling
-	// Ask), so there is nothing to watch for.
-	var waitingWakeC <-chan struct{}
 	if handoff {
 		timer := time.NewTimer(SubagentBackgroundAfter())
 		defer timer.Stop()
@@ -1182,24 +1066,6 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 		poll := time.NewTicker(userPendingPoll)
 		defer poll.Stop()
 		pollC = poll.C
-
-		if observer := getJobObserver(); observer != nil {
-			// Derived from ctx (not detached): once this call returns —
-			// handed off, cancelled, or every child finished — nothing
-			// reads wake any more, and this stops the watcher goroutines
-			// from blocking on WaitObserve forever.
-			watchCtx, cancelWatch := context.WithCancel(ctx)
-			defer cancelWatch()
-			// Buffered: a child that asks its question before this select
-			// is even entered (e.g. between spawn and here) must not lose
-			// its wake waiting for a receiver that has not started
-			// selecting yet.
-			wake := make(chan struct{}, 1)
-			for _, st := range spawned {
-				go watchForWaiting(watchCtx, observer, st.jobID, wake)
-			}
-			waitingWakeC = wake
-		}
 	}
 
 	for len(waiting) > 0 {
@@ -1214,28 +1080,18 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 		select {
 		case <-next.done:
 			delete(waiting, next)
+		case <-timerC:
+			return t.handOff(spawned), true
 		case <-pollC:
 			if UserPending() {
-				return t.handOff(ctx, spawned, true), true
+				return t.handOff(spawned), true
 			}
-		case <-waitingWakeC:
-			// A spawned child is now blocked on ask_parent. Hand off
-			// immediately so the parent's turn ends now — the queued
-			// ask-notice (jobs.Registry.Ask's onEvent hook) can then reach
-			// it right away instead of after the rest of this window.
-			return t.handOff(ctx, spawned, true), true
-		case <-timerC:
-			return t.handOff(ctx, spawned, true), true
 		case <-ctx.Done():
 			if handoff {
 				// The parent turn was cancelled (Esc). The children are
 				// detached and keep going; say so rather than pretending
-				// they stopped. markShown is false here: keeping the
-				// already-queued ask-notice untouched costs at worst a
-				// duplicate on this path, never a silent loss, and that is
-				// the safer default to keep — see
-				// the JobNotifier.MarkAskShown doc comment for why.
-				return t.handOff(ctx, spawned, false), true
+				// they stopped.
+				return t.handOff(spawned), true
 			}
 			// No handoff is available in this mode, so there is nobody to
 			// leave these running for — stop them outright instead of
@@ -1258,25 +1114,8 @@ func (t *SubagentTool) runWithHandoff(ctx context.Context, tasks []subagentTask,
 }
 
 // handOff moves whatever is still running to the background and builds the
-// message: ids for those, full results for those that already finished,
-// plus (see pendingQuestions) the pending question text for any that are,
-// right now, blocked on ask_parent — so the message's promise that "you
-// will be told... when one is BLOCKED on a question" is something it can
-// itself make good on, not only something the onEvent notice path might
-// (batch-2 review finding C1/(b)).
-//
-// markShown controls whether a job's question, once it ends up in the
-// returned message, is also reported to the wired JobNotifier via
-// MarkAskShown — so a "child is blocked" notice already queued for the
-// same job+ask (jobs.Registry.Ask's onEvent hook fires before Ask ever
-// blocks, so that notice is typically queued well before this runs) is left
-// out of the next drain instead of repeating what this message just said.
-// Callers pass false for the one handoff where the safer default is to keep
-// the queued notice untouched rather than suppress it — runWithHandoff's
-// ctx.Done() (Esc) branch, where duplicating it costs far less than risking
-// the only delivery the question ever gets. See
-// the JobNotifier.MarkAskShown doc comment.
-func (t *SubagentTool) handOff(ctx context.Context, spawned []*spawnedTask, markShown bool) ToolResult {
+// message: ids for those, full results for those that already finished.
+func (t *SubagentTool) handOff(spawned []*spawnedTask) ToolResult {
 	var stillRunning []*spawnedTask
 	var finished []subagentResult
 	for _, st := range spawned {
@@ -1299,37 +1138,7 @@ func (t *SubagentTool) handOff(ctx context.Context, spawned []*spawnedTask, mark
 		// handoff decision.
 		return resultsToToolResult(finished)
 	}
-	questions := pendingQuestions(ctx, stillRunning)
-	if markShown {
-		if n := getJobNotifier(); n != nil {
-			for jobID, q := range questions {
-				n.MarkAskShown(jobID, q.Seq)
-			}
-		}
-	}
-	return ToolResult{Type: "result", Success: true, Content: spawnedJobsMessage(stillRunning, finished, questions)}
-}
-
-// pendingQuestions queries the observer (see JobObserver/getJobObserver)
-// for each still-running child's CURRENT status and returns the question
-// (text plus its unforgeable QuestionSeq — see pendingQuestion) for any that
-// are, right now, blocked on ask_parent. A zero-timeout Wait call is a
-// quick, non-blocking-in-practice peek at current status — the same
-// technique watchForWaiting's first call uses, and for the same reason —
-// not a poll loop. nil (not an error) when no observer is wired, e.g. in
-// tests that do not exercise this.
-func pendingQuestions(ctx context.Context, stillRunning []*spawnedTask) map[string]pendingQuestion {
-	observer := getJobObserver()
-	if observer == nil {
-		return nil
-	}
-	out := make(map[string]pendingQuestion, len(stillRunning))
-	for _, st := range stillRunning {
-		if status, ok := observer.Observe(ctx, st.jobID, 0); ok && status.Waiting && status.Question != "" {
-			out[st.jobID] = pendingQuestion{Text: status.Question, Seq: status.QuestionSeq}
-		}
-	}
-	return out
+	return ToolResult{Type: "result", Success: true, Content: spawnedJobsMessage(stillRunning, finished, nil)}
 }
 
 // cancelRemaining is runWithHandoff's handoff=false counterpart to handOff:

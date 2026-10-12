@@ -620,9 +620,6 @@ func (m TuiModel) formatSubagentRow(row subagentTreeRow, width, tokW, costW int)
 
 	icon, color := jobStatusIcon(row.job.Status)
 	label := row.job.Description
-	if row.job.Status == jobs.StatusWaitingAnswer && row.job.Question != "" {
-		label = "asks: " + row.job.Question
-	}
 	if row.continues {
 		label = "↻ " + label
 	}
