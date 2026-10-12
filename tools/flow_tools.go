@@ -52,7 +52,6 @@ var (
 	workflowMgr   WorkflowManager
 )
 
-// SetWorkflowManager wires the workflow_* tools. Until it is called they fail
 // showRunID returns a run number as users see it, "#17". An old id is returned
 // unchanged. tools does not import flow, so it has its own copy of flow.ShowRunID.
 func showRunID(id string) string {
@@ -62,6 +61,7 @@ func showRunID(id string) string {
 	return id
 }
 
+// SetWorkflowManager wires the workflow_* tools. Until it is called they fail
 // with a clear error.
 func SetWorkflowManager(m WorkflowManager) {
 	workflowMgrMu.Lock()
