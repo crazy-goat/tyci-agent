@@ -144,6 +144,17 @@ func (t *WaitTool) setWaiter(w JobWaiter) {
 
 func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	jobID, _ := input["job_id"].(string)
+	ids, multi, idsErr := waitIDs(input)
+	if idsErr != "" {
+		return validationResult(idsErr)
+	}
+	mode, _ := input["mode"].(string)
+	if mode == "" {
+		mode = "any"
+	}
+	if mode != "any" && mode != "all" {
+		return validationResultf("mode must be \"any\" or \"all\", got %q", mode)
+	}
 
 	// A wait blocks without streaming, so the watchdog would read the caller
 	// as idle. Its return counts as activity for the caller's own job.
@@ -151,8 +162,9 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	defer touchJobActivity(callerJobID)
 
 	secRaw, hasSeconds := input["seconds"]
-	if !hasSeconds && jobID == "" {
-		return validationResult("seconds is required for a plain wait (or pass job_id to wait for a job)")
+	isJob := jobID != "" || len(ids) > 0
+	if !hasSeconds && !isJob {
+		return validationResult("seconds is required for a plain wait (or pass job_id or ids to wait for a job)")
 	}
 	seconds := DefaultJobWaitSeconds
 	if hasSeconds {
@@ -164,13 +176,13 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	}
 
 	minSeconds := MinWaitSeconds
-	if jobID != "" {
+	if isJob {
 		minSeconds = JobMinWaitSeconds
 	}
 
 	clampedNote := ""
 	if seconds < minSeconds {
-		if jobID != "" {
+		if isJob {
 			// Worth explaining rather than just stating: the caller asked for
 			// a sleep and is getting a wait for the result, which is what it
 			// meant.
@@ -187,6 +199,9 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	note, _ := input["note"].(string)
 	arrived := newNoticeWatch(callerJobID)
 
+	if multi {
+		return t.runIDs(ctx, callerJobID, ids, mode, time.Duration(seconds)*time.Second, clampedNote, arrived)
+	}
 	if jobID != "" {
 		// Copy the interface value out under RLock once, then use this
 		// local copy for both the nil check and the actual wait below —
