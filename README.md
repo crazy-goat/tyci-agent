@@ -322,6 +322,8 @@ tyci tui
 
 The sidebar (Ctrl+T) has a width you can change. Shift+Left makes it wider and Shift+Right makes it narrower, one column per press. With the sidebar focused, `<` and `>` do the same. The width is a percentage of the terminal width, and it is saved globally in `~/.tyci/tui-state.json` (`sidebar_width_percent`, default `40`). The sidebar keeps at least 36 columns and the chat keeps at least 40.
 
+The Bus tab lists the recent messages of the bus, newest first. One line shows the state (`📤` sent, `📥` received, `❌` failed), the sender, the receiver (`*` for a broadcast) and the text. A long line ends with `...`. Up and Down select a message. Enter opens a preview pane under the list that shows the full text. PgUp and PgDn scroll the pane. Enter again closes it. Secrets in the text are redacted.
+
 Press Enter on a subagent in the Subagents list to open its conversation. Text you type there goes to that agent: a running agent reads it as a message before its next turn. A finished agent is resumed with the text, but only after a second Enter, which shows the context size and the estimated cost first; any other key cancels. A resumed agent is a side conversation, so its reply does not change its workflow run. Only an agent of a run in the `done` or `paused` state, or an agent of no run, can be resumed. The resume is refused when the worktree of the run is gone, or when a state file of a run cannot be read. The resumed job is listed under the job it continues, marked with `↻`.
 
 ## Run transcripts

@@ -43,6 +43,13 @@ func (t *TUI) SetRunLister(fn func() []TuiRunRow) {
 	t.prog.Send(tuiSetRunListerMsg{fn: fn})
 }
 
+// SetBusLister wires the sidebar Bus tab to fn, which returns the recent bus
+// messages, newest first. fn is called on every frame while the tab is open,
+// so it must be cheap.
+func (t *TUI) SetBusLister(fn func() []TuiBusRow) {
+	t.prog.Send(tuiSetBusListerMsg{fn: fn})
+}
+
 // TuiReminderRow is one undelivered reminder shown in the Tasks tab.
 type TuiReminderRow struct {
 	ID      string

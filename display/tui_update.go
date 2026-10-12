@@ -199,6 +199,10 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runLister = rl.fn
 		return m, nil
 	}
+	if rl, ok := msg.(tuiSetBusListerMsg); ok {
+		m.busLister = rl.fn
+		return m, nil
+	}
 	if rl, ok := msg.(tuiSetReminderListerMsg); ok {
 		m.reminderLister = rl.fn
 		return m, nil

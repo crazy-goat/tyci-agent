@@ -451,6 +451,8 @@ func (m TuiModel) sidebarFooter() string {
 		return width + "↑↓ select  Enter view  r resume  " + nav + "  Esc close"
 	case sidebarTabRuns:
 		return width + "↑↓ select  Enter expand/collapse  " + nav + "  Esc close"
+	case sidebarTabBus:
+		return width + "↑↓ select  Enter preview  PgUp/PgDn scroll preview  " + nav + "  Esc close"
 	default:
 		return width + nav + "  Esc close"
 	}
@@ -483,6 +485,8 @@ func (m TuiModel) sidebarTabLines(width int) []string {
 		return m.renderSidebarSessions(width)
 	case sidebarTabRuns:
 		return m.renderSidebarRuns(width)
+	case sidebarTabBus:
+		return m.busListLines(width)
 	default:
 		return nil
 	}
@@ -502,6 +506,9 @@ func rowStyle(selected bool) lipgloss.Style {
 // contentHeight). The Tasks tab styles only the rows of that window; the
 // other tabs style every line.
 func (m TuiModel) sidebarBodyLines(layout sidebarLayoutT, width int) []string {
+	if m.sidebarTab == sidebarTabBus {
+		return m.busBodyLines(layout, width)
+	}
 	if m.sidebarTab == sidebarTabTasks {
 		rows := m.sidebarTaskRows(width)
 		scroll := m.sidebarVisibleScrollForLineCount(layout, len(rows))

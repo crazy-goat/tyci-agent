@@ -584,6 +584,10 @@ var tuiCmd = &cobra.Command{
 			_, err := tools.StopWorkflowRun(run, "stopped from the Runs tab")
 			return err
 		})
+		// The Bus tab shows the delivery observer of appBus (see busTabRows).
+		tuiDisp.SetBusLister(func() []display.TuiBusRow {
+			return busTabRows(appBus.Events())
+		})
 		// The agent view sends its input to the viewed agent (see
 		// agentViewInput). Enter on a finished agent resumes it.
 		tuiDisp.SetAgentInput(agentViewInput{})

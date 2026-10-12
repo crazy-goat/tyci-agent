@@ -284,6 +284,20 @@ become eligible for eviction.
 
 ---
 
+## 5b. Sidebar Bus tab (`tui_sidebar_bus.go`)
+
+The Bus tab lists the recent bus messages, newest first. `bus_wiring.go`
+(`busTabRows`) turns `appBus.Events()` into `display.TuiBusRow`, one row per
+message with the state of its newest event. It redacts the text there, so the
+display package never gets a secret. `TUI.SetBusLister` wires the rows in
+(`commands.go`). The lister is called on every frame while the tab is open, so
+it reads the ring without a cache.
+
+Keys on the tab: Up and Down select a message, Enter opens or closes the
+preview pane, and PgUp and PgDn scroll the pane text. The pane is a fixed
+`busPaneHeight` lines at the bottom of the sidebar. Its text is cut by cell
+width, and the list above it gets the lines that are left.
+
 ## 6. Configuration (environment variables)
 
 | Variable | Default | Effect |

@@ -114,6 +114,11 @@ type tuiSetRunListerMsg struct {
 	fn func() []TuiRunRow
 }
 
+// tuiSetBusListerMsg carries the callback of the sidebar Bus tab.
+type tuiSetBusListerMsg struct {
+	fn func() []TuiBusRow
+}
+
 // tuiSetReminderListerMsg carries the callback of the reminders in the Tasks tab.
 type tuiSetReminderListerMsg struct {
 	fn func() []TuiReminderRow
@@ -554,6 +559,14 @@ type TuiModel struct {
 	// runLister returns the recent workflow runs for the sidebar Runs tab.
 	// nil means it was never wired.
 	runLister func() []TuiRunRow
+
+	// busLister returns the recent bus messages for the sidebar Bus tab,
+	// newest first. nil means it was never wired.
+	busLister func() []TuiBusRow
+	// sidebarBusPane is true while the Bus tab shows the preview pane of the
+	// selected message. sidebarBusScroll is the first wrapped text line of the pane.
+	sidebarBusPane   bool
+	sidebarBusScroll int
 
 	// reminderLister returns the undelivered reminders for the Tasks tab.
 	// nil means it was never wired, and the tab shows no reminder rows.

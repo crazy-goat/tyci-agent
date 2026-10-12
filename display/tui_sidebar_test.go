@@ -91,8 +91,8 @@ func TestSidebarTabAtX_PastLastLabelIsNoTab(t *testing.T) {
 	if got := sidebarTabAtX(layout, layout.contentLeft+sidebarTabStart(sidebarTabCount)); got != -1 {
 		t.Fatalf("click past the last label = tab %d, want -1", got)
 	}
-	if got := sidebarTabAtX(layout, layout.contentLeft+sidebarTabStart(sidebarTabCount)-1); got != sidebarTabRuns {
-		t.Fatalf("click on the last label = tab %d, want %d", got, sidebarTabRuns)
+	if got := sidebarTabAtX(layout, layout.contentLeft+sidebarTabStart(sidebarTabCount)-1); got != sidebarTabBus {
+		t.Fatalf("click on the last label = tab %d, want %d", got, sidebarTabBus)
 	}
 }
 
@@ -651,7 +651,7 @@ func TestUpdateSidebar_LeftAtFirstTabExitsFocus(t *testing.T) {
 
 func TestUpdateSidebar_RightAtLastTabExitsFocus(t *testing.T) {
 	m := newTestModelForSidebar()
-	m.openSidebar(sidebarTabRuns) // the last tab
+	m.openSidebar(sidebarTabBus) // the last tab
 	m.sidebarFocused = true
 
 	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyRight})
@@ -659,7 +659,7 @@ func TestUpdateSidebar_RightAtLastTabExitsFocus(t *testing.T) {
 	if m2.sidebarFocused {
 		t.Fatalf("expected Right at the last tab to exit focus back to the conversation")
 	}
-	if m2.sidebarTab != sidebarTabRuns {
+	if m2.sidebarTab != sidebarTabBus {
 		t.Fatalf("expected the tab selection to stay put on exit, got %d", m2.sidebarTab)
 	}
 }

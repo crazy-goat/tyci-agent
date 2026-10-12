@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/bus"
+	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/internal/redact"
 	"github.com/crazy-goat/tyci-agent/internal/watchdog"
 	"github.com/crazy-goat/tyci-agent/jobs"
@@ -555,5 +557,71 @@ func showBtwSuggestions(sub *bus.Sub, done <-chan struct{}, show func(string)) {
 		case <-done:
 			return
 		}
+	}
+}
+
+// busTabRows returns the rows of the Bus tab, newest first. A message has one
+// row, with the state of its newest event. The text is redacted.
+func busTabRows(events []bus.Event) []display.TuiBusRow {
+	var rows []display.TuiBusRow
+	seen := make(map[uint64]bool)
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		if ev.Msg.Seq != 0 {
+			if seen[ev.Msg.Seq] {
+				continue
+			}
+			seen[ev.Msg.Seq] = true
+		}
+		rows = append(rows, display.TuiBusRow{
+			Seq:   ev.Msg.Seq,
+			At:    ev.Msg.At,
+			From:  busAddrName(ev.Msg.From),
+			To:    busAddrName(ev.Msg.To),
+			Kind:  string(ev.Msg.Kind),
+			Text:  redact.Redact(busPayloadText(ev.Msg)),
+			State: busStateName(ev.State),
+		})
+	}
+	return rows
+}
+
+// busAddrName is the name of an address in the Bus tab. A broadcast is "*".
+func busAddrName(a bus.Addr) string {
+	switch a.Type {
+	case bus.AddrUser:
+		return "human"
+	case bus.AddrAgent:
+		return a.ID
+	case bus.AddrSubtree:
+		return "*"
+	default:
+		return string(a.Type)
+	}
+}
+
+// busPayloadText is the text field of the payload. A message without one
+// shows its kind.
+func busPayloadText(m bus.Message) string {
+	var p struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(m.Payload, &p) == nil && p.Text != "" {
+		return p.Text
+	}
+	return string(m.Kind)
+}
+
+// busStateName is the name of a delivery state in the Bus tab.
+func busStateName(s bus.DeliveryState) string {
+	switch s {
+	case bus.Sent:
+		return "sent"
+	case bus.Received:
+		return "received"
+	case bus.Failed:
+		return "failed"
+	default:
+		return ""
 	}
 }
