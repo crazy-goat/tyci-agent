@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/api"
+	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/stream"
@@ -34,6 +35,16 @@ type Config struct {
 	Tools         ToolRunner
 	Schema        json.RawMessage
 	Session       *session.Session // optional session logging / resume
+
+	// Bus, when set, runs tool calls through a dispatcher. A call that runs
+	// longer than its wait is backgrounded, and its result comes back as a
+	// tail notice (late_notice.go). BusAddr is the address that receives the
+	// late results. Nil keeps the inline behaviour.
+	Bus     *bus.Bus
+	BusAddr bus.Addr
+
+	// disp is the dispatcher of this run. Run creates it from Bus.
+	disp *dispatcher
 
 	// Temperature, when non-nil, is forwarded on every connector.Request this
 	// run issues — to the primary model and, if it fails, to every fallback in
@@ -218,6 +229,14 @@ var ErrMaxIterations = errors.New("agent reached max tool-call iterations withou
 func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connector.Message, cfg Config) (stream.Usage, error) {
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 5
+	}
+	if cfg.Bus != nil {
+		sub := cfg.Bus.Subscribe("tool-results", bus.Filter{
+			To:    cfg.BusAddr,
+			Kinds: []bus.Kind{bus.KindToolResult, bus.KindAgentMessage, bus.KindAskRequest, bus.KindPingMissed},
+		})
+		defer sub.Close()
+		cfg.disp = newDispatcher(cfg.Bus, cfg.BusAddr, sub)
 	}
 
 	var totalUsage stream.Usage
@@ -472,6 +491,12 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				}
 			}
 		}
+		if canDrain && cfg.disp != nil {
+			if late := cfg.disp.takeLate(); len(late) > 0 {
+				appendLateNotices(msgs, cfg, late)
+				drained = true
+			}
+		}
 		// A real user follow-up starts a fresh sub-task; reset the reminder
 		// budget so we're willing to nag again about whatever it leaves open.
 		if drained {
@@ -508,6 +533,14 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				contextReminded = true
 				reminder := buildContextBudgetReminder(used, hardAt, false)
 				*msgs = append(*msgs, connector.Message{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: reminder}}})
+			}
+		}
+		// The model ended its turn while calls still run. Wait for their
+		// results, so that the model sees them before the turn ends.
+		if !more && !drained && canDrain && cfg.disp != nil && cfg.disp.Pending() > 0 {
+			if late := cfg.disp.waitLate(ctx); len(late) > 0 {
+				appendLateNotices(msgs, cfg, late)
+				drained = true
 			}
 		}
 		if !more && !drained {

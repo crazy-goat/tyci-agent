@@ -25,7 +25,14 @@ func executeAndAppendToolResults(ctx context.Context, d Sink, msgs *[]connector.
 	showToolCalls(d, toolCalls, toolDeltas)
 	ctx = installToolStreaming(ctx, d)
 
-	results, durations, failed := executeTools(ctx, cfg.Tools, toolCalls)
+	var results []string
+	var durations []time.Duration
+	var failed []bool
+	if cfg.disp != nil {
+		results, durations, failed = executeToolsDispatched(ctx, cfg.Tools, toolCalls, cfg.disp)
+	} else {
+		results, durations, failed = executeTools(ctx, cfg.Tools, toolCalls)
+	}
 
 	appendToolResults(d, msgs, cfg, toolCalls, results, durations, failed)
 }

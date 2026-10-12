@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Bus: the kind `tool.result` (payload `call_id`, `content`, `failed`, `duration_ms`, `truncated`, `full_path`) carries the late result of a tool call that moved to the background. The agent dispatcher that starts such calls is not wired into the tool loop yet (#197).
+- Agent: a tool call that runs past its wait moves to the background when the agent has a bus. The model gets a placeholder (`started, id=cN`), and the real result arrives as a `<tyci-notice kind=tool.result>` user text block at the end of the conversation. The loop waits for these results before a turn ends, unless a user is pending. The bus is not connected to the main conversation yet, so the tool loop still runs inline (#197).
 - Reminders: the command `tyci remind list` and `tyci remind cancel <id>`, the chat command `/reminders`, and one row per undelivered reminder in the Tasks tab of the TUI sidebar (#587).
 - Tools: the chat tool `session_list` lists your saved sessions, newest first, with the path, title and first prompt. It lists the current project, or every project with `all: true`. A subagent cannot use it.
 - Sessions: a session can have a title. The `title` event is appended to the session file, the last one wins. `/rename <title>` and the chat tool `session_rename` set it. The `/resume` picker and `tyci session list` show it. Old session files still work.
