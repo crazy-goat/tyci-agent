@@ -32,8 +32,8 @@ func TestTaskRowBuildsPerJobEvent(t *testing.T) {
 		})
 	})
 	t.Logf("builds per job event: %d", got)
-	if got > 2 {
-		t.Fatalf("applyJobUpdate built the Tasks rows %d times, want at most 2", got)
+	if got != 2 {
+		t.Fatalf("applyJobUpdate built the Tasks rows %d times, want 2", got)
 	}
 }
 

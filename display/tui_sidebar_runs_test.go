@@ -512,3 +512,19 @@ func TestSidebarRunsTab_StopKeyIgnoresFinishedRuns(t *testing.T) {
 		t.Fatal("x must not ask to stop a finished run")
 	}
 }
+
+// A raw body line with a tab (a state name with a tab, #636 review) must not
+// widen the row: every row of the sidebar column has the layout width.
+func TestRenderSidebarColumn_TabInBodyLineKeepsRowWidth(t *testing.T) {
+	now := time.Now()
+	m := runsModel(TuiRunRow{ID: "r1", Issue: 1, Status: "running", State: "co\tde", Role: "worker",
+		Started: now.Add(-time.Minute), Since: now.Add(-19 * time.Second)})
+	m.sidebarRunsExpanded = map[string]bool{"r1": true}
+	layout := m.sidebarLayout()
+	want := layout.contentWidth + 3 // border, space, content, space
+	for i, row := range strings.Split(m.renderSidebarColumn(), "\n") {
+		if got := lipgloss.Width(row); got != want {
+			t.Errorf("row %d has width %d, want %d: %q", i, got, want, row)
+		}
+	}
+}
