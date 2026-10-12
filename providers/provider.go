@@ -3,7 +3,6 @@ package providers
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -12,10 +11,11 @@ import (
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 	"github.com/crazy-goat/tyci-agent/internal/instructions"
+	"github.com/crazy-goat/tyci-agent/internal/skills"
 )
 
 func BuildSystemPrompt() string {
-	return buildSystemPrompt(true, "", true)
+	return buildSystemPrompt("", true, "", true)
 }
 
 // BuildOrchestratorSystemPrompt is the system prompt of the TUI chat
@@ -25,7 +25,7 @@ func BuildSystemPrompt() string {
 // It is a dedicated builder (like BuildScoutSystemPrompt) so the shared
 // builder and every other prompt stay unchanged.
 func BuildOrchestratorSystemPrompt(workers int) string {
-	wd, date, osName, tempDir := envContext()
+	wd, date, osName, tempDir := envContext("")
 	n := "any number of"
 	if workers > 0 {
 		n = fmt.Sprint(workers)
@@ -76,8 +76,8 @@ Write short, plain sentences.
 // A plain (unnamed) subagent is never restricted by a `tools:` whitelist, so
 // ask_parent is always actually available to it — this is the hasAskParent=
 // true case of buildSubagentContractNote.
-func BuildSubagentSystemPrompt() string {
-	return buildSystemPrompt(false, buildSubagentContractNote(true), true)
+func BuildSubagentSystemPrompt(wd string) string {
+	return buildSystemPrompt(wd, false, buildSubagentContractNote(true), true)
 }
 
 // buildSubagentContractNote is the fixed subagent-contract prose spliced
@@ -127,8 +127,8 @@ You are a SUBAGENT spawned by a parent agent to complete ONE task and report bac
 // separator buildSystemPrompt already uses for AGENTS.md and skills, so the
 // role shows up as one more clearly delimited section, never silently glued
 // onto the prose above it.
-func BuildSubagentSystemPromptWithRole(role string, hasAskParent bool) string {
-	prompt := buildSystemPrompt(false, buildSubagentContractNote(hasAskParent), hasAskParent)
+func BuildSubagentSystemPromptWithRole(role string, hasAskParent bool, wd string) string {
+	prompt := buildSystemPrompt(wd, false, buildSubagentContractNote(hasAskParent), hasAskParent)
 	role = strings.TrimSpace(role)
 	if role == "" {
 		return prompt
@@ -180,8 +180,8 @@ func BuildSubagentSystemPromptWithRole(role string, hasAskParent bool) string {
 // schema — "unless told otherwise" in an earlier version of this prompt
 // hedged nothing, because nothing else in the prompt ever told it
 // otherwise.
-func BuildScoutSystemPrompt(canSpawnScout bool) string {
-	wd, date, osName, tempDir := envContext()
+func BuildScoutSystemPrompt(canSpawnScout bool, wd string) string {
+	wd, date, osName, tempDir := envContext(wd)
 
 	delegationLine := "You cannot spawn subagents or further scouts."
 	if canSpawnScout {
@@ -212,10 +212,13 @@ What you are:
 // and the platform's temp-dir spelling. Factored out of buildSystemPrompt so
 // BuildScoutSystemPrompt computes the identical values without duplicating
 // the wd-fallback/tempDir-by-OS logic.
-func envContext() (wd, date, osName, tempDir string) {
-	wd, _ = os.Getwd()
-	if wd == "" {
-		wd = "."
+func envContext(wd string) (dir, date, osName, tempDir string) {
+	dir = wd
+	if dir == "" {
+		dir, _ = os.Getwd()
+	}
+	if dir == "" {
+		dir = "."
 	}
 	date = time.Now().Format("2006-01-02")
 	osName = runtime.GOOS
@@ -223,7 +226,7 @@ func envContext() (wd, date, osName, tempDir string) {
 	if osName == "windows" {
 		tempDir = "%TEMP%"
 	}
-	return wd, date, osName, tempDir
+	return dir, date, osName, tempDir
 }
 
 // projectContextTail is the standing project context every child prompt
@@ -241,9 +244,12 @@ func projectContextTail(wd string) string {
 	home, _ := os.UserHomeDir()
 	tail += instructions.Load(home, wd)
 
-	skillsDir := filepath.Join(os.Getenv("HOME"), ".tyci", "skills")
-	if skillNames, err := listSkillNames(skillsDir); err == nil && len(skillNames) > 0 {
-		tail += "\n---\nAvailable skills: " + strings.Join(skillNames, ", ")
+	if found, err := skills.ListSkillsMerged(wd); err == nil && len(found) > 0 {
+		names := make([]string, 0, len(found))
+		for _, s := range found {
+			names = append(names, s.Name)
+		}
+		tail += "\n---\nAvailable skills: " + strings.Join(names, ", ")
 		tail += "\nUse skills(name) to load a skill's full content.\n"
 	}
 	return tail
@@ -255,8 +261,8 @@ func projectContextTail(wd string) string {
 // disagree about whether the tool actually exists for this agent. Ignored
 // for the top-level prompt (includeSubagent=true), which never mentions
 // ask_parent as one of its own tools.
-func buildSystemPrompt(includeSubagent bool, roleNote string, hasAskParent bool) string {
-	wd, date, osName, tempDir := envContext()
+func buildSystemPrompt(wd string, includeSubagent bool, roleNote string, hasAskParent bool) string {
+	wd, date, osName, tempDir := envContext(wd)
 
 	// Posture, tool list and contracts are assembled from three pieces rather
 	// than one template: what a top-level agent needs to know and what a child
@@ -432,23 +438,3 @@ type Provider interface {
 }
 
 var DefaultRetryConfig = api.RetryConfig{MaxRetries: 5, BaseBackoff: 4, MaxBackoff: 128}
-
-// listSkillNames returns the names of all skills in the given directory.
-func listSkillNames(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	var names []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		skillPath := filepath.Join(dir, entry.Name(), "SKILL.md")
-		if _, err := os.Stat(skillPath); err == nil {
-			names = append(names, entry.Name())
-		}
-	}
-	return names, nil
-}

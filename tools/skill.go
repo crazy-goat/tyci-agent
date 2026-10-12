@@ -21,7 +21,7 @@ func (t *SkillsTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	// (./.tyci/skills), project-local winning on a name collision, the same
 	// precedence agents/ already uses.
 	if hasName && name != "" {
-		skill, err := skills.GetSkillMerged("", name)
+		skill, err := skills.GetSkillMerged(Workdir(ctx), name)
 		if err != nil {
 			return ToolResult{Type: "result", Success: false, Error: err.Error()}
 		}
@@ -37,7 +37,7 @@ func (t *SkillsTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	}
 
 	// No name — list available skills, global union project-local.
-	found, err := skills.ListSkillsMerged("")
+	found, err := skills.ListSkillsMerged(Workdir(ctx))
 	if err != nil {
 		return ToolResult{Type: "result", Success: false, Error: err.Error()}
 	}

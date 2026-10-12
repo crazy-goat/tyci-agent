@@ -74,7 +74,7 @@ func TestBuildSubagentSystemPromptWithRole_ContainsRoleContractAndCwd(t *testing
 		t.Fatal(err)
 	}
 
-	prompt := BuildSubagentSystemPromptWithRole("ROLA: you review Go diffs for correctness.", true)
+	prompt := BuildSubagentSystemPromptWithRole("ROLA: you review Go diffs for correctness.", true, "")
 
 	if !strings.Contains(prompt, "ROLA: you review Go diffs for correctness.") {
 		t.Errorf("expected role text in prompt:\n%s", prompt)
@@ -98,7 +98,7 @@ func TestBuildSubagentSystemPromptWithRole_OmitsAvailableAgents(t *testing.T) {
 
 	writeAgentDef(t, filepath.Join(tmp, ".tyci", "agents"), "reviewer", "Reviews Go diffs")
 
-	prompt := BuildSubagentSystemPromptWithRole("some role", true)
+	prompt := BuildSubagentSystemPromptWithRole("some role", true, "")
 	if strings.Contains(prompt, "Available agents") {
 		t.Errorf("expected no 'Available agents' section in a subagent's prompt:\n%s", prompt)
 	}
@@ -114,7 +114,7 @@ func TestBuildSubagentSystemPromptWithRole_IncludesAgentsMd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prompt := BuildSubagentSystemPromptWithRole("ROLA", true)
+	prompt := BuildSubagentSystemPromptWithRole("ROLA", true, "")
 
 	if !strings.Contains(prompt, "--- AGENTS.md ---") {
 		t.Errorf("expected AGENTS.md section in prompt:\n%s", prompt)
@@ -137,11 +137,11 @@ func TestBuildSubagentSystemPromptWithRole_IncludesAgentsMd(t *testing.T) {
 // degenerate case: an empty role must not leave a dangling "Your role:"
 // separator with nothing after it.
 func TestBuildSubagentSystemPromptWithRole_EmptyRoleReturnsBasePrompt(t *testing.T) {
-	prompt := BuildSubagentSystemPromptWithRole("", true)
+	prompt := BuildSubagentSystemPromptWithRole("", true, "")
 	if strings.Contains(prompt, "Your role:") {
 		t.Errorf("expected no role section for an empty role:\n%s", prompt)
 	}
-	if prompt != BuildSubagentSystemPrompt() {
+	if prompt != BuildSubagentSystemPrompt("") {
 		t.Errorf("expected empty role to return exactly the base subagent prompt")
 	}
 }
@@ -985,7 +985,7 @@ func (d *stubDoer) Do(req *http.Request) (*http.Response, error) {
 // this test only needs to hold for the tools genuinely never on a scout's
 // profile — "scout(task)" is not one of those, and is covered there, not here.
 func TestBuildScoutSystemPrompt_OmitsUnavailableTools(t *testing.T) {
-	prompt := BuildScoutSystemPrompt(true)
+	prompt := BuildScoutSystemPrompt(true, "")
 
 	// Matched as a tool-call form ("write(", not the bare word "write") so
 	// this does not false-positive on the prompt's own prose ("cannot write,
@@ -1009,9 +1009,9 @@ func TestBuildScoutSystemPrompt_OmitsUnavailableTools(t *testing.T) {
 // which would also match the ordinary subagent prompt's own prose (e.g.
 // "read" inside "Read-only") and so would pass even if
 // BuildScoutSystemPrompt were stubbed to just return
-// BuildSubagentSystemPrompt().
+// BuildSubagentSystemPrompt("").
 func TestBuildScoutSystemPrompt_MentionsActualTools(t *testing.T) {
-	prompt := BuildScoutSystemPrompt(true)
+	prompt := BuildScoutSystemPrompt(true, "")
 
 	for _, form := range []string{"find(pattern", "read(path", "help(tool"} {
 		if !strings.Contains(prompt, form) {
@@ -1036,7 +1036,7 @@ func TestBuildScoutSystemPrompt_MentionsActualTools(t *testing.T) {
 // wire system prompt agree.
 func TestBuildScoutSystemPrompt_DelegationLineMatchesCanSpawnScout(t *testing.T) {
 	for _, canSpawn := range []bool{true, false} {
-		prompt := BuildScoutSystemPrompt(canSpawn)
+		prompt := BuildScoutSystemPrompt(canSpawn, "")
 		mentionsScoutTool := strings.Contains(prompt, "scout(task)")
 		if mentionsScoutTool != canSpawn {
 			t.Errorf("canSpawnScout=%v: scout(task) mentioned = %v, want %v:\n%s",
@@ -1061,7 +1061,7 @@ func TestBuildScoutSystemPrompt_IncludesAgentsMd(t *testing.T) {
 	}
 	t.Chdir(dir)
 
-	prompt := BuildScoutSystemPrompt(true)
+	prompt := BuildScoutSystemPrompt(true, "")
 	if !strings.Contains(prompt, "--- AGENTS.md ---") {
 		t.Errorf("expected AGENTS.md section in scout prompt:\n%s", prompt)
 	}

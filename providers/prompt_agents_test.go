@@ -80,7 +80,7 @@ func TestBuildSubagentSystemPrompt_omitsAgents(t *testing.T) {
 
 	writeAgentDef(t, filepath.Join(tmp, ".tyci", "agents"), "reviewer", "Reviews Go diffs for correctness")
 
-	prompt := BuildSubagentSystemPrompt()
+	prompt := BuildSubagentSystemPrompt("")
 	if strings.Contains(prompt, "Available agents") {
 		t.Errorf("subagent prompt should not list agents, but it does:\n%s", prompt)
 	}
@@ -166,7 +166,7 @@ func TestSystemPromptCarriesTheMultiAgentPosture(t *testing.T) {
 // TestSubagentPromptHasNoDelegationPolicy: children cannot spawn children, so
 // telling them when to delegate would describe a tool they do not have.
 func TestSubagentPromptHasNoDelegationPolicy(t *testing.T) {
-	prompt := BuildSubagentSystemPrompt()
+	prompt := BuildSubagentSystemPrompt("")
 
 	if strings.Contains(prompt, "MANY agents") {
 		t.Error("subagent prompt advertises delegation, but children have no subagent tool")
@@ -198,7 +198,7 @@ func TestPromptStatesTheLuaPosture(t *testing.T) {
 // parent does, so withholding this would make the delegated half of the work
 // the slow half.
 func TestSubagentsAlsoGetTheLuaPosture(t *testing.T) {
-	if !strings.Contains(BuildSubagentSystemPrompt(), "loops in lua") {
+	if !strings.Contains(BuildSubagentSystemPrompt(""), "loops in lua") {
 		t.Error("a subagent's prompt has no lua posture")
 	}
 }
@@ -247,7 +247,7 @@ func TestPromptListsEveryToolTheModelHas(t *testing.T) {
 // report_progress work only inside a job, so they belong in the child's
 // list and nowhere else.
 func TestSubagentPromptListsTheToolsOnlyAChildCanUse(t *testing.T) {
-	child := BuildSubagentSystemPrompt()
+	child := BuildSubagentSystemPrompt("")
 	for _, name := range []string{"ask_parent(", "report_progress("} {
 		if !strings.Contains(child, name) {
 			t.Errorf("a child's prompt does not mention %s", name)
@@ -304,7 +304,7 @@ func TestSubagentPromptDoesNotContradictItsOwnAskParentTool(t *testing.T) {
 	// test asserts against, which has nothing to do with item 41.
 	t.Setenv("HOME", t.TempDir())
 
-	prompt := BuildSubagentSystemPrompt()
+	prompt := BuildSubagentSystemPrompt("")
 
 	if !strings.Contains(prompt, "ask_parent(") {
 		t.Fatalf("expected the child prompt to expose ask_parent(), it did not:\n%s", prompt)
@@ -327,7 +327,7 @@ func TestSubagentPromptDoesNotContradictItsOwnAskParentTool(t *testing.T) {
 func TestSubagentPromptWithoutAskParent_DoesNotClaimItIsReal(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	prompt := BuildSubagentSystemPromptWithRole("ROLA: does one narrow thing.", false)
+	prompt := BuildSubagentSystemPromptWithRole("ROLA: does one narrow thing.", false, "")
 
 	if strings.Contains(prompt, "ask_parent(") {
 		t.Errorf("expected no ask_parent mention in the contract note for an agent without it:\n%s", prompt)

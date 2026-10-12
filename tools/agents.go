@@ -19,13 +19,13 @@ type AgentsTool struct{}
 
 func (t *AgentsTool) Name() string { return "agents" }
 
-func (t *AgentsTool) Run(_ context.Context, input map[string]any) ToolResult {
+func (t *AgentsTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	name, hasName := input["name"].(string)
 
 	if hasName && name != "" {
-		def, ok := agentdefs.Get("", name)
+		def, ok := agentdefs.Get(Workdir(ctx), name)
 		if !ok {
-			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("agent %q not found (looked in %s and %s)", name, agentdefs.GlobalDir(), agentdefs.ProjectDir(""))}
+			return ToolResult{Type: "result", Success: false, Error: fmt.Sprintf("agent %q not found (looked in %s and %s)", name, agentdefs.GlobalDir(), agentdefs.ProjectDir(Workdir(ctx)))}
 		}
 
 		var b strings.Builder
@@ -51,9 +51,9 @@ func (t *AgentsTool) Run(_ context.Context, input map[string]any) ToolResult {
 		return ToolResult{Type: "result", Success: true, Content: b.String()}
 	}
 
-	defs := agentdefs.List("")
+	defs := agentdefs.List(Workdir(ctx))
 	if len(defs) == 0 {
-		return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("No named agents available. Define one as a markdown file in %s or %s.", agentdefs.GlobalDir(), agentdefs.ProjectDir(""))}
+		return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("No named agents available. Define one as a markdown file in %s or %s.", agentdefs.GlobalDir(), agentdefs.ProjectDir(Workdir(ctx)))}
 	}
 
 	var b strings.Builder

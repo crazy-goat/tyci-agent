@@ -21,7 +21,7 @@ func goldenPrompt(t *testing.T, build func() string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, date, osName, tempDir := envContext()
+	_, date, osName, tempDir := envContext("")
 	out := build()
 	out = strings.ReplaceAll(out, real, "<WD>")
 	out = strings.ReplaceAll(out, wd, "<WD>")
@@ -52,18 +52,20 @@ func TestChatPromptUnchanged(t *testing.T) {
 }
 
 func TestSubagentPromptUnchanged(t *testing.T) {
-	checkPromptGolden(t, "prompt_subagent.golden.txt", goldenPrompt(t, BuildSubagentSystemPrompt))
+	checkPromptGolden(t, "prompt_subagent.golden.txt", goldenPrompt(t, func() string {
+		return BuildSubagentSystemPrompt("")
+	}))
 }
 
 func TestSubagentRolePromptUnchanged(t *testing.T) {
 	checkPromptGolden(t, "prompt_subagent_role.golden.txt", goldenPrompt(t, func() string {
-		return BuildSubagentSystemPromptWithRole("You review Go code.", true)
+		return BuildSubagentSystemPromptWithRole("You review Go code.", true, "")
 	}))
 }
 
 func TestScoutPromptUnchanged(t *testing.T) {
 	checkPromptGolden(t, "prompt_scout.golden.txt", goldenPrompt(t, func() string {
-		return BuildScoutSystemPrompt(true)
+		return BuildScoutSystemPrompt(true, "")
 	}))
 }
 

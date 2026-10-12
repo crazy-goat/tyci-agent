@@ -29,9 +29,12 @@ type MemoryTool struct{}
 func (t *MemoryTool) Name() string { return "memory" }
 
 func (t *MemoryTool) Run(ctx context.Context, input map[string]any) ToolResult {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return failf("cannot determine the working directory: %v", err)
+	cwd := Workdir(ctx)
+	if cwd == "" {
+		var err error
+		if cwd, err = os.Getwd(); err != nil {
+			return failf("cannot determine the working directory: %v", err)
+		}
 	}
 
 	action := strings.TrimSpace(stringParam(input, "action", ""))

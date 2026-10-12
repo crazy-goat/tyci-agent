@@ -326,10 +326,10 @@ func withIsolatedPool(mc connector.ModelClient, fallbacks []connector.ModelClien
 // package never has to import tools (see BuildScoutSystemPrompt's doc
 // comment for why that edge is worth avoiding).
 func (r *agentRunner) RunTask(ctx context.Context, task string, model string, opts tools.SubagentOptions) (string, error) {
-	system := providers.BuildSubagentSystemPrompt()
+	system := providers.BuildSubagentSystemPrompt(tools.Workdir(ctx))
 	if opts.ScoutMode {
 		depth := tools.DepthFromContext(ctx)
-		system = providers.BuildScoutSystemPrompt(tools.AllowedDelegationTool(depth) == "scout")
+		system = providers.BuildScoutSystemPrompt(tools.AllowedDelegationTool(depth) == "scout", tools.Workdir(ctx))
 	}
 	return r.run(ctx, task, model, system, opts)
 }
@@ -373,7 +373,7 @@ func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model 
 			break
 		}
 	}
-	return r.run(ctx, task, model, providers.BuildSubagentSystemPromptWithRole(system, hasAskParent), opts)
+	return r.run(ctx, task, model, providers.BuildSubagentSystemPromptWithRole(system, hasAskParent, tools.Workdir(ctx)), opts)
 }
 
 // run executes one subagent turn and normalizes the outcome into a result the
