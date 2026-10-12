@@ -918,6 +918,11 @@ are loaded, global first, when the project is trusted. In an untrusted project,
 tyci warns that project-local hooks, Lua tools, the local cron directory and
 MCP configuration are skipped; global `~/.tyci/` content still loads.
 
+A linked worktree of a project uses the trust answer of the main checkout. A
+checked-out branch can bring its own `.tyci/hooks.json`, so trust only the
+repositories whose contents you trust. The worktree file is read first when
+it exists (see Worktrees).
+
 ```json
 {
   "hooks": [
@@ -964,8 +969,14 @@ Omit `paths` to match every call.
 Each hook receives the full call as JSON on stdin
 (`{event, tool, args, success, content, error}`) plus `$TYCI_TOOL`,
 `$TYCI_TOOL_PATH`, `$TYCI_TOOL_COMMAND`, `$TYCI_TOOL_SUCCESS` and
-`$TYCI_HOOK_EVENT`. Omit `tools` to match every tool. Default timeout is 10s
-(`"timeout"` overrides); output is capped at 8 KiB.
+`$TYCI_HOOK_EVENT`. `$TYCI_PROJECT_DIR` is the main checkout of the project,
+even when the hook file comes from a linked worktree. Omit `tools` to match
+every tool. Default timeout is 10s (`"timeout"` overrides); output is capped
+at 8 KiB.
+
+A relative path in `hooks.json` and `mcp.json` is relative to the working
+directory of the tyci process, not to the file. Use `$TYCI_PROJECT_DIR` in a
+hook command to reach a file of the project.
 
 Hooks wrap the dispatcher, so they see MCP tools and calls made from inside a
 Lua script too. A config error is reported on startup rather than ignored: a

@@ -23,11 +23,12 @@ package instructions
 import (
 	"errors"
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 var ErrValidation = errors.New("invalid memory note input")

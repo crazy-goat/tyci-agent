@@ -11,8 +11,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"gopkg.in/yaml.v3"
+
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 // Def is a fully parsed markdown agent definition.

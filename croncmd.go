@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/cron"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"github.com/crazy-goat/tyci-agent/internal/trust"
 	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/spf13/cobra"

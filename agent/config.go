@@ -6,7 +6,6 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 const globalConfigName = "config.json"

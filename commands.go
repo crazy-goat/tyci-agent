@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,6 +17,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/cron"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"github.com/crazy-goat/tyci-agent/internal/hooks"
 	"github.com/crazy-goat/tyci-agent/internal/pricing"
 	"github.com/crazy-goat/tyci-agent/internal/readline"

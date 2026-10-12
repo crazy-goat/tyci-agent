@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/connect"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 // Client defines the interface for MCP servers.

@@ -2,11 +2,12 @@ package skills
 
 import (
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 // Skill represents a loaded skill with metadata and content.

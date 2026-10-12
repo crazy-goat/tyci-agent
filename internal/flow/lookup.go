@@ -3,7 +3,6 @@ package flow
 import (
 	"errors"
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 var workflowName = regexp.MustCompile(`^[a-z0-9-]+$`)

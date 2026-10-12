@@ -31,7 +31,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +39,8 @@ import (
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
+
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 const (

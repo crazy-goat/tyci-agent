@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 const defaultCheckTimeout = 1800 * time.Second

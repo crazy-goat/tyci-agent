@@ -16,13 +16,14 @@ package worktree
 import (
 	"context"
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 // gitTimeout bounds a single git invocation. Creating a worktree is a local

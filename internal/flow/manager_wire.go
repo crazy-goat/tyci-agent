@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"github.com/crazy-goat/tyci-agent/internal/trust"
 	"github.com/crazy-goat/tyci-agent/internal/worktree"
 	"github.com/crazy-goat/tyci-agent/session"
@@ -78,7 +78,7 @@ func DetectRepoAt(dir string) (RepoInfo, error) {
 	if terr != nil {
 		trusted = false
 	}
-	return RepoInfo{Home: home, Root: root, ConfigDir: gitinfo.ProjectDir(root), Repo: repo, DefaultBranch: strings.TrimPrefix(ref, "origin/"), Trusted: trusted}, nil
+	return RepoInfo{Home: home, Root: root, MainRoot: gitinfo.ProjectDir(root), Repo: repo, DefaultBranch: strings.TrimPrefix(ref, "origin/"), Trusted: trusted}, nil
 }
 
 // NewManager returns the production Manager. notify receives the notices;
@@ -113,7 +113,7 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 			RunDir:        runDir,
 			DefaultBranch: info.DefaultBranch,
 			// The run dir with state.json stays; only the worktree goes.
-			OnSkip: removeWorktreeHook(info.ConfigDir),
+			OnSkip: removeWorktreeHook(info.MainRoot),
 		}
 		if err != nil {
 			r.Agents = failingAgents{err}
@@ -160,9 +160,9 @@ func (f failingAgents) Run(context.Context, string, string, RunContext) (string,
 // a run without one gets run-<run id>.
 func addRunWorktree(ctx context.Context, info RepoInfo, runID string, issue int) (*worktree.Worktree, error) {
 	if issue > 0 {
-		return worktree.AddIssue(ctx, info.Home, info.ConfigDir, issue, info.DefaultBranch)
+		return worktree.AddIssue(ctx, info.Home, info.MainRoot, issue, info.DefaultBranch)
 	}
-	return worktree.AddRun(ctx, info.Home, info.ConfigDir, runID, info.DefaultBranch)
+	return worktree.AddRun(ctx, info.Home, info.MainRoot, runID, info.DefaultBranch)
 }
 
 // ChatTools adapts a Manager to tools.WorkflowManager.
