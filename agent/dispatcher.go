@@ -6,13 +6,14 @@ import (
 	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
-// dispatcher runs tool calls in goroutines. The agent loop waits for a call
+// Dispatcher runs tool calls in goroutines. The agent loop waits for a call
 // for a bounded time. When the wait ends first, the call is backgrounded: the
 // model gets a placeholder, and the goroutine keeps running. Its result then
 // arrives as a KindToolResult bus message, which the loop takes with takeLate
@@ -25,8 +26,8 @@ import (
 // before it calls Fire. Fire itself never fails.
 //
 // Without a bus, nothing can deliver a late result. Then no call is ever
-// backgrounded, and each call runs inline as it did before the dispatcher.
-type dispatcher struct {
+// backgrounded, and each call runs inline as it did before the Dispatcher.
+type Dispatcher struct {
 	mu    sync.Mutex
 	next  int
 	calls map[string]*dispatchCall
@@ -50,7 +51,7 @@ type dispatcher struct {
 }
 
 // dispatchCall is one tool call. text, failed and background are guarded by
-// dispatcher.mu. done is closed after text and failed are set.
+// Dispatcher.mu. done is closed after text and failed are set.
 type dispatchCall struct {
 	started    time.Time
 	done       chan struct{}
@@ -77,10 +78,62 @@ const (
 	noDeadline = time.Duration(math.MaxInt64)
 )
 
-// newDispatcher returns a dispatcher. sub must receive the messages of self,
+// NewDispatcher returns a Dispatcher that receives its late results at self.
+// It returns nil when b is nil: then every call runs inline. The owner calls
+// Close when it no longer needs the Dispatcher. self must be unique per
+// Dispatcher, because call ids are only unique inside one Dispatcher.
+func NewDispatcher(b *bus.Bus, self bus.Addr) *Dispatcher {
+	if b == nil {
+		return nil
+	}
+	sub := b.Subscribe("tool-results", bus.Filter{
+		To:    self,
+		Kinds: []bus.Kind{bus.KindToolResult, bus.KindAgentMessage, bus.KindAskRequest, bus.KindPingMissed},
+	})
+	return newDispatcher(b, self, sub)
+}
+
+var dispatchSeq atomic.Uint64
+
+// UniqueDispatchAddr returns an address that no other Dispatcher of this
+// process uses.
+func UniqueDispatchAddr() bus.Addr {
+	return bus.Addr{Type: bus.AddrAgent, ID: fmt.Sprintf("tools-%d", dispatchSeq.Add(1))}
+}
+
+// Close stops the subscription of d. It is safe on a nil Dispatcher.
+func (d *Dispatcher) Close() {
+	if d != nil && d.sub != nil {
+		d.sub.Close()
+	}
+}
+
+// Wait blocks until no backgrounded call is in flight, or until ctx is done.
+// A headless run uses it so that the process does not exit mid-call.
+func (d *Dispatcher) Wait(ctx context.Context) {
+	if d == nil {
+		return
+	}
+	for {
+		d.mu.Lock()
+		if d.pending == 0 {
+			d.mu.Unlock()
+			return
+		}
+		changed := d.changed
+		d.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// newDispatcher returns a Dispatcher. sub must receive the messages of self,
 // and it may be nil when there is no bus.
-func newDispatcher(b *bus.Bus, self bus.Addr, sub *bus.Sub) *dispatcher {
-	d := &dispatcher{
+func newDispatcher(b *bus.Bus, self bus.Addr, sub *bus.Sub) *Dispatcher {
+	d := &Dispatcher{
 		calls:       make(map[string]*dispatchCall),
 		bus:         b,
 		self:        self,
@@ -95,7 +148,7 @@ func newDispatcher(b *bus.Bus, self bus.Addr, sub *bus.Sub) *dispatcher {
 }
 
 // pump absorbs the messages of sub as they arrive, until sub is closed.
-func (d *dispatcher) pump() {
+func (d *Dispatcher) pump() {
 	for {
 		select {
 		case <-d.sub.Ready():
@@ -106,10 +159,10 @@ func (d *dispatcher) pump() {
 	}
 }
 
-// absorb moves the waiting messages of sub into the dispatcher state. It is
+// absorb moves the waiting messages of sub into the Dispatcher state. It is
 // safe to call from any goroutine, and it never consumes a message that the
 // loop needs: a wake only counts, and a tool.result waits in late.
-func (d *dispatcher) absorb() {
+func (d *Dispatcher) absorb() {
 	if d.sub == nil {
 		return
 	}
@@ -133,14 +186,14 @@ func (d *dispatcher) absorb() {
 }
 
 // notifyLocked wakes every goroutine that waits on changed. The caller holds mu.
-func (d *dispatcher) notifyLocked() {
+func (d *Dispatcher) notifyLocked() {
 	close(d.changed)
 	d.changed = make(chan struct{})
 }
 
 // Fire starts run in a goroutine and returns its call id: c1, c2, and so on.
 // The ids count per agent. They are not bus sequence numbers.
-func (d *dispatcher) Fire(ctx context.Context, run func(context.Context) (string, bool)) string {
+func (d *Dispatcher) Fire(ctx context.Context, run func(context.Context) (string, bool)) string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.next++
@@ -152,7 +205,7 @@ func (d *dispatcher) Fire(ctx context.Context, run func(context.Context) (string
 }
 
 // run calls run and stores its result. A panic becomes a failed result.
-func (d *dispatcher) run(ctx context.Context, id string, c *dispatchCall, run func(context.Context) (string, bool)) {
+func (d *Dispatcher) run(ctx context.Context, id string, c *dispatchCall, run func(context.Context) (string, bool)) {
 	var text string
 	var failed bool
 	func() {
@@ -167,7 +220,7 @@ func (d *dispatcher) run(ctx context.Context, id string, c *dispatchCall, run fu
 }
 
 // Pending returns how many backgrounded calls have not finished yet.
-func (d *dispatcher) Pending() int {
+func (d *Dispatcher) Pending() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.pending
@@ -176,7 +229,7 @@ func (d *dispatcher) Pending() int {
 // finish stores the result and closes done. A call that was backgrounded
 // publishes its result before it counts as finished, so that waitLate never
 // misses it.
-func (d *dispatcher) finish(id string, c *dispatchCall, text string, failed bool) {
+func (d *Dispatcher) finish(id string, c *dispatchCall, text string, failed bool) {
 	d.mu.Lock()
 	background := c.background
 	c.text, c.failed = text, failed
@@ -186,19 +239,32 @@ func (d *dispatcher) finish(id string, c *dispatchCall, text string, failed bool
 	if !background {
 		return
 	}
-	if d.bus != nil {
-		// A publish error means that the bus is closed. The journal-only path
-		// for that case comes in a later stage.
-		_, _ = bus.Publish(d.bus, bus.KindToolResult, d.self, d.self, bus.OriginSystem, bus.ToolResult{
-			CallID:     id,
-			Content:    text,
-			Failed:     failed,
-			DurationMS: time.Since(c.started).Milliseconds(),
-		})
-	}
+	d.deliver(bus.ToolResult{
+		CallID:     id,
+		Content:    text,
+		Failed:     failed,
+		DurationMS: time.Since(c.started).Milliseconds(),
+	})
+	// The result is on the bus queue, not yet in late. Move it there before
+	// pending drops, or waitLate could see no pending call and no result.
+	d.absorb()
 	d.mu.Lock()
 	d.pending--
 	delete(d.calls, id)
+	d.notifyLocked()
+	d.mu.Unlock()
+}
+
+// deliver publishes a late result on the bus. When the bus is closed, the
+// result is kept in memory, so that the next turn still takes it.
+func (d *Dispatcher) deliver(r bus.ToolResult) {
+	if d.bus != nil {
+		if _, err := bus.Publish(d.bus, bus.KindToolResult, d.self, d.self, bus.OriginSystem, r); err == nil {
+			return
+		}
+	}
+	d.mu.Lock()
+	d.late = append(d.late, r)
 	d.notifyLocked()
 	d.mu.Unlock()
 }
@@ -209,7 +275,7 @@ func (d *dispatcher) finish(id string, c *dispatchCall, text string, failed bool
 // backgrounds the call. A timeout of 0 gives the placeholder at once.
 //
 // Without a bus the call cannot be backgrounded, so Await waits for it.
-func (d *dispatcher) Await(ctx context.Context, id string, timeout time.Duration) dispatchOutcome {
+func (d *Dispatcher) Await(ctx context.Context, id string, timeout time.Duration) dispatchOutcome {
 	d.mu.Lock()
 	c, ok := d.calls[id]
 	d.mu.Unlock()
@@ -263,7 +329,7 @@ func (d *dispatcher) Await(ctx context.Context, id string, timeout time.Duration
 
 // finishedLocked returns the real result when the call has finished. The
 // caller holds mu.
-func (d *dispatcher) finishedLocked(id string, c *dispatchCall) (dispatchOutcome, bool) {
+func (d *Dispatcher) finishedLocked(id string, c *dispatchCall) (dispatchOutcome, bool) {
 	select {
 	case <-c.done:
 		delete(d.calls, id)
@@ -275,14 +341,14 @@ func (d *dispatcher) finishedLocked(id string, c *dispatchCall) (dispatchOutcome
 
 // handOff returns the real result when the call has finished. Otherwise it
 // backgrounds the call and returns the placeholder.
-func (d *dispatcher) handOff(id string, c *dispatchCall) dispatchOutcome {
+func (d *Dispatcher) handOff(id string, c *dispatchCall) dispatchOutcome {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.handOffLocked(id, c)
 }
 
 // handOffLocked is handOff for a caller that holds mu.
-func (d *dispatcher) handOffLocked(id string, c *dispatchCall) dispatchOutcome {
+func (d *Dispatcher) handOffLocked(id string, c *dispatchCall) dispatchOutcome {
 	if out, ok := d.finishedLocked(id, c); ok {
 		return out
 	}
@@ -292,7 +358,7 @@ func (d *dispatcher) handOffLocked(id string, c *dispatchCall) dispatchOutcome {
 }
 
 // takeLate returns the late results that have arrived and not been taken yet.
-func (d *dispatcher) takeLate() []bus.ToolResult {
+func (d *Dispatcher) takeLate() []bus.ToolResult {
 	d.absorb()
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -305,7 +371,7 @@ func (d *dispatcher) takeLate() []bus.ToolResult {
 // It also returns when ctx is done or a user is pending, so that a person
 // is never kept waiting for a background tool. The loop calls it at the end
 // of a turn. Calls still running then deliver their results at the next turn.
-func (d *dispatcher) waitLate(ctx context.Context) []bus.ToolResult {
+func (d *Dispatcher) waitLate(ctx context.Context) []bus.ToolResult {
 	var poll <-chan time.Time
 	if d.userPending != nil {
 		ticker := time.NewTicker(pollInterval)
@@ -352,13 +418,12 @@ func wakesInline(msg bus.Message) bool {
 // timeoutFor returns how long a call of toolName waits before it is
 // backgrounded. The values are a stub. Config comes in issue #198.
 //
-// subagent and ask_parent are never inline: they get 0 and the placeholder at
-// once. wait blocks by design, so it never backgrounds.
+// subagent, ask_parent and wait block by design: the model waits for the
+// answer or the child result, so they never background. Backgrounding them
+// would change the contract of those tools.
 func timeoutFor(toolName string) time.Duration {
 	switch toolName {
-	case "subagent", "ask_parent":
-		return 0
-	case "wait":
+	case "subagent", "ask_parent", "wait":
 		return noDeadline
 	case "bash", "lua":
 		return 60 * time.Second

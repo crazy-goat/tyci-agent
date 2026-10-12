@@ -325,6 +325,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	}
 	cfg := agent.Config{
 		System:             providers.BuildSystemPrompt(),
+		Dispatch:           agent.NewDispatcher(appBus, orchestratorAddr),
 		MaxRetries:         maxRetries,
 		MaxIterations:      maxIterations,
 		Debug:              debugFlag,
@@ -474,7 +475,11 @@ var runCmd = &cobra.Command{
 		// No TUI reads the orchestrator inbox here. The model reads its
 		// notices through NextMessages, so a notice reaches the model.
 		cond.SetNextMessages(withOrchestratorNotices(cond.Config().NextMessages))
-		if code := runPrompt(cond, disp, prompt, ctx); code != 0 {
+		code := runPrompt(cond, disp, prompt, ctx)
+		// A one-shot run ends only after its background calls. Their results have
+		// no next turn, so the wait only keeps the process alive until they finish.
+		cfg.Dispatch.Wait(ctx)
+		if code != 0 {
 			return exitCodeError(code)
 		}
 		return nil

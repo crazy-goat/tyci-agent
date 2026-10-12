@@ -21,7 +21,7 @@ var testSelf = bus.Addr{Type: bus.AddrAgent, ID: "a1"}
 
 // waitToolResult waits until d has a late result for callID. The pump of d
 // owns the subscription, so the test reads through d, not through the sub.
-func waitToolResult(t *testing.T, d *dispatcher, callID string) bus.ToolResult {
+func waitToolResult(t *testing.T, d *Dispatcher, callID string) bus.ToolResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -189,8 +189,8 @@ func TestPanicBecomesFailedResult(t *testing.T) {
 
 func TestTimeoutFor(t *testing.T) {
 	cases := map[string]time.Duration{
-		"subagent":   0,
-		"ask_parent": 0,
+		"subagent":   noDeadline,
+		"ask_parent": noDeadline,
 		"wait":       noDeadline,
 		"bash":       60 * time.Second,
 		"lua":        60 * time.Second,
@@ -213,14 +213,14 @@ func TestOneToolResultPerToolUse(t *testing.T) {
 
 	release := make(chan struct{})
 	runner := fakeRunner{fn: func(ctx context.Context, name string, _ map[string]any) (string, error) {
-		if name == "subagent" {
+		if name == "other_tool" {
 			<-release
 		}
 		return name + " ok", nil
 	}}
 	calls := []stream.ToolCall{
 		{ID: "t1", Name: "read"},
-		{ID: "t2", Name: "subagent"},
+		{ID: "t2", Name: "other_tool"},
 		{ID: "t3", Name: "read"},
 	}
 	results, _, failed := executeToolsDispatched(context.Background(), runner, calls, d)
@@ -231,11 +231,11 @@ func TestOneToolResultPerToolUse(t *testing.T) {
 		t.Errorf("inline results = %q, %q", results[0], results[2])
 	}
 	if !strings.HasPrefix(results[1], placeholderPrefix) {
-		t.Errorf("subagent result = %q, want placeholder", results[1])
+		t.Errorf("other_tool result = %q, want placeholder", results[1])
 	}
 	close(release)
 	got := waitToolResult(t, d, "c2")
-	if got.Content != "subagent ok" {
+	if got.Content != "other_tool ok" {
 		t.Errorf("late result = %+v", got)
 	}
 }

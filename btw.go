@@ -496,6 +496,9 @@ func btwConfig(base agent.Config) agent.Config {
 	// preserve the parent's other model settings and cancellation behavior.
 	cfg.MaxIterations = 0
 	cfg.Session = nil
+	// A /btw child runs inline. Sharing the parent dispatcher would mix its
+	// call ids and late results with the parent's.
+	cfg.Dispatch = nil
 	cfg.NextMessages = nil
 	cfg.PendingTodos = nil
 	// F10, history: base (cond.Config()) carries the MAIN conversation's

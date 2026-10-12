@@ -485,6 +485,8 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 
 	cfg := agent.Config{
 		System: system,
+		// Each subagent has its own dispatcher, so call ids never collide.
+		Dispatch: agent.NewDispatcher(appBus, agent.UniqueDispatchAddr()),
 		// opts.MaxIterationsCap is 0 (unlimited) for every ordinary
 		// subagent — only tools/scout.go ever sets it, to 15. Plain
 		// MaxIterations stays deliberately unpopulated; see its doc
@@ -569,6 +571,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 			defer func() { _ = cs.Close() }()
 		}
 	}
+	defer cfg.Dispatch.Close()
 	_, err = agent.Run(ctx, mc, ledger.Watch(sink, kind, mc.Provider(), mc.Model(), jobID), &msgs, cfg)
 	text := strings.TrimSpace(collectedText())
 

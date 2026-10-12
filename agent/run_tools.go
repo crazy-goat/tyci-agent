@@ -28,8 +28,8 @@ func executeAndAppendToolResults(ctx context.Context, d Sink, msgs *[]connector.
 	var results []string
 	var durations []time.Duration
 	var failed []bool
-	if cfg.disp != nil {
-		results, durations, failed = executeToolsDispatched(ctx, cfg.Tools, toolCalls, cfg.disp)
+	if cfg.Dispatch != nil {
+		results, durations, failed = executeToolsDispatched(ctx, cfg.Tools, toolCalls, cfg.Dispatch)
 	} else {
 		results, durations, failed = executeTools(ctx, cfg.Tools, toolCalls)
 	}

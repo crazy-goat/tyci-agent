@@ -396,6 +396,7 @@ func (c *Conductor) EndSession(status string, exitCode int) {
 // Resume renders nothing. Replaying the transcript, reporting corrupt lines
 // and announcing "Resumed session ..." are the frontend's business.
 func (c *Conductor) Resume(path string, msgs []connector.Message, usage stream.Usage) error {
+	msgs = agent.CloseOpenToolCalls(msgs)
 	c.EndSession("ok", 0)
 
 	sess, err := session.Open(path, normalizeCWD(c.workDir), c.client.Model(), c.client.Provider())
