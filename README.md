@@ -9,7 +9,7 @@ and a rich TUI — all configurable through a simple JSON model registry.
 - **Multi-provider support** — OpenAI-compatible, Anthropic, Gemini, and custom API types
 - **Agent loop** — model calls, tool execution, iteration, fallback models
 - **Tool system** — built-in tools: `bash`, `find`, `read`, `write`, `todo`, `subagent`, `lua`, `wait`, `jobs`, `session_list`, `remind`, `lock`, `skills`, `agents`, `web`
-- **Background commands** — a shell command still running after 30s moves to the background; the agent is notified when it finishes
+- **Background commands** — a shell command still running after 30s moves to the background; the agent gets its result as a late notice when it finishes
 - **Hooks** — run your own commands before and after any tool call, to gate it or feed its result back
 - **Project instructions & memory** — `AGENTS.md` plus notes the agent writes for its own future sessions
 - **Prompt caching** — Anthropic cache breakpoints on the schemas, system prompt and conversation
@@ -781,17 +781,9 @@ so their divider shows `compaction`. Older files without these fields still load
 
 ## Long subagents
 
-A blocking `subagent` call waits 60s. After that its children move to the
-background — the model is notified when each finishes, exactly as with
-`async=true`, and the turn ends. The point is the person at the keyboard: a
-child that takes five minutes used to hold the turn open for five minutes, with
-no way to type anything.
-
-60s rather than bash's 30s because a child has a model round trip and a few
-tool calls to make before it could possibly be done; a shorter window would
-background almost every call. Children that finish inside the window are
-returned inline as before, and a half-finished batch returns both — results for
-the ones that are done, job ids for the rest.
+A blocking `subagent` call waits until its children finish or block on a
+question. It has no time limit of its own. Use `async=true` to get job ids at
+once and to be notified when each child finishes. See `docs/async-tools.md`.
 
 ## Long background commands
 

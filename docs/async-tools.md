@@ -1,0 +1,102 @@
+# Async tools
+
+This document describes how tool calls run, how a late result reaches the
+model, and what the wait tool does. It describes the code as it is in the
+current branch.
+
+## Design
+
+1. The agent loop fires each tool call through the dispatcher
+   (`agent/dispatcher.go`).
+2. The dispatcher waits for the call for a short time.
+3. If the call ends in that time, its result goes into the conversation as
+   the normal tool result.
+4. If the call is still running, the model gets a placeholder result. The
+   placeholder reads `started, id=cN`, where `N` is the call number.
+5. When the call ends, the result is published on the bus as kind
+   `tool.result`. The agent adds it to the conversation as a tail notice.
+
+## Tail notice
+
+A late result has this form:
+
+    <tyci-notice kind=tool.result call_id=cN failed=false duration_ms=1234>
+    ...content...
+    </tyci-notice>
+
+The notice is a user text block at the end of the conversation. The
+conversation before it does not change, so the prompt cache stays valid.
+
+## Wake rule
+
+A turn ends when the model stops calling tools. The loop then waits for the
+results of the calls still running, unless a user message is pending. A
+pending user message ends the wait, so the person at the keyboard gets the
+next turn at once. The wait ends when the last result arrives.
+
+## Wait tool
+
+`wait` takes these parameters:
+
+| Parameter | Meaning |
+|---|---|
+| `ids` | List of job ids. Repeated ids count once. |
+| `mode` | `any` (default) returns when one job finishes or blocks. `all` returns when every job does. |
+| `seconds` | Maximum time. Required only for a plain sleep, with no job id. |
+| `job_id` | Alias for one id. It gives the same result as `ids` with that one id. |
+
+The wait ends early when a user message is pending or when a new notice
+arrives. The jobs are not touched in either case.
+
+`wait` runs one call at a time in a batch (`MaxParallel` is 1).
+
+Not implemented: a `kinds` filter for notices, and a `Seq` based dedupe. The
+wait path dedupes by job id only.
+
+## Mutation FIFO
+
+A mutation changes files in a worktree. These calls take a FIFO for their
+worktree, in the order they start:
+
+- `write`, which also covers edit mode
+- `bash`, unless the call has `parallel=true`
+- `ctx.run` and `ctx.write` inside a Lua script
+
+Reads do not take the FIFO. Two agents in one worktree share one FIFO. Two
+worktrees do not block each other. The FIFO exists only in one tyci process.
+
+## Locks
+
+A `lock` without a `seconds` value lives until the agent ends. The lock tool
+takes this lifetime from the agent context, set with `tools.WithAgentCtx`. A
+call context that ends does not release the lock.
+
+## Failure paths
+
+- A call that panics returns the text `Error: tool panicked: ...` and is
+  marked failed.
+- A call cancelled by the user returns `cancelled: the turn was interrupted`.
+- A call still open when a session is resumed gets a failed result with the
+  text `cancelled: session was restarted`.
+- A `tyci run` waits for its background calls before it exits.
+- A result that arrives after a run has ended, and no later turn starts,
+  is not shown to the model. The result stays in the bus journal.
+
+## Security
+
+- A subagent may wait on and kill only jobs in its own subtree.
+- Inside a subagent, an unknown job id is refused.
+- Locks are advisory. They do not stop a process from writing a file.
+- The FIFO does not stop writes from outside tyci.
+
+## Known gaps
+
+- `subagent` and `ask_parent` block by design. Making `ask_parent` async is
+  tracked in issue #200.
+- Subagent results do not wake the parent after its run has ended.
+- `bash_output` does not exist in this repository. Read output with
+  `wait(job_id)`.
+- `call_id` is not accepted by `kill_job`. Display events are still matched
+  by queue order, not by call id.
+- `runWithHandoff`, `watchForWaiting`, the bash `background_after` timer,
+  `SetJobObserver` and `AskUnroutableCtxKey` still exist. See `findings.md`.
