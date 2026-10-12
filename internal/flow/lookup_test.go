@@ -252,3 +252,40 @@ func TestProjectHasWorkflowsUsesWorktreeToplevel(t *testing.T) {
 		t.Error("the main clone has no .tyci/workflows, want false")
 	}
 }
+
+// A workflow that only the main checkout has is listed and found from a linked
+// worktree of a trusted project, as Lookup finds it.
+func TestListingsMergesMainCheckoutWorkflows(t *testing.T) {
+	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"} {
+		t.Setenv(k, v)
+	}
+	clone := t.TempDir()
+	e2eGit(t, clone, "init", "-q", "-b", "main")
+	e2eCommit(t, clone, "README.md", "x")
+	writeWF(t, clone, "mainonly", "main")
+	linked := filepath.Join(t.TempDir(), "wt")
+	e2eGit(t, clone, "worktree", "add", "-q", linked, "-b", "wt")
+	writeWF(t, linked, "wtonly", "worktree")
+	home := t.TempDir()
+
+	info := RepoInfo{Home: home, Root: linked, Trusted: true}
+	got := map[string]Listing{}
+	for _, l := range Listings(info) {
+		got[l.Name] = l
+	}
+	for _, name := range []string{"mainonly", "wtonly"} {
+		l, ok := got[name]
+		if !ok {
+			t.Fatalf("Listings lacks %s", name)
+		}
+		if l.Err != nil || l.Source != "project" {
+			t.Errorf("%s: source %q err %v, want project and nil", name, l.Source, l.Err)
+		}
+		if _, _, err := Lookup(name, home, linked, true); err != nil {
+			t.Errorf("Lookup(%s): %v", name, err)
+		}
+	}
+	if hint := workflowNotFound("missing", home, linked, true).Error(); !strings.Contains(hint, "mainonly") {
+		t.Errorf("not-found hint %q lacks mainonly", hint)
+	}
+}

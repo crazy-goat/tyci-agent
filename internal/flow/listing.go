@@ -1,9 +1,10 @@
 package flow
 
 import (
-	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"path/filepath"
 	"strings"
+
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 // Listing is one workflow directory of the current repository, for the TUI
@@ -20,7 +21,10 @@ type Listing struct {
 // name. A directory that does not load is listed with its error, so the
 // person can see why it is not started.
 func Listings(info RepoInfo) []Listing {
-	projectDir := gitinfo.ProjectPath(info.Root, "workflows") + string(filepath.Separator)
+	var projectDirs []string
+	for _, d := range gitinfo.ProjectFiles(info.Root, "workflows") {
+		projectDirs = append(projectDirs, d+string(filepath.Separator))
+	}
 	var out []Listing
 	for _, name := range availableWorkflows(info.Home, info.Root, info.Trusted) {
 		wf, source, err := Lookup(name, info.Home, info.Root, info.Trusted)
@@ -28,8 +32,10 @@ func Listings(info RepoInfo) []Listing {
 		if err == nil {
 			l.Params = wf.Params
 			l.Source = "home"
-			if strings.HasPrefix(source, projectDir) {
-				l.Source = "project"
+			for _, d := range projectDirs {
+				if strings.HasPrefix(source, d) {
+					l.Source = "project"
+				}
 			}
 		}
 		out = append(out, l)

@@ -169,8 +169,11 @@ func TestProjectFileDeletedMainFallsBackToWorktree(t *testing.T) {
 	if got := ProjectFile(wt, "config.json"); got != filepath.Join(wt, ".tyci", "config.json") {
 		t.Fatalf("ProjectFile(deleted main) = %q, want worktree file", got)
 	}
-	if got := ProjectDir(wt); got == "" {
-		t.Fatalf("ProjectDir(deleted main) = empty, want a path")
+	if got := ProjectDir(wt); got != wt {
+		t.Fatalf("ProjectDir(deleted main) = %q, want the worktree %q", got, wt)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("the deleted main checkout must not be re-created: %v", err)
 	}
 }
 

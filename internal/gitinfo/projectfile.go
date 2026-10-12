@@ -16,13 +16,24 @@ import (
 // config.json or hooks.json. Symlinks do not count, so a tracked link
 // ".tyci -> elsewhere" is ignored.
 func ProjectFile(wd, rel string) string {
-	worktree, main := projectRoots(wd)
-	for _, root := range uniqueRoots(worktree, main) {
-		if isRealEntry(root, rel) {
-			return filepath.Join(root, ".tyci", rel)
-		}
+	if files := ProjectFiles(wd, rel); len(files) > 0 {
+		return files[0]
 	}
 	return ""
+}
+
+// ProjectFiles returns the path of rel in every root of the project of wd that
+// has it, worktree first. Use it to merge a directory from both checkouts, for
+// example the workflow names of a listing.
+func ProjectFiles(wd, rel string) []string {
+	worktree, main := projectRoots(wd)
+	var files []string
+	for _, root := range uniqueRoots(worktree, main) {
+		if isRealEntry(root, rel) {
+			files = append(files, filepath.Join(root, ".tyci", rel))
+		}
+	}
+	return files
 }
 
 // ProjectPath returns ProjectFile(wd, rel), or, when no such entry exists,
@@ -58,7 +69,9 @@ func projectRoots(wd string) (worktree, main string) {
 		worktree = top
 	}
 	main = ProjectRoot(abs)
-	if main == "" {
+	if !isDir(main) {
+		// A deleted or moved main checkout is not a root: its git pointer is
+		// still there, but the directory is gone.
 		main = worktree
 	}
 	// In a plain checkout the two roots name the same directory. Keep the
@@ -103,4 +116,10 @@ func isRealEntry(root, rel string) bool {
 func isNotSymlink(p string) bool {
 	fi, err := os.Lstat(p)
 	return err == nil && fi.Mode()&os.ModeSymlink == 0
+}
+
+// isDir reports whether path is an existing directory. An empty path is not.
+func isDir(path string) bool {
+	st, err := os.Stat(path)
+	return path != "" && err == nil && st.IsDir()
 }

@@ -73,10 +73,11 @@ func workflowDirs(name, home, projectDir string, trusted bool) []string {
 }
 
 // lookupBases returns the .tyci/workflows directories that can hold workflows, project first.
+// It returns every real project entry (worktree, then main checkout).
 func lookupBases(home, projectDir string, trusted bool) []string {
 	var bases []string
 	if trusted && projectDir != "" {
-		bases = append(bases, gitinfo.ProjectPath(projectDir, "workflows"))
+		bases = append(bases, gitinfo.ProjectFiles(projectDir, "workflows")...)
 	}
 	if home != "" {
 		bases = append(bases, filepath.Join(home, ".tyci", "workflows"))
