@@ -424,3 +424,28 @@ func TestAdd_StillUsesTempDir(t *testing.T) {
 		t.Fatalf("temp parent %s still exists after Remove (err = %v)", parent, err)
 	}
 }
+
+func TestAddIssue_FromLinkedWorktreeNamesAfterMainCheckout(t *testing.T) {
+	work, _ := newRepoWithOrigin(t)
+	home := t.TempDir()
+
+	first, err := AddIssue(context.Background(), home, work, 7, "main")
+	if err != nil {
+		t.Fatalf("AddIssue: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Remove(context.Background()) })
+
+	second, err := AddIssue(context.Background(), home, first.Dir, 8, "main")
+	if err != nil {
+		t.Fatalf("AddIssue from a worktree: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Remove(context.Background()) })
+
+	want := filepath.Join(home, ".tyci", "worktrees", filepath.Base(work), "issue-8")
+	if second.Dir != want {
+		t.Fatalf("Dir = %q, want %q", second.Dir, want)
+	}
+	if second.Repo != first.Repo {
+		t.Fatalf("Repo = %q, want the main checkout %q", second.Repo, first.Repo)
+	}
+}

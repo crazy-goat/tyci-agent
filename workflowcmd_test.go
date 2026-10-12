@@ -76,7 +76,7 @@ func wfRunRepo(t *testing.T, home string) flow.RepoInfo {
 	wfGit(t, root, "clone", "-q", origin, work)
 	wfGit(t, work, "commit", "-q", "--allow-empty", "-m", "init")
 	wfGit(t, work, "push", "-q", "-u", "origin", "main")
-	return flow.RepoInfo{Home: home, Root: work, Repo: "acme/demo", DefaultBranch: "main"}
+	return flow.RepoInfo{Home: home, Root: work, ConfigDir: work, Repo: "acme/demo", DefaultBranch: "main"}
 }
 
 // wfUseRepo makes the workflow commands use info as the repository of the run.

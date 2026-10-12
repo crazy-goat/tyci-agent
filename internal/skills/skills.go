@@ -2,6 +2,7 @@ package skills
 
 import (
 	"fmt"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,7 +35,7 @@ func ProjectDir(wd string) string {
 	if wd == "" {
 		wd, _ = os.Getwd()
 	}
-	return filepath.Join(wd, ".tyci", "skills")
+	return gitinfo.ProjectPath(wd, "skills")
 }
 
 // Dirs returns the ordered list of directories to load skills from: global

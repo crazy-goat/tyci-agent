@@ -16,6 +16,7 @@ package worktree
 import (
 	"context"
 	"fmt"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,10 +112,13 @@ func addNamed(ctx context.Context, home, repo, name string, defaultBranch string
 		return nil, fmt.Errorf("worktree: home directory must not be empty")
 	}
 
-	root, err := Root(ctx, repo)
+	top, err := Root(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
+	// Name the worktree after the main checkout, and run git there, so a run
+	// started inside a worktree does not nest under the worktree's name.
+	root := gitinfo.ProjectDir(top)
 
 	branch := name
 	target := filepath.Join(home, ".tyci", "worktrees", filepath.Base(root), branch)

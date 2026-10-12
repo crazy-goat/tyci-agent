@@ -123,12 +123,7 @@ func ProjectDir(wd string) string {
 	if wd == "" {
 		wd, _ = os.Getwd()
 	}
-	if root := gitinfo.ProjectRoot(wd); root != "" {
-		wd = root
-	} else if abs, err := filepath.Abs(wd); err == nil {
-		wd = abs
-	}
-	return filepath.Join(wd, ".tyci", "agents")
+	return gitinfo.ProjectPath(wd, "agents")
 }
 
 // Dirs returns the ordered list of directories to load agent definitions

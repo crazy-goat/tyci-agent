@@ -6,6 +6,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -221,7 +222,7 @@ func globalConfigFilePath() string {
 
 // localConfigFilePath returns <wd>/.tyci/config.json.
 func localConfigFilePath(wd string) string {
-	return filepath.Join(wd, GlobalConfigDir, localConfigName)
+	return gitinfo.ProjectPath(wd, localConfigName)
 }
 
 // readTyciConfigFile reads one config.json file. A missing file (or one that

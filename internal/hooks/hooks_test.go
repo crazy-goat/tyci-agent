@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
 func TestRunPreAllowsWhenHookSucceeds(t *testing.T) {
@@ -402,5 +404,23 @@ func TestLoadRejectsBadPathPattern(t *testing.T) {
 	// The valid entry must survive: one bad hook does not disable the rest.
 	if !Any(EventPostTool) {
 		t.Fatal("the well-formed hook should still be loaded")
+	}
+}
+
+func TestHookEnvExposesProjectDir(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "env.txt")
+	defer SetForTesting([]Hook{{
+		Event:   EventPostTool,
+		Command: `printf '%s' "$TYCI_PROJECT_DIR" > ` + out,
+	}})()
+
+	RunPost(context.Background(), "write", map[string]any{"path": "x"}, true, "written", "")
+
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := gitinfo.ProjectDir("."); string(data) != want {
+		t.Fatalf("TYCI_PROJECT_DIR = %q, want %q", data, want)
 	}
 }

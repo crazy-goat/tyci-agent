@@ -25,6 +25,17 @@ func ProjectFile(wd, rel string) string {
 	return ""
 }
 
+// ProjectPath returns ProjectFile(wd, rel), or, when no such entry exists,
+// the path it would have in the main checkout. Use it for a missing file a
+// caller only reads (the read fails as "not exist", as before) and for a
+// target a caller creates.
+func ProjectPath(wd, rel string) string {
+	if p := ProjectFile(wd, rel); p != "" {
+		return p
+	}
+	return filepath.Join(ProjectDir(wd), ".tyci", rel)
+}
+
 // ProjectDir returns the main checkout of the project of wd, the place for
 // state shared by every worktree. It falls back to the worktree root, and
 // then to the absolute wd, when git cannot tell (no repository, bare
@@ -46,14 +57,14 @@ func projectRoots(wd string) (worktree, main string) {
 	if top, _ := locateGitDir(abs); top != "" {
 		worktree = top
 	}
-	// Resolve symlinks like ProjectRoot does, so both roots use one spelling
-	// of the same path (macOS temp dirs sit behind /var -> /private/var).
-	if r, err := filepath.EvalSymlinks(worktree); err == nil {
-		worktree = r
-	}
 	main = ProjectRoot(abs)
 	if main == "" {
 		main = worktree
+	}
+	// In a plain checkout the two roots name the same directory. Keep the
+	// resolved main spelling so callers see one path, as before.
+	if resolved, err := filepath.EvalSymlinks(worktree); err == nil && resolved == main {
+		worktree = main
 	}
 	return worktree, main
 }

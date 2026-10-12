@@ -3,6 +3,7 @@ package flow
 import (
 	"errors"
 	"fmt"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -36,8 +37,7 @@ func findWorkflow(name, home, projectDir string, trusted bool) (*Workflow, strin
 	if !workflowName.MatchString(name) {
 		return nil, "", fmt.Errorf("bad workflow name %q: use a-z, 0-9 and -", name)
 	}
-	for _, base := range lookupBases(home, projectDir, trusted) {
-		dir := filepath.Join(base, ".tyci", "workflows", name)
+	for _, dir := range workflowDirs(name, home, projectDir, trusted) {
 		st, serr := os.Stat(dir)
 		if errors.Is(serr, fs.ErrNotExist) {
 			continue
@@ -57,14 +57,29 @@ func findWorkflow(name, home, projectDir string, trusted bool) (*Workflow, strin
 	return nil, "", workflowNotFound(name, home, projectDir, trusted)
 }
 
-// lookupBases returns the directories that can hold .tyci/workflows, project first.
+// workflowDirs returns the directories that can hold the workflow name, project first.
+// The project entry is resolved per workflow (see gitinfo.ProjectFile).
+func workflowDirs(name, home, projectDir string, trusted bool) []string {
+	var dirs []string
+	if trusted && projectDir != "" {
+		if p := gitinfo.ProjectFile(projectDir, "workflows/"+name); p != "" {
+			dirs = append(dirs, p)
+		}
+	}
+	if home != "" {
+		dirs = append(dirs, filepath.Join(home, ".tyci", "workflows", name))
+	}
+	return dirs
+}
+
+// lookupBases returns the .tyci/workflows directories that can hold workflows, project first.
 func lookupBases(home, projectDir string, trusted bool) []string {
 	var bases []string
 	if trusted && projectDir != "" {
-		bases = append(bases, projectDir)
+		bases = append(bases, gitinfo.ProjectPath(projectDir, "workflows"))
 	}
 	if home != "" {
-		bases = append(bases, home)
+		bases = append(bases, filepath.Join(home, ".tyci", "workflows"))
 	}
 	return bases
 }
@@ -192,7 +207,7 @@ func workflowNotFound(name, home, projectDir string, trusted bool) error {
 func availableWorkflows(home, projectDir string, trusted bool) []string {
 	seen := map[string]bool{}
 	for _, base := range lookupBases(home, projectDir, trusted) {
-		entries, err := os.ReadDir(filepath.Join(base, ".tyci", "workflows"))
+		entries, err := os.ReadDir(base)
 		if err != nil {
 			continue
 		}
@@ -215,10 +230,10 @@ func availableWorkflows(home, projectDir string, trusted bool) []string {
 // It uses the same toplevel as DetectRepoAt, so a linked worktree is checked
 // in its own directory, as Lookup does.
 func ProjectHasWorkflows(dir string) bool {
-	root, err := gitOut(dir, "rev-parse", "--show-toplevel")
-	if err != nil {
+	p := gitinfo.ProjectFile(dir, "workflows")
+	if p == "" {
 		return false
 	}
-	st, err := os.Stat(filepath.Join(root, ".tyci", "workflows"))
+	st, err := os.Stat(p)
 	return err == nil && st.IsDir()
 }

@@ -67,7 +67,7 @@ func TestProjectFilePerEntryWorktreeWins(t *testing.T) {
 		t.Fatalf("config.json = %q, want main", got)
 	}
 	writeFile(t, filepath.Join(resolved(t, wt), ".tyci", "config.json"), "wt")
-	if got := ProjectFile(wt, "config.json"); got != filepath.Join(resolved(t, wt), ".tyci", "config.json") {
+	if got := ProjectFile(wt, "config.json"); got != filepath.Join(wt, ".tyci", "config.json") {
 		t.Fatalf("config.json = %q, want worktree", got)
 	}
 }
@@ -98,10 +98,10 @@ func TestProjectFileBareRepoFallsBackToWd(t *testing.T) {
 	run(t, bare, "init", "-q", "--bare", ".")
 	writeFile(t, filepath.Join(resolved(t, bare), ".tyci", "config.json"), "{}")
 
-	if got := ProjectDir(bare); got != resolved(t, bare) {
-		t.Fatalf("ProjectDir(bare) = %q, want %q", got, resolved(t, bare))
+	if got := ProjectDir(bare); got != bare {
+		t.Fatalf("ProjectDir(bare) = %q, want %q", got, bare)
 	}
-	if got := ProjectFile(bare, "config.json"); got != filepath.Join(resolved(t, bare), ".tyci", "config.json") {
+	if got := ProjectFile(bare, "config.json"); got != filepath.Join(bare, ".tyci", "config.json") {
 		t.Fatalf("ProjectFile(bare) = %q", got)
 	}
 }
@@ -166,7 +166,7 @@ func TestProjectFileDeletedMainFallsBackToWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := ProjectFile(wt, "config.json"); got != filepath.Join(resolved(t, wt), ".tyci", "config.json") {
+	if got := ProjectFile(wt, "config.json"); got != filepath.Join(wt, ".tyci", "config.json") {
 		t.Fatalf("ProjectFile(deleted main) = %q, want worktree file", got)
 	}
 	if got := ProjectDir(wt); got == "" {
@@ -177,10 +177,26 @@ func TestProjectFileDeletedMainFallsBackToWorktree(t *testing.T) {
 func TestProjectFileOutsideRepository(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(resolved(t, dir), ".tyci", "config.json"), "{}")
-	if got := ProjectFile(dir, "config.json"); got != filepath.Join(resolved(t, dir), ".tyci", "config.json") {
+	if got := ProjectFile(dir, "config.json"); got != filepath.Join(dir, ".tyci", "config.json") {
 		t.Fatalf("ProjectFile(no repo) = %q", got)
 	}
-	if got := ProjectDir(dir); got != resolved(t, dir) {
+	if got := ProjectDir(dir); got != dir {
 		t.Fatalf("ProjectDir(no repo) = %q, want %q", got, dir)
+	}
+}
+
+func TestProjectPathFallsBackToMainCheckout(t *testing.T) {
+	dir := initRepo(t)
+	wt := filepath.Join(t.TempDir(), "wt")
+	run(t, dir, "worktree", "add", "-q", "-b", "tyci/child", wt)
+	t.Cleanup(func() { run(t, dir, "worktree", "remove", "--force", wt) })
+
+	want := filepath.Join(resolved(t, dir), ".tyci", "memory")
+	if got := ProjectPath(wt, "memory"); got != want {
+		t.Fatalf("ProjectPath(missing) = %q, want %q", got, want)
+	}
+	writeFile(t, filepath.Join(wt, ".tyci", "memory", "n.md"), "x")
+	if got := ProjectPath(wt, "memory"); got != filepath.Join(wt, ".tyci", "memory") {
+		t.Fatalf("ProjectPath(worktree has it) = %q", got)
 	}
 }

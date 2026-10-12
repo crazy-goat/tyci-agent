@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"path/filepath"
 	"strings"
 )
@@ -19,7 +20,7 @@ type Listing struct {
 // name. A directory that does not load is listed with its error, so the
 // person can see why it is not started.
 func Listings(info RepoInfo) []Listing {
-	projectDir := filepath.Join(info.Root, ".tyci", "workflows") + string(filepath.Separator)
+	projectDir := gitinfo.ProjectPath(info.Root, "workflows") + string(filepath.Separator)
 	var out []Listing
 	for _, name := range availableWorkflows(info.Home, info.Root, info.Trusted) {
 		wf, source, err := Lookup(name, info.Home, info.Root, info.Trusted)

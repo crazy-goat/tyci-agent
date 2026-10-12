@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"os"
 	"path/filepath"
 	"sync"
@@ -112,7 +113,7 @@ func ConfigPath() string {
 // and commands.go's initCommon, which gates it the same way it already gates
 // hooks.json and .tyci/tools).
 func LocalConfigPath(wd string) string {
-	return filepath.Join(wd, ".tyci", "mcp.json")
+	return gitinfo.ProjectPath(wd, "mcp.json")
 }
 
 // LoadConfig reads the global MCP configuration file.

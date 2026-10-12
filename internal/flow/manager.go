@@ -22,7 +22,8 @@ var runIDPattern = regexp.MustCompile(`^\d{8}-\d{6}-\d+(-[0-9a-f]{6})?$`)
 // RepoInfo describes the repository a run works in.
 type RepoInfo struct {
 	Home          string // user home; runs live under <Home>/.tyci/runs
-	Root          string // repository root
+	Root          string // directory the run works in: the repository toplevel (a linked worktree has its own)
+	ConfigDir     string // main checkout of the project: git and worktree operations
 	Repo          string // owner/name
 	DefaultBranch string
 	Trusted       bool
