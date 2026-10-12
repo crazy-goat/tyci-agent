@@ -137,6 +137,16 @@ func (d *Dispatcher) Wait(ctx context.Context) {
 	}
 }
 
+// NewChildDispatcher returns the Dispatcher of a subagent. Its calls never
+// background: each one blocks until it finishes or its context ends, so the
+// subagent never loses a late result when its Run ends. A child has no bus
+// and no user poll. The main conversation uses NewDispatcher.
+func NewChildDispatcher() *Dispatcher {
+	d := newDispatcher(nil, bus.Addr{}, nil)
+	d.userPending = nil
+	return d
+}
+
 // newDispatcher returns a Dispatcher. sub must receive the messages of self,
 // and it may be nil when there is no bus.
 func newDispatcher(b *bus.Bus, self bus.Addr, sub *bus.Sub) *Dispatcher {
@@ -297,6 +307,7 @@ func (d *Dispatcher) deliver(r bus.ToolResult) {
 // that is already backgrounded is cancelled by cancelBackground instead.
 //
 // Without a bus the call cannot be backgrounded, so Await waits for it.
+// A child dispatcher (NewChildDispatcher) has no bus, so its calls block too.
 func (d *Dispatcher) Await(ctx context.Context, id string, timeout time.Duration) dispatchOutcome {
 	d.mu.Lock()
 	c, ok := d.calls[id]
@@ -305,12 +316,14 @@ func (d *Dispatcher) Await(ctx context.Context, id string, timeout time.Duration
 		return dispatchOutcome{Text: "Error: unknown call id " + id, Failed: true}
 	}
 
-	blocking := timeout == noDeadline
-	if d.bus == nil {
-		blocking = true
+	blocking := timeout == noDeadline || d.bus == nil
+	// A blocking call has no timer: it never backgrounds on time.
+	var timeoutC <-chan time.Time
+	if !blocking {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		timeoutC = timer.C
 	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
 	var poll <-chan time.Time
 	if !blocking && d.userPending != nil {
 		ticker := time.NewTicker(pollInterval)
@@ -339,7 +352,7 @@ func (d *Dispatcher) Await(ctx context.Context, id string, timeout time.Duration
 			if d.userPending() {
 				return d.handOff(id, c)
 			}
-		case <-timer.C:
+		case <-timeoutC:
 			return d.handOff(id, c)
 		case <-ctx.Done():
 			return d.cancelAndWait(id, c)

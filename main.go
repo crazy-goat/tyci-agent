@@ -486,7 +486,8 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	cfg := agent.Config{
 		System: system,
 		// Each subagent has its own dispatcher, so call ids never collide.
-		Dispatch: agent.NewDispatcher(appBus, agent.UniqueDispatchAddr()),
+		// Its calls block and never background (see NewChildDispatcher).
+		Dispatch: agent.NewChildDispatcher(),
 		// opts.MaxIterationsCap is 0 (unlimited) for every ordinary
 		// subagent — only tools/scout.go ever sets it, to 15. Plain
 		// MaxIterations stays deliberately unpopulated; see its doc

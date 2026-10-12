@@ -36,6 +36,9 @@ next turn at once. The wait ends when the last result arrives.
 
 A blocking call (timeout `noDeadline`: `subagent`, `ask_parent`, `wait`, and
 every call of a tool that runs one at a time) never moves to the background.
+Every call of a subagent blocks, because a subagent has no late-result path:
+its dispatcher has no bus and no user poll (`NewChildDispatcher`). Only the
+main conversation backgrounds calls.
 Wake messages and a pending user message do not change it. It returns only
 when it finishes or when the turn is cancelled. A serial tool therefore keeps
 the order of its batch.

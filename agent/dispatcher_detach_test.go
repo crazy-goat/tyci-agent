@@ -136,3 +136,24 @@ func TestSerialCallsKeepOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestChildCallNeverBackgrounds checks that a subagent call is not moved to
+// the background, even when its wait is over and a user is pending. The short
+// timeout is the test hook: it stands in for the stub timeouts of 2.5 s and 60 s.
+func TestChildCallNeverBackgrounds(t *testing.T) {
+	isolateHome(t)
+	d := NewChildDispatcher()
+	d.userPending = func() bool { return true }
+
+	id := d.Fire(context.Background(), func(context.Context) (string, bool) {
+		time.Sleep(100 * time.Millisecond)
+		return "child result", false
+	})
+	out := d.Await(context.Background(), id, 10*time.Millisecond)
+	if out.Background || out.Failed || out.Text != "child result" {
+		t.Errorf("outcome = %+v, want inline child result", out)
+	}
+	if n := d.Pending(); n != 0 {
+		t.Errorf("pending = %d, want 0", n)
+	}
+}
