@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/agent"
 )
 
 // roleAgents is a scripted AgentRunner for replacement tests. Each role
@@ -347,5 +351,88 @@ func TestReplaceHistoryRecordsReplacingRole(t *testing.T) {
 	waitRun(t, done)
 	if len(st.History) != 1 || st.History[0].Role != "worker-critical" || st.History[0].Key != "done" {
 		t.Fatalf("history = %+v, want one worker-critical step with key done", st.History)
+	}
+}
+
+// lateCallAgents runs the "worker" role like an agent loop: it starts a call
+// on a child dispatcher that ignores its context and ends late. The agent
+// waits for that call before it returns, as Run does. Other roles use roleAgents.
+type lateCallAgents struct {
+	*roleAgents
+	callDelay time.Duration
+	callEnded atomic.Bool
+}
+
+func (l *lateCallAgents) Run(ctx context.Context, role, task string, rc RunContext) (string, string, error) {
+	if role != "worker" {
+		if !l.callEnded.Load() {
+			l.record("early start " + role)
+		}
+		return l.roleAgents.Run(ctx, role, task, rc)
+	}
+	l.record("start worker")
+	l.started <- role
+	d := agent.NewChildDispatcher()
+	id := d.Fire(context.Background(), func(context.Context) (string, bool) {
+		time.Sleep(l.callDelay)
+		l.callEnded.Store(true)
+		return "late", false
+	})
+	<-ctx.Done()
+	d.Await(ctx, id, time.Duration(math.MaxInt64))
+	l.record("stop worker")
+	return "", "", ctx.Err()
+}
+
+// The new agent starts only after the late call of the old agent has ended.
+func TestReplaceNewAgentWaitsForLateToolCall(t *testing.T) {
+	a := newRoleAgents()
+	late := &lateCallAgents{roleAgents: a, callDelay: 200 * time.Millisecond}
+	store := &memStore{}
+	r := &Runner{WF: replaceWorkflow(0), Agents: late, Store: store, Checks: &fakeChecks{}}
+	r.slot = newAgentSlot("test-run", validateRoles)
+	done := make(chan error, 1)
+	go func() { done <- r.Run(context.Background(), newRun("code")) }()
+	waitStart(t, a, "worker")
+	if err := r.slot.replace("test-run/worker", "worker-critical", "stuck"); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	waitRun(t, done)
+	for _, ev := range a.log() {
+		if strings.HasPrefix(ev, "early start") {
+			t.Fatalf("new agent started before the late call ended: %v", a.log())
+		}
+	}
+	if !late.callEnded.Load() {
+		t.Fatal("the late call did not end")
+	}
+}
+
+// A late call that outlives the wait refuses the replacement: no new agent starts.
+func TestReplaceRefusedIfLateToolCallOutlivesWait(t *testing.T) {
+	old := replaceWait
+	replaceWait = 50 * time.Millisecond
+	t.Cleanup(func() { replaceWait = old })
+
+	a := newRoleAgents()
+	late := &lateCallAgents{roleAgents: a, callDelay: 400 * time.Millisecond}
+	store := &memStore{}
+	r := &Runner{WF: replaceWorkflow(0), Agents: late, Store: store, Checks: &fakeChecks{}}
+	r.slot = newAgentSlot("test-run", validateRoles)
+	done := make(chan error, 1)
+	go func() { done <- r.Run(context.Background(), newRun("code")) }()
+	waitStart(t, a, "worker")
+	err := r.slot.replace("test-run/worker", "worker-critical", "stuck")
+	if err == nil || !strings.Contains(err.Error(), "did not stop") {
+		t.Fatalf("replace with a late call: err = %v", err)
+	}
+	waitRun(t, done)
+	if !late.callEnded.Load() {
+		t.Fatal("the late call did not end before the run ended")
+	}
+	for _, ev := range a.log() {
+		if strings.HasPrefix(ev, "start worker-critical") {
+			t.Fatal("new agent started after a refused replacement")
+		}
 	}
 }
