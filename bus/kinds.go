@@ -17,6 +17,9 @@ const (
 	KindBtwAnswer Kind = "btw.answer"
 	// KindPingMissed tells the parent that an agent has been quiet too long.
 	KindPingMissed Kind = "ping.missed"
+	// KindToolResult is the late result of a tool call that was moved to the
+	// background. It is Durable and written with Origin=System.
+	KindToolResult Kind = "tool.result"
 )
 
 // Completion is the payload of KindNoticeCompletion.
@@ -75,6 +78,17 @@ type JobStatus struct {
 	LastActivity time.Time `json:"last_activity"`
 }
 
+// ToolResult is the payload of KindToolResult. Content is untrusted model
+// input and is shown only inside a tagged notice.
+type ToolResult struct {
+	CallID     string `json:"call_id"`
+	Content    string `json:"content"`
+	Failed     bool   `json:"failed"`
+	DurationMS int64  `json:"duration_ms"`
+	Truncated  bool   `json:"truncated"`
+	FullPath   string `json:"full_path"`
+}
+
 func init() {
 	Register[JobStatus](KindJobStatus, Latest, jobStatusKey)
 	Register[Completion](KindNoticeCompletion, Durable, nil)
@@ -82,6 +96,7 @@ func init() {
 	Register[AgentMessage](KindAgentMessage, Durable, nil)
 	Register[BtwAnswer](KindBtwAnswer, Durable, nil)
 	Register[PingMissed](KindPingMissed, Durable, nil)
+	Register[ToolResult](KindToolResult, Durable, nil)
 }
 
 // jobStatusKey coalesces job.status messages per job.
