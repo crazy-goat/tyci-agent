@@ -119,10 +119,11 @@ func (s *agentSlot) replace(agentID, toRole, reason string) error {
 
 // runAgent runs the agent of state cur. When the orchestrator replaces the agent,
 // the old agent is stopped, the summary is built and the new role runs in the
-// same visit. Visits are not counted again.
-func (r *Runner) runAgent(ctx context.Context, st *RunState, cur string, s State, rc RunContext) (string, string, error) {
+// same visit. Visits are not counted again. It returns the role that ran last.
+func (r *Runner) runAgent(ctx context.Context, st *RunState, cur string, s State, rc RunContext) (string, string, string, error) {
 	if r.slot == nil {
-		return r.Agents.Run(ctx, s.Agent, s.Task, rc)
+		key, session, err := r.Agents.Run(ctx, s.Agent, s.Task, rc)
+		return s.Agent, key, session, err
 	}
 	role := s.Agent
 	for {
@@ -132,7 +133,7 @@ func (r *Runner) runAgent(ctx context.Context, st *RunState, cur string, s State
 		cancel()
 		p := r.slot.end()
 		if p == nil {
-			return key, session, err
+			return role, key, session, err
 		}
 		next, sumErr := r.replaceWith(st, cur, rc, role, p)
 		if sumErr != nil {

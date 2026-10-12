@@ -2,6 +2,7 @@ package flow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ type roleAgents struct {
 	started chan string
 	stuck   map[string]bool
 	hold    map[string]chan struct{}
+	// holdErr is returned by a held role when its gate closes (a cancelled agent).
+	holdErr map[string]error
 	keys    map[string]string
 }
 
@@ -26,6 +29,7 @@ func newRoleAgents() *roleAgents {
 		started: make(chan string, 32),
 		stuck:   map[string]bool{},
 		hold:    map[string]chan struct{}{},
+		holdErr: map[string]error{},
 		keys:    map[string]string{"worker": "done", "worker-critical": "done"},
 	}
 }
@@ -47,6 +51,10 @@ func (a *roleAgents) Run(ctx context.Context, role, _ string, _ RunContext) (str
 	a.started <- role
 	if gate, ok := a.hold[role]; ok {
 		<-gate
+		if err := a.holdErr[role]; err != nil {
+			a.record("stop " + role)
+			return "", "", err
+		}
 		a.record("finish " + role)
 		return a.keys[role], "sess-" + role, nil
 	}
@@ -183,6 +191,7 @@ func TestReplaceRefusedIfOldAgentWontStop(t *testing.T) {
 	a := newRoleAgents()
 	gate := make(chan struct{})
 	a.hold["worker"] = gate
+	a.holdErr["worker"] = errors.New("cancelled")
 	store := &memStore{}
 	r, st, done := startReplaceRun(t, a, store, replaceWorkflow(0))
 	waitStart(t, a, "worker")
@@ -195,6 +204,10 @@ func TestReplaceRefusedIfOldAgentWontStop(t *testing.T) {
 	waitRun(t, done)
 	if len(st.Replaced) != 0 {
 		t.Fatalf("refused replacement was recorded: %+v", st.Replaced)
+	}
+	// The old agent was cancelled before the wait, so its step ends as an error.
+	if len(st.History) != 1 || st.History[0].Key != "error" || st.History[0].Role != "worker" {
+		t.Fatalf("history after refusal = %+v, want one worker step with key error", st.History)
 	}
 	for _, ev := range a.log() {
 		if strings.HasPrefix(ev, "start worker-critical") {
@@ -318,5 +331,21 @@ func TestReplacedAgentTextHasSummary(t *testing.T) {
 	}
 	if !strings.Contains(task, "ISSUE") {
 		t.Errorf("task lacks the issue text:\n%s", task)
+	}
+}
+
+// The history step records the role that ran last: worker-critical after a replacement.
+func TestReplaceHistoryRecordsReplacingRole(t *testing.T) {
+	a := newRoleAgents()
+	a.stuck["worker"] = true
+	store := &memStore{}
+	r, st, done := startReplaceRun(t, a, store, replaceWorkflow(0))
+	waitStart(t, a, "worker")
+	if err := r.slot.replace("test-run/worker", "worker-critical", "stuck"); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	waitRun(t, done)
+	if len(st.History) != 1 || st.History[0].Role != "worker-critical" || st.History[0].Key != "done" {
+		t.Fatalf("history = %+v, want one worker-critical step with key done", st.History)
 	}
 }

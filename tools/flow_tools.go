@@ -356,7 +356,7 @@ func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 				"run":    map[string]any{"type": "string", "description": "Run id."},
 				"reason": map[string]any{"type": "string", "description": "Why the run stops. Optional."},
 			}, []string{"run"}),
-		fn("replace_agent", "Replace a stuck agent of a workflow run with an agent of another role. The old agent is stopped first, and a summary of its work goes to the new agent. One replacement per state visit. Use it only when the run is stuck and the user agrees, or when the run notice says so.",
+		fn("replace_agent", "Last resort: use it on a stuck agent, for example missed pings or a hit limit. It replaces the agent of a workflow run with an agent of another role. The old agent is stopped first, and a summary of its work goes to the new agent. One replacement per state visit.",
 			map[string]any{
 				"agent_id": map[string]any{"type": "string", "description": "Id of the running agent: <run>/<role>, for example run-7/coder."},
 				"role":     map[string]any{"type": "string", "description": "Role of the new agent, as defined in the workflow config."},
