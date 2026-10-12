@@ -68,9 +68,9 @@ returns only when it finishes or when the turn is cancelled. A serial tool
 therefore keeps the order of its batch.
 
 The dispatcher never backgrounds `subagent`, `ask_parent` or `wait`. The
-`subagent` tool still has its own 60s handoff (`runWithHandoff` in
-`tools/subagent.go`). That handoff stays until the cleanup follow-up removes
-it.
+`subagent` tool has no handoff of its own. It blocks until its children finish,
+or until its context ends. Then the children that still run are cancelled
+(`runBlocking` in `tools/subagent.go`).
 
 ## Background wait and kill deadline
 
@@ -197,5 +197,3 @@ call context that ends does not release the lock.
   `agent/agent.go` is false there). The notice stays queued for the next turn. If no
   later turn follows, the result is lost.
 - Call ids restart at `c1` after a resume (see "Call ids").
-- `runWithHandoff`, `watchForWaiting`, the bash `background_after` timer,
-  `SetJobObserver` and `AskUnroutableCtxKey` still exist. See #651.
