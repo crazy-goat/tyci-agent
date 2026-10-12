@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/crazy-goat/tyci-agent/bus"
@@ -14,18 +15,33 @@ func TestBusKindWatchSeesOnlyTheKinds(t *testing.T) {
 	defer release()
 
 	arrived, stop := busKindWatch(job, []string{"ask.reply"})
-	t.Cleanup(stop)
 
 	publishAgentMessage(appBus, job, orchestratorAddr, bus.OriginAgent, "hello")
 	if arrived() {
 		t.Fatal("an agent.message woke a watch for ask.reply")
 	}
 
-	if _, err := bus.PublishReply(appBus, bus.KindAskReply, orchestratorAddr, agentAddr(job), bus.OriginAgent,
-		1, bus.AskReply{Question: "q1", Answer: "yes"}); err != nil {
+	seq, err := bus.PublishReply(appBus, bus.KindAskReply, orchestratorAddr, agentAddr(job), bus.OriginAgent,
+		1, bus.AskReply{Question: "q1", Answer: "yes"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if !arrived() {
 		t.Fatal("an ask.reply to the job did not wake the watch")
+	}
+
+	if got := agentInboxes.drain(job); len(got) != 2 || !strings.Contains(got[1], "yes") {
+		t.Fatalf("job inbox = %q, want the message and the reply", got)
+	}
+	stop()
+	// The last event of the reply holds its final state.
+	var last *bus.Event
+	for _, e := range appBus.Events() {
+		if e.Msg.Seq == seq {
+			last = &e
+		}
+	}
+	if last == nil || last.State != bus.Received {
+		t.Fatalf("last state of the reply = %+v, want Received after the job drained it and the watch stopped", last)
 	}
 }

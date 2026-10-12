@@ -180,7 +180,10 @@ func busKindWatch(callerJobID string, kinds []string) (arrived func() bool, stop
 		bk = append(bk, bus.Kind(k))
 	}
 	sub := appBus.Subscribe("wait kinds "+callerJobID, bus.Filter{To: agentAddr(callerJobID), Kinds: bk})
-	return func() bool { return sub.Accepted() > 0 }, sub.Close
+	// stop drains the watch too. The watch is a receiver, so a message that
+	// stays queued in it would keep its state at Sent (see #578). The
+	// messages are dropped: the job inbox still holds them for the agent.
+	return func() bool { return sub.Accepted() > 0 }, func() { sub.CloseAndDrain() }
 }
 
 // publishAsk sends question of agent agentID to parentID, or to the

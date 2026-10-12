@@ -140,6 +140,9 @@ message or a job it waits for. Use `kinds` only in a subagent.
 Repeated ids count once. The dedupe runs after call ids are resolved, so `c3`
 and its job id count as one job.
 
+Not implemented: a dedupe of notices by `Seq`. `wait` does not read a notice
+list; it wakes on a count of new notices, and the bus stores each message once.
+
 ## Mutation FIFO
 
 A mutation changes files in a worktree. These calls take a FIFO for their
@@ -191,6 +194,8 @@ call context that ends does not release the lock.
 
 ## Known gaps
 
+- A dedupe of notices by `Seq` is not implemented. `wait` has no notice list to
+  dedupe; it wakes on a count of new notices (see "Wait tool").
 - The full output of a late tool result in a workflow run is not written to
   `<run dir>/tool-results/`. It goes only to `~/.tyci/tool-results/<session-id>`
   (`agent/result_tail.go`). Open follow-up of #651.
