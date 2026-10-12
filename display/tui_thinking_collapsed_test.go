@@ -63,7 +63,7 @@ func TestThinkingBlockShowsDuration(t *testing.T) {
 		t.Fatalf("expected a measured duration > 0, got %v", m.blocks[0].duration)
 	}
 	line := stripANSI(m.getBlockLines(0, false)[0])
-	if !strings.Contains(line, "click to display") {
+	if !strings.Contains(line, "click to expand") {
 		t.Fatalf("finished thinking block should offer to display, got %q", line)
 	}
 	// formatDuration always emits a unit suffix ("ms" or "s").
@@ -85,7 +85,7 @@ func TestThinkingBlockWhileStreamingShowsProgress(t *testing.T) {
 	if !strings.Contains(line, "click for progress") {
 		t.Fatalf("still-streaming thinking block should read as running, got %q", line)
 	}
-	if strings.Contains(line, "click to display") {
+	if strings.Contains(line, "click to expand") {
 		t.Fatalf("should not claim to be finished yet: %q", line)
 	}
 }

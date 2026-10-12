@@ -242,7 +242,7 @@ func TestGroup_ClickOnHeaderTogglesWithoutModal(t *testing.T) {
 	}
 }
 
-func TestGroup_ClickOnStepOpensToolModal(t *testing.T) {
+func TestGroup_ClickOnStepExpandsIt(t *testing.T) {
 	m := newGroupTestModel()
 	addFinishedTool(&m, "read", `{"path": "a.txt"}`)
 	addFinishedTool(&m, "bash", `{"description": "build"}`)
@@ -255,8 +255,8 @@ func TestGroup_ClickOnStepOpensToolModal(t *testing.T) {
 	next, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 1, Y: 2})
 	m = next.(TuiModel)
 
-	if !m.subagentModalActive || m.subagentModalBlockIdx != 0 {
-		t.Fatalf("a click on a step should open that step's modal, active=%v block=%d", m.subagentModalActive, m.subagentModalBlockIdx)
+	if !m.blocks[0].expanded || m.blocks[1].expanded {
+		t.Fatalf("a click on a step should expand that step only, expanded=%v/%v", m.blocks[0].expanded, m.blocks[1].expanded)
 	}
 }
 

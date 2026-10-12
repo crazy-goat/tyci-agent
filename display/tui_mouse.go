@@ -97,13 +97,16 @@ func (m TuiModel) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		y := m.selection.PressY
 		m = m.clearSelection()
-		m.openToolModalAt(y)
+		m.toggleBlockAt(y)
 		return m, nil
 	}
 	return m, nil
 }
 
-func (m *TuiModel) openToolModalAt(y int) {
+// toggleBlockAt handles a click on screen row y. A group header toggles the
+// group. A tool or thinking line opens or folds its body in place. The click
+// reads the block of the shown model, so it also works in an agent view.
+func (m *TuiModel) toggleBlockAt(y int) {
 	if y < 0 || y >= m.messageRegionHeight() {
 		return
 	}
@@ -112,30 +115,36 @@ func (m *TuiModel) openToolModalAt(y int) {
 		return
 	}
 	// The header of a group toggles the group. Its steps open one by one.
+	shown := m.shownModel()
 	if line.SourceKind == "group" {
-		m.shownModel().toggleGroup(line.BlockIndex)
-		return
-	}
-	// The tool modal reads the main conversation's blocks, so it does not
-	// open while an agent view is on screen.
-	if m.agentView != nil {
+		shown.toggleGroup(line.BlockIndex)
 		return
 	}
 	idx := line.BlockIndex
-	if idx < 0 || (m.blocks[idx].kind != "tool" && m.blocks[idx].kind != "thinking") {
+	if idx < 0 || idx >= len(shown.blocks) || (shown.blocks[idx].kind != "tool" && shown.blocks[idx].kind != "thinking") {
 		return
 	}
-	m.savedScrollLine = m.scrollLine
-	m.savedAtBottom = m.atBottom
-
-	// Any tool (or thinking) block, in any state. A running tool used to be
-	// ignored unless it was a subagent, so clicking a long bash command — the
-	// case where you most want to see what is happening — did nothing at
-	// all. The modal reads the block's live output, which is exactly what
-	// tool-progress is filling in while the command runs.
-	if !m.subagentModalActive {
-		m.openToolBlockModal(idx)
+	// Scroll position is kept on the main model. The lines of the body are
+	// added below the header, so the scroll offset grows by the same count.
+	// The header then stays on its row, also at the bottom, where the view
+	// leaves the auto-follow mode. clampScroll restores it when the offset is 0.
+	before := shown.totalRenderedLines()
+	shown.toggleBlockExpanded(idx)
+	m.scrollLine += shown.totalRenderedLines() - before
+	if m.scrollLine > 0 {
+		m.atBottom = false
 	}
+	m.clampScroll()
+}
+
+// toggleBlockExpanded opens or folds the body of a tool or thinking block and
+// drops the block's cached lines, so the next render shows the new state.
+func (m *TuiModel) toggleBlockExpanded(idx int) {
+	b := &m.blocks[idx]
+	b.expanded = !b.expanded
+	b.cachedLines = nil
+	b.cachedLineCount = 0
+	m.invalidateTotalLines()
 }
 
 // handleModalMouseMsg handles mouse events inside the subagent modal body

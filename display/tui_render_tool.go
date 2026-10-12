@@ -29,22 +29,69 @@ func (m TuiModel) renderToolBlock(idx int, b block) string {
 		m.toolDisplayCache[idx] = line
 	}
 
+	hint := ""
 	switch b.toolState {
 	case "running":
 		line += " ⟳"
-		// Advertised while running too: the modal shows the tool's live
-		// output, which is the moment it is most worth opening.
-		line += " " + hintStyle.Render("- click for progress")
+		// Advertised while running too: the expanded body shows the tool's
+		// live output, which is the moment it is most worth opening.
+		hint = "- click for progress"
 	case "done":
 		dur := b.duration
 		if dur == 0 {
 			dur = time.Since(b.startTime) // fallback, shouldn't happen
 		}
 		line += " " + formatDuration(dur)
-		line += " " + hintStyle.Render("- click to display")
+		hint = "- click to expand"
+	}
+	if b.expanded && hint != "" {
+		hint = "- click to fold"
+	}
+	if hint != "" {
+		line += " " + hintStyle.Render(hint)
 	}
 
-	return bar + " " + toolLabel + " " + textStyle.Render(line)
+	out := bar + " " + toolLabel + " " + textStyle.Render(line)
+	if b.expanded {
+		if body := toolBodyText(b); body != "" {
+			out += "\n" + strings.Join(expandedBodyLines(body, barStyle.Render("┃"), textStyle, m.renderWidth()), "\n")
+		}
+	}
+	return out
+}
+
+// tuiExpandedToolLines caps the body of an expanded tool block. The newest
+// lines are kept, so a running tool shows its latest output.
+const tuiExpandedToolLines = 20
+
+// toolBodyText returns the text under an expanded tool header: the raw
+// arguments, then the output. When there are more than tuiExpandedToolLines
+// lines, the oldest are cut and a "... N more lines" line comes first.
+func toolBodyText(b block) string {
+	var all []string
+	if args := strings.TrimSpace(b.content); args != "" {
+		all = append(all, strings.Split(args, "\n")...)
+	}
+	if out := strings.TrimRight(b.output, "\n"); out != "" {
+		all = append(all, strings.Split(out, "\n")...)
+	}
+	if cut := len(all) - tuiExpandedToolLines; cut > 0 {
+		all = append([]string{fmt.Sprintf("... %d more lines", cut)}, all[cut:]...)
+	}
+	return strings.Join(all, "\n")
+}
+
+// expandedBodyLines wraps text to width and puts bar and style on each row.
+// It is the body of an expanded tool or thinking block.
+func expandedBodyLines(text, bar string, style lipgloss.Style, width int) []string {
+	maxW := max(width-2, 10)
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		for _, wl := range strings.Split(wrapText(line, maxW, 0), "\n") {
+			lines = append(lines, bar+" "+style.Render(strings.TrimSuffix(wl, clearLine)))
+		}
+	}
+	return lines
 }
 
 // formatToolCall parses the raw JSON tool arguments and returns a human-readable

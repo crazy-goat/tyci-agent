@@ -260,10 +260,10 @@ The resident set is bounded by a **scrollback disk cache** plus per-field caps:
   `sync.Mutex`.
 
 - **Tool output cap** — `tuiMaxToolOutput` (1 MiB) bounds each tool block's raw
-  `.output` buffer (the source shown in the click-to-expand modal).
+  `.output` buffer (the source shown in the expanded body of a tool block).
   `appendTool`/`finishToolAt` trim to the tail at a line boundary, so a chatty
   tool (e.g. `bash` printing a 50 MB log) can't blow up the heap before eviction
-  runs. The modal still shows the most recent output.
+  runs. The expanded body still shows the most recent output.
 
 - **Subagent modal cap** — `tuiMaxModalBuffer` (1 MiB) bounds the modal streaming
   accumulator (`subagentModalContent`). A runaway child agent streaming forever
@@ -283,6 +283,12 @@ deltas) or dirty/actively-streaming blocks. `forceRenderDirtyBlocks` clears the
 become eligible for eviction.
 
 ---
+
+## 5a2. Expandable tool and thinking blocks (`tui_mouse.go`, `tui_render_tool.go`, `tui_render_thinking.go`)
+
+A click on a tool or thinking line toggles `block.expanded` (`toggleBlockAt`, `toggleBlockExpanded`). No modal opens. The renderer adds the body below the header line: a tool body is its arguments and output (`toolBodyText`, capped at `tuiExpandedToolLines` = 20 lines, with `... N more lines` first), a thinking body is the full text. Both go through `expandedBodyLines`. The body is part of the block's `cachedLines`, so the line buffer, selection and copy read it like any other line.
+
+The toggle drops the block's `cachedLines` and `cachedLineCount`, then calls `invalidateTotalLines`. Live tool output (`appendTool`) does the same while the block is expanded. `toggleBlockAt` adds the change in line count to `scrollLine` and sets `atBottom` to false, so the header line keeps its row, also at the bottom. `clampScroll` restores the bottom mode when the offset is 0. An agent view is toggled through `shownModel()`.
 
 ## 5b. Sidebar Bus tab (`tui_sidebar_bus.go`)
 

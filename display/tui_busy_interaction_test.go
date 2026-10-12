@@ -110,7 +110,7 @@ func TestToolEndFallsBackToItsOwnClock(t *testing.T) {
 // TestClickOpensTheModalForARunningTool is the reported bug: only subagents
 // and finished tools opened. Clicking a bash command while it ran — the moment
 // you most want to see its output — did nothing.
-func TestClickOpensTheModalForARunningTool(t *testing.T) {
+func TestClickExpandsARunningTool(t *testing.T) {
 	m := newTestModel()
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-progress", toolIdx: 0, content: "compiling…"})
@@ -119,41 +119,18 @@ func TestClickOpensTheModalForARunningTool(t *testing.T) {
 		t.Fatalf("setup: state is %q", m.blocks[0].toolState)
 	}
 
-	m.openToolModalAt(0)
+	m.toggleBlockAt(0)
 
-	if !m.subagentModalActive {
-		t.Fatal("the modal did not open for a running tool")
+	if !m.blocks[0].expanded {
+		t.Fatal("a click on a running tool should expand it")
 	}
-	if m.subagentModalBlockIdx != 0 {
-		t.Errorf("the modal points at block %d", m.subagentModalBlockIdx)
-	}
-	if m.subagentModalDone {
-		t.Error("a running tool must not be shown as finished")
+	if m.subagentModalActive {
+		t.Fatal("a click on a running tool must not open a modal")
 	}
 }
 
 // TestModalForARunningToolShowsLiveOutput: opening it is only useful if what
 // arrives while it is open lands in the block it is showing.
-func TestModalForARunningToolShowsLiveOutput(t *testing.T) {
-	m := newTestModel()
-	m.handleBlockMsg(tuiMsgBlock{kind: "tool-start", toolName: "bash"})
-	m.openToolModalAt(0)
-
-	m.handleBlockMsg(tuiMsgBlock{kind: "tool-progress", toolIdx: 0, content: "step two"})
-
-	if !strings.Contains(m.blocks[0].output, "step two") {
-		t.Fatalf("live output did not reach the block: %q", m.blocks[0].output)
-	}
-
-	m.handleBlockMsg(tuiMsgBlock{kind: "tool-end", content: "done", duration: time.Second})
-	if !m.subagentModalDone {
-		t.Error("the modal should mark itself finished when the tool ends")
-	}
-	if !m.subagentModalActive {
-		t.Error("the modal should stay open so the result can be read")
-	}
-}
-
 // TestRunningToolAdvertisesTheClick: a feature nobody can discover is not a
 // feature.
 func TestRunningToolAdvertisesTheClick(t *testing.T) {

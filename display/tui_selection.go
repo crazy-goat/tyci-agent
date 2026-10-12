@@ -137,7 +137,9 @@ func gutterLen(sourceKind, plain string) int {
 		// same idea as "tool"'s "┃ tool " below) — no trailing space, since
 		// the line runs straight into "(summary) ..." with no space between
 		// the label and the opening paren.
-		if strings.HasPrefix(plain, "│ thinking") {
+		// The "(" tells the header apart from an expanded body line that
+		// starts with the word "thinking".
+		if strings.HasPrefix(plain, "│ thinking(") {
 			return len([]rune("│ thinking"))
 		}
 		// Fallback: just the bar+space (e.g. an older cached render).

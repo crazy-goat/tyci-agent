@@ -155,7 +155,7 @@ func TestSubagentModal_OutsideClick_NoLeakToBackgroundBlocks(t *testing.T) {
 		t.Fatal("modal should be closed")
 	}
 	// The click was consumed — no tool modal should have been opened.
-	// (If it leaked, openToolModalAt would have set subagentModalActive=true again)
+	// (If it leaked, toggleBlockAt would have set subagentModalActive=true again)
 }
 
 func TestSubagentModal_OutsideClick_ClearsSelection(t *testing.T) {
