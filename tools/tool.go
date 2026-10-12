@@ -313,6 +313,7 @@ func builtinToolsSchema() []map[string]any {
 						"description":       map[string]any{"type": "string", "description": "Short description of what this command does. Also used as the label for a background job, so keep it recognisable."},
 						"command":           map[string]any{"type": "string", "description": "Command to execute"},
 						"timeout":           map[string]any{"type": "integer", "description": "How long the command may run in total, in seconds (default: 120), also after it moved to the background. A call still blocks for at most 30s. If every background slot is busy, the command is stopped at 30s instead."},
+						"parallel":          map[string]any{"type": "boolean", "description": "true: run at once, even while other changes in this worktree are queued. Use only for a command that does not change files. Default false: the command waits its turn behind other writes, edits and bash calls in this worktree."},
 						"run_in_background": map[string]any{"type": "boolean", "description": "Start the command in the background immediately and return a job_id without waiting for any output. Use for long builds, test suites or watchers when you have other work to get on with."},
 					},
 					"required": []string{"command"},

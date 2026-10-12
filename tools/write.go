@@ -24,6 +24,12 @@ func (t *WriteTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	// write itself all agree on which file this is. See tools/workdir.go.
 	path = resolvePath(ctx, path)
 
+	release := acquireMutation(ctx)
+	if release == nil {
+		return ToolResult{Type: "result", Success: false, Error: "cancelled while waiting for earlier changes in this worktree"}
+	}
+	defer release()
+
 	// Detect mode: if oldString is present, it's edit mode
 	if oldStr, hasOld := input["oldString"].(string); hasOld && oldStr != "" {
 		return t.runEditMode(ctx, input, path, oldStr)

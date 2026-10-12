@@ -23,6 +23,23 @@ func newHolderID() string {
 	return "holder-" + hex.EncodeToString(buf[:])
 }
 
+type agentCtxKey struct{}
+
+// WithAgentCtx returns ctx carrying the agent's own context. A lock without
+// a TTL lives until that context ends, not until the call returns, so the
+// lock tool takes its lifetime from here. Without it, the call context is used.
+func WithAgentCtx(ctx, agent context.Context) context.Context {
+	return context.WithValue(ctx, agentCtxKey{}, agent)
+}
+
+// agentCtxOf returns the agent context set by WithAgentCtx, or ctx itself.
+func agentCtxOf(ctx context.Context) context.Context {
+	if agent, ok := ctx.Value(agentCtxKey{}).(context.Context); ok && agent != nil {
+		return agent
+	}
+	return ctx
+}
+
 // LockTool implements the "lock" tool: an advisory, in-process claim on a
 // path so parallel subagents can agree not to step on each other's edits.
 type LockTool struct {
@@ -55,7 +72,7 @@ func (t *LockTool) Run(ctx context.Context, input map[string]any) ToolResult {
 
 	holder := newHolderID()
 
-	_, ok, existing := t.Registry.Acquire(ctx, path, holder, ttl)
+	_, ok, existing := t.Registry.Acquire(agentCtxOf(ctx), path, holder, ttl)
 	if !ok {
 		expiry := "no expiry"
 		if existing != nil && !existing.ExpiresAt.IsZero() {

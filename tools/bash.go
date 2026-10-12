@@ -87,6 +87,16 @@ func (t *BashTool) Run(ctx context.Context, input map[string]any) ToolResult {
 		return validationResult("empty command")
 	}
 
+	// A mutation takes the worktree FIFO unless the caller says parallel=true,
+	// for a command that only reads or does not touch the worktree.
+	if parallel, _ := input["parallel"].(bool); !parallel {
+		release := acquireMutation(ctx)
+		if release == nil {
+			return ToolResult{Type: "result", Success: false, Error: "cancelled while waiting for earlier changes in this worktree"}
+		}
+		defer release()
+	}
+
 	timeoutSec := intParam(input, "timeout", BashDefaultTimeoutSec)
 	if timeoutSec <= 0 {
 		timeoutSec = BashDefaultTimeoutSec

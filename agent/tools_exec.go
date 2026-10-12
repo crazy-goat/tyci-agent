@@ -164,6 +164,9 @@ func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, i
 		defer cancel()
 	}
 
+	// lock needs the agent's lifetime, not this call's (see the lock case above).
+	toolCtx = tools.WithAgentCtx(toolCtx, ctx)
+
 	if call.Name == "bash" || call.Name == "subagent" {
 		toolCtx = context.WithValue(toolCtx, stream.ToolIdxCtxKey{}, idx)
 	}

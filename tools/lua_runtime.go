@@ -62,6 +62,13 @@ func newLuaContext(ctx context.Context, L *lua.LState) *lua.LTable {
 // ctxRun executes a shell command and returns stdout.
 func (lc *LuaContext) ctxRun(L *lua.LState) int {
 	cmdStr := L.CheckString(1)
+	// A shell command may change the worktree, so it takes the mutation FIFO.
+	release := acquireMutation(lc.ctx)
+	if release == nil {
+		L.RaiseError("cancelled while waiting for earlier changes in this worktree")
+		return 0
+	}
+	defer release()
 
 	cmd := exec.CommandContext(lc.ctx, "sh", "-c", cmdStr)
 	// Capped: an unbounded CombinedOutput here meant one `cat` of a large
@@ -105,6 +112,12 @@ func (lc *LuaContext) ctxRead(L *lua.LState) int {
 func (lc *LuaContext) ctxWrite(L *lua.LState) int {
 	path := L.CheckString(1)
 	content := L.CheckString(2)
+	release := acquireMutation(lc.ctx)
+	if release == nil {
+		L.RaiseError("cancelled while waiting for earlier changes in this worktree")
+		return 0
+	}
+	defer release()
 
 	// Create parent directory if needed
 	dir := filepath.Dir(path)
