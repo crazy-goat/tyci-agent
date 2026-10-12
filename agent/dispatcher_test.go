@@ -279,3 +279,11 @@ func TestToolResultIsUntrustedNotice(t *testing.T) {
 		t.Errorf("notice lacks the failed flag: %q", msgs[0].Content[0].Text)
 	}
 }
+
+// TestAskReplyWakesInlineWait checks that an answer to a question ends an
+// awaited call, so that the call is backgrounded at once.
+func TestAskReplyWakesInlineWait(t *testing.T) {
+	if !wakesInline(bus.Message{Kind: bus.KindAskReply}) {
+		t.Fatal("ask.reply does not wake an awaited call")
+	}
+}

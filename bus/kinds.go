@@ -13,7 +13,7 @@ const (
 	// the question id (q<Seq>) that wait and answer_job use.
 	KindAskRequest Kind = "ask.request"
 	// KindAskReply is the answer that a parent gives to a question. Its
-	// ReplyTo is the Seq of the question.
+	// Question is the question id (q<Seq>) of the question it answers.
 	KindAskReply Kind = "ask.reply"
 	// KindAgentMessage is a message from one agent to another.
 	KindAgentMessage Kind = "agent.message"
@@ -42,7 +42,8 @@ type AskRequest struct {
 
 // AskReply is the payload of KindAskReply.
 type AskReply struct {
-	Answer string `json:"answer"`
+	Question string `json:"question"`
+	Answer   string `json:"answer"`
 }
 
 // AgentMessage is the payload of KindAgentMessage.

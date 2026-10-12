@@ -128,6 +128,40 @@ func (t *WaitTool) setWaiter(w JobWaiter) {
 	t.waiterMu.Unlock()
 }
 
+// waitKinds reads the optional "kinds" input. Only "ask.reply" is accepted.
+// The wait wakes on any new notice, so this input does not yet filter
+// notices by kind (see the tool schema in tool.go).
+func waitKinds(input map[string]any) (kinds []string, errText string) {
+	raw, ok := input["kinds"]
+	if !ok {
+		return nil, ""
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		if sl, isStrings := raw.([]string); isStrings {
+			return sl, validateWaitKinds(sl)
+		}
+		return nil, "kinds must be an array of strings"
+	}
+	for _, v := range list {
+		s, ok := v.(string)
+		if !ok {
+			return nil, "kinds must contain only strings"
+		}
+		kinds = append(kinds, s)
+	}
+	return kinds, validateWaitKinds(kinds)
+}
+
+func validateWaitKinds(kinds []string) string {
+	for _, k := range kinds {
+		if k != "ask.reply" {
+			return fmt.Sprintf("kinds: unknown kind %q, the only allowed kind is \"ask.reply\"", k)
+		}
+	}
+	return ""
+}
+
 func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	jobID, _ := input["job_id"].(string)
 	ids, multi, idsErr := waitIDs(input)
@@ -140,6 +174,9 @@ func (t *WaitTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	}
 	if mode != "any" && mode != "all" {
 		return validationResultf("mode must be \"any\" or \"all\", got %q", mode)
+	}
+	if _, errText := waitKinds(input); errText != "" {
+		return validationResult(errText)
 	}
 
 	// A wait blocks without streaming, so the watchdog would read the caller

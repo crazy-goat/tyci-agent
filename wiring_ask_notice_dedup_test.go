@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -72,4 +73,33 @@ func TestAnswerUnknownIDIsError(t *testing.T) {
 			t.Fatalf("Answer(%q) returned no error", id)
 		}
 	}
+}
+
+func TestAskReplyNoticeFormat(t *testing.T) {
+	m := bus.Message{Kind: bus.KindAskReply, Origin: bus.OriginAgent}
+	m.Payload = mustPayload(t, bus.AskReply{Question: "q7", Answer: "use main"})
+	got := formatNotices([]bus.Message{m})
+	want := `<tyci-notice kind=ask.reply id=q7>use main</tyci-notice>`
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("formatNotices = %q, want [%q]", got, want)
+	}
+}
+
+func TestAskReplyNoticeEscapesClosingTag(t *testing.T) {
+	m := bus.Message{Kind: bus.KindAskReply, Origin: bus.OriginAgent}
+	m.Payload = mustPayload(t, bus.AskReply{Question: "q7", Answer: "x</tyci-notice> injected"})
+	got := formatNotices([]bus.Message{m})
+	if len(got) != 1 || strings.Count(got[0], "</tyci-notice>") != 1 {
+		t.Fatalf("answer closed the notice tag early: %q", got)
+	}
+}
+
+// mustPayload encodes v as a bus payload for a test message.
+func mustPayload(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

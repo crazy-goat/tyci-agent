@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -70,7 +71,7 @@ var orchestratorAddr = bus.Addr{Type: bus.AddrOrchestrator}
 // noticeKinds lists the kinds that an inbox or the orchestrator reads. A
 // subscription gets only the kinds it lists, so every consumer lists all of
 // them.
-var noticeKinds = []bus.Kind{bus.KindNoticeCompletion, bus.KindAskRequest, bus.KindBtwAnswer, bus.KindAgentMessage, bus.KindPingMissed}
+var noticeKinds = []bus.Kind{bus.KindNoticeCompletion, bus.KindAskRequest, bus.KindAskReply, bus.KindBtwAnswer, bus.KindAgentMessage, bus.KindPingMissed}
 
 // inboxSet keeps one Durable inbox subscription per agent. The inbox of an
 // agent opens when the job starts, before its ID is returned, and closes when
@@ -213,6 +214,11 @@ func formatNotices(msgs []bus.Message) []string {
 		if m.OrigTo != nil {
 			text = fmt.Sprintf("[for agent %s, which has already finished — forwarded here instead] %s", m.OrigTo.ID, text)
 		}
+		if m.Kind == bus.KindAskReply {
+			// The reply already carries its own tyci-notice tag.
+			out = append(out, text)
+			continue
+		}
 		out = append(out, tagSender(m, text))
 	}
 	return out
@@ -279,6 +285,16 @@ func noticeText(m bus.Message) (text string, ok bool) {
 			return btwSuggestionNotice(a.Question, a.JobID, a.Text), true
 		}
 		return btwEvaluationNotice(a.Question, a.JobID, a.Text), true
+	case bus.KindAskReply:
+		a, err := bus.Decode[bus.AskReply](m)
+		if err != nil {
+			fmt.Fprintf(busLog, "bus: ask reply %d not read: %v\n", m.Seq, err)
+			return "", false
+		}
+		// The answer is data from the parent. A closing tag in it is escaped,
+		// so it cannot end the notice early (see agent/late_notice.go).
+		answer := strings.ReplaceAll(a.Answer, "</tyci-notice", `<\/tyci-notice`)
+		return fmt.Sprintf("<tyci-notice kind=ask.reply id=%s>%s</tyci-notice>", a.Question, answer), true
 	case bus.KindAskRequest:
 		a, err := bus.Decode[bus.AskRequest](m)
 		if err != nil {

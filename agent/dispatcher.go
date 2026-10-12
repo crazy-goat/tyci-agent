@@ -99,7 +99,7 @@ func NewDispatcher(b *bus.Bus, self bus.Addr, tools ToolsConfig) *Dispatcher {
 	}
 	sub := b.Subscribe("tool-results", bus.Filter{
 		To:    self,
-		Kinds: []bus.Kind{bus.KindToolResult, bus.KindAgentMessage, bus.KindAskRequest, bus.KindPingMissed},
+		Kinds: []bus.Kind{bus.KindToolResult, bus.KindAgentMessage, bus.KindAskRequest, bus.KindAskReply, bus.KindPingMissed},
 	})
 	d := newDispatcher(b, self, sub)
 	d.tools = tools
@@ -515,7 +515,7 @@ func (d *Dispatcher) waitLate(ctx context.Context) []bus.ToolResult {
 // through the done channel.
 func wakesInline(msg bus.Message) bool {
 	switch msg.Kind {
-	case bus.KindToolResult, bus.KindAgentMessage, bus.KindAskRequest, bus.KindPingMissed:
+	case bus.KindToolResult, bus.KindAgentMessage, bus.KindAskRequest, bus.KindAskReply, bus.KindPingMissed:
 		return true
 	}
 	return false

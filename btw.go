@@ -135,7 +135,7 @@ func (a jobAnswererAdapter) Answer(id, text string) error {
 		return fmt.Errorf("unknown or already answered question id %q", id)
 	}
 	publishTo(appBus, bus.KindAskReply, orchestratorAddr, agentAddr(asker), bus.OriginAgent,
-		bus.AskReply{Answer: text})
+		bus.AskReply{Question: id, Answer: text})
 	return nil
 }
 
