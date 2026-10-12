@@ -116,7 +116,7 @@ func TestTuiModel_RenderToolBlock_ShowsFrozenDuration(t *testing.T) {
 	if !strings.Contains(rendered, "1.23s") {
 		t.Errorf("expected rendered block to contain '1.23s', got %q", rendered)
 	}
-	if !strings.Contains(rendered, "- click to display") {
+	if !strings.Contains(rendered, "- click to expand") {
 		t.Errorf("expected rendered block to contain hint, got %q", rendered)
 	}
 }
@@ -136,8 +136,8 @@ func TestTuiModel_RenderToolBlock_RunningShowsSpinner(t *testing.T) {
 	if !strings.Contains(rendered, "⟳") {
 		t.Errorf("expected running tool to show spinner, got %q", rendered)
 	}
-	if strings.Contains(rendered, "click to display") {
-		t.Errorf("running tool should not have 'click to display', got %q", rendered)
+	if strings.Contains(rendered, "click to expand") {
+		t.Errorf("running tool should not have 'click to expand', got %q", rendered)
 	}
 }
 
@@ -717,8 +717,8 @@ func TestToolBlock_StartShowsRunningSpinner(t *testing.T) {
 	if !strings.Contains(plain, "⟳") {
 		t.Errorf("running tool should show spinner '⟳', got: %q", plain)
 	}
-	if strings.Contains(plain, "click to display") {
-		t.Errorf("running tool should NOT show 'click to display' hint, got: %q", plain)
+	if strings.Contains(plain, "click to expand") {
+		t.Errorf("running tool should NOT show 'click to expand' hint, got: %q", plain)
 	}
 	if strings.Contains(plain, "ms") && strings.Contains(plain, "s") {
 		// Might show duration after completion, but not during running
@@ -773,8 +773,8 @@ func TestToolBlock_EndShowsDoneState(t *testing.T) {
 	if !strings.Contains(view, "bash(list files)") {
 		t.Errorf("should show formatted tool call, got: %q", view)
 	}
-	if !strings.Contains(view, "click to display") {
-		t.Errorf("done tool should show 'click to display' hint, got: %q", view)
+	if !strings.Contains(view, "click to expand") {
+		t.Errorf("done tool should show 'click to expand' hint, got: %q", view)
 	}
 	if strings.Contains(view, "⟳") {
 		t.Errorf("done tool should NOT show spinner, got: %q", view)
@@ -849,8 +849,8 @@ func TestToolBlock_ViewDoesNotStaleCacheAfterEnd(t *testing.T) {
 
 	// View should show done state, not stale running state
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "click to display") {
-		t.Errorf("after end, View() should show 'click to display', got stale: %q", view)
+	if !strings.Contains(view, "click to expand") {
+		t.Errorf("after end, View() should show 'click to expand', got stale: %q", view)
 	}
 	if strings.Contains(view, "⟳") {
 		t.Errorf("after end, View() should NOT show spinner, got stale: %q", view)
@@ -887,7 +887,7 @@ func TestToolBlock_TwoConsecutiveTools(t *testing.T) {
 	if !strings.Contains(view, "bash(build)") {
 		t.Errorf("should contain second tool 'bash(build)', got: %q", view)
 	}
-	if !strings.Contains(view, "click to display") {
+	if !strings.Contains(view, "click to expand") {
 		t.Errorf("both tools should show click hint, got: %q", view)
 	}
 }
@@ -919,7 +919,7 @@ func TestToolBlock_SubagentInlineFormat(t *testing.T) {
 	if !strings.Contains(view2, "subagent") {
 		t.Errorf("after end, subagent should show 'subagent', got: %q", view2)
 	}
-	if !strings.Contains(view2, "click to display") {
+	if !strings.Contains(view2, "click to expand") {
 		t.Errorf("subagent done should show click hint, got: %q", view2)
 	}
 	if strings.Contains(view2, "⟳") {
@@ -963,8 +963,8 @@ func TestToolBlock_CachedLinesInvalidatedOnToolStart(t *testing.T) {
 	m.handleBlockMsg(tuiMsgBlock{kind: "tool-delta", content: `{"path": "other.go"}`})
 
 	view := stripANSI(m.View())
-	if strings.Contains(view, "bash(") && !strings.Contains(view, "click to display") {
-		t.Errorf("first tool should still show but with 'click to display' hint")
+	if strings.Contains(view, "bash(") && !strings.Contains(view, "click to expand") {
+		t.Errorf("first tool should still show but with 'click to expand' hint")
 	}
 	if !strings.Contains(view, "read(other.go)") {
 		t.Errorf("second tool should show 'read(other.go)', got: %q", view)
@@ -1006,8 +1006,8 @@ func TestToolBlock_GetBlockLines_ReturnsUpdatedContent(t *testing.T) {
 		t.Fatal("getBlockLines should return non-empty lines after end")
 	}
 	combined := strings.Join(lines2, " ")
-	if !strings.Contains(combined, "click to display") {
-		t.Errorf("getBlockLines after end should contain 'click to display', got: %v", lines2)
+	if !strings.Contains(combined, "click to expand") {
+		t.Errorf("getBlockLines after end should contain 'click to expand', got: %v", lines2)
 	}
 	// Should still have the tool call
 	if !strings.Contains(combined, "write(out.txt)") {
@@ -1039,11 +1039,11 @@ func TestToolBlock_RenderBlock_RunningVsDone(t *testing.T) {
 	if !strings.Contains(running, "⟳") {
 		t.Errorf("running render should contain spinner, got: %q", running)
 	}
-	if strings.Contains(running, "click to display") {
-		t.Errorf("running render should NOT contain 'click to display', got: %q", running)
+	if strings.Contains(running, "click to expand") {
+		t.Errorf("running render should NOT contain 'click to expand', got: %q", running)
 	}
-	if !strings.Contains(done, "click to display") {
-		t.Errorf("done render should contain 'click to display', got: %q", done)
+	if !strings.Contains(done, "click to expand") {
+		t.Errorf("done render should contain 'click to expand', got: %q", done)
 	}
 	if strings.Contains(done, "⟳") {
 		t.Errorf("done render should NOT contain spinner, got: %q", done)

@@ -63,10 +63,13 @@ func (m TuiModel) renderThinkingBlock(b block) string {
 	var status, hint string
 	if b.toolState == "done" {
 		status = " " + formatDuration(b.duration)
-		hint = "- click to display"
+		hint = "- click to expand"
 	} else {
 		status = " ⟳"
 		hint = "- click for progress"
+	}
+	if b.expanded {
+		hint = "- click to fold"
 	}
 
 	summary := b.thinkingSummary
@@ -100,5 +103,9 @@ func (m TuiModel) renderThinkingBlock(b block) string {
 	// "thinking"; repeating the word in the line itself ("thinking
 	// thinking(...)") would just be noise.
 	line := "(" + summary + ")" + status + " " + hintStyle.Render(hint)
-	return bar + " " + label + thinkingStyle.Render(line)
+	out := bar + " " + label + thinkingStyle.Render(line)
+	if b.expanded && b.content != "" {
+		out += "\n" + strings.Join(expandedBodyLines(b.content, bar, thinkingStyle, m.renderWidth()), "\n")
+	}
+	return out
 }

@@ -195,6 +195,11 @@ type block struct {
 	// group only (see tui_group.go).
 	groupOpen bool
 
+	// expanded shows the body of a tool or thinking block (its arguments and
+	// output, or its full text) below the block's header line. Toggled by a
+	// click on the block (see toggleBlockAt in tui_mouse.go).
+	expanded bool
+
 	// Markdown rendering cache (for "thinking" and "text" blocks)
 	dirty bool // content changed since last render
 

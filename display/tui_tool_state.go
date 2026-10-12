@@ -33,9 +33,15 @@ func (m *TuiModel) appendTool(queueIdx int, content string) {
 		m.blocks[blockIdx].output += content
 		// Bound the raw tool output buffer so a chatty tool (e.g. bash cat-ing
 		// a huge log) can't grow the heap unbounded. Keep the tail — that's
-		// what the click-to-expand modal shows.
+		// what the expanded body shows.
 		if len(m.blocks[blockIdx].output) > tuiMaxToolOutput {
 			m.blocks[blockIdx].output = capToolOutput(m.blocks[blockIdx].output, tuiMaxToolOutput)
+		}
+		// An expanded body shows the output, so it must be rendered again.
+		if m.blocks[blockIdx].expanded {
+			m.blocks[blockIdx].cachedLines = nil
+			m.blocks[blockIdx].cachedLineCount = 0
+			m.invalidateTotalLines()
 		}
 	}
 }

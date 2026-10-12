@@ -74,7 +74,7 @@ func TestTuiSelection_MouseReleaseCopiesSelection(t *testing.T) {
 	}
 }
 
-func TestTuiSelection_ClickToolOpensModalButDragDoesNot(t *testing.T) {
+func TestTuiSelection_ClickToolExpandsButDragDoesNot(t *testing.T) {
 	m := newSelectionTestModel()
 	m.blocks = []block{{kind: "tool", toolName: "bash", toolState: "done", collapsed: true, content: "echo hi", output: "hi"}}
 	m.invalidateAllBlockLineCounts()
@@ -84,8 +84,8 @@ func TestTuiSelection_ClickToolOpensModalButDragDoesNot(t *testing.T) {
 	m = model.(TuiModel)
 	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 1, Y: 1})
 	m = model.(TuiModel)
-	if !m.subagentModalActive {
-		t.Fatal("expected click on done tool to open modal")
+	if !m.blocks[0].expanded {
+		t.Fatal("expected click on done tool to expand it")
 	}
 
 	copied := withClipboardStub(t)
@@ -98,8 +98,8 @@ func TestTuiSelection_ClickToolOpensModalButDragDoesNot(t *testing.T) {
 	m = model.(TuiModel)
 	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 8, Y: 1})
 	m = model.(TuiModel)
-	if m.subagentModalActive {
-		t.Fatal("drag over tool should not open modal")
+	if m.blocks[0].expanded {
+		t.Fatal("drag over tool should not expand it")
 	}
 	if *copied == "" {
 		t.Fatal("expected drag over tool line to copy selection")
@@ -197,10 +197,10 @@ func TestTuiSelection_ScreenYMapping(t *testing.T) {
 		t.Fatal("transcriptY(end+1) should be false (past last line, issue #87)")
 	}
 
-	// openToolModalAt should accept message-area Y in range [0, visibleLines()-1]
+	// toggleBlockAt should accept message-area Y in range [0, visibleLines()-1]
 	// and reject negative values (which would come from top bar clicks).
-	m.openToolModalAt(-1)               // should be no-op (top bar)
-	m.openToolModalAt(m.visibleLines()) // should be no-op (past end)
+	m.toggleBlockAt(-1)               // should be no-op (top bar)
+	m.toggleBlockAt(m.visibleLines()) // should be no-op (past end)
 	// No crash means success.
 }
 
@@ -299,7 +299,7 @@ func TestBlockAtVisibleLine_SpacerReturnsMinusOne(t *testing.T) {
 // TestClickSpacerLineDoesNotOpenToolModal is an end-to-end test: clicking the
 // blank spacer line between a text block and a tool block must NOT open the
 // tool modal. Before the fix, the spacer was mapped to the next block (issue #87).
-func TestClickSpacerLineDoesNotOpenToolModal(t *testing.T) {
+func TestClickSpacerLineDoesNotExpandTool(t *testing.T) {
 	m := newModel(nil, "test/model", "", nil, 0, 0, 0)
 	m.ready = true
 	m.width = 80
@@ -319,8 +319,8 @@ func TestClickSpacerLineDoesNotOpenToolModal(t *testing.T) {
 	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 1, Y: 2})
 	m = model.(TuiModel)
 
-	if m.subagentModalActive {
-		t.Fatal("clicking spacer line should NOT open tool modal (issue #87)")
+	if m.blocks[1].expanded {
+		t.Fatal("clicking spacer line should NOT expand the tool (issue #87)")
 	}
 
 	// Sanity: clicking the actual tool line (screen Y=3) should open the modal
@@ -329,8 +329,8 @@ func TestClickSpacerLineDoesNotOpenToolModal(t *testing.T) {
 	model, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 1, Y: 3})
 	m = model.(TuiModel)
 
-	if !m.subagentModalActive {
-		t.Fatal("clicking tool line should open tool modal (issue #87)")
+	if !m.blocks[1].expanded {
+		t.Fatal("clicking tool line should expand the tool (issue #87)")
 	}
 }
 
@@ -473,11 +473,11 @@ func TestTuiSelection_StripsThinkingGutter(t *testing.T) {
 	copied := withClipboardStub(t)
 	m := newSelectionTestModel()
 	m.renderBuffer = &RenderBuffer{Lines: []RenderLine{
-		{PlainText: "│ thinking(some reasoning) 42ms - click to display", SourceKind: "thinking", Y: 0},
+		{PlainText: "│ thinking(some reasoning) 42ms - click to expand", SourceKind: "thinking", Y: 0},
 	}}
 	m.selection = SelectionState{Active: true, AnchorX: 0, AnchorY: 0, CursorX: 100, CursorY: 0}
 	m = m.copySelection()
-	if *copied != "(some reasoning) 42ms - click to display" {
+	if *copied != "(some reasoning) 42ms - click to expand" {
 		t.Fatalf("expected '│ thinking' stripped, got %q", *copied)
 	}
 }

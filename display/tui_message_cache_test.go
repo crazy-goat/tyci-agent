@@ -240,8 +240,8 @@ func TestMessageRegionCache_ToolEndInvalidates(t *testing.T) {
 
 	frame := m.renderFrame()
 	plain := stripANSI(frame)
-	if !strings.Contains(plain, "click to display") {
-		t.Errorf("frame should show 'click to display' after tool-end, got:\n%s", plain)
+	if !strings.Contains(plain, "click to expand") {
+		t.Errorf("frame should show 'click to expand' after tool-end, got:\n%s", plain)
 	}
 	if m.messageRegion.cached == cached {
 		t.Error("cache should be rebuilt after tool-end")
