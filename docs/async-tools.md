@@ -133,6 +133,10 @@ The `kinds` input accepts only `ask.reply`. With `kinds`, the wait wakes only on
 a new notice of that kind. Notices of other kinds do not end the wait. A wait
 without `kinds` wakes on any new notice.
 
+The main conversation has no `ask_parent`, so `kinds=["ask.reply"]` never wakes
+the main agent. Its wait then ends only at `seconds`, or on a pending user
+message or a job it waits for. Use `kinds` only in a subagent.
+
 Repeated ids count once. The dedupe runs after call ids are resolved, so `c3`
 and its job id count as one job.
 
@@ -187,6 +191,9 @@ call context that ends does not release the lock.
 
 ## Known gaps
 
+- The full output of a late tool result in a workflow run is not written to
+  `<run dir>/tool-results/`. It goes only to `~/.tyci/tool-results/<session-id>`
+  (`agent/result_tail.go`). Open follow-up of #651.
 - `subagent` blocks by design. `ask_parent` returns at once (#200). Its
   question id and route are kept in memory, so an answer after a restart of
   tyci fails.

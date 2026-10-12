@@ -547,6 +547,9 @@ var fastTools = map[string]bool{
 // or the awaited kinds, so they never background (noDeadline, see Await).
 // ask_parent returns at once, but it is kept in the same case because it
 // never backgrounds either. Their overrides and class values are ignored.
+// subagent and ask_parent stay noDeadline on purpose: a subagent call has no
+// late-result path (see NewChildDispatcher), and an early placeholder would
+// make the model poll for a child that it must wait for anyway.
 //
 // This wait is not a kill deadline. A tool keeps its own timeout in
 // runToolCall, which does not change here.
