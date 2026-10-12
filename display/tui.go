@@ -96,6 +96,12 @@ type tuiMsgJobUpdate struct {
 	Job jobs.Job
 }
 
+// tuiMsgJobUpdates carries every job snapshot drained from the bus in one go,
+// oldest first, so a burst of job events costs one frame instead of one each.
+type tuiMsgJobUpdates struct {
+	Jobs []jobs.Job
+}
+
 // tuiMsgJobsReset clears the mirror at a conversation boundary and remembers
 // IDs whose queued terminal events belong to the old conversation.
 type tuiMsgJobsReset struct {

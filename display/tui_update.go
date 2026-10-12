@@ -174,6 +174,12 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// so its elapsed/quiet time doesn't freeze until the next update.
 		return m, m.armStatusTick()
 	}
+	if upd, ok := msg.(tuiMsgJobUpdates); ok {
+		for _, j := range upd.Jobs {
+			m.applyJobUpdate(j)
+		}
+		return m, m.armStatusTick()
+	}
 	// A finished file scan (tui_filecomplete.go) is pure state: it must land
 	// whatever overlay happens to be open, or the popup would sit on
 	// "scanning…" until the next keystroke.
