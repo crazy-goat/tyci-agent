@@ -132,6 +132,7 @@ func (m *TuiModel) openSidebar(tab int) {
 	m.sidebarTaskOwner = ""
 	m.sidebarBusPane = false
 	m.sidebarBusScroll = 0
+	m.sidebarBusSeq = 0
 	if !wasActive {
 		// Only an actual closed->open transition changes the effective
 		// width the transcript wraps at (mainColumnWidth narrows). Calling

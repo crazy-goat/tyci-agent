@@ -228,6 +228,23 @@ func TestSidebarBusTab_PaneKeepsSelectedMessageWhenNewRowArrives(t *testing.T) {
 	}
 }
 
+// A reopened Bus tab does not keep the message selected before it closed.
+func TestSidebarBusTab_ReopenClearsSelectedMessage(t *testing.T) {
+	m := busModel(
+		TuiBusRow{From: "human", To: "a1", Text: "newer message", State: "sent"},
+		TuiBusRow{From: "a1", To: "human", Text: "older message", State: "sent"},
+	)
+	m.sidebarBusSeq = 2 // the older message is selected (index 1)
+	m.closeSidebar()
+	m.openSidebar(sidebarTabBus)
+	if m.sidebarBusSeq != 0 {
+		t.Fatalf("sidebarBusSeq after reopen = %d, want 0", m.sidebarBusSeq)
+	}
+	if got := m.busCursor(m.sidebarBusRows()); got != 0 {
+		t.Fatalf("selected index after reopen = %d, want 0 (the newest message)", got)
+	}
+}
+
 // A click on another row opens the pane for that row. A click on the
 // selected row toggles the pane.
 func TestSidebarBusTab_ClickOnOtherRowOpensItsPane(t *testing.T) {
