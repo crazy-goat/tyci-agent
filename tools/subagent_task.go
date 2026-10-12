@@ -40,6 +40,8 @@ type TaskSpec struct {
 	// Policy, when set, is the tool policy of a workflow role (see Policy).
 	// It restricts the tools and the write paths of the run.
 	Policy *Policy
+	// Fallbacks are the provider URIs tried, in order, when Model fails.
+	Fallbacks []string
 }
 
 // TaskStats is what a finished subagent run reports: the model it used and
@@ -132,6 +134,7 @@ func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (st
 		ctx = context.WithValue(ctx, TranscriptCtxKey{}, s.Transcript)
 	}
 	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: s.SystemPrompt, softLimit: s.SoftLimit, hardLimit: s.HardLimit, effort: s.Effort}
+	t.fallbacks = s.Fallbacks
 	if s.Policy != nil {
 		ctx = WithPolicy(ctx, *s.Policy)
 		t.toolsOverride = s.Policy.ToolNames()

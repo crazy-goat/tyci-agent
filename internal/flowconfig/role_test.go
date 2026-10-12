@@ -155,3 +155,20 @@ func TestLocalToolsMayUseGlobalWildcard(t *testing.T) {
 		t.Fatalf("tools = %v", got.Tools)
 	}
 }
+
+func TestResolveFallbacks(t *testing.T) {
+	c := &Config{Models: map[string]string{"fast": "openai/gpt-fast"}}
+	got, err := c.ResolveFallbacks(Role{Fallback: []string{"fast", "anthropic/claude-y"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "openai/gpt-fast,anthropic/claude-y" {
+		t.Fatalf("got %v", got)
+	}
+	if got, err := c.ResolveFallbacks(Role{}); err != nil || got != nil {
+		t.Fatalf("no fallbacks: got %v err %v", got, err)
+	}
+	if _, err := c.ResolveFallbacks(Role{Fallback: []string{"nope"}}); err == nil {
+		t.Fatal("unknown alias accepted")
+	}
+}

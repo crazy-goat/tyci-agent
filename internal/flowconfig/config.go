@@ -414,6 +414,25 @@ func (c *Config) ResolveModel(r Role) (string, error) {
 	if alias == "" {
 		return "", errors.New("no model set for the role and no default_model")
 	}
+	return c.resolveAlias(alias)
+}
+
+// ResolveFallbacks returns the provider URIs of the role's fallback aliases,
+// in the order the role lists them. A role without fallbacks returns nil.
+func (c *Config) ResolveFallbacks(r Role) ([]string, error) {
+	var out []string
+	for _, alias := range r.Fallback {
+		uri, err := c.resolveAlias(alias)
+		if err != nil {
+			return nil, fmt.Errorf("fallback: %w", err)
+		}
+		out = append(out, uri)
+	}
+	return out, nil
+}
+
+// resolveAlias maps a model alias or a provider URI to a provider URI.
+func (c *Config) resolveAlias(alias string) (string, error) {
 	if uri, ok := c.Models[alias]; ok {
 		return uri, nil
 	}

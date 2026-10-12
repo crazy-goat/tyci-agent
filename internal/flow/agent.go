@@ -86,6 +86,10 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if err != nil {
 		return "", "", err
 	}
+	fallbacks, err := r.Cfg.ResolveFallbacks(rl)
+	if err != nil {
+		return "", "", err
+	}
 	if rc.Prompt != "" {
 		rl.Prompt = rc.Prompt
 	}
@@ -131,7 +135,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 		name = rc.Run + "/" + role
 	}
 	policy := tools.Policy{Role: role, Permission: rl.PermissionMode(), Network: rl.NetworkOn(), Tools: rl.Tools, Dir: rc.Worktree}
-	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl), Policy: &policy}
+	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl), Policy: &policy, Fallbacks: fallbacks}
 	effective := spec.Effort
 	if r.URIEffort != nil {
 		if v := r.URIEffort(model); v != "" {

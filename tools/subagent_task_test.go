@@ -50,6 +50,18 @@ func TestRunSubagentTask_PassesCompactLimits(t *testing.T) {
 	}
 }
 
+// #201: the role fallbacks in TaskSpec reach the child options.
+func TestRunSubagentTask_PassesFallbacks(t *testing.T) {
+	r := &recordingRunner{}
+	fbs := []string{"openai/gpt-x", "anthropic/claude-y"}
+	if _, _, err := runSubagentTask(context.Background(), r, TaskSpec{Task: "x", Fallbacks: fbs}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(r.gotOpts.Fallbacks, ",") != strings.Join(fbs, ",") {
+		t.Fatalf("opts fallbacks = %v", r.gotOpts.Fallbacks)
+	}
+}
+
 func TestRunSubagentTask_ErrorIsReturned(t *testing.T) {
 	r := &recordingRunner{returnErr: os.ErrInvalid}
 	_, _, err := runSubagentTask(context.Background(), r, TaskSpec{Task: "x"})

@@ -239,6 +239,9 @@ type subagentTask struct {
 	// task leaves opts exactly as it was before scout existed.
 	toolsOverride    []string
 	maxIterationsCap int
+	// fallbacks, when set, replaces the named agent's fallback list. Used by
+	// workflow roles (TaskSpec.Fallbacks). Nil keeps the agent default.
+	fallbacks []string
 	// scoutMode, when true, tells main.go's agentRunner.run to build this
 	// child's schema and runtime gate from scoutGate/scoutSchemaJSONForDepth
 	// (tools/scout.go) instead of the ordinary AllowOnlySubagent/
@@ -1316,6 +1319,9 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	// plain-subagent path.
 	if task.toolsOverride != nil {
 		opts.Tools = task.toolsOverride
+	}
+	if task.fallbacks != nil {
+		opts.Fallbacks = task.fallbacks
 	}
 	if task.maxIterationsCap > 0 {
 		opts.MaxIterationsCap = task.maxIterationsCap
