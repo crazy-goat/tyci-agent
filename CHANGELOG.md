@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: a run can be stopped. A stopped run has the status `stopped`, keeps its worktree and its pull request, and cannot be resumed. `tyci workflow stop <run-id> [--reason text] [--json]` stops a running run that no live tyci process owns. The Runs tab and `tyci workflow status` show the status. `tyci workflow status` exits with code 0 for `stopped` (#582).
 
 ### Changed
-- Subagent: a blocking `subagent` call waits until its children finish or block on a question. It no longer moves to the background after 60s. Use `async=true` for that (#197).
+- Subagent: a blocking `subagent` call from a subagent never moves to the background. The 60s handoff of the `subagent` tool itself is unchanged until its cleanup lands (#197).
 - Locks: a lock without `seconds` lives until the agent ends, not until the tool call ends (#197).
 - TUI: streamed output (text, thinking and tool output) is drawn at most once per second, except that a change of block kind or tool index draws the previous content at once. So several parallel tools with mixed progress can still draw once per line. The first chunk after a quiet period is drawn at once, and the end of a turn draws the rest at once. The status bar and the background job times are refreshed once per second, and the status bar shows elapsed times in whole seconds, for example `12s`, not tenths. Keyboard, mouse, resize and modal redraws are not delayed (#630).
 

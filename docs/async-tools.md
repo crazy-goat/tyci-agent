@@ -12,7 +12,8 @@ current branch.
 3. If the call ends in that time, its result goes into the conversation as
    the normal tool result.
 4. If the call is still running, the model gets a placeholder result. The
-   placeholder reads `started, id=cN`, where `N` is the call number.
+   placeholder reads `started, id=cN; the result arrives later as a tool.result
+   notice; wait does not take this id yet`, where `N` is the call number.
 5. When the call ends, the result is published on the bus as kind
    `tool.result`. The agent adds it to the conversation as a tail notice.
 
@@ -39,9 +40,14 @@ every call of a tool that runs one at a time) never moves to the background.
 Every call of a subagent blocks, because a subagent has no late-result path:
 its dispatcher has no bus and no user poll (`NewChildDispatcher`). Only the
 main conversation backgrounds calls.
-Wake messages and a pending user message do not change it. It returns only
-when it finishes or when the turn is cancelled. A serial tool therefore keeps
-the order of its batch.
+Wake messages and a pending user message do not change a blocking call. It
+returns only when it finishes or when the turn is cancelled. A serial tool
+therefore keeps the order of its batch.
+
+The dispatcher never backgrounds `subagent`, `ask_parent` or `wait`. The
+`subagent` tool still has its own 60s handoff (`runWithHandoff` in
+`tools/subagent.go`). That handoff stays until the cleanup follow-up removes
+it.
 
 ## Wait tool
 

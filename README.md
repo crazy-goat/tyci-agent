@@ -781,9 +781,11 @@ so their divider shows `compaction`. Older files without these fields still load
 
 ## Long subagents
 
-A blocking `subagent` call waits until its children finish or block on a
-question. It has no time limit of its own. Use `async=true` to get job ids at
-once and to be notified when each child finishes. See `docs/async-tools.md`.
+A blocking `subagent` call waits 60s. After that its children move to the
+background, and the model is notified when each finishes, as with `async=true`.
+This 60s handoff is still in the subagent tool until the cleanup follow-up
+removes it. The dispatcher itself never backgrounds a subagent call. Use
+`async=true` to get job ids at once. See `docs/async-tools.md`.
 
 ## Long background commands
 

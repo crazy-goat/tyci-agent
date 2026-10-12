@@ -76,7 +76,7 @@ func TestAwaitTimeoutBackground(t *testing.T) {
 		return "late", false
 	})
 	out := d.Await(context.Background(), id, 10*time.Millisecond)
-	if !out.Background || out.Text != placeholderPrefix+id {
+	if !out.Background || out.Text != placeholderPrefix+id+placeholderSuffix {
 		t.Fatalf("outcome = %+v, want placeholder for %s", out, id)
 	}
 

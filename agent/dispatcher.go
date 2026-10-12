@@ -74,6 +74,8 @@ type dispatchOutcome struct {
 const (
 	// placeholderPrefix starts the text that the model gets for a background call.
 	placeholderPrefix = "started, id="
+	// placeholderSuffix ends the text that the model gets for a background call.
+	placeholderSuffix = "; the result arrives later as a tool.result notice; wait does not take this id yet"
 	// pollInterval is how often Await checks userPending.
 	pollInterval = 50 * time.Millisecond
 	// noDeadline is the timeout of a call that never backgrounds on time.
@@ -415,7 +417,7 @@ func (d *Dispatcher) handOffLocked(id string, c *dispatchCall) dispatchOutcome {
 	}
 	c.background = true
 	d.pending++
-	return dispatchOutcome{Text: placeholderPrefix + id, Background: true}
+	return dispatchOutcome{Text: placeholderPrefix + id + placeholderSuffix, Background: true}
 }
 
 // takeLate returns the late results that have arrived and not been taken yet.
