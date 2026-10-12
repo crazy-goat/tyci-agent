@@ -28,6 +28,29 @@ A late result has this form:
 The notice is a user text block at the end of the conversation. The
 conversation before it does not change, so the prompt cache stays valid.
 
+## Large late results
+
+A late result longer than `tools.result_tail_bytes` (default 16384) keeps only its
+last bytes in the `tool.result` message. Only the results of background calls are
+cut. An inline result is never cut.
+
+The first line of a cut result tells the model how much it sees and where the full
+output is:
+
+    [truncated: showing the last 16384 of 1048576 bytes; full output: /home/u/.tyci/tool-results/<session-id>/c1.txt]
+
+The full output is written to `~/.tyci/tool-results/<session-id>/<call_id>.txt`.
+The directory is created with mode 0700 and the file with mode 0600. The session id
+is unique, so the call ids of two sessions do not collide. The cut moves forward to
+the next UTF-8 character start, so the tail can be a few bytes shorter than the limit.
+
+If the file cannot be written, the tail is still sent. The first line then says
+`full output could not be saved`, and `full_path` is empty. A chat without an open
+session has no directory, so its cut results are never saved.
+
+The `tool.result` payload has the fields `truncated` and `full_path`. The notice
+tag shows them as `truncated=true` and `full_path="..."`.
+
 ## Wake rule
 
 A turn ends when the model stops calling tools. The loop then waits for the

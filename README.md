@@ -815,8 +815,10 @@ when a key is absent:
 - `background_after_sec` sets the wait of one tool by name. It wins over the class value.
 - `0` moves the call to the background at once.
 - A negative value is a config error. The `background_after_sec.subagent` key is an error too.
-- `result_tail_bytes` is the size limit of a late result. This version reads and checks
-  the value. A later change applies it. `0` is allowed. The default is 16384.
+- `result_tail_bytes` is the size limit of a late result. A late result longer than
+  the limit keeps only its last bytes, and the full output is saved under
+  `~/.tyci/tool-results/<session-id>/<call-id>.txt` (mode 0600). The notice names the
+  file. `0` is allowed. The default is 16384.
 - A project file `.tyci/config.json` can set the same keys. A value it sets wins, `0` included.
   For `background_after_sec` the two files merge per tool name.
 
