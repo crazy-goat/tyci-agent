@@ -49,6 +49,29 @@ The dispatcher never backgrounds `subagent`, `ask_parent` or `wait`. The
 `tools/subagent.go`). That handoff stays until the cleanup follow-up removes
 it.
 
+## Background wait and kill deadline
+
+Two timers apply to a tool call. They are different.
+
+- The background wait is set by `timeoutFor` in `agent/dispatcher.go`. When it
+  ends, the call moves to the background. The call keeps running, and the model
+  gets the placeholder. Nothing is killed.
+- The kill deadline is the timeout of the tool itself, for example the `timeout`
+  of `bash`. It is set in `runToolCall` and does not change with this design. When
+  it ends, the tool stops.
+
+The background wait has three levels. The first match wins:
+
+1. A blocking tool (`subagent`, `ask_parent`, `wait`) never backgrounds.
+2. `tools.background_after_sec.<tool>` in config.json, when the key is set.
+3. The class of the tool: `tools.background_after_fast_sec` (default 2.5s) for fast
+   tools, and `tools.background_after_slow_sec` (default 60s) for slow tools.
+
+Fast tools are `read`, `find`, `skills`, `agents`, `todo`, `write`, `edit`, `lock`,
+`unlock` and `report_progress`. Every other tool is slow. An MCP tool is always slow.
+A `0` value backgrounds the call at once. The keys are documented in the README,
+section "Tool timeouts before background".
+
 ## Wait tool
 
 `wait` takes these parameters:

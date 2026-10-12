@@ -787,6 +787,41 @@ This 60s handoff is still in the subagent tool until the cleanup follow-up
 removes it. The dispatcher itself never backgrounds a subagent call. Use
 `async=true` to get job ids at once. See `docs/async-tools.md`.
 
+## Tool timeouts before background
+
+A tool call that runs longer than its wait moves to the background. The model gets
+a placeholder, and the result arrives later as a `tool.result` notice. The wait is
+not a kill deadline: the tool keeps running, and its own timeout still applies.
+
+Tools have two classes. Fast tools wait 2.5s, slow tools wait 60s. Fast tools are
+`read`, `find`, `skills`, `agents`, `todo`, `write`, `edit`, `lock`, `unlock` and
+`report_progress`. Every other tool is slow, including MCP tools. `subagent`,
+`ask_parent` and `wait` always block, and their values are ignored.
+
+Set the values in the `tools` block of `~/.tyci/config.json`. The defaults apply
+when a key is absent:
+
+```json
+{
+  "tools": {
+    "background_after_fast_sec": 2.5,
+    "background_after_slow_sec": 60,
+    "background_after_sec": { "bash": 10 },
+    "result_tail_bytes": 16384
+  }
+}
+```
+
+- `background_after_sec` sets the wait of one tool by name. It wins over the class value.
+- `0` moves the call to the background at once.
+- A negative value is a config error. The `background_after_sec.subagent` key is an error too.
+- `result_tail_bytes` is the size limit of a late result. This version reads and checks
+  the value. A later change applies it. `0` is allowed. The default is 16384.
+- A project file `.tyci/config.json` can set the same keys. A value it sets wins, `0` included.
+  For `background_after_sec` the two files merge per tool name.
+
+See `docs/async-tools.md` for the difference between the background wait and the kill deadline.
+
 ## Long background commands
 
 A bash call never blocks for more than 30s. A command that still runs after 30s

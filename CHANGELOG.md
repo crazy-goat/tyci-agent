@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Config: the `tools` block of `config.json` sets when a tool call moves to the background: `background_after_fast_sec` (default 2.5), `background_after_slow_sec` (default 60), `background_after_sec` (one value per tool name) and `result_tail_bytes` (default 16384). A project file can set the same keys and wins for each key it sets, `0` included. A negative value, or `background_after_sec.subagent`, is a config error at startup (#198).
 - Tools: `wait` takes `ids` (a list of job ids), `mode` (`any` or `all`) and keeps `job_id` as an alias for one id. Repeated ids count once (#197).
 - Tools: mutations of one worktree (`write`, `edit`, `bash` without `parallel=true`, Lua `ctx.run` and `ctx.write`) run in call order: the dispatcher takes their place in the queue in the order of the batch, before each call starts. Reads stay parallel. `bash` takes `parallel=true` to skip the queue (#197).
 - Bus: the kind `tool.result` (payload `call_id`, `content`, `failed`, `duration_ms`, `truncated`, `full_path`) carries the late result of a tool call that moved to the background. The dispatcher that starts such calls is live in the main conversation (#197).
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: a run can be stopped. A stopped run has the status `stopped`, keeps its worktree and its pull request, and cannot be resumed. `tyci workflow stop <run-id> [--reason text] [--json]` stops a running run that no live tyci process owns. The Runs tab and `tyci workflow status` show the status. `tyci workflow status` exits with code 0 for `stopped` (#582).
 
 ### Changed
+- Tools: a call of a fast tool (`read`, `find`, `skills`, `agents`, `todo`, `write`, `edit`, `lock`, `unlock`, `report_progress`) moves to the background after 2.5s. Every other tool, including MCP tools and unknown names, moves after 60s. Before, only `bash` and `lua` waited 60s, and every other tool waited 2.5s. The kill deadline of each tool is unchanged (#198).
 - Subagent: a blocking `subagent` call from a subagent never moves to the background. The 60s handoff of the `subagent` tool itself is unchanged until its cleanup lands (#197).
 - Locks: a lock without `seconds` lives until the agent ends, not until the tool call ends (#197).
 - TUI: streamed output (text, thinking and tool output) is drawn at most once per second, except that a change of block kind or tool index draws the previous content at once. So several parallel tools with mixed progress can still draw once per line. The first chunk after a quiet period is drawn at once, and the end of a turn draws the rest at once. The status bar and the background job times are refreshed once per second, and the status bar shows elapsed times in whole seconds, for example `12s`, not tenths. Keyboard, mouse, resize and modal redraws are not delayed (#630).
