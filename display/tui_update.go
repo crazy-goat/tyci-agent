@@ -46,7 +46,7 @@ func (m TuiModel) wantsStatusTick() bool {
 // to exist: nothing needs repainting for it unless one of the three places
 // that render a job's duration is actually on screen right now.
 func (m TuiModel) hasLiveJobsToPaint() bool {
-	if len(m.runningBackgroundJobs()) == 0 {
+	if m.runningBackgroundJobCount() == 0 {
 		// No running/waiting-answer job at all — pruneBackgroundJobsLocked
 		// or terminal-status transitions already got us here.
 		return false
@@ -172,6 +172,12 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// screen after the turn that started it has already ended (item
 		// 57) — arm (or no-op if a chain is already ticking, e.g. mid-turn)
 		// so its elapsed/quiet time doesn't freeze until the next update.
+		return m, m.armStatusTick()
+	}
+	if upd, ok := msg.(tuiMsgJobUpdates); ok {
+		for _, j := range upd.Jobs {
+			m.applyJobUpdate(j)
+		}
 		return m, m.armStatusTick()
 	}
 	// A finished file scan (tui_filecomplete.go) is pure state: it must land

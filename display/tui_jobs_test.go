@@ -556,8 +556,10 @@ func TestForwardJobUpdates_FloodWithSlowConsumerKeepsTerminalStates(t *testing.T
 			model, _ := m.Update(msg)
 			m = model.(TuiModel)
 			msgs.Add(1)
-			if j := msg.(tuiMsgJobUpdate).Job; !subagentLive(j.Status) {
-				terminalMsgs.Add(1)
+			for _, j := range msg.(tuiMsgJobUpdates).Jobs {
+				if !subagentLive(j.Status) {
+					terminalMsgs.Add(1)
+				}
 			}
 		})
 	}()
@@ -660,7 +662,9 @@ func TestTUI_JobsPanel_ShowsRunningThenDone(t *testing.T) {
 
 	received := make(chan jobs.Job, 16)
 	go forwardJobUpdates(sub, make(chan struct{}), func(msg tea.Msg) {
-		received <- msg.(tuiMsgJobUpdate).Job
+		for _, j := range msg.(tuiMsgJobUpdates).Jobs {
+			received <- j
+		}
 	})
 
 	next := func(t *testing.T) jobs.Job {
@@ -697,4 +701,70 @@ func TestTUI_JobsPanel_ShowsRunningThenDone(t *testing.T) {
 	if got := m.backgroundJobs["job-1"].Status; got != jobs.StatusDone {
 		t.Fatalf("status = %s, want done", got)
 	}
+}
+
+// runningBackgroundJobCount must match len(runningBackgroundJobs()) for every
+// status mix, because jobsPanelHeight uses the count to size the panel.
+func TestRunningBackgroundJobCount_MatchesRunningList(t *testing.T) {
+	m := newTestModelForJobs()
+	for i, st := range []jobs.Status{jobs.StatusRunning, jobs.StatusWaitingAnswer, jobs.StatusDone, jobs.StatusRunning} {
+		m.applyJobUpdate(jobs.Job{
+			ID: fmt.Sprintf("job-%d", i), Description: "d",
+			Status: st, StartedAt: time.Now(),
+		})
+	}
+	if got, want := m.runningBackgroundJobCount(), len(m.runningBackgroundJobs()); got != want || want != 3 {
+		t.Fatalf("runningBackgroundJobCount = %d, runningBackgroundJobs = %d, want 3", got, want)
+	}
+	if h := m.jobsPanelHeight(); h != 3 {
+		t.Errorf("jobsPanelHeight = %d, want 3", h)
+	}
+}
+
+// Five job.status messages that are already queued when the forwarder starts
+// reach the model in one tuiMsgJobUpdates, in publish order.
+func TestForwardJobUpdates_BatchesQueuedUpdatesIntoOneMessage(t *testing.T) {
+	b := bus.New()
+	defer b.Close()
+
+	sub := jobStatusSub(b)
+	defer sub.Close()
+
+	for i := 0; i < 5; i++ {
+		publishJobStatus(b, bus.JobStatus{ID: fmt.Sprintf("job-%d", i), Name: "batch", Status: string(jobs.StatusRunning), Started: time.Now()})
+	}
+
+	sent := make(chan tea.Msg, 10)
+	stop := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		forwardJobUpdates(sub, stop, func(msg tea.Msg) { sent <- msg })
+	}()
+
+	var msg tea.Msg
+	select {
+	case msg = <-sent:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the batch")
+	}
+	batch, ok := msg.(tuiMsgJobUpdates)
+	if !ok {
+		t.Fatalf("message = %T, want tuiMsgJobUpdates", msg)
+	}
+	if len(batch.Jobs) != 5 {
+		t.Fatalf("batch has %d jobs, want 5", len(batch.Jobs))
+	}
+	for i, j := range batch.Jobs {
+		if want := fmt.Sprintf("job-%d", i); j.ID != want {
+			t.Errorf("jobs[%d].ID = %s, want %s", i, j.ID, want)
+		}
+	}
+	select {
+	case extra := <-sent:
+		t.Fatalf("got a second message %T, want one batch", extra)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(stop)
+	<-finished
 }

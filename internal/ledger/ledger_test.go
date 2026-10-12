@@ -228,3 +228,47 @@ func TestReset_ClearsEverything(t *testing.T) {
 		t.Fatalf("after Reset: %+v, want empty", s)
 	}
 }
+
+// The cached results of Get, ByModel and UsageByJob must follow every Record
+// and every Reset. An empty HOME keeps the prices out of the test.
+func TestCache_InvalidatedByRecordAndReset(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pricing.Reset()
+	t.Cleanup(pricing.Reset)
+	Reset()
+	t.Cleanup(Reset)
+
+	Record(Subagent, "p", "m", "j1", stream.Usage{Input: 10})
+	if s := Get(); len(s.Rows) != 1 || s.Sub.Input != 10 {
+		t.Fatalf("Get after first Record = %+v, want one row with Input 10", s)
+	}
+	if got := ByModel(); len(got) != 1 || got[0].Usage.Input != 10 {
+		t.Fatalf("ByModel after first Record = %+v, want Input 10", got)
+	}
+	if got := UsageByJob(); got["j1"].Usage.Input != 10 {
+		t.Fatalf("UsageByJob after first Record = %+v, want Input 10 for j1", got)
+	}
+
+	// A second Record must show up in all three, not the cached totals.
+	Record(Subagent, "p", "m", "j1", stream.Usage{Input: 5})
+	if s := Get(); s.Sub.Input != 15 || s.Rows[0].Runs != 2 {
+		t.Fatalf("Get after second Record = %+v, want Input 15 and Runs 2", s)
+	}
+	if got := ByModel(); got[0].Usage.Input != 15 || got[0].Runs != 2 {
+		t.Fatalf("ByModel after second Record = %+v, want Input 15 and Runs 2", got)
+	}
+	if got := UsageByJob(); got["j1"].Usage.Input != 15 {
+		t.Fatalf("UsageByJob after second Record = %+v, want Input 15", got)
+	}
+
+	Reset()
+	if s := Get(); len(s.Rows) != 0 || s.Sub.Input != 0 {
+		t.Fatalf("Get after Reset = %+v, want empty", s)
+	}
+	if got := ByModel(); len(got) != 0 {
+		t.Fatalf("ByModel after Reset = %+v, want empty", got)
+	}
+	if got := UsageByJob(); len(got) != 0 {
+		t.Fatalf("UsageByJob after Reset = %+v, want empty", got)
+	}
+}

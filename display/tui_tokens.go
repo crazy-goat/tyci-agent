@@ -231,7 +231,8 @@ func (m TuiModel) buildUsageDetail(width int) []string {
 	// otherwise show N identical-looking lines for N subagents that happen
 	// to share a model instead of one aggregated line — see ByModel's doc
 	// comment.
-	byModel := ledger.ByModel()
+	// A copy: ByModel's result is cached in the ledger and must not be sorted in place.
+	byModel := append([]ledger.Row(nil), ledger.ByModel()...)
 	if len(byModel) > 0 {
 		// Main-session rows come first, then subagent rows, then scout
 		// rows. Kind is ordered Main, Subagent, Scout. The sort is stable,

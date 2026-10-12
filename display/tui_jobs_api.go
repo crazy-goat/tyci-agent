@@ -27,17 +27,22 @@ func (t *TUI) SetJobEvents(sub *bus.Sub) {
 	}()
 }
 
-// forwardJobUpdates sends the job snapshot of each drained job.status message
-// to send until done closes or the subscription ends. Messages still pending
-// when the subscription ends are delivered first.
+// forwardJobUpdates sends the job snapshots of each drained batch of
+// job.status messages to send, as one tuiMsgJobUpdates per drain, until done
+// closes or the subscription ends. Messages still pending when the
+// subscription ends are delivered first.
 func forwardJobUpdates(sub *bus.Sub, done <-chan struct{}, send func(tea.Msg)) {
 	deliver := func() {
+		var batch []jobs.Job
 		for _, m := range sub.Drain() {
 			st, err := bus.Decode[bus.JobStatus](m)
 			if err != nil {
 				continue
 			}
-			send(tuiMsgJobUpdate{Job: jobFromStatus(st, m.Seq)})
+			batch = append(batch, jobFromStatus(st, m.Seq))
+		}
+		if len(batch) > 0 {
+			send(tuiMsgJobUpdates{Jobs: batch})
 		}
 	}
 	for {

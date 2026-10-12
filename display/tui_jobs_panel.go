@@ -317,10 +317,23 @@ func (m TuiModel) renderJobsPanel(width int) string {
 	return b.String()
 }
 
+// runningBackgroundJobCount counts the jobs runningBackgroundJobs returns,
+// without sorting them. It is for the callers that need only the number.
+func (m TuiModel) runningBackgroundJobCount() int {
+	n := 0
+	for _, j := range m.backgroundJobs {
+		switch j.Status {
+		case jobs.StatusWaitingAnswer, jobs.StatusRunning:
+			n++
+		}
+	}
+	return n
+}
+
 // jobsPanelHeight returns the terminal rows renderJobsPanel occupies at the
 // current backgroundJobs size, mirroring queuePanelHeight.
 func (m TuiModel) jobsPanelHeight() int {
-	n := len(m.runningBackgroundJobs())
+	n := m.runningBackgroundJobCount()
 	if n == 0 {
 		return 0
 	}

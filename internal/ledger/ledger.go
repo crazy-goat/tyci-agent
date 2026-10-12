@@ -98,10 +98,20 @@ type key struct {
 	jobID    string
 }
 
+// version is bumped by every Record and Reset. The cached results of Get,
+// ByModel and UsageByJob are valid only while their version matches it.
 var (
-	mu    sync.Mutex
-	rows  = map[key]*Row{}
-	order []key
+	mu      sync.Mutex
+	rows    = map[key]*Row{}
+	order   []key
+	version uint64
+
+	getCache     *Snapshot
+	getVersion   uint64
+	byModelCache []Row
+	byModelVer   uint64
+	usageCache   map[string]JobUsage
+	usageVersion uint64
 )
 
 // Record adds one agent run's usage, attributing it to jobID (empty for the
@@ -126,6 +136,7 @@ func Record(kind Kind, provider, model, jobID string, u stream.Usage) {
 	rates, _ := pricing.Lookup(provider, model)
 	r.Priced = rates.Known()
 	r.USD = Cost(rates, r.Usage)
+	version++
 }
 
 // Cost prices a usage total. Input is treated as including CacheRead (which is
@@ -156,10 +167,14 @@ func Cost(r pricing.Rates, u stream.Usage) float64 {
 		float64(u.Output)/perMillion*r.Output
 }
 
-// Get returns the current totals, in first-seen order.
+// Get returns the current totals, in first-seen order. The result is cached
+// until the next Record or Reset, so callers must not modify its Rows.
 func Get() Snapshot {
 	mu.Lock()
 	defer mu.Unlock()
+	if getCache != nil && getVersion == version {
+		return *getCache
+	}
 	s := Snapshot{Rows: make([]Row, 0, len(order))}
 	for _, k := range order {
 		r := rows[k]
@@ -180,6 +195,7 @@ func Get() Snapshot {
 			s.Main.Add(r.Usage)
 		}
 	}
+	getCache, getVersion = &s, version
 	return s
 }
 
@@ -192,10 +208,14 @@ func Get() Snapshot {
 // consumer of Get().Rows too: twelve subagents on the same model would show
 // as twelve identical-looking lines instead of one aggregated one. Returned
 // rows carry no JobID (it no longer identifies a single job) and are
-// ordered by first-seen model, mirroring Get()'s own ordering.
+// ordered by first-seen model, mirroring Get()'s own ordering. The result is
+// cached until the next Record or Reset, so callers must not modify it.
 func ByModel() []Row {
 	mu.Lock()
 	defer mu.Unlock()
+	if byModelCache != nil && byModelVer == version {
+		return byModelCache
+	}
 	type mkey struct {
 		kind     Kind
 		provider string
@@ -222,6 +242,7 @@ func ByModel() []Row {
 			Usage: r.Usage, USD: r.USD, Priced: r.Priced, Runs: r.Runs,
 		})
 	}
+	byModelCache, byModelVer = out, version
 	return out
 }
 
@@ -246,10 +267,14 @@ type JobUsage struct {
 // Deliberately per-job, not rolled up across a parent-child tree: tokens are
 // not additive across models in any useful sense (see TODO.md item 1), so
 // only the caller — walking jobs.Job.ParentID — decides whether and how to
-// sum cost across a subtree.
+// sum cost across a subtree. The result is cached until the next Record or
+// Reset, so callers must not modify it.
 func UsageByJob() map[string]JobUsage {
 	mu.Lock()
 	defer mu.Unlock()
+	if usageCache != nil && usageVersion == version {
+		return usageCache
+	}
 	out := map[string]JobUsage{}
 	priced := map[string]bool{}
 	for _, k := range order {
@@ -273,6 +298,7 @@ func UsageByJob() map[string]JobUsage {
 		agg.Priced = p
 		out[id] = agg
 	}
+	usageCache, usageVersion = out, version
 	return out
 }
 
@@ -281,5 +307,6 @@ func UsageByJob() map[string]JobUsage {
 func Reset() {
 	mu.Lock()
 	rows, order = map[key]*Row{}, nil
+	version++
 	mu.Unlock()
 }

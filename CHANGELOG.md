@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Worktrees: tyci reads each project `.tyci` file (config, hooks, Lua tools, MCP, workflows, agents, skills, memory and cron) from the worktree first, then from the main checkout. A linked worktree of a trusted project uses the trust answer of its main checkout. Worktree names use the name of the main checkout. `TYCI_PROJECT_DIR` is set for hooks (#619).
 - Subagents: a subagent works in its worktree. Its system prompt names the worktree, and it reads the project's `AGENTS.md`, agents, skills and memory from it. A memory note goes to the main checkout unless the worktree has its own `.tyci/memory` (#619).
 - Bus: an agent sends `agent.message` only to its parent or to its own child. Another route fails with the tool error `message not delivered: an agent can only message its parent`. The orchestrator and the person (`/msg`) are not limited. (#597).
+- TUI: less work per job event and per frame. Job updates from the bus arrive in one batch per drain, and the ledger caches its totals until the next record (#636).
 
 ### Removed
 - Tools: the 60s handoff of a blocking `subagent` call is removed. The call blocks until its children finish, and a cancel of the call cancels the children that still run. A child that is stopped by kill_job is reported as stopped by the user.
