@@ -197,4 +197,4 @@ call context that ends does not release the lock.
   later turn follows, the result is lost.
 - Call ids restart at `c1` after a resume (see "Call ids").
 - `runWithHandoff`, `watchForWaiting`, the bash `background_after` timer,
-  `SetJobObserver` and `AskUnroutableCtxKey` still exist. See `findings.md`.
+  `SetJobObserver` and `AskUnroutableCtxKey` still exist. See #651.

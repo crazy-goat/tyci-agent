@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strconv"
 	"testing"
 )
 
@@ -47,8 +48,9 @@ func TestCallIDAliasInsideSubagent(t *testing.T) {
 	}
 }
 
-// TestWaitKinds: kinds accepts only "ask.reply" and rejects other values.
-func TestWaitKinds(t *testing.T) {
+// TestWaitKindsInputCheck: kinds is checked on input (array of strings, only
+// "ask.reply" allowed). It is not a filter over notices; see docs/async-tools.md.
+func TestWaitKindsInputCheck(t *testing.T) {
 	cases := []struct {
 		name    string
 		input   map[string]any
@@ -71,5 +73,30 @@ func TestWaitKinds(t *testing.T) {
 				t.Fatalf("kinds = %v, want %v", kinds, c.kinds)
 			}
 		})
+	}
+}
+
+// TestCallJobsBoundedFIFO: the binding map is capped. Once the cap is
+// exceeded, the oldest binding is dropped and the newest one is kept.
+func TestCallJobsBoundedFIFO(t *testing.T) {
+	const owner = "sub-bounded"
+	for i := 0; i <= maxCallJobBindings; i++ {
+		ctx := context.WithValue(context.Background(), JobIDCtxKey{}, owner)
+		ctx = context.WithValue(ctx, CallIDCtxKey{}, "b"+strconv.Itoa(i))
+		BindCallJob(ctx, "job-b"+strconv.Itoa(i))
+	}
+
+	if got := resolveCallID(owner, "b0"); got != "b0" {
+		t.Fatalf("oldest binding must be dropped, resolve(b0) = %q", got)
+	}
+	last := "b" + strconv.Itoa(maxCallJobBindings)
+	if got := resolveCallID(owner, last); got != "job-"+last {
+		t.Fatalf("newest binding must be kept, resolve(%s) = %q", last, got)
+	}
+
+	callJobs.mu.Lock()
+	defer callJobs.mu.Unlock()
+	if n := len(callJobs.m); n > maxCallJobBindings {
+		t.Fatalf("map has %d entries, cap is %d", n, maxCallJobBindings)
 	}
 }
