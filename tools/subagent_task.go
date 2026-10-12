@@ -131,7 +131,27 @@ func resumeSubagentTask(ctx context.Context, s TaskSpec) (string, string, error)
 			if c := getJobCanceler(); c != nil {
 				c.Cancel(id)
 			}
+			// The resumed job may still write until it reports Done.
+			waitCancelledJob(waiter, id, resumeCancelWait)
 			return "", id, ctx.Err()
+		}
+	}
+}
+
+// resumeCancelWait bounds the wait for a cancelled resumed job to stop.
+const resumeCancelWait = 10 * time.Second
+
+// waitCancelledJob waits until job id reports Done, or until bound passes.
+func waitCancelledJob(w JobWaiter, id string, bound time.Duration) {
+	deadline := time.Now().Add(bound)
+	for {
+		left := time.Until(deadline)
+		if left <= 0 {
+			return
+		}
+		st, ok := w.Wait(context.Background(), id, left)
+		if !ok || st.Done {
+			return
 		}
 	}
 }
