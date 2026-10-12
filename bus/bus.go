@@ -60,6 +60,12 @@ type Bus struct {
 	journalPath string
 	redact      func([]byte) []byte
 	journal     *journal
+
+	// obsMu guards events and pending. The observer only appends to the
+	// bounded ring under it, so it never blocks Publish for long.
+	obsMu   sync.Mutex
+	events  []Event
+	pending map[uint64]int // receivers that have not taken a message yet
 }
 
 // New returns an open bus with no subscriptions.
@@ -143,7 +149,12 @@ func Publish[T any](b *Bus, kind Kind, from, to Addr, origin Origin, payload T) 
 
 // PublishReply is Publish for a message that answers the message with Seq
 // replyTo. Zero means no reply.
-func PublishReply[T any](b *Bus, kind Kind, from, to Addr, origin Origin, replyTo uint64, payload T) (uint64, error) {
+func PublishReply[T any](b *Bus, kind Kind, from, to Addr, origin Origin, replyTo uint64, payload T) (seq uint64, err error) {
+	defer func() {
+		if err != nil {
+			b.observe(Event{Msg: Message{Kind: kind, From: from, To: to, Origin: origin, ReplyTo: replyTo}, State: Failed})
+		}
+	}()
 	info, ok := lookupKind(kind)
 	if !ok {
 		return 0, fmt.Errorf("bus: kind %q is not registered", kind)
@@ -248,6 +259,7 @@ func (b *Bus) deliver(m Message, class Class, key string) (Message, []inboxWarni
 			warnings = append(warnings, inboxWarning{agent: s.filter.To.ID, parent: b.parentOf(s.filter.To.ID), depth: depth})
 		}
 	}
+	b.observeSent(m, len(targets))
 	return m, warnings, nil
 }
 
@@ -299,7 +311,11 @@ func (s *Sub) Ready() <-chan struct{} { return s.q.ready }
 
 // Drain returns the waiting messages, Durable first in publish order, then
 // the newest message per key in first-seen order. It clears the queue.
-func (s *Sub) Drain() []Message { return s.q.drain() }
+func (s *Sub) Drain() []Message {
+	msgs := s.q.drain()
+	s.bus.observeReceived(msgs)
+	return msgs
+}
 
 // Done returns a channel that closes once the subscription is closed, or
 // once the bus is closed. A consumer that waits on Ready and Done can stop
@@ -320,6 +336,7 @@ func (s *Sub) Close() {
 func (s *Sub) CloseAndDrain() []Message {
 	s.bus.unsubscribe(s)
 	msgs := s.q.drain()
+	s.bus.observeReceived(msgs)
 	s.q.close()
 	s.finish()
 	return msgs
