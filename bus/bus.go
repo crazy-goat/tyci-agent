@@ -241,8 +241,12 @@ func (b *Bus) deliver(m Message, class Class, key string) (Message, []inboxWarni
 	if b.closed {
 		return m, nil, ErrClosed
 	}
+	var rerouted *Message
 	if m.To.Type == AddrAgent && !b.isLive(m.To.ID) {
 		orig := m.To
+		failed := m
+		failed.To = orig
+		rerouted = &failed
 		m.OrigTo = &orig
 		m.To = Addr{Type: AddrOrchestrator}
 		m.Origin = OriginSystem
@@ -252,6 +256,14 @@ func (b *Bus) deliver(m Message, class Class, key string) (Message, []inboxWarni
 	b.seq++
 	m.Seq = b.seq
 	m.At = time.Now()
+	if rerouted != nil {
+		rerouted.Seq = m.Seq
+		rerouted.At = m.At
+		b.observe(Event{Msg: *rerouted, State: Failed})
+	}
+	// The state is registered before the first put. A drainer that wakes on
+	// Ready can then take the message at once and still find its state.
+	b.observeSent(m, len(targets))
 	var warnings []inboxWarning
 	for _, s := range targets {
 		depth, crossed := s.q.put(m, class, key)
@@ -259,7 +271,6 @@ func (b *Bus) deliver(m Message, class Class, key string) (Message, []inboxWarni
 			warnings = append(warnings, inboxWarning{agent: s.filter.To.ID, parent: b.parentOf(s.filter.To.ID), depth: depth})
 		}
 	}
-	b.observeSent(m, len(targets))
 	return m, warnings, nil
 }
 

@@ -16,7 +16,10 @@ const (
 	// Received means that every receiver of the message took it with Drain.
 	Received
 	// Failed means that Publish returned an error, or that no subscription
-	// received the message.
+	// received the message. A message to an agent that is not live gets one
+	// Failed event for that agent, with Msg.To set to the agent. The bus then
+	// reroutes the message to the orchestrator, and that delivery has its own
+	// state: Sent, or Failed when no orchestrator subscription exists.
 	Failed
 )
 
@@ -80,10 +83,12 @@ func (b *Bus) observeReceived(msgs []Message) {
 }
 
 // appendLocked adds ev and drops the oldest event at the limit. The caller
-// holds b.obsMu. A dropped message no longer has its receivers tracked.
+// holds b.obsMu. A dropped Sent event stops the tracking of its receivers.
 func (b *Bus) appendLocked(ev Event) {
 	if len(b.events) == observeLimit {
-		delete(b.pending, b.events[0].Msg.Seq)
+		if b.events[0].State == Sent {
+			delete(b.pending, b.events[0].Msg.Seq)
+		}
 		copy(b.events, b.events[1:])
 		b.events = b.events[:observeLimit-1]
 	}

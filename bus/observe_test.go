@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -49,8 +50,78 @@ func TestEvents_DirectToUnknownAgentFailed(t *testing.T) {
 	if _, err := Publish(b, kindDurable, orchestrator, agent("gone"), OriginSystem, item{ID: "1"}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if got := states(b.Events()); !slices.Equal(got, []DeliveryState{Failed}) {
-		t.Fatalf("states = %v, want [Failed]", got)
+	// One Failed for the agent, then Failed for the rerouted orchestrator delivery.
+	if got := states(b.Events()); !slices.Equal(got, []DeliveryState{Failed, Failed}) {
+		t.Fatalf("states = %v, want [Failed Failed]", got)
+	}
+}
+
+func TestEvents_RerouteToOrchestratorKeepsFailedForAgent(t *testing.T) {
+	b := New(WithTree(Tree{IsLive: func(id string) bool { return id != "gone" }}))
+	defer b.Close()
+	orch := b.Subscribe("orchestrator", Filter{To: orchestrator})
+
+	seq, err := Publish(b, kindDurable, orchestrator, agent("gone"), OriginSystem, item{ID: "1"})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	evs := b.Events()
+	if got := states(evs); !slices.Equal(got, []DeliveryState{Failed, Sent}) {
+		t.Fatalf("states = %v, want [Failed Sent]", got)
+	}
+	if evs[0].Msg.To != agent("gone") || evs[0].Msg.Seq != seq {
+		t.Fatalf("Failed event = %+v, want To agent gone with Seq %d", evs[0].Msg, seq)
+	}
+
+	// The orchestrator still gets the message, as before.
+	msgs := orch.Drain()
+	if len(msgs) != 1 || msgs[0].Seq != seq || msgs[0].OrigTo == nil {
+		t.Fatalf("orchestrator drained %+v, want the rerouted message", msgs)
+	}
+	if got := states(b.Events()); !slices.Equal(got, []DeliveryState{Failed, Sent, Received}) {
+		t.Fatalf("states after Drain = %v, want [Failed Sent Received]", got)
+	}
+}
+
+func TestEvents_ConcurrentDrainerOnReadySeesReceived(t *testing.T) {
+	const n = 100 // Sent and Received events of n messages fit in the ring
+	b := New()
+	defer b.Close()
+	sub := b.Subscribe("a", Filter{To: agent("a")})
+
+	drained := make(chan error, 1)
+	go func() {
+		got := 0
+		for got < n {
+			select {
+			case <-sub.Ready():
+			case <-time.After(10 * time.Second):
+				drained <- errors.New("drainer timed out")
+				return
+			}
+			got += len(sub.Drain())
+		}
+		drained <- nil
+	}()
+
+	for i := range n {
+		if _, err := Publish(b, kindDurable, orchestrator, agent("a"), OriginSystem, item{N: i}); err != nil {
+			t.Fatalf("Publish %d: %v", i, err)
+		}
+	}
+	if err := <-drained; err != nil {
+		t.Fatal(err)
+	}
+
+	// Every message has one Received event, so none stayed Sent.
+	received := make(map[uint64]bool)
+	for _, ev := range b.Events() {
+		if ev.State == Received {
+			received[ev.Msg.Seq] = true
+		}
+	}
+	if len(received) != n {
+		t.Fatalf("messages with a Received event = %d, want %d", len(received), n)
 	}
 }
 
