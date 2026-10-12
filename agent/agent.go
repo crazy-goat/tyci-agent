@@ -231,6 +231,8 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 			cfg.Dispatch.cancelBackground()
 		}
 	}()
+	// A large late result is saved under the directory of the open session.
+	cfg.Dispatch.SetResultDir(toolResultDir(cfg.Session))
 
 	var totalUsage stream.Usage
 

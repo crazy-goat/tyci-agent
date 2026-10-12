@@ -39,8 +39,12 @@ type Dispatcher struct {
 	sub *bus.Sub
 	// userPending reports that a person is waiting for the agent. It may be nil.
 	userPending func() bool
-	// tools holds the background_after settings that timeoutFor reads.
+	// tools holds the background_after settings that timeoutFor reads, and
+	// the result_tail_bytes limit that publishResult applies.
 	tools ToolsConfig
+	// resultDir receives the full output of a large late result. It is set
+	// with SetResultDir and is guarded by mu. Empty means no file is written.
+	resultDir string
 	// wakes counts the wake messages absorbed so far. A call backgrounds when
 	// a wake arrives after it was fired.
 	wakes uint64
@@ -269,12 +273,7 @@ func (d *Dispatcher) finish(id string, c *dispatchCall, text string, failed bool
 	if !background {
 		return
 	}
-	d.deliver(bus.ToolResult{
-		CallID:     id,
-		Content:    text,
-		Failed:     failed,
-		DurationMS: time.Since(c.started).Milliseconds(),
-	})
+	d.publishResult(id, c.started, text, failed)
 	// The result is on the bus queue, not yet in late. Move it there before
 	// pending drops, or waitLate could see no pending call and no result.
 	d.absorb()
@@ -283,6 +282,45 @@ func (d *Dispatcher) finish(id string, c *dispatchCall, text string, failed bool
 	delete(d.calls, id)
 	d.notifyLocked()
 	d.mu.Unlock()
+}
+
+// SetResultDir sets the directory that receives the full output of a large
+// late result. The agent loop sets it at the start of each Run, from the open
+// session. It is safe on a nil Dispatcher.
+func (d *Dispatcher) SetResultDir(dir string) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	d.resultDir = dir
+	d.mu.Unlock()
+}
+
+// publishResult delivers the late result of call id. A content longer than
+// the result_tail_bytes limit keeps only its last bytes. The full output goes
+// to the result directory, and the notice names its path.
+func (d *Dispatcher) publishResult(id string, started time.Time, text string, failed bool) {
+	r := bus.ToolResult{
+		CallID:     id,
+		Content:    text,
+		Failed:     failed,
+		DurationMS: time.Since(started).Milliseconds(),
+	}
+	limit := d.tools.ResultTailLimit()
+	if len(text) > limit {
+		d.mu.Lock()
+		dir := d.resultDir
+		d.mu.Unlock()
+		path, err := writeFull(dir, id, text)
+		if err != nil {
+			path = ""
+		}
+		tail, _ := tailResult(text, limit)
+		r.Content = truncationNote(limit, len(text), path) + "\n" + tail
+		r.Truncated = true
+		r.FullPath = path
+	}
+	d.deliver(r)
 }
 
 // deliver publishes a late result on the bus. When the bus is closed, the

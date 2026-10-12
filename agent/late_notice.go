@@ -15,8 +15,11 @@ import (
 // in the content is escaped.
 func lateNotice(r bus.ToolResult) string {
 	content := strings.ReplaceAll(r.Content, "</tyci-notice", `<\/tyci-notice`)
-	return fmt.Sprintf(`<tyci-notice kind=tool.result call_id=%s failed=%t duration_ms=%d>%s</tyci-notice>`,
-		r.CallID, r.Failed, r.DurationMS, content)
+	attrs := fmt.Sprintf("call_id=%s failed=%t duration_ms=%d truncated=%t", r.CallID, r.Failed, r.DurationMS, r.Truncated)
+	if r.FullPath != "" {
+		attrs += fmt.Sprintf(` full_path="%s"`, r.FullPath)
+	}
+	return fmt.Sprintf(`<tyci-notice kind=tool.result %s>%s</tyci-notice>`, attrs, content)
 }
 
 // appendLateNotices appends one user text block per late result, at the tail
