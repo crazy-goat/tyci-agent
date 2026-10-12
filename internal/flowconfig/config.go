@@ -79,6 +79,48 @@ type Role struct {
 	// Context limits in tokens for this role; 0 = use the global defaults.
 	CompactSoftLimit int `json:"compact_soft_limit,omitempty"`
 	CompactHardLimit int `json:"compact_hard_limit,omitempty"`
+	// Fallback lists model aliases or provider/model names tried in order
+	// when the model of the role fails.
+	Fallback []string `json:"fallback,omitempty"`
+	// Permission is read-only, worktree-write or full. Empty means worktree-write.
+	Permission string `json:"permission,omitempty"`
+	// Network is nil (true) or false. False removes web and MCP tools.
+	Network *bool `json:"network,omitempty"`
+	// Tools lists the tools of the role. Nil means the default set of the permission.
+	Tools []string `json:"tools,omitempty"`
+	// Limits stop the run of the role. Zero means no limit (see Limits).
+	Limits Limits `json:"limits,omitempty"`
+}
+
+// Limits are the run limits of one role. Zero means unlimited, except PingMin.
+type Limits struct {
+	Rounds    int `json:"rounds,omitempty"`     // model turns
+	TimeMin   int `json:"time_min,omitempty"`   // minutes of wall time
+	ToolCalls int `json:"tool_calls,omitempty"` // tool calls
+	PingMin   int `json:"ping_min,omitempty"`   // minutes between progress notes
+}
+
+// Permission modes of a role, from the most restricted to the least.
+const (
+	PermissionReadOnly      = "read-only"
+	PermissionWorktreeWrite = "worktree-write"
+	PermissionFull          = "full"
+)
+
+// permissions are the accepted permission modes, from the most restricted.
+var permissions = []string{PermissionReadOnly, PermissionWorktreeWrite, PermissionFull}
+
+// PermissionMode returns the permission of the role. Empty means worktree-write.
+func (r Role) PermissionMode() string {
+	if r.Permission == "" {
+		return PermissionWorktreeWrite
+	}
+	return r.Permission
+}
+
+// NetworkOn reports whether the role may use the network (web and MCP tools).
+func (r Role) NetworkOn() bool {
+	return r.Network == nil || *r.Network
 }
 
 //go:embed prompts/*.md
@@ -115,7 +157,7 @@ func Load(home, projectDir string, trusted bool) (*Config, error) {
 			merged.Models[k] = v
 		}
 		for k, v := range proj.Roles {
-			merged.Roles[k] = v
+			merged.Roles[k] = tighter(merged.Roles[k], v)
 		}
 		if proj.DefaultModel != "" {
 			merged.DefaultModel = proj.DefaultModel
@@ -203,6 +245,76 @@ func ReadPromptFile(dir, rel string) (string, error) {
 	return string(b), nil
 }
 
+// tighter returns the local role of the repository file, limited by the global
+// role of the same name. A role that only the repository file defines has the
+// zero global role, so its permission is capped at worktree-write.
+// Model, prompt, effort, fallback and limits come from local.
+// A key that local omits is inherited from global.
+// Permission and network can only get stricter. Tools can only be narrowed,
+// and a local list cannot add an MCP tool that global does not list.
+func tighter(global, local Role) Role {
+	out := local
+	ceiling := PermissionWorktreeWrite
+	if global.Permission != "" {
+		ceiling = global.Permission
+	}
+	switch {
+	case local.Permission == "":
+		out.Permission = global.Permission
+	case permissionRank(local.Permission) > permissionRank(ceiling):
+		out.Permission = ceiling
+	}
+	if local.Network == nil {
+		out.Network = global.Network
+	} else if !global.NetworkOn() {
+		off := false
+		out.Network = &off
+	}
+	switch {
+	case local.Tools == nil:
+		out.Tools = global.Tools
+	case global.Tools == nil:
+		out.Tools = withoutMCP(local.Tools)
+	default:
+		out.Tools = intersectTools(global.Tools, local.Tools)
+	}
+	return out
+}
+
+// permissionRank orders the permission modes. Unknown modes rank as full.
+func permissionRank(p string) int {
+	if i := slices.Index(permissions, p); i >= 0 {
+		return i
+	}
+	return len(permissions)
+}
+
+// withoutMCP returns names without the MCP tools (mcp_*).
+func withoutMCP(names []string) []string {
+	out := []string{}
+	for _, n := range names {
+		if !strings.HasPrefix(n, "mcp_") {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// intersectTools returns the names of local that global lists. A global
+// entry ending in "*" lists every name with that prefix.
+func intersectTools(global, local []string) []string {
+	out := []string{}
+	for _, n := range local {
+		for _, g := range global {
+			if g == n || (strings.HasSuffix(g, "*") && strings.HasPrefix(n, strings.TrimSuffix(g, "*"))) {
+				out = append(out, n)
+				break
+			}
+		}
+	}
+	return out
+}
+
 func (c *Config) validate() error {
 	if d := c.Logs.RetentionDays; d != nil && *d < 0 {
 		return fmt.Errorf("logs.retention_days: %d is negative", *d)
@@ -225,6 +337,28 @@ func (c *Config) validate() error {
 		}
 		if r.Model != "" && !c.hasModel(r.Model) {
 			return fmt.Errorf("role %q: unknown model alias %q", name, r.Model)
+		}
+		if err := r.validatePolicy(name, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validatePolicy checks the permission, fallback and limit keys of one role.
+func (r Role) validatePolicy(name string, c *Config) error {
+	if r.Permission != "" && !slices.Contains(permissions, r.Permission) {
+		return fmt.Errorf("roles.%s.permission: unknown permission %q (use one of %s)", name, r.Permission, strings.Join(permissions, ", "))
+	}
+	for _, fb := range r.Fallback {
+		if !c.hasModel(fb) {
+			return fmt.Errorf("role %q: unknown fallback model alias %q", name, fb)
+		}
+	}
+	limits := map[string]int{"rounds": r.Limits.Rounds, "time_min": r.Limits.TimeMin, "tool_calls": r.Limits.ToolCalls, "ping_min": r.Limits.PingMin}
+	for _, key := range []string{"rounds", "time_min", "tool_calls", "ping_min"} {
+		if limits[key] < 0 {
+			return fmt.Errorf("roles.%s.limits.%s: %d is negative", name, key, limits[key])
 		}
 	}
 	return nil
