@@ -224,6 +224,13 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	if cfg.MaxRetries == 0 {
 		cfg.MaxRetries = 5
 	}
+	// ESC (a cancelled ctx) stops the background calls too. A normal end of
+	// the turn does not cancel them: their results come in a later turn.
+	defer func() {
+		if ctx.Err() != nil {
+			cfg.Dispatch.cancelBackground()
+		}
+	}()
 
 	var totalUsage stream.Usage
 

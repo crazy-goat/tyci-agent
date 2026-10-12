@@ -41,7 +41,7 @@ func executeToolsDispatched(ctx context.Context, runner ToolRunner, toolCalls []
 		tc := toolCalls[i]
 		starts[i] = time.Now()
 		ids[i] = disp.Fire(ctx, func(c context.Context) (string, bool) {
-			out, bad := runToolCall(c, runner, tc, i)
+			out, bad := runToolCallIn(c, ctx, runner, tc, i)
 			if bad && c.Err() != nil {
 				return "cancelled: the turn was interrupted", true
 			}

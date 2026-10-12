@@ -34,6 +34,12 @@ results of the calls still running, unless a user message is pending. A
 pending user message ends the wait, so the person at the keyboard gets the
 next turn at once. The wait ends when the last result arrives.
 
+A blocking call (timeout `noDeadline`: `subagent`, `ask_parent`, `wait`, and
+every call of a tool that runs one at a time) never moves to the background.
+Wake messages and a pending user message do not change it. It returns only
+when it finishes or when the turn is cancelled. A serial tool therefore keeps
+the order of its batch.
+
 ## Wait tool
 
 `wait` takes these parameters:
@@ -75,10 +81,16 @@ call context that ends does not release the lock.
 
 - A call that panics returns the text `Error: tool panicked: ...` and is
   marked failed.
-- A call cancelled by the user returns `cancelled: the turn was interrupted`.
+- A call cancelled by the user (ESC) returns `cancelled: the turn was
+  interrupted`. ESC cancels a call that is still waiting, and it cancels the
+  calls that are backgrounded.
+- A backgrounded call does not stop when its turn ends. Its real result
+  arrives as a late result in a later turn. Only ESC or a close of the
+  dispatcher cancels it.
 - A call still open when a session is resumed gets a failed result with the
   text `cancelled: session was restarted`.
 - A `tyci run` waits for its background calls before it exits.
+- Closing the dispatcher cancels the calls that are still running.
 - A result that arrives after a run has ended, and no later turn starts,
   is not shown to the model. The result stays in the bus journal.
 

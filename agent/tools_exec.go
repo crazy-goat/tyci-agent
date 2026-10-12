@@ -105,6 +105,14 @@ func timeToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, 
 // result (or an error string) back to results[idx]. Extracted from
 // executeTools so the serial and parallel branches share one code path.
 func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, idx int) (string, bool) {
+	return runToolCallIn(ctx, ctx, runner, call, idx)
+}
+
+// runToolCallIn is runToolCall with a separate agent context. The agent
+// context ends with the turn (the Run), so a lock lasts only as long as the
+// turn. A backgrounded call runs on a context that outlives the turn, so the
+// dispatcher passes the turn's context here.
+func runToolCallIn(ctx, agentCtx context.Context, runner ToolRunner, call stream.ToolCall, idx int) (string, bool) {
 	var args map[string]any
 	if call.Arguments != "" {
 		if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
@@ -165,7 +173,7 @@ func runToolCall(ctx context.Context, runner ToolRunner, call stream.ToolCall, i
 	}
 
 	// lock needs the agent's lifetime, not this call's (see the lock case above).
-	toolCtx = tools.WithAgentCtx(toolCtx, ctx)
+	toolCtx = tools.WithAgentCtx(toolCtx, agentCtx)
 
 	if call.Name == "bash" || call.Name == "subagent" {
 		toolCtx = context.WithValue(toolCtx, stream.ToolIdxCtxKey{}, idx)

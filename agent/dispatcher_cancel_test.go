@@ -12,7 +12,8 @@ import (
 )
 
 // TestEscCancelPublishesCancelledResult cancels the turn while a call runs.
-// The call must end with one failed tool.result that says it was cancelled.
+// The call is still waiting, so it is not backgrounded. Its one result is
+// the inline cancelled result, and it does not reach the bus.
 func TestEscCancelPublishesCancelledResult(t *testing.T) {
 	isolateHome(t)
 	b := bus.New()
@@ -20,19 +21,20 @@ func TestEscCancelPublishesCancelledResult(t *testing.T) {
 	defer sub.Close()
 	d := newDispatcher(b, testSelf, sub)
 
-	// "other_tool" waits 2.5s, so the cancel at 2.6s hits a backgrounded call.
-	// The cancelled result must then reach the bus.
+	// "other_tool" waits 2.5s, so the cancel at 100ms hits a call that is
+	// still in its wait. Await must cancel it and return its result inline.
 	ctx, cancel := context.WithCancel(context.Background())
 	runner := fakeRunner{fn: func(ctx context.Context, _ string, _ map[string]any) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	}}
-	time.AfterFunc(2600*time.Millisecond, cancel)
-	executeToolsDispatched(ctx, runner, []stream.ToolCall{{ID: "t1", Name: "other_tool"}}, d)
-
-	got := waitToolResult(t, d, "c1")
-	if !got.Failed || got.Content != "cancelled: the turn was interrupted" {
-		t.Errorf("cancelled result = %+v", got)
+	time.AfterFunc(100*time.Millisecond, cancel)
+	results, _, failed := executeToolsDispatched(ctx, runner, []stream.ToolCall{{ID: "t1", Name: "other_tool"}}, d)
+	if !failed[0] || results[0] != "cancelled: the turn was interrupted" {
+		t.Errorf("cancelled result = %q failed=%v", results[0], failed[0])
+	}
+	if n := d.Pending(); n != 0 {
+		t.Errorf("pending = %d after cancel, want 0", n)
 	}
 }
 

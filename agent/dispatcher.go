@@ -59,6 +59,8 @@ type dispatchCall struct {
 	failed     bool
 	seen       uint64
 	background bool
+	// cancel ends the call's own context. It is set by Fire and is never nil.
+	cancel context.CancelFunc
 }
 
 // dispatchOutcome is what Await returns. Background is true when the call is
@@ -101,9 +103,14 @@ func UniqueDispatchAddr() bus.Addr {
 	return bus.Addr{Type: bus.AddrAgent, ID: fmt.Sprintf("tools-%d", dispatchSeq.Add(1))}
 }
 
-// Close stops the subscription of d. It is safe on a nil Dispatcher.
+// Close stops the subscription of d and cancels the calls still running. It is
+// safe on a nil Dispatcher.
 func (d *Dispatcher) Close() {
-	if d != nil && d.sub != nil {
+	if d == nil {
+		return
+	}
+	d.cancelBackground()
+	if d.sub != nil {
 		d.sub.Close()
 	}
 }
@@ -198,9 +205,14 @@ func (d *Dispatcher) Fire(ctx context.Context, run func(context.Context) (string
 	defer d.mu.Unlock()
 	d.next++
 	id := "c" + strconv.Itoa(d.next)
-	c := &dispatchCall{started: time.Now(), done: make(chan struct{}), seen: d.wakes}
+	// The call must outlive the Run that started it: a backgrounded call
+	// delivers its result in a later turn. So it runs on a context that the
+	// end of the Run does not cancel. Its own cancel ends it on ESC (see
+	// Await and cancelBackground) and on Close.
+	callCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	c := &dispatchCall{started: time.Now(), done: make(chan struct{}), seen: d.wakes, cancel: cancel}
 	d.calls[id] = c
-	go d.run(ctx, id, c, run)
+	go d.run(callCtx, id, c, run)
 	return id
 }
 
@@ -235,6 +247,7 @@ func (d *Dispatcher) finish(id string, c *dispatchCall, text string, failed bool
 	c.text, c.failed = text, failed
 	close(c.done)
 	d.mu.Unlock()
+	c.cancel()
 
 	if !background {
 		return
@@ -274,6 +287,15 @@ func (d *Dispatcher) deliver(r bus.ToolResult) {
 // when the call has finished. Otherwise it returns the placeholder and
 // backgrounds the call. A timeout of 0 gives the placeholder at once.
 //
+// A timeout of noDeadline is a blocking call. It never backgrounds: Await
+// ignores wake messages and the user, and waits for the call to finish or
+// for ctx to end. A serial tool depends on this, because the next call of
+// its batch starts only after this one returns.
+//
+// When ctx ends first (ESC, or the Run is cancelled), the call is cancelled
+// and Await returns its result. This is the explicit cancel path. A call
+// that is already backgrounded is cancelled by cancelBackground instead.
+//
 // Without a bus the call cannot be backgrounded, so Await waits for it.
 func (d *Dispatcher) Await(ctx context.Context, id string, timeout time.Duration) dispatchOutcome {
 	d.mu.Lock()
@@ -283,16 +305,14 @@ func (d *Dispatcher) Await(ctx context.Context, id string, timeout time.Duration
 		return dispatchOutcome{Text: "Error: unknown call id " + id, Failed: true}
 	}
 
-	var ctxDone <-chan struct{}
+	blocking := timeout == noDeadline
 	if d.bus == nil {
-		timeout = noDeadline
-	} else {
-		ctxDone = ctx.Done()
+		blocking = true
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	var poll <-chan time.Time
-	if d.userPending != nil {
+	if !blocking && d.userPending != nil {
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
 		poll = ticker.C
@@ -304,7 +324,7 @@ func (d *Dispatcher) Await(ctx context.Context, id string, timeout time.Duration
 			d.mu.Unlock()
 			return out
 		}
-		if d.wakes != c.seen {
+		if !blocking && d.wakes != c.seen {
 			out := d.handOffLocked(id, c)
 			d.mu.Unlock()
 			return out
@@ -321,8 +341,36 @@ func (d *Dispatcher) Await(ctx context.Context, id string, timeout time.Duration
 			}
 		case <-timer.C:
 			return d.handOff(id, c)
-		case <-ctxDone:
-			return d.handOff(id, c)
+		case <-ctx.Done():
+			return d.cancelAndWait(id, c)
+		}
+	}
+}
+
+// cancelAndWait cancels call c and waits for its result. The call honours its
+// context, so it finishes soon after the cancel. The result is returned inline.
+func (d *Dispatcher) cancelAndWait(id string, c *dispatchCall) dispatchOutcome {
+	c.cancel()
+	<-c.done
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out, _ := d.finishedLocked(id, c)
+	return out
+}
+
+// cancelBackground cancels every call that is backgrounded and still running.
+// The agent loop calls it when its Run is cancelled (ESC), so that a
+// background call stops with the turn the user cancelled. A call is not
+// cancelled when a turn ends normally.
+func (d *Dispatcher) cancelBackground() {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, c := range d.calls {
+		if c.background {
+			c.cancel()
 		}
 	}
 }
@@ -419,8 +467,8 @@ func wakesInline(msg bus.Message) bool {
 // backgrounded. The values are a stub. Config comes in issue #198.
 //
 // subagent, ask_parent and wait block by design: the model waits for the
-// answer or the child result, so they never background. Backgrounding them
-// would change the contract of those tools.
+// answer or the child result, so they never background (noDeadline, see
+// Await).
 func timeoutFor(toolName string) time.Duration {
 	switch toolName {
 	case "subagent", "ask_parent", "wait":
