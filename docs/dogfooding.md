@@ -76,7 +76,7 @@ Run `tyci workflow init roadmap` too if you use the orchestrator. The command st
 workflow directory exists already, so run it once for each repository. It does not change
 `.tyci/config.json`.
 
-Type `work on #N`. The assistant calls the tool `workflow_start` and returns a run id.
+Type `work on #N`. The assistant calls the tool `workflow_start` and returns a run number, for example `#17`.
 Ask "status of the run" to call `workflow_status`.
 
 ## 5. Watch

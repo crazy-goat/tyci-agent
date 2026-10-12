@@ -106,7 +106,7 @@ func newProposalEnv(t *testing.T, patch string) *proposalEnv {
 		Info:   func() (RepoInfo, error) { return e.info, nil },
 		Notify: func(s string) { e.notices <- s },
 		Prepare: func(_ context.Context, _ RepoInfo, req StartRequest) (*RunState, *Workflow, []string, error) {
-			id := NewRunID(testIssue(req), time.Now())
+			id := testRunID(e.info.Home)
 			st := &RunState{Version: 1, Run: id, Workflow: "issue-to-merge", Repo: "o/r", Issue: testIssue(req),
 				Status: "running", Current: "fixer", Visits: map[string]int{}, History: []Step{}}
 			return st, proposalWF(), nil, (&Store{Dir: runDir(id)}).Save(st)

@@ -71,7 +71,7 @@ func newMgrEnv(t *testing.T, checks *gatedChecks) *mgrEnv {
 			if e.prepErr != nil {
 				return nil, nil, nil, e.prepErr
 			}
-			id := NewRunID(testIssue(req), time.Now())
+			id := testRunID(e.home)
 			st := &RunState{Version: 1, Run: id, Workflow: "demo", Repo: "o/r", Issue: testIssue(req),
 				Status: "running", Current: "c", Visits: map[string]int{}, History: []Step{}}
 			if err := (&Store{Dir: runDir(id)}).Save(st); err != nil {
@@ -279,7 +279,7 @@ func TestFinishedRun_NoticeFollowsEndState(t *testing.T) {
 func TestPausedRun_PushesNotice(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "bad"})
 	id, _, _ := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}})
-	want := "workflow run " + id + " paused: Need a decision. (last step: c, key bad) (needs a human; answer with workflow_resume: retry|stop|retry <note>|goto <state>)"
+	want := "workflow run " + ShowRunID(id) + " paused: Need a decision. (last step: c, key bad) (needs a human; answer with workflow_resume: retry|stop|retry <note>|goto <state>)"
 	if got := e.notice(t); got != want {
 		t.Fatalf("notice = %q, want %q", got, want)
 	}

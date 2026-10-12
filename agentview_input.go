@@ -152,10 +152,10 @@ func runWorkdirIn(info flow.RepoInfo, jobID string) (string, error) {
 		return "", nil
 	}
 	if st.Status != "done" && st.Status != "paused" {
-		return "", fmt.Errorf("the agent belongs to run %s (%s): only agents of done or paused runs can be resumed", st.Run, st.Status)
+		return "", fmt.Errorf("the agent belongs to run %s (%s): only agents of done or paused runs can be resumed", flow.ShowRunID(st.Run), st.Status)
 	}
 	if _, err := os.Stat(st.Worktree); err != nil {
-		return "", fmt.Errorf("the worktree of run %s is gone: the agent cannot work in its files", st.Run)
+		return "", fmt.Errorf("the worktree of run %s is gone: the agent cannot work in its files", flow.ShowRunID(st.Run))
 	}
 	return st.Worktree, nil
 }

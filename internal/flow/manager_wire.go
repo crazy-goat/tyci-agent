@@ -101,6 +101,7 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 			NewStore: func(runID string) (*Store, error) {
 				return &Store{Dir: RunDir(info.Home, info.Name(), runID)}, nil
 			},
+			NewRunID: func() (string, error) { return NewRunID(info.Home, info.Name()) },
 		}
 		return PrepareRun(ctx, d, PrepareReq{Workflow: req.Workflow, Repo: info.Repo, DefaultBranch: info.DefaultBranch, Params: req.Params})
 	}
@@ -267,7 +268,7 @@ func (c ChatTools) Status(run string) (any, error) {
 	}
 	total, byRole := st.Totals()
 	out := map[string]any{
-		"run": st.Run, "status": st.Status, "state": st.Current, "issue": st.Issue,
+		"run": ShowRunID(st.Run), "status": st.Status, "state": st.Current, "issue": st.Issue,
 		"visits": st.Visits, "history": steps, "totals": total, "roles": byRole, "updated_at": st.UpdatedAt.Format(time.RFC3339),
 	}
 	if st.PR > 0 {

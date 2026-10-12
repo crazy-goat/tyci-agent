@@ -148,11 +148,13 @@ func TestLoad_OldStateGetsIssueParam(t *testing.T) {
 	}
 }
 
-func TestNewRunID_Format(t *testing.T) {
-	got := NewRunID(160, time.Date(2026, 10, 5, 12, 3, 1, 0, time.UTC))
-	if got != "20261005-120301-160" {
-		t.Fatal(got)
+// testRunID reserves the next run number of repo "r" in home.
+func testRunID(home string) string {
+	id, err := NewRunID(home, "r")
+	if err != nil {
+		panic(err)
 	}
+	return id
 }
 
 func TestLatestRun_PicksNewest(t *testing.T) {

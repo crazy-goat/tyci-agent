@@ -230,7 +230,7 @@ tyci workflow run issue-to-merge 191 --json
 ```
 
 ```json
-{"run_id":"20261008-101500-191","workflow":"issue-to-merge","state":"ask","status":"paused","state_file":"/home/user/.tyci/runs/tyci-agent/20261008-101500-191/state.json"}
+{"run_id":"#17","workflow":"issue-to-merge","state":"ask","status":"paused","state_file":"/home/user/.tyci/runs/tyci-agent/17/state.json"}
 ```
 
 A failed run adds the field `error` with the reason. `validate` prints the list of problems in the field `errors`.
@@ -241,7 +241,9 @@ The agents of a run use the same providers, hooks, Lua tools and MCP servers as 
 
 `validate` checks the workflow the same way a run checks it. It does not start a run or change a file.
 
-`status` searches the runs of every repository under `~/.tyci/runs/`, so it needs no `--dir`. If more than one repository has the run id, the command fails and lists the state files.
+A run has a number that counts up for each repository: `#1`, `#2`, and so on. Runs made before this change keep their old id, `YYYYMMDD-HHMMSS-<issue>`. `status` and `stop` accept the number with or without `#`, and the old id.
+
+`status` searches the runs of every repository under `~/.tyci/runs/`, so it needs no `--dir`. Two repositories can each have run `#17`. Then the number is ambiguous: the command fails and lists the state files of the matching runs. Use the old id of the run instead.
 
 ## Quick Start
 

@@ -176,7 +176,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			var warnings []string
 			if key == "fail" && filepath.Base(s.Check) == "post_review.sh" {
 				warnings = []string{"review_post_failed"}
-				r.warn("run " + st.Run + ": posting the review to the PR failed")
+				r.warn("run " + ShowRunID(st.Run) + ": posting the review to the PR failed")
 			}
 			st.History = append(st.History, Step{
 				Seq:        len(st.History) + 1,

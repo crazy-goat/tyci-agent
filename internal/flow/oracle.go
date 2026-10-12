@@ -174,7 +174,7 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 		st.Note = MaskSecrets(note)
 	}
 	step.To = next
-	r.warn("workflow run " + st.Run + ": oracle answered " + step.Key + ": " + step.Note)
+	r.warn("workflow run " + ShowRunID(st.Run) + ": oracle answered " + step.Key + ": " + step.Note)
 	return r.moveOn(ctx, st, step, next, false)
 }
 

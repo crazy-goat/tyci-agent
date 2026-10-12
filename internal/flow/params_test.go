@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/worktree"
@@ -114,8 +114,9 @@ func TestTaskTemplates_ParamsAccess(t *testing.T) {
 // worktreeCalls. The runs of home are stored under home.
 func preparedDeps(home string, wf *Workflow, worktreeCalls *[]string) PrepareDeps {
 	return PrepareDeps{
-		Lookup: func(string) (*Workflow, string, error) { return wf, "test", nil },
-		Config: func() (*flowconfig.Config, error) { return okCfg(), nil },
+		Lookup:   func(string) (*Workflow, string, error) { return wf, "test", nil },
+		Config:   func() (*flowconfig.Config, error) { return okCfg(), nil },
+		NewRunID: func() (string, error) { return NewRunID(home, "r") },
 		AddWorktree: func(_ context.Context, runID string, _ int) (*worktree.Worktree, error) {
 			*worktreeCalls = append(*worktreeCalls, runID)
 			return &worktree.Worktree{Dir: filepath.Join(home, runID), Branch: "run-" + runID}, nil
@@ -137,7 +138,7 @@ func TestPrepareRun_NoIssueNamesWorktreeAfterRun(t *testing.T) {
 	if st.Issue != 0 || len(calls) != 1 || calls[0] != st.Run {
 		t.Fatalf("issue = %d, worktree calls = %v, run = %s", st.Issue, calls, st.Run)
 	}
-	if !strings.Contains(st.Run, "-0-") || st.Params["branch"] != "dev" {
+	if _, err := strconv.Atoi(st.Run); err != nil || st.Params["branch"] != "dev" {
 		t.Fatalf("run = %s, params = %v", st.Run, st.Params)
 	}
 	if !strings.HasPrefix(st.Branch, "run-") {
@@ -208,12 +209,12 @@ func TestWorkflowStart_NoIssueWorkflow(t *testing.T) {
 	wf := demoWF()
 	wf.Params = nil
 	e.m.Workflow = func(RepoInfo, string) (*Workflow, error) { return wf, nil }
-	info := RepoInfo{Home: e.home, Root: work, Repo: "o/r", DefaultBranch: "main"}
+	info := RepoInfo{Home: e.home, Root: work, MainRoot: work, Repo: "o/r", DefaultBranch: "main"}
 	e.m.Prepare = func(ctx context.Context, _ RepoInfo, req StartRequest) (*RunState, *Workflow, []string, error) {
 		if len(req.Params) != 0 {
 			t.Errorf("params = %v", req.Params)
 		}
-		id := NewRunID(0, time.Now())
+		id := testRunID(e.home)
 		wt, err := addRunWorktree(ctx, info, id, 0)
 		if err != nil {
 			return nil, nil, nil, err
@@ -226,7 +227,7 @@ func TestWorkflowStart_NoIssueWorkflow(t *testing.T) {
 		}
 		return st, wf, nil, nil
 	}
-	// Both starts run in the same second: each must still get its own run id.
+	// Two starts: each must get its own run id.
 	id1, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo"})
 	if err != nil {
 		t.Fatal(err)
@@ -257,9 +258,9 @@ func TestWorkflowStart_NoIssueWorkflow(t *testing.T) {
 // after the run id of a run that has none.
 func TestAddRunWorktree_IssueOrRun(t *testing.T) {
 	work, _ := newRepo(t)
-	info := RepoInfo{Home: t.TempDir(), Root: work, Repo: "o/r", DefaultBranch: "main"}
+	info := RepoInfo{Home: t.TempDir(), Root: work, MainRoot: work, Repo: "o/r", DefaultBranch: "main"}
 	ctx := context.Background()
-	withIssue, err := addRunWorktree(ctx, info, NewRunID(7, time.Now()), 7)
+	withIssue, err := addRunWorktree(ctx, info, testRunID(info.Home), 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +268,7 @@ func TestAddRunWorktree_IssueOrRun(t *testing.T) {
 	if withIssue.Branch != "issue-7" || !strings.HasSuffix(withIssue.Dir, "issue-7") {
 		t.Fatalf("issue run: branch %q dir %q", withIssue.Branch, withIssue.Dir)
 	}
-	runID := NewRunID(0, time.Now())
+	runID := testRunID(info.Home)
 	noIssue, err := addRunWorktree(ctx, info, runID, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -412,17 +413,5 @@ func TestBindParams_IssueIsCanonical(t *testing.T) {
 	}
 	if params["issue"] != "7" {
 		t.Fatalf("issue param = %q, want 7", params["issue"])
-	}
-}
-
-// Two run ids made in the same second differ, and an issue run keeps its id.
-func TestNewRunID_NoIssueIsUnique(t *testing.T) {
-	now := time.Date(2026, 10, 9, 10, 10, 10, 0, time.UTC)
-	a, b := NewRunID(0, now), NewRunID(0, now)
-	if a == b || !runIDPattern.MatchString(a) || !runIDPattern.MatchString(b) {
-		t.Fatalf("ids %q and %q", a, b)
-	}
-	if got := NewRunID(160, now); got != "20261009-101010-160" {
-		t.Fatalf("issue id = %q", got)
 	}
 }

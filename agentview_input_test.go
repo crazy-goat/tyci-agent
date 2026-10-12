@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
@@ -121,9 +120,12 @@ func TestRunWorkdirIn_AllowsAWorkflowAgentOfADoneRunBeforeItsStepIsSaved(t *test
 }
 
 func TestRunWorkdirIn_IssuelessRunIsFoundByItsJobName(t *testing.T) {
-	// A run without an issue has the id YYYYMMDD-HHMMSS-0-<hex>. Its job name
-	// finds the run, so an active one is refused and a done one gives its worktree.
-	id := flow.NewRunID(0, time.Now())
+	// A run has a run number as its id. Its job name finds the run, so an active
+	// one is refused and a done one gives its worktree.
+	id, err := flow.NewRunID(t.TempDir(), "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	jobIDs := startNamedJobs(t, id+"/coder", id+"/coder")
 	home := t.TempDir()

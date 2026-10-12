@@ -17,7 +17,29 @@ import (
 // prepared. The rest of the key is the issue number, not a run ID.
 const preparingPrefix = "preparing:"
 
-var runIDPattern = regexp.MustCompile(`^\d{8}-\d{6}-\d+(-[0-9a-f]{6})?$`)
+// runIDPattern matches a run id: a run number (1, 2, ...) or an old id
+// YYYYMMDD-HHMMSS-<issue>. The run dir name is the id, so the pattern also keeps
+// paths safe.
+var runIDPattern = regexp.MustCompile(`^(?:[1-9]\d*|\d{8}-\d{6}-\d+(?:-[0-9a-f]{6})?)$`)
+
+// runNumberPattern matches a run number, the new form of a run id.
+var runNumberPattern = regexp.MustCompile(`^[1-9]\d*$`)
+
+// ParseRunID returns the run id of s. s may have a leading "#", as shown to users
+// ("#17"). ok is false when s is not a run id.
+func ParseRunID(s string) (id string, ok bool) {
+	id = strings.TrimPrefix(s, "#")
+	return id, runIDPattern.MatchString(id)
+}
+
+// ShowRunID returns a run id as users see it: "#17" for a run number. An old id
+// is returned unchanged.
+func ShowRunID(id string) string {
+	if runNumberPattern.MatchString(id) {
+		return "#" + id
+	}
+	return id
+}
 
 // RepoInfo describes the repository a run works in.
 type RepoInfo struct {
@@ -270,7 +292,7 @@ func (m *Manager) refuse(info RepoInfo, issue int) error {
 		if strings.HasPrefix(id, preparingPrefix) {
 			return fmt.Errorf("%w: issue %d is being prepared", ErrBusy, issue)
 		}
-		return fmt.Errorf("%w: run %s is active for issue %d", ErrBusy, id, issue)
+		return fmt.Errorf("%w: run %s is active for issue %d", ErrBusy, ShowRunID(id), issue)
 	}
 	entries, _ := os.ReadDir(filepath.Dir(RunDir(info.Home, info.Name(), "x")))
 	for _, e := range entries {
@@ -280,7 +302,7 @@ func (m *Manager) refuse(info RepoInfo, issue int) error {
 		}
 		owned := st.Status == "running" && st.PID != os.Getpid() && !ownerGone(st)
 		if st.Status == "paused" || owned {
-			return fmt.Errorf("%w: issue %d already has run %s (%s)", ErrBusy, issue, st.Run, st.Status)
+			return fmt.Errorf("%w: issue %d already has run %s (%s)", ErrBusy, issue, ShowRunID(st.Run), st.Status)
 		}
 	}
 	return nil
@@ -363,7 +385,7 @@ func (m *Manager) notify(st *RunState, wf *Workflow) {
 	if m.Notify == nil {
 		return
 	}
-	text := "workflow run " + st.Run
+	text := "workflow run " + ShowRunID(st.Run)
 	switch st.Status {
 	case "done":
 		switch {
@@ -433,6 +455,7 @@ func answerKeys(wf *Workflow, state string) []string {
 // Resume answers a paused run. A bad answer returns an error that lists the
 // allowed keys; the run stays paused.
 func (m *Manager) Resume(runID, answer string) error {
+	runID = strings.TrimPrefix(runID, "#")
 	info, err := m.Info()
 	if err != nil {
 		return err
@@ -442,7 +465,7 @@ func (m *Manager) Resume(runID, answer string) error {
 		return err
 	}
 	if st.Status != "paused" {
-		return fmt.Errorf("run %s is %s, not paused", st.Run, st.Status)
+		return fmt.Errorf("run %s is %s, not paused", ShowRunID(st.Run), st.Status)
 	}
 	wf, err := m.Workflow(info, st.Workflow)
 	if err != nil {
@@ -477,7 +500,7 @@ func (m *Manager) Resume(runID, answer string) error {
 	m.mu.Lock()
 	if _, ok := m.active[st.Run]; ok {
 		m.mu.Unlock()
-		return fmt.Errorf("%w: run %s is active", ErrBusy, st.Run)
+		return fmt.Errorf("%w: run %s is active", ErrBusy, ShowRunID(st.Run))
 	}
 	// Every run in m.active takes a worker slot. An apply or reject of a workflow
 	// proposal is one too: answerProposal keeps its run in m.active.
@@ -485,7 +508,7 @@ func (m *Manager) Resume(runID, answer string) error {
 	if startup && m.workers > 0 && len(m.active) >= m.workers {
 		m.mu.Unlock()
 		return fmt.Errorf("run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active (an apply or reject of a workflow proposal counts as an active run); answer resume again when one ends",
-			st.Run, st.Issue, m.workers, len(m.active))
+			ShowRunID(st.Run), st.Issue, m.workers, len(m.active))
 	}
 	m.launch(info, wf, st, true, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
 	if startup {
@@ -511,7 +534,7 @@ func (m *Manager) answerProposal(info RepoInfo, wf *Workflow, st *RunState, answ
 	m.mu.Lock()
 	if _, ok := m.active[st.Run]; ok {
 		m.mu.Unlock()
-		return fmt.Errorf("%w: run %s is active", ErrBusy, st.Run)
+		return fmt.Errorf("%w: run %s is active", ErrBusy, ShowRunID(st.Run))
 	}
 	if m.active == nil {
 		m.active = map[string]activeRun{}
@@ -530,7 +553,7 @@ func (m *Manager) answerProposal(info RepoInfo, wf *Workflow, st *RunState, answ
 		return err
 	}
 	if cur.Status != "paused" || cur.Ask == nil || cur.Ask.Proposal != proposal {
-		return fmt.Errorf("run %s changed, its proposal is no longer open", st.Run)
+		return fmt.Errorf("run %s changed, its proposal is no longer open", ShowRunID(st.Run))
 	}
 	st = cur
 	runDir := RunDir(info.Home, info.Name(), st.Run)
@@ -609,12 +632,13 @@ func loadRun(info RepoInfo, runID string) (*RunState, error) {
 		}
 		return Load(dir)
 	}
-	if !runIDPattern.MatchString(runID) {
+	id, ok := ParseRunID(runID)
+	if !ok {
 		return nil, fmt.Errorf("bad run id %q", runID)
 	}
-	st, err := Load(RunDir(info.Home, info.Name(), runID))
+	st, err := Load(RunDir(info.Home, info.Name(), id))
 	if err != nil {
-		return nil, errors.New("run " + runID + " not found")
+		return nil, errors.New("run " + ShowRunID(id) + " not found")
 	}
 	return st, nil
 }
@@ -670,6 +694,7 @@ func (m *Manager) stopHint(run string) string {
 // worktree and its pull request. It returns the saved state. A stop of a run
 // that ends by itself before Stop reads its state keeps the natural result.
 func (m *Manager) Stop(run, reason string) (*RunState, error) {
+	run = strings.TrimPrefix(run, "#")
 	if reason == "" {
 		reason = DefaultStopReason
 	}
@@ -699,6 +724,6 @@ func (m *Manager) Stop(run, reason string) (*RunState, error) {
 	case <-a.done:
 		return a.st, nil
 	case <-time.After(5 * time.Second):
-		return nil, fmt.Errorf("run %s did not stop within 5s; it is saved as stopped when it ends", run)
+		return nil, fmt.Errorf("run %s did not stop within 5s; it is saved as stopped when it ends", ShowRunID(run))
 	}
 }

@@ -185,7 +185,7 @@ func newE2E(t *testing.T, script map[string][]string) *e2e {
 		t.Fatal(err)
 	}
 	e.wf = initWF(t, e.home, "issue-to-merge", "issue-to-merge")
-	runID := NewRunID(e2eIssue, time.Now())
+	runID := testRunID(e.home)
 	e.runDir = RunDir(e.home, "r", runID)
 	e.st = &RunState{
 		Version: 1, Run: runID, Workflow: e.wf.Name, Repo: e2eRepo, Issue: e2eIssue,

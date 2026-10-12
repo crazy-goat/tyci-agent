@@ -35,6 +35,7 @@ func TestPrepareRun_InvalidWorkflowCreatesNothing(t *testing.T) {
 	d := PrepareDeps{
 		Lookup:      func(string) (*Workflow, string, error) { return wf, "test", nil },
 		Config:      func() (*flowconfig.Config, error) { return okCfg(), nil },
+		NewRunID:    func() (string, error) { return NewRunID(home, "r") },
 		AddWorktree: func(context.Context, string, int) (*worktree.Worktree, error) { called = true; return nil, nil },
 		NewStore: func(id string) (*Store, error) {
 			called = true
@@ -62,7 +63,8 @@ func TestPrepareRun_CallOrder(t *testing.T) {
 			order = append(order, "Lookup")
 			return okWF(), "test", nil
 		},
-		Config: func() (*flowconfig.Config, error) { order = append(order, "Config"); return okCfg(), nil },
+		Config:   func() (*flowconfig.Config, error) { order = append(order, "Config"); return okCfg(), nil },
+		NewRunID: func() (string, error) { return NewRunID(home, "r") },
 		AddWorktree: func(context.Context, string, int) (*worktree.Worktree, error) {
 			order = append(order, "AddWorktree")
 			return &worktree.Worktree{Dir: "/w", Branch: "b"}, nil

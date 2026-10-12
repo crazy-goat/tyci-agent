@@ -58,7 +58,7 @@ func doneProposalNote(st *RunState, runDir string) string {
 	if dir == "" {
 		return ""
 	}
-	return "workflow run " + st.Run + " ended, a workflow proposal was not answered: " + proposalSummary(dir) + " (" + dir + ")"
+	return "workflow run " + ShowRunID(st.Run) + " ended, a workflow proposal was not answered: " + proposalSummary(dir) + " (" + dir + ")"
 }
 
 // proposalKey is the sha256 of proposal.patch. An empty patch is an error.
@@ -186,7 +186,7 @@ func ApplyProposal(ctx context.Context, info RepoInfo, st *RunState, dir string)
 			return "", fmt.Errorf("the proposal changes %s, outside %s", n, wfDir)
 		}
 	}
-	title := "chore(workflow): apply the workflow proposal of run " + st.Run
+	title := "chore(workflow): apply the workflow proposal of run " + ShowRunID(st.Run)
 	if _, err := git(wt, "commit", "-q", "-m", title); err != nil {
 		return "", err
 	}

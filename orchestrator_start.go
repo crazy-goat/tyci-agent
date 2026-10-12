@@ -159,7 +159,7 @@ func runRows(views []flow.RunView) []display.TuiRunRow {
 	for _, v := range views {
 		st := v.State
 		total, _ := st.Totals()
-		r := display.TuiRunRow{ID: st.Run, Issue: st.Issue, Status: st.Status, State: st.Current, Role: v.Role,
+		r := display.TuiRunRow{ID: flow.ShowRunID(st.Run), Issue: st.Issue, Status: st.Status, State: st.Current, Role: v.Role,
 			Started: st.StartedAt, Since: stepSince(st), Ended: st.UpdatedAt, Took: total.Duration,
 			Cost: fmt.Sprintf("$%.2f", total.CostUSD)}
 		if flow.WasMerged(st) {

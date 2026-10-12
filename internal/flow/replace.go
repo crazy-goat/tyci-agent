@@ -75,7 +75,7 @@ func (s *agentSlot) replace(agentID, toRole, reason string) error {
 	s.mu.Lock()
 	if s.cancel == nil {
 		s.mu.Unlock()
-		return fmt.Errorf("run %s has no running agent", s.run)
+		return fmt.Errorf("run %s has no running agent", ShowRunID(s.run))
 	}
 	if want := s.run + "/" + s.role; agentID != want {
 		s.mu.Unlock()
@@ -166,7 +166,7 @@ func (r *Runner) replaceWith(st *RunState, cur string, rc RunContext, from strin
 		}
 	}
 	if r.Notify != nil {
-		r.Notify(fmt.Sprintf("run %s: replaced %s with %s in state %s: %s", st.Run, from, p.toRole, cur, p.reason))
+		r.Notify(fmt.Sprintf("run %s: replaced %s with %s in state %s: %s", ShowRunID(st.Run), from, p.toRole, cur, p.reason))
 	}
 	rc.AgentSeq = st.AgentSeq
 	rc.Summary = summary

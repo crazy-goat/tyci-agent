@@ -182,7 +182,7 @@ func (m *Manager) AskUnfinished() {
 	for _, st := range stale {
 		wf, err := m.Workflow(info, st.Workflow)
 		if err != nil {
-			notes = append(notes, "cannot pause run "+st.Run+": "+err.Error())
+			notes = append(notes, "cannot pause run "+ShowRunID(st.Run)+": "+err.Error())
 			continue
 		}
 		m.pauseStale(RunDir(info.Home, info.Name(), st.Run), wf, st, "tyci restarted", false)
@@ -204,7 +204,7 @@ func (m *Manager) startupQuestion(info RepoInfo, paused []*RunState) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "tyci started. %d workflow run(s) of %s are not finished and are paused. Nothing resumes until the user answers.\n", len(paused), info.Repo)
 	for _, st := range paused {
-		fmt.Fprintf(&b, "- run %s, issue #%d", st.Run, st.Issue)
+		fmt.Fprintf(&b, "- run %s, issue #%d", ShowRunID(st.Run), st.Issue)
 		if n := len(st.History); n > 0 {
 			h := st.History[n-1]
 			fmt.Fprintf(&b, ", last step %s -> %s", h.State, h.Key)
@@ -362,14 +362,14 @@ func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool,
 		}
 		if m.workers > 0 && len(m.active) >= m.workers {
 			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active",
-				ErrBusy, st.Run, issue, m.workers, len(m.active))
+				ErrBusy, ShowRunID(st.Run), issue, m.workers, len(m.active))
 		}
 		ok, err := m.resumeRun(info, st)
 		if err != nil {
 			return "", true, err
 		}
 		if !ok {
-			return "", true, fmt.Errorf("run %s of issue %d was not resumed (%s)", st.Run, issue, st.Status)
+			return "", true, fmt.Errorf("run %s of issue %d was not resumed (%s)", ShowRunID(st.Run), issue, st.Status)
 		}
 		// The orchestrator adopts the run at its next fill, so the run counts as a
 		// worker even when the user resumed it by hand.

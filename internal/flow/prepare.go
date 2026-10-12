@@ -18,6 +18,8 @@ type PrepareDeps struct {
 	// no issue param; the worktree is then named after runID.
 	AddWorktree func(ctx context.Context, runID string, issue int) (*worktree.Worktree, error)
 	NewStore    func(runID string) (*Store, error)
+	// NewRunID reserves the run id of the new run (production: NewRunID).
+	NewRunID func() (string, error)
 }
 
 // PrepareReq says which run to prepare.
@@ -49,7 +51,10 @@ func PrepareRun(ctx context.Context, d PrepareDeps, req PrepareReq) (*RunState, 
 	}
 	now := time.Now().UTC()
 	issue := issueOf(params)
-	runID := NewRunID(issue, now)
+	runID, err := d.NewRunID()
+	if err != nil {
+		return nil, nil, warnings, err
+	}
 	wt, err := d.AddWorktree(ctx, runID, issue)
 	if err != nil {
 		return nil, nil, warnings, err

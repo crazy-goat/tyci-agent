@@ -157,7 +157,7 @@ stderr. Exit code 0 means done or paused. Exit code 1 means failed or invalid.`,
 		// The command context, not ctx: Ctrl+C must let the runner save its
 		// final state first. Only a deadline (set by tests) ends the wait early.
 		if err = awaitRun(cmd.Context(), events, runID); err != nil {
-			return fail(cmd, jsonOut, fmt.Errorf("run %s did not report its end: %w", runID, err))
+			return fail(cmd, jsonOut, fmt.Errorf("run %s did not report its end: %w", flow.ShowRunID(runID), err))
 		}
 		runDir := flow.RunDir(info.Home, info.Name(), runID)
 		st, err := flow.Load(runDir)
@@ -269,7 +269,7 @@ unknown or ambiguous.`,
 			return fail(cmd, jsonOut, err)
 		}
 		if st.Status != "running" {
-			return fail(cmd, jsonOut, fmt.Errorf("run %s is %s, not running", st.Run, st.Status))
+			return fail(cmd, jsonOut, fmt.Errorf("run %s is %s, not running", flow.ShowRunID(st.Run), st.Status))
 		}
 		if !flow.OwnerGone(st) {
 			return fail(cmd, jsonOut, errors.New("run is live in another process; use /stop <run> in its chat session, or end that process first"))
@@ -320,7 +320,7 @@ func setupWorkflowAgents(ctx context.Context, cmd *cobra.Command, info flow.Repo
 // its reason in error.
 func runResult(st *flow.RunState, statePath string) workflowResult {
 	r := workflowResult{
-		RunID:     st.Run,
+		RunID:     flow.ShowRunID(st.Run),
 		Workflow:  st.Workflow,
 		State:     st.Current,
 		Status:    st.Status,

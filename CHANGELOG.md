@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Flow: a run has a number per repository, `#1`, `#2`, and so on. It never reuses a number. The number is shown in notices, tool output and the Runs tab, and `status`, `stop` and `resume` accept `17`, `#17` or the old id. Runs made before this change keep their old id `YYYYMMDD-HHMMSS-<issue>` and still load and list. The issue number stays in `state.json`. A bare number that two repositories share is ambiguous for `status` and `stop` (#557).
 - TUI: focus moves between the sidebar and the chat only by a mouse click or by Shift+Tab. Ctrl+Right no longer enters the sidebar, and Ctrl+Left and Ctrl+Right no longer leave it. At the first tab Left does nothing, and at the last tab Right does nothing (#591).
 - TUI: a click on a tool or thinking line expands its body in place, below the line, instead of opening a modal. A second click folds it. The hint reads `- click to expand` or `- click to fold`. An expanded tool shows its arguments and output (the newest 20 lines), and a running tool shows its live output. A click in an agent view works the same way (#604).
 - Worktrees: tyci reads each project `.tyci` file (config, hooks, Lua tools, MCP, workflows, agents, skills, memory and cron) from the worktree first, then from the main checkout. A linked worktree of a trusted project uses the trust answer of its main checkout. Worktree names use the name of the main checkout. `TYCI_PROJECT_DIR` is set for hooks (#619).
