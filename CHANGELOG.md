@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- TUI: a click on a tool or thinking line expands its body in place, below the line, instead of opening a modal. A second click folds it. The hint reads `- click to expand` or `- click to fold`. An expanded tool shows its arguments and output (the newest 20 lines), and a running tool shows its live output. A click in an agent view works the same way (#604).
 - Worktrees: tyci reads each project `.tyci` file (config, hooks, Lua tools, MCP, workflows, agents, skills, memory and cron) from the worktree first, then from the main checkout. A linked worktree of a trusted project uses the trust answer of its main checkout. Worktree names use the name of the main checkout. `TYCI_PROJECT_DIR` is set for hooks (#619).
 - Subagents: a subagent works in its worktree. Its system prompt names the worktree, and it reads the project's `AGENTS.md`, agents, skills and memory from it. A memory note goes to the main checkout unless the worktree has its own `.tyci/memory` (#619).
 
