@@ -136,12 +136,11 @@ func (a jobAnswererAdapter) Answer(ctx context.Context, id, text string) error {
 	if _, err := fmt.Sscanf(id, "q%d", &seq); err != nil {
 		return fmt.Errorf("unknown question id %q: use the id q<N> that ask_parent returned", id)
 	}
+	// The lock stays held until the route is dropped, so a failed publish
+	// keeps the route and the question can be answered again.
 	askRoutes.Lock()
+	defer askRoutes.Unlock()
 	asker, ok := askRoutes.asker[seq]
-	if ok {
-		delete(askRoutes.asker, seq)
-	}
-	askRoutes.Unlock()
 	if !ok {
 		return fmt.Errorf("unknown or already answered question id %q", id)
 	}
@@ -153,8 +152,9 @@ func (a jobAnswererAdapter) Answer(ctx context.Context, id, text string) error {
 	}
 	if _, err := bus.PublishReply(appBus, bus.KindAskReply, from, agentAddr(asker), bus.OriginAgent,
 		seq, bus.AskReply{Question: id, Answer: text}); err != nil {
-		fmt.Fprintf(busLog, "bus: ask.reply %s not published: %v\n", id, err)
+		return fmt.Errorf("answer to %s not sent: %w", id, err)
 	}
+	delete(askRoutes.asker, seq)
 	return nil
 }
 

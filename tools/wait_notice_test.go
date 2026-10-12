@@ -51,6 +51,47 @@ func startSubagentJob(t *testing.T, reg *jobs.Registry) string {
 	return job.ID
 }
 
+func TestWaitTool_JobWaitEndsOnNewMainNotice(t *testing.T) {
+	notices, _ := waitNoticeEnv(t)
+	tool := &WaitTool{Waiter: &scriptedWaiter{known: true}}
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		notices.Notify("[watchdog] Agent job-7 has shown no activity for 3m0s.")
+	}()
+
+	start := time.Now()
+	res := tool.Run(boundedCtx(t, context.Background()), map[string]any{"job_id": "job-1", "seconds": 1800})
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("waited %v after a notice had arrived", elapsed)
+	}
+	if !res.Success || !strings.Contains(res.Content, "new notice arrived") || !strings.Contains(res.Content, "job-1") {
+		t.Fatalf("unexpected result: success=%v content=%q error=%q", res.Success, res.Content, res.Error)
+	}
+	if got := notices.Drain(); len(got) != 1 {
+		t.Fatalf("the wait must leave the notice queued, got %v", got)
+	}
+}
+
+func TestWaitTool_JobWaitEndsOnNewMessageForSubagent(t *testing.T) {
+	_, reg := waitNoticeEnv(t)
+	subID := startSubagentJob(t, reg)
+	tool := &WaitTool{Waiter: &scriptedWaiter{known: true}}
+	ctx := context.WithValue(boundedCtx(t, context.Background()), JobIDCtxKey{}, subID)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		getJobMailbox().Post(subID, "[watchdog] Agent job-7 has shown no activity for 3m0s.")
+	}()
+
+	start := time.Now()
+	res := tool.Run(ctx, map[string]any{"job_id": "job-1", "seconds": 1800})
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("subagent waited %v after a message had arrived", elapsed)
+	}
+	if !res.Success || !strings.Contains(res.Content, "new notice arrived") {
+		t.Fatalf("unexpected result: success=%v content=%q error=%q", res.Success, res.Content, res.Error)
+	}
+}
+
 func TestWaitTool_PlainWaitEndsOnNewMainNotice(t *testing.T) {
 	notices, _ := waitNoticeEnv(t)
 	go func() {

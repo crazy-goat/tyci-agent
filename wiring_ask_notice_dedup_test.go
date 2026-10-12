@@ -137,3 +137,30 @@ func TestAskReplyArrivesAsMessage(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// TestAnswerKeepsRouteWhenPublishFails checks that a failed ask.reply does
+// not drop the question route: the same question can be answered later.
+func TestAnswerKeepsRouteWhenPublishFails(t *testing.T) {
+	reg, _ := withTestWiring(t)
+	child, release := startLiveJob(t, reg)
+	defer release()
+	qid, ok := jobAskerAdapter{reg: reg}.Ask(context.Background(), child, "Which branch?")
+	if !ok {
+		t.Fatal("Ask failed")
+	}
+
+	// A closed bus refuses every publish.
+	origBus := appBus
+	closed := bus.New()
+	closed.Close()
+	appBus = closed
+	err := (jobAnswererAdapter{reg: reg}).Answer(context.Background(), qid, "use main")
+	appBus = origBus
+	if err == nil {
+		t.Fatal("Answer returned no error although the reply was not published")
+	}
+
+	if err := (jobAnswererAdapter{reg: reg}).Answer(context.Background(), qid, "use main"); err != nil {
+		t.Fatalf("second Answer(%s) after a failed publish: %v", qid, err)
+	}
+}
