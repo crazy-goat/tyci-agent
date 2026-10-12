@@ -310,9 +310,10 @@ func (m *TuiModel) maybeFlushOldBlocks() {
 	}
 	// Walk oldest-first; stop once under budget or when we'd flush a queued/
 	// dirty/actively-streaming block (those must stay resident).
+	flushed := false
 	for i := range m.blocks {
 		if m.scrollback.residentBytes <= tuiScrollbackResidentBudget {
-			return
+			break
 		}
 		b := &m.blocks[i]
 		if b.flushed || b.dirty || queued[i] {
@@ -328,6 +329,10 @@ func (m *TuiModel) maybeFlushOldBlocks() {
 		}
 		m.scrollback.flushBlock(b, m.renderWidth())
 		m.dropResidentCaches(i)
+		flushed = true
+	}
+	if flushed {
+		m.maybeFreeOSMemory()
 	}
 }
 

@@ -31,10 +31,6 @@ func cutPromptLines(s string, limit int) string {
 // nothing else did.
 func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 	var cmd tea.Cmd
-	switch msg.kind {
-	case "thinking", "text", "tool-start", "tool-end", "block", "error":
-		periodicFreeOSMemory(&m.blockEventCount)
-	}
 	// One choke point for every kind of untrusted text, because there is no
 	// kind that is trusted: model output, tool output and streamed progress
 	// are all arbitrary bytes drawn into a terminal that reads some of those

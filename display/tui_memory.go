@@ -3,20 +3,31 @@ package display
 import (
 	"runtime/debug"
 	"strings"
+	"time"
 )
 
-// periodicFreeOSMemory hands memory that's already been dropped by the
-// caches above (dirtyBlocks, mdCacheRendered, flushed tool output, trimmed
-// conversation history) back to the OS on every block-lifecycle event
-// (tool/thinking/text/etc. — these fire rarely enough, unlike render ticks
-// or streamed tokens, that running this on each one is cheap). Go's GC frees
-// objects but doesn't proactively scavenge the heap, so RSS otherwise looks
-// like it never comes down over a long session even though nothing is
-// actually still referenced. Runs the scavenge off the calling goroutine
-// since it can take a few ms.
-func periodicFreeOSMemory(counter *int) {
-	*counter++
-	go debug.FreeOSMemory()
+// freeOSMemoryInterval is the minimum time between two forced heap scavenges.
+// See maybeFreeOSMemory.
+const freeOSMemoryInterval = 10 * time.Second
+
+// releaseOSMemory starts the heap scavenge. It is a variable so that tests can
+// count the calls. The scavenge can take a few ms, so it runs on its own
+// goroutine, not on the UI goroutine.
+var releaseOSMemory = func() { go debug.FreeOSMemory() }
+
+// maybeFreeOSMemory hands memory that was dropped by the scrollback cache
+// (flushed block content, cachedLines and tool output) back to the OS. Go's GC
+// frees objects but does not scavenge the heap by itself, so RSS would not come
+// down over a long session. Call it only after blocks were flushed to disk. A
+// streamed flush does not change the heap enough to justify a forced scavenge,
+// so the call runs at most once per freeOSMemoryInterval.
+func (m *TuiModel) maybeFreeOSMemory() {
+	now := time.Now()
+	if !m.lastFreeOSMemory.IsZero() && now.Sub(m.lastFreeOSMemory) < freeOSMemoryInterval {
+		return
+	}
+	m.lastFreeOSMemory = now
+	releaseOSMemory()
 }
 
 // Memory bounds for the TUI transcript.
