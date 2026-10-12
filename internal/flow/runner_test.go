@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/crazy-goat/tyci-agent/agent"
 )
 
 type fakeChecks struct {
@@ -482,5 +484,39 @@ func TestRunner_RecoveryCapNotGivenByRoleName(t *testing.T) {
 	}
 	if rc := agents.rcs[0]; rc.Failed != "check" || rc.FailedKey != "fail" {
 		t.Fatalf("role fixer got Failed %q key %q, want check and fail", rc.Failed, rc.FailedKey)
+	}
+}
+
+// #201: a run that stops on a role limit takes the "limit" key.
+func TestRunner_LimitErrorUsesLimitKey(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
+		"code": {Agent: "worker", On: map[string]string{"limit": "end", "error": "fail"}},
+		"end":  {End: true},
+		"fail": {End: true},
+	}}
+	lim := &agent.ErrLimit{Kind: "rounds"}
+	r := &Runner{WF: wf, Agents: &fakeAgents{errs: map[string]error{"code": lim}}, Store: &memStore{}}
+	st := newRun("code")
+	if err := r.Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st.Current != "end" || st.History[0].Key != "limit" {
+		t.Fatalf("current = %q key = %q, want end/limit", st.Current, st.History[0].Key)
+	}
+}
+
+// #201: without a "limit" key a limit stop falls back to the "error" route.
+func TestRunner_LimitErrorWithoutLimitKeyUsesError(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
+		"code": {Agent: "worker", On: map[string]string{"error": "end"}},
+		"end":  {End: true},
+	}}
+	r := &Runner{WF: wf, Agents: &fakeAgents{errs: map[string]error{"code": &agent.ErrLimit{Kind: "time"}}}, Store: &memStore{}}
+	st := newRun("code")
+	if err := r.Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st.History[0].Key != "error" {
+		t.Fatalf("key = %q, want error", st.History[0].Key)
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/crazy-goat/tyci-agent/agent"
 )
 
 // ErrPaused is returned when the run enters an ask state.
@@ -271,6 +273,10 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			}
 			if runErr != nil {
 				key = "error"
+				var lim *agent.ErrLimit
+				if _, ok := s.On["limit"]; ok && errors.As(runErr, &lim) {
+					key = "limit"
+				}
 				next, ok := route(s, key)
 				if !ok {
 					reason := fmt.Sprintf("agent failed in state %q: %v", cur, runErr)

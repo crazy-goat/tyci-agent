@@ -12,7 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/internal/pricing"
@@ -145,7 +147,31 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Stats != nil {
 		spec.OnDone = func(ts tools.TaskStats) { *rc.Stats = stepStats(model, effective, ts) }
 	}
-	return r.Spawn(ctx, spec)
+	return r.spawnWithLimits(ctx, spec, rl.Limits)
+}
+
+// spawnWithLimits runs the spawn with the role limits. time_min is a deadline
+// on the run; rounds is passed to the run as MaxRounds. A run that stops on
+// either limit returns an *agent.ErrLimit. Zero limits mean unlimited.
+func (r *SubagentRunner) spawnWithLimits(ctx context.Context, spec tools.TaskSpec, lim flowconfig.Limits) (string, string, error) {
+	spec.MaxRounds = lim.Rounds
+	parent := ctx
+	if lim.TimeMin > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(lim.TimeMin)*time.Minute)
+		defer cancel()
+	}
+	out, sid, err := r.Spawn(ctx, spec)
+	if err == nil {
+		return out, sid, nil
+	}
+	if parent.Err() == nil && (errors.Is(err, tools.ErrSubagentTimedOut) || errors.Is(err, context.DeadlineExceeded)) {
+		return "", sid, &agent.ErrLimit{Kind: "time"}
+	}
+	if lim.Rounds > 0 && errors.Is(err, tools.ErrSubagentTruncated) {
+		return "", sid, &agent.ErrLimit{Kind: "rounds"}
+	}
+	return out, sid, err
 }
 
 // transcriptPath is the transcript file of this agent visit, or "" when the

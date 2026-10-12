@@ -212,3 +212,14 @@ func TestRunSubagentTask_NamedJobPanicIsError(t *testing.T) {
 		t.Fatal("want an error after a panic in the role agent")
 	}
 }
+
+// #201: the role rounds limit in TaskSpec reaches the child options.
+func TestRunSubagentTask_PassesMaxRounds(t *testing.T) {
+	r := &recordingRunner{}
+	if _, _, err := runSubagentTask(context.Background(), r, TaskSpec{Task: "x", MaxRounds: 9}); err != nil {
+		t.Fatal(err)
+	}
+	if r.gotOpts.MaxIterationsCap != 9 {
+		t.Fatalf("MaxIterationsCap = %d, want 9", r.gotOpts.MaxIterationsCap)
+	}
+}

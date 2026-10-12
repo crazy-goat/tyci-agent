@@ -214,6 +214,17 @@ const lastStepDeadlineThreshold = 45 * time.Second
 // receiving an empty or truncated "successful" result.
 var ErrMaxIterations = errors.New("agent reached max tool-call iterations without finishing")
 
+// ErrLimit is returned by a workflow agent run that stopped on a role limit.
+// Kind is "rounds" or "time". The workflow runner routes it to the "limit"
+// transition key when the state has one.
+type ErrLimit struct {
+	Kind string
+}
+
+func (e *ErrLimit) Error() string {
+	return "role limit reached: " + e.Kind
+}
+
 // Run executes the agent loop. It will make at most MaxRetries retries on
 // transient errors, and at most MaxIterations tool-call iterations.
 // If MaxIterations <= 0, there is no iteration limit.

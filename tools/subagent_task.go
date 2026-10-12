@@ -42,6 +42,9 @@ type TaskSpec struct {
 	Policy *Policy
 	// Fallbacks are the provider URIs tried, in order, when Model fails.
 	Fallbacks []string
+	// MaxRounds, when > 0, caps the tool-call rounds of the run. A run that
+	// reaches the cap returns ErrSubagentTruncated.
+	MaxRounds int
 }
 
 // TaskStats is what a finished subagent run reports: the model it used and
@@ -135,6 +138,7 @@ func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (st
 	}
 	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: s.SystemPrompt, softLimit: s.SoftLimit, hardLimit: s.HardLimit, effort: s.Effort}
 	t.fallbacks = s.Fallbacks
+	t.maxIterationsCap = s.MaxRounds
 	if s.Policy != nil {
 		ctx = WithPolicy(ctx, *s.Policy)
 		t.toolsOverride = s.Policy.ToolNames()
