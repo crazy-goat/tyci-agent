@@ -104,7 +104,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 			return "", "", err
 		}
 	}
-	if role == "worker" {
+	if role == "worker" || rc.Summary != "" {
 		// A run without an issue param has no issue text to add (#520).
 		if rc.Issue > 0 {
 			fetch := r.IssueContext
@@ -121,6 +121,9 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 		if rc.Note != "" {
 			text += "\n\n## Note from the orchestrator\n\n" + rc.Note + "\n"
 		}
+	}
+	if rc.Summary != "" {
+		text += "\n\n## Summary of the previous agent\n\n" + rc.Summary + "\n"
 	}
 	if rc.ArtifactDir != "" {
 		text += "\n\n## Run so far\n\n"

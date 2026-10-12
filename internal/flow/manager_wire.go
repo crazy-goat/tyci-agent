@@ -123,6 +123,10 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 		agents := NewSubagentRunner(cfg, spawn)
 		agents.Render = TaskTemplates{Dir: wf.Source}
 		r.Agents = agents
+		r.slot = newAgentSlot(st.Run, func(role string) error {
+			_, err := cfg.Role(role)
+			return err
+		})
 		return r
 	}
 	m.Text = func(ctx context.Context, info RepoInfo, wf *Workflow, input string) (string, error) {
@@ -231,6 +235,11 @@ func (c ChatTools) Stop(run, reason string) (any, error) {
 		return nil, err
 	}
 	return c.Status(run)
+}
+
+// Replace implements tools.WorkflowManager for replace_agent (#202).
+func (c ChatTools) Replace(agentID, role, reason string) error {
+	return c.M.Replace(agentID, role, reason)
 }
 
 // Status implements tools.WorkflowManager. It returns a JSON-ready summary.

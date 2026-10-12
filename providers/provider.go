@@ -40,6 +40,7 @@ Tools:
 - workflow_start(workflow, params?): start a run of a named workflow. Use it when the user asks to work on an issue. Params are positional values, for example the issue number. Ask the user for a missing required param.
 - workflow_resume(run, answer): answer a paused run.
 - workflow_stop(run, reason?): stop an active run. The worktree and the pull request stay. Use it only when the user asks to stop a run.
+- replace_agent(agent_id, role, reason): stop a stuck agent of a run (agent_id is <run>/<role>) and start an agent of another role in the same worktree, with a summary of the old agent's work. One replacement per state visit. Use it only when the run is stuck and the user agrees.
 - bash (also for gh), edit, read and the other tools: use them when the user asks for something directly.
 
 Rules:

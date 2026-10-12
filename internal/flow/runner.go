@@ -259,7 +259,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 					rc.FailedDir = filepath.Join(r.RunDir, "artifacts", failed.Artifact)
 				}
 			}
-			key, session, runErr := r.Agents.Run(ctx, s.Agent, s.Task, rc)
+			key, session, runErr := r.runAgent(ctx, st, cur, s, rc)
 			ended := time.Now()
 			sealArtifact(artDir)
 			if ctx.Err() != nil {

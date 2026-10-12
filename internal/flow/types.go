@@ -108,6 +108,19 @@ type RunState struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	Visits    map[string]int `json:"visits"`
 	History   []Step         `json:"history"`
+	// Replaced lists the agents that the orchestrator replaced (replace.go), oldest first.
+	Replaced []Replacement `json:"replaced,omitempty"`
+}
+
+// Replacement records that the orchestrator stopped the agent of a state visit
+// and started another role in the same visit (#202).
+type Replacement struct {
+	State     string    `json:"state"`
+	Visit     int       `json:"visit"`
+	FromAgent string    `json:"from_agent"` // agent id: <run>/<role>
+	ToRole    string    `json:"to_role"`
+	Reason    string    `json:"reason"`
+	At        time.Time `json:"at"`
 }
 
 // Step is one executed transition.
@@ -226,6 +239,9 @@ type RunContext struct {
 	Pause, Goto string
 	// Stats is filled by the agent runner when the agent ends. Nil: not wanted.
 	Stats *StepStats
+	// Summary is the text of the previous agent when this agent replaces it (#202).
+	// It is empty for a normal agent.
+	Summary string
 }
 
 // CheckResult is the outcome of one check-script execution.
@@ -264,4 +280,8 @@ type Runner struct {
 	// Warn receives warnings that the Manager does not send itself.
 	Warn   func(string)
 	OnSkip func(*RunState)
+	// Notify receives the chat notices of the run (an agent replacement). Optional.
+	Notify func(string)
+	// slot tracks the running agent for replace_agent. Nil: no replacement.
+	slot *agentSlot
 }

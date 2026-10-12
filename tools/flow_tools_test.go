@@ -18,6 +18,8 @@ type fakeWorkflowManager struct {
 	// listArchived, listLimit and listOffset record the last List call.
 	listArchived          bool
 	listLimit, listOffset int
+	// replaceID, replaceRole and replaceReason record the last Replace call.
+	replaceID, replaceRole, replaceReason string
 }
 
 func (f *fakeWorkflowManager) Start(_ context.Context, workflow string, params []string) (string, []string, error) {
@@ -33,6 +35,10 @@ func (f *fakeWorkflowManager) List(archived bool, limit, offset int) (any, error
 	return map[string]any{"runs": []any{}, "total": 0}, f.err
 }
 func (f *fakeWorkflowManager) Resume(_, answer string) error { f.answer = answer; return f.err }
+func (f *fakeWorkflowManager) Replace(agentID, role, reason string) error {
+	f.replaceID, f.replaceRole, f.replaceReason = agentID, role, reason
+	return f.err
+}
 func (f *fakeWorkflowManager) Stop(run, reason string) (any, error) {
 	f.stopped, f.stopReason = run, reason
 	return map[string]any{"run": run, "status": "stopped"}, f.err
@@ -68,7 +74,7 @@ func TestWorkflowTools_StartStatusResume(t *testing.T) {
 
 func TestSubagentToolSetExcludesWorkflowTools(t *testing.T) {
 	withWorkflowManager(t, &fakeWorkflowManager{})
-	names := []string{"workflow_start", "workflow_status", "workflow_list", "workflow_resume", "workflow_stop"}
+	names := []string{"workflow_start", "workflow_status", "workflow_list", "workflow_resume", "workflow_stop", "replace_agent"}
 	for _, schema := range []string{string(GetSubagentToolsSchemaJSON()), string(GetSubagentToolsSchemaJSONFor(names))} {
 		for _, n := range names {
 			if strings.Contains(schema, `"`+n+`"`) {
@@ -177,5 +183,44 @@ func TestWorkflowStopSchema_InTopLevelSchemaOnce(t *testing.T) {
 	withWorkflowManager(t, &fakeWorkflowManager{})
 	if n := strings.Count(string(GetTopLevelToolsSchemaJSON()), `"name":"workflow_stop"`); n != 1 {
 		t.Fatalf("workflow_stop appears %d times in the top-level schema", n)
+	}
+}
+
+func TestReplaceAgentTool_PassesArgs(t *testing.T) {
+	f := &fakeWorkflowManager{}
+	withWorkflowManager(t, f)
+	res := RunTool(context.Background(), "replace_agent", map[string]any{
+		"agent_id": "run-7/worker", "role": "worker-critical", "reason": "stuck",
+	})
+	if !res.Success {
+		t.Fatalf("replace_agent failed: %s", res.Error)
+	}
+	if f.replaceID != "run-7/worker" || f.replaceRole != "worker-critical" || f.replaceReason != "stuck" {
+		t.Fatalf("Replace got %q %q %q", f.replaceID, f.replaceRole, f.replaceReason)
+	}
+}
+
+func TestReplaceAgentTool_RequiresArgs(t *testing.T) {
+	f := &fakeWorkflowManager{}
+	withWorkflowManager(t, f)
+	res := RunTool(context.Background(), "replace_agent", map[string]any{"agent_id": "run-7/worker", "role": "worker-critical"})
+	if res.Success {
+		t.Fatal("replace_agent without reason succeeded")
+	}
+	if f.replaceID != "" {
+		t.Fatalf("Replace called without a reason: %q", f.replaceID)
+	}
+}
+
+func TestWorkerCannotCallReplace(t *testing.T) {
+	withWorkflowManager(t, &fakeWorkflowManager{})
+	if !subagentDeniedTools["replace_agent"] {
+		t.Fatal("replace_agent is not denied to subagents")
+	}
+	if strings.Contains(string(GetSubagentToolsSchemaJSON()), `"replace_agent"`) {
+		t.Fatal("subagent schema offers replace_agent")
+	}
+	if !strings.Contains(string(GetAllToolsSchemaJSON()), `"replace_agent"`) {
+		t.Fatal("chat schema lacks replace_agent")
 	}
 }

@@ -27,6 +27,10 @@ type WorkflowManager interface {
 	Resume(run, answer string) error
 	// Stop ends an active run and returns a JSON-ready summary of it.
 	Stop(run, reason string) (any, error)
+	// Replace stops the running agent agentID (<run>/<role>) of a run and starts
+	// an agent of role in its place. It returns once the old agent has stopped,
+	// or with an error when the replacement is refused (#202).
+	Replace(agentID, role, reason string) error
 }
 
 // WorkflowInfo describes a workflow for the model.
@@ -165,6 +169,30 @@ func (t *WorkflowStopTool) Run(_ context.Context, input map[string]any) ToolResu
 		return workflowFail(err)
 	}
 	return workflowJSON(st)
+}
+
+// ReplaceAgentTool replaces a stuck agent of a workflow run with an agent of
+// another role (#202). Only the orchestrator has it; subagents are denied.
+type ReplaceAgentTool struct{}
+
+func (t *ReplaceAgentTool) Name() string { return "replace_agent" }
+
+func (t *ReplaceAgentTool) Run(_ context.Context, input map[string]any) ToolResult {
+	m, bad := getWorkflowManager()
+	if bad != nil {
+		return *bad
+	}
+	agentID := strings.TrimSpace(stringParam(input, "agent_id", ""))
+	role := strings.TrimSpace(stringParam(input, "role", ""))
+	reason := strings.TrimSpace(stringParam(input, "reason", ""))
+	if agentID == "" || role == "" || reason == "" {
+		return ToolResult{Type: "result", Success: false, validationError: true,
+			Error: "replace_agent requires agent_id, role and reason"}
+	}
+	if err := m.Replace(agentID, role, reason); err != nil {
+		return workflowFail(err)
+	}
+	return workflowJSON(map[string]any{"agent_id": agentID, "role": role, "status": "replaced"})
 }
 
 // WorkflowListTool lists the runs of the repo, newest first.
@@ -328,6 +356,12 @@ func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 				"run":    map[string]any{"type": "string", "description": "Run id."},
 				"reason": map[string]any{"type": "string", "description": "Why the run stops. Optional."},
 			}, []string{"run"}),
+		fn("replace_agent", "Replace a stuck agent of a workflow run with an agent of another role. The old agent is stopped first, and a summary of its work goes to the new agent. One replacement per state visit. Use it only when the run is stuck and the user agrees, or when the run notice says so.",
+			map[string]any{
+				"agent_id": map[string]any{"type": "string", "description": "Id of the running agent: <run>/<role>, for example run-7/coder."},
+				"role":     map[string]any{"type": "string", "description": "Role of the new agent, as defined in the workflow config."},
+				"reason":   map[string]any{"type": "string", "description": "Why the agent is replaced. Required."},
+			}, []string{"agent_id", "role", "reason"}),
 		fn("workflow_resume", "Answer a paused workflow run. Use one of the answers named in the pause notice: \"retry\" (back to the worker), \"stop\" (end the run), \"retry <note>\" (back to the worker with the note), \"goto <state>\" (continue at that state) or \"resume\" (only for a run paused at start-up: continue at its saved state). When the pause has a workflow proposal, first show its summary and patch from workflow_status to the user, then answer \"apply\" (opens a PR with the change of .tyci/workflows/<name>/) or \"reject\" only as the user says; the run stays paused for its normal answer.",
 			map[string]any{
 				"run":    map[string]any{"type": "string", "description": "Run id."},

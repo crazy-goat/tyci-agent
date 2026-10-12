@@ -83,6 +83,8 @@ type activeRun struct {
 	// stopped and stopReason are set by Stop before cancel. The run goroutine reads them.
 	stopped    bool
 	stopReason string
+	// slot runs replace_agent for the running agent (#202). Nil when no agent runs.
+	slot *agentSlot
 	// done is closed when the run goroutine ends. It is nil for a preparing entry
 	// and for a run that Resume runs in the caller's goroutine.
 	done chan struct{}
@@ -299,6 +301,12 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 	if r.Warn == nil {
 		r.Warn = m.Notify
 	}
+	if r.Notify == nil {
+		r.Notify = m.Notify
+	}
+	a := m.active[st.Run]
+	a.slot = r.slot
+	m.active[st.Run] = a
 	go func() {
 		defer func() {
 			cancel()
