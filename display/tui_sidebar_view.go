@@ -443,7 +443,7 @@ func (m TuiModel) sidebarFooter() string {
 		return "Shift+Tab: focus  Shift+←/→ width"
 	}
 	width := "Shift+←/→ or </>: width  "
-	nav := "←→ switch tab (← at first/→ at last exits to conversation)"
+	nav := "←→ switch tab  Shift+Tab: conversation"
 	switch m.sidebarTab {
 	case sidebarTabSessions:
 		return width + "↑↓ browse  Enter: open resume picker  " + nav + "  Esc close"

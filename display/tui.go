@@ -518,7 +518,7 @@ type TuiModel struct {
 	// false (focus starts on the conversation), and closing it resets it
 	// too so the next open starts the same way. See
 	// tui_update.go's Update() for the routing this gates and
-	// tui_sidebar.go's updateSidebar for the Left/Right boundary-exit logic.
+	// tui_sidebar.go's updateSidebar for the focused keys.
 	sidebarFocused bool
 	sidebarTab     int // one of the sidebarTab* constants (tui_sidebar.go)
 	// sidebarWidthPercent is the sidebar width as a percent of the terminal

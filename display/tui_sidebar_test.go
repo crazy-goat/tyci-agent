@@ -625,66 +625,72 @@ func TestUpdateSidebar_TabAndShiftTabDoNotChangeModel(t *testing.T) {
 	}
 }
 
-// TestUpdateSidebar_LeftAtFirstTabExitsFocus and
-// TestUpdateSidebar_RightAtLastTabExitsFocus cover the legacy focus-boundary
-// exit: at the leftmost/rightmost tab, Left/Right walk focus back OUT to the
-// conversation instead of wrapping around to the other end. This remains for
-// backwards compatibility; the primary focus-exit key is now Ctrl+Left / Ctrl+Right
-// from any tab (TestUpdateSidebar_CtrlArrowsExitFocusFromAnyTab below).
-func TestUpdateSidebar_LeftAtFirstTabExitsFocus(t *testing.T) {
+// TestUpdateSidebar_LeftAtFirstTabKeepsFocus covers Left at the first tab:
+// it does nothing. Focus stays on the sidebar and the tab does not change.
+func TestUpdateSidebar_LeftAtFirstTabKeepsFocus(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.openSidebar(sidebarTabTokens) // Tokens is tab 0
 	m.sidebarFocused = true
 
 	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyLeft})
 	m2 := model.(TuiModel)
-	if m2.sidebarFocused {
-		t.Fatalf("expected Left at the first tab to exit focus back to the conversation")
+	if !m2.sidebarFocused {
+		t.Fatalf("expected Left at the first tab to keep focus on the sidebar")
 	}
 	if !m2.sidebarActive {
-		t.Fatalf("expected the sidebar to stay open, just unfocused")
+		t.Fatalf("expected the sidebar to stay open")
 	}
 	if m2.sidebarTab != sidebarTabTokens {
-		t.Fatalf("expected the tab selection to stay put on exit, got %d", m2.sidebarTab)
+		t.Fatalf("expected the tab to stay put at the first tab, got %d", m2.sidebarTab)
 	}
 }
 
-func TestUpdateSidebar_RightAtLastTabExitsFocus(t *testing.T) {
+// TestUpdateSidebar_RightAtLastTabKeepsFocus covers Right at the last tab:
+// it does nothing. Focus stays on the sidebar and the tab does not change.
+func TestUpdateSidebar_RightAtLastTabKeepsFocus(t *testing.T) {
 	m := newTestModelForSidebar()
 	m.openSidebar(sidebarTabBus) // the last tab
 	m.sidebarFocused = true
 
 	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyRight})
 	m2 := model.(TuiModel)
-	if m2.sidebarFocused {
-		t.Fatalf("expected Right at the last tab to exit focus back to the conversation")
+	if !m2.sidebarFocused {
+		t.Fatalf("expected Right at the last tab to keep focus on the sidebar")
 	}
 	if m2.sidebarTab != sidebarTabBus {
-		t.Fatalf("expected the tab selection to stay put on exit, got %d", m2.sidebarTab)
+		t.Fatalf("expected the tab to stay put at the last tab, got %d", m2.sidebarTab)
 	}
 }
 
-// TestUpdateSidebar_CtrlArrowsExitFocusFromAnyTab covers the primary
-// focus-exit path: Ctrl+Left or Ctrl+Right walk focus back out to the
-// conversation from any tab (not just the tab-row boundaries), leaving the
-// sidebar open and the tab selection where it was. This is the symmetric
-// inverse of the Ctrl+Right entry in routeSidebarMsg.
-func TestUpdateSidebar_CtrlArrowsExitFocusFromAnyTab(t *testing.T) {
+// TestSidebarFocus_CtrlLeftRightDoNotMoveFocus covers Ctrl+Left and Ctrl+Right
+// in both places: with the sidebar focused they do not move focus back to the
+// conversation, and with the conversation focused they do not move focus into
+// the sidebar. Focus changes only by mouse click or Shift+Tab.
+func TestSidebarFocus_CtrlLeftRightDoNotMoveFocus(t *testing.T) {
 	for _, keyType := range []tea.KeyType{tea.KeyCtrlLeft, tea.KeyCtrlRight} {
 		m := newTestModelForSidebar()
 		m.openSidebar(sidebarTabTasks) // middle tab
 		m.sidebarFocused = true
 
-		model, _ := m.updateSidebar(tea.KeyMsg{Type: keyType})
+		model, _ := m.Update(tea.KeyMsg{Type: keyType})
 		m2 := model.(TuiModel)
-		if m2.sidebarFocused {
-			t.Fatalf("expected %v to exit focus back to the conversation", keyType)
-		}
-		if !m2.sidebarActive {
-			t.Fatalf("expected %v to leave the sidebar open, just unfocused", keyType)
+		if !m2.sidebarFocused {
+			t.Fatalf("expected %v in the sidebar to keep focus on the sidebar", keyType)
 		}
 		if m2.sidebarTab != sidebarTabTasks {
 			t.Fatalf("expected %v to keep the tab selection, got %d", keyType, m2.sidebarTab)
+		}
+
+		m = newTestModelForSidebar()
+		m.openSidebar(sidebarTabTasks)
+
+		model, _ = m.Update(tea.KeyMsg{Type: keyType})
+		m2 = model.(TuiModel)
+		if m2.sidebarFocused {
+			t.Fatalf("expected %v in the conversation to keep focus on the conversation", keyType)
+		}
+		if !m2.sidebarActive || m2.sidebarTab != sidebarTabTasks {
+			t.Fatalf("expected %v to leave the sidebar open on Tasks, got active=%v tab=%d", keyType, m2.sidebarActive, m2.sidebarTab)
 		}
 	}
 }
@@ -715,23 +721,6 @@ func TestSidebarFocus_DefaultsToConversation(t *testing.T) {
 	}
 	if m2.sidebarFocused {
 		t.Fatalf("expected focus to remain on the conversation after an ordinary keystroke")
-	}
-}
-
-// TestSidebarFocus_RightEntersSidebarFromConversation covers Ctrl+Right
-// "walking into" the sidebar from the conversation side, landing on whichever
-// tab was already selected rather than resetting to the first tab.
-func TestSidebarFocus_RightEntersSidebarFromConversation(t *testing.T) {
-	m := newTestModelForSidebar()
-	m.openSidebar(sidebarTabTasks)
-
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlRight})
-	m2 := model.(TuiModel)
-	if !m2.sidebarFocused {
-		t.Fatalf("expected Ctrl+Right from the conversation to move focus onto the sidebar")
-	}
-	if m2.sidebarTab != sidebarTabTasks {
-		t.Fatalf("expected entering focus to keep the already-selected tab, got %d", m2.sidebarTab)
 	}
 }
 

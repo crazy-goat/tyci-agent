@@ -12,13 +12,15 @@ package display
 // there are now two things on screen that could reasonably want the
 // keyboard — so the sidebar tracks its own focus state (m.sidebarFocused,
 // tui.go): opening it defaults focus to the conversation (typing lands in
-// the input box as normal). Ctrl+Right or Shift+Tab from the conversation
-// "walks into" the sidebar's tabs; Ctrl+Left, Ctrl+Right or Shift+Tab walk
-// back out to the conversation from any tab. Shift+Tab also opens a closed
-// sidebar. Plain Left/Right are untouched and keep switching sidebar
-// tabs (and moving the prompt cursor, since they are never hijacked). See
+// the input box as normal). Focus moves only by a mouse click (on the
+// sidebar or on the conversation) or by Shift+Tab: Shift+Tab from the
+// conversation "walks into" the sidebar's tabs, and Shift+Tab from the
+// sidebar walks back out to the conversation. Shift+Tab also opens a closed
+// sidebar. No other key moves focus. Left/Right switch sidebar tabs while
+// the sidebar is focused and stop at the first and last tab. Plain
+// Left/Right in the conversation keep moving the prompt cursor. See
 // Update() in tui_update.go for the routing this drives and updateSidebar
-// below for the focus-exit logic.
+// below for the focus handling.
 //
 // Data sources, deliberately reused rather than duplicated:
 //   - Tokens: buildUsageDetail (tui_tokens.go), previously dead code (Inbox
@@ -412,12 +414,12 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 //     just went, so it also updates sidebarFocused to match which side was
 //     clicked.
 //   - KeyMsg goes to the sidebar only while sidebarFocused; otherwise only
-//     Ctrl+Right and Shift+Tab are claimed here (entering focus) and
-//     everything else falls through to the normal keymap. Shift+Tab is not
-//     claimed while the subagent modal is open: that modal is drawn above
-//     the sidebar, so the key belongs to it. Tab is never claimed here,
-//     because the terminal treats Tab as a focus-cycle key; the sidebar's
-//     tabs are driven by arrows only.
+//     Shift+Tab is claimed here (entering focus) and everything else falls
+//     through to the normal keymap. Shift+Tab is not claimed while the
+//     subagent modal is open: that modal is drawn above the sidebar, so the
+//     key belongs to it. Tab is never claimed here, because the terminal
+//     treats Tab as a focus-cycle key; the sidebar's tabs are driven by
+//     arrows only.
 //   - tuiMsgBlock never reaches this function: Update() dispatches it to
 //     handleBlockMsg before any sidebar routing, so streamed blocks keep
 //     flowing whether or not the sidebar has focus.
@@ -465,17 +467,10 @@ func (m TuiModel) routeSidebarMsg(msg tea.Msg) (handled bool, model tea.Model, c
 			model, cmd := m.updateSidebar(msg)
 			return true, model, cmd
 		}
-		// Ctrl+Right and Shift+Tab walk focus "into" the sidebar from the
-		// conversation side, landing on whichever tab was already selected
-		// (not reset to 0) — see tui_sidebar.go's package doc comment. Plain
-		// Right is left alone so it keeps moving the cursor through the
-		// prompt text (it was previously hijacked for this, which made it
-		// impossible to move the prompt cursor right while the sidebar was
-		// open).
-		if msg.Type == tea.KeyCtrlRight {
-			m.sidebarFocused = true
-			return true, m, nil
-		}
+		// Shift+Tab walks focus "into" the sidebar from the conversation
+		// side, landing on whichever tab was already selected (not reset to
+		// 0) — see tui_sidebar.go's package doc comment. Plain Right is left
+		// alone so it keeps moving the cursor through the prompt text.
 		if msg.Type == tea.KeyShiftTab && !m.subagentModalActive {
 			m.sidebarFocused = true
 			return true, m, nil
@@ -540,30 +535,24 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.closeSidebarPersisted()
 			return m, nil
 
-		case tea.KeyCtrlLeft, tea.KeyCtrlRight, tea.KeyShiftTab:
-			// Ctrl+Left, Ctrl+Right and Shift+Tab always walk focus back OUT
-			// to the conversation, from any tab, regardless of position.
-			// Ctrl+Right and Shift+Tab are the keys that enter the sidebar
-			// (routeSidebarMsg), so these are their inverse.
+		case tea.KeyShiftTab:
+			// Shift+Tab walks focus back OUT to the conversation, from any
+			// tab. It is the inverse of the key that enters the sidebar
+			// (routeSidebarMsg).
 			m.sidebarFocused = false
 			return m, nil
 
 		case tea.KeyLeft:
-			// At the leftmost tab, Left walks focus back OUT to the
-			// conversation instead of wrapping to the last tab — this case
-			// is only reached while sidebarFocused (Update() gates it), so
-			// it's always a focused-navigation key, never a boundary no-op.
+			// At the first tab, Left does nothing: focus stays on the sidebar.
 			if m.sidebarTab == 0 {
-				m.sidebarFocused = false
 				return m, nil
 			}
 			m.sidebarSwitchTab(m.sidebarTab - 1)
 			return m, m.armStatusTick()
 
 		case tea.KeyRight:
-			// Symmetric exit at the rightmost tab.
+			// At the last tab, Right does nothing: focus stays on the sidebar.
 			if m.sidebarTab == sidebarTabCount-1 {
-				m.sidebarFocused = false
 				return m, nil
 			}
 			m.sidebarSwitchTab(m.sidebarTab + 1)

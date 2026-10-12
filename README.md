@@ -323,6 +323,8 @@ tyci tui
 
 The sidebar (Ctrl+T) has a width you can change. Shift+Left makes it wider and Shift+Right makes it narrower, one column per press. With the sidebar focused, `<` and `>` do the same. The width is a percentage of the terminal width, and it is saved globally in `~/.tyci/tui-state.json` (`sidebar_width_percent`, default `40`). The sidebar keeps at least 36 columns and the chat keeps at least 40.
 
+Focus moves between the sidebar and the chat only by a mouse click or by Shift+Tab. Shift+Tab also opens a closed sidebar. Left and Right switch the sidebar's tabs while the sidebar has focus. At the first tab Left does nothing, and at the last tab Right does nothing. No other key moves focus.
+
 The Bus tab lists the recent messages of the bus, newest first. One line shows the state (`📤` sent, `📥` received, `❌` failed), the sender, the receiver (`*` for a broadcast) and the text. A long line ends with `...`. Up and Down select a message. Enter opens a preview pane under the list that shows the full text. PgUp and PgDn scroll the pane. Enter again closes it. Secrets in the text are redacted.
 
 Click a tool or thinking line in the chat to show its body below the line. A tool body shows its arguments and its output, and a running tool shows its live output. A body of more than 20 lines shows only its newest lines, with a `... N more lines` line first. A thinking body shows the full text. Click the line again to fold the body. The hint at the end of the line says `- click to expand` or `- click to fold`. A click in an agent view works the same way. The header line of a block keeps its row when its body opens, also at the bottom of the transcript. The view then leaves the bottom and does not follow new output until you scroll down.
