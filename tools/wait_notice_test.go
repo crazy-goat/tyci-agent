@@ -79,7 +79,7 @@ func TestWaitTool_JobWaitEndsOnNewMessageForSubagent(t *testing.T) {
 	ctx := context.WithValue(boundedCtx(t, context.Background()), JobIDCtxKey{}, subID)
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		getJobMailbox().Post(subID, "[watchdog] Agent job-7 has shown no activity for 3m0s.")
+		_ = getJobMailbox().Post("", subID, "[watchdog] Agent job-7 has shown no activity for 3m0s.")
 	}()
 
 	start := time.Now()
@@ -115,7 +115,7 @@ func TestWaitTool_MainPlainWaitIgnoresMessageForSubagent(t *testing.T) {
 	subID := startSubagentJob(t, reg)
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		getJobMailbox().Post(subID, "a message for the subagent")
+		_ = getJobMailbox().Post("", subID, "a message for the subagent")
 	}()
 
 	res := (&WaitTool{}).Run(context.Background(), map[string]any{"seconds": 1})

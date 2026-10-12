@@ -92,7 +92,7 @@ func (raceJobProgressHeartbeat) NeedsProgressHeartbeat(id string, after time.Dur
 type raceJobMailbox struct{}
 
 func (raceJobMailbox) Resolve(id string) (string, bool) { return "", false }
-func (raceJobMailbox) Post(id, text string) bool        { return false }
+func (raceJobMailbox) Post(_, id, text string) error    { return ErrNotParent }
 func (raceJobMailbox) IsLive(id string) bool            { return false }
 func (raceJobMailbox) Drain(id string) []string         { return nil }
 func (raceJobMailbox) Posted(id string) uint64          { return 0 }

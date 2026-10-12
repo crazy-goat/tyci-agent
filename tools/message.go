@@ -2,9 +2,14 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 )
+
+// ErrNotParent is returned by JobMailbox.Post when the sending agent may not
+// message the target: an agent messages only its parent and its own children.
+var ErrNotParent = errors.New("message not delivered: an agent can only message its parent")
 
 // JobMailbox is the local contract behind the "message" tool and the
 // "/msg" slash command: Resolve maps a job's full id or its jobs-panel
@@ -20,9 +25,11 @@ type JobMailbox interface {
 	// full id. ok is false when nothing matches.
 	Resolve(id string) (full string, ok bool)
 	// Post enqueues text for delivery to job id's next iteration boundary.
-	// Returns false when id is unknown or terminal; callers should Resolve
-	// first when they need to distinguish those cases.
-	Post(id, text string) bool
+	// from is the job that sends it, or "" for the orchestrator. It returns
+	// ErrNotParent when from may not message id, and another error when id is
+	// unknown or terminal; callers should Resolve and IsLive first when they
+	// need to distinguish those cases.
+	Post(from, id, text string) error
 	// IsLive reports whether id identifies a running or waiting job. Terminal
 	// jobs remain resolvable for resume, but cannot receive new messages.
 	IsLive(id string) bool
@@ -133,7 +140,11 @@ func (t *MessageTool) Run(ctx context.Context, input map[string]any) ToolResult 
 	if !mailbox.IsLive(jobID) {
 		return ToolResult{Type: "result", Success: false, Error: terminalMessageError(jobID)}
 	}
-	if !mailbox.Post(jobID, text) {
+	from, _ := ctx.Value(JobIDCtxKey{}).(string)
+	if err := mailbox.Post(from, jobID, text); err != nil {
+		if errors.Is(err, ErrNotParent) {
+			return ToolResult{Type: "result", Success: false, Error: err.Error()}
+		}
 		return ToolResult{Type: "result", Success: false, Error: terminalMessageError(jobID)}
 	}
 	return ToolResult{Type: "result", Success: true, Content: fmt.Sprintf("message queued for job %s; it will see it at its next iteration", jobID)}

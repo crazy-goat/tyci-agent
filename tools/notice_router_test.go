@@ -16,7 +16,7 @@ func init() {
 // tests that check it install their own publisher.
 func routeTestNotice(parentID, text string, _ bool) {
 	if parentID != "" {
-		if mb := getJobMailbox(); mb != nil && mb.Post(parentID, text) {
+		if mb := getJobMailbox(); mb != nil && mb.Post("", parentID, text) == nil {
 			return
 		}
 		text = fmt.Sprintf("[for agent %s, which has already finished — forwarded here instead] %s", parentID, text)

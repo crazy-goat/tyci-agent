@@ -77,8 +77,8 @@ func TestWiring_M1_MessagePostedWhileRunningReachesNextIteration(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	if !(jobMailboxAdapter{reg: reg}).Post(jobID, "steer this way") {
-		t.Fatal("expected Post to succeed against a known, running job")
+	if err := (jobMailboxAdapter{reg: reg}).Post("", jobID, "steer this way"); err != nil {
+		t.Fatalf("expected Post to succeed against a known, running job: %v", err)
 	}
 	// Also exercise the short-id form Resolve supports, matching what the
 	// "message" tool / "/msg" slash command actually do before posting.
@@ -144,7 +144,7 @@ func containsUserText(req connector.Request, want string) bool {
 // message was not queued anywhere.
 func TestWiring_M2_PostToUnknownJobFails(t *testing.T) {
 	reg, _ := withTestWiring(t)
-	if (jobMailboxAdapter{reg: reg}).Post("job-does-not-exist-1", "hi") {
+	if (jobMailboxAdapter{reg: reg}).Post("", "job-does-not-exist-1", "hi") == nil {
 		t.Fatal("expected Post to fail for an unknown job id")
 	}
 	if _, ok := reg.Resolve("job-does-not-exist-1"); ok {

@@ -334,9 +334,9 @@ type cronTestMailbox struct {
 }
 
 func (m *cronTestMailbox) Resolve(id string) (string, bool) { return id, true }
-func (m *cronTestMailbox) Post(id, text string) bool {
+func (m *cronTestMailbox) Post(_, id, text string) error {
 	m.posted[id] = append(m.posted[id], text)
-	return true
+	return nil
 }
 func (m *cronTestMailbox) IsLive(string) bool    { return !m.dead }
 func (m *cronTestMailbox) Drain(string) []string { return nil }

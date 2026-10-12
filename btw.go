@@ -189,15 +189,37 @@ type jobMailboxAdapter struct{ reg *jobs.Registry }
 
 func (a jobMailboxAdapter) Resolve(id string) (string, bool) { return a.reg.Resolve(id) }
 
-// Post sends text to job id as an agent.message from the orchestrator. It
-// reports false when id is not live, so the caller does not report success
-// for a message that the bus would reroute.
-func (a jobMailboxAdapter) Post(id, text string) bool {
+// Post sends text to job id as an agent.message from job from, or from the
+// orchestrator when from is "". It returns an error when id is not live, so
+// the caller does not report success for a message that the bus would
+// reroute, and ErrNotParent when from may not message id.
+func (a jobMailboxAdapter) Post(from, id, text string) error {
 	if !a.reg.IsLive(id) {
-		return false
+		return fmt.Errorf("agent/job %q is no longer running", id)
 	}
-	publishAgentMessage(appBus, id, orchestratorAddr, bus.OriginAgent, text)
-	return true
+	sender := orchestratorAddr
+	if from != "" {
+		if err := a.checkRoute(from, id); err != nil {
+			return err
+		}
+		sender = agentAddr(from)
+	}
+	publishAgentMessage(appBus, id, sender, bus.OriginAgent, text)
+	return nil
+}
+
+// checkRoute allows an agent to message its parent and its own children.
+// Every other route returns tools.ErrNotParent.
+func (a jobMailboxAdapter) checkRoute(from, to string) error {
+	sender, okFrom := a.reg.Get(from)
+	target, okTo := a.reg.Get(to)
+	if !okFrom || !okTo {
+		return tools.ErrNotParent
+	}
+	if sender.ParentID == to || target.ParentID == from {
+		return nil
+	}
+	return tools.ErrNotParent
 }
 func (a jobMailboxAdapter) IsLive(id string) bool { return a.reg.IsLive(id) }
 func (a jobMailboxAdapter) Drain(id string) []string {

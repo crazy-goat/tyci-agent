@@ -63,8 +63,8 @@ func TestFormatInbox_ChildCannotSendPlainUserTurn(t *testing.T) {
 	child, release := startLiveJob(t, reg)
 	defer release()
 
-	if !(jobMailboxAdapter{reg: reg}).Post(child, "steer this way") {
-		t.Fatal("Post to a live child failed")
+	if err := (jobMailboxAdapter{reg: reg}).Post("", child, "steer this way"); err != nil {
+		t.Fatalf("Post to a live child failed: %v", err)
 	}
 	got := agentInboxes.drain(child)
 	if len(got) != 1 {

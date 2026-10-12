@@ -23,15 +23,15 @@ func (m *testMailbox) Resolve(id string) (string, bool) { return m.reg.Resolve(i
 
 func (m *testMailbox) IsLive(id string) bool { return m.reg.IsLive(id) }
 
-func (m *testMailbox) Post(id, text string) bool {
+func (m *testMailbox) Post(_, id, text string) error {
 	if !m.reg.IsLive(id) {
-		return false
+		return ErrNotParent
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.queue[id] = append(m.queue[id], text)
 	m.posted[id]++
-	return true
+	return nil
 }
 
 func (m *testMailbox) Drain(id string) []string {

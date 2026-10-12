@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -11,7 +12,7 @@ import (
 type fakeJobMailbox struct {
 	resolved  map[string]string // idOrShort -> full id
 	posts     []postCall
-	postFails map[string]bool // full id -> Post returns false
+	postFails map[string]bool // full id -> Post returns an error
 	live      map[string]bool
 	drainOut  map[string][]string
 }
@@ -29,13 +30,15 @@ func (f *fakeJobMailbox) IsLive(id string) bool {
 	return f.live == nil || f.live[id]
 }
 
-func (f *fakeJobMailbox) Post(id, text string) bool {
+func (f *fakeJobMailbox) Post(_, id, text string) error {
 	if f.postFails[id] {
-		return false
+		return errPostFails
 	}
 	f.posts = append(f.posts, postCall{id, text})
-	return true
+	return nil
 }
+
+var errPostFails = errors.New("post failed")
 
 func (f *fakeJobMailbox) Drain(id string) []string {
 	return f.drainOut[id]
