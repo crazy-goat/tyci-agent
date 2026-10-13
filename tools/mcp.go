@@ -31,6 +31,10 @@ type MCPToolRunner struct {
 	// a runner while it is above zero.
 	active atomic.Int64
 
+	// retired is set by ReloadMCP, under mu, when a newer runner replaces
+	// this one. Its clients are closed after that, so RunTool refuses calls.
+	retired bool
+
 	// Sampling/Elicitation handlers
 	samplingFunc    func(ctx context.Context, messages []mcp.SamplingMessage, model string) (string, error)
 	elicitationFunc func(ctx context.Context, message string) (string, error)
@@ -227,6 +231,14 @@ func (r *MCPToolRunner) serverFor(name string) (server string, ok bool) {
 // RunTool executes an MCP tool.
 func (r *MCPToolRunner) RunTool(ctx context.Context, name string, arguments map[string]any) ToolResult {
 	r.mu.RLock()
+	if r.retired {
+		r.mu.RUnlock()
+		return ToolResult{
+			Type:    "result",
+			Success: false,
+			Error:   fmt.Sprintf("MCP servers were reloaded during the call; run %q again", name),
+		}
+	}
 	t, ok := r.tools[name]
 	if !ok {
 		r.mu.RUnlock()
@@ -407,14 +419,15 @@ func ReloadMCP(ctx context.Context, wd string, includeLocal bool) (int, error) {
 	if old == nil {
 		setGlobal()
 	} else {
-		// Holding old.mu keeps RunTool from finding old between the busy
-		// check and the swap.
+		// Holding old.mu keeps RunTool from counting a call between the busy
+		// check and the swap. After the swap, RunTool refuses calls on old.
 		old.mu.Lock()
 		if old.active.Load() > 0 {
 			old.mu.Unlock()
 			next.Close()
 			return 0, ErrMCPBusy
 		}
+		old.retired = true
 		setGlobal()
 		old.mu.Unlock()
 		old.Close()

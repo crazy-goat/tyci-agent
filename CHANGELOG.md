@@ -14,12 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: `/reload` reloads the hooks, the Lua tools, the cron jobs and the MCP servers of the project without a restart. A broken file keeps its previous settings and shows the error. Set `defaults.watch_config` to `true` in `~/.tyci/config.json` to reload these settings when their files change (#620).
 
 ### Fixed
+- Tools: a tool call that runs during `/reload` no longer uses a closed MCP runner. The call fails with a message to run it again, and a reload still reports busy while an MCP call runs (#714).
 - Flow: the worktree setup script `bin/worktree-setup.sh` runs only in a trusted project; an untrusted project gets the worktree without it (#495).
 - Subagents: a resumed subagent can wait for or stop only the jobs in its own subtree, as a new subagent can (#503).
 - TUI: Enter or a click on a Tasks row (a Bash row, or a subagent row without a transcript) opens the result modal and keeps the sidebar open. A refused `/resume` on the Sessions tab keeps it open too (#549).
 - Flow: while a run has an open PR, a recover oracle answer `stop`, `goto:merge` or a goto to a state that ends the run now pauses at `ask` for a human, as the pause oracle already does (#561).
 - TUI: the orchestrator does not start when the `roadmap` or the configured orchestrator workflow is missing. It posts one line that names `tyci workflow init <name>` (#569).
 - TUI: an agent marked yellow by a missed ping turns green again when it shows activity (new bus kind `ping.ok`), and a truncated agent is grey. A missed ping is published once, so the journal and the Bus tab show one `ping.missed` line per alarm (#702).
+- Ask: a question from a job no longer races with the job's finish when its route is pruned. The route check reads the job status under the registry lock (#705).
 ### Changed
 - Bus: each tyci process writes its own journal, `bus-<pid>-<start>.jsonl`, in the session directory, instead of one shared `bus.jsonl`. Journals older than 7 days are deleted at start. Sequence numbers start at 1 for each process (#599).
 ### Fixed
