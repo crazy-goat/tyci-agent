@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/bus"
 )
 
@@ -72,5 +73,53 @@ func TestFormatInbox_ChildCannotSendPlainUserTurn(t *testing.T) {
 	}
 	if got[0] == "steer this way" || !strings.HasPrefix(got[0], "[notice from=") || !strings.Contains(got[0], "kind=agent.message") {
 		t.Fatalf("inbox line = %q, want the sender tag", got[0])
+	}
+}
+
+// TestNoticeFormatUsesSharedPrefix: the notice tag must start with the prefix
+// the agent loop checks, or a notice is taken for a person's line.
+func TestNoticeFormatUsesSharedPrefix(t *testing.T) {
+	m := rawMessage(t, bus.KindNoticeCompletion, bus.Addr{Type: bus.AddrOrchestrator}, bus.OriginSystem, bus.Completion{Text: "done"})
+	got := formatNotices([]bus.Message{m})
+	if len(got) != 1 || !strings.HasPrefix(got[0], agent.NoticePrefix) {
+		t.Fatalf("formatNotices = %q, want a line starting with agent.NoticePrefix", got)
+	}
+}
+
+// TestNoticeLinesPassIsNoticeLine checks that every line that formatNotices
+// writes for a harness notice is recognised by agent.IsNoticeLine, also when
+// the bus rerouted the message. A line that is not recognised is taken for a
+// person's line, and the interrupt note comes back.
+func TestNoticeLinesPassIsNoticeLine(t *testing.T) {
+	reply := rawMessage(t, bus.KindAskReply, bus.Addr{Type: bus.AddrOrchestrator}, bus.OriginAgent, bus.AskReply{Question: "q7", Answer: "use main"})
+	completion := rawMessage(t, bus.KindNoticeCompletion, bus.Addr{Type: bus.AddrOrchestrator}, bus.OriginSystem, bus.Completion{Text: "done"})
+	orig := bus.Addr{Type: bus.AddrAgent, ID: "job-1"}
+	rerouted := []bus.Message{reply, completion}
+	for i := range rerouted {
+		rerouted[i].OrigTo = &orig
+	}
+	cases := map[string]bus.Message{
+		"ask reply":           reply,
+		"ask reply rerouted":  rerouted[0],
+		"completion":          completion,
+		"completion rerouted": rerouted[1],
+	}
+	for name, m := range cases {
+		got := formatNotices([]bus.Message{m})
+		if len(got) != 1 || !agent.IsNoticeLine(got[0]) {
+			t.Errorf("%s: formatNotices = %q, want a line that agent.IsNoticeLine accepts", name, got)
+		}
+	}
+}
+
+// TestAskReplyReroutedNoticeText checks the text of a rerouted ask reply. The
+// reroute note is inside the reply tag, so the line starts with the tag.
+func TestAskReplyReroutedNoticeText(t *testing.T) {
+	m := rawMessage(t, bus.KindAskReply, bus.Addr{Type: bus.AddrOrchestrator}, bus.OriginAgent, bus.AskReply{Question: "q7", Answer: "use main"})
+	m.OrigTo = &bus.Addr{Type: bus.AddrAgent, ID: "job-1"}
+	got := formatNotices([]bus.Message{m})
+	want := `<tyci-notice kind=ask.reply id=q7 from=agent>[for agent job-1, which has already finished — forwarded here instead] use main</tyci-notice>`
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("formatNotices = %q, want [%q]", got, want)
 	}
 }

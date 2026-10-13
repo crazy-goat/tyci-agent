@@ -481,6 +481,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 		canDrain := cfg.MaxIterations <= 0 || iter+1 < cfg.MaxIterations
 		if canDrain && cfg.NextMessages != nil {
 			if pending := cfg.NextMessages(); len(pending) > 0 {
+				human := false
 				for _, line := range pending {
 					*msgs = append(*msgs, connector.Message{
 						Role:    "user",
@@ -489,6 +490,9 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 					if cfg.Session != nil {
 						blocks := []session.ContentBlock{{Type: "text", Text: line}}
 						_ = cfg.Session.WriteMessage("user", blocks, nil)
+					}
+					if !IsNoticeLine(line) {
+						human = true
 					}
 				}
 				drained = true
@@ -500,8 +504,9 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				// cannot see: that nothing was cancelled, and that answering
 				// now is the right move. Without this it reads an
 				// out-of-nowhere question as a change of instructions and
-				// abandons what it was doing.
-				if cfg.PendingJobs != nil {
+				// abandons what it was doing. A batch of harness notices
+				// with no human line gets no note.
+				if human && cfg.PendingJobs != nil {
 					if jobs := cfg.PendingJobs(); len(jobs) > 0 {
 						note := buildInterruptNote(jobs)
 						*msgs = append(*msgs, connector.Message{

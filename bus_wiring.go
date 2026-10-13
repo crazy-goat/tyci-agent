@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/internal/redact"
@@ -247,19 +248,21 @@ func publishAgentMessage(b *bus.Bus, id string, from bus.Addr, origin bus.Origin
 func formatNotices(msgs []bus.Message) []string {
 	out := make([]string, 0, len(msgs))
 	for _, m := range msgs {
-		text, ok := noticeText(m)
+		note := ""
+		if m.OrigTo != nil {
+			note = fmt.Sprintf("[for agent %s, which has already finished — forwarded here instead] ", m.OrigTo.ID)
+		}
+		text, ok := noticeText(m, note)
 		if !ok {
 			continue
 		}
-		if m.OrigTo != nil {
-			text = fmt.Sprintf("[for agent %s, which has already finished — forwarded here instead] %s", m.OrigTo.ID, text)
-		}
 		if m.Kind == bus.KindAskReply {
-			// The reply already carries its own tyci-notice tag.
+			// The reply already carries its own tyci-notice tag, and the note is
+			// inside it, so the line still starts with the tag.
 			out = append(out, text)
 			continue
 		}
-		out = append(out, tagSender(m, text))
+		out = append(out, tagSender(m, note+text))
 	}
 	return out
 }
@@ -272,7 +275,7 @@ func tagSender(m bus.Message, text string) string {
 	if m.Origin == bus.OriginHuman {
 		return text
 	}
-	return fmt.Sprintf("[notice from=%s kind=%s] %s", addrLabel(m.From), m.Kind, text)
+	return fmt.Sprintf("%s%s kind=%s] %s", agent.NoticePrefix, addrLabel(m.From), m.Kind, text)
 }
 
 // addrLabel renders an address as type or type:id, for the tag.
@@ -283,9 +286,11 @@ func addrLabel(a bus.Addr) string {
 	return string(a.Type) + ":" + a.ID
 }
 
-// noticeText returns the text of m. ok is false when m must not be shown: it
-// is an ask that a handoff message already carried.
-func noticeText(m bus.Message) (text string, ok bool) {
+// noticeText returns the text of m. note is the reroute note of m, if any. An
+// ask reply puts it inside its tag; for every other kind the caller adds it.
+// ok is false when m must not be shown: it is an ask that a handoff message
+// already carried.
+func noticeText(m bus.Message, note string) (text string, ok bool) {
 	switch m.Kind {
 	case bus.KindNoticeCompletion:
 		c, err := bus.Decode[bus.Completion](m)
@@ -334,7 +339,7 @@ func noticeText(m bus.Message) (text string, ok bool) {
 		// The answer is data from the parent. A closing tag in it is escaped,
 		// so it cannot end the notice early (see agent/late_notice.go).
 		answer := strings.ReplaceAll(a.Answer, "</tyci-notice", `<\/tyci-notice`)
-		return fmt.Sprintf("<tyci-notice kind=ask.reply id=%s from=agent>%s</tyci-notice>", a.Question, answer), true
+		return fmt.Sprintf("%skind=ask.reply id=%s from=agent>%s%s</tyci-notice>", agent.ReplyPrefix, a.Question, note, answer), true
 	case bus.KindAskRequest:
 		a, err := bus.Decode[bus.AskRequest](m)
 		if err != nil {
