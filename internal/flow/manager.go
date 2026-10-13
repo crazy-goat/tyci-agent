@@ -505,10 +505,10 @@ func (m *Manager) Resume(runID, answer string) error {
 	// Every run in m.active takes a worker slot. An apply or reject of a workflow
 	// proposal is one too: answerProposal keeps its run in m.active.
 	startup := saved != "" && answer == "goto "+saved
-	if startup && m.workers > 0 && len(m.active) >= m.workers {
+	if n := m.slotsInUse(info, st.Run); startup && m.workers > 0 && n >= m.workers {
 		m.mu.Unlock()
 		return fmt.Errorf("run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active (an apply or reject of a workflow proposal counts as an active run); answer resume again when one ends",
-			ShowRunID(st.Run), st.Issue, m.workers, len(m.active))
+			ShowRunID(st.Run), st.Issue, m.workers, n)
 	}
 	m.launch(info, wf, st, true, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
 	if startup {

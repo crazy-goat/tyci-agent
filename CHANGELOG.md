@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: the run counter is written through a temp file and a rename, so a crash cannot leave an empty counter. A run without an issue skips a number whose `run-<id>` branch still exists. `workflow_status`, `workflow_stop` and `workflow_resume` show the run as `#17`, as `workflow_start` does, and the Runs tab shows the run id next to the issue (#673).
 - Flow: the oracle answer is read from its first key line, which may follow prose lines. The pause oracle and the recover oracle accept the same forms (`goto:<state>`, `goto <state>`, `stop`, `ask`), the stop check with an open PR is in one place, and the recover task lists the goto states of the run (#697).
 - TUI: the orchestrator start reads the repository and the orchestrator config once, and a broken workflow file gives one line in the chat (#691).
+- Flow: a resume checks `orchestrator.workers` against the paused runs that the orchestrator holds too, so a manual resume is refused when they fill the limit (#509).
 
 ## [0.9.0] - 2026-10-13
 

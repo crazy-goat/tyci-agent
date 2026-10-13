@@ -728,6 +728,34 @@ func TestWorkflowStart_ResumeRefusedAtWorkersLimit(t *testing.T) {
 	e.notice(t)
 }
 
+// A run that the orchestrator holds while it is paused keeps its worker slot, so
+// a resume of a stale run is refused at the limit: with workers 2, one active run
+// and one held paused run, the resume of issue 6 is refused.
+func TestWorkflowStart_ResumeCountsHeldPausedRun(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	e.m.SetWorkers(2)
+	if _, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"1"}}); err != nil {
+		t.Fatal(err)
+	}
+	saveRun(t, e.home, 5, func(st *RunState) {
+		st.Status, st.Current, st.Ask = "paused", "ask", &Ask{Message: "Need a decision."}
+	})
+	if _, paused, ok := e.m.Adopt(5); !ok || !paused {
+		t.Fatalf("adopt: paused %v, ok %v", paused, ok)
+	}
+	st := saveRun(t, e.home, 6, nil)
+	_, _, err := e.m.Start(context.Background(), StartRequest{Workflow: "demo", Params: []string{"6"}})
+	if !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "orchestrator.workers is 2") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := loadRunState(t, e.home, st.Run); got.Resumed != 0 || got.Status != "running" {
+		t.Fatalf("refused run changed: %+v", got)
+	}
+	close(c.release)
+	e.notice(t)
+}
+
 // A paused run is adoptable at start-up, but a later fill takes only the runs a
 // resume made active (AdoptableResumed), so a paused run of a manual start does
 // not take a worker slot.
