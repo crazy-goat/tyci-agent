@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- CLI: `tyci update` downloads the latest release, checks its SHA-256 and replaces the binary; `--check`, `--version` and `--force` (#621).
 - TUI: the Runs tab shows the agents under each run. A run row unfolds into its agents, with the ping state as colour and the question of an agent that waits for an answer. Agents without a run are listed under `ad-hoc`. A missed ping stays yellow until the agent finishes (#203).
 
 ### Fixed
