@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - CLI: `tyci update` downloads the latest release, checks its SHA-256 and replaces the binary; `--check`, `--version` and `--force` (#621).
 - TUI: the Runs tab shows the agents under each run. A run row unfolds into its agents, with the ping state as colour and the question of an agent that waits for an answer. Agents without a run are listed under `ad-hoc`. A missed ping stays yellow until the agent finishes (#203).
+- Tools: the chat tool `session_read(path, max_messages?)` returns the last messages (default 20, max 100) of a session that `session_list` returns, as user and assistant text only, each cut to 2000 characters. Any other path is refused. A subagent cannot use it (#590).
 
 ### Fixed
 - Flow: the worktree setup script `bin/worktree-setup.sh` runs only in a trusted project; an untrusted project gets the worktree without it (#495).

@@ -71,11 +71,21 @@ type SessionInfo struct {
 	Modified    time.Time
 }
 
-// SessionBrowser lists saved sessions, newest first. main wires it with
+// SessionMessage is one plain-text message of a saved session.
+type SessionMessage struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+// SessionBrowser lists and reads saved sessions. main wires it with
 // SetSessionBrowser. The adapter in main converts session.ResumeEntry values
-// into SessionInfo, so this file only works with SessionInfo.
+// into SessionInfo and SessionMessage values, so this file only works with
+// those types.
 type SessionBrowser interface {
 	List(cwd string, all bool) ([]SessionInfo, error)
+	// Read returns the last maxMessages messages that have text. truncated is
+	// true when older messages were left out.
+	Read(path string, maxMessages int) (title string, msgs []SessionMessage, truncated bool, err error)
 }
 
 var (
@@ -163,6 +173,70 @@ func sessionListLimit(v any) int {
 	}
 	if n > sessionListMaxLimit {
 		return sessionListMaxLimit
+	}
+	return n
+}
+
+const (
+	sessionReadDefaultMessages = 20
+	sessionReadMaxMessages     = 100
+)
+
+// SessionReadTool reads the last messages of a saved session. The browser
+// refuses any path that session_list does not return. A subagent never gets
+// session_read.
+type SessionReadTool struct{}
+
+func (t *SessionReadTool) Name() string { return "session_read" }
+
+// Run returns the title and the last messages of the session at path as a
+// JSON object. max_messages is 1 to 100 and defaults to 20.
+func (t *SessionReadTool) Run(_ context.Context, input map[string]any) ToolResult {
+	path := stringParam(input, "path", "")
+	if path == "" {
+		return failf("session_read: path is required; get it from session_list")
+	}
+	n := sessionReadMessagesLimit(input["max_messages"])
+
+	browser := getSessionBrowser()
+	if browser == nil {
+		return failf("session_read is unavailable in this mode")
+	}
+	title, msgs, truncated, err := browser.Read(path, n)
+	if err != nil {
+		return failf("session_read: %v", err)
+	}
+	if msgs == nil {
+		msgs = []SessionMessage{}
+	}
+	b, err := json.Marshal(map[string]any{
+		"path":      path,
+		"title":     title,
+		"truncated": truncated,
+		"messages":  msgs,
+	})
+	if err != nil {
+		return failf("session_read: %v", err)
+	}
+	return ToolResult{Type: "result", Success: true, Content: string(b)}
+}
+
+// sessionReadMessagesLimit reads the max_messages argument. JSON numbers
+// decode as float64. A missing or out-of-range value gives the default for
+// values below 1 and the maximum for values above it.
+func sessionReadMessagesLimit(v any) int {
+	n := sessionReadDefaultMessages
+	switch x := v.(type) {
+	case float64:
+		n = int(x)
+	case int:
+		n = x
+	}
+	if n < 1 {
+		return sessionReadDefaultMessages
+	}
+	if n > sessionReadMaxMessages {
+		return sessionReadMaxMessages
 	}
 	return n
 }
