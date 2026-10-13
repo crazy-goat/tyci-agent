@@ -84,6 +84,25 @@ Make sure the next milestone `vX.Y.(Z+1)` (or the next minor) exists.
 - Check that install instructions work with the new version (release binaries and `checksums.txt`).
 - If something is wrong, do not move the tag. Fix forward with a patch release.
 
+## Automated release
+
+The workflow `release` runs steps 1 to 6 for you. The manual steps above remain the reference.
+
+1. Run `tyci workflow init release` in the repository.
+2. Run `workflow_start release v0.10.0` with the milestone title.
+3. Wait for the question `ask_release`. The run checks the milestone and CI first.
+4. Answer `yes` to release, or `no` to stop. A `no` changes nothing on GitHub.
+
+After a `yes`, the run does these steps:
+
+- The worker moves `[Unreleased]` to `[X.Y.Z] - date` in CHANGELOG.md and opens a pull request.
+- The run waits for CI, then merges the pull request.
+- The run creates an annotated tag `X.Y.Z` on the merge commit and pushes it.
+- The run waits for the release workflow and checks the binaries and `checksums.txt`.
+- The run closes the milestone.
+
+The `release` workflow never deletes or moves a tag. If a tag already exists, the run stops. Fix the problem by hand, then decide the next version.
+
 ## Checklist
 
 - [ ] Milestone has no open issues, CI is green
