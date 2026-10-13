@@ -554,6 +554,10 @@ type TuiModel struct {
 	// (every step). A run is collapsed unless its id is true here.
 	sidebarRunsExpanded map[string]bool
 
+	// tree holds the ping state of the agents shown under the runs. Nil
+	// until the TUI sets it; a nil tree knows no missed ping.
+	tree *treeState
+
 	// runStopper stops a workflow run (TUI.SetRunStopper). sidebarStopRun is the
 	// run that waits for y in the Runs tab; empty when no stop is asked.
 	runStopper     func(run string) error
