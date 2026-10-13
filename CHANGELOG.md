@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Sessions: an old session directory with a file written in the last 10 minutes is no longer moved into the project directory. It is moved on a later listing (#490).
+
 ## [0.8.0] - 2026-10-13
 
 ### Changed
