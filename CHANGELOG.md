@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-13
+
 ### Changed
 - Flow: a run has a number per repository, `#1`, `#2`, and so on. It never reuses a number. The number is shown in notices, tool output and the Runs tab, and `status`, `stop` and `resume` accept `17`, `#17` or the old id. Runs made before this change keep their old id `YYYYMMDD-HHMMSS-<issue>` and still load and list. The issue number stays in `state.json`. A bare number that two repositories share is ambiguous for `status` and `stop` (#557).
 - TUI: focus moves between the sidebar and the chat only by a mouse click or by Shift+Tab. Ctrl+Right no longer enters the sidebar, and Ctrl+Left and Ctrl+Right no longer leave it. At the first tab Left does nothing, and at the last tab Right does nothing (#591).
