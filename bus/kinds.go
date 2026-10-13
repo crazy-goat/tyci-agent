@@ -74,6 +74,7 @@ type BtwAnswer struct {
 type JobStatus struct {
 	ID           string    `json:"id"`
 	ParentID     string    `json:"parent_id"`
+	RunID        string    `json:"run_id,omitempty"`
 	Kind         string    `json:"kind"`
 	Name         string    `json:"name"`
 	Status       string    `json:"status"`

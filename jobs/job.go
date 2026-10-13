@@ -42,6 +42,12 @@ type contextStoppedByUser string
 
 func (e contextStoppedByUser) Error() string { return string(e) }
 
+// RunIDCtxKey is the context key under which the flow puts the ID of the
+// workflow run that starts an agent. Registry.Start copies it to Job.RunID.
+// It lives here and not in tools: tools' tests import jobs, so jobs cannot
+// import tools.
+type RunIDCtxKey struct{}
+
 type Job struct {
 	ID          string
 	Description string
@@ -57,6 +63,10 @@ type Job struct {
 	// stop a whole subtree (a subagent plus every background command it
 	// started) in one call.
 	ParentID string
+	// RunID is the ID of the workflow run that the agent works for, as shown
+	// in the Runs tab (flow.ShowRunID). Empty for an ad-hoc agent. Set once at
+	// Start from RunIDCtxKey, like ParentID, and never mutated afterward.
+	RunID string
 
 	Status     Status
 	Result     string
@@ -229,6 +239,7 @@ func (j *Job) Snapshot() Job {
 		Description: j.Description,
 		Kind:        j.Kind,
 		ParentID:    j.ParentID,
+		RunID:       j.RunID,
 		Status:      j.Status,
 		Result:      j.Result,
 		Err:         j.Err,
