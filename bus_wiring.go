@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
@@ -536,11 +537,30 @@ func watchdogNotify(to string, a watchdog.Alarm) bool {
 
 // publishPingMissed sends a watchdog alarm about agent a.Agent to parentID, or
 // to the orchestrator when parentID is "".
+// The TUI sees it too, through subscribePings, without a second publish.
 func publishPingMissed(b *bus.Bus, parentID string, a watchdog.Alarm) {
 	p := bus.PingMissed{Agent: a.Agent, Description: a.Description, LastNote: a.LastNote, QuietFor: a.QuietFor}
 	publishTo(b, bus.KindPingMissed, bus.Addr{Type: bus.AddrAgent, ID: a.Agent}, recipientAddr(parentID), bus.OriginSystem, p)
-	// The TUI gets its own copy, so the Runs tab can mark the agent missed.
-	publishTo(b, bus.KindPingMissed, bus.Addr{Type: bus.AddrAgent, ID: a.Agent}, bus.Addr{Type: bus.AddrTUI}, bus.OriginSystem, p)
+}
+
+// pingOKWanted is true once the TUI subscribes to the pings (see
+// subscribePings). The watchdog goroutine reads it, so it is atomic. A
+// headless run never sets it, and then no ping.ok is published.
+var pingOKWanted atomic.Bool
+
+// watchdogRecovered sends ping.ok for agent id, see publishPingOK. It does
+// nothing when no TUI listens for pings.
+func watchdogRecovered(id string) {
+	if !pingOKWanted.Load() {
+		return
+	}
+	publishPingOK(appBus, id)
+}
+
+// publishPingOK tells the TUI that agent id shows activity again after a
+// ping.missed.
+func publishPingOK(b *bus.Bus, id string) {
+	publishTo(b, bus.KindPingOK, agentAddr(id), bus.Addr{Type: bus.AddrTUI}, bus.OriginSystem, bus.PingOK{Agent: id})
 }
 
 // formatIdle shows whole seconds below one minute and rounded minutes above.
@@ -575,9 +595,13 @@ func subscribeJobStatus(b *bus.Bus) *bus.Sub {
 	return b.Subscribe("tui-jobs", bus.Filter{To: bus.Addr{Type: bus.AddrTUI}, Kinds: []bus.Kind{bus.KindJobStatus}})
 }
 
-// subscribePingMissed gives the TUI the ping.missed alarms (see publishPingMissed).
-func subscribePingMissed(b *bus.Bus) *bus.Sub {
-	return b.Subscribe("tui-pings", bus.Filter{To: bus.Addr{Type: bus.AddrTUI}, Kinds: []bus.Kind{bus.KindPingMissed}})
+// subscribePings gives the TUI the ping.missed alarms of every agent and the
+// ping.ok messages (see publishPingMissed and publishPingOK). It also turns on
+// the ping.ok messages of watchdogRecovered.
+func subscribePings(b *bus.Bus) *bus.Sub {
+	pingOKWanted.Store(true)
+	// To is the TUI, so the delivery state of a ping.ok counts this watcher.
+	return b.Subscribe("tui-pings", bus.Filter{Any: true, To: bus.Addr{Type: bus.AddrTUI}, Kinds: []bus.Kind{bus.KindPingMissed, bus.KindPingOK}})
 }
 
 // subscribeBtwSuggestions subscribes to the btw answers that the TUI shows in

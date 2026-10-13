@@ -118,13 +118,13 @@ func (m *TuiModel) treeAgents(jobsOfRun []jobs.Job) []treeAgent {
 }
 
 // pingColour returns the colour of an agent row. A failed job is red, a done
-// job is grey, a running job after ping.missed is yellow and any other running
-// job is green. A job with no status yet has no colour.
+// or truncated job is grey, a running job after ping.missed is yellow and any
+// other running job is green. A job with no status yet has no colour.
 func pingColour(j jobs.Job, missed bool) lipgloss.TerminalColor {
 	switch {
 	case j.Status == jobs.StatusFailed:
 		return lipgloss.Color("196")
-	case j.Status == jobs.StatusDone:
+	case j.Status == jobs.StatusDone || j.Status == jobs.StatusTruncated:
 		return lipgloss.Color("245")
 	case missed:
 		return lipgloss.Color("220")
@@ -142,6 +142,11 @@ const treeMaxMissed = 256
 
 // busPingMissedMsg reports one ping.missed alarm for the agent Agent.
 type busPingMissedMsg struct {
+	Agent string
+}
+
+// busPingOKMsg reports that the agent Agent shows activity after a ping.missed.
+type busPingOKMsg struct {
 	Agent string
 }
 

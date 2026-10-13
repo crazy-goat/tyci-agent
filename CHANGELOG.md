@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - CLI: `tyci update` downloads the latest release, checks its SHA-256 and replaces the binary; `--check`, `--version` and `--force` (#621).
-- TUI: the Runs tab shows the agents under each run. A run row unfolds into its agents, with the ping state as colour and the question of an agent that waits for an answer. Agents without a run are listed under `ad-hoc`. A missed ping stays yellow until the agent finishes (#203).
+- TUI: the Runs tab shows the agents under each run. A run row unfolds into its agents, with the ping state as colour and the question of an agent that waits for an answer. Agents without a run are listed under `ad-hoc`. A missed ping stays yellow until the agent shows activity again or finishes (#203).
 - Tools: the chat tool `session_read(path, max_messages?)` returns the last messages (default 20, max 100) of a session that `session_list` returns, as user and assistant text only, each cut to 2000 characters. Any other path is refused. A subagent cannot use it (#590).
 - TUI: Enter on an agent row of the Runs tab opens its log in a viewer titled `<run> / <agent>`. The viewer follows the log while the agent runs and keeps a scrolled position. An ad-hoc agent shows `(no log yet)`. A job started from an agent records its transcript path (#205).
 - TUI: `/reload` reloads the hooks, the Lua tools, the cron jobs and the MCP servers of the project without a restart. A broken file keeps its previous settings and shows the error. Set `defaults.watch_config` to `true` in `~/.tyci/config.json` to reload these settings when their files change (#620).
@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: Enter or a click on a Tasks row (a Bash row, or a subagent row without a transcript) opens the result modal and keeps the sidebar open. A refused `/resume` on the Sessions tab keeps it open too (#549).
 - Flow: while a run has an open PR, a recover oracle answer `stop`, `goto:merge` or a goto to a state that ends the run now pauses at `ask` for a human, as the pause oracle already does (#561).
 - TUI: the orchestrator does not start when the `roadmap` or the configured orchestrator workflow is missing. It posts one line that names `tyci workflow init <name>` (#569).
+- TUI: an agent marked yellow by a missed ping turns green again when it shows activity (new bus kind `ping.ok`), and a truncated agent is grey. A missed ping is published once, so the journal and the Bus tab show one `ping.missed` line per alarm (#702).
 - Ask: a question from a job no longer races with the job's finish when its route is pruned. The route check reads the job status under the registry lock (#705).
 ### Changed
 - Bus: each tyci process writes its own journal, `bus-<pid>-<start>.jsonl`, in the session directory, instead of one shared `bus.jsonl`. Journals older than 7 days are deleted at start. Sequence numbers start at 1 for each process (#599).

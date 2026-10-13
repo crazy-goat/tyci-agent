@@ -534,7 +534,7 @@ var tuiCmd = &cobra.Command{
 		// Show async subagent jobs (subagent(async: true), see tools/subagent.go)
 		// in the TUI's background-jobs panel/modal (Ctrl+B).
 		tuiDisp.SetJobEvents(subscribeJobStatus(appBus))
-		tuiDisp.SetPingEvents(subscribePingMissed(appBus))
+		tuiDisp.SetPingEvents(subscribePings(appBus))
 		// Busy-line btw answers (see publishBtwSuggestion) appear in the chat.
 		go showBtwSuggestions(subscribeBtwSuggestions(appBus), tuiDisp.DoneCh(), tuiDisp.ToolBlock)
 

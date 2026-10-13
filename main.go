@@ -976,7 +976,7 @@ func run() int {
 	wdCtx, stopWatchdog := context.WithCancel(context.Background())
 	go (&watchdog.Watchdog{
 		Reg: JobRegistry, IdleAfter: idle, EscalateAfter: escalate,
-		Notify: watchdogNotify,
+		Notify: watchdogNotify, Recovered: watchdogRecovered,
 	}).Run(wdCtx)
 
 	err = rootCmd.Execute()

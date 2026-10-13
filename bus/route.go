@@ -49,6 +49,10 @@ func (b *Bus) recipients(subs []*Sub, m Message) []*Sub {
 		if !s.filter.wants(m.Kind) {
 			continue
 		}
+		if s.filter.Any {
+			out = append(out, s)
+			continue
+		}
 		if m.To.Type == AddrSubtree {
 			if s.filter.To.Type == AddrAgent && s.filter.To != m.From && b.isLive(s.filter.To.ID) && b.inSubtree(s.filter.To.ID, m.To.ID) {
 				out = append(out, s)
@@ -83,6 +87,19 @@ func (b *Bus) inSubtree(id, root string) bool {
 		cur = parent
 	}
 	return false
+}
+
+// countTracked counts the subscriptions in subs whose delivery state the bus
+// follows for a message to the address to. An Any subscription counts only
+// when its To equals to, see observeReceived.
+func countTracked(subs []*Sub, to Addr) int {
+	n := 0
+	for _, s := range subs {
+		if !s.filter.Any || s.filter.To == to {
+			n++
+		}
+	}
+	return n
 }
 
 // wants reports whether the filter selects messages of kind.

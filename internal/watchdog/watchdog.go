@@ -30,6 +30,9 @@ type Watchdog struct {
 	// Notify delivers an alarm to a job's inbox; toJobID "" means the human.
 	// It returns false when the job cannot receive the alarm.
 	Notify func(toJobID string, a Alarm) bool
+	// Recovered is called once when a job that was alarmed shows activity
+	// again. It may be nil.
+	Recovered func(jobID string)
 
 	// state is touched only by the ticker goroutine (and tests calling Tick).
 	state map[string]*escState
@@ -88,6 +91,9 @@ func (w *Watchdog) Tick(now time.Time) {
 		st := w.state[j.ID]
 		switch {
 		case idle < w.IdleAfter:
+			if st != nil && w.Recovered != nil {
+				w.Recovered(j.ID)
+			}
 			delete(w.state, j.ID)
 		case st == nil:
 			w.escalate(j, byID, 1, idle, now)
