@@ -193,6 +193,18 @@ func TestPush_BodyClosesIssue(t *testing.T) {
 	}
 }
 
+// #207: a run without an issue (a release) opens the PR with an empty body, not "Closes #".
+func TestPush_NoIssueEmptyBody(t *testing.T) {
+	e := newPushEnv(t)
+	key, exit, _, _, log := e.run(t, map[string]string{"TYCI_ISSUE": ""})
+	if key != "ok" || exit != 0 {
+		t.Fatalf("key=%q exit=%d log=%s", key, exit, log)
+	}
+	if strings.Contains(log, "Closes") || !strings.Contains(log, "--title feat: seven --body") {
+		t.Fatalf("log=%s", log)
+	}
+}
+
 func TestPush_GhErrorExitsNonZero(t *testing.T) {
 	for _, f := range []string{"list", "create"} {
 		e := newPushEnv(t)

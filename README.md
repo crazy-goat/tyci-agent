@@ -87,6 +87,7 @@ The model calls `workflow_list` to see the runs of the project, newest first. By
 
 `tyci` has no built-in workflow. Run `tyci workflow init issue-to-merge` in the repository before the first run. The orchestrator also needs the workflow `roadmap` for its oracle step. Run `tyci workflow init roadmap` too. See "Create or change a workflow" below.
 The optional workflow `milestone-close` moves the open issues without milestone into a milestone when the last issue of the milestone closes. Run `tyci workflow init milestone-close` to use it. It needs the param `milestone`, for example `workflow_start milestone-close v0.10.0`.
+The optional workflow `release` prepares a release of a milestone. Run `tyci workflow init release` to use it. It checks the milestone and CI, asks for a human `yes` in the chat, then writes the CHANGELOG section, merges the pull request, creates the annotated tag, waits for the GitHub release and closes the milestone. It needs the param `milestone`, for example `workflow_start release v0.10.0`. See `docs/release-workflow.md`.
 
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
 - Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
