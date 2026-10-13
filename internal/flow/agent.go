@@ -19,6 +19,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/internal/pricing"
 	"github.com/crazy-goat/tyci-agent/internal/runlog"
+	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/providers"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
@@ -150,6 +151,8 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Stats != nil {
 		spec.OnDone = func(ts tools.TaskStats) { *rc.Stats = stepStats(model, effective, ts) }
 	}
+	// The job of this agent shows the path of its transcript (jobs.Job.Transcript).
+	ctx = context.WithValue(ctx, jobs.TranscriptCtxKey{}, spec.Transcript)
 	return r.spawnWithLimits(ctx, spec, rl.Limits)
 }
 

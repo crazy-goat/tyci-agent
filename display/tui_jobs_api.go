@@ -103,6 +103,7 @@ func jobFromStatus(st bus.JobStatus, seq uint64) jobs.Job {
 		ID:           st.ID,
 		ParentID:     st.ParentID,
 		RunID:        st.RunID,
+		Transcript:   st.Transcript,
 		Kind:         jobs.Kind(st.Kind),
 		Description:  st.Name,
 		Status:       jobs.Status(st.Status),

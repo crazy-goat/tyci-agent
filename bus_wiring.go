@@ -557,6 +557,7 @@ func jobStatusOf(j jobs.Job) bus.JobStatus {
 		ID:           j.ID,
 		ParentID:     j.ParentID,
 		RunID:        j.RunID,
+		Transcript:   j.Transcript,
 		Kind:         string(j.Kind),
 		Name:         j.Description,
 		Status:       string(j.Status),

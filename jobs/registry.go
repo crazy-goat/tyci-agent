@@ -145,12 +145,17 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 		jobCtx, cancel = context.WithCancel(ctx)
 	}
 	runID, _ := ctx.Value(RunIDCtxKey{}).(string)
+	transcript, _ := ctx.Value(TranscriptCtxKey{}).(string)
+	// The job's own context must not pass the transcript path on to the
+	// agents that this job starts.
+	jobCtx = context.WithValue(jobCtx, TranscriptCtxKey{}, "")
 	job := &Job{
 		ID:           nextID(),
 		Description:  description,
 		Kind:         kind,
 		ParentID:     parentID,
 		RunID:        runID,
+		Transcript:   transcript,
 		Status:       StatusRunning,
 		StartedAt:    now,
 		done:         make(chan struct{}),

@@ -324,6 +324,11 @@ type TuiModel struct {
 	// — content not tied to any tool block, e.g. a finished background job's
 	// Result/Err shown from the jobs modal (Ctrl+B). See subagentModalText.
 	subagentModalStaticText string
+	// agentLogJob and agentLogPath name the agent whose log the modal shows
+	// (see tui_agent_log.go). agentLogReading is true while a read is in flight.
+	agentLogJob     string
+	agentLogPath    string
+	agentLogReading bool
 
 	// Queue index of the most recent "subagent" tool call. Used only to route
 	// streamed argument deltas to the right block when the subagent is not the
