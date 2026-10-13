@@ -250,7 +250,7 @@ func (t *BashTool) handoff(ctx context.Context, run *bashRun, label string, wait
 	// A command started inside a job stops when that job ends. The agent of
 	// such a job gets no notice unless it makes another tool call, so it must
 	// collect the result itself before it answers. parentID also covers a
-	// resumed subagent, which has no SubagentSinkCtxKey.
+	// subagent whose context has no SubagentSinkCtxKey.
 	if parentID != "" || ctx.Value(SubagentSinkCtxKey{}) != nil {
 		return ToolResult{
 			Type:    "result",

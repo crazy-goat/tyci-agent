@@ -359,7 +359,10 @@ func TestStashResumable_LiveJobEntrySurvivesConcurrentStashPressure(t *testing.T
 		<-block
 		return "", false, nil
 	})
-	t.Cleanup(func() { JobRegistry.Cancel(live.ID) })
+	t.Cleanup(func() {
+		JobRegistry.Cancel(live.ID)
+		JobRegistry.Wait(context.Background(), live.ID, 5*time.Second)
+	})
 
 	// Stash the live job's entry FIRST, so plain FIFO order would otherwise
 	// make it the very first candidate for eviction — the guard has to
