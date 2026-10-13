@@ -167,7 +167,7 @@ func stepLabel(b block) string {
 		}
 		label = "thinking(" + summary + ")"
 	} else {
-		label = "tool " + formatToolCall(b.toolName, b.content)
+		label = "tool " + formatToolSummary(b.toolName, b.content)
 	}
 	if b.toolState == "done" {
 		label += " " + formatDuration(b.duration)

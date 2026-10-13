@@ -172,7 +172,7 @@ func TestToolDeltaSkipsInvalidationForPartialJSON(t *testing.T) {
 	if _, ok := m.toolDisplayCache[0]; ok {
 		t.Error("completing tool-delta did not invalidate the display cache")
 	}
-	if got := formatToolCall(m.blocks[0].toolName, m.blocks[0].content); got != `write(a.go)` {
+	if got := formatToolSummary(m.blocks[0].toolName, m.blocks[0].content); got != `write(a.go)` {
 		t.Errorf("final summary = %q, want %q", got, "write(a.go)")
 	}
 }

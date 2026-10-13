@@ -9,7 +9,7 @@ import (
 )
 
 func label(toolName, argsJSON string) string {
-	return formatToolCall(toolName, argsJSON)
+	return formatToolSummary(toolName, argsJSON)
 }
 
 func TestLuaLabelUsesTheDescription(t *testing.T) {

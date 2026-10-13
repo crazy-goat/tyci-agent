@@ -25,7 +25,7 @@ func (m TuiModel) renderToolBlock(idx int, b block) string {
 
 	line, ok := m.toolDisplayCache[idx]
 	if !ok {
-		line = formatToolCall(b.toolName, b.content)
+		line = formatToolSummary(b.toolName, b.content)
 		m.toolDisplayCache[idx] = line
 	}
 
@@ -94,9 +94,9 @@ func expandedBodyLines(text, bar string, style lipgloss.Style, width int) []stri
 	return lines
 }
 
-// formatToolCall parses the raw JSON tool arguments and returns a human-readable
+// formatToolSummary parses the raw JSON tool arguments and returns a human-readable
 // summary like "read(main.go)" or "bash(Build display package)".
-func formatToolCall(toolName, rawJSON string) string {
+func formatToolSummary(toolName, rawJSON string) string {
 	// Skills has a different default: no args means "list"
 	if toolName == "skills" {
 		if rawJSON == "" {
@@ -298,7 +298,7 @@ func formatDuration(d time.Duration) string {
 }
 
 // lookupTodoContent returns the content of a todo item by id, or "".
-// Used by formatToolCall to enrich todo(doing/done/blocked, N) renders with
+// Used by formatToolSummary to enrich todo(doing/done/blocked, N) renders with
 // what the item actually says, so the transcript is self-explanatory.
 func lookupTodoContent(id int) string {
 	for _, item := range tools.AllTodoItems() {

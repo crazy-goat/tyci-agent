@@ -57,9 +57,9 @@ func TestFormatToolCall_Web(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCall("web", tt.args)
+			got := formatToolSummary("web", tt.args)
 			if got != tt.want {
-				t.Errorf("formatToolCall(\"web\", %q) = %q, want %q", tt.args, got, tt.want)
+				t.Errorf("formatToolSummary(\"web\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -95,9 +95,9 @@ func TestFormatToolCall_Skills(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCall("skills", tt.args)
+			got := formatToolSummary("skills", tt.args)
 			if got != tt.want {
-				t.Errorf("formatToolCall(\"skills\", %q) = %q, want %q", tt.args, got, tt.want)
+				t.Errorf("formatToolSummary(\"skills\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -128,9 +128,9 @@ func TestFormatToolCall_Find(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCall("find", tt.args)
+			got := formatToolSummary("find", tt.args)
 			if got != tt.want {
-				t.Errorf("formatToolCall(\"find\", %q) = %q, want %q", tt.args, got, tt.want)
+				t.Errorf("formatToolSummary(\"find\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -198,9 +198,9 @@ func TestFormatToolCall_Todo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCall("todo", tt.args)
+			got := formatToolSummary("todo", tt.args)
 			if got != tt.want {
-				t.Errorf("formatToolCall(\"todo\", %q) = %q, want %q", tt.args, got, tt.want)
+				t.Errorf("formatToolSummary(\"todo\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -245,7 +245,7 @@ func TestPrintTodoRenderMatrix(t *testing.T) {
 
 	for _, args := range cases {
 		b, _ := json.Marshal(args)
-		line := formatToolCall("todo", string(b))
+		line := formatToolSummary("todo", string(b))
 		t.Logf("TUI> tool %s", line)
 	}
 
@@ -280,9 +280,9 @@ func TestFormatToolCall_Read(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCall("read", tt.args)
+			got := formatToolSummary("read", tt.args)
 			if got != tt.want {
-				t.Errorf("formatToolCall(\"read\", %q) = %q, want %q", tt.args, got, tt.want)
+				t.Errorf("formatToolSummary(\"read\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -308,9 +308,9 @@ func TestFormatToolCall_Write(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCall("write", tt.args)
+			got := formatToolSummary("write", tt.args)
 			if got != tt.want {
-				t.Errorf("formatToolCall(\"write\", %q) = %q, want %q", tt.args, got, tt.want)
+				t.Errorf("formatToolSummary(\"write\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -341,9 +341,9 @@ func TestFormatToolCall_Bash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCall("bash", tt.args)
+			got := formatToolSummary("bash", tt.args)
 			if got != tt.want {
-				t.Errorf("formatToolCall(\"bash\", %q) = %q, want %q", tt.args, got, tt.want)
+				t.Errorf("formatToolSummary(\"bash\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -379,9 +379,9 @@ func TestFormatToolCall_Subagent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCall("subagent", tt.args)
+			got := formatToolSummary("subagent", tt.args)
 			if got != tt.want {
-				t.Errorf("formatToolCall(\"subagent\", %q) = %q, want %q", tt.args, got, tt.want)
+				t.Errorf("formatToolSummary(\"subagent\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
@@ -422,28 +422,28 @@ func TestFormatToolCall_Wait(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCall("wait", tt.args)
+			got := formatToolSummary("wait", tt.args)
 			if got != tt.want {
-				t.Errorf("formatToolCall(\"wait\", %q) = %q, want %q", tt.args, got, tt.want)
+				t.Errorf("formatToolSummary(\"wait\", %q) = %q, want %q", tt.args, got, tt.want)
 			}
 		})
 	}
 }
 
 func TestFormatToolCall_Lock(t *testing.T) {
-	if got, want := formatToolCall("lock", `{"path":"foo/bar.go","seconds":30}`), "lock(foo/bar.go)"; got != want {
-		t.Errorf("formatToolCall(\"lock\", ...) = %q, want %q", got, want)
+	if got, want := formatToolSummary("lock", `{"path":"foo/bar.go","seconds":30}`), "lock(foo/bar.go)"; got != want {
+		t.Errorf("formatToolSummary(\"lock\", ...) = %q, want %q", got, want)
 	}
-	if got, want := formatToolCall("unlock", `{"path":"foo/bar.go","holder":"holder-abc"}`), "unlock(foo/bar.go)"; got != want {
-		t.Errorf("formatToolCall(\"unlock\", ...) = %q, want %q", got, want)
+	if got, want := formatToolSummary("unlock", `{"path":"foo/bar.go","holder":"holder-abc"}`), "unlock(foo/bar.go)"; got != want {
+		t.Errorf("formatToolSummary(\"unlock\", ...) = %q, want %q", got, want)
 	}
 }
 
 func TestFormatToolCall_UnknownToolFallsBack(t *testing.T) {
-	got := formatToolCall("unknown", `{"foo":"bar"}`)
+	got := formatToolSummary("unknown", `{"foo":"bar"}`)
 	want := "unknown(...)"
 	if got != want {
-		t.Errorf("formatToolCall(\"unknown\", ...) = %q, want %q", got, want)
+		t.Errorf("formatToolSummary(\"unknown\", ...) = %q, want %q", got, want)
 	}
 }
 

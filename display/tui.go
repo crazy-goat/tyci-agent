@@ -340,7 +340,7 @@ type TuiModel struct {
 	mdCacheRendered  map[int]string         // cached rendered ANSI output per block
 	streamWraps      map[int]*streamWrap    // incremental raw-wrap state during streaming
 	mdStreamState    map[int]*mdStreamState // progressive-markdown fence/boundary scan state during streaming
-	toolDisplayCache map[int]string         // cached formatToolCall result per tool block index
+	toolDisplayCache map[int]string         // cached formatToolSummary result per tool block index
 
 	// Total line count cache (invalidated on block add/change/resize)
 	cachedTotalLines int

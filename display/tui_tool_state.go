@@ -10,7 +10,7 @@ func (m *TuiModel) appendToLastTool(delta string) {
 		if m.blocks[i].kind == "tool" {
 			m.blocks[i].content += delta
 			// The collapsed tool line only changes once the args JSON is
-			// complete (formatToolCall shows "tool(...)" until it parses).
+			// complete (formatToolSummary shows "tool(...)" until it parses).
 			// Skip cache invalidation for deltas that cannot end the JSON —
 			// otherwise every delta re-parses the whole accumulated args.
 			if jsonMaybeComplete(m.blocks[i].content) {
