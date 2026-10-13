@@ -36,7 +36,7 @@ type treeRun struct {
 // run form the last row, the ad-hoc row. With no run source (runLister nil)
 // only the ad-hoc row is returned, and it is empty when there are no
 // ad-hoc agents.
-func (m TuiModel) buildTree() []treeRun {
+func (m *TuiModel) buildTree() []treeRun {
 	byRun := map[string][]jobs.Job{}
 	var adHoc []jobs.Job
 	for _, j := range m.sortedBackgroundJobs() {

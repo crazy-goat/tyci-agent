@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/runlog"
-	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // replaceWait is how long a replacement waits for the old agent to stop. A
@@ -122,8 +121,6 @@ func (s *agentSlot) replace(agentID, toRole, reason string) error {
 // the old agent is stopped, the summary is built and the new role runs in the
 // same visit. Visits are not counted again. It returns the role that ran last.
 func (r *Runner) runAgent(ctx context.Context, st *RunState, cur string, s State, rc RunContext) (string, string, string, error) {
-	// The agents of the run start their jobs under this run ID (jobs.Job.RunID).
-	ctx = context.WithValue(ctx, jobs.RunIDCtxKey{}, ShowRunID(st.Run))
 	if r.slot == nil {
 		key, session, err := r.Agents.Run(ctx, s.Agent, s.Task, rc)
 		return s.Agent, key, session, err

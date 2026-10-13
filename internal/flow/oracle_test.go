@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
@@ -18,6 +19,7 @@ type oracleAgents struct {
 	err     error
 	calls   []RunContext
 	tasks   []string
+	runIDs  []string // the run ID on the context of each oracle call
 }
 
 func (o *oracleAgents) Run(ctx context.Context, role, task string, rc RunContext) (string, string, error) {
@@ -26,6 +28,8 @@ func (o *oracleAgents) Run(ctx context.Context, role, task string, rc RunContext
 	}
 	o.calls = append(o.calls, rc)
 	o.tasks = append(o.tasks, task)
+	runID, _ := ctx.Value(jobs.RunIDCtxKey{}).(string)
+	o.runIDs = append(o.runIDs, runID)
 	if o.err != nil {
 		return "", "", o.err
 	}
@@ -101,6 +105,21 @@ func TestOracle_RetryNoteReachesWorkerThenStopEnds(t *testing.T) {
 	want := "workflow run test-run: oracle answered retry use the new flag: the worker missed the flag"
 	if len(f.notices) == 0 || f.notices[0] != want {
 		t.Fatalf("notices %q, want first %q", f.notices, want)
+	}
+}
+
+func TestOracle_JobCarriesRunID(t *testing.T) {
+	f := newOracleFixture(askWF(false), "retry use the new flag\nthe worker missed the flag", "stop\nno more work")
+	if err := f.r.Run(context.Background(), f.st); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if len(f.oa.runIDs) != 2 {
+		t.Fatalf("oracle calls %d, want 2", len(f.oa.runIDs))
+	}
+	for i, id := range f.oa.runIDs {
+		if id != "test-run" {
+			t.Fatalf("oracle call %d run ID %q, want test-run", i, id)
+		}
 	}
 }
 

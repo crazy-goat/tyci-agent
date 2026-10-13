@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/jobs"
 )
 
 // ErrPaused is returned when the run enters an ask state.
@@ -63,6 +64,9 @@ func (r *Runner) Continue(ctx context.Context, st *RunState) error {
 // run is Run; again skips the visit count of the first state unless that visit
 // is not counted in the saved state.
 func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) {
+	// Every agent of the run starts its job under this run ID (jobs.Job.RunID),
+	// the oracle and the replaced agents included.
+	ctx = context.WithValue(ctx, jobs.RunIDCtxKey{}, ShowRunID(st.Run))
 	defer func() {
 		if p := recover(); p != nil {
 			st.Status = "failed"

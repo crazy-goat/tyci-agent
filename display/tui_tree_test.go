@@ -96,7 +96,8 @@ func TestBuildTree_NoRunSource(t *testing.T) {
 	if len(got) != 1 || got[0].run.ID != treeAdHocID {
 		t.Fatalf("tree = %+v, want only the ad-hoc row", got)
 	}
-	if got := treeModel(nil).buildTree(); len(got) != 0 {
+	empty := treeModel(nil)
+	if got := empty.buildTree(); len(got) != 0 {
 		t.Fatalf("empty model tree = %+v, want none", got)
 	}
 }
@@ -107,7 +108,8 @@ func TestBuildTree_FinishedRunsCapped(t *testing.T) {
 		runs = append(runs, treeTestRun(fmt.Sprintf("#%d", i), "done", i))
 	}
 	runs = append(runs, treeTestRun("#9", "running", 0))
-	got := treeModel(runs).buildTree()
+	withRuns := treeModel(runs)
+	got := withRuns.buildTree()
 	if len(got) != treeFinishedRuns+1 {
 		t.Fatalf("rows = %d, want %d (one active, %d finished)", len(got), treeFinishedRuns+1, treeFinishedRuns)
 	}

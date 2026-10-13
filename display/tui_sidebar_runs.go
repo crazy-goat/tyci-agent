@@ -57,7 +57,7 @@ func runFinished(r TuiRunRow) bool {
 // sidebarRunRows returns the rows of the Runs tab in display order, the same
 // rows that buildTree draws. The index of a row is the cursor position of its
 // run, so the cursor, Enter and the stop key use this list only.
-func (m TuiModel) sidebarRunRows() []TuiRunRow {
+func (m *TuiModel) sidebarRunRows() []TuiRunRow {
 	tree := m.buildTree()
 	rows := make([]TuiRunRow, 0, len(tree))
 	for _, t := range tree {
