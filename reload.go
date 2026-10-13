@@ -34,10 +34,15 @@ var reloadMu sync.Mutex
 
 // rememberProjectSetup records the project setup that initCommon made. It
 // also records the file hashes that the setup loaded, so that the first
-// reload sees only the changes made after the start.
+// reload sees only the changes made after the start. A failed start-up
+// connect leaves no MCP runner; then the MCP hash is not recorded, so the
+// next reload starts the servers.
 func rememberProjectSetup(wd string, trusted, mcp bool) {
 	reloadMu.Lock()
 	reloadHashes = settingsHashes(wd, trusted)
+	if mcp && tools.GetMCPToolRunner() == nil {
+		delete(reloadHashes, "mcp")
+	}
 	reloadMu.Unlock()
 
 	projectSetup.mu.Lock()

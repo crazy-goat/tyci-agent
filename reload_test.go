@@ -246,9 +246,9 @@ const luaReloadScript = `return {schema = {name = "reload-main-lua"}, run = func
 // the MCP servers when no MCP file changed.
 func TestReloadKeepsMCPWhenOnlyHooksChange(t *testing.T) {
 	wd := setupReloadProject(t)
-	rememberProjectSetup(wd, true, true)
 	runner := tools.NewMCPToolRunner()
 	t.Cleanup(tools.SetMCPToolRunnerForTests(runner))
+	rememberProjectSetup(wd, true, true)
 
 	writeProjectHooks(t, wd, preHooksJSON)
 	summary, err := reloadProjectSettings(context.Background())
@@ -260,6 +260,25 @@ func TestReloadKeepsMCPWhenOnlyHooksChange(t *testing.T) {
 	}
 	if !strings.Contains(summary, "mcp: unchanged") {
 		t.Errorf("summary = %q, want the unchanged mcp line", summary)
+	}
+}
+
+// TestReloadStartsMCPAfterFailedStart checks that a start-up MCP connect that
+// failed is retried by the next reload, although no MCP file changed.
+func TestReloadStartsMCPAfterFailedStart(t *testing.T) {
+	wd := setupReloadProject(t)
+	t.Cleanup(tools.SetMCPToolRunnerForTests(nil))
+	rememberProjectSetup(wd, true, true)
+
+	summary, err := reloadProjectSettings(context.Background())
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if strings.Contains(summary, "mcp: unchanged") {
+		t.Errorf("summary = %q, want the MCP servers started again", summary)
+	}
+	if tools.GetMCPToolRunner() == nil {
+		t.Error("MCP servers not started by the reload after a failed start")
 	}
 }
 
