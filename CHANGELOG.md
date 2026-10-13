@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Bus: the journal cleanup deletes only files named `bus-<pid>-<start>.jsonl`, and keeps the journal of a process that is still running, even when it is older than 7 days (#696).
 - Sessions: a session that is still open in a running tyci process is no longer moved from the old session layout into its project directory, even when its file is older than ten minutes. The move waits until the writer closes the file (#692).
 - Subagents: `kill_job`, `wait` and `jobs` refuse or hide every job outside the caller's subtree when a subagent lost its sink context key. The subtree rule now fails closed (#698).
 - Flow: the run counter is written through a temp file and a rename, so a crash cannot leave an empty counter. A run without an issue skips a number whose `run-<id>` branch still exists. `workflow_status`, `workflow_stop` and `workflow_resume` show the run as `#17`, as `workflow_start` does, and the Runs tab shows the run id next to the issue (#673).
