@@ -465,6 +465,21 @@ func builtinToolsSchema() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        "session_read",
+				"description": "Read the last messages of a saved session from session_list. Shows user and assistant text only. Use it to recall an earlier decision.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path":         map[string]any{"type": "string", "description": "The path of a session, from session_list."},
+						"max_messages": map[string]any{"type": "integer", "description": "How many last messages to return, 1 to 100. Default 20."},
+					},
+					"required": []string{"path"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name":        "session_rename",
 				"description": "Give this conversation a short title (at most 5 words). It shows in /resume.",
 				"parameters": map[string]any{
@@ -1110,6 +1125,8 @@ var toolRegistry = map[string]Tool{
 	"session_rename": &SessionRenameTool{},
 	// session_list fails until SetSessionBrowser is called (main wires it).
 	"session_list": &SessionListTool{},
+	// session_read fails until SetSessionBrowser is called (main wires it).
+	"session_read": &SessionReadTool{},
 
 	"workflow_start":  &WorkflowStartTool{},
 	"workflow_status": &WorkflowStatusTool{},

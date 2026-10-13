@@ -1,9 +1,16 @@
 package main
 
 import (
+	"fmt"
+	"strings"
+
+	"github.com/crazy-goat/tyci-agent/connector"
 	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
+
+// sessionReadTextLimit is the most runes of one message that session_read returns.
+const sessionReadTextLimit = 2000
 
 // sessionBrowserAdapter satisfies tools.SessionBrowser with the session
 // package, so the tools package does not list sessions itself.
@@ -30,4 +37,67 @@ func (sessionBrowserAdapter) List(cwd string, all bool) ([]tools.SessionInfo, er
 		})
 	}
 	return out, nil
+}
+
+// Read refuses a path that session_list does not return. It keeps the last
+// maxMessages user and assistant messages that have text. Tool calls, tool
+// results and thinking blocks are skipped.
+func (sessionBrowserAdapter) Read(path string, maxMessages int) (string, []tools.SessionMessage, bool, error) {
+	entries, err := session.ResumeEntriesAll()
+	if err != nil {
+		return "", nil, false, err
+	}
+	var title string
+	listed := false
+	for _, e := range entries {
+		if e.Path == path {
+			title = e.Title
+			listed = true
+			break
+		}
+	}
+	if !listed {
+		return "", nil, false, fmt.Errorf("session %q is not in the session list; use session_list first", path)
+	}
+
+	_, msgs, _, _, err := session.LoadForReplay(path)
+	if err != nil {
+		return "", nil, false, err
+	}
+	var texts []tools.SessionMessage
+	for _, m := range msgs {
+		if m.Role != "user" && m.Role != "assistant" {
+			continue
+		}
+		text := messageText(m)
+		if text == "" {
+			continue
+		}
+		texts = append(texts, tools.SessionMessage{Role: m.Role, Text: cutRunes(text, sessionReadTextLimit)})
+	}
+	truncated := len(texts) > maxMessages
+	if truncated {
+		texts = texts[len(texts)-maxMessages:]
+	}
+	return title, texts, truncated, nil
+}
+
+// messageText joins the text blocks of a message with a blank line.
+func messageText(m connector.Message) string {
+	var parts []string
+	for _, b := range m.Content {
+		if b.Type == "text" && b.Text != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// cutRunes returns the first limit runes of s and "..." when it cuts.
+func cutRunes(s string, limit int) string {
+	r := []rune(s)
+	if len(r) <= limit {
+		return s
+	}
+	return string(r[:limit]) + "..."
 }

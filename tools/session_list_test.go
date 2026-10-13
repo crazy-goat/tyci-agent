@@ -9,17 +9,31 @@ import (
 	"time"
 )
 
-// fakeBrowser records the arguments of List and returns items.
+// fakeBrowser records the arguments of List and Read, and returns the
+// configured items and read result.
 type fakeBrowser struct {
 	items  []SessionInfo
 	gotCwd string
 	gotAll bool
+
+	readTitle string
+	readMsgs  []SessionMessage
+	readTrunc bool
+	readErr   error
+	gotPath   string
+	gotMax    int
 }
 
 func (f *fakeBrowser) List(cwd string, all bool) ([]SessionInfo, error) {
 	f.gotCwd = cwd
 	f.gotAll = all
 	return f.items, nil
+}
+
+func (f *fakeBrowser) Read(path string, maxMessages int) (string, []SessionMessage, bool, error) {
+	f.gotPath = path
+	f.gotMax = maxMessages
+	return f.readTitle, f.readMsgs, f.readTrunc, f.readErr
 }
 
 func wireFakeBrowser(t *testing.T, f *fakeBrowser) {
