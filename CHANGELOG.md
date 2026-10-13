@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Subagents: a resumed subagent can wait for or stop only the jobs in its own subtree, as a new subagent can (#503).
+
 ## [0.8.0] - 2026-10-13
 
 ### Changed

@@ -321,6 +321,10 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		}
 
 		c := &collector{}
+		// Mark the run as a child, as the promoted /btw path does (see
+		// SubagentSinkCtxKey). Without it, the subtree rule of kill_job and
+		// wait is skipped and the resumed run may stop jobs outside its subtree.
+		runCtx = context.WithValue(runCtx, tools.SubagentSinkCtxKey{}, c)
 		// The new user turn of the resume is the first event of this run's
 		// agent view, after the turns copied above (see tools.LiveEvent).
 		tools.RecordLiveEvent(newJobID, tools.LiveEvent{Kind: "prompt", Content: task})
