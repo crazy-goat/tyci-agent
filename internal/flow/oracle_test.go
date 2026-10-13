@@ -236,6 +236,28 @@ func TestOracle_OpenPRGotoEndingStateNeedsHuman(t *testing.T) {
 	}
 }
 
+// Without a PR, a goto to merge still goes to a human, with a reason that does
+// not mention the PR.
+func TestOracle_OracleGotoMergeWithoutPRNeedsHuman(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "recover", States: map[string]State{
+		"merge":   {Check: "merge.sh", On: map[string]string{"merged": "end", "default": "end"}},
+		"recover": {Agent: "oracle", Task: "recover", On: map[string]string{"stop": "end", "default": "ask"}},
+		"ask":     {Ask: "The run needs a human decision.", On: map[string]string{"retry": "recover", "stop": "end"}},
+		"end":     {End: true},
+	}}
+	f := newOracleFixture(wf, "goto:merge the work is ready")
+	if err := f.r.Run(context.Background(), f.st); !errors.Is(err, ErrPaused) {
+		t.Fatalf("err = %v, want ErrPaused", err)
+	}
+	if f.st.Status != "paused" || f.st.Current != "ask" {
+		t.Fatalf("status %q current %q, want paused at ask", f.st.Status, f.st.Current)
+	}
+	want := "The oracle proposes goto:merge, a human must confirm: the work is ready"
+	if !strings.Contains(f.st.Ask.Message, want) || strings.Contains(f.st.Ask.Message, "PR is open") {
+		t.Fatalf("message %q", f.st.Ask.Message)
+	}
+}
+
 func TestOracle_GotoStatesLeaveOutBlockedStates(t *testing.T) {
 	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
 		"code":     {Agent: "coder", On: map[string]string{"done": "merge"}},

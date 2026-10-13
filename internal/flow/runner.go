@@ -332,7 +332,11 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				if !ok {
 					return r.failUnknownKey(st, cur, key, art)
 				}
-				note = MaskSecrets(strings.TrimSpace("The oracle proposes " + key + " while the PR is open, a human must confirm: " + note))
+				scope := ""
+				if st.PR != 0 {
+					scope = " while the PR is open"
+				}
+				note = MaskSecrets(strings.TrimSpace("The oracle proposes " + key + scope + ", a human must confirm: " + note))
 			}
 			if strings.HasPrefix(key, "goto:") && note != "" && !blocked {
 				st.Note = note
