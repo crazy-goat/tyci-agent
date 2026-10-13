@@ -97,7 +97,7 @@ block to its `output.log`. The run then goes to the `fixer` role, which fixes sm
 and answers `ok` (the step runs again) or `failed`. On `failed` the `oracle` answers
 `goto:<state>`, `stop` or `ask <reason>`. After 2 fixer runs and 1 oracle run for the same
 step, the run pauses. The limits apply to the states named `fixer` and `oracle`, not to
-their agent role.
+their agent role. With an open, unmerged PR, `stop`, `goto:merge` and a goto to a state that ends the run pause at `ask` for a human.
 
 ### Pauses and the oracle
 
@@ -1040,7 +1040,7 @@ file and `range: "append"` need no prior read.
 Sessions are automatically saved to `~/.tyci/sessions/` as JSONL files.
 The chat tool `session_list` lets the model list the saved sessions, newest first (`all: true` includes other projects). It does not read message content.
 Subagents that run as jobs write their own files to `~/.tyci/sessions/<project>/agents/`. The file name ends with the job id. `tyci session list` does not show these files, and nothing deletes them yet. Agents of a workflow run write to the run dir instead (see Run transcripts).
-`bus.jsonl` is the message journal; it is not a session and the session list skips it.
+`bus-<pid>-<start>.jsonl` is the message journal of one tyci process; it is not a session and the session list skips it. Journals older than 7 days are deleted when a tyci process starts.
 Each line is a complete event (message, tool call, result, usage).
 
 A session can have a name. It is a `title` event: `{"type":"title","id":"<session id>","timestamp":"<RFC 3339>","title":"<text>"}`. `/rename <title>` and the chat tool `session_rename` append it. The last `title` event in the file wins. The `/resume` picker shows the title instead of the first prompt, and `tyci session list` shows it before the path. Old files have no `title` event. They still work, and they show the first prompt.

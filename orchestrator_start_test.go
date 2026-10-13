@@ -194,3 +194,58 @@ func TestRunRowsSteps(t *testing.T) {
 		t.Fatalf("run: cost %q took %v since %v", r.Cost, r.Took, r.Since)
 	}
 }
+
+func TestOrchestratorWorkflowsMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	info := flow.RepoInfo{Home: home, Root: t.TempDir()}
+
+	got := missingOrchestratorWorkflow(info, "roadmap", "issue-to-merge")
+	if !strings.Contains(got, `tyci workflow init roadmap`) || strings.Contains(got, "\n") {
+		t.Fatalf("%q", got)
+	}
+
+	if _, err := flow.Init("roadmap", "", home); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Init("issue-to-merge", "", home); err != nil {
+		t.Fatal(err)
+	}
+	if got := missingOrchestratorWorkflow(info, "roadmap", "issue-to-merge"); got != "" {
+		t.Fatalf("%q", got)
+	}
+}
+
+// The config loader leaves Workflow empty when no config sets it. The start check
+// must use the default name, so an empty config with both workflows is no problem.
+func TestOrchestratorWorkflowDefaultFromConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	info := flow.RepoInfo{Home: home, Root: t.TempDir()}
+
+	oc, err := loadOrchestratorConfig(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oc.Workflow != "" {
+		t.Fatalf("loader set workflow %q", oc.Workflow)
+	}
+	if _, err := flow.Init("roadmap", "", home); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Init(orchestrator.DefaultWorkflow, "", home); err != nil {
+		t.Fatal(err)
+	}
+	if got := missingOrchestratorWorkflow(info, "roadmap", orchestratorWorkflow(oc)); got != "" {
+		t.Fatalf("empty config: %q", got)
+	}
+
+	// Without issue-to-merge the error must name it.
+	if err := os.RemoveAll(filepath.Join(home, ".tyci", "workflows", orchestrator.DefaultWorkflow)); err != nil {
+		t.Fatal(err)
+	}
+	got := missingOrchestratorWorkflow(info, "roadmap", orchestratorWorkflow(oc))
+	if !strings.Contains(got, "tyci workflow init "+orchestrator.DefaultWorkflow) {
+		t.Fatalf("%q", got)
+	}
+}
