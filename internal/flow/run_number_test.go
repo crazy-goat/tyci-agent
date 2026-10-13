@@ -230,3 +230,43 @@ func TestRunOrder_NumbersByValueBeforeOldIds(t *testing.T) {
 		t.Fatalf("ListRuns order = %v, want %v", got, want)
 	}
 }
+
+func TestNewRunID_FailedWriteKeepsOldCounter(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the directory permissions this test uses")
+	}
+	home := t.TempDir()
+	if got := testRunID(home); got != "1" {
+		t.Fatalf("run id = %s, want 1", got)
+	}
+	base := filepath.Join(home, ".tyci", "runs", "r")
+	// A read-only dir: the temp file cannot be created, so the write must fail
+	// and the counter must keep its old value.
+	if err := os.Chmod(base, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(base, 0o700) })
+	if _, err := NewRunID(home, "r"); err == nil {
+		t.Fatal("NewRunID succeeded in a read-only dir")
+	}
+	data, err := os.ReadFile(filepath.Join(base, runCounterFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "1\n" {
+		t.Fatalf("counter = %q, want the old value %q", data, "1\n")
+	}
+}
+
+func TestReserveRunID_SkipsRunBranchThatStillExists(t *testing.T) {
+	work, _ := newRepo(t)
+	e2eGit(t, work, "branch", "run-1")
+	home := t.TempDir()
+	id, err := reserveRunID(home, "r", work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "2" {
+		t.Fatalf("run id = %s, want 2: run-1 is a branch of an old run", id)
+	}
+}

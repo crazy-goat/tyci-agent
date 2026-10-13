@@ -101,7 +101,7 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 			NewStore: func(runID string) (*Store, error) {
 				return &Store{Dir: RunDir(info.Home, info.Name(), runID)}, nil
 			},
-			NewRunID: func() (string, error) { return NewRunID(info.Home, info.Name()) },
+			NewRunID: func() (string, error) { return reserveRunID(info.Home, info.Name(), info.MainRoot) },
 		}
 		return PrepareRun(ctx, d, PrepareReq{Workflow: req.Workflow, Repo: info.Repo, DefaultBranch: info.DefaultBranch, Params: req.Params})
 	}
@@ -155,6 +155,21 @@ type failingAgents struct{ err error }
 
 func (f failingAgents) Run(context.Context, string, string, RunContext) (string, string, error) {
 	return "", "", f.err
+}
+
+// reserveRunID reserves the next run number whose run branch does not exist in
+// the repository at mainRoot. A branch of an old run can stay after its run dir
+// and counter are deleted. Each skipped number is used up, so the loop ends.
+func reserveRunID(home, repoName, mainRoot string) (string, error) {
+	for {
+		id, err := NewRunID(home, repoName)
+		if err != nil {
+			return "", err
+		}
+		if !worktree.BranchExists(context.Background(), mainRoot, "run-"+id) {
+			return id, nil
+		}
+	}
 }
 
 // addRunWorktree creates the worktree of a run. A run with an issue gets issue-<N>;

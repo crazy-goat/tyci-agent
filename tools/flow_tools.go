@@ -96,6 +96,23 @@ func workflowJSON(v any) ToolResult {
 	return ToolResult{Type: "result", Success: true, Content: string(b)}
 }
 
+// workflowRunJSON is workflowJSON for a saved run state. The state file keeps the
+// bare run number, so its "run" field is shown as users see it ("#17").
+func workflowRunJSON(v any) ToolResult {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return workflowFail(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return workflowFail(err)
+	}
+	if run, ok := m["run"].(string); ok {
+		m["run"] = showRunID(run)
+	}
+	return workflowJSON(m)
+}
+
 // StopWorkflowRun stops an active run through the wired workflow manager. It is
 // used by the workflow_stop tool, by the /stop command and by the Runs tab key.
 func StopWorkflowRun(run, reason string) (any, error) {
@@ -160,7 +177,7 @@ func (t *WorkflowStatusTool) Run(_ context.Context, input map[string]any) ToolRe
 	if err != nil {
 		return workflowFail(err)
 	}
-	return workflowJSON(st)
+	return workflowRunJSON(st)
 }
 
 // WorkflowStopTool stops an active run. The worktree and the pull request stay.
@@ -177,7 +194,7 @@ func (t *WorkflowStopTool) Run(_ context.Context, input map[string]any) ToolResu
 	if err != nil {
 		return workflowFail(err)
 	}
-	return workflowJSON(st)
+	return workflowRunJSON(st)
 }
 
 // ReplaceAgentTool replaces a stuck agent of a workflow run with an agent of
@@ -241,7 +258,7 @@ func (t *WorkflowResumeTool) Run(_ context.Context, input map[string]any) ToolRe
 	if answer == "apply" || answer == "reject" {
 		// A proposal answer keeps the run paused; the status says what happened.
 		if st, err := m.Status(run); err == nil {
-			return workflowJSON(st)
+			return workflowRunJSON(st)
 		}
 	}
 	return workflowJSON(map[string]any{"run": showRunID(strings.TrimPrefix(run, "#")), "status": "running"})

@@ -224,3 +224,22 @@ func TestWorkerCannotCallReplace(t *testing.T) {
 		t.Fatal("chat schema lacks replace_agent")
 	}
 }
+
+// stateWorkflowManager returns a saved run state, whose run field is the bare
+// run number, as the flow package does.
+type stateWorkflowManager struct{ fakeWorkflowManager }
+
+func (f *stateWorkflowManager) Status(string) (any, error) {
+	return map[string]any{"run": "17", "status": "running"}, nil
+}
+
+func TestWorkflowStatusAndStop_ShowRunNumberWithHash(t *testing.T) {
+	withWorkflowManager(t, &stateWorkflowManager{})
+	ctx := context.Background()
+	if res := RunTool(ctx, "workflow_status", map[string]any{"run": "17"}); !res.Success || !strings.Contains(res.Content, `"run":"#17"`) {
+		t.Fatalf("status: %+v", res)
+	}
+	if res := RunTool(ctx, "workflow_stop", map[string]any{"run": "17"}); !res.Success || !strings.Contains(res.Content, `"run":"#17"`) {
+		t.Fatalf("stop: %+v", res)
+	}
+}

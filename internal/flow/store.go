@@ -46,10 +46,37 @@ func NewRunID(home, repoName string) (string, error) {
 		return "", err
 	}
 	next := last + 1
-	if err := os.WriteFile(path, []byte(strconv.Itoa(next)+"\n"), 0o600); err != nil {
+	if err := writeFileAtomic(path, []byte(strconv.Itoa(next)+"\n")); err != nil {
 		return "", err
 	}
 	return strconv.Itoa(next), nil
+}
+
+// writeFileAtomic writes data to path (0600) through a temp file in the same
+// dir and a rename. A crash or a full disk leaves the old file or the new one,
+// never a truncated file.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op after a successful rename
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // readRunCounter returns the last run number in path. When path does not exist,
