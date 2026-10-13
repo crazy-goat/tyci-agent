@@ -20,6 +20,11 @@ func (m *fakeManager) StartIssue(_ context.Context, workflow string, issue int) 
 	return "20260101-000000-1", nil, nil
 }
 
+func (m *fakeManager) Start(_ context.Context, req flow.StartRequest) (string, []string, error) {
+	m.workflow = req.Workflow
+	return "20260101-000000-2", req.Params, nil
+}
+
 func (m *fakeManager) RunText(_ context.Context, _, input string) (string, error) {
 	m.text = input
 	return "answer", nil
@@ -33,7 +38,7 @@ func (m *fakeManager) Subscribe(fn func(flow.RunEvent)) func() {
 func TestFlowRunnerAskResumeMerged(t *testing.T) {
 	m := &fakeManager{}
 	r := NewRunner(m)
-	h, err := r.Start(context.Background(), "issue-to-merge", map[string]string{"issue": "7"})
+	h, err := r.Start(context.Background(), "issue-to-merge", map[string]string{"issue": "7"}, nil)
 	if err != nil || m.issue != 7 || m.workflow != "issue-to-merge" {
 		t.Fatalf("err=%v workflow=%q issue=%d", err, m.workflow, m.issue)
 	}
@@ -63,7 +68,7 @@ func TestFlowRunnerAskResumeMerged(t *testing.T) {
 
 func TestFlowRunnerTextInput(t *testing.T) {
 	m := &fakeManager{}
-	h, err := NewRunner(m).Start(context.Background(), "roadmap", map[string]string{"input": "{}"})
+	h, err := NewRunner(m).Start(context.Background(), "roadmap", map[string]string{"input": "{}"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +84,7 @@ func TestFlowRunnerTextInput(t *testing.T) {
 
 func TestFlowRunnerRejectsOtherInputs(t *testing.T) {
 	r := NewRunner(&fakeManager{})
-	if _, err := r.Start(context.Background(), "roadmap", map[string]string{"x": "{}"}); err == nil {
+	if _, err := r.Start(context.Background(), "roadmap", map[string]string{"x": "{}"}, nil); err == nil {
 		t.Fatal("want error")
 	}
 }
@@ -142,7 +147,7 @@ func TestFlowRunnerAdoptPausedRunAsksAtOnce(t *testing.T) {
 func TestFlowRunnerStoppedRunEndsHandler(t *testing.T) {
 	m := &fakeManager{}
 	r := NewRunner(m)
-	h, err := r.Start(context.Background(), "issue-to-merge", map[string]string{"issue": "7"})
+	h, err := r.Start(context.Background(), "issue-to-merge", map[string]string{"issue": "7"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

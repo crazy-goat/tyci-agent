@@ -14,6 +14,7 @@ type FileConfig struct {
 	Workers        *int    `json:"workers"`
 	PlanTimeoutSec *int    `json:"plan_timeout_sec"`
 	AcceptedLabel  *string `json:"accepted_label"`
+	AutoClose      *bool   `json:"auto_close"`
 }
 
 // Merge returns user with every key set in project replaced (project wins).
@@ -27,13 +28,19 @@ func Merge(user, project FileConfig) FileConfig {
 	if project.AcceptedLabel != nil {
 		user.AcceptedLabel = project.AcceptedLabel
 	}
+	if project.AutoClose != nil {
+		user.AutoClose = project.AutoClose
+	}
 	return user
 }
 
-// Resolve applies the defaults (3 workers, no plan timeout, label "accepted")
-// and validates the values. source names the file in error messages.
+// Resolve applies the defaults (3 workers, no plan timeout, label "accepted",
+// auto_close true) and validates the values. source names the file in error messages.
 func (c FileConfig) Resolve(source string) (Config, error) {
-	cfg := Config{Workers: 3, AcceptedLabel: "accepted"}
+	cfg := Config{Workers: 3, AcceptedLabel: "accepted", AutoClose: true}
+	if c.AutoClose != nil {
+		cfg.AutoClose = *c.AutoClose
+	}
 	if c.Workers != nil {
 		if *c.Workers < 0 {
 			return Config{}, fmt.Errorf("orchestrator.workers must be an integer >= 0 (got %d) in %s", *c.Workers, source)

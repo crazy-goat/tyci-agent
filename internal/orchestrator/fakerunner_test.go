@@ -40,16 +40,27 @@ type fakeRunner struct {
 	gateIssue   int
 	entered     chan struct{} // gets a value when Start for gateIssue reaches the gate
 	oracle      func(input string) RunResult
-	started     chan int // issue numbers in start order
-	resumed     []int    // issues of runs resumed after a restart (Adopter)
-	paused      []int    // issues of paused runs (Adopter); their handles ask at once
+	started     chan int      // issue numbers in start order
+	resumed     []int         // issues of runs resumed after a restart (Adopter)
+	paused      []int         // issues of paused runs (Adopter); their handles ask at once
+	closes      chan []string // params of each CloseWorkflow start
+	closeH      *fakeHandle   // the handle of the last CloseWorkflow start
 }
 
 func newFakeRunner() *fakeRunner {
-	return &fakeRunner{handles: map[int]*fakeHandle{}, count: map[int]int{}, startErr: map[int]error{}, started: make(chan int, 100)}
+	return &fakeRunner{handles: map[int]*fakeHandle{}, count: map[int]int{}, startErr: map[int]error{}, started: make(chan int, 100), closes: make(chan []string, 10)}
 }
 
-func (r *fakeRunner) Start(_ context.Context, workflow string, in map[string]string) (RunHandle, error) {
+func (r *fakeRunner) Start(_ context.Context, workflow string, in map[string]string, params []string) (RunHandle, error) {
+	if len(params) > 0 {
+		// The test ends the run by sending on the handle's done channel.
+		h := &fakeHandle{id: workflow, done: make(chan RunResult, 1), asks: make(chan struct{}, 1), owner: r}
+		r.mu.Lock()
+		r.closeH = h
+		r.mu.Unlock()
+		r.closes <- params
+		return h, nil
+	}
 	if workflow == "roadmap" {
 		if r.oracle == nil {
 			return nil, errors.New("oracle down")
