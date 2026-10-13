@@ -226,3 +226,50 @@ func TestEvents_PublishDoesNotWaitForObserver(t *testing.T) {
 		t.Fatal("Publish or Events did not finish: the observer blocks the bus")
 	}
 }
+
+// TestAny_ReceivesWithoutCountingAsRecipient checks that an Any watcher gets
+// a message whatever its To. The watcher is not a recipient for the delivery
+// state, so a message with no other recipient is Failed.
+func TestAny_ReceivesWithoutCountingAsRecipient(t *testing.T) {
+	b := New()
+	defer b.Close()
+	watcher := b.Subscribe("tui", Filter{Any: true, Kinds: []Kind{kindDurable}})
+
+	if _, err := Publish(b, kindDurable, orchestrator, agent("gone"), OriginSystem, item{ID: "1"}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if got := states(b.Events()); !slices.Equal(got, []DeliveryState{Failed}) {
+		t.Fatalf("states = %v, want [Failed]", got)
+	}
+	if got := watcher.Drain(); len(got) != 1 {
+		t.Fatalf("watcher got %d messages, want 1", len(got))
+	}
+	if got := states(b.Events()); !slices.Equal(got, []DeliveryState{Failed}) {
+		t.Fatalf("states after Drain = %v, want [Failed]", got)
+	}
+}
+
+// TestAny_DoesNotChangeDeliveryOfRecipient checks that an Any watcher does not
+// mark a message Received while its real recipient has not taken it.
+func TestAny_DoesNotChangeDeliveryOfRecipient(t *testing.T) {
+	b := New()
+	defer b.Close()
+	recipient := b.Subscribe("a", Filter{To: agent("a")})
+	watcher := b.Subscribe("tui", Filter{Any: true, Kinds: []Kind{kindDurable}})
+
+	if _, err := Publish(b, kindDurable, orchestrator, agent("a"), OriginSystem, item{ID: "1"}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if got := len(watcher.Drain()); got != 1 {
+		t.Fatalf("watcher got %d messages, want 1", got)
+	}
+	if got := states(b.Events()); !slices.Equal(got, []DeliveryState{Sent}) {
+		t.Fatalf("states after watcher Drain = %v, want [Sent]", got)
+	}
+	if got := len(recipient.Drain()); got != 1 {
+		t.Fatalf("recipient got %d messages, want 1", got)
+	}
+	if got := states(b.Events()); !slices.Equal(got, []DeliveryState{Sent, Received}) {
+		t.Fatalf("states after recipient Drain = %v, want [Sent Received]", got)
+	}
+}

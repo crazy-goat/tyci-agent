@@ -57,7 +57,7 @@ func (m *TuiModel) applyJobUpdate(j jobs.Job) {
 		selected = m.sidebarCursorJobID()
 	}
 	m.backgroundJobs[j.ID] = j
-	if !subagentLive(j.Status) {
+	if j.Status != jobs.StatusRunning {
 		m.tree.forget(j.ID)
 	}
 	if !sameOrder {

@@ -21,6 +21,9 @@ const (
 	KindBtwAnswer Kind = "btw.answer"
 	// KindPingMissed tells the parent that an agent has been quiet too long.
 	KindPingMissed Kind = "ping.missed"
+	// KindPingOK tells the TUI that an agent, after a ping.missed, shows
+	// activity again. It is Durable, so it keeps its order against ping.missed.
+	KindPingOK Kind = "ping.ok"
 	// KindToolResult is the late result of a tool call that was moved to the
 	// background. It is Durable and written with Origin=System.
 	KindToolResult Kind = "tool.result"
@@ -57,6 +60,11 @@ type PingMissed struct {
 	Description string        `json:"description,omitempty"`
 	LastNote    string        `json:"last_note,omitempty"`
 	QuietFor    time.Duration `json:"quiet_for"`
+}
+
+// PingOK is the payload of KindPingOK.
+type PingOK struct {
+	Agent string `json:"agent"`
 }
 
 // BtwAnswer is the payload of KindBtwAnswer.
@@ -106,6 +114,7 @@ func init() {
 	Register[AgentMessage](KindAgentMessage, Durable, nil)
 	Register[BtwAnswer](KindBtwAnswer, Durable, nil)
 	Register[PingMissed](KindPingMissed, Durable, nil)
+	Register[PingOK](KindPingOK, Durable, nil)
 	Register[ToolResult](KindToolResult, Durable, nil)
 }
 

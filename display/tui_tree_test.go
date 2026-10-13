@@ -128,6 +128,7 @@ func TestBuildTree_PingColours(t *testing.T) {
 		{jobs.StatusFailed, true, lipgloss.Color("196")},
 		{jobs.StatusFailed, false, lipgloss.Color("196")},
 		{jobs.StatusDone, false, lipgloss.Color("245")},
+		{jobs.StatusTruncated, false, lipgloss.Color("245")},
 		{jobs.StatusRunning, true, lipgloss.Color("220")},
 		{jobs.StatusRunning, false, lipgloss.Color("42")},
 		{jobs.StatusWaitingAnswer, false, lipgloss.Color("42")},
@@ -306,6 +307,59 @@ func TestAppMissedPing(t *testing.T) {
 	m.applyJobUpdate(done)
 	if m.tree.isMissed("a") {
 		t.Fatal("the mark stays after the agent is done")
+	}
+}
+
+// agentColour returns the ping colour of agent id in the tree of m.
+func agentColour(t *testing.T, m TuiModel, id string) lipgloss.TerminalColor {
+	t.Helper()
+	for _, r := range m.buildTree() {
+		for _, a := range r.agents {
+			if a.job.ID == id {
+				return a.colour
+			}
+		}
+	}
+	t.Fatalf("agent %s is not in the tree", id)
+	return nil
+}
+
+// TestAppPingOK_TurnsGreen checks that a missed agent turns green on ping.ok,
+// and yellow again on the next ping.missed.
+func TestAppPingOK_TurnsGreen(t *testing.T) {
+	m := treeModel(nil, treeTestJob("a", "", "", jobs.StatusRunning, 1))
+	m.tree = newTreeState()
+	model, _ := m.update(busPingMissedMsg{Agent: "a"})
+	m = model.(TuiModel)
+	if c := agentColour(t, m, "a"); c != lipgloss.Color("220") {
+		t.Fatalf("colour = %v, want yellow 220 after ping.missed", c)
+	}
+	model, _ = m.update(busPingOKMsg{Agent: "a"})
+	m = model.(TuiModel)
+	if c := agentColour(t, m, "a"); c != lipgloss.Color("42") {
+		t.Fatalf("colour = %v, want green 42 after ping.ok", c)
+	}
+	model, _ = m.update(busPingMissedMsg{Agent: "a"})
+	m = model.(TuiModel)
+	if c := agentColour(t, m, "a"); c != lipgloss.Color("220") {
+		t.Fatalf("colour = %v, want yellow 220 after a second ping.missed", c)
+	}
+}
+
+// TestAppMissedPing_WaitingAnswerClears checks that a missed agent that waits
+// for an answer is not yellow, and that it is green again once it runs.
+func TestAppMissedPing_WaitingAnswerClears(t *testing.T) {
+	m := treeModel(nil, treeTestJob("a", "", "", jobs.StatusRunning, 1))
+	m.tree = newTreeState()
+	model, _ := m.update(busPingMissedMsg{Agent: "a"})
+	m = model.(TuiModel)
+	m.applyJobUpdate(treeTestJob("a", "", "", jobs.StatusWaitingAnswer, 1))
+	if c := agentColour(t, m, "a"); c != lipgloss.Color("42") {
+		t.Fatalf("colour = %v, want green 42 while waiting for an answer", c)
+	}
+	m.applyJobUpdate(treeTestJob("a", "", "", jobs.StatusRunning, 1))
+	if c := agentColour(t, m, "a"); c != lipgloss.Color("42") {
+		t.Fatalf("colour = %v, want green 42 after the answer", c)
 	}
 }
 

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -110,4 +113,114 @@ func TestPingMissed_TextMatchesOldAlarm(t *testing.T) {
 			t.Fatalf("%s: text = %q, want %q", c.name, got, c.want)
 		}
 	}
+}
+
+// TestPingMissed_OnePublishPerMiss checks that one alarm is one bus message.
+// The journal gets one ping.missed line, the Bus tab one event, the parent one
+// copy and the TUI one copy.
+func TestPingMissed_OnePublishPerMiss(t *testing.T) {
+	journal := filepath.Join(t.TempDir(), "bus.jsonl")
+	b := bus.New(bus.WithJournal(journal))
+	defer b.Close()
+	parent := b.Subscribe("test-parent", bus.Filter{To: agentAddr("p"), Kinds: []bus.Kind{bus.KindPingMissed}})
+	tui := subscribePings(b)
+
+	publishPingMissed(b, "p", watchdog.Alarm{Agent: "job-3", QuietFor: time.Minute})
+
+	if n := len(parent.Drain()); n != 1 {
+		t.Fatalf("parent got %d ping.missed, want 1", n)
+	}
+	if n := len(tui.Drain()); n != 1 {
+		t.Fatalf("tui got %d ping.missed, want 1", n)
+	}
+	seqs := map[uint64]bool{}
+	for _, ev := range b.Events() {
+		if ev.Msg.Kind == bus.KindPingMissed {
+			seqs[ev.Msg.Seq] = true
+		}
+	}
+	if len(seqs) != 1 {
+		t.Fatalf("bus events for %d messages, want 1", len(seqs))
+	}
+	b.Close()
+	data, err := os.ReadFile(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), `"kind":"ping.missed"`); n != 1 {
+		t.Fatalf("journal has %d ping.missed lines, want 1:\n%s", n, data)
+	}
+}
+
+// TestWatchdogRecovered_PublishesOnlyWithTUISubscription checks that a recovery
+// writes no ping.ok when no TUI subscribed, as in a headless run. With the
+// subscription, it publishes one ping.ok that the TUI gets.
+func TestWatchdogRecovered_PublishesOnlyWithTUISubscription(t *testing.T) {
+	withTestWiring(t)
+	pingOKWanted.Store(false)
+	t.Cleanup(func() { pingOKWanted.Store(false) })
+
+	headless := filepath.Join(t.TempDir(), "headless.jsonl")
+	hb := bus.New(bus.WithJournal(headless))
+	appBus = hb
+	watchdogRecovered("job-1")
+	if n := len(hb.Events()); n != 0 {
+		t.Fatalf("headless bus has %d events, want none", n)
+	}
+	hb.Close()
+	if data, err := os.ReadFile(headless); err == nil && strings.Contains(string(data), `"kind":"ping.ok"`) {
+		t.Fatalf("headless journal has a ping.ok line:\n%s", data)
+	}
+
+	tuiJournal := filepath.Join(t.TempDir(), "tui.jsonl")
+	tb := bus.New(bus.WithJournal(tuiJournal))
+	defer tb.Close()
+	appBus = tb
+	tui := subscribePings(tb)
+	watchdogRecovered("job-1")
+	msgs := tui.Drain()
+	if len(msgs) != 1 || msgs[0].Kind != bus.KindPingOK {
+		t.Fatalf("tui got %d messages, want one ping.ok", len(msgs))
+	}
+	tb.Close()
+	data, err := os.ReadFile(tuiJournal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), `"kind":"ping.ok"`); n != 1 {
+		t.Fatalf("tui journal has %d ping.ok lines, want 1:\n%s", n, data)
+	}
+}
+
+// TestPingOK_TUIReceivesAsRecipient checks that a ping.ok addressed to the TUI
+// ends Sent and then Received, not Failed. The TUI watcher is an Any
+// subscription whose To is the TUI, so the bus counts it as the recipient.
+func TestPingOK_TUIReceivesAsRecipient(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	b := bus.New(bus.WithJournal(filepath.Join(t.TempDir(), "bus.jsonl")))
+	defer b.Close()
+	tui := subscribePings(b)
+
+	publishPingOK(b, "job-1")
+	if got := pingOKStates(b); !slices.Equal(got, []bus.DeliveryState{bus.Sent}) {
+		t.Fatalf("ping.ok states before Drain = %v, want [Sent]", got)
+	}
+	if n := len(tui.Drain()); n != 1 {
+		t.Fatalf("tui got %d messages, want 1", n)
+	}
+	if got := pingOKStates(b); !slices.Equal(got, []bus.DeliveryState{bus.Sent, bus.Received}) {
+		t.Fatalf("ping.ok states after Drain = %v, want [Sent Received]", got)
+	}
+}
+
+// pingOKStates returns the delivery states of the ping.ok events of b, oldest
+// first.
+func pingOKStates(b *bus.Bus) []bus.DeliveryState {
+	var out []bus.DeliveryState
+	for _, ev := range b.Events() {
+		if ev.Msg.Kind == bus.KindPingOK {
+			out = append(out, ev.State)
+		}
+	}
+	return out
 }
