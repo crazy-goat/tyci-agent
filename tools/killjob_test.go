@@ -265,3 +265,112 @@ func TestKillJob_NotRunningError(t *testing.T) {
 		t.Errorf(`non-running error should guide with wait, got %q`, res.Error)
 	}
 }
+
+// depthOnlyCtx builds a child context that has a nesting depth and a job id
+// but no SubagentSinkCtxKey, as a context built without the sink would be.
+func depthOnlyCtx(jobID string) context.Context {
+	ctx := context.WithValue(context.Background(), JobIDCtxKey{}, jobID)
+	return WithDepth(ctx, 1)
+}
+
+// TestKillJob_DepthWithoutSinkRefusesUnrelatedTarget: a child at depth above 0
+// that lost the sink key is refused for a job outside its subtree, not
+// allowed. Revert check: restore the sink-only check in inOwnSubtree and
+// Cancel fires on job-b-2.
+func TestKillJob_DepthWithoutSinkRefusesUnrelatedTarget(t *testing.T) {
+	c := &fakeCanceler{}
+	lister := &fakeLister{jobs: []JobKindSource{
+		fakeJob{id: "job-a-1", parentID: ""},
+		fakeJob{id: "job-b-2", parentID: ""},
+	}}
+	withKillWiring(t, c, lister)
+
+	tool := &KillJobTool{}
+	res := tool.Run(depthOnlyCtx("job-a-1"), map[string]any{"job_id": "job-b-2"})
+	if res.Success {
+		t.Fatal("expected refusal for an unrelated job at depth 1 without the sink key")
+	}
+	if !strings.Contains(res.Error, "refused") {
+		t.Errorf(`refusal should name its boundary, got %q`, res.Error)
+	}
+	if c.got("job-b-2") {
+		t.Error("Cancel must not fire on a refused target")
+	}
+}
+
+// TestKillJob_DepthWithoutSinkMayStopSelfAndOwnSubtree: a child at depth above 0
+// without the sink key keeps its own subtree and may stop itself.
+// Revert check: make inOwnSubtree refuse every target at depth 1 and the
+// self-stop and subtree allowance fail.
+func TestKillJob_DepthWithoutSinkAllowsOwnSubtree(t *testing.T) {
+	c := &fakeCanceler{}
+	lister := &fakeLister{jobs: []JobKindSource{
+		fakeJob{id: "job-b-1", parentID: "job-b-2"},
+		fakeJob{id: "job-b-2", parentID: ""},
+	}}
+	withKillWiring(t, c, lister)
+
+	tool := &KillJobTool{}
+	if res := tool.Run(depthOnlyCtx("job-b-2"), map[string]any{"job_id": "job-b-1"}); !res.Success {
+		t.Fatalf("expected allowance for own subtree, got error %q", res.Error)
+	}
+	if res := tool.Run(depthOnlyCtx("job-b-2"), map[string]any{"job_id": "job-b-2"}); !res.Success {
+		t.Fatalf("expected a child to stop itself, got error %q", res.Error)
+	}
+}
+
+// TestKillJob_MainAgentAtDepthZeroUnrestricted: depth 0 without the sink key is
+// the main agent and may stop any job. Revert check: make the gate fail
+// closed for depth 0 too and this fails.
+func TestKillJob_MainAgentAtDepthZeroUnrestricted(t *testing.T) {
+	c := &fakeCanceler{}
+	lister := &fakeLister{jobs: []JobKindSource{fakeJob{id: "job-x-9", parentID: ""}}}
+	withKillWiring(t, c, lister)
+
+	ctx := WithDepth(context.WithValue(context.Background(), JobIDCtxKey{}, "job-m-1"), 0)
+	res := (&KillJobTool{}).Run(ctx, map[string]any{"job_id": "job-x-9"})
+	if !res.Success {
+		t.Fatalf("main agent should kill any job, got error %q", res.Error)
+	}
+}
+
+// TestWait_DepthWithoutSinkRefusesUnrelatedTarget: wait follows the same rule
+// at depth above 0 without the sink key. Revert check: restore the sink-only
+// check in inOwnSubtree and the wait call reaches the waiter.
+func TestWait_DepthWithoutSinkRefusesUnrelatedTarget(t *testing.T) {
+	lister := &fakeLister{jobs: []JobKindSource{
+		fakeJob{id: "job-a-1", parentID: ""},
+		fakeJob{id: "job-b-2", parentID: ""},
+	}}
+	withKillWiring(t, nil, lister)
+	w := &countingWaiter{}
+
+	tool := &WaitTool{Waiter: w}
+	res := tool.Run(depthOnlyCtx("job-a-1"), map[string]any{"job_id": "job-b-2", "seconds": 0})
+	if res.Success {
+		t.Fatal("expected refusal for an unrelated job at depth 1 without the sink key")
+	}
+	if !strings.Contains(res.Error, "refused") {
+		t.Errorf(`refusal should name its boundary, got %q`, res.Error)
+	}
+	if w.count() != 0 {
+		t.Errorf("waiter must not be asked about a refused job, got %d calls", w.count())
+	}
+}
+
+// TestJobsTool_DepthWithoutSinkSeesOwnSubtreeOnly: the job list at depth above 0
+// without the sink key shows only the caller's subtree.
+// Revert check: restore the sink-only check and job-c shows up.
+func TestJobsTool_DepthWithoutSinkSeesOwnSubtreeOnly(t *testing.T) {
+	lister := &fakeLister{jobs: []JobKindSource{
+		detailJob{id: "job-a", status: "running", kind: "subagent"},
+		detailJob{id: "job-b", parentID: "job-a", status: "running", kind: "bash"},
+		detailJob{id: "job-c", status: "running", kind: "subagent"},
+	}}
+	withKillWiring(t, nil, lister)
+
+	got := runJobsTool(t, depthOnlyCtx("job-a"), nil)
+	if !sameIDs(got, "job-a", "job-b") {
+		t.Fatalf("child at depth 1 without sink should see job-a and job-b, got %v", got)
+	}
+}

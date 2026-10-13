@@ -161,13 +161,15 @@ func resolveListedJob(lister JobLister, jobID string) (fullID string, known bool
 }
 
 // inOwnSubtree enforces item 26's safety rule for kill_job and wait called
-// from inside a running child agent (SubagentSinkCtxKey present): the child
-// may act ONLY on jobs rooted in its own subtree — including itself. The main
-// agent (no sink key) may act on anything: everything in the registry is its
-// own or its descendants' work. callerJobID is this call site's own job
+// from inside a running child agent: the child may act ONLY on jobs rooted
+// in its own subtree — including itself. A caller is inside a child when it
+// has a nesting depth above 0 or a SubagentSinkCtxKey. The main agent (depth
+// 0, no sink key) may act on anything: everything in the registry is its own
+// or its descendants' work. A child whose sink key is missing is still
+// checked as a child (fail closed). callerJobID is this call site's own job
 // (JobIDCtxKey); targetID the resolved job.
 func inOwnSubtree(ctx context.Context, callerJobID, targetID string, lister JobLister) bool {
-	if ctx.Value(SubagentSinkCtxKey{}) == nil {
+	if DepthFromContext(ctx) == 0 && ctx.Value(SubagentSinkCtxKey{}) == nil {
 		return true
 	}
 	if targetID == callerJobID {
