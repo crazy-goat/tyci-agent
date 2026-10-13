@@ -29,11 +29,11 @@ type PrepareReq struct {
 	Params []string
 }
 
-// PrepareRun does: 1 Lookup, 2 Config, 3 Validate and BindParams (any error
+// PrepareRun does: 1 Lookup, 2 Config, 3 Validate, the oracle task check and BindParams (any error
 // returns and creates NOTHING), 4 AddWorktree (worktree), 5 NewStore and the
 // initial RunState (status running, current = start), saved once.
 func PrepareRun(ctx context.Context, d PrepareDeps, req PrepareReq) (*RunState, *Workflow, []string, error) {
-	wf, _, err := d.Lookup(req.Workflow)
+	wf, dir, err := d.Lookup(req.Workflow)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -44,6 +44,9 @@ func PrepareRun(ctx context.Context, d PrepareDeps, req PrepareReq) (*RunState, 
 	warnings, err := Validate(wf, cfg, wfResolver(wf))
 	if err != nil {
 		return nil, nil, warnings, fmt.Errorf("workflow %q is invalid: %w", req.Workflow, err)
+	}
+	if p := oracleTaskProblem(wf, dir); p != "" {
+		return nil, nil, warnings, fmt.Errorf("workflow %q is invalid: %s", req.Workflow, p)
 	}
 	params, err := BindParams(wf, req.Params)
 	if err != nil {
