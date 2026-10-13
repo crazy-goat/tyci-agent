@@ -1,0 +1,14 @@
+{
+  "description": "Propose a split of the open issues without milestone over the milestones, validate it, and write it to GitHub only after a human yes.",
+  "start": "collect",
+  "states": {
+    "collect":  {"check": "checks/rebalance_collect.sh", "on": {"found": "split", "none": "done", "fail": "failed", "default": "failed"}},
+    "split":    {"agent": "oracle", "task": "rebalance_split", "max_visits": 3, "on": {"done": "validate", "default": "failed"}},
+    "validate": {"check": "checks/rebalance_validate.sh", "on": {"ok": "ask", "invalid": "split", "fail": "failed", "default": "failed"}},
+    "ask":      {"ask": "The proposal is in proposal.md. Answer yes to create the new milestones and assign the issues, or no to stop. A no changes nothing on GitHub.", "human": true, "on": {"yes": "apply", "no": "declined", "default": "declined"}},
+    "apply":    {"check": "checks/rebalance_apply.sh", "on": {"done": "done", "fail": "failed", "default": "failed"}},
+    "done":     {"end": true, "result": "done"},
+    "declined": {"end": true, "result": "declined"},
+    "failed":   {"end": true, "result": "failed"}
+  }
+}
