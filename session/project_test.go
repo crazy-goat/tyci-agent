@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // ─── test helpers: a real git repo, isolated $HOME ─────────────────────────
@@ -166,6 +167,33 @@ func writeOldFormatSession(t *testing.T, path, cwd string) {
 	content := string(hData) + "\n" + msg + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	// Old enough that migrateLegacyDirs does not treat it as a live writer.
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A legacy directory with a recently written file may belong to a running
+// tyci process that still writes it, so it must not be migrated yet.
+func TestMigrateLegacyDirs_RecentlyWrittenSessionLeftInPlace(t *testing.T) {
+	home := isolatedHome(t)
+	root := initGitRepo(t)
+
+	oldEncoded := encodeKey(root)
+	oldPath := filepath.Join(home, ".tyci", "sessions", oldEncoded, "live.jsonl")
+	writeOldFormatSession(t, oldPath, root)
+	now := time.Now()
+	if err := os.Chtimes(oldPath, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SessionDir(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Errorf("recently written legacy session should stay in place: %v", err)
 	}
 }
 
