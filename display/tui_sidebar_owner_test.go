@@ -262,11 +262,10 @@ func TestSidebarTasks_EnterOnAgentRowOpensViewAndKeepsSidebar(t *testing.T) {
 	}
 }
 
-// TestSidebarTasks_EnterWithoutTranscriptClosesSidebar pins the existing Enter
-// behaviour for a subagent without a live transcript: the sidebar closes and
-// the result modal opens. closeSidebar clears the owner, so the Bash rows show
-// main when the sidebar opens again.
-func TestSidebarTasks_EnterWithoutTranscriptClosesSidebar(t *testing.T) {
+// TestSidebarTasks_EnterWithoutTranscriptKeepsSidebarOpen pins Enter's
+// behaviour for a subagent without a live transcript: the result modal opens
+// and the sidebar stays open with its owner selection.
+func TestSidebarTasks_EnterWithoutTranscriptKeepsSidebarOpen(t *testing.T) {
 	m := ownerTestModel(t)
 	m.applyJobUpdate(jobs.Job{ID: "sub-c", Kind: jobs.KindSubagent, Status: jobs.StatusDone, Description: "run/worker-c", StartedAt: time.Now().Add(-2 * time.Minute)})
 	for i := 0; i < 10 && cursorRowID(m) != "sub-c"; i++ {
@@ -277,11 +276,11 @@ func TestSidebarTasks_EnterWithoutTranscriptClosesSidebar(t *testing.T) {
 	}
 
 	m = pressSidebarKey(t, m, tea.KeyEnter)
-	if m.sidebarActive || !m.subagentModalActive {
-		t.Fatalf("Enter on sub-c: want the sidebar closed and the result modal open, got sidebarActive=%v subagentModalActive=%v", m.sidebarActive, m.subagentModalActive)
+	if !m.sidebarActive || !m.subagentModalActive {
+		t.Fatalf("Enter on sub-c: want the sidebar open and the result modal open, got sidebarActive=%v subagentModalActive=%v", m.sidebarActive, m.subagentModalActive)
 	}
-	if m.sidebarTaskOwner != "" {
-		t.Fatalf("Enter on sub-c: want owner cleared by closeSidebar, got %q", m.sidebarTaskOwner)
+	if m.sidebarTaskOwner != "sub-c" {
+		t.Fatalf("Enter on sub-c: want owner sub-c kept, got %q", m.sidebarTaskOwner)
 	}
 }
 

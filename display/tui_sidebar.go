@@ -428,6 +428,11 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 //     it falls through so the conversation keeps updating live even with
 //     the sidebar open.
 func (m TuiModel) routeSidebarMsg(msg tea.Msg) (handled bool, model tea.Model, cmd tea.Cmd) {
+	// The subagent modal is drawn above the sidebar, so keys and clicks
+	// belong to it. Otherwise Esc or a click would close the sidebar.
+	if _, isSize := msg.(tea.WindowSizeMsg); !isSize && m.subagentModalActive {
+		return false, m, nil
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		newModel, cmd := m.handleResize(msg)
@@ -753,9 +758,8 @@ func sidebarTabAtX(layout sidebarLayoutT, x int) int {
 // sidebarActivateRow is Enter's (and a row click's) handler: what "open
 // this row" means depends on the active tab. On the Tasks tab, a Subagents
 // row selects its agent, so the Bash and Lua rows list that agent's jobs. The
-// main row selects main. A Bash row keeps the selection. closeSidebar below
-// clears the selection again, so for a subagent without a live transcript the
-// Bash and Lua rows show main once the sidebar closes.
+// main row selects main. A Bash row keeps the selection. A row that opens the
+// result modal keeps the sidebar open, with its focus and cursor.
 func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 	switch m.sidebarTab {
 	case sidebarTabSessions:
@@ -779,7 +783,6 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 				cmd := m.armStatusTick()
 				return m, cmd
 			case row.job != nil:
-				m.closeSidebar()
 				m.openJobResultModal(*row.job)
 			}
 		}
@@ -872,12 +875,10 @@ func (m TuiModel) sidebarSubmitResume() (tea.Model, tea.Cmd) {
 		// Short and front-loaded on purpose: buildStatus (tui_status.go)
 		// hard-truncates status text to 60 columns, so anything longer lost
 		// its actionable half mid-sentence.
-		m.closeSidebar()
 		m.statusMessage = "Press Esc first (cancels this turn), or wait, then retry."
 		return m, sidebarStatusCmd(m.statusMessage)
 	}
 	if strings.TrimSpace(m.input.Value()) != "" {
-		m.closeSidebar()
 		m.statusMessage = "Clear the input first, then reopen Sessions to resume."
 		return m, sidebarStatusCmd(m.statusMessage)
 	}

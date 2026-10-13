@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- TUI: Enter or a click on a Tasks row (a Bash row, or a subagent row without a transcript) opens the result modal and keeps the sidebar open. A refused `/resume` on the Sessions tab keeps it open too (#549).
+
 ## [0.8.0] - 2026-10-13
 
 ### Changed
