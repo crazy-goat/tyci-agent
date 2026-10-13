@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-13
+
 ### Added
 - CLI: `tyci update` downloads the latest release, checks its SHA-256 and replaces the binary; `--check`, `--version` and `--force` (#621).
 - Tools: the chat tool `session_read(path, max_messages?)` returns the last messages (default 20, max 100) of a session that `session_list` returns, as user and assistant text only, each cut to 2000 characters. Only sessions of the current project are read; any other path is refused. A subagent cannot use it (#590).
