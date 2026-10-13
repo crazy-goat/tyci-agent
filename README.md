@@ -993,6 +993,30 @@ Hooks wrap the dispatcher, so they see MCP tools and calls made from inside a
 Lua script too. A config error is reported on startup rather than ignored: a
 hook that silently never fires is worse than no hook.
 
+## Reload the settings
+
+Type `/reload` in the TUI to reload these settings without a restart:
+
+1. Hooks (`hooks.json`, global and project).
+2. Lua tools (`~/.tyci/tools` and the project `tools` directory).
+3. Cron jobs (`cron.json`, global and project).
+4. MCP servers of the project.
+
+A file with an error keeps its previous settings. The reload shows the error.
+
+The reload does not change the trust decision of the project. A change of
+trust, a provider key or a provider setting needs a restart.
+
+To reload the settings when their files change, set this in
+`~/.tyci/config.json`. Only the global file counts:
+
+```json
+{ "defaults": { "watch_config": true } }
+```
+
+The TUI checks the files every 2 seconds and reloads after the files stop
+changing for 500 milliseconds. The default is `false`.
+
 ## `help`
 
 `help()` lists every available tool; `help(tool="lua")` returns the long
