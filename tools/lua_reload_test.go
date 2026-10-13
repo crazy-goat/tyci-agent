@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -75,5 +76,45 @@ func TestReloadLuaToolsKeepsToolsOnBrokenScript(t *testing.T) {
 	}
 	if !luaToolRegistered("reload-keep") {
 		t.Error("previous tool dropped by a broken script")
+	}
+}
+
+func TestReloadLuaToolsKeepsOnlyBrokenFileTool(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	restore := SnapshotLuaToolsForTesting()
+	t.Cleanup(restore)
+	local := t.TempDir()
+
+	for _, name := range []string{"reload-a", "reload-b"} {
+		file := filepath.Join(local, name+".lua")
+		if err := os.WriteFile(file, []byte(luaToolScript(name)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := ReloadLuaTools(local); err != nil {
+		t.Fatalf("first reload: %v", err)
+	}
+
+	// reload-a breaks, reload-c is added. Only reload-a keeps its old tool.
+	if err := os.WriteFile(filepath.Join(local, "reload-a.lua"), []byte("return {"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(local, "reload-c.lua"), []byte(luaToolScript("reload-c")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n, err := ReloadLuaTools(local)
+	if err == nil {
+		t.Fatal("broken script: want an error")
+	}
+	if !strings.Contains(err.Error(), "reload-a.lua") {
+		t.Errorf("error %q does not name the broken file", err)
+	}
+	if n != 3 {
+		t.Errorf("n = %d, want 3 (kept reload-a, reload-b, new reload-c)", n)
+	}
+	for _, name := range []string{"reload-a", "reload-b", "reload-c"} {
+		if !luaToolRegistered(name) {
+			t.Errorf("%s not registered after a reload with one broken file", name)
+		}
 	}
 }
