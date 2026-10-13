@@ -78,13 +78,13 @@ func TestRebalanceValidate_WritesProposalTable(t *testing.T) {
 	if key := runValidate(t, dir); key != "ok" {
 		t.Fatalf("key=%q", key)
 	}
-	table, err := os.ReadFile(filepath.Join(dir, "proposal.md"))
+	table, err := os.ReadFile(filepath.Join(dir, "ask-table.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"| #1 | first | v0.10.0 |", `| #2 | second \| pipe | v0.11.0 (new) |`} {
 		if !strings.Contains(string(table), want) {
-			t.Fatalf("proposal.md = %q, want the row %q", table, want)
+			t.Fatalf("ask-table.md = %q, want the row %q", table, want)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "proposal.json")); err != nil {
@@ -103,7 +103,7 @@ func TestRebalanceValidate_InvalidRemovesStaleProposal(t *testing.T) {
 	if key := runValidate(t, dir); key != "invalid" {
 		t.Fatalf("second run key=%q", key)
 	}
-	for _, name := range []string{"proposal.json", "proposal.md"} {
+	for _, name := range []string{"proposal.json", "ask-table.md"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			t.Fatalf("%s is still there after an invalid split", name)
 		}

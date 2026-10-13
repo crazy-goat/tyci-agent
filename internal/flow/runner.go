@@ -610,6 +610,25 @@ func (r *Runner) setAsk(st *RunState, message, reason string) {
 		st.Ask.Message += proposalWaits + proposalSummary(dir) +
 			" (workflow_status shows it; answer apply or reject)"
 	}
+	if table := readAskTable(r.RunDir); table != "" {
+		st.Ask.Message += "\n\n" + table
+	}
+}
+
+// askTable is the file in the run dir with a table that the ask message shows
+// (the rebalance validate step writes it). A missing file adds nothing.
+const askTable = "ask-table.md"
+
+// readAskTable returns the trimmed content of the ask table of runDir, or "".
+func readAskTable(runDir string) string {
+	if runDir == "" {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(runDir, askTable))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // checkGoto rejects a goto target that is not a state of wf, is an ask state

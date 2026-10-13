@@ -9,8 +9,8 @@
 #          the split step, the newest $TYCI_RUN_DIR/artifacts/*-split/output.txt:
 #          {"assign":{"vX.Y.Z":[N,...]},"create":["vX.Y.Z",...]}. A code fence line in the answer is ignored.
 # Writes:  on ok, $TYCI_RUN_DIR/proposal.json (the validated copy, read by rebalance_apply.sh) and
-#          proposal.md (a table with every candidate issue once). On invalid, validate.err with the reason.
-#          Both copies are removed when a split is invalid, so a stale proposal is never applied.
+#          ask-table.md (a table with every candidate issue once, shown in the ask message). On invalid,
+#          validate.err with the reason. Both copies are removed when a split is invalid, so a stale proposal is never applied.
 # Keys:    ok       the split is valid and the proposal is written
 #          invalid  the split breaks a rule; validate.err has the reason (the split step runs again)
 #          fail     an input is missing or not JSON, or the answer has the wrong form
@@ -77,7 +77,7 @@ problem=$(jq -r --argjson c "$cands" --argjson m "$miles" '
     ' <<<"$plan")
 
 if [ -n "$problem" ]; then
-    rm -f "$run/proposal.json" "$run/proposal.md"
+    rm -f "$run/proposal.json" "$run/ask-table.md"
     printf '%s\n' "$problem" >"$run/validate.err"
     describe invalid "the split is not valid: $problem" \
         "the oracle broke one rule of the split" \
@@ -97,6 +97,6 @@ jq -c '{assign: .assign, create: .create}' <<<"$plan" >"$run/proposal.json"
         | ($where[(.number | tostring)]) as $t
         | "| #\(.number) | \($title) | \($t)\(if any($p.create[]; . == $t) then " (new)" else "" end) |"
         ' "$run/candidates.json"
-} >"$run/proposal.md"
+} >"$run/ask-table.md"
 rm -f "$run/validate.err"
 echo ok
