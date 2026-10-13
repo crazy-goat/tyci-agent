@@ -47,7 +47,9 @@ func (b *Bus) observe(ev Event) {
 }
 
 // observeSent records that the bus queued m for n tracked receivers. Zero
-// receivers is a failure. Any subscriptions are not tracked, see countTracked. The caller holds b.mu, so Seq is already set.
+// receivers is a failure. An Any subscription is tracked only when its To
+// equals the To of m, see countTracked. The caller holds b.mu, so Seq is
+// already set.
 func (b *Bus) observeSent(m Message, n int) {
 	b.obsMu.Lock()
 	defer b.obsMu.Unlock()

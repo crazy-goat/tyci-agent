@@ -262,7 +262,7 @@ func (b *Bus) deliver(m Message, class Class, key string) (Message, []inboxWarni
 	}
 	// The state is registered before the first put. A drainer that wakes on
 	// Ready can then take the message at once and still find its state.
-	b.observeSent(m, countTracked(targets))
+	b.observeSent(m, countTracked(targets, m.To))
 	var warnings []inboxWarning
 	for _, s := range targets {
 		depth, crossed := s.q.put(m, class, key)
@@ -305,8 +305,9 @@ type Filter struct {
 	// Kinds lists the kinds to receive. Empty means all kinds.
 	Kinds []Kind
 	// Any receives the messages of Kinds whatever their To. It is for a
-	// read-only watcher, such as the TUI. To is ignored when Any is set. An
-	// Any subscription does not count as a recipient for the delivery state.
+	// read-only watcher, such as the TUI. For delivery, To is ignored when Any
+	// is set, except for the delivery state: an Any subscription counts as a
+	// recipient only for the messages whose To equals its To.
 	Any bool
 }
 
@@ -357,10 +358,17 @@ func (s *Sub) CloseAndDrain() []Message {
 }
 
 // observeReceived reports msgs as taken to the delivery state. An Any
-// subscription is not counted in the delivery state, so it does not report.
+// subscription reports only the messages whose To equals its To, as
+// countTracked counted them.
 func (s *Sub) observeReceived(msgs []Message) {
 	if s.filter.Any {
-		return
+		var tracked []Message
+		for _, m := range msgs {
+			if m.To == s.filter.To {
+				tracked = append(tracked, m)
+			}
+		}
+		msgs = tracked
 	}
 	s.bus.observeReceived(msgs)
 }

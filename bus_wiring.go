@@ -600,7 +600,8 @@ func subscribeJobStatus(b *bus.Bus) *bus.Sub {
 // the ping.ok messages of watchdogRecovered.
 func subscribePings(b *bus.Bus) *bus.Sub {
 	pingOKWanted.Store(true)
-	return b.Subscribe("tui-pings", bus.Filter{Any: true, Kinds: []bus.Kind{bus.KindPingMissed, bus.KindPingOK}})
+	// To is the TUI, so the delivery state of a ping.ok counts this watcher.
+	return b.Subscribe("tui-pings", bus.Filter{Any: true, To: bus.Addr{Type: bus.AddrTUI}, Kinds: []bus.Kind{bus.KindPingMissed, bus.KindPingOK}})
 }
 
 // subscribeBtwSuggestions subscribes to the btw answers that the TUI shows in

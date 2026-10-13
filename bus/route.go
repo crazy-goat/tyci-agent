@@ -90,11 +90,12 @@ func (b *Bus) inSubtree(id, root string) bool {
 }
 
 // countTracked counts the subscriptions in subs whose delivery state the bus
-// follows. An Any subscription is a read-only watcher and is not counted.
-func countTracked(subs []*Sub) int {
+// follows for a message to the address to. An Any subscription counts only
+// when its To equals to, see observeReceived.
+func countTracked(subs []*Sub, to Addr) int {
 	n := 0
 	for _, s := range subs {
-		if !s.filter.Any {
+		if !s.filter.Any || s.filter.To == to {
 			n++
 		}
 	}

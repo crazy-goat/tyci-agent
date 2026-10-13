@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -189,4 +190,37 @@ func TestWatchdogRecovered_PublishesOnlyWithTUISubscription(t *testing.T) {
 	if n := strings.Count(string(data), `"kind":"ping.ok"`); n != 1 {
 		t.Fatalf("tui journal has %d ping.ok lines, want 1:\n%s", n, data)
 	}
+}
+
+// TestPingOK_TUIReceivesAsRecipient checks that a ping.ok addressed to the TUI
+// ends Sent and then Received, not Failed. The TUI watcher is an Any
+// subscription whose To is the TUI, so the bus counts it as the recipient.
+func TestPingOK_TUIReceivesAsRecipient(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	b := bus.New(bus.WithJournal(filepath.Join(t.TempDir(), "bus.jsonl")))
+	defer b.Close()
+	tui := subscribePings(b)
+
+	publishPingOK(b, "job-1")
+	if got := pingOKStates(b); !slices.Equal(got, []bus.DeliveryState{bus.Sent}) {
+		t.Fatalf("ping.ok states before Drain = %v, want [Sent]", got)
+	}
+	if n := len(tui.Drain()); n != 1 {
+		t.Fatalf("tui got %d messages, want 1", n)
+	}
+	if got := pingOKStates(b); !slices.Equal(got, []bus.DeliveryState{bus.Sent, bus.Received}) {
+		t.Fatalf("ping.ok states after Drain = %v, want [Sent Received]", got)
+	}
+}
+
+// pingOKStates returns the delivery states of the ping.ok events of b, oldest
+// first.
+func pingOKStates(b *bus.Bus) []bus.DeliveryState {
+	var out []bus.DeliveryState
+	for _, ev := range b.Events() {
+		if ev.Msg.Kind == bus.KindPingOK {
+			out = append(out, ev.State)
+		}
+	}
+	return out
 }
