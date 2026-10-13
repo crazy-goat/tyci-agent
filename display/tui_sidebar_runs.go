@@ -89,16 +89,21 @@ func (m TuiModel) runsTab(width int) runsView {
 		v.add("  Workflow runs are not wired up in this build.", -1)
 		return v
 	}
-	rows := m.sidebarRunRows()
-	if len(rows) == 0 {
+	tree := m.buildTree()
+	if len(tree) == 0 {
 		v.add("", -1)
 		v.add("  No workflow runs yet.", -1)
 		return v
 	}
+	rows := make([]TuiRunRow, 0, len(tree))
+	for _, t := range tree {
+		rows = append(rows, t.run)
+	}
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	now := time.Now()
 	durW, costW := runsColumnWidths(rows, now)
-	for i, r := range rows {
+	for i, t := range tree {
+		r := t.run
 		if i > 0 && runFinished(r) && !runFinished(rows[i-1]) {
 			v.add(dim.Render(strings.Repeat("─", width)), -1)
 		}
@@ -118,6 +123,9 @@ func (m TuiModel) runsTab(width int) runsView {
 		}
 		if !runFinished(r) && !r.Since.IsZero() {
 			v.add(fillWidth("   "+runStepText(r, now), width), i)
+		}
+		for _, a := range t.agents {
+			v.add(agentRowLine(a, width), i)
 		}
 	}
 	if m.sidebarStopRun != "" {

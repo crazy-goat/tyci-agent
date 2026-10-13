@@ -2,6 +2,7 @@ package display
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/crazy-goat/tyci-agent/jobs"
@@ -176,6 +177,18 @@ func (t *treeState) markMissed(id string) {
 // isMissed reports whether the agent with the job ID id was reported missed.
 func (t *treeState) isMissed(id string) bool {
 	return t != nil && t.missed[id]
+}
+
+// agentRowLine is the line of an agent under its run: the indent of its depth,
+// the status icon, the description and, for an agent that waits for an answer,
+// the question. The line is cut or padded to width and takes the ping colour.
+func agentRowLine(a treeAgent, width int) string {
+	icon, _ := jobStatusIcon(a.job.Status)
+	text := strings.Repeat("  ", a.depth) + icon + " " + sanitizeUntrusted(a.job.Description)
+	if q := askText(a.job); q != "" {
+		text += " asks: " + sanitizeUntrusted(q)
+	}
+	return lipgloss.NewStyle().Foreground(a.colour).Render(fillWidth(text, width))
 }
 
 // askText returns the question of an agent that waits for an answer. It is

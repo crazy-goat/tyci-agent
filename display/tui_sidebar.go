@@ -825,7 +825,7 @@ func (m TuiModel) sidebarScrollBusPane(delta int) TuiModel {
 // running run can be stopped: Manager.Stop rejects the other runs.
 func (m TuiModel) sidebarAskStop() TuiModel {
 	rows := m.sidebarRunRows()
-	if m.sidebarCursor < 0 || m.sidebarCursor >= len(rows) || rows[m.sidebarCursor].Status != "running" {
+	if m.sidebarCursor < 0 || m.sidebarCursor >= len(rows) || rows[m.sidebarCursor].Status != "running" || rows[m.sidebarCursor].ID == treeAdHocID {
 		return m
 	}
 	m.sidebarStopRun = rows[m.sidebarCursor].ID

@@ -2,6 +2,7 @@ package display
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,5 +159,55 @@ func TestTreeState_CapsUnknownPings(t *testing.T) {
 	}
 	if len(s.missed) != treeMaxMissed {
 		t.Fatalf("missed = %d entries, want %d", len(s.missed), treeMaxMissed)
+	}
+}
+
+func treeRunsModel() TuiModel {
+	ask := treeTestJob("b", "#1", "", jobs.StatusWaitingAnswer, 2)
+	ask.Progress = "which branch?\x1b[31m\nnext line of the question that is long enough to be cut"
+	long := treeTestJob("a", "#1", "", jobs.StatusRunning, 1)
+	long.Description = "a worker with a very long description \t and\x1b]0;title\x07 control codes"
+	m := treeModel([]TuiRunRow{treeTestRun("#1", "running", 1)}, long, ask)
+	m.tree = newTreeState()
+	m.tree.markMissed("a")
+	m.sidebarRunsExpanded = map[string]bool{"#1": true}
+	return m
+}
+
+// TestRunsTab_RowsFitWidth checks that every line of the Runs tab, with an
+// expanded run and agents, fits the sidebar width.
+func TestRunsTab_RowsFitWidth(t *testing.T) {
+	m := treeRunsModel()
+	for w := 10; w <= 80; w++ {
+		for i, line := range m.renderSidebarRuns(w) {
+			if got := lipgloss.Width(line); got > w {
+				t.Fatalf("width %d: line %d is %d cells: %q", w, i, got, line)
+			}
+		}
+	}
+}
+
+func TestRunsTab_AgentShowsQuestion(t *testing.T) {
+	got := strings.Join(treeRunsModel().renderSidebarRuns(200), "\n")
+	if !strings.Contains(got, "asks: which branch?") {
+		t.Fatalf("runs tab has no question:\n%s", got)
+	}
+	if strings.Contains(got, "\x1b]") || strings.Contains(got, "\t") {
+		t.Fatalf("runs tab shows control codes:\n%s", got)
+	}
+}
+
+// TestRunsTab_CostBoundedByVisibleRuns checks that the Runs tab does not grow
+// with the old finished runs: only treeFinishedRuns of them are laid out.
+func TestRunsTab_CostBoundedByVisibleRuns(t *testing.T) {
+	lines := func(n int) int {
+		var runs []TuiRunRow
+		for i := range n {
+			runs = append(runs, treeTestRun(fmt.Sprintf("#%d", i), "done", i))
+		}
+		return len(treeModel(runs).runsTab(40).lines)
+	}
+	if small, large := lines(10), lines(2000); small != large {
+		t.Fatalf("lines with 10 finished runs = %d, with 2000 = %d; want equal", small, large)
 	}
 }
