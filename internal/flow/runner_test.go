@@ -520,3 +520,39 @@ func TestRunner_LimitErrorWithoutLimitKeyUsesError(t *testing.T) {
 		t.Fatalf("key = %q, want error", st.History[0].Key)
 	}
 }
+
+// #201: a run that stops on the time limit takes the "limit" key too.
+func TestRunner_TimeLimitUsesLimitKey(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
+		"code": {Agent: "worker", On: map[string]string{"limit": "end", "error": "fail"}},
+		"end":  {End: true},
+		"fail": {End: true},
+	}}
+	lim := &agent.ErrLimit{Kind: "time"}
+	r := &Runner{WF: wf, Agents: &fakeAgents{errs: map[string]error{"code": lim}}, Store: &memStore{}}
+	st := newRun("code")
+	if err := r.Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st.Current != "end" || st.History[0].Key != "limit" {
+		t.Fatalf("current = %q key = %q, want end/limit", st.Current, st.History[0].Key)
+	}
+}
+
+// #201: a run that stops on the tool_calls limit takes the "limit" key.
+func TestRunner_ToolCallsLimitUsesLimitKey(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
+		"code": {Agent: "worker", On: map[string]string{"limit": "end", "error": "fail"}},
+		"end":  {End: true},
+		"fail": {End: true},
+	}}
+	lim := &agent.ErrLimit{Kind: "tool_calls"}
+	r := &Runner{WF: wf, Agents: &fakeAgents{errs: map[string]error{"code": lim}}, Store: &memStore{}}
+	st := newRun("code")
+	if err := r.Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st.Current != "end" || st.History[0].Key != "limit" {
+		t.Fatalf("current = %q key = %q, want end/limit", st.Current, st.History[0].Key)
+	}
+}

@@ -30,6 +30,7 @@ type Config struct {
 	System        string
 	MaxRetries    int
 	MaxIterations int // max tool-call iterations; -1 or 0 means unlimited
+	MaxToolCalls  int // max tool calls of this Run; 0 means unlimited
 	Debug         bool
 	Tools         ToolRunner
 	Schema        json.RawMessage
@@ -213,9 +214,14 @@ const lastStepDeadlineThreshold = 45 * time.Second
 // receiving an empty or truncated "successful" result.
 var ErrMaxIterations = errors.New("agent reached max tool-call iterations without finishing")
 
+// ErrMaxToolCalls is returned by Run when a tool call is past
+// Config.MaxToolCalls. The batch that held the call is finished first, and the
+// calls past the limit get an error result.
+var ErrMaxToolCalls = errors.New("agent reached max tool calls")
+
 // ErrLimit is returned by a workflow agent run that stopped on a role limit.
-// Kind is "rounds" or "time". The workflow runner routes it to the "limit"
-// transition key when the state has one.
+// Kind is "rounds", "time" or "tool_calls". The workflow runner routes it to
+// the "limit" transition key when the state has one.
 type ErrLimit struct {
 	Kind string
 }
@@ -243,6 +249,12 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	}()
 	// A large late result is saved under the directory of the open session.
 	cfg.Dispatch.SetResultDir(toolResultDir(cfg.Session))
+
+	var calls *toolCallLimit
+	if cfg.MaxToolCalls > 0 {
+		calls = &toolCallLimit{runner: cfg.Tools, max: int64(cfg.MaxToolCalls)}
+		cfg.Tools = calls
+	}
 
 	var totalUsage stream.Usage
 
@@ -445,6 +457,14 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 				}
 				return totalUsage, lastErr
 			}
+		}
+		// The batch that held a call past MaxToolCalls is done: its results
+		// are in msgs, so the run stops here with no open tool call.
+		if calls != nil && calls.exceeded.Load() {
+			if !totalEmitted {
+				d.Total(totalUsage)
+			}
+			return totalUsage, ErrMaxToolCalls
 		}
 		// Issue #88: drain the pending-message queue after EVERY runOnce
 		// (not only when more == false). This is the "next safe point":
