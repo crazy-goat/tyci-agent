@@ -315,6 +315,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 	// and --no-mcp) mcp.json — all gated on `trusted`, decided once above.
 	noMCP, _ := cmd.Flags().GetBool("no-mcp")
 	ctx, shutdown := setupProjectLocalEnv(ctx, wd, trusted, connectMCP, noMCP)
+	rememberProjectSetup(wd, trusted, connectMCP && !noMCP)
 
 	debugFlag, _ := cmd.Flags().GetBool("debug")
 	maxIterations, _ := cmd.Flags().GetInt("max-iterations")

@@ -3,10 +3,12 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/mcp"
@@ -24,6 +26,10 @@ type MCPToolRunner struct {
 	mu      sync.RWMutex
 	clients map[string]mcp.Client
 	tools   map[string]*mcpTool // prefixed name -> tool info
+
+	// active counts the RunTool calls in flight. ReloadMCP does not replace
+	// a runner while it is above zero.
+	active atomic.Int64
 
 	// Sampling/Elicitation handlers
 	samplingFunc    func(ctx context.Context, messages []mcp.SamplingMessage, model string) (string, error)
@@ -231,7 +237,11 @@ func (r *MCPToolRunner) RunTool(ctx context.Context, name string, arguments map[
 		}
 	}
 	client := r.clients[t.server]
+	// Count the call under the same lock that found the tool, so that a
+	// ReloadMCP holding r.mu sees every call that got this runner.
+	r.active.Add(1)
 	r.mu.RUnlock()
+	defer r.active.Add(-1)
 
 	if client == nil {
 		return ToolResult{
@@ -369,6 +379,49 @@ func SetMCPToolRunnerForTests(r *MCPToolRunner) (restore func()) {
 		globalMCPRunner = orig
 		globalMCPRunnerMu.Unlock()
 	}
+}
+
+// ErrMCPBusy is returned by ReloadMCP while an MCP tool call is running.
+var ErrMCPBusy = errors.New("an MCP tool call is running")
+
+// ReloadMCP connects the MCP servers again, with the same wd and includeLocal
+// rules as InitMCP, and replaces the global runner. The old servers are closed
+// after the swap. It keeps the old runner, and returns the error, when a
+// connect fails or a tool call is running on the old runner. It returns the
+// number of connected servers.
+func ReloadMCP(ctx context.Context, wd string, includeLocal bool) (int, error) {
+	old := GetMCPToolRunner()
+	if old != nil && old.active.Load() > 0 {
+		return 0, ErrMCPBusy
+	}
+	next := NewMCPToolRunner()
+	if err := next.Connect(ctx, wd, includeLocal); err != nil {
+		next.Close()
+		return 0, err
+	}
+	setGlobal := func() {
+		globalMCPRunnerMu.Lock()
+		globalMCPRunner = next
+		globalMCPRunnerMu.Unlock()
+	}
+	if old == nil {
+		setGlobal()
+	} else {
+		// Holding old.mu keeps RunTool from finding old between the busy
+		// check and the swap.
+		old.mu.Lock()
+		if old.active.Load() > 0 {
+			old.mu.Unlock()
+			next.Close()
+			return 0, ErrMCPBusy
+		}
+		setGlobal()
+		old.mu.Unlock()
+		old.Close()
+	}
+	next.mu.RLock()
+	defer next.mu.RUnlock()
+	return len(next.clients), nil
 }
 
 // ShutdownMCP closes every connected MCP server's client (killing stdio
