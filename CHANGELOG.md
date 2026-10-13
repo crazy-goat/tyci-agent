@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Sessions: a session that is still open in a running tyci process is no longer moved from the old session layout into its project directory, even when its file is older than ten minutes. The move waits until the writer closes the file (#692).
+
 ## [0.9.0] - 2026-10-13
 
 ### Added
