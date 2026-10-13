@@ -1021,6 +1021,9 @@ Type `/reload` in the TUI to reload these settings without a restart:
 
 A file with an error keeps its previous settings. The reload shows the error.
 
+The MCP servers restart only when an MCP file (`mcp.json`) changed. A broken Lua
+tool file keeps its old tool; the other Lua tools load.
+
 The reload does not change the trust decision of the project. A change of
 trust, a provider key or a provider setting needs a restart.
 

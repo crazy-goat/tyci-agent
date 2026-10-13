@@ -617,27 +617,36 @@ func installLuaTools(dir string, tools []*LuaTool) {
 
 // ReloadLuaTools reloads the global Lua tools (~/.tyci/tools) and, when
 // localDir is not empty, the project-local ones, and replaces the tools
-// registered before. It is all or nothing: if any script fails to load, it
-// returns the errors and keeps the tools it had. It returns the number of
-// Lua tools now registered from both directories.
+// registered before. It is per file: a script that fails to load keeps the
+// tool it had from that file, and the other scripts load as usual. It returns
+// the number of Lua tools now registered from both directories, and the
+// errors of the failed scripts.
 func ReloadLuaTools(localDir string) (int, error) {
 	dirs := []string{filepath.Join(os.Getenv("HOME"), ".tyci", "tools")}
 	if localDir != "" {
 		dirs = append(dirs, localDir)
 	}
 	loaded := make([][]*LuaTool, len(dirs))
-	var errs []error
+	failures := make([][]error, len(dirs))
 	for i, dir := range dirs {
-		tools, dirErrs := loadLuaToolFiles(dir)
-		loaded[i] = tools
-		errs = append(errs, dirErrs...)
-	}
-	if len(errs) > 0 {
-		return 0, errors.Join(errs...)
+		loaded[i], failures[i] = loadLuaToolFiles(dir)
 	}
 
 	toolRegistryMu.Lock()
 	defer toolRegistryMu.Unlock()
+	var errs []error
+	for i, dir := range dirs {
+		for _, err := range failures[i] {
+			var fileErr luaFileError
+			if errors.As(err, &fileErr) {
+				if old := registeredLuaTool(dir, fileErr.path); old != nil {
+					loaded[i] = append(loaded[i], old)
+					err = fmt.Errorf("%w; the previous tool is kept", err)
+				}
+			}
+			errs = append(errs, err)
+		}
+	}
 	// Remove every directory's old tools first, so a tool that moved from
 	// one directory to the other does not count as a conflict.
 	for _, dir := range dirs {
@@ -651,11 +660,35 @@ func ReloadLuaTools(localDir string) (int, error) {
 		installLuaTools(dir, loaded[i])
 		total += len(luaToolsByDir[dir])
 	}
-	return total, nil
+	return total, errors.Join(errs...)
+}
+
+// luaFileError is the failure of one Lua tool script.
+type luaFileError struct {
+	path string
+	err  error
+}
+
+func (e luaFileError) Error() string {
+	return fmt.Sprintf("lua tool %s: %v", filepath.Base(e.path), e.err)
+}
+
+func (e luaFileError) Unwrap() error { return e.err }
+
+// registeredLuaTool returns the tool that the script scriptPath of dir
+// registered, or nil. The caller must hold toolRegistryMu.
+func registeredLuaTool(dir, scriptPath string) *LuaTool {
+	for _, name := range luaToolsByDir[dir] {
+		if tool, ok := toolRegistry[name].(*LuaTool); ok && tool.scriptPath == scriptPath {
+			return tool
+		}
+	}
+	return nil
 }
 
 // loadLuaToolFiles loads every Lua tool script in dir. Unlike LoadLuaTools
-// it returns each failure instead of printing it.
+// it returns each failure instead of printing it. A failure of one script is
+// a luaFileError.
 func loadLuaToolFiles(dir string) ([]*LuaTool, []error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -670,9 +703,10 @@ func loadLuaToolFiles(dir string) ([]*LuaTool, []error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".lua") {
 			continue
 		}
-		tool, err := loadLuaTool(filepath.Join(dir, entry.Name()))
+		scriptPath := filepath.Join(dir, entry.Name())
+		tool, err := loadLuaTool(scriptPath)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("lua tool %s: %w", entry.Name(), err))
+			errs = append(errs, luaFileError{path: scriptPath, err: err})
 			continue
 		}
 		tools = append(tools, tool)

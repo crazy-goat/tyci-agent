@@ -267,8 +267,10 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 	// defaults.watch_config: reload the settings when their files change. The
 	// watcher stops with baseCtx.
 	if agent.LoadTyciConfig().WatchConfigEnabled() {
-		go watchProjectSettings(baseCtx, func(summary string, err error) {
-			tuiDisp.ToolBlock("reloaded: " + strings.ReplaceAll(summary, "\n", "; "))
+		go watchProjectSettings(baseCtx, func(changed string, err error) {
+			if changed != "" {
+				tuiDisp.ToolBlock("reloaded: " + changed)
+			}
 			if err != nil {
 				tuiDisp.Error(err)
 			}

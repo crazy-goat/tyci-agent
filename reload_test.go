@@ -11,6 +11,8 @@ import (
 
 	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"github.com/crazy-goat/tyci-agent/internal/hooks"
+	"github.com/crazy-goat/tyci-agent/internal/mcp"
+	"github.com/crazy-goat/tyci-agent/tools"
 )
 
 // setupReloadProject points HOME and the project at fresh temp dirs and
@@ -234,5 +236,107 @@ func TestSettingsFingerprintIgnoresUntrustedProjectMCP(t *testing.T) {
 	}
 	if after := settingsFingerprint(wd, false); after != before {
 		t.Fatal("fingerprint changed for the project mcp.json of an untrusted project")
+	}
+}
+
+// luaReloadScript is a minimal Lua tool script for the reload tests.
+const luaReloadScript = `return {schema = {name = "reload-main-lua"}, run = function(ctx, args) return {success = true, content = "ok"} end}`
+
+// TestReloadKeepsMCPWhenOnlyHooksChange checks that a reload does not restart
+// the MCP servers when no MCP file changed.
+func TestReloadKeepsMCPWhenOnlyHooksChange(t *testing.T) {
+	wd := setupReloadProject(t)
+	runner := tools.NewMCPToolRunner()
+	t.Cleanup(tools.SetMCPToolRunnerForTests(runner))
+	rememberProjectSetup(wd, true, true)
+
+	writeProjectHooks(t, wd, preHooksJSON)
+	summary, err := reloadProjectSettings(context.Background())
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := tools.GetMCPToolRunner(); got != runner {
+		t.Error("MCP servers restarted although only hooks.json changed")
+	}
+	if !strings.Contains(summary, "mcp: unchanged") {
+		t.Errorf("summary = %q, want the unchanged mcp line", summary)
+	}
+}
+
+// TestReloadStartsMCPAfterFailedStart checks that a start-up MCP connect that
+// failed is retried by the next reload, although no MCP file changed.
+func TestReloadStartsMCPAfterFailedStart(t *testing.T) {
+	wd := setupReloadProject(t)
+	t.Cleanup(tools.SetMCPToolRunnerForTests(nil))
+	rememberProjectSetup(wd, true, true)
+
+	summary, err := reloadProjectSettings(context.Background())
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if strings.Contains(summary, "mcp: unchanged") {
+		t.Errorf("summary = %q, want the MCP servers started again", summary)
+	}
+	if tools.GetMCPToolRunner() == nil {
+		t.Error("MCP servers not started by the reload after a failed start")
+	}
+}
+
+// TestReloadRestartsMCPWhenMCPFileChanges checks that a changed MCP file
+// restarts the MCP servers.
+func TestReloadRestartsMCPWhenMCPFileChanges(t *testing.T) {
+	wd := setupReloadProject(t)
+	rememberProjectSetup(wd, true, true)
+	runner := tools.NewMCPToolRunner()
+	t.Cleanup(tools.SetMCPToolRunnerForTests(runner))
+
+	if err := os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".tyci"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mcp.ConfigPath(), []byte(`{"mcpServers":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reloadProjectSettings(context.Background()); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := tools.GetMCPToolRunner(); got == runner {
+		t.Error("MCP servers not restarted after mcp.json changed")
+	}
+}
+
+// TestReloadChangedAreasNamesOnlyChangedParts checks the line of the settings
+// watcher: it names only the areas whose files changed.
+func TestReloadChangedAreasNamesOnlyChangedParts(t *testing.T) {
+	t.Cleanup(tools.SnapshotLuaToolsForTesting())
+	wd := setupReloadProject(t)
+
+	writeProjectHooks(t, wd, preHooksJSON)
+	changed, err := reloadChangedAreas(context.Background())
+	if err != nil {
+		t.Fatalf("hooks reload: %v", err)
+	}
+	if changed != "hooks" {
+		t.Errorf("changed = %q, want %q", changed, "hooks")
+	}
+
+	writeProjectHooks(t, wd, postHooksJSON)
+	luaDir := filepath.Join(os.Getenv("HOME"), ".tyci", "tools")
+	if err := os.MkdirAll(luaDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(luaDir, "main-reload.lua"), []byte(luaReloadScript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err = reloadChangedAreas(context.Background())
+	if err != nil {
+		t.Fatalf("hooks and lua reload: %v", err)
+	}
+	if changed != "hooks, lua tools" {
+		t.Errorf("changed = %q, want %q", changed, "hooks, lua tools")
+	}
+
+	changed, err = reloadChangedAreas(context.Background())
+	if err != nil || changed != "" {
+		t.Errorf("reload without a change: changed = %q, err = %v, want empty", changed, err)
 	}
 }
