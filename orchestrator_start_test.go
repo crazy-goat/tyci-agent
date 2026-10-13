@@ -15,6 +15,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/forge"
 	"github.com/crazy-goat/tyci-agent/internal/forge/fake"
 	"github.com/crazy-goat/tyci-agent/internal/orchestrator"
+	"github.com/crazy-goat/tyci-agent/providers"
 )
 
 type stubRunner struct {
@@ -247,5 +248,63 @@ func TestOrchestratorWorkflowDefaultFromConfig(t *testing.T) {
 	got := missingOrchestratorWorkflow(info, "roadmap", orchestratorWorkflow(oc))
 	if !strings.Contains(got, "tyci workflow init "+orchestrator.DefaultWorkflow) {
 		t.Fatalf("%q", got)
+	}
+}
+
+// A workflow with several bad files gives one line that names every bad file.
+func TestOrchestratorWorkflowBrokenOneLine(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	info := flow.RepoInfo{Home: home, Root: t.TempDir()}
+	dir := filepath.Join(home, ".tyci", "workflows", orchestrator.RoadmapWorkflow)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"description":"d","start":"a","states":{
+		"a":{"agent":"worker","check":"checks/gone.sh","task":"t1","on":{"default":"b"}},
+		"b":{"agent":"worker","prompt":"@prompts/none.md","on":{"default":"c"}},
+		"c":{"end":true}}}`
+	if err := os.WriteFile(filepath.Join(dir, "workflow.json"), []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := missingOrchestratorWorkflow(info, orchestrator.RoadmapWorkflow)
+	if strings.Contains(got, "\n") {
+		t.Fatalf("message has a line break: %q", got)
+	}
+	for _, want := range []string{"checks/gone.sh", "tasks/t1.md", "prompts/none.md"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("message lacks %s: %q", want, got)
+		}
+	}
+}
+
+// The prompt uses the config read at start. A later change of the file does not
+// change it, and a missing repository gives the default of 3 workers.
+func TestOrchestratorSystemPromptUsesStartConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	info := flow.RepoInfo{Home: home, Root: t.TempDir()}
+	cfgPath := filepath.Join(home, ".tyci", "config.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(`{"orchestrator":{"workers":7}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oc, err := loadOrchestratorConfig(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := orchestratorStart{info: info, oc: oc}
+	if err := os.WriteFile(cfgPath, []byte(`{"orchestrator":{"workers":2}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := orchestratorSystemPrompt(st), providers.BuildOrchestratorSystemPrompt(7); got != want {
+		t.Fatal("prompt does not use the config read at start")
+	}
+	if got, want := orchestratorSystemPrompt(orchestratorStart{repoErr: errors.New("no repo")}), providers.BuildOrchestratorSystemPrompt(3); got != want {
+		t.Fatal("no repository must give the default of 3 workers")
 	}
 }
