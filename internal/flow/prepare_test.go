@@ -99,3 +99,31 @@ func TestPrepareRun_LookupError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestPrepareRun_RefusesMissingOracleTask(t *testing.T) {
+	home := t.TempDir()
+	wf := okWF()
+	wf.States["ask"] = State{Ask: "need a human", On: map[string]string{"done": "end"}}
+	wf.States["a"] = State{Agent: "worker", On: map[string]string{"done": "ask"}}
+	called := false
+	d := PrepareDeps{
+		Lookup:      func(string) (*Workflow, string, error) { return wf, t.TempDir(), nil },
+		Config:      func() (*flowconfig.Config, error) { return okCfg(), nil },
+		NewRunID:    func() (string, error) { return NewRunID(home, "r") },
+		AddWorktree: func(context.Context, string, int) (*worktree.Worktree, error) { called = true; return nil, nil },
+		NewStore: func(id string) (*Store, error) {
+			called = true
+			return &Store{Dir: filepath.Join(home, ".tyci", "runs", "r", id)}, nil
+		},
+	}
+	_, _, _, err := PrepareRun(context.Background(), d, PrepareReq{Workflow: "demo", Params: []string{"1"}})
+	if err == nil {
+		t.Fatal("expected error for a workflow without tasks/ask.md")
+	}
+	if !strings.Contains(err.Error(), "tasks/ask.md is missing") {
+		t.Fatalf("err = %v, want it to name tasks/ask.md", err)
+	}
+	if called {
+		t.Fatal("AddWorktree or NewStore called for a refused workflow")
+	}
+}

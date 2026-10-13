@@ -75,12 +75,11 @@ func New(opts ...Option) *Bus {
 		opt(b)
 	}
 	if b.journalPath != "" {
-		j, last, err := openJournal(b.journalPath, b.redact)
+		j, err := openJournal(b.journalPath, b.redact)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bus: journal %s is off: %v\n", b.journalPath, err)
 		} else {
 			b.journal = j
-			b.seq = last
 		}
 	}
 	return b

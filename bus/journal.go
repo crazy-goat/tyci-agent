@@ -1,12 +1,9 @@
 package bus
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"sync"
 )
@@ -25,41 +22,19 @@ type journal struct {
 	closed bool
 }
 
-// openJournal opens the journal file at path for append. It removes an
-// incomplete last line, so that the next line starts on a new line. It
-// returns the journal and the highest Seq that the file holds.
-func openJournal(path string, redact func([]byte) []byte) (*journal, uint64, error) {
-	data, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, 0, err
-	}
-	end := bytes.LastIndexByte(data, '\n') + 1
-	if end < len(data) {
-		if err := os.Truncate(path, int64(end)); err != nil {
-			return nil, 0, err
-		}
-	}
-
-	// Take the highest Seq, not the last line. Writes happen after bus.mu is
-	// released, so two publishers can write their lines out of Seq order.
-	var last uint64
-	for line := range bytes.Lines(data[:end]) {
-		var m Message
-		if json.Unmarshal(line, &m) == nil && m.Seq > last {
-			last = m.Seq
-		}
-	}
-
+// openJournal opens the journal file at path for append. Each process has its
+// own file, so it does not read or change the bytes that are already there.
+func openJournal(path string, redact func([]byte) []byte) (*journal, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	// The mode of OpenFile applies only to a new file. Set it on an old one too.
 	if err := f.Chmod(0o600); err != nil {
 		_ = f.Close()
-		return nil, 0, err
+		return nil, err
 	}
-	return &journal{redact: redact, logw: os.Stderr, f: f, w: f}, last, nil
+	return &journal{redact: redact, logw: os.Stderr, f: f, w: f}, nil
 }
 
 // write appends m as one redacted line. A write failure is logged once.

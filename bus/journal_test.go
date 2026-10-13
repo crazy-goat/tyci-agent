@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/crazy-goat/tyci-agent/internal/redact"
@@ -61,82 +60,6 @@ func TestJournal_WritesOnlyDurable(t *testing.T) {
 	got := decodeItems(t, msgs)
 	if want := []item{{ID: "a", N: 1}, {ID: "b", N: 3}}; !slices.Equal(got, want) {
 		t.Fatalf("journal payloads = %+v, want %+v", got, want)
-	}
-}
-
-func TestJournal_SeqRecoveredAfterReopen(t *testing.T) {
-	path := journalPath(t)
-	b := New(WithJournal(path))
-	for i := range 3 {
-		mustPublish(t, b, kindDurable, item{ID: "a", N: i})
-	}
-	b.Close()
-
-	b2 := New(WithJournal(path))
-	defer b2.Close()
-	if seq := mustPublish(t, b2, kindDurable, item{ID: "d"}); seq != 4 {
-		t.Fatalf("Seq after reopen = %d, want 4", seq)
-	}
-	if n := len(readJournal(t, path)); n != 4 {
-		t.Fatalf("journal has %d lines, want 4", n)
-	}
-}
-
-func TestJournal_SeqRecoveredAfterConcurrentPublish(t *testing.T) {
-	path := journalPath(t)
-	b := New(WithJournal(path))
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Go(func() {
-			for range 100 {
-				if _, err := Publish(b, kindDurable, orchestrator, agent("x"), OriginSystem, item{ID: "a"}); err != nil {
-					t.Errorf("Publish: %v", err)
-				}
-			}
-		})
-	}
-	wg.Wait()
-	b.Close()
-
-	b2 := New(WithJournal(path))
-	defer b2.Close()
-	if seq := mustPublish(t, b2, kindDurable, item{ID: "d"}); seq != 801 {
-		t.Fatalf("Seq after reopen = %d, want 801", seq)
-	}
-}
-
-func TestJournal_TornLastLineIgnored(t *testing.T) {
-	path := journalPath(t)
-	b := New(WithJournal(path))
-	mustPublish(t, b, kindDurable, item{ID: "a"})
-	mustPublish(t, b, kindDurable, item{ID: "b"})
-	b.Close()
-
-	// A crash in the middle of a write leaves a line without its end.
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatalf("OpenFile: %v", err)
-	}
-	if _, err := f.WriteString(`{"seq":3,"kind":"test.dur`); err != nil {
-		t.Fatalf("WriteString: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-
-	b2 := New(WithJournal(path))
-	defer b2.Close()
-	if seq := mustPublish(t, b2, kindDurable, item{ID: "c"}); seq != 3 {
-		t.Fatalf("Seq after torn line = %d, want 3", seq)
-	}
-	msgs := readJournal(t, path)
-	if len(msgs) != 3 {
-		t.Fatalf("journal has %d lines, want 3", len(msgs))
-	}
-	for i, m := range msgs {
-		if m.Seq != uint64(i+1) {
-			t.Fatalf("line %d has Seq %d, want %d", i, m.Seq, i+1)
-		}
 	}
 }
 
@@ -201,28 +124,6 @@ func TestJournal_ExistingFileGetsMode0600(t *testing.T) {
 	}
 }
 
-func TestJournal_SeqFromOutOfOrderLines(t *testing.T) {
-	path := journalPath(t)
-	// Lines written by two publishers, the later Seq first.
-	var data []byte
-	for _, seq := range []uint64{5, 3} {
-		line, err := json.Marshal(Message{Seq: seq, Kind: kindDurable, Origin: OriginSystem, Payload: []byte(`{}`)})
-		if err != nil {
-			t.Fatalf("Marshal: %v", err)
-		}
-		data = append(append(data, line...), '\n')
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	b := New(WithJournal(path))
-	defer b.Close()
-	if seq := mustPublish(t, b, kindDurable, item{ID: "a"}); seq != 6 {
-		t.Fatalf("Seq after reopen = %d, want 6", seq)
-	}
-}
-
 func TestJournal_ReplaysSameMessages(t *testing.T) {
 	path := journalPath(t)
 	b := New(WithJournal(path))
@@ -274,5 +175,31 @@ func TestJournal_OpenFailure_RunsInMemory(t *testing.T) {
 
 	if seq := mustPublish(t, b, kindDurable, item{ID: "a"}); seq != 1 {
 		t.Fatalf("Seq = %d, want 1", seq)
+	}
+}
+
+// TestJournal_OpenDoesNotReadOrTruncate checks that opening a journal leaves
+// the existing bytes alone, including a partial last line, and that Seq starts
+// at 1 for each journal file. Each process has its own file.
+func TestJournal_OpenDoesNotReadOrTruncate(t *testing.T) {
+	path := journalPath(t)
+	old := []byte(`{"seq":9}` + "\n" + `{"seq":1`)
+	if err := os.WriteFile(path, old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	b := New(WithJournal(path))
+	defer b.Close()
+	if seq := mustPublish(t, b, kindDurable, item{ID: "d"}); seq != 1 {
+		t.Fatalf("first Seq = %d, want 1", seq)
+	}
+	b.Close()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, old) {
+		t.Fatalf("open changed the existing bytes: %q", data)
 	}
 }
