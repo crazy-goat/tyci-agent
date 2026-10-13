@@ -68,9 +68,33 @@ func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string)) 
 		post(orchestrator.FormatSpecial(orchestrator.ForgeError, err.Error()))
 		return nil
 	}
+	if msg := missingOrchestratorWorkflow(info, "roadmap", orchestratorWorkflow(oc)); msg != "" {
+		post("orchestrator: " + msg)
+		return nil
+	}
 	// A start-up resume counts as a worker: refuse it while the limit is reached.
 	workflowManager.SetWorkers(oc.Workers)
 	return startOrchestrator(ctx, false, oc, f, orchestrator.NewRunner(workflowManager), post)
+}
+
+// missingOrchestratorWorkflow returns the error of the first workflow name that
+// does not load, or "" when all of them load. The error names the init command.
+func missingOrchestratorWorkflow(info flow.RepoInfo, names ...string) string {
+	for _, n := range names {
+		if _, _, err := flow.Lookup(n, info.Home, info.Root, info.Trusted); err != nil {
+			return err.Error()
+		}
+	}
+	return ""
+}
+
+// orchestratorWorkflow is the workflow the orchestrator runs per issue. The
+// config loader leaves Workflow empty when the config sets none.
+func orchestratorWorkflow(oc orchestrator.Config) string {
+	if oc.Workflow == "" {
+		return orchestrator.DefaultWorkflow
+	}
+	return oc.Workflow
 }
 
 func loadOrchestratorConfig(info flow.RepoInfo) (orchestrator.Config, error) {

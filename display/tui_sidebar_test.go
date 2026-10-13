@@ -285,9 +285,8 @@ func TestSidebarResize_ReclampsStaleScrollAndClickMapping(t *testing.T) {
 	// A click on the first content row must open row 0's job (the oldest —
 	// the Bash rows are oldest first — "job-0"), not some row offset by the
 	// stale, pre-resize scroll (9), which would either open the wrong job or
-	// hit nothing at all. sidebarActivateRow closes the sidebar and resets
-	// sidebarCursor to 0 unconditionally on success, so the modal's own title
-	// (not the cursor field) is what proves which row was actually picked.
+	// hit nothing at all. The modal's own title is what proves which row was
+	// actually picked.
 	model, _ = m2.updateSidebar(tea.MouseMsg{
 		X: bigLayout.contentLeft, Y: bigLayout.contentTop + taskLineOfFirstJob(m2),
 		Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
@@ -1496,8 +1495,8 @@ func TestSidebarSubmitResume_RefusesMidTurn(t *testing.T) {
 
 	model, _ := m.sidebarSubmitResume()
 	m2 := model.(TuiModel)
-	if m2.sidebarActive {
-		t.Fatalf("expected the sidebar to close even when refusing")
+	if !m2.sidebarActive {
+		t.Fatalf("expected the sidebar to stay open when refusing")
 	}
 	if m2.input.Value() != "" {
 		t.Fatalf("expected the input box to stay untouched, got %q", m2.input.Value())

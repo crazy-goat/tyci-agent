@@ -137,6 +137,8 @@ it writes `failed.log` in its artifact dir and answers `failed`, and the run goe
 continues at that state), `stop` (the run ends) or `ask <reason>` (the run pauses and the
 pause message shows the reason).
 
+With an open, unmerged PR, `stop`, `goto:merge` and a goto to a state that ends the run pause at `ask` for a human.
+
 The fixer runs at most 2 times for the same failed step, and the oracle once. After that
 the run pauses at `ask`. The limits apply to the states named `fixer` and `oracle`, not to
 the agent role of a state. In a workflow file, the on target `$failed` means "the last check

@@ -942,7 +942,7 @@ func main() {
 // run starts tyci and returns its exit code. Its defers run before main exits.
 func run() int {
 	// The process-wide message bus of v0.7.0. Its journal is
-	// <session dir>/bus.jsonl when the session directory exists. It is set
+	// <session dir>/bus-<pid>-<start>.jsonl when the session directory exists. It is set
 	// before wireTools, which subscribes to it.
 	appBus = newAppBus(busJournalPath())
 	defer appBus.Close()

@@ -552,20 +552,47 @@ func TestE2E_OracleAsk_PausesWithReason(t *testing.T) {
 	}
 }
 
-// #369: a step that keeps failing gets the fixer twice, then the oracle (once), then a human.
-func TestE2E_StepKeepsFailing_FixerTwiceOracleOnceThenAsk(t *testing.T) {
+// #369: a step that keeps failing gets the fixer twice, then the oracle, then a human.
+// #561: with the PR open, the oracle goto:merge goes to a human at once.
+func TestE2E_StepKeepsFailing_FixerTwiceOracleThenAsk(t *testing.T) {
 	s := happy()
 	s["fixer"] = []string{"ok", "ok"}
 	s["oracle"] = []string{"goto:merge try once more"}
 	e := newE2E(t, s)
 	e.ctlSet("merge_fail", "")
 	e.mustPause()
-	e.wantStates(toMerge + ", fixer, merge, fixer, merge, fixer, oracle, merge, fixer, oracle")
-	if e.agents.calls != 2+2+1 { // code, review, two fixer runs, one oracle run
-		t.Errorf("agent calls = %d, want 5", e.agents.calls)
+	e.wantStates(toMerge + ", fixer, merge, fixer, merge, fixer, oracle")
+	if e.st.Current != "ask" || e.st.Ask == nil || !strings.Contains(e.st.Ask.Reason, "try once more") {
+		t.Errorf("current %q, ask = %+v", e.st.Current, e.st.Ask)
 	}
-	if e.st.Ask == nil || !strings.Contains(e.st.Ask.Reason, "oracle already ran 1 time(s) for the failed step merge") {
-		t.Errorf("ask = %+v", e.st.Ask)
+}
+
+// #561: with an open PR, the recover oracle cannot stop the run; a human decides.
+func TestE2E_RecoverOracleStopWithOpenPR_PausesAtAsk(t *testing.T) {
+	s := happy()
+	s["fixer"] = []string{"failed"}
+	s["oracle"] = []string{"stop the issue looks done"}
+	e := newE2E(t, s)
+	e.ctlSet("merge_fail", "")
+	e.mustPause()
+	e.wantStates(toMerge + ", fixer, oracle")
+	if e.st.PR == 0 || e.st.Current != "ask" || e.st.Ask == nil || !strings.Contains(e.st.Ask.Reason, "The oracle proposes stop while the PR is open") {
+		t.Errorf("PR %d, current %q, ask = %+v", e.st.PR, e.st.Current, e.st.Ask)
+	}
+}
+
+// #561: without a PR, the recover oracle stop still ends the run.
+func TestE2E_RecoverOracleStopWithoutPR_EndsRun(t *testing.T) {
+	s := map[string][]string{
+		"fixer":  {"failed"},
+		"oracle": {"stop the issue is already done"},
+	}
+	e := newE2E(t, s)
+	e.ctlSet("down", "")
+	e.mustFinish()
+	e.wantStates("check_done, fixer, oracle")
+	if e.st.PR != 0 || e.st.Status != "done" {
+		t.Errorf("PR %d, status %q", e.st.PR, e.st.Status)
 	}
 }
 
