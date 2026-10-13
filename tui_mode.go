@@ -208,7 +208,7 @@ func compactAndShow(disp compactionDisplay, compact func(summary, focus string, 
 // runTUI is the full-screen frontend. It reads user input, dispatches slash
 // commands and paints; the conversation behind it — history, model client,
 // session log, usage — is the conductor's.
-func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Context) {
+func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Context, orchStart orchestratorStart) {
 	titleSet := false // track whether terminal title has been set
 
 	// renameSession stores a session title and shows it in the terminal
@@ -262,7 +262,7 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 
 	// The start-up greeting and the orchestrator: display only, never in the
 	// model history. Posting from the orchestrator goroutine is safe.
-	startTUIOrchestrator(baseCtx, resumed, func(line string) { tuiDisp.Text(line + "\n") })
+	startTUIOrchestrator(baseCtx, resumed, func(line string) { tuiDisp.Text(line + "\n") }, orchStart)
 
 	// defaults.watch_config: reload the settings when their files change. The
 	// watcher stops with baseCtx.

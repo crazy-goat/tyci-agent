@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Bus: the journal cleanup deletes only files named `bus-<pid>-<start>.jsonl`, and keeps the journal of a process that is still running, even when it is older than 7 days (#696).
 - Sessions: a session that is still open in a running tyci process is no longer moved from the old session layout into its project directory, even when its file is older than ten minutes. The move waits until the writer closes the file (#692).
 - Subagents: `kill_job`, `wait` and `jobs` refuse or hide every job outside the caller's subtree when a subagent lost its sink context key. The subtree rule now fails closed (#698).
 - Flow: the oracle answer is read from its first key line, which may follow prose lines. The pause oracle and the recover oracle accept the same forms (`goto:<state>`, `goto <state>`, `stop`, `ask`), the stop check with an open PR is in one place, and the recover task lists the goto states of the run (#697).
+- TUI: the orchestrator start reads the repository and the orchestrator config once, and a broken workflow file gives one line in the chat (#691).
 
 ## [0.9.0] - 2026-10-13
 

@@ -32,3 +32,20 @@ func TestSessionLists_SkipJournal(t *testing.T) {
 		t.Fatalf("resumeEntriesInDir = %+v, want only real-session.jsonl", resume)
 	}
 }
+
+// TestJournalPID_ExactName checks that only names in the form
+// bus-<pid>-<start>.jsonl are journals, and that the pid is read from them.
+func TestJournalPID_ExactName(t *testing.T) {
+	pid, ok := JournalPID("bus-42-1700000000.jsonl")
+	if !ok || pid != 42 {
+		t.Fatalf("JournalPID(bus-42-...) = %d, %v; want 42, true", pid, ok)
+	}
+	for _, name := range []string{"business.jsonl", "bus.jsonl", "bus-abc-1.jsonl", "bus-1000.jsonl", "bus-0-1.jsonl", "bus-1-1.jsonl.bak"} {
+		if _, ok := JournalPID(name); ok {
+			t.Errorf("JournalPID(%q) reports a journal", name)
+		}
+		if IsJournalFile(name) {
+			t.Errorf("IsJournalFile(%q) = true", name)
+		}
+	}
+}
