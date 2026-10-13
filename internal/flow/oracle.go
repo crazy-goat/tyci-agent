@@ -23,6 +23,12 @@ func isPauseOracle(role, task string) bool {
 	return role == "oracle" && task == oracleTask
 }
 
+// isPickOracle reports whether the agent is the read-only oracle that picks the
+// findings of a milestone-close run (task pick_critical, #206).
+func isPickOracle(role, task string) bool {
+	return role == "oracle" && task == "pick_critical"
+}
+
 // oracleTaskProblem returns the problem of the workflow in dir when the oracle
 // needs tasks/ask.md and the file is missing. The oracle answers the pauses of
 // each ask state without "human": true, unless defaults.oracle_answers is 0.

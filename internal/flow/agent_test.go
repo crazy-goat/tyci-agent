@@ -348,3 +348,20 @@ func TestStepStats_HasEffort(t *testing.T) {
 		t.Fatalf("effort = %q", got.Effort)
 	}
 }
+
+// #206: the pick oracle of a milestone-close run saves its answer as output.txt and writes no report.md.
+func TestPickOracle_SavesTextAsOutput(t *testing.T) {
+	s := &spawnRec{result: "  {\"critical\":[1],\"doubt\":[]}\n"}
+	art := t.TempDir()
+	key, _, err := newRunner(s).Run(context.Background(), "oracle", "pick_critical", RunContext{Worktree: t.TempDir(), ArtifactDir: art})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(art, "output.txt"))
+	if key != "done" || string(b) != "{\"critical\":[1],\"doubt\":[]}\n" {
+		t.Errorf("key=%q output=%q", key, b)
+	}
+	if len(s.specs) != 1 || strings.Contains(s.specs[0].Task, "report.md") {
+		t.Errorf("specs = %+v", s.specs)
+	}
+}
