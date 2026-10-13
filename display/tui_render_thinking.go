@@ -8,7 +8,7 @@ import (
 )
 
 // thinkingSummaryMaxLen is the width (in runes) a thinking block's collapsed
-// summary is frozen at. Matches the width formatToolCall truncates a tool's
+// summary is frozen at. Matches the width formatToolSummary truncates a tool's
 // arg summary to (see e.g. its "find" case), so a thinking line and a tool
 // line take up a similar share of the row before any further, width-aware
 // truncation happens at render time (see renderThinkingBlock).

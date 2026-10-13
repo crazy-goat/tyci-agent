@@ -230,7 +230,7 @@ func (m TuiModel) sidebarRowCount() int {
 	case sidebarTabTasks:
 		return len(m.sidebarTaskJobRows(m.sidebarLayout().contentWidth))
 	case sidebarTabRuns:
-		return len(m.sidebarRunRows())
+		return len(m.runsItems(m.buildTree()))
 	case sidebarTabBus:
 		return len(m.sidebarBusRows())
 	default:
@@ -705,8 +705,9 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 				case sidebarTabRuns:
-					// A run has one line or more; a click on any of them
-					// toggles that run. The separator belongs to no run.
+					// A row has one line or more; a click on any of them
+					// acts like Enter on that row: it toggles a run and opens
+					// the log of an agent. The separator belongs to no row.
 					owner := m.runsTab(layout.contentWidth).owner
 					if line >= 0 && line < len(owner) && owner[line] >= 0 {
 						m.sidebarCursor = owner[line]
@@ -788,6 +789,9 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case sidebarTabRuns:
+		if t, it, ok := m.runsCursorItem(); ok && it.agent >= 0 {
+			return m.openAgentLog(t.run, t.agents[it.agent])
+		}
 		return m.sidebarToggleRun(), nil
 	case sidebarTabBus:
 		return m.sidebarToggleBusPane(), nil
@@ -824,11 +828,11 @@ func (m TuiModel) sidebarScrollBusPane(delta int) TuiModel {
 // sidebarAskStop asks for y before the run under the cursor is stopped. Only a
 // running run can be stopped: Manager.Stop rejects the other runs.
 func (m TuiModel) sidebarAskStop() TuiModel {
-	rows := m.sidebarRunRows()
-	if m.sidebarCursor < 0 || m.sidebarCursor >= len(rows) || rows[m.sidebarCursor].Status != "running" || rows[m.sidebarCursor].ID == treeAdHocID {
+	t, it, ok := m.runsCursorItem()
+	if !ok || it.agent >= 0 || t.run.Status != "running" || t.run.ID == treeAdHocID {
 		return m
 	}
-	m.sidebarStopRun = rows[m.sidebarCursor].ID
+	m.sidebarStopRun = t.run.ID
 	return m
 }
 
@@ -842,13 +846,14 @@ func (m TuiModel) stopRunCmd(run string) tea.Cmd {
 	return func() tea.Msg { return runStopResultMsg{run: run, err: stop(run)} }
 }
 
-// sidebarToggleRun expands or collapses the run under the cursor.
+// sidebarToggleRun expands or collapses the run under the cursor. The cursor on
+// an agent row changes nothing.
 func (m TuiModel) sidebarToggleRun() TuiModel {
-	rows := m.sidebarRunRows()
-	if m.sidebarCursor < 0 || m.sidebarCursor >= len(rows) {
+	t, it, ok := m.runsCursorItem()
+	if !ok || it.agent >= 0 {
 		return m
 	}
-	id := rows[m.sidebarCursor].ID
+	id := t.run.ID
 	if m.sidebarRunsExpanded == nil {
 		m.sidebarRunsExpanded = map[string]bool{}
 	}

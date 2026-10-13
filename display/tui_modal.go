@@ -17,6 +17,8 @@ func (m *TuiModel) closeSubagentModal() {
 	m.subagentModalDone = false
 	m.subagentModalTitle = ""
 	m.subagentModalStaticText = ""
+	m.agentLogJob = ""
+	m.agentLogPath = ""
 	// Restore scroll state from before modal opened
 	m.atBottom = m.savedAtBottom
 	m.scrollLine = m.savedScrollLine

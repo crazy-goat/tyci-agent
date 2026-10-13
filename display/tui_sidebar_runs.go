@@ -36,12 +36,20 @@ type TuiRunStep struct {
 }
 
 // runsView is the Runs tab laid out at one width. owner has one entry per
-// line: the index of the run the line belongs to, or -1 for the separator and
-// the notices. start has one entry per run: the index of its first line.
+// line: the index of the selectable row (runsItem) the line belongs to, or -1
+// for the separator and the notices. start has one entry per selectable row:
+// the index of its first line.
 type runsView struct {
 	lines []string
 	owner []int
 	start []int
+}
+
+// runsItem is one selectable row of the Runs tab: a run row, or an agent row
+// under an expanded run. The cursor is an index into the list of runsItem.
+type runsItem struct {
+	run   int // index into the buildTree rows
+	agent int // index into the agents of that run, or -1 for the run row
 }
 
 func (v *runsView) add(line string, run int) {
@@ -54,16 +62,33 @@ func runFinished(r TuiRunRow) bool {
 	return r.Status == "done" || r.Status == "failed" || r.Status == "stopped"
 }
 
-// sidebarRunRows returns the rows of the Runs tab in display order, the same
-// rows that buildTree draws. The index of a row is the cursor position of its
-// run, so the cursor, Enter and the stop key use this list only.
-func (m *TuiModel) sidebarRunRows() []TuiRunRow {
-	tree := m.buildTree()
-	rows := make([]TuiRunRow, 0, len(tree))
-	for _, t := range tree {
-		rows = append(rows, t.run)
+// runsItems returns the selectable rows of the Runs tab in display order: each
+// run row, and the agent rows of the expanded runs. The cursor, the drawing,
+// Enter and the stop key all use this list only.
+func (m TuiModel) runsItems(tree []treeRun) []runsItem {
+	var items []runsItem
+	for i, t := range tree {
+		items = append(items, runsItem{run: i, agent: -1})
+		if !m.sidebarRunsExpanded[t.run.ID] {
+			continue
+		}
+		for j := range t.agents {
+			items = append(items, runsItem{run: i, agent: j})
+		}
 	}
-	return rows
+	return items
+}
+
+// runsCursorItem returns the tree row and the item under the cursor. ok is
+// false when the cursor is on no row.
+func (m TuiModel) runsCursorItem() (t treeRun, it runsItem, ok bool) {
+	tree := m.buildTree()
+	items := m.runsItems(tree)
+	if m.sidebarCursor < 0 || m.sidebarCursor >= len(items) {
+		return treeRun{}, runsItem{}, false
+	}
+	it = items[m.sidebarCursor]
+	return tree[it.run], it, true
 }
 
 func (m TuiModel) renderSidebarRuns(width int) []string {
@@ -97,25 +122,28 @@ func (m TuiModel) runsTab(width int) runsView {
 		if i > 0 && runFinished(r) && !runFinished(rows[i-1]) {
 			v.add(dim.Render(strings.Repeat("─", width)), -1)
 		}
+		item := len(v.start)
 		v.start = append(v.start, len(v.lines))
-		selected := i == m.sidebarCursor
+		selected := item == m.sidebarCursor
 		style := rowStyle(selected)
 		if !selected && runFinished(r) {
 			style = dim
 		}
-		v.add(style.Render(runRowLine(" "+runHeader(r), runDuration(r, now), r.Cost, width, durW, costW)), i)
+		v.add(style.Render(runRowLine(" "+runHeader(r), runDuration(r, now), r.Cost, width, durW, costW)), item)
 		if !m.sidebarRunsExpanded[r.ID] {
 			continue
 		}
-		v.add(dim.Render(fillWidth("   "+r.ID, width)), i)
+		v.add(dim.Render(fillWidth("   "+r.ID, width)), item)
 		for _, s := range r.Steps {
-			v.add(dim.Render(lineWithRight("   "+s.Text, s.Cost, width)), i)
+			v.add(dim.Render(lineWithRight("   "+s.Text, s.Cost, width)), item)
 		}
 		if !runFinished(r) && !r.Since.IsZero() {
-			v.add(fillWidth("   "+runStepText(r, now), width), i)
+			v.add(fillWidth("   "+runStepText(r, now), width), item)
 		}
-		for _, a := range t.agents {
-			v.add(agentRowLine(a, width), i)
+		for j, a := range t.agents {
+			ai := item + 1 + j
+			v.start = append(v.start, len(v.lines))
+			v.add(agentRowLine(a, width, ai == m.sidebarCursor), ai)
 		}
 	}
 	if m.sidebarStopRun != "" {

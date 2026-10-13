@@ -38,7 +38,7 @@ const (
 // screen (item 57 — without this, a job's elapsed/quiet time freezes
 // between job.status messages once the turn that started it has ended).
 func (m TuiModel) wantsStatusTick() bool {
-	return !m.reading || m.agentView != nil || (m.sidebarActive && m.sidebarTab == sidebarTabRuns) || m.hasLiveJobsToPaint()
+	return !m.reading || m.agentView != nil || (m.sidebarActive && m.sidebarTab == sidebarTabRuns) || m.hasLiveJobsToPaint() || m.agentLogTailing()
 }
 
 // hasLiveJobsToPaint reports whether some non-terminal backgroundJobs entry
@@ -157,14 +157,22 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(statusTickMsg); ok {
 		// The agent view replays the viewed job's new events on each tick.
 		m.pullAgentView()
+		// The read of an open agent log runs in a tea.Cmd, not here.
+		var logCmd tea.Cmd
+		m, logCmd = m.agentLogTick()
 		// Keep ticking while a turn is in flight OR a live job still needs
 		// painting somewhere (item 57); stop otherwise, and clear the armed
 		// flag so the next thing that needs a chain is free to start a new one.
 		if m.wantsStatusTick() {
-			return m, statusTickCmd(m.tickInterval())
+			return m, tea.Batch(statusTickCmd(m.tickInterval()), logCmd)
 		}
 		m.statusTickArmed = false
-		return m, nil
+		return m, logCmd
+	}
+	// The result of a read of an agent log. It is handled here, before the
+	// overlays, because the subagent modal would otherwise swallow it.
+	if lm, ok := msg.(agentLogMsg); ok {
+		return m.applyAgentLog(lm), nil
 	}
 	if upd, ok := msg.(tuiMsgJobUpdate); ok {
 		m.applyJobUpdate(upd.Job)

@@ -48,6 +48,12 @@ func (e contextStoppedByUser) Error() string { return string(e) }
 // import tools.
 type RunIDCtxKey struct{}
 
+// TranscriptCtxKey is the context key under which the flow puts the path of
+// the redacted transcript of the agent that starts. Registry.Start copies it to
+// Job.Transcript and clears it for the job's own context, so a child job does
+// not inherit the path of its parent.
+type TranscriptCtxKey struct{}
+
 type Job struct {
 	ID          string
 	Description string
@@ -67,6 +73,10 @@ type Job struct {
 	// in the Runs tab (flow.ShowRunID). Empty for an ad-hoc agent. Set once at
 	// Start from RunIDCtxKey, like ParentID, and never mutated afterward.
 	RunID string
+	// Transcript is the path of the redacted transcript file of the agent
+	// (runlog.Path). Empty for an ad-hoc agent. Set once at Start from
+	// TranscriptCtxKey and never mutated afterward.
+	Transcript string
 
 	Status     Status
 	Result     string
@@ -240,6 +250,7 @@ func (j *Job) Snapshot() Job {
 		Kind:        j.Kind,
 		ParentID:    j.ParentID,
 		RunID:       j.RunID,
+		Transcript:  j.Transcript,
 		Status:      j.Status,
 		Result:      j.Result,
 		Err:         j.Err,

@@ -31,7 +31,7 @@ type treeRun struct {
 }
 
 // buildTree groups the subagent jobs under the workflow runs they work for
-// (jobs.Job.RunID). The rows are in the order of sidebarRunRows: active runs
+// (jobs.Job.RunID). The rows are in the display order of runsTab: active runs
 // first, then at most treeFinishedRuns finished runs. The agents without a
 // run form the last row, the ad-hoc row. With no run source (runLister nil)
 // only the ad-hoc row is returned, and it is empty when there are no
@@ -182,12 +182,16 @@ func (t *treeState) isMissed(id string) bool {
 
 // agentRowLine is the line of an agent under its run: the indent of its depth,
 // the status icon, the description and, for an agent that waits for an answer,
-// the question. The line is cut or padded to width and takes the ping colour.
-func agentRowLine(a treeAgent, width int) string {
+// the question. The line is cut or padded to width and takes the ping colour,
+// or the selection colours when the cursor is on it.
+func agentRowLine(a treeAgent, width int, selected bool) string {
 	icon, _ := jobStatusIcon(a.job.Status)
 	text := strings.Repeat("  ", a.depth) + icon + " " + sanitizeUntrusted(a.job.Description)
 	if q := askText(a.job); q != "" {
 		text += " asks: " + sanitizeUntrusted(q)
+	}
+	if selected {
+		return rowStyle(true).Render(fillWidth(text, width))
 	}
 	return lipgloss.NewStyle().Foreground(a.colour).Render(fillWidth(text, width))
 }

@@ -146,7 +146,7 @@ func (m *TuiModel) handleBlockMsg(msg tuiMsgBlock) tea.Cmd {
 			if bidx >= 0 && bidx < len(m.blocks) && m.blocks[bidx].kind == "tool" && m.blocks[bidx].toolName == "subagent" {
 				m.blocks[bidx].content += msg.content
 				// The collapsed tool line only changes once the args JSON is
-				// complete (formatToolCall shows "tool(...)" until it parses),
+				// complete (formatToolSummary shows "tool(...)" until it parses),
 				// so skip cache invalidation and parse attempts for deltas
 				// that cannot end the JSON document.
 				if jsonMaybeComplete(m.blocks[bidx].content) {
