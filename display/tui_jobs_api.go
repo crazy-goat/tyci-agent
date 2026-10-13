@@ -27,23 +27,29 @@ func (t *TUI) SetJobEvents(sub *bus.Sub) {
 	}()
 }
 
-// SetPingEvents feeds the Runs tab with the ping.missed alarms of sub, a
-// subscription to the alarms addressed to the TUI. A nil sub is a no-op.
+// SetPingEvents feeds the Runs tab with the ping.missed and ping.ok messages
+// of sub, a subscription made by subscribePings. A nil sub is a no-op.
 func (t *TUI) SetPingEvents(sub *bus.Sub) {
 	if sub == nil {
 		return
 	}
 	go func() {
 		defer sub.Close()
-		forwardPingMissed(sub, t.done, t.prog.Send)
+		forwardPings(sub, t.done, t.prog.Send)
 	}()
 }
 
-// forwardPingMissed sends one busPingMissedMsg per ping.missed message to
+// forwardPings sends one busPingMissedMsg or busPingOKMsg per ping message to
 // send, until done closes or the subscription ends.
-func forwardPingMissed(sub *bus.Sub, done <-chan struct{}, send func(tea.Msg)) {
+func forwardPings(sub *bus.Sub, done <-chan struct{}, send func(tea.Msg)) {
 	deliver := func() {
 		for _, m := range sub.Drain() {
+			if m.Kind == bus.KindPingOK {
+				if p, err := bus.Decode[bus.PingOK](m); err == nil {
+					send(busPingOKMsg{Agent: p.Agent})
+				}
+				continue
+			}
 			p, err := bus.Decode[bus.PingMissed](m)
 			if err != nil {
 				continue

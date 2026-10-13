@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -109,5 +111,42 @@ func TestPingMissed_TextMatchesOldAlarm(t *testing.T) {
 		if len(got) != 1 || bodyOf(got[0]) != c.want {
 			t.Fatalf("%s: text = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// TestPingMissed_OnePublishPerMiss checks that one alarm is one bus message.
+// The journal gets one ping.missed line, the Bus tab one event, the parent one
+// copy and the TUI one copy.
+func TestPingMissed_OnePublishPerMiss(t *testing.T) {
+	journal := filepath.Join(t.TempDir(), "bus.jsonl")
+	b := bus.New(bus.WithJournal(journal))
+	defer b.Close()
+	parent := b.Subscribe("test-parent", bus.Filter{To: agentAddr("p"), Kinds: []bus.Kind{bus.KindPingMissed}})
+	tui := subscribePings(b)
+
+	publishPingMissed(b, "p", watchdog.Alarm{Agent: "job-3", QuietFor: time.Minute})
+
+	if n := len(parent.Drain()); n != 1 {
+		t.Fatalf("parent got %d ping.missed, want 1", n)
+	}
+	if n := len(tui.Drain()); n != 1 {
+		t.Fatalf("tui got %d ping.missed, want 1", n)
+	}
+	seqs := map[uint64]bool{}
+	for _, ev := range b.Events() {
+		if ev.Msg.Kind == bus.KindPingMissed {
+			seqs[ev.Msg.Seq] = true
+		}
+	}
+	if len(seqs) != 1 {
+		t.Fatalf("bus events for %d messages, want 1", len(seqs))
+	}
+	b.Close()
+	data, err := os.ReadFile(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), `"kind":"ping.missed"`); n != 1 {
+		t.Fatalf("journal has %d ping.missed lines, want 1:\n%s", n, data)
 	}
 }

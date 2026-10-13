@@ -304,6 +304,9 @@ type Filter struct {
 	To Addr
 	// Kinds lists the kinds to receive. Empty means all kinds.
 	Kinds []Kind
+	// Any receives the messages of Kinds whatever their To. It is for a
+	// read-only watcher, such as the TUI. To is ignored when Any is set.
+	Any bool
 }
 
 // Accepted returns how many messages the subscription has stored, drained or

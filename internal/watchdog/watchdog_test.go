@@ -124,6 +124,29 @@ func TestTick_TopLevelParentNotifiesHumanImmediately(t *testing.T) {
 	}
 }
 
+// TestTick_RecoveredOnceAfterAlarm checks that Recovered fires once when an
+// alarmed job shows activity again.
+func TestTick_RecoveredOnceAfterAlarm(t *testing.T) {
+	r := newRig(t)
+	var recovered []string
+	r.w.Recovered = func(id string) { recovered = append(recovered, id) }
+	p := r.job(jobs.KindOther, "")
+	c := r.job(jobs.KindSubagent, p.ID)
+	r.tick(3 * time.Minute)
+	if len(r.msgs) != 1 {
+		t.Fatalf("alarms = %v, want one", r.msgs)
+	}
+	if len(recovered) != 0 {
+		t.Fatalf("recovered before any activity: %v", recovered)
+	}
+	r.reg.TouchActivity(c.ID)
+	r.w.Tick(time.Now().Add(time.Second))
+	r.w.Tick(time.Now().Add(2 * time.Second))
+	if len(recovered) != 1 || recovered[0] != c.ID {
+		t.Fatalf("recovered = %v, want [%s] once", recovered, c.ID)
+	}
+}
+
 func TestTick_ActivityResetsLadder(t *testing.T) {
 	r := newRig(t)
 	p := r.job(jobs.KindOther, "")

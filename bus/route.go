@@ -49,6 +49,10 @@ func (b *Bus) recipients(subs []*Sub, m Message) []*Sub {
 		if !s.filter.wants(m.Kind) {
 			continue
 		}
+		if s.filter.Any {
+			out = append(out, s)
+			continue
+		}
 		if m.To.Type == AddrSubtree {
 			if s.filter.To.Type == AddrAgent && s.filter.To != m.From && b.isLive(s.filter.To.ID) && b.inSubtree(s.filter.To.ID, m.To.ID) {
 				out = append(out, s)
