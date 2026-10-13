@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: starting a workflow from chat or the TUI refuses a workflow without `tasks/ask.md`, as `tyci workflow run` does (#575).
 - TUI: with the sidebar focused, the resize flush is no longer dropped, so the sidebar width is saved. A width change made less than 500 ms before quit is saved too (#607).
 - Sessions: an old session directory with a file written in the last 10 minutes is no longer moved into the project directory. It is moved on a later listing (#490).
+- Agent: the "they typed that while work was running" note is added only when a person typed a line. A batch of orchestrator notices alone no longer gets it (#686).
 
 ## [0.8.0] - 2026-10-13
 

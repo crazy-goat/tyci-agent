@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/bus"
 )
 
@@ -72,5 +73,15 @@ func TestFormatInbox_ChildCannotSendPlainUserTurn(t *testing.T) {
 	}
 	if got[0] == "steer this way" || !strings.HasPrefix(got[0], "[notice from=") || !strings.Contains(got[0], "kind=agent.message") {
 		t.Fatalf("inbox line = %q, want the sender tag", got[0])
+	}
+}
+
+// TestNoticeFormatUsesSharedPrefix: the notice tag must start with the prefix
+// the agent loop checks, or a notice is taken for a person's line.
+func TestNoticeFormatUsesSharedPrefix(t *testing.T) {
+	m := rawMessage(t, bus.KindNoticeCompletion, bus.Addr{Type: bus.AddrOrchestrator}, bus.OriginSystem, bus.Completion{Text: "done"})
+	got := formatNotices([]bus.Message{m})
+	if len(got) != 1 || !strings.HasPrefix(got[0], agent.NoticePrefix) {
+		t.Fatalf("formatNotices = %q, want a line starting with agent.NoticePrefix", got)
 	}
 }

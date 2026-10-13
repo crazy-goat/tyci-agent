@@ -433,3 +433,63 @@ func TestNoInterruptNoteWithNothingRunning(t *testing.T) {
 		}
 	}
 }
+
+// runWithQueued runs one turn whose first drain returns lines, with a job
+// still running, and reports whether an interrupt note was attached.
+func runWithQueued(t *testing.T, lines []string) bool {
+	t.Helper()
+	sink := &blockRecordingSink{}
+	mc := &connectortest.Fake{ProviderName: "p", ModelName: "m", Turns: [][]stream.Event{
+		{stream.TextDelta{Text: "a"}, stream.Finish{Reason: "stop"}},
+		{stream.TextDelta{Text: "b"}, stream.Finish{Reason: "stop"}},
+	}}
+
+	delivered := false
+	cfg := Config{
+		MaxRetries: 1,
+		NextMessages: func() []string {
+			if delivered {
+				return nil
+			}
+			delivered = true
+			return lines
+		},
+		PendingJobs: func() []string { return []string{"running: the long one (job_id=job-1)"} },
+	}
+
+	msgs := []connector.Message{{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}}}
+	if _, err := Run(context.Background(), mc, sink, &msgs, cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range msgs {
+		for _, b := range m.Content {
+			if strings.Contains(b.Text, "Nothing was cancelled") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestNoInterruptNoteForNoticesOnly: a notice from the orchestrator is not a
+// person typing, so it must not get the note even while a job runs.
+func TestNoInterruptNoteForNoticesOnly(t *testing.T) {
+	if runWithQueued(t, []string{NoticePrefix + "orchestrator kind=notice.completion] done"}) {
+		t.Fatal("an interrupt note was attached to a notice-only batch")
+	}
+	if runWithQueued(t, []string{`<tyci-notice kind=ask.reply id=q1 from=agent>yes</tyci-notice>`}) {
+		t.Fatal("an interrupt note was attached to an ask reply only")
+	}
+}
+
+// TestInterruptNoteWithHumanLineAmongNotices: a person's line in the batch
+// still gets the note, whatever else the batch holds.
+func TestInterruptNoteWithHumanLineAmongNotices(t *testing.T) {
+	lines := []string{
+		NoticePrefix + "orchestrator kind=notice.completion] done",
+		"actually, what about the tests?",
+	}
+	if !runWithQueued(t, lines) {
+		t.Fatal("no interrupt note for a batch with a human line")
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/bus"
 	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/internal/redact"
@@ -272,7 +273,7 @@ func tagSender(m bus.Message, text string) string {
 	if m.Origin == bus.OriginHuman {
 		return text
 	}
-	return fmt.Sprintf("[notice from=%s kind=%s] %s", addrLabel(m.From), m.Kind, text)
+	return fmt.Sprintf("%s%s kind=%s] %s", agent.NoticePrefix, addrLabel(m.From), m.Kind, text)
 }
 
 // addrLabel renders an address as type or type:id, for the tag.
