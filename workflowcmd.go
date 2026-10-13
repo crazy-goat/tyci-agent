@@ -39,7 +39,7 @@ var workflowCmd = &cobra.Command{
 var workflowInitCmd = &cobra.Command{
 	Use:   "init <template> [name]",
 	Short: "Create a project workflow from a template",
-	Long: `Copy the template <template> (issue-to-merge or roadmap) into
+	Long: `Copy the template <template> (issue-to-merge, roadmap or milestone-close) into
 .tyci/workflows/<name>/ of the project. The name defaults to the template name.
 The copy has workflow.json, the check scripts in checks/, the task templates in
 tasks/ and the role prompts in prompts/. Change the copy there.

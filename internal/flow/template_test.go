@@ -215,3 +215,18 @@ func TestRun_RolePromptFileBeatsConfigPrompt(t *testing.T) {
 		t.Fatalf("review prompt = %q, want the config prompt", specs[1].SystemPrompt)
 	}
 }
+
+// #206: the milestone-close template is embedded, loads and validates with the oracle role.
+func TestTemplate_MilestoneCloseParsesAndValidates(t *testing.T) {
+	wf := initWF(t, t.TempDir(), "milestone-close", "milestone-close")
+	cfg := &flowconfig.Config{
+		Models: map[string]string{"m": "x://1"},
+		Roles:  map[string]flowconfig.Role{"oracle": {Model: "m"}},
+	}
+	if _, err := Validate(wf, cfg, wfResolver(wf)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !wf.States["ask"].Human || wf.States["declined"].Result != "declined" {
+		t.Fatalf("ask human or declined result missing: %+v", wf.States)
+	}
+}
