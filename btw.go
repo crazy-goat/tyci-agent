@@ -101,7 +101,7 @@ func (a jobAskerAdapter) Ask(ctx context.Context, id, question string) (string, 
 // job cannot receive the answer. The caller holds askRoutes.Lock.
 func pruneAskRoutes(reg *jobs.Registry) {
 	for seq, id := range askRoutes.asker {
-		if j, ok := reg.Get(id); !ok || (j.Status != jobs.StatusRunning && j.Status != jobs.StatusWaitingAnswer) {
+		if !reg.IsLive(id) {
 			delete(askRoutes.asker, seq)
 		}
 	}

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: Enter or a click on a Tasks row (a Bash row, or a subagent row without a transcript) opens the result modal and keeps the sidebar open. A refused `/resume` on the Sessions tab keeps it open too (#549).
 - Flow: while a run has an open PR, a recover oracle answer `stop`, `goto:merge` or a goto to a state that ends the run now pauses at `ask` for a human, as the pause oracle already does (#561).
 - TUI: the orchestrator does not start when the `roadmap` or the configured orchestrator workflow is missing. It posts one line that names `tyci workflow init <name>` (#569).
+- Ask: a question from a job no longer races with the job's finish when its route is pruned. The route check reads the job status under the registry lock (#705).
 ### Changed
 - Bus: each tyci process writes its own journal, `bus-<pid>-<start>.jsonl`, in the session directory, instead of one shared `bus.jsonl`. Journals older than 7 days are deleted at start. Sequence numbers start at 1 for each process (#599).
 ### Fixed

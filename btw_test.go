@@ -827,3 +827,51 @@ func TestBtwSuggestion_ShownOnceInChat(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+// TestPruneAskRoutesWhileJobFinishes runs pruneAskRoutes while the job that
+// owns a route finishes. The registry writes the job status under its lock;
+// pruneAskRoutes must read it through the registry, or -race reports a data race.
+func TestPruneAskRoutesWhileJobFinishes(t *testing.T) {
+	reg := jobs.NewRegistry(nil)
+	release := make(chan struct{})
+	job := reg.Start(context.Background(), "ask test", jobs.KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
+		<-release
+		return "done", false, nil
+	})
+
+	askRoutes.Lock()
+	askRoutes.asker[1] = job.ID
+	askRoutes.Unlock()
+	t.Cleanup(func() {
+		askRoutes.Lock()
+		delete(askRoutes.asker, 1)
+		askRoutes.Unlock()
+	})
+
+	askRoutes.Lock()
+	pruneAskRoutes(reg) // the job is still running here, so the route stays
+	askRoutes.Unlock()
+
+	close(release)
+	finished := make(chan struct{})
+	go func() {
+		reg.Wait(context.Background(), job.ID, time.Minute)
+		close(finished)
+	}()
+	for running := true; running; {
+		askRoutes.Lock()
+		pruneAskRoutes(reg)
+		askRoutes.Unlock()
+		select {
+		case <-finished:
+			running = false
+		default:
+		}
+	}
+
+	askRoutes.Lock()
+	defer askRoutes.Unlock()
+	if _, ok := askRoutes.asker[1]; ok {
+		t.Fatal("route of a finished job was not pruned")
+	}
+}
