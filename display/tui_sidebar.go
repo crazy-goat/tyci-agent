@@ -879,7 +879,7 @@ func (m TuiModel) sidebarSubmitResume() (tea.Model, tea.Cmd) {
 		return m, sidebarStatusCmd(m.statusMessage)
 	}
 	if strings.TrimSpace(m.input.Value()) != "" {
-		m.statusMessage = "Clear the input first, then reopen Sessions to resume."
+		m.statusMessage = "Clear the input first, then press Enter again."
 		return m, sidebarStatusCmd(m.statusMessage)
 	}
 	m.closeSidebar()
