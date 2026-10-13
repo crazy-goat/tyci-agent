@@ -1236,27 +1236,13 @@ func (m TuiModel) buildSubagentTree() []subagentTreeRow {
 // buildSubagentTreeFrom is buildSubagentTree for the newest-first list all
 // from sortedBackgroundJobs, so a caller that already sorted it does not sort it again.
 func (m TuiModel) buildSubagentTreeFrom(all []jobs.Job) []subagentTreeRow {
-	byParent := map[string][]jobs.Job{}
 	descriptions := map[string]string{}
 	for _, j := range all {
-		if j.Kind != jobs.KindSubagent {
-			continue
+		if j.Kind == jobs.KindSubagent {
+			descriptions[j.ID] = j.Description
 		}
-		descriptions[j.ID] = j.Description
-		// A resumed job is listed under the job it continues. Its real
-		// ParentID stays as it is, so notices do not change. The cost rollup
-		// walks this tree, so the cost of the resumed job also counts in the
-		// job it continues and in that job's ancestors.
-		parent := j.ParentID
-		if old, ok := m.resumedFrom[j.ID]; ok {
-			parent = old
-		}
-		byParent[parent] = append(byParent[parent], j)
 	}
-	active := subagentActiveSet(byParent)
-	for parent, kids := range byParent {
-		byParent[parent] = sortSubagentSiblings(kids, active)
-	}
+	steps, byParent := orderSubagentTree(all, m.resumedFrom)
 
 	usage := ledger.UsageByJob()
 	snap := ledger.Get()
@@ -1277,6 +1263,80 @@ func (m TuiModel) buildSubagentTreeFrom(all []jobs.Job) []subagentTreeRow {
 		rollupUnpriced: mainUnpriced,
 	}}
 
+	for _, s := range steps {
+		j := s.job
+		own := usage[j.ID]
+		cost, unpriced := rollupJobCost(j.ID, byParent, usage)
+		if s.continues {
+			// Show the name of the original agent, also for a job that
+			// continues a resumed job: follow the chain back to its start.
+			origin := m.resumedFrom[j.ID]
+			for next, ok := m.resumedFrom[origin]; ok; next, ok = m.resumedFrom[origin] {
+				origin = next
+			}
+			if desc, ok := descriptions[origin]; ok {
+				j.Description = desc
+			}
+		}
+		rows = append(rows, subagentTreeRow{
+			depth:           s.depth,
+			job:             j,
+			ownTokens:       own.Usage.Input + own.Usage.Output,
+			rollupUSD:       cost,
+			rollupUnpriced:  unpriced,
+			separatorBefore: s.separatorBefore,
+			continues:       s.continues,
+		})
+	}
+	return rows
+}
+
+// subagentStep is one job in the depth-first order of a subagent tree. See
+// orderSubagentTree.
+type subagentStep struct {
+	job             jobs.Job
+	depth           int
+	separatorBefore bool
+	continues       bool
+}
+
+// orderSubagentTree puts the subagent jobs of all in the depth-first order of
+// the Subagents tree, with the depth of each job. It also returns the sibling
+// groups keyed by parent ID. Within each sibling group the active children
+// come first, newest start first. A finished child (done, failed or
+// truncated) follows, most recent end first. A child counts as active when it
+// is running, waiting for an answer, or has an active child itself. A
+// separator sits between the two parts when both are non-empty.
+//
+// A resumed job, a key of resumedFrom, is listed under the job it continues.
+// Its real ParentID stays as it is, so notices do not change.
+//
+// A subagent whose ParentID does not point at another job of all — its
+// parent was a non-subagent job (e.g. a cron run), or its parent has since
+// been evicted from backgroundJobs (see pruneBackgroundJobsLocked) — is not
+// reachable from the synthetic root by the normal walk. Rather than let such
+// a job silently vanish from the tree, every byParent group whose key the
+// walk never visited is emitted afterward as its own depth-1 root (still
+// walked recursively, so its own children render at the correct relative
+// depth).
+func orderSubagentTree(all []jobs.Job, resumedFrom map[string]string) ([]subagentStep, map[string][]jobs.Job) {
+	byParent := map[string][]jobs.Job{}
+	for _, j := range all {
+		if j.Kind != jobs.KindSubagent {
+			continue
+		}
+		parent := j.ParentID
+		if old, ok := resumedFrom[j.ID]; ok {
+			parent = old
+		}
+		byParent[parent] = append(byParent[parent], j)
+	}
+	active := subagentActiveSet(byParent)
+	for parent, kids := range byParent {
+		byParent[parent] = sortSubagentSiblings(kids, active)
+	}
+
+	var steps []subagentStep
 	// "" (the synthetic root's own key) gets marked visited by the very
 	// first walk("", 1) call below, same as every other key — nothing here
 	// pre-seeds it, or the cycle guard inside walk (visited[parentID] ==
@@ -1299,26 +1359,10 @@ func (m TuiModel) buildSubagentTreeFrom(all []jobs.Job) []subagentTreeRow {
 		visited[parentID] = true
 		kids := byParent[parentID]
 		for i, j := range kids {
-			own := usage[j.ID]
-			cost, unpriced := rollupJobCost(j.ID, byParent, usage)
-			_, continues := m.resumedFrom[j.ID]
-			if continues {
-				// Show the name of the original agent, also for a job that
-				// continues a resumed job: follow the chain back to its start.
-				origin := m.resumedFrom[j.ID]
-				for next, ok := m.resumedFrom[origin]; ok; next, ok = m.resumedFrom[origin] {
-					origin = next
-				}
-				if desc, ok := descriptions[origin]; ok {
-					j.Description = desc
-				}
-			}
-			rows = append(rows, subagentTreeRow{
-				depth:           depth,
+			_, continues := resumedFrom[j.ID]
+			steps = append(steps, subagentStep{
 				job:             j,
-				ownTokens:       own.Usage.Input + own.Usage.Output,
-				rollupUSD:       cost,
-				rollupUnpriced:  unpriced,
+				depth:           depth,
 				separatorBefore: i > 0 && !active[j.ID] && active[kids[i-1].ID],
 				continues:       continues,
 			})
@@ -1375,7 +1419,7 @@ func (m TuiModel) buildSubagentTreeFrom(all []jobs.Job) []subagentTreeRow {
 		walkOrphan(parent, 1, map[string]bool{})
 	}
 
-	return rows
+	return steps, byParent
 }
 
 // subagentLive reports whether a subagent is still active. Done, failed and

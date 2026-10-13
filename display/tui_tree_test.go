@@ -2,6 +2,7 @@ package display
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -139,6 +140,111 @@ func TestBuildTree_PingColours(t *testing.T) {
 	}
 }
 
+// TestBuildTree_AgentsInTreeOrder checks that the agents of a run follow the
+// Subagents tree order: a child is drawn under its parent. Worker A starts
+// first, then B, then C, a child of A. B is finished, so the active A comes
+// first with its child C, and the finished B comes last.
+func TestBuildTree_AgentsInTreeOrder(t *testing.T) {
+	m := treeModel([]TuiRunRow{treeTestRun("#1", "running", 3)},
+		treeTestJob("a", "#1", "", jobs.StatusRunning, 1),
+		treeTestJob("b", "#1", "", jobs.StatusDone, 2),
+		treeTestJob("c", "#1", "a", jobs.StatusRunning, 3),
+	)
+	got := m.buildTree()
+	if len(got) != 1 {
+		t.Fatalf("rows = %d, want 1", len(got))
+	}
+	want := []struct {
+		id    string
+		depth int
+	}{{"a", 1}, {"c", 2}, {"b", 1}}
+	agents := got[0].agents
+	if len(agents) != len(want) {
+		t.Fatalf("agents = %v, want %v", agentIDs(agents), want)
+	}
+	for i, w := range want {
+		if agents[i].job.ID != w.id || agents[i].depth != w.depth {
+			t.Fatalf("agent %d = %s at depth %d, want %s at depth %d (order %v)",
+				i, agents[i].job.ID, agents[i].depth, w.id, w.depth, agentIDs(agents))
+		}
+	}
+}
+
+// TestBuildTree_ResumedJobUnderOriginal checks that a resumed job is drawn
+// under the job it continues, as on the Tasks tab.
+func TestBuildTree_ResumedJobUnderOriginal(t *testing.T) {
+	m := treeModel([]TuiRunRow{treeTestRun("#1", "running", 3)},
+		treeTestJob("a", "#1", "", jobs.StatusDone, 1),
+		treeTestJob("b", "#1", "", jobs.StatusDone, 2),
+		treeTestJob("r", "#1", "", jobs.StatusRunning, 3),
+	)
+	m.resumedFrom = map[string]string{"r": "a"}
+	got := m.buildTree()
+	if len(got) != 1 {
+		t.Fatalf("rows = %d, want 1", len(got))
+	}
+	agents := got[0].agents
+	if len(agents) != 3 {
+		t.Fatalf("agents = %v, want 3", agentIDs(agents))
+	}
+	if agents[0].job.ID != "a" || agents[0].depth != 1 ||
+		agents[1].job.ID != "r" || agents[1].depth != 2 ||
+		agents[2].job.ID != "b" || agents[2].depth != 1 {
+		t.Fatalf("order = %v with depths %d, %d, %d; want a(1), r(2), b(1)",
+			agentIDs(agents), agents[0].depth, agents[1].depth, agents[2].depth)
+	}
+}
+
+// medianBuildTreeCost returns the median time of buildTree over `calls` calls.
+// The median ignores scheduler noise.
+func medianBuildTreeCost(m *TuiModel, calls int) time.Duration {
+	costs := make([]time.Duration, 0, calls)
+	for range calls {
+		start := time.Now()
+		_ = m.buildTree()
+		costs = append(costs, time.Since(start))
+	}
+	sort.Slice(costs, func(i, j int) bool { return costs[i] < costs[j] })
+	return costs[len(costs)/2]
+}
+
+// TestBuildTree_CostDoesNotGrowWithFlushedBlocks checks that building the
+// Runs tab does not copy the whole model. The value receivers of
+// runRowsCapped and treeAgents did that once per run row. The test compares a
+// session with about 1000 flushed blocks to one with about 5000, both with the
+// same runs and agents. The limit is 2.5, as in the scroll-wheel cost test.
+func TestBuildTree_CostDoesNotGrowWithFlushedBlocks(t *testing.T) {
+	build := func(blocks int) *TuiModel {
+		m := newWheelBenchModel(t, blocks)
+		var runs []TuiRunRow
+		m.backgroundJobs = map[string]jobs.Job{}
+		for r := 1; r <= 20; r++ {
+			id := fmt.Sprintf("#%d", r)
+			runs = append(runs, treeTestRun(id, "done", r))
+			for a := 1; a <= 3; a++ {
+				j := treeTestJob(fmt.Sprintf("%s-%d", id, a), id, "", jobs.StatusDone, a)
+				m.backgroundJobs[j.ID] = j
+			}
+		}
+		m.runLister = func() []TuiRunRow { return runs }
+		return &m
+	}
+	small, large := build(1000), build(5000)
+	smallFlushed, largeFlushed := countFlushed(*small), countFlushed(*large)
+	if smallFlushed < 800 || largeFlushed < 4000 {
+		t.Fatalf("flushed blocks: small=%d large=%d, want at least 800 and 4000", smallFlushed, largeFlushed)
+	}
+	if got := len(small.buildTree()); got != treeFinishedRuns {
+		t.Fatalf("rows = %d, want %d", got, treeFinishedRuns)
+	}
+	smallCost := medianBuildTreeCost(small, 200)
+	largeCost := medianBuildTreeCost(large, 200)
+	if largeCost > smallCost*5/2 {
+		t.Fatalf("buildTree cost grows with flushed blocks: %v with %d flushed, %v with %d flushed; want ratio at most 2.5",
+			smallCost, smallFlushed, largeCost, largeFlushed)
+	}
+}
+
 func TestTreeState_PingBeforeJob(t *testing.T) {
 	m := treeModel([]TuiRunRow{treeTestRun("#1", "running", 1)}, treeTestJob("a", "#1", "", jobs.StatusRunning, 1))
 	m.tree = newTreeState()
@@ -238,8 +344,6 @@ func TestRunsTab_AgentShowsQuestion(t *testing.T) {
 	}
 }
 
-// TestRunsTab_CostBoundedByVisibleRuns checks that the Runs tab does not grow
-// with the old finished runs: only treeFinishedRuns of them are laid out.
 // TestRunsTab_AdHocWithoutRunSource checks that the Runs tab shows an ad-hoc
 // agent with no run source, and no "not wired up" note.
 func TestRunsTab_AdHocWithoutRunSource(t *testing.T) {
@@ -296,6 +400,8 @@ func TestRunsTab_StopKeyNotOnAdHoc(t *testing.T) {
 	}
 }
 
+// TestRunsTab_CostBoundedByVisibleRuns checks that the Runs tab does not grow
+// with the old finished runs: only treeFinishedRuns of them are laid out.
 func TestRunsTab_CostBoundedByVisibleRuns(t *testing.T) {
 	lines := func(n int) int {
 		var runs []TuiRunRow

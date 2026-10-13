@@ -62,7 +62,7 @@ func (m *TuiModel) buildTree() []treeRun {
 
 // runRowsCapped returns the runs of the run source in display order, with the
 // finished runs cut to treeFinishedRuns. It returns nil with no run source.
-func (m TuiModel) runRowsCapped() []TuiRunRow {
+func (m *TuiModel) runRowsCapped() []TuiRunRow {
 	if m.runLister == nil {
 		return nil
 	}
@@ -103,28 +103,16 @@ func adHocRow(agents []jobs.Job) TuiRunRow {
 	return r
 }
 
-// treeAgents turns the jobs of one run into rows. The depth follows the
-// ParentID chain inside the run. The order of jobs is kept.
-func (m TuiModel) treeAgents(jobsOfRun []jobs.Job) []treeAgent {
+// treeAgents turns the jobs of one run into rows in the order of the Subagents
+// tree: each agent follows the job it continues or its parent, depth-first.
+func (m *TuiModel) treeAgents(jobsOfRun []jobs.Job) []treeAgent {
 	if len(jobsOfRun) == 0 {
 		return nil
 	}
-	parent := map[string]string{}
-	for _, j := range jobsOfRun {
-		parent[j.ID] = j.ParentID
-	}
-	out := make([]treeAgent, 0, len(jobsOfRun))
-	for _, j := range jobsOfRun {
-		depth := 1
-		for id, guard := parent[j.ID], 0; id != "" && guard < len(jobsOfRun); guard++ {
-			p, inRun := parent[id]
-			if !inRun {
-				break
-			}
-			depth++
-			id = p
-		}
-		out = append(out, treeAgent{job: j, depth: depth, colour: pingColour(j, m.tree.isMissed(j.ID))})
+	steps, _ := orderSubagentTree(jobsOfRun, m.resumedFrom)
+	out := make([]treeAgent, 0, len(steps))
+	for _, s := range steps {
+		out = append(out, treeAgent{job: s.job, depth: s.depth, colour: pingColour(s.job, m.tree.isMissed(s.job.ID))})
 	}
 	return out
 }
