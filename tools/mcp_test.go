@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -386,5 +387,76 @@ func TestMCPToolRunnerCloseIsConcurrent(t *testing.T) {
 	threshold := delay * 2
 	if elapsed > threshold {
 		t.Errorf("MCPToolRunner.Close() took %v for %d clients each with a %v Close(); expected roughly %v (concurrent), not up to %v (serial) -- closes are not running concurrently", elapsed, n, delay, delay, n*delay)
+	}
+}
+
+// recordingMCPClient counts the CallTool calls it receives, so a test can
+// see whether a call reached a client.
+type recordingMCPClient struct {
+	fakeMCPClient
+	calls int
+}
+
+func (f *recordingMCPClient) CallTool(ctx context.Context, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
+	f.calls++
+	return &mcp.CallToolResult{Content: []mcp.ContentBlock{{Type: "text", Text: "ok"}}}, nil
+}
+
+// TestRunToolAfterReloadNeverUsesClosedRunner covers a reload that runs
+// between the HasTool check and RunTool. The old runner must refuse the call
+// with a retry result, and its client must not receive it.
+func TestRunToolAfterReloadNeverUsesClosedRunner(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	client := &recordingMCPClient{fakeMCPClient: fakeMCPClient{name: "a"}}
+	old := NewMCPToolRunner()
+	old.clients["a"] = client
+	old.tools["mcp_a_echo"] = &mcpTool{server: "a", tool: mcp.Tool{Name: "echo"}}
+	withRunner(t, old)
+
+	if !old.HasTool("mcp_a_echo") {
+		t.Fatal("expected mcp_a_echo to be a tool before the reload")
+	}
+	// The reload runs between the lookup and the run.
+	if _, err := ReloadMCP(context.Background(), t.TempDir(), false); err != nil {
+		t.Fatalf("ReloadMCP: %v", err)
+	}
+	if !client.closed {
+		t.Fatal("expected the reload to close the old client")
+	}
+
+	res := old.RunTool(context.Background(), "mcp_a_echo", nil)
+	if res.Success {
+		t.Fatalf("call on a retired runner succeeded: %+v", res)
+	}
+	if client.calls != 0 {
+		t.Fatalf("closed client received %d call(s)", client.calls)
+	}
+	if GetMCPToolRunner() == old {
+		t.Fatal("the global runner was not replaced")
+	}
+}
+
+// TestReloadMCPReportsBusyWhileCallRuns checks the busy rule: a reload does
+// not retire or close a runner that has a call in flight.
+func TestReloadMCPReportsBusyWhileCallRuns(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	client := &recordingMCPClient{fakeMCPClient: fakeMCPClient{name: "a"}}
+	old := NewMCPToolRunner()
+	old.clients["a"] = client
+	old.tools["mcp_a_echo"] = &mcpTool{server: "a", tool: mcp.Tool{Name: "echo"}}
+	withRunner(t, old)
+
+	old.active.Add(1) // a call in flight
+	_, err := ReloadMCP(context.Background(), t.TempDir(), false)
+	old.active.Add(-1)
+
+	if !errors.Is(err, ErrMCPBusy) {
+		t.Fatalf("ReloadMCP error = %v, want ErrMCPBusy", err)
+	}
+	if client.closed || old.retired {
+		t.Fatalf("busy runner was closed or retired: closed=%v retired=%v", client.closed, old.retired)
+	}
+	if GetMCPToolRunner() != old {
+		t.Fatal("busy reload replaced the global runner")
 	}
 }
