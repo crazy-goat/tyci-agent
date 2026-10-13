@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/crazy-goat/tyci-agent/connector"
@@ -39,11 +40,15 @@ func (sessionBrowserAdapter) List(cwd string, all bool) ([]tools.SessionInfo, er
 	return out, nil
 }
 
-// Read refuses a path that session_list does not return. It keeps the last
-// maxMessages user and assistant messages that have text. Tool calls, tool
-// results and thinking blocks are skipped.
+// Read refuses a path that session_list does not return for the current
+// project. It keeps the last maxMessages user and assistant messages that
+// have text. Tool calls, tool results and thinking blocks are skipped.
 func (sessionBrowserAdapter) Read(path string, maxMessages int) (string, []tools.SessionMessage, bool, error) {
-	entries, err := session.ResumeEntriesAll()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", nil, false, err
+	}
+	entries, err := session.ResumeEntries(cwd)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -57,7 +62,7 @@ func (sessionBrowserAdapter) Read(path string, maxMessages int) (string, []tools
 		}
 	}
 	if !listed {
-		return "", nil, false, fmt.Errorf("session %q is not in the session list; use session_list first", path)
+		return "", nil, false, fmt.Errorf("session %q is not in the current project; use session_list first", path)
 	}
 
 	_, msgs, _, _, err := session.LoadForReplay(path)

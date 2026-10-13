@@ -10,14 +10,26 @@ import (
 	"github.com/crazy-goat/tyci-agent/session"
 )
 
-// isolatedSessionHome points HOME at a temp dir and writes one session file
-// into the session directory of a temp cwd. It returns the file path.
+// isolatedSessionHome points HOME at a temp dir, makes a temp cwd the working
+// directory and writes one session file into the session directory of that
+// cwd. It returns the file path.
 func isolatedSessionHome(t *testing.T, lines []string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	cwd := t.TempDir()
+	t.Chdir(t.TempDir())
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writeSessionFile(t, cwd, lines)
+}
+
+// writeSessionFile writes one session file into the session directory of cwd
+// and returns its path.
+func writeSessionFile(t *testing.T, cwd string, lines []string) string {
+	t.Helper()
 	dir, err := session.SessionDir(cwd)
 	if err != nil {
 		t.Fatal(err)
@@ -31,6 +43,41 @@ func isolatedSessionHome(t *testing.T, lines []string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestSessionBrowserRead_RefusesSessionOfOtherProject(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	otherCwd := t.TempDir()
+	otherPath := writeSessionFile(t, otherCwd, []string{
+		`{"type":"session","id":"o","projectRoot":"` + otherCwd + `"}`,
+		`{"type":"message","id":"o1","message":{"role":"user","content":[{"type":"text","text":"secret of the other project"}]}}`,
+	})
+	// The current project is a different directory with no sessions.
+	t.Chdir(t.TempDir())
+
+	title, msgs, _, err := sessionBrowserAdapter{}.Read(otherPath, 20)
+	if err == nil || !strings.Contains(err.Error(), "current project") {
+		t.Fatalf("want refusal naming the current project, got err=%v", err)
+	}
+	if title != "" || len(msgs) != 0 {
+		t.Errorf("refused read returned content: title=%q msgs=%+v", title, msgs)
+	}
+}
+
+func TestSessionBrowserRead_ReadsSessionOfCurrentProject(t *testing.T) {
+	path := isolatedSessionHome(t, []string{
+		`{"type":"session","id":"a","projectRoot":"/x"}`,
+		`{"type":"message","id":"m1","message":{"role":"user","content":[{"type":"text","text":"current project question"}]}}`,
+	})
+
+	_, msgs, _, err := sessionBrowserAdapter{}.Read(path, 20)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Text != "current project question" {
+		t.Errorf("messages = %+v, want the current project question", msgs)
+	}
 }
 
 func TestSessionBrowserRead_RefusesUnlistedPath(t *testing.T) {
