@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- TUI: the orchestrator does not start when the `roadmap` or the configured orchestrator workflow is missing. It posts one line that names `tyci workflow init <name>` (#569).
 ### Changed
 - Bus: each tyci process writes its own journal, `bus-<pid>-<start>.jsonl`, in the session directory, instead of one shared `bus.jsonl`. Journals older than 7 days are deleted at start. Sequence numbers start at 1 for each process (#599).
 ### Fixed
