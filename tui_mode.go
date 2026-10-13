@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/conductor"
 	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/jobs"
@@ -262,6 +263,17 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 	// The start-up greeting and the orchestrator: display only, never in the
 	// model history. Posting from the orchestrator goroutine is safe.
 	startTUIOrchestrator(baseCtx, resumed, func(line string) { tuiDisp.Text(line + "\n") })
+
+	// defaults.watch_config: reload the settings when their files change. The
+	// watcher stops with baseCtx.
+	if agent.LoadTyciConfig().WatchConfigEnabled() {
+		go watchProjectSettings(baseCtx, func(summary string, err error) {
+			tuiDisp.ToolBlock("reloaded: " + strings.ReplaceAll(summary, "\n", "; "))
+			if err != nil {
+				tuiDisp.Error(err)
+			}
+		})
+	}
 
 	// A person typing must not have to wait for whatever is running. Tools that
 	// can hand their work to the background check this and do so at once; the

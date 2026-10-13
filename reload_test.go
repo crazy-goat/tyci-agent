@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/hooks"
 )
@@ -109,5 +111,86 @@ func TestHandleReloadCommandPrintsSummary(t *testing.T) {
 	}
 	if disp.lastError != nil {
 		t.Errorf("unexpected error: %v", disp.lastError)
+	}
+}
+
+// shortWatchIntervals makes the watcher poll and settle fast for a test.
+func shortWatchIntervals(t *testing.T) {
+	t.Helper()
+	prevPoll, prevDebounce := watchPollInterval, watchDebounce
+	watchPollInterval = 2 * time.Millisecond
+	watchDebounce = 5 * time.Millisecond
+	t.Cleanup(func() {
+		watchPollInterval, watchDebounce = prevPoll, prevDebounce
+	})
+}
+
+func TestWatchSettingsReloadsOnceAfterQuickChanges(t *testing.T) {
+	shortWatchIntervals(t)
+
+	var mu sync.Mutex
+	state := "v0"
+	// baseline is closed when the watcher has read its first fingerprint.
+	baseline := make(chan struct{})
+	var once sync.Once
+	fingerprint := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		once.Do(func() { close(baseline) })
+		return state
+	}
+	setState := func(s string) {
+		mu.Lock()
+		defer mu.Unlock()
+		state = s
+	}
+
+	reloads := make(chan struct{}, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchSettings(ctx, fingerprint, func() { reloads <- struct{}{} })
+	}()
+
+	select {
+	case <-baseline:
+	case <-time.After(5 * time.Second):
+		t.Fatal("watcher did not start")
+	}
+	setState("v1")
+	setState("v2")
+	setState("v3")
+
+	select {
+	case <-reloads:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no reload after the change")
+	}
+	select {
+	case <-reloads:
+		t.Fatal("reload ran twice for quick changes")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("watcher did not stop on context end")
+	}
+}
+
+func TestSettingsFingerprintSeesFileChange(t *testing.T) {
+	wd := setupReloadProject(t)
+	before := settingsFingerprint(wd, true)
+	if err := os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".tyci"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".tyci", "hooks.json"), []byte(preHooksJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if after := settingsFingerprint(wd, true); after == before {
+		t.Fatal("fingerprint did not change after hooks.json was written")
 	}
 }

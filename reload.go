@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"github.com/crazy-goat/tyci-agent/internal/hooks"
@@ -116,4 +118,98 @@ func reloadProjectSettings(ctx context.Context) (string, error) {
 		lines = append(lines, fmt.Sprintf("%s: %s", a.name, a.detail))
 	}
 	return strings.Join(lines, "\n"), err
+}
+
+// Polling of the settings files for defaults.watch_config. A change must stay
+// unchanged for watchDebounce before the reload runs.
+var (
+	watchPollInterval = 2 * time.Second
+	watchDebounce     = 500 * time.Millisecond
+)
+
+// settingsFingerprint describes the size and modification time of every
+// file and every entry of a directory that a reload reads. A changed
+// fingerprint means the settings may have changed.
+func settingsFingerprint(wd string, trusted bool) string {
+	home := os.Getenv("HOME")
+	files := []string{
+		filepath.Join(home, ".tyci", "hooks.json"),
+		filepath.Join(home, ".tyci", "cron.json"),
+	}
+	dirs := []string{filepath.Join(home, ".tyci", "tools")}
+	if trusted {
+		files = append(files, gitinfo.ProjectPath(wd, "hooks.json"), gitinfo.ProjectPath(wd, "cron.json"))
+		dirs = append(dirs, gitinfo.ProjectPath(wd, "tools"))
+	}
+
+	var b strings.Builder
+	for _, f := range files {
+		writeStat(&b, f)
+	}
+	for _, d := range dirs {
+		entries, _ := os.ReadDir(d)
+		for _, e := range entries {
+			writeStat(&b, filepath.Join(d, e.Name()))
+		}
+	}
+	return b.String()
+}
+
+// writeStat appends one line for path to b: its size and modification time,
+// or "missing".
+func writeStat(b *strings.Builder, path string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		fmt.Fprintf(b, "%s missing\n", path)
+		return
+	}
+	fmt.Fprintf(b, "%s %d %d\n", path, info.Size(), info.ModTime().UnixNano())
+}
+
+// watchSettings calls reload once fingerprint has changed and then stayed
+// unchanged for watchDebounce. It returns when ctx ends.
+func watchSettings(ctx context.Context, fingerprint func() string, reload func()) {
+	ticker := time.NewTicker(watchPollInterval)
+	defer ticker.Stop()
+	last := fingerprint()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		cur := fingerprint()
+		if cur == last {
+			continue
+		}
+		// Wait until the files stop changing, then reload once.
+		for {
+			last = cur
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(watchDebounce):
+			}
+			cur = fingerprint()
+			if cur == last {
+				break
+			}
+		}
+		reload()
+	}
+}
+
+// watchProjectSettings watches the settings of this process and reloads them
+// on change. report receives each reload result. It returns when ctx ends.
+func watchProjectSettings(ctx context.Context, report func(summary string, err error)) {
+	projectSetup.mu.Lock()
+	set, wd, trusted := projectSetup.set, projectSetup.wd, projectSetup.trusted
+	projectSetup.mu.Unlock()
+	if !set {
+		return
+	}
+	watchSettings(ctx,
+		func() string { return settingsFingerprint(wd, trusted) },
+		func() { report(reloadProjectSettings(ctx)) },
+	)
 }
