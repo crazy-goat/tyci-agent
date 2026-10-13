@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Flow: the worktree setup script `bin/worktree-setup.sh` runs only in a trusted project; an untrusted project gets the worktree without it (#495).
 - Subagents: a resumed subagent can wait for or stop only the jobs in its own subtree, as a new subagent can (#503).
 - TUI: Enter or a click on a Tasks row (a Bash row, or a subagent row without a transcript) opens the result modal and keeps the sidebar open. A refused `/resume` on the Sessions tab keeps it open too (#549).
 - Flow: while a run has an open PR, a recover oracle answer `stop`, `goto:merge` or a goto to a state that ends the run now pauses at `ask` for a human, as the pause oracle already does (#561).

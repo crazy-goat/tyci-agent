@@ -180,7 +180,7 @@ func newE2E(t *testing.T, script map[string][]string) *e2e {
 	e.ctlSet("perm", "write")
 	e.ctlSet("ci_bucket", "pass")
 
-	wt, err := worktree.AddIssue(context.Background(), e.home, e.work, e2eIssue, "main")
+	wt, err := worktree.AddIssue(context.Background(), e.home, e.work, e2eIssue, "main", true)
 	if err != nil {
 		t.Fatal(err)
 	}
