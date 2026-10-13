@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Bus: the journal cleanup deletes only files named `bus-<pid>-<start>.jsonl`, and keeps the journal of a process that is still running, even when it is older than 7 days (#696).
+
 ## [0.9.0] - 2026-10-13
 
 ### Added

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1612,9 +1613,27 @@ func SessionDirFromPath(path string) string {
 // directory. A journal is not a session.
 const JournalFilePrefix = "bus"
 
+// journalFileRE matches the exact name of a bus journal: bus-<pid>-<start>.jsonl.
+var journalFileRE = regexp.MustCompile(`^` + JournalFilePrefix + `-([0-9]+)-[0-9]+\.jsonl$`)
+
+// JournalPID returns the process id in the name of a bus journal. It returns
+// false when name is not exactly a bus journal name.
+func JournalPID(name string) (int, bool) {
+	m := journalFileRE.FindStringSubmatch(name)
+	if m == nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(m[1])
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
 // IsJournalFile reports whether name is a message journal of the bus.
 func IsJournalFile(name string) bool {
-	return strings.HasPrefix(name, JournalFilePrefix) && strings.HasSuffix(name, ".jsonl")
+	_, ok := JournalPID(name)
+	return ok
 }
 
 // ListEntries returns session files in dir, newest first. Each entry includes
