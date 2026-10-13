@@ -6,6 +6,8 @@
 # issues_open_nomilestone  prints one JSON object per line for each open issue without a milestone.
 #                          Pull requests are skipped, every page is read. When TYCI_EXCLUDE_LABEL is
 #                          set, issues with that label are skipped too.
+# issues_candidates       prints a JSON array of {number, title, body} for the open issues without milestone
+#                          whose author may write (body cut to 4000 characters). It returns 2 on a gh failure.
 # author_may_write <login> exit 0 when the login has write or admin permission on TYCI_REPO,
 #                          exit 1 when it has not (or is not a GitHub login), exit 2 on a gh failure.
 #                          The login rules are the ones of issue_done.sh.
@@ -32,4 +34,22 @@ author_may_write() {
         return 1
     fi
     return 2
+}
+
+issues_candidates() {
+    local issues issue login rc cands='[]'
+    issues=$(issues_open_nomilestone) || return 2
+    while IFS= read -r issue; do
+        [ -n "$issue" ] || continue
+        login=$(jq -r '.user.login // ""' <<<"$issue") || return 2
+        rc=0
+        author_may_write "$login" || rc=$?
+        case "$rc" in
+        0) ;;
+        1) continue ;;
+        *) return 2 ;;
+        esac
+        cands=$(jq -c --argjson i "$issue" '. + [{number: $i.number, title: ($i.title // ""), body: (($i.body // "")[0:4000])}]' <<<"$cands") || return 2
+    done <<<"$issues"
+    printf '%s\n' "$cands"
 }
