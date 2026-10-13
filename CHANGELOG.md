@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: `/reload` reloads the hooks, the Lua tools, the cron jobs and the MCP servers of the project without a restart. A broken file keeps its previous settings and shows the error. Set `defaults.watch_config` to `true` in `~/.tyci/config.json` to reload these settings when their files change (#620).
 
 ### Fixed
+- Tools: a tool call that runs during `/reload` no longer uses a closed MCP runner. The call fails with a message to run it again, and a reload still reports busy while an MCP call runs (#714).
 - Flow: the worktree setup script `bin/worktree-setup.sh` runs only in a trusted project; an untrusted project gets the worktree without it (#495).
 - Subagents: a resumed subagent can wait for or stop only the jobs in its own subtree, as a new subagent can (#503).
 - TUI: Enter or a click on a Tasks row (a Bash row, or a subagent row without a transcript) opens the result modal and keeps the sidebar open. A refused `/resume` on the Sessions tab keeps it open too (#549).
