@@ -197,6 +197,41 @@ func TestMigrateLegacyDirs_RecentlyWrittenSessionLeftInPlace(t *testing.T) {
 	}
 }
 
+// An idle but running writer keeps its session file locked, so an old file
+// (no recent write) must not be migrated out from under it. Once the writer
+// closes, the file is a dead writer's file and is migrated.
+func TestMigrateLegacyDirs_IdleLiveWriterLeftInPlaceUntilClosed(t *testing.T) {
+	home := isolatedHome(t)
+	root := initGitRepo(t)
+
+	oldEncoded := encodeKey(root)
+	oldPath := filepath.Join(home, ".tyci", "sessions", oldEncoded, "idle.jsonl")
+	writeOldFormatSession(t, oldPath, root) // mtime is two hours old
+
+	writer, err := Open(oldPath, root, "test-model", "test-provider")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	if _, err := SessionDir(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Fatalf("idle live writer's session must stay in place: %v", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	projectDir, err := SessionDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "idle.jsonl")); err != nil {
+		t.Errorf("session of a closed writer should be migrated: %v", err)
+	}
+}
+
 // A session recorded before this change, filed under the old
 // encoded-exact-cwd directory for a subdirectory of a repo, must still turn
 // up once sessions are listed for the repo's project key: migrateLegacyDirs

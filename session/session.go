@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -245,6 +246,7 @@ func Open(path, cwd, model, provider string) (*Session, error) {
 		s.file = f
 		s.encoder = json.NewEncoder(f)
 		s.isResume = true
+		lockSessionFile(f)
 
 		lines, err := parseSessionFile(path)
 		if err != nil {
@@ -262,6 +264,7 @@ func Open(path, cwd, model, provider string) (*Session, error) {
 		}
 		s.file = f
 		s.encoder = json.NewEncoder(f)
+		lockSessionFile(f)
 
 		// Write header
 		projectRoot, _ := ProjectKey(cwd)
@@ -284,6 +287,30 @@ func Open(path, cwd, model, provider string) (*Session, error) {
 	}
 
 	return s, nil
+}
+
+// lockSessionFile takes a shared advisory lock on the session file. The lock
+// lives as long as f stays open, so it ends with the writer's Close or with
+// the process. migrateLegacyDirs uses it to see a live writer. Locking is
+// best-effort: a failure only means the file is not seen as in use.
+func lockSessionFile(f *os.File) {
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_SH)
+}
+
+// sessionInUse reports whether a live writer holds the lock taken by
+// lockSessionFile. The probe takes an exclusive lock without waiting and
+// releases it at once.
+func sessionInUse(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }() // read-only
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return err == syscall.EWOULDBLOCK
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
 }
 
 // ─── ID generation ────────────────────────────────────────────────────────
@@ -1513,9 +1540,11 @@ func AllProjectDirs() ([]string, error) {
 // timestamp+uuid filename can't collide) and removed once empty. Every step
 // is best-effort: a permissions error or a directory that isn't ours to
 // touch just leaves that directory in place for next time rather than
-// failing the caller's session lookup. A directory that has a file written
-// within legacyWriterGrace is skipped, so a running old tyci process is not
-// moved out from under its writer.
+// failing the caller's session lookup. A directory is skipped while a session
+// file in it is locked by a live writer (see lockSessionFile), so a running
+// tyci process is not moved out from under its writer. A directory that has a
+// file written within legacyWriterGrace is also skipped: old tyci builds take
+// no lock, so the file age is the fallback for them.
 const legacyWriterGrace = 10 * time.Minute
 
 func migrateLegacyDirs(sessionsRoot, targetDir, targetKey string) {
@@ -1557,6 +1586,17 @@ func migrateLegacyDirs(sessionsRoot, targetDir, targetKey string) {
 		}
 		key, err := ProjectKey(h.CWD)
 		if err != nil || key != targetKey {
+			continue
+		}
+		// A session file locked by a live writer stays where it is.
+		busy := false
+		for _, name := range jsonlNames {
+			if sessionInUse(filepath.Join(dir, name)) {
+				busy = true
+				break
+			}
+		}
+		if busy {
 			continue
 		}
 		if err := os.MkdirAll(targetDir, 0755); err != nil {
