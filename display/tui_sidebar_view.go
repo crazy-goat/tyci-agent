@@ -120,6 +120,7 @@ func (m TuiModel) resizeSidebar(delta int) (TuiModel, tea.Cmd) {
 	}
 	m.sidebarScroll = m.sidebarVisibleScroll(m.sidebarLayout())
 	m.sidebarWidthSeq++
+	m.pendingSidebarWidthSave = true
 	seq := m.sidebarWidthSeq
 	return m, tea.Tick(sidebarWidthSaveDelay, func(time.Time) tea.Msg {
 		return sidebarWidthSaveMsg{seq: seq}
@@ -132,6 +133,7 @@ func (m TuiModel) handleSidebarWidthSave(msg sidebarWidthSaveMsg) (tea.Model, te
 	if msg.seq != m.sidebarWidthSeq {
 		return m, nil
 	}
+	m.pendingSidebarWidthSave = false
 	percent := m.sidebarWidthPercent
 	return m, func() tea.Msg {
 		// A failed write must not break the key press, like the sidebar
@@ -139,6 +141,17 @@ func (m TuiModel) handleSidebarWidthSave(msg sidebarWidthSaveMsg) (tea.Model, te
 		_ = saveSidebarWidthPercent(percent)
 		return nil
 	}
+}
+
+// saveSidebarWidthOnExit writes a width change whose debounce timer did not
+// fire before the program quit. It runs after the program has ended, so it
+// covers every quit path.
+func (m TuiModel) saveSidebarWidthOnExit() {
+	if !m.pendingSidebarWidthSave {
+		return
+	}
+	// A failed write must not change the exit, like handleSidebarWidthSave.
+	_ = saveSidebarWidthPercent(m.sidebarWidthPercent)
 }
 
 // mainColumnWidth is the width the main conversation column renders at:
