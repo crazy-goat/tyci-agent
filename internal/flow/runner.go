@@ -109,6 +109,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 		}
 		if s.End {
 			st.Status = "done"
+			st.Result = endResult(s)
 			st.UpdatedAt = time.Now()
 			if r.Store != nil {
 				if saveErr := r.Store.Save(st); saveErr != nil {
@@ -689,6 +690,7 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		st.Ask = nil
 		st.UpdatedAt = now
 		st.Status = "done"
+		st.Result = "done"
 		if r.Store != nil {
 			if err := r.Store.Save(st); err != nil {
 				return err
@@ -721,6 +723,15 @@ func (r *Runner) moveOn(ctx context.Context, st *RunState, step Step, next strin
 		return r.Continue(ctx, st)
 	}
 	return r.Run(ctx, st)
+}
+
+// endResult is the Result of a run that ends at s. An end state without a
+// Result, or an ask state without on, ends the run as "done".
+func endResult(s State) string {
+	if s.Result == "" {
+		return "done"
+	}
+	return s.Result
 }
 
 func (r *Runner) warn(msg string) {

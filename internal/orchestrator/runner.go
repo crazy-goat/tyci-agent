@@ -47,6 +47,7 @@ type RunHandle interface {
 type RunResult struct {
 	Outcome string // merged | ended | failed | cancelled | stopped
 	Output  string // final agent text; the roadmap run returns the oracle JSON here
+	Result  string // result of the end state of a flow run (flow.RunState.Result); empty otherwise
 	Err     error
 }
 
@@ -236,9 +237,9 @@ func (h *flowHandle) watch(ctx context.Context) {
 				signal(h.asks)
 			case "done":
 				if ev.PR > 0 {
-					h.done <- RunResult{Outcome: "merged"}
+					h.done <- RunResult{Outcome: "merged", Result: ev.Result}
 				} else {
-					h.done <- RunResult{Outcome: "ended"}
+					h.done <- RunResult{Outcome: "ended", Result: ev.Result}
 				}
 				return
 			case "failed":

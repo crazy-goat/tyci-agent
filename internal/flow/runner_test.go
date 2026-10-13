@@ -556,3 +556,26 @@ func TestRunner_ToolCallsLimitUsesLimitKey(t *testing.T) {
 		t.Fatalf("current = %q key = %q, want end/limit", st.Current, st.History[0].Key)
 	}
 }
+
+func TestRunnerEndResult(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+		"a":        {Check: "x.sh", On: map[string]string{"go": "declined", "ok": "plain"}},
+		"declined": {End: true, Result: "declined"},
+		"plain":    {End: true},
+	}}
+	cases := map[string]struct{ key, want string }{
+		"declined": {"go", "declined"},
+		"plain":    {"ok", "done"},
+	}
+	for name, c := range cases {
+		checks := &fakeChecks{keys: map[string][]string{"x.sh": {c.key}}}
+		r := &Runner{WF: wf, Checks: checks, Store: &memStore{}}
+		st := newRun("a")
+		if err := r.Run(context.Background(), st); err != nil {
+			t.Fatalf("%s: Run: %v", name, err)
+		}
+		if st.Status != "done" || st.Result != c.want {
+			t.Fatalf("%s: status=%q result=%q, want done/%q", name, st.Status, st.Result, c.want)
+		}
+	}
+}

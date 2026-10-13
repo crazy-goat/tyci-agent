@@ -98,6 +98,7 @@ type workflowResult struct {
 	Workflow  string            `json:"workflow,omitempty"`
 	State     string            `json:"state,omitempty"`
 	Status    string            `json:"status,omitempty"` // running|paused|done|failed
+	Result    string            `json:"result,omitempty"` // outcome of a done run, for example "done"
 	Visits    map[string]int    `json:"visits,omitempty"`
 	Params    map[string]string `json:"params,omitempty"`
 	StateFile string            `json:"state_file,omitempty"`
@@ -324,6 +325,7 @@ func runResult(st *flow.RunState, statePath string) workflowResult {
 		Workflow:  st.Workflow,
 		State:     st.Current,
 		Status:    st.Status,
+		Result:    st.Result,
 		Visits:    st.Visits,
 		Params:    st.Params,
 		StateFile: statePath,

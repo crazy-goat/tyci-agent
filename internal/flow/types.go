@@ -52,8 +52,11 @@ type State struct {
 	Prompt string `json:"prompt,omitempty"`
 	Ask    string `json:"ask,omitempty"`
 	// Human makes an ask state wait for a human: the oracle does not answer it (#531).
-	Human      bool              `json:"human,omitempty"`
-	End        bool              `json:"end,omitempty"`
+	Human bool `json:"human,omitempty"`
+	End   bool `json:"end,omitempty"`
+	// Result is the outcome of an end state, for example "merged" or "declined".
+	// Only an end state may set it. An empty Result ends the run as "done".
+	Result     string            `json:"result,omitempty"`
 	On         map[string]string `json:"on,omitempty"`
 	MaxVisits  int               `json:"max_visits,omitempty"`
 	TimeoutSec int               `json:"timeout_sec,omitempty"`
@@ -85,8 +88,10 @@ type RunState struct {
 	Branch   string            `json:"branch"`
 	Worktree string            `json:"worktree"`
 	Status   string            `json:"status"` // running|paused|done|failed|stopped
-	Reason   string            `json:"reason,omitempty"`
-	Current  string            `json:"current"`
+	// Result is the outcome of a done run: the Result of its end state, "done" when empty.
+	Result  string `json:"result,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Current string `json:"current"`
 	// EntryPending is true after a transition into Current, until the visit of
 	// that entry is saved. A restart counts the visit when it is still pending.
 	EntryPending bool `json:"entry_pending,omitempty"`
