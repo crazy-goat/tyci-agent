@@ -180,6 +180,13 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.armStatusTick()
 	}
+	if pm, ok := msg.(busPingMissedMsg); ok {
+		j, known := m.backgroundJobs[pm.Agent]
+		if !known || subagentLive(j.Status) {
+			m.tree.markMissed(pm.Agent, known)
+		}
+		return m, nil
+	}
 	// A finished file scan (tui_filecomplete.go) is pure state: it must land
 	// whatever overlay happens to be open, or the popup would sit on
 	// "scanning…" until the next keystroke.

@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- TUI: the Runs tab shows the agents under each run. A run row unfolds into its agents, with the ping state as colour and the question of an agent that waits for an answer. Agents without a run are listed under `ad-hoc`. A missed ping stays yellow until the agent finishes (#203).
+
 ### Fixed
 - Flow: the worktree setup script `bin/worktree-setup.sh` runs only in a trusted project; an untrusted project gets the worktree without it (#495).
 - Subagents: a resumed subagent can wait for or stop only the jobs in its own subtree, as a new subagent can (#503).

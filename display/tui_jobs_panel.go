@@ -57,6 +57,9 @@ func (m *TuiModel) applyJobUpdate(j jobs.Job) {
 		selected = m.sidebarCursorJobID()
 	}
 	m.backgroundJobs[j.ID] = j
+	if !subagentLive(j.Status) {
+		m.tree.forget(j.ID)
+	}
 	if !sameOrder {
 		m.pruneBackgroundJobsLocked()
 		m.sidebarFollowJob(selected)
@@ -107,6 +110,7 @@ func (m *TuiModel) pruneBackgroundJobsLocked() {
 	})
 	for _, j := range terminal[:len(terminal)-jobs.MaxRetainedTerminalJobs] {
 		delete(m.backgroundJobs, j.ID)
+		m.tree.forget(j.ID)
 	}
 }
 

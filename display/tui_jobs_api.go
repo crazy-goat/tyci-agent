@@ -27,6 +27,43 @@ func (t *TUI) SetJobEvents(sub *bus.Sub) {
 	}()
 }
 
+// SetPingEvents feeds the Runs tab with the ping.missed alarms of sub, a
+// subscription to the alarms addressed to the TUI. A nil sub is a no-op.
+func (t *TUI) SetPingEvents(sub *bus.Sub) {
+	if sub == nil {
+		return
+	}
+	go func() {
+		defer sub.Close()
+		forwardPingMissed(sub, t.done, t.prog.Send)
+	}()
+}
+
+// forwardPingMissed sends one busPingMissedMsg per ping.missed message to
+// send, until done closes or the subscription ends.
+func forwardPingMissed(sub *bus.Sub, done <-chan struct{}, send func(tea.Msg)) {
+	deliver := func() {
+		for _, m := range sub.Drain() {
+			p, err := bus.Decode[bus.PingMissed](m)
+			if err != nil {
+				continue
+			}
+			send(busPingMissedMsg{Agent: p.Agent})
+		}
+	}
+	for {
+		select {
+		case <-sub.Ready():
+			deliver()
+		case <-sub.Done():
+			deliver()
+			return
+		case <-done:
+			return
+		}
+	}
+}
+
 // forwardJobUpdates sends the job snapshots of each drained batch of
 // job.status messages to send, as one tuiMsgJobUpdates per drain, until done
 // closes or the subscription ends. Messages still pending when the
@@ -65,6 +102,7 @@ func jobFromStatus(st bus.JobStatus, seq uint64) jobs.Job {
 	return jobs.Job{
 		ID:           st.ID,
 		ParentID:     st.ParentID,
+		RunID:        st.RunID,
 		Kind:         jobs.Kind(st.Kind),
 		Description:  st.Name,
 		Status:       jobs.Status(st.Status),

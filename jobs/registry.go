@@ -144,11 +144,13 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 	} else {
 		jobCtx, cancel = context.WithCancel(ctx)
 	}
+	runID, _ := ctx.Value(RunIDCtxKey{}).(string)
 	job := &Job{
 		ID:           nextID(),
 		Description:  description,
 		Kind:         kind,
 		ParentID:     parentID,
+		RunID:        runID,
 		Status:       StatusRunning,
 		StartedAt:    now,
 		done:         make(chan struct{}),
