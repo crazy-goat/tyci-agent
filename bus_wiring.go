@@ -32,7 +32,30 @@ func busJournalPath() string {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return ""
 	}
-	return filepath.Join(dir, session.JournalFileName)
+	removeOldJournals(dir)
+	return filepath.Join(dir, fmt.Sprintf("%s-%d-%d.jsonl", session.JournalFilePrefix, os.Getpid(), time.Now().Unix()))
+}
+
+// journalMaxAge is how long a journal file is kept after its last write.
+const journalMaxAge = 7 * 24 * time.Hour
+
+// removeOldJournals deletes the bus journals in dir that were last written more
+// than journalMaxAge ago. Other files are not touched.
+func removeOldJournals(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !session.IsJournalFile(e.Name()) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) < journalMaxAge {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, e.Name()))
+	}
 }
 
 // newAppBus returns a bus that routes to JobRegistry's agent tree. It journals

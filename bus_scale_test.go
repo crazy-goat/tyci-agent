@@ -96,8 +96,8 @@ func TestBusJournalPath_OnlyWhenSessionDirExists(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(dir, "bus.jsonl")
-	if got := busJournalPath(); got != want {
-		t.Fatalf("busJournalPath() = %q, want %q", got, want)
+	got := busJournalPath()
+	if filepath.Dir(got) != dir || !session.IsJournalFile(filepath.Base(got)) {
+		t.Fatalf("busJournalPath() = %q, want a journal file in %q", got, dir)
 	}
 }
