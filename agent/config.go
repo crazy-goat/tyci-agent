@@ -72,6 +72,21 @@ type TyciConfig struct {
 	// built-in defaults. Global and local files merge per key (see
 	// mergeToolsConfig).
 	Tools *ToolsConfig `json:"tools,omitempty"`
+	// Defaults holds process-wide switches. Global config only: a
+	// project-local value is ignored (see mergeTyciConfig).
+	Defaults *DefaultsConfig `json:"defaults,omitempty"`
+}
+
+// DefaultsConfig is the "defaults" block of config.json.
+type DefaultsConfig struct {
+	// WatchConfig makes the TUI reload the settings files when they change.
+	// Absent or false means no watching; /reload still works.
+	WatchConfig bool `json:"watch_config,omitempty"`
+}
+
+// WatchConfigEnabled reports whether defaults.watch_config is set.
+func (c TyciConfig) WatchConfigEnabled() bool {
+	return c.Defaults != nil && c.Defaults.WatchConfig
 }
 
 // ToolsConfig is the "tools" block of config.json. The pointer fields
@@ -274,6 +289,7 @@ func mergeTyciConfig(global, local TyciConfig) TyciConfig {
 		merged.StreamIdleTimeoutSec = local.StreamIdleTimeoutSec
 	}
 	merged.Tools = mergeToolsConfig(global.Tools, local.Tools)
+	// Defaults is global only: merged keeps the global value and ignores local.
 	return merged
 }
 

@@ -165,6 +165,15 @@ var registry = struct {
 // opt-in. A malformed file IS reported: silently ignoring it would leave the
 // user believing a protection is active when it is not.
 func Load(paths ...string) []error {
+	all, errs := Read(paths...)
+	Set(all)
+	return errs
+}
+
+// Read parses the hook definitions of the given files, in order, without
+// installing them. Errors are reported as in Load. Use Set to install the
+// result.
+func Read(paths ...string) ([]Hook, []error) {
 	var all []Hook
 	var errs []error
 
@@ -206,11 +215,14 @@ func Load(paths ...string) []error {
 			all = append(all, h)
 		}
 	}
+	return all, errs
+}
 
+// Set replaces the installed hook definitions with hooks.
+func Set(hooks []Hook) {
 	registry.mu.Lock()
-	registry.hooks = all
+	registry.hooks = hooks
 	registry.mu.Unlock()
-	return errs
 }
 
 // DefaultPaths returns the config files Load reads, global first so that a

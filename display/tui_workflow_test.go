@@ -77,7 +77,7 @@ func TestWorkflowCommandReachesReservedNames(t *testing.T) {
 }
 
 func TestIsReservedWorkflowName(t *testing.T) {
-	for _, n := range []string{"btw", "compact", "exit", "msg", "new", "resume", "workflow"} {
+	for _, n := range []string{"btw", "compact", "exit", "msg", "new", "reload", "resume", "workflow"} {
 		if !IsReservedWorkflowName(n) {
 			t.Errorf("%q must be reserved", n)
 		}
