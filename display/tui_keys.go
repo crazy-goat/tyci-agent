@@ -150,6 +150,19 @@ func (m TuiModel) handleLocalSlashCommand() (bool, tea.Model) {
 			enqueueOrStatus(m.commands, line, &m.statusMessage)
 		}
 		return true, m
+	case lower == "/reload":
+		// Idle: the main loop runs it. Busy: it goes to the agent's
+		// goroutine like /stop, so the running turn is not interrupted.
+		if m.status == "idle" {
+			return false, m
+		}
+		m.input.Reset()
+		m.input.SetHeight(1)
+		m.closeFileComplete()
+		if m.commands != nil {
+			enqueueOrStatus(m.commands, line, &m.statusMessage)
+		}
+		return true, m
 	case lower == "/reminders":
 		// Reading the reminder file does not touch the conversation the turn
 		// writes to, so it is routed to the main loop like /stop.

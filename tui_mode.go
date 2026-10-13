@@ -144,6 +144,19 @@ func handleRemindersCommand(disp slashCommandDisplay) {
 	disp.ToolBlock(text)
 }
 
+// handleReloadCommand implements "/reload": it reloads the project settings
+// and prints one line per area. It does not reset the status, so it is safe
+// while a turn runs.
+func handleReloadCommand(disp slashCommandDisplay, ctx context.Context) {
+	summary, err := reloadProjectSettings(ctx)
+	if summary != "" {
+		disp.ToolBlock(summary)
+	}
+	if err != nil {
+		disp.Error(err)
+	}
+}
+
 // handleMsgSlashCommand implements "/msg <job> <text>": posts to a job's
 // mailbox. Same class of bug as the two commands above — this never runs
 // the agent, so nothing else would restore reading.
@@ -379,6 +392,8 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				stopCommandOutput(tuiDisp, strings.TrimPrefix(cmd, "/stop"), tools.StopWorkflowRun)
 			case cmd == "/reminders":
 				handleRemindersCommand(tuiDisp)
+			case cmd == "/reload":
+				handleReloadCommand(tuiDisp, baseCtx)
 			}
 		}
 		return nil
@@ -547,6 +562,12 @@ func runTUI(cond *conductor.Conductor, tuiDisp *display.TUI, baseCtx context.Con
 				// Bare /reminders: list the undelivered reminders.
 				iterCancel()
 				handleRemindersCommand(tuiDisp)
+				continue
+			case trimmed == "/reload":
+				// Reloads hooks, Lua tools, cron and MCP. The conversation is
+				// not touched.
+				iterCancel()
+				handleReloadCommand(tuiDisp, baseCtx)
 				continue
 			case strings.HasPrefix(trimmed, "/msg "):
 				// /msg <job> <text>: posts to a job's mailbox. Doesn't touch

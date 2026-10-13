@@ -36,7 +36,7 @@ func TestSlashPopupOpensOnSlashAndListsBuiltinsAndWorkflows(t *testing.T) {
 		t.Fatal("popup closed on \"/\"")
 	}
 	got := strings.Join(itemNames(m), " ")
-	if got != "btw compact exit msg new resume stop workflow issue-to-merge" {
+	if got != "btw compact exit msg new reload resume stop workflow issue-to-merge" {
 		t.Fatalf("items %q", got)
 	}
 }
@@ -48,8 +48,8 @@ func TestSlashPopupFiltersWhileTyping(t *testing.T) {
 	}
 	m.input.SetValue("/e")
 	m.filterSlashItems()
-	// "exit" and "resume" contain "e"; prefix matches come first.
-	if got := strings.Join(itemNames(m), " "); got != "exit new resume issue-to-merge other" {
+	// "exit", "reload" and "resume" contain "e"; prefix matches come first.
+	if got := strings.Join(itemNames(m), " "); got != "exit new reload resume issue-to-merge other" {
 		t.Fatalf("items %q", got)
 	}
 }
