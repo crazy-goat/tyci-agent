@@ -183,8 +183,8 @@ const (
 )
 
 // SessionReadTool reads the last messages of a saved session. The browser
-// refuses any path that session_list does not return. A subagent never gets
-// session_read.
+// refuses any path that session_list does not return for the current
+// project. A subagent never gets session_read.
 type SessionReadTool struct{}
 
 func (t *SessionReadTool) Name() string { return "session_read" }

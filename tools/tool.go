@@ -452,7 +452,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "session_list",
-				"description": "List your saved sessions, newest first: path, title and first prompt. Set all to true to include other projects. Use session_read(path) to read one.",
+				"description": "List your saved sessions, newest first: path, title and first prompt. Set all to true to include other projects. Use session_read(path) to read one of the current project; session_read refuses other projects.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -466,11 +466,11 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "session_read",
-				"description": "Read the last messages of a saved session from session_list. Shows user and assistant text only. Use it to recall an earlier decision.",
+				"description": "Read the last messages of a saved session of the current project, from session_list. Shows user and assistant text only. Sessions of other projects are refused. Use it to recall an earlier decision.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"path":         map[string]any{"type": "string", "description": "The path of a session, from session_list."},
+						"path":         map[string]any{"type": "string", "description": "The path of a session of the current project, from session_list."},
 						"max_messages": map[string]any{"type": "integer", "description": "How many last messages to return, 1 to 100. Default 20."},
 					},
 					"required": []string{"path"},
