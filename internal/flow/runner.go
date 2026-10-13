@@ -675,6 +675,9 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		sort.Strings(keys)
 		return fmt.Errorf("flow: unknown answer %q, allowed: %s", answer, strings.Join(keys, ", "))
 	}
+	if err := r.recordApproval(st, answer); err != nil {
+		return err
+	}
 	now := time.Now()
 	step := Step{
 		Seq:       len(st.History) + 1,
@@ -699,6 +702,26 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		return nil
 	}
 	return r.moveOn(ctx, st, step, next, restart)
+}
+
+// recordApproval appends one line to approvals.txt of the run dir for a human
+// answer: the time, the ask state and the answer. The oracle does not call it.
+// A run without a run dir records nothing.
+func (r *Runner) recordApproval(st *RunState, answer string) error {
+	if r.RunDir == "" {
+		return nil
+	}
+	line := fmt.Sprintf("%s\t%s\t%s\n", time.Now().UTC().Format(time.RFC3339), st.Current,
+		strings.ReplaceAll(MaskSecrets(answer), "\n", " "))
+	f, err := os.OpenFile(filepath.Join(r.RunDir, "approvals.txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(line); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // moveOn appends step to the history of st, which leaves its ask state for next,
