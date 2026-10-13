@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- TUI: with the sidebar focused, resize, status and width messages are no longer dropped. A width change made less than 500 ms before quit is saved (#607).
+
 ## [0.8.0] - 2026-10-13
 
 ### Changed
