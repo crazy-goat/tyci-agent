@@ -503,7 +503,9 @@ func (m *Manager) Resume(runID, answer string) error {
 		return fmt.Errorf("%w: run %s is active", ErrBusy, ShowRunID(st.Run))
 	}
 	// Every run in m.active takes a worker slot. An apply or reject of a workflow
-	// proposal is one too: answerProposal keeps its run in m.active.
+	// proposal is one too: answerProposal keeps its run in m.active. The held paused
+	// runs are not counted here: at start-up the orchestrator holds all of them, and
+	// the run being resumed already holds its own slot.
 	startup := saved != "" && answer == "goto "+saved
 	if startup && m.workers > 0 && len(m.active) >= m.workers {
 		m.mu.Unlock()

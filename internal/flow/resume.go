@@ -289,6 +289,20 @@ func (m *Manager) pausedRuns() []*RunState {
 	return out
 }
 
+// slotsInUse returns the worker slots in use: the active runs, and the paused
+// runs that the orchestrator holds (adopted, with no goroutine). except is a run
+// that is not counted, the run being resumed. m.mu must be held.
+func (m *Manager) slotsInUse(info RepoInfo, except string) int {
+	n := len(m.active)
+	paused, _ := ScanAsk(RunsDir(info.Home), info.Repo)
+	for _, st := range paused {
+		if _, running := m.active[st.Run]; st.Run != except && !running && m.adopted[st.Run] {
+			n++
+		}
+	}
+	return n
+}
+
 // Adoptable returns the issues of the runs that the orchestrator must watch
 // before it starts new runs: runs resumed with the answer "resume" and paused
 // runs (for example the runs that AskUnfinished paused). No Start or Adopt
@@ -353,16 +367,16 @@ func (m *Manager) Adopt(issue int) (id string, paused, ok bool) {
 
 // resumeStale resumes a run of the issue whose owner process is gone. found is
 // false when there is no such run. A resume needs a free worker slot: when
-// orchestrator.workers runs are active, it is refused (no queue). m.mu must be held.
+// orchestrator.workers worker slots are in use, it is refused (no queue). m.mu must be held.
 func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool, err error) {
 	stale, _ := ScanResumable(RunsDir(info.Home), info.Repo)
 	for _, st := range stale {
 		if st.Issue != issue {
 			continue
 		}
-		if m.workers > 0 && len(m.active) >= m.workers {
-			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active",
-				ErrBusy, ShowRunID(st.Run), issue, m.workers, len(m.active))
+		if n := m.slotsInUse(info, st.Run); m.workers > 0 && n >= m.workers {
+			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d worker slot(s) are in use (active runs, paused runs held by the orchestrator, and an apply or reject of a workflow proposal)",
+				ErrBusy, ShowRunID(st.Run), issue, m.workers, n)
 		}
 		ok, err := m.resumeRun(info, st)
 		if err != nil {
