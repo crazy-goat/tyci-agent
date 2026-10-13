@@ -1512,7 +1512,11 @@ func AllProjectDirs() ([]string, error) {
 // timestamp+uuid filename can't collide) and removed once empty. Every step
 // is best-effort: a permissions error or a directory that isn't ours to
 // touch just leaves that directory in place for next time rather than
-// failing the caller's session lookup.
+// failing the caller's session lookup. A directory that has a file written
+// within legacyWriterGrace is skipped, so a running old tyci process is not
+// moved out from under its writer.
+const legacyWriterGrace = 10 * time.Minute
+
 func migrateLegacyDirs(sessionsRoot, targetDir, targetKey string) {
 	entries, err := os.ReadDir(sessionsRoot)
 	if err != nil {
@@ -1531,12 +1535,18 @@ func migrateLegacyDirs(sessionsRoot, targetDir, targetKey string) {
 			continue
 		}
 		var jsonlNames []string
+		recent := false
 		for _, f := range files {
 			if !f.IsDir() && strings.HasSuffix(f.Name(), ".jsonl") {
 				jsonlNames = append(jsonlNames, f.Name())
+				// A recent write may come from a tyci process that still runs
+				// on the old layout; leave the directory for a later listing.
+				if info, err := f.Info(); err == nil && time.Since(info.ModTime()) < legacyWriterGrace {
+					recent = true
+				}
 			}
 		}
-		if len(jsonlNames) == 0 {
+		if len(jsonlNames) == 0 || recent {
 			continue
 		}
 		h, ok := peekHeader(filepath.Join(dir, jsonlNames[0]))

@@ -534,6 +534,9 @@ type TuiModel struct {
 	// sidebarWidthSeq numbers the width key presses; only the newest one saves.
 	sidebarWidthSeq int
 	sidebarCursor   int // selected row within the current tab's list, if any
+	// pendingSidebarWidthSave is true while a width change waits for its
+	// debounce timer. saveSidebarWidthOnExit writes it when the program quits.
+	pendingSidebarWidthSave bool
 	// sidebarScroll is the first visible line's index into the active tab's
 	// rendered lines (tui_sidebar_view.go's sidebarTabLines) — a plain
 	// vertical offset, distinct from sidebarCursor: a non-selectable tab

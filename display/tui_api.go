@@ -122,7 +122,10 @@ func NewTUI(modelName string, historyPath string, toolCount int, skillCount int,
 		// (WithoutRenderer), so we do it ourselves: raw mode, initial window
 		// size, and resize forwarding. Must happen before Run().
 		restoreTerm := setupPainterTerminal(p)
-		_, err := p.Run()
+		final, err := p.Run()
+		if fm, ok := final.(TuiModel); ok {
+			fm.saveSidebarWidthOnExit()
+		}
 		// p.Run() returns after bubbletea's own shutdown (including recovered
 		// panics), so this is the right place to restore the terminal state the
 		// painter set up — the nil renderer never does it.
