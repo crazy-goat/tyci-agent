@@ -297,3 +297,16 @@ directory, and the runner copies them to `state.json`.
 | Config | `.tyci/config.json` over `~/.tyci/config.json` |
 
 `tyci` reads project files (`.tyci/...`) only for trusted projects.
+
+## 12. End of a milestone
+
+When the last open issue of a milestone closes, the orchestrator prints the chat line for a release. With `orchestrator.auto_close` set to `true` (the default), it also starts the workflow `milestone-close` once for that milestone.
+
+1. Check the chat for `Started milestone-close for milestone <title>.`
+2. Wait for the notice `milestone-close finished` or `milestone-close ended`.
+3. If the run asks a question, answer `yes` to move the doubtful issues or `no` to leave them out. The answer goes to the chat.
+4. Read the result in `workflow_status`. `done` means the findings were moved. `declined` or `failed` means nothing more was moved.
+5. To run the workflow again, send `workflow_start milestone-close <title>`. The orchestrator does not start it again on its own.
+6. Create the release tag yourself. tyci never tags a release.
+
+To turn off the automatic start, set `orchestrator.auto_close` to `false` in the config file.

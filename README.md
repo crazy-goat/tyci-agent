@@ -219,6 +219,7 @@ Orchestrator keys (section `orchestrator`; the project file wins key by key):
 | `orchestrator.workers` | 3 | integer >= 0; 0 = unlimited |
 | `orchestrator.plan_timeout_sec` | 0 | integer >= 0; 0 = no timeout |
 | `orchestrator.accepted_label` | `accepted` | non-empty string |
+| `orchestrator.auto_close` | `true` | `false` = when the last issue of a milestone closes, only the chat line is shown; `true` = start `milestone-close` once |
 
 An invalid value stops the orchestrator start and the message names the key and the file.
 
