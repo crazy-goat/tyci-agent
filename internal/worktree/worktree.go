@@ -80,32 +80,34 @@ func Add(ctx context.Context, repo, label string) (*Worktree, error) {
 
 // AddIssue creates <home>/.tyci/worktrees/<repoName>/issue-<n> on branch
 // issue-<n> from origin/<defaultBranch>. It fails if the directory or the
-// branch already exists. Then it runs bin/worktree-setup.sh in the new
-// worktree when the repository has one, and fails if that script fails.
+// branch already exists. Then, when trusted is true, it runs
+// bin/worktree-setup.sh in the new worktree when the repository has one, and
+// fails if that script fails. An untrusted repository gets the worktree
+// without the script.
 //
 // home is a parameter so tests can pass t.TempDir(); callers pass the result
 // of os.UserHomeDir. The branch starts from origin/<defaultBranch>, not HEAD,
 // so the worktree holds the latest shared state rather than whatever the
 // local checkout happens to point at.
-func AddIssue(ctx context.Context, home, repo string, issue int, defaultBranch string) (*Worktree, error) {
+func AddIssue(ctx context.Context, home, repo string, issue int, defaultBranch string, trusted bool) (*Worktree, error) {
 	if issue <= 0 {
 		return nil, fmt.Errorf("worktree: invalid issue number %d: must be positive", issue)
 	}
-	return addNamed(ctx, home, repo, fmt.Sprintf("issue-%d", issue), defaultBranch)
+	return addNamed(ctx, home, repo, fmt.Sprintf("issue-%d", issue), defaultBranch, trusted)
 }
 
 // AddRun is AddIssue for a workflow run that has no issue. It creates
 // <home>/.tyci/worktrees/<repoName>/run-<runID> on branch run-<runID>.
-func AddRun(ctx context.Context, home, repo, runID string, defaultBranch string) (*Worktree, error) {
+func AddRun(ctx context.Context, home, repo, runID string, defaultBranch string, trusted bool) (*Worktree, error) {
 	if runID == "" {
 		return nil, fmt.Errorf("worktree: run id must not be empty")
 	}
-	return addNamed(ctx, home, repo, "run-"+runID, defaultBranch)
+	return addNamed(ctx, home, repo, "run-"+runID, defaultBranch, trusted)
 }
 
 // addNamed is the shared part of AddIssue and AddRun: the worktree and the branch
 // are both named name.
-func addNamed(ctx context.Context, home, repo, name string, defaultBranch string) (*Worktree, error) {
+func addNamed(ctx context.Context, home, repo, name string, defaultBranch string, trusted bool) (*Worktree, error) {
 	if defaultBranch == "" {
 		return nil, fmt.Errorf("worktree: default branch must not be empty")
 	}
@@ -152,9 +154,11 @@ func addNamed(ctx context.Context, home, repo, name string, defaultBranch string
 		discard(ctx, root, target, branch)
 		return nil, fmt.Errorf("worktree: git rev-parse origin/%s: %w: %s", defaultBranch, err, base)
 	}
-	if err := runSetup(ctx, target); err != nil {
-		discard(ctx, root, target, branch)
-		return nil, err
+	if trusted {
+		if err := runSetup(ctx, target); err != nil {
+			discard(ctx, root, target, branch)
+			return nil, err
+		}
 	}
 	return &Worktree{Dir: target, Branch: branch, Repo: root, BaseCommit: strings.TrimSpace(base), keepParent: true}, nil
 }
