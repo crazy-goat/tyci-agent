@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Flow: starting a workflow from chat or the TUI refuses a workflow without `tasks/ask.md`, as `tyci workflow run` does (#575).
+
 ## [0.8.0] - 2026-10-13
 
 ### Changed
