@@ -165,14 +165,19 @@ func runsColumnWidths(rows []TuiRunRow, now time.Time) (durW, costW int) {
 	return durW, costW
 }
 
-// runHeader is the label of a run without its time and cost: "#472 done
-// (merged)" for a finished run, "#632 code (worker)" for an active one. The
-// ad-hoc row is labelled "ad-hoc".
+// runHeader is the label of a run without its time and cost: "#3 issue #472
+// done (merged)" for a finished run, "#4 issue #632 code (worker)" for an active
+// one. The run id comes first. The ad-hoc row is labelled "ad-hoc".
 func runHeader(r TuiRunRow) string {
 	if r.ID == treeAdHocID {
 		return treeAdHocID
 	}
-	head := fmt.Sprintf("#%d", r.Issue)
+	// The run id and the issue are both shown: a bare number is ambiguous, as a
+	// run number and an issue number look the same.
+	head := r.ID
+	if r.Issue > 0 {
+		head += fmt.Sprintf(" issue #%d", r.Issue)
+	}
 	if !runFinished(r) {
 		return head + " " + runStep(r)
 	}

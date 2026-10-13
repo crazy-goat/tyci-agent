@@ -69,9 +69,9 @@ func TestSidebarRunsTab_CollapsedLines(t *testing.T) {
 		t.Fatalf("collapsed runs want one line each and a separator, got %d: %q", len(lines), lines)
 	}
 	checks := []struct{ line, label, dur, cost string }{
-		{lines[0], " #632 code (worker)", "19s", "$0.01"},
-		{lines[1], " #633 ci_wait (script)", "5s", "$0.00"},
-		{lines[3], " #472 done (merged)", "12m3s", "$0.52"},
+		{lines[0], " r1 issue #632 code (worker)", "19s", "$0.01"},
+		{lines[1], " r2 issue #633 ci_wait (script)", "5s", "$0.00"},
+		{lines[3], " r3 issue #472 done (merged)", "12m3s", "$0.52"},
 	}
 	for _, c := range checks {
 		if !strings.HasPrefix(c.line, c.label) || !strings.HasSuffix(c.line, c.dur+"   "+c.cost) {
@@ -82,7 +82,7 @@ func TestSidebarRunsTab_CollapsedLines(t *testing.T) {
 		t.Errorf("cost is right-aligned: line width %d, want 60: %q", w, lines[0])
 	}
 	got := strings.Join(lines, "\n")
-	for _, hidden := range []string{"r1", "r3", "merge -> merged"} {
+	for _, hidden := range []string{"merge -> merged"} {
 		if strings.Contains(got, hidden) {
 			t.Errorf("collapsed run must not show %q: %q", hidden, got)
 		}
@@ -105,9 +105,9 @@ func TestSidebarRunsTab_DurationColumnLinesUp(t *testing.T) {
 		t.Fatalf("want two active runs, a separator and a finished run: got %d: %q", len(lines), lines)
 	}
 	checks := []struct{ line, label, cost string }{
-		{lines[0], " #621 code (worker)", "$0.00"},
-		{lines[1], " #584 findings (reviewer)", "$12.34"},
-		{lines[3], " #638 done (merged)", "$0.96"},
+		{lines[0], " r1 issue #621 code (worker)", "$0.00"},
+		{lines[1], " r2 issue #584 findings (reviewer)", "$12.34"},
+		{lines[3], " r3 issue #638 done (merged)", "$0.96"},
 	}
 	// The text before the cost ends with the duration. Its width is the
 	// column where the duration ends, so it does not depend on the clock.
@@ -526,5 +526,14 @@ func TestRenderSidebarColumn_TabInBodyLineKeepsRowWidth(t *testing.T) {
 		if got := lipgloss.Width(row); got != want {
 			t.Errorf("row %d has width %d, want %d: %q", i, got, want, row)
 		}
+	}
+}
+
+func TestRunHeader_ShowsRunIDAndIssue(t *testing.T) {
+	if got := runHeader(TuiRunRow{ID: "#3", Issue: 472, Status: "done", State: "end", Result: "merged"}); got != "#3 issue #472 done (merged)" {
+		t.Fatalf("finished run header = %q", got)
+	}
+	if got := runHeader(TuiRunRow{ID: "#4", Status: "running", State: "code", Role: "worker"}); !strings.HasPrefix(got, "#4 code") {
+		t.Fatalf("run without issue header = %q", got)
 	}
 }

@@ -275,6 +275,12 @@ func Root(ctx context.Context, dir string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// BranchExists reports whether repo has a local branch named branch.
+func BranchExists(ctx context.Context, repo, branch string) bool {
+	_, err := git(ctx, repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return err == nil
+}
+
 // branchName turns a task label into something git will accept, and keeps it
 // recognisable in `git branch` afterwards.
 func branchName(label string) string {
