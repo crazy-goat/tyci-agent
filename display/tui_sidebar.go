@@ -705,8 +705,9 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 				case sidebarTabRuns:
-					// A run has one line or more; a click on any of them
-					// toggles that run. The separator belongs to no run.
+					// A row has one line or more; a click on any of them
+					// acts like Enter on that row: it toggles a run and opens
+					// the log of an agent. The separator belongs to no row.
 					owner := m.runsTab(layout.contentWidth).owner
 					if line >= 0 && line < len(owner) && owner[line] >= 0 {
 						m.sidebarCursor = owner[line]
