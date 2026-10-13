@@ -86,6 +86,7 @@ The orchestrator can replace a stuck agent. The model calls `replace_agent` with
 The model calls `workflow_list` to see the runs of the project, newest first. By default it lists only running and paused runs. With `archived: true` it also lists done, stopped and failed runs. `limit` (default 20) and `offset` page the list, and the result gives the `total` and whether `more` runs exist. `tyci workflow list [--archived] [--limit n] [--offset n] [--json]` prints the same list in the current project.
 
 `tyci` has no built-in workflow. Run `tyci workflow init issue-to-merge` in the repository before the first run. The orchestrator also needs the workflow `roadmap` for its oracle step. Run `tyci workflow init roadmap` too. See "Create or change a workflow" below.
+The optional workflow `milestone-close` moves the open issues without milestone into a milestone when the last issue of the milestone closes. Run `tyci workflow init milestone-close` to use it. It needs the param `milestone`, for example `workflow_start milestone-close v0.10.0`.
 
 - Config: `~/.tyci/config.json` (and `.tyci/config.json` for trusted projects)
 - Worktrees: `~/.tyci/worktrees/<repo>/issue-N`
@@ -218,6 +219,7 @@ Orchestrator keys (section `orchestrator`; the project file wins key by key):
 | `orchestrator.workers` | 3 | integer >= 0; 0 = unlimited |
 | `orchestrator.plan_timeout_sec` | 0 | integer >= 0; 0 = no timeout |
 | `orchestrator.accepted_label` | `accepted` | non-empty string |
+| `orchestrator.auto_close` | `true` | `false` = when the last issue of a milestone closes, only the chat line is shown; `true` = start `milestone-close` once |
 
 An invalid value stops the orchestrator start and the message names the key and the file.
 

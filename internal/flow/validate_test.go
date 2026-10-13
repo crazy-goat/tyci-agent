@@ -219,3 +219,14 @@ func TestValidate_DescriptionIsOneLine(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestValidateResultOnlyInEndState(t *testing.T) {
+	wf := &Workflow{Name: "demo", Description: "d", Start: "a", States: map[string]State{
+		"a":   {Check: "x.sh", Result: "declined", On: map[string]string{"go": "end"}},
+		"end": {End: true},
+	}}
+	errs := validateStructure(wf)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "result is only allowed in an end state") {
+		t.Fatalf("errs = %v, want one result error", errs)
+	}
+}

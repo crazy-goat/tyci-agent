@@ -840,3 +840,96 @@ func TestWorkflowStart_ResumedByHandIsAdoptable(t *testing.T) {
 	close(c.release)
 	e.notice(t)
 }
+
+func TestAskAnswerMovesRun(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "ask", States: map[string]State{
+		"ask": {Ask: "needs a human", On: map[string]string{"stop": "end", "retry": "ask"}},
+		"end": {End: true},
+	}}
+	paused := func() *RunState {
+		st := newRun("ask")
+		st.Status = "paused"
+		st.Ask = &Ask{Message: "needs a human"}
+		return st
+	}
+
+	st := paused()
+	r := &Runner{WF: wf, Store: &memStore{}}
+	if err := r.Resume(context.Background(), st, "stop"); err != nil {
+		t.Fatalf("Resume stop: %v", err)
+	}
+	if st.Status != "done" || st.Current != "end" {
+		t.Fatalf("known answer: status %q current %q, want done at end", st.Status, st.Current)
+	}
+
+	st = paused()
+	if err := r.Resume(context.Background(), st, "maybe"); err == nil {
+		t.Fatal("Resume maybe: want an error for an unknown answer")
+	}
+	if st.Status != "paused" || st.Current != "ask" || st.Ask == nil {
+		t.Fatalf("unknown answer: status %q current %q ask %v, want still paused at ask", st.Status, st.Current, st.Ask)
+	}
+
+	// A human state keeps the run paused: the oracle does not answer it.
+	f := newOracleFixture(askWF(true), "retry\nreason")
+	if err := f.r.Run(context.Background(), f.st); !errors.Is(err, ErrPaused) {
+		t.Fatalf("human state: err = %v, want ErrPaused", err)
+	}
+	if len(f.oa.calls) != 0 || f.st.Status != "paused" || f.st.Current != "ask" {
+		t.Fatalf("human state: oracle calls %d status %q current %q", len(f.oa.calls), f.st.Status, f.st.Current)
+	}
+}
+
+func TestApprovalsFile(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "ask", States: map[string]State{
+		"ask": {Ask: "needs a human", On: map[string]string{"stop": "end", "retry": "ask"}},
+		"end": {End: true},
+	}}
+	dir := t.TempDir()
+	read := func() string {
+		b, err := os.ReadFile(filepath.Join(dir, "approvals.txt"))
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("read approvals: %v", err)
+		}
+		return string(b)
+	}
+	paused := func() *RunState {
+		st := newRun("ask")
+		st.Status = "paused"
+		st.Ask = &Ask{Message: "needs a human"}
+		return st
+	}
+	r := &Runner{WF: wf, Store: &memStore{}, RunDir: dir}
+
+	if err := r.Resume(context.Background(), paused(), "maybe"); err == nil {
+		t.Fatal("Resume maybe: want an error")
+	}
+	if got := read(); got != "" {
+		t.Fatalf("unknown answer wrote %q, want no line", got)
+	}
+
+	if err := r.Resume(context.Background(), paused(), "stop"); err != nil {
+		t.Fatalf("Resume stop: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(read()), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("approvals lines = %q, want one", lines)
+	}
+	fields := strings.Split(lines[0], "\t")
+	if len(fields) != 3 || fields[1] != "ask" || fields[2] != "stop" {
+		t.Fatalf("approval line = %q, want time, ask, stop", lines[0])
+	}
+
+	// An oracle answer is not a human approval.
+	f := newOracleFixture(askWF(false), "retry use the new flag\nreason", "stop\nno more work")
+	f.r.RunDir = dir
+	if err := os.Remove(filepath.Join(dir, "approvals.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.r.Run(context.Background(), f.st); err != nil {
+		t.Fatalf("oracle run: %v", err)
+	}
+	if got := read(); got != "" {
+		t.Fatalf("oracle answers wrote %q, want no approval", got)
+	}
+}

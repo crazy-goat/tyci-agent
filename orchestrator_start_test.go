@@ -23,7 +23,7 @@ type stubRunner struct {
 	n  int
 }
 
-func (r *stubRunner) Start(context.Context, string, map[string]string) (orchestrator.RunHandle, error) {
+func (r *stubRunner) Start(context.Context, string, map[string]string, []string) (orchestrator.RunHandle, error) {
 	r.mu.Lock()
 	r.n++
 	r.mu.Unlock()

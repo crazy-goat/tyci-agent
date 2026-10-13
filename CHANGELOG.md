@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Workflows: the `milestone-close` workflow moves the open issues without milestone (the findings) into a milestone. The oracle picks the critical findings, a script moves them, and the doubtful ones wait for a human answer in the chat. The result of an end state is shown in `workflow_status`, and the orchestrator starts the workflow when the last issue of a milestone closes (`orchestrator.auto_close`, default `true`) (#206).
+
 ### Fixed
 - Bus: the journal cleanup deletes only files named `bus-<pid>-<start>.jsonl`, and keeps the journal of a process that is still running, even when it is older than 7 days (#696).
 - Sessions: a session that is still open in a running tyci process is no longer moved from the old session layout into its project directory, even when its file is older than ten minutes. The move waits until the writer closes the file (#692).

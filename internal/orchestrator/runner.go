@@ -13,7 +13,9 @@ import (
 
 // Runner starts workflow runs. NewRunner adapts flow.Manager.
 type Runner interface {
-	Start(ctx context.Context, workflow string, inputs map[string]string) (RunHandle, error)
+	// Start starts a run with the input key "issue" or "input", or, when params
+	// is not empty, a run with the positional params of the workflow (#206).
+	Start(ctx context.Context, workflow string, inputs map[string]string, params []string) (RunHandle, error)
 }
 
 // Adopter is an optional part of a Runner. It returns the runs that exist
@@ -47,12 +49,14 @@ type RunHandle interface {
 type RunResult struct {
 	Outcome string // merged | ended | failed | cancelled | stopped
 	Output  string // final agent text; the roadmap run returns the oracle JSON here
+	Result  string // result of the end state of a flow run (flow.RunState.Result); empty otherwise
 	Err     error
 }
 
 // FlowManager is the part of flow.Manager the adapter uses.
 type FlowManager interface {
 	StartIssue(ctx context.Context, workflow string, issue int) (string, []string, error)
+	Start(ctx context.Context, req flow.StartRequest) (string, []string, error)
 	RunText(ctx context.Context, workflow, input string) (string, error)
 	Subscribe(fn func(flow.RunEvent)) func()
 }
@@ -68,7 +72,13 @@ type flowRunner struct {
 // NewRunner returns a Runner over flow.Manager.
 func NewRunner(m FlowManager) Runner { return &flowRunner{m: m} }
 
-func (r *flowRunner) Start(ctx context.Context, workflow string, inputs map[string]string) (RunHandle, error) {
+func (r *flowRunner) Start(ctx context.Context, workflow string, inputs map[string]string, params []string) (RunHandle, error) {
+	if len(params) > 0 {
+		return r.startRun(ctx, func() (string, error) {
+			id, _, err := r.m.Start(ctx, flow.StartRequest{Workflow: workflow, Params: params})
+			return id, err
+		})
+	}
 	if text, ok := inputs["input"]; ok && len(inputs) == 1 {
 		return r.startText(ctx, workflow, text), nil
 	}
@@ -76,9 +86,17 @@ func (r *flowRunner) Start(ctx context.Context, workflow string, inputs map[stri
 	if err != nil || len(inputs) != 1 {
 		return nil, fmt.Errorf("workflow %q: use exactly one input, \"issue\" or \"input\"", workflow)
 	}
+	return r.startRun(ctx, func() (string, error) {
+		id, _, err := r.m.StartIssue(ctx, workflow, n)
+		return id, err
+	})
+}
+
+// startRun subscribes, starts the run with start and watches it until its end.
+func (r *flowRunner) startRun(ctx context.Context, start func() (string, error)) (RunHandle, error) {
 	h := newFlowHandle()
 	unsub := r.m.Subscribe(h.add)
-	id, _, err := r.m.StartIssue(ctx, workflow, n)
+	id, err := start()
 	if err != nil {
 		unsub()
 		return nil, err
@@ -236,9 +254,9 @@ func (h *flowHandle) watch(ctx context.Context) {
 				signal(h.asks)
 			case "done":
 				if ev.PR > 0 {
-					h.done <- RunResult{Outcome: "merged"}
+					h.done <- RunResult{Outcome: "merged", Result: ev.Result}
 				} else {
-					h.done <- RunResult{Outcome: "ended"}
+					h.done <- RunResult{Outcome: "ended", Result: ev.Result}
 				}
 				return
 			case "failed":

@@ -1,0 +1,14 @@
+{
+  "description": "Move the open issues without milestone (the findings) into a milestone after it closes.",
+  "start": "collect",
+  "params": [{"name": "milestone", "description": "milestone title, for example v0.10.0", "required": true}],
+  "states": {
+    "collect": {"check": "checks/findings_collect.sh", "on": {"found": "pick", "none": "done", "fail": "failed", "default": "failed"}},
+    "pick":    {"agent": "oracle", "task": "pick_critical", "on": {"done": "apply", "default": "failed"}},
+    "apply":   {"check": "checks/findings_apply.sh", "on": {"done": "done", "doubt": "ask", "fail": "failed", "default": "failed"}},
+    "ask":     {"ask": "Some open issues may not belong to the milestone. Answer yes to move the doubtful issues, no to leave them out.", "human": true, "on": {"yes": "apply", "no": "declined", "default": "declined"}},
+    "done":     {"end": true, "result": "done"},
+    "declined": {"end": true, "result": "declined"},
+    "failed":   {"end": true, "result": "failed"}
+  }
+}

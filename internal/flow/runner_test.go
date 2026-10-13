@@ -3,6 +3,7 @@ package flow
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,11 +14,13 @@ type fakeChecks struct {
 	keys  map[string][]string
 	errs  map[string]error
 	calls []string
+	envs  [][]string
 	panic string
 }
 
-func (f *fakeChecks) Run(_ context.Context, s State, _ []string, _ string) (string, CheckResult, error) {
+func (f *fakeChecks) Run(_ context.Context, s State, env []string, _ string) (string, CheckResult, error) {
 	f.calls = append(f.calls, s.Check)
+	f.envs = append(f.envs, env)
 	if f.panic != "" {
 		panic(f.panic)
 	}
@@ -554,5 +557,54 @@ func TestRunner_ToolCallsLimitUsesLimitKey(t *testing.T) {
 	}
 	if st.Current != "end" || st.History[0].Key != "limit" {
 		t.Fatalf("current = %q key = %q, want end/limit", st.Current, st.History[0].Key)
+	}
+}
+
+func TestRunnerEndResult(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+		"a":        {Check: "x.sh", On: map[string]string{"go": "declined", "ok": "plain"}},
+		"declined": {End: true, Result: "declined"},
+		"plain":    {End: true},
+	}}
+	cases := map[string]struct{ key, want string }{
+		"declined": {"go", "declined"},
+		"plain":    {"ok", "done"},
+	}
+	for name, c := range cases {
+		checks := &fakeChecks{keys: map[string][]string{"x.sh": {c.key}}}
+		r := &Runner{WF: wf, Checks: checks, Store: &memStore{}}
+		st := newRun("a")
+		if err := r.Run(context.Background(), st); err != nil {
+			t.Fatalf("%s: Run: %v", name, err)
+		}
+		if st.Status != "done" || st.Result != c.want {
+			t.Fatalf("%s: status=%q result=%q, want done/%q", name, st.Status, st.Result, c.want)
+		}
+	}
+}
+
+func TestRunnerParamsEnv(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+		"a":   {Check: "x.sh", On: map[string]string{"go": "end"}},
+		"end": {End: true},
+	}}
+	checks := &fakeChecks{keys: map[string][]string{"x.sh": {"go"}}}
+	r := &Runner{WF: wf, Checks: checks, Store: &memStore{}}
+	st := newRun("a")
+	st.Params = map[string]string{"milestone": "v0.10.0", "bad-name": "x"}
+	if err := r.Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(checks.envs) != 1 {
+		t.Fatalf("check runs = %d, want 1", len(checks.envs))
+	}
+	env := checks.envs[0]
+	if !slices.Contains(env, "TYCI_PARAM_MILESTONE=v0.10.0") {
+		t.Fatalf("env lacks TYCI_PARAM_MILESTONE: %v", env)
+	}
+	for _, kv := range env {
+		if strings.Contains(kv, "bad-name") || strings.HasPrefix(kv, "TYCI_PARAM_BAD") {
+			t.Fatalf("env has an invalid param name: %q", kv)
+		}
 	}
 }

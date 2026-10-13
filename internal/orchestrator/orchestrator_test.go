@@ -253,6 +253,57 @@ func TestDrainReleaseNeeded(t *testing.T) {
 	e.waitStop()
 }
 
+// #206: the last issue closing starts milestone-close once with the milestone title; auto_close false
+// and MILESTONE EMPTY start nothing.
+func TestOrchestratorReleaseNeeded(t *testing.T) {
+	noStart := func(t *testing.T, e *env) {
+		t.Helper()
+		select {
+		case p := <-e.r.closes:
+			t.Fatalf("milestone-close started with %v", p)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	t.Run("auto close starts once", func(t *testing.T) {
+		e := newEnv(t, Config{AutoClose: true}, issue(1, ""))
+		e.start()
+		e.f.Ms[0] = forge.Milestone{Number: 1, Title: "v0.4.0", ClosedCount: 1}
+		e.r.handle(1).finish("merged")
+		if p := e.waitReady(); !errors.Is(p.Special, forge.ErrReleaseNeeded) {
+			t.Fatalf("%+v", p)
+		}
+		select {
+		case params := <-e.r.closes:
+			if len(params) != 1 || params[0] != "v0.4.0" {
+				t.Fatalf("params = %v", params)
+			}
+		case <-time.After(wait):
+			t.Fatal("milestone-close did not start")
+		}
+		e.r.closeH.done <- RunResult{Outcome: "ended", Result: "done"}
+		e.waitNote("finished for milestone v0.4.0")
+		noStart(t, e)
+	})
+	t.Run("auto close off", func(t *testing.T) {
+		e := newEnv(t, Config{}, issue(1, ""))
+		e.start()
+		e.f.Ms[0] = forge.Milestone{Number: 1, Title: "v0.4.0", ClosedCount: 1}
+		e.r.handle(1).finish("merged")
+		e.waitReady()
+		noStart(t, e)
+	})
+	t.Run("milestone empty", func(t *testing.T) {
+		e := newEnv(t, Config{AutoClose: true}, issue(1, ""))
+		e.start()
+		e.f.Ms[0] = forge.Milestone{Number: 1, Title: "v0.4.0"}
+		e.r.handle(1).finish("merged")
+		if p := e.waitReady(); !errors.Is(p.Special, forge.ErrMilestoneEmpty) {
+			t.Fatalf("%+v", p)
+		}
+		noStart(t, e)
+	})
+}
+
 func TestDrainPicksNewIssuesOnce(t *testing.T) {
 	e := newEnv(t, Config{}, issue(1, ""))
 	e.start()

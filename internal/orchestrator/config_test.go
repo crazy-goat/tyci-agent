@@ -107,3 +107,22 @@ func TestAcquireRespectsLimit(t *testing.T) {
 		t.Fatal("limit not respected")
 	}
 }
+
+// #206: auto_close defaults to true; the project file wins over the user file; a false value is kept.
+func TestOrchestratorConfigAutoClose(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "none.json")
+	if c, err := LoadConfig(missing, missing); err != nil || !c.AutoClose {
+		t.Fatalf("default: %+v %v", c, err)
+	}
+	if c, err := LoadConfig(writeCfg(t, `{"orchestrator":{"auto_close":false}}`), missing); err != nil || c.AutoClose {
+		t.Fatalf("false in user file: %+v %v", c, err)
+	}
+	u := writeCfg(t, `{"orchestrator":{"auto_close":false}}`)
+	p := writeCfg(t, `{"orchestrator":{"auto_close":true}}`)
+	if c, err := LoadConfig(u, p); err != nil || !c.AutoClose {
+		t.Fatalf("project wins: %+v %v", c, err)
+	}
+	if c, err := LoadConfig(writeCfg(t, `{"orchestrator":{"auto_close":true}}`), writeCfg(t, `{"orchestrator":{"auto_close":false}}`)); err != nil || c.AutoClose {
+		t.Fatalf("project false: %+v %v", c, err)
+	}
+}

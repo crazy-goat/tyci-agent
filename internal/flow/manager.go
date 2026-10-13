@@ -125,6 +125,7 @@ type RunEvent struct {
 	Status string
 	PR     int
 	Reason string
+	Result string
 }
 
 // Subscribe registers fn for the run events. fn runs on the run goroutine and must
@@ -341,7 +342,7 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 			}
 			m.mu.Unlock()
 			close(done)
-			m.emit(RunEvent{Run: st.Run, Status: st.Status, PR: st.PR, Reason: st.Reason})
+			m.emit(RunEvent{Run: st.Run, Status: st.Status, PR: st.PR, Reason: st.Reason, Result: st.Result})
 		}()
 		defer func() {
 			if p := recover(); p != nil {

@@ -65,6 +65,9 @@ func validateStructure(wf *Workflow) []error {
 		if s.Prompt != "" && s.Agent == "" {
 			errs = append(errs, fmt.Errorf("state %q: prompt is only allowed in an agent state", name))
 		}
+		if s.Result != "" && !s.End {
+			errs = append(errs, fmt.Errorf("state %q: result is only allowed in an end state", name))
+		}
 		if s.Human && s.Ask == "" {
 			errs = append(errs, fmt.Errorf("state %q: human is only allowed in an ask state", name))
 		}

@@ -3,8 +3,14 @@ package flow
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 )
+
+// paramEnvName accepts the names of bound params that become TYCI_PARAM_* variables.
+var paramEnvName = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 // buildCheckEnv builds the minimal environment for check scripts (SDR 5.3).
 // Only PATH, HOME and LANG are inherited from the parent, plus
@@ -18,6 +24,8 @@ import (
 // the artifact dir of the step, and TYCI_REVIEW_DIR (see reviewDir), both
 // empty when the runner has no run dir.
 // TYCI_DEFAULT_BRANCH is the defaultBranch argument (Runner.DefaultBranch).
+// Each bound param adds TYCI_PARAM_<NAME> (upper case) when its name matches
+// [A-Za-z0-9_]+; other names are skipped.
 // Nothing else from the parent env leaks in.
 func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string {
 	_ = s
@@ -69,6 +77,18 @@ func buildCheckEnv(st *RunState, s State, runDir, defaultBranch string) []string
 		"TYCI_LAST_COMMENT_ID="+lastComment,
 		"TYCI_LAST_REVIEW_COMMENT_ID="+lastReview,
 	)
+	if st != nil {
+		names := make([]string, 0, len(st.Params))
+		for k := range st.Params {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		for _, k := range names {
+			if paramEnvName.MatchString(k) {
+				env = append(env, "TYCI_PARAM_"+strings.ToUpper(k)+"="+st.Params[k])
+			}
+		}
+	}
 	return env
 }
 

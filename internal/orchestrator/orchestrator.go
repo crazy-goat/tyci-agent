@@ -20,12 +20,17 @@ const DefaultWorkflow = "issue-to-merge"
 // RoadmapWorkflow is the workflow that plans a milestone (the oracle run).
 const RoadmapWorkflow = "roadmap"
 
+// CloseWorkflow is the workflow that moves the findings into a milestone that
+// has no open issues left (#206). Its one param is the milestone title.
+const CloseWorkflow = "milestone-close"
+
 // Config is the orchestrator configuration.
 type Config struct {
 	Workers       int           // 0 = unlimited
 	PlanTimeout   time.Duration // 0 = none
 	Workflow      string        // "" -> DefaultWorkflow
 	AcceptedLabel string        // "" -> "accepted"
+	AutoClose     bool          // start CloseWorkflow when the milestone has no open issues left
 }
 
 // PlanReady is the hook the greeting uses. The orchestrator never formats the greeting.
@@ -63,6 +68,8 @@ type Orchestrator struct {
 	inFlight map[int]string // issue -> run id; only adoptResumed, acquire, setRunID, release and busy touch it
 	announce bool           // send "started #N" notices (false until the first fill is done)
 	stop     chan struct{}
+	closing  bool            // a CloseWorkflow run is active (one at a time)
+	closed   map[string]bool // milestones whose CloseWorkflow run ended; never started again
 }
 
 // New returns an Orchestrator. Workers is not defaulted: 0 means unlimited.
@@ -73,7 +80,7 @@ func New(cfg Config, f forge.Forge, r Runner, h Hooks) *Orchestrator {
 	if cfg.AcceptedLabel == "" {
 		cfg.AcceptedLabel = "accepted"
 	}
-	return &Orchestrator{cfg: cfg, f: f, r: r, h: h, inFlight: map[int]string{}, stop: make(chan struct{})}
+	return &Orchestrator{cfg: cfg, f: f, r: r, h: h, inFlight: map[int]string{}, stop: make(chan struct{}), closed: map[string]bool{}}
 }
 
 // Start runs the orchestrator in a goroutine and returns at once. Cancel ctx
@@ -127,7 +134,7 @@ func (o *Orchestrator) notify(lines ...string) {
 func (o *Orchestrator) loop(ctx context.Context, finished chan finishedRun, adopted []adoptedRun) {
 	rm, err := o.plan(ctx)
 	if err != nil {
-		o.reportForgeError(err, PlanReady{Roadmap: rm, Total: o.cfg.Workers, Special: err})
+		o.reportForgeError(ctx, err, PlanReady{Roadmap: rm, Total: o.cfg.Workers, Special: err})
 		return
 	}
 	o.mu.Lock()
@@ -164,7 +171,10 @@ func (o *Orchestrator) loop(ctx context.Context, finished chan finishedRun, adop
 	}
 }
 
-func (o *Orchestrator) reportForgeError(err error, pr PlanReady) {
+func (o *Orchestrator) reportForgeError(ctx context.Context, err error, pr PlanReady) {
+	if errors.Is(err, forge.ErrReleaseNeeded) {
+		o.startClose(ctx, pr.Roadmap.Milestone)
+	}
 	if o.h.PlanReady != nil {
 		o.h.PlanReady(pr) // the owner formats the special case
 		return
@@ -174,6 +184,56 @@ func (o *Orchestrator) reportForgeError(err error, pr PlanReady) {
 	} else {
 		o.notify("forge error: " + err.Error())
 	}
+}
+
+// startClose starts CloseWorkflow for the milestone when auto_close is on, no
+// other CloseWorkflow run is active and the milestone has not ended one. A
+// start error ends the milestone too: there is no retry loop.
+func (o *Orchestrator) startClose(ctx context.Context, milestone string) {
+	if !o.cfg.AutoClose || milestone == "" {
+		return
+	}
+	o.mu.Lock()
+	if o.closing || o.closed[milestone] {
+		o.mu.Unlock()
+		return
+	}
+	o.closing = true
+	o.mu.Unlock()
+	h, err := o.r.Start(ctx, CloseWorkflow, nil, []string{milestone})
+	if err != nil {
+		o.endClose(milestone)
+		o.notify(fmt.Sprintf("%s did not start for milestone %s: %s", CloseWorkflow, sanitize(milestone, maxTitle), sanitize(err.Error(), maxReason)))
+		return
+	}
+	o.notify(fmt.Sprintf("Started %s for milestone %s.", CloseWorkflow, sanitize(milestone, maxTitle)))
+	go o.watchClose(h, milestone)
+}
+
+// watchClose reports the result of a CloseWorkflow run. The result "done" is a
+// success; any other result (declined, failed, stopped) names the restart command.
+func (o *Orchestrator) watchClose(h RunHandle, milestone string) {
+	res := <-h.Done()
+	o.endClose(milestone)
+	name := sanitize(milestone, maxTitle)
+	if res.Result == "done" {
+		o.notify(fmt.Sprintf("%s finished for milestone %s.", CloseWorkflow, name))
+		return
+	}
+	label := res.Result
+	if label == "" {
+		label = res.Outcome
+	}
+	o.notify(fmt.Sprintf("%s ended for milestone %s: %s. To run it again, send: workflow_start %s %s",
+		CloseWorkflow, name, sanitize(label, maxReason), CloseWorkflow, name))
+}
+
+// endClose marks the CloseWorkflow run of the milestone as ended.
+func (o *Orchestrator) endClose(milestone string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.closing = false
+	o.closed[milestone] = true
 }
 
 func (o *Orchestrator) planReady(started []int, special error) {
@@ -267,7 +327,7 @@ func shortWhy(err error) string {
 func (o *Orchestrator) runOracle(ctx context.Context, input string) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	h, err := o.r.Start(ctx, RoadmapWorkflow, map[string]string{"input": input})
+	h, err := o.r.Start(ctx, RoadmapWorkflow, map[string]string{"input": input}, nil)
 	if err != nil {
 		return "", err
 	}
@@ -443,7 +503,7 @@ func (o *Orchestrator) fill(ctx context.Context, finished chan<- finishedRun) []
 			continue
 		}
 		o.setStatus(i, StatusWip)
-		h, err := o.r.Start(ctx, o.cfg.Workflow, map[string]string{"issue": strconv.Itoa(issue)})
+		h, err := o.r.Start(ctx, o.cfg.Workflow, map[string]string{"issue": strconv.Itoa(issue)}, nil)
 		if errors.Is(err, flow.ErrBusy) {
 			// The issue already has an active run (for example a manual one).
 			// Not a failure: keep it todo, try the next item.
@@ -615,7 +675,7 @@ func (o *Orchestrator) drain(ctx context.Context, replanned bool) (again, stop b
 	o.mu.Unlock()
 	rm, in, err := o.gather(ctx, known)
 	if err != nil {
-		o.reportForgeError(err, PlanReady{Roadmap: rm, Total: o.cfg.Workers, Special: err})
+		o.reportForgeError(ctx, err, PlanReady{Roadmap: rm, Total: o.cfg.Workers, Special: err})
 		return false, true
 	}
 	if len(in.Issues) > 0 && !replanned {

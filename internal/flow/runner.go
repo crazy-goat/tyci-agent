@@ -109,6 +109,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 		}
 		if s.End {
 			st.Status = "done"
+			st.Result = endResult(s)
 			st.UpdatedAt = time.Now()
 			if r.Store != nil {
 				if saveErr := r.Store.Save(st); saveErr != nil {
@@ -674,6 +675,9 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		sort.Strings(keys)
 		return fmt.Errorf("flow: unknown answer %q, allowed: %s", answer, strings.Join(keys, ", "))
 	}
+	if err := r.recordApproval(st, answer); err != nil {
+		return err
+	}
 	now := time.Now()
 	step := Step{
 		Seq:       len(st.History) + 1,
@@ -689,6 +693,7 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		st.Ask = nil
 		st.UpdatedAt = now
 		st.Status = "done"
+		st.Result = "done"
 		if r.Store != nil {
 			if err := r.Store.Save(st); err != nil {
 				return err
@@ -697,6 +702,26 @@ func (r *Runner) Resume(ctx context.Context, st *RunState, answer string) error 
 		return nil
 	}
 	return r.moveOn(ctx, st, step, next, restart)
+}
+
+// recordApproval appends one line to approvals.txt of the run dir for a human
+// answer: the time, the ask state and the answer. The oracle does not call it.
+// A run without a run dir records nothing.
+func (r *Runner) recordApproval(st *RunState, answer string) error {
+	if r.RunDir == "" {
+		return nil
+	}
+	line := fmt.Sprintf("%s\t%s\t%s\n", time.Now().UTC().Format(time.RFC3339), st.Current,
+		strings.ReplaceAll(MaskSecrets(answer), "\n", " "))
+	f, err := os.OpenFile(filepath.Join(r.RunDir, "approvals.txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(line); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // moveOn appends step to the history of st, which leaves its ask state for next,
@@ -721,6 +746,15 @@ func (r *Runner) moveOn(ctx context.Context, st *RunState, step Step, next strin
 		return r.Continue(ctx, st)
 	}
 	return r.Run(ctx, st)
+}
+
+// endResult is the Result of a run that ends at s. An end state without a
+// Result, or an ask state without on, ends the run as "done".
+func endResult(s State) string {
+	if s.Result == "" {
+		return "done"
+	}
+	return s.Result
 }
 
 func (r *Runner) warn(msg string) {
