@@ -1086,7 +1086,7 @@ file and `range: "append"` need no prior read.
 ## Session Management
 
 Sessions are automatically saved to `~/.tyci/sessions/` as JSONL files.
-The chat tool `session_list` lets the model list the saved sessions, newest first (`all: true` includes other projects). It does not read message content.
+The chat tool `session_list` lets the model list the saved sessions, newest first (`all: true` includes other projects). It does not read message content. A row of another project has `"readable": false`; the rows of the current project have no such field.
 The chat tool `session_read(path, max_messages?)` returns the last messages of a session of the current project from `session_list` (default 20, maximum 100). It shows user and assistant text only, not tool calls, tool results or thinking. Each message is cut to 2000 characters. It refuses any path that is not a session of the current project, so `session_list` with `all: true` shows other projects but `session_read` does not read them.
 Subagents that run as jobs write their own files to `~/.tyci/sessions/<project>/agents/`. The file name ends with the job id. `tyci session list` does not show these files, and nothing deletes them yet. Agents of a workflow run write to the run dir instead (see Run transcripts).
 `bus-<pid>-<start>.jsonl` is the message journal of one tyci process; it is not a session and the session list skips it. When a tyci process starts, it deletes the journals of processes that are no longer running and that are older than 7 days. A journal of a running process is kept.
