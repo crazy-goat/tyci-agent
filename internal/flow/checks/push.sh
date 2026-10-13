@@ -50,8 +50,11 @@ find_pr() {
 
 pr=$(find_pr)
 if [ -z "$pr" ]; then
+    # A run without an issue (for example a release, #207) gets an empty PR body.
+    body=""
+    if [ -n "${TYCI_ISSUE:-}" ]; then body="Closes #$TYCI_ISSUE"; fi
     gh pr create -R "$TYCI_REPO" --base "$TYCI_DEFAULT_BRANCH" --head "$branch" \
-        --title "$(git log -1 --format=%s)" --body "Closes #$TYCI_ISSUE" >&2
+        --title "$(git log -1 --format=%s)" --body "$body" >&2
     pr=$(find_pr)
 fi
 
