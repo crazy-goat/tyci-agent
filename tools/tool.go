@@ -452,7 +452,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "session_list",
-				"description": "List your saved sessions, newest first: path, title and first prompt. Set all to true to include other projects. Use session_read(path) to read one of the current project; session_read refuses other projects.",
+				"description": "List your saved sessions, newest first: path, title and first prompt. Set all to true to include other projects; a row of another project has \"readable\": false, and session_read refuses it. Use session_read(path) to read one of the current project.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
