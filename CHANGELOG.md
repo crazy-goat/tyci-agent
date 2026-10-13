@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Bus: each tyci process writes its own journal, `bus-<pid>-<start>.jsonl`, in the session directory, instead of one shared `bus.jsonl`. Journals older than 7 days are deleted at start. Sequence numbers start at 1 for each process (#599).
+
 ## [0.8.0] - 2026-10-13
 
 ### Changed

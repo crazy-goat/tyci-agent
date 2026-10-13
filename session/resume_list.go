@@ -74,7 +74,7 @@ func resumeEntriesInDir(dir string) ([]ResumeEntry, error) {
 		if f.IsDir() {
 			continue
 		}
-		if !strings.HasSuffix(f.Name(), ".jsonl") || f.Name() == JournalFileName {
+		if !strings.HasSuffix(f.Name(), ".jsonl") || IsJournalFile(f.Name()) {
 			continue
 		}
 		info, err := f.Info()

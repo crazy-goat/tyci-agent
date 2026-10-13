@@ -10,7 +10,7 @@ import (
 // session directory. Both lists must return only the session.
 func TestSessionLists_SkipJournal(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"real-session.jsonl", JournalFileName} {
+	for _, name := range []string{"real-session.jsonl", "bus-1-1700000000.jsonl"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
