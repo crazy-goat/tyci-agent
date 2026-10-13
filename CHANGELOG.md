@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- TUI: the orchestrator does not start when the `roadmap` or the configured orchestrator workflow is missing. It posts one line that names `tyci workflow init <name>` (#569).
+
 ## [0.8.0] - 2026-10-13
 
 ### Changed

@@ -194,3 +194,24 @@ func TestRunRowsSteps(t *testing.T) {
 		t.Fatalf("run: cost %q took %v since %v", r.Cost, r.Took, r.Since)
 	}
 }
+
+func TestOrchestratorWorkflowsMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	info := flow.RepoInfo{Home: home, Root: t.TempDir()}
+
+	got := missingOrchestratorWorkflow(info, "roadmap", "issue-to-merge")
+	if !strings.Contains(got, `tyci workflow init roadmap`) || strings.Contains(got, "\n") {
+		t.Fatalf("%q", got)
+	}
+
+	if _, err := flow.Init("roadmap", "", home); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Init("issue-to-merge", "", home); err != nil {
+		t.Fatal(err)
+	}
+	if got := missingOrchestratorWorkflow(info, "roadmap", "issue-to-merge"); got != "" {
+		t.Fatalf("%q", got)
+	}
+}
