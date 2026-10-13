@@ -756,6 +756,52 @@ func TestWorkflowStart_ResumeCountsHeldPausedRun(t *testing.T) {
 	e.notice(t)
 }
 
+// At start-up the orchestrator adopts every paused run, even more than
+// orchestrator.workers. The runs resumed by the user keep their own slots, so
+// the first runs continue and only a run past the limit is refused.
+func TestResume_StartupContinuesAdoptedRunsUpToWorkers(t *testing.T) {
+	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
+	e := newMgrEnv(t, c)
+	e.m.SetWorkers(2)
+	a := saveRun(t, e.home, 5, nil)
+	b := saveRun(t, e.home, 6, nil)
+	d := saveRun(t, e.home, 7, nil)
+	e.m.AskUnfinished()
+	e.notice(t)
+	for _, id := range []int{5, 6, 7} {
+		if _, paused, ok := e.m.Adopt(id); !ok || !paused {
+			t.Fatalf("adopt %d: paused %v, ok %v", id, paused, ok)
+		}
+	}
+	ended := make(chan RunEvent, 8)
+	unsub := e.m.Subscribe(func(ev RunEvent) { ended <- ev })
+	defer unsub()
+	if err := e.m.Resume(a.Run, "resume"); err != nil {
+		t.Fatalf("resume A: %v", err)
+	}
+	if err := e.m.Resume(b.Run, "resume"); err != nil {
+		t.Fatalf("resume B: %v", err)
+	}
+	err := e.m.Resume(d.Run, "resume")
+	if err == nil || !strings.Contains(err.Error(), "orchestrator.workers is 2") {
+		t.Fatalf("resume C: err = %v", err)
+	}
+	if st := loadRunState(t, e.home, d.Run); st.Status != "paused" {
+		t.Fatalf("refused run: status %q", st.Status)
+	}
+	close(c.release)
+	for n := 0; n < 2; {
+		select {
+		case ev := <-ended:
+			if ev.Status == "done" {
+				n++
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("resumed runs did not end")
+		}
+	}
+}
+
 // A paused run is adoptable at start-up, but a later fill takes only the runs a
 // resume made active (AdoptableResumed), so a paused run of a manual start does
 // not take a worker slot.

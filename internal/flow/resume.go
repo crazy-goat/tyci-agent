@@ -367,7 +367,7 @@ func (m *Manager) Adopt(issue int) (id string, paused, ok bool) {
 
 // resumeStale resumes a run of the issue whose owner process is gone. found is
 // false when there is no such run. A resume needs a free worker slot: when
-// orchestrator.workers runs are active, it is refused (no queue). m.mu must be held.
+// orchestrator.workers worker slots are in use, it is refused (no queue). m.mu must be held.
 func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool, err error) {
 	stale, _ := ScanResumable(RunsDir(info.Home), info.Repo)
 	for _, st := range stale {
@@ -375,7 +375,7 @@ func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool,
 			continue
 		}
 		if n := m.slotsInUse(info, st.Run); m.workers > 0 && n >= m.workers {
-			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active",
+			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d worker slot(s) are in use (active runs, paused runs held by the orchestrator, and an apply or reject of a workflow proposal)",
 				ErrBusy, ShowRunID(st.Run), issue, m.workers, n)
 		}
 		ok, err := m.resumeRun(info, st)
