@@ -840,3 +840,42 @@ func TestWorkflowStart_ResumedByHandIsAdoptable(t *testing.T) {
 	close(c.release)
 	e.notice(t)
 }
+
+func TestAskAnswerMovesRun(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "ask", States: map[string]State{
+		"ask": {Ask: "needs a human", On: map[string]string{"stop": "end", "retry": "ask"}},
+		"end": {End: true},
+	}}
+	paused := func() *RunState {
+		st := newRun("ask")
+		st.Status = "paused"
+		st.Ask = &Ask{Message: "needs a human"}
+		return st
+	}
+
+	st := paused()
+	r := &Runner{WF: wf, Store: &memStore{}}
+	if err := r.Resume(context.Background(), st, "stop"); err != nil {
+		t.Fatalf("Resume stop: %v", err)
+	}
+	if st.Status != "done" || st.Current != "end" {
+		t.Fatalf("known answer: status %q current %q, want done at end", st.Status, st.Current)
+	}
+
+	st = paused()
+	if err := r.Resume(context.Background(), st, "maybe"); err == nil {
+		t.Fatal("Resume maybe: want an error for an unknown answer")
+	}
+	if st.Status != "paused" || st.Current != "ask" || st.Ask == nil {
+		t.Fatalf("unknown answer: status %q current %q ask %v, want still paused at ask", st.Status, st.Current, st.Ask)
+	}
+
+	// A human state keeps the run paused: the oracle does not answer it.
+	f := newOracleFixture(askWF(true), "retry\nreason")
+	if err := f.r.Run(context.Background(), f.st); !errors.Is(err, ErrPaused) {
+		t.Fatalf("human state: err = %v, want ErrPaused", err)
+	}
+	if len(f.oa.calls) != 0 || f.st.Status != "paused" || f.st.Current != "ask" {
+		t.Fatalf("human state: oracle calls %d status %q current %q", len(f.oa.calls), f.st.Status, f.st.Current)
+	}
+}
