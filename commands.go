@@ -628,7 +628,9 @@ var tuiCmd = &cobra.Command{
 		tools.StartCronTicker(ctx, time.Minute)
 
 		// The TUI chat is the orchestrator of the session: its own short prompt.
-		cfg = orchestratorChatConfig(cfg)
+		// One read of the repository and the config serves the prompt and the start.
+		orchStart := readOrchestratorStart()
+		cfg = orchestratorChatConfig(cfg, orchStart)
 		// Chat tools workflow_start/status/resume exist only in tui:
 		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
 		// Set them before the schema snapshot, or the model never sees them.
@@ -639,7 +641,7 @@ var tuiCmd = &cobra.Command{
 		defer workflowManager.Shutdown(3 * time.Second)
 		startRunLogHousekeeping(ctx)
 		resumeWorkflowRuns()
-		runTUI(cond, tuiDisp, ctx)
+		runTUI(cond, tuiDisp, ctx, orchStart)
 		return nil
 	},
 }

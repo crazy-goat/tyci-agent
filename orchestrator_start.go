@@ -42,33 +42,54 @@ func newForge(c flowconfig.Forge) (forge.Forge, error) {
 	return forge.NewGitHub(c.Repo)
 }
 
+// orchestratorStart is what one TUI start reads from disk: the repository and
+// the orchestrator config. readOrchestratorStart reads both once; the errors are
+// kept until startTUIOrchestrator posts them.
+type orchestratorStart struct {
+	info    flow.RepoInfo
+	repoErr error
+	oc      orchestrator.Config
+	cfgErr  error
+}
+
+// readOrchestratorStart detects the repository and loads the orchestrator config.
+// It reads no config when the repository is not found.
+func readOrchestratorStart() orchestratorStart {
+	info, err := flow.DetectRepo()
+	if err != nil {
+		return orchestratorStart{repoErr: err}
+	}
+	oc, err := loadOrchestratorConfig(info)
+	return orchestratorStart{info: info, oc: oc, cfgErr: err}
+}
+
 // startTUIOrchestrator wires the config, forge and flow manager. Every failure
 // posts one line and the chat keeps working.
-func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string)) *orchestrator.Orchestrator {
+func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string), st orchestratorStart) *orchestrator.Orchestrator {
 	if resumed {
 		return nil
 	}
-	info, err := flow.DetectRepo()
-	if err != nil {
-		post(orchestrator.FormatSpecial(orchestrator.ForgeError, err.Error()))
+	if st.repoErr != nil {
+		post(orchestrator.FormatSpecial(orchestrator.ForgeError, st.repoErr.Error()))
 		return nil
 	}
+	info := st.info
 	fc, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
 	if err != nil {
 		post("orchestrator config: " + err.Error())
 		return nil
 	}
-	oc, err := loadOrchestratorConfig(info)
-	if err != nil {
-		post("orchestrator config: " + err.Error())
+	if st.cfgErr != nil {
+		post("orchestrator config: " + st.cfgErr.Error())
 		return nil
 	}
+	oc := st.oc
 	f, err := newForge(fc.Forge)
 	if err != nil {
 		post(orchestrator.FormatSpecial(orchestrator.ForgeError, err.Error()))
 		return nil
 	}
-	if msg := missingOrchestratorWorkflow(info, "roadmap", orchestratorWorkflow(oc)); msg != "" {
+	if msg := missingOrchestratorWorkflow(info, orchestrator.RoadmapWorkflow, orchestratorWorkflow(oc)); msg != "" {
 		post("orchestrator: " + msg)
 		return nil
 	}
@@ -79,10 +100,11 @@ func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string)) 
 
 // missingOrchestratorWorkflow returns the error of the first workflow name that
 // does not load, or "" when all of them load. The error names the init command.
+// The error is one line: a workflow with several bad files lists them joined by "; ".
 func missingOrchestratorWorkflow(info flow.RepoInfo, names ...string) string {
 	for _, n := range names {
 		if _, _, err := flow.Lookup(n, info.Home, info.Root, info.Trusted); err != nil {
-			return err.Error()
+			return strings.ReplaceAll(err.Error(), "\n", "; ")
 		}
 	}
 	return ""
@@ -159,20 +181,18 @@ func resumeWorkflowRuns() {
 // orchestratorSystemPrompt is the TUI chat prompt. The worker limit comes from
 // the orchestrator config; outside a repository or on a config error it is the
 // default, 3 (startTUIOrchestrator reports the error to the user).
-func orchestratorSystemPrompt() string {
+func orchestratorSystemPrompt(st orchestratorStart) string {
 	workers := 3
-	if info, err := flow.DetectRepo(); err == nil {
-		if oc, err := loadOrchestratorConfig(info); err == nil {
-			workers = oc.Workers
-		}
+	if st.repoErr == nil && st.cfgErr == nil {
+		workers = st.oc.Workers
 	}
 	return providers.BuildOrchestratorSystemPrompt(workers)
 }
 
 // orchestratorChatConfig turns the chat config into the orchestrator config:
 // the orchestrator prompt.
-func orchestratorChatConfig(cfg agent.Config) agent.Config {
-	cfg.System = orchestratorSystemPrompt()
+func orchestratorChatConfig(cfg agent.Config, st orchestratorStart) agent.Config {
+	cfg.System = orchestratorSystemPrompt(st)
 	return cfg
 }
 

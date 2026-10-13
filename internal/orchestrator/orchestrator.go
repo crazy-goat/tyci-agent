@@ -17,6 +17,9 @@ import (
 // DefaultWorkflow is the per-issue workflow used when the config sets none.
 const DefaultWorkflow = "issue-to-merge"
 
+// RoadmapWorkflow is the workflow that plans a milestone (the oracle run).
+const RoadmapWorkflow = "roadmap"
+
 // Config is the orchestrator configuration.
 type Config struct {
 	Workers       int           // 0 = unlimited
@@ -264,7 +267,7 @@ func shortWhy(err error) string {
 func (o *Orchestrator) runOracle(ctx context.Context, input string) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	h, err := o.r.Start(ctx, "roadmap", map[string]string{"input": input})
+	h, err := o.r.Start(ctx, RoadmapWorkflow, map[string]string{"input": input})
 	if err != nil {
 		return "", err
 	}
