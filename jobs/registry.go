@@ -233,9 +233,10 @@ func (r *Registry) Start(ctx context.Context, description string, kind Kind, par
 			for _, kill := range orphanKills {
 				kill()
 			}
-			close(job.done)
-
+			// Publish before close(job.done): a caller woken by Wait may
+			// then rely on the final event having been delivered.
 			r.publish(snapshot)
+			close(job.done)
 		}()
 
 		func() {

@@ -14,11 +14,14 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/forge"
 )
 
+// DefaultWorkflow is the per-issue workflow used when the config sets none.
+const DefaultWorkflow = "issue-to-merge"
+
 // Config is the orchestrator configuration.
 type Config struct {
 	Workers       int           // 0 = unlimited
 	PlanTimeout   time.Duration // 0 = none
-	Workflow      string        // "" -> "issue-to-merge"
+	Workflow      string        // "" -> DefaultWorkflow
 	AcceptedLabel string        // "" -> "accepted"
 }
 
@@ -62,7 +65,7 @@ type Orchestrator struct {
 // New returns an Orchestrator. Workers is not defaulted: 0 means unlimited.
 func New(cfg Config, f forge.Forge, r Runner, h Hooks) *Orchestrator {
 	if cfg.Workflow == "" {
-		cfg.Workflow = "issue-to-merge"
+		cfg.Workflow = DefaultWorkflow
 	}
 	if cfg.AcceptedLabel == "" {
 		cfg.AcceptedLabel = "accepted"

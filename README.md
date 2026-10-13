@@ -97,7 +97,7 @@ block to its `output.log`. The run then goes to the `fixer` role, which fixes sm
 and answers `ok` (the step runs again) or `failed`. On `failed` the `oracle` answers
 `goto:<state>`, `stop` or `ask <reason>`. After 2 fixer runs and 1 oracle run for the same
 step, the run pauses. The limits apply to the states named `fixer` and `oracle`, not to
-their agent role.
+their agent role. With an open, unmerged PR, `stop`, `goto:merge` and a goto to a state that ends the run pause at `ask` for a human.
 
 ### Pauses and the oracle
 
