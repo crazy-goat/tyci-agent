@@ -38,6 +38,11 @@ const (
 var ErrSubagentTruncated = errors.New("subagent hit its max-iterations cap")
 var ErrSubagentTimedOut = errors.New("subagent exceeded its wall-clock time limit")
 
+// ErrSubagentToolCalls is the tool_calls counterpart of the sentinels above:
+// the run stopped because a tool call was past its tool call limit. The
+// built-in runner wraps it (main.go) and runSingleTask treats it the same way.
+var ErrSubagentToolCalls = errors.New("subagent reached its tool call limit")
+
 // ErrSubagentStoppedByUser is the kill-switch counterpart to the two
 // sentinels above: returned (wrapped via fmt.Errorf %w) by a SubAgentRunner
 // when the child was stopped through jobs.Registry.Cancel — today only
@@ -195,6 +200,7 @@ type subagentTask struct {
 	// task leaves opts exactly as it was before scout existed.
 	toolsOverride    []string
 	maxIterationsCap int
+	maxToolCalls     int
 	// fallbacks, when set, replaces the named agent's fallback list. Used by
 	// workflow roles (TaskSpec.Fallbacks). Nil keeps the agent default.
 	fallbacks []string
@@ -1087,6 +1093,9 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 	if task.maxIterationsCap > 0 {
 		opts.MaxIterationsCap = task.maxIterationsCap
 	}
+	if task.maxToolCalls > 0 {
+		opts.MaxToolCalls = task.maxToolCalls
+	}
 	if task.scoutMode {
 		opts.ScoutMode = true
 	}
@@ -1189,7 +1198,7 @@ func runSingleTask(ctx context.Context, runner SubAgentRunner, task subagentTask
 		res.Success = false
 		res.limitErr = roleLimitCause(err)
 		switch {
-		case errors.Is(err, ErrSubagentTruncated), errors.Is(err, ErrSubagentTimedOut), errors.Is(err, ErrSubagentStoppedByUser):
+		case errors.Is(err, ErrSubagentTruncated), errors.Is(err, ErrSubagentTimedOut), errors.Is(err, ErrSubagentToolCalls), errors.Is(err, ErrSubagentStoppedByUser):
 			// Hit the iteration cap or the wall-clock deadline but produced
 			// text: surface as a partial success, not an error, the same
 			// way either way. Stopped-by-user (kill_job) joins them: what
@@ -1230,6 +1239,8 @@ func roleLimitCause(err error) error {
 		return ErrSubagentTruncated
 	case errors.Is(err, ErrSubagentTimedOut):
 		return ErrSubagentTimedOut
+	case errors.Is(err, ErrSubagentToolCalls):
+		return ErrSubagentToolCalls
 	}
 	return nil
 }

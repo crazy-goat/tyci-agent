@@ -34,6 +34,11 @@ type SubagentOptions struct {
 	// way regardless of what its task string asks for.
 	MaxIterationsCap int
 
+	// MaxToolCalls, when > 0, caps the tool calls of the child (main.go's
+	// agentRunner.run sets cfg.MaxToolCalls from it). Like MaxIterationsCap,
+	// it comes only from a workflow role's limits (TaskSpec.MaxToolCalls).
+	MaxToolCalls int
+
 	// ScoutMode, when true, tells main.go's agentRunner.run and
 	// subagentToolRunner.Run to build this child's schema and runtime gate
 	// from tools/scout.go's scoutGate/scoutSchemaJSONForDepth instead of

@@ -68,3 +68,35 @@ func TestSpawnWithLimits_ParentCancelIsNotLimit(t *testing.T) {
 		t.Fatalf("cancel mapped to limit %v", lim)
 	}
 }
+
+func TestSpawnWithLimits_ToolCallsCapPassedAndMapped(t *testing.T) {
+	var gotCalls int
+	r := &SubagentRunner{Spawn: func(_ context.Context, s tools.TaskSpec) (string, string, error) {
+		gotCalls = s.MaxToolCalls
+		return "", "", tools.ErrSubagentToolCalls
+	}}
+	_, _, err := r.spawnWithLimits(context.Background(), tools.TaskSpec{}, flowconfig.Limits{ToolCalls: 2})
+	var lim *agent.ErrLimit
+	if !errors.As(err, &lim) || lim.Kind != "tool_calls" {
+		t.Fatalf("err = %v, want ErrLimit tool_calls", err)
+	}
+	if gotCalls != 2 {
+		t.Fatalf("MaxToolCalls = %d, want 2", gotCalls)
+	}
+}
+
+func TestSpawnWithLimits_ToolCallsZeroIsUnlimited(t *testing.T) {
+	var gotCalls int
+	r := &SubagentRunner{Spawn: func(_ context.Context, s tools.TaskSpec) (string, string, error) {
+		gotCalls = s.MaxToolCalls
+		return "", "", tools.ErrSubagentToolCalls
+	}}
+	_, _, err := r.spawnWithLimits(context.Background(), tools.TaskSpec{}, flowconfig.Limits{Rounds: 3})
+	var lim *agent.ErrLimit
+	if errors.As(err, &lim) {
+		t.Fatalf("tool_calls 0 mapped to limit %v", lim)
+	}
+	if gotCalls != 0 {
+		t.Fatalf("MaxToolCalls = %d, want 0", gotCalls)
+	}
+}

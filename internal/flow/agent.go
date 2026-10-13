@@ -140,7 +140,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 		name = rc.Run + "/" + role
 	}
 	policy := tools.Policy{Role: role, Permission: rl.PermissionMode(), Network: rl.NetworkOn(), Tools: rl.Tools, Dir: rc.Worktree}
-	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl), Policy: &policy, Fallbacks: fallbacks, RoleLimits: rl.Limits.Rounds > 0 || rl.Limits.TimeMin > 0}
+	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl), Policy: &policy, Fallbacks: fallbacks, RoleLimits: rl.Limits.Rounds > 0 || rl.Limits.TimeMin > 0 || rl.Limits.ToolCalls > 0}
 	effective := spec.Effort
 	if r.URIEffort != nil {
 		if v := r.URIEffort(model); v != "" {
@@ -154,10 +154,12 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 }
 
 // spawnWithLimits runs the spawn with the role limits. time_min is a deadline
-// on the run; rounds is passed to the run as MaxRounds. A run that stops on
-// either limit returns an *agent.ErrLimit. Zero limits mean unlimited.
+// on the run; rounds and tool_calls are passed to the run as MaxRounds and
+// MaxToolCalls. A run that stops on one of them returns an *agent.ErrLimit
+// with its kind. Zero limits mean unlimited.
 func (r *SubagentRunner) spawnWithLimits(ctx context.Context, spec tools.TaskSpec, lim flowconfig.Limits) (string, string, error) {
 	spec.MaxRounds = lim.Rounds
+	spec.MaxToolCalls = lim.ToolCalls
 	parent := ctx
 	if lim.TimeMin > 0 {
 		var cancel context.CancelFunc
@@ -173,6 +175,9 @@ func (r *SubagentRunner) spawnWithLimits(ctx context.Context, spec tools.TaskSpe
 	}
 	if lim.Rounds > 0 && errors.Is(err, tools.ErrSubagentTruncated) {
 		return "", sid, &agent.ErrLimit{Kind: "rounds"}
+	}
+	if lim.ToolCalls > 0 && errors.Is(err, tools.ErrSubagentToolCalls) {
+		return "", sid, &agent.ErrLimit{Kind: "tool_calls"}
 	}
 	return out, sid, err
 }

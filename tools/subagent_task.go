@@ -42,13 +42,17 @@ type TaskSpec struct {
 	Policy *Policy
 	// Fallbacks are the provider URIs tried, in order, when Model fails.
 	Fallbacks []string
-	// RoleLimits is true when the role sets rounds or time_min. A run that
-	// stops on one of them returns an error that wraps ErrSubagentTruncated
-	// or ErrSubagentTimedOut, so the workflow can take its "limit" key.
+	// RoleLimits is true when the role sets rounds, time_min or tool_calls.
+	// A run that stops on one of them returns an error that wraps
+	// ErrSubagentTruncated, ErrSubagentTimedOut or ErrSubagentToolCalls, so
+	// the workflow can take its "limit" key.
 	RoleLimits bool
 	// MaxRounds, when > 0, caps the tool-call rounds of the run. A run that
 	// reaches the cap returns ErrSubagentTruncated.
 	MaxRounds int
+	// MaxToolCalls, when > 0, caps the tool calls of the run. A run that
+	// makes a call past the cap returns ErrSubagentToolCalls.
+	MaxToolCalls int
 }
 
 // TaskStats is what a finished subagent run reports: the model it used and
@@ -159,6 +163,7 @@ func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (st
 	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: s.SystemPrompt, softLimit: s.SoftLimit, hardLimit: s.HardLimit, effort: s.Effort}
 	t.fallbacks = s.Fallbacks
 	t.maxIterationsCap = s.MaxRounds
+	t.maxToolCalls = s.MaxToolCalls
 	if s.Policy != nil {
 		ctx = WithPolicy(ctx, *s.Policy)
 		t.toolsOverride = s.Policy.ToolNames()

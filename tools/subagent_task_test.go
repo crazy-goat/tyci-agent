@@ -259,3 +259,23 @@ func TestRunSubagentTask_NoRoleLimitUnchanged(t *testing.T) {
 		t.Fatalf("out=%q err=%v, want partial and nil", out, err)
 	}
 }
+
+// #201: the role tool_calls limit in TaskSpec reaches the child options.
+func TestRunSubagentTask_PassesMaxToolCalls(t *testing.T) {
+	r := &recordingRunner{}
+	if _, _, err := runSubagentTask(context.Background(), r, TaskSpec{Task: "x", MaxToolCalls: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if r.gotOpts.MaxToolCalls != 4 {
+		t.Fatalf("MaxToolCalls = %d, want 4", r.gotOpts.MaxToolCalls)
+	}
+}
+
+// #201: a run that stops on the tool_calls limit keeps its sentinel.
+func TestRunSubagentTask_ToolCallsLimitKeepsSentinel(t *testing.T) {
+	r := &recordingRunner{returnResult: "partial", returnErr: fmt.Errorf("%w: cap", ErrSubagentToolCalls)}
+	_, _, err := runSubagentTask(context.Background(), r, TaskSpec{Task: "x", RoleLimits: true})
+	if !errors.Is(err, ErrSubagentToolCalls) {
+		t.Fatalf("err = %v, want ErrSubagentToolCalls", err)
+	}
+}

@@ -493,6 +493,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		// MaxIterations stays deliberately unpopulated; see its doc
 		// comment in tools/tool.go.
 		MaxIterations: opts.MaxIterationsCap,
+		MaxToolCalls:  opts.MaxToolCalls,
 		Debug:         false,
 		Tools:         &subagentToolRunner{allowed: opts.Tools, scoutMode: opts.ScoutMode},
 		Schema:        schema,
@@ -581,6 +582,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// returns one error. All leave a resumable, partially-completed
 	// conversation behind, so all get the same treatment below.
 	truncated := errors.Is(err, agent.ErrMaxIterations)
+	toolCallLimit := errors.Is(err, agent.ErrMaxToolCalls)
 	deadlineExceeded := !truncated && errors.Is(err, context.DeadlineExceeded)
 	stoppedByUser := isStoppedByUser(err, ctx)
 
@@ -602,6 +604,13 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		// exactly like the deadline path below. The stash above already
 		// happened, so a resume(job_id=...) hint here is actionable.
 		return subagentStoppedMessage(text, jobID)
+	}
+	if toolCallLimit {
+		// A role's tool_calls limit: the conversation is complete up to the
+		// batch that passed the limit, so the partial text is returned as a
+		// partial success, like the iteration cap.
+		return text + "\n\n[note: subagent stopped at its tool call limit; the result above may be incomplete.]",
+			fmt.Errorf("%w: result may be incomplete", tools.ErrSubagentToolCalls)
 	}
 	if truncated || deadlineExceeded {
 		// agentRunner configures an ORDINARY child run without a

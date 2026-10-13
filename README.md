@@ -772,8 +772,11 @@ Each flow role also takes these keys in the flow config:
    (no limit). A run that reaches the limit takes the `limit` key of its state.
 6. `roles.<name>.limits.time_min`: the wall-clock time in minutes. Default: `0`
    (no limit). A run that reaches the limit takes the `limit` key of its state.
-7. `roles.<name>.limits.tool_calls` and `roles.<name>.limits.ping_min`: the
-   values are read and checked, but they do not change the run yet. Default: `0`.
+7. `roles.<name>.limits.tool_calls`: the number of tool calls. Default: `0`
+   (no limit). A run that makes a call past the limit stops after that batch of
+   calls and takes the `limit` key of its state.
+8. `roles.<name>.limits.ping_min`: the values are read and checked, but they do
+   not change the run yet. Default: `0`.
 
 A flow state without a `limit` key takes the `error` key when a limit stops its run.
 A project `.tyci/config.json` can narrow these keys only when the folder is trusted.
