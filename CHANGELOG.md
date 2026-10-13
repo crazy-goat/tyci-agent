@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Subagents: `kill_job`, `wait` and `jobs` refuse or hide every job outside the caller's subtree when a subagent lost its sink context key. The subtree rule now fails closed (#698).
+
 ## [0.9.0] - 2026-10-13
 
 ### Added
