@@ -205,6 +205,7 @@ func TestFixer_Key(t *testing.T) {
 }
 
 // #369: the oracle answer gives goto:<state> with a note, stop, or ask with a reason.
+// The key line may come after a line of prose (#697).
 func TestOracle_Key(t *testing.T) {
 	for in, want := range map[string]string{
 		"goto:ci the fixer pushed, wait for CI": "goto:ci the fixer pushed, wait for CI",
@@ -214,6 +215,10 @@ func TestOracle_Key(t *testing.T) {
 		"ASK":                                   "ask",
 		"\n\nbanana split":                      "ask the oracle answer is not goto:<state>, stop or ask: banana split",
 		"goto:":                                 "ask the oracle answer is not goto:<state>, stop or ask: goto:",
+		"The CI is flaky.\ngoto:ci wait for CI": "goto:ci wait for CI",
+		"prose\nstop the work is done":          "stop",
+		"retry use X":                           "ask the oracle answer is not goto:<state>, stop or ask: retry use X",
+		"goto ci wait":                          "goto:ci wait",
 	} {
 		s := &spawnRec{result: in}
 		key, _, _ := newRunner(s).Run(context.Background(), "oracle", "recover", RunContext{})
@@ -248,6 +253,17 @@ func TestRecoverOracle_TaskAsksForReport(t *testing.T) {
 	}
 	if len(s.specs) != 1 || !strings.Contains(s.specs[0].Task, "MUST write "+filepath.Join(art, "report.md")) {
 		t.Errorf("specs = %+v", s.specs)
+	}
+}
+
+// #697: the recover task lists the goto states of the run, not a fixed list.
+func TestRecoverTask_ListsGotoStates(t *testing.T) {
+	task, err := renderTask("recover", TaskData{Goto: "code, ci"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(task, "may name are: code, ci.") || strings.Contains(task, "`review`") {
+		t.Errorf("task does not use the goto states of the run: %q", task)
 	}
 }
 

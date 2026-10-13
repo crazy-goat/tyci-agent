@@ -14,7 +14,7 @@ Line 1 is one of these forms:
 
 - `retry`: try the work again. The workflow sends the run back to its retry state.
 - `retry <note>`: try the work again. The note goes to the worker prompt, so say exactly what the worker must change.
-- `goto <state>`: continue at that state. The allowed states are: {{.Goto}}.
+- `goto:<state>`: continue at that state. The allowed states are: {{.Goto}}.
 - `stop`: end the run without a merge. Use it only when the PR is 0.
 - `ask`: a human must decide. Line 2 says what the human must decide.
 

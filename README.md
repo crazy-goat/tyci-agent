@@ -118,11 +118,11 @@ their agent role. With an open, unmerged PR, `stop`, `goto:merge` and a goto to 
 
 ### Pauses and the oracle
 
-The `oracle` agent answers a pause at an `ask` state before a human sees it. The oracle answers one of these forms:
+The `oracle` agent answers a pause at an `ask` state before a human sees it. The oracle answers one of these forms. The key line is the first line that starts with one of them; the other lines give the reason:
 
 - `retry`: the run tries the work again.
 - `retry <note>`: the run tries again. The note goes to the worker prompt.
-- `goto <state>`: the run continues at that state.
+- `goto:<state>`: the run continues at that state.
 - `stop`: the run ends without a merge.
 - `ask`: a human must decide.
 

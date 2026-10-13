@@ -99,8 +99,8 @@ func oracleCount(st *RunState) int {
 
 // oracleAnswer asks the oracle for the pause of st, which sits in the ask state s.
 // A valid answer moves the run on, as a human answer does (see Resume). Any other
-// answer, or an oracle error, leaves the run paused for a human. The answer is
-// the first line of the oracle text, the reason the other lines.
+// answer, or an oracle error, leaves the run paused for a human. The key line of
+// the answer selects the route, the other lines are the reason (see parseOracleAnswer).
 func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error {
 	cur := st.Current
 	step := Step{Seq: len(st.History) + 1, State: cur, Kind: "ask", Role: "oracle", Task: oracleTask, StartedAt: time.Now()}
@@ -151,27 +151,39 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 		step.Key, step.Error = "error", runErr.Error()
 		return r.escalate(st, step, "The oracle failed: "+runErr.Error())
 	}
-	ans, why := parseAskAnswer(answer)
-	step.Key = MaskSecrets(ans)
+	key, note, reason, ok := parseOracleAnswer(answer)
+	if !ok {
+		line := oracleFirstLine(answer)
+		step.Key = MaskSecrets(line)
+		return r.escalate(st, step, fmt.Sprintf("The oracle answer is not valid: %q", line))
+	}
+	step.Key = MaskSecrets(strings.TrimSpace(key + " " + note))
+	why := reason
+	if (key == "ask" || key == "stop") && note != "" {
+		why = strings.TrimSpace(note + " " + reason)
+	}
+	if why == "" {
+		why = "no reason given"
+	}
 	step.Note = MaskSecrets(why)
-	if word, _, _ := strings.Cut(ans, " "); word == "ask" {
+	if key == "ask" {
 		return r.escalate(st, step, "The oracle asks a human: "+why)
 	}
-	next, note, ok := oracleTarget(r.WF, s, ans)
+	next, outNote, ok := oracleTarget(r.WF, s, key, note)
 	if !ok {
-		return r.escalate(st, step, fmt.Sprintf("The oracle answer is not valid: %q", ans))
+		return r.escalate(st, step, fmt.Sprintf("The oracle answer is not valid: %q", strings.TrimSpace(key+" "+note)))
 	}
 	if next == "merge" {
 		return r.escalate(st, step, "The oracle proposes a merge, a human must confirm: "+why)
 	}
-	if word, _, _ := strings.Cut(ans, " "); word == "stop" && st.PR > 0 && !WasMerged(st) {
-		return r.escalate(st, step, "The oracle proposes stop, a human must confirm: "+why)
-	}
-	if oracleBlocked(r.WF, st, next) {
+	if oracleBlocked(r.WF, st, key, next) {
+		if key == "stop" {
+			return r.escalate(st, step, "The oracle proposes stop, a human must confirm: "+why)
+		}
 		return r.escalate(st, step, "The oracle proposes the state "+next+" while the PR is open, a human must confirm: "+why)
 	}
-	if note != "" {
-		st.Note = MaskSecrets(note)
+	if outNote != "" {
+		st.Note = MaskSecrets(outNote)
 	}
 	step.To = next
 	r.warn("workflow run " + ShowRunID(st.Run) + ": oracle answered " + step.Key + ": " + step.Note)
@@ -189,39 +201,74 @@ func (r *Runner) escalate(st *RunState, step Step, reason string) error {
 	return r.savePaused(st)
 }
 
-// parseAskAnswer splits an oracle answer into the answer (the first non-empty line)
-// and the reason (the other lines). Backticks and asterisks around a line are
-// removed. Without a reason, the reason is "no reason given".
-func parseAskAnswer(text string) (answer, reason string) {
-	var lines []string
-	for _, l := range strings.Split(text, "\n") {
-		if l = strings.Trim(strings.TrimSpace(l), "`*"); strings.TrimSpace(l) != "" {
-			lines = append(lines, strings.TrimSpace(l))
+// parseOracleAnswer reads an oracle answer and finds its key line: the first line
+// whose first word is a key. The keys are "goto:<state>" (or "goto <state>"),
+// "retry", "stop" and "ask". Key is the key in one form: "goto:<state>", "retry",
+// "stop" or "ask". Note is the text after the key on that line. Reason is the text
+// of the other lines, joined with spaces. ok is false when no line has a key.
+func parseOracleAnswer(text string) (key, note, reason string, ok bool) {
+	var others []string
+	for _, line := range oracleLines(text) {
+		if k, n, valid := parseKeyLine(line); valid && !ok {
+			key, note, ok = k, n, true
+			continue
 		}
+		others = append(others, line)
 	}
-	switch len(lines) {
-	case 0:
-		return "", "no reason given"
-	case 1:
-		return lines[0], "no reason given"
-	}
-	return lines[0], strings.Join(lines[1:], " ")
+	return key, note, strings.Join(others, " "), ok
 }
 
-// oracleTarget returns the state that the oracle answer ans selects in the ask
-// state s, as a human answer does (see Resume). The answers are "retry",
-// "retry <note>", "goto <state>" and "stop". ok is false for any other answer and
-// for a target that the workflow does not allow. note is the text after retry.
-func oracleTarget(wf *Workflow, s State, ans string) (next, note string, ok bool) {
-	word, rest, _ := strings.Cut(ans, " ")
+// parseKeyLine reads one line of an oracle answer as a key line (see
+// parseOracleAnswer). A trailing ".,;:!?" after the key is ignored.
+func parseKeyLine(line string) (key, note string, ok bool) {
+	word, rest, _ := strings.Cut(line, " ")
+	word = strings.ToLower(strings.TrimRight(word, ".,;:!?"))
 	rest = strings.TrimSpace(rest)
 	switch {
+	case word == "stop" || word == "retry" || word == "ask":
+		return word, rest, true
+	case strings.HasPrefix(word, "goto:") && len(word) > len("goto:"):
+		return word, rest, true
 	case word == "goto" && rest != "":
-		return rest, "", checkGoto(wf, rest) == nil
-	case word == "retry":
+		state, after, _ := strings.Cut(rest, " ")
+		return "goto:" + state, strings.TrimSpace(after), true
+	}
+	return "", "", false
+}
+
+// oracleLines returns the non-empty lines of an oracle answer. Spaces, backticks
+// and asterisks around a line are removed.
+func oracleLines(text string) []string {
+	var lines []string
+	for _, l := range strings.Split(text, "\n") {
+		if l = strings.TrimSpace(strings.Trim(strings.TrimSpace(l), "`*")); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// oracleFirstLine returns the first non-empty line of an oracle answer, or "".
+func oracleFirstLine(text string) string {
+	if lines := oracleLines(text); len(lines) > 0 {
+		return lines[0]
+	}
+	return ""
+}
+
+// oracleTarget returns the state that the oracle key selects in the ask state s,
+// as a human answer does (see Resume). The keys are "goto:<state>", "retry" and
+// "stop". ok is false for any other key and for a target that the workflow does
+// not allow. outNote is the note for the next worker prompt.
+func oracleTarget(wf *Workflow, s State, key, note string) (next, outNote string, ok bool) {
+	switch {
+	case strings.HasPrefix(key, "goto:"):
+		target := strings.TrimPrefix(key, "goto:")
+		return target, note, checkGoto(wf, target) == nil
+	case key == "retry":
 		next, ok = onTarget(s, "retry")
-		return next, rest, ok
-	case word == "stop" && rest == "":
+		return next, note, ok
+	case key == "stop":
 		next, ok = onTarget(s, "stop")
 		return next, "", ok
 	}
@@ -237,18 +284,18 @@ func onTarget(s State, key string) (string, bool) {
 	return next, ok
 }
 
-// oracleBlocked reports whether an oracle answer that sends the run to the state
-// name must go to a human. The merge state always does. While the PR is open, a
-// state that ends the run does too, and so does a state of the oracle agent,
-// which can stop the run.
-func oracleBlocked(wf *Workflow, st *RunState, name string) bool {
+// oracleBlocked reports whether an oracle answer with the key, which sends the run
+// to the state name, must go to a human. The merge state always does. While the PR
+// is open, a stop does too, and so does a state that ends the run or a state of the
+// oracle agent, which can stop the run.
+func oracleBlocked(wf *Workflow, st *RunState, key, name string) bool {
 	if name == "merge" {
 		return true
 	}
 	if st.PR == 0 || WasMerged(st) {
 		return false
 	}
-	return wf.States[name].Agent == "oracle" || leavesRun(wf, name)
+	return key == "stop" || wf.States[name].Agent == "oracle" || leavesRun(wf, name)
 }
 
 // leavesRun reports whether the state name ends the run, or whether every target
@@ -274,7 +321,7 @@ func leavesRun(wf *Workflow, name string) bool {
 func gotoStates(wf *Workflow, st *RunState) string {
 	var names []string
 	for name := range wf.States {
-		if checkGoto(wf, name) == nil && !oracleBlocked(wf, st, name) {
+		if checkGoto(wf, name) == nil && !oracleBlocked(wf, st, "goto:"+name, name) {
 			names = append(names, name)
 		}
 	}
