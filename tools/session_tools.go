@@ -69,6 +69,9 @@ type SessionInfo struct {
 	Title       string
 	FirstPrompt string
 	Modified    time.Time
+	// OtherProject is true for a session of another project. session_read
+	// refuses such a path, so the row gets "readable": false.
+	OtherProject bool
 }
 
 // SessionMessage is one plain-text message of a saved session.
@@ -143,12 +146,16 @@ func (t *SessionListTool) Run(_ context.Context, input map[string]any) ToolResul
 
 	rows := make([]map[string]any, 0, len(list))
 	for _, s := range list {
-		rows = append(rows, map[string]any{
+		row := map[string]any{
 			"path":         s.Path,
 			"title":        s.Title,
 			"first_prompt": s.FirstPrompt,
 			"modified":     s.Modified.Format(time.RFC3339),
-		})
+		}
+		if s.OtherProject {
+			row["readable"] = false
+		}
+		rows = append(rows, row)
 	}
 	b, err := json.Marshal(rows)
 	if err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/crazy-goat/tyci-agent/connector"
@@ -28,13 +29,23 @@ func (sessionBrowserAdapter) List(cwd string, all bool) ([]tools.SessionInfo, er
 	if err != nil {
 		return nil, err
 	}
+	// With all, a session of another project is listed but Read refuses it,
+	// so it is marked. The current project is the directory of cwd.
+	var currentDir string
+	if all {
+		currentDir, err = session.SessionDir(cwd)
+		if err != nil {
+			return nil, err
+		}
+	}
 	out := make([]tools.SessionInfo, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, tools.SessionInfo{
-			Path:        e.Path,
-			Title:       e.Title,
-			FirstPrompt: e.FirstPrompt,
-			Modified:    e.ModTime.Time(),
+			Path:         e.Path,
+			Title:        e.Title,
+			FirstPrompt:  e.FirstPrompt,
+			Modified:     e.ModTime.Time(),
+			OtherProject: all && filepath.Dir(e.Path) != currentDir,
 		})
 	}
 	return out, nil
