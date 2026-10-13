@@ -1015,7 +1015,9 @@ To reload the settings when their files change, set this in
 ```
 
 The TUI checks the files every 2 seconds and reloads after the files stop
-changing for 500 milliseconds. The default is `false`.
+changing for 500 milliseconds. The default is `false`. The watcher watches the
+hooks, cron and MCP files (`mcp.json` only for a trusted project), and the Lua
+tool directories; `~/.tyci/config.json` is not watched, so a change to it needs a restart.
 
 ## `help`
 

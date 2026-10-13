@@ -12,6 +12,7 @@ import (
 
 	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"github.com/crazy-goat/tyci-agent/internal/hooks"
+	"github.com/crazy-goat/tyci-agent/internal/mcp"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
@@ -135,10 +136,11 @@ func settingsFingerprint(wd string, trusted bool) string {
 	files := []string{
 		filepath.Join(home, ".tyci", "hooks.json"),
 		filepath.Join(home, ".tyci", "cron.json"),
+		mcp.ConfigPath(),
 	}
 	dirs := []string{filepath.Join(home, ".tyci", "tools")}
 	if trusted {
-		files = append(files, gitinfo.ProjectPath(wd, "hooks.json"), gitinfo.ProjectPath(wd, "cron.json"))
+		files = append(files, gitinfo.ProjectPath(wd, "hooks.json"), gitinfo.ProjectPath(wd, "cron.json"), gitinfo.ProjectPath(wd, "mcp.json"))
 		dirs = append(dirs, gitinfo.ProjectPath(wd, "tools"))
 	}
 

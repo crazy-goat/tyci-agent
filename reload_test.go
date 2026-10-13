@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 	"github.com/crazy-goat/tyci-agent/internal/hooks"
 )
 
@@ -192,5 +193,46 @@ func TestSettingsFingerprintSeesFileChange(t *testing.T) {
 	}
 	if after := settingsFingerprint(wd, true); after == before {
 		t.Fatal("fingerprint did not change after hooks.json was written")
+	}
+}
+
+func TestSettingsFingerprintSeesMCPConfig(t *testing.T) {
+	wd := setupReloadProject(t)
+	home := os.Getenv("HOME")
+	writeMCP := func(path string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(`{"mcpServers":{}}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	before := settingsFingerprint(wd, true)
+	writeMCP(filepath.Join(home, ".tyci", "mcp.json"))
+	afterGlobal := settingsFingerprint(wd, true)
+	if afterGlobal == before {
+		t.Fatal("fingerprint did not change after the global mcp.json was written")
+	}
+
+	writeMCP(gitinfo.ProjectPath(wd, "mcp.json"))
+	if afterProject := settingsFingerprint(wd, true); afterProject == afterGlobal {
+		t.Fatal("fingerprint did not change after the project mcp.json was written")
+	}
+}
+
+func TestSettingsFingerprintIgnoresUntrustedProjectMCP(t *testing.T) {
+	wd := setupReloadProject(t)
+	before := settingsFingerprint(wd, false)
+	path := gitinfo.ProjectPath(wd, "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if after := settingsFingerprint(wd, false); after != before {
+		t.Fatal("fingerprint changed for the project mcp.json of an untrusted project")
 	}
 }
