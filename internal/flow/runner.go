@@ -325,7 +325,16 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			if !ok {
 				return r.failUnknownKey(st, cur, key, art)
 			}
-			if strings.HasPrefix(key, "goto:") && note != "" {
+			// #561: the recover oracle may not end the run or merge while the PR is open.
+			blocked := s.Agent == "oracle" && oracleBlocked(r.WF, st, next)
+			if blocked {
+				next, ok = route(s, "ask")
+				if !ok {
+					return r.failUnknownKey(st, cur, key, art)
+				}
+				note = MaskSecrets(strings.TrimSpace("The oracle proposes " + key + " while the PR is open, a human must confirm: " + note))
+			}
+			if strings.HasPrefix(key, "goto:") && note != "" && !blocked {
 				st.Note = note
 			}
 			st.History = append(st.History, Step{

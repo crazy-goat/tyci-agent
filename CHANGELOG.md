@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Flow: while a run has an open PR, a recover oracle answer `stop`, `goto:merge` or a goto to a state that ends the run now pauses at `ask` for a human, as the pause oracle already does (#561).
+
 ## [0.8.0] - 2026-10-13
 
 ### Changed
