@@ -68,7 +68,7 @@ func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string)) 
 		post(orchestrator.FormatSpecial(orchestrator.ForgeError, err.Error()))
 		return nil
 	}
-	if msg := missingOrchestratorWorkflow(info, "roadmap", oc.Workflow); msg != "" {
+	if msg := missingOrchestratorWorkflow(info, "roadmap", orchestratorWorkflow(oc)); msg != "" {
 		post("orchestrator: " + msg)
 		return nil
 	}
@@ -86,6 +86,15 @@ func missingOrchestratorWorkflow(info flow.RepoInfo, names ...string) string {
 		}
 	}
 	return ""
+}
+
+// orchestratorWorkflow is the workflow the orchestrator runs per issue. The
+// config loader leaves Workflow empty when the config sets none.
+func orchestratorWorkflow(oc orchestrator.Config) string {
+	if oc.Workflow == "" {
+		return orchestrator.DefaultWorkflow
+	}
+	return oc.Workflow
 }
 
 func loadOrchestratorConfig(info flow.RepoInfo) (orchestrator.Config, error) {
