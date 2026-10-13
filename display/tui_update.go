@@ -239,6 +239,11 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if sw, ok := msg.(sidebarWidthSaveMsg); ok {
 		return m.handleSidebarWidthSave(sw)
 	}
+	// The resize flush is handled here too, for the same reason: a focused
+	// sidebar or an open overlay would otherwise drop it and leave resizePending set.
+	if _, ok := msg.(resizeFlushMsg); ok {
+		return m.handleResizeFlush()
+	}
 	// Background stream blocks must never be lost just because some other
 	// popup happens to be open when they arrive. Dispatch them unconditionally,
 	// ahead of every exclusivity check below, just like /btw messages.
@@ -318,8 +323,6 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return m.handleResize(msg)
-	case resizeFlushMsg:
-		return m.handleResizeFlush()
 	case selectionFlashDoneMsg:
 		m.selectionFlash = false
 		return m, nil

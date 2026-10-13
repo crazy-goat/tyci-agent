@@ -1512,7 +1512,11 @@ func AllProjectDirs() ([]string, error) {
 // timestamp+uuid filename can't collide) and removed once empty. Every step
 // is best-effort: a permissions error or a directory that isn't ours to
 // touch just leaves that directory in place for next time rather than
-// failing the caller's session lookup.
+// failing the caller's session lookup. A directory that has a file written
+// within legacyWriterGrace is skipped, so a running old tyci process is not
+// moved out from under its writer.
+const legacyWriterGrace = 10 * time.Minute
+
 func migrateLegacyDirs(sessionsRoot, targetDir, targetKey string) {
 	entries, err := os.ReadDir(sessionsRoot)
 	if err != nil {
@@ -1531,12 +1535,18 @@ func migrateLegacyDirs(sessionsRoot, targetDir, targetKey string) {
 			continue
 		}
 		var jsonlNames []string
+		recent := false
 		for _, f := range files {
 			if !f.IsDir() && strings.HasSuffix(f.Name(), ".jsonl") {
 				jsonlNames = append(jsonlNames, f.Name())
+				// A recent write may come from a tyci process that still runs
+				// on the old layout; leave the directory for a later listing.
+				if info, err := f.Info(); err == nil && time.Since(info.ModTime()) < legacyWriterGrace {
+					recent = true
+				}
 			}
 		}
-		if len(jsonlNames) == 0 {
+		if len(jsonlNames) == 0 || recent {
 			continue
 		}
 		h, ok := peekHeader(filepath.Join(dir, jsonlNames[0]))
@@ -1597,13 +1607,19 @@ func SessionDirFromPath(path string) string {
 	return filepath.Dir(path)
 }
 
-// JournalFileName is the message journal of the bus. It sits in the session
-// directory next to the sessions, but it is not a session.
-const JournalFileName = "bus.jsonl"
+// JournalFilePrefix starts the name of each message journal of the bus. Each
+// tyci process writes its own file, bus-<pid>-<start>.jsonl, in the session
+// directory. A journal is not a session.
+const JournalFilePrefix = "bus"
+
+// IsJournalFile reports whether name is a message journal of the bus.
+func IsJournalFile(name string) bool {
+	return strings.HasPrefix(name, JournalFilePrefix) && strings.HasSuffix(name, ".jsonl")
+}
 
 // ListEntries returns session files in dir, newest first. Each entry includes
 // the path, file size, and modification time. Files with extension .jsonl are
-// listed, except bus.jsonl; everything else (lockfiles, partials) is ignored.
+// listed, except bus journals; everything else (lockfiles, partials) is ignored.
 func ListEntries(dir string) ([]SessionEntry, error) {
 	if dir == "" {
 		return nil, nil
@@ -1620,7 +1636,7 @@ func ListEntries(dir string) ([]SessionEntry, error) {
 		if e.IsDir() {
 			continue
 		}
-		if !strings.HasSuffix(e.Name(), ".jsonl") || e.Name() == JournalFileName {
+		if !strings.HasSuffix(e.Name(), ".jsonl") || IsJournalFile(e.Name()) {
 			continue
 		}
 		info, err := e.Info()

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - TUI: the orchestrator does not start when the `roadmap` or the configured orchestrator workflow is missing. It posts one line that names `tyci workflow init <name>` (#569).
+### Changed
+- Bus: each tyci process writes its own journal, `bus-<pid>-<start>.jsonl`, in the session directory, instead of one shared `bus.jsonl`. Journals older than 7 days are deleted at start. Sequence numbers start at 1 for each process (#599).
+### Fixed
+- Flow: starting a workflow from chat or the TUI refuses a workflow without `tasks/ask.md`, as `tyci workflow run` does (#575).
+- TUI: with the sidebar focused, the resize flush is no longer dropped, so the sidebar width is saved. A width change made less than 500 ms before quit is saved too (#607).
+- Sessions: an old session directory with a file written in the last 10 minutes is no longer moved into the project directory. It is moved on a later listing (#490).
 
 ## [0.8.0] - 2026-10-13
 
