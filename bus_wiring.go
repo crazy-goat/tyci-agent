@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
@@ -38,18 +40,24 @@ func busJournalPath() string {
 	return filepath.Join(dir, fmt.Sprintf("%s-%d-%d.jsonl", session.JournalFilePrefix, os.Getpid(), time.Now().Unix()))
 }
 
-// journalMaxAge is how long a journal file is kept after its last write.
+// journalMaxAge is how long a journal file of a dead process is kept after its
+// last write.
 const journalMaxAge = 7 * 24 * time.Hour
 
-// removeOldJournals deletes the bus journals in dir that were last written more
-// than journalMaxAge ago. Other files are not touched.
+// removeOldJournals deletes the bus journals in dir whose process is gone and
+// that were last written more than journalMaxAge ago. A journal of a live
+// process is kept. Other files are not touched.
 func removeOldJournals(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
-		if e.IsDir() || !session.IsJournalFile(e.Name()) {
+		if e.IsDir() {
+			continue
+		}
+		pid, ok := session.JournalPID(e.Name())
+		if !ok || processAlive(pid) {
 			continue
 		}
 		info, err := e.Info()
@@ -58,6 +66,13 @@ func removeOldJournals(dir string) {
 		}
 		_ = os.Remove(filepath.Join(dir, e.Name()))
 	}
+}
+
+// processAlive reports whether a process with pid exists. A process that exists
+// but belongs to another user counts as alive.
+func processAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // newAppBus returns a bus that routes to JobRegistry's agent tree. It journals
