@@ -328,6 +328,39 @@ func TestResumePicker_CloseKeepsAnswerForLaterRead(t *testing.T) {
 	}
 }
 
+// Two answers while no reader runs: the newest one must stay in the slot.
+func TestResumePicker_CloseKeepsNewestAnswer(t *testing.T) {
+	cases := []struct {
+		name   string
+		first  string
+		second string
+	}{
+		{name: "path replaces path", first: "/tmp/s1.jsonl", second: "/tmp/s2.jsonl"},
+		{name: "cancel then path", first: "", second: "/tmp/s2.jsonl"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m, resumeCh := newResumePickerTestModel(mkEntries(2))
+			m.closeResumePicker(c.first)
+			m.resumePickerActive = true
+			m.closeResumePicker(c.second)
+			select {
+			case got := <-resumeCh:
+				if got != c.second {
+					t.Fatalf("answer = %q, want the newest %q", got, c.second)
+				}
+			default:
+				t.Fatal("no answer in resumeCh")
+			}
+			select {
+			case got := <-resumeCh:
+				t.Fatalf("extra answer %q left in resumeCh", got)
+			default:
+			}
+		})
+	}
+}
+
 func TestResumeLabel_TitleWinsOverFirstPrompt(t *testing.T) {
 	if got := resumeLabel(TuiResumeEntry{Title: "Named", FirstPrompt: "hello"}); got != "Named" {
 		t.Errorf("resumeLabel with title = %q, want %q", got, "Named")
