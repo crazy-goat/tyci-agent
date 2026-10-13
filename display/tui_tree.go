@@ -143,11 +143,34 @@ func pingColour(j jobs.Job, missed bool) lipgloss.TerminalColor {
 	}
 }
 
+// treeMaxMissed caps the missed agents that treeState remembers. A missed
+// ping of an agent the TUI has not seen yet is kept until the agent shows up.
+const treeMaxMissed = 256
+
+// busPingMissedMsg reports one ping.missed alarm for the agent Agent.
+type busPingMissedMsg struct {
+	Agent string
+}
+
 // treeState keeps what the Runs tab learns from the bus about the agents.
 // The TUI holds it by pointer, so a model copy shares it. A nil treeState
-// knows no ping.missed.
+// knows no ping.missed. Only the Bubble Tea goroutine uses it, so it needs
+// no lock.
 type treeState struct {
 	missed map[string]bool
+}
+
+func newTreeState() *treeState {
+	return &treeState{missed: map[string]bool{}}
+}
+
+// markMissed records that the agent id missed its ping. Past treeMaxMissed
+// entries a new agent is not recorded.
+func (t *treeState) markMissed(id string) {
+	if t.missed[id] || len(t.missed) >= treeMaxMissed {
+		return
+	}
+	t.missed[id] = true
 }
 
 // isMissed reports whether the agent with the job ID id was reported missed.

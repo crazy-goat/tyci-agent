@@ -133,3 +133,30 @@ func TestBuildTree_PingColours(t *testing.T) {
 		}
 	}
 }
+
+func TestTreeState_PingBeforeJob(t *testing.T) {
+	m := treeModel([]TuiRunRow{treeTestRun("#1", "running", 1)}, treeTestJob("a", "#1", "", jobs.StatusRunning, 1))
+	m.tree = newTreeState()
+	m.tree.markMissed("a")
+	got := m.buildTree()
+	if len(got) != 1 || len(got[0].agents) != 1 {
+		t.Fatalf("tree = %+v, want one agent", got)
+	}
+	if c := got[0].agents[0].colour; c != lipgloss.Color("220") {
+		t.Fatalf("colour = %v, want yellow 220 after a missed ping", c)
+	}
+	var nilTree *treeState
+	if nilTree.isMissed("a") {
+		t.Fatal("nil treeState reports a missed ping")
+	}
+}
+
+func TestTreeState_CapsUnknownPings(t *testing.T) {
+	s := newTreeState()
+	for i := range treeMaxMissed + 10 {
+		s.markMissed(fmt.Sprintf("job-%d", i))
+	}
+	if len(s.missed) != treeMaxMissed {
+		t.Fatalf("missed = %d entries, want %d", len(s.missed), treeMaxMissed)
+	}
+}

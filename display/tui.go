@@ -631,6 +631,7 @@ func newModel(submitResult chan<- string, modelName string, historyPath string, 
 
 	return TuiModel{
 		blocks:                make([]block, 0, 1024),
+		tree:                  newTreeState(),
 		input:                 ta,
 		resumedFrom:           map[string]string{},
 		submitResult:          submitResult,
