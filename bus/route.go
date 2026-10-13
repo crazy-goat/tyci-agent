@@ -89,6 +89,18 @@ func (b *Bus) inSubtree(id, root string) bool {
 	return false
 }
 
+// countTracked counts the subscriptions in subs whose delivery state the bus
+// follows. An Any subscription is a read-only watcher and is not counted.
+func countTracked(subs []*Sub) int {
+	n := 0
+	for _, s := range subs {
+		if !s.filter.Any {
+			n++
+		}
+	}
+	return n
+}
+
 // wants reports whether the filter selects messages of kind.
 func (f Filter) wants(kind Kind) bool {
 	return len(f.Kinds) == 0 || slices.Contains(f.Kinds, kind)

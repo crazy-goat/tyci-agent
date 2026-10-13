@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/agent"
@@ -542,8 +543,17 @@ func publishPingMissed(b *bus.Bus, parentID string, a watchdog.Alarm) {
 	publishTo(b, bus.KindPingMissed, bus.Addr{Type: bus.AddrAgent, ID: a.Agent}, recipientAddr(parentID), bus.OriginSystem, p)
 }
 
-// watchdogRecovered sends ping.ok for agent id, see publishPingOK.
+// pingOKWanted is true once the TUI subscribes to the pings (see
+// subscribePings). The watchdog goroutine reads it, so it is atomic. A
+// headless run never sets it, and then no ping.ok is published.
+var pingOKWanted atomic.Bool
+
+// watchdogRecovered sends ping.ok for agent id, see publishPingOK. It does
+// nothing when no TUI listens for pings.
 func watchdogRecovered(id string) {
+	if !pingOKWanted.Load() {
+		return
+	}
 	publishPingOK(appBus, id)
 }
 
@@ -586,8 +596,10 @@ func subscribeJobStatus(b *bus.Bus) *bus.Sub {
 }
 
 // subscribePings gives the TUI the ping.missed alarms of every agent and the
-// ping.ok messages (see publishPingMissed and publishPingOK).
+// ping.ok messages (see publishPingMissed and publishPingOK). It also turns on
+// the ping.ok messages of watchdogRecovered.
 func subscribePings(b *bus.Bus) *bus.Sub {
+	pingOKWanted.Store(true)
 	return b.Subscribe("tui-pings", bus.Filter{Any: true, Kinds: []bus.Kind{bus.KindPingMissed, bus.KindPingOK}})
 }
 

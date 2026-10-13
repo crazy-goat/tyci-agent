@@ -262,7 +262,7 @@ func (b *Bus) deliver(m Message, class Class, key string) (Message, []inboxWarni
 	}
 	// The state is registered before the first put. A drainer that wakes on
 	// Ready can then take the message at once and still find its state.
-	b.observeSent(m, len(targets))
+	b.observeSent(m, countTracked(targets))
 	var warnings []inboxWarning
 	for _, s := range targets {
 		depth, crossed := s.q.put(m, class, key)
@@ -305,7 +305,8 @@ type Filter struct {
 	// Kinds lists the kinds to receive. Empty means all kinds.
 	Kinds []Kind
 	// Any receives the messages of Kinds whatever their To. It is for a
-	// read-only watcher, such as the TUI. To is ignored when Any is set.
+	// read-only watcher, such as the TUI. To is ignored when Any is set. An
+	// Any subscription does not count as a recipient for the delivery state.
 	Any bool
 }
 
@@ -326,7 +327,7 @@ func (s *Sub) Ready() <-chan struct{} { return s.q.ready }
 // the newest message per key in first-seen order. It clears the queue.
 func (s *Sub) Drain() []Message {
 	msgs := s.q.drain()
-	s.bus.observeReceived(msgs)
+	s.observeReceived(msgs)
 	return msgs
 }
 
@@ -349,10 +350,19 @@ func (s *Sub) Close() {
 func (s *Sub) CloseAndDrain() []Message {
 	s.bus.unsubscribe(s)
 	msgs := s.q.drain()
-	s.bus.observeReceived(msgs)
+	s.observeReceived(msgs)
 	s.q.close()
 	s.finish()
 	return msgs
+}
+
+// observeReceived reports msgs as taken to the delivery state. An Any
+// subscription is not counted in the delivery state, so it does not report.
+func (s *Sub) observeReceived(msgs []Message) {
+	if s.filter.Any {
+		return
+	}
+	s.bus.observeReceived(msgs)
 }
 
 // finish closes the Done channel once.

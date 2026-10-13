@@ -150,3 +150,43 @@ func TestPingMissed_OnePublishPerMiss(t *testing.T) {
 		t.Fatalf("journal has %d ping.missed lines, want 1:\n%s", n, data)
 	}
 }
+
+// TestWatchdogRecovered_PublishesOnlyWithTUISubscription checks that a recovery
+// writes no ping.ok when no TUI subscribed, as in a headless run. With the
+// subscription, it publishes one ping.ok that the TUI gets.
+func TestWatchdogRecovered_PublishesOnlyWithTUISubscription(t *testing.T) {
+	withTestWiring(t)
+	pingOKWanted.Store(false)
+	t.Cleanup(func() { pingOKWanted.Store(false) })
+
+	headless := filepath.Join(t.TempDir(), "headless.jsonl")
+	hb := bus.New(bus.WithJournal(headless))
+	appBus = hb
+	watchdogRecovered("job-1")
+	if n := len(hb.Events()); n != 0 {
+		t.Fatalf("headless bus has %d events, want none", n)
+	}
+	hb.Close()
+	if data, err := os.ReadFile(headless); err == nil && strings.Contains(string(data), `"kind":"ping.ok"`) {
+		t.Fatalf("headless journal has a ping.ok line:\n%s", data)
+	}
+
+	tuiJournal := filepath.Join(t.TempDir(), "tui.jsonl")
+	tb := bus.New(bus.WithJournal(tuiJournal))
+	defer tb.Close()
+	appBus = tb
+	tui := subscribePings(tb)
+	watchdogRecovered("job-1")
+	msgs := tui.Drain()
+	if len(msgs) != 1 || msgs[0].Kind != bus.KindPingOK {
+		t.Fatalf("tui got %d messages, want one ping.ok", len(msgs))
+	}
+	tb.Close()
+	data, err := os.ReadFile(tuiJournal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), `"kind":"ping.ok"`); n != 1 {
+		t.Fatalf("tui journal has %d ping.ok lines, want 1:\n%s", n, data)
+	}
+}
