@@ -258,6 +258,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			_, recoveryRole := recoveryCaps[s.Agent]
 			_, recoveryState := recoveryCaps[cur]
 			if recoveryRole || recoveryState {
+				rc.Goto = gotoStates(r.WF, st)
 				rc.Failed, rc.FailedKey = failed.State, failed.Key
 				if failed.Artifact != "" && r.RunDir != "" {
 					rc.FailedDir = filepath.Join(r.RunDir, "artifacts", failed.Artifact)
@@ -330,7 +331,7 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 				return r.failUnknownKey(st, cur, key, art)
 			}
 			// #561: the recover oracle may not end the run or merge while the PR is open.
-			blocked := s.Agent == "oracle" && oracleBlocked(r.WF, st, next)
+			blocked := s.Agent == "oracle" && oracleBlocked(r.WF, st, key, next)
 			if blocked {
 				next, ok = route(s, "ask")
 				if !ok {

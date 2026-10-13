@@ -329,28 +329,17 @@ func fixerKey(answer string, rc RunContext) string {
 	return "failed"
 }
 
-// oracleKey reads the first non-empty line of the oracle answer: "goto:<state> [note]",
-// "stop" or "ask [reason]". Anything else is an ask with the line as the reason.
+// oracleKey reads the key line of the oracle answer (see parseOracleAnswer): "goto:<state> [note]",
+// "stop" or "ask [reason]". An answer without such a line is an ask with its first line as the reason.
 func oracleKey(answer string) string {
-	line := ""
-	for _, l := range strings.Split(answer, "\n") {
-		if line = strings.TrimSpace(strings.Trim(strings.TrimSpace(l), "`*")); line != "" {
-			break
-		}
-	}
-	word, rest, _ := strings.Cut(line, " ")
-	rest = strings.TrimSpace(rest)
-	switch w := strings.ToLower(strings.TrimRight(word, ".,;:!?")); {
-	case w == "stop":
+	key, note, _, ok := parseOracleAnswer(answer)
+	switch {
+	case ok && key == "stop":
 		return "stop"
-	case w == "ask" && rest != "":
-		return "ask " + rest
-	case w == "ask":
-		return "ask"
-	case strings.HasPrefix(w, "goto:") && len(w) > len("goto:"):
-		return strings.TrimSpace(w + " " + rest)
+	case ok && key != "retry":
+		return strings.TrimSpace(key + " " + note)
 	}
-	return "ask the oracle answer is not goto:<state>, stop or ask: " + line
+	return "ask the oracle answer is not goto:<state>, stop or ask: " + oracleFirstLine(answer)
 }
 
 // fetchIssueContext returns the issue text. Text from authors without write
