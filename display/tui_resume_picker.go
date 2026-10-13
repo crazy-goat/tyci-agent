@@ -35,12 +35,18 @@ func (m *TuiModel) openResumePicker(entries []TuiResumeEntry) {
 // clean. The send never blocks the event loop. runTUI reads resumeCh only
 // while it is idle, so a blocking send would freeze the TUI until a running
 // turn ends. The channel holds one value, and runTUI reads it at its next
-// idle select. A second value while the first is unread is dropped.
+// idle select. If an earlier value is still unread, it is replaced by the
+// newest one, so the last choice wins. Only the event loop sends, so the
+// slot is empty after the drain and the second send cannot block.
 func (m *TuiModel) closeResumePicker(selected string) {
 	m.resumePickerActive = false
 	m.resumePickerEntries = nil
 	m.resumePickerCursor = 0
 	if m.resumeCh != nil {
+		select {
+		case <-m.resumeCh:
+		default:
+		}
 		select {
 		case m.resumeCh <- selected:
 		default:
