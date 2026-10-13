@@ -130,7 +130,8 @@ func (m TuiModel) treeAgents(jobsOfRun []jobs.Job) []treeAgent {
 }
 
 // pingColour returns the colour of an agent row. A failed job is red, a done
-// job is grey, a job after ping.missed is yellow. Any other job has no colour.
+// job is grey, a running job after ping.missed is yellow and any other running
+// job is green. A job with no status yet has no colour.
 func pingColour(j jobs.Job, missed bool) lipgloss.TerminalColor {
 	switch {
 	case j.Status == jobs.StatusFailed:
@@ -139,13 +140,16 @@ func pingColour(j jobs.Job, missed bool) lipgloss.TerminalColor {
 		return lipgloss.Color("245")
 	case missed:
 		return lipgloss.Color("220")
+	case j.Status == jobs.StatusRunning || j.Status == jobs.StatusWaitingAnswer:
+		return lipgloss.Color("42")
 	default:
 		return lipgloss.NoColor{}
 	}
 }
 
-// treeMaxMissed caps the missed agents that treeState remembers. A missed
-// ping of an agent the TUI has not seen yet is kept until the agent shows up.
+// treeMaxMissed caps the missed marks that treeState keeps for the pings of
+// unknown jobs. A missed ping of an agent the TUI has not seen yet is kept
+// until the agent shows up.
 const treeMaxMissed = 256
 
 // busPingMissedMsg reports one ping.missed alarm for the agent Agent.
@@ -165,13 +169,22 @@ func newTreeState() *treeState {
 	return &treeState{missed: map[string]bool{}}
 }
 
-// markMissed records that the agent id missed its ping. Past treeMaxMissed
-// entries a new agent is not recorded.
-func (t *treeState) markMissed(id string) {
-	if t.missed[id] || len(t.missed) >= treeMaxMissed {
+// markMissed records that the agent id missed its ping. known tells whether the
+// TUI has the job. A ping of an unknown job is not recorded once treeMaxMissed
+// entries are kept. A nil treeState records nothing.
+func (t *treeState) markMissed(id string, known bool) {
+	if t == nil || t.missed[id] || (!known && len(t.missed) >= treeMaxMissed) {
 		return
 	}
 	t.missed[id] = true
+}
+
+// forget drops the missed mark of the job id. It is called when the job leaves
+// the running state, or is removed from the list.
+func (t *treeState) forget(id string) {
+	if t != nil {
+		delete(t.missed, id)
+	}
 }
 
 // isMissed reports whether the agent with the job ID id was reported missed.

@@ -2,7 +2,6 @@ package display
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -55,24 +54,16 @@ func runFinished(r TuiRunRow) bool {
 	return r.Status == "done" || r.Status == "failed" || r.Status == "stopped"
 }
 
-// sidebarRunRows returns the runs in display order: the active runs by start,
-// newest first, then the finished runs by end, newest first. The index of a
-// row is the cursor position of its run.
+// sidebarRunRows returns the rows of the Runs tab in display order, the same
+// rows that buildTree draws. The index of a row is the cursor position of its
+// run, so the cursor, Enter and the stop key use this list only.
 func (m TuiModel) sidebarRunRows() []TuiRunRow {
-	if m.runLister == nil {
-		return nil
+	tree := m.buildTree()
+	rows := make([]TuiRunRow, 0, len(tree))
+	for _, t := range tree {
+		rows = append(rows, t.run)
 	}
-	var active, finished []TuiRunRow
-	for _, r := range m.runLister() {
-		if runFinished(r) {
-			finished = append(finished, r)
-		} else {
-			active = append(active, r)
-		}
-	}
-	sort.SliceStable(active, func(i, j int) bool { return active[i].Started.After(active[j].Started) })
-	sort.SliceStable(finished, func(i, j int) bool { return finished[i].Ended.After(finished[j].Ended) })
-	return append(active, finished...)
+	return rows
 }
 
 func (m TuiModel) renderSidebarRuns(width int) []string {
@@ -84,15 +75,14 @@ func (m TuiModel) renderSidebarRuns(width int) []string {
 // and the finished runs.
 func (m TuiModel) runsTab(width int) runsView {
 	var v runsView
-	if m.runLister == nil {
-		v.add("", -1)
-		v.add("  Workflow runs are not wired up in this build.", -1)
-		return v
-	}
 	tree := m.buildTree()
 	if len(tree) == 0 {
 		v.add("", -1)
-		v.add("  No workflow runs yet.", -1)
+		if m.runLister == nil {
+			v.add("  Workflow runs are not wired up in this build.", -1)
+		} else {
+			v.add("  No workflow runs yet.", -1)
+		}
 		return v
 	}
 	rows := make([]TuiRunRow, 0, len(tree))
@@ -148,8 +138,12 @@ func runsColumnWidths(rows []TuiRunRow, now time.Time) (durW, costW int) {
 }
 
 // runHeader is the label of a run without its time and cost: "#472 done
-// (merged)" for a finished run, "#632 code (worker)" for an active one.
+// (merged)" for a finished run, "#632 code (worker)" for an active one. The
+// ad-hoc row is labelled "ad-hoc".
 func runHeader(r TuiRunRow) string {
+	if r.ID == treeAdHocID {
+		return treeAdHocID
+	}
 	head := fmt.Sprintf("#%d", r.Issue)
 	if !runFinished(r) {
 		return head + " " + runStep(r)

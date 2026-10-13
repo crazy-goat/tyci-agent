@@ -126,7 +126,9 @@ func TestBuildTree_PingColours(t *testing.T) {
 		{jobs.StatusFailed, false, lipgloss.Color("196")},
 		{jobs.StatusDone, false, lipgloss.Color("245")},
 		{jobs.StatusRunning, true, lipgloss.Color("220")},
-		{jobs.StatusRunning, false, lipgloss.NoColor{}},
+		{jobs.StatusRunning, false, lipgloss.Color("42")},
+		{jobs.StatusWaitingAnswer, false, lipgloss.Color("42")},
+		{jobs.Status(""), false, lipgloss.NoColor{}},
 	}
 	for _, c := range cases {
 		if got := pingColour(treeTestJob("a", "", "", c.status, 1), c.missed); got != c.want {
@@ -138,7 +140,7 @@ func TestBuildTree_PingColours(t *testing.T) {
 func TestTreeState_PingBeforeJob(t *testing.T) {
 	m := treeModel([]TuiRunRow{treeTestRun("#1", "running", 1)}, treeTestJob("a", "#1", "", jobs.StatusRunning, 1))
 	m.tree = newTreeState()
-	m.tree.markMissed("a")
+	m.tree.markMissed("a", false)
 	got := m.buildTree()
 	if len(got) != 1 || len(got[0].agents) != 1 {
 		t.Fatalf("tree = %+v, want one agent", got)
@@ -155,10 +157,47 @@ func TestTreeState_PingBeforeJob(t *testing.T) {
 func TestTreeState_CapsUnknownPings(t *testing.T) {
 	s := newTreeState()
 	for i := range treeMaxMissed + 10 {
-		s.markMissed(fmt.Sprintf("job-%d", i))
+		s.markMissed(fmt.Sprintf("job-%d", i), false)
 	}
 	if len(s.missed) != treeMaxMissed {
 		t.Fatalf("missed = %d entries, want %d", len(s.missed), treeMaxMissed)
+	}
+	s.markMissed("known", true)
+	if !s.isMissed("known") {
+		t.Fatal("a ping of a known job is not capped")
+	}
+}
+
+// TestTreeState_ForgetsEndedJobs checks that the missed mark of a job is
+// dropped when the job leaves the running state.
+func TestTreeState_ForgetsEndedJobs(t *testing.T) {
+	s := newTreeState()
+	s.markMissed("a", true)
+	s.forget("a")
+	if s.isMissed("a") {
+		t.Fatal("the missed mark stays after the job ended")
+	}
+	var nilTree *treeState
+	nilTree.forget("a")
+	nilTree.markMissed("a", false)
+}
+
+// TestAppMissedPing checks the update path: a ping of a running job is marked,
+// a ping of a finished job is not, and the mark is dropped when the job ends.
+func TestAppMissedPing(t *testing.T) {
+	m := treeModel(nil, treeTestJob("a", "", "", jobs.StatusRunning, 1), treeTestJob("b", "", "", jobs.StatusDone, 2))
+	m.tree = newTreeState()
+	model, _ := m.update(busPingMissedMsg{Agent: "a"})
+	m = model.(TuiModel)
+	model, _ = m.update(busPingMissedMsg{Agent: "b"})
+	m = model.(TuiModel)
+	if !m.tree.isMissed("a") || m.tree.isMissed("b") {
+		t.Fatalf("missed a=%v b=%v, want true and false", m.tree.isMissed("a"), m.tree.isMissed("b"))
+	}
+	done := treeTestJob("a", "", "", jobs.StatusDone, 1)
+	m.applyJobUpdate(done)
+	if m.tree.isMissed("a") {
+		t.Fatal("the mark stays after the agent is done")
 	}
 }
 
@@ -169,7 +208,7 @@ func treeRunsModel() TuiModel {
 	long.Description = "a worker with a very long description \t and\x1b]0;title\x07 control codes"
 	m := treeModel([]TuiRunRow{treeTestRun("#1", "running", 1)}, long, ask)
 	m.tree = newTreeState()
-	m.tree.markMissed("a")
+	m.tree.markMissed("a", true)
 	m.sidebarRunsExpanded = map[string]bool{"#1": true}
 	return m
 }
@@ -199,6 +238,62 @@ func TestRunsTab_AgentShowsQuestion(t *testing.T) {
 
 // TestRunsTab_CostBoundedByVisibleRuns checks that the Runs tab does not grow
 // with the old finished runs: only treeFinishedRuns of them are laid out.
+// TestRunsTab_AdHocWithoutRunSource checks that the Runs tab shows an ad-hoc
+// agent with no run source, and no "not wired up" note.
+func TestRunsTab_AdHocWithoutRunSource(t *testing.T) {
+	m := treeModel(nil, treeTestJob("x", "", "", jobs.StatusRunning, 1))
+	got := strings.Join(m.renderSidebarRuns(60), "\n")
+	if !strings.Contains(got, "ad-hoc") {
+		t.Fatalf("runs tab has no ad-hoc row:\n%s", got)
+	}
+	m.sidebarRunsExpanded = map[string]bool{treeAdHocID: true}
+	got = strings.Join(m.renderSidebarRuns(60), "\n")
+	if !strings.Contains(got, "worker x") || strings.Contains(got, "not wired up") {
+		t.Fatalf("runs tab must show the ad-hoc agent and no error:\n%s", got)
+	}
+}
+
+// TestRunsTab_CursorUsesDrawnRows checks that the cursor, Enter and the stop
+// key use the rows that are drawn: 8 finished runs and one ad-hoc agent give
+// 6 rows, and Enter on the last row opens the ad-hoc agents.
+func TestRunsTab_CursorUsesDrawnRows(t *testing.T) {
+	var runs []TuiRunRow
+	for i := 1; i <= 8; i++ {
+		runs = append(runs, treeTestRun(fmt.Sprintf("#%d", i), "done", i))
+	}
+	m := treeModel(runs, treeTestJob("x", "", "", jobs.StatusRunning, 1))
+	m.sidebarTab = sidebarTabRuns
+	if got := m.sidebarRowCount(); got != treeFinishedRuns+1 {
+		t.Fatalf("row count = %d, want %d drawn rows", got, treeFinishedRuns+1)
+	}
+	for range 20 {
+		m.sidebarMoveCursor(1)
+	}
+	if m.sidebarCursor != treeFinishedRuns {
+		t.Fatalf("cursor = %d, want the ad-hoc row %d", m.sidebarCursor, treeFinishedRuns)
+	}
+	model, _ := m.sidebarActivateRow()
+	m = model.(TuiModel)
+	if !m.sidebarRunsExpanded[treeAdHocID] || m.sidebarRunsExpanded["#5"] || len(m.sidebarRunsExpanded) != 1 {
+		t.Fatalf("Enter must toggle the ad-hoc row only: %v", m.sidebarRunsExpanded)
+	}
+	if got := strings.Join(m.renderSidebarRuns(60), "\n"); !strings.Contains(got, "worker x") {
+		t.Fatalf("ad-hoc agent not drawn after Enter:\n%s", got)
+	}
+}
+
+// TestRunsTab_StopKeyNotOnAdHoc checks that the stop key does nothing on the
+// ad-hoc row, even when its agents are live.
+func TestRunsTab_StopKeyNotOnAdHoc(t *testing.T) {
+	m := treeModel([]TuiRunRow{treeTestRun("#1", "running", 1)}, treeTestJob("x", "", "", jobs.StatusRunning, 1))
+	m.sidebarTab = sidebarTabRuns
+	m.sidebarCursor = 1
+	m = m.sidebarAskStop()
+	if m.sidebarStopRun != "" {
+		t.Fatalf("stop asked on the ad-hoc row: %q", m.sidebarStopRun)
+	}
+}
+
 func TestRunsTab_CostBoundedByVisibleRuns(t *testing.T) {
 	lines := func(n int) int {
 		var runs []TuiRunRow
