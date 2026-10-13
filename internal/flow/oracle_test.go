@@ -200,7 +200,7 @@ func TestOracle_GotoMergeNeedsHuman(t *testing.T) {
 		t.Fatalf("message %q", f.st.Ask.Message)
 	}
 	steps := oracleSteps(f.st)
-	if len(steps) != 1 || steps[0].Key != "goto merge" {
+	if len(steps) != 1 || steps[0].Key != "goto:merge" {
 		t.Fatalf("oracle steps %+v", steps)
 	}
 }
@@ -313,6 +313,20 @@ func TestOracle_StopWithOpenPRNeedsHuman(t *testing.T) {
 	}
 }
 
+// The key line of the pause answer may come after a line of prose, and goto
+// takes a note as the agent route does.
+func TestOracle_KeyLineAfterProseAndNote(t *testing.T) {
+	f := newOracleFixture(askWF(false), "The worker is stuck.\ngoto:code wait for the fixer")
+	_ = f.r.Run(context.Background(), f.st)
+	steps := oracleSteps(f.st)
+	if len(steps) == 0 || steps[0].Key != "goto:code wait for the fixer" || steps[0].To != "code" {
+		t.Fatalf("oracle steps %+v, want a goto:code step with its note to code first", steps)
+	}
+	if !strings.Contains(strings.Join(f.notices, "\n"), "oracle answered goto:code wait for the fixer:") {
+		t.Fatalf("notices %q", f.notices)
+	}
+}
+
 func TestOracle_StopWithoutPREnds(t *testing.T) {
 	f := newOracleFixture(askWF(false), "stop\nno work left")
 	if err := f.r.Run(context.Background(), f.st); err != nil {
@@ -331,9 +345,8 @@ func TestOracle_InvalidAnswerEscalates(t *testing.T) {
 		want   string
 	}{
 		{"unknown word", "foo\nreason", nil, `The oracle answer is not valid: "foo"`},
-		{"goto unknown state", "goto nowhere\nreason", nil, `The oracle answer is not valid: "goto nowhere"`},
-		{"goto ask state", "goto ask\nreason", nil, `The oracle answer is not valid: "goto ask"`},
-		{"stop with text", "stop now\nreason", nil, `The oracle answer is not valid: "stop now"`},
+		{"goto unknown state", "goto nowhere\nreason", nil, `The oracle answer is not valid: "goto:nowhere"`},
+		{"goto ask state", "goto ask\nreason", nil, `The oracle answer is not valid: "goto:ask"`},
 		{"ask escalates", "ask\nthe run needs a human", nil, "The oracle asks a human: the run needs a human"},
 		{"oracle error", "retry\nreason", errors.New("boom"), "The oracle failed: boom"},
 	}
@@ -407,20 +420,30 @@ func TestOracle_MayAnswerRules(t *testing.T) {
 	}
 }
 
-func TestParseAskAnswer(t *testing.T) {
+func TestParseOracleAnswer(t *testing.T) {
 	cases := []struct {
-		in, answer, reason string
+		in, key, note, reason string
+		ok                    bool
 	}{
-		{"retry\nthe worker missed it", "retry", "the worker missed it"},
-		{"\n  retry use X  \n\nline two\nline three\n", "retry use X", "line two line three"},
-		{"`retry`\n**reason here**", "retry", "reason here"},
-		{"stop", "stop", "no reason given"},
-		{"  \n\n ", "", "no reason given"},
+		{"retry\nthe worker missed it", "retry", "", "the worker missed it", true},
+		{"\n  retry use X  \n\nline two\nline three\n", "retry", "use X", "line two line three", true},
+		{"`retry`\n**reason here**", "retry", "", "reason here", true},
+		{"stop", "stop", "", "", true},
+		{"stop.\nall work is done", "stop", "", "all work is done", true},
+		{"goto:ci wait for CI", "goto:ci", "wait for CI", "", true},
+		{"goto ci wait for CI", "goto:ci", "wait for CI", "", true},
+		{"GOTO:CI", "goto:ci", "", "", true},
+		{"The CI is flaky.\ngoto:ci wait for CI", "goto:ci", "wait for CI", "The CI is flaky.", true},
+		{"ask the origin is gone", "ask", "the origin is gone", "", true},
+		{"prose only\nmore prose", "", "", "prose only more prose", false},
+		{"goto:\ngoto", "", "", "goto: goto", false},
+		{"  \n\n ", "", "", "", false},
 	}
 	for _, c := range cases {
-		answer, reason := parseAskAnswer(c.in)
-		if answer != c.answer || reason != c.reason {
-			t.Fatalf("parseAskAnswer(%q) = %q, %q; want %q, %q", c.in, answer, reason, c.answer, c.reason)
+		key, note, reason, ok := parseOracleAnswer(c.in)
+		if key != c.key || note != c.note || reason != c.reason || ok != c.ok {
+			t.Fatalf("parseOracleAnswer(%q) = %q, %q, %q, %v; want %q, %q, %q, %v",
+				c.in, key, note, reason, ok, c.key, c.note, c.reason, c.ok)
 		}
 	}
 }

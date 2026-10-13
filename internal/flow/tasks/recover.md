@@ -11,7 +11,7 @@ Read these files with the read tool:
 2. `failed.log` and `report.md` of the fixer steps in "Run so far" below.
 3. The other artifact files in "Run so far" when you need more.
 
-Decide the next step of the run. The workflow states are: `code` (the worker changes the code), `review`, `lock`, `update` (merge the default branch and push), `ci` (wait for CI), `comments`, `merge`, `rebase`, `findings`.
+Decide the next step of the run. The states that `goto:<state>` may name are: {{.Goto}}.
 
 Answer with exactly one line, in one of these forms:
 
