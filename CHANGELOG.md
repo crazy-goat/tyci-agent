@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- CLI: `tyci update` downloads the latest release, checks its SHA-256 and replaces the binary; `--check`, `--version` and `--force` (#621).
 - TUI: the Runs tab shows the agents under each run. A run row unfolds into its agents, with the ping state as colour and the question of an agent that waits for an answer. Agents without a run are listed under `ad-hoc`. A missed ping stays yellow until the agent finishes (#203).
 - Tools: the chat tool `session_read(path, max_messages?)` returns the last messages (default 20, max 100) of a session that `session_list` returns, as user and assistant text only, each cut to 2000 characters. Any other path is refused. A subagent cannot use it (#590).
 - TUI: `/reload` reloads the hooks, the Lua tools, the cron jobs and the MCP servers of the project without a restart. A broken file keeps its previous settings and shows the error. Set `defaults.watch_config` to `true` in `~/.tyci/config.json` to reload these settings when their files change (#620).

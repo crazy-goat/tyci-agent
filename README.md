@@ -54,6 +54,23 @@ version into the binary, shown by `tyci --version`: by default the nearest
 make install
 ```
 
+### Update a release binary
+
+`tyci update` downloads the latest release for your platform, checks its SHA-256
+against `checksums.txt` and replaces the running binary. The new file is written
+next to the old one, so the directory must be writable. A wrong or missing
+checksum stops the update and leaves the binary unchanged.
+
+```bash
+tyci update                 # install the latest release
+tyci update --check         # only show the latest version
+tyci update --version v0.9.0  # install a specific release
+tyci update --force         # replace a dev build, or re-install the same version
+```
+
+Set `GITHUB_TOKEN` or `GH_TOKEN` to avoid the GitHub API rate limit. Restart
+`tyci` to use the new version.
+
 ## Issue-to-merge workflow
 
 `tyci` can take a GitHub issue to a merged pull request. The chat has four tools:
