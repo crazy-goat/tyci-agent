@@ -68,7 +68,7 @@ git fetch -q origin "$TYCI_DEFAULT_BRANCH" ||
     stop "git fetch origin $TYCI_DEFAULT_BRANCH failed (see the git output above); nothing was tagged" \
         "no network or git is not authenticated" \
         "fix the connection to origin, then start the release again"
-git cat-file -e "$sha^{commit}" ||
+git merge-base --is-ancestor "$sha" "origin/$TYCI_DEFAULT_BRANCH" ||
     stop "merge commit $sha of PR #$TYCI_PR is not in origin/$TYCI_DEFAULT_BRANCH; nothing was tagged" \
         "the merge commit is not on the default branch" \
         "return failed; check PR #$TYCI_PR with 'gh pr view $TYCI_PR'"
