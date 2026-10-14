@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-14
+
 ### Added
 - Workflows: the `fix-ci` workflow repairs a red default branch. It reads the failed CI log, redacts secrets from it, and lets a worker fix the code, verify it, push it and wait for CI. The `dependency-bump` workflow updates the Go dependencies, shows the diff and merges only after a human `yes` (#209).
 - Workflows: the `milestone-close` workflow moves the open issues without milestone (the findings) into a milestone. The oracle picks the critical findings, a script moves them, and the doubtful ones wait for a human answer in the chat. The result of an end state is shown in `workflow_status`, and the orchestrator starts the workflow when the last issue of a milestone closes (`orchestrator.auto_close`, default `true`) (#206).
