@@ -174,7 +174,7 @@ pause that needs your decision:
 ```
 
 The oracle never answers these pauses: an apply or reject of a workflow proposal, a merge
-to a protected branch, a move to the `merge` state, and a step that ends the run while its
+to a protected branch, a move to a guarded state (`"guard": true` on the state; a workflow with no `guard` flag guards the `merge` state), and a step that ends the run while its
 pull request is open. For such a step, the oracle can propose it, and you confirm it. A pause that waits for you says `needs a human`
 in the notice and on the Runs tab.
 

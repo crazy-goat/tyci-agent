@@ -13,7 +13,7 @@
     "post_review": {"check": "checks/post_review.sh", "on": {"ok": "ci", "skip": "ci", "fail": "ci", "default": "ci"}},
     "ci":         {"check": "checks/ci_wait.sh", "max_visits": 3, "timeout_sec": 5400, "on": {"green": "comments", "red": "code", "conflict": "rebase", "behind": "rebase", "timeout": "ask", "fail": "fixer", "default": "fixer"}},
     "comments":   {"check": "checks/fetch_comments.sh", "on": {"none": "merge", "new": "code", "fail": "fixer", "default": "fixer"}},
-    "merge":      {"check": "checks/merge.sh", "on": {"merged": "findings", "behind": "rebase", "protected": "ask", "fail": "fixer", "default": "fixer"}},
+    "merge": {"check": "checks/merge.sh", "guard": true, "on": {"merged": "findings", "behind": "rebase", "protected": "ask", "fail": "fixer", "default": "fixer"}},
     "rebase":     {"check": "checks/rebase.sh", "on": {"ok": "ci", "conflict": "code", "fail": "fixer", "default": "fixer"}},
     "fixer":      {"agent": "fixer", "task": "fixer", "on": {"ok": "$failed", "failed": "oracle", "default": "oracle"}},
     "oracle":     {"agent": "oracle", "task": "recover", "on": {"stop": "end", "ask": "ask", "default": "ask"}},
