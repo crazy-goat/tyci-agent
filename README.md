@@ -139,7 +139,7 @@ The oracle never answers these pauses. A human answers them:
 
 - a pause at an ask state with `"human": true`,
 - an apply or reject of a workflow proposal,
-- a merge to a protected branch, and an oracle answer that moves the run to the `merge` state,
+- a merge to a protected branch, and an oracle answer that moves the run to a guarded state. A state with `"guard": true` is guarded. In a workflow with no `guard` flag, the state named `merge` is guarded,
 - a step that ends the run, or a step of the `oracle` agent, while the run has an open PR. The oracle can propose the step, and a human confirms it.
 
 An answer that is not valid, and an oracle error, go to a human. The pause message gives the reason. A pause that waits for a human says `needs a human` in the notice and on the Runs tab.

@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - TUI: the orchestrator start reads the repository and the orchestrator config once, and a broken workflow file gives one line in the chat (#691).
 - Flow: a resume checks `orchestrator.workers` against the paused runs that the orchestrator holds too, so a manual resume is refused when they fill the limit (#509).
 - Reload: `/reload` and the settings watcher restart the MCP servers only when an MCP file changed. A broken Lua tool file keeps its old tool and the other Lua tools load. The watcher line names only the parts that changed, as `reloaded: hooks, lua tools` (#712).
+- Flow: an oracle answer that sends the run to a state with `"guard": true` goes to a human, under any state name. A chain of states that ends the run is blocked while the PR is open, and the `release` workflow sends an oracle `goto:tag` to a human. A workflow with no `guard` flag still guards its `merge` state (#562).
 - Tools: `session_list` with `all: true` marks a session of another project with `"readable": false`, because `session_read` refuses it (#719).
 
 ## [0.9.0] - 2026-10-13
