@@ -11,10 +11,11 @@ import (
 )
 
 // ciFailureGh answers gh from env vars: RUNS_JSON (the run list) and RUN_LOG (the failed log).
+// A run list without --workflow tests.yaml fails, so the workflow filter is tested too.
 // Other calls fail.
 const ciFailureGh = `
 case "$*" in
-  "run list "*) printf '%s' "$RUNS_JSON" ;;
+  "run list "*"--workflow tests.yaml"*) printf '%s' "$RUNS_JSON" ;;
   "run view "*) printf '%s\n' "$RUN_LOG" ;;
   *) exit 2 ;;
 esac
@@ -72,6 +73,28 @@ func TestCiFailureKeepsLast300Lines(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, "failure.log"))
 	if n := strings.Count(string(b), "\n"); n != 300 || !strings.HasSuffix(string(b), "the last line\n") {
 		t.Fatalf("failure.log has %d lines, want the last 300", n)
+	}
+}
+
+// A cancelled newest run is ignored: the failed run before it decides.
+func TestCiFailureIgnoresCancelled(t *testing.T) {
+	runs := `[{"databaseId":556,"conclusion":"cancelled","status":"completed"},{"databaseId":555,"conclusion":"failure","status":"completed"}]`
+	key, dir := runCiFailure(t, runs, "FAIL: TestX\n")
+	if key != "red" {
+		t.Fatalf("key=%q, want red", key)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "failure.log"))
+	if err != nil || !strings.Contains(string(b), "FAIL: TestX") {
+		t.Fatalf("failure.log = %q, err %v", b, err)
+	}
+}
+
+// Only cancelled and skipped runs: nothing decides, so the state fails.
+func TestCiFailureOnlyCancelledFails(t *testing.T) {
+	runs := `[{"databaseId":556,"conclusion":"cancelled","status":"completed"},{"databaseId":555,"conclusion":"skipped","status":"completed"}]`
+	key, _ := runCiFailure(t, runs, "")
+	if key != "fail" {
+		t.Fatalf("key=%q, want fail", key)
 	}
 }
 

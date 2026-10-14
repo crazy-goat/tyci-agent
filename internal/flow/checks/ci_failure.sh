@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ci_failure.sh: reads the state of the default branch and keeps the failed log of its latest run
 # (state ci_failure, fix-ci workflow, #209). Read-only on GitHub and in git.
-# The newest completed workflow run on TYCI_DEFAULT_BRANCH decides: success gives green, any other
-# conclusion gives red. On red the last 300 lines of 'gh run view --log-failed' go through redact
+# The newest completed run of the CI workflow (TYCI_CI_WORKFLOW, default tests.yaml: the workflow
+# that holds the ci-ok check) on TYCI_DEFAULT_BRANCH decides: success gives green, any other
+# conclusion gives red. Cancelled, skipped and neutral runs are ignored, so the next run decides. On red the last 300 lines of 'gh run view --log-failed' go through redact
 # (lib_redact.sh) into $TYCI_ARTIFACT_DIR/failure.log. The log is data for the coder: it is never run.
 # A green default branch writes no failure.log.
 #
-# Env in:  TYCI_REPO, TYCI_DEFAULT_BRANCH, TYCI_ARTIFACT_DIR.
+# Env in:  TYCI_REPO, TYCI_DEFAULT_BRANCH, TYCI_ARTIFACT_DIR, TYCI_CI_WORKFLOW (optional).
 # Keys:    red    the latest run failed; failure.log has its failed job log
 #          green  the latest run succeeded; no failure.log
 #          fail   gh failed, or the default branch has no completed run
@@ -27,18 +28,19 @@ if [ -z "$out" ] || [ -z "${TYCI_REPO:-}" ] || [ -z "${TYCI_DEFAULT_BRANCH:-}" ]
     exit 0
 fi
 
-if ! runs=$(gh run list -R "$TYCI_REPO" --branch "$TYCI_DEFAULT_BRANCH" --limit 20 --json databaseId,conclusion,status 2>/dev/null); then
-    describe fail "gh could not list the runs of $TYCI_DEFAULT_BRANCH in $TYCI_REPO" \
+ci_workflow="${TYCI_CI_WORKFLOW:-tests.yaml}"
+if ! runs=$(gh run list -R "$TYCI_REPO" --workflow "$ci_workflow" --branch "$TYCI_DEFAULT_BRANCH" --limit 20 --json databaseId,conclusion,status 2>/dev/null); then
+    describe fail "gh could not list the runs of $ci_workflow on $TYCI_DEFAULT_BRANCH in $TYCI_REPO" \
         "no network, gh is not logged in, a rate limit, or a GitHub outage" \
-        "run 'gh auth status' and 'gh run list --branch $TYCI_DEFAULT_BRANCH'; when gh works again, return ok so the step runs again"
+        "run 'gh auth status' and 'gh run list --workflow $ci_workflow --branch $TYCI_DEFAULT_BRANCH'; when gh works again, return ok so the step runs again"
     echo fail
     exit 0
 fi
 
 # gh lists the newest run first. A run that is still in progress is skipped.
-latest=$(jq -c '[.[] | select(.status == "completed")][0] // empty' <<<"$runs")
+latest=$(jq -c '[.[] | select(.status == "completed" and (.conclusion | IN("cancelled", "skipped", "neutral") | not))][0] // empty' <<<"$runs")
 if [ -z "$latest" ]; then
-    describe fail "$TYCI_DEFAULT_BRANCH of $TYCI_REPO has no completed workflow run" \
+    describe fail "$ci_workflow on $TYCI_DEFAULT_BRANCH of $TYCI_REPO has no completed run" \
         "the repository has no CI run on its default branch yet, or all runs are still in progress" \
         "return failed; a human checks the default branch"
     echo fail
