@@ -1,0 +1,18 @@
+{
+  "description": "Fix a red default branch: read the failed CI log, a worker fixes it, the build and tests run, then a pull request merges by the normal gate.",
+  "start": "ci_failure",
+  "states": {
+    "ci_failure": {"check": "checks/ci_failure.sh", "on": {"red": "code", "green": "done", "fail": "failed", "default": "failed"}},
+    "code":       {"agent": "worker", "task": "fix_ci", "max_visits": 3, "on": {"done": "verify", "default": "ask"}},
+    "verify":     {"check": "checks/verify.sh", "max_visits": 3, "on": {"green": "push", "red": "code", "default": "ask"}},
+    "push":       {"check": "checks/push.sh", "on": {"ok": "ci", "fail": "fixer", "default": "fixer"}},
+    "ci":         {"check": "checks/ci_wait.sh", "max_visits": 3, "timeout_sec": 5400, "on": {"green": "merge", "red": "code", "conflict": "rebase", "behind": "rebase", "timeout": "ask", "fail": "fixer", "default": "fixer"}},
+    "merge":      {"check": "checks/merge.sh", "on": {"merged": "done", "behind": "rebase", "protected": "ask", "fail": "fixer", "default": "fixer"}},
+    "rebase":     {"check": "checks/rebase.sh", "on": {"ok": "ci", "conflict": "code", "fail": "fixer", "default": "fixer"}},
+    "fixer":      {"agent": "fixer", "task": "fixer", "on": {"ok": "$failed", "failed": "oracle", "default": "oracle"}},
+    "oracle":     {"agent": "oracle", "task": "recover", "on": {"stop": "failed", "ask": "ask", "default": "ask"}},
+    "ask":        {"ask": "The fix-ci run needs a human decision.", "on": {"retry": "code", "stop": "failed"}},
+    "done":       {"end": true, "result": "done"},
+    "failed":     {"end": true, "result": "failed"}
+  }
+}

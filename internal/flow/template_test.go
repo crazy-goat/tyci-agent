@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -228,5 +229,23 @@ func TestTemplate_MilestoneCloseParsesAndValidates(t *testing.T) {
 	}
 	if !wf.States["ask"].Human || wf.States["declined"].Result != "declined" {
 		t.Fatalf("ask human or declined result missing: %+v", wf.States)
+	}
+}
+
+func TestTemplatesValidate(t *testing.T) {
+	names := Templates()
+	for _, want := range []string{"dependency-bump", "fix-ci"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("Templates() = %v, lacks %q", names, want)
+		}
+	}
+	for _, name := range names {
+		paths, err := Init(name, "", t.TempDir())
+		if err != nil {
+			t.Fatalf("Init(%q): %v", name, err)
+		}
+		if len(paths) == 0 {
+			t.Fatalf("Init(%q) wrote no files", name)
+		}
 	}
 }
