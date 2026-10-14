@@ -524,3 +524,75 @@ func TestOracleTaskProblem(t *testing.T) {
 		})
 	}
 }
+
+// A guarded state keeps its guard under any name (#562): the oracle goto to it
+// goes to a human, and the merge name is not guarded in such a workflow.
+func TestOracle_GuardedStateWithOtherNameNeedsHuman(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
+		"code":    {Agent: "coder", MaxVisits: 1, On: map[string]string{"done": "code"}},
+		"publish": {Check: "publish.sh", Guard: true, On: map[string]string{"done": "end", "default": "end"}},
+		"ask":     {Ask: "The run needs a human decision.", On: map[string]string{"retry": "code", "stop": "end"}},
+		"end":     {End: true},
+	}}
+	f := newOracleFixture(wf, "goto:publish\nthe work is ready")
+	if err := f.r.Run(context.Background(), f.st); !errors.Is(err, ErrPaused) {
+		t.Fatalf("err = %v, want ErrPaused", err)
+	}
+	if f.st.Status != "paused" || f.st.Current != "ask" {
+		t.Fatalf("status %q current %q, want paused at ask", f.st.Status, f.st.Current)
+	}
+	want := "The oracle proposes the state publish, a human must confirm: the work is ready"
+	if !strings.Contains(f.st.Ask.Message, want) {
+		t.Fatalf("message %q", f.st.Ask.Message)
+	}
+	if isGuarded(wf, "merge") {
+		t.Fatalf("merge is guarded in a workflow with a guard flag")
+	}
+}
+
+// A chain of states that ends the run is blocked while the PR is open, and a
+// chain that does not end the run is not (#562).
+func TestOracle_ChainThatEndsRunNeedsHumanWithOpenPR(t *testing.T) {
+	wf := &Workflow{Name: "demo", Start: "code", States: map[string]State{
+		"code":   {Agent: "coder", On: map[string]string{"done": "push"}},
+		"push":   {Check: "push.sh", On: map[string]string{"ok": "finish", "default": "finish"}},
+		"finish": {Check: "finish.sh", On: map[string]string{"done": "end", "default": "end"}},
+		"review": {Check: "review.sh", On: map[string]string{"ok": "review", "default": "end"}},
+		"end":    {End: true},
+		"ask":    {Ask: "The run needs a human decision.", On: map[string]string{"retry": "code", "stop": "end"}},
+	}}
+	st := newRun("")
+	if oracleBlocked(wf, st, "goto:push", "push") {
+		t.Fatalf("goto push blocked without a PR")
+	}
+	st.PR = 7
+	if !oracleBlocked(wf, st, "goto:push", "push") {
+		t.Fatalf("goto push (push -> finish -> end) not blocked with an open PR")
+	}
+	if !oracleBlocked(wf, st, "goto:finish", "finish") {
+		t.Fatalf("goto finish not blocked with an open PR")
+	}
+	// review loops on itself on ok, so it does not end the run on every path.
+	if oracleBlocked(wf, st, "goto:review", "review") {
+		t.Fatalf("goto review blocked: it does not always end the run")
+	}
+}
+
+// In the release template an oracle goto:tag goes to a human, with or without an
+// open PR (#562). The release merge stays guarded too.
+func TestOracle_ReleaseTagGotoNeedsHuman(t *testing.T) {
+	wf := initWF(t, t.TempDir(), "release", "release")
+	for _, pr := range []int{0, 7} {
+		st := newRun("")
+		st.PR = pr
+		if !oracleBlocked(wf, st, "goto:tag", "tag") {
+			t.Fatalf("PR %d: goto:tag not blocked", pr)
+		}
+		if !oracleBlocked(wf, st, "goto:merge", "merge") {
+			t.Fatalf("PR %d: goto:merge not blocked", pr)
+		}
+		if strings.Contains(gotoStates(wf, st), "tag") {
+			t.Fatalf("PR %d: gotoStates %q lists tag", pr, gotoStates(wf, st))
+		}
+	}
+}

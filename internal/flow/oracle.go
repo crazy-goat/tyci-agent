@@ -331,28 +331,35 @@ func isGuarded(wf *Workflow, name string) bool {
 
 // leavesRun reports whether the state name ends the run, or whether every path
 // from it does. A state without targets counts as ending the run. A guarded state
-// and "$failed" count as the run going on, and so does a loop that comes back to a
-// state already seen.
+// and "$failed" count as the run going on. A loop back to a state of the walk does
+// not end the run.
 func leavesRun(wf *Workflow, name string) bool {
 	return endsRun(wf, name, map[string]bool{})
 }
 
-// endsRun is leavesRun with the states seen on the current walk.
-func endsRun(wf *Workflow, name string, seen map[string]bool) bool {
+// endsRun is leavesRun with the result of each state. A state that is still on
+// the walk is stored as false, so a loop does not end the run.
+func endsRun(wf *Workflow, name string, result map[string]bool) bool {
+	if done, ok := result[name]; ok {
+		return done
+	}
 	s, ok := wf.States[name]
-	if !ok || seen[name] || isGuarded(wf, name) {
+	if !ok || isGuarded(wf, name) {
 		return false
 	}
 	if s.End {
 		return true
 	}
-	seen[name] = true
+	result[name] = false
+	ends := true
 	for _, next := range s.On {
-		if next == FailedTarget || !endsRun(wf, next, seen) {
-			return false
+		if next == FailedTarget || !endsRun(wf, next, result) {
+			ends = false
+			break
 		}
 	}
-	return true
+	result[name] = ends
+	return ends
 }
 
 // gotoStates lists the states that an oracle "goto" may name, for the task text.
