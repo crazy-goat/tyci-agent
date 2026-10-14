@@ -85,14 +85,14 @@ func TestBumpDepsNoChange(t *testing.T) {
 		t.Fatalf("key=%q exit=%d", key, exit)
 	}
 	if _, err := os.Stat(filepath.Join(runDir, "ask-table.md")); err == nil {
-		t.Fatal("ask-table.md written without a change")
+		t.Fatal("ask-table.md written by bump_deps")
 	}
 	if n := gitOut(t, repo, "rev-list", "--count", "HEAD"); n != "1" {
 		t.Fatalf("commits = %s, want 1", n)
 	}
 }
 
-func TestBumpDepsChangedCommitsAndShowsDiff(t *testing.T) {
+func TestBumpDepsChangedCommits(t *testing.T) {
 	repo := bumpRepo(t)
 	token := "ghp_" + strings.Repeat("a", 36)
 	key, runDir, exit := runBump(t, repo, map[string]string{
@@ -105,17 +105,8 @@ func TestBumpDepsChangedCommitsAndShowsDiff(t *testing.T) {
 	if subj := gitOut(t, repo, "log", "-1", "--format=%s"); subj != "chore(deps): bump Go dependencies" {
 		t.Fatalf("subject = %q", subj)
 	}
-	table, err := os.ReadFile(filepath.Join(runDir, "ask-table.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"```diff", "+require example.com/new v2.0.0", "+new v2.0.0"} {
-		if !strings.Contains(string(table), want) {
-			t.Fatalf("ask-table.md lacks %q: %s", want, table)
-		}
-	}
-	if strings.Contains(string(table), token) {
-		t.Fatalf("ask-table.md has the token: %s", table)
+	if _, err := os.Stat(filepath.Join(runDir, "ask-table.md")); err == nil {
+		t.Fatal("bump_deps wrote ask-table.md; the ask_table state does that")
 	}
 }
 

@@ -70,6 +70,7 @@ func bumpChecks() *fakeChecks {
 		"checks/verify.sh":    {"green"},
 		"checks/push.sh":      {"ok"},
 		"checks/ci_wait.sh":   {"green"},
+		"checks/ask_table.sh": {"ok"},
 		"checks/merge.sh":     {"merged"},
 	}}
 }

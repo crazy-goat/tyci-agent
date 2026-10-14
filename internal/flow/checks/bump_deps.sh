@@ -3,30 +3,18 @@
 # workflow, #209). Go only: it runs 'go get -u ./...' and 'go mod tidy'.
 # When go.mod or go.sum changed, it commits them with the message 'chore(deps): bump Go dependencies'.
 # A script commits here because the dependency-bump run has no coder step on the green path.
-# It writes $TYCI_RUN_DIR/ask-table.md: the diff of go.mod and go.sum, cut to 300 lines and passed
-# through redact (lib_redact.sh). The ask message shows it, so a human reads the change before the merge.
-# A run with no change removes ask-table.md. The git identity comes from the worktree or the environment.
+# The ask table is not written here: the state ask_table writes it from the branch diff, after the
+# code and verify states may have changed go.mod again.
 #
-# Env in:  TYCI_RUN_DIR. cwd = the run worktree.
-# Keys:    changed   go.mod or go.sum changed; the commit is made and ask-table.md is written
+# Env in:  cwd = the run worktree.
+# Keys:    changed   go.mod or go.sum changed; the commit is made
 #          nochange  the update changed nothing; the run ends
-#          fail      go, git or the run dir failed (the output above says why)
+#          fail      go or git failed (the output above says why)
 set -euo pipefail
 # describe.sh prints the failure block (see there). A copy of this script without it still works.
 describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 # shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
-# shellcheck disable=SC1091 # sibling file; shellcheck checks it on its own
-. "$(dirname "${BASH_SOURCE[0]}")/lib_redact.sh"
-
-run="${TYCI_RUN_DIR:-}"
-if [ -z "$run" ]; then
-    describe fail "TYCI_RUN_DIR is not set" \
-        "the run was started without a run dir" \
-        "return failed; the dependency-bump run cannot write its ask table"
-    echo fail
-    exit 0
-fi
 
 if ! go get -u ./... >&2 || ! go mod tidy >&2; then
     describe fail "'go get -u ./...' or 'go mod tidy' failed (see the go output above); the worktree may have partial changes" \
@@ -37,18 +25,9 @@ if ! go get -u ./... >&2 || ! go mod tidy >&2; then
 fi
 
 if git diff --quiet -- go.mod go.sum; then
-    rm -f "$run/ask-table.md"
     echo nochange
     exit 0
 fi
-
-{
-    echo "The dependency update changes go.mod and go.sum. The diff is below."
-    echo
-    echo '```diff'
-    git diff -- go.mod go.sum | sed -n '1,300p' | redact
-    echo '```'
-} >"$run/ask-table.md"
 
 if ! git add go.mod go.sum || ! git commit -q -m "chore(deps): bump Go dependencies" >&2; then
     describe fail "git could not commit the go.mod and go.sum changes" \
