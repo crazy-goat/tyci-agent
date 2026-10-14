@@ -188,6 +188,9 @@ func (r *Runner) oracleAnswer(ctx context.Context, st *RunState, s State) error 
 	if next == "merge" {
 		return r.escalate(st, step, "The oracle proposes a merge, a human must confirm: "+why)
 	}
+	if isGuarded(r.WF, next) {
+		return r.escalate(st, step, "The oracle proposes the state "+next+", a human must confirm: "+why)
+	}
 	if oracleBlocked(r.WF, st, key, next) {
 		if key == "stop" {
 			return r.escalate(st, step, "The oracle proposes stop, a human must confirm: "+why)
@@ -297,11 +300,11 @@ func onTarget(s State, key string) (string, bool) {
 }
 
 // oracleBlocked reports whether an oracle answer with the key, which sends the run
-// to the state name, must go to a human. The merge state always does. While the PR
-// is open, a stop does too, and so does a state that ends the run or a state of the
-// oracle agent, which can stop the run.
+// to the state name, must go to a human. A guarded state always does (see
+// isGuarded). While the PR is open, a stop does too, and so does a state that ends
+// the run or a state of the oracle agent, which can stop the run.
 func oracleBlocked(wf *Workflow, st *RunState, key, name string) bool {
-	if name == "merge" {
+	if isGuarded(wf, name) {
 		return true
 	}
 	if st.PR == 0 || WasMerged(st) {
@@ -310,18 +313,42 @@ func oracleBlocked(wf *Workflow, st *RunState, key, name string) bool {
 	return key == "stop" || wf.States[name].Agent == "oracle" || leavesRun(wf, name)
 }
 
-// leavesRun reports whether the state name ends the run, or whether every target
-// of its on map does. A state without targets counts as ending the run.
+// isGuarded reports whether the state name needs a human before an oracle may send
+// the run there (#562). A state with "guard": true is guarded. When no state of the
+// workflow has the flag, the state named "merge" is guarded, as in a workflow that
+// predates the flag.
+func isGuarded(wf *Workflow, name string) bool {
+	if wf.States[name].Guard {
+		return true
+	}
+	for _, s := range wf.States {
+		if s.Guard {
+			return false
+		}
+	}
+	return name == "merge"
+}
+
+// leavesRun reports whether the state name ends the run, or whether every path
+// from it does. A state without targets counts as ending the run. A guarded state
+// and "$failed" count as the run going on, and so does a loop that comes back to a
+// state already seen.
 func leavesRun(wf *Workflow, name string) bool {
+	return endsRun(wf, name, map[string]bool{})
+}
+
+// endsRun is leavesRun with the states seen on the current walk.
+func endsRun(wf *Workflow, name string, seen map[string]bool) bool {
 	s, ok := wf.States[name]
-	if !ok {
+	if !ok || seen[name] || isGuarded(wf, name) {
 		return false
 	}
 	if s.End {
 		return true
 	}
+	seen[name] = true
 	for _, next := range s.On {
-		if !wf.States[next].End {
+		if next == FailedTarget || !endsRun(wf, next, seen) {
 			return false
 		}
 	}

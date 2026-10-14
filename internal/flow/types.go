@@ -53,6 +53,9 @@ type State struct {
 	Ask    string `json:"ask,omitempty"`
 	// Human makes an ask state wait for a human: the oracle does not answer it (#531).
 	Human bool `json:"human,omitempty"`
+	// Guard means the state needs a human before an oracle may send the run
+	// here (#562). See isGuarded.
+	Guard bool `json:"guard,omitempty"`
 	End   bool `json:"end,omitempty"`
 	// Result is the outcome of an end state, for example "merged" or "declined".
 	// Only an end state may set it. An empty Result ends the run as "done".
