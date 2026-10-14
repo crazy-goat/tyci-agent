@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Workflows: the `milestone-close` workflow moves the open issues without milestone (the findings) into a milestone. The oracle picks the critical findings, a script moves them, and the doubtful ones wait for a human answer in the chat. The result of an end state is shown in `workflow_status`, and the orchestrator starts the workflow when the last issue of a milestone closes (`orchestrator.auto_close`, default `true`) (#206).
 - Workflows: the `release` workflow runs the release steps of `docs/release-workflow.md`. It checks the milestone and CI, asks a human yes or no in the chat, writes the CHANGELOG section and merges its pull request. After a yes it creates an annotated tag (never moved or deleted), waits for the GitHub release and closes the milestone (#207).
+- Workflows: the `rebalance` workflow proposes how to spread the open issues without milestone over the open milestones, and creates new ones when needed. The oracle proposes the split, a script checks every rule of it (each issue once, known milestones, valid titles) and the valid split is shown as a table in the chat. The milestones and issue assignments are written only after a human `yes`. An invalid split runs the oracle again, up to three times (#208).
 
 ### Fixed
 - Bus: the journal cleanup deletes only files named `bus-<pid>-<start>.jsonl`, and keeps the journal of a process that is still running, even when it is older than 7 days (#696).

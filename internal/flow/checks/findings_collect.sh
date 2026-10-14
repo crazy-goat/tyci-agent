@@ -25,33 +25,13 @@ if [ -z "$run" ] || [ -z "${TYCI_REPO:-}" ]; then
     exit 0
 fi
 
-if ! issues=$(issues_open_nomilestone); then
-    describe fail "gh could not list the open issues without a milestone of $TYCI_REPO" \
+if ! cands=$(issues_candidates); then
+    describe fail "gh could not list the open issues without a milestone of $TYCI_REPO, or read an author permission" \
         "a GitHub outage, a rate limit, or gh is not logged in" \
         "check 'gh auth status', then return ok so the step runs again"
     echo fail
     exit 0
 fi
-
-cands='[]'
-while IFS= read -r issue; do
-    [ -n "$issue" ] || continue
-    login=$(jq -r '.user.login // ""' <<<"$issue")
-    rc=0
-    author_may_write "$login" || rc=$?
-    case "$rc" in
-    0) ;;
-    1) continue ;;
-    *)
-        describe fail "the permission lookup failed for the author '$login' of an open issue" \
-            "a GitHub outage, a rate limit, or gh is not logged in" \
-            "check 'gh auth status', then return ok so the step runs again"
-        echo fail
-        exit 0
-        ;;
-    esac
-    cands=$(jq -c --argjson i "$issue" '. + [{number: $i.number, title: ($i.title // ""), body: (($i.body // "")[0:4000])}]' <<<"$cands")
-done <<<"$issues"
 
 printf '%s\n' "$cands" >"$run/candidates.json"
 if [ "$(jq 'length' <<<"$cands")" -eq 0 ]; then
