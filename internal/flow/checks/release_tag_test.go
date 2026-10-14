@@ -88,6 +88,25 @@ func TestReleaseTagCreatesAnnotatedTag(t *testing.T) {
 	}
 }
 
+func TestReleaseTagRefusesCommitOffDefaultBranch(t *testing.T) {
+	dir, _, _, env := tagEnv(t, approvedRelease)
+	// A commit that exists locally but was never pushed to origin/main.
+	git(t, dir, "checkout", "-q", "-b", "side")
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "side")
+	side := git(t, dir, "rev-parse", "HEAD")
+	env["MERGE_SHA"] = side
+	key, _ := runTag(t, dir, env)
+	if key != "fail" {
+		t.Fatalf("key=%q, want fail", key)
+	}
+	if remote := git(t, dir, "ls-remote", "--tags", "origin"); remote != "" {
+		t.Fatalf("a tag was pushed for a commit off the default branch: %s", remote)
+	}
+	if local := git(t, dir, "tag", "-l", "v0.10.0"); local != "" {
+		t.Fatalf("a local tag was created for a commit off the default branch: %s", local)
+	}
+}
+
 func TestReleaseTagExists(t *testing.T) {
 	t.Run("on origin", func(t *testing.T) {
 		dir, _, _, env := tagEnv(t, approvedRelease)
