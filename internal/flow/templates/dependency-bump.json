@@ -1,0 +1,20 @@
+{
+  "description": "Update the Go dependencies, verify them, open a pull request and merge it only after a human yes.",
+  "start": "bump_deps",
+  "states": {
+    "bump_deps": {"check": "checks/bump_deps.sh", "on": {"changed": "verify", "nochange": "done", "fail": "failed", "default": "failed"}},
+    "verify":    {"check": "checks/verify.sh", "max_visits": 3, "on": {"green": "push", "red": "code", "default": "ask"}},
+    "code":      {"agent": "worker", "task": "fix_bump", "max_visits": 3, "on": {"done": "verify", "default": "ask"}},
+    "push":      {"check": "checks/push.sh", "on": {"ok": "ci", "fail": "fixer", "default": "fixer"}},
+    "ci":        {"check": "checks/ci_wait.sh", "max_visits": 3, "timeout_sec": 5400, "on": {"green": "ask_merge", "red": "code", "conflict": "rebase", "behind": "rebase", "timeout": "ask", "fail": "fixer", "default": "fixer"}},
+    "ask":       {"ask": "The dependency update needs a human decision.", "on": {"retry": "code", "stop": "failed"}},
+    "ask_merge": {"ask": "The dependency update has green CI. The go.mod and go.sum changes are shown below. Answer yes to merge the pull request, or no to stop. A no does not merge it.", "human": true, "on": {"yes": "merge", "no": "declined", "default": "declined"}},
+    "merge":     {"check": "checks/merge.sh", "on": {"merged": "done", "behind": "rebase", "protected": "ask", "fail": "fixer", "default": "fixer"}},
+    "rebase":    {"check": "checks/rebase.sh", "on": {"ok": "ci", "conflict": "code", "fail": "fixer", "default": "fixer"}},
+    "fixer":     {"agent": "fixer", "task": "fixer", "on": {"ok": "$failed", "failed": "oracle", "default": "oracle"}},
+    "oracle":    {"agent": "oracle", "task": "recover", "on": {"stop": "failed", "ask": "ask", "default": "ask"}},
+    "done":      {"end": true, "result": "done"},
+    "declined":  {"end": true, "result": "declined"},
+    "failed":    {"end": true, "result": "failed"}
+  }
+}
