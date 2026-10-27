@@ -79,26 +79,30 @@ func runsItemIndex(tree []treeRun, items []runsItem, key runsCursorKey) int {
 }
 
 // sidebarRememberRun stores the Runs row under the cursor in sidebarRunKey. It
-// must run after each move of the Runs cursor, so that sidebarFollowRun finds
+// must run after each move of the Runs cursor, so that sidebarRunsResolve finds
 // the same row again.
 func (m *TuiModel) sidebarRememberRun() {
 	if m.sidebarTab != sidebarTabRuns {
 		return
 	}
-	t, it, ok := m.runsCursorItem()
-	if !ok {
+	// The index is read raw: the cursor was just written, and the old key
+	// must not override it.
+	tree := m.buildTree()
+	items := m.runsItems(tree)
+	if m.sidebarCursor < 0 || m.sidebarCursor >= len(items) {
 		m.sidebarRunKey = runsCursorKey{}
 		return
 	}
-	m.sidebarRunKey = runsItemKey(t, it)
+	m.sidebarRunKey = runsItemKey(tree[items[m.sidebarCursor].run], items[m.sidebarCursor])
 }
 
-// sidebarFollowRun moves the Runs cursor to the row of sidebarRunKey after the
-// run rows changed, so the selection stays on the same run or agent. When the
-// agent is gone, the cursor goes to its run. When the run is gone, the cursor
-// keeps its index, clamped to the last row. It does nothing on another tab.
-func (m *TuiModel) sidebarFollowRun() {
-	if m.sidebarTab != sidebarTabRuns {
+// sidebarRunsResolve sets the cursor to the row of sidebarRunKey and stores
+// that row as the key. It runs before each Runs key action and on each tick, so
+// a key acts on the row the user sees, as sidebarBusResolve does on the Bus tab.
+// It keeps the row inside the visible window. It does nothing when the sidebar
+// is closed or another tab is open.
+func (m *TuiModel) sidebarRunsResolve() {
+	if !m.sidebarActive || m.sidebarTab != sidebarTabRuns {
 		return
 	}
 	tree := m.buildTree()
@@ -108,15 +112,9 @@ func (m *TuiModel) sidebarFollowRun() {
 		m.sidebarRunKey = runsCursorKey{}
 		return
 	}
-	i := runsItemIndex(tree, items, m.sidebarRunKey)
-	if i < 0 {
-		i = runsItemIndex(tree, items, runsCursorKey{run: m.sidebarRunKey.run})
-	}
-	if i < 0 {
-		i = min(max(m.sidebarCursor, 0), len(items)-1)
-	}
-	m.sidebarCursor = i
-	m.sidebarRunKey = runsItemKey(tree[items[i].run], items[i])
+	m.sidebarCursor = min(max(m.runsCursor(tree, items), 0), len(items)-1)
+	m.sidebarRunKey = runsItemKey(tree[items[m.sidebarCursor].run], items[m.sidebarCursor])
+	m.sidebarClampScrollToCursor(m.sidebarLayout().contentHeight)
 }
 
 func (v *runsView) add(line string, run int) {
@@ -151,11 +149,29 @@ func (m TuiModel) runsItems(tree []treeRun) []runsItem {
 func (m TuiModel) runsCursorItem() (t treeRun, it runsItem, ok bool) {
 	tree := m.buildTree()
 	items := m.runsItems(tree)
-	if m.sidebarCursor < 0 || m.sidebarCursor >= len(items) {
+	i := m.runsCursor(tree, items)
+	if i < 0 || i >= len(items) {
 		return treeRun{}, runsItem{}, false
 	}
-	it = items[m.sidebarCursor]
+	it = items[i]
 	return tree[it.run], it, true
+}
+
+// runsCursor returns the index in items of the row under the Runs cursor. It
+// finds the row by sidebarRunKey, so a run that moved keeps its row, the same
+// way busCursor works on the Bus tab. Without a key the index is the cursor.
+// When the key is gone, the index is clamped to the last row.
+func (m TuiModel) runsCursor(tree []treeRun, items []runsItem) int {
+	if m.sidebarRunKey == (runsCursorKey{}) {
+		return m.sidebarCursor
+	}
+	if i := runsItemIndex(tree, items, m.sidebarRunKey); i >= 0 {
+		return i
+	}
+	if i := runsItemIndex(tree, items, runsCursorKey{run: m.sidebarRunKey.run}); i >= 0 {
+		return i
+	}
+	return min(max(m.sidebarCursor, 0), len(items)-1)
 }
 
 func (m TuiModel) renderSidebarRuns(width int) []string {
@@ -177,6 +193,8 @@ func (m TuiModel) runsTab(width int) runsView {
 		}
 		return v
 	}
+	items := m.runsItems(tree)
+	cursor := m.runsCursor(tree, items)
 	rows := make([]TuiRunRow, 0, len(tree))
 	for _, t := range tree {
 		rows = append(rows, t.run)
@@ -191,7 +209,7 @@ func (m TuiModel) runsTab(width int) runsView {
 		}
 		item := len(v.start)
 		v.start = append(v.start, len(v.lines))
-		selected := item == m.sidebarCursor
+		selected := item == cursor
 		style := rowStyle(selected)
 		if !selected && runFinished(r) {
 			style = dim
@@ -210,7 +228,7 @@ func (m TuiModel) runsTab(width int) runsView {
 		for j, a := range t.agents {
 			ai := item + 1 + j
 			v.start = append(v.start, len(v.lines))
-			v.add(agentRowLine(a, width, ai == m.sidebarCursor), ai)
+			v.add(agentRowLine(a, width, ai == cursor), ai)
 		}
 	}
 	if m.sidebarStopRun != "" {

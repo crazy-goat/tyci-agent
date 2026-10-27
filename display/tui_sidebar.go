@@ -386,6 +386,7 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 			m.sidebarScrollToLine(jobRows[m.sidebarCursor], layout.contentHeight)
 			return
 		} else {
+			m.sidebarRunsResolve()
 			last := m.sidebarRowCount() - 1
 			m.sidebarCursor += delta
 			if m.sidebarCursor < 0 {
@@ -793,6 +794,7 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case sidebarTabRuns:
+		m.sidebarRunsResolve()
 		if t, it, ok := m.runsCursorItem(); ok && it.agent >= 0 {
 			return m.openAgentLog(t.run, t.agents[it.agent])
 		}
@@ -832,6 +834,7 @@ func (m TuiModel) sidebarScrollBusPane(delta int) TuiModel {
 // sidebarAskStop asks for y before the run under the cursor is stopped. Only a
 // running run can be stopped: Manager.Stop rejects the other runs.
 func (m TuiModel) sidebarAskStop() TuiModel {
+	m.sidebarRunsResolve()
 	t, it, ok := m.runsCursorItem()
 	if !ok || it.agent >= 0 || t.run.Status != "running" || t.run.ID == treeAdHocID {
 		return m

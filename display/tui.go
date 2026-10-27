@@ -560,7 +560,7 @@ type TuiModel struct {
 	sidebarRunsExpanded map[string]bool
 	// sidebarRunKey is the Runs row under the cursor, stored on each cursor
 	// move. A run can change state and reorder the rows, so the tick finds the
-	// row again by this key (see sidebarFollowRun in tui_sidebar_runs.go).
+	// row again by this key (see sidebarRunsResolve in tui_sidebar_runs.go).
 	sidebarRunKey runsCursorKey
 
 	// tree holds the ping state of the agents shown under the runs. Nil

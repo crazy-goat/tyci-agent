@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
@@ -578,5 +579,75 @@ func TestRunsTab_CursorFollowsAgentRow(t *testing.T) {
 	}
 	if m.sidebarCursor != 1 {
 		t.Fatalf("cursor = %d, want 1, the new row of w1", m.sidebarCursor)
+	}
+}
+
+// TestRunsTab_KeyActsOnRowSeenWithoutTick checks that Up, Down and Enter act on
+// the row the user sees when the rows changed and no tick ran yet.
+func TestRunsTab_KeyActsOnRowSeenWithoutTick(t *testing.T) {
+	base := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	rows := []TuiRunRow{
+		{ID: "c", Issue: 3, Status: "running", State: "code", Role: "worker", Started: base.Add(2 * time.Minute), Since: base.Add(2 * time.Minute)},
+		{ID: "b", Issue: 2, Status: "running", State: "code", Role: "worker", Started: base.Add(time.Minute), Since: base.Add(time.Minute)},
+		{ID: "a", Issue: 1, Status: "running", State: "code", Role: "worker", Started: base, Since: base},
+	}
+	m := runsFollowModel(&rows)
+	// Rows: c, b, a. Select b, row 1.
+	m.sidebarMoveCursor(1)
+	// c finishes. Rows: b, a, c. b is row 0 now. No tick runs.
+	rows[0] = TuiRunRow{ID: "c", Issue: 3, Status: "done", State: "end", Result: "merged",
+		Started: base.Add(2 * time.Minute), Ended: base.Add(3 * time.Minute), Took: time.Minute}
+	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyDown})
+	m = model.(TuiModel)
+	if id, _ := selectedRunRow(t, m); id != "a" {
+		t.Fatalf("Down from b selected %q, want a, the row below b", id)
+	}
+	model, _ = m.updateSidebar(tea.KeyMsg{Type: tea.KeyUp})
+	m = model.(TuiModel)
+	model, _ = m.updateSidebar(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(TuiModel)
+	if !m.sidebarRunsExpanded["b"] || m.sidebarRunsExpanded["c"] {
+		t.Fatalf("Enter must expand b, the row seen, and not c: %v", m.sidebarRunsExpanded)
+	}
+}
+
+// TestRunsTab_CursorStaysVisibleWhenRunAboveLeaves checks that the cursor row
+// stays inside the visible window of a short sidebar when the lines above it
+// shrink: a run above finishes and moves below the others.
+func TestRunsTab_CursorStaysVisibleWhenRunAboveLeaves(t *testing.T) {
+	base := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	steps := make([]TuiRunStep, 8)
+	for i := range steps {
+		steps[i] = TuiRunStep{Text: fmt.Sprintf("plan %d -> ok", i)}
+	}
+	rows := []TuiRunRow{
+		{ID: "x", Issue: 1, Status: "running", State: "code", Role: "worker", Started: base.Add(time.Hour), Since: base.Add(time.Hour), Steps: steps},
+	}
+	for i := range 10 {
+		rows = append(rows, TuiRunRow{ID: fmt.Sprintf("r%d", i), Issue: 10 + i, Status: "running", State: "code", Role: "worker",
+			Started: base.Add(time.Duration(i) * time.Minute), Since: base.Add(time.Duration(i) * time.Minute)})
+	}
+	m := runsFollowModel(&rows)
+	m.height = 12
+	m.sidebarRunsExpanded = map[string]bool{"x": true}
+	layout := m.sidebarLayout()
+	if layout.contentHeight >= 10 {
+		t.Fatalf("setup: contentHeight %d, want a short sidebar below 10 lines", layout.contentHeight)
+	}
+	// Move to the last run. The window scrolls down to show it.
+	for range len(rows) {
+		m.sidebarMoveCursor(1)
+	}
+	// x finishes. Its lines leave the top, so the last run moves up.
+	rows[0] = TuiRunRow{ID: "x", Issue: 1, Status: "done", State: "end", Result: "merged",
+		Started: base.Add(time.Hour), Ended: base.Add(2 * time.Hour), Took: time.Minute, Steps: steps}
+	m = tickRuns(t, m)
+	if id, _ := selectedRunRow(t, m); id != "r0" {
+		t.Fatalf("selected %q, want r0, the run that was last", id)
+	}
+	line := m.runsTab(layout.contentWidth).start[m.sidebarCursor]
+	top := m.sidebarScroll
+	if line < top || line >= top+m.sidebarListHeight(layout.contentHeight) {
+		t.Fatalf("cursor line %d is outside the window [%d, %d)", line, top, top+m.sidebarListHeight(layout.contentHeight))
 	}
 }
