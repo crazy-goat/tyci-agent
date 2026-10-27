@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -18,11 +16,6 @@ import (
 const (
 	// luaGlobLimit bounds ctx.glob's result. Matches the old find | head -500.
 	luaGlobLimit = 500
-
-	// luaReadLimit bounds ctx.read. Generous enough for source files, small
-	// enough that a stray read of a binary or a log does not become a
-	// multi-megabyte Lua string on its way into a tool result.
-	luaReadLimit = 1 << 20
 )
 
 // errGlobLimit stops a glob walk once the limit is reached. doublestar has no
@@ -59,77 +52,77 @@ func newLuaContext(ctx context.Context, L *lua.LState) *lua.LTable {
 	return tbl
 }
 
-// ctxRun executes a shell command and returns stdout.
+// ctxRun runs a shell command through the bash tool and returns stdout.
+//
+// It goes through RunTool, so the pre_tool and post_tool hooks, the tool gate
+// and the worktree mutation queue apply, as they do to a model's bash call.
+// On failure the tool's error text is returned instead of stdout.
 func (lc *LuaContext) ctxRun(L *lua.LState) int {
 	cmdStr := L.CheckString(1)
-	// A shell command may change the worktree, so it takes the mutation FIFO.
-	release := AcquireMutation(lc.ctx)
-	if release == nil {
-		L.RaiseError("cancelled while waiting for earlier changes in this worktree")
-		return 0
+	res := RunTool(lc.ctx, "bash", map[string]any{"command": cmdStr})
+	if !res.Success {
+		L.Push(lua.LString(res.Error))
+		return 1
 	}
-	defer release()
-
-	cmd := exec.CommandContext(lc.ctx, "sh", "-c", cmdStr)
-	// Capped: an unbounded CombinedOutput here meant one `cat` of a large
-	// file could pull hundreds of megabytes into the Lua string and from
-	// there into a tool result.
-	var buf cappedBuffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	err := cmd.Run()
-
-	output := buf.result()
-	if err != nil {
-		L.Push(lua.LString(output + "\nError: " + err.Error()))
-	} else {
-		L.Push(lua.LString(strings.TrimSpace(output)))
-	}
+	L.Push(lua.LString(strings.TrimSpace(res.Content)))
 	return 1
 }
 
-// ctxRead reads a file and returns its contents.
+// ctxRead reads a file through the read tool and returns its contents.
+//
+// On failure it returns an empty string and the error text. When the read
+// tool cuts the file, the second value holds its notice, as the direct read
+// did before, so a script can tell a partial read from a whole one.
 func (lc *LuaContext) ctxRead(L *lua.LState) int {
 	path := L.CheckString(1)
-
-	data, err := os.ReadFile(path)
-	if err != nil {
+	res := RunTool(lc.ctx, "read", map[string]any{"path": path})
+	if !res.Success {
 		L.Push(lua.LString(""))
-		L.Push(lua.LString(err.Error()))
-		return 2
-	}
-	if len(data) > luaReadLimit {
-		L.Push(lua.LString(string(data[:luaReadLimit])))
-		L.Push(lua.LString(fmt.Sprintf("truncated: %s is %d bytes, only the first %d were read", path, len(data), luaReadLimit)))
+		L.Push(lua.LString(res.Error))
 		return 2
 	}
 
-	L.Push(lua.LString(string(data)))
+	text, notice := splitReadNotice(res.Content)
+	L.Push(lua.LString(text))
+	if notice != "" {
+		L.Push(lua.LString(notice))
+		return 2
+	}
 	return 1
 }
 
-// ctxWrite writes content to a file.
+// The texts that the read tool (read.go) puts in its result when it cuts a
+// file. The read tool has no flag for this, and its result is shown to the
+// model, so the marks are matched here. TestLuaTool_CtxReadReturnsNotice
+// fails if the wording in read.go changes.
+const (
+	readContinuationMark = "\n\n[Showing lines "
+	readFirstLineMark    = "No partial line returned."
+)
+
+// splitReadNotice separates the read tool's notice from the file text. When
+// the first line alone is over the byte cap, the read tool returns only its
+// notice, so the text is empty.
+func splitReadNotice(content string) (text, notice string) {
+	if strings.Contains(content, readFirstLineMark) {
+		return "", content
+	}
+	if i := strings.LastIndex(content, readContinuationMark); i >= 0 {
+		return content[:i], content[i+2:]
+	}
+	return content, ""
+}
+
+// ctxWrite writes content to a file through the write tool.
+//
+// It returns true on success. On failure it returns false and the error text.
 func (lc *LuaContext) ctxWrite(L *lua.LState) int {
 	path := L.CheckString(1)
 	content := L.CheckString(2)
-	release := AcquireMutation(lc.ctx)
-	if release == nil {
-		L.RaiseError("cancelled while waiting for earlier changes in this worktree")
-		return 0
-	}
-	defer release()
-
-	// Create parent directory if needed
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	res := RunTool(lc.ctx, "write", map[string]any{"path": path, "content": content})
+	if !res.Success {
 		L.Push(lua.LBool(false))
-		L.Push(lua.LString(err.Error()))
-		return 2
-	}
-
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		L.Push(lua.LBool(false))
-		L.Push(lua.LString(err.Error()))
+		L.Push(lua.LString(res.Error))
 		return 2
 	}
 

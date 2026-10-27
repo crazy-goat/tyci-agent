@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- Lua tools: the unsandboxed Lua tools are removed. A Lua tool has no `os.execute`, `io`, `require` or `load`, at load time and in `run`. A cancel stops a pure-Lua loop. `ctx.run`, `ctx.read` and `ctx.write` go through the `bash`, `read` and `write` tools, so the hooks, the tool gates and the write freshness guard apply. `ctx.read` gives the read tool's limit of 2000 lines or 50 KB (#210).
+
 ## [0.10.0] - 2026-10-14
 
 ### Added
