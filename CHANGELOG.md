@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Removed
 - Lua tools: the unsandboxed Lua tools are removed. A Lua tool has no `os.execute`, `io`, `require` or `load`, at load time and in `run`, and a cancel stops a pure-Lua loop. `ctx.run`, `ctx.read` and `ctx.write` go through the `bash`, `read` and `write` tools, so hooks, tool gates and the write freshness guard apply. Scripts see these changes: `ctx.write` fails on an existing file that the script did not read first and no longer creates parent directories; `ctx.run` has the bash timeout of 120 s and the bash output cap; `ctx.read` gives at most 2000 lines or 50 KB; relative paths of all three resolve against the agent's work directory, not the process directory (#210).
 
+### Fixed
+- Flow: the `milestone-close` apply step joins the doubtful issue numbers after it converts them to text, so jq 1.5 no longer fails and exits without a key (#741).
+- Orchestrator: when `milestone-close` does not start, the notice says how to install it, with `tyci workflow init milestone-close`. The hint is added after the cut error text, so a long error does not hide it (#741).
+
 ## [0.10.0] - 2026-10-14
 
 ### Added
