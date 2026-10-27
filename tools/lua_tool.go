@@ -37,6 +37,9 @@ type LuaRun struct {
 // acceptable for a long session.
 const maxRetainedLuaRuns = 50
 
+// luaToolLoadTimeout keeps a broken top-level chunk from hanging startup or reload.
+const luaToolLoadTimeout = 5 * time.Second
+
 var (
 	luaRunsMu sync.Mutex
 	luaRuns   []LuaRun
@@ -177,7 +180,7 @@ func newTopLevelFunction(L *lua.LState, proto *lua.FunctionProto) *lua.LFunction
 // process-local run history (see LuaRunHistory) regardless of outcome.
 func (t *LuaTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	started := time.Now()
-	res := t.run(ctx, input)
+	res := t.run(ctx, input, LuaDefaultTimeoutSec*time.Second)
 	owner, _ := ctx.Value(JobIDCtxKey{}).(string)
 	recordLuaRun(LuaRun{
 		Name:      t.name,
@@ -191,7 +194,10 @@ func (t *LuaTool) Run(ctx context.Context, input map[string]any) ToolResult {
 }
 
 // run is Run's actual body, unwrapped so Run can time and record it above.
-func (t *LuaTool) run(ctx context.Context, input map[string]any) ToolResult {
+func (t *LuaTool) run(ctx context.Context, input map[string]any, timeout time.Duration) ToolResult {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	proto, err := t.loadProto()
 	if err != nil {
 		return ToolResult{
@@ -383,9 +389,13 @@ func loadLuaTool(scriptPath string) (*LuaTool, error) {
 		return nil, err
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), luaToolLoadTimeout)
+	defer cancel()
+
 	L := lua.NewState()
 	defer L.Close()
 	RestrictLuaStdlib(L)
+	L.SetContext(ctx)
 
 	L.Push(newTopLevelFunction(L, proto))
 	if err := L.PCall(0, lua.MultRet, nil); err != nil {

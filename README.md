@@ -1079,7 +1079,11 @@ The script is sandboxed to the pure part of the language: `string`, `table`,
 allowlist all still apply. `print` is rebound onto `log`.
 
 Separately, `.lua` files in `~/.tyci/tools/` or `./.tyci/tools/` are loaded as
-named tools of their own.
+named tools of their own. Their top-level code has a 5s limit when loaded at
+startup or on `/reload`; a timeout is reported as a load error, and a reload
+keeps that file's previous tool. Each call has a 300s internal limit, covering
+both top-level code and the `run` function. An earlier caller deadline or
+cancellation still stops the call sooner.
 
 ## Write freshness
 
