@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -91,24 +92,27 @@ func (lc *LuaContext) ctxRead(L *lua.LState) int {
 	return 1
 }
 
-// The texts that the read tool (read.go) puts in its result when it cuts a
+// The notices that the read tool (read.go) puts in its result when it cuts a
 // file. The read tool has no flag for this, and its result is shown to the
-// model, so the marks are matched here. TestLuaTool_CtxReadReturnsNotice
-// fails if the wording in read.go changes.
-const (
-	readContinuationMark = "\n\n[Showing lines "
-	readFirstLineMark    = "No partial line returned."
+// model, so the notices are matched here. A notice is accepted only where
+// the read tool puts it: the first-line notice is the whole result, and the
+// continuation notice is the last line after a blank line. Text of a whole
+// file that merely contains the same words is not split.
+// TestLuaTool_CtxReadWholeFileKeepsItsText fails if this matching changes.
+var (
+	readFirstLineNotice    = regexp.MustCompile(`\A\[Line [^\n]*No partial line returned\.[^\n]*after this long line\.\]\z`)
+	readContinuationNotice = regexp.MustCompile(`\n\n(\[Showing lines [^\n]*to continue\.\])\z`)
 )
 
 // splitReadNotice separates the read tool's notice from the file text. When
 // the first line alone is over the byte cap, the read tool returns only its
 // notice, so the text is empty.
 func splitReadNotice(content string) (text, notice string) {
-	if strings.Contains(content, readFirstLineMark) {
+	if readFirstLineNotice.MatchString(content) {
 		return "", content
 	}
-	if i := strings.LastIndex(content, readContinuationMark); i >= 0 {
-		return content[:i], content[i+2:]
+	if m := readContinuationNotice.FindStringSubmatchIndex(content); m != nil {
+		return content[:m[0]], content[m[2]:m[3]]
 	}
 	return content, ""
 }

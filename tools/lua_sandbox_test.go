@@ -184,6 +184,29 @@ func TestLuaTool_CtxReadFirstLineTooLong(t *testing.T) {
 	}
 }
 
+// TestLuaTool_CtxReadWholeFileKeepsItsText: a file that the read tool does not
+// cut, but whose text contains both notice wordings, is returned whole with
+// one value. Matching the notices anywhere in the text would cut it.
+func TestLuaTool_CtxReadWholeFileKeepsItsText(t *testing.T) {
+	body := "alpha\nNo partial line returned.\n\n[Showing lines 1-2 of 9]\nomega\n"
+	path := filepath.Join(t.TempDir(), "transcript.txt")
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tool := luaToolFromSource(t, `return {schema = {name = "read-whole"}, run = function(ctx, args)
+		local text, notice = ctx.read(args.path)
+		return {success = true, content = select("#", ctx.read(args.path)) .. "|" .. tostring(notice) .. "|" .. text}
+	end}`)
+
+	res := tool.Run(context.Background(), map[string]any{"path": path})
+	if !res.Success {
+		t.Fatalf("tool failed: %s", res.Error)
+	}
+	if want := "1|nil|" + body; res.Content != want {
+		t.Fatalf("got %q, want %q", res.Content, want)
+	}
+}
+
 // TestLuaTool_CtxReadWholeFileHasOneValue: a file the read tool does not cut
 // gives one value, as before.
 func TestLuaTool_CtxReadWholeFileHasOneValue(t *testing.T) {
