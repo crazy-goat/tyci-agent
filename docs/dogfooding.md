@@ -9,7 +9,8 @@ that loop once. Every command can be copied as it is.
 - A gate script (`internal/flow/checks/issue_done.sh`) starts work only if the issue is
   open, has the label `accepted` and its author has write or admin access.
 - The gate skips an issue that another account is assigned to. Otherwise it assigns the
-  issue to the account that runs the workflow.
+  issue to the account that runs the workflow. The assignment stays after the run ends.
+  Release it as described in section 9, step 6.
 - The merge waits for the required check `ci-ok`. Push uses explicit refs.
 - A pull request that touches `.github/**`, `.tyci/**` or `internal/flow/checks/**`
   stops at `ask_protected` before the merge. A human answers `approve` or `stop`.
@@ -225,6 +226,14 @@ git -C ~/work/crazy-goat/tyci-agent branch -D issue-N
 
 ```bash
 rm -rf ~/.tyci/runs/tyci-agent/<run>
+```
+
+6. Release the issue assignment. The gate keeps the assignment after the run ends. A run of
+   another account then skips the issue, and it prints no message. Run this command with
+   the issue number, the repository and the login that the issue has:
+
+```bash
+gh issue edit <N> -R <repo> --remove-assignee <login>
 ```
 
 ## 10. Read `state.json`

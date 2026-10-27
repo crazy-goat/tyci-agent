@@ -51,7 +51,7 @@ find_pr() {
 pr=$(find_pr)
 if [ -z "$pr" ]; then
     # The title is the subject of the first non-merge commit since the default branch. The last
-    # commit can be a sync merge (#864), so it is only the fallback.
+    # commit can be a sync merge (rabbit-stream #864), so it is only the fallback.
     title=""
     default_ref="origin/$TYCI_DEFAULT_BRANCH"
     if git rev-parse --verify --quiet "$default_ref^{commit}" >/dev/null &&

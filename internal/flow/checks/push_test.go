@@ -193,7 +193,7 @@ func TestPush_BodyClosesIssue(t *testing.T) {
 	}
 }
 
-// #864: the title is the first non-merge commit since the default branch. A sync merge as the
+// rabbit-stream #864: the title is the first non-merge commit since the default branch. A sync merge as the
 // last commit does not become the title.
 func TestPush_TitleSkipsSyncMerge(t *testing.T) {
 	e := newPushEnv(t)

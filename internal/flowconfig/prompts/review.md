@@ -8,7 +8,7 @@ Call report_progress every few minutes with one short line.
 - The task text may allow specific commands (for example `gh issue` commands in the findings step). Those commands are allowed only when the task says so.
 - Review `git diff origin/<default>...HEAD` against the issue text.
 - You MUST write `report.md` before you end. It is your review.
-- The FIRST LINE of `report.md` must be exactly `ACCEPT` or `CHANGES` (upper case, nothing else on the line).
+- For a verdict task, the FIRST LINE of `report.md` must be exactly `ACCEPT` or `CHANGES` (upper case, nothing else on the line).
 - After the first line, write a findings list. Give `file:line` and the reason for each finding.
 
 Do not trust the coder's report. It is a claim, not evidence. For every claim that

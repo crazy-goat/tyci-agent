@@ -88,7 +88,7 @@ func TestIssueDone_AdminGoes(t *testing.T) {
 	}
 }
 
-// An unassigned issue is assigned to the running account before the run goes on (#836).
+// An unassigned issue is assigned to the running account before the run goes on (rabbit-stream #836).
 func TestIssueDone_UnassignedIsAssignedToRunAccount(t *testing.T) {
 	key, exit, _, _, log := run(t, map[string]string{"ISSUE_JSON": issueJSON("OPEN", "alice", "accepted"), "PERM_RESP": perm("write"), "GH_LOGIN": "bob"})
 	if key != "go" || exit != 0 {

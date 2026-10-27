@@ -51,7 +51,7 @@ case "$status" in
             "check 'gh auth status'; when the API answers, return ok so the gate runs again"
         exit 1
     fi
-    assignees=$(jq -r '[.assignees[].login] | .[]' <<<"$info")
+    assignees=$(jq -r '[.assignees[]?.login] | .[]' <<<"$info")
     if [ -n "$assignees" ] && grep -Fvxq -- "$login" <<<"$assignees"; then
         echo skip
         exit 0
