@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/crazy-goat/tyci-agent/jobs"
 )
@@ -466,5 +467,187 @@ func TestRunsTab_CostBoundedByVisibleRuns(t *testing.T) {
 	}
 	if small, large := lines(10), lines(2000); small != large {
 		t.Fatalf("lines with 10 finished runs = %d, with 2000 = %d; want equal", small, large)
+	}
+}
+
+// runsFollowModel returns a Runs tab over the runs in *rows. A test changes
+// *rows to move a run, the way a run that finishes changes the list.
+func runsFollowModel(rows *[]TuiRunRow) TuiModel {
+	m := newTestModelForSidebar()
+	m.backgroundJobs = map[string]jobs.Job{}
+	m.runLister = func() []TuiRunRow { return *rows }
+	m.openSidebar(sidebarTabRuns)
+	return m
+}
+
+// selectedRunRow returns the ID of the run and the ID of the agent under the
+// Runs cursor. The agent ID is empty on a run row.
+func selectedRunRow(t *testing.T, m TuiModel) (runID, agentID string) {
+	t.Helper()
+	tree, it, ok := m.runsCursorItem()
+	if !ok {
+		t.Fatalf("cursor %d is on no Runs row", m.sidebarCursor)
+	}
+	if it.agent >= 0 {
+		agentID = tree.agents[it.agent].job.ID
+	}
+	return tree.run.ID, agentID
+}
+
+// tickRuns sends one status tick, the message that re-finds the Runs cursor.
+func tickRuns(t *testing.T, m TuiModel) TuiModel {
+	t.Helper()
+	model, _ := m.Update(statusTickMsg{})
+	return model.(TuiModel)
+}
+
+// TestRunsTab_CursorFollowsRunWhenOrderChanges checks that the cursor stays on
+// the same run when another run finishes and the rows reorder.
+func TestRunsTab_CursorFollowsRunWhenOrderChanges(t *testing.T) {
+	base := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	rows := []TuiRunRow{
+		{ID: "a", Issue: 1, Status: "running", State: "code", Role: "worker", Started: base, Since: base},
+		{ID: "b", Issue: 2, Status: "running", State: "code", Role: "worker", Started: base.Add(time.Minute), Since: base.Add(time.Minute)},
+	}
+	m := runsFollowModel(&rows)
+	// Active runs are listed newest start first: b is row 0, a is row 1.
+	m.sidebarMoveCursor(1)
+	if id, _ := selectedRunRow(t, m); id != "a" {
+		t.Fatalf("selected %q, want a", id)
+	}
+	// b finishes and moves below a, so a is now row 0.
+	rows[1] = TuiRunRow{ID: "b", Issue: 2, Status: "done", State: "end", Result: "merged",
+		Started: base.Add(time.Minute), Ended: base.Add(2 * time.Minute), Took: time.Minute}
+	m = tickRuns(t, m)
+	if id, _ := selectedRunRow(t, m); id != "a" {
+		t.Fatalf("after b finished: selected %q, want a", id)
+	}
+	if m.sidebarCursor != 0 {
+		t.Fatalf("cursor = %d, want 0, the new row of a", m.sidebarCursor)
+	}
+}
+
+// TestRunsTab_CursorStaysInRangeWhenRunGone checks that the cursor is clamped
+// to a valid row when the selected run leaves the list.
+func TestRunsTab_CursorStaysInRangeWhenRunGone(t *testing.T) {
+	base := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	rows := []TuiRunRow{
+		{ID: "a", Issue: 1, Status: "running", State: "code", Role: "worker", Started: base, Since: base},
+		{ID: "b", Issue: 2, Status: "running", State: "code", Role: "worker", Started: base.Add(time.Minute), Since: base.Add(time.Minute)},
+	}
+	m := runsFollowModel(&rows)
+	m.sidebarMoveCursor(1)
+	// a leaves the list. Only b is left, and the cursor was on row 1.
+	rows = rows[1:]
+	m = tickRuns(t, m)
+	if n := m.sidebarRowCount(); m.sidebarCursor < 0 || m.sidebarCursor >= n {
+		t.Fatalf("cursor %d is out of range for %d rows", m.sidebarCursor, n)
+	}
+	if id, _ := selectedRunRow(t, m); id != "b" {
+		t.Fatalf("selected %q, want b, the only row left", id)
+	}
+	// With no run left, the cursor is 0 and nothing is selected.
+	rows = nil
+	m = tickRuns(t, m)
+	if m.sidebarCursor != 0 {
+		t.Fatalf("cursor = %d with no runs, want 0", m.sidebarCursor)
+	}
+}
+
+// TestRunsTab_CursorFollowsAgentRow checks that the cursor stays on an agent
+// row under an expanded run when the runs reorder.
+func TestRunsTab_CursorFollowsAgentRow(t *testing.T) {
+	base := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	rows := []TuiRunRow{
+		{ID: "a", Issue: 1, Status: "running", State: "code", Role: "worker", Started: base, Since: base},
+		{ID: "b", Issue: 2, Status: "running", State: "code", Role: "worker", Started: base.Add(time.Minute), Since: base.Add(time.Minute)},
+	}
+	m := runsFollowModel(&rows)
+	m.backgroundJobs["w1"] = treeTestJob("w1", "a", "", jobs.StatusRunning, 1)
+	m.sidebarRunsExpanded = map[string]bool{"a": true}
+	// Rows: b, a, the agent w1 under a. The cursor goes to w1.
+	m.sidebarMoveCursor(2)
+	if _, agent := selectedRunRow(t, m); agent != "w1" {
+		t.Fatalf("selected agent %q, want w1", agent)
+	}
+	// b finishes. Rows: a, w1, b. w1 is now row 1.
+	rows[1] = TuiRunRow{ID: "b", Issue: 2, Status: "done", State: "end", Result: "merged",
+		Started: base.Add(time.Minute), Ended: base.Add(2 * time.Minute), Took: time.Minute}
+	m = tickRuns(t, m)
+	if run, agent := selectedRunRow(t, m); run != "a" || agent != "w1" {
+		t.Fatalf("after b finished: selected run %q agent %q, want a and w1", run, agent)
+	}
+	if m.sidebarCursor != 1 {
+		t.Fatalf("cursor = %d, want 1, the new row of w1", m.sidebarCursor)
+	}
+}
+
+// TestRunsTab_KeyActsOnRowSeenWithoutTick checks that Up, Down and Enter act on
+// the row the user sees when the rows changed and no tick ran yet.
+func TestRunsTab_KeyActsOnRowSeenWithoutTick(t *testing.T) {
+	base := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	rows := []TuiRunRow{
+		{ID: "c", Issue: 3, Status: "running", State: "code", Role: "worker", Started: base.Add(2 * time.Minute), Since: base.Add(2 * time.Minute)},
+		{ID: "b", Issue: 2, Status: "running", State: "code", Role: "worker", Started: base.Add(time.Minute), Since: base.Add(time.Minute)},
+		{ID: "a", Issue: 1, Status: "running", State: "code", Role: "worker", Started: base, Since: base},
+	}
+	m := runsFollowModel(&rows)
+	// Rows: c, b, a. Select b, row 1.
+	m.sidebarMoveCursor(1)
+	// c finishes. Rows: b, a, c. b is row 0 now. No tick runs.
+	rows[0] = TuiRunRow{ID: "c", Issue: 3, Status: "done", State: "end", Result: "merged",
+		Started: base.Add(2 * time.Minute), Ended: base.Add(3 * time.Minute), Took: time.Minute}
+	model, _ := m.updateSidebar(tea.KeyMsg{Type: tea.KeyDown})
+	m = model.(TuiModel)
+	if id, _ := selectedRunRow(t, m); id != "a" {
+		t.Fatalf("Down from b selected %q, want a, the row below b", id)
+	}
+	model, _ = m.updateSidebar(tea.KeyMsg{Type: tea.KeyUp})
+	m = model.(TuiModel)
+	model, _ = m.updateSidebar(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(TuiModel)
+	if !m.sidebarRunsExpanded["b"] || m.sidebarRunsExpanded["c"] {
+		t.Fatalf("Enter must expand b, the row seen, and not c: %v", m.sidebarRunsExpanded)
+	}
+}
+
+// TestRunsTab_CursorStaysVisibleWhenRunAboveLeaves checks that the cursor row
+// stays inside the visible window of a short sidebar when the lines above it
+// shrink: a run above finishes and moves below the others.
+func TestRunsTab_CursorStaysVisibleWhenRunAboveLeaves(t *testing.T) {
+	base := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	steps := make([]TuiRunStep, 8)
+	for i := range steps {
+		steps[i] = TuiRunStep{Text: fmt.Sprintf("plan %d -> ok", i)}
+	}
+	rows := []TuiRunRow{
+		{ID: "x", Issue: 1, Status: "running", State: "code", Role: "worker", Started: base.Add(time.Hour), Since: base.Add(time.Hour), Steps: steps},
+	}
+	for i := range 10 {
+		rows = append(rows, TuiRunRow{ID: fmt.Sprintf("r%d", i), Issue: 10 + i, Status: "running", State: "code", Role: "worker",
+			Started: base.Add(time.Duration(i) * time.Minute), Since: base.Add(time.Duration(i) * time.Minute)})
+	}
+	m := runsFollowModel(&rows)
+	m.height = 12
+	m.sidebarRunsExpanded = map[string]bool{"x": true}
+	layout := m.sidebarLayout()
+	if layout.contentHeight >= 10 {
+		t.Fatalf("setup: contentHeight %d, want a short sidebar below 10 lines", layout.contentHeight)
+	}
+	// Move to the last run. The window scrolls down to show it.
+	for range len(rows) {
+		m.sidebarMoveCursor(1)
+	}
+	// x finishes. Its lines leave the top, so the last run moves up.
+	rows[0] = TuiRunRow{ID: "x", Issue: 1, Status: "done", State: "end", Result: "merged",
+		Started: base.Add(time.Hour), Ended: base.Add(2 * time.Hour), Took: time.Minute, Steps: steps}
+	m = tickRuns(t, m)
+	if id, _ := selectedRunRow(t, m); id != "r0" {
+		t.Fatalf("selected %q, want r0, the run that was last", id)
+	}
+	line := m.runsTab(layout.contentWidth).start[m.sidebarCursor]
+	top := m.sidebarScroll
+	if line < top || line >= top+m.sidebarListHeight(layout.contentHeight) {
+		t.Fatalf("cursor line %d is outside the window [%d, %d)", line, top, top+m.sidebarListHeight(layout.contentHeight))
 	}
 }
