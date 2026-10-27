@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # issue_done.sh: security gate of the issue-to-merge loop (state check_done).
-# An issue is worked on only if it is open, has the accept label, AND its author
-# has write or admin permission on the repository.
+# An issue is worked on only if it is open, accepted, its author has write/admin
+# permission, and it is unassigned or assigned to the account running this run.
 #
 # Env in:  TYCI_REPO (owner/name), TYCI_ISSUE, optional TYCI_ACCEPT_LABEL (default: accepted).
 # Keys:    go    work on the issue
-#          skip  do not work on the issue
+#          skip  do not work on the issue (including assignment to another account)
 # Errors:  any gh failure other than HTTP 404 exits non-zero WITHOUT a key; stderr then has a
 #          describe.sh block (RESULT: error) that says what failed.
-# Idempotent, read-only. Never prints tokens.
+# Idempotent. Assignment is retained after the run ends and must be released manually. Never prints tokens.
 set -euo pipefail
 # describe.sh prints the failure block (see there). A copy of this script without it still works.
 describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
@@ -17,7 +17,7 @@ if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(bas
 
 label="${TYCI_ACCEPT_LABEL:-accepted}"
 
-info=$(gh issue view "$TYCI_ISSUE" -R "$TYCI_REPO" --json state,labels,author)
+info=$(gh issue view "$TYCI_ISSUE" -R "$TYCI_REPO" --json state,labels,author,assignees)
 
 state=$(jq -r '.state' <<<"$info")
 has_label=$(jq -r --arg l "$label" '[.labels[].name] | index($l) != null' <<<"$info")
@@ -40,11 +40,32 @@ status=$(head -n 1 <<<"$resp" | tr -d '\r' | awk '{print $2}')
 case "$status" in
 200)
     perm=$(sed -n '/^\r\{0,1\}$/,$p' <<<"$resp" | jq -r '.permission // ""')
-    if [ "$perm" = "admin" ] || [ "$perm" = "write" ]; then
-        echo go
-    else
+    if [ "$perm" != "admin" ] && [ "$perm" != "write" ]; then
         echo skip
+        exit 0
     fi
+
+    if ! login=$(gh api user --jq .login); then
+        describe error "could not read the authenticated GitHub account" \
+            "gh is not logged in or the GitHub API is unavailable" \
+            "check 'gh auth status'; when the API answers, return ok so the gate runs again"
+        exit 1
+    fi
+    assignees=$(jq -r '[.assignees[].login] | .[]' <<<"$info")
+    if [ -n "$assignees" ] && grep -Fvxq -- "$login" <<<"$assignees"; then
+        echo skip
+        exit 0
+    fi
+
+    # Add the current account when unassigned; adding it again is harmless if
+    # the issue was already assigned to this account.
+    if ! gh issue edit "$TYCI_ISSUE" -R "$TYCI_REPO" --add-assignee "$login"; then
+        describe error "could not assign issue #$TYCI_ISSUE to '$login'" \
+            "the account may lack permission to assign issues, or the GitHub API may be unavailable" \
+            "check the issue permissions and 'gh auth status'; when assignment succeeds, return ok so the gate runs again"
+        exit 1
+    fi
+    echo go
     ;;
 404)
     echo skip

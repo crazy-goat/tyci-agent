@@ -34,6 +34,7 @@ case "$*" in
   "api -i"*) printf 'HTTP/2.0 200 OK\r\n\r\n{"permission":"%%s"}\n' "$(cat "$CTL/perm")" ;;
   "pr review"*) cat "${@: -1}" > "$CTL/review_body" ;;
   "api user"*) echo bot ;;
+  "issue edit"*) exit 0 ;;
   "api --paginate"*) if [ -e "$CTL/comments.json" ]; then cat "$CTL/comments.json"; else echo '[]'; fi ;;
   "pr list"*)
     case "$*" in
@@ -176,7 +177,7 @@ func newE2E(t *testing.T, script map[string][]string) *e2e {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", filepath.Dir(gh)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	e.ctlSet("issue.json", `{"state":"OPEN","author":{"login":"alice"},"labels":[{"name":"accepted"}]}`)
+	e.ctlSet("issue.json", `{"state":"OPEN","author":{"login":"alice"},"labels":[{"name":"accepted"}],"assignees":[]}`)
 	e.ctlSet("perm", "write")
 	e.ctlSet("ci_bucket", "pass")
 
@@ -337,7 +338,7 @@ const happyStates = "check_done, open_pr, code, review, lock, update, post_revie
 
 func TestE2E_Gate_NoLabel_NoAgentStarted(t *testing.T) {
 	e := newE2E(t, nil)
-	e.ctlSet("issue.json", `{"state":"OPEN","author":{"login":"alice"},"labels":[]}`)
+	e.ctlSet("issue.json", `{"state":"OPEN","author":{"login":"alice"},"labels":[],"assignees":[]}`)
 	e.mustFinish()
 	e.wantStates("check_done")
 	if e.st.History[0].To != "end" || e.agents.calls != 0 {
@@ -603,6 +604,9 @@ func TestE2E_ProtectedPath_StopsBeforeMerge(t *testing.T) {
 	e.wantStates("check_done, open_pr, code, review, lock, update, post_review, ci, comments, merge")
 	if k := e.st.History[9].Key; k != "protected" {
 		t.Errorf("merge key = %q", k)
+	}
+	if e.st.Current != "ask_protected" || e.st.Ask == nil {
+		t.Errorf("current %q, ask = %+v", e.st.Current, e.st.Ask)
 	}
 	e.wantNoMerge()
 }

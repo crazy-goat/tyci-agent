@@ -13,12 +13,14 @@
     "post_review": {"check": "checks/post_review.sh", "on": {"ok": "ci", "skip": "ci", "fail": "ci", "default": "ci"}},
     "ci":         {"check": "checks/ci_wait.sh", "max_visits": 3, "timeout_sec": 5400, "on": {"green": "comments", "red": "code", "conflict": "rebase", "behind": "rebase", "timeout": "ask", "fail": "fixer", "default": "fixer"}},
     "comments":   {"check": "checks/fetch_comments.sh", "on": {"none": "merge", "new": "code", "fail": "fixer", "default": "fixer"}},
-    "merge": {"check": "checks/merge.sh", "guard": true, "on": {"merged": "findings", "behind": "rebase", "protected": "ask", "fail": "fixer", "default": "fixer"}},
+    "merge": {"check": "checks/merge.sh", "guard": true, "on": {"merged": "findings", "behind": "rebase", "protected": "ask_protected", "fail": "fixer", "default": "fixer"}},
     "rebase":     {"check": "checks/rebase.sh", "on": {"ok": "ci", "conflict": "code", "fail": "fixer", "default": "fixer"}},
     "fixer":      {"agent": "fixer", "task": "fixer", "on": {"ok": "$failed", "failed": "oracle", "default": "oracle"}},
     "oracle":     {"agent": "oracle", "task": "recover", "on": {"stop": "end", "ask": "ask", "default": "ask"}},
     "findings":   {"agent": "review", "task": "findings_to_issues", "on": {"done": "end", "default": "end"}},
     "ask":        {"ask": "The run needs a human decision.", "on": {"retry": "code", "stop": "end"}},
-    "end":        {"end": true}
+    "end":        {"end": true},
+    "ask_protected": {"ask": "The PR changes protected paths and waits for your approval. Answer approve to merge it, or stop to merge it by hand.", "human": true, "on": {"approve": "merge_approved", "stop": "end"}},
+    "merge_approved": {"check": "checks/merge_approved.sh", "guard": true, "on": {"merged": "findings", "behind": "rebase", "protected": "ask_protected", "fail": "fixer", "default": "fixer"}}
   }
 }

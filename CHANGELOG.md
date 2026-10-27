@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Workflows: the `issue-to-merge` workflow assigns the issue to the account that runs it. The gate skips an issue that another account is assigned to, so two runs on two machines do not work on the same issue (#753).
+- Workflows: the `issue-to-merge` workflow pauses at the new state `ask_protected` when the pull request changes protected paths (`.github/`, `.tyci/`, `internal/flow/checks/`). A human answers `approve` to merge the pull request through the run, or `stop` to end the run. The oracle never answers this pause, and it cannot send the run to the approved merge (#753).
+
+### Changed
+- Workflows: the title of a run's pull request is the subject of the first non-merge commit since the default branch. A sync merge as the last commit no longer becomes the title (#753).
+- Workflows: the review prompt tells the reviewer to check the coder's claims against the code, to check the issue numbers that a diff cites, and to drop findings without a file and line. A review round reads the earlier review reports and looks first at the new commits. The worker fixes every hit of a pattern that a review lists (#753).
+
 ## [0.10.0] - 2026-10-14
 
 ### Added

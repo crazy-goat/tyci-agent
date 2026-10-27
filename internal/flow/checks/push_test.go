@@ -193,6 +193,21 @@ func TestPush_BodyClosesIssue(t *testing.T) {
 	}
 }
 
+// #864: the title is the first non-merge commit since the default branch. A sync merge as the
+// last commit does not become the title.
+func TestPush_TitleSkipsSyncMerge(t *testing.T) {
+	e := newPushEnv(t)
+	git(t, e.work, "checkout", "-q", "main")
+	git(t, e.work, "commit", "-q", "--allow-empty", "-m", "fix: main moved")
+	git(t, e.work, "push", "-q", "origin", "main")
+	git(t, e.work, "checkout", "-q", "issue-7")
+	git(t, e.work, "merge", "-q", "--no-ff", "-m", "Merge branch 'main' into issue-7", "main")
+	key, _, _, _, log := e.run(t, nil)
+	if key != "ok" || !strings.Contains(log, "--title feat: seven") {
+		t.Fatalf("key=%q log=%s", key, log)
+	}
+}
+
 // #207: a run without an issue (a release) opens the PR with an empty body, not "Closes #".
 func TestPush_NoIssueEmptyBody(t *testing.T) {
 	e := newPushEnv(t)

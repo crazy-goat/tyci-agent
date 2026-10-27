@@ -20,7 +20,7 @@ func TestInit_WritesWorkflowDir(t *testing.T) {
 	}
 	root := filepath.Join(dir, ".tyci", "workflows", "issue-to-merge")
 	all := strings.Join(written, "\n")
-	for _, rel := range []string{"workflow.json", "checks/merge.sh", "tasks/fixer.md", "tasks/recover.md",
+	for _, rel := range []string{"workflow.json", "checks/merge.sh", "checks/merge_approved.sh", "tasks/fixer.md", "tasks/recover.md",
 		"tasks/findings_to_issues.md", "tasks/ask.md", "prompts/worker.md", "prompts/oracle.md"} {
 		if !strings.Contains(all, filepath.Join(root, rel)) {
 			t.Errorf("%s not in written list", rel)
@@ -35,6 +35,33 @@ func TestInit_WritesWorkflowDir(t *testing.T) {
 	wf, src, err := Lookup("issue-to-merge", t.TempDir(), dir, true)
 	if err != nil || src != root || wf.Source != root {
 		t.Fatalf("lookup: %q %v", src, err)
+	}
+}
+
+// #753: a protected PR waits at ask_protected, a human pause the oracle does not answer. Only
+// the approve answer reaches merge_approved, which sets TYCI_ALLOW_PROTECTED=1 and is guarded.
+func TestIssueToMerge_ProtectedApprovalStates(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init("issue-to-merge", "", dir); err != nil {
+		t.Fatal(err)
+	}
+	wf, _, err := Lookup("issue-to-merge", t.TempDir(), dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wf.States["merge"].On["protected"]; got != "ask_protected" {
+		t.Errorf("merge protected -> %q, want ask_protected", got)
+	}
+	ap := wf.States["ask_protected"]
+	if !ap.Human || ap.Ask == "" || ap.On["approve"] != "merge_approved" || ap.On["stop"] != "end" {
+		t.Errorf("ask_protected = %+v", ap)
+	}
+	ma := wf.States["merge_approved"]
+	if ma.Check != "checks/merge_approved.sh" || ma.On["merged"] != "findings" || ma.On["protected"] != "ask_protected" {
+		t.Errorf("merge_approved = %+v", ma)
+	}
+	if !isGuarded(wf, "merge_approved") || !isGuarded(wf, "merge") {
+		t.Error("merge_approved or merge is not guarded: an oracle could merge a protected PR without a human")
 	}
 }
 
