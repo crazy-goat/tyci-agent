@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Display: the Runs tab keeps the selection on the same run when runs change state. The cursor no longer moves to another run when a run finishes and the rows reorder (#553).
+- Workflows: the `release` workflow question tells the human to answer `goto tag` after the CHANGELOG pull request is merged, and `goto wait` if the release tag is already on origin. It also says that `retry` at that point runs the worker on an empty `[Unreleased]` (#739).
 
 ## [0.10.0] - 2026-10-14
 
