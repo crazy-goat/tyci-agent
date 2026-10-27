@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Subagents: `wait`, `wait` with ids and background `bash` use the same subagent rule as `kill_job` (#724).
+
 ## [0.10.0] - 2026-10-14
 
 ### Added

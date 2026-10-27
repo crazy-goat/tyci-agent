@@ -374,8 +374,42 @@ func TestBashHandoffInsideSubagentTellsItToCollect(t *testing.T) {
 					t.Errorf("subagent handoff must not contain %q, got %q", banned, res.Content)
 				}
 			}
-			waitForJob(t, reg, id, bgFinishCap)
+			if owner := waitForJob(t, reg, id, bgFinishCap).ParentID; owner != parent.ID {
+				t.Errorf("background job owner = %q, want the caller's job %q", owner, parent.ID)
+			}
 		})
+	}
+}
+
+// TestBashHandoffDepthWithoutSinkKeepsChildReply: a caller at depth above 0
+// without the sink key gets the child reply, because inSubagent sees the
+// depth. It has no job id here, so the job has no owner (ParentID ""). It does
+// not stop with a parent, and the caller cannot wait on it. The child reply
+// promises both, so this test pins a known gap, not a correct state. The fix is
+// to refuse run_in_background for a caller without a job id (findings.md, #724).
+// Revert check: restore the sink-only check in bash.go and the main-agent reply
+// comes back.
+func TestBashHandoffDepthWithoutSinkKeepsChildReply(t *testing.T) {
+	reg, _ := bgTestEnv(t)
+	SetJobMailbox(newTestMailbox(reg))
+	t.Cleanup(func() { SetJobMailbox(nil) })
+
+	ctx := WithDepth(context.Background(), 1)
+	res := (&BashTool{}).Run(ctx, map[string]any{
+		"command":           "echo child",
+		"run_in_background": true,
+	})
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+	if !strings.Contains(res.Content, "stop when you return your answer") {
+		t.Errorf("depth-only child handoff should use the child reply, got %q", res.Content)
+	}
+	if strings.Contains(res.Content, "a notice reaches you") {
+		t.Errorf("depth-only child handoff must not use the main-agent reply, got %q", res.Content)
+	}
+	if owner := waitForJob(t, reg, jobIDFromResult(t, res.Content), bgFinishCap).ParentID; owner != "" {
+		t.Errorf("caller without a job id should start an unowned job, got owner %q", owner)
 	}
 }
 
