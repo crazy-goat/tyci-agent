@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Agent: a job or run notice no longer resets the end-of-turn job reminder budget. Only a real user message resets it. The todo reminder budget follows the same rule (#484).
+
 ## [0.10.0] - 2026-10-14
 
 ### Added
