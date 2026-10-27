@@ -243,6 +243,7 @@ Use the `workflow` commands to run and check a workflow from a terminal or a scr
 - `run` and `validate` take a workflow name, not a file path.
 - Use `--dir <path>` with `run` and `validate` to select the repository. The default is the current directory.
 - Use `--json` to print one JSON object on stdout. Progress and warnings go to stderr.
+- `run` writes a debug log to `~/.tyci/debug/`. Use `--no-debug` to turn it off.
 
 The `run` command waits until the run ends or pauses at an ask state. A paused run is not an error. The command then prints `waiting at ask state <name>` on stderr. Answer the paused run with `workflow_resume` in the chat.
 

@@ -139,6 +139,14 @@ stderr. Exit code 0 means done or paused. Exit code 1 means failed or invalid.`,
 
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 		defer stop()
+		ctx, dl := openDebugLog(cmd, ctx)
+		if dl != nil {
+			defer func() {
+				if err := dl.Close(); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: debug log: close: %v\n", err)
+				}
+			}()
+		}
 		ctx, shutdown := setupWorkflowAgents(ctx, cmd, info)
 		defer shutdown()
 		m := flow.NewManager(func(text string) { fmt.Fprintln(cmd.ErrOrStderr(), text) }, workflowSpawn)

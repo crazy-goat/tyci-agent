@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- CLI: `tyci workflow run` writes the debug log to `~/.tyci/debug/`, and `--no-debug` turns it off (#515).
+
 ## [0.10.0] - 2026-10-14
 
 ### Added
