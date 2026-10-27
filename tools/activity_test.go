@@ -198,11 +198,12 @@ func TestRealRegistry_SatisfiesJobActivityToucher(t *testing.T) {
 // its StartedAt, i.e. something touched the job after it started.
 func assertJobActivityAfterStart(t *testing.T, reg *jobs.Registry, id string) {
 	t.Helper()
-	job, ok := reg.Get(id)
+	// RunSubagentTask returns before the registry records the job as finished.
+	// Wait for that, so the snapshot does not read fields the registry writes.
+	snap, ok := reg.Wait(context.Background(), id, 5*time.Second)
 	if !ok {
 		t.Fatalf("job %q not found in registry", id)
 	}
-	snap := job.Snapshot()
 	if !snap.LastActivity.After(snap.StartedAt) {
 		t.Fatalf("expected LastActivity to move past StartedAt, got last=%s started=%s", snap.LastActivity, snap.StartedAt)
 	}
