@@ -93,8 +93,9 @@ func capArtifact(s string) string {
 }
 
 // runSoFar lists the steps since the last visit of state (all steps on the
-// first visit), one line each: seq, state, key and the artifact files. A failed
-// step has its error on the line after it.
+// first visit) and the last visit of state when it failed, one line each: seq,
+// state, key and the artifact files. A failed step has its error on the line
+// after it.
 func runSoFar(st *RunState, state, runDir string) string {
 	from := 0
 	for i, h := range st.History {
