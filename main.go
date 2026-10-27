@@ -612,6 +612,11 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		return text + "\n\n[note: subagent stopped at its tool call limit; the result above may be incomplete.]",
 			fmt.Errorf("%w: result may be incomplete", tools.ErrSubagentToolCalls)
 	}
+	if truncated {
+		// The cap warning is a notice, not text. Keep it in the result as
+		// before, so a child that wrote no text still reports the cap.
+		text = appendMaxIterationsNotice(text, cfg.MaxIterations)
+	}
 	if truncated || deadlineExceeded {
 		// agentRunner configures an ORDINARY child run without a
 		// MaxIterations cap or subagent-specific deadline, so
@@ -643,6 +648,12 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// scratch. resumeHint itself already no-ops when jobID is empty (no job
 	// registry — tests only), so nothing here needs to duplicate that check.
 	return text + resumeHint(jobID), nil
+}
+
+// appendMaxIterationsNotice adds the iteration-cap warning to a run's text. It
+// keeps the text layout the warning had when it was sent through Text.
+func appendMaxIterationsNotice(text string, maxIterations int) string {
+	return text + "\n" + agent.MaxIterationsNotice(maxIterations) + "\n"
 }
 
 // subagentStoppedMessage builds the (content, error) pair run() returns when

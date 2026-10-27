@@ -214,6 +214,14 @@ const lastStepDeadlineThreshold = 45 * time.Second
 // receiving an empty or truncated "successful" result.
 var ErrMaxIterations = errors.New("agent reached max tool-call iterations without finishing")
 
+// MaxIterationsNotice is the warning shown when a run stops at its
+// MaxIterations cap. The display gets it as a ToolBlock notice. A caller that
+// keeps the run's text appends it, so a cut-off run with no model text still
+// reports why it stopped.
+func MaxIterationsNotice(n int) string {
+	return fmt.Sprintf("⚠️ Agent executed %d tool-call iterations – possible infinite loop. Stopping.", n)
+}
+
 // ErrMaxToolCalls is returned by Run when a tool call is past
 // Config.MaxToolCalls. The batch that held the call is finished first, and the
 // calls past the limit get an error result.
@@ -728,7 +736,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	}
 
 	if cfg.MaxIterations > 0 {
-		d.ToolBlock(fmt.Sprintf("⚠️ Agent executed %d tool-call iterations – possible infinite loop. Stopping.", cfg.MaxIterations))
+		d.ToolBlock(MaxIterationsNotice(cfg.MaxIterations))
 		return totalUsage, ErrMaxIterations
 	}
 	return totalUsage, nil

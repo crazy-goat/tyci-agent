@@ -339,7 +339,11 @@ func (a jobResumerAdapter) Resume(ctx context.Context, jobID, task string) (tool
 		if truncated {
 			err = nil
 		}
-		text := strings.TrimSpace(c.text.String())
+		text := c.text.String()
+		if truncated {
+			text = appendMaxIterationsNotice(text, runCfg.MaxIterations)
+		}
+		text = strings.TrimSpace(text)
 
 		// Re-register so a resumed job can itself be resumed again
 		// (chaining), same condition as the original run in
@@ -523,7 +527,11 @@ func (btwPromotionAdapter) Promote(ctx context.Context, evaluationID string) (to
 		if truncated {
 			err = nil
 		}
-		text := strings.TrimSpace(c.text.String())
+		text := c.text.String()
+		if truncated {
+			text = appendMaxIterationsNotice(text, cfg.MaxIterations)
+		}
+		text = strings.TrimSpace(text)
 		// Timeout and kill_job still leave useful partial work. Preserve it so
 		// the parent can resume the promoted conversation instead of losing it.
 		if err == nil || truncated || deadlineExceeded || stopped {
@@ -696,6 +704,9 @@ func startBtwFork(ctx context.Context, cond *conductor.Conductor, question strin
 			err = nil
 		}
 		text := sink.CollectedText()
+		if truncated {
+			text = appendMaxIterationsNotice(text, cfg.MaxIterations)
+		}
 		if err == nil || truncated {
 			retainBtwEvaluation(jobID, &btwEvaluation{msgs: session.ForkMessages(forked), mc: client, cfg: cfg, question: question})
 			if busy {

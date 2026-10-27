@@ -6,9 +6,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-- Subagents: a subagent or scout that hits its iteration cap without any text now fails. Before, the cap warning counted as text and the run was a partial success. The error still names the cap (#466).
-
 ### Fixed
 - CLI: `tyci run` prints the max-iterations warning on stderr, not stdout (#466).
 
