@@ -21,6 +21,6 @@
     "ask":        {"ask": "The run needs a human decision.", "on": {"retry": "code", "stop": "end"}},
     "end":        {"end": true},
     "ask_protected": {"ask": "The PR changes protected paths and waits for your approval. Answer approve to merge it, or stop to merge it by hand.", "human": true, "on": {"approve": "merge_approved", "stop": "end"}},
-    "merge_approved": {"check": "checks/merge_approved.sh", "guard": true, "on": {"merged": "findings", "behind": "rebase", "protected": "ask_protected", "fail": "fixer", "default": "fixer"}}
+    "merge_approved": {"check": "checks/merge_approved.sh", "guard": true, "on": {"merged": "findings", "behind": "rebase", "protected": "ask_protected", "fail": "ask_protected", "default": "ask_protected"}}
   }
 }

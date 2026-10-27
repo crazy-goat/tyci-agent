@@ -9,7 +9,9 @@ that loop once. Every command can be copied as it is.
 - A gate script (`internal/flow/checks/issue_done.sh`) starts work only if the issue is
   open, has the label `accepted` and its author has write or admin access.
 - The gate skips an issue that another account is assigned to. Otherwise it assigns the
-  issue to the account that runs the workflow. The assignment stays after the run ends.
+  issue to the account that runs the workflow. The assignment makes two runs on the same
+  issue unlikely. A short check-then-assign window remains: two runs that start within
+  seconds of each other can both assign the issue. The assignment stays after the run ends.
   Release it as described in section 9, step 6.
 - The merge waits for the required check `ci-ok`. Push uses explicit refs.
 - A pull request that touches `.github/**`, `.tyci/**` or `internal/flow/checks/**`
@@ -198,6 +200,8 @@ If the pull request touches `.github/**`, `.tyci/**` or `internal/flow/checks/**
 the run stops at `ask_protected` before the merge. Review the pull request first.
 Answer `approve` to merge it through the run. Answer `stop` to end the run and merge it yourself.
 The oracle never answers this pause.
+If the merge fails after your `approve`, the run stops at `ask_protected` again. It does not retry
+the merge without a new answer from you.
 
 ## 9. Stop and clean up a stuck run
 
