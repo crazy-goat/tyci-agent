@@ -155,6 +155,9 @@ func (m TuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// handler and die there. The chain stopped while statusTickArmed stayed true,
 	// so the elapsed time froze for the rest of the turn (issue #319).
 	if _, ok := msg.(statusTickMsg); ok {
+		// A run can change state between two ticks and move its row, so the
+		// Runs cursor is found again on each tick (#553).
+		m.sidebarFollowRun()
 		// The agent view replays the viewed job's new events on each tick.
 		m.pullAgentView()
 		// The read of an open agent log runs in a tea.Cmd, not here.

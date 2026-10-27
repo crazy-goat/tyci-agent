@@ -128,6 +128,7 @@ func (m *TuiModel) openSidebar(tab int) {
 	m.sidebarFocused = false
 	m.sidebarTab = tab
 	m.sidebarCursor = 0
+	m.sidebarRememberRun()
 	m.sidebarScroll = 0
 	m.sidebarTaskOwner = ""
 	m.sidebarBusPane = false
@@ -295,6 +296,7 @@ func (m TuiModel) sidebarVisibleScrollForLineCount(layout sidebarLayoutT, lineCo
 func (m *TuiModel) sidebarSwitchTab(tab int) {
 	m.sidebarTab = ((tab % sidebarTabCount) + sidebarTabCount) % sidebarTabCount
 	m.sidebarCursor = 0
+	m.sidebarRememberRun()
 	m.sidebarScroll = 0
 	m.sidebarTaskOwner = ""
 	m.sidebarStopRun = ""
@@ -392,6 +394,7 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 			if m.sidebarCursor > last {
 				m.sidebarCursor = max(0, last)
 			}
+			m.sidebarRememberRun()
 		}
 		m.sidebarClampScrollToCursor(layout.contentHeight)
 		return
@@ -711,6 +714,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 					owner := m.runsTab(layout.contentWidth).owner
 					if line >= 0 && line < len(owner) && owner[line] >= 0 {
 						m.sidebarCursor = owner[line]
+						m.sidebarRememberRun()
 						return m.sidebarActivateRow()
 					}
 				default:

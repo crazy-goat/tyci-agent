@@ -52,6 +52,73 @@ type runsItem struct {
 	agent int // index into the agents of that run, or -1 for the run row
 }
 
+// runsCursorKey identifies a Runs row: the run id, and the agent job id for an
+// agent row. The agent id is empty on a run row.
+type runsCursorKey struct {
+	run   string
+	agent string
+}
+
+// runsItemKey returns the key of the item it of the tree row t.
+func runsItemKey(t treeRun, it runsItem) runsCursorKey {
+	k := runsCursorKey{run: t.run.ID}
+	if it.agent >= 0 {
+		k.agent = t.agents[it.agent].job.ID
+	}
+	return k
+}
+
+// runsItemIndex returns the index in items of the row with key, or -1.
+func runsItemIndex(tree []treeRun, items []runsItem, key runsCursorKey) int {
+	for i, it := range items {
+		if runsItemKey(tree[it.run], it) == key {
+			return i
+		}
+	}
+	return -1
+}
+
+// sidebarRememberRun stores the Runs row under the cursor in sidebarRunKey. It
+// must run after each move of the Runs cursor, so that sidebarFollowRun finds
+// the same row again.
+func (m *TuiModel) sidebarRememberRun() {
+	if m.sidebarTab != sidebarTabRuns {
+		return
+	}
+	t, it, ok := m.runsCursorItem()
+	if !ok {
+		m.sidebarRunKey = runsCursorKey{}
+		return
+	}
+	m.sidebarRunKey = runsItemKey(t, it)
+}
+
+// sidebarFollowRun moves the Runs cursor to the row of sidebarRunKey after the
+// run rows changed, so the selection stays on the same run or agent. When the
+// agent is gone, the cursor goes to its run. When the run is gone, the cursor
+// keeps its index, clamped to the last row. It does nothing on another tab.
+func (m *TuiModel) sidebarFollowRun() {
+	if m.sidebarTab != sidebarTabRuns {
+		return
+	}
+	tree := m.buildTree()
+	items := m.runsItems(tree)
+	if len(items) == 0 {
+		m.sidebarCursor = 0
+		m.sidebarRunKey = runsCursorKey{}
+		return
+	}
+	i := runsItemIndex(tree, items, m.sidebarRunKey)
+	if i < 0 {
+		i = runsItemIndex(tree, items, runsCursorKey{run: m.sidebarRunKey.run})
+	}
+	if i < 0 {
+		i = min(max(m.sidebarCursor, 0), len(items)-1)
+	}
+	m.sidebarCursor = i
+	m.sidebarRunKey = runsItemKey(tree[items[i].run], items[i])
+}
+
 func (v *runsView) add(line string, run int) {
 	v.lines = append(v.lines, line)
 	v.owner = append(v.owner, run)
