@@ -144,3 +144,36 @@ func TestRun_InjectsLastStepWarning_OnDeadline(t *testing.T) {
 		t.Fatalf("expected a last-step warning injected ahead of the near deadline, got none: %#v", msgs)
 	}
 }
+
+// The max-iterations warning is a notice, not model output. It must go through
+// ToolBlock, so a plain run prints it on stderr and keeps stdout for the answer.
+func TestRun_MaxIterations_WarningIsToolBlockNotText(t *testing.T) {
+	msgs := []connector.Message{
+		{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "go"}}},
+	}
+	disp := newCaptureDisplay()
+	_, err := Run(context.Background(), alwaysTool(), disp, &msgs, Config{
+		MaxRetries:    1,
+		MaxIterations: 3,
+		Tools:         newMockToolRunner(),
+	})
+	if !errors.Is(err, ErrMaxIterations) {
+		t.Fatalf("expected ErrMaxIterations, got %v", err)
+	}
+
+	const marker = "tool-call iterations"
+	for _, s := range disp.text {
+		if strings.Contains(s, marker) {
+			t.Errorf("warning sent as Text: %q", s)
+		}
+	}
+	found := false
+	for _, s := range disp.toolBlocks {
+		if strings.Contains(s, marker) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warning not sent as ToolBlock; toolBlocks = %q", disp.toolBlocks)
+	}
+}

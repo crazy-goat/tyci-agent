@@ -159,35 +159,64 @@ func TestScoutWhitelist_DeniesWrite(t *testing.T) {
 // always unlimited (agent.ErrMaxIterations could never fire). Now that
 // scout sets a real cap (15), a truncated scout must report THAT number,
 // not the -1 sentinel.
+//
+// The warning of agent.Run goes through ToolBlock, so it is not in the
+// child's text. A cut-off child therefore has text only when the model wrote
+// some. Both cases are checked: with text, a partial success; without text,
+// a failure. In both, the cap number comes from scout, not the sentinel.
 func TestScout_HittingMaxIterationsCapReportsRealNumber(t *testing.T) {
-	withTestWiring(t)
+	findTool := stream.ToolCall{ID: "tc", Name: "find", Arguments: `{"method":"glob","pattern":"*.go","output":"count"}`}
 
-	fake := &connectortest.Fake{ProviderName: "scout-cap-test"}
-	fake.Script = func(turn int, req connector.Request) []stream.Event {
-		// Every turn calls an allowed, harmless tool and asks for another
-		// tool_calls round — never "stop" — so the loop only ends by
-		// hitting scout's own 15-iteration cap.
-		return []stream.Event{
-			stream.ToolCall{ID: "tc", Name: "find", Arguments: `{"method":"glob","pattern":"*.go","output":"count"}`},
-			stream.Finish{Reason: "tool_calls"},
+	t.Run("with text is a truncated partial success", func(t *testing.T) {
+		withTestWiring(t)
+		fake := &connectortest.Fake{ProviderName: "scout-cap-test"}
+		fake.Script = func(turn int, req connector.Request) []stream.Event {
+			// Every turn writes some text, calls an allowed, harmless tool and
+			// asks for another tool_calls round, so the loop only ends by
+			// hitting scout's own 15-iteration cap.
+			return []stream.Event{
+				stream.TextDelta{Text: "partial answer"},
+				findTool,
+				stream.Finish{Reason: "tool_calls"},
+			}
 		}
-	}
 
-	ctx := connector.WithModelClient(tools.WithDepth(context.Background(), 1), fake)
-	res := tools.RunTool(ctx, "scout", map[string]any{"task": "loop forever"})
-	// agent.Run's own iteration-cap warning ("Agent executed N tool-call
-	// iterations...") is text, so this surfaces as a partial success
-	// (Truncated=true), not a bare failure — same as an ordinary subagent
-	// hitting a cutoff with something to show.
-	if !res.Success || !res.Truncated {
-		t.Fatalf("expected a truncated partial success, got success=%v truncated=%v content=%q error=%q", res.Success, res.Truncated, res.Content, res.Error)
-	}
-	if !strings.Contains(res.Content, "15-iteration") {
-		t.Errorf("expected the cutoff note to name scout's real cap (15), got: %q", res.Content)
-	}
-	if strings.Contains(res.Content, "-1-iteration") {
-		t.Errorf("cutoff note regressed to the unlimited-subagent sentinel: %q", res.Content)
-	}
+		ctx := connector.WithModelClient(tools.WithDepth(context.Background(), 1), fake)
+		res := tools.RunTool(ctx, "scout", map[string]any{"task": "loop forever"})
+		if !res.Success || !res.Truncated {
+			t.Fatalf("expected a truncated partial success, got success=%v truncated=%v content=%q error=%q", res.Success, res.Truncated, res.Content, res.Error)
+		}
+		if !strings.Contains(res.Content, "15-iteration") {
+			t.Errorf("expected the cutoff note to name scout's real cap (15), got: %q", res.Content)
+		}
+		if strings.Contains(res.Content, "-1-iteration") {
+			t.Errorf("cutoff note regressed to the unlimited-subagent sentinel: %q", res.Content)
+		}
+	})
+
+	t.Run("without text is a failure that names the cap", func(t *testing.T) {
+		withTestWiring(t)
+		fake := &connectortest.Fake{ProviderName: "scout-cap-test"}
+		fake.Script = func(turn int, req connector.Request) []stream.Event {
+			// Only tool calls, no text: the loop ends by hitting the cap.
+			return []stream.Event{
+				findTool,
+				stream.Finish{Reason: "tool_calls"},
+			}
+		}
+
+		ctx := connector.WithModelClient(tools.WithDepth(context.Background(), 1), fake)
+		res := tools.RunTool(ctx, "scout", map[string]any{"task": "loop forever"})
+		if res.Success {
+			t.Fatalf("expected a failure, got success with content=%q", res.Content)
+		}
+		if !strings.Contains(res.Error, "15-iteration") {
+			t.Errorf("expected the error to name scout's real cap (15), got: %q", res.Error)
+		}
+		if strings.Contains(res.Error, "-1-iteration") {
+			t.Errorf("error regressed to the unlimited-subagent sentinel: %q", res.Error)
+		}
+	})
 }
 
 // TestJobResumerAdapter_RestoresDepthForScoutSchemaGateAgreement is the

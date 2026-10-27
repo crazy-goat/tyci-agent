@@ -728,7 +728,7 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 	}
 
 	if cfg.MaxIterations > 0 {
-		d.Text(fmt.Sprintf("\n⚠️ Agent executed %d tool-call iterations – possible infinite loop. Stopping.\n", cfg.MaxIterations))
+		d.ToolBlock(fmt.Sprintf("⚠️ Agent executed %d tool-call iterations – possible infinite loop. Stopping.", cfg.MaxIterations))
 		return totalUsage, ErrMaxIterations
 	}
 	return totalUsage, nil

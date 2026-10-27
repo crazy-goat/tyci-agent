@@ -19,11 +19,11 @@ import (
 // but a non-empty jobID means main.go's run() just stashed a resumable
 // entry for it (see resumable[jobID] at run()'s stash site). Exercised
 // directly against the pure decision function — rather than via a real
-// agent.Run call — because agent.Run's own "possible infinite loop"
-// diagnostic (see agent.go, right before it returns ErrMaxIterations) means
-// collected text is never actually empty on the real iteration-cap path in
-// practice; the function must still get the logic right for whenever text
-// truly is empty.
+// agent.Run call — because agent.Run's own "possible infinite loop" warning
+// (see agent.go, right before it returns ErrMaxIterations) is a notice sent
+// through ToolBlock, not text, so collected text can be empty on the real
+// iteration-cap path when the model wrote none; the function must get the
+// logic right for that case.
 func TestSubagentCutoffMessage_ZeroOutput_StaysResumable(t *testing.T) {
 	for _, deadlineWasHit := range []bool{false, true} {
 		jobID := "job-zero-output-1"
