@@ -650,10 +650,11 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	return text + resumeHint(jobID), nil
 }
 
-// appendMaxIterationsNotice adds the iteration-cap warning to a run's text. It
-// keeps the text layout the warning had when it was sent through Text.
+// appendMaxIterationsNotice adds the iteration-cap notice to a run's text on
+// the line after the text, and trims the result. The layout matches the old
+// result, when the warning was sent through Text and then trimmed.
 func appendMaxIterationsNotice(text string, maxIterations int) string {
-	return text + "\n" + agent.MaxIterationsNotice(maxIterations) + "\n"
+	return strings.TrimSpace(text + "\n" + agent.MaxIterationsNotice(maxIterations))
 }
 
 // subagentStoppedMessage builds the (content, error) pair run() returns when
