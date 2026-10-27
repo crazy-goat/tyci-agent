@@ -12,6 +12,9 @@ import (
 // last artifactCap bytes after a truncation line.
 const artifactCap = 64 << 10
 
+// runSoFarErrorCap is the byte limit of the error of a failed step in runSoFar (#445).
+const runSoFarErrorCap = 2000
+
 // Every step of a run gets its own artifact dir <runDir>/artifacts/NNN-<state>,
 // NNN being the step seq. The runner creates it before the step and seals it
 // after the step; nothing writes to it later.
@@ -90,13 +93,19 @@ func capArtifact(s string) string {
 }
 
 // runSoFar lists the steps since the last visit of state (all steps on the
-// first visit), one line each: seq, state, key and the artifact files.
+// first visit), one line each: seq, state, key and the artifact files. A failed
+// step has its error on the line after it.
 func runSoFar(st *RunState, state, runDir string) string {
 	from := 0
 	for i, h := range st.History {
 		if h.State == state {
 			from = i + 1
 		}
+	}
+	// A failed last visit of state is listed too: its error is the reason of the
+	// retry (#445).
+	if from > 0 && st.History[from-1].Error != "" {
+		from--
 	}
 	var b strings.Builder
 	for _, h := range st.History[from:] {
@@ -115,6 +124,20 @@ func runSoFar(st *RunState, state, runDir string) string {
 			}
 		}
 		b.WriteString("\n")
+		if h.Error != "" {
+			b.WriteString("  error: " + stepError(h.Error) + "\n")
+		}
 	}
 	return b.String()
+}
+
+// stepError returns the error of a failed step for a task text. Secrets are
+// masked before the cut, so no part of a secret is left. Continuation lines are
+// indented under their list item.
+func stepError(e string) string {
+	e = MaskSecrets(strings.TrimSpace(e))
+	if len(e) > runSoFarErrorCap {
+		e = cutBytes(e, runSoFarErrorCap) + "…"
+	}
+	return strings.ReplaceAll(e, "\n", "\n  ")
 }
