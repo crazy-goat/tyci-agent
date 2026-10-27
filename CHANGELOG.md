@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Flow: start-up does not pause a run that another tyci process resumes at the same time (#432).
+
 ## [0.10.0] - 2026-10-14
 
 ### Added
