@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/crazy-goat/tyci-agent/internal/flow"
 )
 
 type errBackend struct{}
@@ -42,5 +44,36 @@ func TestRPCAnswerKeepsIDAndSkipsNotifications(t *testing.T) {
 	}
 	if _, ok := answer(context.Background(), errBackend{}, []byte(`{"jsonrpc":"2.0","method":"status"}`)); ok {
 		t.Fatal("a notification (no id) got an answer")
+	}
+}
+
+func TestInProcessReadsRunFiles(t *testing.T) {
+	home := t.TempDir()
+	for _, st := range []*flow.RunState{
+		{Version: 1, Run: "1", Workflow: "fix-ci", Repo: "acme/r", Status: "running", Current: "ci"},
+		{Version: 1, Run: "2", Workflow: "fix-ci", Repo: "acme/r", Status: "done", Current: "end"},
+		{Version: 1, Run: "3", Workflow: "fix-ci", Repo: "acme/other", Status: "running", Current: "ci"},
+	} {
+		if err := (&flow.Store{Dir: flow.RunDir(home, flow.RepoInfo{Repo: st.Repo}.Name(), st.Run)}).Save(st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &InProcess{Home: home, Repos: []string{"acme/r"}}
+	runs, err := p.RunsList(context.Background())
+	if err != nil || len(runs) != 1 || runs[0].Run != "1" || runs[0].Repo != "acme/r" {
+		t.Fatalf("RunsList = %+v, %v; want only the open run 1 of acme/r", runs, err)
+	}
+	got, err := p.RunsGet(context.Background(), "3")
+	if err != nil || got.State == nil || got.State.Repo != "acme/other" {
+		t.Fatalf("RunsGet(3) = %+v, %v; want the run of any repository", got, err)
+	}
+	if _, err := p.RunsGet(context.Background(), "9"); err == nil {
+		t.Fatal("RunsGet of an unknown run: no error")
+	}
+	if _, err := p.Status(context.Background()); !errors.Is(err, ErrNoDaemon) {
+		t.Fatalf("Status error = %v, want ErrNoDaemon", err)
+	}
+	if runs, _ := (&InProcess{Home: home}).RunsList(context.Background()); runs == nil {
+		t.Fatal("RunsList without repos is nil, want an empty list")
 	}
 }
