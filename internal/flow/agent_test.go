@@ -382,3 +382,121 @@ func TestSubagentRunner_RunPolicyIsRunWorktree(t *testing.T) {
 		t.Errorf("spec dir %q policy %+v", sp.Dir, sp.Policy)
 	}
 }
+
+// #214: the first line of a plan review is the verdict. A third REJECT goes to a human.
+func TestPlanReviewKey(t *testing.T) {
+	cases := []struct {
+		answer  string
+		rejects int
+		want    string
+	}{
+		{"APPROVE\nthe plan is correct", 0, "APPROVE"},
+		{"`APPROVE`\n", 0, "APPROVE"},
+		{"REJECT\nthe plan misses the tests", 0, "REJECT"},
+		{"REJECT\nthe plan misses the tests", 1, "REJECT"},
+		{"REJECT\nthe plan misses the tests", 2, "REJECT_LIMIT"},
+		{"DOUBT\nthe risk is unclear", 0, "DOUBT"},
+		{"maybe", 0, "DOUBT"},
+		{"", 0, "DOUBT"},
+		{"the plan looks fine\nAPPROVE", 0, "DOUBT"},
+	}
+	for _, c := range cases {
+		if got := planReviewKey(c.answer, c.rejects); got != c.want {
+			t.Errorf("planReviewKey(%q, %d) = %q, want %q", c.answer, c.rejects, got, c.want)
+		}
+	}
+}
+
+// #214: the rejects count restarts after a human answer (an ask step).
+func TestPlanRejects_CountsSinceHumanAnswer(t *testing.T) {
+	st := &RunState{History: []Step{
+		{Kind: "agent", Task: "plan_review", Key: "REJECT"},
+		{Kind: "ask", Key: "replan"},
+		{Kind: "agent", Task: "plan_review", Key: "REJECT"},
+		{Kind: "agent", Task: "plan", Key: "done"},
+		{Kind: "agent", Task: "plan_review", Key: "REJECT"},
+		{Kind: "agent", Task: "code", Key: "done"},
+	}}
+	if got := planRejects(st); got != 2 {
+		t.Fatalf("planRejects = %d, want 2", got)
+	}
+}
+
+// #214: the plan review answer is saved as review.txt and its key is the verdict.
+func TestSubagentRunner_PlanReviewSavesAnswer(t *testing.T) {
+	s := &spawnRec{result: "REJECT\nthe plan misses the tests"}
+	rc := RunContext{Worktree: t.TempDir(), ArtifactDir: t.TempDir(), Issue: 9, PlanRejects: 2}
+	key, _, err := newRunner(s).Run(context.Background(), "oracle", "plan_review", rc)
+	if err != nil || key != "REJECT_LIMIT" {
+		t.Fatalf("key %q err %v", key, err)
+	}
+	b, err := os.ReadFile(filepath.Join(rc.ArtifactDir, "review.txt"))
+	if err != nil || string(b) != "REJECT\nthe plan misses the tests\n" {
+		t.Fatalf("review.txt %q err %v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(rc.ArtifactDir, "report.md")); err == nil {
+		t.Error("plan review must not write report.md")
+	}
+	if task := s.specs[0].Task; !strings.Contains(task, "ISSUE") || strings.Contains(task, "MUST write") {
+		t.Errorf("task = %q, want the issue text and no report.md reminder", task)
+	}
+}
+
+// #214: the plan answer is saved as output.txt, and the state goes on to the plan review.
+func TestSubagentRunner_PlanSavesOutput(t *testing.T) {
+	s := &spawnRec{result: "  1. Goal\nfix it  \n"}
+	rc := RunContext{Worktree: t.TempDir(), ArtifactDir: t.TempDir(), Issue: 9}
+	key, _, err := newRunner(s).Run(context.Background(), "oracle", "plan", rc)
+	if err != nil || key != "done" {
+		t.Fatalf("key %q err %v", key, err)
+	}
+	b, err := os.ReadFile(filepath.Join(rc.ArtifactDir, "output.txt"))
+	if err != nil || string(b) != "1. Goal\nfix it\n" {
+		t.Fatalf("output.txt %q err %v", b, err)
+	}
+}
+
+// #214: the plan and plan_review states are read-only. A write, a bash call or
+// a kill is refused in their run, so the plan can only be written by the harness.
+func TestSubagentRunner_PlanStatesAreReadOnly(t *testing.T) {
+	for _, task := range []string{"plan", "plan_review"} {
+		s := &spawnRec{result: "REJECT\nno"}
+		rc := RunContext{Worktree: t.TempDir(), ArtifactDir: t.TempDir(), Issue: 9}
+		if _, _, err := newRunner(s).Run(context.Background(), "oracle", task, rc); err != nil {
+			t.Fatalf("%s: %v", task, err)
+		}
+		p := s.specs[0].Policy
+		if p == nil {
+			t.Fatalf("%s: no policy", task)
+		}
+		for _, name := range []string{"write", "bash", "kill_job"} {
+			if tools.AllowedFor(*p, name) {
+				t.Errorf("%s: %s is allowed, want refused", task, name)
+			}
+		}
+		if !tools.AllowedFor(*p, "read") {
+			t.Errorf("%s: read is refused, want allowed", task)
+		}
+	}
+}
+
+// #214: an empty artifact dir gets no output.txt in the working directory.
+func TestSubagentRunner_PlanWithoutArtifactDirWritesNothing(t *testing.T) {
+	cwd := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(old) })
+	s := &spawnRec{result: "1. Goal\n"}
+	key, _, err := newRunner(s).Run(context.Background(), "oracle", "plan", RunContext{Worktree: t.TempDir(), Issue: 9})
+	if err != nil || key != "done" {
+		t.Fatalf("key %q err %v", key, err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "output.txt")); err == nil {
+		t.Error("output.txt written to the working directory")
+	}
+}
