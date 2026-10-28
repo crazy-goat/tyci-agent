@@ -14,6 +14,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
 	"github.com/crazy-goat/tyci-agent/internal/forge/fake"
+	"github.com/crazy-goat/tyci-agent/internal/forge/gitlab"
 	"github.com/crazy-goat/tyci-agent/internal/orchestrator"
 	"github.com/crazy-goat/tyci-agent/providers"
 )
@@ -107,8 +108,38 @@ func TestForgeConfigUnknownKind(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "forge.kind") {
 		t.Fatal(err)
 	}
-	if _, err := newForge(flowconfig.Forge{Kind: "gitlab"}); err == nil {
+	if _, err := newForge(flowconfig.Forge{Kind: "gitlab"}, nil, ""); err == nil {
 		t.Fatal("newForge accepted gitlab")
+	}
+}
+
+func TestNewForgeFromRepos(t *testing.T) {
+	t.Setenv("TYCI_GITLAB_TOKEN", "test-token-0123456789")
+	repos := map[string]flowconfig.Repo{
+		"group/project": {Forge: "gitlab", URL: "https://gitlab.example.com"},
+		"o/r":           {Forge: "github"},
+	}
+	f, err := newForge(flowconfig.Forge{Repo: "group/project"}, repos, "")
+	if _, ok := f.(*gitlab.GitLab); err != nil || !ok {
+		t.Fatalf("group/project: %T, %v", f, err)
+	}
+	// forge.repo "auto" takes the repo of the git remote.
+	for _, auto := range []string{"", "auto"} {
+		f, err := newForge(flowconfig.Forge{Repo: auto}, repos, "group/project")
+		if g, ok := f.(*gitlab.GitLab); err != nil || !ok || g.Repo() != "group/project" {
+			t.Fatalf("auto %q: %T, %v", auto, f, err)
+		}
+	}
+	for _, repo := range []string{"o/r", "other/repo"} {
+		f, err := newForge(flowconfig.Forge{Repo: repo}, repos, "group/project")
+		if _, ok := f.(*forge.GitHub); err != nil || !ok {
+			t.Fatalf("%s: %T, %v", repo, f, err)
+		}
+	}
+	t.Setenv("TYCI_GITLAB_TOKEN", "")
+	t.Setenv("GITLAB_TOKEN", "")
+	if _, err := newForge(flowconfig.Forge{Repo: "group/project"}, repos, ""); err == nil || !strings.Contains(err.Error(), "GITLAB_TOKEN") {
+		t.Fatalf("no token: %v", err)
 	}
 }
 

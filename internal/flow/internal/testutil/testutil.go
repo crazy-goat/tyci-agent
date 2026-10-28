@@ -65,3 +65,19 @@ func RunCheckIn(t *testing.T, dir, script string, env map[string]string) (key st
 	}
 	return key, exit, out.String(), errb.String()
 }
+
+// StubTyci writes a fake tyci binary for the GitLab path of the check scripts
+// (TYCI_FORGE=gitlab, TYCI_BIN). Every call appends its arguments ($*) to the
+// returned log file. body is a shell fragment, usually a case "$*" statement.
+// It returns the env that selects GitLab; the script must also get TYCI_REPO.
+func StubTyci(t *testing.T, body string) (env map[string]string, logPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	logPath = filepath.Join(dir, "tyci.log")
+	bin := filepath.Join(dir, "tyci")
+	script := "#!/usr/bin/env bash\necho \"$*\" >> " + "'" + logPath + "'\n" + body + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return map[string]string{"TYCI_FORGE": "gitlab", "TYCI_BIN": bin}, logPath
+}

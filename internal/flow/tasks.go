@@ -18,6 +18,9 @@ type TaskData struct {
 	Pause, Goto                                           string // the pause message and goto states (ask)
 	Issue, PR, Visit                                      int
 	Params                                                map[string]string // the bound params (#520)
+	// ForgeCmd is the shell command prefix of the GitLab ops ("'<tyci>' forge
+	// --repo <repo>"). Empty: the repo is on GitHub, use gh.
+	ForgeCmd string
 }
 
 func renderTaskText(name, text string, d TaskData) (string, error) {
@@ -37,7 +40,8 @@ var taskName = regexp.MustCompile(`^[a-z0-9_-]+$`)
 // TaskTemplates implements TaskRenderer. A task is read from <Dir>/tasks/<name>.md,
 // where Dir is the workflow directory.
 type TaskTemplates struct {
-	Dir string
+	Dir      string
+	ForgeCmd string // TaskData.ForgeCmd
 }
 
 // Render implements TaskRenderer. It masks Reason again, so a caller
@@ -49,7 +53,7 @@ func (t TaskTemplates) Render(name string, rc RunContext) (string, error) {
 		Worktree: rc.Worktree, RunDir: rc.RunDir, Reason: MaskSecrets(rc.Reason),
 		Issue: rc.Issue, PR: rc.PR, Visit: rc.Visit, Input: rc.Input, Params: rc.Params,
 		Failed: rc.Failed, FailedKey: rc.FailedKey, FailedDir: rc.FailedDir,
-		Pause: rc.Pause, Goto: rc.Goto,
+		Pause: rc.Pause, Goto: rc.Goto, ForgeCmd: t.ForgeCmd,
 	}
 	if !taskName.MatchString(name) {
 		return "", fmt.Errorf("bad task name %q: use a-z, 0-9, _ and -", name)

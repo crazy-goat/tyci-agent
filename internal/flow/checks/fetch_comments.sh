@@ -18,6 +18,10 @@ set -euo pipefail
 describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 # shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
+# lib_forge.sh selects gh or `tyci forge` (GitLab). A copy of this script without it works only for GitHub.
+forge_lib="$(dirname "${BASH_SOURCE[0]}")/lib_forge.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$forge_lib" ]; then . "$forge_lib"; else is_gitlab() { [ "${TYCI_FORGE:-github}" != gitlab ] && return 1; echo "$(basename "$0"): lib_forge.sh is missing" >&2; exit 1; }; github_only() { is_gitlab || :; }; fi
 
 pr="${TYCI_PR:-}"
 repo="${TYCI_REPO:-}"
@@ -37,9 +41,15 @@ fi
 marker='<!-- tyci-agent -->'
 
 fail() {
-    describe fail "$1 while reading the comments of PR #$pr" \
-        "no network, gh is not logged in, a rate limit, or a GitHub outage" \
-        "run 'gh auth status' and 'gh api repos/$repo/issues/$pr/comments'; when gh works again, return ok so the step runs again"
+    if is_gitlab; then
+        describe fail "$1 while reading the comments of merge request !$pr" \
+            "no network, TYCI_GITLAB_TOKEN/GITLAB_TOKEN is missing or not valid, a rate limit, or a GitLab outage" \
+            "check the token and the GitLab API; when it answers, return ok so the step runs again"
+    else
+        describe fail "$1 while reading the comments of PR #$pr" \
+            "no network, gh is not logged in, a rate limit, or a GitHub outage" \
+            "run 'gh auth status' and 'gh api repos/$repo/issues/$pr/comments'; when gh works again, return ok so the step runs again"
+    fi
     echo fail
     exit 0
 }
@@ -48,9 +58,16 @@ list() {
     gh api --paginate "repos/$repo/$1/$pr/comments" | jq -s '[.[][]]'
 }
 
-pulls=$(list pulls) || fail "gh failed for pull request comments"
-issue=$(list issues) || fail "gh failed for issue comments"
-own=$(gh api user -q .login) || fail "gh failed for the own login"
+if is_gitlab; then
+    # The notes of a merge request also hold its diff comments: one id sequence.
+    pulls='[]'
+    issue=$(forge_op pr-comments "$pr") || fail "tyci forge failed for merge request comments"
+    own=$(forge_op whoami) || fail "tyci forge failed for the own login"
+else
+    pulls=$(list pulls) || fail "gh failed for pull request comments"
+    issue=$(list issues) || fail "gh failed for issue comments"
+    own=$(gh api user -q .login) || fail "gh failed for the own login"
+fi
 
 # Review comments and issue comments have separate id sequences: one mark each.
 # shellcheck disable=SC2016 # jq program, not a shell expansion
@@ -62,8 +79,18 @@ max_review=$(jq -r --argjson last "$last_review" '[.[].id] | max // $last' <<<"$
 max_issue=$(jq -r --argjson last "$last" '[.[].id] | max // $last' <<<"$issue")
 
 allowed='[]'
+user_re='^[A-Za-z0-9-]+$'
+# A GitLab user name can also have dots and underscores.
+if is_gitlab; then user_re='^[A-Za-z0-9_][A-Za-z0-9_.-]*$'; fi
 while IFS= read -r user; do
-    [[ "$user" =~ ^[A-Za-z0-9-]+$ ]] || continue
+    [[ "$user" =~ $user_re ]] || continue
+    if is_gitlab; then
+        perm=$(forge_op can-write "$user") || fail "permission lookup failed for $user"
+        if [ "$perm" = write ]; then
+            allowed=$(jq -c --arg u "$user" '. + [$u]' <<<"$allowed")
+        fi
+        continue
+    fi
     if perm=$(gh api "repos/$repo/collaborators/$user/permission" --jq .permission 2>&1); then
         if [ "$perm" = write ] || [ "$perm" = admin ]; then
             allowed=$(jq -c --arg u "$user" '. + [$u]' <<<"$allowed")

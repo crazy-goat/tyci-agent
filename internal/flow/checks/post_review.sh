@@ -15,6 +15,10 @@ set -euo pipefail
 describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 # shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
+# lib_forge.sh selects gh or `tyci forge` (GitLab). A copy of this script without it works only for GitHub.
+forge_lib="$(dirname "${BASH_SOURCE[0]}")/lib_forge.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$forge_lib" ]; then . "$forge_lib"; else is_gitlab() { [ "${TYCI_FORGE:-github}" != gitlab ] && return 1; echo "$(basename "$0"): lib_forge.sh is missing" >&2; exit 1; }; github_only() { is_gitlab || :; }; fi
 
 pr="${TYCI_PR:-}"
 review_dir="${TYCI_REVIEW_DIR:-}"
@@ -39,8 +43,18 @@ trap 'rm -f "$body"' EXIT
     cat "$review"
 } >"$body"
 
-if gh pr review "$pr" -R "${TYCI_REPO:-}" --comment --body-file "$body" >&2; then
+if is_gitlab; then
+    post=(forge_op pr-comment "$pr" "$body")
+else
+    post=(gh pr review "$pr" -R "${TYCI_REPO:-}" --comment --body-file "$body")
+fi
+if "${post[@]}" >&2; then
     echo ok
+elif is_gitlab; then
+    describe fail "tyci forge pr-comment $pr failed (see the error above); the review was not posted" \
+        "no network, TYCI_GITLAB_TOKEN/GITLAB_TOKEN is missing or not valid, or no permission to comment" \
+        "nothing to do: the run records a warning and goes on to ci"
+    echo fail
 else
     describe fail "gh pr review $pr --comment failed (see the gh output above); the review was not posted" \
         "no network, gh is not logged in, or no permission to comment" \

@@ -17,6 +17,10 @@ set -euo pipefail
 describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 # shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
+# lib_forge.sh selects gh or `tyci forge` (GitLab). A copy of this script without it works only for GitHub.
+forge_lib="$(dirname "${BASH_SOURCE[0]}")/lib_forge.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$forge_lib" ]; then . "$forge_lib"; else is_gitlab() { [ "${TYCI_FORGE:-github}" != gitlab ] && return 1; echo "$(basename "$0"): lib_forge.sh is missing" >&2; exit 1; }; github_only() { is_gitlab || :; }; fi
 
 branch="${TYCI_BRANCH:-}"
 if [ -s "${TYCI_RUN_DIR:-}/pr_branch" ]; then branch="$(<"$TYCI_RUN_DIR/pr_branch")"; fi
@@ -45,7 +49,11 @@ if ! git push origin "HEAD:refs/heads/$branch" >&2; then
 fi
 
 find_pr() {
-    gh pr list -R "$TYCI_REPO" --head "$branch" --state open --json number --jq '.[0].number'
+    if is_gitlab; then
+        forge_op pr-list "$branch" | jq -r '.[0].number // empty'
+    else
+        gh pr list -R "$TYCI_REPO" --head "$branch" --state open --json number --jq '.[0].number'
+    fi
 }
 
 pr=$(find_pr)
@@ -70,8 +78,12 @@ if [ -z "$pr" ]; then
     # A run without an issue (for example a release, #207) gets an empty PR body.
     body=""
     if [ -n "${TYCI_ISSUE:-}" ]; then body="Closes #$TYCI_ISSUE"; fi
-    gh pr create -R "$TYCI_REPO" --base "$TYCI_DEFAULT_BRANCH" --head "$branch" \
-        --title "$title" --body "$body" >&2
+    if is_gitlab; then
+        forge_op pr-create "$TYCI_DEFAULT_BRANCH" "$branch" "$title" "$body" >&2
+    else
+        gh pr create -R "$TYCI_REPO" --base "$TYCI_DEFAULT_BRANCH" --head "$branch" \
+            --title "$title" --body "$body" >&2
+    fi
     pr=$(find_pr)
 fi
 

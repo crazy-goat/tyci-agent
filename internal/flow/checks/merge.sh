@@ -22,6 +22,10 @@ set -euo pipefail
 describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 # shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
+# lib_forge.sh selects gh or `tyci forge` (GitLab). A copy of this script without it works only for GitHub.
+forge_lib="$(dirname "${BASH_SOURCE[0]}")/lib_forge.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$forge_lib" ]; then . "$forge_lib"; else is_gitlab() { [ "${TYCI_FORGE:-github}" != gitlab ] && return 1; echo "$(basename "$0"): lib_forge.sh is missing" >&2; exit 1; }; github_only() { is_gitlab || :; }; fi
 
 if ! git fetch origin "$TYCI_DEFAULT_BRANCH" >&2; then
     describe fail "git fetch origin $TYCI_DEFAULT_BRANCH failed (see the git output above); nothing was merged" \
@@ -43,36 +47,63 @@ if [ -n "$protected" ]; then
     echo "merge.sh: PR $TYCI_PR changes protected paths: $(paste -sd ' ' - <<<"$protected"); approved by a human, so this step continues" >&2
 fi
 
+# pr_field F prints the field F of the PR (gh pr view, or tyci forge pr-view on GitLab).
+pr_field() {
+    if is_gitlab; then
+        forge_op pr-view "$TYCI_PR" | jq -r ".$1"
+    else
+        gh pr view "$TYCI_PR" -R "$TYCI_REPO" --json "$1" --jq ".$1"
+    fi
+}
+
 # Idempotent after a crash between the merge and the state write: the resumed run
 # finds the PR already merged.
-if [ "$(gh pr view "$TYCI_PR" -R "$TYCI_REPO" --json state --jq .state 2>/dev/null || true)" = MERGED ]; then
+if [ "$(pr_field state 2>/dev/null || true)" = MERGED ]; then
     echo "merge.sh: PR $TYCI_PR is already merged" >&2
     echo merged
     exit 0
 fi
 
-bucket=$(gh pr checks "$TYCI_PR" -R "$TYCI_REPO" --json name,bucket --jq '[.[] | select(.name == "ci-ok")][0].bucket // ""') || bucket=""
+ci_ok='[.[] | select(.name == "ci-ok")][0].bucket // ""'
+if is_gitlab; then
+    # The pipeline of the head commit is the check ci-ok.
+    bucket=$(forge_op pr-checks "$TYCI_PR" | jq -r "$ci_ok") || bucket=""
+else
+    bucket=$(gh pr checks "$TYCI_PR" -R "$TYCI_REPO" --json name,bucket --jq "$ci_ok") || bucket=""
+fi
 # A gh failure (including "no checks reported") gives an empty bucket, which is "missing", as in ci_wait.sh.
 if [ "$bucket" != pass ]; then
     echo "merge.sh: ci-ok is '${bucket:-missing}'" >&2
-    if [ -z "$bucket" ] && [ "$(gh pr view "$TYCI_PR" -R "$TYCI_REPO" --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null || true)" = BEHIND ]; then
+    if [ -z "$bucket" ] && [ "$(pr_field mergeStateStatus 2>/dev/null || true)" = BEHIND ]; then
         describe behind "PR #$TYCI_PR has no ci-ok check and is behind the default branch" \
             "the default branch moved after CI ran" \
             "the run goes to rebase: it merges origin/$TYCI_DEFAULT_BRANCH, pushes and waits for CI again"
         echo behind
         exit 0
     fi
-    describe fail "ci-ok of PR #$TYCI_PR is '${bucket:-missing}', not pass, so merge.sh did not merge" \
-        "CI was started again after the ci step, a new push started a new CI run, or gh failed" \
-        "run 'gh pr checks $TYCI_PR'; if ci-ok is pending or missing, return ok after it passes ('gh pr checks $TYCI_PR --watch'); if it failed, return failed"
+    if is_gitlab; then
+        describe fail "ci-ok (the head pipeline) of merge request !$TYCI_PR is '${bucket:-missing}', not pass, so merge.sh did not merge" \
+            "the pipeline was started again after the ci step, a new push started a new pipeline, or the GitLab API failed" \
+            "run '${TYCI_BIN:-tyci} forge --repo $TYCI_REPO pr-checks $TYCI_PR'; if ci-ok is pending or missing, return ok after it passes; if it failed, return failed"
+    else
+        describe fail "ci-ok of PR #$TYCI_PR is '${bucket:-missing}', not pass, so merge.sh did not merge" \
+            "CI was started again after the ci step, a new push started a new CI run, or gh failed" \
+            "run 'gh pr checks $TYCI_PR'; if ci-ok is pending or missing, return ok after it passes ('gh pr checks $TYCI_PR --watch'); if it failed, return failed"
+    fi
     echo fail
     exit 0
 fi
 
-state=$(gh pr view "$TYCI_PR" -R "$TYCI_REPO" --json mergeStateStatus --jq .mergeStateStatus) || {
-    describe fail "'gh pr view $TYCI_PR --json mergeStateStatus' failed (see the gh output above); nothing was merged" \
-        "no network, gh is not logged in, a rate limit, or a GitHub outage" \
-        "run 'gh auth status' and 'gh pr view $TYCI_PR'; when gh works again, return ok so the step runs again"
+state=$(pr_field mergeStateStatus) || {
+    if is_gitlab; then
+        describe fail "'tyci forge pr-view $TYCI_PR' failed (see the error above); nothing was merged" \
+            "no network, TYCI_GITLAB_TOKEN/GITLAB_TOKEN is missing or not valid, a rate limit, or a GitLab outage" \
+            "check the token and the GitLab API; when it answers, return ok so the step runs again"
+    else
+        describe fail "'gh pr view $TYCI_PR --json mergeStateStatus' failed (see the gh output above); nothing was merged" \
+            "no network, gh is not logged in, a rate limit, or a GitHub outage" \
+            "run 'gh auth status' and 'gh pr view $TYCI_PR'; when gh works again, return ok so the step runs again"
+    fi
     echo fail
     exit 0
 }
@@ -85,7 +116,7 @@ if [ "$state" = BEHIND ]; then
 fi
 
 head=$(git rev-parse HEAD)
-remote_head=$(gh pr view "$TYCI_PR" -R "$TYCI_REPO" --json headRefOid --jq .headRefOid) || remote_head=""
+remote_head=$(pr_field headRefOid) || remote_head=""
 if [ "$head" != "$remote_head" ]; then
     # The PR head branch: open_pr.sh may have continued a PR from another branch (#374).
     pr_branch="${TYCI_BRANCH:-<branch>}"
@@ -97,8 +128,19 @@ if [ "$head" != "$remote_head" ]; then
     exit 0
 fi
 
-if gh pr merge "$TYCI_PR" -R "$TYCI_REPO" --squash --delete-branch --match-head-commit "$head" >&2; then
+if is_gitlab; then
+    # tyci forge pr-merge: squash, delete the branch, only at head $head and only on a passed pipeline.
+    merge=(forge_op pr-merge "$TYCI_PR" "$head")
+else
+    merge=(gh pr merge "$TYCI_PR" -R "$TYCI_REPO" --squash --delete-branch --match-head-commit "$head")
+fi
+if "${merge[@]}" >&2; then
     echo merged
+elif is_gitlab; then
+    describe fail "tyci forge pr-merge $TYCI_PR $head failed (see the error above); nothing was merged" \
+        "the merge request head moved, its head pipeline did not pass, it needs an approval or a rebase, or a temporary GitLab problem" \
+        "open the merge request in GitLab and look at its pipeline and merge status; fix a temporary cause (for example wait and try again) and return ok; else return failed"
+    echo fail
 else
     describe fail "gh pr merge $TYCI_PR --squash failed (see the gh output above)" \
         "the PR head moved, a required check or review is missing, the branch is not up to date, or a temporary GitHub problem" \

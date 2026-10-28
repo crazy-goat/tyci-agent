@@ -160,6 +160,9 @@ func (r *Runner) run(ctx context.Context, st *RunState, again bool) (err error) 
 			}
 			started := time.Now()
 			env := append(buildCheckEnv(st, s, r.RunDir, r.DefaultBranch), "TYCI_ARTIFACT_DIR="+artDir, "TYCI_REVIEW_DIR="+r.reviewDir(st), "TYCI_ANSWER="+r.savedAnswer(st))
+			if r.GitLab {
+				env = append(env, gitlabEnv()...)
+			}
 			key, res, runErr := r.Checks.Run(ctx, s, env, st.Worktree)
 			ended := time.Now()
 			if artDir != "" {

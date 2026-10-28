@@ -18,6 +18,7 @@ var (
 	mu      sync.RWMutex
 	exact   []string
 	pattern = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,})\b|` +
+		`\bglpat-[A-Za-z0-9_\-]{20,}|` +
 		`\bsk-[A-Za-z0-9_\-]{20,}|` +
 		`\bAKIA[0-9A-Z]{16}\b|` +
 		`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)
