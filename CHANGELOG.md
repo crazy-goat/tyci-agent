@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Lua tools: the unsandboxed Lua tools are removed. A Lua tool has no `os.execute`, `io`, `require` or `load`, at load time and in `run`, and a cancel stops a pure-Lua loop. `ctx.run`, `ctx.read` and `ctx.write` go through the `bash`, `read` and `write` tools, so hooks, tool gates and the write freshness guard apply. Scripts see these changes: `ctx.write` fails on an existing file that the script did not read first and no longer creates parent directories; `ctx.run` has the bash timeout of 120 s and the bash output cap; `ctx.read` gives at most 2000 lines or 50 KB; relative paths of all three resolve against the agent's work directory, not the process directory (#210).
 
 ### Fixed
+- Lua tools: a top-level loop stops with a load error after 5s instead of hanging startup or `/reload`. Each call also has a 300s internal limit, even without a caller deadline; earlier deadlines and cancellation still apply (#755).
 - Display: the Runs tab keeps the selection on the same run when runs change state. The cursor no longer moves to another run when a run finishes and the rows reorder (#553).
 - Flow: a retried worker gets the error of the failed step in its task text, under "Run so far". The error is masked and cut to 2000 bytes (#445).
 - CLI: `tyci run` prints the max-iterations warning on stderr, not stdout (#466).
