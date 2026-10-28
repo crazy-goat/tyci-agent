@@ -76,6 +76,53 @@ func TestWorkflowResumeContinuesAPausedRun(t *testing.T) {
 	}
 }
 
+// The run number of the paused run also exists in another repository. A reject
+// of a workflow proposal reads the run of this repository and does not wait.
+func TestWorkflowResumeRejectWithTheSameRunNumberInTwoRepos(t *testing.T) {
+	home := wfHome(t)
+	info := wfRunRepo(t, home)
+	wfUseRepo(t, info)
+	askFlow(t, home)
+	out, _, err := runWorkflowCLI(t, "workflow", "run", "ask-flow", "9", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.TrimPrefix(decodeWorkflowResult(t, out).RunID, "#")
+	// A workflow proposal waits in the paused run.
+	runDir := flow.RunDir(home, info.Name(), id)
+	st, err := flow.Load(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prop := t.TempDir()
+	if err := os.WriteFile(filepath.Join(prop, "proposal.patch"), []byte("--- a\n+++ b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st.Ask.Proposal = prop
+	if err := (&flow.Store{Dir: runDir}).Save(st); err != nil {
+		t.Fatal(err)
+	}
+	other := &flow.RunState{Version: 1, Run: id, Workflow: "ask-flow", Repo: "acme/other", Status: "done"}
+	if err := (&flow.Store{Dir: flow.RunDir(home, "other", id)}).Save(other); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	out, _, err = runWorkflowCLI(t, "workflow", "resume", id, "reject", "--json")
+	if err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if r := decodeWorkflowResult(t, out); r.Status != "paused" {
+		t.Fatalf("reject %+v", r)
+	}
+	if d := time.Since(start); d > 30*time.Second {
+		t.Fatalf("reject waited %s for a run end", d)
+	}
+	if _, _, err := runWorkflowCLI(t, "workflow", "resume", "99", "go"); err == nil || !strings.Contains(err.Error(), "run #99 of acme/demo") {
+		t.Fatalf("resume of a missing run: %v", err)
+	}
+}
+
 // stubBackend answers runs.get with a fixed state.
 type stubBackend struct{ st *flow.RunState }
 

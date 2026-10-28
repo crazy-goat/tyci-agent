@@ -300,7 +300,17 @@ A run has a number that counts up for each repository: `#1`, `#2`, and so on. Ru
 
 - The `issue` and `ci_failure` triggers watch only the repositories in `daemon.repos`. Today the daemon watches only the repository of `--dir`, and only if `daemon.repos` lists it. Without repositories, the daemon runs the cron trigger only.
 - The `ci_failure` trigger reads the CI workflow `TYCI_CI_WORKFLOW`. The default is `tests.yaml`, the same as `ci_failure.sh`. A cancelled, skipped or neutral CI run does not count.
-- The daemon keeps no database. A run file in `~/.tyci/runs/` stops a second run for the same issue. For `ci_failure`, a `fix-ci` run that started after the red CI run stops a second run. This is also true after a restart.
+- The daemon keeps no database. A run file in `~/.tyci/runs/` stops a second run for the same issue. This is also true after a restart.
+- A `fix-ci` run that the daemon starts keeps the head SHA of the red CI run in its run file (`trigger`). The daemon starts only one `fix-ci` run for a SHA, also when CI runs again on the same SHA and also after a restart.
+- The daemon does not start a `fix-ci` run in these cases:
+  - A `fix-ci` run of the repository is running or paused.
+  - The newest `fix-ci` run since the last green CI run failed or was stopped.
+  - 3 `fix-ci` runs started since the last green CI run.
+
+  "The last green CI run" is the last green CI run that the daemon saw, or the daemon start.
+
+  A green CI run on the default branch, or a daemon restart, ends this limit. The daemon writes one log line when the limit stops a `fix-ci` run.
+- In each issue comment, the daemon replaces token-like text (for example `ghp_...` or `Bearer ...`) with `***`.
 - The daemon starts a maximum of `daemon.workers` runs at the same time.
 - If a run stops at an ask state, the run stays paused. No timeout ends it. The daemon writes one comment on the issue. Then a human continues the run with `tyci workflow resume <run-id> <answer>`.
 - If a run fails, the daemon writes one comment on the issue and does not start the run again. A `fix-ci` run has no issue, so the daemon only writes its log.

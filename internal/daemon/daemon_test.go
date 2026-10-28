@@ -52,6 +52,9 @@ func (f *fakeRuns) Start(_ context.Context, t Trigger) (string, <-chan Result, e
 		}
 	}
 	st := &flow.RunState{Version: 1, Run: id, Workflow: t.Workflow, Repo: t.Repo, Issue: t.Issue, Status: "running", StartedAt: time.Now()}
+	if t.Kind == KindCIFailure {
+		st.Trigger = t.Key // like ManagerRuns
+	}
 	store := flow.Store{Dir: flow.RunDir(f.home, "r", id)}
 	if err := store.Save(st); err != nil {
 		return "", nil, err
@@ -289,22 +292,78 @@ func TestDaemonCIGreenStartsNothing(t *testing.T) {
 	}
 }
 
+// redCI sets a red newest CI run of main with sha, created now.
+func (h *harness) redCI(id int64, sha string) {
+	h.ci.SetRun("tests.yaml", "main", forge.CIRun{ID: id, SHA: sha, Failed: true, CreatedAt: time.Now()})
+}
+
+func (h *harness) greenCI(id int64, sha string) {
+	h.ci.SetRun("tests.yaml", "main", forge.CIRun{ID: id, SHA: sha, CreatedAt: time.Now()})
+}
+
+// waitCIPolls waits for n more polls. The issue poller has the same interval
+// as the CI poller, so its count tells that the CI poller ran too.
+func (h *harness) waitCIPolls(t *testing.T, n int) {
+	t.Helper()
+	waitPolls(t, h.forge, n)
+	time.Sleep(3 * h.cfg.PollInterval)
+}
+
 func TestDaemonCIFailureSameSHANotRepeated(t *testing.T) {
 	h := newHarness(t, newForge())
-	h.cfg.Issue = false
-	h.runs.result = Result{Status: "failed", Reason: "no fix"}
-	red := time.Now().Add(-time.Hour)
-	h.ci.SetRun("tests.yaml", "main", forge.CIRun{ID: 1, SHA: "abc", Failed: true, CreatedAt: red})
+	h.redCI(1, "abc")
 	h.start(t)
 	waitFor(t, "first fix-ci", func() bool { return len(h.runs.starts()) == 1 })
-	// The fix-ci run failed. The same red run must not start another one.
-	time.Sleep(100 * time.Millisecond)
+	// A second red CI run on the same SHA (a re-run, a schedule), created
+	// after the fix-ci run started: the SHA is handled.
+	h.redCI(2, "abc")
+	h.waitCIPolls(t, 3)
 	if n := len(h.runs.starts()); n != 1 {
-		t.Fatalf("%d starts for one red run", n)
+		t.Fatalf("%d fix-ci starts for one SHA", n)
 	}
-	// A new red run, after the fix-ci run, is a new failure.
-	h.ci.SetRun("tests.yaml", "main", forge.CIRun{ID: 2, SHA: "def", Failed: true, CreatedAt: time.Now().Add(time.Second)})
+	// A red run on a new SHA is a new failure.
+	h.redCI(3, "def")
 	waitFor(t, "second fix-ci", func() bool { return len(h.runs.starts()) == 2 })
+	if got := h.runs.starts()[1].Key; got != "ci_failure:o/r:main@def" {
+		t.Fatalf("second key %q", got)
+	}
+}
+
+func TestDaemonFixCIChainStopsAtTheLimit(t *testing.T) {
+	h := newHarness(t, newForge())
+	h.start(t)
+	for i := 1; i <= MaxFixCIRuns; i++ {
+		h.redCI(int64(i), fmt.Sprintf("sha%d", i))
+		waitFor(t, "fix-ci start", func() bool { return len(h.runs.starts()) == i })
+	}
+	// Every fix-ci run was done, but the branch is red again on a new SHA.
+	h.redCI(9, "sha9")
+	h.waitCIPolls(t, 3)
+	if n := len(h.runs.starts()); n != MaxFixCIRuns {
+		t.Fatalf("%d fix-ci starts, want the limit %d", n, MaxFixCIRuns)
+	}
+	// A green CI run ends the chain.
+	h.greenCI(10, "sha10")
+	h.waitCIPolls(t, 3)
+	h.redCI(11, "sha11")
+	waitFor(t, "fix-ci after green", func() bool { return len(h.runs.starts()) == MaxFixCIRuns+1 })
+}
+
+func TestDaemonFailedFixCIStopsTheChain(t *testing.T) {
+	h := newHarness(t, newForge())
+	h.runs.result = Result{Status: "failed", Reason: "no fix"}
+	h.redCI(1, "abc")
+	h.start(t)
+	waitFor(t, "first fix-ci", func() bool { return len(h.runs.starts()) == 1 })
+	h.redCI(2, "def")
+	h.waitCIPolls(t, 3)
+	if n := len(h.runs.starts()); n != 1 {
+		t.Fatalf("%d fix-ci starts after a failed fix-ci", n)
+	}
+	h.greenCI(3, "ghi")
+	h.waitCIPolls(t, 3)
+	h.redCI(4, "jkl")
+	waitFor(t, "fix-ci after green", func() bool { return len(h.runs.starts()) == 2 })
 }
 
 func TestDaemonCronTickRunsDueJob(t *testing.T) {
@@ -357,7 +416,7 @@ func TestDaemonSecondInstanceRefused(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := New(h.cfg).Run(ctx)
-	if !errors.Is(err, ErrRunning) || !strings.Contains(err.Error(), "pid ") {
+	if !errors.Is(err, ErrRunning) || !strings.Contains(err.Error(), fmt.Sprintf("(pid %d)", os.Getpid())) {
 		t.Fatalf("second daemon: %v", err)
 	}
 	// The first daemon still answers.
@@ -507,6 +566,16 @@ func TestDaemonFailedRunGetsOneComment(t *testing.T) {
 	}
 	if n := len(h.runs.starts()); n != 1 {
 		t.Fatalf("%d starts of a failed issue, want 1", n)
+	}
+}
+
+func TestDaemonCommentMasksSecrets(t *testing.T) {
+	h := newHarness(t, newForge(accepted(5)))
+	h.runs.result = Result{Status: "failed", Reason: "push to https://x:ghp_Secret123@github.com/o/r failed"}
+	h.start(t)
+	waitFor(t, "comment", func() bool { return len(h.ci.Comments()) == 1 })
+	if b := h.ci.Comments()[0].Body; strings.Contains(b, "ghp_Secret123") || !strings.Contains(b, "***") {
+		t.Fatalf("comment %q", b)
 	}
 }
 

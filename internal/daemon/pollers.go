@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/forge"
@@ -69,32 +70,76 @@ func (p *IssuePoller) Poll(ctx context.Context) ([]Trigger, error) {
 	return out, permErr
 }
 
+// MaxFixCIRuns is the most fix-ci runs that the daemon starts between two
+// green CI runs that it sees.
+const MaxFixCIRuns = 3
+
 // CIPoller gives a fix-ci trigger when the newest completed CI run of the
-// default branch is red and no fix-ci run started after that CI run.
+// default branch is red. It gives no trigger when:
+//   - a fix-ci run has the same trigger key (the same head SHA), or
+//   - a fix-ci run is running or paused, or
+//   - since the last green CI run that the poller saw (or since the poller
+//     started), MaxFixCIRuns fix-ci runs started or the newest one failed.
+//
+// Poll is not safe for concurrent use; one poll loop calls it.
 type CIPoller struct {
 	Repo Repo
 	Home string
+	Now  func() time.Time
+	Logf func(string, ...any)
+
+	lastGreen time.Time
+	blocked   string // the key that the last "no fix-ci" log line was for
 }
 
 // Poll implements Poller.
 func (p *CIPoller) Poll(ctx context.Context) ([]Trigger, error) {
+	if p.lastGreen.IsZero() {
+		p.lastGreen = p.Now()
+	}
 	ci, ok, err := p.Repo.CI.LatestCI(ctx, p.Repo.CIWorkflow, p.Repo.DefaultBranch)
-	if err != nil || !ok || !ci.Failed {
+	if err != nil || !ok {
 		return nil, err
 	}
+	if !ci.Failed {
+		p.lastGreen = p.Now()
+		return nil, nil
+	}
+	key := fmt.Sprintf("%s:%s:%s@%s", KindCIFailure, p.Repo.Name, p.Repo.DefaultBranch, ci.SHA)
+	var (
+		chain  int
+		newest *flow.RunState
+	)
 	for _, st := range repoRuns(p.Home, p.Repo.Name) {
 		if st.Workflow != FixCIWorkflow {
 			continue
 		}
-		// An open fix-ci run, or one that started after the red CI run, covers it.
-		if st.Status == "running" || st.Status == "paused" || !st.StartedAt.Before(ci.CreatedAt) {
+		if st.Trigger == key || st.Status == "running" || st.Status == "paused" {
 			return nil, nil
 		}
+		if st.StartedAt.Before(p.lastGreen) {
+			continue
+		}
+		chain++
+		if newest == nil || st.StartedAt.After(newest.StartedAt) {
+			newest = st
+		}
 	}
-	return []Trigger{{
-		Kind: KindCIFailure, Repo: p.Repo.Name, Workflow: FixCIWorkflow,
-		Key: fmt.Sprintf("%s:%s:%s@%s", KindCIFailure, p.Repo.Name, p.Repo.DefaultBranch, ci.SHA),
-	}}, nil
+	why := ""
+	switch {
+	case chain >= MaxFixCIRuns:
+		why = fmt.Sprintf("%d fix-ci runs started since the last green CI run", chain)
+	case newest != nil && (newest.Status == "failed" || newest.Status == flow.StatusStopped):
+		why = fmt.Sprintf("the last fix-ci run %s is %s", flow.ShowRunID(newest.Run), newest.Status)
+	}
+	if why != "" {
+		if p.blocked != key && p.Logf != nil {
+			p.Logf("%s: no new fix-ci: %s; fix the default branch by hand (a green CI run or a daemon restart lets the daemon start fix-ci again)", key, why)
+		}
+		p.blocked = key
+		return nil, nil
+	}
+	return []Trigger{{Kind: KindCIFailure, Repo: p.Repo.Name, Workflow: FixCIWorkflow, Key: key}}, nil
 }
 
 // cronPoller runs the cron tick in Poll. The tick starts the due jobs itself,

@@ -35,7 +35,7 @@ func (r *ManagerRuns) event(ev flow.RunEvent) {
 	res := Result{Status: ev.Status, Reason: ev.Reason, PR: ev.PR}
 	if ev.Status == "paused" {
 		// The event has no ask text; the run file has it.
-		if st, _, err := flow.FindRun(r.home, ev.Run); err == nil && st.Ask != nil {
+		if st, err := flow.Load(flow.RunDir(r.home, flow.RepoInfo{Repo: r.repo}.Name(), ev.Run)); err == nil && st.Ask != nil {
 			res.Reason = st.Ask.Message
 		}
 	}
@@ -59,7 +59,7 @@ func (r *ManagerRuns) Start(ctx context.Context, t Trigger) (string, <-chan Resu
 	case KindIssue:
 		id, _, err = r.m.StartIssue(ctx, t.Workflow, t.Issue)
 	case KindCIFailure:
-		id, _, err = r.m.Start(ctx, flow.StartRequest{Workflow: t.Workflow})
+		id, _, err = r.m.Start(ctx, flow.StartRequest{Workflow: t.Workflow, Trigger: t.Key})
 	case KindResume:
 		id, err = t.Run, r.m.Resume(t.Run, "resume")
 	default:

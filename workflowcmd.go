@@ -163,11 +163,18 @@ paused. Exit code 1 means failed, a bad answer, or a run that is not paused.`,
 			return fail(cmd, workflowResumeJSON, err)
 		}
 		noteUntrusted(cmd, info)
-		run := strings.TrimPrefix(args[0], "#")
+		run, ok := flow.ParseRunID(args[0])
+		if !ok {
+			return fail(cmd, workflowResumeJSON, fmt.Errorf("bad run id %q", args[0]))
+		}
+		// The run of this repository: a run number exists in every repository.
+		st, err := flow.Load(flow.RunDir(info.Home, info.Name(), run))
+		if err != nil {
+			return fail(cmd, workflowResumeJSON, fmt.Errorf("run %s of %s: %w", flow.ShowRunID(run), info.Repo, err))
+		}
 		// An apply or reject of a workflow proposal keeps the run paused: there
 		// is no run end to wait for.
-		st, _, _ := flow.FindRun(info.Home, run)
-		wait := st == nil || st.Ask == nil || st.Ask.Proposal == "" || (args[1] != "apply" && args[1] != "reject")
+		wait := st.Ask == nil || st.Ask.Proposal == "" || (args[1] != "apply" && args[1] != "reject")
 		return runAndReport(cmd, workflowResumeJSON, info, func(_ context.Context, m *flow.Manager) (string, bool, error) {
 			return run, wait, m.Resume(run, args[1])
 		})

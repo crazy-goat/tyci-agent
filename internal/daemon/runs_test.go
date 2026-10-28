@@ -28,18 +28,30 @@ func demoWorkflow() *flow.Workflow {
 	}}
 }
 
+// workflowNamed is demoWorkflow; fix-ci has no issue param.
+func workflowNamed(name string) *flow.Workflow {
+	wf := demoWorkflow()
+	if name == FixCIWorkflow {
+		wf.Name, wf.Params = name, nil
+	}
+	return wf
+}
+
 func newManager(t *testing.T, home, key string) *flow.Manager {
 	t.Helper()
 	info := flow.RepoInfo{Home: home, Root: home, Repo: repoName, DefaultBranch: "main"}
 	n := 0
 	return &flow.Manager{
 		Info:     func() (flow.RepoInfo, error) { return info, nil },
-		Workflow: func(flow.RepoInfo, string) (*flow.Workflow, error) { return demoWorkflow(), nil },
+		Workflow: func(_ flow.RepoInfo, name string) (*flow.Workflow, error) { return workflowNamed(name), nil },
 		Prepare: func(_ context.Context, _ flow.RepoInfo, req flow.StartRequest) (*flow.RunState, *flow.Workflow, []string, error) {
 			n++
-			issue, _ := strconv.Atoi(req.Params[0])
-			st := &flow.RunState{Version: 1, Run: strconv.Itoa(n), Workflow: req.Workflow, Repo: repoName, Issue: issue, Status: "running", Current: "c", Worktree: home, Visits: map[string]int{}}
-			return st, demoWorkflow(), nil, (&flow.Store{Dir: flow.RunDir(home, "r", st.Run)}).Save(st)
+			issue := 0
+			if len(req.Params) > 0 {
+				issue, _ = strconv.Atoi(req.Params[0])
+			}
+			st := &flow.RunState{Version: 1, Run: strconv.Itoa(n), Workflow: req.Workflow, Repo: repoName, Issue: issue, Trigger: req.Trigger, Status: "running", Current: "c", Worktree: home, Visits: map[string]int{}}
+			return st, workflowNamed(req.Workflow), nil, (&flow.Store{Dir: flow.RunDir(home, "r", st.Run)}).Save(st)
 		},
 		NewRunner: func(_ flow.RepoInfo, wf *flow.Workflow, st *flow.RunState) *flow.Runner {
 			dir := flow.RunDir(home, "r", st.Run)
@@ -102,5 +114,39 @@ func TestManagerRunsContinuesAnInterruptedRun(t *testing.T) {
 	}
 	if res := result(t, done); res.Status != "done" {
 		t.Fatalf("result %+v", res)
+	}
+}
+
+func TestManagerRunsFixCIRunKeepsTheTriggerKey(t *testing.T) {
+	home := t.TempDir()
+	r := NewManagerRuns(newManager(t, home, "ok"), home, repoName)
+	key := "ci_failure:o/r:main@abc"
+	id, done, err := r.Start(context.Background(), Trigger{Kind: KindCIFailure, Repo: repoName, Workflow: FixCIWorkflow, Key: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result(t, done)
+	st, err := flow.Load(flow.RunDir(home, "r", id))
+	if err != nil || st.Trigger != key {
+		t.Fatalf("run file trigger %q, want %q (%v)", st.Trigger, key, err)
+	}
+}
+
+func TestManagerRunsAskOfThisRepoWhenAnotherRepoHasTheSameRunNumber(t *testing.T) {
+	home := t.TempDir()
+	// Run #1 of another repository, paused with another ask.
+	other := &flow.RunState{Version: 1, Run: "1", Workflow: "demo", Repo: "x/other", Status: "paused", Ask: &flow.Ask{Message: "other repo ask"}}
+	if err := (&flow.Store{Dir: flow.RunDir(home, "other", "1")}).Save(other); err != nil {
+		t.Fatal(err)
+	}
+	r := NewManagerRuns(newManager(t, home, "bad"), home, repoName)
+	id, done, err := r.Start(context.Background(), Trigger{Kind: KindIssue, Repo: repoName, Workflow: "demo", Issue: 6})
+	if err != nil || id != "1" {
+		t.Fatalf("start %q %v", id, err)
+	}
+	res := result(t, done)
+	st, err := flow.Load(flow.RunDir(home, "r", id))
+	if err != nil || st.Ask == nil || res.Reason != st.Ask.Message {
+		t.Fatalf("result %+v, want the ask of this repo's run file (%v)", res, err)
 	}
 }

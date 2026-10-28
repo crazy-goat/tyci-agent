@@ -239,7 +239,7 @@ func (d *Daemon) pollers() map[string]Poller {
 			ps[KindIssue+" "+r.Name] = &IssuePoller{Repo: r, Home: d.cfg.Home}
 		}
 		if d.cfg.CIFailure && r.CI != nil {
-			ps[KindCIFailure+" "+r.Name] = &CIPoller{Repo: r, Home: d.cfg.Home}
+			ps[KindCIFailure+" "+r.Name] = &CIPoller{Repo: r, Home: d.cfg.Home, Now: d.cfg.Now, Logf: d.Logf}
 		}
 	}
 	if d.cfg.Cron != nil {
@@ -370,12 +370,14 @@ func (d *Daemon) forget(key, id string) {
 	d.mu.Unlock()
 }
 
-// comment posts body on issue, or only logs when that is not possible.
+// comment posts body, with the secrets masked, on issue, or only logs when that is not possible.
 func (d *Daemon) comment(ctx context.Context, r Repo, issue int, body string) {
 	if issue <= 0 || r.Comments == nil {
 		return
 	}
-	if err := r.Comments.Comment(ctx, issue, body); err != nil {
+	// The run texts can hold a token (an error with a push URL); the issue can
+	// be public.
+	if err := r.Comments.Comment(ctx, issue, flow.MaskSecrets(body)); err != nil {
 		d.Logf("%s: comment on #%d failed: %v", r.Name, issue, err)
 	}
 }
