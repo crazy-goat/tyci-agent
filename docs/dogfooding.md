@@ -284,10 +284,13 @@ Every agent step (worker, review, fixer, findings, and oracle in a `recover` ste
 `report.md` in its artifact dir before it ends: what it did, the result, what is left. The
 roadmap run has no artifact dir and writes no report.
 
-- The task text of every agent has a "Run so far" section: the steps since the last visit of
-  its state (all steps on the first visit), each with `seq`, state, key and the absolute paths
-  of its artifact files, plus the agent's own artifact dir. The agent reads the files with the
-  `read` tool.
+- The task text of every agent has a "Run so far" section. It lists the steps since the last
+  visit of its state (all steps on the first visit). Each line has `seq`, state, key and the
+  absolute paths of its artifact files. The section also gives the agent's own artifact dir.
+  The agent reads the files with the `read` tool.
+- If the last visit of the state failed, that visit is listed too. A failed step has an
+  `error:` line under its line. The error is masked and cut to 2000 bytes, so a retried worker
+  learns why its step failed.
 - After the agent ends, the runner checks that `report.md` exists and is not empty. If not, it
   sends one message in the same session: "You did not leave your artifact at <path>. Write it
   now." After 2 reminders without a report, the run pauses in `ask` with the reason
