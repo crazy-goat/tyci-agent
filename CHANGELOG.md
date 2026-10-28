@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: start-up does not pause a run that another tyci process resumes at the same time (#432).
 - Flow: the `milestone-close` apply step joins the doubtful issue numbers after it converts them to text, so jq 1.5 no longer fails and exits without a key (#741).
 - Orchestrator: when `milestone-close` does not start, the notice says how to install it, with `tyci workflow init milestone-close`. The hint is added after the cut error text, so a long error does not hide it (#741).
+- Agent: a job or run notice no longer resets the end-of-turn job reminder budget. Only a real user message resets it. The todo reminder budget follows the same rule (#484).
 
 ## [0.10.0] - 2026-10-14
 

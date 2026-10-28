@@ -482,6 +482,9 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 		// next call — including in the middle of a tool-call loop —
 		// rather than waiting for the entire turn to finish.
 		drained := false
+		// human is true when a drained line is a real user message, not a
+		// notice from a job or a run.
+		human := false
 		// Do not drain after the final allowed iteration: there is no next
 		// runOnce to deliver those messages to. A completion notice must remain
 		// queued for the next turn (or an idle wakeup), rather than being
@@ -489,7 +492,6 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 		canDrain := cfg.MaxIterations <= 0 || iter+1 < cfg.MaxIterations
 		if canDrain && cfg.NextMessages != nil {
 			if pending := cfg.NextMessages(); len(pending) > 0 {
-				human := false
 				for _, line := range pending {
 					*msgs = append(*msgs, connector.Message{
 						Role:    "user",
@@ -537,7 +539,9 @@ func Run(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]connecto
 		}
 		// A real user follow-up starts a fresh sub-task; reset the reminder
 		// budget so we're willing to nag again about whatever it leaves open.
-		if drained {
+		// A notice from a job or a run does not count: it arrives on its own,
+		// and resetting here would let a notice on every turn nag without limit.
+		if human {
 			todoReminders = 0
 			jobReminders = 0
 		}
