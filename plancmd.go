@@ -51,7 +51,27 @@ type plannerEntry struct {
 var (
 	plannerSessionsMu sync.Mutex
 	plannerSessions   = map[string]plannerEntry{}
+	// plannerTurns maps the id of a resumed planner turn that runs now to the
+	// id of its planner job. A running turn has no resumable entry yet (that
+	// is written when its run ends), so this map is what finds it. Guarded by
+	// plannerSessionsMu.
+	plannerTurns = map[string]string{}
 )
+
+// registerPlannerTurn records that the running job jobID continues the planner
+// job root.
+func registerPlannerTurn(jobID, root string) {
+	plannerSessionsMu.Lock()
+	defer plannerSessionsMu.Unlock()
+	plannerTurns[jobID] = root
+}
+
+// unregisterPlannerTurn forgets a turn that ended.
+func unregisterPlannerTurn(jobID string) {
+	plannerSessionsMu.Lock()
+	defer plannerSessionsMu.Unlock()
+	delete(plannerTurns, jobID)
+}
 
 // registerPlannerSession keeps the session of the planner job jobID open.
 func registerPlannerSession(jobID string, e plannerEntry) {
@@ -60,17 +80,29 @@ func registerPlannerSession(jobID string, e plannerEntry) {
 	plannerSessions[jobID] = e
 }
 
-// plannerEntryOf returns the open planner session of jobID or of a job in its
-// conversation chain, so a resumed planner gets the worktree of its session.
-func plannerEntryOf(jobID string) (plannerEntry, bool) {
+// plannerOwnerOf returns the open planner session of jobID, the id of its
+// planner job, and true. The job is the planner job itself, a running resumed
+// turn, or a finished job of the conversation chain of a planner.
+func plannerOwnerOf(jobID string) (plannerEntry, string, bool) {
 	ids := chainOf(jobID)
 	plannerSessionsMu.Lock()
 	defer plannerSessionsMu.Unlock()
+	if root, ok := plannerTurns[jobID]; ok {
+		if e, ok := plannerSessions[root]; ok {
+			return e, root, true
+		}
+	}
 	root, ok := ownerOf(ids, plannerSessions)
 	if !ok {
-		return plannerEntry{}, false
+		return plannerEntry{}, "", false
 	}
-	return plannerSessions[root], true
+	return plannerSessions[root], root, true
+}
+
+// plannerEntryOf is plannerOwnerOf without the id of the planner job.
+func plannerEntryOf(jobID string) (plannerEntry, bool) {
+	e, _, ok := plannerOwnerOf(jobID)
+	return e, ok
 }
 
 // chainOf returns the job ids of the conversation chain of jobID.
@@ -156,22 +188,31 @@ func startPlanner(ctx context.Context, topic string) error {
 }
 
 // closePlannerSessions ends every open planner session. It runs when tyci
-// exits. Before a session is closed, every live job of its conversation chain
-// is cancelled and waited for, so a resumed turn that still writes stops
-// first. A clean worktree is removed. A kept worktree gets a notice with its
-// path on w. A close error is printed on w too.
+// exits. Before a session is closed, every live job that belongs to it is
+// cancelled and waited for: its planner job, a running resumed turn, and a
+// job of its conversation chain. So a turn that still writes stops first. A
+// clean worktree is removed. A kept worktree gets a notice with its path on w.
+// A close error is printed on w too.
 func closePlannerSessions(w io.Writer) {
 	plannerSessionsMu.Lock()
 	open := plannerSessions
+	turns := make(map[string]string, len(plannerTurns))
+	for id, root := range plannerTurns {
+		turns[id] = root
+	}
 	plannerSessions = map[string]plannerEntry{}
 	plannerSessionsMu.Unlock()
 
-	live := map[string][]string{} // planner job id -> live jobs of its chain
+	live := map[string][]string{} // planner job id -> live jobs of its sessions
 	for _, job := range JobRegistry.List() {
 		if !JobRegistry.IsLive(job.ID) {
 			continue
 		}
-		if root, ok := ownerOf(chainOf(job.ID), open); ok {
+		root, ok := turns[job.ID]
+		if !ok {
+			root, ok = ownerOf(chainOf(job.ID), open)
+		}
+		if ok {
 			live[root] = append(live[root], job.ID)
 		}
 	}

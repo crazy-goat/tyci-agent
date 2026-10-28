@@ -53,9 +53,13 @@ func (agentViewInput) ResumeCheck(jobID string) (tokens int, usd float64, priced
 // agent jobID with text, and returns the id of the new job. The new job is a
 // side conversation: nothing waits for it and its reply goes nowhere else.
 func (agentViewInput) Resume(jobID, text string) (string, error) {
-	ctx, err := agentResumeContext(jobID)
+	workdir, err := agentRunWorkdir(jobID)
 	if err != nil {
 		return "", err
+	}
+	ctx := context.Background()
+	if workdir != "" {
+		ctx = tools.WithWorkdir(ctx, workdir)
 	}
 	h, err := jobResumerAdapter{reg: JobRegistry}.Resume(ctx, jobID, text)
 	if err != nil {
@@ -67,29 +71,12 @@ func (agentViewInput) Resume(jobID, text string) (string, error) {
 // agentRunInfo gives the repository info for the run lookup. Tests replace it.
 var agentRunInfo = func() (flow.RepoInfo, error) { return workflowManager.Info() }
 
-// agentResumeContext returns the context of a resume of the finished agent
-// jobID. A resumed planner works in the worktree of its session, under the
-// planner policy, so it never runs in the process directory.
-func agentResumeContext(jobID string) (context.Context, error) {
-	workdir, err := agentRunWorkdir(jobID)
-	if err != nil {
-		return nil, err
-	}
-	ctx := context.Background()
-	if workdir != "" {
-		ctx = tools.WithWorkdir(ctx, workdir)
-	}
-	if e, ok := plannerEntryOf(jobID); ok {
-		ctx = tools.WithPolicy(ctx, e.policy)
-	}
-	return ctx, nil
-}
-
 // agentRunWorkdir refuses a resume of an agent that belongs to a workflow run
 // which is not done or paused. It returns the worktree of that run, so the
 // resumed agent works in the same files. A planner job, or a job of its
 // conversation chain, returns the worktree of its planner session (see
-// plancmd.go). An agent of no run returns "". A resumed job belongs to the
+// plancmd.go; jobResumerAdapter.Resume sets the planner policy). An agent of
+// no run returns "". A resumed job belongs to the
 // run of the agent it continues (see runIDsOf). The worktree of a merged or
 // skipped run is removed; a resume then would work in the main checkout, so
 // it is refused too.

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -17,11 +16,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crazy-goat/tyci-agent/agent"
+	"github.com/crazy-goat/tyci-agent/connector"
+	"github.com/crazy-goat/tyci-agent/connector/connectortest"
 	"github.com/crazy-goat/tyci-agent/display"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
+	"github.com/crazy-goat/tyci-agent/internal/hooks"
 	"github.com/crazy-goat/tyci-agent/internal/planner"
 	"github.com/crazy-goat/tyci-agent/jobs"
+	"github.com/crazy-goat/tyci-agent/stream"
 	"github.com/crazy-goat/tyci-agent/tools"
 )
 
@@ -315,24 +319,11 @@ func TestPlanCommand_TakesNoWorkerSlot(t *testing.T) {
 // commitIn adds a file with a commit in dir, so the worktree counts as changed.
 func commitIn(t *testing.T, dir string) {
 	t.Helper()
-	if err := commitInErr(dir); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("plan"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// commitInErr is commitIn for a goroutine, which must not call t.Fatal.
-func commitInErr(dir string) error {
-	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("plan"), 0o644); err != nil {
-		return err
-	}
-	for _, args := range [][]string{{"add", "plan.md"}, {"commit", "-qm", "plan"}} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("git %v: %v: %s", args, err, out)
-		}
-	}
-	return nil
+	planGit(t, dir, "add", "plan.md")
+	planGit(t, dir, "commit", "-qm", "plan")
 }
 
 // openPlannerSession opens a real planner session in work and keeps it under
@@ -378,47 +369,145 @@ func TestClosePlannerSessions_CleanRemovedKeptHasNotice(t *testing.T) {
 	}
 }
 
+// resumePlannerTurn stashes the first turn of the planner root, as its run
+// does when it ends, and resumes it through the agent view. It returns the id
+// of the new turn. The turn is cancelled at the end of the test, if it runs.
+func resumePlannerTurn(t *testing.T, root string, fake *connectortest.Fake, text string) string {
+	t.Helper()
+	stashResumable(root, resumableEntry{
+		msgs: []connector.Message{
+			{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "first"}}},
+		},
+		mc:          fake,
+		cfg:         agent.Config{MaxRetries: 1},
+		todoAgentID: root,
+	})
+	id, err := agentViewInput{}.Resume(root, text)
+	if err != nil {
+		t.Fatalf("resume %s: %v", root, err)
+	}
+	t.Cleanup(func() { JobRegistry.Cancel(id) })
+	return id
+}
+
+// waitForCalls waits until the fake model got its first request, so the turn
+// is live.
+func waitForCalls(t *testing.T, fake *connectortest.Fake) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for fake.Calls() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the resumed turn never called the model")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestClosePlannerSessions_CancelsAndWaitsForResumedTurn(t *testing.T) {
 	_, work := newPlanRepo(t)
 	withTestWiring(t)
 	resetPlannerSessions(t)
-
+	resetResumableForTest(t)
 	s := openPlannerSession(t, work, "planner-job")
-	stopped := make(chan struct{})
-	var writeErr error
-	// A resumed turn that runs until it is cancelled, then writes once more.
-	// The write must land before Close decides whether the worktree is kept.
-	job := JobRegistry.Start(context.Background(), "resumed turn", jobs.KindSubagent, "", func(ctx context.Context, _ string) (string, bool, error) {
-		defer close(stopped)
-		<-ctx.Done()
-		writeErr = commitInErr(s.Worktree)
-		return "", false, ctx.Err()
-	})
-	resumableMu.Lock()
-	resumable[job.ID] = resumableEntry{chain: []string{"planner-job", job.ID}}
-	resumableMu.Unlock()
-	t.Cleanup(func() {
-		resumableMu.Lock()
-		delete(resumable, job.ID)
-		resumableMu.Unlock()
-	})
+
+	// The turn blocks until it is cancelled, so it is still running at exit.
+	fake := &connectortest.Fake{BlockUntilCancel: true}
+	id := resumePlannerTurn(t, "planner-job", fake, "more")
+	waitForCalls(t, fake)
 
 	var out bytes.Buffer
 	closePlannerSessions(&out)
 
-	select {
-	case <-stopped:
-	default:
-		t.Fatal("the resumed turn was not stopped before Close")
+	if job, ok := JobRegistry.Get(id); !ok || job.Status == jobs.StatusRunning {
+		t.Fatalf("resumed turn %s still runs after its session was closed", id)
 	}
-	if writeErr != nil {
-		t.Fatalf("write of the resumed turn: %v", writeErr)
+	if _, err := os.Stat(s.Worktree); !os.IsNotExist(err) {
+		t.Fatalf("clean worktree %s was not removed after the turn stopped (err = %v)", s.Worktree, err)
 	}
-	if _, err := os.Stat(s.Worktree); err != nil {
-		t.Fatalf("worktree removed under the resumed turn: %v", err)
+}
+
+func TestResumedPlannerTurn_RunsInItsWorktreeAndChain(t *testing.T) {
+	_, work := newPlanRepo(t)
+	withTestWiring(t)
+	resetPlannerSessions(t)
+	resetResumableForTest(t)
+	s := openPlannerSession(t, work, "planner-job")
+
+	fake := connectortest.Text("answer")
+	first := resumePlannerTurn(t, "planner-job", fake, "more")
+	if _, ok := JobRegistry.Wait(context.Background(), first, 10*time.Second); !ok {
+		t.Fatal("the resumed turn never ended")
 	}
-	if !strings.Contains(out.String(), "planner session planner-job kept") {
-		t.Fatalf("output = %q, want the kept notice", out.String())
+	for _, id := range []string{"planner-job", first} {
+		got, err := agentRunWorkdir(id)
+		if err != nil || got != s.Worktree {
+			t.Fatalf("agentRunWorkdir(%s) = %q, %v; want %q", id, got, err, s.Worktree)
+		}
+	}
+}
+
+// TestResumeTool_PlannerTurnRunsInItsWorktree checks the chat tool "resume":
+// it calls the same resumer as the agent view, with no worktree in its
+// context. A planner turn it starts must write in the planner worktree.
+func TestResumeTool_PlannerTurnRunsInItsWorktree(t *testing.T) {
+	_, work := newPlanRepo(t)
+	reg, _ := withTestWiring(t)
+	resetPlannerSessions(t)
+	resetResumableForTest(t)
+	s := openPlannerSession(t, work, "planner-job")
+	// The hook registry is process-wide. A test that loads global hooks leaves
+	// them set, and a pre_tool hook would block the write. So none run here.
+	t.Cleanup(hooks.SetForTesting(nil))
+	tools.SetJobResumer(jobResumerAdapter{reg: reg})
+	t.Cleanup(func() { tools.SetJobResumer(nil) })
+
+	const file = "tool-resume-note.txt"
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(filepath.Join(cwd, file)) })
+
+	const task = "write the note"
+	fake := &connectortest.Fake{Script: func(turn int, _ connector.Request) []stream.Event {
+		if turn == 0 {
+			return []stream.Event{
+				stream.ToolCall{ID: "tc-write", Name: "write", Arguments: `{"path":"` + file + `","content":"note"}`},
+				stream.Finish{Reason: "tool_calls"},
+			}
+		}
+		return []stream.Event{stream.TextDelta{Text: "done"}, stream.Finish{Reason: "stop"}}
+	}}
+	stashResumable("planner-job", resumableEntry{
+		msgs: []connector.Message{
+			{Role: "user", Content: []connector.ContentBlock{{Type: "text", Text: "first"}}},
+		},
+		mc:          fake,
+		cfg:         agent.Config{MaxRetries: 1, Tools: &subagentToolRunner{}},
+		todoAgentID: "planner-job",
+	})
+
+	res := (&tools.ResumeTool{}).Run(context.Background(), map[string]any{"job_id": "planner-job", "task": task})
+	if !res.Success {
+		t.Fatalf("resume tool: %+v", res)
+	}
+	var id string
+	for _, j := range reg.List() {
+		if j.Description == task {
+			id = j.ID
+		}
+	}
+	if id == "" {
+		t.Fatal("the resume tool started no turn")
+	}
+	if _, ok := reg.Wait(context.Background(), id, 10*time.Second); !ok {
+		t.Fatal("the resumed turn never ended")
+	}
+	if _, err := os.Stat(filepath.Join(s.Worktree, file)); err != nil {
+		t.Fatalf("the tool resume did not write in the planner worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, file)); err == nil {
+		t.Fatal("the tool resume wrote in the process directory")
 	}
 }
 
@@ -436,40 +525,5 @@ func TestClosePlannerSessions_CloseErrorIsPrinted(t *testing.T) {
 	closePlannerSessions(&out)
 	if !strings.Contains(out.String(), "/plan: close planner session job-broken:") {
 		t.Fatalf("output = %q, want the close error", out.String())
-	}
-}
-
-func TestAgentRunWorkdir_ResumedPlannerRunsInItsWorktree(t *testing.T) {
-	_, work := newPlanRepo(t)
-	withTestWiring(t)
-	resetPlannerSessions(t)
-
-	s := openPlannerSession(t, work, "planner-job")
-	resumableMu.Lock()
-	resumable["resumed-job"] = resumableEntry{chain: []string{"planner-job", "resumed-job"}}
-	resumableMu.Unlock()
-	t.Cleanup(func() {
-		resumableMu.Lock()
-		delete(resumable, "resumed-job")
-		resumableMu.Unlock()
-	})
-
-	for _, id := range []string{"planner-job", "resumed-job"} {
-		got, err := agentRunWorkdir(id)
-		if err != nil || got != s.Worktree {
-			t.Fatalf("agentRunWorkdir(%s) = %q, %v; want %q", id, got, err, s.Worktree)
-		}
-	}
-
-	ctx, err := agentResumeContext("resumed-job")
-	if err != nil {
-		t.Fatalf("agentResumeContext: %v", err)
-	}
-	if dir := tools.Workdir(ctx); dir != s.Worktree {
-		t.Fatalf("resumed planner workdir = %q, want %q (never the process directory)", dir, s.Worktree)
-	}
-	p, ok := tools.PolicyOf(ctx)
-	if !ok || p.Role != plannerRole || p.Permission != flowconfig.PermissionWorktreeWrite || p.Dir != s.Worktree {
-		t.Fatalf("resumed planner policy = %+v, ok = %v", p, ok)
 	}
 }
