@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/crazy-goat/tyci-agent/agent"
@@ -58,5 +59,36 @@ func TestRunPromptPrintsOnlyAnswerOnStdout(t *testing.T) {
 	}
 	if got := client.Calls(); got != 2 {
 		t.Errorf("model calls = %d, want 2 (tool round, then answer)", got)
+	}
+}
+
+// TestRunPromptMaxIterationsWarningGoesToStderr drives runPrompt with a model
+// that always asks for a tool, so the iteration cap stops the turn. The warning
+// must go to stderr. Stdout must not contain it.
+func TestRunPromptMaxIterationsWarningGoesToStderr(t *testing.T) {
+	client := &connectortest.Fake{
+		ProviderName: "run-test-prov",
+		ModelName:    "run-test-model",
+		OnExhausted: []stream.Event{
+			stream.ToolCall{ID: "call-1", Name: "echo", Arguments: `{"text":"hi"}`},
+			stream.Finish{Reason: "tool_calls"},
+		},
+	}
+	var out, errOut bytes.Buffer
+	disp := &plainSink{out: &out, err: &errOut}
+	cond := conductor.New(conductor.Options{
+		Client: client,
+		Sink:   disp,
+		Config: agent.Config{Tools: fixedToolRunner{}, MaxIterations: 2},
+	})
+
+	if code := runPrompt(cond, disp, "loop forever", context.Background()); code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if got := out.String(); strings.Contains(got, "tool-call iterations") {
+		t.Errorf("stdout = %q, must not contain the max-iterations warning", got)
+	}
+	if got := errOut.String(); !strings.Contains(got, "tool-call iterations") {
+		t.Errorf("stderr = %q, want the max-iterations warning", got)
 	}
 }
