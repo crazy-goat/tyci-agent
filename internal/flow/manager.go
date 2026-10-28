@@ -311,7 +311,6 @@ func (m *Manager) refuse(info RepoInfo, issue int) error {
 	return nil
 }
 
-// launch registers the run as active and runs it. m.mu must be held.
 // endRunTools removes the Lua tools that tool_create made in runDir when the
 // run ends. A paused run keeps them, as it keeps its adoption.
 func endRunTools(status, runDir string) {
@@ -320,6 +319,7 @@ func endRunTools(status, runDir string) {
 	}
 }
 
+// launch registers the run as active and runs it. m.mu must be held.
 func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool, do func(context.Context, *Runner) error) {
 	parent := m.base
 	if parent == nil {

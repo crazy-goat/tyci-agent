@@ -233,6 +233,10 @@ func builtinToolsSchema() []map[string]any {
 					"properties": map[string]any{
 						"name":   map[string]any{"type": "string", "description": "Tool name: lowercase letters, digits and underscores. Must equal schema.name in source."},
 						"source": map[string]any{"type": "string", "description": "The Lua script, in the .tyci/tools format."},
+						"tests": map[string]any{"type": "array", "description": "Optional tests run before the tool is registered. If one fails, nothing is created.", "items": map[string]any{"type": "object", "properties": map[string]any{
+							"args":   map[string]any{"type": "object", "description": "Input to run the tool with"},
+							"expect": map[string]any{"type": "string", "description": "Text the result content must contain"},
+						}, "required": []string{"expect"}}},
 					},
 					"required": []string{"name", "source"},
 				},

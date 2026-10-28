@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // createSource is a valid Lua tool script that echoes its input.
@@ -281,9 +282,116 @@ func TestToolCreateRefusedFromLuaInSubagent(t *testing.T) {
 	dir := t.TempDir()
 	t.Cleanup(func() { RemoveRunTools(dir) })
 
-	script := `return tool("tool_create", {name = "lua_made", source = [==[` + createSource + `]==]})`
-	RunTool(subagentCtx(dir, nil, nil), "lua", map[string]any{"script": script})
+	source := replaceName(createSource, "lua_made")
+	script := `return tool("tool_create", {name = "lua_made", source = [==[` + source + `]==]})`
+
+	// The name matches the source, so only the gate can refuse the call.
+	res := RunTool(subagentCtx(dir, nil, nil), "lua", map[string]any{"script": script})
 	if registered("lua_made") {
 		t.Fatal("an unrestricted subagent created a tool through lua tool()")
 	}
+	if !strings.Contains(res.Error+res.Content, "is not available to this subagent") {
+		t.Fatalf("the refusal is not the gate error: success=%v content=%q error=%q", res.Success, res.Content, res.Error)
+	}
+
+	// Control: the same script from a role that lists tool_create is created.
+	p := Policy{Role: "r", Permission: PermissionWorktreeWrite, Tools: []string{"lua", toolCreateName}, Dir: dir}
+	RunTool(subagentCtx(dir, p.Tools, &p), "lua", map[string]any{"script": script})
+	if !registered("lua_made") {
+		t.Fatal("control: a role that lists tool_create did not create the tool through lua tool()")
+	}
+}
+
+// noTempLeft fails when dir/tools still has a temp file or the named tool file.
+func noTempLeft(t *testing.T, dir, name string) {
+	t.Helper()
+	if matches, _ := filepath.Glob(filepath.Join(dir, "tools", "*.tmp")); len(matches) > 0 {
+		t.Fatalf("temp files left behind: %v", matches)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tools", name+".lua")); err == nil {
+		t.Fatalf("the script of %q was kept", name)
+	}
+}
+
+func TestToolCreateLoadIsBounded(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+
+	source := "while true do end\n" + createSource
+	ctx, cancel := context.WithTimeout(WithRunDir(context.Background(), dir), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	res := RunTool(ctx, "tool_create", map[string]any{"name": "made_echo", "source": source})
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("a script that never returns held the call for %v", elapsed)
+	}
+	if res.Success {
+		t.Fatal("a script that never returns was accepted")
+	}
+	if registered("made_echo") {
+		t.Fatal("a script that never returns was registered")
+	}
+	noTempLeft(t, dir, "made_echo")
+}
+
+func TestToolCreatePassingTestsRegister(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+
+	ctx := WithRunDir(context.Background(), dir)
+	tests := []any{map[string]any{"args": map[string]any{"input": "hi"}, "expect": "echo: hi"}}
+	res := RunTool(ctx, "tool_create", map[string]any{"name": "made_echo", "source": createSource, "tests": tests})
+	if !res.Success || !registered("made_echo") {
+		t.Fatalf("a passing test blocked the tool: success=%v error=%q", res.Success, res.Error)
+	}
+	noTempLeft(t, dir, "")
+}
+
+func TestToolCreateFailingTestDeletesFile(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+
+	ctx := WithRunDir(context.Background(), dir)
+	tests := []any{map[string]any{"args": map[string]any{"input": "hi"}, "expect": "not in the result"}}
+	res := RunTool(ctx, "tool_create", map[string]any{"name": "made_echo", "source": createSource, "tests": tests})
+	if res.Success {
+		t.Fatal("a failing test was accepted")
+	}
+	if registered("made_echo") {
+		t.Fatal("a failing test left the tool registered")
+	}
+	noTempLeft(t, dir, "made_echo")
+}
+
+func TestToolCreateOsExecuteFailsInSandbox(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+
+	t.Run("at load", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Cleanup(func() { RemoveRunTools(dir) })
+		source := "os.execute('true')\n" + createSource
+		res := createInRun(t, dir, "made_echo", source)
+		if res.Success || registered("made_echo") {
+			t.Fatal("a script that calls os.execute at load was accepted")
+		}
+		noTempLeft(t, dir, "made_echo")
+	})
+
+	t.Run("in run", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Cleanup(func() { RemoveRunTools(dir) })
+		source := replaceName(strings.Replace(createSource,
+			`content = "echo: " .. (args.input or "none")`,
+			`os.execute('true'); return {success = true, content = "ran"}`, 1), "made_echo")
+		ctx := WithRunDir(context.Background(), dir)
+		tests := []any{map[string]any{"expect": "ran"}}
+		res := RunTool(ctx, "tool_create", map[string]any{"name": "made_echo", "source": source, "tests": tests})
+		if res.Success || registered("made_echo") {
+			t.Fatal("a script that calls os.execute in run was accepted")
+		}
+		noTempLeft(t, dir, "made_echo")
+	})
 }
