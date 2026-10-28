@@ -16,6 +16,7 @@ import (
 
 	"github.com/crazy-goat/tyci-agent/agent"
 	"github.com/crazy-goat/tyci-agent/internal/flowconfig"
+	"github.com/crazy-goat/tyci-agent/internal/forge/gitlab"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
 	"github.com/crazy-goat/tyci-agent/internal/pricing"
 	"github.com/crazy-goat/tyci-agent/internal/runlog"
@@ -483,24 +484,62 @@ func (f *issueFetcher) fetch(ctx context.Context, repo string, issue int) (strin
 	if err := json.Unmarshal(out, &v); err != nil {
 		return "", fmt.Errorf("gh issue view: %w", err)
 	}
+	comments := make([]issueComment, 0, len(v.Comments))
+	for _, c := range v.Comments {
+		comments = append(comments, issueComment{c.Author.Login, c.Body})
+	}
+	return issueText(ctx, v.Title, v.Body, v.Author.Login, comments, func(ctx context.Context, user string) (bool, error) {
+		return f.canWrite(ctx, repo, user)
+	})
+}
+
+type issueComment struct{ author, body string }
+
+// issueText is the issue text for the worker. Text from authors that
+// canWrite refuses is dropped.
+func issueText(ctx context.Context, title, body, author string, comments []issueComment, canWrite func(context.Context, string) (bool, error)) (string, error) {
 	var b strings.Builder
-	ok, err := f.canWrite(ctx, repo, v.Author.Login)
+	ok, err := canWrite(ctx, author)
 	if err != nil {
 		return "", err
 	}
 	if ok {
-		fmt.Fprintf(&b, "# %s\n\n%s\n", v.Title, v.Body)
+		fmt.Fprintf(&b, "# %s\n\n%s\n", title, body)
 	} else {
 		b.WriteString("(issue text omitted: its author has no write access)\n")
 	}
-	for _, c := range v.Comments {
-		ok, err := f.canWrite(ctx, repo, c.Author.Login)
+	for _, c := range comments {
+		ok, err := canWrite(ctx, c.author)
 		if err != nil {
 			return "", err
 		}
 		if ok {
-			fmt.Fprintf(&b, "\n## Comment by %s\n\n%s\n", c.Author.Login, c.Body)
+			fmt.Fprintf(&b, "\n## Comment by %s\n\n%s\n", c.author, c.body)
 		}
 	}
 	return b.String(), nil
+}
+
+// gitlabIssueContext is fetchIssueContext for a GitLab repo.
+func gitlabIssueContext(g *gitlab.GitLab) func(ctx context.Context, repo string, issue int) (string, error) {
+	return func(ctx context.Context, _ string, issue int) (string, error) {
+		is, err := g.Issue(ctx, issue)
+		if err != nil {
+			return "", err
+		}
+		notes, err := g.IssueComments(ctx, issue)
+		if err != nil {
+			return "", err
+		}
+		comments := make([]issueComment, 0, len(notes))
+		for _, n := range notes {
+			comments = append(comments, issueComment{n.User.Login, n.Body})
+		}
+		return issueText(ctx, is.Title, is.Body, is.Author.Login, comments, func(ctx context.Context, user string) (bool, error) {
+			if user == "" {
+				return false, nil
+			}
+			return g.CanWrite(ctx, user)
+		})
+	}
 }

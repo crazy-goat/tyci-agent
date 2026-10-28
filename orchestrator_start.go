@@ -36,13 +36,18 @@ func startOrchestrator(ctx context.Context, resumed bool, cfg orchestrator.Confi
 }
 
 // newForge builds the forge of the config. A repos entry with forge "gitlab"
-// for forge.repo selects GitLab; everything else is GitHub.
-func newForge(c flowconfig.Forge, repos map[string]flowconfig.Repo) (forge.Forge, error) {
+// for forge.repo selects GitLab; everything else is GitHub. When forge.repo is
+// "" or "auto", detected (the repo of the git remote) is the repo.
+func newForge(c flowconfig.Forge, repos map[string]flowconfig.Repo, detected string) (forge.Forge, error) {
 	if c.Kind != "" && c.Kind != "github" {
 		return nil, fmt.Errorf("forge.kind: unknown kind %q", c.Kind)
 	}
-	if r, ok := repos[c.Repo]; ok && r.Forge == "gitlab" {
-		return gitlab.New(c.Repo, r.URL)
+	repo := c.Repo
+	if repo == "" || repo == "auto" {
+		repo = detected
+	}
+	if r, ok := repos[repo]; ok && r.Forge == "gitlab" {
+		return gitlab.New(repo, r.URL)
 	}
 	return forge.NewGitHub(c.Repo)
 }
@@ -89,7 +94,7 @@ func startTUIOrchestrator(ctx context.Context, resumed bool, post func(string), 
 		return nil
 	}
 	oc := st.oc
-	f, err := newForge(fc.Forge, fc.Repos)
+	f, err := newForge(fc.Forge, fc.Repos, info.Repo)
 	if err != nil {
 		post(orchestrator.FormatSpecial(orchestrator.ForgeError, err.Error()))
 		return nil

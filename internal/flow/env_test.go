@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,6 +126,30 @@ func TestReviewDir(t *testing.T) {
 	} {
 		if got := r.reviewDir(&RunState{History: tc.history}); got != tc.want {
 			t.Errorf("%s: reviewDir = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+// #216: a GitLab run gives the scripts TYCI_FORGE, TYCI_BIN and the GitLab token.
+func TestRunner_GitLabCheckEnv(t *testing.T) {
+	t.Setenv("TYCI_GITLAB_TOKEN", "glpat-env-test-0123456789")
+	t.Setenv("GITLAB_TOKEN", "")
+	wf := &Workflow{Name: "demo", Start: "a", States: map[string]State{
+		"a":   {Check: "checks/x.sh", On: map[string]string{"go": "end"}},
+		"end": {End: true},
+	}}
+	for _, gl := range []bool{false, true} {
+		checks := &fakeChecks{keys: map[string][]string{"checks/x.sh": {"go"}}}
+		r := &Runner{WF: wf, Checks: checks, Store: &memStore{}, GitLab: gl}
+		if err := r.Run(context.Background(), newRun("a")); err != nil {
+			t.Fatal(err)
+		}
+		env := strings.Join(checks.envs[0], "\n") + "\n"
+		exe, _ := os.Executable()
+		has := strings.Contains(env, "TYCI_FORGE=gitlab\n") && strings.Contains(env, "TYCI_BIN="+exe+"\n") &&
+			strings.Contains(env, "TYCI_GITLAB_TOKEN=glpat-env-test-0123456789\n") && !strings.Contains(env, "GITLAB_TOKEN=\n")
+		if has != gl || (!gl && strings.Contains(env, "GITLAB")) {
+			t.Errorf("GitLab %v: env\n%s", gl, env)
 		}
 	}
 }

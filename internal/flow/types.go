@@ -297,6 +297,8 @@ type Runner struct {
 	RunDir string // run directory: TYCI_RUN_DIR and RunContext.RunDir
 	// DefaultBranch is TYCI_DEFAULT_BRANCH and RunContext.DefaultBranch.
 	DefaultBranch string
+	// GitLab adds the GitLab check env (see gitlabEnv).
+	GitLab bool
 	// Warn receives warnings that the Manager does not send itself.
 	Warn   func(string)
 	OnSkip func(*RunState)
