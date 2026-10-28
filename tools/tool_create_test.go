@@ -2,9 +2,12 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -429,4 +432,132 @@ func TestToolCreateOsExecuteFailsInSandbox(t *testing.T) {
 		}
 		noTempLeft(t, dir, "made_echo")
 	})
+}
+
+// writeRunTool writes source as the file name.lua in the tools folder of dir.
+func writeRunTool(t *testing.T, dir, name, source string) {
+	t.Helper()
+	toolsDir := filepath.Join(dir, "tools")
+	if err := os.MkdirAll(toolsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsDir, name+".lua"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// After a restart the run folder keeps the tool files, and ReloadRunTools
+// registers the good ones again. A bad file is skipped and the others load.
+func TestReloadRunToolsRegistersGoodFilesOnly(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+	writeRunTool(t, dir, "made_echo", createSource)
+	writeRunTool(t, dir, "Bad-Name", replaceName(createSource, "Bad-Name"))
+	writeRunTool(t, dir, "made_other", replaceName(createSource, "made_renamed"))
+	writeRunTool(t, dir, "made_broken", "return {")
+
+	var warnings []string
+	ReloadRunTools(dir, func(msg string) { warnings = append(warnings, msg) })
+	if len(warnings) != 3 {
+		t.Fatalf("got %d warnings, want 3 (one per bad file): %v", len(warnings), warnings)
+	}
+
+	if !registered("made_echo") {
+		t.Fatal("the good tool was not registered again")
+	}
+	for _, name := range []string{"Bad-Name", "made_other", "made_broken"} {
+		if registered(name) {
+			t.Fatalf("the bad file %s was registered", name)
+		}
+	}
+	if out := RunTool(context.Background(), "made_echo", map[string]any{"input": "hi"}); !out.Success || out.Content != "echo: hi" {
+		t.Fatalf("the reloaded tool did not run: %+v", out)
+	}
+}
+
+// A second reload of the same folder replaces the tools of that folder and
+// does not report them as name conflicts.
+func TestReloadRunToolsTwiceKeepsOneTool(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+	writeRunTool(t, dir, "made_echo", createSource)
+
+	ReloadRunTools(dir, nil)
+	ReloadRunTools(dir, nil)
+	if !registered("made_echo") {
+		t.Fatal("the tool is gone after the second reload")
+	}
+	RemoveRunTools(dir)
+	if registered("made_echo") {
+		t.Fatal("the tool of the run survived RemoveRunTools")
+	}
+}
+
+// A run folder without a tools folder is left alone.
+func TestReloadRunToolsNoFolderIsNoop(t *testing.T) {
+	ReloadRunTools(t.TempDir(), nil)
+}
+
+// startedAgo returns a folder under root with the name and a modification time d ago.
+func startedAgo(t *testing.T, root, name string, d time.Duration) string {
+	t.Helper()
+	dir := filepath.Join(root, name)
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-d)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// A session folder whose owner PID is gone is removed. A folder of a live PID,
+// a young folder without PID, an unrelated folder and a file are kept. An old
+// folder without PID is removed.
+func TestRemoveStaleSessionFolders(t *testing.T) {
+	root := t.TempDir()
+
+	// A child that has exited: its PID is free again.
+	child := exec.Command("true")
+	if err := child.Run(); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := child.Process.Pid
+
+	dead := startedAgo(t, root, fmt.Sprintf("%s%d-x", sessionFolderPrefix, deadPID), 0)
+	live := startedAgo(t, root, fmt.Sprintf("%s%d-x", sessionFolderPrefix, os.Getpid()), 0)
+	young := startedAgo(t, root, sessionFolderPrefix+"x", time.Hour)
+	old := startedAgo(t, root, sessionFolderPrefix+"y", 25*time.Hour)
+	other := startedAgo(t, root, "other-"+strconv.Itoa(deadPID), 0)
+	file := filepath.Join(root, fmt.Sprintf("%s%d-f", sessionFolderPrefix, deadPID))
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := RemoveStaleSessionFolders(root); n != 2 {
+		t.Fatalf("removed %d folders, want 2", n)
+	}
+	for path, want := range map[string]bool{dead: false, old: false, live: true, young: true, other: true, file: true} {
+		_, err := os.Stat(path)
+		if exists := err == nil; exists != want {
+			t.Errorf("%s exists = %v, want %v", filepath.Base(path), exists, want)
+		}
+	}
+}
+
+// NewSessionFolder names the folder with the PID of this process, so a later
+// start can tell that the owner is alive.
+func TestSessionFolderNameHoldsOwnPID(t *testing.T) {
+	dir, end, err := NewSessionFolder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer end()
+	want := fmt.Sprintf("%s%d-", sessionFolderPrefix, os.Getpid())
+	if !strings.HasPrefix(filepath.Base(dir), want) {
+		t.Fatalf("session folder %q does not start with %q", filepath.Base(dir), want)
+	}
 }

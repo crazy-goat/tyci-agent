@@ -121,6 +121,8 @@ and answers `ok` (the step runs again) or `failed`. On `failed` the `oracle` ans
 step, the run pauses. The limits apply to the states named `fixer` and `oracle`, not to
 their agent role. With an open, unmerged PR, `stop`, `goto:merge` and a goto to a state that ends the run pause at `ask` for a human.
 
+The `issue-to-merge` workflow sends an unknown result of the gate `check_done` (the script `checks/issue_done.sh`) to the state `ask_check`. The run does not go to the fixer. A human answers `retry` to run the gate again, or `stop` to end the run. The oracle never answers this pause. A copied workflow does not get this change. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again.
+
 ### Pauses and the oracle
 
 The `oracle` agent answers a pause at an `ask` state before a human sees it. The oracle answers one of these forms. The key line is the first line that starts with one of them; the other lines give the reason:
@@ -197,6 +199,7 @@ Type `/plan [topic]` in the chat to start a planner. The topic is the first mess
 - The planner stays open until tyci exits. You can resume it after its answer, in the agent view or with the chat tool `resume`. Each resumed turn works in the planner worktree, under the planner policy.
 - When tyci exits, a turn that still runs is stopped first. Then the worktree of a planner with no change is removed.
 - When tyci exits, the worktree of a planner that changed a file is kept, with its branch `plan-<id>`. A notice on the terminal shows the path.
+- The planner rules for issues (no milestone, no `accepted` label, an issue only after you say "create it") live only in its prompt, and its `bash` tool is not sandboxed, so tyci does not enforce these rules.
 
 ### Workflow proposals
 
@@ -370,7 +373,7 @@ The Bus tab lists the recent messages of the bus, newest first. One line shows t
 
 Click a tool or thinking line in the chat to show its body below the line. A tool body shows its arguments and its output, and a running tool shows its live output. A body of more than 20 lines shows only its newest lines, with a `... N more lines` line first. A thinking body shows the full text. Click the line again to fold the body. The hint at the end of the line says `- click to expand` or `- click to fold`. A click in an agent view works the same way. The header line of a block keeps its row when its body opens, also at the bottom of the transcript. The view then leaves the bottom and does not follow new output until you scroll down.
 
-Press Enter on a subagent in the Subagents list to open its conversation. Text you type there goes to that agent: a running agent reads it as a message before its next turn. A finished agent is resumed with the text, but only after a second Enter, which shows the context size and the estimated cost first; any other key cancels. A resumed agent is a side conversation, so its reply does not change its workflow run. Only an agent of a run in the `done` or `paused` state, or an agent of no run, can be resumed. The resume is refused when the worktree of the run is gone, or when a state file of a run cannot be read. The resumed job is listed under the job it continues, marked with `↻`.
+Press Enter on a subagent in the Subagents list to open its conversation. Text you type there goes to that agent: a running agent reads it as a message before its next turn. A finished agent is resumed with the text, but only after a second Enter, which shows the context size and the estimated cost first; any other key cancels. A resumed agent is a side conversation, so its reply does not change its workflow run. Only an agent of a run in the `done` or `paused` state, or an agent of no run, can be resumed. The resume is refused when the worktree of the run is gone, or when a state file of a run cannot be read. The resumed job is listed under the job it continues, marked with `↻`. A resumed role agent keeps its role policy and its worktree.
 
 ## Run transcripts
 
@@ -1118,10 +1121,17 @@ the session ends. The script and each test run under a 2 s limit. The optional
 `tests` input is a list of `{args, expect}`: each case runs the tool with `args`, and
 its result must contain `expect`. If a case fails, the script is removed and nothing
 is registered. The main chat has `tool_create`. A workflow role has it only
-when its `tools` list names it. A role or named agent can call its own created tool
-only when its `tools` list also names that tool. The main chat sees a tool made in
-the session on its next request. A workflow role or named agent keeps the tool list
-it had at spawn, so it does not see a new tool until it starts again.
+when its `tools` list names it. A role or named agent can call a tool it created only
+through `tool()` in the `lua` tool, and only when its `tools` list names the new tool.
+The main chat sees a tool made in the session on its next request. A workflow role or
+named agent keeps the tool list it had at spawn, so it does not see a new tool until
+it starts again.
+
+When a paused run starts again, also after a tyci restart, tyci loads the tool files
+of its run folder again. A file that fails the same checks as `tool_create` is skipped
+with a warning, and the other files load. When tyci starts, it removes the session
+folders of tyci processes that have exited. A session folder name holds the PID of its
+owner. A folder without a PID, made by an older tyci, is removed after 24 hours.
 
 The `tool_promote` tool copies a Lua tool from the run folder into the project. It
 writes `.tyci/tools/<name>.lua` in the current worktree. Before the copy, a read-only

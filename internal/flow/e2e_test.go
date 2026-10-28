@@ -590,9 +590,10 @@ func TestE2E_RecoverOracleStopWithoutPR_EndsRun(t *testing.T) {
 		"oracle": {"stop the issue is already done"},
 	}
 	e := newE2E(t, s)
-	e.ctlSet("down", "")
+	// The PR is listed, but its branch is not on origin, so open_pr fails and the fixer runs.
+	e.ctlSet("pr", "")
 	e.mustFinish()
-	e.wantStates("check_done, fixer, oracle")
+	e.wantStates("check_done, open_pr, fixer, oracle")
 	if e.st.PR != 0 || e.st.Status != "done" {
 		t.Errorf("PR %d, status %q", e.st.PR, e.st.Status)
 	}
@@ -656,17 +657,24 @@ func TestE2E_CITimeout_GoesToAsk(t *testing.T) {
 	}
 }
 
-func TestE2E_GhDown_AtGate_FixerThenAsk(t *testing.T) {
-	e := newE2E(t, map[string][]string{"fixer": {"failed"}, "oracle": {"ask gh is down"}})
+// #810: issue_done.sh fails with no key (gh is down). The run pauses at ask_check for a
+// human. The fixer and the oracle are not started, and the worktree stays.
+func TestE2E_IssueDoneFails_AsksCheck(t *testing.T) {
+	e := newE2E(t, nil)
 	e.ctlSet("down", "")
 	e.mustPause()
-	e.wantStates("check_done, fixer, oracle")
-	if e.st.History[0].To != "fixer" || e.agents.calls != 2 {
-		t.Errorf("to = %q, agent calls = %d", e.st.History[0].To, e.agents.calls)
+	e.wantStates("check_done")
+	if e.st.Current != "ask_check" || e.st.Ask == nil {
+		t.Errorf("current %q, ask = %+v", e.st.Current, e.st.Ask)
+	}
+	if e.agents.calls != 0 {
+		t.Errorf("agent calls = %d, want 0", e.agents.calls)
 	}
 	if _, err := os.Stat(e.st.Worktree); err != nil {
 		t.Errorf("worktree must stay when the run asks: %v", err)
 	}
+	e.wantNoAsk()
+	e.wantNoMerge()
 }
 
 func TestE2E_StateJsonHasEveryTransition(t *testing.T) {

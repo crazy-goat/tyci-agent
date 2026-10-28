@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Docs: the README says that the planner rules for issues live only in its prompt, and that its `bash` tool is not sandboxed (#808).
+
 ### Deprecated
 - CLI: the `--debug` flag has no effect and is hidden. It is still accepted, and it prints a deprecation notice. The debug log in `~/.tyci/debug/` is always on; use `--no-debug` to turn it off (#786).
 
@@ -13,9 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Internal: the unused `debug` setting of the agent config and of the connector request is removed (#786).
 
 ### Fixed
+- Workflows: an unknown result of the `issue-to-merge` gate `check_done` no longer goes to the fixer. The run pauses at the new state `ask_check`, which the oracle never answers. A human answers `retry` to run the gate again, or `stop` to end the run. A copied workflow does not get the fix. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again (#810).
+- Lua tools: a paused run that starts again, also after a tyci restart, loads the tool files of its run folder again. A bad file is logged and skipped, and the run starts (#813).
+- Lua tools: at start, tyci removes the session folders `tyci-session-*` of tyci processes that have exited. A folder without a PID, made by an older tyci, is removed after 24 hours (#813).
 - Flow: a saved oracle answer no longer depends on the task or state name. A state with `"saves": true` saves its answer as `output.txt`, and the check gets its path in `TYCI_ANSWER`. The builtin `milestone-close` and `rebalance` templates set the flag, so a copied workflow with a renamed state still moves its findings or validates its split. A workflow with no `saves` flag keeps the task names `pick_critical`, `rebalance_split` and `plan` (#784).
+- Transcripts: the `cwd` in the header of a subagent transcript is the working directory of its run, not the process directory (#791).
 
 ### Security
+- Roles: a role job that is resumed keeps its tool policy and its worktree. Before, the chat tool `resume` and the agent view resumed it with no tool gate and no write root, so it could write outside its worktree (#791).
 - Roles: a role with the permission `read-only` refuses every MCP tool, also when its `tools` list names it. The refusal applies to a direct call, to `tool()` in `lua` and to the tool schema. The plan steps and the read-only text runs get the same rule (#804).
 - Memory: project notes in `.tyci/memory/` are written with mode `0600`, as role notes are, and a note that already exists with a looser mode is tightened on the next write. This repository's `.gitignore` ignores `.tyci/memory/`, so `git add -A` does not commit the notes. tyci does not write a `.gitignore` for other projects; add `/.tyci/memory/` to the `.gitignore` of a project that uses memory notes (#795).
 - Roles: the write root of a `worktree-write` role limits only `write` and `edit`. `bash` runs in the worktree but is not sandboxed, so a command with an absolute path or `cd` can still change files outside it. The docs now say this, and a `worktree-write` run gets a system prompt line that names its worktree and this limit (#790).
