@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: a retried worker gets the error of the failed step in its task text, under "Run so far". The error is masked and cut to 2000 bytes (#445).
 - CLI: `tyci run` prints the max-iterations warning on stderr, not stdout (#466).
 - Flow: start-up does not pause a run that another tyci process resumes at the same time (#432).
+- Flow: the `milestone-close` apply step joins the doubtful issue numbers after it converts them to text, so jq 1.5 no longer fails and exits without a key (#741).
+- Orchestrator: when `milestone-close` does not start, the notice says how to install it, with `tyci workflow init milestone-close`. The hint is added after the cut error text, so a long error does not hide it (#741).
 
 ## [0.10.0] - 2026-10-14
 
