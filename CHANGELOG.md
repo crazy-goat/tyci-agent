@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Workflows: a role agent that is resumed to write its `report.md` keeps its tool policy. Its `write` and `edit` refuse paths outside the run worktree, as in the first visit (#446).
 - Workflows: the `rebalance` workflow shows the reason why the proposal is not valid when the split pauses after three invalid proposals. The ask text no longer says that a proposal is shown below in that case, and it says to answer `yes` only for a valid proposal (#740).
 - Flow: the orchestrator releases its paused runs when it stops. They no longer take a worker slot, so a resume of another run is not refused at `orchestrator.workers` (#731).
+- Flow: a text run (the `roadmap` oracle) runs read-only in an empty temporary dir, not in the main checkout. It can no longer write files there (#789).
 
 ## [0.10.0] - 2026-10-14
 
