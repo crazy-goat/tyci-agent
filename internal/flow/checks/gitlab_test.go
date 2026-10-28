@@ -178,24 +178,29 @@ func TestGitLab_Merge(t *testing.T) {
 		return `{"state":"` + state + `","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"` + head + `"}`
 	}
 	for name, tc := range map[string]struct {
-		state, bucket, key string
-		merges             bool
+		state, bucket, key, fail string
+		merges                   bool
 	}{
-		"merged":         {"OPEN", "pass", "merged", true},
-		"ci not green":   {"OPEN", "pending", "fail", false},
-		"already merged": {"MERGED", "pass", "merged", false},
+		"merged":         {"OPEN", "pass", "merged", "", true},
+		"ci not green":   {"OPEN", "pending", "fail", "", false},
+		"already merged": {"MERGED", "pass", "merged", "", false},
+		"merge refused":  {"OPEN", "pass", "fail", "1", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newPushEnv(t)
 			git(t, e.work, "push", "-q", "origin", "issue-7")
 			head := git(t, e.work, "rev-parse", "HEAD")
 			r := runGitLab(t, e.work, "merge.sh", map[string]string{"TYCI_PR": "171", "TYCI_DEFAULT_BRANCH": "main",
-				"OUT_pr_view": view(tc.state, head), "OUT_pr_checks": `[{"name":"ci-ok","bucket":"` + tc.bucket + `"}]`})
+				"OUT_pr_view": view(tc.state, head), "OUT_pr_checks": `[{"name":"ci-ok","bucket":"` + tc.bucket + `"}]`, "FAIL_pr_merge": tc.fail})
 			if r.key != tc.key || r.exit != 0 {
 				t.Fatalf("key=%q exit=%d stderr=%s", r.key, r.exit, r.stderr)
 			}
 			if got := strings.Contains(r.tyci, "pr-merge 171 "+head+"\n"); got != tc.merges {
 				t.Errorf("pr-merge called=%v, log:\n%s", got, r.tyci)
+			}
+			// The failure text names the GitLab command, not gh.
+			if tc.fail != "" && (!strings.Contains(r.stderr, "tyci forge pr-merge 171") || strings.Contains(r.stderr, "gh pr")) {
+				t.Errorf("stderr:\n%s", r.stderr)
 			}
 		})
 	}

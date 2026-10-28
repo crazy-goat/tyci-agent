@@ -124,6 +124,11 @@ else
 fi
 if "${merge[@]}" >&2; then
     echo merged
+elif is_gitlab; then
+    describe fail "tyci forge pr-merge $TYCI_PR $head failed (see the error above); nothing was merged" \
+        "the merge request head moved, its head pipeline did not pass, it needs an approval or a rebase, or a temporary GitLab problem" \
+        "open the merge request in GitLab and look at its pipeline and merge status; fix a temporary cause (for example wait and try again) and return ok; else return failed"
+    echo fail
 else
     describe fail "gh pr merge $TYCI_PR --squash failed (see the gh output above)" \
         "the PR head moved, a required check or review is missing, the branch is not up to date, or a temporary GitHub problem" \
