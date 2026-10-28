@@ -2,6 +2,7 @@ package flow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -98,6 +99,9 @@ func TestTwoReposShareWorkers(t *testing.T) {
 	ctx := context.Background()
 	if _, _, err := rs.Start(ctx, "", "demo", []string{"#1"}); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("bare #1 with two repos: err = %v", err)
+	}
+	if _, _, err := rs.Start(ctx, "", "demo", []string{"docs/README.md#usage"}); err == nil || strings.Contains(err.Error(), "not open") {
+		t.Fatalf("a param with # that is not an issue ref: err = %v, want the ambiguous repo, not a repo lookup", err)
 	}
 	idA, _, err := rs.Start(ctx, "", "demo", []string{"o/r#1"})
 	if err != nil || !strings.HasPrefix(idA, "o/r#") {
@@ -215,4 +219,90 @@ func TestOpenRepoReadsRegistryPath(t *testing.T) {
 	if _, err := OpenRepo(home, "no/path"); err == nil || !strings.Contains(err.Error(), "has no path") {
 		t.Fatalf("no path: err = %v", err)
 	}
+}
+
+// twoRepos returns a Repos with the primary repo o/r and the registry repo x/r,
+// and a broken registry entry bad/r that does not open.
+func twoRepos(t *testing.T) (*Repos, *mgrEnv, *mgrEnv) {
+	t.Helper()
+	a, b := newMgrEnv(t, &gatedChecks{key: "ok"}), newMgrEnv(t, &gatedChecks{key: "ok"})
+	infoB := RepoInfo{Home: b.home, Root: b.home, Repo: "x/r", DefaultBranch: "main"}
+	b.m.Info = func() (RepoInfo, error) { return infoB, nil }
+	rs := &Repos{
+		Primary:  a.m,
+		Registry: func() ([]string, error) { return []string{"bad/r", "x/r"}, nil },
+		New: func(repo string) (*Manager, error) {
+			if repo != "x/r" {
+				return nil, errors.New("repos." + repo + ".path: the origin remote is other/r")
+			}
+			return b.m, nil
+		},
+	}
+	return rs, a, b
+}
+
+func TestBrokenRegistryEntryIsNotOpen(t *testing.T) {
+	rs, _, _ := twoRepos(t)
+	if got := strings.Join(rs.Open(), ","); got != "o/r,x/r" {
+		t.Fatalf("Open = %s, want o/r,x/r", got)
+	}
+	if _, err := rs.Status("bad/r#1"); err == nil || !strings.Contains(err.Error(), "origin remote is other/r") {
+		t.Fatalf("Status(bad/r#1): err = %v, want the reason", err)
+	}
+	only := &Repos{Primary: rs.Primary, Registry: func() ([]string, error) { return []string{"bad/r"}, nil }, New: rs.New}
+	if got := strings.Join(only.Open(), ","); got != "o/r" {
+		t.Fatalf("Open with only a broken entry = %s, want o/r", got)
+	}
+}
+
+func TestStatusWithoutRunIsNewestOfPrimary(t *testing.T) {
+	rs, a, _ := twoRepos(t)
+	st := &RunState{Version: 1, Run: "3", Workflow: "demo", Repo: "o/r", Status: "done", Current: "end",
+		Visits: map[string]int{}, History: []Step{}}
+	if err := (&Store{Dir: RunDir(a.home, RepoKey("o/r"), "3")}).Save(st); err != nil {
+		t.Fatal(err)
+	}
+	got, err := rs.Status("")
+	if err != nil {
+		t.Fatalf("Status(\"\") with two open repos: %v", err)
+	}
+	if b, _ := json.Marshal(got); !strings.Contains(string(b), `"#3"`) {
+		t.Fatalf("Status(\"\") = %s, want run #3 of o/r", b)
+	}
+}
+
+func TestReplaceBareRunFindsItsRepo(t *testing.T) {
+	rs, a, b := twoRepos(t)
+	setActive := func(m *Manager, run string, on bool) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.active == nil {
+			m.active = map[string]activeRun{}
+		}
+		if on {
+			m.active[run] = activeRun{slot: &agentSlot{}}
+		} else {
+			delete(m.active, run)
+		}
+	}
+	// An empty reason fails only after the run is found, so the error tells
+	// which Manager got the call.
+	setActive(b.m, "7", true)
+	if err := rs.Replace("7/worker", "worker", ""); err == nil || !strings.Contains(err.Error(), "reason is required") {
+		t.Fatalf("run 7 active in x/r: err = %v, want the call routed to x/r", err)
+	}
+	setActive(a.m, "7", true)
+	if err := rs.Replace("7/worker", "worker", ""); err == nil || !strings.Contains(err.Error(), "active in 2 repositories") {
+		t.Fatalf("run 7 active in both: err = %v, want ambiguous", err)
+	}
+	if err := rs.Replace("x/r#7/worker", "worker", ""); err == nil || !strings.Contains(err.Error(), "reason is required") {
+		t.Fatalf("qualified x/r#7: err = %v", err)
+	}
+	setActive(a.m, "7", false)
+	setActive(b.m, "7", false)
+	setActive(a.m, "8", true)
+	if err := rs.Replace("8/worker", "worker", ""); err == nil || !strings.Contains(err.Error(), "reason is required") {
+		t.Fatalf("orchestrator run 8 of o/r: err = %v, want the call routed to o/r", err)
+	}
+	setActive(a.m, "8", false)
 }

@@ -118,7 +118,8 @@ type Repos struct {
 	base context.Context
 }
 
-// Open returns the open repositories, sorted.
+// Open returns the open repositories, sorted. A registry entry counts only when
+// its checkout opens (For), so a stale entry does not make a bare ref ambiguous.
 func (r *Repos) Open() []string {
 	set := map[string]bool{}
 	if info, err := r.Primary.Info(); err == nil {
@@ -127,7 +128,9 @@ func (r *Repos) Open() []string {
 	if r.Registry != nil {
 		names, _ := r.Registry()
 		for _, n := range names {
-			set[n] = true
+			if _, err := r.For(n); err == nil {
+				set[n] = true
+			}
 		}
 	}
 	return slices.Sorted(maps.Keys(set))
@@ -201,12 +204,22 @@ func (r *Repos) managers() []*Manager {
 // pick returns the Manager of ref ("owner/name#rest" or a bare ref) and rest.
 func (r *Repos) pick(ref, what string) (*Manager, string, string, error) {
 	repo, rest := splitRef(ref)
-	repo, err := pickRepo(repo, r.Open(), what)
-	if err != nil {
-		return nil, "", "", err
+	m, repo, err := r.resolve(repo, what)
+	return m, repo, rest, err
+}
+
+// resolve returns the Manager of repo. An empty repo is the only open
+// repository. A named repository that does not open gives the reason (no path,
+// wrong origin).
+func (r *Repos) resolve(repo, what string) (*Manager, string, error) {
+	if repo == "" {
+		var err error
+		if repo, err = pickRepo("", r.Open(), what); err != nil {
+			return nil, "", err
+		}
 	}
 	m, err := r.For(repo)
-	return m, repo, rest, err
+	return m, repo, err
 }
 
 // qualify returns run as "owner/name#N" when several repositories are open,
@@ -223,18 +236,17 @@ func (r *Repos) qualify(repo, run string) string {
 func (r *Repos) Start(ctx context.Context, repo, workflow string, params []string) (string, []string, error) {
 	params = slices.Clone(params)
 	for i, p := range params {
-		if q, rest := splitRef(p); q != "" {
+		// Only an issue ref ("owner/name#N") names the repository; other text
+		// with "#" (for example "docs/README.md#usage") stays a plain param.
+		q, rest := splitRef(p)
+		if _, err := strconv.Atoi(strings.TrimPrefix(rest, "#")); q != "" && err == nil {
 			if repo != "" && repo != q {
 				return "", nil, fmt.Errorf("param %q names %s, but repo is %s", p, q, repo)
 			}
 			repo, params[i] = q, strings.TrimPrefix(rest, "#")
 		}
 	}
-	repo, err := pickRepo(repo, r.Open(), "the repository of the run")
-	if err != nil {
-		return "", nil, err
-	}
-	m, err := r.For(repo)
+	m, repo, err := r.resolve(repo, "the repository of the run")
 	if err != nil {
 		return "", nil, err
 	}
@@ -255,9 +267,19 @@ func (r *Repos) Workflows() []tools.WorkflowInfo {
 	return ChatTools{M: m}.Workflows()
 }
 
-// Status implements tools.WorkflowManager.
+// Status implements tools.WorkflowManager. An empty run is the newest run of
+// the repository of the current directory (else of the only open repository).
 func (r *Repos) Status(run string) (any, error) {
-	m, _, id, err := r.pick(run, "run "+run)
+	if strings.TrimSpace(run) == "" {
+		if _, err := r.Primary.Info(); err == nil {
+			return ChatTools{M: r.Primary}.Status("")
+		}
+	}
+	what := "run " + run
+	if strings.TrimSpace(run) == "" {
+		what = "the newest run"
+	}
+	m, _, id, err := r.pick(run, what)
 	if err != nil {
 		return nil, err
 	}
@@ -310,15 +332,39 @@ func (r *Repos) Stop(run, reason string) (any, error) {
 }
 
 // Replace implements tools.WorkflowManager. agentID is <run>/<role>; the run may
-// be "owner/name#N".
+// be "owner/name#N". A bare run goes to the open repository where it is active,
+// else to the repository of the current directory (the orchestrator's runs).
 func (r *Repos) Replace(agentID, role, reason string) error {
-	i := strings.LastIndex(agentID, "/")
-	if i < 0 {
-		return ChatTools{M: r.Primary}.Replace(agentID, role, reason)
+	if i := strings.LastIndex(agentID, "/"); i >= 0 {
+		if repo, id := splitRef(agentID[:i]); repo != "" {
+			m, _, err := r.resolve(repo, "")
+			if err != nil {
+				return err
+			}
+			return ChatTools{M: m}.Replace(strings.TrimPrefix(id, "#")+agentID[i:], role, reason)
+		}
 	}
-	m, _, id, err := r.pick(agentID[:i], "run "+agentID[:i])
-	if err != nil {
-		return err
+	run, _, _ := strings.Cut(agentID, "/")
+	var hits []string
+	var m *Manager
+	for _, repo := range r.Open() {
+		rm, err := r.For(repo)
+		if err != nil {
+			continue
+		}
+		rm.mu.Lock()
+		_, active := rm.active[run]
+		rm.mu.Unlock()
+		if active {
+			hits, m = append(hits, repo), rm
+		}
 	}
-	return ChatTools{M: m}.Replace(id+agentID[i:], role, reason)
+	switch {
+	case len(hits) > 1:
+		return fmt.Errorf("run %s is active in %d repositories (%s); name the repository, for example %s#%s/<role>",
+			run, len(hits), strings.Join(hits, ", "), hits[0], strings.TrimPrefix(run, "#"))
+	case m == nil:
+		m = r.Primary
+	}
+	return ChatTools{M: m}.Replace(agentID, role, reason)
 }

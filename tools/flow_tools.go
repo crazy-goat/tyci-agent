@@ -373,7 +373,7 @@ func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 				"repo": map[string]any{"type": "string", "description": "Repository owner/name. Needed only when several repositories are open and no param is owner/name#N."},
 			}, []string{"workflow"}),
 		fn("workflow_status", "Show the state of a workflow run: status, current state, visits, last history entries, PR.",
-			map[string]any{"run": map[string]any{"type": "string", "description": "Run id, for example #17, or owner/name#17 when several repositories are open (default: newest run)."}}, []string{}),
+			map[string]any{"run": map[string]any{"type": "string", "description": "Run id, for example #17, or owner/name#17 when several repositories are open (default: the newest run of the repository of the current directory)."}}, []string{}),
 		fn("workflow_list", "List the workflow runs of this project, newest first: run id, workflow, params, status, state, start time. By default only running and paused runs. With archived true also done, stopped and failed runs. Use limit (default 20) and offset to page; the result gives total and more.",
 			map[string]any{
 				"archived": map[string]any{"type": "boolean", "description": "Also list done, stopped and failed runs. Default false."},
@@ -387,7 +387,7 @@ func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 			}, []string{"run"}),
 		fn("replace_agent", "Last resort: use it on a stuck agent, for example missed pings or a hit limit. It replaces the agent of a workflow run with an agent of another role. The old agent is stopped first, and a summary of its work goes to the new agent. One replacement per state visit.",
 			map[string]any{
-				"agent_id": map[string]any{"type": "string", "description": "Id of the running agent: <run>/<role>, for example run-7/coder."},
+				"agent_id": map[string]any{"type": "string", "description": "Id of the running agent: <run>/<role>, for example run-7/coder. When the same run id is active in several repositories, use owner/name#<run>/<role>."},
 				"role":     map[string]any{"type": "string", "description": "Role of the new agent, as defined in the workflow config."},
 				"reason":   map[string]any{"type": "string", "description": "Why the agent is replaced. Required."},
 			}, []string{"agent_id", "role", "reason"}),
