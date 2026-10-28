@@ -98,6 +98,7 @@ func (o *Orchestrator) Start(ctx context.Context) {
 				o.notify(fmt.Sprintf("orchestrator stopped: panic: %v", p))
 			}
 		}()
+		defer o.releaseAdopted()
 		o.loop(ctx, finished, adopted)
 	}()
 }
@@ -415,6 +416,14 @@ func (o *Orchestrator) adoptResumed(ctx context.Context, finished chan<- finishe
 		go o.watch(issue, h, finished)
 	}
 	return out
+}
+
+// releaseAdopted runs when the loop stops. The adopted runs no longer count as
+// workers, so a resume by hand is not refused for a run the orchestrator dropped.
+func (o *Orchestrator) releaseAdopted() {
+	if a, ok := o.r.(Adopter); ok {
+		a.ReleaseAdopted()
+	}
 }
 
 // markAdopted marks the plan items of the adopted runs: wip, or ask for a

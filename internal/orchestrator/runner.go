@@ -31,6 +31,9 @@ type Adopter interface {
 	// ok is false when there is no such run. paused is true for a run that
 	// waits for the user's answer; its handle signals Asks at once.
 	Adopt(ctx context.Context, issue int) (h RunHandle, paused, ok bool)
+	// ReleaseAdopted forgets the runs adopted so far. The orchestrator calls it
+	// when it stops, so they no longer count as workers.
+	ReleaseAdopted()
 }
 
 // RunHandle is one started run. ONE final result arrives on Done; ask and
@@ -114,6 +117,7 @@ type flowAdopter interface {
 	Adoptable() []int
 	AdoptableResumed() []int
 	Adopt(issue int) (id string, paused, ok bool)
+	ReleaseAdopted()
 }
 
 var _ flowAdopter = (*flow.Manager)(nil)
@@ -132,6 +136,13 @@ func (r *flowRunner) AdoptableResumed() []int {
 		return a.AdoptableResumed()
 	}
 	return nil
+}
+
+// ReleaseAdopted tells the flow manager that the orchestrator no longer holds its runs.
+func (r *flowRunner) ReleaseAdopted() {
+	if a, ok := r.m.(flowAdopter); ok {
+		a.ReleaseAdopted()
+	}
 }
 
 // Adopt watches the resumed or paused run of the issue. It subscribes before it

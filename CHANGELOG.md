@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flow: a retried worker gets the error of the failed step in its task text, under "Run so far". The error is masked and cut to 2000 bytes (#445).
 - CLI: `tyci run` prints the max-iterations warning on stderr, not stdout (#466).
 - Flow: start-up does not pause a run that another tyci process resumes at the same time (#432).
+- Flow: the orchestrator releases its paused runs when it stops. They no longer take a worker slot, so a resume of another run is not refused at `orchestrator.workers` (#731).
 
 ## [0.10.0] - 2026-10-14
 

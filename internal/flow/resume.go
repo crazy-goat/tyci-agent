@@ -389,6 +389,15 @@ func (m *Manager) Adopt(issue int) (id string, paused, ok bool) {
 	return "", false, false
 }
 
+// ReleaseAdopted forgets the runs that the orchestrator adopted. The orchestrator
+// calls it when it stops. A paused run is offered again by Adoptable. Afterwards
+// only the active runs and the paused runs of a new adoption count as worker slots.
+func (m *Manager) ReleaseAdopted() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.adopted = nil
+}
+
 // resumeStale resumes a run of the issue whose owner process is gone. found is
 // false when there is no such run. A resume needs a free worker slot: when
 // orchestrator.workers worker slots are in use, it is refused (no queue). m.mu must be held.

@@ -104,6 +104,8 @@ func (m *fakeAdoptManager) AdoptableResumed() []int {
 	return []int{7}
 }
 
+func (m *fakeAdoptManager) ReleaseAdopted() {}
+
 func (m *fakeAdoptManager) Adopt(issue int) (string, bool, bool) {
 	if issue != 7 || m.taken {
 		return "", false, false

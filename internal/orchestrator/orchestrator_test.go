@@ -389,6 +389,22 @@ func TestContextCancelStopsLoop(t *testing.T) {
 	e.waitStop()
 }
 
+// When the orchestrator stops, it releases the runs it adopted, so a held paused
+// run no longer counts as a worker.
+func TestStopReleasesAdoptedRuns(t *testing.T) {
+	e := newEnv(t, Config{}, issue(1, ""))
+	e.r.paused = []int{5}
+	e.start()
+	if n := e.r.releases(); n != 0 {
+		t.Fatalf("released before the stop: %d", n)
+	}
+	e.cancel()
+	e.waitStop()
+	if n := e.r.releases(); n != 1 {
+		t.Fatalf("ReleaseAdopted called %d times", n)
+	}
+}
+
 func TestPanicIsRecovered(t *testing.T) {
 	e := newEnv(t, Config{}, issue(1, ""))
 	e.o.h.PlanReady = func(PlanReady) { panic("kaboom") }
