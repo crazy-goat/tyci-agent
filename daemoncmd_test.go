@@ -257,6 +257,54 @@ func TestDaemonCommandWithoutReposRunsCronOnly(t *testing.T) {
 	}
 }
 
+// TestDaemonCommandWatchesRegistryRepos watches the repository of --dir and a
+// registry repository with a path. A registry entry without a path or with
+// the wrong origin is skipped (#218).
+func TestDaemonCommandWatchesRegistryRepos(t *testing.T) {
+	home := shortHome(t)
+	wfUseRepo(t, flow.RepoInfo{Home: home, Root: home, Repo: "acme/demo", DefaultBranch: "main"})
+	one := filepath.Join(home, "one")
+	if err := os.MkdirAll(one, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wfGit(t, one, "init", "-q", "-b", "main")
+	wfGit(t, one, "remote", "add", "origin", "git@github.com:acme/one.git")
+	wfGit(t, one, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	wfWrite(t, filepath.Join(home, ".tyci", "config.json"), `{
+		"repos": {"acme/one": {"path": "`+one+`"}, "acme/two": {"path": "`+one+`"}},
+		"daemon": {"repos": ["acme/demo", "acme/one", "acme/two", "acme/none"],
+			"triggers": {"issue": false, "ci_failure": false, "cron": false}}}`)
+	resetRootFlags()
+	ctx, cancel := context.WithCancel(context.Background())
+	log := &syncWriter{}
+	done := make(chan error, 1)
+	go func() { done <- runDaemon(ctx, daemonCmd, log) }()
+	sock := daemon.SocketPath(daemon.DefaultDir(home))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(sock); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no socket")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s, err := (&daemon.Client{Path: sock}).Status(context.Background())
+	if err != nil || strings.Join(s.Repos, ",") != "acme/demo,acme/one" {
+		t.Fatalf("status %+v %v", s, err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	text := log.String()
+	if !strings.Contains(text, "repo acme/two skipped") || !strings.Contains(text, "origin remote is acme/one") ||
+		!strings.Contains(text, "repo acme/none skipped") || !strings.Contains(text, "has no path") {
+		t.Fatalf("log:\n%s", text)
+	}
+}
+
 // syncWriter is a bytes.Buffer that is safe for concurrent use.
 type syncWriter struct {
 	mu sync.Mutex

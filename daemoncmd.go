@@ -80,22 +80,43 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, log io.Writer) error {
 	if dc.Cron {
 		cfg.Cron = func(ctx context.Context) error { return runCronTick(ctx, cronLog(logf), daemonDir) }
 	}
+	// The repository of --dir needs no registry path. Every other repository
+	// needs repos.<name>.path in ~/.tyci/config.json (#218).
+	var watched []flow.RepoInfo
 	var skipped []string
 	for _, name := range dc.Repos {
-		if repoErr != nil || name != info.Repo {
-			skipped = append(skipped, name)
+		if repoErr == nil && name == info.Repo {
+			watched = append(watched, info)
 			continue
 		}
-		r, shutdown, err := daemonRepo(ctx, cmd, info, logf)
+		ri, err := flow.OpenRepo(home, name)
 		if err != nil {
-			return err
+			skipped = append(skipped, fmt.Sprintf("repo %s skipped: %v", name, err))
+			continue
 		}
+		watched = append(watched, ri)
+	}
+	if len(watched) > 0 {
+		// Hooks, Lua tools, the cron dir and MCP servers are global to the
+		// process, so their project-local part comes only from the repository
+		// of --dir (a known limit of #218).
+		local := flow.RepoInfo{}
+		if repoErr == nil {
+			local = info
+		}
+		agentCtx, shutdown := setupWorkflowAgents(ctx, cmd, local)
 		defer shutdown()
-		cfg.Repos = append(cfg.Repos, r)
+		for _, ri := range watched {
+			r, err := daemonRepo(agentCtx, ri, logf)
+			if err != nil {
+				return err
+			}
+			cfg.Repos = append(cfg.Repos, r)
+		}
 	}
 	d = daemon.New(cfg)
-	for _, name := range skipped {
-		d.Logf("repo %s skipped: the daemon watches only the repository of --dir (more repositories come with #218)", name)
+	for _, line := range skipped {
+		d.Logf("%s", line)
 	}
 	if len(cfg.Repos) == 0 {
 		d.Logf("no repository to watch: the issue and ci_failure triggers are off, cron only")
@@ -120,15 +141,16 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, log io.Writer) error {
 }
 
 // daemonRepo wires one repository: the forge, the orchestrator config and a
-// flow.Manager like 'tyci workflow run' has.
-func daemonRepo(ctx context.Context, cmd *cobra.Command, info flow.RepoInfo, logf func(string, ...any)) (daemon.Repo, func(), error) {
+// flow.Manager like 'tyci workflow run' has. agentCtx comes from
+// setupWorkflowAgents.
+func daemonRepo(agentCtx context.Context, info flow.RepoInfo, logf func(string, ...any)) (daemon.Repo, error) {
 	fc, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
 	if err != nil {
-		return daemon.Repo{}, nil, err
+		return daemon.Repo{}, err
 	}
 	oc, err := loadOrchestratorConfig(info)
 	if err != nil {
-		return daemon.Repo{}, nil, err
+		return daemon.Repo{}, err
 	}
 	fcfg := fc.Forge
 	if fcfg.Repo == "" || fcfg.Repo == "auto" {
@@ -136,7 +158,7 @@ func daemonRepo(ctx context.Context, cmd *cobra.Command, info flow.RepoInfo, log
 	}
 	f, err := newForge(fcfg, fc.Repos, info.Repo)
 	if err != nil {
-		return daemon.Repo{}, nil, err
+		return daemon.Repo{}, err
 	}
 	ciWorkflow := os.Getenv("TYCI_CI_WORKFLOW")
 	if ciWorkflow == "" {
@@ -149,14 +171,13 @@ func daemonRepo(ctx context.Context, cmd *cobra.Command, info flow.RepoInfo, log
 	r.CI, _ = f.(forge.CIReader)
 	r.Comments, _ = f.(forge.Commenter)
 
-	agentCtx, shutdown := setupWorkflowAgents(ctx, cmd, info)
-	m := flow.NewManager(func(text string) { logf("%s", text) }, workflowSpawn)
+	m := flow.NewManager(func(text string) { logf("%s: %s", info.Repo, text) }, workflowSpawn)
 	m.Info = func() (flow.RepoInfo, error) { return info, nil }
 	// A signal stops the polling, not the runs: a cancelled run is saved as
 	// failed. Runs that outlive the daemon are continued at the next start.
 	m.SetBase(context.WithoutCancel(agentCtx))
 	r.Runs = daemon.NewManagerRuns(m, info.Home, info.Repo)
-	return r, shutdown, nil
+	return r, nil
 }
 
 // cronLog writes the cron tick output to the daemon log, without the
