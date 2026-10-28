@@ -63,17 +63,20 @@ func TestToolCreateBadLuaRegistersNothing(t *testing.T) {
 	dir := t.TempDir()
 	t.Cleanup(func() { RemoveRunTools(dir) })
 
-	cases := map[string]string{
-		"syntax error":     `return {`,
-		"no run function":  `return {schema = {name = "bad_one"}}`,
-		"wrong name":       `return {schema = {name = "other_name"}, run = function(ctx, args) return {success = true} end}`,
-		"no schema at all": `return {run = function(ctx, args) return {success = true} end}`,
+	cases := map[string]struct{ source, reason string }{
+		"syntax error":     {`return {`, "failed to parse"},
+		"no run function":  {`return {schema = {name = "bad_one"}}`, "'run' function"},
+		"wrong name":       {`return {schema = {name = "other_name"}, run = function(ctx, args) return {success = true} end}`, "schema.name is"},
+		"no schema at all": {`return {run = function(ctx, args) return {success = true} end}`, "'schema' table"},
 	}
-	for label, source := range cases {
+	for label, c := range cases {
 		t.Run(label, func(t *testing.T) {
-			res := createInRun(t, dir, "bad_one", source)
+			res := createInRun(t, dir, "bad_one", c.source)
 			if res.Success {
 				t.Fatal("tool_create accepted a script that does not load")
+			}
+			if !strings.Contains(res.Error, c.reason) {
+				t.Fatalf("the refusal is not the expected one (want %q): %q", c.reason, res.Error)
 			}
 			if registered("bad_one") {
 				t.Fatal("a failed tool_create left a tool in the registry")
@@ -90,10 +93,18 @@ func TestToolCreateRefusesBadNames(t *testing.T) {
 	dir := t.TempDir()
 
 	// "read" is a builtin, "mcp_x_y" is an MCP name, "../x" would leave the run folder.
-	for _, name := range []string{"read", "mcp_x_y", "../x", "Bad-Name", ""} {
+	// "read" is a valid shape, so it is refused as a clash with the builtin.
+	reasons := map[string]string{
+		"read": "already exists", "mcp_x_y": "is not valid", "../x": "is not valid",
+		"Bad-Name": "is not valid", "": "is not valid",
+	}
+	for name, reason := range reasons {
 		res := createInRun(t, dir, name, createSource)
 		if res.Success {
 			t.Fatalf("tool_create accepted the name %q", name)
+		}
+		if !strings.Contains(res.Error, reason) {
+			t.Fatalf("the refusal of the name %q is not the expected one (want %q): %q", name, reason, res.Error)
 		}
 	}
 	if !registered("read") {
@@ -112,8 +123,12 @@ func TestToolCreateRefusesExistingTool(t *testing.T) {
 	if res := createInRun(t, dir, "made_echo", createSource); !res.Success {
 		t.Fatalf("first tool_create failed: %s", res.Error)
 	}
-	if res := createInRun(t, dir, "made_echo", createSource); res.Success {
+	res := createInRun(t, dir, "made_echo", createSource)
+	if res.Success {
 		t.Fatal("a second tool_create with the same name succeeded")
+	}
+	if !strings.Contains(res.Error, "already exists") {
+		t.Fatalf("the refusal is not the name clash: %q", res.Error)
 	}
 }
 
@@ -124,8 +139,8 @@ func TestToolCreateNeedsRunDir(t *testing.T) {
 	if res.Success {
 		t.Fatal("tool_create worked without a run folder")
 	}
-	if res.Error == "" {
-		t.Fatal("the refusal has no reason")
+	if !strings.Contains(res.Error, "run folder") {
+		t.Fatalf("the refusal is not the missing run folder: %q", res.Error)
 	}
 	if registered("made_echo") {
 		t.Fatal("tool_create without a run folder registered a tool")
@@ -180,6 +195,9 @@ func TestToolCreateRoleNeedsListing(t *testing.T) {
 	res := RunTool(ctx, "tool_create", map[string]any{"name": "made_echo", "source": createSource})
 	if res.Success {
 		t.Fatal("a role without tool_create in its list created a tool")
+	}
+	if !strings.Contains(res.Error, "tool_create") {
+		t.Fatalf("the refusal does not name tool_create: %q", res.Error)
 	}
 	if registered("made_echo") {
 		t.Fatal("a refused tool_create registered a tool")
@@ -257,6 +275,9 @@ func TestToolCreateRefusedForUnrestrictedSubagent(t *testing.T) {
 	if res.Success {
 		t.Fatal("an unrestricted subagent created a tool")
 	}
+	if !strings.Contains(res.Error, "is not available to this subagent") {
+		t.Fatalf("the refusal is not the gate error: %q", res.Error)
+	}
 	if registered("made_echo") {
 		t.Fatal("a refused subagent tool_create registered a tool")
 	}
@@ -329,6 +350,9 @@ func TestToolCreateLoadIsBounded(t *testing.T) {
 	if res.Success {
 		t.Fatal("a script that never returns was accepted")
 	}
+	if !strings.Contains(res.Error, "does not load") {
+		t.Fatalf("the refusal is not the load limit: %q", res.Error)
+	}
 	if registered("made_echo") {
 		t.Fatal("a script that never returns was registered")
 	}
@@ -360,6 +384,9 @@ func TestToolCreateFailingTestDeletesFile(t *testing.T) {
 	if res.Success {
 		t.Fatal("a failing test was accepted")
 	}
+	if !strings.Contains(res.Error, "a test of the Lua tool failed") || !strings.Contains(res.Error, "does not contain") {
+		t.Fatalf("the refusal is not the failing test: %q", res.Error)
+	}
 	if registered("made_echo") {
 		t.Fatal("a failing test left the tool registered")
 	}
@@ -377,6 +404,9 @@ func TestToolCreateOsExecuteFailsInSandbox(t *testing.T) {
 		if res.Success || registered("made_echo") {
 			t.Fatal("a script that calls os.execute at load was accepted")
 		}
+		if !strings.Contains(res.Error, "does not load") || !strings.Contains(res.Error, "non-function") {
+			t.Fatalf("the refusal is not the sandbox at load: %q", res.Error)
+		}
 		noTempLeft(t, dir, "made_echo")
 	})
 
@@ -384,13 +414,18 @@ func TestToolCreateOsExecuteFailsInSandbox(t *testing.T) {
 		dir := t.TempDir()
 		t.Cleanup(func() { RemoveRunTools(dir) })
 		source := replaceName(strings.Replace(createSource,
-			`content = "echo: " .. (args.input or "none")`,
+			`return {success = true, content = "echo: " .. (args.input or "none")}`,
 			`os.execute('true'); return {success = true, content = "ran"}`, 1), "made_echo")
 		ctx := WithRunDir(context.Background(), dir)
 		tests := []any{map[string]any{"expect": "ran"}}
 		res := RunTool(ctx, "tool_create", map[string]any{"name": "made_echo", "source": source, "tests": tests})
 		if res.Success || registered("made_echo") {
 			t.Fatal("a script that calls os.execute in run was accepted")
+		}
+		// The script must parse and load, so the test run is what refuses it.
+		// os.execute is nil in the sandbox, so the call fails inside the test run.
+		if !strings.Contains(res.Error, "a test of the Lua tool failed") || !strings.Contains(res.Error, "non-function") {
+			t.Fatalf("the refusal is not the sandbox: %q", res.Error)
 		}
 		noTempLeft(t, dir, "made_echo")
 	})
