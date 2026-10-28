@@ -12,8 +12,8 @@ import (
 
 // Defaults and limits of the "daemon" section.
 const (
-	DefaultPollInterval = 60 * time.Second
-	MinPollInterval     = 5 * time.Second
+	DefaultPollInterval  = 60 * time.Second
+	MinPollInterval      = 5 * time.Second
 	DefaultDaemonWorkers = 3
 )
 
