@@ -213,19 +213,66 @@ func daemonClient(home string) *daemon.Client {
 	return &daemon.Client{Path: path, Timeout: 2 * time.Second}
 }
 
+// daemonOrLocal is a daemon.Backend that asks the running daemon over its
+// socket. Without a socket, or when the socket does not answer (a dead
+// daemon), it asks local. An error that the daemon answers is returned.
+type daemonOrLocal struct {
+	home  string
+	local daemon.Backend
+}
+
+var _ daemon.Backend = daemonOrLocal{}
+
+func viaDaemon[T any](home string, remote func(*daemon.Client) (T, error), local func() (T, error)) (T, error) {
+	if c := daemonClient(home); c != nil {
+		v, err := remote(c)
+		var re *daemon.RemoteError
+		if err == nil || errors.As(err, &re) {
+			return v, err
+		}
+	}
+	return local()
+}
+
+// Status implements daemon.Backend.
+func (b daemonOrLocal) Status(ctx context.Context) (daemon.Status, error) {
+	return viaDaemon(b.home,
+		func(c *daemon.Client) (daemon.Status, error) { return c.Status(ctx) },
+		func() (daemon.Status, error) { return b.local.Status(ctx) })
+}
+
+// RunsList implements daemon.Backend.
+func (b daemonOrLocal) RunsList(ctx context.Context) ([]daemon.RunInfo, error) {
+	return viaDaemon(b.home,
+		func(c *daemon.Client) ([]daemon.RunInfo, error) { return c.RunsList(ctx) },
+		func() ([]daemon.RunInfo, error) { return b.local.RunsList(ctx) })
+}
+
+// RunsGet implements daemon.Backend. An answer without a state also falls
+// back to local.
+func (b daemonOrLocal) RunsGet(ctx context.Context, run string) (daemon.RunDetail, error) {
+	return viaDaemon(b.home,
+		func(c *daemon.Client) (daemon.RunDetail, error) {
+			got, err := c.RunsGet(ctx, run)
+			if err == nil && got.State == nil {
+				err = errors.New("daemon answered no state")
+			}
+			return got, err
+		},
+		func() (daemon.RunDetail, error) { return b.local.RunsGet(ctx, run) })
+}
+
 // findRun reads a run through the daemon when its socket is there, else from
 // the run files. A socket that does not answer (a dead daemon) falls back to
 // the files.
 func findRun(ctx context.Context, home, run string) (*flow.RunState, string, error) {
-	if c := daemonClient(home); c != nil {
-		got, err := c.RunsGet(ctx, run)
-		var re *daemon.RemoteError
-		switch {
-		case err == nil && got.State != nil:
-			return got.State, got.Path, nil
-		case errors.As(err, &re):
-			return nil, "", fmt.Errorf("%s", re.Message)
-		}
+	got, err := daemonOrLocal{home: home, local: &daemon.InProcess{Home: home}}.RunsGet(ctx, run)
+	var re *daemon.RemoteError
+	if errors.As(err, &re) {
+		return nil, "", fmt.Errorf("%s", re.Message)
 	}
-	return flow.FindRun(home, run)
+	if err != nil {
+		return nil, "", err
+	}
+	return got.State, got.Path, nil
 }
