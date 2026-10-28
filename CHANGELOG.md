@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Internal: the unused `debug` setting of the agent config and of the connector request is removed (#786).
 
 ### Fixed
+- Lua tools: a paused run that starts again, also after a tyci restart, loads the tool files of its run folder again. A bad file is logged and skipped, and the run starts (#813).
+- Lua tools: at start, tyci removes the session folders `tyci-session-*` of tyci processes that have exited. A folder without a PID, made by an older tyci, is removed after 24 hours (#813).
 - Flow: a saved oracle answer no longer depends on the task or state name. A state with `"saves": true` saves its answer as `output.txt`, and the check gets its path in `TYCI_ANSWER`. The builtin `milestone-close` and `rebalance` templates set the flag, so a copied workflow with a renamed state still moves its findings or validates its split. A workflow with no `saves` flag keeps the task names `pick_critical`, `rebalance_split` and `plan` (#784).
 
 ### Security

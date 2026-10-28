@@ -368,6 +368,9 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 		if resumed {
 			m.emit(RunEvent{Run: st.Run, Status: "running"})
 		}
+		// The Lua tools that tool_create made in this run are registered again: after
+		// a restart the registry is empty. A run without a tools folder is not changed.
+		tools.ReloadRunTools(RunDir(info.Home, info.Name(), st.Run))
 		err := do(ctx, r)
 		m.mu.Lock()
 		a := m.active[st.Run]
