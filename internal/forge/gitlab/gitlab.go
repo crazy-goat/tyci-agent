@@ -225,7 +225,8 @@ type Change struct {
 	State string
 	// HeadSHA is the last commit of the source branch.
 	HeadSHA string
-	// Checks is the head pipeline: "pass", "fail" or "pending" (also no pipeline).
+	// Checks is the head pipeline: "pass", "fail" or "pending" (also no
+	// pipeline, or a pipeline of an older commit).
 	Checks string
 }
 
@@ -241,13 +242,15 @@ func (g *GitLab) Change(ctx context.Context, iid int) (Change, error) {
 		SHA          string `json:"sha"`
 		HeadPipeline *struct {
 			Status string `json:"status"`
+			SHA    string `json:"sha"`
 		} `json:"head_pipeline"`
 	}
 	if err := json.Unmarshal(body, &r); err != nil {
 		return Change{}, fmt.Errorf("gitlab: bad JSON: %w", err)
 	}
 	ch := Change{Number: r.IID, State: issueState(r.State), HeadSHA: r.SHA, Checks: "pending"}
-	if r.HeadPipeline != nil {
+	// Right after a push, head_pipeline can still be the pipeline of the old head.
+	if r.HeadPipeline != nil && r.HeadPipeline.SHA == r.SHA {
 		ch.Checks = checks(r.HeadPipeline.Status)
 	}
 	return ch, nil

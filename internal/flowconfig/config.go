@@ -339,7 +339,7 @@ func (c *Config) validate() error {
 		return fmt.Errorf("logs.retention_days: %d is negative", *d)
 	}
 	if k := c.Forge.Kind; k != "" && k != "github" {
-		return fmt.Errorf("forge.kind: unknown kind %q (only \"github\" is supported)", k)
+		return fmt.Errorf("forge.kind: unknown kind %q (only \"github\"; use repos to select GitLab)", k)
 	}
 	if r := c.Forge.Repo; r != "" && r != "auto" && !forgeRepoRe.MatchString(r) {
 		return fmt.Errorf("forge.repo: %q is not \"auto\" or \"owner/name\"", r)

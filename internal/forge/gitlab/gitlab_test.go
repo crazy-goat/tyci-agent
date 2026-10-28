@@ -175,12 +175,18 @@ func TestGitLabPaginationStops(t *testing.T) {
 	}
 }
 
-// mr serves merge request 5 with head shaA and the given pipeline status.
+// mr serves merge request 5 with head shaA and the given pipeline status of
+// shaA.
 func mr(s *server, t *testing.T, state, pipeline string) {
+	mrAt(s, t, state, pipeline, shaA)
+}
+
+// mrAt is mr with a pipeline of commit pipelineSHA.
+func mrAt(s *server, t *testing.T, state, pipeline, pipelineSHA string) {
 	s.handle("GET merge_requests/5", func(w http.ResponseWriter, _ *http.Request) {
 		v := item{"iid": 5, "state": state, "sha": shaA}
 		if pipeline != "" {
-			v["head_pipeline"] = item{"status": pipeline}
+			v["head_pipeline"] = item{"status": pipeline, "sha": pipelineSHA}
 		}
 		writeJSON(t, w, v)
 	})
@@ -217,11 +223,13 @@ func TestGitLabMergeRejectsMovedHead(t *testing.T) {
 }
 
 func TestGitLabMergeOnlyGreen(t *testing.T) {
-	for _, tc := range []struct{ state, pipeline string }{
-		{"opened", "running"}, {"opened", "failed"}, {"opened", ""}, {"merged", "success"}, {"closed", "success"},
+	for _, tc := range []struct{ state, pipeline, pipelineSHA string }{
+		{"opened", "running", shaA}, {"opened", "failed", shaA}, {"opened", "", shaA},
+		{"merged", "success", shaA}, {"closed", "success", shaA},
+		{"opened", "success", shaB}, // a green pipeline of an older head
 	} {
 		s, g := newServer(t)
-		mr(s, t, tc.state, tc.pipeline)
+		mrAt(s, t, tc.state, tc.pipeline, tc.pipelineSHA)
 		err := g.Merge(context.Background(), 5, shaA)
 		if !errors.Is(err, gitlab.ErrNotGreen) && !errors.Is(err, gitlab.ErrNotOpen) {
 			t.Errorf("%+v: got %v", tc, err)
