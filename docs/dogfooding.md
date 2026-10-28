@@ -210,8 +210,9 @@ An issue with the labels `accepted` and `risky` runs the plan gate:
    `approve` to code the issue, `replan` to plan it again, or `stop` to end the run.
 
 The oracle never answers `ask_plan`. A risky issue that already has an open pull request
-skips the gate. A copied workflow gets the gate only after you run
-`tyci workflow init issue-to-merge` again.
+skips the gate. A copied workflow gets the gate only after you move or delete
+`.tyci/workflows/issue-to-merge` in the project, then run
+`tyci workflow init issue-to-merge` again. The init command never overwrites a directory.
 
 ## 8. Protected paths
 

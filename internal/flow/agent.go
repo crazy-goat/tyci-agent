@@ -67,8 +67,10 @@ func (r *SubagentRunner) Run(ctx context.Context, role, task string, rc RunConte
 	}
 	if isSavedOracle(role, task) {
 		// The answer is the text. It is saved as output.txt for the next state.
-		if err := os.WriteFile(filepath.Join(rc.ArtifactDir, "output.txt"), []byte(strings.TrimSpace(out)+"\n"), 0o600); err != nil {
-			return "", session, err
+		if rc.ArtifactDir != "" {
+			if err := os.WriteFile(filepath.Join(rc.ArtifactDir, "output.txt"), []byte(strings.TrimSpace(out)+"\n"), 0o600); err != nil {
+				return "", session, err
+			}
 		}
 		return "done", session, nil
 	}
@@ -81,7 +83,7 @@ func (r *SubagentRunner) Run(ctx context.Context, role, task string, rc RunConte
 		}
 		return planReviewKey(out, rc.PlanRejects), session, nil
 	}
-	if session, err = r.ensureReport(ctx, role, session, rc); err != nil {
+	if session, err = r.ensureReport(ctx, role, task, session, rc); err != nil {
 		return "", session, err
 	}
 	switch {
@@ -156,7 +158,7 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Run != "" {
 		name = rc.Run + "/" + role
 	}
-	policy := rolePolicy(role, rl, rc.Worktree)
+	policy := rolePolicy(role, task, rl, rc.Worktree)
 	spec := tools.TaskSpec{Task: text, Model: model, SystemPrompt: rl.Prompt, Dir: rc.Worktree, Name: name, Transcript: transcriptPath(rc, role), SoftLimit: rl.CompactSoftLimit, HardLimit: rl.CompactHardLimit, Effort: r.Cfg.ResolveEffort(rl), Policy: &policy, Fallbacks: fallbacks, RoleLimits: rl.Limits.Rounds > 0 || rl.Limits.TimeMin > 0 || rl.Limits.ToolCalls > 0}
 	effective := spec.Effort
 	if r.URIEffort != nil {
@@ -240,16 +242,21 @@ func hasReport(rc RunContext) bool {
 	return err == nil && len(bytes.TrimSpace(b)) > 0
 }
 
-// rolePolicy is the tool policy of a run of role in the worktree dir. A run
-// and its reminders get the same policy.
-func rolePolicy(role string, rl flowconfig.Role, dir string) tools.Policy {
-	return tools.Policy{Role: role, Permission: rl.PermissionMode(), Network: rl.NetworkOn(), Tools: rl.Tools, Dir: dir}
+// rolePolicy is the tool policy of a run of role with task in the worktree dir.
+// A run and its reminders get the same policy. The plan steps are read-only
+// whatever the role permission is: the harness writes their answer (#214).
+func rolePolicy(role, task string, rl flowconfig.Role, dir string) tools.Policy {
+	p := tools.Policy{Role: role, Permission: rl.PermissionMode(), Network: rl.NetworkOn(), Tools: rl.Tools, Dir: dir}
+	if isPlanStep(role, task) {
+		p.Permission = tools.PermissionReadOnly
+	}
+	return p
 }
 
 // ensureReport checks that the agent wrote a non-empty report.md. If not, it
 // sends a reminder in the same session, at most maxReminders times. It
 // returns the session id of the last message.
-func (r *SubagentRunner) ensureReport(ctx context.Context, role, session string, rc RunContext) (string, error) {
+func (r *SubagentRunner) ensureReport(ctx context.Context, role, task, session string, rc RunContext) (string, error) {
 	if rc.ArtifactDir == "" {
 		return session, nil
 	}
@@ -257,7 +264,7 @@ func (r *SubagentRunner) ensureReport(ctx context.Context, role, session string,
 	if err != nil {
 		return session, err
 	}
-	policy := rolePolicy(role, rl, rc.Worktree)
+	policy := rolePolicy(role, task, rl, rc.Worktree)
 	for i := 0; ; i++ {
 		if hasReport(rc) {
 			return session, nil

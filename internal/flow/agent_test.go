@@ -455,3 +455,48 @@ func TestSubagentRunner_PlanSavesOutput(t *testing.T) {
 		t.Fatalf("output.txt %q err %v", b, err)
 	}
 }
+
+// #214: the plan and plan_review states are read-only. A write, a bash call or
+// a kill is refused in their run, so the plan can only be written by the harness.
+func TestSubagentRunner_PlanStatesAreReadOnly(t *testing.T) {
+	for _, task := range []string{"plan", "plan_review"} {
+		s := &spawnRec{result: "REJECT\nno"}
+		rc := RunContext{Worktree: t.TempDir(), ArtifactDir: t.TempDir(), Issue: 9}
+		if _, _, err := newRunner(s).Run(context.Background(), "oracle", task, rc); err != nil {
+			t.Fatalf("%s: %v", task, err)
+		}
+		p := s.specs[0].Policy
+		if p == nil {
+			t.Fatalf("%s: no policy", task)
+		}
+		for _, name := range []string{"write", "bash", "kill_job"} {
+			if tools.AllowedFor(*p, name) {
+				t.Errorf("%s: %s is allowed, want refused", task, name)
+			}
+		}
+		if !tools.AllowedFor(*p, "read") {
+			t.Errorf("%s: read is refused, want allowed", task)
+		}
+	}
+}
+
+// #214: an empty artifact dir gets no output.txt in the working directory.
+func TestSubagentRunner_PlanWithoutArtifactDirWritesNothing(t *testing.T) {
+	cwd := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(old) })
+	s := &spawnRec{result: "1. Goal\n"}
+	key, _, err := newRunner(s).Run(context.Background(), "oracle", "plan", RunContext{Worktree: t.TempDir(), Issue: 9})
+	if err != nil || key != "done" {
+		t.Fatalf("key %q err %v", key, err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "output.txt")); err == nil {
+		t.Error("output.txt written to the working directory")
+	}
+}
