@@ -129,6 +129,36 @@ func GetRun(home, run string) (RunDetail, error) {
 	return RunDetail{State: st, Path: path}, nil
 }
 
+// ErrNoDaemon is the Status error of InProcess: no daemon runs.
+var ErrNoDaemon = errors.New("no daemon runs: start it with 'tyci daemon'")
+
+// InProcess is a Backend that reads the run files itself. A caller uses it
+// when no daemon runs.
+type InProcess struct {
+	Home string
+	// Repos are the repositories ("owner/name") that RunsList lists.
+	Repos []string
+}
+
+var _ Backend = (*InProcess)(nil)
+
+// Status implements Backend. It always returns ErrNoDaemon.
+func (p *InProcess) Status(context.Context) (Status, error) { return Status{}, ErrNoDaemon }
+
+// RunsList implements Backend.
+func (p *InProcess) RunsList(context.Context) ([]RunInfo, error) {
+	out := []RunInfo{}
+	for _, r := range p.Repos {
+		out = append(out, ListOpenRuns(p.Home, r)...)
+	}
+	return out, nil
+}
+
+// RunsGet implements Backend.
+func (p *InProcess) RunsGet(_ context.Context, run string) (RunDetail, error) {
+	return GetRun(p.Home, run)
+}
+
 // JSON-RPC 2.0 error codes.
 const (
 	codeParse          = -32700
