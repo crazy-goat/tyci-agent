@@ -72,6 +72,8 @@ var (
 	workflowInitDir      string
 	workflowRunJSON      bool
 	workflowRunDir       string
+	workflowResumeJSON   bool
+	workflowResumeDir    string
 	workflowValidateJSON bool
 	workflowValidateDir  string
 	workflowStatusJSON   bool
@@ -137,45 +139,38 @@ stderr. Exit code 0 means done or paused. Exit code 1 means failed or invalid.`,
 			return printValidity(cmd.OutOrStdout(), jsonOut, args[0], problems)
 		}
 
-		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
-		defer stop()
-		ctx, dl := openDebugLog(cmd, ctx)
-		defer closeDebugLog(dl)
-		ctx, shutdown := setupWorkflowAgents(ctx, cmd, info)
-		defer shutdown()
-		m := flow.NewManager(func(text string) { fmt.Fprintln(cmd.ErrOrStderr(), text) }, workflowSpawn)
-		m.Info = func() (flow.RepoInfo, error) { return info, nil }
-		m.SetBase(ctx)
-		events := make(chan flow.RunEvent, 16)
-		unsubscribe := m.Subscribe(func(ev flow.RunEvent) { events <- ev })
-		defer unsubscribe()
-		// A workflow run has no model turn of its own, so no NextMessages
-		// reads the orchestrator inbox. Its notices are dropped at the end.
-		defer dropLeftoverNotices(cmd.ErrOrStderr())
+		return runAndReport(cmd, jsonOut, info, func(ctx context.Context, m *flow.Manager) (string, bool, error) {
+			id, _, err := m.StartIssue(ctx, args[0], issue)
+			return id, true, err
+		})
+	},
+}
 
-		runID, _, err := m.StartIssue(ctx, args[0], issue)
+var workflowResumeCmd = &cobra.Command{
+	Use:   "resume <run-id> <answer>",
+	Short: "Answer a paused run and wait until it ends or pauses again",
+	Long: `Answer the paused run <run-id> of the repository of --dir (default: the current
+directory) with <answer>, for example one key of its ask state, "retry <note>",
+"goto <state>", "stop", or "resume" for a run that a restart paused. The command then
+waits like 'tyci workflow run'. Use it for a run that 'tyci daemon' left paused.
+
+With --json the command prints one JSON object on stdout. Exit code 0 means done or
+paused. Exit code 1 means failed, a bad answer, or a run that is not paused.`,
+	Args: jsonArgs(2, &workflowResumeJSON),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		info, err := workflowRepoInfo(workflowResumeDir)
 		if err != nil {
-			return fail(cmd, jsonOut, err)
+			return fail(cmd, workflowResumeJSON, err)
 		}
-		// The command context, not ctx: Ctrl+C must let the runner save its
-		// final state first. Only a deadline (set by tests) ends the wait early.
-		if err = awaitRun(cmd.Context(), events, runID); err != nil {
-			return fail(cmd, jsonOut, fmt.Errorf("run %s did not report its end: %w", flow.ShowRunID(runID), err))
-		}
-		runDir := flow.RunDir(info.Home, info.Name(), runID)
-		st, err := flow.Load(runDir)
-		if err != nil {
-			return fail(cmd, jsonOut, err)
-		}
-		r := runResult(st, flow.StatePath(runDir))
-		printResult(cmd.OutOrStdout(), jsonOut, r)
-		if r.Error != "" {
-			return errors.New(r.Error)
-		}
-		if st.Status == "paused" {
-			fmt.Fprintf(cmd.ErrOrStderr(), "waiting at ask state %s\n", st.Current)
-		}
-		return nil
+		noteUntrusted(cmd, info)
+		run := strings.TrimPrefix(args[0], "#")
+		// An apply or reject of a workflow proposal keeps the run paused: there
+		// is no run end to wait for.
+		st, _, _ := flow.FindRun(info.Home, run)
+		wait := st == nil || st.Ask == nil || st.Ask.Proposal == "" || (args[1] != "apply" && args[1] != "reject")
+		return runAndReport(cmd, workflowResumeJSON, info, func(_ context.Context, m *flow.Manager) (string, bool, error) {
+			return run, wait, m.Resume(run, args[1])
+		})
 	},
 }
 
@@ -206,7 +201,8 @@ var workflowStatusCmd = &cobra.Command{
 	Use:   "status <run-id>",
 	Short: "Show the saved state of a run in any repository",
 	Long: `Show the saved state of the run <run-id>. The command searches the runs of every
-repository under ~/.tyci/runs. Exit code 0 means running, paused, done or stopped. Exit code 1
+repository under ~/.tyci/runs. When 'tyci daemon' runs, the command asks the daemon over
+its socket. Exit code 0 means running, paused, done or stopped. Exit code 1
 means failed, unknown or ambiguous.`,
 	Args: jsonArgs(1, &workflowStatusJSON),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -215,7 +211,7 @@ means failed, unknown or ambiguous.`,
 		if err != nil {
 			return fail(cmd, jsonOut, err)
 		}
-		st, statePath, err := flow.FindRun(home, args[0])
+		st, statePath, err := findRun(cmd.Context(), home, args[0])
 		if err != nil {
 			return fail(cmd, jsonOut, err)
 		}
@@ -288,6 +284,53 @@ unknown or ambiguous.`,
 		printResult(cmd.OutOrStdout(), jsonOut, runResult(st, statePath))
 		return nil
 	},
+}
+
+// runAndReport starts or resumes a run with start, waits until it ends or
+// pauses (when start says so), and prints its result. The run works in a flow.Manager of info, like
+// a run in the TUI.
+func runAndReport(cmd *cobra.Command, jsonOut bool, info flow.RepoInfo, start func(context.Context, *flow.Manager) (string, bool, error)) error {
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	defer stop()
+	ctx, dl := openDebugLog(cmd, ctx)
+	defer closeDebugLog(dl)
+	ctx, shutdown := setupWorkflowAgents(ctx, cmd, info)
+	defer shutdown()
+	m := flow.NewManager(func(text string) { fmt.Fprintln(cmd.ErrOrStderr(), text) }, workflowSpawn)
+	m.Info = func() (flow.RepoInfo, error) { return info, nil }
+	m.SetBase(ctx)
+	events := make(chan flow.RunEvent, 16)
+	unsubscribe := m.Subscribe(func(ev flow.RunEvent) { events <- ev })
+	defer unsubscribe()
+	// A workflow run has no model turn of its own, so no NextMessages
+	// reads the orchestrator inbox. Its notices are dropped at the end.
+	defer dropLeftoverNotices(cmd.ErrOrStderr())
+
+	runID, wait, err := start(ctx, m)
+	if err != nil {
+		return fail(cmd, jsonOut, err)
+	}
+	// The command context, not ctx: Ctrl+C must let the runner save its
+	// final state first. Only a deadline (set by tests) ends the wait early.
+	if wait {
+		if err = awaitRun(cmd.Context(), events, runID); err != nil {
+			return fail(cmd, jsonOut, fmt.Errorf("run %s did not report its end: %w", flow.ShowRunID(runID), err))
+		}
+	}
+	runDir := flow.RunDir(info.Home, info.Name(), runID)
+	st, err := flow.Load(runDir)
+	if err != nil {
+		return fail(cmd, jsonOut, err)
+	}
+	r := runResult(st, flow.StatePath(runDir))
+	printResult(cmd.OutOrStdout(), jsonOut, r)
+	if r.Error != "" {
+		return errors.New(r.Error)
+	}
+	if st.Status == "paused" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "waiting at ask state %s\n", st.Current)
+	}
+	return nil
 }
 
 // awaitRun returns when run id reports its final status (done, failed, paused or stopped).
@@ -432,6 +475,8 @@ func init() {
 	workflowInitCmd.Flags().StringVar(&workflowInitDir, "dir", "", "project directory (default: current directory)")
 	workflowRunCmd.Flags().BoolVar(&workflowRunJSON, "json", false, "print one JSON object on stdout")
 	workflowRunCmd.Flags().StringVar(&workflowRunDir, "dir", "", "project directory (default: current directory)")
+	workflowResumeCmd.Flags().BoolVar(&workflowResumeJSON, "json", false, "print one JSON object on stdout")
+	workflowResumeCmd.Flags().StringVar(&workflowResumeDir, "dir", "", "project directory (default: current directory)")
 	workflowValidateCmd.Flags().BoolVar(&workflowValidateJSON, "json", false, "print one JSON object on stdout")
 	workflowValidateCmd.Flags().StringVar(&workflowValidateDir, "dir", "", "project directory (default: current directory)")
 	workflowStatusCmd.Flags().BoolVar(&workflowStatusJSON, "json", false, "print one JSON object on stdout")
@@ -442,6 +487,6 @@ func init() {
 	workflowListCmd.Flags().IntVar(&workflowListLimit, "limit", flow.DefaultRunListLimit, "runs per page")
 	workflowListCmd.Flags().IntVar(&workflowListOffset, "offset", 0, "runs to skip, newest first")
 	workflowStopCmd.Flags().StringVar(&workflowStopReason, "reason", "", "why the run is stopped (default: stopped by user)")
-	workflowCmd.AddCommand(workflowInitCmd, workflowRunCmd, workflowValidateCmd, workflowStatusCmd, workflowListCmd, workflowStopCmd)
+	workflowCmd.AddCommand(workflowInitCmd, workflowRunCmd, workflowResumeCmd, workflowValidateCmd, workflowStatusCmd, workflowListCmd, workflowStopCmd)
 	rootCmd.AddCommand(workflowCmd)
 }
