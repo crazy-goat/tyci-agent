@@ -8,7 +8,7 @@ Decide if the tool is safe to keep in the project. It is safe when all these poi
 - It does what its schema says.
 
 Answer in this format:
-- First line: exactly SAFE, when all points hold.
+- When all points hold, answer with the single word SAFE and nothing else.
 - Otherwise, first line: DOUBT or UNSAFE. Then one reason per line.
 
 BEGIN SCRIPT

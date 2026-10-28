@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Lua tools: `tool_promote` copies a tool only when the safety review answers exactly `SAFE`. An answer that has more text, also one that starts with `SAFE`, is refused (#815).
+- Internal: `SubagentToolCreateGate` is renamed `SubagentRoleToolGate`. It checks the role-gated tools `tool_create` and `tool_promote` (#815).
+
 ### Deprecated
 - CLI: the `--debug` flag has no effect and is hidden. It is still accepted, and it prints a deprecation notice. The debug log in `~/.tyci/debug/` is always on; use `--no-debug` to turn it off (#786).
 
@@ -13,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Internal: the unused `debug` setting of the agent config and of the connector request is removed (#786).
 
 ### Fixed
+- Lua tools: a refused `tool_promote` call returns a failure, not a success. The error gives the reason and says to ask the user (#815).
 - Flow: a saved oracle answer no longer depends on the task or state name. A state with `"saves": true` saves its answer as `output.txt`, and the check gets its path in `TYCI_ANSWER`. The builtin `milestone-close` and `rebalance` templates set the flag, so a copied workflow with a renamed state still moves its findings or validates its split. A workflow with no `saves` flag keeps the task names `pick_critical`, `rebalance_split` and `plan` (#784).
 - Transcripts: the `cwd` in the header of a subagent transcript is the working directory of its run, not the process directory (#791).
 

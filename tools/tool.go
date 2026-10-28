@@ -246,7 +246,7 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "tool_promote",
-				"description": "Copy a Lua tool made with tool_create in this run or session into the project, to .tyci/tools/<name>.lua of the current worktree. A read-only safety review must answer SAFE first. If it does not, nothing is copied and the result says so: ask the user. The copy is not committed.",
+				"description": "Copy a Lua tool made with tool_create in this run or session into the project, to .tyci/tools/<name>.lua of the current worktree. A read-only safety review must answer exactly SAFE first. If it does not, nothing is copied, the call fails with the reason, and you ask the user. The copy is not committed.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
