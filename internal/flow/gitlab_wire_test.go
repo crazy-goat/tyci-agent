@@ -148,6 +148,9 @@ func TestNewRunnerGitLab(t *testing.T) {
 	if r := m.NewRunner(info, wf, st); !r.GitLab {
 		t.Fatal("no token: GitLab env missing")
 	}
+	if st.GitLabURL != info.GitLabURL {
+		t.Fatalf("state gitlab url = %q", st.GitLabURL)
+	}
 	t.Setenv("TYCI_GITLAB_TOKEN", "glpat-wire-test-0123456789")
 	r := m.NewRunner(info, wf, st)
 	sub, ok := r.Agents.(*SubagentRunner)
@@ -158,7 +161,19 @@ func TestNewRunnerGitLab(t *testing.T) {
 		t.Fatalf("render %#v", sub.Render)
 	}
 	info.GitLabURL = ""
-	if r := m.NewRunner(info, wf, st); r.GitLab {
+	if r := m.NewRunner(info, wf, st); r.GitLab || st.GitLabURL != "" {
 		t.Fatal("GitHub repo got the GitLab env")
+	}
+}
+
+// #216: the run notice and the status JSON link the GitLab merge request.
+func TestPRURL_GitLab(t *testing.T) {
+	st := &RunState{Repo: "g/sub/p", PR: 5, GitLabURL: "https://gitlab.example.com/"}
+	if got := prURL(st); got != "https://gitlab.example.com/g/sub/p/-/merge_requests/5" {
+		t.Fatalf("got %q", got)
+	}
+	st.GitLabURL = ""
+	if got := prURL(st); got != "https://github.com/g/sub/p/pull/5" {
+		t.Fatalf("got %q", got)
 	}
 }

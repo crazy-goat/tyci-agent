@@ -89,7 +89,9 @@ type RunState struct {
 	Run      string `json:"run"`
 	Workflow string `json:"workflow"`
 	Repo     string `json:"repo"`
-	Issue    int    `json:"issue"` // 0 when the workflow has no issue param
+	// GitLabURL is the GitLab server of Repo, empty for GitHub. prURL uses it.
+	GitLabURL string `json:"gitlab_url,omitempty"`
+	Issue     int    `json:"issue"` // 0 when the workflow has no issue param
 	// Params are the bound param values of the run, by name (#520).
 	Params   map[string]string `json:"params,omitempty"`
 	Branch   string            `json:"branch"`

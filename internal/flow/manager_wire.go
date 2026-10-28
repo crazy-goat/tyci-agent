@@ -146,6 +146,8 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 	}
 	m.NewRunner = func(info RepoInfo, wf *Workflow, st *RunState) *Runner {
 		runDir := RunDir(info.Home, info.Name(), st.Run)
+		// prURL links the merge request on GitLab. The runner saves it with the state.
+		st.GitLabURL = info.GitLabURL
 		cfg, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
 		r := &Runner{
 			WF:            wf,

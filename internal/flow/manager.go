@@ -450,7 +450,12 @@ func endedByAsk(st *RunState) bool {
 	return n > 0 && st.History[n-1].Kind == "ask"
 }
 
+// prURL is the web link of the PR of the run: a GitLab merge request when
+// the run has a GitLab server, else a GitHub pull request.
 func prURL(st *RunState) string {
+	if st.GitLabURL != "" {
+		return fmt.Sprintf("%s/%s/-/merge_requests/%d", strings.TrimRight(st.GitLabURL, "/"), st.Repo, st.PR)
+	}
 	return fmt.Sprintf("https://github.com/%s/pull/%d", st.Repo, st.PR)
 }
 
