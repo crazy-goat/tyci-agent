@@ -111,6 +111,11 @@ func resumeSubagentTask(ctx context.Context, s TaskSpec) (string, string, error)
 		return "", "", errors.New("resume unavailable: job registry not configured")
 	}
 	jobCtx := WithWorkdir(ctx, s.Dir)
+	// The resumed run keeps the role's tool gate and write root. The caller's
+	// ctx carries no policy, so without this a resumed role could write anywhere.
+	if s.Policy != nil {
+		jobCtx = WithPolicy(jobCtx, *s.Policy)
+	}
 	h, err := resumer.Resume(jobCtx, s.Resume, s.Task)
 	if err != nil {
 		return "", "", err
