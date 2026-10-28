@@ -229,14 +229,18 @@ func NewSessionFolder() (string, func(), error) {
 // ReloadRunTools registers again the Lua tools that tool_create made in the run
 // folder dir, from the files in dir/tools. A paused run calls it when it starts
 // again, also after a tyci restart, because the registry is empty after a
-// restart. A file that fails a check is logged and skipped. The other files load
-// as usual. A run folder without a tools folder is left alone.
-func ReloadRunTools(dir string) {
+// restart. A file that fails a check is reported through warn and skipped. The
+// other files load as usual. A nil warn writes to stderr. A run folder without a
+// tools folder is left alone.
+func ReloadRunTools(dir string, warn func(string)) {
+	if warn == nil {
+		warn = func(msg string) { fmt.Fprintln(os.Stderr, msg) }
+	}
 	toolsDir := filepath.Join(dir, "tools")
 	entries, err := os.ReadDir(toolsDir)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Warning: cannot read the Lua tools of this run: %v\n", err)
+			warn(fmt.Sprintf("Warning: cannot read the Lua tools of this run: %v", err))
 		}
 		return
 	}
@@ -249,7 +253,7 @@ func ReloadRunTools(dir string) {
 		path := filepath.Join(toolsDir, e.Name())
 		tool, err := loadRunToolFile(stem, path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: skipping the Lua tool %s of this run: %v\n", path, err)
+			warn(fmt.Sprintf("Warning: skipping the Lua tool %s of this run: %v", path, err))
 			continue
 		}
 		loaded = append(loaded, tool)

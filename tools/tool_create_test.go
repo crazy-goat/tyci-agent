@@ -457,7 +457,11 @@ func TestReloadRunToolsRegistersGoodFilesOnly(t *testing.T) {
 	writeRunTool(t, dir, "made_other", replaceName(createSource, "made_renamed"))
 	writeRunTool(t, dir, "made_broken", "return {")
 
-	ReloadRunTools(dir)
+	var warnings []string
+	ReloadRunTools(dir, func(msg string) { warnings = append(warnings, msg) })
+	if len(warnings) != 3 {
+		t.Fatalf("got %d warnings, want 3 (one per bad file): %v", len(warnings), warnings)
+	}
 
 	if !registered("made_echo") {
 		t.Fatal("the good tool was not registered again")
@@ -480,8 +484,8 @@ func TestReloadRunToolsTwiceKeepsOneTool(t *testing.T) {
 	t.Cleanup(func() { RemoveRunTools(dir) })
 	writeRunTool(t, dir, "made_echo", createSource)
 
-	ReloadRunTools(dir)
-	ReloadRunTools(dir)
+	ReloadRunTools(dir, nil)
+	ReloadRunTools(dir, nil)
 	if !registered("made_echo") {
 		t.Fatal("the tool is gone after the second reload")
 	}
@@ -493,7 +497,7 @@ func TestReloadRunToolsTwiceKeepsOneTool(t *testing.T) {
 
 // A run folder without a tools folder is left alone.
 func TestReloadRunToolsNoFolderIsNoop(t *testing.T) {
-	ReloadRunTools(t.TempDir())
+	ReloadRunTools(t.TempDir(), nil)
 }
 
 // startedAgo returns a folder under root with the name and a modification time d ago.
