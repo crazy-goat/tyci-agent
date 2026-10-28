@@ -17,9 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Flow: a saved oracle answer no longer depends on the task or state name. A state with `"saves": true` saves its answer as `output.txt`, and the check gets its path in `TYCI_ANSWER`. The builtin `milestone-close` and `rebalance` templates set the flag, so a copied workflow with a renamed state still moves its findings or validates its split. A workflow with no `saves` flag keeps the task names `pick_critical`, `rebalance_split` and `plan` (#784).
+- Transcripts: the `cwd` in the header of a subagent transcript is the working directory of its run, not the process directory (#791).
 
 ### Security
+- Roles: a role job that is resumed keeps its tool policy and its worktree. Before, the chat tool `resume` and the agent view resumed it with no tool gate and no write root, so it could write outside its worktree (#791).
 - Roles: a role with the permission `read-only` refuses every MCP tool, also when its `tools` list names it. The refusal applies to a direct call, to `tool()` in `lua` and to the tool schema. The plan steps and the read-only text runs get the same rule (#804).
+- Memory: project notes in `.tyci/memory/` are written with mode `0600`, as role notes are, and a note that already exists with a looser mode is tightened on the next write. This repository's `.gitignore` ignores `.tyci/memory/`, so `git add -A` does not commit the notes. tyci does not write a `.gitignore` for other projects; add `/.tyci/memory/` to the `.gitignore` of a project that uses memory notes (#795).
+- Roles: the write root of a `worktree-write` role limits only `write` and `edit`. `bash` runs in the worktree but is not sandboxed, so a command with an absolute path or `cd` can still change files outside it. The docs now say this, and a `worktree-write` run gets a system prompt line that names its worktree and this limit (#790).
 
 ## [0.11.0] - 2026-10-28
 
