@@ -734,8 +734,18 @@ func runC1Iteration(t *testing.T) {
 			t.Errorf("job %q ended %s (%s), want done", j.Description, j.Status, j.Err)
 		}
 	}
-	if _, locked := tools.LockRegistry.IsLocked("/race/path"); locked {
-		t.Error("lock still held after both subagents finished")
+	// The loser's no-TTL lock can still be held after its job is terminal,
+	// because the release runs on a goroutine. Poll for it instead of reading once.
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if _, locked := tools.LockRegistry.IsLocked("/race/path"); !locked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Error("lock still held 5s after both subagents finished")
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if name := gaveUp.Load(); name != nil {
 		t.Errorf("%v never got the lock: it waited for it, retried, and hit a second conflict even though the test had already seen the lock go free", name)
