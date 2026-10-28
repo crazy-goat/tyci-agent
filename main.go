@@ -94,6 +94,26 @@ type resumableEntry struct {
 	// a chain (for example after a report reminder), so the run guard looks
 	// for every id of the chain (see runIDsOf). Empty means the job alone.
 	chain []string
+
+	// policy is the tool policy of the stashed run (tools.PolicyOf), nil when
+	// the run had none. jobResumerAdapter.Resume applies it again, so a role
+	// job keeps its tool gate and write root when a caller outside the role
+	// resumes it. Nil means no policy, not the zero Policy.
+	policy *tools.Policy
+
+	// workdir is the working directory of the stashed run (tools.Workdir),
+	// empty for the process directory. A resumed run starts in it, so a role
+	// job writes in its own worktree.
+	workdir string
+}
+
+// runPolicy returns the tool policy that ctx carries, nil when it carries none.
+func runPolicy(ctx context.Context) *tools.Policy {
+	p, ok := tools.PolicyOf(ctx)
+	if !ok {
+		return nil
+	}
+	return &p
 }
 
 // resumableMu guards resumable and resumableOrder.
@@ -586,7 +606,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 			defer func() { _ = w.Close() }()
 		}
 	} else if jobID != "" {
-		if cs := openChildSession(msgs, mc.Model(), mc.Provider(), jobID); cs != nil {
+		if cs := openChildSession(msgs, mc.Model(), mc.Provider(), jobID, childWorkdir(ctx)); cs != nil {
 			cfg.Session = cs
 			defer func() { _ = cs.Close() }()
 		}
@@ -612,7 +632,7 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 	// tool call can continue this exact conversation as a brand-new job. See
 	// stashResumable's doc comment for the (bounded) retention policy.
 	if jobID != "" && (err == nil || truncated || deadlineExceeded || stoppedByUser) {
-		stashResumable(jobID, resumableEntry{msgs: msgs, mc: mc, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(ctx), depth: depth})
+		stashResumable(jobID, resumableEntry{msgs: msgs, mc: mc, cfg: cfg, todoAgentID: tools.TodoAgentIDFromContext(ctx), depth: depth, policy: runPolicy(ctx), workdir: tools.Workdir(ctx)})
 	}
 
 	if stoppedByUser {

@@ -275,3 +275,48 @@ func TestWriteEnforcesTheFileCountCap(t *testing.T) {
 		t.Fatalf("replacing an existing note must still work at the cap: %v", err)
 	}
 }
+
+// assertMode0600 checks that path is readable and writable only by its owner.
+func assertMode0600(t *testing.T, path string) {
+	t.Helper()
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := st.Mode().Perm(); mode != 0o600 {
+		t.Errorf("%s: file mode %o, want 600", path, mode)
+	}
+}
+
+// TestWriteCreatesNoteWithMode0600: a project note is private, as a role note is.
+func TestWriteCreatesNoteWithMode0600(t *testing.T) {
+	project := t.TempDir()
+	name, err := Write(project, "test-command", "make check runs everything")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMode0600(t, filepath.Join(MemoryDir(project), name+".md"))
+}
+
+// TestWriteReplacesNoteWithLooserMode: a note that exists with mode 0644 must
+// come back as 0600 after the next write, with the new content.
+func TestWriteReplacesNoteWithLooserMode(t *testing.T) {
+	project := t.TempDir()
+	p := filepath.Join(MemoryDir(project), "test-command.md")
+	write(t, p, "old content")
+	if err := os.Chmod(p, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Write(project, "test-command", "new content"); err != nil {
+		t.Fatal(err)
+	}
+	assertMode0600(t, p)
+	if body, _ := Read(project, "test-command"); body != "new content\n" {
+		t.Fatalf("got %q", body)
+	}
+	entries, _ := os.ReadDir(MemoryDir(project))
+	if len(entries) != 1 {
+		t.Errorf("a temporary file was left behind: %v", entries)
+	}
+}
