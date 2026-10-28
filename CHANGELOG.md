@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Internal: the unused `debug` setting of the agent config and of the connector request is removed (#786).
 
 ### Fixed
+- Workflows: an unknown result of the `issue-to-merge` gate `check_done` no longer goes to the fixer. The run pauses at the new state `ask_check`, which the oracle never answers. A human answers `retry` to run the gate again, or `stop` to end the run. A copied workflow does not get the fix. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again (#810).
 - Flow: a saved oracle answer no longer depends on the task or state name. A state with `"saves": true` saves its answer as `output.txt`, and the check gets its path in `TYCI_ANSWER`. The builtin `milestone-close` and `rebalance` templates set the flag, so a copied workflow with a renamed state still moves its findings or validates its split. A workflow with no `saves` flag keeps the task names `pick_critical`, `rebalance_split` and `plan` (#784).
 
 ### Security

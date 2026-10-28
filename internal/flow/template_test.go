@@ -107,6 +107,61 @@ func TestIssueToMerge_MergeApprovedLoopNeedsHuman(t *testing.T) {
 	}
 }
 
+// #810: an unknown result of the issue gate (check_done default) goes to the human state
+// ask_check, not to fixer. Walk the static routes from the default edge. No path reaches
+// code without a human answer. The oracle answers the pauses of fixer and of the generic ask.
+func TestIssueToMerge_CheckDoneUnknownAsksHuman(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Init("issue-to-merge", "", dir); err != nil {
+		t.Fatal(err)
+	}
+	wf, _, err := Lookup("issue-to-merge", t.TempDir(), dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &flowconfig.Config{
+		Models:       map[string]string{"m": "prov/model"},
+		DefaultModel: "m",
+		Roles: map[string]flowconfig.Role{
+			"worker": {Prompt: "W"}, "review": {Prompt: "R"}, "fixer": {Prompt: "F"}, "oracle": {Prompt: "O"},
+		},
+	}
+	if _, err := Validate(wf, cfg, wfResolver(wf)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	def := wf.States["check_done"].On["default"]
+	if def != "ask_check" {
+		t.Fatalf("check_done default -> %q, want ask_check", def)
+	}
+	ac := wf.States["ask_check"]
+	if !ac.Human || ac.Ask == "" || !maps.Equal(ac.On, map[string]string{"retry": "check_done", "stop": "end"}) {
+		t.Errorf("ask_check = %+v", ac)
+	}
+	r := &Runner{WF: wf, Agents: &fakeAgents{}}
+	if r.oracleMayAnswer(&RunState{Ask: &Ask{Message: "m"}}, ac) {
+		t.Error("the oracle may answer ask_check")
+	}
+	// Walk from the default edge. A human state stops the walk. check_done is blocked, so
+	// the walk does not follow its real answers go, go-risky or skip.
+	blocked := map[string]bool{"ask_check": true, "check_done": true}
+	seen := map[string]bool{}
+	queue := []string{def}
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		if strings.HasPrefix(name, "$") || blocked[name] || seen[name] {
+			continue
+		}
+		if name == "code" {
+			t.Fatal("check_done default reaches code without a human answer")
+		}
+		seen[name] = true
+		for _, next := range wf.States[name].On {
+			queue = append(queue, next)
+		}
+	}
+}
+
 func TestInit_NameTemplateAndBadInput(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Init("roadmap", "plan", dir); err != nil {

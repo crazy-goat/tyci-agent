@@ -121,6 +121,8 @@ and answers `ok` (the step runs again) or `failed`. On `failed` the `oracle` ans
 step, the run pauses. The limits apply to the states named `fixer` and `oracle`, not to
 their agent role. With an open, unmerged PR, `stop`, `goto:merge` and a goto to a state that ends the run pause at `ask` for a human.
 
+The `issue-to-merge` workflow sends an unknown result of the gate `check_done` (the script `checks/issue_done.sh`) to the state `ask_check`. The run does not go to the fixer. A human answers `retry` to run the gate again, or `stop` to end the run. The oracle never answers this pause. A copied workflow does not get this change. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again.
+
 ### Pauses and the oracle
 
 The `oracle` agent answers a pause at an `ask` state before a human sees it. The oracle answers one of these forms. The key line is the first line that starts with one of them; the other lines give the reason:
