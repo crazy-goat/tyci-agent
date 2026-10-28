@@ -284,6 +284,58 @@ func TestPlanCommand_NewErrorIsShownAndStartsNoJob(t *testing.T) {
 	}
 }
 
+// TestPlanCommand_PlannerWritesOnlyInPlanWorktree runs the write tool with the
+// policy that startPlanner builds. A write, or an edit (write with oldString),
+// outside the plan worktree is refused, and a write inside it works. The
+// context is built the way tools.runSubagentTask builds it: the policy and
+// the working directory of the job.
+func TestPlanCommand_PlannerWritesOnlyInPlanWorktree(t *testing.T) {
+	home, work := newPlanRepo(t)
+	withTestWiring(t)
+	// Hooks are process-wide. A hook that an earlier test left installed
+	// would refuse the write before the write root is checked.
+	t.Cleanup(hooks.SetForTesting(nil))
+	f := installPlanFakes(t, home, work)
+
+	if err := startPlanner(context.Background(), "plan the cache"); err != nil {
+		t.Fatalf("startPlanner: %v", err)
+	}
+	nextNotice(t, f)
+	f.finish(t)
+	spec := f.specs[0]
+	if spec.Policy == nil {
+		t.Fatal("planner job has no policy")
+	}
+	ctx := tools.WithPolicy(tools.WithWorkdir(context.Background(), spec.Dir), *spec.Policy)
+
+	outside := filepath.Join(work, "outside.md")
+	res := tools.RunTool(ctx, "write", map[string]any{"path": outside, "content": "x"})
+	if res.Success || !strings.Contains(res.Error, "outside the worktree") {
+		t.Fatalf("write outside the plan worktree: success = %v, error = %q", res.Success, res.Error)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("file outside the plan worktree exists (err = %v)", err)
+	}
+
+	existing := filepath.Join(work, "x")
+	res = tools.RunTool(ctx, "write", map[string]any{"path": existing, "oldString": "x", "newString": "y"})
+	if res.Success || !strings.Contains(res.Error, "outside the worktree") {
+		t.Fatalf("edit outside the plan worktree: success = %v, error = %q", res.Success, res.Error)
+	}
+	if got, err := os.ReadFile(existing); err != nil || string(got) != "x" {
+		t.Fatalf("file in the main checkout changed: %q, %v", got, err)
+	}
+
+	inside := filepath.Join(spec.Dir, "plan.md")
+	res = tools.RunTool(ctx, "write", map[string]any{"path": inside, "content": "plan"})
+	if !res.Success {
+		t.Fatalf("write inside the plan worktree refused: %s", res.Error)
+	}
+	if got, err := os.ReadFile(inside); err != nil || string(got) != "plan" {
+		t.Fatalf("plan file = %q, %v; want plan", got, err)
+	}
+}
+
 // TestPlanCommand_TakesNoWorkerSlot checks that /plan never starts or changes a
 // workflow run. A worker slot is counted by flow.Manager (its active runs and
 // the paused runs the orchestrator holds), so only a workflow run takes one.

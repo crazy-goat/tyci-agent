@@ -197,6 +197,7 @@ Type `/plan [topic]` in the chat to start a planner. The topic is the first mess
 - The planner stays open until tyci exits. You can resume it after its answer, in the agent view or with the chat tool `resume`. Each resumed turn works in the planner worktree, under the planner policy.
 - When tyci exits, a turn that still runs is stopped first. Then the worktree of a planner with no change is removed.
 - When tyci exits, the worktree of a planner that changed a file is kept, with its branch `plan-<id>`. A notice on the terminal shows the path.
+- The planner rules for issues (no milestone, no `accepted` label, an issue only after you say "create it") live only in its prompt, and its `bash` tool is not sandboxed, so tyci does not enforce these rules.
 
 ### Workflow proposals
 
