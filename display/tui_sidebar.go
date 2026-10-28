@@ -128,6 +128,7 @@ func (m *TuiModel) openSidebar(tab int) {
 	m.sidebarFocused = false
 	m.sidebarTab = tab
 	m.sidebarCursor = 0
+	m.sidebarRememberRun()
 	m.sidebarScroll = 0
 	m.sidebarTaskOwner = ""
 	m.sidebarBusPane = false
@@ -295,6 +296,7 @@ func (m TuiModel) sidebarVisibleScrollForLineCount(layout sidebarLayoutT, lineCo
 func (m *TuiModel) sidebarSwitchTab(tab int) {
 	m.sidebarTab = ((tab % sidebarTabCount) + sidebarTabCount) % sidebarTabCount
 	m.sidebarCursor = 0
+	m.sidebarRememberRun()
 	m.sidebarScroll = 0
 	m.sidebarTaskOwner = ""
 	m.sidebarStopRun = ""
@@ -384,6 +386,7 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 			m.sidebarScrollToLine(jobRows[m.sidebarCursor], layout.contentHeight)
 			return
 		} else {
+			m.sidebarRunsResolve()
 			last := m.sidebarRowCount() - 1
 			m.sidebarCursor += delta
 			if m.sidebarCursor < 0 {
@@ -392,6 +395,7 @@ func (m *TuiModel) sidebarMoveCursor(delta int) {
 			if m.sidebarCursor > last {
 				m.sidebarCursor = max(0, last)
 			}
+			m.sidebarRememberRun()
 		}
 		m.sidebarClampScrollToCursor(layout.contentHeight)
 		return
@@ -711,6 +715,7 @@ func (m TuiModel) updateSidebar(msg tea.Msg) (tea.Model, tea.Cmd) {
 					owner := m.runsTab(layout.contentWidth).owner
 					if line >= 0 && line < len(owner) && owner[line] >= 0 {
 						m.sidebarCursor = owner[line]
+						m.sidebarRememberRun()
 						return m.sidebarActivateRow()
 					}
 				default:
@@ -789,6 +794,7 @@ func (m TuiModel) sidebarActivateRow() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case sidebarTabRuns:
+		m.sidebarRunsResolve()
 		if t, it, ok := m.runsCursorItem(); ok && it.agent >= 0 {
 			return m.openAgentLog(t.run, t.agents[it.agent])
 		}
@@ -828,6 +834,7 @@ func (m TuiModel) sidebarScrollBusPane(delta int) TuiModel {
 // sidebarAskStop asks for y before the run under the cursor is stopped. Only a
 // running run can be stopped: Manager.Stop rejects the other runs.
 func (m TuiModel) sidebarAskStop() TuiModel {
+	m.sidebarRunsResolve()
 	t, it, ok := m.runsCursorItem()
 	if !ok || it.agent >= 0 || t.run.Status != "running" || t.run.ID == treeAdHocID {
 		return m

@@ -31,6 +31,7 @@ func TestRunsTab_AgentRowsAreSelectable(t *testing.T) {
 		t.Fatalf("stop asked on an agent row: %q", before.sidebarStopRun)
 	}
 	m.sidebarCursor = 0
+	m.sidebarRememberRun()
 	model, _ := m.sidebarActivateRow()
 	m = model.(TuiModel)
 	if m.sidebarRunsExpanded["#1"] {

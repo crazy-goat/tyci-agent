@@ -5,12 +5,17 @@
 #   - the merge call ALWAYS has --squash --delete-branch --match-head-commit <local HEAD>;
 #   - no other merge mode is ever used (no admin bypass, no auto merge, no plain merge, no rebase).
 # Protected paths are the self-modification stop: a PR that changes the process files
-# (.github/, .tyci/, internal/flow/checks/) is never merged unattended.
+# (.github/, .tyci/, internal/flow/checks/) is never merged unattended. A workflow with an
+# approval pause (issue-to-merge: state ask_protected) lets a human lift the stop: the answer
+# "approve" runs merge_approved.sh, which sets TYCI_ALLOW_PROTECTED=1 and runs this script,
+# so the approval is explicit and the run history records it. Everything else stays fixed
+# below: ci-ok pass, head match, squash merge.
 #
 # Env in:  TYCI_PR, TYCI_REPO, TYCI_DEFAULT_BRANCH. cwd = the run worktree.
+#          TYCI_ALLOW_PROTECTED=1 (set only by merge_approved.sh) merges a protected PR.
 # Keys:    merged     the PR was squash merged, or was already merged (a resumed run)
 #          behind     the PR is behind the default branch (rebase it first)
-#          protected  the diff touches a protected path; no gh call was made
+#          protected  the diff touches a protected path and the human did not approve
 #          fail       fetch, CI re-check, head match or merge failed
 set -euo pipefail
 # describe.sh prints the failure block (see there). A copy of this script without it still works.
@@ -27,12 +32,15 @@ if ! git fetch origin "$TYCI_DEFAULT_BRANCH" >&2; then
 fi
 
 protected=$(git diff --name-only "origin/${TYCI_DEFAULT_BRANCH}...HEAD" | grep -E '^(\.github/|\.tyci/|internal/flow/checks/)' || true)
-if [ -n "$protected" ]; then
-    describe protected "the PR changes protected paths: $(paste -sd ' ' - <<<"$protected"); tyci never merges such a PR unattended" \
-        "the issue changes the process files (.github/, .tyci/, internal/flow/checks/)" \
-        "a human reviews and merges PR #$TYCI_PR by hand"
+if [ -n "$protected" ] && [ "${TYCI_ALLOW_PROTECTED:-}" != "1" ]; then
+    describe protected "the PR changes protected paths: $(paste -sd ' ' - <<<"$protected"); it was not approved, so merge.sh did not merge" \
+        "the issue changes the process files (.github/, .tyci/, internal/flow/checks/); tyci never merges such a PR unattended" \
+        "a human reviews PR #$TYCI_PR and decides whether it merges; the workflow may offer an approval answer, otherwise a human merges it by hand"
     echo protected
     exit 0
+fi
+if [ -n "$protected" ]; then
+    echo "merge.sh: PR $TYCI_PR changes protected paths: $(paste -sd ' ' - <<<"$protected"); approved by a human, so this step continues" >&2
 fi
 
 # Idempotent after a crash between the merge and the state write: the resumed run
