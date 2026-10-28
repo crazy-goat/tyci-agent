@@ -2,12 +2,16 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -40,6 +44,11 @@ const toolCreateLimit = 2 * time.Second
 // in the run folder, so a name with a slash or a dot is refused.
 var toolCreateNameRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
+// validToolName reports whether name is a name that tool_create accepts.
+func validToolName(name string) bool {
+	return toolCreateNameRE.MatchString(name) && !strings.HasPrefix(name, "mcp_")
+}
+
 func (t *ToolCreateTool) Name() string { return toolCreateName }
 
 // toolCreateCase is one supplied test: the args to run the tool with, and a
@@ -56,7 +65,7 @@ func (t *ToolCreateTool) Run(ctx context.Context, input map[string]any) ToolResu
 	}
 	name := strings.TrimSpace(stringParam(input, "name", ""))
 	source := stringParam(input, "source", "")
-	if !toolCreateNameRE.MatchString(name) || strings.HasPrefix(name, "mcp_") {
+	if !validToolName(name) {
 		return validationf("name %q is not valid; use 1-64 lowercase letters, digits and underscores, starting with a letter, and not starting with mcp_", name)
 	}
 	if strings.TrimSpace(source) == "" {
@@ -194,11 +203,19 @@ func RemoveRunTools(dir string) {
 	delete(luaToolsByDir, dir)
 }
 
+// sessionFolderPrefix starts the name of every session folder. The name holds
+// the PID of the tyci process that owns the folder, see RemoveStaleSessionFolders.
+const sessionFolderPrefix = "tyci-session-"
+
+// staleSessionAge is the age after which a session folder without a PID in its
+// name (made by an older tyci) is removed.
+const staleSessionAge = 24 * time.Hour
+
 // NewSessionFolder makes the run folder of a main chat session. It returns the
 // folder and an end func. The end func unregisters the tools made in the
 // folder and removes the folder. Call it when the session ends.
 func NewSessionFolder() (string, func(), error) {
-	dir, err := os.MkdirTemp("", "tyci-session-")
+	dir, err := os.MkdirTemp("", fmt.Sprintf("%s%d-", sessionFolderPrefix, os.Getpid()))
 	if err != nil {
 		return "", nil, err
 	}
@@ -207,4 +224,97 @@ func NewSessionFolder() (string, func(), error) {
 		_ = os.RemoveAll(dir)
 	}
 	return dir, end, nil
+}
+
+// ReloadRunTools registers again the Lua tools that tool_create made in the run
+// folder dir, from the files in dir/tools. A paused run calls it when it starts
+// again, also after a tyci restart, because the registry is empty after a
+// restart. A file that fails a check is reported through warn and skipped. The
+// other files load as usual. A nil warn writes to stderr. A run folder without a
+// tools folder is left alone.
+func ReloadRunTools(dir string, warn func(string)) {
+	if warn == nil {
+		warn = func(msg string) { fmt.Fprintln(os.Stderr, msg) }
+	}
+	toolsDir := filepath.Join(dir, "tools")
+	entries, err := os.ReadDir(toolsDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			warn(fmt.Sprintf("Warning: cannot read the Lua tools of this run: %v", err))
+		}
+		return
+	}
+	var loaded []*LuaTool
+	for _, e := range entries {
+		stem, isLua := strings.CutSuffix(e.Name(), ".lua")
+		if e.IsDir() || !isLua {
+			continue
+		}
+		path := filepath.Join(toolsDir, e.Name())
+		tool, err := loadRunToolFile(stem, path)
+		if err != nil {
+			warn(fmt.Sprintf("Warning: skipping the Lua tool %s of this run: %v", path, err))
+			continue
+		}
+		loaded = append(loaded, tool)
+	}
+	toolRegistryMu.Lock()
+	defer toolRegistryMu.Unlock()
+	installLuaTools(dir, loaded)
+}
+
+// loadRunToolFile loads the script at path, a tool made with tool_create under
+// the name stem. It runs the same checks as tool_create: the name rule, the
+// bounded load, and a schema name equal to the name.
+func loadRunToolFile(stem, path string) (*LuaTool, error) {
+	if !validToolName(stem) {
+		return nil, fmt.Errorf("name %q is not valid", stem)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), toolCreateLimit)
+	defer cancel()
+	tool, err := loadLuaToolCtx(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if tool.name != stem {
+		return nil, fmt.Errorf("schema.name is %q, but the file name is %q", tool.name, stem)
+	}
+	return tool, nil
+}
+
+// RemoveStaleSessionFolders removes the session folders in root that no live
+// process owns, and returns how many it removed. A folder name holds the PID of
+// its owner. A folder whose PID does not exist is removed. A PID that exists, also
+// one of another user, keeps the folder. A folder without a PID is removed when
+// it is older than 24 hours. Other entries are not touched.
+func RemoveStaleSessionFolders(root string) int {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), sessionFolderPrefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || !sessionFolderStale(e.Name(), info) {
+			continue
+		}
+		if os.RemoveAll(filepath.Join(root, e.Name())) == nil {
+			removed++
+		}
+	}
+	return removed
+}
+
+// sessionFolderStale reports whether the session folder name, with info, has no
+// live owner. See RemoveStaleSessionFolders.
+func sessionFolderStale(name string, info fs.FileInfo) bool {
+	pidText, _, hasPID := strings.Cut(strings.TrimPrefix(name, sessionFolderPrefix), "-")
+	pid, err := strconv.Atoi(pidText)
+	if hasPID && err == nil {
+		return pid > 0 && errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+	}
+	return time.Since(info.ModTime()) > staleSessionAge
 }

@@ -19,6 +19,8 @@ that loop once. Every command can be copied as it is.
   state `ask_plan`.
 - A pull request that touches `.github/**`, `.tyci/**` or `internal/flow/checks/**`
   stops at `ask_protected` before the merge. A human answers `approve` or `stop`.
+- If the gate script fails (for example, gh is down) or prints an unknown result, the run
+  pauses at `ask_check`. A human answers `retry` to run the gate again, or `stop` to end the run.
 - One run works at a time.
 
 ## 1. Install the binary
@@ -194,6 +196,7 @@ Run these once to see that the safety model works.
 |---|---|
 | Issue without the label `accepted` | `check_done` goes to `end`. No worktree is created. |
 | Issue by an author without write access | The run is skipped. |
+| gh is down at the gate | The run pauses at `ask_check`. A human answers `retry` or `stop`. The oracle does not answer. |
 | Red CI three times | The oracle answers the pause, up to 2 times. Then the run pauses at `ask` and waits for you. No merge happens. |
 | A check fails again after 2 fixer runs | The oracle decides once, then the run pauses at `ask`. |
 

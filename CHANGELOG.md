@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - Lua tools: `tool_promote` copies a tool only when the safety review answers exactly `SAFE`. An answer that has more text, also one that starts with `SAFE`, is refused (#815).
 - Internal: `SubagentToolCreateGate` is renamed `SubagentRoleToolGate`. It checks the role-gated tools `tool_create` and `tool_promote` (#815).
+- Docs: the README says that the planner rules for issues live only in its prompt, and that its `bash` tool is not sandboxed (#808).
 
 ### Deprecated
 - CLI: the `--debug` flag has no effect and is hidden. It is still accepted, and it prints a deprecation notice. The debug log in `~/.tyci/debug/` is always on; use `--no-debug` to turn it off (#786).
@@ -18,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Lua tools: a refused `tool_promote` call returns a failure, not a success. The error gives the reason and says to ask the user (#815).
+- Workflows: an unknown result of the `issue-to-merge` gate `check_done` no longer goes to the fixer. The run pauses at the new state `ask_check`, which the oracle never answers. A human answers `retry` to run the gate again, or `stop` to end the run. A copied workflow does not get the fix. To get it, move or delete `.tyci/workflows/issue-to-merge` in the project, then run `tyci workflow init issue-to-merge` again (#810).
+- Lua tools: a paused run that starts again, also after a tyci restart, loads the tool files of its run folder again. A bad file is logged and skipped, and the run starts (#813).
+- Lua tools: at start, tyci removes the session folders `tyci-session-*` of tyci processes that have exited. A folder without a PID, made by an older tyci, is removed after 24 hours (#813).
 - Flow: a saved oracle answer no longer depends on the task or state name. A state with `"saves": true` saves its answer as `output.txt`, and the check gets its path in `TYCI_ANSWER`. The builtin `milestone-close` and `rebalance` templates set the flag, so a copied workflow with a renamed state still moves its findings or validates its split. A workflow with no `saves` flag keeps the task names `pick_critical`, `rebalance_split` and `plan` (#784).
 - Transcripts: the `cwd` in the header of a subagent transcript is the working directory of its run, not the process directory (#791).
 
