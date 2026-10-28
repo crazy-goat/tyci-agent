@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/crazy-goat/tyci-agent/internal/atomicfile"
 	"github.com/crazy-goat/tyci-agent/internal/gitinfo"
 )
 
@@ -268,7 +269,7 @@ func Write(cwd, name, content string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, clean+".md"), []byte(content+"\n"), 0o644); err != nil {
+	if err := atomicfile.Write(filepath.Join(dir, clean+".md"), []byte(content+"\n")); err != nil {
 		return "", err
 	}
 	return clean, nil

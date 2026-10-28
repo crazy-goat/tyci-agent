@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 - Roles: a role with the permission `read-only` refuses every MCP tool, also when its `tools` list names it. The refusal applies to a direct call, to `tool()` in `lua` and to the tool schema. The plan steps and the read-only text runs get the same rule (#804).
+- Memory: project notes in `.tyci/memory/` are written with mode `0600`, as role notes are, and a note that already exists with a looser mode is tightened on the next write. This repository's `.gitignore` ignores `.tyci/memory/`, so `git add -A` does not commit the notes. tyci does not write a `.gitignore` for other projects; add `/.tyci/memory/` to the `.gitignore` of a project that uses memory notes (#795).
 
 ## [0.11.0] - 2026-10-28
 
