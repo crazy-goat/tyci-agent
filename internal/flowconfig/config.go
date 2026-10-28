@@ -82,6 +82,15 @@ type Repo struct {
 	URL   string `json:"url"`   // GitLab server, https://...; required for "gitlab"
 }
 
+// GitLabURL returns the server URL of repo when repos selects GitLab for it,
+// else "".
+func (c *Config) GitLabURL(repo string) string {
+	if r, ok := c.Repos[repo]; ok && r.Forge == "gitlab" {
+		return r.URL
+	}
+	return ""
+}
+
 // forgeRepoRe accepts "owner/name" and nested GitLab groups ("group/sub/project").
 var forgeRepoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$`)
 

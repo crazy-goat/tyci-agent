@@ -313,6 +313,9 @@ func TestLoad_Repos(t *testing.T) {
 	if r := c.Repos["group/sub/project"]; r.Forge != "gitlab" || r.URL != "https://gitlab.example.com" {
 		t.Fatalf("got %+v", c.Repos)
 	}
+	if c.GitLabURL("group/sub/project") != "https://gitlab.example.com" || c.GitLabURL("o/r") != "" || c.GitLabURL("x/y") != "" {
+		t.Fatal("GitLabURL")
+	}
 	for _, bad := range []string{
 		`{"repos":{"g/p":{"forge":"gitlab"}}}`,
 		`{"repos":{"g/p":{"forge":"gitlab","url":"http://gitlab.example.com"}}}`,
