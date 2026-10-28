@@ -147,7 +147,7 @@ func TestInitCommon_UntrustedProject_SkipsLocalHooksAndLua_KeepsGlobal(t *testin
 		t.Fatal("expected the project-local hook (blocks read) to be skipped for an untrusted project")
 	}
 
-	schema := schemaNames(t, cfg.Schema)
+	schema := schemaNames(t, cfg.SchemaFunc())
 	if !schemaHasFunctionNamed(schema, "global-trust-wiring-tool") {
 		t.Fatal("expected the global Lua tool to be registered regardless of trust")
 	}
@@ -205,7 +205,7 @@ func TestInitCommon_TrustedProject_LoadsLocalHooksAndLuaToo(t *testing.T) {
 		t.Fatal("expected the project-local hook to now be active for a trusted project")
 	}
 
-	schema := schemaNames(t, cfg.Schema)
+	schema := schemaNames(t, cfg.SchemaFunc())
 	if !schemaHasFunctionNamed(schema, "local-trust-wiring-tool") {
 		t.Fatal("expected the project-local Lua tool to be registered for a trusted project")
 	}

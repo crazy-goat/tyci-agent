@@ -334,7 +334,7 @@ func initCommon(cmd *cobra.Command, connectMCP bool, interactive bool) (provider
 		MaxIterations:      maxIterations,
 		Debug:              debugFlag,
 		Tools:              toolsAdapter{},
-		Schema:             tools.GetTopLevelToolsSchemaJSON(),
+		SchemaFunc:         tools.GetTopLevelToolsSchemaJSON,
 		MaxTokens:          maxTokens,
 		NoPromptCache:      !agent.PromptCacheEnabled(),
 		PendingTodos:       tools.PendingTodos,
@@ -648,9 +648,10 @@ var tuiCmd = &cobra.Command{
 		cfg = orchestratorChatConfig(cfg, orchStart)
 		// Chat tools workflow_start/status/resume exist only in tui:
 		// run mode exits after the turn and would kill a run (tools/flow_tools.go).
-		// Set them before the schema snapshot, or the model never sees them.
+		// The schema is read on every request (cfg.SchemaFunc), so they are offered.
 		tools.SetWorkflowManager(flow.ChatTools{M: workflowManager})
-		cfg.Schema = tools.GetTopLevelToolsSchemaJSON()
+		cfg.Schema = nil
+		cfg.SchemaFunc = tools.GetTopLevelToolsSchemaJSON
 		cond := newConductor(provider, modelName, tuiDisp, cfg, sessionPath)
 		workflowManager.SetBase(ctx)
 		defer workflowManager.Shutdown(3 * time.Second)

@@ -236,3 +236,54 @@ func TestSessionFolderRemovedAtSessionEnd(t *testing.T) {
 func replaceName(source, name string) string {
 	return strings.Replace(source, `name = "made_echo"`, `name = "`+name+`"`, 1)
 }
+
+// subagentCtx is a context as a subagent's tool calls see it: the run folder
+// is dir, and the subagent gate is installed the way main.go installs it.
+func subagentCtx(dir string, allowed []string, policy *Policy) context.Context {
+	ctx := WithRunDir(context.Background(), dir)
+	if policy != nil {
+		ctx = WithPolicy(ctx, *policy)
+	}
+	return WithToolGate(ctx, SubagentToolCreateGate(ctx, allowed))
+}
+
+func TestToolCreateRefusedForUnrestrictedSubagent(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+
+	res := RunTool(subagentCtx(dir, nil, nil), "tool_create", map[string]any{"name": "made_echo", "source": createSource})
+	if res.Success {
+		t.Fatal("an unrestricted subagent created a tool")
+	}
+	if registered("made_echo") {
+		t.Fatal("a refused subagent tool_create registered a tool")
+	}
+}
+
+func TestToolCreateAllowedForListedRole(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+
+	p := Policy{Role: "r", Permission: PermissionWorktreeWrite, Tools: []string{"read", toolCreateName}, Dir: dir}
+	res := RunTool(subagentCtx(dir, p.Tools, &p), "tool_create", map[string]any{"name": "made_echo", "source": createSource})
+	if !res.Success {
+		t.Fatalf("a role whose list names tool_create could not create a tool: %s", res.Error)
+	}
+	if !registered("made_echo") {
+		t.Fatal("the listed role's tool is not registered")
+	}
+}
+
+func TestToolCreateRefusedFromLuaInSubagent(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+
+	script := `return tool("tool_create", {name = "lua_made", source = [==[` + createSource + `]==]})`
+	RunTool(subagentCtx(dir, nil, nil), "lua", map[string]any{"script": script})
+	if registered("lua_made") {
+		t.Fatal("an unrestricted subagent created a tool through lua tool()")
+	}
+}
