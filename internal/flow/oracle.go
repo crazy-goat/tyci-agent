@@ -24,16 +24,27 @@ func isPauseOracle(role, task string) bool {
 	return role == "oracle" && task == oracleTask
 }
 
-// savedOracleTasks are the oracle tasks whose answer is the text that the next
-// state reads from output.txt: the pick of the findings of a milestone-close run
-// (#206), the split of a rebalance run (#208) and the plan of a risky issue (#214).
-// Such an oracle writes no report.md.
-var savedOracleTasks = []string{"pick_critical", "rebalance_split", "plan"}
+// legacySavedTasks are the oracle tasks that save their answer in a workflow without
+// a "saves" flag: the pick of the findings of a milestone-close run (#206), the split
+// of a rebalance run (#208) and the plan of a risky issue (#214).
+var legacySavedTasks = []string{"pick_critical", "rebalance_split", "plan"}
 
-// isSavedOracle reports whether the agent is an oracle whose answer is saved as
-// output.txt (see savedOracleTasks).
-func isSavedOracle(role, task string) bool {
-	return role == "oracle" && slices.Contains(savedOracleTasks, task)
+// savesAnswer reports whether the agent state name saves the oracle answer as
+// output.txt for the next state (#784). Such an oracle writes no report.md. A state
+// with "saves": true saves. When no state of the workflow has the flag, a state
+// with the oracle agent and a legacy task name saves, as in a workflow that predates
+// the flag.
+func savesAnswer(wf *Workflow, name string) bool {
+	s := wf.States[name]
+	if s.Saves {
+		return true
+	}
+	for _, other := range wf.States {
+		if other.Saves {
+			return false
+		}
+	}
+	return s.Agent == "oracle" && slices.Contains(legacySavedTasks, s.Task)
 }
 
 // oracleTaskProblem returns the problem of the workflow in dir when the oracle

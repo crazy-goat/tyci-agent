@@ -135,6 +135,8 @@ Each oracle answer is a history step in `state.json` and a notice, for example `
 
 The oracle reads the task file `tasks/ask.md` of the workflow. `tyci workflow init` copies it when the template has an `ask` state. A workflow with an `ask` state that does not set `"human": true` needs this file, unless `defaults.oracle_answers` is `0`. `tyci workflow validate` reports the file when it is missing.
 
+An oracle state with `"saves": true` saves its answer as `output.txt` in its artifact dir, and the state writes no `report.md`. The next state reads the answer. The builtin `milestone-close` and `rebalance` templates set this flag. A workflow with no `saves` flag saves the answer of the tasks `pick_critical`, `rebalance_split` and `plan`. A check reads the path of the newest saved answer from `TYCI_ANSWER`.
+
 The oracle never answers these pauses. A human answers them:
 
 - a pause at an ask state with `"human": true`,
@@ -452,8 +454,9 @@ These flags work with `run` and `tui`:
 | `--history-file` | `""` | Path to history file (default: `~/.tyci/history`) |
 | `--session` | `""` | Session file path (default: auto-generated in `~/.tyci/sessions/`) |
 | `--no-session` | `false` | Disable session persistence |
-| `--debug` | `false` | Show HTTP request/response data |
 | `--no-debug` | `false` | Disable API request/response debug logging |
+
+The debug log is on by default. It is written to `~/.tyci/debug/`. Use `--no-debug` to turn it off.
 
 ### `run` flags
 
@@ -806,6 +809,8 @@ Each flow role also takes these keys in the flow config:
    tries them in order when the model fails. Default: `[]` (no fallback).
 2. `roles.<name>.permission`: `read-only`, `worktree-write` or `full`. Default:
    `worktree-write`. `read-only` refuses `write`, `edit`, `bash` and `kill_job`.
+   It also refuses every MCP tool. A `read-only` role does not see MCP tools in its
+   schema, even when `tools` names them.
    `worktree-write` refuses writes outside the worktree. `full` has no such limit.
 3. `roles.<name>.network`: `true` or `false`. Default: `true`. `false` removes
    the `web` tool and the MCP tools that are not listed in `tools`.

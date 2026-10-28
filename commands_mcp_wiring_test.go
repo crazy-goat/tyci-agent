@@ -61,7 +61,6 @@ func newInitCommonTestCmd(t *testing.T) *cobra.Command {
 	cmd.Flags().String("history-file", "", "")
 	cmd.Flags().String("session", "", "")
 	cmd.Flags().Bool("no-session", true, "")
-	cmd.Flags().Bool("debug", false, "")
 	cmd.Flags().Bool("no-debug", true, "")
 	cmd.Flags().Bool("no-mcp", false, "")
 	return cmd

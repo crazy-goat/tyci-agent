@@ -6,7 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Deprecated
+- CLI: the `--debug` flag has no effect and is hidden. It is still accepted, and it prints a deprecation notice. The debug log in `~/.tyci/debug/` is always on; use `--no-debug` to turn it off (#786).
+
+### Removed
+- Internal: the unused `debug` setting of the agent config and of the connector request is removed (#786).
+
+### Fixed
+- Flow: a saved oracle answer no longer depends on the task or state name. A state with `"saves": true` saves its answer as `output.txt`, and the check gets its path in `TYCI_ANSWER`. The builtin `milestone-close` and `rebalance` templates set the flag, so a copied workflow with a renamed state still moves its findings or validates its split. A workflow with no `saves` flag keeps the task names `pick_critical`, `rebalance_split` and `plan` (#784).
+
 ### Security
+- Roles: a role with the permission `read-only` refuses every MCP tool, also when its `tools` list names it. The refusal applies to a direct call, to `tool()` in `lua` and to the tool schema. The plan steps and the read-only text runs get the same rule (#804).
 - Memory: project notes in `.tyci/memory/` are written with mode `0600`, as role notes are, and a note that already exists with a looser mode is tightened on the next write. This repository's `.gitignore` ignores `.tyci/memory/`, so `git add -A` does not commit the notes. tyci does not write a `.gitignore` for other projects; add `/.tyci/memory/` to the `.gitignore` of a project that uses memory notes (#795).
 
 ## [0.11.0] - 2026-10-28
