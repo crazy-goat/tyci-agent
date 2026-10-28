@@ -95,8 +95,14 @@ The chat can start and watch runs in more than one repository. The open reposito
 - `path` must be an absolute path to a local clone. The `origin` remote of the clone must be the repository of the key. If not, the repository does not open and the error says why.
 - Name the repository with `owner/name#N`, for example `acme/api#12`. `workflow_start` also accepts the argument `repo`. A bare `#12` is accepted only when one repository is open. With more open repositories, a bare ref is refused as ambiguous.
 - Run ids follow the same rule. With more open repositories, `workflow_start` returns a run id such as `acme/api#17`, and `workflow_list` returns one page for each repository.
+- `workflow_status` without a run shows the newest run of the repository of the current directory. `replace_agent` with a bare `<run>/<role>` goes to the repository where the run is active. If the run is active in more than one repository, name the repository: `acme/api#7/worker`.
+- A registry entry that does not open (no directory, wrong `origin`) does not count as open. A ref that names it gives the reason.
 - Each repository has its own run dir and its own worktrees. All repositories share one `orchestrator.workers` limit.
-- Known limit: project-local hooks, Lua tools, the local cron dir and `mcp.json` come only from the repository of the current directory. The orchestrator works only in that repository too.
+- Known limits:
+  - Project-local hooks, Lua tools, the local cron dir and `mcp.json` come only from the repository of the current directory.
+  - The orchestrator works only in the repository of the current directory.
+  - The Runs tab, `/stop` and the TUI run views show only the runs of the repository of the current directory. Stop a run of another repository with `workflow_stop`.
+  - The worker limit comes from `orchestrator.workers`, and it applies only after the orchestrator starts in the session.
 
 A run can be stopped. The model calls `workflow_stop`. You type `/stop <run> [reason]` in the chat. On the Runs tab, you select a running run, press `x`, then `y`. These stop a run of the current tyci session. `tyci workflow stop <run-id>` stops a run that no live tyci process owns. A stopped run gets the status `stopped`. It keeps its worktree and its pull request, and it cannot be resumed.
 
@@ -342,7 +348,7 @@ A run has a number that counts up for each repository: `#1`, `#2`, and so on. Ru
 | `ci_failure` | The newest completed CI run on the default branch failed. | `fix-ci` |
 | `cron` | A job in `cron.json` is due. The daemon does a cron tick every minute. | the cron job |
 
-- The `issue` and `ci_failure` triggers watch only the repositories in `daemon.repos`. The repository of `--dir` needs only its name in this list. Each other repository also needs `repos.<owner/name>.path` in `~/.tyci/config.json` (see "More than one repository in one session"). The daemon writes a log line for each repository that it cannot open, and skips it. The daemon polls each repository under its own name. `forge.repo` does not apply to the daemon. Without repositories, the daemon runs the cron trigger only.
+- The `issue` and `ci_failure` triggers watch only the repositories in `daemon.repos`. The repository of `--dir` needs only its name in this list. Each other repository also needs `repos.<owner/name>.path` in `~/.tyci/config.json` (see "More than one repository in one session"). The daemon writes a log line for each repository that it cannot open, and skips it. An explicit `forge.repo` applies only to the repository of `--dir`. Each other repository polls its own forge repository. Without repositories, the daemon runs the cron trigger only.
 - Project-local hooks, Lua tools, the local cron dir and `mcp.json` come only from the repository of `--dir`. This is a known limit.
 - The `ci_failure` trigger reads the CI workflow `TYCI_CI_WORKFLOW`. The default is `tests.yaml`, the same as `ci_failure.sh`. A cancelled, skipped or neutral CI run does not count.
 - The daemon keeps no database. A run file in `~/.tyci/runs/` stops a second run for the same issue. This is also true after a restart.
