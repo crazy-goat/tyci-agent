@@ -33,8 +33,11 @@ var promoteTaskTemplate string
 const promoteSystemPrompt = "You are a security reviewer. You answer in the format the task gives, and you do not use tools."
 
 // promoteOracle runs the safety review and returns its answer. It is a
-// variable so that tests do not call a model. The review is read-only: it
-// has no tools, so a script cannot make it read or write anything.
+// variable so that tests do not call a model. The review has a read-only
+// policy with an empty tools list. It gets only the always-allowed tools
+// (help, lua and report_progress). The read-only policy refuses read, write
+// and bash, also through lua, so the review cannot read or write files or
+// run commands.
 var promoteOracle = func(ctx context.Context, task, dir string) (string, error) {
 	res, _, err := RunSubagentTask(ctx, TaskSpec{
 		Task:         task,
@@ -114,9 +117,6 @@ func promoteRoot(ctx context.Context) (string, error) {
 	if info.IsDir() {
 		return "", fmt.Errorf("tool_promote does not write into the main checkout %s; run it in a worktree", root)
 	}
-	if err := os.MkdirAll(filepath.Join(root, ".tyci", "tools"), 0o755); err != nil {
-		return "", fmt.Errorf("cannot create .tyci/tools in %s: %v", root, err)
-	}
 	return root, nil
 }
 
@@ -155,9 +155,14 @@ func notPromoted(reason string) ToolResult {
 
 // writeNewFile writes data to target, which must be inside root and must not
 // exist. O_EXCL keeps an existing file: the write is refused, not replaced.
+// The folder of target is created here, after the review said SAFE, so a
+// refusal leaves no folder behind.
 func writeNewFile(root, target string, data []byte) error {
 	if !within(root, target) {
 		return fmt.Errorf("%s is outside the worktree", target)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
 	}
 	f, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {

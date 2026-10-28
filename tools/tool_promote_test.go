@@ -143,6 +143,9 @@ func TestToolPromoteRefusesWithoutSafe(t *testing.T) {
 			if _, err := os.Stat(promoteTarget(wt, "made_echo")); !os.IsNotExist(err) {
 				t.Fatalf("a refused tool was copied to the worktree: %v", err)
 			}
+			if _, err := os.Stat(filepath.Join(wt, ".tyci")); !os.IsNotExist(err) {
+				t.Fatalf("a refused review left a .tyci folder in the worktree: %v", err)
+			}
 			if oracle.calls != 1 {
 				t.Fatalf("the oracle was called %d times, want 1", oracle.calls)
 			}
@@ -336,5 +339,41 @@ func TestToolPromoteSchemaVisibility(t *testing.T) {
 	}
 	if slices.Contains(names(subagentToolsSchemaFor([]string{"read"})), toolPromoteName) {
 		t.Fatal("a subagent whose list does not name tool_promote is offered it")
+	}
+}
+
+func TestToolPromoteRefusedForReadOnlyRole(t *testing.T) {
+	defer SnapshotLuaToolsForTesting()()
+	dir := t.TempDir()
+	t.Cleanup(func() { RemoveRunTools(dir) })
+	_, wt := linkedWorktree(t)
+	if res := createInRun(t, dir, "made_echo", createSource); !res.Success {
+		t.Fatalf("tool_create failed: %s", res.Error)
+	}
+	oracle := useFakeOracle(t, "SAFE", nil)
+
+	// A read-only role that lists tool_promote is refused: the list alone does not grant it.
+	for _, perm := range []string{PermissionReadOnly, ""} {
+		p := Policy{Role: "r", Permission: perm, Tools: []string{"read", toolPromoteName}, Dir: wt}
+		if AllowedFor(p, toolPromoteName) {
+			t.Fatalf("a role with permission %q may call tool_promote although it lists it", perm)
+		}
+	}
+	// Control: the same list with worktree-write is allowed.
+	if !AllowedFor(Policy{Role: "r", Permission: PermissionWorktreeWrite, Tools: []string{"read", toolPromoteName}, Dir: wt}, toolPromoteName) {
+		t.Fatal("control: a worktree-write role that lists tool_promote may not call it")
+	}
+
+	p := Policy{Role: "r", Permission: PermissionReadOnly, Tools: []string{"read", toolPromoteName}, Dir: wt}
+	ctx := WithPolicy(WithWorkdir(WithRunDir(context.Background(), dir), wt), p)
+	res := RunTool(ctx, "tool_promote", promoteInput("made_echo"))
+	if res.Success || !strings.Contains(res.Error, "tool_promote") {
+		t.Fatalf("a read-only role that lists tool_promote was not refused: success=%v error=%q", res.Success, res.Error)
+	}
+	if _, err := os.Stat(promoteTarget(wt, "made_echo")); !os.IsNotExist(err) {
+		t.Fatalf("a read-only role copied a tool into the worktree: %v", err)
+	}
+	if oracle.calls != 0 {
+		t.Fatalf("the oracle was called %d times for a read-only role, want 0", oracle.calls)
 	}
 }

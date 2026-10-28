@@ -1109,7 +1109,9 @@ safety review reads the script. The copy happens only when the review answers `S
 on its first line. Any other answer copies nothing, and the chat asks the user. The
 tool never commits, pushes or merges, and it does not overwrite an existing file. It
 runs only in a linked git worktree, not in the main checkout. The main chat has
-`tool_promote`. A workflow role has it only when its `tools` list names it.
+`tool_promote`. A workflow role has it only when its `tools` list names it and its
+permission is `worktree-write` or `full`. A `read-only` role never gets it, even when
+its list names it.
 
 ## Write freshness
 
