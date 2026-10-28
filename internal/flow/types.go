@@ -93,10 +93,13 @@ type RunState struct {
 	GitLabURL string `json:"gitlab_url,omitempty"`
 	Issue     int    `json:"issue"` // 0 when the workflow has no issue param
 	// Params are the bound param values of the run, by name (#520).
-	Params   map[string]string `json:"params,omitempty"`
-	Branch   string            `json:"branch"`
-	Worktree string            `json:"worktree"`
-	Status   string            `json:"status"` // running|paused|done|failed|stopped
+	Params map[string]string `json:"params,omitempty"`
+	// Trigger is what started the run, for example the tyci daemon key
+	// "ci_failure:owner/name:main@<sha>". Empty for a start by a user.
+	Trigger  string `json:"trigger,omitempty"`
+	Branch   string `json:"branch"`
+	Worktree string `json:"worktree"`
+	Status   string `json:"status"` // running|paused|done|failed|stopped
 	// Result is the outcome of a done run: the Result of its end state, "done" when empty.
 	Result  string `json:"result,omitempty"`
 	Reason  string `json:"reason,omitempty"`

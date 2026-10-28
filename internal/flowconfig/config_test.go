@@ -229,6 +229,14 @@ func TestLoad_OrchestratorSectionIsAccepted(t *testing.T) {
 	}
 }
 
+func TestLoad_DaemonSectionIsAccepted(t *testing.T) {
+	home := t.TempDir()
+	write(t, home, ".tyci/config.json", `{"daemon":{"workers":2,"repos":["a/b"]}}`)
+	if _, err := Load(home, t.TempDir(), true); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRole_OracleWithoutModelUsesDefaultModel(t *testing.T) {
 	c := &Config{Models: map[string]string{"a": "uri"}, DefaultModel: "a"}
 	for _, cfg := range []*Config{c, {Models: c.Models, DefaultModel: "a", Roles: map[string]Role{"oracle": {Prompt: "p"}}}} {

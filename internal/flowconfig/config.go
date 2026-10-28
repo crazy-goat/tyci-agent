@@ -30,6 +30,7 @@ type Config struct {
 	CheckTimeoutSec int               `json:"check_timeout_sec"`      // 0 means 1800
 	Forge           Forge             `json:"forge"`                  // where the orchestrator reads issues
 	Orchestrator    json.RawMessage   `json:"orchestrator,omitempty"` // read by orchestrator.LoadConfig
+	Daemon          json.RawMessage   `json:"daemon,omitempty"`       // read by tyciconfig.LoadDaemon
 	Logs            Logs              `json:"logs"`                   // run transcripts
 
 	// Repos selects the forge per repository ("owner/name" or "group/project").

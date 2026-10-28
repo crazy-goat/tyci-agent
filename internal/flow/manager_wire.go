@@ -142,7 +142,7 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 			},
 			NewRunID: func() (string, error) { return reserveRunID(info.Home, info.Name(), info.MainRoot) },
 		}
-		return PrepareRun(ctx, d, PrepareReq{Workflow: req.Workflow, Repo: info.Repo, DefaultBranch: info.DefaultBranch, Params: req.Params})
+		return PrepareRun(ctx, d, PrepareReq{Workflow: req.Workflow, Repo: info.Repo, DefaultBranch: info.DefaultBranch, Params: req.Params, Trigger: req.Trigger})
 	}
 	m.NewRunner = func(info RepoInfo, wf *Workflow, st *RunState) *Runner {
 		runDir := RunDir(info.Home, info.Name(), st.Run)

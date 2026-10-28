@@ -27,6 +27,8 @@ type PrepareReq struct {
 	Workflow, Repo, DefaultBranch string
 	// Params are the positional values of the run (see BindParams).
 	Params []string
+	// Trigger goes to RunState.Trigger.
+	Trigger string
 }
 
 // PrepareRun does: 1 Lookup, 2 Config, 3 Validate, the oracle task check and BindParams (any error
@@ -73,6 +75,7 @@ func PrepareRun(ctx context.Context, d PrepareDeps, req PrepareReq) (*RunState, 
 		Repo:      req.Repo,
 		Issue:     issue,
 		Params:    params,
+		Trigger:   req.Trigger,
 		Branch:    wt.Branch,
 		Worktree:  wt.Dir,
 		Status:    "running",

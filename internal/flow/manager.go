@@ -65,6 +65,9 @@ func (i RepoInfo) Name() string {
 type StartRequest struct {
 	Workflow string
 	Params   []string
+	// Trigger is what started the run (RunState.Trigger), for example a
+	// tyci daemon trigger key. Empty for a start by a user.
+	Trigger string
 }
 
 // Manager starts and resumes runs in goroutines. Several runs may be active, but

@@ -91,14 +91,12 @@ func mentions(body string, self int, known map[int]bool) []int {
 	return out
 }
 
-// buildInput makes the oracle input from issues. Issues without acceptedLabel
-// or from authors without write access are returned in Skipped. Bodies are
-// parsed for mentions only and never put into Input.
-func buildInput(repo, milestone, acceptedLabel string, issues []forge.Issue, canWrite func(user string) (bool, error)) (Input, []Skipped) {
-	in := Input{Repo: repo, Milestone: milestone, Issues: []InputIssue{}}
-	var skipped []Skipped
+// Eligible splits issues into the ones tyci may work on (acceptedLabel set
+// and the author has write access) and the skipped ones with a reason. The
+// roadmap and the daemon issue trigger use the same rule.
+func Eligible(issues []forge.Issue, acceptedLabel string, canWrite func(user string) (bool, error)) ([]forge.Issue, []Skipped) {
 	var eligible []forge.Issue
-	known := map[int]bool{}
+	var skipped []Skipped
 	for _, is := range issues {
 		if !hasLabel(is.Labels, acceptedLabel) {
 			skipped = append(skipped, Skipped{is.Number, "no accepted label"})
@@ -114,6 +112,18 @@ func buildInput(repo, milestone, acceptedLabel string, issues []forge.Issue, can
 			continue
 		}
 		eligible = append(eligible, is)
+	}
+	return eligible, skipped
+}
+
+// buildInput makes the oracle input from issues. Issues without acceptedLabel
+// or from authors without write access are returned in Skipped. Bodies are
+// parsed for mentions only and never put into Input.
+func buildInput(repo, milestone, acceptedLabel string, issues []forge.Issue, canWrite func(user string) (bool, error)) (Input, []Skipped) {
+	in := Input{Repo: repo, Milestone: milestone, Issues: []InputIssue{}}
+	eligible, skipped := Eligible(issues, acceptedLabel, canWrite)
+	known := map[int]bool{}
+	for _, is := range eligible {
 		known[is.Number] = true
 	}
 	for _, is := range eligible {
