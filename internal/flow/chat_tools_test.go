@@ -51,7 +51,7 @@ func TestChatTools_WorkflowsSkipsBrokenDirectory(t *testing.T) {
 // A missing required param reaches the model with the text that tells it to ask the user.
 func TestChatTools_StartMissingParamText(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
-	_, _, err := ChatTools{e.m}.Start(context.Background(), "demo", nil)
+	_, _, err := ChatTools{e.m}.Start(context.Background(), "", "demo", nil)
 	want := "missing required param issue (GitHub issue number): ask the user, then call workflow_start again"
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
@@ -62,7 +62,7 @@ func TestChatTools_StartMissingParamText(t *testing.T) {
 func TestChatTools_StartShowsNotice(t *testing.T) {
 	c := &gatedChecks{release: make(chan struct{}), key: "ok"}
 	e := newMgrEnv(t, c)
-	if _, _, err := (ChatTools{e.m}).Start(context.Background(), "demo", []string{"160"}); err != nil {
+	if _, _, err := (ChatTools{e.m}).Start(context.Background(), "", "demo", []string{"160"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.notice(t); got != "model started /demo 160" {
@@ -85,7 +85,7 @@ func TestStartedNotice(t *testing.T) {
 func TestChatTools_StartFailureSendsNoNotice(t *testing.T) {
 	e := newMgrEnv(t, &gatedChecks{key: "ok"})
 	e.prepErr = errors.New("prepare failed")
-	if _, _, err := (ChatTools{e.m}).Start(context.Background(), "demo", []string{"160"}); err == nil {
+	if _, _, err := (ChatTools{e.m}).Start(context.Background(), "", "demo", []string{"160"}); err == nil {
 		t.Fatal("start succeeded")
 	}
 	select {

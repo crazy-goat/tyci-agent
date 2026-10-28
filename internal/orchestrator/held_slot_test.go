@@ -99,7 +99,7 @@ func TestStopReleasesHeldRunSlot(t *testing.T) {
 		_, _, err := m.Start(ctx, flow.StartRequest{Workflow: "demo", Params: []string{"6"}})
 		return err
 	}
-	if err := resume(); !errors.Is(err, flow.ErrBusy) {
+	if err := resume(); !errors.Is(err, flow.ErrNoSlot) {
 		t.Fatalf("resume while the orchestrator holds run 5: err = %v", err)
 	}
 	close(gate)

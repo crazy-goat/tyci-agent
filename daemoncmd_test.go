@@ -17,6 +17,7 @@ import (
 
 	"github.com/crazy-goat/tyci-agent/internal/daemon"
 	"github.com/crazy-goat/tyci-agent/internal/flow"
+	"github.com/crazy-goat/tyci-agent/internal/forge"
 )
 
 // shortHome is wfHome in a short temp dir: the daemon socket path must stay
@@ -89,7 +90,7 @@ func TestWorkflowResumeRejectWithTheSameRunNumberInTwoRepos(t *testing.T) {
 	}
 	id := strings.TrimPrefix(decodeWorkflowResult(t, out).RunID, "#")
 	// A workflow proposal waits in the paused run.
-	runDir := flow.RunDir(home, info.Name(), id)
+	runDir := flow.RunDir(home, info.Key(), id)
 	st, err := flow.Load(runDir)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +147,7 @@ func TestWorkflowManagerSavesTheStartTrigger(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the run did not pause")
 	}
-	st, err := flow.Load(flow.RunDir(home, info.Name(), id))
+	st, err := flow.Load(flow.RunDir(home, info.Key(), id))
 	if err != nil || st.Trigger != "ci_failure:acme/demo:main@abc" {
 		t.Fatalf("run file trigger %q (%v)", st.Trigger, err)
 	}
@@ -254,6 +255,80 @@ func TestDaemonCommandWithoutReposRunsCronOnly(t *testing.T) {
 	text := log.String()
 	if !strings.Contains(text, "repo acme/other skipped") || !strings.Contains(text, "cron only") {
 		t.Fatalf("log:\n%s", text)
+	}
+}
+
+// TestDaemonCommandWatchesRegistryRepos watches the repository of --dir and a
+// registry repository with a path. A registry entry without a path or with
+// the wrong origin is skipped (#218).
+func TestDaemonCommandWatchesRegistryRepos(t *testing.T) {
+	home := shortHome(t)
+	wfUseRepo(t, flow.RepoInfo{Home: home, Root: home, Repo: "acme/demo", DefaultBranch: "main"})
+	one := filepath.Join(home, "one")
+	if err := os.MkdirAll(one, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wfGit(t, one, "init", "-q", "-b", "main")
+	wfGit(t, one, "remote", "add", "origin", "git@github.com:acme/one.git")
+	wfGit(t, one, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	wfWrite(t, filepath.Join(home, ".tyci", "config.json"), `{
+		"repos": {"acme/one": {"path": "`+one+`"}, "acme/two": {"path": "`+one+`"}},
+		"daemon": {"repos": ["acme/demo", "acme/one", "acme/two", "acme/none"],
+			"triggers": {"issue": false, "ci_failure": false, "cron": false}}}`)
+	resetRootFlags()
+	ctx, cancel := context.WithCancel(context.Background())
+	log := &syncWriter{}
+	done := make(chan error, 1)
+	go func() { done <- runDaemon(ctx, daemonCmd, log) }()
+	sock := daemon.SocketPath(daemon.DefaultDir(home))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(sock); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no socket")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s, err := (&daemon.Client{Path: sock}).Status(context.Background())
+	if err != nil || strings.Join(s.Repos, ",") != "acme/demo,acme/one" {
+		t.Fatalf("status %+v %v", s, err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	text := log.String()
+	if !strings.Contains(text, "repo acme/two skipped") || !strings.Contains(text, "origin remote is acme/one") ||
+		!strings.Contains(text, "repo acme/none skipped") || !strings.Contains(text, "has no path") {
+		t.Fatalf("log:\n%s", text)
+	}
+}
+
+// TestDaemonRepoUsesItsOwnForgeRepo makes sure that a global forge.repo does
+// not send the polls of a registry repository to another repository. The
+// repository of --dir keeps an explicit forge.repo (#218).
+func TestDaemonRepoUsesItsOwnForgeRepo(t *testing.T) {
+	home := shortHome(t)
+	wfWrite(t, filepath.Join(home, ".tyci", "config.json"), `{"forge":{"repo":"acme/demo"}}`)
+	for _, c := range []struct {
+		repo    string
+		primary bool
+		want    string
+	}{
+		{"acme/one", false, "acme/one"},  // a registry repository
+		{"acme/fork", true, "acme/demo"}, // the repository of --dir keeps forge.repo
+	} {
+		r, err := daemonRepo(context.Background(), flow.RepoInfo{Home: home, Root: home, Repo: c.repo, DefaultBranch: "main"},
+			c.primary, func(string, ...any) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, ok := r.Forge.(*forge.GitHub)
+		if !ok || g.Repo() != c.want {
+			t.Fatalf("%s: forge %#v, want the GitHub forge of %s", c.repo, r.Forge, c.want)
+		}
 	}
 }
 

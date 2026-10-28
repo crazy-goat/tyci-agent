@@ -168,7 +168,7 @@ paused. Exit code 1 means failed, a bad answer, or a run that is not paused.`,
 			return fail(cmd, workflowResumeJSON, fmt.Errorf("bad run id %q", args[0]))
 		}
 		// The run of this repository: a run number exists in every repository.
-		st, err := flow.Load(flow.RunDir(info.Home, info.Name(), run))
+		st, err := flow.Load(flow.RunDir(info.Home, info.Key(), run))
 		if err != nil {
 			return fail(cmd, workflowResumeJSON, fmt.Errorf("run %s of %s: %w", flow.ShowRunID(run), info.Repo, err))
 		}
@@ -246,7 +246,7 @@ Exit code 0 means the list was printed. Exit code 1 means an error.`,
 		if err != nil {
 			return fail(cmd, jsonOut, err)
 		}
-		list, err := flow.ListRuns(info.Home, info.Name(), workflowListArchived, workflowListLimit, workflowListOffset)
+		list, err := flow.ListRuns(info.Home, info.Key(), workflowListArchived, workflowListLimit, workflowListOffset)
 		if err != nil {
 			return fail(cmd, jsonOut, err)
 		}
@@ -324,7 +324,7 @@ func runAndReport(cmd *cobra.Command, jsonOut bool, info flow.RepoInfo, start fu
 			return fail(cmd, jsonOut, fmt.Errorf("run %s did not report its end: %w", flow.ShowRunID(runID), err))
 		}
 	}
-	runDir := flow.RunDir(info.Home, info.Name(), runID)
+	runDir := flow.RunDir(info.Home, info.Key(), runID)
 	st, err := flow.Load(runDir)
 	if err != nil {
 		return fail(cmd, jsonOut, err)

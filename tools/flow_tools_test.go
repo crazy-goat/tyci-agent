@@ -22,7 +22,7 @@ type fakeWorkflowManager struct {
 	replaceID, replaceRole, replaceReason string
 }
 
-func (f *fakeWorkflowManager) Start(_ context.Context, workflow string, params []string) (string, []string, error) {
+func (f *fakeWorkflowManager) Start(_ context.Context, _, workflow string, params []string) (string, []string, error) {
 	f.workflow, f.params = workflow, params
 	return "20261005-120301-160", nil, f.err
 }

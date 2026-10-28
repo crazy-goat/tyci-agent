@@ -78,7 +78,7 @@ func Add(ctx context.Context, repo, label string) (*Worktree, error) {
 	return &Worktree{Dir: target, Branch: branch, Repo: root, BaseCommit: strings.TrimSpace(base)}, nil
 }
 
-// AddIssue creates <home>/.tyci/worktrees/<repoName>/issue-<n> on branch
+// AddIssue creates <home>/.tyci/worktrees/<key>/issue-<n> on branch
 // issue-<n> from origin/<defaultBranch>. It fails if the directory or the
 // branch already exists. Then, when trusted is true, it runs
 // bin/worktree-setup.sh in the new worktree when the repository has one, and
@@ -89,20 +89,24 @@ func Add(ctx context.Context, repo, label string) (*Worktree, error) {
 // of os.UserHomeDir. The branch starts from origin/<defaultBranch>, not HEAD,
 // so the worktree holds the latest shared state rather than whatever the
 // local checkout happens to point at.
-func AddIssue(ctx context.Context, home, repo string, issue int, defaultBranch string, trusted bool) (*Worktree, error) {
+//
+// key names the directory of the repository's worktrees. Workflow runs pass
+// the repo key (owner+name), so two checkouts with the same base name do not
+// share worktrees (#218). An empty key means the base name of the main checkout.
+func AddIssue(ctx context.Context, home, repo, key string, issue int, defaultBranch string, trusted bool) (*Worktree, error) {
 	if issue <= 0 {
 		return nil, fmt.Errorf("worktree: invalid issue number %d: must be positive", issue)
 	}
-	return addNamed(ctx, home, repo, fmt.Sprintf("issue-%d", issue), defaultBranch, trusted)
+	return addNamed(ctx, home, repo, key, fmt.Sprintf("issue-%d", issue), defaultBranch, trusted)
 }
 
 // AddRun is AddIssue for a workflow run that has no issue. It creates
-// <home>/.tyci/worktrees/<repoName>/run-<runID> on branch run-<runID>.
-func AddRun(ctx context.Context, home, repo, runID string, defaultBranch string, trusted bool) (*Worktree, error) {
+// <home>/.tyci/worktrees/<key>/run-<runID> on branch run-<runID>.
+func AddRun(ctx context.Context, home, repo, key, runID string, defaultBranch string, trusted bool) (*Worktree, error) {
 	if runID == "" {
 		return nil, fmt.Errorf("worktree: run id must not be empty")
 	}
-	return addNamed(ctx, home, repo, "run-"+runID, defaultBranch, trusted)
+	return addNamed(ctx, home, repo, key, "run-"+runID, defaultBranch, trusted)
 }
 
 // AddPlan creates <home>/.tyci/worktrees/<repoName>/plan-<id> on branch plan-<id>
@@ -124,15 +128,15 @@ func AddPlan(ctx context.Context, home, repo, id, defaultBranch string) (*Worktr
 	}
 
 	name := "plan-" + id
-	root, target, err := namedPath(ctx, home, repo, name)
+	root, target, err := namedPath(ctx, home, repo, "", name)
 	if err != nil {
 		return nil, err
 	}
 	if _, err := os.Stat(target); err != nil {
-		return addNamed(ctx, home, repo, name, defaultBranch, false)
+		return addNamed(ctx, home, repo, "", name, defaultBranch, false)
 	}
 	if !BranchExists(ctx, root, name) {
-		return addNamed(ctx, home, repo, name, defaultBranch, false)
+		return addNamed(ctx, home, repo, "", name, defaultBranch, false)
 	}
 
 	base, err := git(ctx, root, "merge-base", "refs/heads/"+name, "origin/"+defaultBranch)
@@ -143,21 +147,25 @@ func AddPlan(ctx context.Context, home, repo, id, defaultBranch string) (*Worktr
 }
 
 // namedPath returns the main checkout that named worktrees of repo belong to,
-// and the directory <home>/.tyci/worktrees/<repoName>/<name> for a worktree
-// called name. The main checkout is used so a run started inside a worktree
-// does not nest under the worktree's name.
-func namedPath(ctx context.Context, home, repo, name string) (root, target string, err error) {
+// and the directory <home>/.tyci/worktrees/<key>/<name> for a worktree called
+// name. An empty key is the base name of the main checkout. The main checkout
+// is used so a run started inside a worktree does not nest under the
+// worktree's name.
+func namedPath(ctx context.Context, home, repo, key, name string) (root, target string, err error) {
 	top, err := Root(ctx, repo)
 	if err != nil {
 		return "", "", err
 	}
 	root = gitinfo.ProjectDir(top)
-	return root, filepath.Join(home, ".tyci", "worktrees", filepath.Base(root), name), nil
+	if key == "" {
+		key = filepath.Base(root)
+	}
+	return root, filepath.Join(home, ".tyci", "worktrees", key, name), nil
 }
 
 // addNamed is the shared part of AddIssue, AddRun and AddPlan: the worktree and
 // the branch are both named name.
-func addNamed(ctx context.Context, home, repo, name string, defaultBranch string, trusted bool) (*Worktree, error) {
+func addNamed(ctx context.Context, home, repo, key, name string, defaultBranch string, trusted bool) (*Worktree, error) {
 	if defaultBranch == "" {
 		return nil, fmt.Errorf("worktree: default branch must not be empty")
 	}
@@ -165,7 +173,7 @@ func addNamed(ctx context.Context, home, repo, name string, defaultBranch string
 		return nil, fmt.Errorf("worktree: home directory must not be empty")
 	}
 
-	root, target, err := namedPath(ctx, home, repo, name)
+	root, target, err := namedPath(ctx, home, repo, key, name)
 	if err != nil {
 		return nil, err
 	}

@@ -109,7 +109,7 @@ func claim(dir string, st *RunState, self int) error {
 // it pauses the run instead. It returns false when the run did not start: it
 // is paused now, or another instance claimed it. m.mu must be held.
 func (m *Manager) resumeRun(info RepoInfo, st *RunState) (bool, error) {
-	dir := RunDir(info.Home, info.Name(), st.Run)
+	dir := RunDir(info.Home, info.Key(), st.Run)
 	wf, err := m.Workflow(info, st.Workflow)
 	if err != nil {
 		return false, err
@@ -207,7 +207,7 @@ func (m *Manager) AskUnfinished() {
 			notes = append(notes, "cannot pause run "+ShowRunID(st.Run)+": "+err.Error())
 			continue
 		}
-		if err := m.pauseStale(RunDir(info.Home, info.Name(), st.Run), wf, "tyci restarted", false); err != nil {
+		if err := m.pauseStale(RunDir(info.Home, info.Key(), st.Run), wf, "tyci restarted", false); err != nil {
 			notes = append(notes, "cannot pause run "+ShowRunID(st.Run)+": "+err.Error())
 		}
 	}
@@ -407,11 +407,14 @@ func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool,
 		if st.Issue != issue {
 			continue
 		}
-		if n := m.slotsInUse(info, st.Run); m.workers > 0 && n >= m.workers {
-			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d worker slot(s) are in use (active runs, paused runs held by the orchestrator, and an apply or reject of a workflow proposal)",
-				ErrBusy, ShowRunID(st.Run), issue, m.workers, n)
+		workers, others, unlockPool := m.reserve()
+		if inUse := m.slotsInUse(info, st.Run) + others; workers > 0 && inUse >= workers {
+			unlockPool()
+			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d worker slot(s) are in use (active runs, also in other repositories, paused runs held by the orchestrator, and an apply or reject of a workflow proposal)",
+				ErrNoSlot, ShowRunID(st.Run), issue, workers, inUse)
 		}
 		ok, err := m.resumeRun(info, st)
+		unlockPool()
 		if err != nil {
 			return "", true, err
 		}

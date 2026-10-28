@@ -138,14 +138,14 @@ func NewManager(notify func(string), spawn func(context.Context, tools.TaskSpec)
 				return addRunWorktree(ctx, info, runID, issue)
 			},
 			NewStore: func(runID string) (*Store, error) {
-				return &Store{Dir: RunDir(info.Home, info.Name(), runID)}, nil
+				return &Store{Dir: RunDir(info.Home, info.Key(), runID)}, nil
 			},
-			NewRunID: func() (string, error) { return reserveRunID(info.Home, info.Name(), info.MainRoot) },
+			NewRunID: func() (string, error) { return reserveRunID(info.Home, info.Key(), info.MainRoot) },
 		}
 		return PrepareRun(ctx, d, PrepareReq{Workflow: req.Workflow, Repo: info.Repo, DefaultBranch: info.DefaultBranch, Params: req.Params, Trigger: req.Trigger})
 	}
 	m.NewRunner = func(info RepoInfo, wf *Workflow, st *RunState) *Runner {
-		runDir := RunDir(info.Home, info.Name(), st.Run)
+		runDir := RunDir(info.Home, info.Key(), st.Run)
 		// prURL links the merge request on GitLab. The runner saves it with the state.
 		st.GitLabURL = info.GitLabURL
 		cfg, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
@@ -235,17 +235,18 @@ func reserveRunID(home, repoName, mainRoot string) (string, error) {
 // a run without one gets run-<run id>.
 func addRunWorktree(ctx context.Context, info RepoInfo, runID string, issue int) (*worktree.Worktree, error) {
 	if issue > 0 {
-		return worktree.AddIssue(ctx, info.Home, info.MainRoot, issue, info.DefaultBranch, info.Trusted)
+		return worktree.AddIssue(ctx, info.Home, info.MainRoot, info.Key(), issue, info.DefaultBranch, info.Trusted)
 	}
-	return worktree.AddRun(ctx, info.Home, info.MainRoot, runID, info.DefaultBranch, info.Trusted)
+	return worktree.AddRun(ctx, info.Home, info.MainRoot, info.Key(), runID, info.DefaultBranch, info.Trusted)
 }
 
 // ChatTools adapts a Manager to tools.WorkflowManager.
 type ChatTools struct{ M *Manager }
 
 // Start implements tools.WorkflowManager. A missing required param gets a text
-// that tells the model to ask the user first.
-func (c ChatTools) Start(ctx context.Context, workflow string, params []string) (string, []string, error) {
+// that tells the model to ask the user first. repo is not used: c.M has one
+// repository (Repos picks it).
+func (c ChatTools) Start(ctx context.Context, _, workflow string, params []string) (string, []string, error) {
 	run, warnings, err := c.M.Start(ctx, StartRequest{Workflow: workflow, Params: params})
 	var mp MissingParamError
 	if errors.As(err, &mp) {
@@ -295,7 +296,7 @@ func (c ChatTools) List(archived bool, limit, offset int) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	list, err := ListRuns(info.Home, info.Name(), archived, limit, offset)
+	list, err := ListRuns(info.Home, info.Key(), archived, limit, offset)
 	if err != nil {
 		return nil, err
 	}

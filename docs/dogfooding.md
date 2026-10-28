@@ -92,11 +92,11 @@ Ask "status of the run" to call `workflow_status`.
 ## 5. Watch
 
 ```bash
-jq '.status, .current, (.history[] | [.seq,.state,.key,.to])' ~/.tyci/runs/tyci-agent/*/state.json
-ls ~/.tyci/worktrees/tyci-agent/
+jq '.status, .current, (.history[] | [.seq,.state,.key,.to])' ~/.tyci/runs/crazy-goat+tyci-agent/*/state.json
+ls ~/.tyci/worktrees/crazy-goat+tyci-agent/
 ```
 
-The code is in `~/.tyci/worktrees/tyci-agent/issue-N` on branch `issue-N`.
+The code is in `~/.tyci/worktrees/crazy-goat+tyci-agent/issue-N` on branch `issue-N`.
 
 ## 6. Answer a paused run
 
@@ -245,14 +245,14 @@ to resume.
 4. Remove the worktree and the branch:
 
 ```bash
-git -C ~/work/crazy-goat/tyci-agent worktree remove --force ~/.tyci/worktrees/tyci-agent/issue-N
+git -C ~/work/crazy-goat/tyci-agent worktree remove --force ~/.tyci/worktrees/crazy-goat+tyci-agent/issue-N
 git -C ~/work/crazy-goat/tyci-agent branch -D issue-N
 ```
 
 5. Remove the run directory. Without this step, the next start asks again about an old `running` or `paused` run, and that run blocks a new start for the issue:
 
 ```bash
-rm -rf ~/.tyci/runs/tyci-agent/<run>
+rm -rf ~/.tyci/runs/crazy-goat+tyci-agent/<run>
 ```
 
 6. Release the issue assignment. The gate keeps the assignment after the run ends. A run of
@@ -265,7 +265,7 @@ gh issue edit <N> -R <repo> --remove-assignee <login>
 
 ## 10. Read `state.json`
 
-The file is `~/.tyci/runs/<repo>/<run>/state.json`.
+The file is `~/.tyci/runs/<owner+name>/<run>/state.json`.
 
 | Field | Meaning |
 |---|---|
@@ -284,7 +284,7 @@ The file is `~/.tyci/runs/<repo>/<run>/state.json`.
 Every check and agent step gets its own artifact dir, in execution order:
 
 ```
-~/.tyci/runs/<repo>/<run>/artifacts/
+~/.tyci/runs/<owner+name>/<run>/artifacts/
   001-check_done/output.log
   002-code/report.md
   003-review/report.md

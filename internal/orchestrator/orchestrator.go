@@ -70,6 +70,11 @@ type Orchestrator struct {
 	stop     chan struct{}
 	closing  bool            // a CloseWorkflow run is active (one at a time)
 	closed   map[string]bool // milestones whose CloseWorkflow run ended; never started again
+	// noSlot: the last fill stopped on flow.ErrNoSlot (runs that the orchestrator
+	// does not watch, for example chat runs, hold all worker slots). The loop
+	// then fills again after slotRetry.
+	noSlot    bool
+	slotRetry time.Duration
 }
 
 // New returns an Orchestrator. Workers is not defaulted: 0 means unlimited.
@@ -80,7 +85,8 @@ func New(cfg Config, f forge.Forge, r Runner, h Hooks) *Orchestrator {
 	if cfg.AcceptedLabel == "" {
 		cfg.AcceptedLabel = "accepted"
 	}
-	return &Orchestrator{cfg: cfg, f: f, r: r, h: h, inFlight: map[int]string{}, stop: make(chan struct{}), closed: map[string]bool{}}
+	return &Orchestrator{cfg: cfg, f: f, r: r, h: h, inFlight: map[int]string{}, stop: make(chan struct{}), closed: map[string]bool{},
+		slotRetry: 10 * time.Second}
 }
 
 // Start runs the orchestrator in a goroutine and returns at once. Cancel ctx
@@ -163,9 +169,14 @@ func (o *Orchestrator) loop(ctx context.Context, finished chan finishedRun, adop
 				return
 			}
 		}
+		var retry <-chan time.Time
+		if o.waitsForSlot() {
+			retry = time.After(o.slotRetry)
+		}
 		select {
 		case f := <-finished:
 			o.finish(f)
+		case <-retry:
 		case <-ctx.Done():
 			return
 		}
@@ -495,6 +506,13 @@ func (o *Orchestrator) candidate(i int) (issue int, startable, ok bool) {
 	return it.Issue, it.Status == StatusTodo && o.ready(it), true
 }
 
+// waitsForSlot reports if the last fill stopped on flow.ErrNoSlot.
+func (o *Orchestrator) waitsForSlot() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.noSlot
+}
+
 // fill starts every ready item while a slot is free. It returns the started issues.
 func (o *Orchestrator) fill(ctx context.Context, finished chan<- finishedRun) []int {
 	var started []int
@@ -504,6 +522,7 @@ func (o *Orchestrator) fill(ctx context.Context, finished chan<- finishedRun) []
 	o.mu.Lock()
 	o.markAdopted(adopted)
 	notes := o.markBlocked()
+	o.noSlot = false
 	o.mu.Unlock()
 	for i := 0; ctx.Err() == nil; i++ {
 		issue, startable, ok := o.candidate(i)
@@ -515,6 +534,16 @@ func (o *Orchestrator) fill(ctx context.Context, finished chan<- finishedRun) []
 		}
 		o.setStatus(i, StatusWip)
 		h, err := o.r.Start(ctx, o.cfg.Workflow, map[string]string{"issue": strconv.Itoa(issue)}, nil)
+		if errors.Is(err, flow.ErrNoSlot) {
+			// Runs that the orchestrator does not watch hold all worker slots.
+			// Keep the item todo and fill again later (loop).
+			o.release(issue)
+			o.mu.Lock()
+			o.roadmap.Items[i].Status = StatusTodo
+			o.noSlot = true
+			o.mu.Unlock()
+			break
+		}
 		if errors.Is(err, flow.ErrBusy) {
 			// The issue already has an active run (for example a manual one).
 			// Not a failure: keep it todo, try the next item.

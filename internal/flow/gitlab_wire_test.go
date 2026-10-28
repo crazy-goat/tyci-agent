@@ -65,7 +65,7 @@ func TestDetectRepoAtGitLab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Repo != "g/sub/p" || info.GitLabURL != "https://gitlab.example.com" || info.DefaultBranch != "main" || info.Name() != "p" {
+	if info.Repo != "g/sub/p" || info.GitLabURL != "https://gitlab.example.com" || info.DefaultBranch != "main" || info.Key() != "g+sub+p" {
 		t.Fatalf("got %+v", info)
 	}
 }

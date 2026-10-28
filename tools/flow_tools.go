@@ -14,8 +14,10 @@ import (
 // implements it; tools never imports flow (layering, as with JobWaiter).
 type WorkflowManager interface {
 	// Start validates and starts a run and returns at once. params are the
-	// positional param values of the workflow.
-	Start(ctx context.Context, workflow string, params []string) (run string, warnings []string, err error)
+	// positional param values of the workflow. repo ("owner/name") picks the
+	// repository when several are open; "" means the only open one, or the
+	// repository of an "owner/name#N" param.
+	Start(ctx context.Context, repo, workflow string, params []string) (run string, warnings []string, err error)
 	// Workflows lists the workflows that can be started.
 	Workflows() []WorkflowInfo
 	// Status returns a JSON-ready summary; an empty run means the newest.
@@ -149,7 +151,7 @@ func (t *WorkflowStartTool) Run(_ context.Context, input map[string]any) ToolRes
 	}
 	// The run outlives this tool call, so it must not use the turn context:
 	// the manager runs it on its own context (cancelled on quit).
-	run, warnings, err := m.Start(context.Background(), name, params)
+	run, warnings, err := m.Start(context.Background(), stringParam(input, "repo", ""), name, params)
 	if err != nil {
 		msg := err.Error()
 		if len(list) > 0 && !workflowKnown(list, name) && !strings.Contains(msg, "available") {
@@ -367,10 +369,11 @@ func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 			map[string]any{
 				"workflow": map[string]any{"type": "string", "description": "Workflow name, one of the available workflows in the description."},
 				"params": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
-					"description": "Positional param values, in the order the workflow declares them."},
+					"description": "Positional param values, in the order the workflow declares them. An issue can be owner/name#N to pick the repository."},
+				"repo": map[string]any{"type": "string", "description": "Repository owner/name. Needed only when several repositories are open and no param is owner/name#N."},
 			}, []string{"workflow"}),
 		fn("workflow_status", "Show the state of a workflow run: status, current state, visits, last history entries, PR.",
-			map[string]any{"run": map[string]any{"type": "string", "description": "Run id (default: newest run)."}}, []string{}),
+			map[string]any{"run": map[string]any{"type": "string", "description": "Run id, for example #17, or owner/name#17 when several repositories are open (default: the newest run of the repository of the current directory)."}}, []string{}),
 		fn("workflow_list", "List the workflow runs of this project, newest first: run id, workflow, params, status, state, start time. By default only running and paused runs. With archived true also done, stopped and failed runs. Use limit (default 20) and offset to page; the result gives total and more.",
 			map[string]any{
 				"archived": map[string]any{"type": "boolean", "description": "Also list done, stopped and failed runs. Default false."},
@@ -384,7 +387,7 @@ func workflowToolsSchema(list []WorkflowInfo) []map[string]any {
 			}, []string{"run"}),
 		fn("replace_agent", "Last resort: use it on a stuck agent, for example missed pings or a hit limit. It replaces the agent of a workflow run with an agent of another role. The old agent is stopped first, and a summary of its work goes to the new agent. One replacement per state visit.",
 			map[string]any{
-				"agent_id": map[string]any{"type": "string", "description": "Id of the running agent: <run>/<role>, for example run-7/coder."},
+				"agent_id": map[string]any{"type": "string", "description": "Id of the running agent: <run>/<role>, for example run-7/coder. When the same run id is active in several repositories, use owner/name#<run>/<role>."},
 				"role":     map[string]any{"type": "string", "description": "Role of the new agent, as defined in the workflow config."},
 				"reason":   map[string]any{"type": "string", "description": "Why the agent is replaced. Required."},
 			}, []string{"agent_id", "role", "reason"}),

@@ -329,6 +329,7 @@ func TestLoad_Repos(t *testing.T) {
 		`{"repos":{"g/p":{"forge":"gitlab","url":"http://gitlab.example.com"}}}`,
 		`{"repos":{"g/p":{"forge":"gitea","url":"https://x.example"}}}`,
 		`{"repos":{"nonsense":{"forge":"github"}}}`,
+		`{"repos":{"o/r":{"path":"relative/dir"}}}`,
 	} {
 		home := t.TempDir()
 		write(t, home, ".tyci/config.json", bad)
