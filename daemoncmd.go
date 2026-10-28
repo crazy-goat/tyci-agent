@@ -34,9 +34,11 @@ var daemonCmd = &cobra.Command{
               branch starts the fix-ci workflow
   cron        the due jobs of ~/.tyci/cron.json and the project cron.json run every minute
 
-The issue and ci_failure triggers watch only the repositories in daemon.repos of
-~/.tyci/config.json. Today that is the repository of --dir (default: the current
-directory) when daemon.repos lists it. Without repos the daemon runs cron only.
+The issue and ci_failure triggers watch the repositories in daemon.repos of
+~/.tyci/config.json. The repository of --dir (default: the current directory) needs
+only its name there. Every other repository also needs repos.<owner/name>.path, the
+absolute path of its local clone. The daemon logs and skips an entry that does not
+open. Without repos the daemon runs cron only.
 A run that stops at an ask state stays paused. The daemon posts one issue comment, and a
 human continues the run with 'tyci workflow resume <run-id> <answer>'.
 
@@ -107,7 +109,7 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, log io.Writer) error {
 		agentCtx, shutdown := setupWorkflowAgents(ctx, cmd, local)
 		defer shutdown()
 		for _, ri := range watched {
-			r, err := daemonRepo(agentCtx, ri, logf)
+			r, err := daemonRepo(agentCtx, ri, repoErr == nil && ri.Repo == info.Repo, logf)
 			if err != nil {
 				return err
 			}
@@ -142,8 +144,8 @@ func runDaemon(ctx context.Context, cmd *cobra.Command, log io.Writer) error {
 
 // daemonRepo wires one repository: the forge, the orchestrator config and a
 // flow.Manager like 'tyci workflow run' has. agentCtx comes from
-// setupWorkflowAgents.
-func daemonRepo(agentCtx context.Context, info flow.RepoInfo, logf func(string, ...any)) (daemon.Repo, error) {
+// setupWorkflowAgents. primary is true for the repository of --dir.
+func daemonRepo(agentCtx context.Context, info flow.RepoInfo, primary bool, logf func(string, ...any)) (daemon.Repo, error) {
 	fc, err := flowconfig.Load(info.Home, info.Root, info.Trusted)
 	if err != nil {
 		return daemon.Repo{}, err
@@ -152,11 +154,13 @@ func daemonRepo(agentCtx context.Context, info flow.RepoInfo, logf func(string, 
 	if err != nil {
 		return daemon.Repo{}, err
 	}
-	// The daemon watches info.Repo, so its forge is always info.Repo. An
-	// explicit forge.repo of the config does not apply: with more than one
-	// watched repository it would make each one poll the same repository (#218).
+	// An explicit forge.repo applies only to the repository of --dir (for
+	// example the upstream of a fork). A registry repository always polls its
+	// own forge repository, so two repositories never poll the same one (#218).
 	fcfg := fc.Forge
-	fcfg.Repo = info.Repo
+	if !primary || fcfg.Repo == "" || fcfg.Repo == "auto" {
+		fcfg.Repo = info.Repo
+	}
 	f, err := newForge(fcfg, fc.Repos, info.Repo)
 	if err != nil {
 		return daemon.Repo{}, err

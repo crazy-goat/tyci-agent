@@ -307,18 +307,28 @@ func TestDaemonCommandWatchesRegistryRepos(t *testing.T) {
 }
 
 // TestDaemonRepoUsesItsOwnForgeRepo makes sure that a global forge.repo does
-// not send the polls of a watched repository to another repository (#218).
+// not send the polls of a registry repository to another repository. The
+// repository of --dir keeps an explicit forge.repo (#218).
 func TestDaemonRepoUsesItsOwnForgeRepo(t *testing.T) {
 	home := shortHome(t)
 	wfWrite(t, filepath.Join(home, ".tyci", "config.json"), `{"forge":{"repo":"acme/demo"}}`)
-	r, err := daemonRepo(context.Background(), flow.RepoInfo{Home: home, Root: home, Repo: "acme/one", DefaultBranch: "main"},
-		func(string, ...any) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-	g, ok := r.Forge.(*forge.GitHub)
-	if !ok || g.Repo() != "acme/one" {
-		t.Fatalf("forge %#v, want the GitHub forge of acme/one", r.Forge)
+	for _, c := range []struct {
+		repo    string
+		primary bool
+		want    string
+	}{
+		{"acme/one", false, "acme/one"},  // a registry repository
+		{"acme/fork", true, "acme/demo"}, // the repository of --dir keeps forge.repo
+	} {
+		r, err := daemonRepo(context.Background(), flow.RepoInfo{Home: home, Root: home, Repo: c.repo, DefaultBranch: "main"},
+			c.primary, func(string, ...any) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, ok := r.Forge.(*forge.GitHub)
+		if !ok || g.Repo() != c.want {
+			t.Fatalf("%s: forge %#v, want the GitHub forge of %s", c.repo, r.Forge, c.want)
+		}
 	}
 }
 
