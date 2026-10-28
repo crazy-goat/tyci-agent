@@ -275,3 +275,41 @@ func TestGitLab_MissingLibFails(t *testing.T) {
 		t.Fatalf("GitHub without lib_forge.sh: key=%q exit=%d log=%s", key, exit, b)
 	}
 }
+
+// On GitLab the describe texts of a failure give no gh or GitHub hint: the fixer
+// must not check gh for a GitLab repo.
+func TestGitLab_FailureTextsHaveNoGhHints(t *testing.T) {
+	clean := `{"state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}`
+	issue := gitlabIssue("a.b", "accepted")
+	for name, tc := range map[string]struct {
+		script, want string
+		git          bool // run in a pushEnv work clone
+		env          map[string]string
+	}{
+		"merge ci not green": {"merge.sh", "pr-checks 171", true, map[string]string{"OUT_pr_view": clean, "OUT_pr_checks": `[{"name":"ci-ok","bucket":"fail"}]`}},
+		"merge view fails":   {"merge.sh", "tyci forge pr-view 171", true, map[string]string{"FAIL_pr_view": "1", "OUT_pr_checks": `[{"name":"ci-ok","bucket":"pass"}]`}},
+		"ci_wait no PR":      {"ci_wait.sh", "pr-list issue-7", false, map[string]string{"TYCI_PR": "", "TYCI_BRANCH": "issue-7"}},
+		"ci_wait conflict":   {"ci_wait.sh", "GitLab state", false, map[string]string{"OUT_pr_view": `{"mergeable":"CONFLICTING","mergeStateStatus":"DIRTY"}`}},
+		"ci_wait no check":   {"ci_wait.sh", "head pipeline (ci-ok) of merge request !5", false, map[string]string{"OUT_pr_view": clean, "OUT_pr_checks": "[]", "TYCI_CI_APPEAR_SEC": "0"}},
+		"ci_wait errors":     {"ci_wait.sh", "tyci forge pr-checks 5", false, map[string]string{"OUT_pr_view": clean, "FAIL_pr_checks": "1"}},
+		"fetch_comments":     {"fetch_comments.sh", "comments of merge request !5", false, map[string]string{"FAIL_pr_comments": "1", "TYCI_RUN_DIR": t.TempDir(), "TYCI_ARTIFACT_DIR": t.TempDir()}},
+		"post_review":        {"post_review.sh", "tyci forge pr-comment 5", false, map[string]string{"FAIL_pr_comment": "1", "TYCI_REVIEW_DIR": writeReview(t, "003-review", "ACCEPT\n")}},
+		"issue_done assign":  {issueScript, "GitLab API", false, map[string]string{"TYCI_ISSUE": "7", "OUT_issue_view": issue, "PERM_a_b": "write", "OUT_whoami": "tyci", "FAIL_issue_assign_self": "1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := map[string]string{"TYCI_PR": "5", "TYCI_CI_POLL_SEC": "0", "TYCI_DEFAULT_BRANCH": "main"}
+			dir := ""
+			if tc.git {
+				e := newPushEnv(t)
+				dir, env["TYCI_PR"] = e.work, "171"
+			}
+			for k, v := range tc.env {
+				env[k] = v
+			}
+			r := runGitLab(t, dir, tc.script, env)
+			if !strings.Contains(r.stderr, tc.want) || strings.Contains(r.stderr, "gh ") || strings.Contains(r.stderr, "GitHub") {
+				t.Fatalf("key=%q exit=%d stderr:\n%s", r.key, r.exit, r.stderr)
+			}
+		})
+	}
+}

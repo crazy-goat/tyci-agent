@@ -50,6 +50,11 @@ else
 fi
 if "${post[@]}" >&2; then
     echo ok
+elif is_gitlab; then
+    describe fail "tyci forge pr-comment $pr failed (see the error above); the review was not posted" \
+        "no network, TYCI_GITLAB_TOKEN/GITLAB_TOKEN is missing or not valid, or no permission to comment" \
+        "nothing to do: the run records a warning and goes on to ci"
+    echo fail
 else
     describe fail "gh pr review $pr --comment failed (see the gh output above); the review was not posted" \
         "no network, gh is not logged in, or no permission to comment" \

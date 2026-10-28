@@ -41,9 +41,15 @@ fi
 marker='<!-- tyci-agent -->'
 
 fail() {
-    describe fail "$1 while reading the comments of PR #$pr" \
-        "no network, gh is not logged in, a rate limit, or a GitHub outage" \
-        "run 'gh auth status' and 'gh api repos/$repo/issues/$pr/comments'; when gh works again, return ok so the step runs again"
+    if is_gitlab; then
+        describe fail "$1 while reading the comments of merge request !$pr" \
+            "no network, TYCI_GITLAB_TOKEN/GITLAB_TOKEN is missing or not valid, a rate limit, or a GitLab outage" \
+            "check the token and the GitLab API; when it answers, return ok so the step runs again"
+    else
+        describe fail "$1 while reading the comments of PR #$pr" \
+            "no network, gh is not logged in, a rate limit, or a GitHub outage" \
+            "run 'gh auth status' and 'gh api repos/$repo/issues/$pr/comments'; when gh works again, return ok so the step runs again"
+    fi
     echo fail
     exit 0
 }

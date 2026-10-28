@@ -98,9 +98,15 @@ case "$status" in
         assign=(gh issue edit "$TYCI_ISSUE" -R "$TYCI_REPO" --add-assignee "$login")
     fi
     if ! "${assign[@]}"; then
-        describe error "could not assign issue #$TYCI_ISSUE to '$login'" \
-            "the account may lack permission to assign issues, or the GitHub API may be unavailable" \
-            "check the issue permissions and 'gh auth status'; when assignment succeeds, answer retry so the gate runs again"
+        if is_gitlab; then
+            describe error "could not assign issue #$TYCI_ISSUE to '$login'" \
+                "the account may lack permission to assign issues, or the GitLab API may be unavailable" \
+                "check the issue permissions and TYCI_GITLAB_TOKEN/GITLAB_TOKEN; when assignment succeeds, answer retry so the gate runs again"
+        else
+            describe error "could not assign issue #$TYCI_ISSUE to '$login'" \
+                "the account may lack permission to assign issues, or the GitHub API may be unavailable" \
+                "check the issue permissions and 'gh auth status'; when assignment succeeds, answer retry so the gate runs again"
+        fi
         exit 1
     fi
     if [ "$has_risky" = "true" ]; then

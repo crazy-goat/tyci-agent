@@ -49,12 +49,19 @@ if [ -z "$pr" ]; then
     # The PR head branch: open_pr.sh may have continued a PR from another branch (#374).
     pr_branch="${TYCI_BRANCH:-<branch>}"
     if [ -s "${TYCI_RUN_DIR:-}/pr_branch" ]; then pr_branch="$(<"$TYCI_RUN_DIR/pr_branch")"; fi
+    if is_gitlab; then
+        hint="run '${TYCI_BIN:-tyci} forge --repo ${TYCI_REPO:-} pr-list $pr_branch'"
+    else
+        hint="run 'gh pr list --head $pr_branch --state open'"
+    fi
     describe fail "TYCI_PR is not set: the run has no PR number, so there is no CI to wait for" \
         "push.sh did not write \$TYCI_RUN_DIR/pr, or the run state lost the PR" \
-        "run 'gh pr list --head $pr_branch --state open'; if a PR exists, return failed with its number (the oracle sends the run back to update); if none exists, return failed"
+        "$hint; if a PR exists, return failed with its number (the oracle sends the run back to update); if none exists, return failed"
     echo fail
     exit 0
 fi
+forge=GitHub
+if is_gitlab; then forge=GitLab; fi
 poll="${TYCI_CI_POLL_SEC:-20}"
 appear="${TYCI_CI_APPEAR_SEC:-300}"
 
@@ -70,7 +77,7 @@ while :; do
     fi
     case "$view" in
     CONFLICTING* | *DIRTY)
-        describe conflict "PR #$pr conflicts with the default branch (GitHub state: $view); CI does not run for it" \
+        describe conflict "PR #$pr conflicts with the default branch ($forge state: $view); CI does not run for it" \
             "the default branch changed the same lines as this PR" \
             "the run goes to rebase: it merges origin/${TYCI_DEFAULT_BRANCH:-<default>} and a coder resolves the conflicts"
         echo conflict
@@ -110,16 +117,32 @@ while :; do
             exit 0
         fi
         if [ "$bucket" = missing ] && [ $((SECONDS - start)) -ge "$appear" ]; then
-            describe fail "the check ci-ok of PR #$pr did not appear within ${appear}s" \
-                "the workflow did not start: the head commit was not pushed, a workflow needs approval, or GitHub Actions is slow or down" \
-                "run 'gh pr checks $pr' and 'gh run list --branch ${TYCI_BRANCH:-<branch>}'; if a run is queued or was just started again ('gh run rerun'), return ok so the step waits again; else return failed"
+            if is_gitlab; then
+                describe fail "the head pipeline (ci-ok) of merge request !$pr did not appear within ${appear}s" \
+                    "the pipeline did not start: the head commit was not pushed, the project has no CI for merge requests, or GitLab CI is slow or down" \
+                    "look at the pipelines of the merge request in GitLab; if a pipeline is queued or was just started again, return ok so the step waits again; else return failed"
+            else
+                describe fail "the check ci-ok of PR #$pr did not appear within ${appear}s" \
+                    "the workflow did not start: the head commit was not pushed, a workflow needs approval, or GitHub Actions is slow or down" \
+                    "run 'gh pr checks $pr' and 'gh run list --branch ${TYCI_BRANCH:-<branch>}'; if a run is queued or was just started again ('gh run rerun'), return ok so the step waits again; else return failed"
+            fi
             echo fail
             exit 0
         fi
     else
         errors=$((errors + 1))
-        echo "ci_wait.sh: gh failure $errors: $(tail -n 1 "$errf")" >&2
-        if [ "$errors" -ge 3 ]; then
+        if is_gitlab; then
+            echo "ci_wait.sh: tyci forge failure $errors: $(tail -n 1 "$errf")" >&2
+        else
+            echo "ci_wait.sh: gh failure $errors: $(tail -n 1 "$errf")" >&2
+        fi
+        if [ "$errors" -ge 3 ] && is_gitlab; then
+            describe fail "'tyci forge pr-checks $pr' failed 3 times in a row (last error: $(tail -n 1 "$errf"))" \
+                "no network, TYCI_GITLAB_TOKEN/GITLAB_TOKEN is missing or not valid, a rate limit, or a GitLab outage" \
+                "check the token and the GitLab API; when it answers, return ok so the step waits again"
+            echo fail
+            exit 0
+        elif [ "$errors" -ge 3 ]; then
             describe fail "'gh pr checks $pr' failed 3 times in a row (last error: $(tail -n 1 "$errf"))" \
                 "no network, gh is not logged in, a rate limit, or a GitHub outage" \
                 "run 'gh auth status' and 'gh pr checks $pr'; when gh works again, return ok so the step waits again"

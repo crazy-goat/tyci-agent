@@ -81,17 +81,29 @@ if [ "$bucket" != pass ]; then
         echo behind
         exit 0
     fi
-    describe fail "ci-ok of PR #$TYCI_PR is '${bucket:-missing}', not pass, so merge.sh did not merge" \
-        "CI was started again after the ci step, a new push started a new CI run, or gh failed" \
-        "run 'gh pr checks $TYCI_PR'; if ci-ok is pending or missing, return ok after it passes ('gh pr checks $TYCI_PR --watch'); if it failed, return failed"
+    if is_gitlab; then
+        describe fail "ci-ok (the head pipeline) of merge request !$TYCI_PR is '${bucket:-missing}', not pass, so merge.sh did not merge" \
+            "the pipeline was started again after the ci step, a new push started a new pipeline, or the GitLab API failed" \
+            "run '${TYCI_BIN:-tyci} forge --repo $TYCI_REPO pr-checks $TYCI_PR'; if ci-ok is pending or missing, return ok after it passes; if it failed, return failed"
+    else
+        describe fail "ci-ok of PR #$TYCI_PR is '${bucket:-missing}', not pass, so merge.sh did not merge" \
+            "CI was started again after the ci step, a new push started a new CI run, or gh failed" \
+            "run 'gh pr checks $TYCI_PR'; if ci-ok is pending or missing, return ok after it passes ('gh pr checks $TYCI_PR --watch'); if it failed, return failed"
+    fi
     echo fail
     exit 0
 fi
 
 state=$(pr_field mergeStateStatus) || {
-    describe fail "'gh pr view $TYCI_PR --json mergeStateStatus' failed (see the gh output above); nothing was merged" \
-        "no network, gh is not logged in, a rate limit, or a GitHub outage" \
-        "run 'gh auth status' and 'gh pr view $TYCI_PR'; when gh works again, return ok so the step runs again"
+    if is_gitlab; then
+        describe fail "'tyci forge pr-view $TYCI_PR' failed (see the error above); nothing was merged" \
+            "no network, TYCI_GITLAB_TOKEN/GITLAB_TOKEN is missing or not valid, a rate limit, or a GitLab outage" \
+            "check the token and the GitLab API; when it answers, return ok so the step runs again"
+    else
+        describe fail "'gh pr view $TYCI_PR --json mergeStateStatus' failed (see the gh output above); nothing was merged" \
+            "no network, gh is not logged in, a rate limit, or a GitHub outage" \
+            "run 'gh auth status' and 'gh pr view $TYCI_PR'; when gh works again, return ok so the step runs again"
+    fi
     echo fail
     exit 0
 }
