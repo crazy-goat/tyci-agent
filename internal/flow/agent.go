@@ -158,6 +158,12 @@ func (r *SubagentRunner) Text(ctx context.Context, role, task string, rc RunCont
 	if rc.Stats != nil {
 		spec.OnDone = func(ts tools.TaskStats) { *rc.Stats = stepStats(model, effective, ts) }
 	}
+	// The role memory of this agent is ~/.tyci/memory/<repo>/<role>.md. The repo
+	// key is the base name, as in the worktree path; without a repo there is no
+	// role memory, so the role context is not set.
+	if rc.Repo != "" {
+		ctx = tools.WithRoleContext(ctx, filepath.Base(rc.Repo), role)
+	}
 	// The job of this agent shows the path of its transcript (jobs.Job.Transcript).
 	ctx = context.WithValue(ctx, jobs.TranscriptCtxKey{}, spec.Transcript)
 	return r.spawnWithLimits(ctx, spec, rl.Limits)

@@ -16,6 +16,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/agentdefs"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
 	"github.com/crazy-goat/tyci-agent/internal/ledger"
+	"github.com/crazy-goat/tyci-agent/internal/rolememory"
 	"github.com/crazy-goat/tyci-agent/internal/watchdog"
 	"github.com/crazy-goat/tyci-agent/jobs"
 	"github.com/crazy-goat/tyci-agent/providers"
@@ -373,7 +374,25 @@ func (r *agentRunner) RunTaskWithSystem(ctx context.Context, task string, model 
 			break
 		}
 	}
-	return r.run(ctx, task, model, providers.BuildSubagentSystemPromptWithRole(system, hasAskParent, tools.Workdir(ctx)), opts)
+	return r.run(ctx, task, model, providers.BuildSubagentSystemPromptWithRole(system, hasAskParent, tools.Workdir(ctx))+roleMemorySection(ctx), opts)
+}
+
+// roleMemorySection returns the role memory of the agent in ctx for its system
+// prompt, or "" when the agent has no role or no note yet. It is added after
+// the standard prompt, so the note is the last section the model reads. The
+// role comes from the context and not from the prompt text, because the
+// prompt carries the role body, not the role name.
+func roleMemorySection(ctx context.Context) string {
+	repo, role, ok := tools.RoleFromContext(ctx)
+	if !ok {
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	block := rolememory.Block(home, repo, role, debug.FromContext(ctx))
+	if block == "" {
+		return ""
+	}
+	return "\n---\nYour notes from earlier sessions of this role:\n" + block + "\n"
 }
 
 // run executes one subagent turn and normalizes the outcome into a result the

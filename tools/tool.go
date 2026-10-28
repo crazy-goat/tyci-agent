@@ -508,13 +508,14 @@ func builtinToolsSchema() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "memory",
-				"description": "Project notes that survive the session: every note in .tyci/memory/ is loaded into the next session's system prompt, so writing one is how something you worked out stops having to be worked out again. Write when you learn something NOT obvious from the code — the command that really runs the tests, a rule the compiler does not enforce, a decision and its reason, a trap you already fell into. Never for what the code plainly says, for one-off task detail, or for this conversation: you pay for every note on every future request. Say WHY, keep it to a few sentences, rewrite under the same name to correct it, delete what stopped being true. actions: list (default), read, write, delete.",
+				"description": "Project notes that survive the session: every note in .tyci/memory/ is loaded into the next session's system prompt, so writing one is how something you worked out stops having to be worked out again. Write when you learn something NOT obvious from the code — the command that really runs the tests, a rule the compiler does not enforce, a decision and its reason, a trap you already fell into. Never for what the code plainly says, for one-off task detail, or for this conversation: you pay for every note on every future request. Say WHY, keep it to a few sentences, rewrite under the same name to correct it, delete what stopped being true. actions: list (default), read, write, delete. scope=\"role\" is different: it is the one private note of your workflow role, kept under ~/.tyci/memory/<repo>/<role>.md and loaded into that role's next session. With scope=\"role\" use action read or write only, leave out name, and write the whole note as content.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"action":  map[string]any{"type": "string", "description": "list (default), read, write or delete"},
-						"name":    map[string]any{"type": "string", "description": "Short slug identifying the note, e.g. \"test-command\". Required for read/write/delete. Writing an existing name replaces it."},
+						"action":  map[string]any{"type": "string", "description": "list (default), read, write or delete. With scope=\"role\": read or write."},
+						"name":    map[string]any{"type": "string", "description": "Short slug identifying the note, e.g. \"test-command\". Required for read/write/delete. Writing an existing name replaces it. Not used with scope=\"role\"."},
 						"content": map[string]any{"type": "string", "description": "The note itself (write only). A few sentences, including why it matters."},
+						"scope":   map[string]any{"type": "string", "enum": []string{"project", "role"}, "description": "project (default): the notes of this project. role: your private note as a workflow role; fails when this agent has no role."},
 					},
 				},
 			},
