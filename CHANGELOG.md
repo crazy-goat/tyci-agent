@@ -12,7 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Removed
 - Internal: the unused `debug` setting of the agent config and of the connector request is removed (#786).
 
+### Fixed
+- Transcripts: the `cwd` in the header of a subagent transcript is the working directory of its run, not the process directory (#791).
+
 ### Security
+- Roles: a role job that is resumed keeps its tool policy and its worktree. Before, the chat tool `resume` and the agent view resumed it with no tool gate and no write root, so it could write outside its worktree (#791).
 - Roles: a role with the permission `read-only` refuses every MCP tool, also when its `tools` list names it. The refusal applies to a direct call, to `tool()` in `lua` and to the tool schema. The plan steps and the read-only text runs get the same rule (#804).
 
 ## [0.11.0] - 2026-10-28
