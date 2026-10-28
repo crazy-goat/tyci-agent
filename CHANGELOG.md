@@ -6,7 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Workflows: the `issue-to-merge` workflow assigns the issue to the account that runs it. The gate skips an issue that another account is assigned to, so two runs on two machines are unlikely to work on the same issue. A short check-then-assign window remains: two runs that start within seconds of each other can both assign the issue. The assignment stays after the run ends. A run of another account then skips the issue with no message. Release it with `gh issue edit <N> -R <repo> --remove-assignee <login>` (#753).
+- Workflows: the `issue-to-merge` workflow pauses at the new state `ask_protected` when the pull request changes protected paths (`.github/`, `.tyci/`, `internal/flow/checks/`). A human answers `approve` to merge the pull request through the run, or `stop` to end the run. The oracle never answers this pause, and it cannot send the run to the approved merge (#753).
+
+### Changed
+- Workflows: the title of a run's pull request is the subject of the first non-merge commit since the default branch. A sync merge as the last commit no longer becomes the title (#753).
+- Workflows: the review prompt tells the reviewer to check the coder's claims against the code, to check the issue numbers that a diff cites, and to drop findings without a file and line. A review round reads the earlier review reports and looks first at the new commits. The worker fixes every hit of a pattern that a review lists (#753).
+
+### Removed
+- Lua tools: the unsandboxed Lua tools are removed. A Lua tool has no `os.execute`, `io`, `require` or `load`, at load time and in `run`, and a cancel stops a pure-Lua loop. `ctx.run`, `ctx.read` and `ctx.write` go through the `bash`, `read` and `write` tools, so hooks, tool gates and the write freshness guard apply. Scripts see these changes: `ctx.write` fails on an existing file that the script did not read first and no longer creates parent directories; `ctx.run` has the bash timeout of 120 s and the bash output cap; `ctx.read` gives at most 2000 lines or 50 KB; relative paths of all three resolve against the agent's work directory, not the process directory (#210).
+
 ### Fixed
+- Display: the Runs tab keeps the selection on the same run when runs change state. The cursor no longer moves to another run when a run finishes and the rows reorder (#553).
 - Flow: a retried worker gets the error of the failed step in its task text, under "Run so far". The error is masked and cut to 2000 bytes (#445).
 
 ## [0.10.0] - 2026-10-14
