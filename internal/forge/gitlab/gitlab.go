@@ -232,28 +232,54 @@ type Change struct {
 	Checks string
 }
 
+// mrJSON is the part of a GitLab merge request that tyci reads.
+type mrJSON struct {
+	IID                 int           `json:"iid"`
+	State               string        `json:"state"`
+	SHA                 string        `json:"sha"`
+	WebURL              string        `json:"web_url"`
+	HasConflicts        bool          `json:"has_conflicts"`
+	DetailedMergeStatus string        `json:"detailed_merge_status"`
+	HeadPipeline        *pipelineJSON `json:"head_pipeline"`
+}
+
+type pipelineJSON struct {
+	ID     int    `json:"id"`
+	Status string `json:"status"`
+	SHA    string `json:"sha"`
+	WebURL string `json:"web_url"`
+}
+
+func (g *GitLab) getMR(ctx context.Context, iid int) (mrJSON, error) {
+	var r mrJSON
+	body, _, err := g.c.do(ctx, http.MethodGet, g.mrPath(iid), nil, nil)
+	if err != nil {
+		return r, err
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return r, fmt.Errorf("gitlab: bad JSON: %w", err)
+	}
+	return r, nil
+}
+
+// pipeline returns the pipeline of the head commit, or nil. Right after a
+// push, head_pipeline can still be the pipeline of the old head.
+func (m mrJSON) pipeline() *pipelineJSON {
+	if m.HeadPipeline != nil && m.HeadPipeline.SHA == m.SHA {
+		return m.HeadPipeline
+	}
+	return nil
+}
+
 // Change returns the merge request iid.
 func (g *GitLab) Change(ctx context.Context, iid int) (Change, error) {
-	body, _, err := g.c.do(ctx, http.MethodGet, g.mrPath(iid), nil)
+	r, err := g.getMR(ctx, iid)
 	if err != nil {
 		return Change{}, err
 	}
-	var r struct {
-		IID          int    `json:"iid"`
-		State        string `json:"state"`
-		SHA          string `json:"sha"`
-		HeadPipeline *struct {
-			Status string `json:"status"`
-			SHA    string `json:"sha"`
-		} `json:"head_pipeline"`
-	}
-	if err := json.Unmarshal(body, &r); err != nil {
-		return Change{}, fmt.Errorf("gitlab: bad JSON: %w", err)
-	}
 	ch := Change{Number: r.IID, State: issueState(r.State), HeadSHA: r.SHA, Checks: "pending"}
-	// Right after a push, head_pipeline can still be the pipeline of the old head.
-	if r.HeadPipeline != nil && r.HeadPipeline.SHA == r.SHA {
-		ch.Checks = checks(r.HeadPipeline.Status)
+	if p := r.pipeline(); p != nil {
+		ch.Checks = checks(p.Status)
 	}
 	return ch, nil
 }
@@ -290,7 +316,7 @@ func (g *GitLab) Merge(ctx context.Context, iid int, sha string) error {
 		return fmt.Errorf("%w: !%d is %s", ErrNotGreen, iid, ch.Checks)
 	}
 	q := url.Values{"sha": {sha}, "squash": {"true"}, "should_remove_source_branch": {"true"}}
-	_, _, err = g.c.do(ctx, http.MethodPut, g.mrPath(iid)+"/merge", q)
+	_, _, err = g.c.do(ctx, http.MethodPut, g.mrPath(iid)+"/merge", q, nil)
 	if isStatus(err, http.StatusConflict) {
 		return fmt.Errorf("%w: %v", ErrHeadMoved, err)
 	}

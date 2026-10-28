@@ -1,7 +1,9 @@
 package gitlab
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -55,38 +57,50 @@ func isStatus(err error, status int) bool {
 	return errors.As(err, &ae) && ae.status == status
 }
 
-// do sends one request to /api/v4/<path>. path must already be escaped.
-// Every error text goes through redact.Redact.
-func (c *client) do(ctx context.Context, method, path string, q url.Values) ([]byte, http.Header, error) {
+// do sends one request to /api/v4/<path>. path must already be escaped. A
+// non-nil in is sent as the JSON body. Every error text goes through
+// redact.Redact.
+func (c *client) do(ctx context.Context, method, path string, q url.Values, in any) ([]byte, http.Header, error) {
 	u := c.base + "/api/v4/" + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, method, u, nil)
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return nil, nil, fmt.Errorf("gitlab: %w", err)
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, body)
 	if err != nil {
 		return nil, nil, fmt.Errorf("gitlab: %s", redact.Redact(err.Error()))
 	}
 	req.Header.Set("PRIVATE-TOKEN", c.token)
 	req.Header.Set("Accept", "application/json")
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("gitlab: %s", redact.Redact(err.Error()))
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+	out, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
 		return nil, nil, fmt.Errorf("gitlab: %s %s: %s", method, path, redact.Redact(err.Error()))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		// Redact the whole body before the cut, so no part of a secret stays.
-		text := []rune(strings.TrimSpace(redact.Redact(string(body))))
+		text := []rune(strings.TrimSpace(redact.Redact(string(out))))
 		if len(text) > 300 {
 			text = text[:300]
 		}
 		msg := fmt.Sprintf("gitlab: %s %s: %s: %s", method, path, resp.Status, string(text))
 		return nil, nil, &apiError{status: resp.StatusCode, msg: redact.Redact(msg)}
 	}
-	return body, resp.Header, nil
+	return out, resp.Header, nil
 }
 
 // getAll sends GET for every page and returns the page bodies. It follows
@@ -102,7 +116,7 @@ func (c *client) getAll(ctx context.Context, path string, q url.Values) ([][]byt
 			return nil, fmt.Errorf("gitlab: GET %s: more than %d pages", path, maxPages)
 		}
 		q.Set("page", page)
-		body, h, err := c.do(ctx, http.MethodGet, path, q)
+		body, h, err := c.do(ctx, http.MethodGet, path, q, nil)
 		if err != nil {
 			return nil, err
 		}

@@ -27,7 +27,8 @@ const (
 type item = map[string]any
 
 // server is a fake GitLab. Routes are keyed by "METHOD path", where path is
-// the escaped path after /api/v4/projects/o%2Fr/.
+// the escaped path after /api/v4/projects/o%2Fr/, or the path after /api/v4
+// (with its leading "/") for other paths.
 type server struct {
 	t      *testing.T
 	mu     sync.Mutex
@@ -40,6 +41,10 @@ func newServer(t *testing.T) (*server, *gitlab.GitLab) {
 	s := &server{t: t, routes: map[string]http.HandlerFunc{}}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path, ok := strings.CutPrefix(r.URL.EscapedPath(), project)
+		if !ok {
+			// A path outside the project, for example "/user".
+			path, ok = strings.CutPrefix(r.URL.EscapedPath(), "/api/v4")
+		}
 		key := r.Method + " " + path
 		s.mu.Lock()
 		s.calls = append(s.calls, key+"?"+r.URL.RawQuery)
