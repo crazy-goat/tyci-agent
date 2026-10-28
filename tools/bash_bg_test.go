@@ -383,12 +383,12 @@ func TestBashHandoffInsideSubagentTellsItToCollect(t *testing.T) {
 
 // TestBashHandoffDepthWithoutSinkKeepsChildReply: a caller at depth above 0
 // without the sink key gets the child reply, because inSubagent sees the
-// depth. It has no job id here, so the job has no owner (ParentID ""). It does
-// not stop with a parent, and the caller cannot wait on it. The child reply
-// promises both, so this test pins a known gap, not a correct state. The fix is
-// to refuse run_in_background for a caller without a job id (findings.md, #724).
-// Revert check: restore the sink-only check in bash.go and the main-agent reply
-// comes back.
+// depth. Known gap: this caller has no job id, so the job it starts has no
+// owner (ParentID ""). The job does not stop with the caller, and the caller
+// cannot wait on it. The child reply promises both, so this test pins the gap,
+// not a correct state. A possible fix is to refuse run_in_background for a
+// caller without a job id. Revert check: restore the sink-only check in bash.go
+// and the main-agent reply comes back.
 func TestBashHandoffDepthWithoutSinkKeepsChildReply(t *testing.T) {
 	reg, _ := bgTestEnv(t)
 	SetJobMailbox(newTestMailbox(reg))
