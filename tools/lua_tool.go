@@ -203,6 +203,9 @@ func (t *LuaTool) run(ctx context.Context, input map[string]any) ToolResult {
 
 	L := lua.NewState()
 	defer L.Close()
+	RestrictLuaStdlib(L)
+	// A cancel stops a pure-Lua loop too, not only a tool call.
+	L.SetContext(ctx)
 
 	// Set up sandboxed context
 	sandbox := newLuaContext(ctx, L)
@@ -382,6 +385,7 @@ func loadLuaTool(scriptPath string) (*LuaTool, error) {
 
 	L := lua.NewState()
 	defer L.Close()
+	RestrictLuaStdlib(L)
 
 	L.Push(newTopLevelFunction(L, proto))
 	if err := L.PCall(0, lua.MultRet, nil); err != nil {
