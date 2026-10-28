@@ -74,7 +74,7 @@ func TestPrepareRun_CallOrder(t *testing.T) {
 			return &Store{Dir: filepath.Join(home, id)}, nil
 		},
 	}
-	st, _, _, err := PrepareRun(context.Background(), d, PrepareReq{Workflow: "demo", Repo: "r", Params: []string{"7"}})
+	st, _, _, err := PrepareRun(context.Background(), d, PrepareReq{Workflow: "demo", Repo: "r", Params: []string{"7"}, Trigger: "ci_failure:o/r:main@abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +90,9 @@ func TestPrepareRun_CallOrder(t *testing.T) {
 	}
 	if saved.PID != os.Getpid() {
 		t.Fatalf("pid = %d, want %d", saved.PID, os.Getpid())
+	}
+	if saved.Trigger != "ci_failure:o/r:main@abc" {
+		t.Fatalf("trigger = %q", saved.Trigger)
 	}
 }
 

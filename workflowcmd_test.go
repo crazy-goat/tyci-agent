@@ -150,6 +150,7 @@ func wfUseSpawn(t *testing.T, spawn func(context.Context, tools.TaskSpec) (strin
 func resetWorkflowFlags() {
 	workflowInitDir = ""
 	workflowRunJSON, workflowRunDir = false, ""
+	workflowResumeJSON, workflowResumeDir = false, ""
 	workflowValidateJSON, workflowValidateDir = false, ""
 	workflowStatusJSON = false
 	workflowStopJSON, workflowStopReason = false, ""

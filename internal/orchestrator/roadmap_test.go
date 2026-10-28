@@ -240,3 +240,18 @@ func TestOracleModel(t *testing.T) {
 		t.Fatalf("%+v %v", r, err)
 	}
 }
+
+func TestEligibleKeepsOnlyAcceptedIssuesOfWriters(t *testing.T) {
+	issues := []forge.Issue{
+		{Number: 1, Labels: []string{"accepted"}, Author: "w"},
+		{Number: 2, Labels: []string{"bug"}, Author: "w"},
+		{Number: 3, Labels: []string{"accepted"}, Author: "x"},
+	}
+	ok, skipped := Eligible(issues, "accepted", func(u string) (bool, error) { return u == "w", nil })
+	if len(ok) != 1 || ok[0].Number != 1 {
+		t.Fatalf("eligible %+v", ok)
+	}
+	if len(skipped) != 2 || skipped[0] != (Skipped{2, "no accepted label"}) || skipped[1] != (Skipped{3, "author has no write access"}) {
+		t.Fatalf("skipped %+v", skipped)
+	}
+}

@@ -250,6 +250,7 @@ Use the `workflow` commands to run and check a workflow from a terminal or a scr
 | Command | Action | Exit code 0 | Exit code 1 |
 |---|---|---|---|
 | `tyci workflow run <name> <issue>` | Run a workflow for a GitHub issue | `done` or `paused` | `failed` or invalid |
+| `tyci workflow resume <run-id> <answer>` | Answer a paused run, then wait like `run` | `done` or `paused` | `failed`, a bad answer, or a run that is not paused |
 | `tyci workflow validate <name>` | Check a workflow. Do not start a run. | valid | invalid or unknown |
 | `tyci workflow status <run-id>` | Show the saved state of a run | `running`, `paused`, `done` or `stopped` | `failed`, unknown or ambiguous |
 | `tyci workflow stop <run-id>` | Stop a running run that no live tyci process owns | `stopped` | not running, owned by a live process, unknown or ambiguous |
@@ -283,7 +284,75 @@ The agents of a run use the same providers, hooks, Lua tools and MCP servers as 
 
 A run has a number that counts up for each repository: `#1`, `#2`, and so on. Runs made before this change keep their old id, `YYYYMMDD-HHMMSS-<issue>`. `status` and `stop` accept the number with or without `#`, and the old id.
 
-`status` searches the runs of every repository under `~/.tyci/runs/`, so it needs no `--dir`. Two repositories can each have run `#17`. Then the number is ambiguous: the command fails and lists the state files of the matching runs. Use the old id of the run instead.
+`resume` works on a run of the repository of `--dir`. Use the run number without `#` in a shell, because the shell reads `#` as the start of a comment.
+
+`status` searches the runs of every repository under `~/.tyci/runs/`, so it needs no `--dir`. If `tyci daemon` runs, `status` asks the daemon over its socket. If the daemon does not answer, `status` reads the run files. Two repositories can each have run `#17`. Then the number is ambiguous: the command fails and lists the state files of the matching runs. Use the old id of the run instead.
+
+### Daemon
+
+`tyci daemon` runs tyci in the foreground without a chat. It polls at an interval and starts workflow runs. It has three triggers:
+
+| Trigger | When | Workflow |
+|---|---|---|
+| `issue` | An open issue of the lowest `vX.Y.Z` milestone has the accepted label, and its author has write access. | `issue-to-merge` |
+| `ci_failure` | The newest completed CI run on the default branch failed. | `fix-ci` |
+| `cron` | A job in `cron.json` is due. The daemon does a cron tick every minute. | the cron job |
+
+- The `issue` and `ci_failure` triggers watch only the repositories in `daemon.repos`. Today the daemon watches only the repository of `--dir`, and only if `daemon.repos` lists it. Without repositories, the daemon runs the cron trigger only.
+- The `ci_failure` trigger reads the CI workflow `TYCI_CI_WORKFLOW`. The default is `tests.yaml`, the same as `ci_failure.sh`. A cancelled, skipped or neutral CI run does not count.
+- The daemon keeps no database. A run file in `~/.tyci/runs/` stops a second run for the same issue. This is also true after a restart.
+- A `fix-ci` run that the daemon starts keeps the head SHA of the red CI run in its run file (`trigger`). The daemon starts only one `fix-ci` run for a SHA, also when CI runs again on the same SHA and also after a restart.
+- The daemon does not start a `fix-ci` run in these cases:
+  - A `fix-ci` run of the repository is running or paused.
+  - The newest `fix-ci` run since the last green CI run failed or was stopped.
+  - 3 `fix-ci` runs started since the last green CI run.
+
+  "The last green CI run" is the last green CI run that the daemon saw, or the daemon start.
+
+  A green CI run on the default branch, or a daemon restart, ends this limit. The daemon writes one log line when the limit stops a `fix-ci` run.
+- In each issue comment, the daemon replaces token-like text (for example `ghp_...` or `Bearer ...`) with `***`.
+- The daemon starts a maximum of `daemon.workers` runs at the same time.
+- If a run stops at an ask state, the run stays paused. No timeout ends it. The daemon writes one comment on the issue. Then a human continues the run with `tyci workflow resume <run-id> <answer>`.
+- If a run fails, the daemon writes one comment on the issue and does not start the run again. A `fix-ci` run has no issue, so the daemon only writes its log.
+- If the forge gives an error, the daemon writes it to the log and tries again at the next interval.
+
+Only one daemon runs for each user. A second `tyci daemon` stops with `daemon already running (pid N)`. The daemon writes its log to stderr. Ctrl+C or SIGTERM stops the polls. The daemon waits 30 seconds for the runs, then it stops. A run that did not end stays `running`, and the next daemon start continues it.
+
+Configure the daemon in the `daemon` section of `~/.tyci/config.json`. A key in the project `.tyci/config.json` replaces the same key of the user file.
+
+```json
+{
+  "daemon": {
+    "enabled": true,
+    "poll_interval": "60s",
+    "workers": 3,
+    "triggers": {"issue": true, "ci_failure": true, "cron": true},
+    "repos": ["crazy-goat/tyci-agent"]
+  }
+}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | If `false`, `tyci daemon` does not start. |
+| `poll_interval` | `"60s"` | The time between two polls of the forge. The minimum is `5s`. |
+| `workers` | `3` | The maximum number of runs at the same time. `0` means no limit. |
+| `triggers` | all `true` | Turn one trigger on or off. |
+| `repos` | none | The `owner/name` repositories that the `issue` and `ci_failure` triggers watch. |
+
+The daemon answers JSON-RPC 2.0 on the unix socket `~/.tyci/daemon/daemon.sock`. The socket directory has the mode `0700` and the socket has the mode `0600`. Each request and each answer is one line of JSON. The daemon has no TCP port.
+
+| Method | Params | Result |
+|---|---|---|
+| `status` | none | The pid, the start time, the repositories, the worker limit, the runs of the daemon, and the last poll of each trigger |
+| `runs.list` | none | The `running` and `paused` runs of the repositories, with the ask text of a paused run |
+| `runs.get` | `{"run": "<run-id>"}` | The saved state of the run and the path of its state file |
+
+This example asks the daemon for its status:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"status"}' | nc -U ~/.tyci/daemon/daemon.sock
+```
 
 ## Quick Start
 
@@ -420,6 +489,7 @@ runs. A negative value is a config error.
 | `tui` | Rich terminal UI (Bubble Tea) |
 | `provider` | Manage provider settings |
 | `cron` | List and run scheduled prompts |
+| `daemon` | Run without a chat: start runs for accepted issues, a red default branch and cron jobs |
 | `remind` | List or cancel one-shot reminders |
 | `completion` | Generate shell completion script |
 
