@@ -103,9 +103,31 @@ func TestRebalanceValidate_InvalidRemovesStaleProposal(t *testing.T) {
 	if key := runValidate(t, dir); key != "invalid" {
 		t.Fatalf("second run key=%q", key)
 	}
-	for _, name := range []string{"proposal.json", "ask-table.md"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
-			t.Fatalf("%s is still there after an invalid split", name)
+	if _, err := os.Stat(filepath.Join(dir, "proposal.json")); !os.IsNotExist(err) {
+		t.Fatal("proposal.json is still there after an invalid split")
+	}
+	table, err := os.ReadFile(filepath.Join(dir, "ask-table.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(table), "| Issue |") || !strings.Contains(string(table), "not assigned") {
+		t.Fatalf("ask-table.md = %q, want the reason of the second split and no proposal table", table)
+	}
+}
+
+// The ask message of the max_visits pause shows this table, so it must say that the proposal is not valid.
+func TestRebalanceValidate_InvalidWritesReasonTable(t *testing.T) {
+	dir := setupValidate(t, `{"assign":{"v0.10.0":[1]},"create":[]}`)
+	if key := runValidate(t, dir); key != "invalid" {
+		t.Fatalf("key=%q", key)
+	}
+	table, err := os.ReadFile(filepath.Join(dir, "ask-table.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"The proposal is not valid", "a candidate issue is not assigned to a milestone"} {
+		if !strings.Contains(string(table), want) {
+			t.Fatalf("ask-table.md = %q, want %q", table, want)
 		}
 	}
 }
