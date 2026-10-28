@@ -188,3 +188,21 @@ func TestE2E_NoReport_RemindsThenPauses(t *testing.T) {
 		t.Errorf("step = %+v", h)
 	}
 }
+
+// #446: a reminder resumes the run's session, so it must keep the role's
+// policy (write root and tool gate) in the run worktree.
+func TestSubagentRunner_ReminderKeepsPolicy(t *testing.T) {
+	wt := t.TempDir()
+	s := &reportSpawn{write: func(sp tools.TaskSpec) bool { return sp.Resume != "" }}
+	if _, _, err := reportRunner(s).Run(context.Background(), "worker", "", RunContext{Worktree: wt, ArtifactDir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.specs) != 2 {
+		t.Fatalf("spawns = %d", len(s.specs))
+	}
+	for i, sp := range s.specs {
+		if sp.Policy == nil || sp.Policy.Dir != wt || sp.Policy.Permission != tools.PermissionWorktreeWrite || sp.Dir != wt {
+			t.Errorf("spawn %d: policy %+v dir %q", i, sp.Policy, sp.Dir)
+		}
+	}
+}

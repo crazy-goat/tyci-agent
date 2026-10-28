@@ -100,6 +100,17 @@ func TestWorktreeWriteRefusesOutside(t *testing.T) {
 	}
 }
 
+// Without a policy (a normal agent), write may use any absolute path.
+func TestNoPolicyWriteAllowsOutside(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "x.txt")
+	ctx := WithWorkdir(context.Background(), root)
+	res := RunTool(ctx, "write", map[string]any{"path": outside, "content": "x"})
+	if !res.Success {
+		t.Fatalf("write outside refused without policy: %+v", res)
+	}
+}
+
 func TestWorktreeWriteAllowsInside(t *testing.T) {
 	root := t.TempDir()
 	ctx := WithWorkdir(WithPolicy(context.Background(), Policy{Role: "worker", Permission: PermissionWorktreeWrite, Network: true, Dir: root}), root)

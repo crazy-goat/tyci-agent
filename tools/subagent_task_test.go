@@ -150,10 +150,11 @@ func TestRunSubagentTask_NamedRunSessionIsJobID(t *testing.T) {
 
 type fakeResumer struct {
 	jobID, task, dir string
+	ctx              context.Context
 }
 
 func (f *fakeResumer) Resume(ctx context.Context, jobID, task string) (JobHandle, error) {
-	f.jobID, f.task, f.dir = jobID, task, Workdir(ctx)
+	f.jobID, f.task, f.dir, f.ctx = jobID, task, Workdir(ctx), ctx
 	return testJobHandle{"job2"}, nil
 }
 
@@ -183,6 +184,31 @@ func TestRunSubagentTask_ResumeSendsTaskToSession(t *testing.T) {
 	}
 	if r.jobID != "job1" || r.task != "write it" || r.dir != dir || w.calls != 2 {
 		t.Errorf("resumer=%+v waits=%d", r, w.calls)
+	}
+}
+
+// A resumed role keeps its policy: its write root applies to the resumed run.
+func TestRunSubagentTask_ResumeKeepsPolicy(t *testing.T) {
+	oldResumer := getJobResumer()
+	tool, _ := lookupTool("wait")
+	wt := tool.(*WaitTool)
+	oldWaiter := wt.waiter()
+	t.Cleanup(func() {
+		SetJobResumer(oldResumer)
+		SetJobWaiter(oldWaiter)
+	})
+	r, w := &fakeResumer{}, &fakeWaiter{}
+	SetJobResumer(r)
+	SetJobWaiter(w)
+	root := t.TempDir()
+	outside := t.TempDir()
+	pol := Policy{Role: "worker", Permission: PermissionWorktreeWrite, Network: true, Dir: root}
+	if _, _, err := RunSubagentTask(context.Background(), TaskSpec{Task: "report", Resume: "job1", Dir: root, Policy: &pol}); err != nil {
+		t.Fatal(err)
+	}
+	res := RunTool(r.ctx, "write", map[string]any{"path": filepath.Join(outside, "x.txt"), "content": "x"})
+	if res.Success || !strings.Contains(res.Error, "outside the worktree") {
+		t.Fatalf("resumed write outside the worktree: %+v", res)
 	}
 }
 

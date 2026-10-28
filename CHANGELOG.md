@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - CLI: `tyci workflow run` writes the debug log to `~/.tyci/debug/`, and `--no-debug` turns it off (#515).
 - Subagents: `wait`, `wait` with ids and background `bash` use the same subagent rule as `kill_job` (#724).
 - Workflows: the `release` workflow question tells the human to answer `goto tag` after the CHANGELOG pull request is merged, and `goto wait` if the release tag is already on origin. It also says that `retry` at that point runs the worker on an empty `[Unreleased]` (#739).
+- Workflows: a role agent that is resumed to write its `report.md` keeps its tool policy. Its `write` and `edit` refuse paths outside the run worktree, as in the first visit (#446).
 
 ## [0.10.0] - 2026-10-14
 
