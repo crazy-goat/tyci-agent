@@ -24,7 +24,7 @@ const toolCreateName = "tool_create"
 
 // roleGatedTools are the tools that only the main chat and a role or agent
 // that names them in its tools list may call (see AllowedFor and
-// SubagentToolCreateGate).
+// SubagentRoleToolGate).
 var roleGatedTools = []string{toolCreateName, toolPromoteName}
 
 // isRoleGatedTool reports whether name is one of roleGatedTools.
