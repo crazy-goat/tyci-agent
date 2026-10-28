@@ -36,7 +36,6 @@ type Request struct {
 	System   string
 	Messages []Message
 	Tools    json.RawMessage
-	Debug    bool
 
 	// Temperature, when non-nil, is forwarded to the provider's sampling
 	// parameter. A pointer (not a plain float64) because 0 is a meaningful

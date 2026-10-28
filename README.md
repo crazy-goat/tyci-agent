@@ -454,8 +454,9 @@ These flags work with `run` and `tui`:
 | `--history-file` | `""` | Path to history file (default: `~/.tyci/history`) |
 | `--session` | `""` | Session file path (default: auto-generated in `~/.tyci/sessions/`) |
 | `--no-session` | `false` | Disable session persistence |
-| `--debug` | `false` | Show HTTP request/response data |
 | `--no-debug` | `false` | Disable API request/response debug logging |
+
+The debug log is on by default. It is written to `~/.tyci/debug/`. Use `--no-debug` to turn it off.
 
 ### `run` flags
 
