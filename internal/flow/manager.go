@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/crazy-goat/tyci-agent/tools"
@@ -96,9 +97,14 @@ type Manager struct {
 	nsub   int
 	// adopted: runs that Adopt or Start returned to the orchestrator.
 	adopted map[string]bool
-	// workers: the limit of active runs for a "resume": the answer resume of a
-	// start-up pause, and a workflow_start that resumes a stale run. 0 = unlimited.
+	// workers: the limit of active runs for a start and for a "resume": the answer
+	// resume of a start-up pause, and a workflow_start that resumes a stale run.
+	// 0 = unlimited. With a pool, the pool's limit counts.
 	workers int
+	// pool shares the worker limit with the Managers of other repos (#218).
+	pool *Pool
+	// count mirrors len(active), so a Pool reads it without m.mu.
+	count atomic.Int32
 }
 
 // activeRun is a run with a goroutine in this process.
@@ -186,13 +192,62 @@ func (m *Manager) SetBase(ctx context.Context) {
 	m.mu.Unlock()
 }
 
-// SetWorkers sets the limit of active runs: a "resume" (the answer resume of a
-// start-up pause, or a workflow_start that resumes a stale run) is refused while
-// that many runs are active (production: orchestrator.workers). 0 means unlimited.
+// SetWorkers sets the limit of active runs: a start or a "resume" (the answer
+// resume of a start-up pause, or a workflow_start that resumes a stale run) is
+// refused while that many runs are active (production: orchestrator.workers).
+// 0 means unlimited. With a pool, it sets the limit of the pool.
 func (m *Manager) SetWorkers(n int) {
 	m.mu.Lock()
 	m.workers = n
+	p := m.pool
 	m.mu.Unlock()
+	if p != nil {
+		p.workers.Store(int32(n))
+	}
+}
+
+// Pool shares one worker limit between the Managers of several repos in one
+// process (#218): the active runs of all of them count against it.
+type Pool struct {
+	workers atomic.Int32
+	mu      sync.Mutex
+	members []*Manager
+}
+
+// Join adds m to the pool. The limit of the pool replaces the limit of m.
+func (p *Pool) Join(m *Manager) {
+	p.mu.Lock()
+	p.members = append(p.members, m)
+	p.mu.Unlock()
+	m.mu.Lock()
+	m.pool = p
+	m.mu.Unlock()
+}
+
+// others returns the active runs of the pool members other than m.
+func (p *Pool) others(m *Manager) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, o := range p.members {
+		if o != m {
+			n += int(o.count.Load())
+		}
+	}
+	return n
+}
+
+// countActive updates m.count after a change of the number of m.active
+// entries. m.mu must be held.
+func (m *Manager) countActive() { m.count.Store(int32(len(m.active))) }
+
+// limit returns the worker limit (0 = unlimited) and the active runs of the
+// other repos that share it. m.mu must be held.
+func (m *Manager) limit() (workers, others int) {
+	if m.pool == nil {
+		return m.workers, 0
+	}
+	return int(m.pool.workers.Load()), m.pool.others(m)
 }
 
 // StartIssue starts workflow for issue. The issue goes to the param named "issue",
@@ -260,6 +315,11 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 			return id, nil, err
 		}
 	}
+	if workers, others := m.limit(); workers > 0 && len(m.active)+others >= workers {
+		m.mu.Unlock()
+		return "", nil, fmt.Errorf("%w: orchestrator.workers is %d and %d run(s) are active, also in other repositories; wait until a run ends (workflow_status), or stop one (workflow_stop), then start again",
+			ErrBusy, workers, len(m.active)+others)
+	}
 	key := fmt.Sprintf("%s%d", preparingPrefix, issue)
 	if issue == 0 {
 		m.nprep++
@@ -269,6 +329,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 		m.active = map[string]activeRun{}
 	}
 	m.active[key] = activeRun{cancel: cancel, issue: issue}
+	m.countActive()
 	m.mu.Unlock()
 
 	st, wf, warnings, err := m.Prepare(prepCtx, info, req)
@@ -276,6 +337,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, []string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.active, key)
+	m.countActive()
 	if err != nil {
 		return "", warnings, err
 	}
@@ -332,6 +394,7 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 	}
 	done := make(chan struct{})
 	m.active[st.Run] = activeRun{cancel: cancel, issue: st.Issue, done: done, st: st}
+	m.countActive()
 	r := m.NewRunner(info, wf, st)
 	if r.Warn == nil {
 		r.Warn = m.Notify
@@ -347,6 +410,7 @@ func (m *Manager) launch(info RepoInfo, wf *Workflow, st *RunState, resumed bool
 			cancel()
 			m.mu.Lock()
 			delete(m.active, st.Run)
+			m.countActive()
 			// A paused run stays adopted: the orchestrator still watches it.
 			if st.Status != "paused" {
 				delete(m.adopted, st.Run)
@@ -528,10 +592,11 @@ func (m *Manager) Resume(runID, answer string) error {
 	// runs are not counted here: at start-up the orchestrator holds all of them, and
 	// the run being resumed already holds its own slot.
 	startup := saved != "" && answer == "goto "+saved
-	if startup && m.workers > 0 && len(m.active) >= m.workers {
+	workers, others := m.limit()
+	if startup && workers > 0 && len(m.active)+others >= workers {
 		m.mu.Unlock()
 		return fmt.Errorf("run %s of issue %d is not resumed: orchestrator.workers is %d and %d run(s) are active (an apply or reject of a workflow proposal counts as an active run); answer resume again when one ends",
-			ShowRunID(st.Run), st.Issue, m.workers, len(m.active))
+			ShowRunID(st.Run), st.Issue, workers, len(m.active)+others)
 	}
 	m.launch(info, wf, st, true, func(ctx context.Context, r *Runner) error { return r.Resume(ctx, st, answer) })
 	if startup {
@@ -563,10 +628,12 @@ func (m *Manager) answerProposal(info RepoInfo, wf *Workflow, st *RunState, answ
 		m.active = map[string]activeRun{}
 	}
 	m.active[st.Run] = activeRun{cancel: cancel, issue: st.Issue}
+	m.countActive()
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
 		delete(m.active, st.Run)
+		m.countActive()
 		m.mu.Unlock()
 	}()
 	// Another answer can have changed the run before the reservation.

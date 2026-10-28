@@ -407,9 +407,9 @@ func (m *Manager) resumeStale(info RepoInfo, issue int) (run string, found bool,
 		if st.Issue != issue {
 			continue
 		}
-		if n := m.slotsInUse(info, st.Run); m.workers > 0 && n >= m.workers {
-			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d worker slot(s) are in use (active runs, paused runs held by the orchestrator, and an apply or reject of a workflow proposal)",
-				ErrBusy, ShowRunID(st.Run), issue, m.workers, n)
+		if workers, others := m.limit(); workers > 0 && m.slotsInUse(info, st.Run)+others >= workers {
+			return "", true, fmt.Errorf("%w: run %s of issue %d is not resumed: orchestrator.workers is %d and %d worker slot(s) are in use (active runs, also in other repositories, paused runs held by the orchestrator, and an apply or reject of a workflow proposal)",
+				ErrBusy, ShowRunID(st.Run), issue, workers, m.slotsInUse(info, st.Run)+others)
 		}
 		ok, err := m.resumeRun(info, st)
 		if err != nil {
