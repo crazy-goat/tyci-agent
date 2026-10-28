@@ -5,6 +5,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +93,12 @@ func (f *fakeRuns) release(t *testing.T) {
 		defer f.mu.Unlock()
 		return f.running == 0
 	})
+}
+
+func (f *fakeRuns) setStartErr(err error) {
+	f.mu.Lock()
+	f.startErr = err
+	f.mu.Unlock()
 }
 
 func (f *fakeRuns) starts() []Trigger {
@@ -486,6 +493,34 @@ func TestDaemonStartErrorCommentsOnceAndDoesNotRetry(t *testing.T) {
 	if cs := h.ci.Comments(); len(cs) != 1 || !strings.Contains(cs[0].Body, "setup failed") {
 		t.Fatalf("comments %+v", cs)
 	}
+}
+
+func TestDaemonFailedRunGetsOneComment(t *testing.T) {
+	h := newHarness(t, newForge(accepted(5)))
+	h.runs.result = Result{Status: "failed", Reason: "tests stay red"}
+	h.start(t)
+	waitFor(t, "comment", func() bool { return len(h.ci.Comments()) == 1 })
+	waitPolls(t, h.forge, 3)
+	cs := h.ci.Comments()
+	if len(cs) != 1 || cs[0].Issue != 5 || !strings.Contains(cs[0].Body, "failed: tests stay red") || !strings.Contains(cs[0].Body, "does not start it again") {
+		t.Fatalf("comments %+v", cs)
+	}
+	if n := len(h.runs.starts()); n != 1 {
+		t.Fatalf("%d starts of a failed issue, want 1", n)
+	}
+}
+
+func TestDaemonBusyIssueTriesAgainNextPoll(t *testing.T) {
+	h := newHarness(t, newForge(accepted(5)))
+	h.runs.setStartErr(fmt.Errorf("issue 5: %w", flow.ErrBusy))
+	h.start(t)
+	waitPolls(t, h.forge, 3)
+	if cs := h.ci.Comments(); len(cs) != 0 {
+		t.Fatalf("a busy issue got comments %+v", cs)
+	}
+	// The other run ends: the next poll starts the issue.
+	h.runs.setStartErr(nil)
+	waitFor(t, "start after busy", func() bool { return len(h.runs.starts()) == 1 })
 }
 
 func TestDaemonContinuesInterruptedRuns(t *testing.T) {

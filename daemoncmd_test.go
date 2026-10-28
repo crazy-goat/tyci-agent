@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -196,4 +197,13 @@ func (w *syncWriter) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.b.String()
+}
+
+func TestCronLogDropsNoJobsDue(t *testing.T) {
+	var got []string
+	l := cronLog(func(format string, args ...any) { got = append(got, fmt.Sprintf(format, args...)) })
+	_, _ = l.Write([]byte("no jobs due\njob nightly: done\n\n"))
+	if len(got) != 1 || got[0] != "cron: job nightly: done" {
+		t.Fatalf("log %q", got)
+	}
 }
