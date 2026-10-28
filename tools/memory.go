@@ -48,6 +48,21 @@ func RoleFromContext(ctx context.Context) (repo, role string, ok bool) {
 	return id.repo, id.role, id.role != ""
 }
 
+type runDirCtxKey struct{}
+
+// WithRunDir returns a context that names the folder of the run or session
+// the agent works in. tool_create writes its Lua files there, and the tools it
+// makes are removed when that run or session ends (see RemoveRunTools).
+func WithRunDir(ctx context.Context, dir string) context.Context {
+	return context.WithValue(ctx, runDirCtxKey{}, dir)
+}
+
+// RunDirFrom returns the folder set by WithRunDir, or "" when none is set.
+func RunDirFrom(ctx context.Context) string {
+	dir, _ := ctx.Value(runDirCtxKey{}).(string)
+	return dir
+}
+
 func (t *MemoryTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	action := strings.TrimSpace(stringParam(input, "action", ""))
 	name := stringParam(input, "name", "")

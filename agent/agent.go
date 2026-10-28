@@ -34,7 +34,11 @@ type Config struct {
 	Debug         bool
 	Tools         ToolRunner
 	Schema        json.RawMessage
-	Session       *session.Session // optional session logging / resume
+	// SchemaFunc gives the tool list of each request when Schema is nil. The
+	// main chat uses it, so a tool created during the session is offered on
+	// the next request. A non-nil Schema always wins.
+	SchemaFunc func() json.RawMessage
+	Session    *session.Session // optional session logging / resume
 
 	// Dispatch runs the tool calls of this conversation through the bus (see
 	// NewDispatcher). It outlives one Run, so a late result is taken by the

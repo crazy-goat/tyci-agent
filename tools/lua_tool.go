@@ -377,6 +377,12 @@ func LoadLuaTools(dir string) ([]*LuaTool, error) {
 // later calls to LuaTool.Run reuse the cached bytecode instead of
 // re-reading and re-parsing the file.
 func loadLuaTool(scriptPath string) (*LuaTool, error) {
+	return loadLuaToolCtx(context.Background(), scriptPath)
+}
+
+// loadLuaToolCtx is loadLuaTool with a ctx. The ctx stops the top-level run of
+// the script, so a script that never returns can be cut off.
+func loadLuaToolCtx(ctx context.Context, scriptPath string) (*LuaTool, error) {
 	t := &LuaTool{scriptPath: scriptPath}
 	proto, err := t.loadProto()
 	if err != nil {
@@ -386,6 +392,7 @@ func loadLuaTool(scriptPath string) (*LuaTool, error) {
 	L := lua.NewState()
 	defer L.Close()
 	RestrictLuaStdlib(L)
+	L.SetContext(ctx)
 
 	L.Push(newTopLevelFunction(L, proto))
 	if err := L.PCall(0, lua.MultRet, nil); err != nil {
