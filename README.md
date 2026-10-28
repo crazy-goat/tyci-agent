@@ -260,6 +260,7 @@ The orchestrator reads GitHub by default. To use a GitLab project, add it to `re
 - tyci uses the GitLab REST API v4. It does not use `glab`.
 - A merge request is a change, a pipeline is its check, and a project milestone is a milestone. A user with Developer access or more can write.
 - `forge.repo` `"auto"` always selects GitHub.
+- Do not use the milestone titles `None`, `Any`, `Upcoming` or `Started`. GitLab reads them as filter keywords, so tyci does not support them.
 - Limit: the GitLab support is not complete. The orchestrator start reads the `origin` remote and accepts only a github.com remote. The workflows (`issue-to-merge` and others) still use `gh`. Thus a run on a GitLab project does not work yet.
 
 ### Headless CLI

@@ -57,6 +57,8 @@ func New(project, baseURL string) (*GitLab, error) {
 	if !projectRe.MatchString(project) {
 		return nil, fmt.Errorf("gitlab: invalid project %q", project)
 	}
+	// http:// is accepted only for tests (httptest); the config and the
+	// README require https://.
 	u, err := url.Parse(baseURL)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return nil, fmt.Errorf("gitlab: invalid url %q", baseURL)

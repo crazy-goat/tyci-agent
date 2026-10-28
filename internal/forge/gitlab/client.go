@@ -78,11 +78,12 @@ func (c *client) do(ctx context.Context, method, path string, q url.Values) ([]b
 		return nil, nil, fmt.Errorf("gitlab: %s %s: %s", method, path, redact.Redact(err.Error()))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		text := strings.TrimSpace(string(body))
+		// Redact the whole body before the cut, so no part of a secret stays.
+		text := []rune(strings.TrimSpace(redact.Redact(string(body))))
 		if len(text) > 300 {
 			text = text[:300]
 		}
-		msg := fmt.Sprintf("gitlab: %s %s: %s: %s", method, path, resp.Status, text)
+		msg := fmt.Sprintf("gitlab: %s %s: %s: %s", method, path, resp.Status, string(text))
 		return nil, nil, &apiError{status: resp.StatusCode, msg: redact.Redact(msg)}
 	}
 	return body, resp.Header, nil

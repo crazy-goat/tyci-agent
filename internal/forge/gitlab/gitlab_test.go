@@ -292,6 +292,23 @@ func TestGitLabTokenNotInError(t *testing.T) {
 	}
 }
 
+func TestGitLabTokenCutNotInError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The token starts at byte 290, so the 300-byte cut splits it.
+		http.Error(w, strings.Repeat("x", 290)+r.Header.Get("PRIVATE-TOKEN"), http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+	t.Setenv("TYCI_GITLAB_TOKEN", token)
+	g, err := gitlab.New("o/r", ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = g.Milestones(context.Background())
+	if err == nil || strings.Contains(err.Error(), token[:8]) || strings.Contains(err.Error(), token[len(token)-8:]) {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestGitLabNoRedirect(t *testing.T) {
 	var leaked atomic.Bool
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
