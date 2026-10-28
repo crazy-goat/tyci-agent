@@ -50,11 +50,28 @@ find_pr() {
 
 pr=$(find_pr)
 if [ -z "$pr" ]; then
+    # The title is the subject of the first non-merge commit since the default branch. The last
+    # commit can be a sync merge (rabbit-stream #864), so it is only the fallback.
+    title=""
+    default_ref="origin/$TYCI_DEFAULT_BRANCH"
+    if git rev-parse --verify --quiet "$default_ref^{commit}" >/dev/null &&
+        git merge-base --is-ancestor "$default_ref" HEAD; then
+        title="$(git log --format=%s --reverse --no-merges "$default_ref"..HEAD | sed -n '1p')"
+    fi
+    if [ -z "$title" ]; then
+        title="$(git log -1 --format=%s --no-merges HEAD)"
+    fi
+    if [ -z "$title" ]; then
+        title="$(git log -1 --format=%s)"
+    fi
+    if [ -z "$title" ]; then
+        title="$branch"
+    fi
     # A run without an issue (for example a release, #207) gets an empty PR body.
     body=""
     if [ -n "${TYCI_ISSUE:-}" ]; then body="Closes #$TYCI_ISSUE"; fi
     gh pr create -R "$TYCI_REPO" --base "$TYCI_DEFAULT_BRANCH" --head "$branch" \
-        --title "$(git log -1 --format=%s)" --body "$body" >&2
+        --title "$title" --body "$body" >&2
     pr=$(find_pr)
 fi
 

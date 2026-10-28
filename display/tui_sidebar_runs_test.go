@@ -357,6 +357,9 @@ func TestSidebarRunsTab_RowsKeepSidebarBackground(t *testing.T) {
 	const firstRunsRow = 3
 	for _, cursor := range []int{-1, 0} {
 		m := runsRowsForBackground()
+		// A cursor of -1 is no selection. The key must be cleared too, or it
+		// would select the row it still remembers.
+		m.sidebarRunKey = runsCursorKey{}
 		m.sidebarCursor = cursor
 		layout := m.sidebarLayout()
 		view := m.runsTab(layout.contentWidth)

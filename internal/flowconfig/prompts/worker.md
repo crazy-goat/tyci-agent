@@ -11,4 +11,5 @@ Call report_progress every few minutes with one short line.
 - If you are blocked, write the question into `findings.md` and stop.
 - Run build, lint and tests with the commands from `AGENTS.md` before you finish.
 - If the run so far shows red CI, CHANGES, a conflict or new comments, fix that first. Read their artifact files.
+- When a review point lists several hits of one pattern, fix every hit, not only the first.
 - You MUST write `report.md` in your artifact dir (the task text gives the path) before you end: what you did, the result, what is left.
