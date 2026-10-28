@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
 	"github.com/crazy-goat/tyci-agent/internal/instructions"
+	"github.com/crazy-goat/tyci-agent/internal/rolememory"
 )
 
 // MemoryTool implements the "memory" tool: short notes the agent writes for
@@ -28,7 +30,37 @@ type MemoryTool struct{}
 
 func (t *MemoryTool) Name() string { return "memory" }
 
+type roleCtxKey struct{}
+
+type roleIdentity struct{ repo, role string }
+
+// WithRoleContext returns a context that names the repository and the workflow
+// role of the agent running in it. The memory tool with scope="role" and the
+// subagent prompt read it back with RoleFromContext.
+func WithRoleContext(ctx context.Context, repo, role string) context.Context {
+	return context.WithValue(ctx, roleCtxKey{}, roleIdentity{repo: repo, role: role})
+}
+
+// RoleFromContext returns the repository and role set by WithRoleContext. ok
+// is false when no role is set.
+func RoleFromContext(ctx context.Context) (repo, role string, ok bool) {
+	id, _ := ctx.Value(roleCtxKey{}).(roleIdentity)
+	return id.repo, id.role, id.role != ""
+}
+
 func (t *MemoryTool) Run(ctx context.Context, input map[string]any) ToolResult {
+	action := strings.TrimSpace(stringParam(input, "action", ""))
+	name := stringParam(input, "name", "")
+	content := stringParam(input, "content", "")
+
+	switch scope := strings.TrimSpace(stringParam(input, "scope", "project")); scope {
+	case "project", "":
+	case "role":
+		return t.runRole(ctx, action, name, content)
+	default:
+		return validationf("unknown scope %q; use \"project\" or \"role\"", scope)
+	}
+
 	cwd := Workdir(ctx)
 	if cwd == "" {
 		var err error
@@ -36,10 +68,6 @@ func (t *MemoryTool) Run(ctx context.Context, input map[string]any) ToolResult {
 			return failf("cannot determine the working directory: %v", err)
 		}
 	}
-
-	action := strings.TrimSpace(stringParam(input, "action", ""))
-	name := stringParam(input, "name", "")
-	content := stringParam(input, "content", "")
 
 	switch action {
 	case "list", "":
@@ -86,6 +114,48 @@ func (t *MemoryTool) Run(ctx context.Context, input map[string]any) ToolResult {
 	default:
 		return validationf("unknown action %q; use \"list\", \"read\", \"write\" or \"delete\"", action)
 	}
+}
+
+// runRole handles scope="role": the one note of the workflow role of this
+// agent, under ~/.tyci/memory/<repo>/<role>.md. The file is chosen by the
+// context, never by the model, so a role cannot name another role's note.
+func (t *MemoryTool) runRole(ctx context.Context, action, name, content string) ToolResult {
+	repo, role, ok := RoleFromContext(ctx)
+	if !ok {
+		return validationf("scope \"role\" needs a workflow role; this agent has none. Use scope \"project\" or leave scope out.")
+	}
+	if action != "read" && action != "write" {
+		return validationf("scope \"role\" supports action \"read\" and \"write\" only")
+	}
+	if name != "" {
+		return validationf("scope \"role\" has one note per role; leave out name")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return failf("cannot determine the home directory: %v", err)
+	}
+
+	if action == "read" {
+		body, err := rolememory.Read(home, repo, role)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return okf("no role note yet.")
+			}
+			return roleMemoryFailure(err)
+		}
+		return okf("%s", body)
+	}
+	if err := rolememory.Write(home, repo, role, content); err != nil {
+		return roleMemoryFailure(err)
+	}
+	return okf("saved your role note. It is loaded into the system prompt of the next session of this role, not into this conversation.")
+}
+
+func roleMemoryFailure(err error) ToolResult {
+	if errors.Is(err, rolememory.ErrInvalid) {
+		return validationf("%v", err)
+	}
+	return failf("%v", err)
 }
 
 func (t *MemoryTool) list(cwd string) ToolResult {

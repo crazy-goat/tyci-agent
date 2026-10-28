@@ -204,6 +204,11 @@ the project's life, which is why the bar for writing one is high.
          content="make check runs the golden tests; go test ./... skips them.")
   memory(action="list")      -- also "read" and "delete"
 
+A workflow role has one more note of its own, for its next session:
+
+  memory(scope="role", action="write", content="...")
+  memory(scope="role", action="read")
+
 Write a note for something NOT obvious from reading the code:
 
   - the command that actually builds or tests this project
