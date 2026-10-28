@@ -23,6 +23,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/crazy-goat/tyci-agent/internal/atomicfile"
 	"github.com/crazy-goat/tyci-agent/internal/debug"
 )
 
@@ -102,25 +103,10 @@ func Write(home, repo, role, content string) error {
 	if len(content) > MaxInject {
 		return fmt.Errorf("%w: note is %d bytes, the limit is %d", ErrInvalid, len(content), MaxInject)
 	}
-	dir := filepath.Dir(p)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, role+".*.tmp")
-	if err != nil {
-		return err
-	}
-	_, werr := tmp.WriteString(content)
-	cerr := tmp.Close()
-	if err := errors.Join(werr, cerr); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	if err := os.Rename(tmp.Name(), p); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	return nil
+	return atomicfile.Write(p, []byte(content))
 }
 
 // Block returns the text to add to the system prompt of role, or "" when there
