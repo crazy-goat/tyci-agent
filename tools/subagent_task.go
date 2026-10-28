@@ -165,7 +165,11 @@ func runSubagentTask(ctx context.Context, runner SubAgentRunner, s TaskSpec) (st
 	if s.Transcript != "" {
 		ctx = context.WithValue(ctx, TranscriptCtxKey{}, s.Transcript)
 	}
-	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: s.SystemPrompt, softLimit: s.SoftLimit, hardLimit: s.HardLimit, effort: s.Effort}
+	system := s.SystemPrompt
+	if s.Policy != nil {
+		system = withWriteRootLine(system, *s.Policy)
+	}
+	t := subagentTask{Task: s.Task, Model: s.Model, systemPrompt: system, softLimit: s.SoftLimit, hardLimit: s.HardLimit, effort: s.Effort}
 	t.fallbacks = s.Fallbacks
 	t.maxIterationsCap = s.MaxRounds
 	t.maxToolCalls = s.MaxToolCalls

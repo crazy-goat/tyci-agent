@@ -52,6 +52,37 @@ func TestRunSubagentTask_PassesCompactLimits(t *testing.T) {
 	}
 }
 
+// #790: a worktree-write run tells the model its write root, because bash is
+// not sandboxed. read-only and full runs get the prompt unchanged.
+func TestRunSubagentTask_WriteRootLineByPermission(t *testing.T) {
+	dir := t.TempDir()
+	want := "Never change files outside your working directory " + dir + ". bash is not sandboxed."
+	cases := []struct {
+		name   string
+		sys    string
+		policy *Policy
+		want   string
+	}{
+		{"worktree-write", "SYS", &Policy{Role: "worker", Permission: PermissionWorktreeWrite, Dir: dir}, "SYS\n\n" + want},
+		{"worktree-write without prompt", "", &Policy{Role: "worker", Permission: PermissionWorktreeWrite, Dir: dir}, want},
+		{"read-only", "SYS", &Policy{Role: "worker", Permission: PermissionReadOnly, Dir: dir}, "SYS"},
+		{"full", "SYS", &Policy{Role: "worker", Permission: PermissionFull, Dir: dir}, "SYS"},
+		{"no policy", "SYS", nil, "SYS"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &recordingRunner{}
+			_, _, err := runSubagentTask(context.Background(), r, TaskSpec{Task: "x", Model: "m", SystemPrompt: tc.sys, Dir: dir, Policy: tc.policy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.gotSystem != tc.want {
+				t.Errorf("system prompt = %q, want %q", r.gotSystem, tc.want)
+			}
+		})
+	}
+}
+
 // #201: the role fallbacks in TaskSpec reach the child options.
 func TestRunSubagentTask_PassesFallbacks(t *testing.T) {
 	r := &recordingRunner{}
