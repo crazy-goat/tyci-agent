@@ -54,7 +54,7 @@ func TestInProcessReadsRunFiles(t *testing.T) {
 		{Version: 1, Run: "2", Workflow: "fix-ci", Repo: "acme/r", Status: "done", Current: "end"},
 		{Version: 1, Run: "3", Workflow: "fix-ci", Repo: "acme/other", Status: "running", Current: "ci"},
 	} {
-		if err := (&flow.Store{Dir: flow.RunDir(home, flow.RepoInfo{Repo: st.Repo}.Name(), st.Run)}).Save(st); err != nil {
+		if err := (&flow.Store{Dir: flow.RunDir(home, flow.RepoKey(st.Repo), st.Run)}).Save(st); err != nil {
 			t.Fatal(err)
 		}
 	}
