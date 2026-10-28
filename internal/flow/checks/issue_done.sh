@@ -15,10 +15,18 @@ set -euo pipefail
 describe_lib="$(dirname "${BASH_SOURCE[0]}")/describe.sh"
 # shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
 if [ -f "$describe_lib" ]; then . "$describe_lib"; else describe() { echo "$(basename "$0"): $2" >&2; }; fi
+# lib_forge.sh selects gh or `tyci forge` (GitLab). A copy of this script without it works only for GitHub.
+forge_lib="$(dirname "${BASH_SOURCE[0]}")/lib_forge.sh"
+# shellcheck disable=SC1090 # sibling file; shellcheck checks it on its own
+if [ -f "$forge_lib" ]; then . "$forge_lib"; else is_gitlab() { [ "${TYCI_FORGE:-github}" != gitlab ] && return 1; echo "$(basename "$0"): lib_forge.sh is missing" >&2; exit 1; }; github_only() { is_gitlab || :; }; fi
 
 label="${TYCI_ACCEPT_LABEL:-accepted}"
 
-info=$(gh issue view "$TYCI_ISSUE" -R "$TYCI_REPO" --json state,labels,author,assignees)
+if is_gitlab; then
+    info=$(forge_op issue-view "$TYCI_ISSUE")
+else
+    info=$(gh issue view "$TYCI_ISSUE" -R "$TYCI_REPO" --json state,labels,author,assignees)
+fi
 
 state=$(jq -r '.state' <<<"$info")
 has_label=$(jq -r --arg l "$label" '[.labels[].name] | index($l) != null' <<<"$info")
@@ -30,24 +38,47 @@ has_risky=$(jq -r '[.labels[].name] | index("risky") != null' <<<"$info")
 
 author=$(jq -r '.author.login // ""' <<<"$info")
 author="${author#app/}"
-if ! [[ "$author" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?$ ]]; then
+user_re='^[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?$'
+# A GitLab user name can also have dots and underscores.
+if is_gitlab; then user_re='^[A-Za-z0-9_][A-Za-z0-9_.-]*$'; fi
+if ! [[ "$author" =~ $user_re ]]; then
     echo skip
     exit 0
 fi
 
-# gh api exits non-zero on HTTP errors, so judge by the status line, not the exit code.
-resp=$(gh api -i "repos/$TYCI_REPO/collaborators/$author/permission" 2>/dev/null) || true
-status=$(head -n 1 <<<"$resp" | tr -d '\r' | awk '{print $2}')
+if is_gitlab; then
+    # can-write prints write (Developer access or more) or none; it fails only on an API error.
+    if ! perm=$(forge_op can-write "$author"); then
+        describe error "'tyci forge can-write $author' failed for issue #$TYCI_ISSUE (see the error above)" \
+            "a GitLab outage, a rate limit, or TYCI_GITLAB_TOKEN/GITLAB_TOKEN is missing or not valid" \
+            "check the token and the GitLab API; when it answers, answer retry so the gate runs again"
+        exit 1
+    fi
+    status=200
+else
+    # gh api exits non-zero on HTTP errors, so judge by the status line, not the exit code.
+    resp=$(gh api -i "repos/$TYCI_REPO/collaborators/$author/permission" 2>/dev/null) || true
+    status=$(head -n 1 <<<"$resp" | tr -d '\r' | awk '{print $2}')
+fi
 
 case "$status" in
 200)
-    perm=$(sed -n '/^\r\{0,1\}$/,$p' <<<"$resp" | jq -r '.permission // ""')
+    if ! is_gitlab; then
+        perm=$(sed -n '/^\r\{0,1\}$/,$p' <<<"$resp" | jq -r '.permission // ""')
+    fi
     if [ "$perm" != "admin" ] && [ "$perm" != "write" ]; then
         echo skip
         exit 0
     fi
 
-    if ! login=$(gh api user --jq .login); then
+    if is_gitlab; then
+        if ! login=$(forge_op whoami); then
+            describe error "could not read the GitLab account of the token" \
+                "TYCI_GITLAB_TOKEN/GITLAB_TOKEN is missing or not valid, or the GitLab API is unavailable" \
+                "check the token; when the API answers, answer retry so the gate runs again"
+            exit 1
+        fi
+    elif ! login=$(gh api user --jq .login); then
         describe error "could not read the authenticated GitHub account" \
             "gh is not logged in or the GitHub API is unavailable" \
             "check 'gh auth status'; when the API answers, answer retry so the gate runs again"
@@ -61,7 +92,12 @@ case "$status" in
 
     # Add the current account when unassigned; adding it again is harmless if
     # the issue was already assigned to this account.
-    if ! gh issue edit "$TYCI_ISSUE" -R "$TYCI_REPO" --add-assignee "$login"; then
+    if is_gitlab; then
+        assign=(forge_op issue-assign-self "$TYCI_ISSUE")
+    else
+        assign=(gh issue edit "$TYCI_ISSUE" -R "$TYCI_REPO" --add-assignee "$login")
+    fi
+    if ! "${assign[@]}"; then
         describe error "could not assign issue #$TYCI_ISSUE to '$login'" \
             "the account may lack permission to assign issues, or the GitHub API may be unavailable" \
             "check the issue permissions and 'gh auth status'; when assignment succeeds, answer retry so the gate runs again"
