@@ -68,7 +68,6 @@ func runOnce(ctx context.Context, mc connector.ModelClient, d Sink, msgs *[]conn
 		System:        cfg.System,
 		Messages:      *msgs,
 		Tools:         schema,
-		Debug:         cfg.Debug,
 		Temperature:   cfg.Temperature,
 		MaxTokens:     cfg.MaxTokens,
 		Effort:        cfg.Effort,

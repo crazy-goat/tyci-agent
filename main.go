@@ -513,7 +513,6 @@ func (r *agentRunner) run(ctx context.Context, task, model, system string, opts 
 		// comment in tools/tool.go.
 		MaxIterations: opts.MaxIterationsCap,
 		MaxToolCalls:  opts.MaxToolCalls,
-		Debug:         false,
 		Tools:         &subagentToolRunner{allowed: opts.Tools, scoutMode: opts.ScoutMode},
 		Schema:        schema,
 		Fallbacks:     fallbacks,

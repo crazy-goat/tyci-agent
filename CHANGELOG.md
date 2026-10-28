@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Deprecated
+- CLI: the `--debug` flag has no effect and is hidden. It is still accepted, and it prints a deprecation notice. The debug log in `~/.tyci/debug/` is always on; use `--no-debug` to turn it off (#786).
+
+### Removed
+- Internal: the unused `debug` setting of the agent config and of the connector request is removed (#786).
+
 ## [0.11.0] - 2026-10-28
 
 ### Added

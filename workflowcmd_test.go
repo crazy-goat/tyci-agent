@@ -21,6 +21,7 @@ import (
 	"github.com/crazy-goat/tyci-agent/internal/trust"
 	"github.com/crazy-goat/tyci-agent/session"
 	"github.com/crazy-goat/tyci-agent/tools"
+	"github.com/spf13/pflag"
 )
 
 const wfOKScript = "#!/bin/sh\nexit 0\n"
@@ -114,6 +115,7 @@ func oneCheckFlow(name string) string {
 func runWorkflowCLI(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	resetWorkflowFlags()
+	resetRootFlags()
 	ctx, cancel := context.WithTimeout(context.Background(), wfCommandTimeout)
 	t.Cleanup(cancel)
 	for _, c := range workflowCmd.Commands() {
@@ -151,6 +153,16 @@ func resetWorkflowFlags() {
 	workflowValidateJSON, workflowValidateDir = false, ""
 	workflowStatusJSON = false
 	workflowStopJSON, workflowStopReason = false, ""
+}
+
+// resetRootFlags sets the persistent flags of the root command back to their
+// defaults. Cobra keeps the values of the previous Execute, so a flag set by one
+// test would leak into the next one.
+func resetRootFlags() {
+	rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
 }
 
 // TestWorkflowValidateMissingFilesAreProblems checks that a missing check script
@@ -459,7 +471,6 @@ func TestWorkflowRunAgentGetsDebugLog(t *testing.T) {
 // log of a run off disk.
 func TestWorkflowRunNoDebugFlagWritesNoLog(t *testing.T) {
 	home := wfHome(t)
-	t.Cleanup(func() { _ = rootCmd.PersistentFlags().Set("no-debug", "false") })
 	wfUseRepo(t, wfRunRepo(t, home))
 	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "one-check", "workflow.json"), oneCheckFlow("one-check"))
 	wfWrite(t, filepath.Join(home, ".tyci", "workflows", "one-check", "checks", "ok.sh"), wfOKScript)
