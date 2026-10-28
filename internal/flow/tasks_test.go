@@ -118,3 +118,22 @@ func TestTaskTemplatesRenderPassesInput(t *testing.T) {
 		t.Fatalf("out = %q, err = %v", out, err)
 	}
 }
+
+// #216: on a GitLab repo the findings task uses the tyci forge ops, never gh.
+func TestFindingsTask_GitLab(t *testing.T) {
+	d := testTaskData
+	d.ForgeCmd = "'/bin/tyci' forge --repo g/p"
+	out, err := renderTask("findings_to_issues", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{"GitLab issues", d.ForgeCmd + ` issue-search "`, d.ForgeCmd + " issue-comment <n> <file>",
+		d.ForgeCmd + ` issue-create "<title>" <file>`, "!42", "NEVER set a milestone", "NEVER apply the accepted label"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing %q in:\n%s", w, out)
+		}
+	}
+	if strings.Contains(out, "gh issue") || !strings.HasSuffix(strings.TrimSpace(out), "`done`.") {
+		t.Errorf("out:\n%s", out)
+	}
+}
