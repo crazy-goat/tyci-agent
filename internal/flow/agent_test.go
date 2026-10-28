@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -498,5 +499,25 @@ func TestSubagentRunner_PlanWithoutArtifactDirWritesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cwd, "output.txt")); err == nil {
 		t.Error("output.txt written to the working directory")
+	}
+}
+
+// A plan step is read-only whatever the role lists, so its policy refuses an
+// MCP tool that the role names. The same role in a work step keeps it.
+func TestPlanStepRefusesListedMCPTool(t *testing.T) {
+	rl := flowconfig.Role{Permission: flowconfig.PermissionWorktreeWrite, Tools: []string{"read", "mcp_weather_forecast"}}
+	dir := t.TempDir()
+
+	plan := rolePolicy("oracle", "plan", rl, dir)
+	if tools.AllowedFor(plan, "mcp_weather_forecast") {
+		t.Fatal("plan step allowed a listed MCP tool")
+	}
+	if slices.Contains(plan.ToolNames(), "mcp_weather_forecast") {
+		t.Fatalf("plan step offers a listed MCP tool: %v", plan.ToolNames())
+	}
+
+	work := rolePolicy("oracle", "review", rl, dir)
+	if !tools.AllowedFor(work, "mcp_weather_forecast") {
+		t.Fatal("work step with worktree-write refused a listed MCP tool")
 	}
 }

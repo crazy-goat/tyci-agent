@@ -56,8 +56,9 @@ func modeAllows(permission, name string) bool {
 
 // AllowedFor reports whether the policy lets the role call the tool name.
 // The always-allowed tools (help, lua, report_progress) are always allowed.
-// An explicit Tools list adds MCP tools, but it cannot widen the permission
-// mode: a built-in tool outside the mode is refused even when it is listed.
+// An explicit Tools list cannot widen the permission mode: a built-in tool
+// outside the mode is refused even when it is listed. It adds MCP tools only
+// in worktree-write and full mode.
 func AllowedFor(p Policy, name string) bool {
 	if slices.Contains(alwaysAllowedTools, name) {
 		return true
@@ -77,6 +78,12 @@ func AllowedFor(p Policy, name string) bool {
 		return true
 	}
 	if isMCPTool(name) {
+		// An MCP tool can change state outside the worktree, so only a mode
+		// that may write, or full, gets one. A read-only role never does, even
+		// when its list names it. An unset mode reads as read-only (modeAllows).
+		if p.Permission != PermissionWorktreeWrite && p.Permission != PermissionFull {
+			return false
+		}
 		// One rule, the same as ToolNames: an MCP tool is offered only when
 		// the list names it, or when there is no list, the mode is full and
 		// the network is on.
